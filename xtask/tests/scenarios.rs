@@ -239,8 +239,12 @@ async fn test_event_engine_log_format_json() -> ::xtask::sandbox::TestResult<()>
     let stderr_lines = stderr_reader
         .join()
         .map_err(|_| color_eyre::eyre::eyre!("stderr reader thread panicked"))??;
-    let lines: Vec<&str> = stderr_lines.iter().map(String::as_str).collect();
+    assert_json_log_lines(&binary_path, &stderr_lines)?;
 
+    Ok(())
+}
+
+fn assert_json_log_lines(binary_path: &Path, lines: &[String]) -> color_eyre::eyre::Result<()> {
     if lines.is_empty() {
         return Err(color_eyre::eyre::eyre!(
             "D11.6 captured no stderr log lines from {}; JSON-log behavior was not exercised",
@@ -248,48 +252,74 @@ async fn test_event_engine_log_format_json() -> ::xtask::sandbox::TestResult<()>
         ));
     }
 
-    // Every non-empty line must be a valid JSON object
-    let mut parsed_count = 0;
-    for line in &lines {
-        match serde_json::from_str::<Value>(line) {
-            Ok(json) => {
-                assert!(
-                    json.is_object(),
-                    "log line should be a JSON object, got: {line}"
-                );
-                parsed_count += 1;
-            }
-            Err(e) => {
-                // Tolerate a handful of non-JSON lines (e.g., panic backtraces written
-                // directly to stderr by the Rust runtime, not tracing).
-                eprintln!("Non-JSON stderr line (tolerated): {line:?} — {e}");
-            }
+    for (index, line) in lines.iter().enumerate() {
+        let json: Value = serde_json::from_str(line).map_err(|error| {
+            color_eyre::eyre::eyre!(
+                "D11.6 stderr line {index} from {} was not valid JSON: {error}; line={line:?}",
+                binary_path.display()
+            )
+        })?;
+
+        if !json.is_object() {
+            return Err(color_eyre::eyre::eyre!(
+                "D11.6 stderr line {index} from {} should be a JSON object, got: {line}",
+                binary_path.display()
+            ));
+        }
+
+        if json.get("timestamp").is_none() && json.get("ts").is_none() {
+            return Err(color_eyre::eyre::eyre!(
+                "D11.6 stderr line {index} from {} should include timestamp or ts, got: {json}",
+                binary_path.display()
+            ));
+        }
+
+        if json.get("level").is_none() {
+            return Err(color_eyre::eyre::eyre!(
+                "D11.6 stderr line {index} from {} should include level, got: {json}",
+                binary_path.display()
+            ));
         }
     }
 
-    assert!(
-        parsed_count > 0,
-        "at least one JSON log line must be present; got {} lines total",
-        lines.len()
-    );
-
-    // Verify the JSON schema of the first parsed log entry
-    let first_json: Value = lines
-        .iter()
-        .find_map(|l| serde_json::from_str(l).ok())
-        .ok_or_else(|| color_eyre::eyre::eyre!("no parseable JSON lines in stderr"))?;
-
-    // tracing-subscriber JSON format emits: timestamp, level, fields, target, span?
-    assert!(
-        first_json.get("timestamp").is_some() || first_json.get("ts").is_some(),
-        "JSON log entry should have a timestamp field, got: {first_json}"
-    );
-    assert!(
-        first_json.get("level").is_some(),
-        "JSON log entry should have a 'level' field, got: {first_json}"
-    );
-
     Ok(())
+}
+
+#[test]
+fn test_json_log_validation_rejects_missing_log_evidence() {
+    let error = assert_json_log_lines(Path::new("sinexd"), &[]).unwrap_err();
+
+    assert!(
+        error
+            .to_string()
+            .contains("JSON-log behavior was not exercised"),
+        "missing runtime log evidence should be reported explicitly, got: {error}"
+    );
+}
+
+#[test]
+fn test_json_log_validation_rejects_mixed_non_json_stderr() {
+    let lines = vec![
+        r#"{"timestamp":"2026-06-21T00:00:00Z","level":"INFO","fields":{"message":"ready"}}"#
+            .to_string(),
+        "panic: wrote directly to stderr".to_string(),
+    ];
+    let error = assert_json_log_lines(Path::new("sinexd"), &lines).unwrap_err();
+
+    assert!(
+        error.to_string().contains("was not valid JSON"),
+        "non-JSON stderr should fail instead of being tolerated, got: {error}"
+    );
+}
+
+#[test]
+fn test_json_log_validation_accepts_json_log_objects() -> color_eyre::eyre::Result<()> {
+    let lines = vec![
+        r#"{"timestamp":"2026-06-21T00:00:00Z","level":"INFO","fields":{"message":"ready"}}"#
+            .to_string(),
+    ];
+
+    assert_json_log_lines(Path::new("sinexd"), &lines)
 }
 
 // ============================================================================
