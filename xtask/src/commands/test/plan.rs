@@ -22,6 +22,7 @@ const SINEXD_RUNTIME_INDEPENDENT_TEST_BINARIES: &[&str] = &[
     "browser_history_parser_test",
     "registry_dispatch_test",
     "terminal_history_parser_test",
+    "transport_security_test",
 ];
 
 #[derive(Debug, Clone, Copy, Serialize)]
@@ -501,8 +502,11 @@ mod tests {
             runtime_binary_requirements_for_target(
                 &plan,
                 false,
-                &["registry_dispatch_test".to_string()],
-                Some("test(weechat_descriptor_registered)"),
+                &[
+                    "registry_dispatch_test".to_string(),
+                    "transport_security_test".to_string()
+                ],
+                Some("test(weechat_descriptor_registered) | test(gateway_tls_accepts_handshake)"),
             )
             .is_empty()
         );
