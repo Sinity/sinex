@@ -15,7 +15,7 @@ use serde_json::json;
 use sinex_db::DbPoolExt;
 use sinex_db::repositories::Operation;
 use sinex_primitives::domain::OperationStatus;
-use sinex_primitives::runtime_pressure::RuntimePressureAction;
+use sinex_primitives::runtime_pressure::{RuntimePressureAction, RuntimePressureLevel};
 use sinex_primitives::validation::normalize_unicode;
 use sinex_primitives::views::{CaveatView, SinexObjectKind, SinexObjectRef};
 use sinex_primitives::{Result, SinexError};
@@ -60,13 +60,13 @@ fn dlq_pending_sequence_span(total_messages: u64, first_seq: u64, last_seq: u64)
     }
 }
 
-fn dlq_pressure_level(total_messages: u64, retry_batch_size: usize) -> &'static str {
+fn dlq_pressure_level(total_messages: u64, retry_batch_size: usize) -> RuntimePressureLevel {
     if total_messages == 0 {
-        "nominal"
+        RuntimePressureLevel::Nominal
     } else if total_messages > retry_batch_size as u64 {
-        "critical"
+        RuntimePressureLevel::Critical
     } else {
-        "warning"
+        RuntimePressureLevel::Warning
     }
 }
 
@@ -98,7 +98,7 @@ fn dlq_pressure_signal(
 ) -> DlqPressureSignal {
     let (recommended_action, reason) = dlq_operator_action(total_messages);
     DlqPressureSignal {
-        pressure_level: dlq_pressure_level(total_messages, retry_batch_size).to_string(),
+        pressure_level: dlq_pressure_level(total_messages, retry_batch_size),
         runtime_action: dlq_runtime_action(total_messages, retry_batch_size),
         pending_messages: total_messages,
         pending_bytes: total_bytes,
@@ -571,7 +571,7 @@ mod tests {
     use sinex_primitives::events::DynamicPayload;
     use sinex_primitives::query::QueryResultEvent;
     use sinex_primitives::views::PrivacyStateKind;
-    use sinex_primitives::{Id, RuntimePressureAction, SourceMaterial, Uuid};
+    use sinex_primitives::{Id, RuntimePressureAction, RuntimePressureLevel, SourceMaterial, Uuid};
     use xtask::sandbox::sinex_test;
 
     #[sinex_test]
@@ -610,9 +610,9 @@ mod tests {
 
     #[sinex_test]
     async fn dlq_list_pressure_classifies_empty_warning_and_critical_depth() -> TestResult<()> {
-        assert_eq!(dlq_pressure_level(0, 10), "nominal");
-        assert_eq!(dlq_pressure_level(10, 10), "warning");
-        assert_eq!(dlq_pressure_level(11, 10), "critical");
+        assert_eq!(dlq_pressure_level(0, 10), RuntimePressureLevel::Nominal);
+        assert_eq!(dlq_pressure_level(10, 10), RuntimePressureLevel::Warning);
+        assert_eq!(dlq_pressure_level(11, 10), RuntimePressureLevel::Critical);
 
         Ok(())
     }
@@ -639,7 +639,7 @@ mod tests {
     async fn dlq_pressure_signal_carries_runtime_action_and_batch_limit() -> TestResult<()> {
         let pressure = dlq_pressure_signal(11, 4096, 10);
 
-        assert_eq!(pressure.pressure_level, "critical");
+        assert_eq!(pressure.pressure_level, RuntimePressureLevel::Critical);
         assert_eq!(pressure.runtime_action, RuntimePressureAction::Throttle);
         assert_eq!(pressure.pending_messages, 11);
         assert_eq!(pressure.pending_bytes, 4096);
