@@ -19,8 +19,8 @@ use serde_json::Value;
 
 use super::{
     AppendOnlyFileConfig, ChainedConfig, ClipboardPollingConfig, DirectoryWalkConfig,
-    FileContentDropConfig, FileDropConfig, JournalctlStreamConfig, SqliteRowConfig,
-    StaticFileConfig, UnixSocketStreamConfig,
+    EmailMboxFileConfig, FileContentDropConfig, FileDropConfig, JournalctlStreamConfig,
+    SqliteRowConfig, StaticFileConfig, UnixSocketStreamConfig,
 };
 
 // =============================================================================
@@ -54,6 +54,7 @@ pub struct AdapterSchema {
 /// - `ClipboardPollingAdapter`
 /// - `DbusStreamAdapter` (hand-authored schema; source file is pending parallel work)
 /// - `DirectoryWalkAdapter`
+/// - `EmailMboxFileAdapter`
 /// - `FileContentDropAdapter`
 /// - `FileDropAdapter`
 /// - `JournalctlStreamAdapter`
@@ -89,6 +90,10 @@ pub fn all_adapter_schemas() -> BTreeMap<String, AdapterSchema> {
     map.insert(
         "DirectoryWalkAdapter".into(),
         schema_for_type::<DirectoryWalkConfig>(),
+    );
+    map.insert(
+        "EmailMboxFileAdapter".into(),
+        schema_for_type::<EmailMboxFileConfig>(),
     );
     map.insert(
         "FileContentDropAdapter".into(),

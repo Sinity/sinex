@@ -69,6 +69,9 @@ pub use adapters::{
     DirectoryWalkCursor,
     // IncrementalDump adapter (#1774).
     DumpLoader,
+    EmailMboxFileAdapter,
+    EmailMboxFileConfig,
+    EmailMboxFileCursor,
     FileContentDropAdapter,
     FileContentDropConfig,
     FileDropAdapter,

@@ -70,7 +70,7 @@ pub struct EmailMailboxParserConfig;
         subject = "source:email.mailbox.mbox-staged",
         event_type = "email.message.received",
         implementation = "staged-mbox-parser",
-        adapter = "FileContentDropAdapter",
+        adapter = "EmailMboxFileAdapter",
         resource_profile = ResourceProfile::BoundedFile,
         runner_pack = RunnerPack::Staged,
         checkpoint_family = CheckpointFamily::AppendStream,
@@ -129,7 +129,7 @@ impl MaterialParser for EmailMailboxParser {
         ParserManifest {
             parser_id: ParserId::from_static("email-mailbox-rfc822"),
             parser_version: "1.0.0".into(),
-            accepted_input_shapes: vec![InputShapeKind::FileDrop],
+            accepted_input_shapes: vec![InputShapeKind::FileDrop, InputShapeKind::Archive],
             source_id: SourceId::from_static("email.mailbox"),
             declared_event_types: vec![
                 (
@@ -162,8 +162,9 @@ impl MaterialParser for EmailMailboxParser {
                 SensitivityHint::FreeText,
                 SensitivityHint::PotentiallySensitive,
             ],
-            description: "Parses staged RFC822/.eml material into email message observations."
-                .into(),
+            description:
+                "Parses staged RFC822/.eml material and MBOX slices into email message observations."
+                    .into(),
         }
     }
 
