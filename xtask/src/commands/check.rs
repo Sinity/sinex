@@ -522,21 +522,39 @@ impl XtaskCommand for CheckCommand {
             );
         }
 
+        // --changed-strict: API drift guard.  Runs before the normal check
+        // pipeline and short-circuits it when set.
+        if let Some(ref base_opt) = this.changed_strict {
+            let base_ref = base_opt.as_deref().unwrap_or("origin/master");
+            let workspace_root = crate::config::workspace_root();
+            let plan = crate::strict_changed::plan_changed_strict(base_ref, &workspace_root)?;
+            if plan.affected_packages.is_empty() {
+                if ctx.is_human() {
+                    println!(
+                        "API drift guard: checking packages changed relative to {base_ref}..."
+                    );
+                }
+                return changed_strict_command_result(ctx, plan.into_empty_report());
+            }
+
+            this.guard_broad_start_pressure(ctx)?;
+
+            // Ensure only compile-time infrastructure is ready. Per-package
+            // `cargo check` needs a live Postgres schema for sqlx macros, but it
+            // must not start NATS or runtime services as a verification side
+            // effect.
+            let compile_ready = preflight::ensure_compile_ready(ctx)?;
+            let result = run_changed_strict_command(base_ref, ctx, &this);
+            drop(compile_ready);
+            return result;
+        }
+
         this.guard_broad_start_pressure(ctx)?;
 
         // Ensure only compile-time infrastructure is ready. `cargo check` needs a
         // live Postgres schema for sqlx macros, but it must not start NATS or
         // runtime services as a side effect of verification.
-        let compile_ready = preflight::ensure_compile_ready(ctx)?;
-
-        // --changed-strict: API drift guard.  Runs before the normal check
-        // pipeline and short-circuits it when set.
-        if let Some(ref base_opt) = this.changed_strict {
-            let base_ref = base_opt.as_deref().unwrap_or("origin/master");
-            let result = run_changed_strict_command(base_ref, ctx, &this);
-            drop(compile_ready);
-            return result;
-        }
+        let _compile_ready = preflight::ensure_compile_ready(ctx)?;
 
         // Resource warning before heavy operation.  Captured regardless of output
         // mode so that machine-facing callers (agents, CI) can surface the
@@ -897,6 +915,13 @@ fn run_changed_strict_command(
         }
     }
 
+    changed_strict_command_result(ctx, report)
+}
+
+fn changed_strict_command_result(
+    ctx: &CommandContext,
+    report: crate::strict_changed::ChangedStrictReport,
+) -> Result<CommandResult> {
     let report_json = serde_json::to_value(&report)?;
 
     if report.success {
