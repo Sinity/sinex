@@ -151,7 +151,7 @@ pub fn hash_prompt_material(material: &str) -> String {
 }
 
 // =============================================================================
-// Model-effect cache — deterministic record-and-replay for LLM calls
+// Model-effect records — deterministic record-and-replay for LLM calls
 // =============================================================================
 
 /// Replay policy governing whether a recorded model effect is reused.
@@ -166,7 +166,7 @@ pub enum ReplayPolicy {
     ExplicitReevaluate,
 }
 
-/// Identifies a specific model-effect invocation for caching and replay.
+/// Identifies a specific model-effect invocation for record/replay.
 ///
 /// Two requests with identical hashes and the same replay policy (or
 /// `ReuseRecorded` in effect) can share a recorded response.
