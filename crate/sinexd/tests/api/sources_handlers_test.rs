@@ -4,7 +4,10 @@ use sinex_db::repositories::DbPoolExt;
 use sinex_db::repositories::source_materials::TemporalLedgerEntry;
 use sinex_primitives::Timestamp;
 use sinex_primitives::domain::{SourceMaterialFormat, SourceMaterialTimingInfoType};
-use sinex_primitives::rpc::sources::{SourcesListRequest, SourcesShowRequest, SourcesStageRequest};
+use sinex_primitives::privacy::MaterialCaptureClass;
+use sinex_primitives::rpc::sources::{
+    SourceAdmissionDecision, SourcesListRequest, SourcesShowRequest, SourcesStageRequest,
+};
 use sinexd::api::handlers;
 use sinexd::api::rpc_server::RpcAuthContext;
 use sinexd::api::service_container::ServiceContainer;
@@ -67,6 +70,22 @@ async fn sources_stage_list_and_show_surface_contract_metadata(ctx: TestContext)
             .and_then(|origin| origin.binding_id.as_deref()),
         Some("source:terminal.activity.atuin-sqlite-live")
     );
+    assert_eq!(
+        stage
+            .contract
+            .policy
+            .as_ref()
+            .and_then(|policy| policy.capture_class),
+        Some(MaterialCaptureClass::AllowedPlaintext)
+    );
+    assert_eq!(
+        stage
+            .contract
+            .policy
+            .as_ref()
+            .and_then(|policy| policy.admission_decision),
+        Some(SourceAdmissionDecision::Admitted)
+    );
 
     let material_id = uuid::Uuid::parse_str(&stage.material_id)?;
     ctx.pool()
@@ -117,6 +136,20 @@ async fn sources_stage_list_and_show_surface_contract_metadata(ctx: TestContext)
             .as_ref()
             .and_then(|statistics| statistics.total_bytes),
         Some(12)
+    );
+    assert_eq!(
+        contract
+            .policy
+            .as_ref()
+            .and_then(|policy| policy.capture_class),
+        Some(MaterialCaptureClass::AllowedPlaintext)
+    );
+    assert_eq!(
+        contract
+            .policy
+            .as_ref()
+            .and_then(|policy| policy.admission_decision),
+        Some(SourceAdmissionDecision::Admitted)
     );
     let evidence = show
         .material
