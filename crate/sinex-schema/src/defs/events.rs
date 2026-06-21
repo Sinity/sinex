@@ -21,9 +21,23 @@ use sqlx::FromRow;
 
 /// **Table: `core.events`**
 ///
-/// This is the single source of truth for all system knowledge. An immutable, append-only
-/// log of both raw observations and synthesized conclusions, implemented as a
-/// `TimescaleDB` hypertable for extreme performance and scalability.
+/// This is the canonical append-only event ledger for admitted observations
+/// and synthesized conclusions. It is implemented as a `TimescaleDB` hypertable
+/// for high-volume ingest and query paths.
+///
+/// `source` and `event_type` remain required namespace/display/index
+/// coordinates. They are not sufficient authority for material origin, parser
+/// identity, admission policy, disclosure policy, or occurrence semantics.
+/// New package/admission code should carry those authorities through
+/// `source_material_id`, `module_run_id`, `payload_schema_id`, EventContract /
+/// AdmissionPolicy catalog refs, and derived-event metadata rather than
+/// overloading the textual namespace pair.
+///
+/// `payload_schema_id` is the DB-visible physical payload-schema pointer. The
+/// higher-level EventContract registry lives in code/catalog today and maps
+/// package/mode semantics to payload schemas and admission policies; the DB
+/// fallback to `(source, event_type)` is compatibility lookup for existing
+/// schema rows, not a claim that the pair is the full semantic contract.
 ///
 /// ## Design Decision: Inline Synthetic Event Metadata
 ///
@@ -410,7 +424,9 @@ impl Events {
                 .col(Events::Source)
                 .col((Events::TsOrig, IndexOrder::Desc))
                 .to_owned(),
-            // Scope recomputation: find all events for a given scope_key
+            // Scope recomputation: find all events for a given namespace and
+            // scope slot. `source` here is an index partition/display
+            // coordinate, not source-package or admission authority.
             Index::create()
                 .if_not_exists()
                 .name("ix_events_scope_key")
@@ -488,6 +504,10 @@ impl Events {
     /// Schema lookup precedence:
     /// 1. `payload_schema_id` (FK) when set on the row.
     /// 2. Latest `is_active = true` row matching `(source, event_type)`.
+    ///
+    /// The fallback exists for transitional rows and old schema registrations.
+    /// EventContract/AdmissionPolicy code should prefer explicit schema refs
+    /// and treat `(source, event_type)` as namespace lookup only.
     ///
     /// If no schema is registered the trigger is lenient (matches the
     /// application-level validator). When a schema *is* registered and the

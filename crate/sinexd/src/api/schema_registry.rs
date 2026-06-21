@@ -1,10 +1,15 @@
-//! Static (source, `event_type`) registry built from the `EventPayload`
-//! inventory at startup (#1172, AC-4 — "schema-as-code").
+//! Static event namespace registry built from the `EventPayload` inventory at
+//! startup (#1172, AC-4 — "schema-as-code").
 //!
-//! Every event-emitting RPC must validate the `(source, event_type)` pair
-//! against this registry before persisting an event. Unknown pairs are
+//! Every event-emitting RPC must validate the `(source, event_type)` namespace
+//! pair against this registry before persisting an event. Unknown pairs are
 //! rejected with a `SinexError::validation` rather than reaching the DB and
 //! being routed to DLQ.
+//!
+//! This registry is not the full event-contract/admission authority. It proves
+//! that a textual namespace pair is declared by compiled payload inventory; the
+//! higher-level EventContract/AdmissionPolicy catalogs own semantic contract,
+//! package/mode, and admission meaning.
 
 use sinex_primitives::domain::{EventSource, EventType};
 use sinex_primitives::error::{Result, SinexError};
@@ -12,8 +17,8 @@ use sinex_primitives::events::schema_registry::get_all_payloads;
 use std::collections::HashSet;
 use std::sync::OnceLock;
 
-/// In-memory registry of every `(source, event_type)` pair declared via
-/// `#[derive(EventPayload)]` and collected by `inventory::collect!`.
+/// In-memory registry of every `(source, event_type)` namespace pair declared
+/// via `#[derive(EventPayload)]` and collected by `inventory::collect!`.
 ///
 /// Constructed lazily on first access (typically gateway startup) and never
 /// rebuilt. The inventory is build-time — adding new payloads requires a
@@ -33,7 +38,7 @@ impl SchemaRegistry {
         Self { pairs }
     }
 
-    /// Look up a `(source, event_type)` pair.
+    /// Look up a declared `(source, event_type)` namespace pair.
     #[must_use]
     pub fn contains(&self, source: &str, event_type: &str) -> bool {
         self.pairs

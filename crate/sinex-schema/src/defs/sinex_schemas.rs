@@ -171,8 +171,15 @@ impl EventPayloadSchemas {
 
 /// **Table: `core.runs`**
 ///
-/// Each row represents a single execution period of a process. A run is
-/// created on startup, updated with heartbeats, and marked ended on shutdown.
+/// Each row represents one execution identity for a process, source runner,
+/// automaton, replay worker, or service instance. Run rows are durable
+/// provenance for attribution (`module_run_id`, service/instance/host,
+/// effective config) and terminal lifecycle (`ended_at`, stopped/failed).
+///
+/// Current liveness is not decided by this table alone. Runtime/operator
+/// surfaces should derive freshness from append-only health/process telemetry
+/// and freshness windows, using `status` / `last_heartbeat_at` only as
+/// compatibility or lifecycle hints where older paths still populate them.
 #[derive(Iden, Copy, Clone)]
 pub enum Runs {
     Table,

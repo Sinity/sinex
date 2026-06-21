@@ -412,11 +412,13 @@ where
     {
         return SeamKind::RecoveredPartial;
     }
-    // Operator-declared `privacy_class` drives `PrivateModeGap` classification
-    // (#1174). Only `Personal`, `Secret`, or `Redacted` count as private —
-    // `Public` and `Unknown` do not, so heuristic and declared signals stay
-    // separate. Either side of the seam being private-classed is enough to
-    // attribute the gap to private mode.
+    // Operator-declared `privacy_class` is used only to attribute continuity
+    // seams to private-mode posture (#1174). Only `Personal`, `Secret`, or
+    // `Redacted` count as private — `Public` and `Unknown` do not, so
+    // heuristic and declared signals stay separate. Disclosure/redaction for
+    // views, exports, logs, completions, DLQ, telemetry, search, and evidence
+    // windows remains field/context/operator-policy work, not a decision made
+    // by this gap classifier.
     if prev.privacy_class().is_private() || curr.privacy_class().is_private() {
         return SeamKind::PrivateModeGap;
     }
