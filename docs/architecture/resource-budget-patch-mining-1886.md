@@ -24,7 +24,13 @@ visible and bounded without creating a parallel scheduler vocabulary.
 
 ## Reconciled
 
-#1886 remains open for the live memory incident/regression evidence that is not
-settled by patch mining alone. Future resource-pressure cleanup should start
-from fresh runtime evidence and attach it to the owning runtime/package-
-completeness surface instead of reopening the stale patch vocabulary here.
+The #1886 patch-mining trail is reconciled by the controlled confirmation-buffer
+and journald-feedback regression harness. That harness is the accepted local
+closure surface for the original incident while production Sinex remains stopped
+for host-RAM reasons; it does not require restarting the live deployment.
+
+Future live-service load testing is a new performance investigation only if the
+operator intentionally restarts the production stack and observes a fresh memory
+growth pattern. Resource-pressure cleanup should start from fresh runtime
+evidence and attach it to the owning runtime/package-completeness surface
+instead of reopening the stale patch vocabulary here.
