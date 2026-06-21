@@ -43,7 +43,8 @@ exact-match predicates. Contract/schema/time predicates should not appear in
 docs or completions until they have an executable lowering path.
 Runtime-health queries execute against the bounded runtime summary row exposed
 by `runtime.health`; predicates filter the summary fields declared by the
-descriptor (`module`, `role`, `state`, and `stale_after`).
+descriptor (`module`, `role`, `state`, and `stale_after`). `stale_after` is
+expressed as integer seconds so range predicates compare numerically.
 
 `json` and `yaml` return the full `ViewEnvelope<SinexQueryResultListView>`.
 `ndjson` emits one `SinexQueryResultRow` per line. `table` prints a compact

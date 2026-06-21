@@ -365,7 +365,7 @@ async fn query_runtime_health(
     .with_field("state", state)
     .with_field("active_count", health.active_count)
     .with_field("inactive_count", health.inactive_count)
-    .with_field("stale_after", "300s");
+    .with_field("stale_after", 300);
     Ok(vec![row]
         .into_iter()
         .filter(|row| row_matches_query(query, row))
@@ -609,7 +609,7 @@ mod tests {
         .with_field("module", "runtime")
         .with_field("role", "summary")
         .with_field("state", "degraded")
-        .with_field("stale_after", "300s");
+        .with_field("stale_after", 300);
 
         assert!(!row_matches_query(&healthy_query, &row));
         assert!(row_matches_query(&degraded_query, &row));
@@ -620,7 +620,8 @@ mod tests {
     async fn runtime_health_query_supports_descriptor_declared_fields() -> xtask::TestResult<()> {
         let module_query = parse_sinex_query("runtime-health where module contains runtime")?;
         let role_query = parse_sinex_query("runtime-health where role starts_with sum")?;
-        let stale_query = parse_sinex_query("runtime-health where stale_after >= \"300s\"")?;
+        let stale_query = parse_sinex_query("runtime-health where stale_after >= 300")?;
+        let stale_range_query = parse_sinex_query("runtime-health where stale_after <= 60")?;
         let row = SinexQueryResultRow::new(
             QueryUnitId::RuntimeHealth,
             SinexObjectKind::RuntimeModule,
@@ -630,11 +631,12 @@ mod tests {
         .with_field("module", "runtime")
         .with_field("role", "summary")
         .with_field("state", "healthy")
-        .with_field("stale_after", "300s");
+        .with_field("stale_after", 300);
 
         assert!(row_matches_query(&module_query, &row));
         assert!(row_matches_query(&role_query, &row));
         assert!(row_matches_query(&stale_query, &row));
+        assert!(!row_matches_query(&stale_range_query, &row));
         Ok(())
     }
 }
