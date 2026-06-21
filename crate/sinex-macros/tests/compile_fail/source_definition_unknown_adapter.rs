@@ -1,8 +1,9 @@
 // Compile-fail: a #[derive(SourceDefinition)] with an unsupported adapter name
 // must not compile (#1727 slice-4 compile-fail matrix). "ChainedAdapter" is a
-// real shape used by browser/history.rs but is not yet in the
-// adapter_type_ident allowlist — the author must use explicit register_source!
-// wiring (tracked in the escape-hatch follow-up issue).
+// real shape used by browser/history.rs but is intentionally outside the
+// adapter_type_ident allowlist. Generic or locally aliased adapters must keep
+// explicit register_source! wiring so the concrete adapter stack remains
+// visible at the registration site.
 use sinex_macros::SourceDefinition;
 
 #[derive(SourceDefinition)]
