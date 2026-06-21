@@ -183,14 +183,28 @@ fn test_zombie_reaping(runner: &mut TestRunner) {
     // Give it a moment to write its PID
     thread::sleep(Duration::from_secs(2));
 
-    // Find and SIGKILL the xtask coordinator process
-    let kill_output = Command::new("sh")
-        .arg("-c")
-        .arg("pgrep -f 'xtask.*check' | head -1 | xargs -r kill -9")
-        .output()
-        .ok();
+    let recorded_pid =
+        xtask_json(&["jobs", "status", &jid.to_string()]).and_then(|v| v["data"]["pid"].as_u64());
 
-    let _ = kill_output; // outcome varies — job may have completed naturally
+    let Some(pid) = recorded_pid else {
+        runner.record(
+            name,
+            TestOutcome::EvidenceMissing,
+            "background job completed before a PID was recorded; zombie-reaping path was not observed",
+        );
+        return;
+    };
+
+    let killed_pid = match kill_pid(pid) {
+        Ok(pid) => pid,
+        Err(error) => {
+            runner.fail(
+                name,
+                &format!("failed to inject SIGKILL into recorded xtask check process: {error}"),
+            );
+            return;
+        }
+    };
     thread::sleep(Duration::from_secs(3));
 
     // After next `jobs list`, orphaned jobs should be retroactively marked Failed
@@ -210,13 +224,39 @@ fn test_zombie_reaping(runner: &mut TestRunner) {
     }
 
     let status = orphaned[0]["status"].as_str().unwrap_or("");
-    if matches!(status, "failed" | "cancelled" | "completed" | "success") {
-        runner.pass(name);
-    } else {
-        runner.fail(
+    match classify_zombie_reaping_status(status) {
+        Ok(()) => runner.pass(name),
+        Err(reason) => runner.fail(
             name,
-            &format!("orphaned job {jid} still in status '{status}' after reaping"),
-        );
+            &format!("killed PID {killed_pid}; job {jid} did not prove reaping: {reason}"),
+        ),
+    }
+}
+
+fn kill_pid(pid: u64) -> std::result::Result<u64, String> {
+    let status = Command::new("kill")
+        .args(["-9", &pid.to_string()])
+        .status()
+        .map_err(|error| format!("failed to run kill -9 {pid}: {error}"))?;
+
+    if status.success() {
+        Ok(pid)
+    } else {
+        Err(format!(
+            "kill -9 {pid} exited with rc={}",
+            status.code().unwrap_or(-1)
+        ))
+    }
+}
+
+fn classify_zombie_reaping_status(status: &str) -> std::result::Result<(), String> {
+    match status {
+        "failed" | "cancelled" => Ok(()),
+        "completed" | "success" => Err(format!(
+            "job ended as {status:?}; natural completion is not orphan-reaping evidence"
+        )),
+        "" => Err("job status was empty after SIGKILL".to_string()),
+        other => Err(format!("job remained in status {other:?} after SIGKILL")),
     }
 }
 
@@ -369,7 +409,7 @@ fn test_history_db_consistency(runner: &mut TestRunner) {
 
 #[cfg(test)]
 mod tests {
-    use super::{classify_stale_cancel_output, last_json_object};
+    use super::{classify_stale_cancel_output, classify_zombie_reaping_status, last_json_object};
 
     #[cfg(unix)]
     fn exit_status(code: i32) -> std::process::ExitStatus {
@@ -393,6 +433,22 @@ mod tests {
         let error = classify_stale_cancel_output(&exit_status(0), output, "")
             .expect_err("success would not prove stale-process rejection");
         assert!(error.contains("JOB_NOT_FOUND"));
+    }
+
+    #[test]
+    fn zombie_reaping_classifier_accepts_failed_or_cancelled_after_kill() {
+        classify_zombie_reaping_status("failed")
+            .expect("failed is terminal orphan-reaping evidence after SIGKILL");
+        classify_zombie_reaping_status("cancelled")
+            .expect("cancelled is terminal orphan-reaping evidence after SIGKILL");
+    }
+
+    #[test]
+    fn zombie_reaping_classifier_rejects_natural_completion_after_kill() {
+        let error = classify_zombie_reaping_status("completed")
+            .expect_err("natural completion is not zombie-reaping evidence");
+
+        assert!(error.contains("natural completion"));
     }
 
     #[test]
