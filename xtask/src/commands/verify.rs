@@ -182,12 +182,27 @@ struct PhaseVerificationPhase {
     boundary_checks: Vec<String>,
     #[serde(default)]
     impact_gates: Vec<PhaseImpactGate>,
+    #[serde(default)]
+    evidence_manifest: Vec<PhaseEvidenceManifestItem>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct PhaseImpactGate {
     impact: String,
     commands: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct PhaseEvidenceManifestItem {
+    ac_id: String,
+    status: String,
+    evidence_kind: String,
+    surface: String,
+    evidence: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    command: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    artifact: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize, Default)]
@@ -364,6 +379,19 @@ fn execute_phase_plan(
                         }
                     }
                 }
+                if !phase.evidence_manifest.is_empty() {
+                    println!("  evidence manifest:");
+                    for item in &phase.evidence_manifest {
+                        println!(
+                            "    - [{}] {} {} {} :: {}",
+                            item.status,
+                            item.ac_id,
+                            item.evidence_kind,
+                            item.surface,
+                            item.evidence
+                        );
+                    }
+                }
             }
         }
     }
@@ -456,9 +484,39 @@ fn validate_phase_manifest(manifest: &PhaseVerificationManifest) -> Result<()> {
                 validate_supported_phase_command(command)?;
             }
         }
+        for error in validate_phase_evidence_manifest(phase) {
+            bail!(
+                "phase `{}` evidence manifest row `{}`: {}",
+                phase.id,
+                error.ac_id.as_deref().unwrap_or("<missing-ac>"),
+                error.reason
+            );
+        }
     }
 
     Ok(())
+}
+
+fn validate_phase_evidence_manifest(
+    phase: &PhaseVerificationPhase,
+) -> Vec<ClosureEvidenceManifestError> {
+    phase
+        .evidence_manifest
+        .iter()
+        .flat_map(|item| {
+            let closure_item = ClosureEvidenceManifestItem {
+                source: format!("phase:{}", phase.id),
+                ac_id: item.ac_id.clone(),
+                status: normalize_manifest_status(&item.status),
+                evidence_kind: item.evidence_kind.clone(),
+                surface: item.surface.clone(),
+                evidence: item.evidence.clone(),
+                command: item.command.clone(),
+                artifact: item.artifact.clone(),
+            };
+            validate_closure_evidence_manifest(std::slice::from_ref(&closure_item))
+        })
+        .collect()
 }
 
 fn validate_supported_phase_command(command: &str) -> Result<()> {
@@ -1027,10 +1085,30 @@ struct ClosureMatrixItem {
     text: String,
 }
 
+#[derive(Debug, Clone, Serialize)]
+struct ClosureEvidenceManifestItem {
+    source: String,
+    ac_id: String,
+    status: String,
+    evidence_kind: String,
+    surface: String,
+    evidence: String,
+    command: Option<String>,
+    artifact: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct ClosureEvidenceManifestError {
+    source: String,
+    ac_id: Option<String>,
+    reason: String,
+}
+
 #[derive(Debug, Clone, Default, Serialize)]
 struct ClosureEvidence {
     commands: Vec<ClosureCommand>,
     matrix_items: Vec<ClosureMatrixItem>,
+    manifest_items: Vec<ClosureEvidenceManifestItem>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -1042,6 +1120,8 @@ struct ClosureVerificationReport {
     commands_passed: usize,
     commands_failed: usize,
     matrix_items_found: usize,
+    manifest_items_found: usize,
+    manifest_errors: Vec<ClosureEvidenceManifestError>,
     overall_passed: bool,
     evidence_sources: Vec<String>,
     results: Vec<ClosureCommandResult>,
@@ -1060,9 +1140,18 @@ fn execute_closure(
         .iter()
         .map(|command| command.source.clone())
         .chain(evidence.matrix_items.iter().map(|item| item.source.clone()))
+        .chain(
+            evidence
+                .manifest_items
+                .iter()
+                .map(|item| item.source.clone()),
+        )
         .collect::<Vec<_>>();
 
-    if commands.is_empty() && evidence.matrix_items.is_empty() {
+    let manifest_errors = validate_closure_evidence_manifest(&evidence.manifest_items);
+
+    if commands.is_empty() && evidence.matrix_items.is_empty() && evidence.manifest_items.is_empty()
+    {
         let report = ClosureVerificationReport {
             issue,
             dry_run,
@@ -1071,6 +1160,8 @@ fn execute_closure(
             commands_passed: 0,
             commands_failed: 0,
             matrix_items_found: 0,
+            manifest_items_found: 0,
+            manifest_errors,
             overall_passed: false,
             evidence_sources,
             results: Vec::new(),
@@ -1099,9 +1190,10 @@ fn execute_closure(
 
     if ctx.is_human() && !json {
         println!(
-            "Issue #{issue}: {} verification command(s), {} closure matrix item(s) found",
+            "Issue #{issue}: {} verification command(s), {} closure matrix item(s), {} evidence manifest item(s) found",
             commands.len(),
-            evidence.matrix_items.len()
+            evidence.matrix_items.len(),
+            evidence.manifest_items.len()
         );
         if dry_run {
             println!("Dry-run mode — printing evidence without executing commands:");
@@ -1110,6 +1202,29 @@ fn execute_closure(
             }
             for item in &evidence.matrix_items {
                 println!("  [{}] [{}] {}", item.source, item.status, item.text);
+            }
+            for item in &evidence.manifest_items {
+                println!(
+                    "  [{}] [{}] {} {} {} :: {}",
+                    item.source,
+                    item.status,
+                    item.ac_id,
+                    item.evidence_kind,
+                    item.surface,
+                    item.evidence
+                );
+            }
+            for error in &manifest_errors {
+                println!(
+                    "  [{}] manifest error{}: {}",
+                    error.source,
+                    error
+                        .ac_id
+                        .as_ref()
+                        .map(|id| format!(" ac={id}"))
+                        .unwrap_or_default(),
+                    error.reason
+                );
             }
         }
     }
@@ -1133,7 +1248,7 @@ fn execute_closure(
     let commands_run = results.len();
     let commands_passed = results.iter().filter(|r| r.passed).count();
     let commands_failed = results.iter().filter(|r| !r.passed).count();
-    let overall_passed = commands_failed == 0;
+    let overall_passed = commands_failed == 0 && manifest_errors.is_empty();
 
     let report = ClosureVerificationReport {
         issue,
@@ -1143,6 +1258,8 @@ fn execute_closure(
         commands_passed,
         commands_failed,
         matrix_items_found: evidence.matrix_items.len(),
+        manifest_items_found: evidence.manifest_items.len(),
+        manifest_errors: manifest_errors.clone(),
         overall_passed,
         evidence_sources,
         results,
@@ -1167,7 +1284,10 @@ fn execute_closure(
     } else {
         CommandResult::failure(crate::output::StructuredError::new(
             "CLOSURE_VERIFICATION_FAILED",
-            format!("issue #{issue}: {commands_failed} verification command(s) failed"),
+            format!(
+                "issue #{issue}: {commands_failed} verification command(s) failed, {} evidence manifest error(s)",
+                manifest_errors.len()
+            ),
         ))
         .with_message(format!("issue #{issue}: closure verification FAILED"))
     };
@@ -1179,6 +1299,8 @@ fn execute_closure(
         .with_detail(format!("passed={commands_passed}"))
         .with_detail(format!("failed={commands_failed}"))
         .with_detail(format!("matrix_items={}", evidence.matrix_items.len()))
+        .with_detail(format!("manifest_items={}", evidence.manifest_items.len()))
+        .with_detail(format!("manifest_errors={}", manifest_errors.len()))
         .with_data(serde_json::to_value(&report)?)
         .with_duration(ctx.elapsed());
 
@@ -1220,6 +1342,12 @@ fn collect_closure_evidence(payload: &ClosureIssuePayload) -> ClosureEvidence {
     evidence
         .matrix_items
         .extend(extract_closure_matrix_items(&payload.body, "body"));
+    evidence
+        .manifest_items
+        .extend(extract_closure_evidence_manifest_items(
+            &payload.body,
+            "body",
+        ));
 
     for (index, comment) in payload.comments.iter().enumerate() {
         let source = if comment.created_at.is_empty() {
@@ -1233,6 +1361,12 @@ fn collect_closure_evidence(payload: &ClosureIssuePayload) -> ClosureEvidence {
         evidence
             .matrix_items
             .extend(extract_closure_matrix_items(&comment.body, &source));
+        evidence
+            .manifest_items
+            .extend(extract_closure_evidence_manifest_items(
+                &comment.body,
+                &source,
+            ));
     }
 
     evidence
@@ -1338,6 +1472,245 @@ fn extract_closure_command_entries(body: &str, source: &str) -> Vec<ClosureComma
             source: source.to_string(),
         })
         .collect()
+}
+
+fn extract_closure_evidence_manifest_items(
+    body: &str,
+    source: &str,
+) -> Vec<ClosureEvidenceManifestItem> {
+    let mut items = Vec::new();
+    let mut in_manifest_section = false;
+    let mut header: Option<Vec<String>> = None;
+
+    for line in body.lines() {
+        let trimmed = line.trim();
+
+        if is_closure_evidence_heading(trimmed) {
+            let heading_lower = trimmed.trim_start_matches('#').trim().to_lowercase();
+            in_manifest_section = heading_lower.contains("evidence manifest")
+                || heading_lower.contains("closure evidence")
+                || heading_lower.contains("acceptance matrix");
+            header = None;
+            continue;
+        }
+
+        if !in_manifest_section || !trimmed.starts_with('|') || !trimmed.ends_with('|') {
+            continue;
+        }
+
+        let cells = parse_markdown_table_cells(trimmed);
+        if cells.is_empty() || is_markdown_separator_row(&cells) {
+            continue;
+        }
+
+        if header.is_none() && looks_like_closure_manifest_header(&cells) {
+            header = Some(cells);
+            continue;
+        }
+
+        let Some(header_cells) = header.as_deref() else {
+            continue;
+        };
+        let Some(item) = parse_closure_manifest_row(header_cells, &cells, source) else {
+            continue;
+        };
+        items.push(item);
+    }
+
+    items
+}
+
+fn parse_markdown_table_cells(line: &str) -> Vec<String> {
+    line.trim_matches('|')
+        .split('|')
+        .map(|cell| cell.trim().to_string())
+        .collect()
+}
+
+fn is_markdown_separator_row(cells: &[String]) -> bool {
+    cells.iter().all(|cell| {
+        cell.chars()
+            .all(|ch| ch == '-' || ch == ':' || ch.is_whitespace())
+    })
+}
+
+fn looks_like_closure_manifest_header(cells: &[String]) -> bool {
+    let normalized = cells
+        .iter()
+        .map(|cell| normalize_manifest_header(cell))
+        .collect::<Vec<_>>();
+    normalized.iter().any(|cell| cell == "ac_id")
+        && normalized.iter().any(|cell| cell == "evidence_kind")
+        && normalized.iter().any(|cell| cell == "surface")
+        && normalized.iter().any(|cell| cell == "evidence")
+        && normalized.iter().any(|cell| cell == "status")
+}
+
+fn normalize_manifest_header(cell: &str) -> String {
+    let lower = cell.trim().to_lowercase();
+    match lower.as_str() {
+        "ac" | "ac id" | "criterion" | "acceptance criterion" | "acceptance" => "ac_id".to_string(),
+        "kind" | "evidence kind" | "evidence_kind" => "evidence_kind".to_string(),
+        "behavior surface" | "surface" => "surface".to_string(),
+        "proof" | "evidence" => "evidence".to_string(),
+        "cmd" | "command" | "commands" => "command".to_string(),
+        "artifact" | "artifacts" => "artifact".to_string(),
+        "state" | "status" => "status".to_string(),
+        _ => lower.replace([' ', '-'], "_"),
+    }
+}
+
+fn manifest_cell<'a>(header: &'a [String], cells: &'a [String], key: &str) -> Option<&'a str> {
+    header
+        .iter()
+        .position(|cell| normalize_manifest_header(cell) == key)
+        .and_then(|index| cells.get(index))
+        .map(|cell| cell.trim())
+}
+
+fn parse_closure_manifest_row(
+    header: &[String],
+    cells: &[String],
+    source: &str,
+) -> Option<ClosureEvidenceManifestItem> {
+    let ac_id = manifest_cell(header, cells, "ac_id")?;
+    let status = manifest_cell(header, cells, "status")?;
+    let evidence_kind = manifest_cell(header, cells, "evidence_kind")?;
+    let surface = manifest_cell(header, cells, "surface")?;
+    let evidence = manifest_cell(header, cells, "evidence")?;
+
+    Some(ClosureEvidenceManifestItem {
+        source: source.to_string(),
+        ac_id: ac_id.to_string(),
+        status: normalize_manifest_status(status),
+        evidence_kind: evidence_kind.to_string(),
+        surface: surface.to_string(),
+        evidence: evidence.to_string(),
+        command: optional_manifest_cell(header, cells, "command"),
+        artifact: optional_manifest_cell(header, cells, "artifact"),
+    })
+}
+
+fn optional_manifest_cell(header: &[String], cells: &[String], key: &str) -> Option<String> {
+    manifest_cell(header, cells, key)
+        .filter(|cell| !cell.trim().is_empty() && *cell != "-")
+        .map(ToString::to_string)
+}
+
+fn normalize_manifest_status(status: &str) -> String {
+    let lower = status.trim().to_lowercase();
+    if lower.contains("satisfied") || lower.contains("done") || lower.contains("pass") {
+        "satisfied".to_string()
+    } else if lower.contains("required") || lower.contains("require") {
+        "required".to_string()
+    } else if lower.contains("defer") || lower.contains("owner") || lower.contains("tracked") {
+        "deferred".to_string()
+    } else if lower.contains("misframed") {
+        "misframed".to_string()
+    } else if lower.contains("fail") {
+        "failed".to_string()
+    } else {
+        lower
+    }
+}
+
+fn validate_closure_evidence_manifest(
+    items: &[ClosureEvidenceManifestItem],
+) -> Vec<ClosureEvidenceManifestError> {
+    let mut errors = Vec::new();
+    for item in items {
+        if item.ac_id.trim().is_empty() {
+            errors.push(manifest_error(item, "missing AC id"));
+        }
+        if item.evidence_kind.trim().is_empty() {
+            errors.push(manifest_error(item, "missing evidence kind"));
+        }
+        if item.surface.trim().is_empty() {
+            errors.push(manifest_error(item, "missing behavior surface"));
+        }
+        if item.evidence.trim().is_empty() {
+            errors.push(manifest_error(item, "missing evidence description"));
+        }
+        if is_satisfied_manifest_status(&item.status) {
+            errors.extend(validate_satisfied_manifest_item(item));
+        }
+    }
+    errors
+}
+
+fn is_satisfied_manifest_status(status: &str) -> bool {
+    matches!(
+        status,
+        "checked" | "satisfied" | "done" | "passed" | "required"
+    )
+}
+
+fn validate_satisfied_manifest_item(
+    item: &ClosureEvidenceManifestItem,
+) -> Vec<ClosureEvidenceManifestError> {
+    let mut errors = Vec::new();
+    let kind = item.evidence_kind.trim().to_lowercase();
+    let surface = item.surface.trim().to_lowercase();
+    let evidence = item.evidence.trim().to_lowercase();
+    let command = item.command.as_deref().unwrap_or("").trim().to_lowercase();
+
+    let allowed_kinds = [
+        "behavior",
+        "contract",
+        "runtime",
+        "parser",
+        "privacy",
+        "disclosure",
+        "replay",
+        "schema",
+        "cli",
+        "api",
+        "rpc",
+        "typed-boundary",
+        "vm",
+        "harness",
+        "docs",
+    ];
+    if !allowed_kinds.contains(&kind.as_str()) {
+        errors.push(manifest_error(
+            item,
+            &format!("unsupported evidence kind `{}`", item.evidence_kind),
+        ));
+    }
+
+    if surface == "source" || surface == "grep" || surface == "text" {
+        errors.push(manifest_error(
+            item,
+            "satisfied evidence must name a behavior/API/runtime/schema/test surface, not source text",
+        ));
+    }
+
+    if kind != "docs" && command.starts_with("rg ") && !command.contains("xtask ") {
+        errors.push(manifest_error(
+            item,
+            "grep-only command cannot satisfy non-doc evidence",
+        ));
+    }
+
+    if kind != "docs" && evidence.contains("source text") {
+        errors.push(manifest_error(
+            item,
+            "source-text evidence cannot satisfy non-doc behavior evidence",
+        ));
+    }
+
+    errors
+}
+
+fn manifest_error(
+    item: &ClosureEvidenceManifestItem,
+    reason: &str,
+) -> ClosureEvidenceManifestError {
+    ClosureEvidenceManifestError {
+        source: item.source.clone(),
+        ac_id: (!item.ac_id.trim().is_empty()).then(|| item.ac_id.clone()),
+        reason: reason.to_string(),
+    }
 }
 
 fn extract_closure_matrix_items(body: &str, source: &str) -> Vec<ClosureMatrixItem> {
@@ -1501,11 +1874,7 @@ fn parse_markdown_closure_matrix_row(line: &str) -> Option<(String, String)> {
         return None;
     }
 
-    let cells: Vec<String> = line
-        .trim_matches('|')
-        .split('|')
-        .map(|cell| cell.trim().to_string())
-        .collect();
+    let cells: Vec<String> = parse_markdown_table_cells(line);
     if cells.len() < 2 {
         return None;
     }
@@ -1514,10 +1883,7 @@ fn parse_markdown_closure_matrix_row(line: &str) -> Option<(String, String)> {
         .iter()
         .map(|cell| cell.to_lowercase())
         .collect::<Vec<_>>();
-    if lower_cells.iter().all(|cell| {
-        cell.chars()
-            .all(|ch| ch == '-' || ch == ':' || ch.is_whitespace())
-    }) {
+    if is_markdown_separator_row(&lower_cells) {
         return None;
     }
     if lower_cells.iter().any(|cell| cell == "status")
@@ -1681,6 +2047,15 @@ mod tests {
                     impact: "schema".to_string(),
                     commands: vec!["xtask docs check".to_string()],
                 }],
+                evidence_manifest: vec![PhaseEvidenceManifestItem {
+                    ac_id: "phase-1.schema".to_string(),
+                    status: "satisfied".to_string(),
+                    evidence_kind: "schema".to_string(),
+                    surface: "schema strict-diff".to_string(),
+                    evidence: "schema drift is checked by the phase boundary gate".to_string(),
+                    command: Some("xtask schema strict-diff".to_string()),
+                    artifact: None,
+                }],
             }],
         }
     }
@@ -1724,6 +2099,40 @@ mod tests {
 
         let error = validate_phase_manifest(&manifest).expect_err("unsupported command must fail");
         assert!(format!("{error:#}").contains("unsupported phase verification command"));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn phase_manifest_validation_rejects_grep_only_behavior_evidence()
+    -> ::xtask::sandbox::TestResult<()> {
+        let mut manifest = valid_phase_manifest();
+        manifest.phases[0].evidence_manifest = vec![PhaseEvidenceManifestItem {
+            ac_id: "phase-1.runtime".to_string(),
+            status: "satisfied".to_string(),
+            evidence_kind: "runtime".to_string(),
+            surface: "source".to_string(),
+            evidence: "source text contains the desired value".to_string(),
+            command: Some("rg -n desired xtask/src/commands/verify.rs".to_string()),
+            artifact: None,
+        }];
+
+        let errors = validate_phase_evidence_manifest(&manifest.phases[0]);
+        let reasons = errors
+            .iter()
+            .map(|error| error.reason.as_str())
+            .collect::<Vec<_>>();
+        assert!(
+            reasons.iter().any(|reason| reason.contains("source text")),
+            "expected source-text rejection, got {reasons:?}"
+        );
+        assert!(
+            reasons.iter().any(|reason| reason.contains("grep-only")),
+            "expected grep-only rejection, got {reasons:?}"
+        );
+
+        let error =
+            validate_phase_manifest(&manifest).expect_err("grep-only phase evidence must fail");
+        assert!(format!("{error:#}").contains("source text"));
         Ok(())
     }
 
@@ -1986,6 +2395,84 @@ Acceptance matrix:
             items[0].text,
             "Every finding has a ledger state | #1800 owns the resurrection work."
         );
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn closure_evidence_manifest_parses_behavior_rows() -> ::xtask::sandbox::TestResult<()> {
+        let body = "\
+## Closure Evidence Manifest
+
+| AC | Evidence kind | Surface | Evidence | Command | Artifact | Status |
+| --- | --- | --- | --- | --- | --- | --- |
+| AC-1 | runtime | xtask infra status JSON | `sinexd` current-checkout state is emitted in JSON and warning paths. | xtask test -p xtask -E 'test(current_checkout_status_reports_dev_local_sinexd)' | - | Satisfied |
+| AC-2 | docs | command guide | Guide documents the explicit local runtime surface. | xtask docs command-guide --check | xtask/docs/command-guide.md | Satisfied |
+";
+        let items = extract_closure_evidence_manifest_items(body, "body");
+        assert_eq!(items.len(), 2);
+        assert_eq!(items[0].ac_id, "AC-1");
+        assert_eq!(items[0].evidence_kind, "runtime");
+        assert_eq!(
+            items[0].command.as_deref(),
+            Some("xtask test -p xtask -E 'test(current_checkout_status_reports_dev_local_sinexd)'")
+        );
+        assert!(validate_closure_evidence_manifest(&items).is_empty());
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn closure_evidence_manifest_rejects_grep_only_runtime_claim()
+    -> ::xtask::sandbox::TestResult<()> {
+        let body = "\
+## Closure Evidence Manifest
+
+| AC | Evidence kind | Surface | Evidence | Command | Status |
+| --- | --- | --- | --- | --- | --- |
+| AC-1 | runtime | source | source text contains the new field | rg -n sinexd xtask/src/infra/stack.rs | Satisfied |
+";
+        let items = extract_closure_evidence_manifest_items(body, "comment[0]");
+        assert_eq!(items.len(), 1);
+        let errors = validate_closure_evidence_manifest(&items);
+        let reasons = errors
+            .iter()
+            .map(|error| error.reason.as_str())
+            .collect::<Vec<_>>();
+        assert!(
+            reasons.iter().any(|reason| reason.contains("source text")),
+            "expected source-text rejection, got {reasons:?}"
+        );
+        assert!(
+            reasons.iter().any(|reason| reason.contains("grep-only")),
+            "expected grep-only rejection, got {reasons:?}"
+        );
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn collect_closure_evidence_includes_manifest_items() -> ::xtask::sandbox::TestResult<()>
+    {
+        let payload = ClosureIssuePayload {
+            body: "## Summary\nNo command here.".to_string(),
+            comments: vec![ClosureIssueComment {
+                body: "\
+## Closure Evidence Manifest
+
+| AC | Evidence kind | Surface | Evidence | Command | Status |
+| --- | --- | --- | --- | --- | --- |
+| AC-1 | schema | strict-diff report | inline check drift is rejected by strict-diff output | xtask test -p sinex-schema -E 'test(strict_diff)' | Satisfied |
+"
+                .to_string(),
+                created_at: "2026-06-21T00:00:00Z".to_string(),
+            }],
+        };
+        let evidence = collect_closure_evidence(&payload);
+        assert!(evidence.commands.is_empty());
+        assert_eq!(evidence.manifest_items.len(), 1);
+        assert_eq!(
+            evidence.manifest_items[0].source,
+            "comment[0]@2026-06-21T00:00:00Z"
+        );
+        assert!(validate_closure_evidence_manifest(&evidence.manifest_items).is_empty());
         Ok(())
     }
 
