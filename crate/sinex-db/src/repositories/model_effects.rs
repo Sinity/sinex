@@ -1,5 +1,10 @@
-//! Repository for model-effect records (#1063). Not yet wired — no production
-//! callers (#1063).
+//! Repository for dormant model-effect records.
+//!
+//! This repository is intentionally available to typed DB code, but current
+//! production paths do not call it. A future live caller must wire model effects
+//! through the event/derivation authority boundary instead of treating this as a
+//! standalone cache that can silently bypass provenance, replay, or disclosure
+//! policy.
 
 use crate::repositories::{
     Repository,
