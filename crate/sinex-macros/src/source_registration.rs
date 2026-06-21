@@ -78,6 +78,12 @@ pub(crate) struct RegistrationAttrs {
     /// Typed enum path token (e.g. `RuntimeShape::OnDemand`), emitted verbatim.
     /// `None` => generator supplies the default path.
     pub runtime_shape: Option<TokenStream>,
+    /// Typed enum-expression token (`MaterialLifecyclePolicy::RetainRaw`),
+    /// emitted verbatim. `None` => generator supplies the default path.
+    pub material_lifecycle: Option<TokenStream>,
+    /// Typed enum-expression token (`TransportSemantics::JETSTREAM_DURABLE`),
+    /// emitted verbatim. `None` => generator supplies the default path.
+    pub transport_semantics: Option<TokenStream>,
     pub capabilities: Vec<String>,
     /// Mark the runtime binding as future-state metadata rather than a live
     /// deployment binding.
@@ -128,6 +134,8 @@ pub(crate) struct RuntimeBindingAttrs {
     pub runner_pack: Option<TokenStream>,
     pub checkpoint_family: Option<TokenStream>,
     pub runtime_shape: Option<TokenStream>,
+    pub material_lifecycle: Option<TokenStream>,
+    pub transport_semantics: Option<TokenStream>,
     pub capabilities: Vec<String>,
     pub proposed: Option<bool>,
 }
@@ -285,6 +293,22 @@ fn generate_one_source_runtime_binding(
         .and_then(|binding| binding.runtime_shape.clone())
         .or_else(|| attrs.runtime_shape.clone())
         .unwrap_or_else(|| quote!(::sinex_primitives::source_contracts::RuntimeShape::Continuous));
+    let material_lifecycle = binding
+        .and_then(|binding| binding.material_lifecycle.clone())
+        .or_else(|| attrs.material_lifecycle.clone())
+        .unwrap_or_else(|| {
+            quote!(::sinex_primitives::source_contracts::MaterialLifecyclePolicy::default_for(#resource_profile))
+        });
+    let transport_semantics = binding
+        .and_then(|binding| binding.transport_semantics.clone())
+        .or_else(|| attrs.transport_semantics.clone())
+        .unwrap_or_else(|| {
+            quote!(::sinex_primitives::source_contracts::TransportSemantics::default_for(
+                #runner_pack,
+                #checkpoint_family,
+                #runtime_shape,
+            ))
+        });
 
     let capabilities = binding
         .filter(|binding| !binding.capabilities.is_empty())
@@ -314,6 +338,8 @@ fn generate_one_source_runtime_binding(
             .resource_profile(#resource_profile)
             .source_id(#id)
             .runner_pack(#runner_pack)
+            .material_lifecycle(#material_lifecycle)
+            .transport_semantics(#transport_semantics)
             #capabilities_call
             .checkpoint_family(#checkpoint_family)
             .runtime_shape(#runtime_shape)

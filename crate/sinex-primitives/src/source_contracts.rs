@@ -222,6 +222,10 @@ pub struct SourceRuntimeBinding {
     pub runtime_shape: RuntimeShape,
     /// Physical/build footprint declared by this binding.
     pub build_impact: SourceBuildImpact,
+    /// RawMaterial/blob/artifact/DLQ lifecycle behavior for this binding.
+    pub material_lifecycle: MaterialLifecyclePolicy,
+    /// Transport, delivery, replay, DLQ, and backpressure semantics.
+    pub transport_semantics: TransportSemantics,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -281,6 +285,8 @@ impl SourceRuntimeBinding {
                 checkpoint_family: CheckpointFamily::AppendStream,
                 runtime_shape: RuntimeShape::Continuous,
                 build_impact: SourceBuildImpact::ZERO,
+                material_lifecycle: MaterialLifecyclePolicy::RetainRaw,
+                transport_semantics: TransportSemantics::DIRECT_APPEND_STREAM,
             },
             _state: PhantomData,
         }
@@ -350,6 +356,18 @@ impl<O, P, CF, RS, BI> SourceRuntimeBindingBuilder<O, P, CF, RS, BI> {
     #[must_use]
     pub const fn runner_pack(mut self, runner_pack: RunnerPack) -> Self {
         self.descriptor.runner_pack = runner_pack;
+        self
+    }
+
+    #[must_use]
+    pub const fn material_lifecycle(mut self, policy: MaterialLifecyclePolicy) -> Self {
+        self.descriptor.material_lifecycle = policy;
+        self
+    }
+
+    #[must_use]
+    pub const fn transport_semantics(mut self, semantics: TransportSemantics) -> Self {
+        self.descriptor.transport_semantics = semantics;
         self
     }
 }
@@ -512,6 +530,155 @@ pub enum RuntimeShape {
     Continuous,
     OnDemand,
     Scheduled,
+}
+
+/// Raw material lifecycle declared by a source binding.
+///
+/// This is package-mode metadata for completeness, operations, and operator
+/// views. It is not a disclosure engine and does not authorize hidden
+/// redaction, deletion, or censorship.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum MaterialLifecyclePolicy {
+    /// Raw material is retained according to the source contract retention.
+    RetainRaw,
+    /// Raw bytes are staged for parsing and may be discarded after admission.
+    EphemeralRaw,
+    /// Raw bytes are not persisted; events/artifacts carry refs and caveats.
+    DerivedOnly,
+    /// Material is held for operator inspection or policy before admission.
+    QuarantineUntilReviewed,
+    /// External material remains outside Sinex; Sinex stores refs/outcomes.
+    ExternalReferenceOnly,
+}
+
+impl MaterialLifecyclePolicy {
+    #[must_use]
+    pub const fn default_for(profile: ResourceProfile) -> Self {
+        match profile {
+            ResourceProfile::LiveWatcher | ResourceProfile::EmbeddedEmitter => Self::EphemeralRaw,
+            ResourceProfile::EventStreamConsumer => Self::DerivedOnly,
+            ResourceProfile::BoundedFile
+            | ResourceProfile::BoundedStream
+            | ResourceProfile::DirectoryScan
+            | ResourceProfile::Oneshot => Self::RetainRaw,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum TransportKind {
+    Direct,
+    LocalQueue,
+    CoreNats,
+    JetStream,
+    Kv,
+    Filesystem,
+    ExternalApi,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum DeliverySemantics {
+    SameProcess,
+    AtMostOnce,
+    AtLeastOnce,
+    ExactlyOnceNotClaimed,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum OrderingSemantics {
+    MaterialOrder,
+    CursorOrder,
+    BestEffort,
+    Unordered,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+pub struct TransportSemantics {
+    pub transport: TransportKind,
+    pub delivery: DeliverySemantics,
+    pub ordering: OrderingSemantics,
+    pub replayable: bool,
+    pub dlq: bool,
+    pub backpressure: bool,
+}
+
+impl TransportSemantics {
+    pub const DIRECT_APPEND_STREAM: Self = Self {
+        transport: TransportKind::Direct,
+        delivery: DeliverySemantics::SameProcess,
+        ordering: OrderingSemantics::CursorOrder,
+        replayable: true,
+        dlq: false,
+        backpressure: false,
+    };
+
+    pub const LOCAL_LIVE_QUEUE: Self = Self {
+        transport: TransportKind::LocalQueue,
+        delivery: DeliverySemantics::AtMostOnce,
+        ordering: OrderingSemantics::BestEffort,
+        replayable: false,
+        dlq: true,
+        backpressure: true,
+    };
+
+    pub const JETSTREAM_DURABLE: Self = Self {
+        transport: TransportKind::JetStream,
+        delivery: DeliverySemantics::AtLeastOnce,
+        ordering: OrderingSemantics::CursorOrder,
+        replayable: true,
+        dlq: true,
+        backpressure: true,
+    };
+
+    #[must_use]
+    pub const fn default_for(
+        runner: RunnerPack,
+        checkpoint: CheckpointFamily,
+        runtime: RuntimeShape,
+    ) -> Self {
+        let transport = match runner {
+            RunnerPack::Staged | RunnerPack::InProcess => TransportKind::Direct,
+            RunnerPack::Live => TransportKind::LocalQueue,
+            RunnerPack::External => TransportKind::JetStream,
+            RunnerPack::SinexdSource => match runtime {
+                RuntimeShape::Continuous => TransportKind::LocalQueue,
+                RuntimeShape::OnDemand | RuntimeShape::Scheduled => TransportKind::Direct,
+            },
+        };
+        let ordering = match checkpoint {
+            CheckpointFamily::AppendStream | CheckpointFamily::Journal => {
+                OrderingSemantics::CursorOrder
+            }
+            CheckpointFamily::MutableSnapshot { .. } => OrderingSemantics::MaterialOrder,
+            CheckpointFamily::Polling | CheckpointFamily::LiveObservation => {
+                OrderingSemantics::BestEffort
+            }
+        };
+        let delivery = match transport {
+            TransportKind::Direct => DeliverySemantics::SameProcess,
+            TransportKind::JetStream => DeliverySemantics::AtLeastOnce,
+            TransportKind::LocalQueue
+            | TransportKind::CoreNats
+            | TransportKind::Kv
+            | TransportKind::Filesystem
+            | TransportKind::ExternalApi => DeliverySemantics::AtMostOnce,
+        };
+        Self {
+            transport,
+            delivery,
+            ordering,
+            replayable: !matches!(checkpoint, CheckpointFamily::LiveObservation),
+            dlq: matches!(
+                transport,
+                TransportKind::JetStream | TransportKind::LocalQueue
+            ),
+            backpressure: !matches!(transport, TransportKind::Direct),
+        }
+    }
 }
 
 /// Retention policy for events emitted by this source.
@@ -985,6 +1152,42 @@ mod tests {
             descriptor.resource_budget(),
             ResourceProfile::BoundedStream.budget_spec()
         );
+        assert_eq!(
+            descriptor.material_lifecycle,
+            MaterialLifecyclePolicy::RetainRaw
+        );
+        assert_eq!(
+            descriptor.transport_semantics,
+            TransportSemantics::DIRECT_APPEND_STREAM
+        );
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn binding_policy_defaults_follow_runtime_shape() -> TestResult<()> {
+        assert_eq!(
+            MaterialLifecyclePolicy::default_for(ResourceProfile::LiveWatcher),
+            MaterialLifecyclePolicy::EphemeralRaw
+        );
+
+        let live_transport = TransportSemantics::default_for(
+            RunnerPack::Live,
+            CheckpointFamily::LiveObservation,
+            RuntimeShape::Continuous,
+        );
+        assert_eq!(live_transport.transport, TransportKind::LocalQueue);
+        assert_eq!(live_transport.ordering, OrderingSemantics::BestEffort);
+        assert!(!live_transport.replayable);
+        assert!(live_transport.backpressure);
+
+        let external_transport = TransportSemantics::default_for(
+            RunnerPack::External,
+            CheckpointFamily::Journal,
+            RuntimeShape::Continuous,
+        );
+        assert_eq!(external_transport.transport, TransportKind::JetStream);
+        assert_eq!(external_transport.delivery, DeliverySemantics::AtLeastOnce);
+        assert!(external_transport.dlq);
         Ok(())
     }
 

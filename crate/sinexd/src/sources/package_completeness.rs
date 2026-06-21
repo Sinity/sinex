@@ -192,6 +192,8 @@ pub struct RuntimeBindingRef {
     pub capabilities: Vec<String>,
     pub resource_limits: Value,
     pub resource_budget: Value,
+    pub material_lifecycle: Value,
+    pub transport_semantics: Value,
     pub proposed: bool,
     pub runner_pack: Value,
     pub checkpoint_family: Value,
@@ -690,11 +692,26 @@ fn finalize_mode(
     );
     diagnostics.require(
         "storage_material_lifecycle_policy",
-        RequirementStatus::Caveat,
-        false,
-        format!(
-            "SourceContract retention is {}; explicit material lifecycle policy is not separated yet",
-            to_json_value(contract.retention)
+        if binding.is_some() {
+            RequirementStatus::Present
+        } else {
+            RequirementStatus::Missing
+        },
+        binding.is_none() && mode_state == PackageModeState::Accepted,
+        binding.map_or_else(
+            || {
+                format!(
+                    "no binding; SourceContract retention is {} but material lifecycle policy cannot be derived",
+                    to_json_value(contract.retention)
+                )
+            },
+            |binding| {
+                format!(
+                    "material lifecycle {}; SourceContract retention {}",
+                    to_json_value(binding.material_lifecycle),
+                    to_json_value(contract.retention)
+                )
+            },
         ),
     );
     diagnostics.require(
@@ -719,15 +736,21 @@ fn finalize_mode(
     );
     diagnostics.require(
         "transport_semantics",
-        RequirementStatus::Caveat,
-        false,
+        if binding.is_some() {
+            RequirementStatus::Present
+        } else {
+            RequirementStatus::Missing
+        },
+        binding.is_none() && mode_state == PackageModeState::Accepted,
         binding.map_or_else(
             || "transport cannot be inferred without a runtime binding".to_string(),
             |binding| {
                 format!(
-                    "runner {}, runtime {}; ack/replay/DLQ policy not explicit in package metadata",
+                    "runner {}, runtime {}, checkpoint {}; transport {}",
                     to_json_value(binding.runner_pack),
-                    to_json_value(binding.runtime_shape)
+                    to_json_value(binding.runtime_shape),
+                    to_json_value(binding.checkpoint_family),
+                    to_json_value(binding.transport_semantics)
                 )
             },
         ),
@@ -1128,6 +1151,8 @@ fn runtime_binding_ref(binding: &SourceRuntimeBinding) -> RuntimeBindingRef {
             .collect(),
         resource_limits: to_json_value(binding.resource_profile.limits()),
         resource_budget: to_json_value(binding.resource_budget()),
+        material_lifecycle: to_json_value(binding.material_lifecycle),
+        transport_semantics: to_json_value(binding.transport_semantics),
         proposed: binding.proposed,
         runner_pack: to_json_value(binding.runner_pack),
         checkpoint_family: to_json_value(binding.checkpoint_family),
