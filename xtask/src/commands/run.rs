@@ -19,6 +19,7 @@ use tokio::process::{Child, ChildStderr, ChildStdout, Command};
 
 use crate::command::{CommandContext, CommandMetadata, CommandResult, XtaskCommand};
 use crate::config::config;
+use crate::infra::stack::StackConfig;
 use crate::jobs::JobManager;
 use crate::orchestrator::{DevOrchestrator, RunArgs};
 use crate::preflight;
@@ -536,6 +537,54 @@ struct RunResult {
     status: String,
 }
 
+#[derive(Debug, Serialize)]
+struct LocalRuntimeCoordinates {
+    mode: &'static str,
+    checkout_root: String,
+    dev_state_dir: String,
+    logs_dir: String,
+    database_url: String,
+    nats_url: String,
+    api_url: Option<String>,
+    jobs_dir: String,
+}
+
+impl LocalRuntimeCoordinates {
+    fn gather() -> Result<Self> {
+        let stack = StackConfig::for_current_checkout()?;
+        let cfg = config();
+        Ok(Self {
+            mode: "dev-local-explicit",
+            checkout_root: crate::config::workspace_root().display().to_string(),
+            dev_state_dir: stack.state_dir.display().to_string(),
+            logs_dir: stack.logs_dir().display().to_string(),
+            database_url: cfg
+                .database_url
+                .clone()
+                .unwrap_or_else(|| stack.database_url()),
+            nats_url: cfg.nats_url.clone().unwrap_or_else(|| stack.nats_url()),
+            api_url: cfg.gateway_url.clone(),
+            jobs_dir: cfg.jobs_dir().display().to_string(),
+        })
+    }
+
+    fn print_human(&self) {
+        println!("Local runtime:");
+        println!("  mode:        {}", self.mode);
+        println!("  checkout:    {}", self.checkout_root);
+        println!("  dev-state:   {}", self.dev_state_dir);
+        println!("  logs:        {}", self.logs_dir);
+        println!("  database:    {}", self.database_url);
+        println!("  nats:        {}", self.nats_url);
+        println!(
+            "  api:         {}",
+            self.api_url.as_deref().unwrap_or("not configured")
+        );
+        println!("  jobs:        {}", self.jobs_dir);
+        println!("  inspect:     xtask infra status");
+    }
+}
+
 impl XtaskCommand for RunCommand {
     fn name(&self) -> &'static str {
         "run"
@@ -680,6 +729,17 @@ impl RunCommand {
         crate::preflight::local_runtime_env_overrides()
     }
 
+    fn local_runtime_coordinates(&self) -> Result<LocalRuntimeCoordinates> {
+        LocalRuntimeCoordinates::gather()
+    }
+
+    fn print_local_runtime_coordinates(&self, ctx: &CommandContext) -> Result<()> {
+        if ctx.is_human() {
+            self.local_runtime_coordinates()?.print_human();
+        }
+        Ok(())
+    }
+
     fn build_cargo_run_args(
         &self,
         package: &str,
@@ -747,12 +807,25 @@ impl RunCommand {
         let instance_id = instance_id.unwrap_or_else(|| format!("{}-{}", name, std::process::id()));
 
         if self.dry_run {
+            let runtime = self.local_runtime_coordinates()?;
             println!("Would run: {name} (package: {package}, instance: {instance_id})");
             if self.watch {
                 println!("  (with --watch)");
             }
-            return Ok(CommandResult::success().with_detail("dry-run passed"));
+            if ctx.is_human() {
+                runtime.print_human();
+            }
+            return Ok(CommandResult::success()
+                .with_detail("dry-run passed")
+                .with_data(serde_json::json!({
+                    "target": name,
+                    "package": package,
+                    "instance_id": instance_id,
+                    "runtime": runtime,
+                })));
         }
+
+        self.print_local_runtime_coordinates(ctx)?;
 
         if ctx.is_background() {
             return self
@@ -783,12 +856,23 @@ impl RunCommand {
         }
 
         if self.dry_run {
+            let runtime = self.local_runtime_coordinates()?;
             println!("Would run bundle: {binaries:?}");
             if ctx.is_background() {
                 println!("  (background mode via JobManager)");
             }
-            return Ok(CommandResult::success().with_detail("dry-run passed"));
+            if ctx.is_human() {
+                runtime.print_human();
+            }
+            return Ok(CommandResult::success()
+                .with_detail("dry-run passed")
+                .with_data(serde_json::json!({
+                    "binaries": binaries,
+                    "runtime": runtime,
+                })));
         }
+
+        self.print_local_runtime_coordinates(ctx)?;
 
         if ctx.is_background() {
             return self
@@ -823,6 +907,7 @@ impl RunCommand {
 
         self.build_packages(&packages, ctx).await?;
 
+        let runtime = self.local_runtime_coordinates()?;
         for name in binaries {
             let (_, package, binary, automaton) = BINARIES
                 .iter()
@@ -844,6 +929,7 @@ impl RunCommand {
             .with_data(serde_json::json!({
                 "binaries": binaries,
                 "job_ids": job_ids,
+                "runtime": runtime,
             })))
     }
 
@@ -1206,6 +1292,7 @@ impl RunCommand {
             .into_owned();
         let args = runtime_cli_args(package, instance_id, automaton);
         let runtime_env = self.local_run_env_vars();
+        let runtime = self.local_runtime_coordinates()?;
 
         let job = manager.spawn_with_env(&binary_command, &args, &runtime_env)?;
 
@@ -1215,6 +1302,7 @@ impl RunCommand {
                 "job_id": job.id,
                 "package": package,
                 "instance_id": instance_id,
+                "runtime": runtime,
             }))
             .with_duration(ctx.elapsed()))
     }
@@ -1543,6 +1631,30 @@ mod tests {
             target_binary_path(true, "sinexd"),
             target_root.join("release/sinexd")
         );
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_local_runtime_coordinates_describe_current_checkout()
+    -> ::xtask::sandbox::TestResult<()> {
+        let command = base_command(RunSubcommand::Core { instance_id: None });
+        let coordinates = command.local_runtime_coordinates()?;
+        let checkout = crate::config::workspace_root();
+
+        assert_eq!(coordinates.mode, "dev-local-explicit");
+        assert_eq!(coordinates.checkout_root, checkout.display().to_string());
+        assert!(
+            coordinates
+                .database_url
+                .starts_with("postgresql:///sinex_dev"),
+            "database URL should point at the checkout-local dev database"
+        );
+        assert!(
+            coordinates.nats_url.starts_with("nats://localhost:"),
+            "NATS URL should point at the checkout-local dev broker"
+        );
+        assert!(coordinates.logs_dir.contains("dev-state"));
+        assert!(coordinates.jobs_dir.contains(".sinex/state/jobs"));
         Ok(())
     }
 
