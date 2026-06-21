@@ -74,6 +74,7 @@ _sinex_pre_push_checkout_env() {
     DATABASE_URL="postgresql:///sinex_dev?host=$pg_run_dir" \
     PGHOST="$pg_run_dir" \
     PGPORT="$pg_port" \
+    PATH="$target_dir/debug:$PATH" \
     SINEX_CACHE_DIR="$cache_root" \
     SINEX_DEV_CACHE_ROOT="$cache_root" \
     SINEX_DEV_GATEWAY_PORT="$gateway_port" \
