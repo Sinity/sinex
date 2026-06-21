@@ -180,7 +180,7 @@ pub async fn spawn_fake_replay_scan_source(
     nats: Client,
     env: SinexEnvironment,
     spec: FakeReplayScanSource,
-) -> TestResult<tokio::task::JoinHandle<()>> {
+) -> TestResult<tokio::task::JoinHandle<TestResult<()>>> {
     let module_name = spec.module_name.to_string();
     let source = spec.source;
     let event_type = spec.event_type;
@@ -192,11 +192,13 @@ pub async fn spawn_fake_replay_scan_source(
 
     let handle = tokio::spawn(async move {
         let Some(msg) = sub.next().await else {
-            panic!("fake replay scan source `{module_name}` ended before receiving scan command");
+            bail!("fake replay scan source `{module_name}` ended before receiving scan command");
         };
-        let Ok(command) = serde_json::from_slice::<SourceScanCommand>(&msg.payload) else {
-            panic!("fake replay scan source `{module_name}` received invalid scan command payload");
-        };
+        let command = serde_json::from_slice::<SourceScanCommand>(&msg.payload).map_err(|error| {
+            color_eyre::eyre::eyre!(
+                "fake replay scan source `{module_name}` received invalid scan command payload: {error}"
+            )
+        })?;
         let operation_id = command.operation_id;
         let progress_subject =
             env.nats_subject(&format!("sinex.control.replay.progress.{operation_id}"));
@@ -208,11 +210,16 @@ pub async fn spawn_fake_replay_scan_source(
                 accepted: true,
                 error: None,
             };
-            let bytes =
-                serde_json::to_vec(&ack).expect("fake replay scan source ack should serialize");
-            nats.publish(reply, bytes.into())
-                .await
-                .expect("fake replay scan source should publish ack reply");
+            let bytes = serde_json::to_vec(&ack).map_err(|error| {
+                color_eyre::eyre::eyre!(
+                    "fake replay scan source `{module_name}` failed to serialize ack: {error}"
+                )
+            })?;
+            nats.publish(reply, bytes.into()).await.map_err(|error| {
+                color_eyre::eyre::eyre!(
+                    "fake replay scan source `{module_name}` failed to publish ack reply: {error}"
+                )
+            })?;
         }
 
         let material_id = material_id.or_else(|| {
@@ -225,7 +232,7 @@ pub async fn spawn_fake_replay_scan_source(
         });
 
         let Some(material_id) = material_id else {
-            panic!(
+            bail!(
                 "fake replay scan source `{module_name}` had no material id from fixture or replay command"
             );
         };
@@ -238,15 +245,20 @@ pub async fn spawn_fake_replay_scan_source(
             )
             .from_material(Id::from_uuid(material_id))
             .build()
-            .expect("fake replay scan source should build replay output event");
+            .map_err(|error| {
+                color_eyre::eyre::eyre!(
+                    "fake replay scan source `{module_name}` failed to build replay output event {i}: {error}"
+                )
+            })?;
 
             let mut event = event;
             event.created_by_operation_id = Some(operation_id);
 
-            pool.events()
-                .insert(event)
-                .await
-                .expect("fake replay scan source should insert replay output event");
+            pool.events().insert(event).await.map_err(|error| {
+                color_eyre::eyre::eyre!(
+                    "fake replay scan source `{module_name}` failed to insert replay output event {i}: {error}"
+                )
+            })?;
         }
 
         let progress = SourceScanProgress {
@@ -266,23 +278,32 @@ pub async fn spawn_fake_replay_scan_source(
             }),
             error: None,
         };
-        let bytes = serde_json::to_vec(&progress)
-            .expect("fake replay scan source progress should serialize");
+        let bytes = serde_json::to_vec(&progress).map_err(|error| {
+            color_eyre::eyre::eyre!(
+                "fake replay scan source `{module_name}` failed to serialize final progress: {error}"
+            )
+        })?;
         nats.publish(progress_subject, bytes.into())
             .await
-            .expect("fake replay scan source should publish final progress");
+            .map_err(|error| {
+                color_eyre::eyre::eyre!(
+                    "fake replay scan source `{module_name}` failed to publish final progress: {error}"
+                )
+            })?;
+        Ok(())
     });
 
     Ok(handle)
 }
 
 pub async fn await_fake_replay_scan_source(
-    handle: tokio::task::JoinHandle<()>,
+    handle: tokio::task::JoinHandle<TestResult<()>>,
     label: &str,
 ) -> TestResult<()> {
     handle
         .await
-        .map_err(|error| color_eyre::eyre::eyre!("{label} fake replay runtime failed: {error}"))
+        .map_err(|error| color_eyre::eyre::eyre!("{label} fake replay runtime panicked: {error}"))?
+        .map_err(|error| color_eyre::eyre::eyre!("{label} fake replay runtime failed: {error:#}"))
 }
 
 /// In-process gateway with full RPC server (TLS) and a `reqwest`-based client.
