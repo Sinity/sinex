@@ -838,8 +838,8 @@ impl AdminSnapshotRestoreCommand {
             .collect::<Vec<_>>();
         if !unsupported.is_empty() {
             bail!(
-                "restore execution for component(s) {} is not implemented yet; use --dry-run \
-                 for plan validation",
+                "restore drill supports state, cas, nats, and postgres components; archive also \
+                 contains unsupported component(s) {}; use --dry-run for plan validation",
                 unsupported.join(", ")
             );
         }
