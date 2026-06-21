@@ -366,6 +366,27 @@
                 bootstrap_lock_dir="$SINEX_DEV_STATE_DIR/cargo-sqlx-bootstrap.lock"
                 bootstrap_log="$pglog/cargo-sqlx-bootstrap.log"
 
+                _sinex_schema_apply_bootstrap_bin() {
+                  local bootstrap_out
+
+                  if ! command -v nix >/dev/null 2>&1; then
+                    echo "nix is required to build schema-apply-bootstrap lazily" >>"$bootstrap_log"
+                    return 127
+                  fi
+
+                  bootstrap_out="$(
+                    nix --no-warn-dirty \
+                      --extra-experimental-features 'nix-command flakes' \
+                      build \
+                      --no-link \
+                      --print-out-paths \
+                      "$root_dir#schema-apply-bootstrap" \
+                      2>>"$bootstrap_log"
+                  )" || return $?
+
+                  printf '%s/bin/schema-apply-bootstrap\n' "$bootstrap_out"
+                }
+
                 _sinex_cargo_command_name() {
                   while [ "$#" -gt 0 ]; do
                     case "$1" in
@@ -510,8 +531,9 @@ WHERE NOT EXISTS (SELECT FROM pg_database WHERE datname = 'sinex_dev')\gexec
 SQL
 
                   echo "ℹ  Applying checkout-local schema for SQLx validation..." >&2
+                  _sinex_schema_apply_bootstrap_bin="$(_sinex_schema_apply_bootstrap_bin)" || return $?
                   DATABASE_URL="postgresql:///sinex_dev?host=$pgrun&user=postgres" \
-                    ${schemaApplyBootstrap}/bin/schema-apply-bootstrap >>"$bootstrap_log" 2>&1
+                    "$_sinex_schema_apply_bootstrap_bin" >>"$bootstrap_log" 2>&1
                 }
 
                 _sinex_cargo_bootstrap_sqlx_database() {
@@ -1308,8 +1330,28 @@ SQL
                   ${postgresForSqlx}/bin/pg_isready -q -h "$pgrun" -p "$pgport" >/dev/null 2>&1
                 }
 
+                _sinex_xtask_schema_apply_bootstrap_bin() {
+                  local bootstrap_out
+
+                  if ! command -v nix >/dev/null 2>&1; then
+                    echo "nix is required to build schema-apply-bootstrap lazily" >&2
+                    return 127
+                  fi
+
+                  bootstrap_out="$(
+                    nix --no-warn-dirty \
+                      --extra-experimental-features 'nix-command flakes' \
+                      build \
+                      --no-link \
+                      --print-out-paths \
+                      "$root_dir#schema-apply-bootstrap"
+                  )" || return $?
+
+                  printf '%s/bin/schema-apply-bootstrap\n' "$bootstrap_out"
+                }
+
                 _sinex_xtask_ensure_sqlx_database() {
-                  local pgdata pgrun pglog pgport runtime_conf include_line dev_user
+                  local pgdata pgrun pglog pgport runtime_conf include_line dev_user schema_apply_bootstrap_bin
 
                   pgdata="$SINEX_DEV_STATE_DIR/data/postgres"
                   pgrun="$SINEX_DEV_STATE_DIR/run"
@@ -1376,8 +1418,9 @@ WHERE NOT EXISTS (SELECT FROM pg_database WHERE datname = 'sinex_dev')\gexec
 SQL
 
                   echo "ℹ  Applying checkout-local schema for SQLx validation..." >&2
+                  schema_apply_bootstrap_bin="$(_sinex_xtask_schema_apply_bootstrap_bin)" || return $?
                   DATABASE_URL="postgresql:///sinex_dev?host=$pgrun&user=postgres" \
-                    ${schemaApplyBootstrap}/bin/schema-apply-bootstrap
+                    "$schema_apply_bootstrap_bin"
 
                   export PGHOST="$pgrun"
                   export PGPORT="$pgport"
