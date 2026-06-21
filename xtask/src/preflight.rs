@@ -749,6 +749,82 @@ pub fn auto_start_stack(verbose: bool) -> Result<()> {
     }
 }
 
+/// Auto-start only checkout-local Postgres if it is not already running.
+pub fn auto_start_postgres(verbose: bool) -> Result<()> {
+    let status = InfraStatus::capture();
+
+    if status.postgres {
+        return Ok(());
+    }
+
+    eprintln!("⚡ Auto-starting Postgres...");
+
+    let timeout_secs = crate::parse_positive_u64_env_or_default(
+        "SINEX_INFRA_START_TIMEOUT",
+        120,
+        "infra start timeout",
+    );
+
+    let start = std::time::Instant::now();
+    let _watchdog = spawn_watchdog("Starting Postgres", 5);
+
+    let mut command = std::process::Command::new("xtask");
+    command
+        .args(["infra", "start", "postgres"])
+        .stdout(if verbose {
+            std::process::Stdio::inherit()
+        } else {
+            std::process::Stdio::null()
+        })
+        .stderr(std::process::Stdio::inherit());
+
+    let mut child = match spawn_process_group_leader(&mut command) {
+        Ok(c) => c,
+        Err(e) => {
+            eprintln!("✗ Failed to start Postgres: {e}");
+            return Err(eyre!("failed to spawn infra start postgres: {e}"));
+        }
+    };
+
+    let timeout = std::time::Duration::from_secs(timeout_secs);
+    let exit_status = loop {
+        if let Some(status) = child
+            .try_wait()
+            .wrap_err("failed to poll infra start postgres status")?
+        {
+            break Ok(status);
+        }
+
+        if start.elapsed() >= timeout {
+            eprintln!(
+                "✗ Postgres start timed out after {timeout_secs}s — terminating subprocess tree"
+            );
+            terminate_child_process_tree(&mut child)?;
+            break Err(eyre!(
+                "infra start postgres timed out after {timeout_secs}s"
+            ));
+        }
+
+        std::thread::sleep(std::time::Duration::from_millis(100));
+    };
+
+    let elapsed = start.elapsed();
+    match exit_status {
+        Ok(exit) if exit.success() => {
+            eprintln!("✓ Postgres started ({:.1}s)", elapsed.as_secs_f64());
+            Ok(())
+        }
+        Ok(status) => {
+            eprintln!("✗ Failed to start Postgres ({:.1}s)", elapsed.as_secs_f64());
+            Err(eyre!("infra start postgres exited with {status}"))
+        }
+        Err(e) => {
+            eprintln!("✗ Failed to start Postgres: {e}");
+            Err(e).wrap_err("failed to wait for infra start postgres")
+        }
+    }
+}
+
 fn spawn_process_group_leader(
     command: &mut std::process::Command,
 ) -> std::io::Result<std::process::Child> {
@@ -1351,6 +1427,88 @@ pub fn ensure_ready(ctx: &crate::command::CommandContext) -> Result<()> {
     save_preflight_cache_if_converged(&blockers, is_interactive);
 
     Ok(())
+}
+
+/// Prepare only the infrastructure needed for compile-time validation.
+///
+/// Rust compile/check/clippy paths need a live Postgres schema for `sqlx`
+/// macros. They do not need NATS, TLS certificates, or runtime contract
+/// deployment, so using the full runtime preflight here creates hidden dev
+/// processes and RAM cost during ordinary verification.
+pub struct CompileReadyGuard {
+    stop_postgres_on_drop: bool,
+    verbose: bool,
+}
+
+impl CompileReadyGuard {
+    fn noop() -> Self {
+        Self {
+            stop_postgres_on_drop: false,
+            verbose: false,
+        }
+    }
+}
+
+impl Drop for CompileReadyGuard {
+    fn drop(&mut self) {
+        if !self.stop_postgres_on_drop {
+            return;
+        }
+
+        let Ok(config) = crate::infra::stack::StackConfig::for_current_checkout() else {
+            eprintln!(
+                "⚠ failed to resolve checkout-local stack while stopping compile preflight Postgres"
+            );
+            return;
+        };
+
+        if let Err(error) = crate::infra::stack::pg_stop(&config, self.verbose) {
+            eprintln!("⚠ failed to stop compile preflight Postgres: {error}");
+        }
+        if let Ok(checkout_state) = crate::infra::state::CheckoutState::for_current_checkout()
+            && let Err(error) = checkout_state.release_lock()
+        {
+            eprintln!("⚠ failed to release compile preflight infra lock: {error}");
+        }
+    }
+}
+
+pub fn ensure_compile_ready(ctx: &crate::command::CommandContext) -> Result<CompileReadyGuard> {
+    // Keep the same nextest guard as full preflight: nextest owns its test
+    // sandbox and any cargo subprocess would risk target-lock deadlock.
+    if crate::config::is_nextest_run() {
+        return Ok(CompileReadyGuard::noop());
+    }
+
+    check_required_tools()?;
+
+    let is_interactive = ctx.is_human();
+    let mut guard = CompileReadyGuard {
+        stop_postgres_on_drop: std::env::var_os("SINEX_XTASK_BOOTSTRAP_POSTGRES_OWNED").is_some(),
+        verbose: is_interactive,
+    };
+    check_disk_pressure(ctx, is_interactive)?;
+
+    let mut status = InfraStatus::capture();
+    if !status.postgres {
+        guard.stop_postgres_on_drop = true;
+        let stage = ctx.start_stage("postgres-start");
+        let started = auto_start_postgres(is_interactive);
+        ctx.finish_stage(stage, started.is_ok());
+        started.wrap_err(
+            "Failed to auto-start Postgres. Check logs or start manually: xtask infra start postgres",
+        )?;
+        status = InfraStatus::capture();
+    }
+
+    if status.schema_apply_pending {
+        let stage = ctx.start_stage("schema-apply");
+        let result = auto_apply_schema(is_interactive);
+        ctx.finish_stage(stage, result.as_ref().is_ok_and(|&ok| ok));
+        result?;
+    }
+
+    Ok(guard)
 }
 
 /// Returns true if the preflight cache is valid and infra is ready (skip preflight).

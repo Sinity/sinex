@@ -57,7 +57,7 @@ impl ModelEffects {
     #[must_use]
     pub fn create_table_statement() -> TableCreateStatement {
         Table::create()
-            .table(Self::Table)
+            .table(Self::table_iden())
             .if_not_exists()
             .col(ColumnDef::new(Self::Id).uuid().not_null().primary_key())
             .col(ColumnDef::new(Self::Provider).string().not_null())
@@ -90,7 +90,7 @@ impl ModelEffects {
     pub fn composite_key_index() -> IndexCreateStatement {
         Index::create()
             .name("idx_model_effects_composite_key")
-            .table(Self::Table)
+            .table(Self::table_iden())
             .col(Self::CompositeKey)
             .to_owned()
     }
