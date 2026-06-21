@@ -27,6 +27,12 @@ use sqlx::FromRow;
 /// fully captured, providing a stable `id` that sources can immediately use
 /// for event provenance. The record is then updated to a terminal status
 /// (`completed`, `cancelled`, `recovered_partial`, or `failed`) upon finalization.
+///
+/// `material_kind` is the storage/backend kind constrained by this table today
+/// (`annex`, `git`, or `local_cas`). Product-level material classes such as
+/// transcript document, OCR segment, API page, live stream segment, or bundle
+/// manifest belong in package-mode metadata / material contracts, not in this
+/// backend-kind column.
 #[derive(Iden, Copy, Clone)]
 pub enum SourceMaterialRegistry {
     Table,
@@ -53,7 +59,7 @@ pub enum SourceMaterialRegistry {
     ///
     /// [dc]: sinex_primitives::sources::continuity::DeclaredCoverageContract
     CoverageContract,
-    /// Operator-declared privacy classification (#1174).
+    /// Operator-declared privacy posture (#1174).
     ///
     /// `TEXT NOT NULL DEFAULT 'unknown'`. Constrained by a named CHECK to
     /// one of `public`, `personal`, `secret`, `redacted`, `unknown`. Seam
@@ -61,7 +67,11 @@ pub enum SourceMaterialRegistry {
     /// private — never `unknown` — to keep heuristic and declared signals
     /// distinct.
     ///
-    /// Mirrored by [`PrivacyClass`][pc] in primitives.
+    /// Mirrored by [`PrivacyClass`][pc] in primitives. This is gap/posture
+    /// evidence for continuity and operator surfaces; it is not final
+    /// disclosure authority for views, exports, logs, completions, DLQ,
+    /// telemetry, search, or evidence windows. Those decisions belong to the
+    /// field/context/operator disclosure policy layer.
     ///
     /// [pc]: sinex_primitives::sources::continuity::PrivacyClass
     PrivacyClass,
@@ -122,9 +132,10 @@ pub struct SourceMaterialRecord {
     /// can flag "configuration gap" rather than "data gap".
     #[serde(default = "default_unknown_coverage_contract")]
     pub coverage_contract: JsonValue,
-    /// Operator-declared privacy classification (#1174). Defaults to
-    /// `"unknown"` for legacy rows; downstream seam classification only
-    /// treats `"personal"` / `"secret"` / `"redacted"` as private.
+    /// Operator-declared privacy posture (#1174). Defaults to `"unknown"` for
+    /// legacy rows; downstream seam classification only treats `"personal"` /
+    /// `"secret"` / `"redacted"` as private. This field is continuity/posture
+    /// evidence, not final disclosure policy.
     #[serde(default = "default_unknown_privacy_class")]
     pub privacy_class: String,
 }
@@ -225,9 +236,11 @@ impl SourceMaterialRegistry {
                         "'{\"kind\":\"Unknown\",\"declared_at\":null}'::jsonb",
                     )),
             )
-            // Privacy class (#1174): operator-declared classification.
-            // Default `'unknown'` for legacy rows; the convergence registry
-            // carries a named CHECK constraining the value to the canonical set.
+            // Privacy posture (#1174): operator-declared continuity/gap
+            // evidence. Default `'unknown'` for legacy rows; the convergence
+            // registry carries a named CHECK constraining the value to the
+            // canonical set. Disclosure policy remains field/context/operator
+            // controlled and is not decided by this column alone.
             .col(
                 ColumnDef::new(SourceMaterialRegistry::PrivacyClass)
                     .text()
