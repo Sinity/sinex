@@ -521,6 +521,30 @@ fn rust_type_name(value: &str) -> String {
 mod tests {
     use super::*;
 
+    fn remove_authoring_blocker(rendered: &str) -> String {
+        rendered
+            .lines()
+            .filter(|line| !line.trim_start().starts_with("compile_error!("))
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
+
+    #[test]
+    fn skeletons_parse_as_rust_after_authoring_blocker_is_removed() {
+        for (package_id, mode_id) in [
+            ("terminal.atuin-history", "terminal.atuin-history"),
+            ("terminal.kitty-osc-live", "terminal.kitty-osc-live"),
+            ("email.mailbox", "email.mailbox.gmail-api-scheduled-sync"),
+            ("weechat.message", "weechat.message"),
+        ] {
+            let rendered = render_source_skeleton(package_id, mode_id).unwrap();
+            let editable_rust = remove_authoring_blocker(&rendered);
+            syn::parse_file(&editable_rust).unwrap_or_else(|error| {
+                panic!("generated skeleton for {package_id}/{mode_id} must parse as Rust: {error}")
+            });
+        }
+    }
+
     #[test]
     fn skeleton_uses_package_completeness_contract_fields() {
         let rendered =
