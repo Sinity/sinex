@@ -19,6 +19,24 @@
             "xtask test -p xtask"
           ]
         }
+      ],
+      "evidence_manifest": [
+        {
+          "ac_id": "phase-0.verify-plan",
+          "evidence_kind": "harness",
+          "surface": "phase manifest loader",
+          "evidence": "phase command support and issue grouping are validated before phase plans are used as release evidence",
+          "command": "xtask verify plan --check",
+          "status": "required"
+        },
+        {
+          "ac_id": "phase-0.docs",
+          "evidence_kind": "docs",
+          "surface": "verification documentation",
+          "evidence": "documentation drift is checked at the phase boundary",
+          "command": "xtask docs check",
+          "status": "required"
+        }
       ]
     },
     {
@@ -51,6 +69,24 @@
             "xtask test --dry-run --fail-fast -p sinex-e2e-tests"
           ]
         }
+      ],
+      "evidence_manifest": [
+        {
+          "ac_id": "phase-1.contract-crates",
+          "evidence_kind": "contract",
+          "surface": "core contract crates",
+          "evidence": "primitive, daemon, schema, and DB crates typecheck and run their package tests",
+          "command": "xtask check -p sinex-primitives && xtask check -p sinexd && xtask check -p sinex-schema && xtask check -p sinex-db",
+          "status": "required"
+        },
+        {
+          "ac_id": "phase-1.schema",
+          "evidence_kind": "schema",
+          "surface": "schema strict-diff",
+          "evidence": "schema or source-material persistence changes must pass the strict drift boundary",
+          "command": "xtask schema strict-diff",
+          "status": "required"
+        }
       ]
     },
     {
@@ -81,6 +117,24 @@
             "xtask test vm --category smoke"
           ]
         }
+      ],
+      "evidence_manifest": [
+        {
+          "ac_id": "phase-2.source-host",
+          "evidence_kind": "runtime",
+          "surface": "sinexd source host tests",
+          "evidence": "source-host and acquisition runtime paths are exercised by daemon and DB tests",
+          "command": "xtask test -p sinexd && xtask test -p sinex-db",
+          "status": "required"
+        },
+        {
+          "ac_id": "phase-2.vm-smoke",
+          "evidence_kind": "vm",
+          "surface": "VM smoke suite",
+          "evidence": "NixOS module or service topology changes require VM smoke evidence",
+          "command": "xtask test vm --category smoke",
+          "status": "required"
+        }
       ]
     },
     {
@@ -106,6 +160,24 @@
             "xtask test vm --category integration"
           ]
         }
+      ],
+      "evidence_manifest": [
+        {
+          "ac_id": "phase-3.replay",
+          "evidence_kind": "replay",
+          "surface": "replay and operation status tests",
+          "evidence": "parser jobs, replay, and operation status changes are checked through daemon, DB, and CLI package tests",
+          "command": "xtask test -p sinexctl && xtask test -p sinexd && xtask test -p sinex-db",
+          "status": "required"
+        },
+        {
+          "ac_id": "phase-3.vm-integration",
+          "evidence_kind": "vm",
+          "surface": "VM integration suite",
+          "evidence": "replay, cascade, replacement, or restart semantic changes require VM integration evidence",
+          "command": "xtask test vm --category integration",
+          "status": "required"
+        }
       ]
     },
     {
@@ -129,6 +201,24 @@
             "xtask test -p sinexd"
           ]
         }
+      ],
+      "evidence_manifest": [
+        {
+          "ac_id": "phase-4.parser-fixtures",
+          "evidence_kind": "parser",
+          "surface": "daemon parser fixture tests",
+          "evidence": "staged-source parser fixture changes are exercised by daemon tests",
+          "command": "xtask test -p sinexd",
+          "status": "required"
+        },
+        {
+          "ac_id": "phase-4.operator-cli",
+          "evidence_kind": "cli",
+          "surface": "sinexctl staged-source views",
+          "evidence": "operator-facing staged-source behavior is checked through sinexctl tests",
+          "command": "xtask test -p sinexctl",
+          "status": "required"
+        }
       ]
     },
     {
@@ -150,6 +240,24 @@
             "xtask test --dry-run --fail-fast -p sinex-e2e-tests"
           ]
         }
+      ],
+      "evidence_manifest": [
+        {
+          "ac_id": "phase-5.external-producers",
+          "evidence_kind": "runtime",
+          "surface": "external producer daemon tests",
+          "evidence": "external and transitional integration changes are checked by daemon package tests",
+          "command": "xtask test -p sinexd",
+          "status": "required"
+        },
+        {
+          "ac_id": "phase-5.privacy-sensitive-bridges",
+          "evidence_kind": "privacy",
+          "surface": "forbidden-pattern and e2e dry-run gates",
+          "evidence": "privacy-sensitive bridge payload changes require forbidden-pattern checks and e2e impact planning",
+          "command": "xtask check --forbidden",
+          "status": "required"
+        }
       ]
     },
     {
@@ -169,6 +277,24 @@
           "commands": [
             "xtask check --forbidden"
           ]
+        }
+      ],
+      "evidence_manifest": [
+        {
+          "ac_id": "phase-6.source-contracts",
+          "evidence_kind": "contract",
+          "surface": "source contract and daemon tests",
+          "evidence": "real source coverage changes must preserve primitive contracts and daemon behavior",
+          "command": "xtask check -p sinex-primitives && xtask test -p sinexd",
+          "status": "required"
+        },
+        {
+          "ac_id": "phase-6.privacy-sensitive-sources",
+          "evidence_kind": "privacy",
+          "surface": "forbidden-pattern gate",
+          "evidence": "new source payloads touching privacy-sensitive data require forbidden-pattern checks",
+          "command": "xtask check --forbidden",
+          "status": "required"
         }
       ]
     }
