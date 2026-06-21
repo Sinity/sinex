@@ -270,6 +270,19 @@ expression: json
         },
         {
           "global": false,
+          "help": "Internal: child checks invoked by `--changed-strict` inherit the parent compile-ready environment and must not run their own preflight",
+          "long": "skip-preflight",
+          "name": "skip_preflight",
+          "possible_values": [
+            "true",
+            "false"
+          ],
+          "required": false,
+          "short": null,
+          "takes_value": false
+        },
+        {
+          "global": false,
           "help": "API drift guard: check only packages that own Rust files changed between HEAD and the merge-base of the given ref (default `origin/master`). Emits a JSON report of changed files, affected packages, and per-package results. Non-zero exit if any per-package check fails. This flag is opt-in and does not alter the default check behaviour",
           "long": "changed-strict",
           "name": "changed_strict",
@@ -1325,8 +1338,117 @@ expression: json
         },
         {
           "about": "Stop the infrastructure",
-          "args": [],
+          "args": [
+            {
+              "global": false,
+              "help": "Stop/clean every checkout-local dev-state root under /var/cache/sinex/$USER",
+              "long": "all-checkouts",
+              "name": "all_checkouts",
+              "possible_values": [
+                "true",
+                "false"
+              ],
+              "required": false,
+              "short": null,
+              "takes_value": false
+            },
+            {
+              "global": false,
+              "help": "Only remove stale/malformed lock and PID files; do not stop live processes",
+              "long": "stale-only",
+              "name": "stale_only",
+              "possible_values": [
+                "true",
+                "false"
+              ],
+              "required": false,
+              "short": null,
+              "takes_value": false
+            },
+            {
+              "global": false,
+              "help": "Print planned actions without stopping processes or removing files",
+              "long": "dry-run",
+              "name": "dry_run",
+              "possible_values": [
+                "true",
+                "false"
+              ],
+              "required": false,
+              "short": null,
+              "takes_value": false
+            },
+            {
+              "global": false,
+              "help": "Specific processes to stop",
+              "long": null,
+              "name": "processes",
+              "possible_values": [],
+              "required": false,
+              "short": null,
+              "takes_value": true
+            }
+          ],
           "name": "stop",
+          "subcommands": []
+        },
+        {
+          "about": "Run the explicit local devshell/runtime lifecycle smoke",
+          "args": [
+            {
+              "global": false,
+              "help": "Print the smoke plan and current coordinates without starting or stopping services",
+              "long": "dry-run",
+              "name": "dry_run",
+              "possible_values": [
+                "true",
+                "false"
+              ],
+              "required": false,
+              "short": null,
+              "takes_value": false
+            },
+            {
+              "global": false,
+              "help": "Stop current-checkout infra before the smoke if it is already running",
+              "long": "reset-first",
+              "name": "reset_first",
+              "possible_values": [
+                "true",
+                "false"
+              ],
+              "required": false,
+              "short": null,
+              "takes_value": false
+            },
+            {
+              "global": false,
+              "help": "Skip the explicit infra start/stop phase and only verify read-only probes",
+              "long": "skip-start",
+              "name": "skip_start",
+              "possible_values": [
+                "true",
+                "false"
+              ],
+              "required": false,
+              "short": null,
+              "takes_value": false
+            },
+            {
+              "global": false,
+              "help": "Start a managed local sinexd job, observe it in infra status, and cancel it",
+              "long": "run-core",
+              "name": "run_core",
+              "possible_values": [
+                "true",
+                "false"
+              ],
+              "required": false,
+              "short": null,
+              "takes_value": false
+            }
+          ],
+          "name": "smoke",
           "subcommands": []
         },
         {
@@ -1343,6 +1465,19 @@ expression: json
               ],
               "required": false,
               "short": "w",
+              "takes_value": false
+            },
+            {
+              "global": false,
+              "help": "Show every checkout-local dev-state root under /var/cache/sinex/$USER",
+              "long": "all-checkouts",
+              "name": "all_checkouts",
+              "possible_values": [
+                "true",
+                "false"
+              ],
+              "required": false,
+              "short": null,
               "takes_value": false
             }
           ],
@@ -2532,7 +2667,7 @@ expression: json
           "args": [
             {
               "global": false,
-              "help": "Day to inspect, in YYYY-MM-DD. Defaults to today in UTC",
+              "help": "Day to inspect: YYYY-MM-DD, today, or yesterday. Defaults to today in UTC",
               "long": "day",
               "name": "day",
               "possible_values": [],
@@ -2542,7 +2677,7 @@ expression: json
             },
             {
               "global": false,
-              "help": "Baseline day, in YYYY-MM-DD. Defaults to the previous UTC day",
+              "help": "Baseline day: YYYY-MM-DD, today, or yesterday. Defaults to the previous UTC day",
               "long": "against",
               "name": "against",
               "possible_values": [],
@@ -2592,7 +2727,7 @@ expression: json
           "args": [
             {
               "global": false,
-              "help": "Day to inspect, in YYYY-MM-DD. Defaults to today in UTC",
+              "help": "Day to inspect: YYYY-MM-DD, today, or yesterday. Defaults to today in UTC",
               "long": "day",
               "name": "day",
               "possible_values": [],
@@ -2602,7 +2737,7 @@ expression: json
             },
             {
               "global": false,
-              "help": "Baseline day, in YYYY-MM-DD. Defaults to the previous UTC day",
+              "help": "Baseline day: YYYY-MM-DD, today, or yesterday. Defaults to the previous UTC day",
               "long": "against",
               "name": "against",
               "possible_values": [],
@@ -4391,7 +4526,7 @@ expression: json
       ]
     },
     {
-      "about": "Probe developer-environment health and deployment readiness",
+      "about": "Probe developer-environment health (Postgres, NATS, tools, TLS, runtime)",
       "args": [
         {
           "global": false,
@@ -4424,19 +4559,6 @@ expression: json
           "help": "Check runtime health (event_engine heartbeat, consumer lag, batch latency)",
           "long": "runtime",
           "name": "runtime",
-          "possible_values": [
-            "true",
-            "false"
-          ],
-          "required": false,
-          "short": null,
-          "takes_value": false
-        },
-        {
-          "global": false,
-          "help": "Check deployment readiness (schema, services, permissions)",
-          "long": "deployment-readiness",
-          "name": "deployment_readiness",
           "possible_values": [
             "true",
             "false"
@@ -4746,7 +4868,7 @@ expression: json
           "args": [
             {
               "global": false,
-              "help": "Database URL to inspect. Defaults to DATABASE_URL",
+              "help": "Database URL to inspect. Without this, prepares the checkout-local stack first",
               "long": "database-url",
               "name": "database_url",
               "possible_values": [],
@@ -5060,6 +5182,46 @@ expression: json
           "subcommands": []
         }
       ]
+    },
+    {
+      "about": "Emit the release-readiness claim matrix and optionally execute required gates",
+      "args": [
+        {
+          "global": false,
+          "help": "Release target/name to report in the readiness payload",
+          "long": "target",
+          "name": "target",
+          "possible_values": [],
+          "required": false,
+          "short": null,
+          "takes_value": true
+        },
+        {
+          "global": false,
+          "help": "Base ref for changed-surface checks",
+          "long": "base-ref",
+          "name": "base_ref",
+          "possible_values": [],
+          "required": false,
+          "short": null,
+          "takes_value": true
+        },
+        {
+          "global": false,
+          "help": "Execute the required command bundle. Without this flag the command emits the release contract and required commands without running expensive gates",
+          "long": "run-required-checks",
+          "name": "run_required_checks",
+          "possible_values": [
+            "true",
+            "false"
+          ],
+          "required": false,
+          "short": null,
+          "takes_value": false
+        }
+      ],
+      "name": "release-readiness",
+      "subcommands": []
     },
     {
       "about": "Generate and verify repo documentation surfaces",
