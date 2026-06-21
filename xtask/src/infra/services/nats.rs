@@ -262,8 +262,8 @@ host = "127.0.0.1"
 port = {}
 jetstream {{
     store_dir = "{}"
-    max_mem = 256MB
-    max_file = 1GB
+    max_mem = 64MB
+    max_file = 256MB
 }}
 "#,
             self.config.port,

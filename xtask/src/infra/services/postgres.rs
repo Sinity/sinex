@@ -23,8 +23,8 @@ fn pg_literal(value: &str) -> String {
 const MANAGED_CONFIG_BEGIN: &str = "# >>> sinex-dev managed configuration >>>";
 const MANAGED_CONFIG_END: &str = "# <<< sinex-dev managed configuration <<<";
 const LEGACY_CONFIG_MARKER: &str = "# sinex-dev configuration";
-const TIMESCALEDB_MAX_BACKGROUND_WORKERS: u16 = 16;
-const POSTGRES_WORKER_PROCESS_HEADROOM: u16 = 8;
+const TIMESCALEDB_MAX_BACKGROUND_WORKERS: u16 = 4;
+const POSTGRES_WORKER_PROCESS_HEADROOM: u16 = 4;
 const POSTGRES_MAX_WORKER_PROCESSES: u16 =
     TIMESCALEDB_MAX_BACKGROUND_WORKERS + POSTGRES_WORKER_PROCESS_HEADROOM;
 
@@ -617,7 +617,7 @@ jit = off
 autovacuum = off
 checkpoint_timeout = '30min'
 max_wal_size = '2GB'
-shared_buffers = '256MB'
+shared_buffers = '64MB'
 "
             }
         };
@@ -626,8 +626,9 @@ shared_buffers = '256MB'
 unix_socket_directories = '{}'
 listen_addresses = '{}'
 port = {}
-max_connections = 800
+max_connections = 256
 max_worker_processes = {}
+shared_buffers = '64MB'
 shared_preload_libraries = 'timescaledb'
 timescaledb.max_background_workers = {}
 log_destination = 'stderr'
