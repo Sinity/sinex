@@ -22,10 +22,10 @@ pub async fn run(runner: &mut TestRunner, database_url: &str) -> Result<()> {
 
     let pool = PgPool::connect(database_url).await?;
 
-    let baseline = test_baseline_events_captured(runner, &pool).await;
-    test_event_engine_restarts_after_sigkill(runner, &pool).await;
-    test_no_data_loss_after_restart(runner, &pool, baseline.as_ref()).await;
-    test_no_duplicate_events_after_restart(runner, &pool, baseline.as_ref()).await;
+    test_baseline_events_captured(runner, &pool).await;
+    let pre_sigkill_baseline = test_event_engine_restarts_after_sigkill(runner, &pool).await;
+    test_no_data_loss_after_restart(runner, &pool, pre_sigkill_baseline.as_ref()).await;
+    test_no_duplicate_events_after_restart(runner, &pool, pre_sigkill_baseline.as_ref()).await;
     test_pipeline_flows_after_recovery(runner, &pool).await;
 
     Ok(())
@@ -66,13 +66,27 @@ async fn test_baseline_events_captured(
         return None;
     }
 
+    let Some(baseline) = capture_restart_baseline(runner, name, pool, "baseline").await else {
+        return None;
+    };
+
+    runner.pass(name);
+    Some(baseline)
+}
+
+async fn capture_restart_baseline(
+    runner: &mut TestRunner,
+    name: &str,
+    pool: &PgPool,
+    phase: &str,
+) -> Option<RestartBaseline> {
     let event_ids = match event_ids(pool).await {
         Ok(event_ids) if !event_ids.is_empty() => event_ids,
         Ok(_) => {
             runner.record(
                 name,
                 TestOutcome::EvidenceMissing,
-                "baseline event count was positive but no event IDs could be snapshotted",
+                &format!("{phase} event count was positive but no event IDs could be snapshotted"),
             );
             return None;
         }
@@ -80,7 +94,7 @@ async fn test_baseline_events_captured(
             runner.record(
                 name,
                 TestOutcome::EvidenceMissing,
-                &format!("baseline event-id snapshot failed: {error}"),
+                &format!("{phase} event-id snapshot failed: {error}"),
             );
             return None;
         }
@@ -92,7 +106,9 @@ async fn test_baseline_events_captured(
             runner.record(
                 name,
                 TestOutcome::EvidenceMissing,
-                "baseline events had no material occurrence anchors to compare after restart",
+                &format!(
+                    "{phase} events had no material occurrence anchors to compare after restart"
+                ),
             );
             return None;
         }
@@ -100,13 +116,12 @@ async fn test_baseline_events_captured(
             runner.record(
                 name,
                 TestOutcome::EvidenceMissing,
-                &format!("baseline material occurrence snapshot failed: {error}"),
+                &format!("{phase} material occurrence snapshot failed: {error}"),
             );
             return None;
         }
     };
 
-    runner.pass(name);
     Some(RestartBaseline {
         event_ids,
         material_occurrences,
@@ -169,12 +184,18 @@ fn material_occurrence_count_regressions(
         .collect()
 }
 
-async fn test_event_engine_restarts_after_sigkill(runner: &mut TestRunner, _pool: &PgPool) {
+async fn test_event_engine_restarts_after_sigkill(
+    runner: &mut TestRunner,
+    pool: &PgPool,
+) -> Option<RestartBaseline> {
     let name = "chaos-process-restart: event_engine restarts after SIGKILL";
 
     if !report_watched_files_written(runner, name, "restart-during", 30, "during") {
-        return;
+        return None;
     }
+    tokio::time::sleep(Duration::from_secs(5)).await;
+
+    let baseline = capture_restart_baseline(runner, name, pool, "pre-SIGKILL").await;
 
     // Get the PID of sinexd
     let pid_output = Command::new("systemctl")
@@ -193,7 +214,7 @@ async fn test_event_engine_restarts_after_sigkill(runner: &mut TestRunner, _pool
             TestOutcome::EvidenceMissing,
             "systemd did not report a live sinexd MainPID, so SIGKILL restart recovery was not exercised",
         );
-        return;
+        return baseline;
     };
 
     let killed = Command::new("kill")
@@ -206,7 +227,7 @@ async fn test_event_engine_restarts_after_sigkill(runner: &mut TestRunner, _pool
             TestOutcome::EvidenceMissing,
             &format!("failed to SIGKILL sinexd MainPID {pid}; restart recovery was not exercised"),
         );
-        return;
+        return baseline;
     }
 
     if wait_for_service_active(
@@ -219,11 +240,13 @@ async fn test_event_engine_restarts_after_sigkill(runner: &mut TestRunner, _pool
         runner.pass(name);
         // Wait for checkpoint replay.
         tokio::time::sleep(Duration::from_secs(10)).await;
+        baseline
     } else {
         runner.fail(
             name,
             "event_engine did not restart within 30s after SIGKILL",
         );
+        baseline
     }
 }
 
