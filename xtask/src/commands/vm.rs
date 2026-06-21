@@ -113,9 +113,9 @@ pub enum VmSubcommand {
         /// Specific test names to run
         tests: Vec<String>,
     },
-    /// Start an interactive VM
+    /// Report that interactive VM presets are not exported yet
     Start {
-        /// VM preset name. Interactive preset wiring is not implemented yet.
+        /// VM preset name to validate against the reserved preset vocabulary.
         preset: String,
         /// Keep state between runs
         #[arg(long)]
@@ -1411,7 +1411,7 @@ fn discover_vm_test_files(workspace_root: &Path) -> Result<Vec<PathBuf>> {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// VM Lifecycle Commands (unchanged from original)
+// VM Lifecycle Commands
 // ─────────────────────────────────────────────────────────────────────────────
 
 fn execute_start(
@@ -1432,22 +1432,30 @@ fn execute_start(
     }
 
     if ctx.is_human() {
-        println!("Starting VM...");
+        println!("Interactive VM start is not available yet.");
         println!("  Preset: {preset}");
         println!("  Persistent: {persistent}");
         if let Some(snap) = snapshot {
             println!("  Snapshot: {snap}");
         }
+        println!("  Supported VM surface today: xtask test vm");
         println!();
     }
 
     let _ = persistent;
     let _ = snapshot;
 
-    bail!(
-        "Interactive VM presets are not exported from the flake yet. Finish this by wiring runnable `config.system.build.vm` outputs for presets {} and mapping them here; today the public VM surface is still the exported flake-check suite behind `xtask test vm`.",
-        valid_presets.join(", ")
-    )
+    Ok(CommandResult::failure(crate::output::StructuredError {
+        code: "VM_INTERACTIVE_PRESET_UNSUPPORTED".to_string(),
+        message: format!(
+            "interactive VM presets are not exported from the flake yet; validated reserved preset `{preset}` but cannot start it"
+        ),
+        location: Some("xtask infra vm start".to_string()),
+        suggestion: Some(format!(
+            "use `xtask test vm` for the supported VM flake-check suite, or wire runnable config.system.build.vm outputs for presets {} before enabling interactive start",
+            valid_presets.join(", ")
+        )),
+    }))
 }
 
 fn execute_ssh(ctx: &CommandContext) -> Result<CommandResult> {

@@ -431,7 +431,7 @@ Manage VM integration
 | Command | Purpose |
 |---|---|
 | `test` | Run exported NixOS VM flake checks |
-| `start` | Start an interactive VM |
+| `start` | Report that interactive VM presets are not exported yet |
 | `ssh` | SSH into a running VM |
 | `stop` | Stop a running VM |
 | `snapshot` | Manage VM snapshots |
@@ -454,13 +454,13 @@ Run exported NixOS VM flake checks
 
 #### `xtask infra vm start`
 
-Start an interactive VM
+Report that interactive VM presets are not exported yet
 
 **Arguments**
 
 | Flag | Value | Required | Description |
 |---|---|---|---|
-| `preset` | yes | yes | VM preset name. Interactive preset wiring is not implemented yet |
+| `preset` | yes | yes | VM preset name to validate against the reserved preset vocabulary |
 | `--persistent` | no | no | Keep state between runs |
 | `--snapshot` | yes | no | Start from a snapshot |
 
