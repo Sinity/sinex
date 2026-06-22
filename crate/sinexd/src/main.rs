@@ -479,9 +479,10 @@ async fn scan_source(
 mod tests {
     use super::{Cli, Command};
     use clap::Parser;
+    use xtask::sandbox::prelude::sinex_test;
 
-    #[test]
-    fn package_completeness_accepts_authoring_aliases() {
+    #[sinex_test]
+    async fn package_completeness_accepts_authoring_aliases() -> xtask::sandbox::TestResult<()> {
         let cli = Cli::try_parse_from([
             "sinexd",
             "export-package-completeness",
@@ -506,10 +507,11 @@ mod tests {
         assert_eq!(package_id.as_deref(), Some("terminal.atuin-history"));
         assert_eq!(mode_id.as_deref(), Some("terminal.atuin-history"));
         assert!(strict);
+        Ok(())
     }
 
-    #[test]
-    fn source_skeleton_accepts_package_and_mode_aliases() {
+    #[sinex_test]
+    async fn source_skeleton_accepts_package_and_mode_aliases() -> xtask::sandbox::TestResult<()> {
         let cli = Cli::try_parse_from([
             "sinexd",
             "export-source-skeleton",
@@ -531,5 +533,6 @@ mod tests {
 
         assert_eq!(package_id, "terminal.atuin-history");
         assert_eq!(mode_id, "terminal.atuin-history");
+        Ok(())
     }
 }

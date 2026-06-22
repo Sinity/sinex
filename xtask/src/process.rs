@@ -3347,8 +3347,9 @@ mod tests {
         Ok(())
     }
 
-    #[test]
-    fn test_status_indicates_clean_interactive_shutdown_accepts_success_and_interrupts() {
+    #[sinex_test]
+    async fn test_status_indicates_clean_interactive_shutdown_accepts_success_and_interrupts()
+    -> ::xtask::sandbox::TestResult<()> {
         #[cfg(unix)]
         {
             use std::os::unix::process::ExitStatusExt;
@@ -3371,5 +3372,6 @@ mod tests {
         {
             let _ = status_indicates_clean_interactive_shutdown;
         }
+        Ok(())
     }
 }

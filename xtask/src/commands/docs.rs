@@ -1373,8 +1373,9 @@ mod tests {
         Ok(())
     }
 
-    #[test]
-    fn test_render_command_reference_renders_nested_sections() {
+    #[sinex_test]
+    async fn test_render_command_reference_renders_nested_sections()
+    -> ::xtask::sandbox::TestResult<()> {
         let rendered = render_command_reference(&[CommandInfo {
             name: "check".to_string(),
             about: Some("Compile verification".to_string()),
@@ -1402,10 +1403,12 @@ mod tests {
             rendered.contains("| `-p, --package` | yes | no | Check specific package(s) only |")
         );
         assert!(rendered.contains("### `xtask check deep`"));
+        Ok(())
     }
 
-    #[test]
-    fn test_render_command_guide_renders_curated_sections() {
+    #[sinex_test]
+    async fn test_render_command_guide_renders_curated_sections() -> ::xtask::sandbox::TestResult<()>
+    {
         let rendered = render_command_guide(&crate::command_catalog::collect_command_catalog());
 
         assert!(rendered.contains("# xtask Command Guide"));
@@ -1413,10 +1416,11 @@ mod tests {
         assert!(rendered.contains("`xtask check`"));
         assert!(rendered.contains("`xtask fix --smart`"));
         assert!(!rendered.contains("xtask fix --check"));
+        Ok(())
     }
 
-    #[test]
-    fn test_schema_bundle_major_version_parses_semver() {
+    #[sinex_test]
+    async fn test_schema_bundle_major_version_parses_semver() -> ::xtask::sandbox::TestResult<()> {
         assert_eq!(
             sinex_primitives::events::schema_registry::schema_bundle_major_version("1.0.0")
                 .unwrap(),
@@ -1433,10 +1437,12 @@ mod tests {
             sinex_primitives::events::schema_registry::schema_bundle_major_version("x.0.0")
                 .is_err()
         );
+        Ok(())
     }
 
-    #[test]
-    fn test_schema_bundle_content_hash_matches_registry_contract() {
+    #[sinex_test]
+    async fn test_schema_bundle_content_hash_matches_registry_contract()
+    -> ::xtask::sandbox::TestResult<()> {
         let schema = serde_json::json!({
             "$schema": "http://json-schema.org/draft-07/schema#",
             "properties": {
@@ -1472,10 +1478,12 @@ mod tests {
             .unwrap(),
             "dfed8161f597e83e0efaff7ed7efb56ea960fc51c00bb401bc06c154220dcaed"
         );
+        Ok(())
     }
 
-    #[test]
-    fn test_render_ast_grep_catalog_renders_rule_details() {
+    #[sinex_test]
+    async fn test_render_ast_grep_catalog_renders_rule_details() -> ::xtask::sandbox::TestResult<()>
+    {
         let rendered = render_ast_grep_catalog(&[
             AstGrepRuleCatalogEntry {
                 id: "cargo-command-outside-process".to_string(),
@@ -1499,5 +1507,6 @@ mod tests {
         assert!(rendered.contains("`cargo-command-outside-process`"));
         assert!(rendered.contains("Within xtask automation, `error` severity is blocking"));
         assert!(rendered.contains("`xtask/src/process.rs`"));
+        Ok(())
     }
 }

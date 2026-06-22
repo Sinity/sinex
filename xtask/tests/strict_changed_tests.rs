@@ -10,7 +10,7 @@ use std::path::Path;
 
 use tempfile::TempDir;
 use xtask::sandbox::sinex_test;
-use xtask::strict_changed::owning_package;
+use xtask::strict_changed::{changed_rust_files_in_repo, owning_package};
 
 // ============================================================================
 // Scaffold helpers
@@ -52,6 +52,22 @@ fn scaffold_workspace() -> ::xtask::sandbox::TestResult<TempDir> {
     fs::write(beta_src.join("lib.rs"), "// beta\n")?;
 
     Ok(tmp)
+}
+
+fn run_git(repo: &Path, args: &[&str]) -> ::xtask::sandbox::TestResult<()> {
+    let output = std::process::Command::new("git")
+        .args(args)
+        .current_dir(repo)
+        .output()?;
+    if !output.status.success() {
+        color_eyre::eyre::bail!(
+            "git {} failed: {}{}",
+            args.join(" "),
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+    Ok(())
 }
 
 // ============================================================================
@@ -227,6 +243,33 @@ async fn test_changed_strict_deduplicates_packages() -> ::xtask::sandbox::TestRe
         "two alpha files should collapse to one entry"
     );
     assert!(pkgs.contains("alpha"));
+    Ok(())
+}
+
+#[sinex_test]
+async fn test_changed_rust_files_include_dirty_staged_and_untracked_worktree()
+-> ::xtask::sandbox::TestResult<()> {
+    let tmp = scaffold_workspace()?;
+    let root = tmp.path();
+    run_git(root, &["init", "-q"])?;
+    run_git(root, &["config", "user.name", "Sinex Test"])?;
+    run_git(root, &["config", "user.email", "sinex@example.test"])?;
+    run_git(root, &["add", "."])?;
+    run_git(root, &["commit", "-qm", "initial"])?;
+
+    fs::write(root.join("crate/alpha/src/lib.rs"), "// alpha dirty\n")?;
+    fs::write(root.join("crate/beta/src/lib.rs"), "// beta staged\n")?;
+    run_git(root, &["add", "crate/beta/src/lib.rs"])?;
+    fs::write(
+        root.join("crate/alpha/src/untracked.rs"),
+        "// alpha untracked\n",
+    )?;
+
+    let changed = changed_rust_files_in_repo("HEAD", root)?;
+
+    assert!(changed.contains(&Path::new("crate/alpha/src/lib.rs").to_path_buf()));
+    assert!(changed.contains(&Path::new("crate/beta/src/lib.rs").to_path_buf()));
+    assert!(changed.contains(&Path::new("crate/alpha/src/untracked.rs").to_path_buf()));
     Ok(())
 }
 

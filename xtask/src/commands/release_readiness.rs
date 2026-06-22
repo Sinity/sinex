@@ -400,9 +400,11 @@ fn git_revision() -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::sandbox::sinex_test;
 
-    #[test]
-    fn contract_only_report_separates_claims_non_claims_and_checks() {
+    #[sinex_test]
+    async fn contract_only_report_separates_claims_non_claims_and_checks()
+    -> ::xtask::sandbox::TestResult<()> {
         let report = build_release_readiness_report("rc", "origin/master", false, |_| {
             unreachable!("contract-only mode must not run checks")
         });
@@ -430,10 +432,12 @@ mod tests {
             report.required_checks.len()
         );
         assert!(!report.summary.ready_for_release);
+        Ok(())
     }
 
-    #[test]
-    fn generated_source_catalog_artifact_points_at_behavior_owner_test() {
+    #[sinex_test]
+    async fn generated_source_catalog_artifact_points_at_behavior_owner_test()
+    -> ::xtask::sandbox::TestResult<()> {
         let source_catalog = generated_artifacts()
             .into_iter()
             .find(|artifact| artifact.path == "nixos/modules/source-catalog.generated.json")
@@ -443,10 +447,11 @@ mod tests {
             source_catalog.validation_command,
             "xtask test -p sinexd -E 'test(source_catalog_artifact_matches_inventory)' --allow-contended-host"
         );
+        Ok(())
     }
 
-    #[test]
-    fn failing_required_check_blocks_release_readiness() {
+    #[sinex_test]
+    async fn failing_required_check_blocks_release_readiness() -> ::xtask::sandbox::TestResult<()> {
         let report = build_release_readiness_report("rc", "origin/master", true, |check| {
             ReleaseCheckResult {
                 id: check.id,
@@ -466,10 +471,11 @@ mod tests {
         assert!(report.check_results.iter().any(
             |result| result.id == "schema-strict-diff" && result.status == CheckStatus::Failed
         ));
+        Ok(())
     }
 
-    #[test]
-    fn all_required_checks_pass_makes_release_ready() {
+    #[sinex_test]
+    async fn all_required_checks_pass_makes_release_ready() -> ::xtask::sandbox::TestResult<()> {
         let report = build_release_readiness_report("rc", "origin/master", true, |check| {
             ReleaseCheckResult {
                 id: check.id,
@@ -483,5 +489,6 @@ mod tests {
         assert_eq!(report.summary.failed_check_count, 0);
         assert_eq!(report.summary.not_run_check_count, 0);
         assert!(report.summary.ready_for_release);
+        Ok(())
     }
 }

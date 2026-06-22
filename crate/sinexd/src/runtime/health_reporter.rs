@@ -662,6 +662,7 @@ impl HealthReporter {
 mod tests {
     use super::*;
     use std::sync::atomic::AtomicU64;
+    use xtask::sandbox::prelude::sinex_test;
 
     #[derive(Debug)]
     struct ManualHealthClock {
@@ -701,7 +702,7 @@ mod tests {
         )
     }
 
-    #[tokio::test]
+    #[sinex_test]
     async fn first_health_check_emits_initial_status_evidence() -> Result<()> {
         let clock = Arc::new(ManualHealthClock::new(1));
         let reporter = reporter_with_clock(clock);
@@ -714,7 +715,7 @@ mod tests {
         Ok(())
     }
 
-    #[tokio::test]
+    #[sinex_test]
     async fn unchanged_health_refreshes_after_configured_interval() -> Result<()> {
         let clock = Arc::new(ManualHealthClock::new(1));
         let reporter = reporter_with_clock(Arc::clone(&clock));

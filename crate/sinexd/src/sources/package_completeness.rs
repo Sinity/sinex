@@ -1259,9 +1259,10 @@ mod tests {
     use sinex_primitives::source_contracts::{
         CheckpointFamily, ResourceProfile, RuntimeShape, SourceBuildImpact, SubjectRef,
     };
+    use xtask::sandbox::prelude::sinex_test;
 
-    #[test]
-    fn filtered_report_recomputes_package_summary() {
+    #[sinex_test]
+    async fn filtered_report_recomputes_package_summary() -> xtask::sandbox::TestResult<()> {
         let rendered =
             render_filtered_package_completeness_report(Some("terminal.kitty-osc-live"), None)
                 .unwrap();
@@ -1273,10 +1274,11 @@ mod tests {
         let package = packages.get("terminal.kitty-osc-live").unwrap();
         let mode_count = package["modes"].as_object().unwrap().len();
         assert_eq!(report["summary"]["mode_count"], mode_count);
+        Ok(())
     }
 
-    #[test]
-    fn filtered_report_recomputes_package_mode_summary() {
+    #[sinex_test]
+    async fn filtered_report_recomputes_package_mode_summary() -> xtask::sandbox::TestResult<()> {
         let rendered = render_filtered_package_completeness_report(
             Some("terminal.kitty-osc-live"),
             Some("terminal.kitty-osc-live"),
@@ -1290,10 +1292,11 @@ mod tests {
         let modes = package["modes"].as_object().unwrap();
         assert_eq!(modes.len(), 1);
         assert!(modes.contains_key("terminal.kitty-osc-live"));
+        Ok(())
     }
 
-    #[test]
-    fn mode_filter_requires_package_id() {
+    #[sinex_test]
+    async fn mode_filter_requires_package_id() -> xtask::sandbox::TestResult<()> {
         let err =
             render_filtered_package_completeness_report(None, Some("terminal.kitty-osc-live"))
                 .unwrap_err();
@@ -1302,10 +1305,12 @@ mod tests {
             err,
             PackageCompletenessFilterError::ModeRequiresPackage
         ));
+        Ok(())
     }
 
-    #[test]
-    fn capability_report_refs_are_filtered_through_typed_parser() {
+    #[sinex_test]
+    async fn capability_report_refs_are_filtered_through_typed_parser()
+    -> xtask::sandbox::TestResult<()> {
         static CAPABILITIES: &[&str] = &[
             "coverage:source-coverage",
             "debt:unified-debt-view",
@@ -1343,5 +1348,6 @@ mod tests {
             capability_refs(Some(&binding), &[SourceCapabilityKind::Operation]),
             vec!["operation:fixture.source.check".to_string()]
         );
+        Ok(())
     }
 }

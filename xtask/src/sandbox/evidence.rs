@@ -603,15 +603,17 @@ pub fn current_process_tree_json(sample_window: Duration) -> JsonValue {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::sandbox::sinex_test;
     use serde_json::json;
 
-    #[test]
-    fn sanitize_component_removes_path_separators() {
+    #[sinex_test]
+    async fn sanitize_component_removes_path_separators() -> ::xtask::sandbox::TestResult<()> {
         assert_eq!(sanitize_component("a/b::c d"), "a_b__c_d");
+        Ok(())
     }
 
-    #[test]
-    fn evidence_bundle_keeps_diagnostic_timeline_shape() {
+    #[sinex_test]
+    async fn evidence_bundle_keeps_diagnostic_timeline_shape() -> ::xtask::sandbox::TestResult<()> {
         let mut evidence = TestEvidence::default();
         evidence.record_event(12, "fixture", "created stack", json!({"stack": "core"}));
         evidence.register_collector(
@@ -647,10 +649,11 @@ mod tests {
         assert_eq!(rendered["captures"][0]["status"], "captured");
         assert!(rendered.get("proof").is_none());
         assert!(rendered.get("scenario").is_none());
+        Ok(())
     }
 
-    #[test]
-    fn human_summary_mentions_key_artifacts() {
+    #[sinex_test]
+    async fn human_summary_mentions_key_artifacts() -> ::xtask::sandbox::TestResult<()> {
         let mut evidence = TestEvidence::default();
         evidence.record_event(1, "start", "fixture initialized", JsonValue::Null);
         evidence.attach_artifact(EvidenceArtifactRef::new(
@@ -678,5 +681,6 @@ mod tests {
 
         assert!(summary.contains("timeline:"));
         assert!(summary.contains("/tmp/db.json"));
+        Ok(())
     }
 }
