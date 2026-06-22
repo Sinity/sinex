@@ -57,6 +57,8 @@ impl XtaskCommand for LintForbiddenCommand {
         // #[tokio::test] as string literals, or tests that need a specific
         // tokio runtime flavor (#[sinex_test] rejects flavor/worker_threads args).
         let tokio_test_allow = [
+            // Affected-test parser: recognizes raw test attributes in source text.
+            "xtask/src/affected.rs",
             // Proc macro: generates #[tokio::test] in expanded sinex_test output
             "xtask/macros/src/lib.rs",
             // This file: contains pattern strings and doc comments referencing it
@@ -73,6 +75,8 @@ impl XtaskCommand for LintForbiddenCommand {
             // Proc-macro crate: self-tests parser/expansion helpers and cannot
             // depend on xtask's harness without creating a dependency cycle.
             "xtask/macros/src/lib.rs",
+            // This file: owns the forbidden raw-test pattern string.
+            "xtask/src/commands/lint_forbidden.rs",
             // EnvGuard tests mutate process-global env vars under documented
             // SAFETY/threading invariants, paired with the multi_thread race
             // tests above in the same module.

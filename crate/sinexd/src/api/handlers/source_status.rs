@@ -1068,7 +1068,7 @@ mod tests {
                     .map(|method| format!("{} -> {}", action.id, method))
             })
             .collect::<Vec<_>>();
-        color_eyre::eyre::ensure!(
+        assert!(
             missing.is_empty(),
             "source {source_id} actions reference unknown RPC methods: {missing:?}"
         );
@@ -1161,7 +1161,7 @@ mod tests {
         let budget = view
             .resource_budget
             .as_ref()
-            .ok_or_else(|| color_eyre::eyre::eyre!("resource budget expected"))?;
+            .expect("resource budget expected");
         assert_eq!(budget.resource_profile, "bounded_file");
         assert_eq!(budget.work_class, "bulk_import");
         assert!(budget.pressure_actions.contains(&"inspect".to_string()));
@@ -1256,7 +1256,7 @@ mod tests {
             .caveats
             .iter()
             .find(|caveat| caveat.id == "source.runtime_bridge.unobserved")
-            .ok_or_else(|| color_eyre::eyre::eyre!("bridge caveat expected"))?;
+            .expect("bridge caveat expected");
         assert!(
             caveat.message.contains("kitty_osc"),
             "runtime bridge caveat should name the unobserved bridge surface"
@@ -1273,7 +1273,7 @@ mod tests {
             .actions
             .iter()
             .find(|action| action.id == "terminal.activity.check")
-            .ok_or_else(|| color_eyre::eyre::eyre!("check action expected"))?;
+            .expect("check action expected");
         assert_eq!(check.state, ActionAvailabilityState::Enabled);
         assert_eq!(
             check.command_hint.as_deref(),
@@ -1284,7 +1284,7 @@ mod tests {
             .actions
             .iter()
             .find(|action| action.id == "terminal.activity.pause")
-            .ok_or_else(|| color_eyre::eyre::eyre!("pause action expected"))?;
+            .expect("pause action expected");
         assert_eq!(pause.state, ActionAvailabilityState::Enabled);
         assert_eq!(pause.side_effect, ActionSideEffect::Admin);
         assert!(pause.requires_confirmation);
@@ -1298,7 +1298,7 @@ mod tests {
             .actions
             .iter()
             .find(|action| action.id == "terminal.activity.resume")
-            .ok_or_else(|| color_eyre::eyre::eyre!("resume action expected"))?;
+            .expect("resume action expected");
         assert_eq!(resume.state, ActionAvailabilityState::Enabled);
         assert_eq!(resume.side_effect, ActionSideEffect::Admin);
         assert!(resume.requires_confirmation);
@@ -1312,7 +1312,7 @@ mod tests {
             .actions
             .iter()
             .find(|action| action.id == "terminal.activity.drain")
-            .ok_or_else(|| color_eyre::eyre::eyre!("drain action expected"))?;
+            .expect("drain action expected");
         assert_eq!(drain.state, ActionAvailabilityState::Enabled);
         assert_eq!(drain.side_effect, ActionSideEffect::Admin);
         assert!(drain.requires_confirmation);
@@ -1326,7 +1326,7 @@ mod tests {
             .actions
             .iter()
             .find(|action| action.id == "terminal.activity.reconnect")
-            .ok_or_else(|| color_eyre::eyre::eyre!("reconnect action expected"))?;
+            .expect("reconnect action expected");
         assert_eq!(reconnect.state, ActionAvailabilityState::Enabled);
         assert_eq!(reconnect.side_effect, ActionSideEffect::Admin);
         assert!(reconnect.requires_confirmation);
@@ -1343,7 +1343,7 @@ mod tests {
     async fn media_package_operations_surface_operator_actions() -> xtask::TestResult<()> {
         let contract = all_source_contracts()
             .find(|contract| contract.id == "media.audio-transcript")
-            .ok_or_else(|| color_eyre::eyre::eyre!("media audio contract expected"))?;
+            .expect("media audio contract expected");
         let bindings = source_runtime_bindings()
             .filter(|binding| binding.source_id == "media.audio-transcript")
             .collect::<Vec<_>>();
@@ -1362,7 +1362,7 @@ mod tests {
             .actions
             .iter()
             .find(|action| action.id == "media.audio-transcript.import-transcript")
-            .ok_or_else(|| color_eyre::eyre::eyre!("transcript import action expected"))?;
+            .expect("transcript import action expected");
         assert_eq!(
             import_transcript.command_hint.as_deref(),
             Some("sinexctl sources stage <path> --format json")
@@ -1378,7 +1378,7 @@ mod tests {
             .actions
             .iter()
             .find(|action| action.id == "media.audio-transcript.import-bundle")
-            .ok_or_else(|| color_eyre::eyre::eyre!("audio bundle import action expected"))?;
+            .expect("audio bundle import action expected");
         assert_eq!(
             import_bundle.command_hint.as_deref(),
             Some(
@@ -1393,7 +1393,7 @@ mod tests {
             .actions
             .iter()
             .find(|action| action.id == "media.audio-transcript.replay")
-            .ok_or_else(|| color_eyre::eyre::eyre!("replay action expected"))?;
+            .expect("replay action expected");
         assert_eq!(
             replay.command_hint.as_deref(),
             Some("sinexctl ops replay plan --source media.audio-transcript")
@@ -1408,7 +1408,7 @@ mod tests {
             .actions
             .iter()
             .find(|action| action.id == "media.audio-transcript.export")
-            .ok_or_else(|| color_eyre::eyre::eyre!("export action expected"))?;
+            .expect("export action expected");
         assert_eq!(
             export.command_hint.as_deref(),
             Some("sinexctl privacy export --source media.audio-transcript --output <file>")
@@ -1418,7 +1418,7 @@ mod tests {
             .actions
             .iter()
             .find(|action| action.id == "media.audio-transcript.run-model")
-            .ok_or_else(|| color_eyre::eyre::eyre!("model action expected"))?;
+            .expect("model action expected");
         assert_eq!(run_model.state, ActionAvailabilityState::Enabled);
         assert_eq!(run_model.side_effect, ActionSideEffect::Admin);
         assert_eq!(run_model.rpc_method.as_deref(), Some("ops.start"));
@@ -1433,7 +1433,7 @@ mod tests {
             .actions
             .iter()
             .find(|action| action.id == "media.audio-transcript.pause")
-            .ok_or_else(|| color_eyre::eyre::eyre!("media pause action expected"))?;
+            .expect("media pause action expected");
         assert_eq!(pause.state, ActionAvailabilityState::Enabled);
         assert_eq!(pause.side_effect, ActionSideEffect::Admin);
         assert_eq!(pause.rpc_method.as_deref(), Some("ops.start"));
@@ -1448,7 +1448,7 @@ mod tests {
             .actions
             .iter()
             .find(|action| action.id == "media.audio-transcript.delete-material")
-            .ok_or_else(|| color_eyre::eyre::eyre!("delete material action expected"))?;
+            .expect("delete material action expected");
         assert_eq!(delete.state, ActionAvailabilityState::Enabled);
         assert_eq!(delete.side_effect, ActionSideEffect::Destructive);
         assert!(delete.requires_confirmation);
@@ -1462,7 +1462,7 @@ mod tests {
 
         let screen_contract = all_source_contracts()
             .find(|contract| contract.id == "media.screen-ocr")
-            .ok_or_else(|| color_eyre::eyre::eyre!("media screen contract expected"))?;
+            .expect("media screen contract expected");
         let screen_bindings = source_runtime_bindings()
             .filter(|binding| binding.source_id == "media.screen-ocr")
             .collect::<Vec<_>>();
@@ -1480,7 +1480,7 @@ mod tests {
             .actions
             .iter()
             .find(|action| action.id == "media.screen-ocr.import-screenshots")
-            .ok_or_else(|| color_eyre::eyre::eyre!("screenshot import action expected"))?;
+            .expect("screenshot import action expected");
         assert_eq!(
             import_screenshots.command_hint.as_deref(),
             Some(
@@ -1498,7 +1498,7 @@ mod tests {
             .actions
             .iter()
             .find(|action| action.id == "media.screen-ocr.run-ocr")
-            .ok_or_else(|| color_eyre::eyre::eyre!("run OCR action expected"))?;
+            .expect("run OCR action expected");
         assert_eq!(run_ocr.state, ActionAvailabilityState::Enabled);
         assert_eq!(run_ocr.rpc_method.as_deref(), Some("ops.start"));
         assert_eq!(
@@ -1512,7 +1512,7 @@ mod tests {
             .actions
             .iter()
             .find(|action| action.id == "media.screen-ocr.capture-region")
-            .ok_or_else(|| color_eyre::eyre::eyre!("capture-region action expected"))?;
+            .expect("capture-region action expected");
         assert_eq!(capture_region.state, ActionAvailabilityState::Enabled);
         assert_eq!(capture_region.side_effect, ActionSideEffect::Admin);
         assert_eq!(capture_region.rpc_method.as_deref(), Some("ops.start"));
@@ -1532,7 +1532,7 @@ mod tests {
     async fn email_package_operations_surface_operator_actions() -> xtask::TestResult<()> {
         let contract = all_source_contracts()
             .find(|contract| contract.id == "email.mailbox")
-            .ok_or_else(|| color_eyre::eyre::eyre!("email mailbox contract expected"))?;
+            .expect("email mailbox contract expected");
         let bindings = source_runtime_bindings()
             .filter(|binding| binding.source_id == "email.mailbox")
             .collect::<Vec<_>>();
@@ -1556,7 +1556,7 @@ mod tests {
                         "sinexctl ops start email.mailbox.authorize --scope '{\"source_id\":\"email.mailbox\",\"mode_id\":\"source:email.mailbox.gmail-api-scheduled-sync\"}' --format json",
                     )
             })
-            .ok_or_else(|| color_eyre::eyre::eyre!("Gmail authorize action expected"))?;
+            .expect("Gmail authorize action expected");
         assert_eq!(authorize_gmail.state, ActionAvailabilityState::Enabled);
         assert_eq!(authorize_gmail.side_effect, ActionSideEffect::Admin);
         assert_eq!(authorize_gmail.rpc_method.as_deref(), Some("ops.start"));
@@ -1571,7 +1571,7 @@ mod tests {
                         "sinexctl ops start email.mailbox.authorize --scope '{\"source_id\":\"email.mailbox\",\"mode_id\":\"source:email.mailbox.imap-scheduled-sync\"}' --format json",
                     )
             })
-            .ok_or_else(|| color_eyre::eyre::eyre!("IMAP authorize action expected"))?;
+            .expect("IMAP authorize action expected");
         assert_eq!(authorize_imap.label, "Authorize IMAP");
 
         let maildir_sync = view
@@ -1583,7 +1583,7 @@ mod tests {
                         "sinexctl ops start email.mailbox.sync --scope '{\"source_id\":\"email.mailbox\",\"mode_id\":\"source:email.mailbox.maildir-staged\"}' --format json",
                     )
             })
-            .ok_or_else(|| color_eyre::eyre::eyre!("Maildir sync action expected"))?;
+            .expect("Maildir sync action expected");
         assert_eq!(maildir_sync.state, ActionAvailabilityState::Enabled);
         assert_eq!(maildir_sync.side_effect, ActionSideEffect::Write);
         assert_eq!(maildir_sync.rpc_method.as_deref(), Some("ops.start"));
@@ -1598,7 +1598,7 @@ mod tests {
                         "sinexctl ops start email.mailbox.sync --scope '{\"source_id\":\"email.mailbox\",\"mode_id\":\"source:email.mailbox.gmail-api-scheduled-sync\"}' --format json",
                     )
             })
-            .ok_or_else(|| color_eyre::eyre::eyre!("Gmail sync action expected"))?;
+            .expect("Gmail sync action expected");
         assert_eq!(gmail_sync.label, "Sync Gmail");
 
         let imap_sync = view
@@ -1610,7 +1610,7 @@ mod tests {
                         "sinexctl ops start email.mailbox.sync --scope '{\"source_id\":\"email.mailbox\",\"mode_id\":\"source:email.mailbox.imap-scheduled-sync\"}' --format json",
                     )
             })
-            .ok_or_else(|| color_eyre::eyre::eyre!("IMAP sync action expected"))?;
+            .expect("IMAP sync action expected");
         assert_eq!(imap_sync.label, "Sync IMAP");
 
         assert!(
@@ -1630,7 +1630,7 @@ mod tests {
                         "sinexctl ops start email.mailbox.pause --scope '{\"source_id\":\"email.mailbox\",\"mode_id\":\"source:email.mailbox.gmail-api-scheduled-sync\"}' --format json",
                     )
             })
-            .ok_or_else(|| color_eyre::eyre::eyre!("email pause action expected"))?;
+            .expect("email pause action expected");
         assert_eq!(pause.state, ActionAvailabilityState::Enabled);
         assert_eq!(pause.side_effect, ActionSideEffect::Admin);
         assert_eq!(pause.rpc_method.as_deref(), Some("ops.start"));
@@ -1639,7 +1639,7 @@ mod tests {
             .actions
             .iter()
             .find(|action| action.id == "email.mailbox.check")
-            .ok_or_else(|| color_eyre::eyre::eyre!("email check action expected"))?;
+            .expect("email check action expected");
         assert_eq!(check.state, ActionAvailabilityState::Enabled);
         assert_eq!(
             check.command_hint.as_deref(),
@@ -1683,7 +1683,7 @@ mod tests {
             .caveats
             .iter()
             .find(|caveat| caveat.id == "source.runtime_bridge.observed")
-            .ok_or_else(|| color_eyre::eyre::eyre!("observed runtime caveat expected"))?;
+            .expect("observed runtime caveat expected");
         assert!(observed.message.contains("connected"));
         assert!(observed.message.contains("terminal-source"));
         assert!(observed.message.contains("last heartbeat"));
@@ -1729,7 +1729,7 @@ mod tests {
             .caveats
             .iter()
             .find(|caveat| caveat.id == "source.runtime_bridge.disconnected")
-            .ok_or_else(|| color_eyre::eyre::eyre!("disconnected caveat expected"))?;
+            .expect("disconnected caveat expected");
         assert!(caveat.message.contains("disconnected"));
         assert!(caveat.message.contains("last heartbeat"));
         Ok(())
@@ -1760,7 +1760,7 @@ mod tests {
             .caveats
             .iter()
             .find(|caveat| caveat.id == "source.runtime_bridge.health")
-            .ok_or_else(|| color_eyre::eyre::eyre!("runtime health caveat expected"))?;
+            .expect("runtime health caveat expected");
         assert!(caveat.message.contains("degraded"));
         assert!(
             caveat
@@ -1798,7 +1798,7 @@ mod tests {
             .caveats
             .iter()
             .find(|caveat| caveat.id == "source.runtime_bridge.stalled")
-            .ok_or_else(|| color_eyre::eyre::eyre!("stalled caveat expected"))?;
+            .expect("stalled caveat expected");
         assert!(caveat.message.contains("heartbeating"));
         assert!(caveat.message.contains("no recent source output"));
         Ok(())
@@ -1829,7 +1829,7 @@ mod tests {
             .caveats
             .iter()
             .find(|caveat| caveat.id == "source.pressure.confirmation_buffer.retained_payload")
-            .ok_or_else(|| color_eyre::eyre::eyre!("pressure caveat expected"))?;
+            .expect("pressure caveat expected");
         assert!(
             caveat.message.contains("1024 byte(s)"),
             "source-local caveat should report only bytes attributed to the source contract"

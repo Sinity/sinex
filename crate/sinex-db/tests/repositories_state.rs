@@ -7,8 +7,8 @@ use sinex_primitives::rpc::lifecycle::{
 };
 use sinex_primitives::{Id, Timestamp, Uuid};
 use std::time::Duration;
-use xtask::{TestContext, TestResult};
 use xtask::sandbox::sinex_test;
+use xtask::{TestContext, TestResult};
 
 async fn insert_runtime_health_status(
     ctx: &TestContext,
@@ -581,9 +581,7 @@ async fn health_events_attach_live_run_identity(ctx: TestContext) -> TestResult<
 }
 
 #[sinex_test]
-async fn concrete_runs_without_health_are_not_runtime_liveness(
-    ctx: TestContext,
-) -> TestResult<()> {
+async fn concrete_runs_without_health_are_not_runtime_liveness(ctx: TestContext) -> TestResult<()> {
     let repo = ctx.pool.state();
     let module_name = ModuleName::new("run-without-health-evidence");
 
