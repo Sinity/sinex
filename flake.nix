@@ -1076,6 +1076,86 @@ SQL
                   esac
                 }
 
+                _sinex_xtask_is_dependency_bootstrap_subcommand() {
+                  local command_name subcommand seen_command
+
+                  command_name="$(_sinex_xtask_command_name "$@")"
+                  [ "$command_name" = "deps" ] || return 1
+
+                  subcommand=""
+                  seen_command=0
+                  while [ "$#" -gt 0 ]; do
+                    case "$1" in
+                      --json|--list-commands|--bg|--fg|-v|-vv|-vvv)
+                        shift
+                        ;;
+                      --format)
+                        if [ "$#" -ge 2 ]; then
+                          shift 2
+                        else
+                          shift
+                        fi
+                        ;;
+                      --format=*)
+                        shift
+                        ;;
+                      "$command_name")
+                        seen_command=1
+                        shift
+                        ;;
+                      *)
+                        if [ "$seen_command" = 1 ]; then
+                          subcommand="$1"
+                          break
+                        fi
+                        shift
+                        ;;
+                    esac
+                  done
+
+                  [ "$subcommand" = "update" ]
+                }
+
+                _sinex_xtask_is_vm_test_subcommand() {
+                  local command_name subcommand seen_command
+
+                  command_name="$(_sinex_xtask_command_name "$@")"
+                  [ "$command_name" = "test" ] || return 1
+
+                  subcommand=""
+                  seen_command=0
+                  while [ "$#" -gt 0 ]; do
+                    case "$1" in
+                      --json|--list-commands|--bg|--fg|-v|-vv|-vvv)
+                        shift
+                        ;;
+                      --format)
+                        if [ "$#" -ge 2 ]; then
+                          shift 2
+                        else
+                          shift
+                        fi
+                        ;;
+                      --format=*)
+                        shift
+                        ;;
+                      "$command_name")
+                        seen_command=1
+                        shift
+                        ;;
+                      *)
+                        if [ "$seen_command" = 1 ]; then
+                          subcommand="$1"
+                          break
+                        fi
+                        shift
+                        ;;
+                    esac
+                  done
+
+                  [ "$subcommand" = "vm" ]
+                }
+
                 _sinex_xtask_changed_strict_has_no_rust_delta() {
                   local command_name seen_command base_ref next_arg merge_base changed_files
 
@@ -1176,6 +1256,12 @@ SQL
                 _sinex_xtask_requires_sqlx_database() {
                   local command_name
                   if _sinex_xtask_is_help_request "$@"; then
+                    return 1
+                  fi
+                  if _sinex_xtask_is_dependency_bootstrap_subcommand "$@"; then
+                    return 1
+                  fi
+                  if _sinex_xtask_is_vm_test_subcommand "$@"; then
                     return 1
                   fi
                   if _sinex_xtask_is_no_compile_subcommand "$@"; then

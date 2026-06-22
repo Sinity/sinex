@@ -22,7 +22,10 @@ use sinexd::api::rpc_server::RpcAuthContext;
 use sinexd::api::{ReplayScope, ReplayState, ReplayStateMachine};
 use std::collections::HashMap;
 use std::io::Write;
+use std::sync::Arc;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use tokio::sync::Mutex;
+use tokio::time::{Duration, timeout};
 use xtask::sandbox::prelude::*;
 
 fn system_auth() -> RpcAuthContext {
@@ -931,7 +934,7 @@ async fn ops_start_executes_gmail_scheduled_sync_with_token_file(
         "online"
     );
     assert_eq!(
-        scope["provider_cursor"]["gmail_history_id"], "history-1",
+        scope["provider_cursor"]["cursor_observation_contract"]["gmail_history_id"], "history-1",
         "Gmail message detail history id should be admitted as provider cursor"
     );
     assert_eq!(
@@ -955,6 +958,182 @@ async fn ops_start_executes_gmail_scheduled_sync_with_token_file(
     assert_eq!(preview["executor_state"], "gmail_api_sync_admitted");
     assert_eq!(preview["provider_record_count"], 1);
     assert_eq!(preview["admitted_event_count"], 1);
+    Ok(())
+}
+
+#[sinex_test]
+async fn ops_start_executes_imap_scheduled_sync_with_password_file(
+    ctx: TestContext,
+) -> TestResult<()> {
+    let server = ImapFixtureServer::start().await?;
+    let dir = tempfile::tempdir()?;
+    let password_file = dir.path().join("imap-password");
+    tokio::fs::write(&password_file, "fixture-password\n").await?;
+
+    let auth = system_auth();
+    let operation = timeout(
+        Duration::from_secs(10),
+        handle_ops_start(
+            ctx.pool(),
+            json!({
+                "operation_type": "email.mailbox.sync",
+                "scope": {
+                    "source_id": "email.mailbox",
+                    "mode_id": "source:email.mailbox.imap-scheduled-sync",
+                    "account_binding_ref": "operator-mailbox:imap-primary",
+                    "imap_host": "127.0.0.1",
+                    "imap_port": server.addr.port(),
+                    "imap_username": "operator",
+                    "imap_password_file": password_file.to_string_lossy(),
+                    "imap_tls_mode": "none",
+                    "mailbox": "INBOX",
+                    "uidvalidity": "700",
+                    "uid": "40",
+                    "batch_size": 10
+                },
+            }),
+            &auth,
+        ),
+    )
+    .await;
+    let response_value = match operation {
+        Ok(value) => value?,
+        Err(_) => {
+            return Err(color_eyre::eyre::eyre!(
+                "IMAP sync operation timed out; fixture commands: {:?}",
+                server.commands().await
+            ));
+        }
+    };
+    let response: OpsStartResponse = serde_json::from_value(response_value)?;
+
+    assert_eq!(response.operation.operation_type, "email.mailbox.sync");
+    assert_eq!(response.operation.result_status, OperationStatus::Success);
+    assert_eq!(
+        response.operation.result_message.as_deref(),
+        Some("email_capture; IMAP sync admitted")
+    );
+    let scope = response
+        .operation
+        .scope
+        .as_ref()
+        .expect("email provider operation scope should be recorded");
+    assert_eq!(scope["executor_state"], "imap_sync_admitted");
+    assert_eq!(scope["imap_sync_input"]["host"], "127.0.0.1");
+    assert_eq!(scope["imap_sync_input"]["tls_mode"], "none");
+    assert_eq!(
+        scope["imap_sync_input"]["password_file_ref"].as_str(),
+        Some(password_file.to_string_lossy().as_ref())
+    );
+    assert_eq!(scope["provider_record_count"], 1);
+    assert_eq!(
+        scope["provider_runtime"]["runtime_observation_contract"]["auth_state"],
+        "authorized"
+    );
+    assert_eq!(
+        scope["provider_runtime"]["runtime_observation_contract"]["network_state"],
+        "online"
+    );
+    assert_eq!(scope["provider_cursor"]["provider"], "imap");
+    assert_eq!(
+        scope["provider_cursor"]["cursor_observation_contract"]["uidvalidity"],
+        "700"
+    );
+    assert_eq!(
+        scope["provider_cursor"]["cursor_observation_contract"]["uid"], "41",
+        "IMAP cursor should advance past the fetched UID"
+    );
+    assert_eq!(
+        scope["provider_event_ids"]
+            .as_array()
+            .expect("provider event ids should be recorded")
+            .len(),
+        1
+    );
+    let persisted_scope = serde_json::to_string(scope)?;
+    assert!(
+        !persisted_scope.contains("fixture-password"),
+        "IMAP password contents must not be persisted in operation scope"
+    );
+
+    let preview = response
+        .operation
+        .preview_summary
+        .as_ref()
+        .expect("email provider preview should be recorded");
+    assert_eq!(preview["executor_state"], "imap_sync_admitted");
+    assert_eq!(preview["provider_record_count"], 1);
+    assert_eq!(preview["admitted_event_count"], 1);
+    Ok(())
+}
+
+#[sinex_test]
+async fn ops_start_executes_imap_sync_without_persisting_inline_password(
+    ctx: TestContext,
+) -> TestResult<()> {
+    let server = ImapFixtureServer::start().await?;
+
+    let auth = system_auth();
+    let operation = timeout(
+        Duration::from_secs(10),
+        handle_ops_start(
+            ctx.pool(),
+            json!({
+                "operation_type": "email.mailbox.sync",
+                "scope": {
+                    "source_id": "email.mailbox",
+                    "mode_id": "source:email.mailbox.imap-scheduled-sync",
+                    "account_binding_ref": "operator-mailbox:imap-inline",
+                    "imap_host": "127.0.0.1",
+                    "imap_port": server.addr.port(),
+                    "imap_username": "operator",
+                    "imap_password": "inline-fixture-password",
+                    "imap_tls_mode": "none",
+                    "mailbox": "INBOX",
+                    "uidvalidity": "700",
+                    "uid": "40",
+                    "batch_size": 10
+                },
+            }),
+            &auth,
+        ),
+    )
+    .await;
+    let response_value = match operation {
+        Ok(value) => value?,
+        Err(_) => {
+            return Err(color_eyre::eyre::eyre!(
+                "IMAP sync operation timed out; fixture commands: {:?}",
+                server.commands().await
+            ));
+        }
+    };
+    let response: OpsStartResponse = serde_json::from_value(response_value)?;
+
+    assert_eq!(response.operation.result_status, OperationStatus::Success);
+    let scope = response
+        .operation
+        .scope
+        .as_ref()
+        .expect("email provider operation scope should be recorded");
+    assert_eq!(scope["imap_sync_input"]["password"], "<redacted>");
+    assert!(
+        scope.get("imap_password").is_none(),
+        "raw IMAP password key must be removed from persisted operation scope"
+    );
+    assert!(
+        scope.get("password").is_none(),
+        "generic password alias must be removed from persisted operation scope"
+    );
+    let persisted_scope = serde_json::to_string(scope)?;
+    assert!(
+        !persisted_scope.contains("inline-fixture-password"),
+        "inline IMAP password contents must not be persisted in operation scope"
+    );
+    assert_eq!(
+        scope["provider_cursor"]["cursor_observation_contract"]["uid"], "41",
+        "IMAP cursor should advance past the fetched UID"
+    );
     Ok(())
 }
 
@@ -1018,6 +1197,90 @@ async fn ops_start_strips_provider_runtime_for_staged_email_mode(
 
 struct GmailFixtureServer {
     addr: std::net::SocketAddr,
+}
+
+struct ImapFixtureServer {
+    addr: std::net::SocketAddr,
+    commands: Arc<Mutex<Vec<String>>>,
+}
+
+impl ImapFixtureServer {
+    async fn start() -> TestResult<Self> {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await?;
+        let addr = listener.local_addr()?;
+        let commands = Arc::new(Mutex::new(Vec::new()));
+        let fixture_commands = commands.clone();
+        tokio::spawn(async move {
+            while let Ok((mut stream, _)) = listener.accept().await {
+                let commands = fixture_commands.clone();
+                tokio::spawn(async move {
+                    let _ = stream.write_all(b"* OK IMAP fixture ready\r\n").await;
+                    while let Ok(command) = read_imap_command(&mut stream).await {
+                        if command.is_empty() {
+                            return;
+                        }
+                        let mut command_log = commands.lock().await;
+                        if command_log.len() < 16 {
+                            command_log.push(command.trim_end().to_owned());
+                        }
+                        drop(command_log);
+                        let tag = command.split_whitespace().next().unwrap_or("A0001");
+                        let response = if command.contains(" LOGIN ") {
+                            format!("{tag} OK LOGIN completed\r\n")
+                        } else if command.contains(" CAPABILITY") {
+                            format!(
+                                "* CAPABILITY IMAP4rev1 CONDSTORE\r\n{tag} OK CAPABILITY completed\r\n"
+                            )
+                        } else if command.contains(" SELECT ") {
+                            format!(
+                                "* FLAGS (\\Seen)\r\n\
+* 2 EXISTS\r\n\
+* OK [UIDVALIDITY 700] UIDs valid\r\n\
+* OK [UIDNEXT 41] Predicted next UID\r\n\
+* OK [HIGHESTMODSEQ 1200]\r\n\
+{tag} OK [READ-WRITE] SELECT completed\r\n"
+                            )
+                        } else if command.contains(" UID FETCH ") {
+                            let header =
+                                "Message-ID: <imap-40@example.com>\r\nSubject: fixture\r\n\r\n";
+                            format!(
+                                "* 1 FETCH (UID 40 FLAGS (\\Seen) RFC822.SIZE {} BODY[HEADER] {{{}}}\r\n{})\r\n{tag} OK UID FETCH completed\r\n",
+                                header.len(),
+                                header.len(),
+                                header
+                            )
+                        } else if command.contains(" LOGOUT") {
+                            format!("* BYE fixture logout\r\n{tag} OK LOGOUT completed\r\n")
+                        } else {
+                            format!("{tag} BAD unsupported fixture command\r\n")
+                        };
+                        let _ = stream.write_all(response.as_bytes()).await;
+                    }
+                });
+            }
+        });
+        Ok(Self { addr, commands })
+    }
+
+    async fn commands(&self) -> Vec<String> {
+        self.commands.lock().await.clone()
+    }
+}
+
+async fn read_imap_command(stream: &mut tokio::net::TcpStream) -> TestResult<String> {
+    let mut buf = Vec::new();
+    loop {
+        let mut byte = [0_u8; 1];
+        let read = stream.read(&mut byte).await?;
+        if read == 0 {
+            break;
+        }
+        buf.push(byte[0]);
+        if buf.ends_with(b"\r\n") {
+            break;
+        }
+    }
+    Ok(String::from_utf8_lossy(&buf).to_string())
 }
 
 impl GmailFixtureServer {

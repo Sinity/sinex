@@ -228,6 +228,8 @@ petgraph = { workspace = true }
 reqwest = { workspace = true }
 serde_path_to_error = { workspace = true }
 bytes = { workspace = true }
+async-imap = { version = "0.11.2", default-features = false, features = ["runtime-tokio"] }
+async-native-tls = { version = "0.6", default-features = false, features = ["runtime-tokio"] }
 
 
 # Source adapter substrate
