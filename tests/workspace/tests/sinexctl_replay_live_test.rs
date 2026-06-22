@@ -4,118 +4,12 @@
 //! in-process gateway with self-signed TLS, then invokes the sinexctl binary
 //! as a subprocess for each replay command.
 
+mod support;
+
 use sinex_workspace_tests::built_binary;
-use sinexd::api::{ServiceContainer, config::GatewayConfig, rpc_server};
-use std::net::TcpListener;
 use std::path::Path;
-use std::time::Duration;
-use tempfile::NamedTempFile;
-use tokio::sync::watch;
-use xtask::sandbox::{EnvGuard, TestContext, sinex_test, timing::Timeouts};
-
-const TEST_TOKEN: &str = "test-token:admin";
-
-fn reserve_port() -> color_eyre::Result<u16> {
-    let listener = TcpListener::bind("127.0.0.1:0")?;
-    let port = listener.local_addr()?.port();
-    drop(listener);
-    Ok(port)
-}
-
-async fn wait_for_port(port: u16, timeout: Duration) -> color_eyre::Result<()> {
-    let deadline = tokio::time::Instant::now() + timeout;
-    loop {
-        match tokio::net::TcpStream::connect(format!("127.0.0.1:{port}")).await {
-            Ok(_) => return Ok(()),
-            Err(_) if tokio::time::Instant::now() < deadline => {
-                tokio::time::sleep(Duration::from_millis(50)).await;
-            }
-            Err(e) => {
-                return Err(color_eyre::eyre::eyre!(
-                    "Gateway port {port} not ready after {timeout:?}: {e}"
-                ));
-            }
-        }
-    }
-}
-
-struct TestGateway {
-    port: u16,
-    _env: EnvGuard,
-    _shutdown_tx: watch::Sender<bool>,
-    handle: tokio::task::JoinHandle<()>,
-    _cert_file: NamedTempFile,
-    _key_file: NamedTempFile,
-}
-
-const GATEWAY_ENV_KEYS: &[&str] = &[
-    "SINEX_API_TLS_CERT",
-    "SINEX_API_TLS_KEY",
-    "SINEX_API_TLS_CLIENT_CA",
-    "SINEX_API_TOKEN",
-    "SINEX_NATS_URL",
-];
-
-fn configure_test_gateway_env(nats_url: &str, cert_path: &Path, key_path: &Path) -> EnvGuard {
-    let mut env = EnvGuard::with_keys(GATEWAY_ENV_KEYS);
-    env.set("SINEX_API_TLS_CERT", cert_path.as_os_str());
-    env.set("SINEX_API_TLS_KEY", key_path.as_os_str());
-    env.clear("SINEX_API_TLS_CLIENT_CA");
-    env.set("SINEX_API_TOKEN", TEST_TOKEN);
-    env.set("SINEX_NATS_URL", nats_url);
-    env
-}
-
-async fn start_test_gateway(ctx: &TestContext) -> color_eyre::Result<TestGateway> {
-    let nats_url = ctx.nats_handle()?.client_url().to_string();
-
-    let cert = rcgen::generate_simple_self_signed(vec!["localhost".into(), "127.0.0.1".into()])?;
-    let cert_file = NamedTempFile::new()?;
-    let key_file = NamedTempFile::new()?;
-    tokio::fs::write(cert_file.path(), cert.cert.pem()).await?;
-    tokio::fs::write(key_file.path(), cert.key_pair.serialize_pem()).await?;
-    let env = configure_test_gateway_env(&nats_url, cert_file.path(), key_file.path());
-
-    let port = reserve_port()?;
-    let mut config = GatewayConfig::load_with_database_url(ctx.database_url().to_string())?;
-    config.database_url = ctx.database_url().to_string();
-    config.tcp_listen = format!("127.0.0.1:{port}");
-    config.rpc_rate_limit_enabled = false;
-    let services = ServiceContainer::new(&config).await?;
-    let (shutdown_tx, shutdown_rx) = watch::channel(false);
-    let mut server_handle = tokio::spawn({
-        let services = services.clone();
-        async move {
-            if let Err(e) = rpc_server::run(&config, services, shutdown_rx).await {
-                eprintln!("Gateway startup failed: {e:#}");
-            }
-        }
-    });
-
-    let port_timeout = Duration::from_secs(Timeouts::STANDARD);
-    tokio::select! {
-        result = wait_for_port(port, port_timeout) => { result?; }
-        join_result = &mut server_handle => {
-            match join_result {
-                Ok(()) => return Err(color_eyre::eyre::eyre!(
-                    "Gateway exited before binding port {port}"
-                )),
-                Err(e) => return Err(color_eyre::eyre::eyre!(
-                    "Gateway panicked: {e}"
-                )),
-            }
-        }
-    }
-
-    Ok(TestGateway {
-        port,
-        _env: env,
-        _shutdown_tx: shutdown_tx,
-        handle: server_handle,
-        _cert_file: cert_file,
-        _key_file: key_file,
-    })
-}
+use support::{GATEWAY_ENV_KEYS, TEST_TOKEN, configure_test_gateway_env, start_test_gateway};
+use xtask::sandbox::sinex_test;
 
 struct RawEnvRestore {
     original: Vec<(&'static str, Option<String>)>,
@@ -150,7 +44,7 @@ impl Drop for RawEnvRestore {
 
 #[sinex_test]
 async fn replay_gateway_env_guard_restores_existing_values(
-    _ctx: TestContext,
+    _ctx: xtask::sandbox::TestContext,
 ) -> color_eyre::Result<()> {
     let _restore = RawEnvRestore::capture(GATEWAY_ENV_KEYS);
     unsafe {
@@ -276,10 +170,12 @@ fn parse_json_lines_stdout(output: &std::process::Output, label: &str) -> Vec<se
 }
 
 #[sinex_test(timeout = 60)]
-async fn sinexctl_replay_plan_creates_operation(ctx: TestContext) -> color_eyre::Result<()> {
+async fn sinexctl_replay_plan_creates_operation(
+    ctx: xtask::sandbox::TestContext,
+) -> color_eyre::Result<()> {
     let ctx = ctx.with_nats().dedicated().await?;
     let gw = start_test_gateway(&ctx).await?;
-    let url = format!("https://127.0.0.1:{}/rpc", gw.port);
+    let url = gw.rpc_url();
 
     let output = sinexctl_replay(
         &url,
@@ -313,15 +209,16 @@ async fn sinexctl_replay_plan_creates_operation(ctx: TestContext) -> color_eyre:
         "plan output should contain operation_id: {operation}"
     );
 
-    gw.handle.abort();
     Ok(())
 }
 
 #[sinex_test(timeout = 60)]
-async fn sinexctl_replay_preview_after_plan(ctx: TestContext) -> color_eyre::Result<()> {
+async fn sinexctl_replay_preview_after_plan(
+    ctx: xtask::sandbox::TestContext,
+) -> color_eyre::Result<()> {
     let ctx = ctx.with_nats().dedicated().await?;
     let gw = start_test_gateway(&ctx).await?;
-    let url = format!("https://127.0.0.1:{}/rpc", gw.port);
+    let url = gw.rpc_url();
 
     // Plan
     let plan_output = sinexctl_replay(
@@ -359,15 +256,16 @@ async fn sinexctl_replay_preview_after_plan(ctx: TestContext) -> color_eyre::Res
         "preview output should contain numeric total_events: {preview}"
     );
 
-    gw.handle.abort();
     Ok(())
 }
 
 #[sinex_test(timeout = 60)]
-async fn sinexctl_replay_approve_after_preview(ctx: TestContext) -> color_eyre::Result<()> {
+async fn sinexctl_replay_approve_after_preview(
+    ctx: xtask::sandbox::TestContext,
+) -> color_eyre::Result<()> {
     let ctx = ctx.with_nats().dedicated().await?;
     let gw = start_test_gateway(&ctx).await?;
-    let url = format!("https://127.0.0.1:{}/rpc", gw.port);
+    let url = gw.rpc_url();
 
     let plan_output = sinexctl_replay(
         &url,
@@ -397,15 +295,16 @@ async fn sinexctl_replay_approve_after_preview(ctx: TestContext) -> color_eyre::
     assert_eq!(approved["operation_id"].as_str(), Some(op_id.as_str()));
     assert_eq!(approved["state"].as_str(), Some("Approved"));
 
-    gw.handle.abort();
     Ok(())
 }
 
 #[sinex_test(timeout = 60)]
-async fn sinexctl_replay_cancel_with_reason(ctx: TestContext) -> color_eyre::Result<()> {
+async fn sinexctl_replay_cancel_with_reason(
+    ctx: xtask::sandbox::TestContext,
+) -> color_eyre::Result<()> {
     let ctx = ctx.with_nats().dedicated().await?;
     let gw = start_test_gateway(&ctx).await?;
-    let url = format!("https://127.0.0.1:{}/rpc", gw.port);
+    let url = gw.rpc_url();
 
     let plan_output = sinexctl_replay(
         &url,
@@ -448,15 +347,16 @@ async fn sinexctl_replay_cancel_with_reason(ctx: TestContext) -> color_eyre::Res
     assert_eq!(cancelled["state"].as_str(), Some("Cancelled"));
     assert_eq!(cancelled["cancelled"].as_bool(), Some(true));
 
-    gw.handle.abort();
     Ok(())
 }
 
 #[sinex_test(timeout = 60)]
-async fn sinexctl_replay_status_shows_state(ctx: TestContext) -> color_eyre::Result<()> {
+async fn sinexctl_replay_status_shows_state(
+    ctx: xtask::sandbox::TestContext,
+) -> color_eyre::Result<()> {
     let ctx = ctx.with_nats().dedicated().await?;
     let gw = start_test_gateway(&ctx).await?;
-    let url = format!("https://127.0.0.1:{}/rpc", gw.port);
+    let url = gw.rpc_url();
 
     let plan_output = sinexctl_replay(
         &url,
@@ -485,15 +385,16 @@ async fn sinexctl_replay_status_shows_state(ctx: TestContext) -> color_eyre::Res
     assert_eq!(status["operation_id"].as_str(), Some(op_id.as_str()));
     assert_eq!(status["state"].as_str(), Some("Planning"));
 
-    gw.handle.abort();
     Ok(())
 }
 
 #[sinex_test(timeout = 60)]
-async fn sinexctl_replay_list_returns_operations(ctx: TestContext) -> color_eyre::Result<()> {
+async fn sinexctl_replay_list_returns_operations(
+    ctx: xtask::sandbox::TestContext,
+) -> color_eyre::Result<()> {
     let ctx = ctx.with_nats().dedicated().await?;
     let gw = start_test_gateway(&ctx).await?;
-    let url = format!("https://127.0.0.1:{}/rpc", gw.port);
+    let url = gw.rpc_url();
 
     // Create two plans
     let plan1 = sinexctl_replay(
@@ -530,15 +431,16 @@ async fn sinexctl_replay_list_returns_operations(ctx: TestContext) -> color_eyre
         "list should contain both operations, got sources {source_ids:?}"
     );
 
-    gw.handle.abort();
     Ok(())
 }
 
 #[sinex_test(timeout = 60)]
-async fn sinexctl_replay_list_filters_by_state(ctx: TestContext) -> color_eyre::Result<()> {
+async fn sinexctl_replay_list_filters_by_state(
+    ctx: xtask::sandbox::TestContext,
+) -> color_eyre::Result<()> {
     let ctx = ctx.with_nats().dedicated().await?;
     let gw = start_test_gateway(&ctx).await?;
-    let url = format!("https://127.0.0.1:{}/rpc", gw.port);
+    let url = gw.rpc_url();
 
     // Create a plan, preview, then cancel it
     let plan_output = sinexctl_replay(
@@ -621,6 +523,5 @@ async fn sinexctl_replay_list_filters_by_state(ctx: TestContext) -> color_eyre::
         "planning filter should include the planning operation: {planning_sources:?}"
     );
 
-    gw.handle.abort();
     Ok(())
 }
