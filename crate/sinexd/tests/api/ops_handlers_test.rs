@@ -2,6 +2,9 @@ use serde_json::json;
 use sinex_db::DbPoolExt;
 use sinex_primitives::domain::{OperationStatus, ReplayOutcome};
 use sinex_primitives::events::DynamicPayload;
+use sinex_primitives::events::payloads::email::{
+    EmailAuthorizationState, EmailCaptureRuntimeObservedPayload, EmailNetworkState, EmailSyncState,
+};
 use sinex_primitives::rpc::lifecycle::{
     LifecycleArchiveRequest, LifecycleArchiveResponse, TombstoneCreateRequest,
     TombstoneCreateResponse, TombstoneOperationState, TombstoneStatusRequest,
@@ -40,6 +43,14 @@ async fn handle_ops_start(
     let request: OpsStartRequest = serde_json::from_value(params)?;
     Ok(serde_json::to_value(
         handle_ops_start_typed(pool, request, auth).await?,
+    )?)
+}
+
+fn provider_runtime_contract(
+    scope: &serde_json::Value,
+) -> TestResult<EmailCaptureRuntimeObservedPayload> {
+    Ok(serde_json::from_value(
+        scope["provider_runtime"]["runtime_observation_contract"].clone(),
     )?)
 }
 
@@ -963,6 +974,72 @@ async fn ops_start_executes_gmail_scheduled_sync_with_token_file(
 }
 
 #[sinex_test]
+async fn ops_start_records_gmail_provider_failure_for_missing_token_file(
+    ctx: TestContext,
+) -> TestResult<()> {
+    let dir = tempfile::tempdir()?;
+    let missing_token_file = dir.path().join("missing-gmail-token");
+
+    let auth = system_auth();
+    let response: OpsStartResponse = serde_json::from_value(
+        handle_ops_start(
+            ctx.pool(),
+            json!({
+                "operation_type": "email.mailbox.sync",
+                "scope": {
+                    "source_id": "email.mailbox",
+                    "mode_id": "source:email.mailbox.gmail-api-scheduled-sync",
+                    "account_binding_ref": "operator-mailbox:gmail-missing-token",
+                    "gmail_token_file": missing_token_file.to_string_lossy(),
+                    "gmail_history_id": "history-before-failure"
+                },
+            }),
+            &auth,
+        )
+        .await?,
+    )?;
+
+    assert_eq!(response.operation.operation_type, "email.mailbox.sync");
+    assert_eq!(response.operation.result_status, OperationStatus::Failed);
+    let scope = response
+        .operation
+        .scope
+        .as_ref()
+        .expect("failed Gmail provider operation scope should be recorded");
+    assert_eq!(scope["executor_state"], "gmail_api_sync_failed");
+    assert_eq!(
+        scope["gmail_sync_input"]["token_file_ref"].as_str(),
+        Some(missing_token_file.to_string_lossy().as_ref())
+    );
+    let runtime_contract = provider_runtime_contract(scope)?;
+    assert_eq!(
+        runtime_contract.auth_state,
+        EmailAuthorizationState::Missing
+    );
+    assert_eq!(runtime_contract.network_state, EmailNetworkState::Unknown);
+    assert_eq!(runtime_contract.sync_state, EmailSyncState::Failed);
+    assert_eq!(
+        scope["provider_failure"]["debt_ref"],
+        "debt:email.mailbox.gmail.provider_runtime"
+    );
+    assert!(
+        scope["provider_failure"]["reason"]
+            .as_str()
+            .expect("failure reason")
+            .contains("token file is unavailable")
+    );
+
+    let preview = response
+        .operation
+        .preview_summary
+        .as_ref()
+        .expect("failed Gmail provider preview should be recorded");
+    assert_eq!(preview["executor_state"], "gmail_api_sync_failed");
+    assert_eq!(preview["provider_failure"], scope["provider_failure"]);
+    Ok(())
+}
+
+#[sinex_test]
 async fn ops_start_executes_imap_scheduled_sync_with_password_file(
     ctx: TestContext,
 ) -> TestResult<()> {
@@ -1072,6 +1149,82 @@ async fn ops_start_executes_imap_scheduled_sync_with_password_file(
     assert_eq!(preview["executor_state"], "imap_sync_admitted");
     assert_eq!(preview["provider_record_count"], 1);
     assert_eq!(preview["admitted_event_count"], 1);
+    Ok(())
+}
+
+#[sinex_test]
+async fn ops_start_records_imap_provider_network_failure_without_secret(
+    ctx: TestContext,
+) -> TestResult<()> {
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await?;
+    let port = listener.local_addr()?.port();
+    drop(listener);
+
+    let auth = system_auth();
+    let response: OpsStartResponse = serde_json::from_value(
+        handle_ops_start(
+            ctx.pool(),
+            json!({
+                "operation_type": "email.mailbox.sync",
+                "scope": {
+                    "source_id": "email.mailbox",
+                    "mode_id": "source:email.mailbox.imap-scheduled-sync",
+                    "account_binding_ref": "operator-mailbox:imap-network-failure",
+                    "imap_host": "127.0.0.1",
+                    "imap_port": port,
+                    "imap_username": "operator",
+                    "imap_password": "inline-network-failure-password",
+                    "imap_tls_mode": "none",
+                    "mailbox": "INBOX",
+                    "uidvalidity": "700",
+                    "uid": "40",
+                    "batch_size": 10
+                },
+            }),
+            &auth,
+        )
+        .await?,
+    )?;
+
+    assert_eq!(response.operation.operation_type, "email.mailbox.sync");
+    assert_eq!(response.operation.result_status, OperationStatus::Failed);
+    let scope = response
+        .operation
+        .scope
+        .as_ref()
+        .expect("failed IMAP provider operation scope should be recorded");
+    assert_eq!(scope["executor_state"], "imap_sync_failed");
+    assert_eq!(scope["imap_sync_input"]["password"], "<redacted>");
+    assert!(scope.get("imap_password").is_none());
+    assert!(
+        !serde_json::to_string(scope)?.contains("inline-network-failure-password"),
+        "failed IMAP operation must not persist inline password contents"
+    );
+    let runtime_contract = provider_runtime_contract(scope)?;
+    assert_eq!(
+        runtime_contract.auth_state,
+        EmailAuthorizationState::Authorized
+    );
+    assert_eq!(runtime_contract.network_state, EmailNetworkState::Error);
+    assert_eq!(runtime_contract.sync_state, EmailSyncState::Failed);
+    assert_eq!(
+        scope["provider_failure"]["debt_ref"],
+        "debt:email.mailbox.imap.provider_runtime"
+    );
+    assert!(
+        scope["provider_failure"]["reason"]
+            .as_str()
+            .expect("failure reason")
+            .contains("IMAP adapter failed")
+    );
+
+    let preview = response
+        .operation
+        .preview_summary
+        .as_ref()
+        .expect("failed IMAP provider preview should be recorded");
+    assert_eq!(preview["executor_state"], "imap_sync_failed");
+    assert_eq!(preview["provider_failure"], scope["provider_failure"]);
     Ok(())
 }
 

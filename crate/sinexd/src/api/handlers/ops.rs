@@ -13,8 +13,8 @@ use sinex_primitives::domain::{
 use sinex_primitives::events::DynamicPayload;
 use sinex_primitives::events::payloads::email::{
     EmailAuthorizationState, EmailCaptureRuntimeObservedPayload, EmailContinuityState,
-    EmailNetworkState, EmailProviderKind, EmailProviderRuntime, EmailSyncCursorKind,
-    EmailSyncCursorObservedPayload, EmailSyncState,
+    EmailNetworkState, EmailProviderKind, EmailProviderRuntime, EmailRateLimitState,
+    EmailSyncCursorKind, EmailSyncCursorObservedPayload, EmailSyncState,
 };
 use sinex_primitives::events::{Event, SourceMaterial};
 use sinex_primitives::parser::{
@@ -130,6 +130,8 @@ const EMAIL_IMAP_IDLE_LIVE_MODE_ID: &str = "source:email.mailbox.imap-idle-live"
 const EMAIL_STAGED_SYNC_EXECUTOR_STATE: &str = "staged_email_sync_admitted";
 const EMAIL_GMAIL_SYNC_EXECUTOR_STATE: &str = "gmail_api_sync_admitted";
 const EMAIL_IMAP_SYNC_EXECUTOR_STATE: &str = "imap_sync_admitted";
+const EMAIL_GMAIL_SYNC_FAILED_EXECUTOR_STATE: &str = "gmail_api_sync_failed";
+const EMAIL_IMAP_SYNC_FAILED_EXECUTOR_STATE: &str = "imap_sync_failed";
 const EMAIL_STAGED_SYNC_DEFAULT_MAX_MESSAGE_BYTES: u64 = 64 * 1024 * 1024;
 const EMAIL_GMAIL_SYNC_DEFAULT_PAGE_SIZE: u32 = 100;
 const EMAIL_IMAP_SYNC_DEFAULT_BATCH_SIZE: u32 = 100;
@@ -1326,26 +1328,44 @@ async fn execute_gmail_provider_sync(
         EmailProviderRuntimeMode::GmailScheduledSync,
         scope,
     )?;
-    let started = Instant::now();
-    let token = tokio::fs::read_to_string(&request.token_file)
-        .await
-        .map_err(|error| {
-            SinexError::io("Failed to read Gmail API token file")
-                .with_context("token_file", request.token_file.to_string())
-                .with_std_error(&error)
-                .with_operation("ops.start")
-        })?;
-    let token = token.trim().to_string();
-    if token.is_empty() {
-        return Err(SinexError::validation("Gmail API token file is empty")
-            .with_context("token_file", request.token_file.to_string())
-            .with_operation("ops.start"));
-    }
-
     scope.insert(
         "gmail_sync_input".to_string(),
         request.sanitized_scope_value(),
     );
+    let started = Instant::now();
+    let token = match tokio::fs::read_to_string(&request.token_file).await {
+        Ok(token) => token,
+        Err(error) => {
+            return Ok(Some(email_provider_failed_execution(
+                scope,
+                preview_summary,
+                EmailProviderRuntimeMode::GmailScheduledSync,
+                &provider_scope,
+                EMAIL_GMAIL_SYNC_FAILED_EXECUTOR_STATE,
+                format!("Gmail API token file is unavailable: {error}"),
+                EmailAuthorizationState::Missing,
+                EmailNetworkState::Unknown,
+                None,
+                started,
+            )));
+        }
+    };
+    let token = token.trim().to_string();
+    if token.is_empty() {
+        return Ok(Some(email_provider_failed_execution(
+            scope,
+            preview_summary,
+            EmailProviderRuntimeMode::GmailScheduledSync,
+            &provider_scope,
+            EMAIL_GMAIL_SYNC_FAILED_EXECUTOR_STATE,
+            "Gmail API token file is empty".to_string(),
+            EmailAuthorizationState::Missing,
+            EmailNetworkState::Unknown,
+            None,
+            started,
+        )));
+    }
+
     let material_record = register_email_provider_material(
         pool,
         spec,
@@ -1374,7 +1394,26 @@ async fn execute_gmail_provider_sync(
         label_ids: request.label_ids,
         include_spam_trash: request.include_spam_trash,
     };
-    let summary = admit_gmail_adapter_records(pool, &material_record, client, config).await?;
+    let summary = match admit_gmail_adapter_records(pool, &material_record, client, config).await {
+        Ok(summary) => summary,
+        Err(error) => {
+            let reason = error.to_string();
+            let (auth_state, network_state, rate_limit_state) =
+                classify_gmail_provider_failure(&reason);
+            return Ok(Some(email_provider_failed_execution(
+                scope,
+                preview_summary,
+                EmailProviderRuntimeMode::GmailScheduledSync,
+                &provider_scope,
+                EMAIL_GMAIL_SYNC_FAILED_EXECUTOR_STATE,
+                reason,
+                auth_state,
+                network_state,
+                rate_limit_state,
+                started,
+            )));
+        }
+    };
     let provider_cursor = summary.provider_cursor.clone().map(|cursor| {
         email_provider_cursor_payload_metadata_value(
             EmailProviderRuntimeMode::GmailScheduledSync,
@@ -1454,14 +1493,30 @@ async fn execute_imap_provider_sync(
             .with_operation("ops.start")
     })?;
     let provider_scope = EmailProviderOperationScope::from_scope(spec.operation_type, mode, scope)?;
-    let started = Instant::now();
-    let password = request.read_password().await?;
-
     scope.insert(
         "imap_sync_input".to_string(),
         request.sanitized_scope_value(),
     );
     remove_imap_secret_scope_keys(scope);
+    let started = Instant::now();
+    let password = match request.read_password().await {
+        Ok(password) => password,
+        Err(error) => {
+            return Ok(Some(email_provider_failed_execution(
+                scope,
+                preview_summary,
+                mode,
+                &provider_scope,
+                EMAIL_IMAP_SYNC_FAILED_EXECUTOR_STATE,
+                format!("IMAP credential read failed: {error}"),
+                EmailAuthorizationState::Missing,
+                EmailNetworkState::Unknown,
+                None,
+                started,
+            )));
+        }
+    };
+
     let material_record =
         register_email_provider_material(pool, spec, mode_id, mode.provider(), &provider_scope)
             .await?;
@@ -1523,7 +1578,25 @@ async fn execute_imap_provider_sync(
         body_material_policy_ref: request.body_material_policy_ref.clone(),
         attachment_material_policy_ref: request.attachment_material_policy_ref.clone(),
     };
-    let summary = admit_imap_adapter_records(pool, &material_record, client, config).await?;
+    let summary = match admit_imap_adapter_records(pool, &material_record, client, config).await {
+        Ok(summary) => summary,
+        Err(error) => {
+            let reason = error.to_string();
+            let (auth_state, network_state) = classify_imap_provider_failure(&reason);
+            return Ok(Some(email_provider_failed_execution(
+                scope,
+                preview_summary,
+                mode,
+                &provider_scope,
+                EMAIL_IMAP_SYNC_FAILED_EXECUTOR_STATE,
+                reason,
+                auth_state,
+                network_state,
+                None,
+                started,
+            )));
+        }
+    };
     let provider_cursor = summary
         .provider_cursor
         .clone()
@@ -1898,10 +1971,13 @@ async fn register_email_provider_material(
     provider: EmailProviderKind,
     provider_scope: &EmailProviderOperationScope,
 ) -> Result<sinex_db::SourceMaterialRecord> {
+    let sync_run_id = uuid::Uuid::now_v7().to_string();
     let source_identifier = format!(
-        "provider://{}/{}",
+        "provider://{}/{}/{}?sync_run={}",
         provider.as_str(),
-        provider_scope.account_binding_ref
+        provider_scope.account_binding_ref,
+        mode_id.trim_start_matches("source:"),
+        sync_run_id
     );
     let mut contract = SourceMaterialMetadataContract::new(
         SourceMaterialFormat::Json,
@@ -1923,6 +1999,7 @@ async fn register_email_provider_material(
                 "provider": provider.as_str(),
                 "account_binding_ref": provider_scope.account_binding_ref.clone(),
                 "mailbox_scope": provider_scope.mailbox_scope.clone(),
+                "sync_run_id": sync_run_id,
             }
         }));
     pool.source_materials().register_material(material).await
@@ -2843,6 +2920,144 @@ fn email_provider_executed_runtime_caveats(
             "IMAP IDLE observation is bounded by idle_timeout_ms in ops.start; daemon reconnect/backoff remains runtime-owned",
             "cursor is admitted as an event after provider records are consumed",
         ],
+    }
+}
+
+fn email_provider_failed_execution(
+    scope: &mut serde_json::Map<String, serde_json::Value>,
+    preview_summary: &mut serde_json::Value,
+    mode: EmailProviderRuntimeMode,
+    provider_scope: &EmailProviderOperationScope,
+    executor_state: &'static str,
+    reason: String,
+    auth_state: EmailAuthorizationState,
+    network_state: EmailNetworkState,
+    rate_limit_state: Option<EmailRateLimitState>,
+    started: Instant,
+) -> EmailSyncExecutionResult {
+    let runtime = email_provider_failed_runtime_value(
+        mode,
+        provider_scope,
+        &reason,
+        auth_state,
+        network_state,
+        rate_limit_state,
+    );
+    scope.insert(
+        "executor_state".to_string(),
+        serde_json::json!(executor_state),
+    );
+    scope.insert("provider_runtime".to_string(), runtime.clone());
+    scope.insert(
+        "provider_failure".to_string(),
+        serde_json::json!({
+            "reason": reason,
+            "coverage_ref": mode.coverage_ref(),
+            "debt_ref": mode.debt_ref(),
+            "actions": email_provider_runtime_actions(mode),
+        }),
+    );
+
+    let preview = preview_summary
+        .as_object_mut()
+        .expect("package operation preview is an object");
+    preview.insert(
+        "executor_state".to_string(),
+        serde_json::json!(executor_state),
+    );
+    preview.insert("provider_runtime".to_string(), runtime);
+    preview.insert(
+        "provider_failure".to_string(),
+        scope["provider_failure"].clone(),
+    );
+
+    EmailSyncExecutionResult {
+        status: OperationStatus::Failed,
+        message: format!("email_capture; provider sync failed: {reason}"),
+        duration_ms: Some(elapsed_millis(started)),
+    }
+}
+
+fn email_provider_failed_runtime_value(
+    mode: EmailProviderRuntimeMode,
+    provider_scope: &EmailProviderOperationScope,
+    reason: &str,
+    auth_state: EmailAuthorizationState,
+    network_state: EmailNetworkState,
+    rate_limit_state: Option<EmailRateLimitState>,
+) -> serde_json::Value {
+    let provider = mode.provider();
+    let cursor_kind = email_provider_sync_cursor_kind(provider);
+    let runtime_payload = EmailCaptureRuntimeObservedPayload {
+        provider,
+        account_binding_ref: provider_scope.account_binding_ref.clone(),
+        mode_id: mode.mode_id().to_string(),
+        observed_at: Timestamp::now(),
+        provider_runtime: mode.runtime(),
+        auth_state,
+        network_state,
+        rate_limit_state,
+        sync_state: EmailSyncState::Failed,
+        pending_messages: None,
+        pending_material_bytes: None,
+        caveats: vec![reason.to_string()],
+        actions: email_provider_runtime_actions(mode)
+            .iter()
+            .map(|action| (*action).to_string())
+            .collect(),
+    };
+    serde_json::json!({
+        "provider": provider.as_str(),
+        "provider_runtime": mode.runtime().as_str(),
+        "account_binding_ref": provider_scope.account_binding_ref,
+        "mailbox_scope": provider_scope.mailbox_scope,
+        "authorization_state_ref": email_provider_authorization_state_ref(provider),
+        "sync_cursor_ref": format!("email.sync_cursor.observed:{}", cursor_kind.as_str()),
+        "sync_cursor_kind": cursor_kind.as_str(),
+        "runtime_state_ref": mode.runtime_state_ref(),
+        "coverage_ref": mode.coverage_ref(),
+        "debt_ref": mode.debt_ref(),
+        "caveats": [reason],
+        "runtime_observation_contract": runtime_payload,
+    })
+}
+
+fn classify_gmail_provider_failure(
+    reason: &str,
+) -> (
+    EmailAuthorizationState,
+    EmailNetworkState,
+    Option<EmailRateLimitState>,
+) {
+    if reason.contains("HTTP 401") || reason.contains("HTTP 403") {
+        (
+            EmailAuthorizationState::Rejected,
+            EmailNetworkState::Online,
+            Some(EmailRateLimitState::Clear),
+        )
+    } else if reason.contains("HTTP 429") {
+        (
+            EmailAuthorizationState::Authorized,
+            EmailNetworkState::RateLimited,
+            Some(EmailRateLimitState::Backoff),
+        )
+    } else {
+        (
+            EmailAuthorizationState::Authorized,
+            EmailNetworkState::Error,
+            None,
+        )
+    }
+}
+
+fn classify_imap_provider_failure(reason: &str) -> (EmailAuthorizationState, EmailNetworkState) {
+    if reason.contains("AUTHENTICATIONFAILED") || reason.contains("authentication") {
+        (EmailAuthorizationState::Rejected, EmailNetworkState::Online)
+    } else {
+        (
+            EmailAuthorizationState::Authorized,
+            EmailNetworkState::Error,
+        )
     }
 }
 
