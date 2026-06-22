@@ -105,6 +105,10 @@ pub enum DepsCommand {
         #[arg(short = 'p', long = "package")]
         packages: Vec<String>,
 
+        /// Resolve current manifests into Cargo.lock without upgrading existing locked packages
+        #[arg(long)]
+        resolve: bool,
+
         /// Update dependencies recursively for the selected packages
         #[arg(long)]
         recursive: bool,
@@ -449,10 +453,11 @@ impl DepsCommand {
 
             Self::Update {
                 packages,
+                resolve,
                 recursive,
                 dry_run,
                 all,
-            } => run_update(packages, *recursive, *dry_run, *all, ctx),
+            } => run_update(packages, *resolve, *recursive, *dry_run, *all, ctx),
 
             Self::Graph {
                 render_format,
@@ -508,10 +513,23 @@ impl DepsCommand {
 
 fn cargo_update_args(
     packages: &[String],
+    resolve: bool,
     recursive: bool,
     dry_run: bool,
     all: bool,
 ) -> Result<Vec<String>> {
+    if resolve {
+        if !packages.is_empty() || recursive || dry_run || all {
+            bail!(
+                "deps update --resolve cannot be combined with --package, --recursive, --dry-run, or --all"
+            );
+        }
+        return Ok(vec![
+            "metadata".to_string(),
+            "--format-version=1".to_string(),
+        ]);
+    }
+
     if packages.is_empty() && !all {
         bail!("deps update requires at least one --package or explicit --all");
     }
@@ -532,21 +550,35 @@ fn cargo_update_args(
 
 fn run_update(
     packages: &[String],
+    resolve: bool,
     recursive: bool,
     dry_run: bool,
     all: bool,
     ctx: &crate::command::CommandContext,
 ) -> Result<crate::command::CommandResult> {
-    let args = cargo_update_args(packages, recursive, dry_run, all)?;
+    let args = cargo_update_args(packages, resolve, recursive, dry_run, all)?;
     let output = crate::process::ProcessBuilder::cargo()
         .args(args.iter().map(String::as_str))
-        .with_description("cargo update")
+        .with_description(if resolve {
+            "cargo metadata"
+        } else {
+            "cargo update"
+        })
         .with_timeout(Duration::from_mins(15))
         .run_capture()
-        .context("failed to run cargo update")?;
+        .context(if resolve {
+            "failed to run cargo metadata"
+        } else {
+            "failed to run cargo update"
+        })?;
     if output.exit_code != 0 {
         bail!(
-            "cargo update failed with exit code {}\nstdout:\n{}\nstderr:\n{}",
+            "{} failed with exit code {}\nstdout:\n{}\nstderr:\n{}",
+            if resolve {
+                "cargo metadata"
+            } else {
+                "cargo update"
+            },
             output.exit_code,
             output.stdout.trim(),
             output.stderr.trim()
@@ -556,8 +588,15 @@ fn run_update(
     let command = std::iter::once("cargo".to_string())
         .chain(args.iter().cloned())
         .collect::<Vec<_>>();
+    let stdout_for_result = if resolve {
+        serde_json::Value::Null
+    } else {
+        serde_json::Value::String(output.stdout.clone())
+    };
     let mut result = crate::command::CommandResult::success()
-        .with_message(if dry_run {
+        .with_message(if resolve {
+            "dependency resolution completed"
+        } else if dry_run {
             "dependency update dry-run completed"
         } else {
             "dependency update completed"
@@ -565,16 +604,17 @@ fn run_update(
         .with_data(serde_json::json!({
             "command": command,
             "packages": packages,
+            "resolve": resolve,
             "recursive": recursive,
             "dry_run": dry_run,
             "all": all,
             "exit_code": output.exit_code,
-            "stdout": output.stdout,
+            "stdout": stdout_for_result,
             "stderr": output.stderr,
         }))
         .with_duration(ctx.elapsed());
 
-    if !ctx.is_json() && !output.stdout.trim().is_empty() {
+    if !resolve && !ctx.is_json() && !output.stdout.trim().is_empty() {
         result = result.with_detail(output.stdout.trim().to_string());
     }
     if !ctx.is_json() && !output.stderr.trim().is_empty() {
@@ -590,7 +630,7 @@ mod tests {
 
     #[sinex_test]
     async fn deps_update_requires_package_or_all() -> crate::TestResult<()> {
-        let error = cargo_update_args(&[], false, false, false)
+        let error = cargo_update_args(&[], false, false, false, false)
             .expect_err("empty targeted update should be rejected");
         assert!(error.to_string().contains("--package"));
         Ok(())
@@ -598,7 +638,7 @@ mod tests {
 
     #[sinex_test]
     async fn deps_update_builds_targeted_recursive_dry_run_args() -> crate::TestResult<()> {
-        let args = cargo_update_args(&["reqwest".to_string()], true, true, false)?;
+        let args = cargo_update_args(&["reqwest".to_string()], false, true, true, false)?;
         assert_eq!(
             args,
             ["update", "-p", "reqwest", "--recursive", "--dry-run"]
@@ -608,8 +648,23 @@ mod tests {
 
     #[sinex_test]
     async fn deps_update_builds_all_lockfile_args() -> crate::TestResult<()> {
-        let args = cargo_update_args(&[], false, true, true)?;
+        let args = cargo_update_args(&[], false, false, true, true)?;
         assert_eq!(args, ["update", "--dry-run"]);
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn deps_update_builds_manifest_resolution_args() -> crate::TestResult<()> {
+        let args = cargo_update_args(&[], true, false, false, false)?;
+        assert_eq!(args, ["metadata", "--format-version=1"]);
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn deps_update_rejects_mixed_resolution_modes() -> crate::TestResult<()> {
+        let error = cargo_update_args(&["reqwest".to_string()], true, false, false, false)
+            .expect_err("resolve mode should not accept package update selectors");
+        assert!(error.to_string().contains("--resolve"));
         Ok(())
     }
 }

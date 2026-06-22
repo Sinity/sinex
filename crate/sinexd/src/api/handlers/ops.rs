@@ -31,7 +31,8 @@ use tokio::process::Command;
 
 use crate::runtime::parser::{
     EmailMboxFileAdapter, EmailMboxFileConfig, GmailApiCursorAdapter, GmailApiCursorConfig,
-    GmailHttpClient,
+    GmailHttpClient, ImapSyncAdapter, ImapSyncConfig, ImapSyncMode, NativeImapSyncClient,
+    NativeImapSyncClientConfig, NativeImapTlsMode,
 };
 use crate::sources::source_contracts::email::EmailMailboxParser;
 
@@ -128,8 +129,11 @@ const EMAIL_IMAP_SCHEDULED_SYNC_MODE_ID: &str = "source:email.mailbox.imap-sched
 const EMAIL_IMAP_IDLE_LIVE_MODE_ID: &str = "source:email.mailbox.imap-idle-live";
 const EMAIL_STAGED_SYNC_EXECUTOR_STATE: &str = "staged_email_sync_admitted";
 const EMAIL_GMAIL_SYNC_EXECUTOR_STATE: &str = "gmail_api_sync_admitted";
+const EMAIL_IMAP_SYNC_EXECUTOR_STATE: &str = "imap_sync_admitted";
 const EMAIL_STAGED_SYNC_DEFAULT_MAX_MESSAGE_BYTES: u64 = 64 * 1024 * 1024;
 const EMAIL_GMAIL_SYNC_DEFAULT_PAGE_SIZE: u32 = 100;
+const EMAIL_IMAP_SYNC_DEFAULT_BATCH_SIZE: u32 = 100;
+const EMAIL_IMAP_SYNC_DEFAULT_IDLE_TIMEOUT_MS: u64 = 30_000;
 const EMAIL_STAGED_MODE_IDS: &[&str] = &[EMAIL_MAILDIR_STAGED_MODE_ID, EMAIL_MBOX_STAGED_MODE_ID];
 const EMAIL_PROVIDER_MODE_IDS: &[&str] = &[
     EMAIL_GMAIL_SCHEDULED_SYNC_MODE_ID,
@@ -863,6 +867,28 @@ async fn start_package_operation(
 
     if spec.surface == "email_capture"
         && spec.operation_type == "email.mailbox.sync"
+        && (mode_id == EMAIL_IMAP_SCHEDULED_SYNC_MODE_ID || mode_id == EMAIL_IMAP_IDLE_LIVE_MODE_ID)
+        && let Some(email_result) =
+            execute_imap_provider_sync(pool, &spec, &mode_id, &mut scope, &mut preview_summary)
+                .await?
+    {
+        return pool
+            .state()
+            .log_operation(DbOperation {
+                id: None,
+                operation_type: operation_type.to_string(),
+                operator: actor.to_string(),
+                scope: Some(serde_json::Value::Object(scope)),
+                result_status: email_result.status,
+                result_message: Some(email_result.message),
+                preview_summary: Some(preview_summary),
+                duration_ms: email_result.duration_ms,
+            })
+            .await;
+    }
+
+    if spec.surface == "email_capture"
+        && spec.operation_type == "email.mailbox.sync"
         && EMAIL_STAGED_MODE_IDS.contains(&mode_id.as_str())
         && let Some(email_result) =
             execute_staged_email_sync(pool, &spec, &mode_id, &mut scope, &mut preview_summary)
@@ -930,6 +956,21 @@ struct EmailGmailSyncRequest {
     label_ids: Vec<String>,
     #[serde(default)]
     include_spam_trash: bool,
+}
+
+#[derive(Debug, Clone)]
+struct EmailImapSyncRequest {
+    host: String,
+    port: u16,
+    username: String,
+    password_file: Option<Utf8PathBuf>,
+    password: Option<String>,
+    mailbox: String,
+    tls_mode: NativeImapTlsMode,
+    batch_size: u32,
+    fetch_bodies: bool,
+    fetch_attachments: bool,
+    idle_timeout_ms: u64,
 }
 
 struct EmailStagedSyncRequest {
@@ -1303,8 +1344,14 @@ async fn execute_gmail_provider_sync(
         "gmail_sync_input".to_string(),
         request.sanitized_scope_value(),
     );
-    let material_record =
-        register_email_provider_material(pool, spec, mode_id, &provider_scope).await?;
+    let material_record = register_email_provider_material(
+        pool,
+        spec,
+        mode_id,
+        EmailProviderKind::Gmail,
+        &provider_scope,
+    )
+    .await?;
     let client = GmailHttpClient::with_endpoint(
         reqwest::Client::new(),
         request
@@ -1326,6 +1373,12 @@ async fn execute_gmail_provider_sync(
         include_spam_trash: request.include_spam_trash,
     };
     let summary = admit_gmail_adapter_records(pool, &material_record, client, config).await?;
+    let provider_cursor = summary.provider_cursor.clone().map(|cursor| {
+        email_provider_cursor_payload_metadata_value(
+            EmailProviderRuntimeMode::GmailScheduledSync,
+            cursor,
+        )
+    });
     let runtime = email_provider_executed_runtime_value(
         EmailProviderRuntimeMode::GmailScheduledSync,
         &provider_scope,
@@ -1348,7 +1401,7 @@ async fn execute_gmail_provider_sync(
         serde_json::json!(summary.parsed_record_count),
     );
     scope.insert("provider_runtime".to_string(), runtime.clone());
-    if let Some(cursor) = summary.provider_cursor.clone() {
+    if let Some(cursor) = provider_cursor.clone() {
         scope.insert("provider_cursor".to_string(), cursor);
     }
 
@@ -1372,13 +1425,155 @@ async fn execute_gmail_provider_sync(
         serde_json::json!(scope["provider_event_ids"].as_array().map_or(0, Vec::len)),
     );
     preview.insert("provider_runtime".to_string(), runtime);
-    if let Some(cursor) = summary.provider_cursor {
+    if let Some(cursor) = provider_cursor {
         preview.insert("provider_cursor".to_string(), cursor);
     }
 
     Ok(Some(EmailSyncExecutionResult {
         status: OperationStatus::Success,
         message: format!("{}; Gmail API sync admitted", spec.surface),
+        duration_ms: Some(elapsed_millis(started)),
+    }))
+}
+
+async fn execute_imap_provider_sync(
+    pool: &PgPool,
+    spec: &PackageOperationSpec,
+    mode_id: &str,
+    scope: &mut serde_json::Map<String, serde_json::Value>,
+    preview_summary: &mut serde_json::Value,
+) -> Result<Option<EmailSyncExecutionResult>> {
+    let Some(request) = EmailImapSyncRequest::from_scope(scope)? else {
+        return Ok(None);
+    };
+    let mode = EmailProviderRuntimeMode::from_mode_id(mode_id).ok_or_else(|| {
+        SinexError::validation("IMAP provider sync received unsupported mode")
+            .with_context("mode_id", mode_id)
+            .with_operation("ops.start")
+    })?;
+    let provider_scope = EmailProviderOperationScope::from_scope(spec.operation_type, mode, scope)?;
+    let started = Instant::now();
+    let password = request.read_password().await?;
+
+    scope.insert(
+        "imap_sync_input".to_string(),
+        request.sanitized_scope_value(),
+    );
+    remove_imap_secret_scope_keys(scope);
+    let material_record =
+        register_email_provider_material(pool, spec, mode_id, mode.provider(), &provider_scope)
+            .await?;
+    let client = NativeImapSyncClient::new(NativeImapSyncClientConfig {
+        host: request.host.clone(),
+        port: request.port,
+        username: request.username.clone(),
+        password,
+        mailbox: request.mailbox.clone(),
+        tls_mode: request.tls_mode,
+        idle_timeout_ms: request.idle_timeout_ms,
+    });
+    let config = ImapSyncConfig {
+        account_binding_ref: provider_scope.account_binding_ref.clone(),
+        mailbox: request.mailbox,
+        mode: match mode {
+            EmailProviderRuntimeMode::ImapScheduledSync => ImapSyncMode::Scheduled,
+            EmailProviderRuntimeMode::ImapIdleLive => ImapSyncMode::Idle,
+            EmailProviderRuntimeMode::GmailScheduledSync => {
+                return Err(
+                    SinexError::validation("Gmail mode cannot use IMAP executor")
+                        .with_operation("ops.start"),
+                );
+            }
+        },
+        initial_uid_next: provider_scope
+            .uid
+            .as_deref()
+            .map(str::parse::<u32>)
+            .transpose()
+            .map_err(|error| {
+                SinexError::validation("IMAP uid cursor must fit in u32")
+                    .with_std_error(&error)
+                    .with_operation("ops.start")
+            })?,
+        initial_uid_validity: provider_scope
+            .uidvalidity
+            .as_deref()
+            .map(str::parse::<u32>)
+            .transpose()
+            .map_err(|error| {
+                SinexError::validation("IMAP uidvalidity cursor must fit in u32")
+                    .with_std_error(&error)
+                    .with_operation("ops.start")
+            })?,
+        initial_highest_modseq: scope
+            .get("highest_modseq")
+            .and_then(serde_json::Value::as_str)
+            .map(str::parse::<u64>)
+            .transpose()
+            .map_err(|error| {
+                SinexError::validation("IMAP highest_modseq cursor must fit in u64")
+                    .with_std_error(&error)
+                    .with_operation("ops.start")
+            })?,
+        batch_size: request.batch_size,
+        fetch_bodies: request.fetch_bodies,
+        fetch_attachments: request.fetch_attachments,
+    };
+    let summary = admit_imap_adapter_records(pool, &material_record, client, config).await?;
+    let provider_cursor = summary
+        .provider_cursor
+        .clone()
+        .map(|cursor| email_provider_cursor_payload_metadata_value(mode, cursor));
+    let runtime = email_provider_executed_runtime_value(mode, &provider_scope);
+
+    scope.insert(
+        "executor_state".to_string(),
+        serde_json::json!(EMAIL_IMAP_SYNC_EXECUTOR_STATE),
+    );
+    scope.insert(
+        "provider_material_id".to_string(),
+        serde_json::json!(summary.material_id),
+    );
+    scope.insert(
+        "provider_event_ids".to_string(),
+        serde_json::json!(summary.event_ids),
+    );
+    scope.insert(
+        "provider_record_count".to_string(),
+        serde_json::json!(summary.parsed_record_count),
+    );
+    scope.insert("provider_runtime".to_string(), runtime.clone());
+    if let Some(cursor) = provider_cursor.clone() {
+        scope.insert("provider_cursor".to_string(), cursor);
+    }
+
+    let preview = preview_summary
+        .as_object_mut()
+        .expect("package operation preview is an object");
+    preview.insert(
+        "executor_state".to_string(),
+        serde_json::json!(EMAIL_IMAP_SYNC_EXECUTOR_STATE),
+    );
+    preview.insert(
+        "provider_material_id".to_string(),
+        serde_json::json!(scope["provider_material_id"]),
+    );
+    preview.insert(
+        "provider_record_count".to_string(),
+        serde_json::json!(summary.parsed_record_count),
+    );
+    preview.insert(
+        "admitted_event_count".to_string(),
+        serde_json::json!(scope["provider_event_ids"].as_array().map_or(0, Vec::len)),
+    );
+    preview.insert("provider_runtime".to_string(), runtime);
+    if let Some(cursor) = provider_cursor {
+        preview.insert("provider_cursor".to_string(), cursor);
+    }
+
+    Ok(Some(EmailSyncExecutionResult {
+        status: OperationStatus::Success,
+        message: format!("{}; IMAP sync admitted", spec.surface),
         duration_ms: Some(elapsed_millis(started)),
     }))
 }
@@ -1425,6 +1620,135 @@ impl EmailGmailSyncRequest {
             "include_spam_trash": self.include_spam_trash,
         })
     }
+}
+
+impl EmailImapSyncRequest {
+    fn from_scope(scope: &serde_json::Map<String, serde_json::Value>) -> Result<Option<Self>> {
+        let Some(host) = optional_scope_string(scope, "imap_host")
+            .or_else(|| optional_scope_string(scope, "host"))
+        else {
+            return Ok(None);
+        };
+        let Some(username) = optional_scope_string(scope, "imap_username")
+            .or_else(|| optional_scope_string(scope, "username"))
+        else {
+            return Ok(None);
+        };
+        let password_file = optional_scope_string(scope, "imap_password_file")
+            .or_else(|| optional_scope_string(scope, "password_file"))
+            .map(Utf8PathBuf::from);
+        let password = optional_scope_string(scope, "imap_password")
+            .or_else(|| optional_scope_string(scope, "password"));
+        if password_file.is_none() && password.is_none() {
+            return Ok(None);
+        }
+
+        let tls_mode = match optional_scope_string(scope, "imap_tls_mode")
+            .or_else(|| optional_scope_string(scope, "tls_mode"))
+            .as_deref()
+        {
+            Some(value) => NativeImapTlsMode::from_scope_value(value).ok_or_else(|| {
+                SinexError::validation("unsupported IMAP TLS mode")
+                    .with_context("tls_mode", value)
+                    .with_operation("ops.start")
+            })?,
+            None => NativeImapTlsMode::Implicit,
+        };
+
+        Ok(Some(Self {
+            host,
+            port: scope
+                .get("imap_port")
+                .or_else(|| scope.get("port"))
+                .and_then(serde_json::Value::as_u64)
+                .map(u16::try_from)
+                .transpose()
+                .map_err(|error| {
+                    SinexError::validation("IMAP port must fit in u16")
+                        .with_std_error(&error)
+                        .with_operation("ops.start")
+                })?
+                .unwrap_or(match tls_mode {
+                    NativeImapTlsMode::Implicit => 993,
+                    NativeImapTlsMode::None => 143,
+                }),
+            username,
+            password_file,
+            password,
+            mailbox: optional_scope_string(scope, "mailbox")
+                .or_else(|| optional_scope_string(scope, "mailbox_scope"))
+                .unwrap_or_else(|| "INBOX".to_string()),
+            tls_mode,
+            batch_size: scope
+                .get("batch_size")
+                .or_else(|| scope.get("page_size"))
+                .and_then(serde_json::Value::as_u64)
+                .map(u32::try_from)
+                .transpose()
+                .map_err(|error| {
+                    SinexError::validation("IMAP batch_size must fit in u32")
+                        .with_std_error(&error)
+                        .with_operation("ops.start")
+                })?
+                .unwrap_or(EMAIL_IMAP_SYNC_DEFAULT_BATCH_SIZE)
+                .max(1),
+            fetch_bodies: scope
+                .get("fetch_bodies")
+                .and_then(serde_json::Value::as_bool)
+                .unwrap_or(false),
+            fetch_attachments: scope
+                .get("fetch_attachments")
+                .and_then(serde_json::Value::as_bool)
+                .unwrap_or(false),
+            idle_timeout_ms: scope
+                .get("idle_timeout_ms")
+                .and_then(serde_json::Value::as_u64)
+                .unwrap_or(EMAIL_IMAP_SYNC_DEFAULT_IDLE_TIMEOUT_MS),
+        }))
+    }
+
+    async fn read_password(&self) -> Result<String> {
+        let password = if let Some(password_file) = &self.password_file {
+            tokio::fs::read_to_string(password_file)
+                .await
+                .map_err(|error| {
+                    SinexError::io("Failed to read IMAP password file")
+                        .with_context("password_file", password_file.to_string())
+                        .with_std_error(&error)
+                        .with_operation("ops.start")
+                })?
+        } else {
+            self.password.clone().unwrap_or_default()
+        };
+        let password = password.trim().to_string();
+        if password.is_empty() {
+            return Err(
+                SinexError::validation("IMAP password is empty").with_operation("ops.start")
+            );
+        }
+        Ok(password)
+    }
+
+    fn sanitized_scope_value(&self) -> serde_json::Value {
+        serde_json::json!({
+            "host": self.host,
+            "port": self.port,
+            "username": self.username,
+            "password_file_ref": self.password_file.as_ref().map(ToString::to_string),
+            "password": self.password.as_ref().map(|_| "<redacted>"),
+            "mailbox": self.mailbox,
+            "tls_mode": self.tls_mode.as_scope_value(),
+            "batch_size": self.batch_size,
+            "fetch_bodies": self.fetch_bodies,
+            "fetch_attachments": self.fetch_attachments,
+            "idle_timeout_ms": self.idle_timeout_ms,
+        })
+    }
+}
+
+fn remove_imap_secret_scope_keys(scope: &mut serde_json::Map<String, serde_json::Value>) {
+    scope.remove("imap_password");
+    scope.remove("password");
 }
 
 impl EmailStagedSyncRequest {
@@ -1539,9 +1863,14 @@ async fn register_email_provider_material(
     pool: &PgPool,
     spec: &PackageOperationSpec,
     mode_id: &str,
+    provider: EmailProviderKind,
     provider_scope: &EmailProviderOperationScope,
 ) -> Result<sinex_db::SourceMaterialRecord> {
-    let source_identifier = format!("provider://gmail/{}", provider_scope.account_binding_ref);
+    let source_identifier = format!(
+        "provider://{}/{}",
+        provider.as_str(),
+        provider_scope.account_binding_ref
+    );
     let mut contract = SourceMaterialMetadataContract::new(
         SourceMaterialFormat::Json,
         SourceMaterialTimingInfoType::StagedAt,
@@ -1559,7 +1888,7 @@ async fn register_email_provider_material(
                 "mode_id": mode_id,
                 "operation_type": spec.operation_type,
                 "action": spec.action,
-                "provider": "gmail",
+                "provider": provider.as_str(),
                 "account_binding_ref": provider_scope.account_binding_ref.clone(),
                 "mailbox_scope": provider_scope.mailbox_scope.clone(),
             }
@@ -1594,6 +1923,48 @@ async fn admit_gmail_adapter_records(
     while let Some(record) = stream.next().await {
         let record = record.map_err(|error| {
             SinexError::parse("Gmail API adapter failed to read record")
+                .with_context("material_id", material_record.id.to_string())
+                .with_context("parse_error", error.to_string())
+                .with_operation("ops.start")
+        })?;
+        summary.parsed_record_count += 1;
+        if let Some(cursor) =
+            admit_email_provider_record(pool, &mut parser, record, material_id, &mut summary)
+                .await?
+        {
+            summary.provider_cursor = Some(cursor);
+        }
+    }
+    Ok(summary)
+}
+
+async fn admit_imap_adapter_records(
+    pool: &PgPool,
+    material_record: &sinex_db::SourceMaterialRecord,
+    client: NativeImapSyncClient,
+    config: ImapSyncConfig,
+) -> Result<EmailProviderSyncSummary> {
+    let material_id = Id::<SourceMaterial>::from_uuid(material_record.id);
+    let adapter = ImapSyncAdapter::new(client);
+    let mut stream = adapter
+        .open(material_id, &config, None)
+        .await
+        .map_err(|error| {
+            SinexError::parse("IMAP adapter failed to open")
+                .with_context("material_id", material_record.id.to_string())
+                .with_context("parse_error", error.to_string())
+                .with_operation("ops.start")
+        })?;
+    let mut parser = EmailMailboxParser;
+    let mut summary = EmailProviderSyncSummary {
+        material_id: material_record.id.to_string(),
+        event_ids: Vec::new(),
+        parsed_record_count: 0,
+        provider_cursor: None,
+    };
+    while let Some(record) = stream.next().await {
+        let record = record.map_err(|error| {
+            SinexError::parse("IMAP adapter failed to read record")
                 .with_context("material_id", material_record.id.to_string())
                 .with_context("parse_error", error.to_string())
                 .with_operation("ops.start")
@@ -2343,6 +2714,44 @@ fn email_provider_cursor_metadata_value(
     })
 }
 
+fn email_provider_cursor_payload_metadata_value(
+    mode: EmailProviderRuntimeMode,
+    cursor_payload: serde_json::Value,
+) -> serde_json::Value {
+    let provider = mode.provider();
+    let fallback_cursor_kind = email_provider_sync_cursor_kind(provider);
+    let cursor_kind = cursor_payload
+        .get("cursor_kind")
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or_else(|| fallback_cursor_kind.as_str());
+    let account_binding_ref = cursor_payload
+        .get("account_binding_ref")
+        .cloned()
+        .unwrap_or(serde_json::Value::Null);
+    let mailbox_scope = cursor_payload
+        .get("mailbox_scope")
+        .cloned()
+        .unwrap_or(serde_json::Value::Null);
+    let cursor_value = cursor_payload
+        .get("cursor_value")
+        .cloned()
+        .unwrap_or(serde_json::Value::Null);
+    let continuity_state = cursor_payload
+        .get("continuity_state")
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or("current");
+
+    serde_json::json!({
+        "provider": provider.as_str(),
+        "account_binding_ref": account_binding_ref,
+        "mailbox_scope": mailbox_scope,
+        "cursor_kind": cursor_kind,
+        "cursor_value": cursor_value,
+        "continuity_state": continuity_state,
+        "cursor_observation_contract": cursor_payload,
+    })
+}
+
 fn email_provider_executed_runtime_value(
     mode: EmailProviderRuntimeMode,
     scope: &EmailProviderOperationScope,
@@ -2361,10 +2770,10 @@ fn email_provider_executed_runtime_value(
         sync_state: EmailSyncState::Idle,
         pending_messages: None,
         pending_material_bytes: None,
-        caveats: vec![
-            "Gmail API sync used an operator-provided token file; OAuth refresh remains outside this executor".to_string(),
-            "cursor is admitted as an event after provider records are consumed".to_string(),
-        ],
+        caveats: email_provider_executed_runtime_caveats(mode)
+            .iter()
+            .map(|caveat| (*caveat).to_string())
+            .collect(),
         actions: email_provider_runtime_actions(mode)
             .iter()
             .map(|action| action.to_string())
@@ -2384,6 +2793,25 @@ fn email_provider_executed_runtime_value(
         "caveats": runtime_payload.caveats.clone(),
         "runtime_observation_contract": runtime_payload,
     })
+}
+
+fn email_provider_executed_runtime_caveats(
+    mode: EmailProviderRuntimeMode,
+) -> &'static [&'static str] {
+    match mode {
+        EmailProviderRuntimeMode::GmailScheduledSync => &[
+            "Gmail API sync used an operator-provided token file; OAuth refresh remains outside this executor",
+            "cursor is admitted as an event after provider records are consumed",
+        ],
+        EmailProviderRuntimeMode::ImapScheduledSync => &[
+            "IMAP sync used operator-provided credentials; durable credential refresh remains outside this executor",
+            "cursor is admitted as an event after provider records are consumed",
+        ],
+        EmailProviderRuntimeMode::ImapIdleLive => &[
+            "IMAP IDLE observation is bounded by idle_timeout_ms in ops.start; daemon reconnect/backoff remains runtime-owned",
+            "cursor is admitted as an event after provider records are consumed",
+        ],
+    }
 }
 
 fn email_provider_cursor_caveats(mode: EmailProviderRuntimeMode) -> &'static [&'static str] {

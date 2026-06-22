@@ -70,7 +70,8 @@ pub use email_gmail_api::{
 };
 pub use email_imap_sync::{
     ImapSyncAdapter, ImapSyncBatch, ImapSyncClient, ImapSyncConfig, ImapSyncCursor, ImapSyncMode,
-    ImapSyncRecord, ImapSyncRecordKind, ImapSyncRequest,
+    ImapSyncRecord, ImapSyncRecordKind, ImapSyncRequest, NativeImapSyncClient,
+    NativeImapSyncClientConfig, NativeImapTlsMode,
 };
 pub use email_mbox_file::{EmailMboxFileAdapter, EmailMboxFileConfig, EmailMboxFileCursor};
 pub use sqlite_row::{SqliteRowAdapter, SqliteRowConfig, SqliteRowCursor};
