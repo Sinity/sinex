@@ -70,6 +70,9 @@ impl XtaskCommand for LintForbiddenCommand {
         // #[sinex_test]: proc-macro / trybuild fixtures, or tests requiring
         // controlled process-global env mutation under a specific thread model.
         let rust_test_allow = [
+            // Proc-macro crate: self-tests parser/expansion helpers and cannot
+            // depend on xtask's harness without creating a dependency cycle.
+            "xtask/macros/src/lib.rs",
             // EnvGuard tests mutate process-global env vars under documented
             // SAFETY/threading invariants, paired with the multi_thread race
             // tests above in the same module.
@@ -683,17 +686,19 @@ fn check_pattern_allow_tests(label: &str, pattern: &str, allow: &[&str]) -> Resu
     check_pattern(label, pattern, allow, is_tests_path)
 }
 
-/// Check test attributes, allowing only dedicated test directories and xtask/.
+/// Check test attributes, allowing only dedicated test directories.
 ///
 /// Inline `mod tests` blocks in library or source files must use `#[sinex_test]`
 /// instead of bare `#[test]` or `#[tokio::test]`. The only exemptions are files
-/// under a `tests/` directory or under `xtask/`, both handled by `is_tests_path`.
+/// under a `tests/` directory. Build tooling source is not blanket-exempt:
+/// xtask source tests use the same `#[sinex_test]` harness as other source
+/// tests unless a path is explicitly allowlisted above.
 fn check_rust_test_attr_patterns(
     label: &str,
     pattern: &str,
     allow: &[&str],
 ) -> Result<Vec<String>> {
-    check_pattern(label, pattern, allow, is_tests_path)
+    check_pattern(label, pattern, allow, is_dedicated_test_path)
 }
 
 fn check_pattern<F>(label: &str, pattern: &str, allow: &[&str], skip: F) -> Result<Vec<String>>
@@ -846,10 +851,19 @@ fn is_comment_match(line: &str) -> bool {
     text.starts_with("//")
 }
 
+/// Check if a path is a dedicated test directory or generated test fixture path.
+///
+/// This predicate is intentionally narrower than `is_tests_path`: it is used
+/// for test-attribute policy, where xtask source files are ordinary source and
+/// should use the project harness.
+fn is_dedicated_test_path(path: &str) -> bool {
+    path.contains("/tests/") || path.starts_with("tests/")
+}
+
 /// Check if a path is a test directory or build tooling.
 ///
-/// xtask is blanket-allowed because the proc macro crate (`xtask/macros/`)
-/// generates `#[test]` and `#[tokio::test]` in its expansion output.
+/// Used by non-test-attribute scans where xtask and test infrastructure are not
+/// production/library code. Do not use this for `#[test]` policy.
 fn is_tests_path(path: &str) -> bool {
     path.contains("/tests/") || path.starts_with("tests/") || path.starts_with("xtask/")
 }
@@ -1155,6 +1169,16 @@ mod tests {
         assert!(is_tests_path("tests/foo.rs"));
         assert!(is_tests_path("crate/lib/foo/tests/bar.rs"));
         assert!(!is_tests_path("crate/lib/foo/src/test_utils.rs"));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_attribute_policy_does_not_blanket_exempt_xtask_source()
+    -> ::xtask::sandbox::TestResult<()> {
+        assert!(is_dedicated_test_path("tests/foo.rs"));
+        assert!(is_dedicated_test_path("xtask/tests/scenarios.rs"));
+        assert!(!is_dedicated_test_path("xtask/src/commands/check.rs"));
+        assert!(!is_dedicated_test_path("crate/sinexd/src/runtime/foo.rs"));
         Ok(())
     }
 

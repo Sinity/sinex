@@ -1721,17 +1721,20 @@ mod tests {
         }
     }
 
-    #[test]
-    fn load_env_filter_defaults_when_rust_log_is_missing() {
+    #[sinex_test]
+    async fn load_env_filter_defaults_when_rust_log_is_missing() -> ::xtask::sandbox::TestResult<()>
+    {
         let _guard = EnvGuard::set("RUST_LOG", None);
 
         let filter = load_env_filter("info").expect("default filter should load");
 
         assert_eq!(filter.to_string(), "info");
+        Ok(())
     }
 
-    #[test]
-    fn load_env_filter_rejects_invalid_rust_log_directive() {
+    #[sinex_test]
+    async fn load_env_filter_rejects_invalid_rust_log_directive() -> ::xtask::sandbox::TestResult<()>
+    {
         let _guard = EnvGuard::set("RUST_LOG", Some(std::ffi::OsString::from("[broken")));
 
         let error = load_env_filter("info").expect_err("invalid directive should fail");
@@ -1741,11 +1744,12 @@ mod tests {
                 .to_string()
                 .contains("Invalid RUST_LOG directive `[broken`")
         );
+        Ok(())
     }
 
     #[cfg(unix)]
-    #[test]
-    fn load_env_filter_rejects_non_utf8_rust_log() {
+    #[sinex_test]
+    async fn load_env_filter_rejects_non_utf8_rust_log() -> ::xtask::sandbox::TestResult<()> {
         use std::os::unix::ffi::OsStringExt;
 
         let _guard = EnvGuard::set("RUST_LOG", Some(std::ffi::OsString::from_vec(vec![0xff])));
@@ -1753,20 +1757,24 @@ mod tests {
         let error = load_env_filter("info").expect_err("non-utf8 directive should fail");
 
         assert!(error.to_string().contains("RUST_LOG is not valid UTF-8"));
+        Ok(())
     }
 
-    #[test]
-    fn background_invocation_id_defaults_to_none_when_missing() {
+    #[sinex_test]
+    async fn background_invocation_id_defaults_to_none_when_missing()
+    -> ::xtask::sandbox::TestResult<()> {
         let _guard = EnvGuard::set("XTASK_BG_INVOCATION_ID", None);
 
         assert_eq!(
             background_invocation_id().expect("missing invocation ID should be allowed"),
             None
         );
+        Ok(())
     }
 
-    #[test]
-    fn background_invocation_id_rejects_invalid_integer() {
+    #[sinex_test]
+    async fn background_invocation_id_rejects_invalid_integer() -> ::xtask::sandbox::TestResult<()>
+    {
         let _guard = EnvGuard::set(
             "XTASK_BG_INVOCATION_ID",
             Some(std::ffi::OsString::from("not-a-number")),
@@ -1780,11 +1788,12 @@ mod tests {
                 .to_string()
                 .contains("Invalid XTASK_BG_INVOCATION_ID `not-a-number`")
         );
+        Ok(())
     }
 
     #[cfg(unix)]
-    #[test]
-    fn background_invocation_id_rejects_non_utf8_value() {
+    #[sinex_test]
+    async fn background_invocation_id_rejects_non_utf8_value() -> ::xtask::sandbox::TestResult<()> {
         use std::os::unix::ffi::OsStringExt;
 
         let _guard = EnvGuard::set(
@@ -1800,13 +1809,14 @@ mod tests {
                 .to_string()
                 .contains("XTASK_BG_INVOCATION_ID is not valid UTF-8")
         );
+        Ok(())
     }
 
-    #[test]
-    fn snapshot_background_registry_reports_busy_when_lock_is_held() {
-        let runtime = tokio::runtime::Runtime::new().expect("runtime should build");
+    #[sinex_test]
+    async fn snapshot_background_registry_reports_busy_when_lock_is_held()
+    -> ::xtask::sandbox::TestResult<()> {
         let background = Arc::new(AsyncMutex::new(BackgroundRegistry::default()));
-        let _guard = runtime.block_on(background.lock());
+        let _guard = background.lock().await;
 
         let snapshot = snapshot_background_registry(background.as_ref());
 
@@ -1818,16 +1828,17 @@ mod tests {
                 busy: true,
             }
         );
+        Ok(())
     }
 
-    #[test]
-    fn snapshot_background_registry_reports_pending_labels_when_available() {
-        let runtime = tokio::runtime::Runtime::new().expect("runtime should build");
+    #[sinex_test]
+    async fn snapshot_background_registry_reports_pending_labels_when_available()
+    -> ::xtask::sandbox::TestResult<()> {
         let background = Arc::new(AsyncMutex::new(BackgroundRegistry::default()));
-        runtime.block_on(async {
+        {
             let mut guard = background.lock().await;
             guard.add_hook("cleanup-hook", futures::future::ready(()).boxed());
-        });
+        }
 
         let snapshot = snapshot_background_registry(background.as_ref());
 
@@ -1839,6 +1850,7 @@ mod tests {
                 busy: false,
             }
         );
+        Ok(())
     }
 
     #[sinex_test]

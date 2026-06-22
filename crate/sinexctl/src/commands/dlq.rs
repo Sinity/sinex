@@ -234,9 +234,11 @@ fn format_dlq_messages_table(messages: &[DlqMessagePeek]) -> String {
 mod tests {
     use super::*;
     use sinex_primitives::rpc::dlq::DlqPressureSignal;
+    use xtask::sandbox::prelude::sinex_test;
 
-    #[test]
-    fn dlq_stats_table_renders_structured_pressure_signal() {
+    #[sinex_test]
+    async fn dlq_stats_table_renders_structured_pressure_signal() -> xtask::sandbox::TestResult<()>
+    {
         let rendered = format_dlq_stats_table(&DlqListResponse {
             total_messages: 11,
             total_bytes: 4096,
@@ -260,5 +262,6 @@ mod tests {
         assert!(rendered.contains("Pressure: critical"));
         assert!(rendered.contains("Runtime action: throttle"));
         assert!(rendered.contains("Retry batch size: 10"));
+        Ok(())
     }
 }

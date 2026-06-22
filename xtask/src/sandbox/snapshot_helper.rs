@@ -241,8 +241,8 @@ mod tests {
     use super::*;
     use serde_json::Value as JsonValue;
 
-    #[test]
-    fn persist_failure_writes_evidence_bundle_and_summary() -> TestResult<()> {
+    #[sinex_test]
+    async fn persist_failure_writes_evidence_bundle_and_summary() -> TestResult<()> {
         let dir = tempfile::tempdir()?;
         let _guard = EnvGuard::set_single("SINEX_TEST_FAIL_DIR", dir.path().as_os_str());
 

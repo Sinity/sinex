@@ -246,17 +246,19 @@ pub fn parse_public_kind(kind: &str) -> Option<SinexObjectKind> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use xtask::sandbox::prelude::sinex_test;
 
-    #[test]
-    fn public_ref_roundtrips_punctuated_ids() {
+    #[sinex_test]
+    async fn public_ref_roundtrips_punctuated_ids() -> xtask::sandbox::TestResult<()> {
         let parsed: PublicSinexRef = "source-material:0199:abc/def".parse().unwrap();
         assert_eq!(parsed.kind, SinexObjectKind::SourceMaterial);
         assert_eq!(parsed.id, "0199:abc/def");
         assert_eq!(parsed.to_string(), "source-material:0199:abc/def");
+        Ok(())
     }
 
-    #[test]
-    fn public_ref_rejects_invalid_forms() {
+    #[sinex_test]
+    async fn public_ref_rejects_invalid_forms() -> xtask::sandbox::TestResult<()> {
         assert_eq!(
             "event".parse::<PublicSinexRef>().unwrap_err(),
             PublicSinexRefParseError::MissingSeparator
@@ -273,10 +275,12 @@ mod tests {
             "source_material:id".parse::<PublicSinexRef>().unwrap_err(),
             PublicSinexRefParseError::UnknownKind("source_material".to_string())
         );
+        Ok(())
     }
 
-    #[test]
-    fn resolved_object_view_distinguishes_not_found_and_unsupported() {
+    #[sinex_test]
+    async fn resolved_object_view_distinguishes_not_found_and_unsupported()
+    -> xtask::sandbox::TestResult<()> {
         let ref_ = SinexObjectRef::new(SinexObjectKind::SourceDriver, "terminal.fish-history");
 
         let missing = ResolvedObjectView::not_found(ref_.clone(), "sinexctl.sources.status");
@@ -290,5 +294,6 @@ mod tests {
         let unsupported = ResolvedObjectView::unsupported(ref_);
         assert_eq!(unsupported.status, ResolvedObjectStatus::Unsupported);
         assert!(unsupported.source_surface.is_none());
+        Ok(())
     }
 }

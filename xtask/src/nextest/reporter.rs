@@ -463,6 +463,7 @@ impl TestReporter {
 #[cfg(test)]
 mod tests {
     use super::{TestPhaseObserver, TestReporter};
+    use crate::sandbox::sinex_test;
     use std::io::Cursor;
 
     #[derive(Default)]
@@ -476,8 +477,8 @@ mod tests {
         }
     }
 
-    #[test]
-    fn suite_totals_backfill_stream_parse_gaps() {
+    #[sinex_test]
+    async fn suite_totals_backfill_stream_parse_gaps() -> ::xtask::sandbox::TestResult<()> {
         let stdout = Cursor::new(
             concat!(
                 "{\"type\":\"suite\",\"event\":\"started\",\"test_count\":1}\n",
@@ -495,10 +496,11 @@ mod tests {
         assert_eq!(stats.passed, 0);
         assert_eq!(stats.ignored, 0);
         assert_eq!(stats.total, 1);
+        Ok(())
     }
 
-    #[test]
-    fn malformed_stdout_json_fails_honestly() {
+    #[sinex_test]
+    async fn malformed_stdout_json_fails_honestly() -> ::xtask::sandbox::TestResult<()> {
         let stdout = Cursor::new(
             concat!(
                 "{\"type\":\"suite\",\"event\":\"started\",\"test_count\":1}\n",
@@ -516,10 +518,11 @@ mod tests {
             message.contains("failed to parse nextest stdout line: not-json"),
             "malformed stdout line was not preserved in error report: {message}"
         );
+        Ok(())
     }
 
-    #[test]
-    fn missing_required_test_name_fails_honestly() {
+    #[sinex_test]
+    async fn missing_required_test_name_fails_honestly() -> ::xtask::sandbox::TestResult<()> {
         let stdout = Cursor::new(
             concat!(
                 "{\"type\":\"suite\",\"event\":\"started\",\"test_count\":1}\n",
@@ -537,10 +540,11 @@ mod tests {
             message.contains("nextest test-finished message is missing required field 'name'"),
             "missing-field cause was not preserved in error chain: {message}"
         );
+        Ok(())
     }
 
-    #[test]
-    fn phase_observer_fires_once_at_first_suite_start() {
+    #[sinex_test]
+    async fn phase_observer_fires_once_at_first_suite_start() -> ::xtask::sandbox::TestResult<()> {
         let stdout = Cursor::new(
             concat!(
                 "{\"type\":\"suite\",\"event\":\"started\",\"test_count\":1}\n",
@@ -560,5 +564,6 @@ mod tests {
         assert_eq!(observer.suite_started_count, 1);
         assert_eq!(stats.passed, 2);
         assert_eq!(stats.total, 2);
+        Ok(())
     }
 }

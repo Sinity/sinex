@@ -235,11 +235,12 @@ fn recreate_symlink(target: &Path, destination: &Path) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::sandbox::sinex_test;
     use std::os::unix::fs::symlink;
     use std::os::unix::net::UnixListener;
 
-    #[test]
-    fn should_exclude_root_local_artifacts() {
+    #[sinex_test]
+    async fn should_exclude_root_local_artifacts() -> ::xtask::sandbox::TestResult<()> {
         for relative in [
             Path::new(".git/config"),
             Path::new(".sinex/run/.s.PGSQL.5432"),
@@ -269,10 +270,11 @@ mod tests {
                 relative.display()
             );
         }
+        Ok(())
     }
 
-    #[test]
-    fn stage_checkout_for_flake_filters_runtime_state_and_keeps_new_sources() -> Result<()> {
+    #[sinex_test]
+    async fn stage_checkout_for_flake_filters_runtime_state_and_keeps_new_sources() -> Result<()> {
         let source = tempfile::tempdir()?;
         let output = tempfile::tempdir()?;
 
@@ -355,8 +357,8 @@ mod tests {
         Ok(())
     }
 
-    #[test]
-    fn stage_checkout_for_flake_preserves_regular_symlinks() -> Result<()> {
+    #[sinex_test]
+    async fn stage_checkout_for_flake_preserves_regular_symlinks() -> Result<()> {
         let source = tempfile::tempdir()?;
         let output = tempfile::tempdir()?;
 
