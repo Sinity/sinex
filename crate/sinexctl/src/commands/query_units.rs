@@ -235,7 +235,7 @@ fn source_material_row(material: SourceMaterialSummary) -> SinexQueryResultRow {
     .with_summary(material.source_identifier.clone())
     .with_field("material_id", material.id)
     .with_field("source_identifier", material.source_identifier)
-    .with_field("material_kind", material.material_kind)
+    .with_field("material_kind", material.material_kind.to_string())
     .with_field("status", status)
 }
 

@@ -97,7 +97,9 @@
 //! | `integration.polylogue` | [polylogue](https://github.com/sinity/polylogue) | AI chat archive indexer |
 //! | `analysis.lynchpin` | [lynchpin](https://github.com/sinity/sinity-lynchpin) | Analysis artifact staging |
 
-use crate::domain::{MaterialStatus, SourceMaterialFormat, SourceMaterialTimingInfoType};
+use crate::domain::{
+    MaterialStatus, MaterialStorageKind, SourceMaterialFormat, SourceMaterialTimingInfoType,
+};
 use crate::parser::{ParserId, SourceBindingId, SourceId};
 use crate::privacy::MaterialCaptureClass;
 use crate::rpc::{RpcDomain, RpcMethod, RpcMutability, RpcRole, RpcStability, methods};
@@ -483,8 +485,8 @@ pub struct SourcesListRequest {
 pub struct SourceMaterialSummary {
     /// UUID of the material
     pub id: String,
-    /// Material kind ("annex", "git", "`local_cas`")
-    pub material_kind: String,
+    /// Storage/backend kind ("annex", "git", "`local_cas`").
+    pub material_kind: MaterialStorageKind,
     /// Source identifier (typically the file path)
     pub source_identifier: String,
     /// Lifecycle status
@@ -525,7 +527,7 @@ pub struct SourcesShowRequest {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SourceMaterialDetail {
     pub id: String,
-    pub material_kind: String,
+    pub material_kind: MaterialStorageKind,
     pub source_identifier: String,
     pub status: MaterialStatus,
     pub timing_info_type: SourceMaterialTimingInfoType,
@@ -563,7 +565,7 @@ pub struct SourcesCoverageRequest {}
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SourceCoverageEntry {
     pub source_identifier: String,
-    pub material_kind: String,
+    pub material_kind: MaterialStorageKind,
     pub earliest_ts: Option<String>,
     pub latest_ts: Option<String>,
     pub event_count: Option<i64>,

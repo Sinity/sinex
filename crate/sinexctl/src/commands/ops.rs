@@ -1337,7 +1337,7 @@ fn capture_debt_row(
         id: format!(
             "debt:capture:{}:{}:{id_segment}",
             debt_id_segment(&source.source_identifier),
-            debt_id_segment(&source.material_kind),
+            debt_id_segment(source.material_kind.as_str()),
         ),
         kind: DebtKind::Capture,
         stage,
@@ -2491,7 +2491,7 @@ mod tests {
     ) -> SourceCoverageEntry {
         SourceCoverageEntry {
             source_identifier: "terminal.shell-history".to_string(),
-            material_kind: "shell_history".to_string(),
+            material_kind: sinex_primitives::MaterialStorageKind::Annex,
             earliest_ts: None,
             latest_ts: None,
             event_count,
