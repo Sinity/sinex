@@ -1022,8 +1022,9 @@ mod tests {
         Ok(())
     }
 
-    #[test]
-    fn inline_check_drift_reports_when_required_markers_are_split() {
+    #[sinex_test]
+    async fn inline_check_drift_reports_when_required_markers_are_split()
+    -> xtask::sandbox::TestResult<()> {
         let declared = DECLARED_INLINE_CHECKS
             .iter()
             .find(|check| check.label == "xor_provenance")
@@ -1046,10 +1047,11 @@ mod tests {
             inline_check_drift(declared, &matching_definition).is_none(),
             "one CHECK containing every declared marker is not drift"
         );
+        Ok(())
     }
 
-    #[test]
-    fn inline_check_drift_reports_missing_constraints() {
+    #[sinex_test]
+    async fn inline_check_drift_reports_missing_constraints() -> xtask::sandbox::TestResult<()> {
         let declared = DECLARED_INLINE_CHECKS
             .iter()
             .find(|check| check.label == "anchor_byte_non_negative")
@@ -1061,10 +1063,12 @@ mod tests {
         assert_eq!(drift.category, DriftCategory::InlineCheckExpr);
         assert_eq!(drift.location, "core.events::anchor_byte_non_negative");
         assert_eq!(drift.observed_summary, "table has no CHECK constraints");
+        Ok(())
     }
 
-    #[test]
-    fn foreign_key_action_drift_reports_missing_delete_action() {
+    #[sinex_test]
+    async fn foreign_key_action_drift_reports_missing_delete_action()
+    -> xtask::sandbox::TestResult<()> {
         let declared = DECLARED_FK_ACTIONS
             .iter()
             .find(|fk| fk.table == "tagged_items")
@@ -1083,10 +1087,12 @@ mod tests {
         );
         assert_eq!(drift.declared_summary, "contains `ON DELETE CASCADE`");
         assert!(drift.observed_summary.contains("ON DELETE NO ACTION"));
+        Ok(())
     }
 
-    #[test]
-    fn foreign_key_action_drift_reports_missing_fk_definition() {
+    #[sinex_test]
+    async fn foreign_key_action_drift_reports_missing_fk_definition()
+    -> xtask::sandbox::TestResult<()> {
         let declared = DECLARED_FK_ACTIONS
             .iter()
             .find(|fk| fk.table == "tags")
@@ -1105,10 +1111,12 @@ mod tests {
                 .observed_summary
                 .contains("no FK on core.tags matches")
         );
+        Ok(())
     }
 
-    #[test]
-    fn hypertable_setting_drift_reports_chunk_interval_states() {
+    #[sinex_test]
+    async fn hypertable_setting_drift_reports_chunk_interval_states()
+    -> xtask::sandbox::TestResult<()> {
         assert!(
             hypertable_chunk_interval_drift(Some((Some(HYPERTABLE_CHUNK_INTERVAL_MICROS),)))
                 .is_none(),
@@ -1126,10 +1134,11 @@ mod tests {
             hypertable_chunk_interval_drift(None).expect("missing hypertable must be reported");
         assert_eq!(missing.location, "core.events");
         assert_eq!(missing.observed_summary, "core.events is not a hypertable");
+        Ok(())
     }
 
-    #[test]
-    fn hypertable_setting_drift_reports_retention_policy() {
+    #[sinex_test]
+    async fn hypertable_setting_drift_reports_retention_policy() -> xtask::sandbox::TestResult<()> {
         assert!(
             hypertable_retention_policy_drift(0).is_none(),
             "declared state has no retention-policy drift"
@@ -1141,5 +1150,6 @@ mod tests {
         assert_eq!(drift.location, "core.events::retention_policy");
         assert_eq!(drift.declared_summary, "no retention policy");
         assert_eq!(drift.observed_summary, "2 retention policy job(s) present");
+        Ok(())
     }
 }
