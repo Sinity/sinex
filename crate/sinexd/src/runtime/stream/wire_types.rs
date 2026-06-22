@@ -43,8 +43,10 @@ pub struct ResolvedReplayMaterial {
     /// Stable registry identity of the source material.
     pub source_material_id: Uuid,
 
-    /// Stored source-material class. Current persisted values still include
-    /// legacy storage-shaped names such as `annex`.
+    /// Registry storage/backend kind (`annex`, `git`, or `local_cas`).
+    ///
+    /// This remains textual on the replay wire so external runtime modules do
+    /// not need to link Rust domain enums.
     pub material_kind: String,
 
     /// Source identifier (for example file path or upstream URI).

@@ -1479,6 +1479,52 @@ impl FromStr for MaterialStatus {
     }
 }
 
+/// Storage/backend kind stored on `raw.source_material_registry.material_kind`.
+///
+/// This is deliberately narrower than source-package material classes. It
+/// describes how raw material is stored or addressed by the registry, not
+/// whether the material is an email message, OCR segment, transcript, API page,
+/// or stream batch.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum MaterialStorageKind {
+    Annex,
+    Git,
+    LocalCas,
+}
+
+impl MaterialStorageKind {
+    pub const ALL: &'static [&'static str] = &["annex", "git", "local_cas"];
+
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Annex => "annex",
+            Self::Git => "git",
+            Self::LocalCas => "local_cas",
+        }
+    }
+}
+
+impl fmt::Display for MaterialStorageKind {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
+impl FromStr for MaterialStorageKind {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            "annex" => Ok(Self::Annex),
+            "git" => Ok(Self::Git),
+            "local_cas" => Ok(Self::LocalCas),
+            _ => Err(format!("unknown material storage kind: {s:?}")),
+        }
+    }
+}
+
 // ─────────────────────────────────────────────────────────────
 // Temporal Vocabulary
 // ─────────────────────────────────────────────────────────────

@@ -69,8 +69,9 @@ pub mod buffers {
 
 pub mod prelude {
     pub use crate::domain::{
-        EventName, EventSource, EventType, HostName, OperationRunStatus, RecordedPath, ServiceName,
-        SourceIdentifier, SourceMaterialFormat, SourceMaterialTimingInfoType,
+        EventName, EventSource, EventType, HostName, MaterialStorageKind, OperationRunStatus,
+        RecordedPath, ServiceName, SourceIdentifier, SourceMaterialFormat,
+        SourceMaterialTimingInfoType,
     };
     pub use crate::environment::SinexEnvironment;
     pub use crate::error::{Result, SinexError};
@@ -130,9 +131,9 @@ pub use derivations::{
     derivation_specs, derivations_for_output, find_derivation_spec,
 };
 pub use domain::{
-    ControlSubject, EventName, EventSource, EventType, HostName, MaterialStatus, OperationKind,
-    OperationRunStatus, RecordedPath, SanitizedPath, ServiceName, SourceIdentifier,
-    SourceMaterialFormat, SourceMaterialTimingInfoType,
+    ControlSubject, EventName, EventSource, EventType, HostName, MaterialStatus,
+    MaterialStorageKind, OperationKind, OperationRunStatus, RecordedPath, SanitizedPath,
+    ServiceName, SourceIdentifier, SourceMaterialFormat, SourceMaterialTimingInfoType,
 };
 pub use domain_reducer::{
     DomainProjectionSpec, ProjectionConflictPolicy, ProjectionOrderingPolicy,
