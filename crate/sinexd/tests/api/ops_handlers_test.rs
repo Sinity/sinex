@@ -22,6 +22,7 @@ use sinexd::api::rpc_server::RpcAuthContext;
 use sinexd::api::{ReplayScope, ReplayState, ReplayStateMachine};
 use std::collections::HashMap;
 use std::io::Write;
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use xtask::sandbox::prelude::*;
 
 fn system_auth() -> RpcAuthContext {
@@ -874,6 +875,90 @@ async fn ops_start_records_email_sync_for_provider_mode(ctx: TestContext) -> Tes
 }
 
 #[sinex_test]
+async fn ops_start_executes_gmail_scheduled_sync_with_token_file(
+    ctx: TestContext,
+) -> TestResult<()> {
+    let server = GmailFixtureServer::start().await?;
+    let dir = tempfile::tempdir()?;
+    let token_file = dir.path().join("gmail-token");
+    tokio::fs::write(&token_file, "test-token\n").await?;
+
+    let auth = system_auth();
+    let response: OpsStartResponse = serde_json::from_value(
+        handle_ops_start(
+            ctx.pool(),
+            json!({
+                "operation_type": "email.mailbox.sync",
+                "scope": {
+                    "source_id": "email.mailbox",
+                    "mode_id": "source:email.mailbox.gmail-api-scheduled-sync",
+                    "account_binding_ref": "operator-mailbox:primary",
+                    "gmail_token_file": token_file.to_string_lossy(),
+                    "gmail_api_base_url": server.base_url(),
+                    "label_ids": ["INBOX"],
+                    "page_size": 10
+                },
+            }),
+            &auth,
+        )
+        .await?,
+    )?;
+
+    assert_eq!(response.operation.operation_type, "email.mailbox.sync");
+    assert_eq!(response.operation.result_status, OperationStatus::Success);
+    assert_eq!(
+        response.operation.result_message.as_deref(),
+        Some("email_capture; Gmail API sync admitted")
+    );
+    let scope = response
+        .operation
+        .scope
+        .as_ref()
+        .expect("email provider operation scope should be recorded");
+    assert_eq!(scope["executor_state"], "gmail_api_sync_admitted");
+    let token_file_ref = token_file.to_string_lossy();
+    assert_eq!(
+        scope["gmail_sync_input"]["token_file_ref"].as_str(),
+        Some(token_file_ref.as_ref())
+    );
+    assert_eq!(scope["provider_record_count"], 1);
+    assert_eq!(
+        scope["provider_runtime"]["runtime_observation_contract"]["auth_state"],
+        "authorized"
+    );
+    assert_eq!(
+        scope["provider_runtime"]["runtime_observation_contract"]["network_state"],
+        "online"
+    );
+    assert_eq!(
+        scope["provider_cursor"]["gmail_history_id"], "history-1",
+        "Gmail message detail history id should be admitted as provider cursor"
+    );
+    assert_eq!(
+        scope["provider_event_ids"]
+            .as_array()
+            .expect("provider event ids should be recorded")
+            .len(),
+        1
+    );
+    let persisted_scope = serde_json::to_string(scope)?;
+    assert!(
+        !persisted_scope.contains("test-token"),
+        "Gmail bearer token contents must not be persisted in operation scope"
+    );
+
+    let preview = response
+        .operation
+        .preview_summary
+        .as_ref()
+        .expect("email provider preview should be recorded");
+    assert_eq!(preview["executor_state"], "gmail_api_sync_admitted");
+    assert_eq!(preview["provider_record_count"], 1);
+    assert_eq!(preview["admitted_event_count"], 1);
+    Ok(())
+}
+
+#[sinex_test]
 async fn ops_start_strips_provider_runtime_for_staged_email_mode(
     ctx: TestContext,
 ) -> TestResult<()> {
@@ -929,6 +1014,72 @@ async fn ops_start_strips_provider_runtime_for_staged_email_mode(
         "staged email previews must not advertise provider cursor metadata"
     );
     Ok(())
+}
+
+struct GmailFixtureServer {
+    addr: std::net::SocketAddr,
+}
+
+impl GmailFixtureServer {
+    async fn start() -> TestResult<Self> {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await?;
+        let addr = listener.local_addr()?;
+        tokio::spawn(async move {
+            while let Ok((mut stream, _)) = listener.accept().await {
+                tokio::spawn(async move {
+                    let mut request = vec![0_u8; 8192];
+                    let Ok(bytes_read) = stream.read(&mut request).await else {
+                        return;
+                    };
+                    let request = String::from_utf8_lossy(&request[..bytes_read]);
+                    let first_line = request.lines().next().unwrap_or_default();
+                    let has_authorization = request
+                        .lines()
+                        .any(|line| line.eq_ignore_ascii_case("authorization: Bearer test-token"));
+                    let body = if !has_authorization {
+                        json!({"error": "missing bearer token", "request": first_line})
+                    } else if first_line.contains("/gmail/v1/users/me/messages/m-1") {
+                        json!({
+                            "id": "m-1",
+                            "threadId": "t-1",
+                            "labelIds": ["INBOX"],
+                            "historyId": "history-1",
+                            "sizeEstimate": 128,
+                            "payload": {
+                                "headers": [
+                                    {"name": "Message-ID", "value": "<m-1@example.com>"},
+                                    {"name": "Subject", "value": "fixture"}
+                                ]
+                            }
+                        })
+                    } else if first_line.contains("/gmail/v1/users/me/messages") {
+                        json!({
+                            "messages": [{"id": "m-1", "threadId": "t-1"}],
+                            "resultSizeEstimate": 1
+                        })
+                    } else {
+                        json!({"error": "unexpected fixture path", "request": first_line})
+                    };
+                    let status = if body.get("error").is_some() {
+                        "HTTP/1.1 404 Not Found"
+                    } else {
+                        "HTTP/1.1 200 OK"
+                    };
+                    let body = body.to_string();
+                    let response = format!(
+                        "{status}\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{body}",
+                        body.len()
+                    );
+                    let _ = stream.write_all(response.as_bytes()).await;
+                });
+            }
+        });
+        Ok(Self { addr })
+    }
+
+    fn base_url(&self) -> String {
+        format!("http://{}/gmail/v1", self.addr)
+    }
 }
 
 fn write_email_takeout_zip(path: &camino::Utf8Path) -> TestResult<()> {
