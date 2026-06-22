@@ -1101,9 +1101,10 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+    use xtask::sandbox::prelude::sinex_test;
 
-    #[test]
-    fn registry_contains_required_issue_1964_units() {
+    #[sinex_test]
+    async fn registry_contains_required_issue_1964_units() -> xtask::sandbox::TestResult<()> {
         let units = query_unit_descriptors()
             .iter()
             .map(|descriptor| descriptor.unit)
@@ -1115,10 +1116,12 @@ mod tests {
         assert!(units.contains(&QueryUnitId::Debt));
         assert!(units.contains(&QueryUnitId::Operations));
         assert!(units.contains(&QueryUnitId::RuntimeHealth));
+        Ok(())
     }
 
-    #[test]
-    fn descriptor_rejects_unknown_field_with_supported_field_names() {
+    #[sinex_test]
+    async fn descriptor_rejects_unknown_field_with_supported_field_names()
+    -> xtask::sandbox::TestResult<()> {
         let descriptor = query_unit_descriptor(QueryUnitId::Events);
         let error = descriptor.field("source_id").unwrap_err();
 
@@ -1126,10 +1129,12 @@ mod tests {
         assert!(rendered.contains("source_id"));
         assert!(rendered.contains("source, event_type, host, scope_key, equivalence_key"));
         assert!(!rendered.contains("event_contract_id"));
+        Ok(())
     }
 
-    #[test]
-    fn event_descriptor_exposes_only_currently_lowerable_fields_and_operators() {
+    #[sinex_test]
+    async fn event_descriptor_exposes_only_currently_lowerable_fields_and_operators()
+    -> xtask::sandbox::TestResult<()> {
         let descriptor = query_unit_descriptor(QueryUnitId::Events);
         let fields = descriptor
             .fields
@@ -1150,10 +1155,12 @@ mod tests {
         for field in descriptor.fields {
             assert_eq!(field.operators, &[QueryOperator::Eq]);
         }
+        Ok(())
     }
 
-    #[test]
-    fn query_validation_rejects_operator_not_declared_by_descriptor() {
+    #[sinex_test]
+    async fn query_validation_rejects_operator_not_declared_by_descriptor()
+    -> xtask::sandbox::TestResult<()> {
         let mut query = SinexQuery::new(QueryUnitId::Debt, Some(20), None);
         query.predicate = Some(SinexQueryPredicate::Compare {
             field: "kind".to_string(),
@@ -1163,18 +1170,21 @@ mod tests {
 
         let error = query.validate().unwrap_err();
         assert!(error.to_string().contains("does not support operator"));
+        Ok(())
     }
 
-    #[test]
-    fn query_validation_clamps_to_unit_limit() {
+    #[sinex_test]
+    async fn query_validation_clamps_to_unit_limit() -> xtask::sandbox::TestResult<()> {
         let query = SinexQuery::new(QueryUnitId::Operations, Some(10_000), Some(-10));
 
         assert_eq!(query.pagination.limit, 500);
         assert_eq!(query.pagination.offset, 0);
+        Ok(())
     }
 
-    #[test]
-    fn parser_lowers_events_query_to_descriptor_validated_ast() {
+    #[sinex_test]
+    async fn parser_lowers_events_query_to_descriptor_validated_ast()
+    -> xtask::sandbox::TestResult<()> {
         let query = parse_sinex_query(
             "events where source = \"terminal.fish-history\" and event_type = terminal.command limit 10",
         )
@@ -1187,39 +1197,47 @@ mod tests {
             query.predicate,
             Some(SinexQueryPredicate::And { .. })
         ));
+        Ok(())
     }
 
-    #[test]
-    fn parser_rejects_unknown_unit_before_execution() {
+    #[sinex_test]
+    async fn parser_rejects_unknown_unit_before_execution() -> xtask::sandbox::TestResult<()> {
         let error = parse_sinex_query("widgets where status = active").unwrap_err();
 
         assert!(error.to_string().contains("unknown query unit"));
+        Ok(())
     }
 
-    #[test]
-    fn parser_rejects_unknown_field_before_execution() {
+    #[sinex_test]
+    async fn parser_rejects_unknown_field_before_execution() -> xtask::sandbox::TestResult<()> {
         let error = parse_sinex_query("debt where widget = active").unwrap_err();
 
         assert!(error.to_string().contains("does not support field"));
+        Ok(())
     }
 
-    #[test]
-    fn parser_rejects_invalid_enum_value_before_execution() {
+    #[sinex_test]
+    async fn parser_rejects_invalid_enum_value_before_execution() -> xtask::sandbox::TestResult<()>
+    {
         let error = parse_sinex_query("operations where status = mystery").unwrap_err();
 
         assert!(error.to_string().contains("does not allow enum value"));
+        Ok(())
     }
 
-    #[test]
-    fn parser_rejects_unsupported_sort_key_before_execution() {
+    #[sinex_test]
+    async fn parser_rejects_unsupported_sort_key_before_execution() -> xtask::sandbox::TestResult<()>
+    {
         let error = parse_sinex_query("operations sort widget desc").unwrap_err();
 
         assert!(error.to_string().contains("does not support sort key"));
         assert!(error.to_string().contains("operation_id"));
+        Ok(())
     }
 
-    #[test]
-    fn parser_lowers_runtime_stale_after_as_numeric_seconds() {
+    #[sinex_test]
+    async fn parser_lowers_runtime_stale_after_as_numeric_seconds() -> xtask::sandbox::TestResult<()>
+    {
         let query = parse_sinex_query("runtime-health where stale_after >= 300").unwrap();
 
         assert_eq!(query.unit, QueryUnitId::RuntimeHealth);
@@ -1231,5 +1249,6 @@ mod tests {
                 value: QueryValue::Integer(300),
             }) if field == "stale_after"
         ));
+        Ok(())
     }
 }

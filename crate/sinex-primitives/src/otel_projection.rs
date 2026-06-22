@@ -244,6 +244,7 @@ fn default_otel_disclosure_boundary() -> OtelDisclosureBoundary {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use xtask::sandbox::prelude::sinex_test;
 
     fn gateway_bucket() -> GatewayStatsBucket {
         GatewayStatsBucket {
@@ -257,8 +258,9 @@ mod tests {
         }
     }
 
-    #[test]
-    fn gateway_stats_projection_maps_existing_telemetry_to_metrics() {
+    #[sinex_test]
+    async fn gateway_stats_projection_maps_existing_telemetry_to_metrics()
+    -> xtask::sandbox::TestResult<()> {
         let view = gateway_stats_to_otel_metrics_projection(vec![gateway_bucket()]);
 
         assert_eq!(view.schema_version, OTEL_METRICS_PROJECTION_SCHEMA_VERSION);
@@ -269,10 +271,11 @@ mod tests {
             == "sinex.gateway.requests.rate_limited"
             && metric.kind == OtelMetricKind::Sum
             && metric.aggregation_temporality == OtelAggregationTemporality::Delta));
+        Ok(())
     }
 
-    #[test]
-    fn gateway_stats_projection_uses_refs_counts_and_timings_not_raw_payloads()
+    #[sinex_test]
+    async fn gateway_stats_projection_uses_refs_counts_and_timings_not_raw_payloads()
     -> serde_json::Result<()> {
         let view = gateway_stats_to_otel_metrics_projection(vec![gateway_bucket()]);
         let serialized = serde_json::to_string(&view)?;

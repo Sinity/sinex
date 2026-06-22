@@ -520,6 +520,7 @@ fn rust_type_name(value: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use xtask::sandbox::prelude::sinex_test;
 
     fn remove_authoring_blocker(rendered: &str) -> String {
         rendered
@@ -529,8 +530,9 @@ mod tests {
             .join("\n")
     }
 
-    #[test]
-    fn skeletons_parse_as_rust_after_authoring_blocker_is_removed() {
+    #[sinex_test]
+    async fn skeletons_parse_as_rust_after_authoring_blocker_is_removed()
+    -> xtask::sandbox::TestResult<()> {
         for (package_id, mode_id) in [
             ("terminal.atuin-history", "terminal.atuin-history"),
             ("terminal.kitty-osc-live", "terminal.kitty-osc-live"),
@@ -543,10 +545,12 @@ mod tests {
                 panic!("generated skeleton for {package_id}/{mode_id} must parse as Rust: {error}")
             });
         }
+        Ok(())
     }
 
-    #[test]
-    fn skeleton_uses_package_completeness_contract_fields() {
+    #[sinex_test]
+    async fn skeleton_uses_package_completeness_contract_fields() -> xtask::sandbox::TestResult<()>
+    {
         let rendered =
             render_source_skeleton("terminal.atuin-history", "terminal.atuin-history").unwrap();
 
@@ -564,10 +568,12 @@ mod tests {
         assert!(rendered.contains("privacy_context = ProcessingContext::"));
         assert!(rendered.contains("runtime_shape = RuntimeShape::"));
         assert!(rendered.contains("factory = \"adapter_parser\""));
+        Ok(())
     }
 
-    #[test]
-    fn skeleton_renders_runtime_binding_metadata_when_available() {
+    #[sinex_test]
+    async fn skeleton_renders_runtime_binding_metadata_when_available()
+    -> xtask::sandbox::TestResult<()> {
         let rendered =
             render_source_skeleton("terminal.kitty-osc-live", "terminal.kitty-osc-live").unwrap();
 
@@ -582,10 +588,11 @@ mod tests {
         assert!(rendered.contains("capabilities = \"coverage:source-coverage, debt:unified-debt-view, operation:terminal.activity.check"));
         assert!(rendered.contains("operation:terminal.activity.inspect"));
         assert!(rendered.contains("factory = \"adapter_parser\""));
+        Ok(())
     }
 
-    #[test]
-    fn skeleton_renders_package_mode_binding_metadata() {
+    #[sinex_test]
+    async fn skeleton_renders_package_mode_binding_metadata() -> xtask::sandbox::TestResult<()> {
         let rendered =
             render_source_skeleton("email.mailbox", "email.mailbox.gmail-api-scheduled-sync")
                 .unwrap();
@@ -603,22 +610,26 @@ mod tests {
         assert!(rendered.contains("proposed = true"));
         assert!(!rendered.contains("ReplaceAdapter"));
         assert!(!rendered.contains("binding("));
+        Ok(())
     }
 
-    #[test]
-    fn skeleton_preserves_parser_only_manual_factory_modes() {
+    #[sinex_test]
+    async fn skeleton_preserves_parser_only_manual_factory_modes() -> xtask::sandbox::TestResult<()>
+    {
         let rendered = render_source_skeleton("weechat.message", "weechat.message").unwrap();
 
         assert!(rendered.contains("factory = \"parser\""));
         assert!(rendered.contains("SourceRuntimeBinding:"));
+        Ok(())
     }
 
-    #[test]
-    fn missing_package_reports_requested_id() {
+    #[sinex_test]
+    async fn missing_package_reports_requested_id() -> xtask::sandbox::TestResult<()> {
         let err = render_source_skeleton("missing.package", "local").unwrap_err();
         assert_eq!(
             err.to_string(),
             "package `missing.package` not found in package completeness report"
         );
+        Ok(())
     }
 }

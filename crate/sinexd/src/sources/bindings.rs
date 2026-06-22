@@ -367,6 +367,7 @@ mod tests {
     use super::*;
     use std::sync::Arc;
     use std::sync::atomic::{AtomicBool, Ordering};
+    use xtask::sandbox::prelude::sinex_test;
 
     /// Marker env var used by the concurrent-binding regression test. Picked
     /// to be specific enough that no other code in the process sets it.
@@ -522,8 +523,8 @@ mod tests {
 
     /// Installing an `EnvGuard` over an empty map is a no-op and does not
     /// touch the environment.
-    #[test]
-    fn env_guard_empty_is_noop() {
+    #[sinex_test]
+    async fn env_guard_empty_is_noop() -> xtask::sandbox::TestResult<()> {
         let key = "SINEX_BINDINGS_TEST_EMPTY_NOOP";
         // SAFETY: scoped to a key no one else uses.
         unsafe {
@@ -535,12 +536,13 @@ mod tests {
             assert!(std::env::var(key).is_err());
         }
         assert!(std::env::var(key).is_err());
+        Ok(())
     }
 
     /// Installing an `EnvGuard` over a key that had a prior value restores
     /// the prior value on drop, not unsets it.
-    #[test]
-    fn env_guard_restores_prior_value() {
+    #[sinex_test]
+    async fn env_guard_restores_prior_value() -> xtask::sandbox::TestResult<()> {
         let key = "SINEX_BINDINGS_TEST_RESTORE";
         // SAFETY: scoped to a unique key; not in scope for the multi-thread
         // race test above.
@@ -562,5 +564,6 @@ mod tests {
         unsafe {
             std::env::remove_var(key);
         }
+        Ok(())
     }
 }
