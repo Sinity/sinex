@@ -52,13 +52,17 @@ impl ImapSyncClient for FakeImapClient {
     async fn fetch_batch(&self, request: ImapSyncRequest) -> Result<ImapSyncBatch, Self::Error> {
         let batch_index = self.requests.lock().expect("request mutex").len();
         self.requests.lock().expect("request mutex").push(request);
-        Ok(self.batches.get(batch_index).cloned().unwrap_or(ImapSyncBatch {
-            records: Vec::new(),
-            uid_validity: None,
-            uid_next: None,
-            highest_modseq: None,
-            has_more: false,
-        }))
+        Ok(self
+            .batches
+            .get(batch_index)
+            .cloned()
+            .unwrap_or(ImapSyncBatch {
+                records: Vec::new(),
+                uid_validity: None,
+                uid_next: None,
+                highest_modseq: None,
+                has_more: false,
+            }))
     }
 }
 
@@ -226,7 +230,12 @@ async fn imap_sync_adapter_schema_exposes_mailbox_mode_and_fetch_policy()
     );
     assert!(schema.required.iter().any(|field| field == "mailbox"));
     assert!(schema.schema.pointer("/properties/mode").is_some());
-    assert!(schema.schema.pointer("/properties/initial_uid_next").is_some());
+    assert!(
+        schema
+            .schema
+            .pointer("/properties/initial_uid_next")
+            .is_some()
+    );
     assert!(schema.schema.pointer("/properties/fetch_bodies").is_some());
     assert!(
         schema
