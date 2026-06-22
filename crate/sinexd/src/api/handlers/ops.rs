@@ -29,7 +29,10 @@ use std::time::{Duration, Instant};
 use tokio::io::{AsyncRead, AsyncReadExt};
 use tokio::process::Command;
 
-use crate::runtime::parser::{EmailMboxFileAdapter, EmailMboxFileConfig};
+use crate::runtime::parser::{
+    EmailMboxFileAdapter, EmailMboxFileConfig, GmailApiCursorAdapter, GmailApiCursorConfig,
+    GmailHttpClient,
+};
 use crate::sources::source_contracts::email::EmailMailboxParser;
 
 // Re-export shared types
@@ -124,7 +127,9 @@ const EMAIL_GMAIL_SCHEDULED_SYNC_MODE_ID: &str = "source:email.mailbox.gmail-api
 const EMAIL_IMAP_SCHEDULED_SYNC_MODE_ID: &str = "source:email.mailbox.imap-scheduled-sync";
 const EMAIL_IMAP_IDLE_LIVE_MODE_ID: &str = "source:email.mailbox.imap-idle-live";
 const EMAIL_STAGED_SYNC_EXECUTOR_STATE: &str = "staged_email_sync_admitted";
+const EMAIL_GMAIL_SYNC_EXECUTOR_STATE: &str = "gmail_api_sync_admitted";
 const EMAIL_STAGED_SYNC_DEFAULT_MAX_MESSAGE_BYTES: u64 = 64 * 1024 * 1024;
+const EMAIL_GMAIL_SYNC_DEFAULT_PAGE_SIZE: u32 = 100;
 const EMAIL_STAGED_MODE_IDS: &[&str] = &[EMAIL_MAILDIR_STAGED_MODE_ID, EMAIL_MBOX_STAGED_MODE_ID];
 const EMAIL_PROVIDER_MODE_IDS: &[&str] = &[
     EMAIL_GMAIL_SCHEDULED_SYNC_MODE_ID,
@@ -836,6 +841,28 @@ async fn start_package_operation(
 
     if spec.surface == "email_capture"
         && spec.operation_type == "email.mailbox.sync"
+        && mode_id == EMAIL_GMAIL_SCHEDULED_SYNC_MODE_ID
+        && let Some(email_result) =
+            execute_gmail_provider_sync(pool, &spec, &mode_id, &mut scope, &mut preview_summary)
+                .await?
+    {
+        return pool
+            .state()
+            .log_operation(DbOperation {
+                id: None,
+                operation_type: operation_type.to_string(),
+                operator: actor.to_string(),
+                scope: Some(serde_json::Value::Object(scope)),
+                result_status: email_result.status,
+                result_message: Some(email_result.message),
+                preview_summary: Some(preview_summary),
+                duration_ms: email_result.duration_ms,
+            })
+            .await;
+    }
+
+    if spec.surface == "email_capture"
+        && spec.operation_type == "email.mailbox.sync"
         && EMAIL_STAGED_MODE_IDS.contains(&mode_id.as_str())
         && let Some(email_result) =
             execute_staged_email_sync(pool, &spec, &mode_id, &mut scope, &mut preview_summary)
@@ -880,6 +907,29 @@ struct EmailSyncExecutionResult {
     status: OperationStatus,
     message: String,
     duration_ms: Option<i32>,
+}
+
+struct EmailProviderSyncSummary {
+    material_id: String,
+    event_ids: Vec<String>,
+    parsed_record_count: u64,
+    provider_cursor: Option<serde_json::Value>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct EmailGmailSyncRequest {
+    token_file: Utf8PathBuf,
+    #[serde(default)]
+    api_base_url: Option<String>,
+    #[serde(default)]
+    user_id: Option<String>,
+    #[serde(default)]
+    page_size: Option<u32>,
+    #[serde(default)]
+    label_ids: Vec<String>,
+    #[serde(default)]
+    include_spam_trash: bool,
 }
 
 struct EmailStagedSyncRequest {
@@ -1218,6 +1268,165 @@ async fn execute_staged_email_sync(
     }))
 }
 
+async fn execute_gmail_provider_sync(
+    pool: &PgPool,
+    spec: &PackageOperationSpec,
+    mode_id: &str,
+    scope: &mut serde_json::Map<String, serde_json::Value>,
+    preview_summary: &mut serde_json::Value,
+) -> Result<Option<EmailSyncExecutionResult>> {
+    let Some(request) = EmailGmailSyncRequest::from_scope(scope)? else {
+        return Ok(None);
+    };
+    let provider_scope = EmailProviderOperationScope::from_scope(
+        spec.operation_type,
+        EmailProviderRuntimeMode::GmailScheduledSync,
+        scope,
+    )?;
+    let started = Instant::now();
+    let token = tokio::fs::read_to_string(&request.token_file)
+        .await
+        .map_err(|error| {
+            SinexError::io("Failed to read Gmail API token file")
+                .with_context("token_file", request.token_file.to_string())
+                .with_std_error(&error)
+                .with_operation("ops.start")
+        })?;
+    let token = token.trim().to_string();
+    if token.is_empty() {
+        return Err(SinexError::validation("Gmail API token file is empty")
+            .with_context("token_file", request.token_file.to_string())
+            .with_operation("ops.start"));
+    }
+
+    scope.insert(
+        "gmail_sync_input".to_string(),
+        request.sanitized_scope_value(),
+    );
+    let material_record =
+        register_email_provider_material(pool, spec, mode_id, &provider_scope).await?;
+    let client = GmailHttpClient::with_endpoint(
+        reqwest::Client::new(),
+        request
+            .api_base_url
+            .unwrap_or_else(|| "https://gmail.googleapis.com/gmail/v1".to_string()),
+        request.user_id.unwrap_or_else(|| "me".to_string()),
+        token,
+    );
+    let config = GmailApiCursorConfig {
+        account_binding_ref: provider_scope.account_binding_ref.clone(),
+        mailbox_scope: provider_scope.mailbox_scope.clone(),
+        initial_page_token: provider_scope.page_token.clone(),
+        initial_history_id: provider_scope.gmail_history_id.clone(),
+        page_size: request
+            .page_size
+            .unwrap_or(EMAIL_GMAIL_SYNC_DEFAULT_PAGE_SIZE)
+            .max(1),
+        label_ids: request.label_ids,
+        include_spam_trash: request.include_spam_trash,
+    };
+    let summary = admit_gmail_adapter_records(pool, &material_record, client, config).await?;
+    let runtime = email_provider_executed_runtime_value(
+        EmailProviderRuntimeMode::GmailScheduledSync,
+        &provider_scope,
+    );
+
+    scope.insert(
+        "executor_state".to_string(),
+        serde_json::json!(EMAIL_GMAIL_SYNC_EXECUTOR_STATE),
+    );
+    scope.insert(
+        "provider_material_id".to_string(),
+        serde_json::json!(summary.material_id),
+    );
+    scope.insert(
+        "provider_event_ids".to_string(),
+        serde_json::json!(summary.event_ids),
+    );
+    scope.insert(
+        "provider_record_count".to_string(),
+        serde_json::json!(summary.parsed_record_count),
+    );
+    scope.insert("provider_runtime".to_string(), runtime.clone());
+    if let Some(cursor) = summary.provider_cursor.clone() {
+        scope.insert("provider_cursor".to_string(), cursor);
+    }
+
+    let preview = preview_summary
+        .as_object_mut()
+        .expect("package operation preview is an object");
+    preview.insert(
+        "executor_state".to_string(),
+        serde_json::json!(EMAIL_GMAIL_SYNC_EXECUTOR_STATE),
+    );
+    preview.insert(
+        "provider_material_id".to_string(),
+        serde_json::json!(scope["provider_material_id"]),
+    );
+    preview.insert(
+        "provider_record_count".to_string(),
+        serde_json::json!(summary.parsed_record_count),
+    );
+    preview.insert(
+        "admitted_event_count".to_string(),
+        serde_json::json!(scope["provider_event_ids"].as_array().map_or(0, Vec::len)),
+    );
+    preview.insert("provider_runtime".to_string(), runtime);
+    if let Some(cursor) = summary.provider_cursor {
+        preview.insert("provider_cursor".to_string(), cursor);
+    }
+
+    Ok(Some(EmailSyncExecutionResult {
+        status: OperationStatus::Success,
+        message: format!("{}; Gmail API sync admitted", spec.surface),
+        duration_ms: Some(elapsed_millis(started)),
+    }))
+}
+
+impl EmailGmailSyncRequest {
+    fn from_scope(scope: &serde_json::Map<String, serde_json::Value>) -> Result<Option<Self>> {
+        let Some(token_file) = optional_scope_string(scope, "gmail_token_file")
+            .or_else(|| optional_scope_string(scope, "access_token_file"))
+            .or_else(|| optional_scope_string(scope, "token_file"))
+        else {
+            return Ok(None);
+        };
+        Ok(Some(Self {
+            token_file: Utf8PathBuf::from(token_file),
+            api_base_url: optional_scope_string(scope, "gmail_api_base_url")
+                .or_else(|| optional_scope_string(scope, "api_base_url")),
+            user_id: optional_scope_string(scope, "gmail_user_id")
+                .or_else(|| optional_scope_string(scope, "user_id")),
+            page_size: scope
+                .get("page_size")
+                .and_then(serde_json::Value::as_u64)
+                .map(u32::try_from)
+                .transpose()
+                .map_err(|error| {
+                    SinexError::validation("Gmail page_size must fit in u32")
+                        .with_std_error(&error)
+                        .with_operation("ops.start")
+                })?,
+            label_ids: scope_string_list(scope, &["label_id", "label_ids"])?,
+            include_spam_trash: scope
+                .get("include_spam_trash")
+                .and_then(serde_json::Value::as_bool)
+                .unwrap_or(false),
+        }))
+    }
+
+    fn sanitized_scope_value(&self) -> serde_json::Value {
+        serde_json::json!({
+            "token_file_ref": self.token_file.to_string(),
+            "api_base_url": self.api_base_url,
+            "user_id": self.user_id,
+            "page_size": self.page_size.unwrap_or(EMAIL_GMAIL_SYNC_DEFAULT_PAGE_SIZE),
+            "label_ids": self.label_ids.clone(),
+            "include_spam_trash": self.include_spam_trash,
+        })
+    }
+}
+
 impl EmailStagedSyncRequest {
     fn from_scope(
         mode_id: &str,
@@ -1290,6 +1499,114 @@ fn staged_path_list(
     paths.sort();
     paths.dedup();
     Ok(paths)
+}
+
+fn scope_string_list(
+    scope: &serde_json::Map<String, serde_json::Value>,
+    keys: &[&str],
+) -> Result<Vec<String>> {
+    let mut values = Vec::new();
+    for key in keys {
+        let Some(value) = scope.get(*key) else {
+            continue;
+        };
+        match value {
+            serde_json::Value::String(text) => values.push(text.to_string()),
+            serde_json::Value::Array(entries) => {
+                for entry in entries {
+                    let text = entry.as_str().ok_or_else(|| {
+                        SinexError::validation(format!("{key} entries must be strings"))
+                            .with_operation("ops.start")
+                    })?;
+                    values.push(text.to_string());
+                }
+            }
+            _ => {
+                return Err(SinexError::validation(format!(
+                    "{key} must be a string or array of strings"
+                ))
+                .with_operation("ops.start"));
+            }
+        }
+    }
+    values.retain(|value| !value.trim().is_empty());
+    values.sort();
+    values.dedup();
+    Ok(values)
+}
+
+async fn register_email_provider_material(
+    pool: &PgPool,
+    spec: &PackageOperationSpec,
+    mode_id: &str,
+    provider_scope: &EmailProviderOperationScope,
+) -> Result<sinex_db::SourceMaterialRecord> {
+    let source_identifier = format!("provider://gmail/{}", provider_scope.account_binding_ref);
+    let mut contract = SourceMaterialMetadataContract::new(
+        SourceMaterialFormat::Json,
+        SourceMaterialTimingInfoType::StagedAt,
+    );
+    contract.origin = Some(SourceOrigin {
+        source_uri: Some(source_identifier.clone()),
+        binding_id: Some(mode_id.to_string()),
+        ..SourceOrigin::default()
+    });
+    let material = sinex_db::repositories::SourceMaterial::blob_text(&source_identifier)
+        .with_metadata_contract(&contract)
+        .with_metadata(serde_json::json!({
+            "email_provider_sync": {
+                "source_id": spec.source_id,
+                "mode_id": mode_id,
+                "operation_type": spec.operation_type,
+                "action": spec.action,
+                "provider": "gmail",
+                "account_binding_ref": provider_scope.account_binding_ref.clone(),
+                "mailbox_scope": provider_scope.mailbox_scope.clone(),
+            }
+        }));
+    pool.source_materials().register_material(material).await
+}
+
+async fn admit_gmail_adapter_records(
+    pool: &PgPool,
+    material_record: &sinex_db::SourceMaterialRecord,
+    client: GmailHttpClient,
+    config: GmailApiCursorConfig,
+) -> Result<EmailProviderSyncSummary> {
+    let material_id = Id::<SourceMaterial>::from_uuid(material_record.id);
+    let adapter = GmailApiCursorAdapter::new(client);
+    let mut stream = adapter
+        .open(material_id, &config, None)
+        .await
+        .map_err(|error| {
+            SinexError::parse("Gmail API adapter failed to open")
+                .with_context("material_id", material_record.id.to_string())
+                .with_context("parse_error", error.to_string())
+                .with_operation("ops.start")
+        })?;
+    let mut parser = EmailMailboxParser;
+    let mut summary = EmailProviderSyncSummary {
+        material_id: material_record.id.to_string(),
+        event_ids: Vec::new(),
+        parsed_record_count: 0,
+        provider_cursor: None,
+    };
+    while let Some(record) = stream.next().await {
+        let record = record.map_err(|error| {
+            SinexError::parse("Gmail API adapter failed to read record")
+                .with_context("material_id", material_record.id.to_string())
+                .with_context("parse_error", error.to_string())
+                .with_operation("ops.start")
+        })?;
+        summary.parsed_record_count += 1;
+        if let Some(cursor) =
+            admit_email_provider_record(pool, &mut parser, record, material_id, &mut summary)
+                .await?
+        {
+            summary.provider_cursor = Some(cursor);
+        }
+    }
+    Ok(summary)
 }
 
 async fn execute_mbox_staged_email_sync(
@@ -1585,6 +1902,44 @@ async fn admit_email_record(
         }
     }
     Ok(())
+}
+
+async fn admit_email_provider_record(
+    pool: &PgPool,
+    parser: &mut EmailMailboxParser,
+    record: SourceRecord,
+    material_id: Id<SourceMaterial>,
+    summary: &mut EmailProviderSyncSummary,
+) -> Result<Option<serde_json::Value>> {
+    let ctx = ParserContext {
+        source_id: SourceId::from_static("email.mailbox"),
+        source_material_id: material_id,
+        record_anchor: record.anchor.clone(),
+        operation_id: uuid::Uuid::now_v7(),
+        job_id: uuid::Uuid::now_v7(),
+        host: std::env::var("HOSTNAME")
+            .or_else(|_| std::env::var("HOST"))
+            .unwrap_or_else(|_| "unknown-host".to_string()),
+        acquisition_time: Timestamp::now(),
+    };
+    let intents = parser.parse_record(record, &ctx).await.map_err(|error| {
+        SinexError::parse("email provider parser failed")
+            .with_context("source_id", "email.mailbox")
+            .with_context("parse_error", error.to_string())
+            .with_operation("ops.start")
+    })?;
+    let mut last_cursor = None;
+    for intent in intents {
+        if intent.event_type.as_str() == "email.sync_cursor.observed" {
+            last_cursor = Some(intent.payload.clone());
+        }
+        let event = parsed_material_intent_to_event(intent, material_id)?;
+        let persisted = pool.events().insert(event).await?;
+        if let Some(id) = persisted.id {
+            summary.event_ids.push(id.to_string());
+        }
+    }
+    Ok(last_cursor)
 }
 
 async fn resolve_media_worker_output(
@@ -1985,6 +2340,49 @@ fn email_provider_cursor_metadata_value(
         "cursor_value": scope.cursor_value_for(provider),
         "continuity_state": "unknown",
         "cursor_observation_contract": cursor_payload,
+    })
+}
+
+fn email_provider_executed_runtime_value(
+    mode: EmailProviderRuntimeMode,
+    scope: &EmailProviderOperationScope,
+) -> serde_json::Value {
+    let provider = mode.provider();
+    let cursor_kind = email_provider_sync_cursor_kind(provider);
+    let runtime_payload = EmailCaptureRuntimeObservedPayload {
+        provider,
+        account_binding_ref: scope.account_binding_ref.clone(),
+        mode_id: mode.mode_id().to_string(),
+        observed_at: Timestamp::now(),
+        provider_runtime: mode.runtime(),
+        auth_state: EmailAuthorizationState::Authorized,
+        network_state: EmailNetworkState::Online,
+        rate_limit_state: None,
+        sync_state: EmailSyncState::Idle,
+        pending_messages: None,
+        pending_material_bytes: None,
+        caveats: vec![
+            "Gmail API sync used an operator-provided token file; OAuth refresh remains outside this executor".to_string(),
+            "cursor is admitted as an event after provider records are consumed".to_string(),
+        ],
+        actions: email_provider_runtime_actions(mode)
+            .iter()
+            .map(|action| action.to_string())
+            .collect(),
+    };
+    serde_json::json!({
+        "provider": provider.as_str(),
+        "provider_runtime": mode.runtime().as_str(),
+        "account_binding_ref": scope.account_binding_ref,
+        "mailbox_scope": scope.mailbox_scope,
+        "authorization_state_ref": email_provider_authorization_state_ref(provider),
+        "sync_cursor_ref": format!("email.sync_cursor.observed:{}", cursor_kind.as_str()),
+        "sync_cursor_kind": cursor_kind.as_str(),
+        "runtime_state_ref": mode.runtime_state_ref(),
+        "coverage_ref": mode.coverage_ref(),
+        "debt_ref": mode.debt_ref(),
+        "caveats": runtime_payload.caveats.clone(),
+        "runtime_observation_contract": runtime_payload,
     })
 }
 
