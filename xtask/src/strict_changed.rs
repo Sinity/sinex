@@ -14,15 +14,15 @@
 //! xtask check --changed-strict main        # explicit base ref
 //! ```
 
-use color_eyre::eyre::{Result, eyre};
+use color_eyre::eyre::{Context, Result, eyre};
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-/// Compute the merge-base SHA between `base` and `HEAD`.
-fn merge_base(base: &str) -> Result<String> {
+fn merge_base_in(base: &str, repo_root: &Path) -> Result<String> {
     let output = Command::new("git")
         .args(["merge-base", base, "HEAD"])
+        .current_dir(repo_root)
         .output()
         .map_err(|e| eyre!("failed to spawn git merge-base: {e}"))?;
 
@@ -40,13 +40,32 @@ fn merge_base(base: &str) -> Result<String> {
 /// `base_ref` may be any git ref or SHA accepted by `git diff --name-only`.
 /// The caller is responsible for resolving the merge-base if needed.
 pub fn changed_rust_files(base_ref: &str) -> Result<Vec<PathBuf>> {
-    let mb = merge_base(base_ref)?;
-    changed_rust_files_from_merge_base(&mb)
+    changed_rust_files_in_repo(base_ref, Path::new("."))
 }
 
-fn changed_rust_files_from_merge_base(merge_base: &str) -> Result<Vec<PathBuf>> {
+/// Return the Rust files changed relative to `base_ref`, including committed
+/// branch changes, staged/unstaged worktree changes, and untracked Rust files.
+///
+/// `git diff <merge-base> HEAD` is not enough for agent workflows because
+/// verification normally runs before commit. A dirty worktree must still affect
+/// changed-strict package selection; otherwise the guard can report a false
+/// green with zero packages checked.
+pub fn changed_rust_files_in_repo(base_ref: &str, repo_root: &Path) -> Result<Vec<PathBuf>> {
+    let mb = merge_base_in(base_ref, repo_root)?;
+    let mut files = BTreeSet::new();
+    files.extend(changed_rust_files_from_merge_base_in(&mb, repo_root)?);
+    files.extend(changed_worktree_rust_files_in(repo_root)?);
+    files.extend(untracked_rust_files_in(repo_root)?);
+    Ok(files.into_iter().collect())
+}
+
+fn changed_rust_files_from_merge_base_in(
+    merge_base: &str,
+    repo_root: &Path,
+) -> Result<Vec<PathBuf>> {
     let output = Command::new("git")
         .args(["diff", "--name-only", merge_base, "HEAD", "--", "*.rs"])
+        .current_dir(repo_root)
         .output()
         .map_err(|e| eyre!("failed to spawn git diff: {e}"))?;
 
@@ -54,6 +73,48 @@ fn changed_rust_files_from_merge_base(merge_base: &str) -> Result<Vec<PathBuf>> 
         let stderr = String::from_utf8_lossy(&output.stderr);
         return Err(eyre!(
             "git diff --name-only {merge_base} HEAD -- *.rs failed: {stderr}"
+        ));
+    }
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    Ok(stdout
+        .lines()
+        .filter(|l| !l.is_empty())
+        .map(PathBuf::from)
+        .collect())
+}
+
+fn changed_worktree_rust_files_in(repo_root: &Path) -> Result<Vec<PathBuf>> {
+    let output = Command::new("git")
+        .args(["diff", "--name-only", "HEAD", "--", "*.rs"])
+        .current_dir(repo_root)
+        .output()
+        .wrap_err("failed to spawn git diff for dirty worktree")?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        return Err(eyre!("git diff --name-only HEAD -- *.rs failed: {stderr}"));
+    }
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    Ok(stdout
+        .lines()
+        .filter(|l| !l.is_empty())
+        .map(PathBuf::from)
+        .collect())
+}
+
+fn untracked_rust_files_in(repo_root: &Path) -> Result<Vec<PathBuf>> {
+    let output = Command::new("git")
+        .args(["ls-files", "--others", "--exclude-standard", "--", "*.rs"])
+        .current_dir(repo_root)
+        .output()
+        .wrap_err("failed to spawn git ls-files for untracked Rust files")?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        return Err(eyre!(
+            "git ls-files --others --exclude-standard -- *.rs failed: {stderr}"
         ));
     }
 
@@ -157,7 +218,7 @@ fn extract_package_name(cargo_toml: &Path) -> Option<String> {
 /// Return the deduplicated, sorted set of Cargo package names that own at least
 /// one of the Rust files changed between `base_ref` and `HEAD`.
 pub fn affected_packages(base_ref: &str, workspace_root: &Path) -> Result<BTreeSet<String>> {
-    let files = changed_rust_files(base_ref)?;
+    let files = changed_rust_files_in_repo(base_ref, workspace_root)?;
     affected_packages_for_files(&files, workspace_root)
 }
 
@@ -188,8 +249,8 @@ pub struct ChangedStrictPlan {
 }
 
 pub fn plan_changed_strict(base_ref: &str, workspace_root: &Path) -> Result<ChangedStrictPlan> {
-    let mb = merge_base(base_ref)?;
-    let changed_files = changed_rust_files_from_merge_base(&mb)?;
+    let mb = merge_base_in(base_ref, workspace_root)?;
+    let changed_files = changed_rust_files_in_repo(base_ref, workspace_root)?;
     let affected_packages = affected_packages_for_files(&changed_files, workspace_root)?
         .into_iter()
         .collect();
@@ -255,9 +316,9 @@ pub fn run_changed_strict(
     xtask_bin: &Path,
     extra_check_args: &[String],
 ) -> Result<ChangedStrictReport> {
-    let mb = merge_base(base_ref)?;
-    let changed_files = changed_rust_files(base_ref)?;
-    let pkgs = affected_packages(base_ref, workspace_root)?;
+    let mb = merge_base_in(base_ref, workspace_root)?;
+    let changed_files = changed_rust_files_in_repo(base_ref, workspace_root)?;
+    let pkgs = affected_packages_for_files(&changed_files, workspace_root)?;
     let pkg_list: Vec<String> = pkgs.into_iter().collect();
 
     if pkg_list.is_empty() {

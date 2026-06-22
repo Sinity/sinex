@@ -688,9 +688,10 @@ fn markdown_cell(text: &str) -> String {
 mod tests {
     use super::*;
     use crate::command_catalog::collect_command_catalog;
+    use crate::sandbox::sinex_test;
 
-    #[test]
-    fn help_category_paths_exist() {
+    #[sinex_test]
+    async fn help_category_paths_exist() -> ::xtask::sandbox::TestResult<()> {
         let commands = collect_command_catalog();
         for category in HELP_CATEGORIES {
             for path in category.command_paths {
@@ -700,10 +701,11 @@ mod tests {
                 );
             }
         }
+        Ok(())
     }
 
-    #[test]
-    fn guide_paths_exist() {
+    #[sinex_test]
+    async fn guide_paths_exist() -> ::xtask::sandbox::TestResult<()> {
         let commands = collect_command_catalog();
         for section in GUIDE_SECTIONS {
             for entry in section.entries {
@@ -714,10 +716,11 @@ mod tests {
                 );
             }
         }
+        Ok(())
     }
 
-    #[test]
-    fn reference_renders_global_flags() {
+    #[sinex_test]
+    async fn reference_renders_global_flags() -> ::xtask::sandbox::TestResult<()> {
         let rendered = render_command_reference(&[CommandInfo {
             name: "check".to_string(),
             about: Some("Compile verification".to_string()),
@@ -740,5 +743,6 @@ mod tests {
         assert!(
             rendered.contains("| `-p, --package` | yes | no | Check specific package(s) only |")
         );
+        Ok(())
     }
 }

@@ -1530,15 +1530,16 @@ mod tests {
     use std::process::Command as StdCommand;
     use std::time::{Duration, Instant};
 
-    #[test]
-    fn nats_port_matches_flake_hash_for_sinex_checkout() {
+    #[sinex_test]
+    async fn nats_port_matches_flake_hash_for_sinex_checkout() -> ::xtask::sandbox::TestResult<()> {
         let checkout = Path::new("/realm/project/sinex");
         assert_eq!(StackConfig::port_offset_for_checkout(checkout), 86);
         assert_eq!(StackConfig::nats_port_for_checkout(checkout), 4308);
+        Ok(())
     }
 
-    #[test]
-    fn discover_nats_port_reads_generated_config() -> Result<()> {
+    #[sinex_test]
+    async fn discover_nats_port_reads_generated_config() -> Result<()> {
         let temp = tempfile::tempdir()?;
         let config_dir = temp.path().join("config/nats");
         fs::create_dir_all(&config_dir)?;
@@ -1554,8 +1555,8 @@ port = 4310
         Ok(())
     }
 
-    #[test]
-    fn service_pid_state_classifies_stale_pid_files() -> Result<()> {
+    #[sinex_test]
+    async fn service_pid_state_classifies_stale_pid_files() -> Result<()> {
         let temp = tempfile::tempdir()?;
         let pid_file = temp.path().join("service.pid");
         fs::write(&pid_file, "999999999\n")?;
@@ -1564,8 +1565,8 @@ port = 4310
         Ok(())
     }
 
-    #[test]
-    fn all_checkouts_status_totals_stale_pid_files_and_sizes() -> Result<()> {
+    #[sinex_test]
+    async fn all_checkouts_status_totals_stale_pid_files_and_sizes() -> Result<()> {
         let base = tempfile::tempdir()?;
         let cache_root = base.path().join("hash123");
         let dev_state = cache_root.join("dev-state");
@@ -1604,8 +1605,8 @@ port = 4310
         Ok(())
     }
 
-    #[test]
-    fn all_checkouts_cleanup_removes_stale_lock_and_pid_files() -> Result<()> {
+    #[sinex_test]
+    async fn all_checkouts_cleanup_removes_stale_lock_and_pid_files() -> Result<()> {
         let base = tempfile::tempdir()?;
         let checkout = tempfile::tempdir()?;
         let cache_root = base.path().join("hash123");
@@ -1649,8 +1650,8 @@ port = 4310
         Ok(())
     }
 
-    #[test]
-    fn all_checkouts_cleanup_dry_run_leaves_stale_files() -> Result<()> {
+    #[sinex_test]
+    async fn all_checkouts_cleanup_dry_run_leaves_stale_files() -> Result<()> {
         let base = tempfile::tempdir()?;
         let cache_root = base.path().join("hash123");
         let dev_state = cache_root.join("dev-state");
@@ -1676,8 +1677,8 @@ port = 4310
         Ok(())
     }
 
-    #[test]
-    fn all_checkouts_cleanup_dry_run_reports_dev_local_sinexd() -> Result<()> {
+    #[sinex_test]
+    async fn all_checkouts_cleanup_dry_run_reports_dev_local_sinexd() -> Result<()> {
         let base = tempfile::tempdir()?;
         let checkout = tempfile::tempdir()?;
         let cache_root = base.path().join("hash123");
@@ -1744,8 +1745,8 @@ port = 4310
         bail!("fake dev-local sinexd pid {pid} was not detected");
     }
 
-    #[test]
-    fn current_checkout_status_reports_dev_local_sinexd() -> Result<()> {
+    #[sinex_test]
+    async fn current_checkout_status_reports_dev_local_sinexd() -> Result<()> {
         let checkout = crate::config::workspace_root();
         let config = StackConfig::for_current_checkout()?;
         let temp = tempfile::Builder::new()
@@ -1789,8 +1790,8 @@ port = 4310
         bail!("fake current-checkout sinexd pid {pid} was not detected");
     }
 
-    #[test]
-    fn parse_cmdline_bytes_ignores_empty_nul_segments() {
+    #[sinex_test]
+    async fn parse_cmdline_bytes_ignores_empty_nul_segments() -> ::xtask::sandbox::TestResult<()> {
         assert_eq!(
             parse_cmdline_bytes(b"postgres\0-D\0/tmp/dev-state/data/postgres\0\0"),
             vec![
@@ -1799,28 +1800,32 @@ port = 4310
                 "/tmp/dev-state/data/postgres".to_string()
             ]
         );
+        Ok(())
     }
 
-    #[test]
-    fn parse_proc_stat_ppid_handles_comm_with_spaces() {
+    #[sinex_test]
+    async fn parse_proc_stat_ppid_handles_comm_with_spaces() -> ::xtask::sandbox::TestResult<()> {
         assert_eq!(
             parse_proc_stat_ppid("123 (postgres: checkpointer) S 42 1 1 0"),
             Some(42)
         );
+        Ok(())
     }
 
-    #[test]
-    fn probe_annex_available_treats_missing_binary_as_absent() {
+    #[sinex_test]
+    async fn probe_annex_available_treats_missing_binary_as_absent()
+    -> ::xtask::sandbox::TestResult<()> {
         let available = probe_annex_available(Err(std::io::Error::new(
             std::io::ErrorKind::NotFound,
             "missing",
         )))
         .unwrap();
         assert!(!available);
+        Ok(())
     }
 
-    #[test]
-    fn probe_annex_available_reports_nonzero_status() {
+    #[sinex_test]
+    async fn probe_annex_available_reports_nonzero_status() -> ::xtask::sandbox::TestResult<()> {
         let error = probe_annex_available(Ok(std::process::Output {
             status: std::process::ExitStatus::from_raw(1 << 8),
             stdout: Vec::new(),
@@ -1828,10 +1833,12 @@ port = 4310
         }))
         .unwrap_err();
         assert!(format!("{error:#}").contains("git-annex broken"));
+        Ok(())
     }
 
-    #[test]
-    fn require_successful_command_reports_failure_output() {
+    #[sinex_test]
+    async fn require_successful_command_reports_failure_output() -> ::xtask::sandbox::TestResult<()>
+    {
         let error = require_successful_command(
             "git init for annex repository",
             Ok(std::process::Output {
@@ -1844,10 +1851,12 @@ port = 4310
         let message = format!("{error:#}");
         assert!(message.contains("permission denied"));
         assert!(message.contains("git init for annex repository"));
+        Ok(())
     }
 
-    #[test]
-    fn annex_git_subprocess_clears_hook_repository_environment() {
+    #[sinex_test]
+    async fn annex_git_subprocess_clears_hook_repository_environment()
+    -> ::xtask::sandbox::TestResult<()> {
         let command = git_subprocess("git");
         for key in GIT_REPOSITORY_ENV_KEYS {
             let is_removed = command
@@ -1858,6 +1867,7 @@ port = 4310
                 "{key} must be removed so annex initialization cannot mutate the hook caller repo"
             );
         }
+        Ok(())
     }
 
     #[sinex_test]
@@ -1890,8 +1900,9 @@ port = 4310
         Ok(())
     }
 
-    #[test]
-    fn collect_snapshot_names_reports_entry_failures_without_dropping_snapshots() {
+    #[sinex_test]
+    async fn collect_snapshot_names_reports_entry_failures_without_dropping_snapshots()
+    -> ::xtask::sandbox::TestResult<()> {
         let probe = collect_snapshot_names(
             Path::new("/tmp/snapshots"),
             [
@@ -1909,11 +1920,13 @@ port = 4310
                 .unwrap_or_default()
                 .contains("failed to read snapshot entry")
         );
+        Ok(())
     }
 
     #[cfg(unix)]
-    #[test]
-    fn collect_snapshot_names_reports_non_utf8_entry_names() {
+    #[sinex_test]
+    async fn collect_snapshot_names_reports_non_utf8_entry_names()
+    -> ::xtask::sandbox::TestResult<()> {
         use std::os::unix::ffi::OsStringExt;
 
         let probe = collect_snapshot_names(
@@ -1933,6 +1946,7 @@ port = 4310
                 .unwrap_or_default()
                 .contains("entry name is not valid UTF-8")
         );
+        Ok(())
     }
 
     #[sinex_test]
