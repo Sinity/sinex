@@ -1815,9 +1815,8 @@ mod tests {
     #[sinex_test]
     async fn snapshot_background_registry_reports_busy_when_lock_is_held()
     -> ::xtask::sandbox::TestResult<()> {
-        let runtime = tokio::runtime::Runtime::new().expect("runtime should build");
         let background = Arc::new(AsyncMutex::new(BackgroundRegistry::default()));
-        let _guard = runtime.block_on(background.lock());
+        let _guard = background.lock().await;
 
         let snapshot = snapshot_background_registry(background.as_ref());
 
@@ -1835,12 +1834,11 @@ mod tests {
     #[sinex_test]
     async fn snapshot_background_registry_reports_pending_labels_when_available()
     -> ::xtask::sandbox::TestResult<()> {
-        let runtime = tokio::runtime::Runtime::new().expect("runtime should build");
         let background = Arc::new(AsyncMutex::new(BackgroundRegistry::default()));
-        runtime.block_on(async {
+        {
             let mut guard = background.lock().await;
             guard.add_hook("cleanup-hook", futures::future::ready(()).boxed());
-        });
+        }
 
         let snapshot = snapshot_background_registry(background.as_ref());
 

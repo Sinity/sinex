@@ -70,6 +70,9 @@ impl XtaskCommand for LintForbiddenCommand {
         // #[sinex_test]: proc-macro / trybuild fixtures, or tests requiring
         // controlled process-global env mutation under a specific thread model.
         let rust_test_allow = [
+            // Proc-macro crate: self-tests parser/expansion helpers and cannot
+            // depend on xtask's harness without creating a dependency cycle.
+            "xtask/macros/src/lib.rs",
             // EnvGuard tests mutate process-global env vars under documented
             // SAFETY/threading invariants, paired with the multi_thread race
             // tests above in the same module.
