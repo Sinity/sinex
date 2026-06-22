@@ -325,7 +325,7 @@ fn format_source_materials_table(response: &SourcesListResponse) -> String {
 
         builder.push_record([
             short_id,
-            m.material_kind.clone(),
+            m.material_kind.to_string(),
             m.source_identifier.clone(),
             m.status.to_string(),
             m.format
@@ -484,7 +484,7 @@ fn format_coverage_table(response: &SourcesCoverageResponse) -> String {
 
         builder.push_record([
             bucket.source_identifier.clone(),
-            bucket.material_kind.clone(),
+            bucket.material_kind.to_string(),
             earliest.to_string(),
             latest.to_string(),
             events,
@@ -1319,7 +1319,7 @@ mod tests {
     fn fixture_material(id: &str) -> SourceMaterialSummary {
         SourceMaterialSummary {
             id: id.to_string(),
-            material_kind: "session_document".to_string(),
+            material_kind: sinex_primitives::MaterialStorageKind::Annex,
             source_identifier: "fixture.source".to_string(),
             status: MaterialStatus::Completed,
             timing_info_type: SourceMaterialTimingInfoType::Intrinsic,
@@ -1335,7 +1335,7 @@ mod tests {
     fn fixture_coverage(source_identifier: &str) -> SourceCoverageEntry {
         SourceCoverageEntry {
             source_identifier: source_identifier.to_string(),
-            material_kind: "session_document".to_string(),
+            material_kind: sinex_primitives::MaterialStorageKind::Annex,
             earliest_ts: Some("2026-06-01T00:00:00Z".to_string()),
             latest_ts: Some("2026-06-01T01:00:00Z".to_string()),
             event_count: Some(7),
