@@ -66,7 +66,7 @@ pub use directory_walk::{
 };
 pub use email_gmail_api::{
     GmailApiClient, GmailApiCursor, GmailApiCursorAdapter, GmailApiCursorConfig, GmailApiPage,
-    GmailApiPageRequest, GmailApiRecord, GmailApiRecordKind,
+    GmailApiPageRequest, GmailApiRecord, GmailApiRecordKind, GmailHttpClient,
 };
 pub use email_imap_sync::{
     ImapSyncAdapter, ImapSyncBatch, ImapSyncClient, ImapSyncConfig, ImapSyncCursor, ImapSyncMode,

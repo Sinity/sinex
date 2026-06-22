@@ -93,6 +93,7 @@ pub use adapters::{
     GmailApiPageRequest,
     GmailApiRecord,
     GmailApiRecordKind,
+    GmailHttpClient,
     ImapSyncAdapter,
     ImapSyncBatch,
     ImapSyncClient,
