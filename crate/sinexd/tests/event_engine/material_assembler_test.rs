@@ -150,8 +150,9 @@ async fn assembler_rejects_corrupted_slice_and_records_dlq(ctx: TestContext) -> 
                     if msg.contains("stream name already in use with a different configuration")
                         || msg.contains("request timed out")
                     {
-                        // Stream collision or slow JetStream — treat as inconclusive rather than failing the suite.
-                        return Ok(());
+                        bail!(
+                            "assembler exited before DLQ evidence was observed; this used to be treated as inconclusive but is a runtime-path failure: {msg}"
+                        );
                     }
                     bail!("assembler exited early: {msg}");
                 }
