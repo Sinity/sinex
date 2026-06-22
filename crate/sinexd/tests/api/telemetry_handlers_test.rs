@@ -5,6 +5,7 @@ use serde_json::{Value, json};
 use sinex_db::DbPoolExt;
 use sinex_primitives::error::ErrorClass;
 use sinex_primitives::events::DynamicPayload;
+use sinex_primitives::events::payloads::metrics::{StreamPressureDimension, StreamPressureLevel};
 use sinex_primitives::rpc::telemetry::*;
 use sinexd::api::handlers::{
     handle_telemetry_assembly_stats, handle_telemetry_command_frequency,
@@ -583,12 +584,12 @@ async fn operator_telemetry_handlers_follow_read_model_schema(ctx: TestContext) 
     assert_eq!(stream_stats.buckets[0].max_message_fill_pct, Some(32.0));
     assert_eq!(stream_stats.buckets[0].max_byte_fill_pct, Some(88.0));
     assert_eq!(
-        stream_stats.buckets[0].max_pressure_level.as_deref(),
-        Some("warning")
+        stream_stats.buckets[0].max_pressure_level,
+        Some(StreamPressureLevel::Warning)
     );
     assert_eq!(
-        stream_stats.buckets[0].limiting_dimension.as_deref(),
-        Some("bytes")
+        stream_stats.buckets[0].limiting_dimension,
+        Some(StreamPressureDimension::Bytes)
     );
     assert_eq!(stream_stats.buckets[0].max_messages, Some(2000));
 

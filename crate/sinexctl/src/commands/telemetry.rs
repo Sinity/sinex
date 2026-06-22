@@ -616,12 +616,12 @@ fn format_stream_stats_table(buckets: &[StreamStatsBucket]) -> String {
             format_opt_f64(bucket.max_byte_fill_pct),
             bucket
                 .max_pressure_level
-                .as_deref()
+                .map(sinex_primitives::events::payloads::metrics::StreamPressureLevel::as_str)
                 .unwrap_or("—")
                 .to_string(),
             bucket
                 .limiting_dimension
-                .as_deref()
+                .map(sinex_primitives::events::payloads::metrics::StreamPressureDimension::as_str)
                 .unwrap_or("—")
                 .to_string(),
             format_opt_f64(bucket.avg_messages),
