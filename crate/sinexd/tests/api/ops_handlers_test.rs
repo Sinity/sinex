@@ -328,6 +328,504 @@ async fn ops_start_projection_rebuild_recovers_pending_replay_invalidation(
 }
 
 #[sinex_test]
+async fn ops_start_records_media_operation_as_pending_executor(ctx: TestContext) -> TestResult<()> {
+    let auth = system_auth();
+    let response: OpsStartResponse = serde_json::from_value(
+        handle_ops_start(
+            ctx.pool(),
+            json!({
+                "operation_type": "media.screen-ocr.capture-region",
+                "scope": {
+                    "source_id": "media.screen-ocr",
+                    "mode_id": "source:media.screen-ocr.on-demand-region",
+                    "region": [0, 0, 640, 480],
+                    "reason": "operator-requested"
+                },
+            }),
+            &auth,
+        )
+        .await?,
+    )?;
+
+    assert_eq!(
+        response.operation.operation_type,
+        "media.screen-ocr.capture-region"
+    );
+    assert_eq!(response.operation.result_status, OperationStatus::Running);
+    assert_eq!(
+        response.operation.result_message.as_deref(),
+        Some("media_capture; executor pending")
+    );
+    let scope = response
+        .operation
+        .scope
+        .as_ref()
+        .expect("media operation scope should be recorded");
+    assert_eq!(scope["surface"], "media_capture");
+    assert_eq!(scope["source_id"], "media.screen-ocr");
+    assert_eq!(scope["mode_id"], "source:media.screen-ocr.on-demand-region");
+    assert_eq!(scope["action"], "capture_region");
+    assert_eq!(scope["executor_state"], "awaiting_runtime_executor");
+    let preview = response
+        .operation
+        .preview_summary
+        .as_ref()
+        .expect("media operation preview should be recorded");
+    assert_eq!(preview["executor_state"], "awaiting_runtime_executor");
+    assert_eq!(preview["operation_type"], "media.screen-ocr.capture-region");
+
+    let persisted = get_operation(&ctx, &auth, &response.operation.id).await?;
+    assert_eq!(
+        persisted.operation.operation_type,
+        "media.screen-ocr.capture-region"
+    );
+    assert_eq!(persisted.operation.result_status, OperationStatus::Running);
+    Ok(())
+}
+
+#[sinex_test]
+async fn ops_start_admits_media_worker_output(ctx: TestContext) -> TestResult<()> {
+    let auth = system_auth();
+    let response: OpsStartResponse = serde_json::from_value(
+        handle_ops_start(
+            ctx.pool(),
+            json!({
+                "operation_type": "media.screen-ocr.run-ocr",
+                "scope": {
+                    "source_id": "media.screen-ocr",
+                    "mode_id": "source:media.screen-ocr.local-model-batch",
+                    "worker_output": {
+                        "screenshot": {
+                            "display_id": "DP-2",
+                            "region": [0, 0, 800, 600],
+                            "width": 800,
+                            "height": 600,
+                            "source_file": "screens/session-a.png",
+                            "policy_posture": "operator-controlled-image-material"
+                        },
+                        "ocr_run": {
+                            "producer_run_id": "ocr-run-api",
+                            "engine_id": "tesseract",
+                            "engine_version": "5.5",
+                            "input_material_ids": ["raw-screen-a"],
+                            "output_refs": ["artifact:media.screen.ocr/run-api"],
+                            "duration_ms": 330,
+                            "resource_posture": "bounded-local-worker"
+                        },
+                        "segments": [
+                            {"text":"run-backed OCR","bbox":[4,8,160,24],"confidence":0.95}
+                        ]
+                    }
+                },
+            }),
+            &auth,
+        )
+        .await?,
+    )?;
+
+    assert_eq!(
+        response.operation.operation_type,
+        "media.screen-ocr.run-ocr"
+    );
+    assert_eq!(response.operation.result_status, OperationStatus::Success);
+    assert_eq!(
+        response.operation.result_message.as_deref(),
+        Some("media_capture; media worker output admitted")
+    );
+    let scope = response
+        .operation
+        .scope
+        .as_ref()
+        .expect("media worker-output operation scope should be recorded");
+    assert_eq!(scope["executor_state"], "worker_output_admitted");
+    assert!(
+        scope.get("worker_output").is_none(),
+        "operation scope must not persist raw inline media worker output"
+    );
+    assert!(
+        scope.get("worker_output_path").is_none(),
+        "operation scope must not persist worker output file paths after ingestion"
+    );
+    let material_id = scope["worker_output_material_id"]
+        .as_str()
+        .expect("worker output material id should be recorded");
+    let event_ids = scope["worker_output_event_ids"]
+        .as_array()
+        .expect("worker output event ids should be recorded");
+    assert_eq!(event_ids.len(), 3);
+    assert_eq!(
+        scope["worker_output_parser"]["parser_id"],
+        "media-screen-ocr-staged"
+    );
+
+    let persisted_events: Vec<String> = sqlx::query_scalar(
+        r#"
+        SELECT event_type
+        FROM core.events
+        WHERE source_material_id = $1::uuid
+        ORDER BY event_type
+        "#,
+    )
+    .bind(uuid::Uuid::parse_str(material_id)?)
+    .fetch_all(ctx.pool())
+    .await?;
+    assert_eq!(
+        persisted_events,
+        vec![
+            "media.screen.ocr_run_observed".to_string(),
+            "media.screen.ocr_segment_observed".to_string(),
+            "media.screen.screenshot_observed".to_string(),
+        ]
+    );
+    let preview = response
+        .operation
+        .preview_summary
+        .as_ref()
+        .expect("media worker-output operation preview should be recorded");
+    assert_eq!(preview["executor_state"], "worker_output_admitted");
+    assert_eq!(preview["admitted_event_count"], 3);
+    Ok(())
+}
+
+#[sinex_test]
+async fn ops_start_records_media_rebuild_invalidation_triggers(ctx: TestContext) -> TestResult<()> {
+    let auth = system_auth();
+    let response: OpsStartResponse = serde_json::from_value(
+        handle_ops_start(
+            ctx.pool(),
+            json!({
+                "operation_type": "media.screen-ocr.rebuild-artifact",
+                "scope": {
+                    "source_id": "media.screen-ocr",
+                    "mode_id": "source:media.screen-ocr.local-model-batch",
+                    "artifact_ref": "artifact:media.screen-ocr:example"
+                },
+            }),
+            &auth,
+        )
+        .await?,
+    )?;
+
+    let scope = response
+        .operation
+        .scope
+        .as_ref()
+        .expect("media rebuild operation scope should be recorded");
+    let operation_metadata = scope
+        .get("operation_metadata")
+        .expect("media rebuild should record operation metadata");
+    let triggers = operation_metadata["invalidation_triggers"]
+        .as_array()
+        .expect("invalidation triggers should be an array");
+    for expected in [
+        "redaction",
+        "source_material_change",
+        "replay",
+        "archive",
+        "parser_semantics_change",
+        "disclosure_policy_change",
+    ] {
+        assert!(
+            triggers.iter().any(|trigger| trigger == expected),
+            "media rebuild trigger {expected} should be present"
+        );
+    }
+    Ok(())
+}
+
+#[sinex_test]
+async fn ops_start_rejects_media_operation_wrong_mode(ctx: TestContext) -> TestResult<()> {
+    let auth = system_auth();
+    let error = handle_ops_start(
+        ctx.pool(),
+        json!({
+            "operation_type": "media.audio-transcript.run-model",
+            "scope": {
+                "source_id": "media.audio-transcript",
+                "mode_id": "source:media.audio-transcript.live-session"
+            },
+        }),
+        &auth,
+    )
+    .await
+    .expect_err("wrong package mode should be rejected");
+
+    assert!(
+        error
+            .to_string()
+            .contains("source:media.audio-transcript.local-model-batch")
+    );
+    Ok(())
+}
+
+#[sinex_test]
+async fn ops_start_records_email_sync_for_provider_mode(ctx: TestContext) -> TestResult<()> {
+    let auth = system_auth();
+    let response: OpsStartResponse = serde_json::from_value(
+        handle_ops_start(
+            ctx.pool(),
+            json!({
+                "operation_type": "email.mailbox.sync",
+                "scope": {
+                    "source_id": "email.mailbox",
+                    "mode_id": "source:email.mailbox.gmail-api-scheduled-sync",
+                    "account_ref": "operator-mailbox:primary",
+                    "gmail_history_id": "12345",
+                    "reason": "operator-requested"
+                },
+            }),
+            &auth,
+        )
+        .await?,
+    )?;
+
+    assert_eq!(response.operation.operation_type, "email.mailbox.sync");
+    assert_eq!(response.operation.result_status, OperationStatus::Running);
+    assert_eq!(
+        response.operation.result_message.as_deref(),
+        Some("email_capture; executor pending")
+    );
+    let scope = response
+        .operation
+        .scope
+        .as_ref()
+        .expect("email operation scope should be recorded");
+    assert_eq!(scope["surface"], "email_capture");
+    assert_eq!(scope["source_id"], "email.mailbox");
+    assert_eq!(
+        scope["mode_id"],
+        "source:email.mailbox.gmail-api-scheduled-sync"
+    );
+    assert_eq!(scope["action"], "sync");
+    assert_eq!(scope["account_ref"], "operator-mailbox:primary");
+    assert_eq!(scope["account_binding_ref"], "operator-mailbox:primary");
+    assert_eq!(
+        scope["provider_operation_scope"]["account_binding_ref"],
+        "operator-mailbox:primary"
+    );
+    let provider_runtime = &scope["provider_runtime"];
+    assert_eq!(provider_runtime["provider"], "gmail");
+    assert_eq!(provider_runtime["provider_runtime"], "scheduled-sync");
+    assert_eq!(
+        provider_runtime["account_binding_ref"],
+        "operator-mailbox:primary"
+    );
+    assert_eq!(
+        provider_runtime["authorization_state_ref"],
+        "email.mailbox.provider_authorization.gmail.oauth"
+    );
+    assert_eq!(
+        provider_runtime["sync_cursor_ref"],
+        "email.sync_cursor.observed:gmail-history-id"
+    );
+    assert_eq!(provider_runtime["sync_cursor_kind"], "gmail-history-id");
+    assert_eq!(
+        provider_runtime["runtime_state_ref"],
+        "email.capture_runtime.observed:gmail.scheduled_sync"
+    );
+    assert_eq!(
+        provider_runtime["coverage_ref"],
+        "coverage:email.mailbox.gmail.provider_runtime"
+    );
+    assert_eq!(
+        provider_runtime["debt_ref"],
+        "debt:email.mailbox.gmail.provider_runtime"
+    );
+    assert!(
+        provider_runtime["caveats"]
+            .as_array()
+            .expect("provider runtime caveats should be an array")
+            .iter()
+            .any(|caveat| caveat == "sync cursor persistence waits for Gmail history-id runtime")
+    );
+    assert_eq!(
+        provider_runtime["runtime_observation_contract"]["account_binding_ref"],
+        "operator-mailbox:primary"
+    );
+    assert_eq!(
+        provider_runtime["runtime_observation_contract"]["provider"],
+        "gmail"
+    );
+    assert_eq!(
+        provider_runtime["runtime_observation_contract"]["provider_runtime"],
+        "scheduled-sync"
+    );
+    assert_eq!(
+        provider_runtime["runtime_observation_contract"]["sync_state"],
+        "idle"
+    );
+
+    let provider_cursor = &scope["provider_cursor"];
+    assert_eq!(provider_cursor["provider"], "gmail");
+    assert_eq!(
+        provider_cursor["account_binding_ref"],
+        "operator-mailbox:primary"
+    );
+    assert_eq!(provider_cursor["cursor_kind"], "gmail-history-id");
+    assert_eq!(provider_cursor["cursor_value"], "12345");
+    assert_eq!(
+        provider_cursor["cursor_observation_contract"]["gmail_history_id"],
+        "12345"
+    );
+    assert_eq!(
+        provider_cursor["cursor_observation_contract"]["continuity_state"],
+        "unknown"
+    );
+
+    let preview = response
+        .operation
+        .preview_summary
+        .as_ref()
+        .expect("email operation preview should be recorded");
+    assert_eq!(preview["surface"], "email_capture");
+    assert_eq!(preview["operation_type"], "email.mailbox.sync");
+    assert_eq!(
+        preview["mode_id"],
+        "source:email.mailbox.gmail-api-scheduled-sync"
+    );
+    assert_eq!(preview["provider_runtime"], scope["provider_runtime"]);
+    assert_eq!(preview["provider_cursor"], scope["provider_cursor"]);
+    Ok(())
+}
+
+#[sinex_test]
+async fn ops_start_strips_provider_runtime_for_staged_email_mode(
+    ctx: TestContext,
+) -> TestResult<()> {
+    let auth = system_auth();
+    let response: OpsStartResponse = serde_json::from_value(
+        handle_ops_start(
+            ctx.pool(),
+            json!({
+                "operation_type": "email.mailbox.sync",
+                "scope": {
+                    "source_id": "email.mailbox",
+                    "mode_id": "source:email.mailbox.maildir-staged",
+                    "provider_runtime": {
+                        "provider": "gmail",
+                        "runtime_state_ref": "email.capture_runtime.observed:gmail.scheduled_sync"
+                    },
+                    "provider_cursor": {
+                        "provider": "gmail",
+                        "sync_cursor_kind": "gmail-history-id"
+                    }
+                },
+            }),
+            &auth,
+        )
+        .await?,
+    )?;
+
+    let scope = response
+        .operation
+        .scope
+        .as_ref()
+        .expect("email staged operation scope should be recorded");
+    assert_eq!(scope["mode_id"], "source:email.mailbox.maildir-staged");
+    assert!(
+        scope.get("provider_runtime").is_none(),
+        "staged email operations must not retain provider runtime metadata"
+    );
+    assert!(
+        scope.get("provider_cursor").is_none(),
+        "staged email operations must not retain provider cursor metadata"
+    );
+    let preview = response
+        .operation
+        .preview_summary
+        .as_ref()
+        .expect("email staged operation preview should be recorded");
+    assert!(
+        preview.get("provider_runtime").is_none(),
+        "staged email previews must not advertise provider runtime metadata"
+    );
+    assert!(
+        preview.get("provider_cursor").is_none(),
+        "staged email previews must not advertise provider cursor metadata"
+    );
+    Ok(())
+}
+
+#[sinex_test]
+async fn ops_start_rejects_email_provider_operation_without_account_binding(
+    ctx: TestContext,
+) -> TestResult<()> {
+    let auth = system_auth();
+    let error = handle_ops_start(
+        ctx.pool(),
+        json!({
+            "operation_type": "email.mailbox.sync",
+            "scope": {
+                "source_id": "email.mailbox",
+                "mode_id": "source:email.mailbox.gmail-api-scheduled-sync"
+            },
+        }),
+        &auth,
+    )
+    .await
+    .expect_err("provider sync should require an explicit account binding");
+
+    assert!(error.to_string().contains("requires account_binding_ref"));
+    Ok(())
+}
+
+#[sinex_test]
+async fn ops_start_rejects_email_provider_operation_with_wrong_cursor_family(
+    ctx: TestContext,
+) -> TestResult<()> {
+    let auth = system_auth();
+    let error = handle_ops_start(
+        ctx.pool(),
+        json!({
+            "operation_type": "email.mailbox.sync",
+            "scope": {
+                "source_id": "email.mailbox",
+                "mode_id": "source:email.mailbox.gmail-api-scheduled-sync",
+                "account_binding_ref": "operator-mailbox:primary",
+                "uidvalidity": "100",
+                "uid": "42"
+            },
+        }),
+        &auth,
+    )
+    .await
+    .expect_err("Gmail sync must reject IMAP cursor coordinates");
+
+    assert!(
+        error
+            .to_string()
+            .contains("cannot use IMAP UID cursor fields")
+    );
+    Ok(())
+}
+
+#[sinex_test]
+async fn ops_start_rejects_email_operation_without_mode(ctx: TestContext) -> TestResult<()> {
+    let auth = system_auth();
+    let error = handle_ops_start(
+        ctx.pool(),
+        json!({
+            "operation_type": "email.mailbox.authorize",
+            "scope": {
+                "source_id": "email.mailbox",
+                "account_ref": "operator-mailbox:primary"
+            },
+        }),
+        &auth,
+    )
+    .await
+    .expect_err("email provider operation should require a package mode");
+
+    assert!(error.to_string().contains("requires mode_id"));
+    assert!(
+        error
+            .to_string()
+            .contains("source:email.mailbox.gmail-api-scheduled-sync")
+    );
+    Ok(())
+}
+
+#[sinex_test]
 async fn ops_list_returns_operations(ctx: TestContext) -> TestResult<()> {
     let auth = system_auth();
 
