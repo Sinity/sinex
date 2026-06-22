@@ -6,11 +6,35 @@
 use assert_cmd::Command;
 use assert_cmd::cargo;
 use predicates::prelude::*;
-use xtask::sandbox::sinex_test;
+use std::fs;
+use std::time::{SystemTime, UNIX_EPOCH};
+use tempfile::TempDir;
+use xtask::sandbox::{TestResult, sinex_test};
 
 /// Helper to create a sinexctl command
 fn sinexctl() -> Command {
     Command::new(cargo::cargo_bin!("sinexctl"))
+}
+
+fn config_home_with_default_format(format: &str) -> TestResult<TempDir> {
+    let dir = tempfile::tempdir()?;
+    let config_body = format!("default_format = \"{format}\"\n");
+    for config_dir in [
+        dir.path().join("sinexctl"),
+        dir.path().join("com").join("sinex").join("sinexctl"),
+    ] {
+        fs::create_dir_all(&config_dir)?;
+        fs::write(config_dir.join("config.toml"), &config_body)?;
+    }
+    Ok(dir)
+}
+
+fn unique_demo_seed() -> u64 {
+    let nanos = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("system clock must be after unix epoch")
+        .as_nanos();
+    (nanos as u64) ^ u64::from(std::process::id())
 }
 
 mod help_tests {
@@ -592,6 +616,109 @@ mod error_handling_tests {
 
 mod output_format_tests {
     use super::*;
+
+    #[sinex_test]
+    async fn list_formats_json_cli_emits_operator_surface_catalog() -> TestResult<()> {
+        let output = sinexctl()
+            .args(["--list-formats", "--format", "json"])
+            .output()?;
+
+        assert!(
+            output.status.success(),
+            "sinexctl --list-formats --format json failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let value: serde_json::Value = serde_json::from_slice(&output.stdout)?;
+        assert_eq!(value["schema_version"], 1);
+
+        let commands = value["commands"]
+            .as_array()
+            .expect("operator surface catalog must expose command rows");
+        let query = commands
+            .iter()
+            .find(|entry| entry["path"] == "query")
+            .expect("catalog must include the root query command");
+        assert!(
+            query["capability"]["supported"]
+                .as_array()
+                .expect("query formats must be an array")
+                .iter()
+                .any(|format| format == "ndjson"),
+            "query must advertise executable ndjson output"
+        );
+
+        let trace = commands
+            .iter()
+            .find(|entry| entry["path"] == "events trace")
+            .expect("catalog must include events trace");
+        assert!(
+            trace["capability"]["supported"]
+                .as_array()
+                .expect("trace formats must be an array")
+                .iter()
+                .any(|format| format == "dot"),
+            "events trace must advertise executable DOT output"
+        );
+
+        let rpc_methods = value["rpc_methods"]
+            .as_array()
+            .expect("catalog must expose RPC method descriptors");
+        assert!(
+            rpc_methods
+                .iter()
+                .any(|method| method["name"] == "events.query"),
+            "catalog must expose typed events.query RPC metadata"
+        );
+
+        let mcp_surfaces = value["mcp_surfaces"]
+            .as_array()
+            .expect("catalog must expose MCP surface descriptors");
+        assert!(
+            mcp_surfaces
+                .iter()
+                .any(|surface| surface["name"] == "sinex.source_readiness"),
+            "catalog must expose MCP source-readiness backing surface"
+        );
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn list_formats_cli_rejects_ndjson_as_catalog_format() -> TestResult<()> {
+        sinexctl()
+            .args(["--list-formats", "--format", "ndjson"])
+            .assert()
+            .failure()
+            .stderr(predicate::str::contains("--list-formats"))
+            .stderr(predicate::str::contains("ndjson"));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn config_default_ndjson_rejects_format_consuming_command() -> TestResult<()> {
+        let config_home = config_home_with_default_format("ndjson")?;
+
+        sinexctl()
+            .env("XDG_CONFIG_HOME", config_home.path())
+            .args(["runtime", "health"])
+            .assert()
+            .failure()
+            .stderr(predicate::str::contains("runtime health"))
+            .stderr(predicate::str::contains("Ndjson"));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn config_default_ndjson_does_not_break_formatless_command() -> TestResult<()> {
+        let config_home = config_home_with_default_format("ndjson")?;
+        let seed = unique_demo_seed().to_string();
+
+        sinexctl()
+            .env("XDG_CONFIG_HOME", config_home.path())
+            .args(["ops", "demo", "--count", "1", "--seed", &seed])
+            .assert()
+            .success();
+        Ok(())
+    }
 
     #[sinex_test]
     async fn test_valid_output_formats() -> TestResult<()> {
