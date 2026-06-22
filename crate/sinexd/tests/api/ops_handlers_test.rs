@@ -488,6 +488,190 @@ async fn ops_start_admits_media_worker_output(ctx: TestContext) -> TestResult<()
 }
 
 #[sinex_test]
+async fn ops_start_runs_media_worker_command_and_admits_stdout(ctx: TestContext) -> TestResult<()> {
+    let auth = system_auth();
+    let worker_output = serde_json::json!({
+        "transcription_run": {
+            "producer_run_id": "transcript-worker-api",
+            "model_id": "whisper.cpp",
+            "model_version": "1.7",
+            "input_material_ids": ["audio-material-a"],
+            "source_file": "audio/session-a.wav",
+            "duration_ms": 190,
+            "resource_posture": "bounded-local-worker",
+            "policy_posture": "operator-controlled-audio-material"
+        },
+        "segments": [
+            {"text":"command-backed transcript","start_ms":0,"end_ms":1200,"confidence":0.91}
+        ]
+    })
+    .to_string();
+    let response: OpsStartResponse = serde_json::from_value(
+        handle_ops_start(
+            ctx.pool(),
+            json!({
+                "operation_type": "media.audio-transcript.run-model",
+                "scope": {
+                    "source_id": "media.audio-transcript",
+                    "mode_id": "source:media.audio-transcript.local-model-batch",
+                    "worker_command": {
+                        "program": "printf",
+                        "args": [worker_output],
+                        "timeout_ms": 5000,
+                        "output_source_identifier": "process://test/audio-transcript-worker"
+                    }
+                },
+            }),
+            &auth,
+        )
+        .await?,
+    )?;
+
+    assert_eq!(
+        response.operation.operation_type,
+        "media.audio-transcript.run-model"
+    );
+    assert_eq!(response.operation.result_status, OperationStatus::Success);
+    assert_eq!(
+        response.operation.result_message.as_deref(),
+        Some("media_capture; media worker command output admitted")
+    );
+    assert!(
+        response.operation.duration_ms.is_some(),
+        "worker command operations should record elapsed execution time"
+    );
+
+    let scope = response
+        .operation
+        .scope
+        .as_ref()
+        .expect("media worker-command operation scope should be recorded");
+    assert_eq!(scope["executor_state"], "worker_command_admitted");
+    assert_eq!(
+        scope["worker_output_parser"]["parser_id"],
+        "media-audio-transcript-staged"
+    );
+    assert!(
+        scope.get("worker_output").is_none(),
+        "operation scope must not persist raw media worker stdout"
+    );
+    assert!(
+        scope.get("worker_output_path").is_none(),
+        "operation scope must not persist worker output paths"
+    );
+    let event_ids = scope["worker_output_event_ids"]
+        .as_array()
+        .expect("worker command event ids should be recorded");
+    assert_eq!(event_ids.len(), 2);
+    assert_eq!(scope["worker_command"]["program"], "printf");
+    assert_eq!(
+        scope["worker_command"]["stdout_max_bytes"],
+        10 * 1024 * 1024
+    );
+
+    let material_id = scope["worker_output_material_id"]
+        .as_str()
+        .expect("worker command material id should be recorded");
+    let persisted_events: Vec<String> = sqlx::query_scalar(
+        r#"
+        SELECT event_type
+        FROM core.events
+        WHERE source_material_id = $1::uuid
+        ORDER BY event_type
+        "#,
+    )
+    .bind(uuid::Uuid::parse_str(material_id)?)
+    .fetch_all(ctx.pool())
+    .await?;
+    let expected_events = vec![
+        "media.audio.transcript_segment_observed".to_string(),
+        "media.audio.transcription_run_observed".to_string(),
+    ];
+    assert_eq!(persisted_events, expected_events,);
+
+    let preview = response
+        .operation
+        .preview_summary
+        .as_ref()
+        .expect("media worker-command preview should be recorded");
+    assert_eq!(preview["executor_state"], "worker_command_admitted");
+    assert_eq!(preview["admitted_event_count"], 2);
+    assert_eq!(preview["worker_command"]["program"], "printf");
+    assert_eq!(preview["worker_command"]["stderr_bytes"], 0);
+    Ok(())
+}
+
+#[sinex_test]
+async fn ops_start_records_media_worker_command_failure_without_raw_output(
+    ctx: TestContext,
+) -> TestResult<()> {
+    let auth = system_auth();
+    let response: OpsStartResponse = serde_json::from_value(
+        handle_ops_start(
+            ctx.pool(),
+            json!({
+                "operation_type": "media.screen-ocr.run-ocr",
+                "scope": {
+                    "source_id": "media.screen-ocr",
+                    "mode_id": "source:media.screen-ocr.local-model-batch",
+                    "worker_command": {
+                        "program": "sh",
+                        "args": ["-c", "exit 7"],
+                        "timeout_ms": 5000
+                    }
+                },
+            }),
+            &auth,
+        )
+        .await?,
+    )?;
+
+    assert_eq!(response.operation.result_status, OperationStatus::Failed);
+    assert!(
+        response
+            .operation
+            .result_message
+            .as_deref()
+            .unwrap_or_default()
+            .contains("media worker command exited with status")
+    );
+    assert!(
+        response.operation.duration_ms.is_some(),
+        "failed worker command operations should record elapsed execution time"
+    );
+    let scope = response
+        .operation
+        .scope
+        .as_ref()
+        .expect("failed media worker-command operation scope should be recorded");
+    assert_eq!(scope["executor_state"], "worker_command_failed");
+    assert!(
+        scope.get("worker_output_material_id").is_none(),
+        "failed worker command must not create admitted material"
+    );
+    assert!(
+        scope.get("worker_output_event_ids").is_none(),
+        "failed worker command must not create admitted events"
+    );
+    let preview = response
+        .operation
+        .preview_summary
+        .as_ref()
+        .expect("failed media worker-command preview should be recorded");
+    assert_eq!(preview["executor_state"], "worker_command_failed");
+    assert_eq!(preview["worker_command"]["exit_code"], 7);
+    assert!(
+        preview["worker_command"].get("stdout").is_none(),
+        "failed previews must not persist raw stdout"
+    );
+    assert!(
+        preview["worker_command"].get("stderr").is_none(),
+        "failed previews must not persist raw stderr"
+    );
+    Ok(())
+}
+
+#[sinex_test]
 async fn ops_start_records_media_rebuild_invalidation_triggers(ctx: TestContext) -> TestResult<()> {
     let auth = system_auth();
     let response: OpsStartResponse = serde_json::from_value(
