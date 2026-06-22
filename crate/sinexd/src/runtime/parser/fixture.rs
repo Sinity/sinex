@@ -35,7 +35,7 @@ use sinex_primitives::parser::{
     TimingEvidence,
 };
 use sinex_primitives::privacy::ProcessingContext;
-use sinex_primitives::source_contracts::{AccessScope, SourceContract};
+use sinex_primitives::source_contracts::SourceContract;
 use sinex_primitives::temporal::Timestamp;
 
 use super::{InputShapeAdapter, MaterialParser};
@@ -1059,7 +1059,7 @@ mod tests {
     use sinex_primitives::domain::{EventSource, EventType};
     use sinex_primitives::parser::{ParserId, SourceId, TimingConfidence};
     use sinex_primitives::source_contracts::{
-        Horizon, OccurrenceIdentity, PrivacyTier, RetentionPolicy,
+        AccessScope, Horizon, OccurrenceIdentity, PrivacyTier, RetentionPolicy,
     };
     use xtask::sandbox::prelude::sinex_test;
 

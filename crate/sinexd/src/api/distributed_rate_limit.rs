@@ -118,7 +118,6 @@ pub struct DistributedRateLimiter {
 
 #[derive(Debug, Clone)]
 struct TokenIdentity {
-    hashed_token: String,
     kv_key: String,
     fingerprint: String,
 }
@@ -135,7 +134,6 @@ fn token_identity(token: &str, role: Role) -> TokenIdentity {
     TokenIdentity {
         kv_key: format!("token.{hashed_token}.{role_str}"),
         fingerprint: hashed_token[..16].to_string(),
-        hashed_token,
     }
 }
 

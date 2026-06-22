@@ -3,26 +3,30 @@
 //! Queries the `sinex_telemetry.*` read models and returns structured responses
 //! for the `telemetry.*` RPC method namespace.
 
-use sinex_primitives::rpc::telemetry::{
-    AssemblyStatsBucket, CommandFrequencyEntry, CurrentDeviceStateEntry, CurrentHealthEntry,
-    EventEngineBatchStatsBucket, EventEngineValidationSnapshot, FileActivityEntry,
-    GatewayStatsBucket, MetricCounterBucket, RecentActivityEntry, SourceStatsBucket,
-    StreamStatsBucket, SystemStateBucket, TelemetryAssemblyStatsRequest,
-    TelemetryAssemblyStatsResponse, TelemetryCommandFrequencyRequest,
-    TelemetryCommandFrequencyResponse, TelemetryCurrentDeviceStateRequest,
-    TelemetryCurrentDeviceStateResponse, TelemetryCurrentHealthRequest,
-    TelemetryCurrentHealthResponse, TelemetryEventEngineBatchStatsRequest,
-    TelemetryEventEngineBatchStatsResponse, TelemetryEventEngineValidationRequest,
-    TelemetryEventEngineValidationResponse, TelemetryFileActivityRequest,
-    TelemetryFileActivityResponse, TelemetryGatewayStatsRequest, TelemetryGatewayStatsResponse,
-    TelemetryMetricCountersRequest, TelemetryMetricCountersResponse,
-    TelemetryRecentActivityRequest, TelemetryRecentActivityResponse, TelemetrySourceStatsRequest,
-    TelemetrySourceStatsResponse, TelemetryStreamStatsRequest, TelemetryStreamStatsResponse,
-    TelemetrySystemStateRequest, TelemetrySystemStateResponse, TelemetryThroughputRequest,
-    TelemetryThroughputResponse, TelemetryWindowFocusRequest, TelemetryWindowFocusResponse,
-    ThroughputComponentEntry, ThroughputSourceEntry, WindowFocusBucket,
-};
 use sinex_primitives::{Result, SinexError};
+use sinex_primitives::{
+    events::payloads::metrics::{StreamPressureDimension, StreamPressureLevel},
+    rpc::telemetry::{
+        AssemblyStatsBucket, CommandFrequencyEntry, CurrentDeviceStateEntry, CurrentHealthEntry,
+        EventEngineBatchStatsBucket, EventEngineValidationSnapshot, FileActivityEntry,
+        GatewayStatsBucket, MetricCounterBucket, RecentActivityEntry, SourceStatsBucket,
+        StreamStatsBucket, SystemStateBucket, TelemetryAssemblyStatsRequest,
+        TelemetryAssemblyStatsResponse, TelemetryCommandFrequencyRequest,
+        TelemetryCommandFrequencyResponse, TelemetryCurrentDeviceStateRequest,
+        TelemetryCurrentDeviceStateResponse, TelemetryCurrentHealthRequest,
+        TelemetryCurrentHealthResponse, TelemetryEventEngineBatchStatsRequest,
+        TelemetryEventEngineBatchStatsResponse, TelemetryEventEngineValidationRequest,
+        TelemetryEventEngineValidationResponse, TelemetryFileActivityRequest,
+        TelemetryFileActivityResponse, TelemetryGatewayStatsRequest, TelemetryGatewayStatsResponse,
+        TelemetryMetricCountersRequest, TelemetryMetricCountersResponse,
+        TelemetryRecentActivityRequest, TelemetryRecentActivityResponse,
+        TelemetrySourceStatsRequest, TelemetrySourceStatsResponse, TelemetryStreamStatsRequest,
+        TelemetryStreamStatsResponse, TelemetrySystemStateRequest, TelemetrySystemStateResponse,
+        TelemetryThroughputRequest, TelemetryThroughputResponse, TelemetryWindowFocusRequest,
+        TelemetryWindowFocusResponse, ThroughputComponentEntry, ThroughputSourceEntry,
+        WindowFocusBucket,
+    },
+};
 use sqlx::PgPool;
 use time::OffsetDateTime;
 use time::format_description::well_known::Rfc3339;
@@ -76,11 +80,19 @@ fn telemetry_query_error(relation: &'static str, error: sqlx::Error) -> SinexErr
     SinexError::database(format!("Failed to query {relation}")).with_std_error(&error)
 }
 
-fn stream_pressure_level(rank: i32) -> Option<String> {
+fn stream_pressure_level(rank: i32) -> Option<StreamPressureLevel> {
     match rank {
-        0 => Some("nominal".to_string()),
-        1 => Some("warning".to_string()),
-        2 => Some("critical".to_string()),
+        0 => Some(StreamPressureLevel::Nominal),
+        1 => Some(StreamPressureLevel::Warning),
+        2 => Some(StreamPressureLevel::Critical),
+        _ => None,
+    }
+}
+
+fn stream_pressure_dimension(value: Option<String>) -> Option<StreamPressureDimension> {
+    match value.as_deref() {
+        Some("messages") => Some(StreamPressureDimension::Messages),
+        Some("bytes") => Some(StreamPressureDimension::Bytes),
         _ => None,
     }
 }
@@ -648,7 +660,7 @@ pub async fn handle_telemetry_stream_stats(
             max_message_fill_pct: row.max_message_fill_pct,
             max_byte_fill_pct: row.max_byte_fill_pct,
             max_pressure_level: row.max_pressure_rank.and_then(stream_pressure_level),
-            limiting_dimension: row.limiting_dimension,
+            limiting_dimension: stream_pressure_dimension(row.limiting_dimension),
             avg_messages: row.avg_messages,
             max_messages: row.max_messages,
             sample_count: row.sample_count,
