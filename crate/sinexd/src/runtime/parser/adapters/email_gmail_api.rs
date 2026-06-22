@@ -5,7 +5,7 @@
 //! implementation; the adapter turns provider pages into bounded
 //! [`SourceRecord`] streams with typed cursor metadata.
 
-use std::{error::Error, future::Future, sync::Arc};
+use std::{error::Error, fmt, future::Future, sync::Arc};
 
 use async_trait::async_trait;
 use futures::StreamExt;
@@ -140,6 +140,335 @@ pub trait GmailApiClient: Send + Sync {
         &self,
         request: GmailApiPageRequest,
     ) -> impl Future<Output = Result<GmailApiPage, Self::Error>> + Send;
+}
+
+/// Reqwest-backed Gmail REST client for scheduled sync operations.
+///
+/// OAuth refresh and secret lookup stay outside the adapter. Callers pass a
+/// bearer token that was read from an operator-owned secret file; the token is
+/// never stored in emitted provider records.
+#[derive(Clone)]
+pub struct GmailHttpClient {
+    http: reqwest::Client,
+    api_base_url: String,
+    user_id: String,
+    bearer_token: String,
+}
+
+impl GmailHttpClient {
+    #[must_use]
+    pub fn new(bearer_token: String) -> Self {
+        Self::with_endpoint(
+            reqwest::Client::new(),
+            "https://gmail.googleapis.com/gmail/v1".to_string(),
+            "me".to_string(),
+            bearer_token,
+        )
+    }
+
+    #[must_use]
+    pub fn with_endpoint(
+        http: reqwest::Client,
+        api_base_url: String,
+        user_id: String,
+        bearer_token: String,
+    ) -> Self {
+        Self {
+            http,
+            api_base_url: api_base_url.trim_end_matches('/').to_string(),
+            user_id,
+            bearer_token,
+        }
+    }
+
+    fn user_url(&self, suffix: &str) -> String {
+        format!(
+            "{}/users/{}/{}",
+            self.api_base_url,
+            urlencoding::encode(&self.user_id),
+            suffix.trim_start_matches('/')
+        )
+    }
+
+    fn user_url_with_query(&self, suffix: &str, query: &[(&str, &str)]) -> String {
+        if query.is_empty() {
+            return self.user_url(suffix);
+        }
+        let query = query
+            .iter()
+            .map(|(key, value)| {
+                format!(
+                    "{}={}",
+                    urlencoding::encode(key),
+                    urlencoding::encode(value)
+                )
+            })
+            .collect::<Vec<_>>()
+            .join("&");
+        format!("{}?{query}", self.user_url(suffix))
+    }
+
+    async fn fetch_json<T>(&self, request: reqwest::RequestBuilder) -> Result<T, GmailHttpError>
+    where
+        T: serde::de::DeserializeOwned,
+    {
+        let response = request
+            .bearer_auth(&self.bearer_token)
+            .send()
+            .await
+            .map_err(GmailHttpError::Transport)?;
+        let status = response.status();
+        if !status.is_success() {
+            let body = response.text().await.unwrap_or_default();
+            return Err(GmailHttpError::Status { status, body });
+        }
+        response.json::<T>().await.map_err(GmailHttpError::Decode)
+    }
+
+    async fn fetch_message(&self, message_id: &str) -> Result<GmailRestMessage, GmailHttpError> {
+        self.fetch_json(self.http.get(self.user_url_with_query(
+            &format!("messages/{message_id}"),
+            &[
+                ("format", "metadata"),
+                ("metadataHeaders", "Message-ID"),
+                ("metadataHeaders", "Date"),
+                ("metadataHeaders", "From"),
+                ("metadataHeaders", "To"),
+                ("metadataHeaders", "Cc"),
+                ("metadataHeaders", "Bcc"),
+                ("metadataHeaders", "Subject"),
+                ("metadataHeaders", "In-Reply-To"),
+                ("metadataHeaders", "References"),
+                ("metadataHeaders", "List-Id"),
+            ],
+        )))
+        .await
+    }
+}
+
+#[derive(Debug)]
+pub enum GmailHttpError {
+    Transport(reqwest::Error),
+    Decode(reqwest::Error),
+    Status {
+        status: reqwest::StatusCode,
+        body: String,
+    },
+}
+
+impl fmt::Display for GmailHttpError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Transport(error) => write!(f, "Gmail transport error: {error}"),
+            Self::Decode(error) => write!(f, "Gmail response decode error: {error}"),
+            Self::Status { status, body } => {
+                if body.trim().is_empty() {
+                    write!(f, "Gmail API returned HTTP {status}")
+                } else {
+                    write!(f, "Gmail API returned HTTP {status}: {body}")
+                }
+            }
+        }
+    }
+}
+
+impl Error for GmailHttpError {}
+
+impl GmailApiClient for GmailHttpClient {
+    type Error = GmailHttpError;
+
+    async fn fetch_page(&self, request: GmailApiPageRequest) -> Result<GmailApiPage, Self::Error> {
+        if request.history_id.is_some() {
+            return self.fetch_history_page(request).await;
+        }
+        self.fetch_message_page(request).await
+    }
+}
+
+impl GmailHttpClient {
+    async fn fetch_message_page(
+        &self,
+        request: GmailApiPageRequest,
+    ) -> Result<GmailApiPage, GmailHttpError> {
+        let max_results = request.page_size.to_string();
+        let mut query = vec![("maxResults", max_results.as_str())];
+        if let Some(page_token) = request.page_token.as_deref() {
+            query.push(("pageToken", page_token));
+        }
+        for label in &request.label_ids {
+            query.push(("labelIds", label));
+        }
+        if request.include_spam_trash {
+            query.push(("includeSpamTrash", "true"));
+        }
+        let page: GmailRestMessageList = self
+            .fetch_json(self.http.get(self.user_url_with_query("messages", &query)))
+            .await?;
+        let mut records = Vec::new();
+        for listed in page.messages {
+            let detail = self.fetch_message(&listed.id).await?;
+            records.push(gmail_rest_message_record(detail));
+        }
+        Ok(GmailApiPage {
+            records,
+            next_page_token: page.next_page_token,
+            history_id: page.history_id,
+        })
+    }
+
+    async fn fetch_history_page(
+        &self,
+        request: GmailApiPageRequest,
+    ) -> Result<GmailApiPage, GmailHttpError> {
+        let history_id = request
+            .history_id
+            .as_deref()
+            .expect("history page request should carry history id");
+        let max_results = request.page_size.to_string();
+        let mut query = vec![
+            ("startHistoryId", history_id),
+            ("maxResults", max_results.as_str()),
+        ];
+        if let Some(page_token) = request.page_token.as_deref() {
+            query.push(("pageToken", page_token));
+        }
+        for label in &request.label_ids {
+            query.push(("labelId", label));
+        }
+        let page: GmailRestHistoryList = self
+            .fetch_json(self.http.get(self.user_url_with_query("history", &query)))
+            .await?;
+        let mut records = Vec::new();
+        for history in page.history {
+            let history_id = history.id.clone();
+            for message in history.messages_added {
+                records.push(gmail_history_record(
+                    "message-added",
+                    history_id.clone(),
+                    message,
+                ));
+            }
+            for message in history.messages_deleted {
+                records.push(gmail_history_record(
+                    "message-deleted",
+                    history_id.clone(),
+                    message,
+                ));
+            }
+            for message in history.labels_added {
+                records.push(gmail_history_record(
+                    "labels-added",
+                    history_id.clone(),
+                    message,
+                ));
+            }
+            for message in history.labels_removed {
+                records.push(gmail_history_record(
+                    "labels-removed",
+                    history_id.clone(),
+                    message,
+                ));
+            }
+        }
+        Ok(GmailApiPage {
+            records,
+            next_page_token: page.next_page_token,
+            history_id: page.history_id,
+        })
+    }
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct GmailRestMessageList {
+    #[serde(default)]
+    messages: Vec<GmailRestMessageRef>,
+    next_page_token: Option<String>,
+    #[allow(dead_code)]
+    result_size_estimate: Option<u64>,
+    history_id: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct GmailRestMessageRef {
+    id: String,
+}
+
+#[derive(Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct GmailRestMessage {
+    id: String,
+    thread_id: Option<String>,
+    #[serde(default)]
+    label_ids: Vec<String>,
+    snippet: Option<String>,
+    history_id: Option<String>,
+    internal_date: Option<String>,
+    size_estimate: Option<u64>,
+    payload: Option<JsonValue>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct GmailRestHistoryList {
+    #[serde(default)]
+    history: Vec<GmailRestHistory>,
+    next_page_token: Option<String>,
+    history_id: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct GmailRestHistory {
+    id: Option<String>,
+    #[serde(default)]
+    messages_added: Vec<GmailRestHistoryMessage>,
+    #[serde(default)]
+    messages_deleted: Vec<GmailRestHistoryMessage>,
+    #[serde(default)]
+    labels_added: Vec<GmailRestHistoryMessage>,
+    #[serde(default)]
+    labels_removed: Vec<GmailRestHistoryMessage>,
+}
+
+#[derive(Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct GmailRestHistoryMessage {
+    message: GmailRestMessage,
+}
+
+fn gmail_rest_message_record(message: GmailRestMessage) -> GmailApiRecord {
+    GmailApiRecord {
+        kind: GmailApiRecordKind::Message,
+        message_id: Some(message.id.clone()),
+        thread_id: message.thread_id.clone(),
+        history_id: message.history_id.clone(),
+        label_ids: message.label_ids.clone(),
+        payload: serde_json::to_value(message).unwrap_or(JsonValue::Null),
+    }
+}
+
+fn gmail_history_record(
+    change_kind: &'static str,
+    history_id: Option<String>,
+    message: GmailRestHistoryMessage,
+) -> GmailApiRecord {
+    let mut payload = serde_json::to_value(&message).unwrap_or(JsonValue::Null);
+    if let JsonValue::Object(object) = &mut payload {
+        object.insert(
+            "history_change_kind".to_string(),
+            serde_json::json!(change_kind),
+        );
+    }
+    GmailApiRecord {
+        kind: GmailApiRecordKind::History,
+        message_id: Some(message.message.id),
+        thread_id: message.message.thread_id,
+        history_id,
+        label_ids: message.message.label_ids,
+        payload,
+    }
 }
 
 /// Scheduled Gmail API adapter.
