@@ -18,7 +18,7 @@ use sinex_primitives::error::SinexError;
 use sinex_primitives::rpc::lifecycle::{TombstoneOperation, TombstoneOperationState};
 use sinex_primitives::{Seconds, Timestamp};
 use sqlx::postgres::types::PgRange;
-use sqlx::{Executor, FromRow, PgPool, Postgres, Row};
+use sqlx::{Executor, FromRow, PgPool, Postgres};
 use std::ops::Bound;
 use std::str::FromStr;
 use std::time::Duration;
@@ -733,7 +733,7 @@ impl StateRepository<'_> {
             .await
             .map_err(|e| db_error(e, "begin replay invalidation recovery"))?;
 
-        let row = sqlx::query(
+        let row = sqlx::query!(
             r#"
             SELECT preview_summary
             FROM core.operations_log
@@ -741,8 +741,8 @@ impl StateRepository<'_> {
               AND operation_type = 'replay'
             FOR UPDATE
             "#,
+            replay_operation_id,
         )
-        .bind(replay_operation_id)
         .fetch_optional(&mut *tx)
         .await
         .map_err(|e| db_error(e, "fetch replay invalidation metadata"))?
@@ -750,14 +750,11 @@ impl StateRepository<'_> {
             SinexError::not_found(format!("Replay operation not found: {replay_operation_id}"))
         })?;
 
-        let mut meta: JsonValue = row
-            .try_get::<Option<JsonValue>, _>("preview_summary")
-            .map_err(|e| db_error(e, "decode replay preview_summary"))?
-            .ok_or_else(|| {
-                SinexError::invalid_state("Replay operation is missing preview_summary metadata")
-                    .with_id("operation_id", replay_operation_id.to_string())
-                    .with_operation("projection_rebuild_recovery")
-            })?;
+        let mut meta: JsonValue = row.preview_summary.ok_or_else(|| {
+            SinexError::invalid_state("Replay operation is missing preview_summary metadata")
+                .with_id("operation_id", replay_operation_id.to_string())
+                .with_operation("projection_rebuild_recovery")
+        })?;
 
         let scope = serde_json::json!({
             "source": "replay-invalidation",
@@ -776,15 +773,15 @@ impl StateRepository<'_> {
                 replay_operation_id,
                 &existing,
             )?;
-            sqlx::query(
+            sqlx::query!(
                 r#"
                 UPDATE core.operations_log
                 SET preview_summary = $2
                 WHERE id = $1::uuid
                 "#,
+                replay_operation_id,
+                meta,
             )
-            .bind(replay_operation_id)
-            .bind(meta)
             .execute(&mut *tx)
             .await
             .map_err(|e| db_error(e, "mark replay invalidation recovered"))?;
@@ -815,15 +812,15 @@ impl StateRepository<'_> {
         let recovery = self.log_operation_with_executor(&mut *tx, recovery).await?;
 
         Self::mark_replay_scope_invalidation_published(&mut meta, replay_operation_id, &recovery)?;
-        sqlx::query(
+        sqlx::query!(
             r#"
             UPDATE core.operations_log
             SET preview_summary = $2
             WHERE id = $1::uuid
             "#,
+            replay_operation_id,
+            meta,
         )
-        .bind(replay_operation_id)
-        .bind(meta)
         .execute(&mut *tx)
         .await
         .map_err(|e| db_error(e, "mark replay invalidation recovered"))?;

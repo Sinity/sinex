@@ -12,7 +12,7 @@ use sinex_primitives::domain::{
     SourceMaterialTimingInfoType, SyntheticTemporalPolicy,
 };
 use sinex_primitives::events::payloads::{FileCreatedPayload, KittyCommandExecutedPayload};
-use sinex_primitives::events::{DynamicPayload, EquivalenceKey, EventId, ScopeKey, SourceMaterial};
+use sinex_primitives::events::{DynamicPayload, EventId, SourceMaterial};
 use sinex_primitives::rpc::sources::{
     SourceAnnotations, SourceMaterialMetadataContract, SourceMaterialStatistics, SourceOrigin,
 };

@@ -331,7 +331,7 @@ impl ReplayExecutionEngine {
         let archived_by = archived_by.to_string();
 
         pool.with_transaction(async |tx| {
-            sqlx::query("LOCK TABLE core.events IN SHARE MODE")
+            sqlx::query!("LOCK TABLE core.events IN SHARE MODE")
                 .execute(&mut **tx)
                 .await
                 .map_err(|err| {

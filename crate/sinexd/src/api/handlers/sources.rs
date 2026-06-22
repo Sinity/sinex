@@ -1634,7 +1634,7 @@ mod tests {
     async fn stage_material_contract_records_package_mode_binding() -> xtask::sandbox::TestResult<()>
     {
         let request = SourcesStageRequest {
-            file_path: "/realm/data/captures/screenshot/session.json".to_string(),
+            file_path: "/tmp/sinex-fixtures/screenshot/session.json".to_string(),
             format: Some(SourceMaterialFormat::Json),
             timing_info_type: Some(SourceMaterialTimingInfoType::Intrinsic),
             reason: Some("operator import".to_string()),
@@ -1644,19 +1644,16 @@ mod tests {
         };
 
         let contract = stage_material_contract(
-            "/realm/data/captures/screenshot/session.json",
+            "/tmp/sinex-fixtures/screenshot/session.json",
             SourceMaterialFormat::Json,
             SourceMaterialTimingInfoType::Intrinsic,
             &request,
         );
 
-        let origin = contract
-            .origin
-            .as_ref()
-            .ok_or_else(|| color_eyre::eyre::eyre!("origin expected"))?;
+        let origin = contract.origin.as_ref().expect("origin expected");
         assert_eq!(
             origin.source_uri.as_deref(),
-            Some("/realm/data/captures/screenshot/session.json")
+            Some("/tmp/sinex-fixtures/screenshot/session.json")
         );
         assert_eq!(
             origin.binding_id.as_deref(),
