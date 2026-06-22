@@ -1,3 +1,4 @@
+use serde::Deserialize;
 use sinex_db::DbPoolExt;
 use sinex_db::repositories::state::Operation as DbOperation;
 use sinex_db::repositories::state::PROJECTION_REBUILD_OPERATION_TYPE;
@@ -18,6 +19,10 @@ use sinex_primitives::parser::{MaterialAnchor, maybe_occurrence_key_string};
 use sinex_primitives::rpc::sources::{SourceMaterialMetadataContract, SourceOrigin};
 use sinex_primitives::temporal::Timestamp;
 use sqlx::PgPool;
+use std::process::Stdio;
+use std::time::{Duration, Instant};
+use tokio::io::{AsyncRead, AsyncReadExt};
+use tokio::process::Command;
 
 // Re-export shared types
 pub use sinex_primitives::rpc::ops::{
@@ -97,9 +102,14 @@ struct PackageOperationSpec {
 
 const PACKAGE_OPERATION_EXECUTOR_STATE: &str = "awaiting_runtime_executor";
 const MEDIA_WORKER_OUTPUT_EXECUTOR_STATE: &str = "worker_output_admitted";
+const MEDIA_WORKER_COMMAND_EXECUTOR_STATE: &str = "worker_command_admitted";
+const MEDIA_WORKER_COMMAND_FAILED_STATE: &str = "worker_command_failed";
 const MEDIA_WORKER_OUTPUT_MAX_BYTES: usize = 10 * 1024 * 1024;
+const MEDIA_WORKER_STDERR_MAX_BYTES: usize = 64 * 1024;
+const MEDIA_WORKER_COMMAND_DEFAULT_TIMEOUT_MS: u64 = 30_000;
 const MEDIA_WORKER_OUTPUT_KEY: &str = "worker_output";
 const MEDIA_WORKER_OUTPUT_PATH_KEY: &str = "worker_output_path";
+const MEDIA_WORKER_COMMAND_KEY: &str = "worker_command";
 const EMAIL_MAILDIR_STAGED_MODE_ID: &str = "source:email.mailbox.maildir-staged";
 const EMAIL_MBOX_STAGED_MODE_ID: &str = "source:email.mailbox.mbox-staged";
 const EMAIL_GMAIL_SCHEDULED_SYNC_MODE_ID: &str = "source:email.mailbox.gmail-api-scheduled-sync";
@@ -809,7 +819,7 @@ async fn start_package_operation(
                 result_status: media_result.status,
                 result_message: Some(media_result.message),
                 preview_summary: Some(preview_summary),
-                duration_ms: None,
+                duration_ms: media_result.duration_ms,
             })
             .await;
     }
@@ -831,11 +841,71 @@ async fn start_package_operation(
 struct MediaWorkerOutputResult {
     status: OperationStatus,
     message: String,
+    duration_ms: Option<i32>,
 }
 
 struct MediaWorkerOutput {
     bytes: Vec<u8>,
     source_identifier: String,
+    executor_state: &'static str,
+    duration_ms: Option<i32>,
+}
+
+struct MediaWorkerCommandOutcome {
+    output: Option<MediaWorkerOutput>,
+    summary: serde_json::Value,
+    failure_message: Option<String>,
+    duration_ms: Option<i32>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct MediaWorkerCommandRequest {
+    program: String,
+    #[serde(default)]
+    args: Vec<String>,
+    #[serde(default)]
+    timeout_ms: Option<u64>,
+    #[serde(default)]
+    output_source_identifier: Option<String>,
+}
+
+impl MediaWorkerCommandRequest {
+    fn validate(&self) -> Result<()> {
+        if self.program.trim().is_empty() {
+            return Err(SinexError::validation(
+                "media worker command requires a non-empty program",
+            )
+            .with_operation("ops.start"));
+        }
+        if self.args.len() > 256 {
+            return Err(SinexError::validation(
+                "media worker command accepts at most 256 arguments",
+            )
+            .with_operation("ops.start")
+            .with_context("argument_count", self.args.len().to_string()));
+        }
+        Ok(())
+    }
+
+    fn timeout(&self) -> Duration {
+        Duration::from_millis(
+            self.timeout_ms
+                .unwrap_or(MEDIA_WORKER_COMMAND_DEFAULT_TIMEOUT_MS)
+                .max(1),
+        )
+    }
+
+    fn sanitized_scope(&self) -> serde_json::Value {
+        serde_json::json!({
+            "program": self.program,
+            "args": self.args,
+            "timeout_ms": self.timeout().as_millis(),
+            "output_source_identifier": self.output_source_identifier,
+            "stdout_max_bytes": MEDIA_WORKER_OUTPUT_MAX_BYTES,
+            "stderr_max_bytes": MEDIA_WORKER_STDERR_MAX_BYTES,
+        })
+    }
 }
 
 async fn execute_media_worker_output(
@@ -845,11 +915,9 @@ async fn execute_media_worker_output(
     scope: &mut serde_json::Map<String, serde_json::Value>,
     preview_summary: &mut serde_json::Value,
 ) -> Result<Option<MediaWorkerOutputResult>> {
-    let Some(worker_output) = read_media_worker_output(scope).await? else {
+    let Some(worker_output) = resolve_media_worker_output(scope, preview_summary).await? else {
         return Ok(None);
     };
-    scope.remove(MEDIA_WORKER_OUTPUT_KEY);
-    scope.remove(MEDIA_WORKER_OUTPUT_PATH_KEY);
     let package = MediaCapturePackage::from_source_id(spec.source_id).ok_or_else(|| {
         SinexError::validation("media worker output operation requires a media source package")
             .with_operation("ops.start")
@@ -874,6 +942,29 @@ async fn execute_media_worker_output(
         .with_operation("ops.start"));
     }
 
+    if let Some(message) = worker_output.failure_message {
+        scope.insert(
+            "executor_state".to_string(),
+            serde_json::json!(MEDIA_WORKER_COMMAND_FAILED_STATE),
+        );
+        let preview = preview_summary
+            .as_object_mut()
+            .expect("package operation preview is an object");
+        preview.insert(
+            "executor_state".to_string(),
+            serde_json::json!(MEDIA_WORKER_COMMAND_FAILED_STATE),
+        );
+        preview.insert("worker_command".to_string(), worker_output.summary);
+        return Ok(Some(MediaWorkerOutputResult {
+            status: OperationStatus::Failed,
+            message,
+            duration_ms: worker_output.duration_ms,
+        }));
+    }
+
+    let worker_output = worker_output
+        .output
+        .expect("successful media worker resolution should include output");
     let mut contract = SourceMaterialMetadataContract::new(
         SourceMaterialFormat::Json,
         SourceMaterialTimingInfoType::StagedAt,
@@ -944,7 +1035,7 @@ async fn execute_media_worker_output(
 
     scope.insert(
         "executor_state".to_string(),
-        serde_json::json!(MEDIA_WORKER_OUTPUT_EXECUTOR_STATE),
+        serde_json::json!(worker_output.executor_state),
     );
     scope.insert(
         "worker_output_material_id".to_string(),
@@ -967,7 +1058,7 @@ async fn execute_media_worker_output(
         .expect("package operation preview is an object");
     preview.insert(
         "executor_state".to_string(),
-        serde_json::json!(MEDIA_WORKER_OUTPUT_EXECUTOR_STATE),
+        serde_json::json!(worker_output.executor_state),
     );
     preview.insert(
         "worker_output_material_id".to_string(),
@@ -984,8 +1075,220 @@ async fn execute_media_worker_output(
 
     Ok(Some(MediaWorkerOutputResult {
         status: OperationStatus::Success,
-        message: format!("{}; media worker output admitted", spec.surface),
+        message: match worker_output.executor_state {
+            MEDIA_WORKER_COMMAND_EXECUTOR_STATE => {
+                format!("{}; media worker command output admitted", spec.surface)
+            }
+            _ => format!("{}; media worker output admitted", spec.surface),
+        },
+        duration_ms: worker_output.duration_ms,
     }))
+}
+
+async fn resolve_media_worker_output(
+    scope: &mut serde_json::Map<String, serde_json::Value>,
+    preview_summary: &mut serde_json::Value,
+) -> Result<Option<MediaWorkerCommandOutcome>> {
+    let has_direct_output = scope.contains_key(MEDIA_WORKER_OUTPUT_KEY)
+        || scope.contains_key(MEDIA_WORKER_OUTPUT_PATH_KEY);
+    let has_command = scope.contains_key(MEDIA_WORKER_COMMAND_KEY);
+    if has_direct_output && has_command {
+        return Err(SinexError::validation(
+            "media operation accepts either worker_output/worker_output_path or worker_command, not both",
+        )
+        .with_operation("ops.start"));
+    }
+
+    if has_command {
+        let value = scope
+            .remove(MEDIA_WORKER_COMMAND_KEY)
+            .expect("checked worker command presence");
+        let request: MediaWorkerCommandRequest =
+            serde_json::from_value(value).map_err(|error| {
+                SinexError::validation("media worker command has invalid shape")
+                    .with_std_error(&error)
+                    .with_operation("ops.start")
+            })?;
+        request.validate()?;
+        scope.insert("worker_command".to_string(), request.sanitized_scope());
+        return execute_media_worker_command(request, preview_summary)
+            .await
+            .map(Some);
+    }
+
+    let Some(output) = read_media_worker_output(scope).await? else {
+        return Ok(None);
+    };
+    scope.remove(MEDIA_WORKER_OUTPUT_KEY);
+    scope.remove(MEDIA_WORKER_OUTPUT_PATH_KEY);
+    Ok(Some(MediaWorkerCommandOutcome {
+        output: Some(output),
+        summary: serde_json::json!({ "kind": "direct_worker_output" }),
+        failure_message: None,
+        duration_ms: None,
+    }))
+}
+
+async fn execute_media_worker_command(
+    request: MediaWorkerCommandRequest,
+    preview_summary: &mut serde_json::Value,
+) -> Result<MediaWorkerCommandOutcome> {
+    let started = Instant::now();
+    let mut child = Command::new(&request.program)
+        .args(&request.args)
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .kill_on_drop(true)
+        .spawn()
+        .map_err(|error| {
+            SinexError::io("Failed to spawn media worker command")
+                .with_context("program", request.program.clone())
+                .with_std_error(&error)
+                .with_operation("ops.start")
+        })?;
+
+    let stdout = child.stdout.take().ok_or_else(|| {
+        SinexError::io("Failed to capture media worker stdout").with_operation("ops.start")
+    })?;
+    let stderr = child.stderr.take().ok_or_else(|| {
+        SinexError::io("Failed to capture media worker stderr").with_operation("ops.start")
+    })?;
+    let stdout_task = tokio::spawn(read_limited(
+        stdout,
+        MEDIA_WORKER_OUTPUT_MAX_BYTES,
+        "stdout",
+    ));
+    let stderr_task = tokio::spawn(read_limited(
+        stderr,
+        MEDIA_WORKER_STDERR_MAX_BYTES,
+        "stderr",
+    ));
+
+    let wait_result = tokio::time::timeout(request.timeout(), child.wait()).await;
+    let timed_out = wait_result.is_err();
+    let status = match wait_result {
+        Ok(result) => Some(result.map_err(|error| {
+            SinexError::io("Failed waiting for media worker command")
+                .with_std_error(&error)
+                .with_operation("ops.start")
+        })?),
+        Err(_) => {
+            let _ = child.kill().await;
+            None
+        }
+    };
+
+    let stdout = task_bytes(stdout_task, "stdout").await;
+    let stderr = task_bytes(stderr_task, "stderr").await;
+    let duration_ms = elapsed_millis(started);
+
+    let stdout_bytes = stdout.as_ref().map_or(0, Vec::len);
+    let stderr_bytes = stderr.as_ref().map_or(0, Vec::len);
+    let mut summary = serde_json::json!({
+        "program": request.program,
+        "args": request.args,
+        "timeout_ms": request.timeout().as_millis(),
+        "duration_ms": duration_ms,
+        "timed_out": timed_out,
+        "stdout_bytes": stdout_bytes,
+        "stderr_bytes": stderr_bytes,
+    });
+    if let Some(status) = status {
+        summary["exit_code"] = status
+            .code()
+            .map_or(serde_json::Value::Null, |code| serde_json::json!(code));
+        if !status.success() {
+            return Ok(MediaWorkerCommandOutcome {
+                output: None,
+                summary,
+                failure_message: Some(format!(
+                    "media_capture; media worker command exited with status {status}"
+                )),
+                duration_ms: Some(duration_ms),
+            });
+        }
+    }
+    if timed_out {
+        return Ok(MediaWorkerCommandOutcome {
+            output: None,
+            summary,
+            failure_message: Some("media_capture; media worker command timed out".to_string()),
+            duration_ms: Some(duration_ms),
+        });
+    }
+
+    let stdout = stdout.map_err(|error| {
+        SinexError::io("Failed to read media worker stdout")
+            .with_std_error(&error)
+            .with_operation("ops.start")
+    })?;
+    let stderr = stderr.map_err(|error| {
+        SinexError::io("Failed to read media worker stderr")
+            .with_std_error(&error)
+            .with_operation("ops.start")
+    })?;
+    summary["stdout_bytes"] = serde_json::json!(stdout.len());
+    summary["stderr_bytes"] = serde_json::json!(stderr.len());
+    preview_summary
+        .as_object_mut()
+        .expect("package operation preview is an object")
+        .insert("worker_command".to_string(), summary.clone());
+
+    Ok(MediaWorkerCommandOutcome {
+        output: Some(MediaWorkerOutput {
+            bytes: stdout,
+            source_identifier: request.output_source_identifier.unwrap_or_else(|| {
+                format!("process://media-worker-command/{}", uuid::Uuid::now_v7())
+            }),
+            executor_state: MEDIA_WORKER_COMMAND_EXECUTOR_STATE,
+            duration_ms: Some(duration_ms),
+        }),
+        summary,
+        failure_message: None,
+        duration_ms: Some(duration_ms),
+    })
+}
+
+async fn read_limited<R>(
+    mut reader: R,
+    max_len: usize,
+    stream_name: &'static str,
+) -> std::io::Result<Vec<u8>>
+where
+    R: AsyncRead + Unpin,
+{
+    let mut output = Vec::new();
+    let mut chunk = [0_u8; 8192];
+    loop {
+        let read = reader.read(&mut chunk).await?;
+        if read == 0 {
+            return Ok(output);
+        }
+        if output.len().saturating_add(read) > max_len {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                format!("media worker {stream_name} exceeded {max_len} bytes"),
+            ));
+        }
+        output.extend_from_slice(&chunk[..read]);
+    }
+}
+
+async fn task_bytes(
+    task: tokio::task::JoinHandle<std::io::Result<Vec<u8>>>,
+    stream_name: &'static str,
+) -> std::io::Result<Vec<u8>> {
+    task.await.map_err(|error| {
+        std::io::Error::new(
+            std::io::ErrorKind::Other,
+            format!("media worker {stream_name} reader task failed: {error}"),
+        )
+    })?
+}
+
+fn elapsed_millis(started: Instant) -> i32 {
+    i32::try_from(started.elapsed().as_millis()).unwrap_or(i32::MAX)
 }
 
 async fn read_media_worker_output(
@@ -1005,6 +1308,8 @@ async fn read_media_worker_output(
         return Ok(Some(MediaWorkerOutput {
             bytes,
             source_identifier: path.to_string(),
+            executor_state: MEDIA_WORKER_OUTPUT_EXECUTOR_STATE,
+            duration_ms: None,
         }));
     }
 
@@ -1023,6 +1328,8 @@ async fn read_media_worker_output(
     Ok(Some(MediaWorkerOutput {
         bytes,
         source_identifier: format!("memory://media-worker-output/{}", uuid::Uuid::now_v7()),
+        executor_state: MEDIA_WORKER_OUTPUT_EXECUTOR_STATE,
+        duration_ms: None,
     }))
 }
 
