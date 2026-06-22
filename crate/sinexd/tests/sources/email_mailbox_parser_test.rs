@@ -12,6 +12,7 @@ use sinex_primitives::{
 };
 use sinexd::runtime::parser::MaterialParser;
 use sinexd::sources::source_contracts::email::EmailMailboxParser;
+use xtask::sandbox::prelude::sinex_test;
 
 fn test_ctx() -> ParserContext {
     ParserContext {
@@ -49,8 +50,9 @@ fn occurrence_field<'a>(
         .find_map(|(field, value)| (field == key).then_some(value.as_str()))
 }
 
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn takeout_mbox_container_splits_messages_with_byte_range_identity() {
+#[sinex_test]
+async fn takeout_mbox_container_splits_messages_with_byte_range_identity()
+-> xtask::sandbox::TestResult<()> {
     let mut parser = EmailMailboxParser;
     let mbox = b"From sender@example.com Sat Jan 01 00:00:00 2022\n\
 Message-ID: <takeout-1@example.com>\n\
@@ -70,10 +72,7 @@ Subject: Second\n\
 Second body.\n";
     let record = record_for(mbox, "Takeout/Mail/All mail Including Spam and Trash.mbox");
 
-    let intents = parser
-        .parse_record(record, &test_ctx())
-        .await
-        .expect("Takeout MBOX should parse");
+    let intents = parser.parse_record(record, &test_ctx()).await?;
     let messages: Vec<_> = intents
         .iter()
         .filter(|intent| intent.event_type.as_str() == "email.message.received")
@@ -108,10 +107,11 @@ Second body.\n";
         occurrence_field(messages[0], "mbox_byte_start"),
         occurrence_field(messages[1], "mbox_byte_start")
     );
+    Ok(())
 }
 
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn mboxrd_escaped_from_lines_do_not_split_messages() {
+#[sinex_test]
+async fn mboxrd_escaped_from_lines_do_not_split_messages() -> xtask::sandbox::TestResult<()> {
     let mut parser = EmailMailboxParser;
     let mbox = b"From sender@example.com Sat Jan 01 00:00:00 2022\n\
 Message-ID: <mboxrd-1@example.com>\n\
@@ -122,10 +122,7 @@ Subject: Body from line\n\
 >From this line is escaped body content, not a message delimiter.\n";
     let record = record_for(mbox, "Takeout/Mail/Inbox.mbox");
 
-    let intents = parser
-        .parse_record(record, &test_ctx())
-        .await
-        .expect("mboxrd body escaping should parse");
+    let intents = parser.parse_record(record, &test_ctx()).await?;
     let messages: Vec<_> = intents
         .iter()
         .filter(|intent| intent.event_type.as_str() == "email.message.received")
@@ -134,4 +131,5 @@ Subject: Body from line\n\
     assert_eq!(messages.len(), 1);
     assert_eq!(messages[0].payload["message_id"], "mboxrd-1@example.com");
     assert_eq!(messages[0].payload["folder"], "Inbox");
+    Ok(())
 }

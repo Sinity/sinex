@@ -1,3 +1,5 @@
+use camino::Utf8PathBuf;
+use futures::StreamExt as _;
 use serde::Deserialize;
 use sinex_db::DbPoolExt;
 use sinex_db::repositories::state::Operation as DbOperation;
@@ -15,7 +17,10 @@ use sinex_primitives::events::payloads::email::{
     EmailSyncCursorObservedPayload, EmailSyncState,
 };
 use sinex_primitives::events::{Event, SourceMaterial};
-use sinex_primitives::parser::{MaterialAnchor, maybe_occurrence_key_string};
+use sinex_primitives::parser::{
+    InputShapeAdapter, MaterialAnchor, MaterialParser, ParserContext, SourceId, SourceRecord,
+    maybe_occurrence_key_string,
+};
 use sinex_primitives::rpc::sources::{SourceMaterialMetadataContract, SourceOrigin};
 use sinex_primitives::temporal::Timestamp;
 use sqlx::PgPool;
@@ -23,6 +28,9 @@ use std::process::Stdio;
 use std::time::{Duration, Instant};
 use tokio::io::{AsyncRead, AsyncReadExt};
 use tokio::process::Command;
+
+use crate::runtime::parser::{EmailMboxFileAdapter, EmailMboxFileConfig};
+use crate::sources::source_contracts::email::EmailMailboxParser;
 
 // Re-export shared types
 pub use sinex_primitives::rpc::ops::{
@@ -115,6 +123,8 @@ const EMAIL_MBOX_STAGED_MODE_ID: &str = "source:email.mailbox.mbox-staged";
 const EMAIL_GMAIL_SCHEDULED_SYNC_MODE_ID: &str = "source:email.mailbox.gmail-api-scheduled-sync";
 const EMAIL_IMAP_SCHEDULED_SYNC_MODE_ID: &str = "source:email.mailbox.imap-scheduled-sync";
 const EMAIL_IMAP_IDLE_LIVE_MODE_ID: &str = "source:email.mailbox.imap-idle-live";
+const EMAIL_STAGED_SYNC_EXECUTOR_STATE: &str = "staged_email_sync_admitted";
+const EMAIL_STAGED_SYNC_DEFAULT_MAX_MESSAGE_BYTES: u64 = 64 * 1024 * 1024;
 const EMAIL_STAGED_MODE_IDS: &[&str] = &[EMAIL_MAILDIR_STAGED_MODE_ID, EMAIL_MBOX_STAGED_MODE_ID];
 const EMAIL_PROVIDER_MODE_IDS: &[&str] = &[
     EMAIL_GMAIL_SCHEDULED_SYNC_MODE_ID,
@@ -824,6 +834,28 @@ async fn start_package_operation(
             .await;
     }
 
+    if spec.surface == "email_capture"
+        && spec.operation_type == "email.mailbox.sync"
+        && EMAIL_STAGED_MODE_IDS.contains(&mode_id.as_str())
+        && let Some(email_result) =
+            execute_staged_email_sync(pool, &spec, &mode_id, &mut scope, &mut preview_summary)
+                .await?
+    {
+        return pool
+            .state()
+            .log_operation(DbOperation {
+                id: None,
+                operation_type: operation_type.to_string(),
+                operator: actor.to_string(),
+                scope: Some(serde_json::Value::Object(scope)),
+                result_status: email_result.status,
+                result_message: Some(email_result.message),
+                preview_summary: Some(preview_summary),
+                duration_ms: email_result.duration_ms,
+            })
+            .await;
+    }
+
     pool.state()
         .log_operation(DbOperation {
             id: None,
@@ -842,6 +874,25 @@ struct MediaWorkerOutputResult {
     status: OperationStatus,
     message: String,
     duration_ms: Option<i32>,
+}
+
+struct EmailSyncExecutionResult {
+    status: OperationStatus,
+    message: String,
+    duration_ms: Option<i32>,
+}
+
+struct EmailStagedSyncRequest {
+    paths: Vec<Utf8PathBuf>,
+    archive_paths: Vec<Utf8PathBuf>,
+    folder: Option<String>,
+    max_message_bytes: u64,
+}
+
+struct EmailStagedSyncSummary {
+    material_ids: Vec<String>,
+    event_ids: Vec<String>,
+    parsed_record_count: usize,
 }
 
 struct MediaWorkerOutput {
@@ -1023,7 +1074,7 @@ async fn execute_media_worker_output(
 
     let mut admitted_event_ids = Vec::new();
     for intent in outcome.events {
-        let event = parsed_media_intent_to_event(
+        let event = parsed_material_intent_to_event(
             intent,
             Id::<SourceMaterial>::from_uuid(material_record.id),
         )?;
@@ -1083,6 +1134,457 @@ async fn execute_media_worker_output(
         },
         duration_ms: worker_output.duration_ms,
     }))
+}
+
+async fn execute_staged_email_sync(
+    pool: &PgPool,
+    spec: &PackageOperationSpec,
+    mode_id: &str,
+    scope: &mut serde_json::Map<String, serde_json::Value>,
+    preview_summary: &mut serde_json::Value,
+) -> Result<Option<EmailSyncExecutionResult>> {
+    let Some(request) = EmailStagedSyncRequest::from_scope(mode_id, scope)? else {
+        return Ok(None);
+    };
+
+    let started = Instant::now();
+    scope.insert(
+        "staged_sync_input".to_string(),
+        request.sanitized_scope_value(),
+    );
+
+    let summary = if mode_id == EMAIL_MBOX_STAGED_MODE_ID {
+        execute_mbox_staged_email_sync(pool, spec, mode_id, &request).await?
+    } else {
+        execute_maildir_staged_email_sync(pool, spec, mode_id, &request).await?
+    };
+
+    scope.insert(
+        "executor_state".to_string(),
+        serde_json::json!(EMAIL_STAGED_SYNC_EXECUTOR_STATE),
+    );
+    scope.insert(
+        "staged_sync_material_ids".to_string(),
+        serde_json::json!(summary.material_ids),
+    );
+    scope.insert(
+        "staged_sync_event_ids".to_string(),
+        serde_json::json!(summary.event_ids),
+    );
+    scope.insert(
+        "staged_sync_parser".to_string(),
+        serde_json::json!({
+            "parser_id": "email-mailbox-rfc822",
+            "parser_version": "1.0.0"
+        }),
+    );
+    scope.insert(
+        "staged_sync_record_count".to_string(),
+        serde_json::json!(summary.parsed_record_count),
+    );
+
+    let preview = preview_summary
+        .as_object_mut()
+        .expect("package operation preview is an object");
+    preview.insert(
+        "executor_state".to_string(),
+        serde_json::json!(EMAIL_STAGED_SYNC_EXECUTOR_STATE),
+    );
+    preview.insert(
+        "staged_sync_material_count".to_string(),
+        serde_json::json!(
+            scope["staged_sync_material_ids"]
+                .as_array()
+                .map_or(0, Vec::len)
+        ),
+    );
+    preview.insert(
+        "admitted_event_count".to_string(),
+        serde_json::json!(
+            scope["staged_sync_event_ids"]
+                .as_array()
+                .map_or(0, Vec::len)
+        ),
+    );
+    preview.insert(
+        "staged_sync_record_count".to_string(),
+        serde_json::json!(summary.parsed_record_count),
+    );
+
+    Ok(Some(EmailSyncExecutionResult {
+        status: OperationStatus::Success,
+        message: format!("{}; staged email sync admitted", spec.surface),
+        duration_ms: Some(elapsed_millis(started)),
+    }))
+}
+
+impl EmailStagedSyncRequest {
+    fn from_scope(
+        mode_id: &str,
+        scope: &serde_json::Map<String, serde_json::Value>,
+    ) -> Result<Option<Self>> {
+        let paths = staged_path_list(scope, &["path", "input_path", "paths", "input_paths"])?;
+        let archive_paths =
+            staged_path_list(scope, &["archive_path", "archive_paths", "takeout_path"])?;
+        if paths.is_empty() && archive_paths.is_empty() {
+            return Ok(None);
+        }
+        if mode_id == EMAIL_MAILDIR_STAGED_MODE_ID && !archive_paths.is_empty() {
+            return Err(SinexError::validation(
+                "maildir staged email sync accepts path/input_path/paths only; use mbox-staged for MBOX or Takeout archives",
+            )
+            .with_operation("ops.start"));
+        }
+
+        Ok(Some(Self {
+            paths,
+            archive_paths,
+            folder: optional_scope_string(scope, "folder"),
+            max_message_bytes: scope
+                .get("max_message_bytes")
+                .and_then(serde_json::Value::as_u64)
+                .unwrap_or(EMAIL_STAGED_SYNC_DEFAULT_MAX_MESSAGE_BYTES),
+        }))
+    }
+
+    fn sanitized_scope_value(&self) -> serde_json::Value {
+        serde_json::json!({
+            "paths": self.paths.iter().map(ToString::to_string).collect::<Vec<_>>(),
+            "archive_paths": self.archive_paths.iter().map(ToString::to_string).collect::<Vec<_>>(),
+            "folder": self.folder,
+            "max_message_bytes": self.max_message_bytes,
+        })
+    }
+}
+
+fn staged_path_list(
+    scope: &serde_json::Map<String, serde_json::Value>,
+    keys: &[&str],
+) -> Result<Vec<Utf8PathBuf>> {
+    let mut paths = Vec::new();
+    for key in keys {
+        let Some(value) = scope.get(*key) else {
+            continue;
+        };
+        match value {
+            serde_json::Value::String(path) => {
+                paths.push(Utf8PathBuf::from(path));
+            }
+            serde_json::Value::Array(values) => {
+                for value in values {
+                    let path = value.as_str().ok_or_else(|| {
+                        SinexError::validation(format!("{key} entries must be strings"))
+                            .with_operation("ops.start")
+                    })?;
+                    paths.push(Utf8PathBuf::from(path));
+                }
+            }
+            _ => {
+                return Err(SinexError::validation(format!(
+                    "{key} must be a string or array of strings"
+                ))
+                .with_operation("ops.start"));
+            }
+        }
+    }
+    paths.sort();
+    paths.dedup();
+    Ok(paths)
+}
+
+async fn execute_mbox_staged_email_sync(
+    pool: &PgPool,
+    spec: &PackageOperationSpec,
+    mode_id: &str,
+    request: &EmailStagedSyncRequest,
+) -> Result<EmailStagedSyncSummary> {
+    let mut summary = EmailStagedSyncSummary {
+        material_ids: Vec::new(),
+        event_ids: Vec::new(),
+        parsed_record_count: 0,
+    };
+    for path in &request.paths {
+        let material_record = register_email_staged_material(
+            pool,
+            spec,
+            mode_id,
+            path,
+            SourceMaterialFormat::Text,
+            serde_json::json!({ "email_staged_sync": { "input_kind": "mbox-file" } }),
+        )
+        .await?;
+        summary.material_ids.push(material_record.id.to_string());
+        let config = EmailMboxFileConfig {
+            paths: vec![path.clone()],
+            archive_paths: Vec::new(),
+            folder: request.folder.clone(),
+            max_message_bytes: request.max_message_bytes,
+        };
+        admit_mbox_adapter_records(pool, &material_record, config, &mut summary).await?;
+    }
+    for archive_path in &request.archive_paths {
+        let material_record = register_email_staged_material(
+            pool,
+            spec,
+            mode_id,
+            archive_path,
+            SourceMaterialFormat::Archive,
+            serde_json::json!({ "email_staged_sync": { "input_kind": "takeout-archive" } }),
+        )
+        .await?;
+        summary.material_ids.push(material_record.id.to_string());
+        let config = EmailMboxFileConfig {
+            paths: Vec::new(),
+            archive_paths: vec![archive_path.clone()],
+            folder: request.folder.clone(),
+            max_message_bytes: request.max_message_bytes,
+        };
+        admit_mbox_adapter_records(pool, &material_record, config, &mut summary).await?;
+    }
+    Ok(summary)
+}
+
+async fn admit_mbox_adapter_records(
+    pool: &PgPool,
+    material_record: &sinex_db::SourceMaterialRecord,
+    config: EmailMboxFileConfig,
+    summary: &mut EmailStagedSyncSummary,
+) -> Result<()> {
+    let adapter = EmailMboxFileAdapter;
+    let material_id = Id::<SourceMaterial>::from_uuid(material_record.id);
+    let mut stream = adapter
+        .open(material_id, &config, None)
+        .await
+        .map_err(|error| {
+            SinexError::parse("email MBOX adapter failed to open")
+                .with_context("material_id", material_record.id.to_string())
+                .with_context("parse_error", error.to_string())
+                .with_operation("ops.start")
+        })?;
+    let mut parser = EmailMailboxParser;
+    while let Some(record) = stream.next().await {
+        let record = record.map_err(|error| {
+            SinexError::parse("email MBOX adapter failed to read record")
+                .with_context("material_id", material_record.id.to_string())
+                .with_context("parse_error", error.to_string())
+                .with_operation("ops.start")
+        })?;
+        summary.parsed_record_count += 1;
+        admit_email_record(pool, &mut parser, record, material_id, summary).await?;
+    }
+    Ok(())
+}
+
+async fn execute_maildir_staged_email_sync(
+    pool: &PgPool,
+    spec: &PackageOperationSpec,
+    mode_id: &str,
+    request: &EmailStagedSyncRequest,
+) -> Result<EmailStagedSyncSummary> {
+    let files = collect_maildir_input_files(&request.paths)?;
+    let mut summary = EmailStagedSyncSummary {
+        material_ids: Vec::new(),
+        event_ids: Vec::new(),
+        parsed_record_count: 0,
+    };
+    let mut parser = EmailMailboxParser;
+    for path in files {
+        let bytes = tokio::fs::read(&path).await.map_err(|error| {
+            SinexError::io("Failed to read staged email file")
+                .with_context("path", path.to_string())
+                .with_std_error(&error)
+                .with_operation("ops.start")
+        })?;
+        let material_record = register_email_staged_material(
+            pool,
+            spec,
+            mode_id,
+            &path,
+            SourceMaterialFormat::Text,
+            serde_json::json!({ "email_staged_sync": { "input_kind": "rfc822-file" } }),
+        )
+        .await?;
+        update_material_total_bytes(pool, material_record.id, bytes.len()).await?;
+        summary.material_ids.push(material_record.id.to_string());
+        let material_id = Id::<SourceMaterial>::from_uuid(material_record.id);
+        let record = SourceRecord {
+            material_id,
+            anchor: MaterialAnchor::ByteRange {
+                start: 0,
+                len: bytes.len() as u64,
+            },
+            bytes,
+            logical_path: Some(path),
+            source_ts_hint: None,
+            metadata: request
+                .folder
+                .as_ref()
+                .map(|folder| serde_json::json!({ "folder": folder }))
+                .unwrap_or(serde_json::Value::Null),
+        };
+        summary.parsed_record_count += 1;
+        admit_email_record(pool, &mut parser, record, material_id, &mut summary).await?;
+    }
+    Ok(summary)
+}
+
+fn collect_maildir_input_files(paths: &[Utf8PathBuf]) -> Result<Vec<Utf8PathBuf>> {
+    let mut files = Vec::new();
+    for path in paths {
+        if path.is_file() {
+            files.push(path.clone());
+            continue;
+        }
+        if !path.is_dir() {
+            return Err(
+                SinexError::validation("staged email input path does not exist")
+                    .with_context("path", path.to_string())
+                    .with_operation("ops.start"),
+            );
+        }
+        collect_maildir_files_from_dir(path, &mut files)?;
+    }
+    files.sort();
+    files.dedup();
+    if files.is_empty() {
+        return Err(SinexError::validation(
+            "staged email sync found no RFC822/Maildir message files",
+        )
+        .with_operation("ops.start"));
+    }
+    Ok(files)
+}
+
+fn collect_maildir_files_from_dir(path: &Utf8PathBuf, files: &mut Vec<Utf8PathBuf>) -> Result<()> {
+    for entry in std::fs::read_dir(path).map_err(|error| {
+        SinexError::io("Failed to read staged email directory")
+            .with_context("path", path.to_string())
+            .with_std_error(&error)
+            .with_operation("ops.start")
+    })? {
+        let entry = entry.map_err(|error| {
+            SinexError::io("Failed to read staged email directory entry")
+                .with_context("path", path.to_string())
+                .with_std_error(&error)
+                .with_operation("ops.start")
+        })?;
+        let entry_path = Utf8PathBuf::from_path_buf(entry.path()).map_err(|_| {
+            SinexError::validation("staged email path is not valid UTF-8")
+                .with_context("path", entry.path().display().to_string())
+                .with_operation("ops.start")
+        })?;
+        let file_type = entry.file_type().map_err(|error| {
+            SinexError::io("Failed to inspect staged email directory entry")
+                .with_context("path", entry_path.to_string())
+                .with_std_error(&error)
+                .with_operation("ops.start")
+        })?;
+        if file_type.is_dir() {
+            collect_maildir_files_from_dir(&entry_path, files)?;
+        } else if file_type.is_file() && maildir_entry_path(&entry_path) {
+            files.push(entry_path);
+        }
+    }
+    Ok(())
+}
+
+fn maildir_entry_path(path: &Utf8PathBuf) -> bool {
+    path.components()
+        .any(|component| matches!(component.as_str(), "cur" | "new"))
+}
+
+async fn register_email_staged_material(
+    pool: &PgPool,
+    spec: &PackageOperationSpec,
+    mode_id: &str,
+    path: &Utf8PathBuf,
+    format: SourceMaterialFormat,
+    metadata: serde_json::Value,
+) -> Result<sinex_db::SourceMaterialRecord> {
+    let mut contract =
+        SourceMaterialMetadataContract::new(format, SourceMaterialTimingInfoType::StagedAt);
+    contract.origin = Some(SourceOrigin {
+        source_uri: Some(path.to_string()),
+        binding_id: Some(mode_id.to_string()),
+        ..SourceOrigin::default()
+    });
+    let material = sinex_db::repositories::SourceMaterial::file(path.to_string())
+        .with_metadata_contract(&contract)
+        .with_metadata(serde_json::json!({
+            "email_staged_sync": {
+                "source_id": spec.source_id,
+                "mode_id": mode_id,
+                "operation_type": spec.operation_type,
+                "action": spec.action,
+            }
+        }))
+        .with_metadata(metadata);
+    let material_record = pool.source_materials().register_material(material).await?;
+    if let Ok(metadata) = std::fs::metadata(path) {
+        if metadata.is_file() {
+            update_material_total_bytes(pool, material_record.id, metadata.len() as usize).await?;
+        }
+    }
+    Ok(material_record)
+}
+
+async fn update_material_total_bytes(
+    pool: &PgPool,
+    material_id: uuid::Uuid,
+    byte_len: usize,
+) -> Result<()> {
+    let total_bytes = i64::try_from(byte_len).map_err(|error| {
+        SinexError::validation("email staged material is too large to record")
+            .with_std_error(&error)
+            .with_operation("ops.start")
+    })?;
+    sqlx::query!(
+        "UPDATE raw.source_material_registry SET total_bytes = $1 WHERE id = $2",
+        total_bytes,
+        material_id
+    )
+    .execute(pool)
+    .await
+    .map_err(|error| {
+        SinexError::database("Failed to persist staged email material size")
+            .with_context("material_id", material_id.to_string())
+            .with_std_error(&error)
+    })?;
+    Ok(())
+}
+
+async fn admit_email_record(
+    pool: &PgPool,
+    parser: &mut EmailMailboxParser,
+    record: SourceRecord,
+    material_id: Id<SourceMaterial>,
+    summary: &mut EmailStagedSyncSummary,
+) -> Result<()> {
+    let ctx = ParserContext {
+        source_id: SourceId::from_static("email.mailbox"),
+        source_material_id: material_id,
+        record_anchor: record.anchor.clone(),
+        operation_id: uuid::Uuid::now_v7(),
+        job_id: uuid::Uuid::now_v7(),
+        host: std::env::var("HOSTNAME")
+            .or_else(|_| std::env::var("HOST"))
+            .unwrap_or_else(|_| "unknown-host".to_string()),
+        acquisition_time: Timestamp::now(),
+    };
+    let intents = parser.parse_record(record, &ctx).await.map_err(|error| {
+        SinexError::parse("email mailbox parser failed")
+            .with_context("source_id", "email.mailbox")
+            .with_context("parse_error", error.to_string())
+            .with_operation("ops.start")
+    })?;
+    for intent in intents {
+        let event = parsed_material_intent_to_event(intent, material_id)?;
+        let persisted = pool.events().insert(event).await?;
+        if let Some(id) = persisted.id {
+            summary.event_ids.push(id.to_string());
+        }
+    }
+    Ok(())
 }
 
 async fn resolve_media_worker_output(
@@ -1344,7 +1846,7 @@ fn validate_media_worker_output_size(byte_len: usize) -> Result<()> {
     Ok(())
 }
 
-fn parsed_media_intent_to_event(
+fn parsed_material_intent_to_event(
     intent: sinex_primitives::parser::ParsedEventIntent,
     material_id: Id<SourceMaterial>,
 ) -> Result<Event<serde_json::Value>> {
