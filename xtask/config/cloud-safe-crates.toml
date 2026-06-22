@@ -1,8 +1,8 @@
 # Cloud-safe crates manifest
 # ===========================
 #
-# Crates listed here are safe to `cargo check -p <crate>` and
-# `cargo test -p <crate>` inside cloud-agent sandboxes
+# Crates listed here are safe to exercise through `xtask check -p <crate>` and
+# `xtask test -p <crate>` inside cloud-agent sandboxes
 # (Claude Code Web, Codex Cloud). "Safe" means:
 #
 #   1. No `sqlx::query!` / `sqlx::query_as!` macros at compile time
@@ -20,9 +20,8 @@
 # Anything NOT listed: do NOT exercise in cloud. Route to the Hetzner
 # self-hosted runner (`[self-hosted, linux, x64, sinex-heavy]`).
 #
-# This file is a manifest only. No xtask command consumes it yet — a
-# follow-up will add `xtask cloud-check` that reads this list and runs
-# `cargo check`/`cargo test` only against entries below. Curate by hand:
+# This file is a manifest only. It documents the cloud-lane crates that an
+# xtask-backed cloud runner may select. Curate by hand:
 # adding a crate means you have verified its source against the criteria
 # above on the current master.
 

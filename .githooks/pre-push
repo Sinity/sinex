@@ -109,6 +109,8 @@ _sinex_pre_push_xtask_sources_newer_than() {
   find \
     "$REPO_ROOT/xtask/src" \
     "$REPO_ROOT/xtask/macros/src" \
+    "$REPO_ROOT/xtask/build.rs" \
+    "$REPO_ROOT/crate/sinex-primitives/src/events/payloads" \
     "$REPO_ROOT/Cargo.lock" \
     "$REPO_ROOT/Cargo.toml" \
     "$REPO_ROOT/xtask/Cargo.toml" \
@@ -124,6 +126,8 @@ _sinex_pre_push_branch_changes_xtask_build_inputs() {
     Cargo.toml \
     flake.nix \
     .cargo/config.toml \
+    crate/sinex-primitives/src/events/payloads \
+    xtask/build.rs \
     xtask/Cargo.toml \
     xtask/src \
     xtask/macros/src

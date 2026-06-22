@@ -5,7 +5,7 @@
 # Runs once at sandbox boot for Claude Code Web and Codex Cloud
 # (both Ubuntu 24.04). Installs system libs sinex builds against,
 # bootstraps rustup with the toolchain pinned in rust-toolchain.toml,
-# and pre-warms the cargo registry.
+# pre-warms the cargo registry, and materializes the repository xtask binary.
 #
 # Idempotent — re-running is safe.
 set -euo pipefail
@@ -48,6 +48,11 @@ fi
 # shellcheck disable=SC1091
 . "${CARGO_HOME:-$HOME/.cargo}/env"
 
+repo_root="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
+export CARGO_HOME="${CARGO_HOME:-${repo_root}/.cargo}"
+export CARGO_TARGET_DIR="${CARGO_TARGET_DIR:-${repo_root}/.target}"
+export PATH="${CARGO_TARGET_DIR}/debug:${PATH}"
+
 log "resolving toolchain from rust-toolchain.toml"
 # `rustup show` triggers install of the channel + components declared in
 # the repo's rust-toolchain.toml. Must run from the repo root.
@@ -58,6 +63,9 @@ rustup show
 # ---------------------------------------------------------------------------
 log "fetching crate dependencies"
 cargo fetch --locked
+
+log "building repository xtask"
+cargo build --locked -p xtask
 
 log "installing cargo-nextest (best-effort)"
 cargo install --locked cargo-nextest || log "cargo-nextest install skipped"
@@ -98,26 +106,28 @@ log "NATS_URL=${NATS_URL}"
 # ---------------------------------------------------------------------------
 # The committed .claude/settings.json stays minimal so it never perturbs the
 # local Nix dev environment. The cloud sandbox needs different cargo paths,
-# the resolved DATABASE_URL/NATS_URL, and permission allowances for bare
+# the resolved DATABASE_URL/NATS_URL, and permission allowances for xtask,
 # cargo/rustup/docker. Write them to .claude/settings.local.json, which Claude
 # Code reads and merges over settings.json and which .gitignore excludes
 # (.claude/*.local.json). The committed forbid-bare-cargo hook is already a
 # no-op here because SINEX_DEV_ROOT / IN_NIX_SHELL are unset outside the Nix
-# devshell, so bare `cargo` works as the cloud lane intends.
-repo_root="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
+# devshell; direct cargo remains available for setup/bootstrap diagnostics,
+# while normal check/test/fix flows use xtask.
 cat > "${repo_root}/.claude/settings.local.json" <<JSON
 {
   "env": {
-    "CARGO_HOME": "${CARGO_HOME:-${repo_root}/.cargo}",
-    "CARGO_TARGET_DIR": "${CARGO_TARGET_DIR:-${repo_root}/.target}",
+    "CARGO_HOME": "${CARGO_HOME}",
+    "CARGO_TARGET_DIR": "${CARGO_TARGET_DIR}",
     "DATABASE_URL": "${DATABASE_URL}",
     "NATS_URL": "${NATS_URL}",
+    "PATH": "${CARGO_TARGET_DIR}/debug:${PATH}",
     "RUSTC_WRAPPER": "",
     "SINEX_AUTO_INFRA": "0",
     "SINEX_AUTO_STATUS": "0"
   },
   "permissions": {
     "allow": [
+      "Bash(xtask:*)",
       "Bash(cargo:*)",
       "Bash(rustup:*)",
       "Bash(docker:*)",

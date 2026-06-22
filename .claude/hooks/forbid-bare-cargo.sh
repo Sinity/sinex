@@ -22,11 +22,11 @@ set -euo pipefail
 
 # The xtask wrapper this hook protects only exists inside the sinex Nix
 # devshell. In environments without it — notably the cloud-agent lane sandbox
-# (Claude Code Web / Codex Cloud), which has no Nix, no xtask, and uses bare
-# `cargo check` / `cargo test` as documented in
-# docs/operations/cloud-agent-lane.md — bare cargo is the intended entrypoint,
-# so this hook must be a no-op. Detect the devshell via the markers the sinnix
-# direnvrc / flake devShell export.
+# (Claude Code Web / Codex Cloud), which has no Nix — this hook must be a
+# no-op so setup/bootstrap diagnostics can still use cargo. The cloud setup
+# script builds the repository xtask and places it on PATH for normal check,
+# test, and fix flows. Detect the devshell via the markers the sinnix direnvrc
+# / flake devShell export.
 if [ -z "${SINEX_DEV_ROOT:-}" ] && [ -z "${IN_NIX_SHELL:-}" ]; then
   exit 0
 fi
