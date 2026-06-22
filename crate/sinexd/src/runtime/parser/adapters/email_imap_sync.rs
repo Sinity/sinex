@@ -5,15 +5,17 @@
 //! an [`ImapSyncClient`] implementation; the adapter turns mailbox batches into
 //! bounded [`SourceRecord`] streams with typed UID/UIDVALIDITY/MODSEQ cursors.
 
-use std::{error::Error, future::Future, sync::Arc};
+use std::{error::Error, fmt, future::Future, sync::Arc, time::Duration};
 
 use async_trait::async_trait;
 use camino::Utf8PathBuf;
-use futures::StreamExt;
 use futures::stream::{self, BoxStream};
+use futures::{StreamExt, TryStreamExt};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value as JsonValue};
+use tokio::io::{AsyncRead, AsyncWrite};
+use tokio::net::TcpStream;
 
 use sinex_primitives::events::SourceMaterial;
 use sinex_primitives::ids::Id;
@@ -178,6 +180,281 @@ pub trait ImapSyncClient: Send + Sync {
         &self,
         request: ImapSyncRequest,
     ) -> impl Future<Output = Result<ImapSyncBatch, Self::Error>> + Send;
+}
+
+/// TLS mode used by [`NativeImapSyncClient`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "kebab-case")]
+pub enum NativeImapTlsMode {
+    /// Implicit TLS, typically IMAPS on port 993.
+    Implicit,
+    /// Plain TCP, intended for local fixtures or explicitly trusted tunnels.
+    None,
+}
+
+impl NativeImapTlsMode {
+    #[must_use]
+    pub fn from_scope_value(value: &str) -> Option<Self> {
+        match value {
+            "implicit" => Some(Self::Implicit),
+            "none" | "plain" => Some(Self::None),
+            _ => None,
+        }
+    }
+
+    #[must_use]
+    pub fn as_scope_value(self) -> &'static str {
+        match self {
+            Self::Implicit => "implicit",
+            Self::None => "none",
+        }
+    }
+}
+
+/// Network configuration for [`NativeImapSyncClient`].
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct NativeImapSyncClientConfig {
+    pub host: String,
+    pub port: u16,
+    pub username: String,
+    pub password: String,
+    #[serde(default = "default_native_imap_mailbox")]
+    pub mailbox: String,
+    #[serde(default = "default_native_imap_tls_mode")]
+    pub tls_mode: NativeImapTlsMode,
+    #[serde(default = "default_native_imap_idle_timeout_ms")]
+    pub idle_timeout_ms: u64,
+}
+
+fn default_native_imap_mailbox() -> String {
+    "INBOX".to_string()
+}
+
+fn default_native_imap_tls_mode() -> NativeImapTlsMode {
+    NativeImapTlsMode::Implicit
+}
+
+fn default_native_imap_idle_timeout_ms() -> u64 {
+    30_000
+}
+
+/// Reqwest-equivalent native IMAP client used by email mailbox operations.
+#[derive(Debug, Clone)]
+pub struct NativeImapSyncClient {
+    config: NativeImapSyncClientConfig,
+}
+
+impl NativeImapSyncClient {
+    #[must_use]
+    pub fn new(config: NativeImapSyncClientConfig) -> Self {
+        Self { config }
+    }
+
+    async fn fetch_with_client<T>(
+        &self,
+        mut client: async_imap::Client<T>,
+        request: ImapSyncRequest,
+    ) -> Result<ImapSyncBatch, NativeImapSyncError>
+    where
+        T: AsyncRead + AsyncWrite + Unpin + fmt::Debug + Send,
+    {
+        client
+            .read_response()
+            .await
+            .map_err(|error| NativeImapSyncError::new("read greeting", error))?
+            .ok_or_else(|| NativeImapSyncError::message("IMAP server closed before greeting"))?;
+        let mut session = client
+            .login(&self.config.username, &self.config.password)
+            .await
+            .map_err(|(error, _client)| NativeImapSyncError::new("login", error))?;
+        let mailbox = match request.mode {
+            ImapSyncMode::Scheduled => match session.select_condstore(&request.mailbox).await {
+                Ok(mailbox) => mailbox,
+                Err(_) => session
+                    .select(&request.mailbox)
+                    .await
+                    .map_err(|error| NativeImapSyncError::new("select mailbox", error))?,
+            },
+            ImapSyncMode::Idle => {
+                let mailbox = match session.select_condstore(&request.mailbox).await {
+                    Ok(mailbox) => mailbox,
+                    Err(_) => session
+                        .select(&request.mailbox)
+                        .await
+                        .map_err(|error| NativeImapSyncError::new("select mailbox", error))?,
+                };
+                let mut idle = session.idle();
+                idle.init()
+                    .await
+                    .map_err(|error| NativeImapSyncError::new("start idle", error))?;
+                let (wait, interrupt) = idle.wait();
+                let timeout = Duration::from_millis(self.config.idle_timeout_ms);
+                tokio::spawn(async move {
+                    tokio::time::sleep(timeout).await;
+                    drop(interrupt);
+                });
+                let _ = wait
+                    .await
+                    .map_err(|error| NativeImapSyncError::new("wait idle", error))?;
+                session = idle
+                    .done()
+                    .await
+                    .map_err(|error| NativeImapSyncError::new("finish idle", error))?;
+                mailbox
+            }
+        };
+
+        let uid_start = request.uid_next.unwrap_or(1).max(1);
+        let batch_size = request.batch_size.max(1);
+        let uid_end = uid_start.saturating_add(batch_size.saturating_sub(1));
+        let query = if request.fetch_bodies {
+            "(UID FLAGS INTERNALDATE RFC822.SIZE BODY.PEEK[])"
+        } else {
+            "(UID FLAGS INTERNALDATE RFC822.SIZE BODY.PEEK[HEADER])"
+        };
+        let mut fetches = session
+            .uid_fetch(format!("{uid_start}:{uid_end}"), query)
+            .await
+            .map_err(|error| NativeImapSyncError::new("uid fetch", error))?;
+        let mut records = Vec::new();
+        let mut last_uid = None;
+        while let Some(fetch) = fetches
+            .try_next()
+            .await
+            .map_err(|error| NativeImapSyncError::new("read fetch", error))?
+        {
+            let uid = fetch.uid;
+            if let Some(uid) = uid {
+                last_uid = Some(uid);
+            }
+            let header = fetch.header().map(bytes_to_lossy_string);
+            let body = request
+                .fetch_bodies
+                .then(|| fetch.body().map(bytes_to_lossy_string))
+                .flatten();
+            let message_id = header
+                .as_deref()
+                .and_then(|text| header_value(text, "Message-ID"));
+            let flags = fetch
+                .flags()
+                .map(|flag| imap_flag_to_string(&flag))
+                .collect::<Vec<_>>();
+            records.push(ImapSyncRecord {
+                kind: ImapSyncRecordKind::Message,
+                uid,
+                message_id,
+                flags: flags.clone(),
+                payload: serde_json::json!({
+                    "uid": uid,
+                    "flags": flags,
+                    "size": fetch.size,
+                    "modseq": fetch.modseq,
+                    "header": header,
+                    "body": body,
+                    "body_fetched": request.fetch_bodies,
+                    "attachments_fetched": request.fetch_attachments,
+                }),
+            });
+        }
+        drop(fetches);
+        session
+            .logout()
+            .await
+            .map_err(|error| NativeImapSyncError::new("logout", error))?;
+
+        let uid_next = last_uid
+            .map(|uid| uid.saturating_add(1))
+            .or(mailbox.uid_next)
+            .or(request.uid_next);
+        let has_more = match (uid_next, mailbox.uid_next) {
+            (Some(next), Some(server_next)) => next < server_next,
+            _ => false,
+        };
+        Ok(ImapSyncBatch {
+            records,
+            uid_validity: mailbox.uid_validity.or(request.uid_validity),
+            uid_next,
+            highest_modseq: mailbox.highest_modseq.or(request.highest_modseq),
+            has_more,
+        })
+    }
+}
+
+impl ImapSyncClient for NativeImapSyncClient {
+    type Error = NativeImapSyncError;
+
+    async fn fetch_batch(&self, request: ImapSyncRequest) -> Result<ImapSyncBatch, Self::Error> {
+        let address = (self.config.host.as_str(), self.config.port);
+        let tcp = TcpStream::connect(address)
+            .await
+            .map_err(|error| NativeImapSyncError::new("connect", error))?;
+        match self.config.tls_mode {
+            NativeImapTlsMode::Implicit => {
+                let tls = async_native_tls::TlsConnector::new()
+                    .connect(self.config.host.as_str(), tcp)
+                    .await
+                    .map_err(|error| NativeImapSyncError::new("tls connect", error))?;
+                self.fetch_with_client(async_imap::Client::new(tls), request)
+                    .await
+            }
+            NativeImapTlsMode::None => {
+                self.fetch_with_client(async_imap::Client::new(tcp), request)
+                    .await
+            }
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct NativeImapSyncError {
+    message: String,
+}
+
+impl NativeImapSyncError {
+    fn message(message: impl Into<String>) -> Self {
+        Self {
+            message: message.into(),
+        }
+    }
+
+    fn new(context: &'static str, error: impl fmt::Display) -> Self {
+        Self::message(format!("IMAP {context} failed: {error}"))
+    }
+}
+
+impl fmt::Display for NativeImapSyncError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(&self.message)
+    }
+}
+
+impl Error for NativeImapSyncError {}
+
+fn bytes_to_lossy_string(bytes: &[u8]) -> String {
+    String::from_utf8_lossy(bytes).into_owned()
+}
+
+fn header_value(header: &str, name: &str) -> Option<String> {
+    let prefix = format!("{name}:");
+    header.lines().find_map(|line| {
+        line.strip_prefix(&prefix)
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(str::to_string)
+    })
+}
+
+fn imap_flag_to_string(flag: &async_imap::types::Flag<'_>) -> String {
+    match flag {
+        async_imap::types::Flag::Seen => "\\Seen".to_string(),
+        async_imap::types::Flag::Answered => "\\Answered".to_string(),
+        async_imap::types::Flag::Flagged => "\\Flagged".to_string(),
+        async_imap::types::Flag::Deleted => "\\Deleted".to_string(),
+        async_imap::types::Flag::Draft => "\\Draft".to_string(),
+        async_imap::types::Flag::Recent => "\\Recent".to_string(),
+        async_imap::types::Flag::MayCreate => "\\*".to_string(),
+        async_imap::types::Flag::Custom(value) => value.to_string(),
+    }
 }
 
 /// Scheduled/IDLE IMAP adapter.
