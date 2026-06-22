@@ -38,6 +38,16 @@ pub enum StreamPressureDimension {
     Bytes,
 }
 
+impl StreamPressureDimension {
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Messages => "messages",
+            Self::Bytes => "bytes",
+        }
+    }
+}
+
 /// Operator-facing pressure classification for a `JetStream` stream sample.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
@@ -45,6 +55,17 @@ pub enum StreamPressureLevel {
     Nominal,
     Warning,
     Critical,
+}
+
+impl StreamPressureLevel {
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Nominal => "nominal",
+            Self::Warning => "warning",
+            Self::Critical => "critical",
+        }
+    }
 }
 
 impl Default for StreamPressureLevel {

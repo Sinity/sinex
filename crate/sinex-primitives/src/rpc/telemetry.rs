@@ -3,7 +3,10 @@
 //! These types map to the `sinex_telemetry.*` read models exposed by the
 //! gateway under the `telemetry.*` method namespace.
 
-use crate::rpc::{RpcDomain, RpcMethod, RpcMutability, RpcRole, RpcStability, methods};
+use crate::{
+    events::payloads::metrics::{StreamPressureDimension, StreamPressureLevel},
+    rpc::{RpcDomain, RpcMethod, RpcMutability, RpcRole, RpcStability, methods},
+};
 use serde::{Deserialize, Serialize};
 
 macro_rules! telemetry_method {
@@ -385,8 +388,8 @@ pub struct StreamStatsBucket {
     pub max_fill_pct: Option<f64>,
     pub max_message_fill_pct: Option<f64>,
     pub max_byte_fill_pct: Option<f64>,
-    pub max_pressure_level: Option<String>,
-    pub limiting_dimension: Option<String>,
+    pub max_pressure_level: Option<StreamPressureLevel>,
+    pub limiting_dimension: Option<StreamPressureDimension>,
     pub avg_messages: Option<f64>,
     pub max_messages: Option<i64>,
     pub sample_count: i64,
