@@ -356,7 +356,10 @@ fn build_imap_record(
         META_ACCOUNT_BINDING_REF.to_string(),
         serde_json::json!(&request_seed.account_binding_ref),
     );
-    metadata.insert(META_MAILBOX.to_string(), serde_json::json!(&request_seed.mailbox));
+    metadata.insert(
+        META_MAILBOX.to_string(),
+        serde_json::json!(&request_seed.mailbox),
+    );
     metadata.insert(
         META_IMAP_MODE.to_string(),
         serde_json::json!(request_seed.mode.as_str()),

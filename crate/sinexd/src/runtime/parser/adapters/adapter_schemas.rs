@@ -110,7 +110,10 @@ pub fn all_adapter_schemas() -> BTreeMap<String, AdapterSchema> {
         "GmailApiCursorAdapter".into(),
         schema_for_type::<GmailApiCursorConfig>(),
     );
-    map.insert("ImapSyncAdapter".into(), schema_for_type::<ImapSyncConfig>());
+    map.insert(
+        "ImapSyncAdapter".into(),
+        schema_for_type::<ImapSyncConfig>(),
+    );
     map.insert(
         "JournalctlStreamAdapter".into(),
         schema_for_type::<JournalctlStreamConfig>(),
