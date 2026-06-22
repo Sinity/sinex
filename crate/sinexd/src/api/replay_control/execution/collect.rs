@@ -485,6 +485,7 @@ impl ReplayExecutionEngine {
     /// Returns `(event_type, scope_keys)` pairs grouped by `event_type`.
     /// Use when a caller needs scope invalidation metadata before moving events
     /// out of `core.events`.
+    #[cfg(test)]
     pub(crate) async fn collect_cascade_scope_metadata(
         &self,
         pool: &sqlx::PgPool,

@@ -789,20 +789,6 @@ mod coverage_matrix {
         }
     }
 
-    const fn blocked_entry(
-        source_id: &'static str,
-        coverage: SmokeCoverage,
-        evidence: &'static str,
-        blocker_issue: &'static str,
-    ) -> SmokeMatrixEntry {
-        SmokeMatrixEntry {
-            source_id,
-            coverage,
-            evidence,
-            blocker_issue: Some(blocker_issue),
-        }
-    }
-
     #[sinex_test]
     async fn source_driver_host_smoke_matrix_covers_every_registered_factory() -> TestResult<()> {
         let factory_ids: BTreeSet<String> = registered_source_factory_ids()
