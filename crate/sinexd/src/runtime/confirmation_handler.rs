@@ -1123,9 +1123,10 @@ mod tests {
             RuntimePressureAction::Throttle
         );
 
-        let confirmed = buffer.confirm(at_limit.event_id).await.ok_or_else(|| {
-            color_eyre::eyre::eyre!("expected at-limit event to remain confirmable")
-        })?;
+        let confirmed = buffer
+            .confirm(at_limit.event_id)
+            .await
+            .expect("expected at-limit event to remain confirmable");
         assert_eq!(confirmed.event_id, at_limit.event_id);
         assert_eq!(buffer.retained_payload_bytes(), 0);
 
