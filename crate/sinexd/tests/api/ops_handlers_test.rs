@@ -825,7 +825,8 @@ async fn ops_start_records_email_sync_for_provider_mode(ctx: TestContext) -> Tes
             .as_array()
             .expect("provider runtime caveats should be an array")
             .iter()
-            .any(|caveat| caveat == "sync cursor persistence waits for Gmail history-id runtime")
+            .any(|caveat| caveat
+                == "provider executor requires explicit gmail_token_file at operation start")
     );
     assert_eq!(
         provider_runtime["runtime_observation_contract"]["account_binding_ref"],
@@ -989,7 +990,9 @@ async fn ops_start_executes_imap_scheduled_sync_with_password_file(
                     "mailbox": "INBOX",
                     "uidvalidity": "700",
                     "uid": "40",
-                    "batch_size": 10
+                    "batch_size": 10,
+                    "fetch_bodies": true,
+                    "body_material_policy_ref": "operator.email-mailbox.body-private"
                 },
             }),
             &auth,
@@ -1021,6 +1024,11 @@ async fn ops_start_executes_imap_scheduled_sync_with_password_file(
     assert_eq!(scope["executor_state"], "imap_sync_admitted");
     assert_eq!(scope["imap_sync_input"]["host"], "127.0.0.1");
     assert_eq!(scope["imap_sync_input"]["tls_mode"], "none");
+    assert_eq!(scope["imap_sync_input"]["fetch_bodies"], true);
+    assert_eq!(
+        scope["imap_sync_input"]["body_material_policy_ref"],
+        "operator.email-mailbox.body-private"
+    );
     assert_eq!(
         scope["imap_sync_input"]["password_file_ref"].as_str(),
         Some(password_file.to_string_lossy().as_ref())
@@ -1133,6 +1141,114 @@ async fn ops_start_executes_imap_sync_without_persisting_inline_password(
     assert_eq!(
         scope["provider_cursor"]["cursor_observation_contract"]["uid"], "41",
         "IMAP cursor should advance past the fetched UID"
+    );
+    Ok(())
+}
+
+#[sinex_test]
+async fn ops_start_rejects_imap_body_fetch_without_material_policy(
+    ctx: TestContext,
+) -> TestResult<()> {
+    let auth = system_auth();
+    let error = handle_ops_start(
+        ctx.pool(),
+        json!({
+            "operation_type": "email.mailbox.sync",
+            "scope": {
+                "source_id": "email.mailbox",
+                "mode_id": "source:email.mailbox.imap-scheduled-sync",
+                "account_binding_ref": "operator-mailbox:imap-primary",
+                "imap_host": "127.0.0.1",
+                "imap_port": 1143,
+                "imap_username": "operator",
+                "imap_password": "inline-fixture-password",
+                "imap_tls_mode": "none",
+                "mailbox": "INBOX",
+                "fetch_bodies": true
+            },
+        }),
+        &auth,
+    )
+    .await
+    .expect_err("IMAP body fetch should require an explicit material policy ref");
+
+    assert!(
+        error
+            .to_string()
+            .contains("fetch_bodies requires body_material_policy_ref")
+    );
+    Ok(())
+}
+
+#[sinex_test]
+async fn ops_start_rejects_imap_attachment_fetch_without_body_fetch(
+    ctx: TestContext,
+) -> TestResult<()> {
+    let auth = system_auth();
+    let error = handle_ops_start(
+        ctx.pool(),
+        json!({
+            "operation_type": "email.mailbox.sync",
+            "scope": {
+                "source_id": "email.mailbox",
+                "mode_id": "source:email.mailbox.imap-scheduled-sync",
+                "account_binding_ref": "operator-mailbox:imap-primary",
+                "imap_host": "127.0.0.1",
+                "imap_port": 1143,
+                "imap_username": "operator",
+                "imap_password": "inline-fixture-password",
+                "imap_tls_mode": "none",
+                "mailbox": "INBOX",
+                "fetch_attachments": true,
+                "attachment_material_policy_ref": "operator.email-mailbox.attachment-private"
+            },
+        }),
+        &auth,
+    )
+    .await
+    .expect_err("IMAP attachment fetch should require full body fetch");
+
+    assert!(
+        error
+            .to_string()
+            .contains("fetch_attachments requires fetch_bodies")
+    );
+    Ok(())
+}
+
+#[sinex_test]
+async fn ops_start_rejects_imap_attachment_fetch_without_material_policy(
+    ctx: TestContext,
+) -> TestResult<()> {
+    let auth = system_auth();
+    let error = handle_ops_start(
+        ctx.pool(),
+        json!({
+            "operation_type": "email.mailbox.sync",
+            "scope": {
+                "source_id": "email.mailbox",
+                "mode_id": "source:email.mailbox.imap-scheduled-sync",
+                "account_binding_ref": "operator-mailbox:imap-primary",
+                "imap_host": "127.0.0.1",
+                "imap_port": 1143,
+                "imap_username": "operator",
+                "imap_password": "inline-fixture-password",
+                "imap_tls_mode": "none",
+                "mailbox": "INBOX",
+                "fetch_bodies": true,
+                "body_material_policy_ref": "operator.email-mailbox.body-private",
+                "fetch_attachments": true
+            },
+        }),
+        &auth,
+    )
+    .await
+    .expect_err("IMAP attachment fetch should require an explicit material policy ref");
+
+    assert!(
+        error
+            .to_string()
+            .contains("fetch_attachments requires attachment_material_policy_ref")
     );
     Ok(())
 }

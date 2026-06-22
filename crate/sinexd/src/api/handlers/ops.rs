@@ -970,6 +970,8 @@ struct EmailImapSyncRequest {
     batch_size: u32,
     fetch_bodies: bool,
     fetch_attachments: bool,
+    body_material_policy_ref: Option<String>,
+    attachment_material_policy_ref: Option<String>,
     idle_timeout_ms: u64,
 }
 
@@ -1518,6 +1520,8 @@ async fn execute_imap_provider_sync(
         batch_size: request.batch_size,
         fetch_bodies: request.fetch_bodies,
         fetch_attachments: request.fetch_attachments,
+        body_material_policy_ref: request.body_material_policy_ref.clone(),
+        attachment_material_policy_ref: request.attachment_material_policy_ref.clone(),
     };
     let summary = admit_imap_adapter_records(pool, &material_record, client, config).await?;
     let provider_cursor = summary
@@ -1654,6 +1658,36 @@ impl EmailImapSyncRequest {
             })?,
             None => NativeImapTlsMode::Implicit,
         };
+        let fetch_bodies = scope
+            .get("fetch_bodies")
+            .and_then(serde_json::Value::as_bool)
+            .unwrap_or(false);
+        let fetch_attachments = scope
+            .get("fetch_attachments")
+            .and_then(serde_json::Value::as_bool)
+            .unwrap_or(false);
+        let body_material_policy_ref = optional_scope_string(scope, "body_material_policy_ref")
+            .or_else(|| optional_scope_string(scope, "raw_body_material_policy_ref"));
+        let attachment_material_policy_ref =
+            optional_scope_string(scope, "attachment_material_policy_ref");
+        if fetch_bodies && body_material_policy_ref.is_none() {
+            return Err(SinexError::validation(
+                "IMAP fetch_bodies requires body_material_policy_ref",
+            )
+            .with_operation("ops.start"));
+        }
+        if fetch_attachments && !fetch_bodies {
+            return Err(
+                SinexError::validation("IMAP fetch_attachments requires fetch_bodies")
+                    .with_operation("ops.start"),
+            );
+        }
+        if fetch_attachments && attachment_material_policy_ref.is_none() {
+            return Err(SinexError::validation(
+                "IMAP fetch_attachments requires attachment_material_policy_ref",
+            )
+            .with_operation("ops.start"));
+        }
 
         Ok(Some(Self {
             host,
@@ -1692,14 +1726,10 @@ impl EmailImapSyncRequest {
                 })?
                 .unwrap_or(EMAIL_IMAP_SYNC_DEFAULT_BATCH_SIZE)
                 .max(1),
-            fetch_bodies: scope
-                .get("fetch_bodies")
-                .and_then(serde_json::Value::as_bool)
-                .unwrap_or(false),
-            fetch_attachments: scope
-                .get("fetch_attachments")
-                .and_then(serde_json::Value::as_bool)
-                .unwrap_or(false),
+            fetch_bodies,
+            fetch_attachments,
+            body_material_policy_ref,
+            attachment_material_policy_ref,
             idle_timeout_ms: scope
                 .get("idle_timeout_ms")
                 .and_then(serde_json::Value::as_u64)
@@ -1741,6 +1771,8 @@ impl EmailImapSyncRequest {
             "batch_size": self.batch_size,
             "fetch_bodies": self.fetch_bodies,
             "fetch_attachments": self.fetch_attachments,
+            "body_material_policy_ref": self.body_material_policy_ref,
+            "attachment_material_policy_ref": self.attachment_material_policy_ref,
             "idle_timeout_ms": self.idle_timeout_ms,
         })
     }
@@ -2612,25 +2644,25 @@ fn email_provider_mode_metadata(mode_id: &str) -> Option<EmailProviderModeMetada
         EmailProviderRuntimeMode::GmailScheduledSync => Some(EmailProviderModeMetadata {
             mode,
             caveats: &[
-                "provider executor not attached",
-                "authorization state is declared but not persisted",
-                "sync cursor persistence waits for Gmail history-id runtime",
+                "provider executor requires explicit gmail_token_file at operation start",
+                "OAuth refresh remains operator/runtime-owned outside this operation",
+                "provider cursor is unknown until an executable sync admits records",
             ],
         }),
         EmailProviderRuntimeMode::ImapScheduledSync => Some(EmailProviderModeMetadata {
             mode,
             caveats: &[
-                "provider executor not attached",
-                "authorization state is declared but not persisted",
-                "sync cursor persistence waits for IMAP UIDVALIDITY/UID runtime",
+                "provider executor requires explicit IMAP credentials at operation start",
+                "credential refresh remains operator/runtime-owned outside this operation",
+                "provider cursor is unknown until an executable sync admits records",
             ],
         }),
         EmailProviderRuntimeMode::ImapIdleLive => Some(EmailProviderModeMetadata {
             mode,
             caveats: &[
-                "provider executor not attached",
-                "authorization state is declared but not persisted",
-                "IDLE reconnect/backoff state waits for runtime implementation",
+                "IMAP IDLE is executable as a bounded operation and not a daemon supervisor",
+                "credential refresh remains operator/runtime-owned outside this operation",
+                "daemon reconnect/backoff state remains runtime-owned outside ops.start",
             ],
         }),
     }

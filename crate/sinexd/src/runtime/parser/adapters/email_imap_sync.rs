@@ -33,6 +33,8 @@ const META_IMAP_UID_NEXT: &str = "imap_uid_next";
 const META_IMAP_HIGHEST_MODSEQ: &str = "imap_highest_modseq";
 const META_IMAP_BATCH_INDEX: &str = "imap_batch_index";
 const META_IMAP_RECORD_INDEX: &str = "imap_record_index";
+const META_IMAP_BODY_MATERIAL_POLICY_REF: &str = "body_material_policy_ref";
+const META_IMAP_ATTACHMENT_MATERIAL_POLICY_REF: &str = "attachment_material_policy_ref";
 const DEFAULT_IMAP_BATCH_SIZE: u32 = 100;
 
 /// IMAP acquisition mode represented by this adapter.
@@ -80,6 +82,12 @@ pub struct ImapSyncConfig {
     /// Whether attachment body parts may be materialized by the runtime client.
     #[serde(default)]
     pub fetch_attachments: bool,
+    /// Operator-selected policy governing fetched raw message bodies.
+    #[serde(default)]
+    pub body_material_policy_ref: Option<String>,
+    /// Operator-selected policy governing materialized attachment body parts.
+    #[serde(default)]
+    pub attachment_material_policy_ref: Option<String>,
 }
 
 fn default_imap_sync_mode() -> ImapSyncMode {
@@ -110,6 +118,8 @@ pub struct ImapSyncRequest {
     pub batch_size: u32,
     pub fetch_bodies: bool,
     pub fetch_attachments: bool,
+    pub body_material_policy_ref: Option<String>,
+    pub attachment_material_policy_ref: Option<String>,
 }
 
 /// One mailbox batch returned by an IMAP client implementation.
@@ -353,6 +363,8 @@ impl NativeImapSyncClient {
                     "body": body,
                     "body_fetched": request.fetch_bodies,
                     "attachments_fetched": request.fetch_attachments,
+                    "body_material_policy_ref": request.body_material_policy_ref.clone(),
+                    "attachment_material_policy_ref": request.attachment_material_policy_ref.clone(),
                 }),
             });
         }
@@ -590,6 +602,8 @@ struct ImapRequestSeed {
     batch_size: u32,
     fetch_bodies: bool,
     fetch_attachments: bool,
+    body_material_policy_ref: Option<String>,
+    attachment_material_policy_ref: Option<String>,
 }
 
 impl ImapRequestSeed {
@@ -601,6 +615,8 @@ impl ImapRequestSeed {
             batch_size: config.batch_size,
             fetch_bodies: config.fetch_bodies,
             fetch_attachments: config.fetch_attachments,
+            body_material_policy_ref: config.body_material_policy_ref.clone(),
+            attachment_material_policy_ref: config.attachment_material_policy_ref.clone(),
         }
     }
 
@@ -615,6 +631,8 @@ impl ImapRequestSeed {
             batch_size: self.batch_size,
             fetch_bodies: self.fetch_bodies,
             fetch_attachments: self.fetch_attachments,
+            body_material_policy_ref: self.body_material_policy_ref.clone(),
+            attachment_material_policy_ref: self.attachment_material_policy_ref.clone(),
         }
     }
 }
@@ -668,6 +686,18 @@ fn build_imap_record(
         META_IMAP_RECORD_INDEX.to_string(),
         serde_json::json!(record_index),
     );
+    if let Some(policy_ref) = &request_seed.body_material_policy_ref {
+        metadata.insert(
+            META_IMAP_BODY_MATERIAL_POLICY_REF.to_string(),
+            serde_json::json!(policy_ref),
+        );
+    }
+    if let Some(policy_ref) = &request_seed.attachment_material_policy_ref {
+        metadata.insert(
+            META_IMAP_ATTACHMENT_MATERIAL_POLICY_REF.to_string(),
+            serde_json::json!(policy_ref),
+        );
+    }
 
     let bytes = serde_json::to_vec(&record).map_err(|error| {
         ParserError::Adapter(format!("failed to serialize IMAP sync record: {error}"))

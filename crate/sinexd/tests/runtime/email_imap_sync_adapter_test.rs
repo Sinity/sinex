@@ -77,6 +77,8 @@ fn config(mode: ImapSyncMode) -> ImapSyncConfig {
         batch_size: 25,
         fetch_bodies: true,
         fetch_attachments: false,
+        body_material_policy_ref: Some("operator.email-mailbox.body-private".to_string()),
+        attachment_material_policy_ref: None,
     }
 }
 
@@ -146,6 +148,10 @@ async fn imap_scheduled_sync_advances_uid_and_modseq() -> xtask::sandbox::TestRe
     assert_eq!(first.metadata["mailbox"], "INBOX");
     assert_eq!(first.metadata["imap_mode"], "scheduled");
     assert_eq!(first.metadata["imap_record_kind"], "message");
+    assert_eq!(
+        first.metadata["body_material_policy_ref"],
+        "operator.email-mailbox.body-private"
+    );
     assert!(matches!(
         first.anchor,
         MaterialAnchor::StreamFrame {
@@ -177,6 +183,10 @@ async fn imap_scheduled_sync_advances_uid_and_modseq() -> xtask::sandbox::TestRe
     assert_eq!(requests[0].batch_size, 25);
     assert!(requests[0].fetch_bodies);
     assert!(!requests[0].fetch_attachments);
+    assert_eq!(
+        requests[0].body_material_policy_ref.as_deref(),
+        Some("operator.email-mailbox.body-private")
+    );
     assert_eq!(requests[1].uid_next, Some(42));
     assert_eq!(requests[1].highest_modseq, Some(1100));
     Ok(())
@@ -241,6 +251,18 @@ async fn imap_sync_adapter_schema_exposes_mailbox_mode_and_fetch_policy()
         schema
             .schema
             .pointer("/properties/fetch_attachments")
+            .is_some()
+    );
+    assert!(
+        schema
+            .schema
+            .pointer("/properties/body_material_policy_ref")
+            .is_some()
+    );
+    assert!(
+        schema
+            .schema
+            .pointer("/properties/attachment_material_policy_ref")
             .is_some()
     );
     Ok(())
