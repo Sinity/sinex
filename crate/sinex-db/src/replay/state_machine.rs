@@ -967,7 +967,9 @@ impl ReplayStateMachine {
 
     pub async fn record_scope_invalidations_published(&self, operation_id: Uuid) -> Result<()> {
         let repo = self.repo();
-        let mut tx = repo.begin_context("record_scope_invalidations_published").await?;
+        let mut tx = repo
+            .begin_context("record_scope_invalidations_published")
+            .await?;
 
         let existing = repo.fetch_meta_for_update(&mut tx, operation_id).await?;
         let mut meta = decode_meta_json(Some(existing))?;

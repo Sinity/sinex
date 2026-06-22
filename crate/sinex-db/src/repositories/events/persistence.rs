@@ -2982,10 +2982,9 @@ mod tests {
         ctx: xtask::sandbox::TestContext,
     ) -> xtask::sandbox::TestResult<()> {
         let missing_parent = Id::<Event<JsonValue>>::new();
-        let provenance = crate::models::Provenance::from_derived([EventId::from_uuid(
-            missing_parent.to_uuid(),
-        )])
-        .ok_or_else(|| color_eyre::eyre::eyre!("expected derived provenance"))?;
+        let provenance =
+            crate::models::Provenance::from_derived([EventId::from_uuid(missing_parent.to_uuid())])
+                .expect("expected derived provenance");
         let event = Event {
             id: Some(Id::new()),
             source: EventSource::new("test.source")?,
@@ -3009,9 +3008,7 @@ mod tests {
 
         let error = match EventRepository::new(ctx.pool()).insert(event).await {
             Ok(_) => {
-                return Err(color_eyre::eyre::eyre!(
-                    "derived insert unexpectedly accepted a missing parent"
-                ));
+                panic!("derived insert unexpectedly accepted a missing parent");
             }
             Err(error) => error,
         };
