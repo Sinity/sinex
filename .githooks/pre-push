@@ -115,6 +115,20 @@ _sinex_pre_push_xtask_sources_newer_than() {
     -type f -newer "$candidate" -print -quit 2>/dev/null | grep -q .
 }
 
+_sinex_pre_push_branch_changes_xtask_build_inputs() {
+  local base_ref merge_base
+  base_ref="${BASE_REF:-origin/master}"
+  merge_base="$(git merge-base "$base_ref" HEAD 2>/dev/null)" || return 0
+  ! git diff --quiet "$merge_base" HEAD -- \
+    Cargo.lock \
+    Cargo.toml \
+    flake.nix \
+    .cargo/config.toml \
+    xtask/Cargo.toml \
+    xtask/src \
+    xtask/macros/src
+}
+
 _sinex_pre_push_checkout_postgres_running() {
   local cache_root pid_file pid
   cache_root="$(_sinex_pre_push_cache_root)"
@@ -151,6 +165,30 @@ _sinex_pre_push_path_xtask_binary() {
   done < <(type -P -a xtask 2>/dev/null || true)
 }
 
+_sinex_pre_push_cached_xtask_binary() {
+  local user_name cache_base candidate
+  user_name="${USER:-$(id -un)}"
+  cache_base="/var/cache/sinex/$user_name"
+  [[ -d "$cache_base" ]] || return 0
+
+  while IFS= read -r candidate; do
+    [[ -n "$candidate" ]] || continue
+    if _sinex_pre_push_branch_changes_xtask_build_inputs; then
+      _sinex_pre_push_xtask_binary_is_current "$candidate" || continue
+    fi
+    printf '%s\n' "$candidate"
+    return 0
+  done < <(
+    find "$cache_base" \
+      -path '*/target/debug/xtask' \
+      -type f \
+      -executable \
+      -printf '%T@ %p\n' 2>/dev/null \
+      | sort -nr \
+      | sed 's/^[^ ]* //'
+  )
+}
+
 _sinex_pre_push_clean_env() {
   env \
     -u CARGO_TARGET_DIR \
@@ -182,11 +220,13 @@ _sinex_pre_push_clean_env() {
 
 _sinex_pre_push_run_xtask() {
   local xtask_bin
+  local xtask_dir
 
   xtask_bin="$(_sinex_pre_push_checkout_xtask_binary || true)"
   if [[ -n "$xtask_bin" ]]; then
     echo "[pre-push] Using checkout-local xtask binary: $xtask_bin" >&2
-    _sinex_pre_push_checkout_env "$xtask_bin" "$@"
+    xtask_dir="$(dirname "$xtask_bin")"
+    PATH="$xtask_dir:$PATH" _sinex_pre_push_checkout_env "$xtask_bin" "$@"
     return $?
   fi
 
@@ -199,7 +239,8 @@ _sinex_pre_push_run_xtask() {
       *)
         if _sinex_pre_push_xtask_binary_is_current "$xtask_bin"; then
           echo "[pre-push] Using active devshell xtask: $xtask_bin" >&2
-          _sinex_pre_push_checkout_env "$xtask_bin" "$@"
+          xtask_dir="$(dirname "$xtask_bin")"
+          PATH="$xtask_dir:$PATH" _sinex_pre_push_checkout_env "$xtask_bin" "$@"
           return $?
         fi
         echo "[pre-push] Ignoring stale active xtask binary: $xtask_bin" >&2
@@ -211,10 +252,19 @@ _sinex_pre_push_run_xtask() {
   if [[ -n "$xtask_bin" ]]; then
     if _sinex_pre_push_xtask_binary_is_current "$xtask_bin"; then
       echo "[pre-push] Using read-only PATH xtask fallback: $xtask_bin" >&2
-      _sinex_pre_push_checkout_env "$xtask_bin" "$@"
+      xtask_dir="$(dirname "$xtask_bin")"
+      PATH="$xtask_dir:$PATH" _sinex_pre_push_checkout_env "$xtask_bin" "$@"
       return $?
     fi
     echo "[pre-push] Ignoring stale PATH xtask fallback: $xtask_bin" >&2
+  fi
+
+  xtask_bin="$(_sinex_pre_push_cached_xtask_binary || true)"
+  if [[ -n "$xtask_bin" ]]; then
+    echo "[pre-push] Using read-only cached xtask fallback: $xtask_bin" >&2
+    xtask_dir="$(dirname "$xtask_bin")"
+    PATH="$xtask_dir:$PATH" _sinex_pre_push_checkout_env "$xtask_bin" "$@"
+    return $?
   fi
 
   echo "[pre-push] No usable xtask binary found; using nix develop fallback." >&2
@@ -227,16 +277,26 @@ _sinex_pre_push_record_drift_bypass() {
   local sha="$2"
 
   local xtask_bin
+  local xtask_dir
 
   xtask_bin="$(_sinex_pre_push_checkout_xtask_binary || true)"
   if [[ -n "$xtask_bin" ]]; then
-    _sinex_pre_push_checkout_env "$xtask_bin" record-drift-bypass --branch "$branch" --sha "$sha" 2>/dev/null || true
+    xtask_dir="$(dirname "$xtask_bin")"
+    PATH="$xtask_dir:$PATH" _sinex_pre_push_checkout_env "$xtask_bin" record-drift-bypass --branch "$branch" --sha "$sha" 2>/dev/null || true
     return 0
   fi
 
   xtask_bin="$(_sinex_pre_push_path_xtask_binary || true)"
   if [[ -n "$xtask_bin" ]]; then
-    _sinex_pre_push_checkout_env "$xtask_bin" record-drift-bypass --branch "$branch" --sha "$sha" 2>/dev/null || true
+    xtask_dir="$(dirname "$xtask_bin")"
+    PATH="$xtask_dir:$PATH" _sinex_pre_push_checkout_env "$xtask_bin" record-drift-bypass --branch "$branch" --sha "$sha" 2>/dev/null || true
+    return 0
+  fi
+
+  xtask_bin="$(_sinex_pre_push_cached_xtask_binary || true)"
+  if [[ -n "$xtask_bin" ]]; then
+    xtask_dir="$(dirname "$xtask_bin")"
+    PATH="$xtask_dir:$PATH" _sinex_pre_push_checkout_env "$xtask_bin" record-drift-bypass --branch "$branch" --sha "$sha" 2>/dev/null || true
     return 0
   fi
 
