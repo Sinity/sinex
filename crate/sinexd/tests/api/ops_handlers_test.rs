@@ -21,6 +21,7 @@ use sinexd::api::handlers::{
 use sinexd::api::rpc_server::RpcAuthContext;
 use sinexd::api::{ReplayScope, ReplayState, ReplayStateMachine};
 use std::collections::HashMap;
+use std::io::Write;
 use xtask::sandbox::prelude::*;
 
 fn system_auth() -> RpcAuthContext {
@@ -926,6 +927,135 @@ async fn ops_start_strips_provider_runtime_for_staged_email_mode(
     assert!(
         preview.get("provider_cursor").is_none(),
         "staged email previews must not advertise provider cursor metadata"
+    );
+    Ok(())
+}
+
+fn write_email_takeout_zip(path: &camino::Utf8Path) -> TestResult<()> {
+    let file = std::fs::File::create(path)?;
+    let mut archive = zip::ZipWriter::new(file);
+    let options =
+        zip::write::SimpleFileOptions::default().compression_method(zip::CompressionMethod::Stored);
+    archive.start_file("Takeout/Mail/Inbox.mbox", options)?;
+    archive.write_all(
+        b"From sender@example.com Sat Jan 01 00:00:00 2022\n\
+Message-ID: <takeout-one@example.com>\n\
+Date: Sat, 01 Jan 2022 00:00:00 +0000\n\
+From: Sender <sender@example.com>\n\
+To: Receiver <receiver@example.com>\n\
+Subject: First\n\
+\n\
+first body\n\
+From sender@example.com Sun Jan 02 00:00:00 2022\n\
+Message-ID: <takeout-two@example.com>\n\
+Date: Sun, 02 Jan 2022 00:00:00 +0000\n\
+From: Sender <sender@example.com>\n\
+To: Receiver <receiver@example.com>\n\
+Subject: Second\n\
+\n\
+second body\n",
+    )?;
+    archive.finish()?;
+    Ok(())
+}
+
+#[sinex_test]
+async fn ops_start_imports_takeout_zip_for_staged_email_sync(ctx: TestContext) -> TestResult<()> {
+    let dir = tempfile::tempdir()?;
+    let archive_path = camino::Utf8PathBuf::from_path_buf(dir.path().join("takeout.zip"))
+        .expect("test temp path should be utf8");
+    write_email_takeout_zip(&archive_path)?;
+
+    let auth = system_auth();
+    let response: OpsStartResponse = serde_json::from_value(
+        handle_ops_start(
+            ctx.pool(),
+            json!({
+                "operation_type": "email.mailbox.sync",
+                "scope": {
+                    "source_id": "email.mailbox",
+                    "mode_id": "source:email.mailbox.mbox-staged",
+                    "archive_path": archive_path.as_str(),
+                    "reason": "operator-requested"
+                },
+            }),
+            &auth,
+        )
+        .await?,
+    )?;
+
+    assert_eq!(response.operation.operation_type, "email.mailbox.sync");
+    assert_eq!(response.operation.result_status, OperationStatus::Success);
+    assert_eq!(
+        response.operation.result_message.as_deref(),
+        Some("email_capture; staged email sync admitted")
+    );
+    let scope = response
+        .operation
+        .scope
+        .as_ref()
+        .expect("email operation scope should be recorded");
+    assert_eq!(scope["executor_state"], "staged_email_sync_admitted");
+    assert_eq!(
+        scope["staged_sync_parser"]["parser_id"],
+        "email-mailbox-rfc822"
+    );
+    assert_eq!(scope["staged_sync_record_count"], 2);
+    assert_eq!(
+        scope["staged_sync_input"]["archive_paths"],
+        json!([archive_path.as_str()])
+    );
+    assert_eq!(
+        scope["staged_sync_material_ids"]
+            .as_array()
+            .expect("material ids should be recorded")
+            .len(),
+        1
+    );
+    assert_eq!(
+        scope["staged_sync_event_ids"]
+            .as_array()
+            .expect("event ids should be recorded")
+            .len(),
+        4,
+        "two messages should admit message and thread events"
+    );
+
+    let preview = response
+        .operation
+        .preview_summary
+        .as_ref()
+        .expect("email operation preview should be recorded");
+    assert_eq!(preview["executor_state"], "staged_email_sync_admitted");
+    assert_eq!(preview["staged_sync_material_count"], 1);
+    assert_eq!(preview["staged_sync_record_count"], 2);
+    assert_eq!(preview["admitted_event_count"], 4);
+    Ok(())
+}
+
+#[sinex_test]
+async fn ops_start_rejects_maildir_staged_sync_with_archive_path(
+    ctx: TestContext,
+) -> TestResult<()> {
+    let auth = system_auth();
+    let error = handle_ops_start(
+        ctx.pool(),
+        json!({
+            "operation_type": "email.mailbox.sync",
+            "scope": {
+                "source_id": "email.mailbox",
+                "mode_id": "source:email.mailbox.maildir-staged",
+                "archive_path": "/tmp/takeout.zip"
+            },
+        }),
+        &auth,
+    )
+    .await
+    .expect_err("maildir staged sync must not accept archives");
+
+    assert!(
+        error.to_string().contains("use mbox-staged"),
+        "error should point operator at the staged MBOX/Takeout mode: {error}"
     );
     Ok(())
 }
