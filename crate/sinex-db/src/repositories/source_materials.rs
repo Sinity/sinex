@@ -9,8 +9,8 @@ use crate::schema::defs::records::SourceMaterialRecord;
 use serde::{Deserialize, Serialize};
 use serde_json::{Map as JsonMap, Value as JsonValue, json};
 use sinex_primitives::domain::{
-    MaterialStatus, SourceMaterialFormat, SourceMaterialTimingInfoType, TemporalClock,
-    TemporalPrecision, TemporalSourceType,
+    MaterialStatus, MaterialStorageKind, SourceMaterialFormat, SourceMaterialTimingInfoType,
+    TemporalClock, TemporalPrecision, TemporalSourceType,
 };
 use sinex_primitives::rpc::sources::{
     CaveatSeverity, SOURCE_MATERIAL_CONTRACT_METADATA_KEY, SourceCaveat,
@@ -28,9 +28,11 @@ use uuid::Uuid;
 /// documents, OCR segments, API pages, or live stream segments belong in
 /// material metadata and package-mode contracts.
 pub mod material_kinds {
-    pub const ANNEX: &str = "annex";
-    pub const GIT: &str = "git";
-    pub const LOCAL_CAS: &str = "local_cas";
+    use sinex_primitives::domain::MaterialStorageKind as K;
+
+    pub const ANNEX: K = K::Annex;
+    pub const GIT: K = K::Git;
+    pub const LOCAL_CAS: K = K::LocalCas;
 }
 /// Canonical timing info types — use `SourceMaterialTimingInfoType` variants directly.
 ///
@@ -126,7 +128,7 @@ fn strip_reserved_metadata_keys(mut metadata: JsonValue) -> JsonValue {
 /// Source material registration payload
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SourceMaterial {
-    material_kind: String,
+    material_kind: MaterialStorageKind,
     source_identifier: String,
     timing_info_type: String,
     status: MaterialStatus,
@@ -138,9 +140,9 @@ pub struct SourceMaterial {
     staged_on_host: Option<String>,
 }
 impl SourceMaterial {
-    fn new(material_kind: impl Into<String>, source_identifier: impl Into<String>) -> Self {
+    fn new(material_kind: MaterialStorageKind, source_identifier: impl Into<String>) -> Self {
         Self {
-            material_kind: material_kind.into(),
+            material_kind,
             source_identifier: source_identifier.into(),
             timing_info_type: timing_info_types::INTRINSIC.to_string(),
             status: MaterialStatus::Completed,
@@ -860,7 +862,7 @@ impl SourceMaterialRepository<'_> {
                 privacy_class as "privacy_class!: String"
                         "#,
                         id.to_uuid(),
-                        material.material_kind,
+                        material.material_kind.as_str(),
                         material.source_identifier,
                         material.status.as_str(),
                         material.timing_info_type,
@@ -1346,7 +1348,7 @@ impl SourceMaterialRepository<'_> {
 
         sqlx::query_as::<_, SourceMaterialRecord>(upsert_sql)
             .bind(id.to_uuid())
-            .bind(&material.material_kind)
+            .bind(material.material_kind.as_str())
             .bind(&material.source_identifier)
             .bind(material.status)
             .bind(&material.timing_info_type)
@@ -1484,7 +1486,7 @@ impl SourceMaterialRepository<'_> {
 
         sqlx::query_as::<_, SourceMaterialRecord>(upsert_sql)
             .bind(id.to_uuid())
-            .bind(&material.material_kind)
+            .bind(material.material_kind.as_str())
             .bind(&material.source_identifier)
             .bind(material.status)
             .bind(&material.timing_info_type)

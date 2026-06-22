@@ -2,8 +2,8 @@ use std::str::FromStr;
 
 use color_eyre::eyre::eyre;
 use sinex_primitives::domain::{
-    ContentKey, EventSource, EventType, HostName, JobId, NatsSubject, SanitizedPath, SchemaVersion,
-    ServiceName,
+    ContentKey, EventSource, EventType, HostName, JobId, MaterialStorageKind, NatsSubject,
+    SanitizedPath, SchemaVersion, ServiceName,
 };
 use sinex_primitives::events::EventPayload;
 use sinex_primitives::events::payloads::{
@@ -94,6 +94,30 @@ async fn domain_types_remain_distinct() -> TestResult<()> {
     let source = EventSource::from_static("test");
     let event_type = EventType::from_static("test");
     assert_eq!(source.as_str(), event_type.as_str());
+    Ok(())
+}
+
+#[sinex_test]
+async fn material_storage_kind_parses_only_registry_backends() -> TestResult<()> {
+    assert_eq!(
+        MaterialStorageKind::from_str("annex").map_err(|err| eyre!(err))?,
+        MaterialStorageKind::Annex
+    );
+    assert_eq!(
+        MaterialStorageKind::from_str("git").map_err(|err| eyre!(err))?,
+        MaterialStorageKind::Git
+    );
+    assert_eq!(
+        MaterialStorageKind::from_str("local_cas").map_err(|err| eyre!(err))?,
+        MaterialStorageKind::LocalCas
+    );
+    assert_eq!(
+        serde_json::to_string(&MaterialStorageKind::LocalCas)?,
+        "\"local_cas\""
+    );
+
+    assert!(MaterialStorageKind::from_str("session_document").is_err());
+    assert!(MaterialStorageKind::from_str("shell_history").is_err());
     Ok(())
 }
 

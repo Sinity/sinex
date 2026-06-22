@@ -6,7 +6,9 @@
 use serde::{Deserialize, Serialize};
 use sinex_db::DbPoolExt;
 use sinex_db::repositories::SourceMaterial;
-use sinex_primitives::domain::{SourceMaterialFormat, SourceMaterialTimingInfoType};
+use sinex_primitives::domain::{
+    MaterialStorageKind, SourceMaterialFormat, SourceMaterialTimingInfoType,
+};
 use sinex_primitives::privacy::{RuntimePrivateModeState, load_private_mode_state};
 use sinex_primitives::rpc::sources::{
     CaveatSeverity, ContinuityContractStatus, CoverageGap, ReplayabilityStatus,
@@ -66,6 +68,15 @@ struct CoverageRow {
     earliest_ts: Option<OffsetDateTime>,
     latest_ts: Option<OffsetDateTime>,
     material_count: i64,
+}
+
+fn parse_material_storage_kind(raw: &str) -> Result<MaterialStorageKind> {
+    raw.parse().map_err(|error: String| {
+        SinexError::database("Source material registry contains an unknown material storage kind")
+            .with_context("material_kind", raw)
+            .with_context("expected", MaterialStorageKind::ALL.join(", "))
+            .with_context("parse_error", error)
+    })
 }
 
 // ── sources.stage ──────────────────────────────────────────────
@@ -293,28 +304,31 @@ pub async fn handle_sources_list(
 
     let materials = rows
         .into_iter()
-        .map(|row| SourceMaterialSummary {
-            format: SourceMaterialMetadataContract::from_metadata(&row.metadata)
-                .map(|contract| contract.format),
-            contract_version: SourceMaterialMetadataContract::from_metadata(&row.metadata)
-                .map(|contract| contract.version),
-            id: row.id.to_string(),
-            material_kind: row.material_kind,
-            source_identifier: row.source_identifier,
-            status: row
-                .status
-                .parse()
-                .unwrap_or(sinex_primitives::MaterialStatus::Sensing),
-            timing_info_type: row
-                .timing_info_type
-                .parse()
-                .unwrap_or(sinex_primitives::domain::SourceMaterialTimingInfoType::Unknown),
-            staged_at: Some(row.staged_at.to_string()),
-            staged_by: row.staged_by,
-            size_bytes: row.total_bytes,
-            mime_type: row.mime_type,
+        .map(|row| {
+            let material_kind = parse_material_storage_kind(&row.material_kind)?;
+            Ok(SourceMaterialSummary {
+                format: SourceMaterialMetadataContract::from_metadata(&row.metadata)
+                    .map(|contract| contract.format),
+                contract_version: SourceMaterialMetadataContract::from_metadata(&row.metadata)
+                    .map(|contract| contract.version),
+                id: row.id.to_string(),
+                material_kind,
+                source_identifier: row.source_identifier,
+                status: row
+                    .status
+                    .parse()
+                    .unwrap_or(sinex_primitives::MaterialStatus::Sensing),
+                timing_info_type: row
+                    .timing_info_type
+                    .parse()
+                    .unwrap_or(sinex_primitives::domain::SourceMaterialTimingInfoType::Unknown),
+                staged_at: Some(row.staged_at.to_string()),
+                staged_by: row.staged_by,
+                size_bytes: row.total_bytes,
+                mime_type: row.mime_type,
+            })
         })
-        .collect();
+        .collect::<Result<Vec<_>>>()?;
 
     Ok(SourcesListResponse { materials })
 }
@@ -355,7 +369,7 @@ pub async fn handle_sources_show(
 
     let detail = SourceMaterialDetail {
         id: record.id.to_string(),
-        material_kind: record.material_kind,
+        material_kind: parse_material_storage_kind(&record.material_kind)?,
         source_identifier: record.source_identifier,
         status: record.status,
         timing_info_type: record
@@ -436,15 +450,18 @@ pub async fn handle_sources_coverage(
 
     let sources = rows
         .into_iter()
-        .map(|row| SourceCoverageEntry {
-            source_identifier: row.source_identifier,
-            material_kind: row.material_kind,
-            earliest_ts: row.earliest_ts.map(|ts| ts.to_string()),
-            latest_ts: row.latest_ts.map(|ts| ts.to_string()),
-            event_count: None,
-            material_count: Some(row.material_count),
+        .map(|row| {
+            let material_kind = parse_material_storage_kind(&row.material_kind)?;
+            Ok(SourceCoverageEntry {
+                source_identifier: row.source_identifier,
+                material_kind,
+                earliest_ts: row.earliest_ts.map(|ts| ts.to_string()),
+                latest_ts: row.latest_ts.map(|ts| ts.to_string()),
+                event_count: None,
+                material_count: Some(row.material_count),
+            })
         })
-        .collect();
+        .collect::<Result<Vec<_>>>()?;
 
     Ok(SourcesCoverageResponse { sources })
 }

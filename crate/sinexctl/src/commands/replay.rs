@@ -943,7 +943,7 @@ async fn collect_material_scorecards(
         out.push(MaterialReplayabilityScorecard {
             material_id: m.id.clone(),
             source_identifier: m.source_identifier.clone(),
-            material_kind: m.material_kind.clone(),
+            material_kind: m.material_kind.to_string(),
             status: m.status,
             replayability,
         });
