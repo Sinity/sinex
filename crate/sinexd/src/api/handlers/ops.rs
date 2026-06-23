@@ -2,9 +2,9 @@ use camino::Utf8PathBuf;
 use futures::StreamExt as _;
 use serde::Deserialize;
 use sinex_db::DbPoolExt;
-use sinex_db::repositories::EmailProviderStateUpsert;
 use sinex_db::repositories::state::Operation as DbOperation;
 use sinex_db::repositories::state::PROJECTION_REBUILD_OPERATION_TYPE;
+use sinex_db::repositories::{EmailMailboxProjectionEvent, EmailProviderStateUpsert};
 use sinex_primitives::Id;
 use sinex_primitives::InvalidationTrigger;
 use sinex_primitives::SinexError;
@@ -1603,26 +1603,27 @@ async fn execute_gmail_provider_sync(
         label_ids: request.label_ids,
         include_spam_trash: request.include_spam_trash,
     };
-    let summary = match admit_gmail_adapter_records(pool, &material_record, client, config).await {
-        Ok(summary) => summary,
-        Err(error) => {
-            let reason = error.to_string();
-            let (auth_state, network_state, rate_limit_state) =
-                classify_gmail_provider_failure(&reason);
-            return Ok(Some(email_provider_failed_execution(
-                scope,
-                preview_summary,
-                EmailProviderRuntimeMode::GmailScheduledSync,
-                &provider_scope,
-                EMAIL_GMAIL_SYNC_FAILED_EXECUTOR_STATE,
-                reason,
-                auth_state,
-                network_state,
-                rate_limit_state,
-                started,
-            )));
-        }
-    };
+    let summary =
+        match admit_gmail_adapter_records(pool, &material_record, mode_id, client, config).await {
+            Ok(summary) => summary,
+            Err(error) => {
+                let reason = error.to_string();
+                let (auth_state, network_state, rate_limit_state) =
+                    classify_gmail_provider_failure(&reason);
+                return Ok(Some(email_provider_failed_execution(
+                    scope,
+                    preview_summary,
+                    EmailProviderRuntimeMode::GmailScheduledSync,
+                    &provider_scope,
+                    EMAIL_GMAIL_SYNC_FAILED_EXECUTOR_STATE,
+                    reason,
+                    auth_state,
+                    network_state,
+                    rate_limit_state,
+                    started,
+                )));
+            }
+        };
     let provider_cursor = summary.provider_cursor.clone().map(|cursor| {
         email_provider_cursor_payload_metadata_value(
             EmailProviderRuntimeMode::GmailScheduledSync,
@@ -1787,25 +1788,26 @@ async fn execute_imap_provider_sync(
         body_material_policy_ref: request.body_material_policy_ref.clone(),
         attachment_material_policy_ref: request.attachment_material_policy_ref.clone(),
     };
-    let summary = match admit_imap_adapter_records(pool, &material_record, client, config).await {
-        Ok(summary) => summary,
-        Err(error) => {
-            let reason = error.to_string();
-            let (auth_state, network_state) = classify_imap_provider_failure(&reason);
-            return Ok(Some(email_provider_failed_execution(
-                scope,
-                preview_summary,
-                mode,
-                &provider_scope,
-                EMAIL_IMAP_SYNC_FAILED_EXECUTOR_STATE,
-                reason,
-                auth_state,
-                network_state,
-                None,
-                started,
-            )));
-        }
-    };
+    let summary =
+        match admit_imap_adapter_records(pool, &material_record, mode_id, client, config).await {
+            Ok(summary) => summary,
+            Err(error) => {
+                let reason = error.to_string();
+                let (auth_state, network_state) = classify_imap_provider_failure(&reason);
+                return Ok(Some(email_provider_failed_execution(
+                    scope,
+                    preview_summary,
+                    mode,
+                    &provider_scope,
+                    EMAIL_IMAP_SYNC_FAILED_EXECUTOR_STATE,
+                    reason,
+                    auth_state,
+                    network_state,
+                    None,
+                    started,
+                )));
+            }
+        };
     let provider_cursor = summary
         .provider_cursor
         .clone()
@@ -2217,6 +2219,7 @@ async fn register_email_provider_material(
 async fn admit_gmail_adapter_records(
     pool: &PgPool,
     material_record: &sinex_db::SourceMaterialRecord,
+    mode_id: &str,
     client: GmailHttpClient,
     config: GmailApiCursorConfig,
 ) -> Result<EmailProviderSyncSummary> {
@@ -2246,9 +2249,15 @@ async fn admit_gmail_adapter_records(
                 .with_operation("ops.start")
         })?;
         summary.parsed_record_count += 1;
-        if let Some(cursor) =
-            admit_email_provider_record(pool, &mut parser, record, material_id, &mut summary)
-                .await?
+        if let Some(cursor) = admit_email_provider_record(
+            pool,
+            &mut parser,
+            record,
+            material_id,
+            mode_id,
+            &mut summary,
+        )
+        .await?
         {
             summary.provider_cursor = Some(cursor);
         }
@@ -2259,6 +2268,7 @@ async fn admit_gmail_adapter_records(
 async fn admit_imap_adapter_records(
     pool: &PgPool,
     material_record: &sinex_db::SourceMaterialRecord,
+    mode_id: &str,
     client: NativeImapSyncClient,
     config: ImapSyncConfig,
 ) -> Result<EmailProviderSyncSummary> {
@@ -2288,9 +2298,15 @@ async fn admit_imap_adapter_records(
                 .with_operation("ops.start")
         })?;
         summary.parsed_record_count += 1;
-        if let Some(cursor) =
-            admit_email_provider_record(pool, &mut parser, record, material_id, &mut summary)
-                .await?
+        if let Some(cursor) = admit_email_provider_record(
+            pool,
+            &mut parser,
+            record,
+            material_id,
+            mode_id,
+            &mut summary,
+        )
+        .await?
         {
             summary.provider_cursor = Some(cursor);
         }
@@ -2326,7 +2342,7 @@ async fn execute_mbox_staged_email_sync(
             folder: request.folder.clone(),
             max_message_bytes: request.max_message_bytes,
         };
-        admit_mbox_adapter_records(pool, &material_record, config, &mut summary).await?;
+        admit_mbox_adapter_records(pool, &material_record, mode_id, config, &mut summary).await?;
     }
     for archive_path in &request.archive_paths {
         let material_record = register_email_staged_material(
@@ -2345,7 +2361,7 @@ async fn execute_mbox_staged_email_sync(
             folder: request.folder.clone(),
             max_message_bytes: request.max_message_bytes,
         };
-        admit_mbox_adapter_records(pool, &material_record, config, &mut summary).await?;
+        admit_mbox_adapter_records(pool, &material_record, mode_id, config, &mut summary).await?;
     }
     Ok(summary)
 }
@@ -2353,6 +2369,7 @@ async fn execute_mbox_staged_email_sync(
 async fn admit_mbox_adapter_records(
     pool: &PgPool,
     material_record: &sinex_db::SourceMaterialRecord,
+    mode_id: &str,
     config: EmailMboxFileConfig,
     summary: &mut EmailStagedSyncSummary,
 ) -> Result<()> {
@@ -2376,7 +2393,7 @@ async fn admit_mbox_adapter_records(
                 .with_operation("ops.start")
         })?;
         summary.parsed_record_count += 1;
-        admit_email_record(pool, &mut parser, record, material_id, summary).await?;
+        admit_email_record(pool, &mut parser, record, material_id, mode_id, summary).await?;
     }
     Ok(())
 }
@@ -2429,7 +2446,15 @@ async fn execute_maildir_staged_email_sync(
                 .unwrap_or(serde_json::Value::Null),
         };
         summary.parsed_record_count += 1;
-        admit_email_record(pool, &mut parser, record, material_id, &mut summary).await?;
+        admit_email_record(
+            pool,
+            &mut parser,
+            record,
+            material_id,
+            mode_id,
+            &mut summary,
+        )
+        .await?;
     }
     Ok(summary)
 }
@@ -2564,6 +2589,7 @@ async fn admit_email_record(
     parser: &mut EmailMailboxParser,
     record: SourceRecord,
     material_id: Id<SourceMaterial>,
+    mode_id: &str,
     summary: &mut EmailStagedSyncSummary,
 ) -> Result<()> {
     let ctx = ParserContext {
@@ -2584,10 +2610,13 @@ async fn admit_email_record(
             .with_operation("ops.start")
     })?;
     for intent in intents {
+        let event_type = intent.event_type.as_str().to_string();
+        let payload = intent.payload.clone();
         let event = parsed_material_intent_to_event(intent, material_id)?;
         let persisted = pool.events().insert(event).await?;
         if let Some(id) = persisted.id {
             summary.event_ids.push(id.to_string());
+            project_email_mailbox_event(pool, mode_id, id.to_uuid(), event_type, payload).await?;
         }
     }
     Ok(())
@@ -2598,6 +2627,7 @@ async fn admit_email_provider_record(
     parser: &mut EmailMailboxParser,
     record: SourceRecord,
     material_id: Id<SourceMaterial>,
+    mode_id: &str,
     summary: &mut EmailProviderSyncSummary,
 ) -> Result<Option<serde_json::Value>> {
     let ctx = ParserContext {
@@ -2619,6 +2649,8 @@ async fn admit_email_provider_record(
     })?;
     let mut last_cursor = None;
     for intent in intents {
+        let event_type = intent.event_type.as_str().to_string();
+        let payload = intent.payload.clone();
         if intent.event_type.as_str() == "email.sync_cursor.observed" {
             last_cursor = Some(intent.payload.clone());
         }
@@ -2626,9 +2658,29 @@ async fn admit_email_provider_record(
         let persisted = pool.events().insert(event).await?;
         if let Some(id) = persisted.id {
             summary.event_ids.push(id.to_string());
+            project_email_mailbox_event(pool, mode_id, id.to_uuid(), event_type, payload).await?;
         }
     }
     Ok(last_cursor)
+}
+
+async fn project_email_mailbox_event(
+    pool: &PgPool,
+    mode_id: &str,
+    event_id: uuid::Uuid,
+    event_type: String,
+    payload: serde_json::Value,
+) -> Result<()> {
+    pool.email_mailbox_projections()
+        .upsert_event(EmailMailboxProjectionEvent {
+            source_id: "email.mailbox".to_string(),
+            mode_id: mode_id.to_string(),
+            event_id,
+            event_type,
+            payload,
+        })
+        .await?;
+    Ok(())
 }
 
 async fn resolve_media_worker_output(

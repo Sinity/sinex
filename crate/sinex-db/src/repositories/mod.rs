@@ -5,6 +5,7 @@ pub mod blobs;
 pub mod common;
 pub mod continuity;
 pub mod document_search;
+pub mod email_mailbox_projection;
 pub mod email_provider_state;
 pub mod embeddings;
 pub mod events;
@@ -28,6 +29,10 @@ pub use continuity::ContinuityRepository;
 pub use document_search::{
     DEFAULT_PAGE_SIZE, DocumentSearchQuery, DocumentSearchRepository, DocumentSearchResult,
     DocumentSearchResults, MAX_PAGE_SIZE, SearchEmptyReason, SearchMode,
+};
+pub use email_mailbox_projection::{
+    EmailMailboxProjectionEvent, EmailMailboxProjectionRecord, EmailMailboxProjectionRepository,
+    EmailMailboxProjectionSummary,
 };
 pub use email_provider_state::{
     EmailProviderStateRecord, EmailProviderStateRepository, EmailProviderStateUpsert,
@@ -79,6 +84,9 @@ use sqlx::PgPool;
 pub trait DbPoolExt {
     fn blobs(&self) -> blobs::BlobRepository;
     fn embeddings(&self) -> embeddings::EmbeddingRepository<'_>;
+    fn email_mailbox_projections(
+        &self,
+    ) -> email_mailbox_projection::EmailMailboxProjectionRepository<'_>;
     fn email_provider_states(&self) -> email_provider_state::EmailProviderStateRepository<'_>;
     fn events(&self) -> events::EventRepository<'_>;
     fn source_materials(&self) -> source_materials::SourceMaterialRepository<'_>;
@@ -105,6 +113,12 @@ impl DbPoolExt for PgPool {
 
     fn embeddings(&self) -> embeddings::EmbeddingRepository<'_> {
         embeddings::EmbeddingRepository::new(self)
+    }
+
+    fn email_mailbox_projections(
+        &self,
+    ) -> email_mailbox_projection::EmailMailboxProjectionRepository<'_> {
+        email_mailbox_projection::EmailMailboxProjectionRepository::new(self)
     }
 
     fn email_provider_states(&self) -> email_provider_state::EmailProviderStateRepository<'_> {

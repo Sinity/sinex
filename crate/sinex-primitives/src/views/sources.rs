@@ -120,6 +120,18 @@ pub struct SourceModeStatusView {
     pub provider_coverage_ref: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub provider_debt_ref: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mailbox_projection_message_count: Option<i64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mailbox_projection_thread_count: Option<i64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mailbox_projection_body_bytes: Option<i64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mailbox_projection_attachment_count: Option<i64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mailbox_projection_attachment_observed_count: Option<i64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mailbox_projection_last_observed_at: Option<Timestamp>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub actions: Vec<ActionAvailability>,
 }
