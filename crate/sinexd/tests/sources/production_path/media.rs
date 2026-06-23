@@ -27,6 +27,16 @@ mod tests {
     }"#;
 
     const SCREEN_OCR_MANIFEST: &[u8] = br#"{
+      "capture_session_started": {
+        "capture_session_id": "screen-capture-session-a",
+        "scope": "focused-window",
+        "reason": "operator_requested",
+        "operator_binding_id": "source:media.screen-ocr.on-demand-video",
+        "display_id": "DP-2",
+        "region": [0, 0, 800, 600],
+        "started_at": "2026-06-23T10:00:00Z",
+        "policy_posture": "operator-controlled-video-material"
+      },
       "screenshot": {
         "display_id": "DP-2",
         "region": [0, 0, 800, 600],
@@ -34,6 +44,19 @@ mod tests {
         "height": 600,
         "source_file": "screens/session-a.png",
         "policy_posture": "operator-controlled-image-material"
+      },
+      "video_segment": {
+        "format": "webm",
+        "codec": "vp9",
+        "duration_ms": 1800,
+        "frame_rate_fps": 30.0,
+        "width": 800,
+        "height": 600,
+        "display_id": "DP-2",
+        "region": [0, 0, 800, 600],
+        "capture_session_id": "screen-capture-session-a",
+        "source_file": "screens/session-a.webm",
+        "policy_posture": "operator-controlled-video-material"
       },
       "ocr_run": {
         "producer_run_id": "ocr-run-a",
@@ -43,6 +66,14 @@ mod tests {
         "output_refs": ["artifact:media.screen.ocr/run-a"],
         "duration_ms": 330,
         "resource_posture": "bounded-local-worker"
+      },
+      "capture_session_ended": {
+        "capture_session_id": "screen-capture-session-a",
+        "reason": "operator_stopped",
+        "duration_ms": 1800,
+        "final_state": "completed",
+        "ended_at": "2026-06-23T10:00:02Z",
+        "policy_posture": "operator-controlled-video-material"
       },
       "segments": [
         {"text":"run-backed OCR","bbox":[4,8,160,24],"confidence":0.95}
@@ -67,9 +98,12 @@ mod tests {
         crate::AdapterKind::StaticFile,
         SCREEN_OCR_MANIFEST,
         &[
+            "media.screen.capture_session_started",
             "media.screen.screenshot_observed",
+            "media.screen.video_segment_observed",
             "media.screen.ocr_run_observed",
             "media.screen.ocr_segment_observed",
+            "media.screen.capture_session_ended",
         ],
     );
 

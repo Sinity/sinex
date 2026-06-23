@@ -4,6 +4,7 @@ use std::sync::{Arc, Mutex};
 
 use futures::StreamExt;
 use sinex_primitives::events::SourceMaterial;
+use sinex_primitives::events::payloads::email::EMAIL_REQUIRED_ACTION_RESYNC_MAILBOX;
 use sinex_primitives::ids::Id;
 use sinex_primitives::parser::{InputShapeAdapter, MaterialAnchor};
 use sinexd::runtime::parser::{
@@ -196,7 +197,7 @@ async fn imap_scheduled_sync_advances_uid_and_modseq() -> xtask::sandbox::TestRe
 async fn imap_idle_empty_batch_emits_cursor_checkpoint() -> xtask::sandbox::TestResult<()> {
     let client = FakeImapClient::new(vec![ImapSyncBatch {
         records: Vec::new(),
-        uid_validity: Some(701),
+        uid_validity: Some(700),
         uid_next: Some(99),
         highest_modseq: Some(2000),
         has_more: false,
@@ -211,15 +212,56 @@ async fn imap_idle_empty_batch_emits_cursor_checkpoint() -> xtask::sandbox::Test
 
     assert_eq!(checkpoint.metadata["imap_mode"], "idle");
     assert_eq!(checkpoint.metadata["imap_record_kind"], "cursor");
-    assert_eq!(checkpoint.metadata["imap_uid_validity"], 701);
+    assert_eq!(checkpoint.metadata["imap_uid_validity"], 700);
     assert_eq!(checkpoint.metadata["imap_uid_next"], 99);
     assert_eq!(checkpoint.metadata["imap_highest_modseq"], 2000);
     let record: ImapSyncRecord = serde_json::from_slice(&checkpoint.bytes)?;
     assert_eq!(record.kind, ImapSyncRecordKind::Cursor);
 
     let cursor = adapter.cursor_after(&checkpoint)?;
-    assert_eq!(cursor.uid_validity, Some(701));
+    assert_eq!(cursor.uid_validity, Some(700));
     assert_eq!(cursor.uid_next, Some(99));
+    assert_eq!(cursor.highest_modseq, Some(2000));
+    Ok(())
+}
+
+#[sinex_test]
+async fn imap_uidvalidity_reset_emits_continuity_record() -> xtask::sandbox::TestResult<()> {
+    let client = FakeImapClient::new(vec![ImapSyncBatch {
+        records: vec![message_record(1, "<new-mailbox-1@example.com>")],
+        uid_validity: Some(701),
+        uid_next: Some(2),
+        highest_modseq: Some(2000),
+        has_more: true,
+    }]);
+    let adapter = ImapSyncAdapter::new(client);
+
+    let mut stream = adapter
+        .open(dummy_material_id(), &config(ImapSyncMode::Scheduled), None)
+        .await?;
+    let continuity = stream.next().await.expect("continuity record")?;
+    assert!(stream.next().await.is_none());
+
+    assert_eq!(continuity.metadata["imap_record_kind"], "continuity");
+    assert_eq!(continuity.metadata["imap_uid_validity"], 701);
+    assert_eq!(continuity.metadata["imap_uid_next"], 2);
+    assert_eq!(continuity.metadata["imap_highest_modseq"], 2000);
+    let record: ImapSyncRecord = serde_json::from_slice(&continuity.bytes)?;
+    assert_eq!(record.kind, ImapSyncRecordKind::Continuity);
+    assert_eq!(record.payload["continuity_state"], "gap");
+    assert_eq!(
+        record.payload["continuity_reason"],
+        "imap-uidvalidity-reset"
+    );
+    assert_eq!(
+        record.payload["required_action"],
+        EMAIL_REQUIRED_ACTION_RESYNC_MAILBOX
+    );
+    assert_eq!(record.payload["previous_uidvalidity"], 700);
+
+    let cursor = adapter.cursor_after(&continuity)?;
+    assert_eq!(cursor.uid_validity, Some(701));
+    assert_eq!(cursor.uid_next, Some(2));
     assert_eq!(cursor.highest_modseq, Some(2000));
     Ok(())
 }

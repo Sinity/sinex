@@ -2,7 +2,7 @@ use clap::Args;
 use console::style;
 use sinex_primitives::views::{
     ActionAvailabilityState, SourceCoverageContinuity, SourceCoverageListView,
-    SourceCoverageReadiness, SourceCoverageView, ViewEnvelope,
+    SourceCoverageReadiness, SourceCoverageView, SourceModeStatusView, ViewEnvelope,
 };
 use tabled::{builder::Builder, settings::Style};
 
@@ -112,6 +112,27 @@ fn actions_summary(source: &SourceCoverageView) -> String {
     }
 }
 
+fn modes_summary(source: &SourceCoverageView) -> String {
+    let summaries = source.modes.iter().map(mode_summary).collect::<Vec<_>>();
+    match summaries.len() {
+        0 => style("-").dim().to_string(),
+        1 => summaries[0].clone(),
+        n => format!("{} (+{})", summaries[0], n - 1),
+    }
+}
+
+fn mode_summary(mode: &SourceModeStatusView) -> String {
+    let state = if mode.proposed {
+        "proposed"
+    } else {
+        "accepted"
+    };
+    format!(
+        "{}:{}/{}/{}",
+        mode.mode_id, state, mode.runtime_shape, mode.transport
+    )
+}
+
 const fn action_state_label(state: ActionAvailabilityState) -> &'static str {
     match state {
         ActionAvailabilityState::Enabled => "enabled",
@@ -139,6 +160,7 @@ fn format_sources_status_table(envelope: &ViewEnvelope<SourceCoverageListView>) 
         "LAST EVENT",
         "LAST MATERIAL",
         "PRIVACY",
+        "MODES",
         "TYPES",
         "CAVEATS",
         "ACTIONS",
@@ -154,6 +176,7 @@ fn format_sources_status_table(envelope: &ViewEnvelope<SourceCoverageListView>) 
             format_optional_timestamp(source.last_event_at.as_ref()),
             format_optional_timestamp(source.last_material_at.as_ref()),
             format!("{}/{}", source.privacy.tier, source.privacy.context),
+            modes_summary(source),
             event_types_summary(source),
             caveats_summary(source),
             actions_summary(source),
@@ -173,7 +196,7 @@ mod tests {
     use crate::fmt::render_finite_envelope;
     use sinex_primitives::views::{
         ActionAvailability, CaveatView, SourceCoverageListView, SourcePrivacyPosture,
-        VIEW_ENVELOPE_SCHEMA_VERSION,
+        SourceResourceBudgetView, VIEW_ENVELOPE_SCHEMA_VERSION,
     };
     use xtask::sandbox::sinex_test;
 
@@ -199,6 +222,51 @@ mod tests {
                 proposed: false,
             },
             resource_budget: None,
+            modes: vec![fixture_mode()],
+            actions: Vec::new(),
+        }
+    }
+
+    fn fixture_mode() -> SourceModeStatusView {
+        SourceModeStatusView {
+            mode_id: "fixture.mode".to_string(),
+            binding_id: "binding.fixture.mode".to_string(),
+            implementation: "fixture-implementation".to_string(),
+            adapter: "FixtureAdapter".to_string(),
+            output_event_type: "fixture.event".to_string(),
+            proposed: false,
+            runner_pack: "staged".to_string(),
+            runtime_shape: "on_demand".to_string(),
+            checkpoint_family: "file_cursor".to_string(),
+            material_lifecycle: "retain_raw".to_string(),
+            transport: "direct".to_string(),
+            delivery: "synchronous".to_string(),
+            ordering: "input_order".to_string(),
+            replayable: true,
+            dlq: false,
+            backpressure: false,
+            privacy_context: "metadata".to_string(),
+            resource_budget: SourceResourceBudgetView {
+                resource_profile: "bounded_file".to_string(),
+                work_class: "bulk_import".to_string(),
+                steady_memory_mib: 16,
+                burst_memory_mib: 32,
+                cpu_weight: 10,
+                max_input_bytes_per_sec: None,
+                max_input_events_per_sec: None,
+                max_pending_material_bytes: 1024,
+                max_pending_candidates: 16,
+                max_unacked_transport_messages: None,
+                batch_size: Some(8),
+                flush_interval_ms: None,
+                checkpoint_interval_ms: None,
+                pressure_actions: vec!["pause".to_string()],
+            },
+            runtime_observed: None,
+            runtime_live: None,
+            last_heartbeat_at: None,
+            last_output_at: None,
+            recent_output_count: None,
             actions: Vec::new(),
         }
     }
@@ -233,6 +301,7 @@ mod tests {
         assert!(table.contains("fixture.source"));
         assert!(table.contains("ready"));
         assert!(table.contains("active"));
+        assert!(table.contains("fixture.mode:accepted/on_demand/direct"));
         assert!(table.contains("fixture/fixture.event"));
         assert!(table.contains("source.runtime_bridge.unobserved"));
         assert!(table.contains("terminal.activity.check:enabled"));

@@ -2526,6 +2526,7 @@ mod tests {
                 proposed: false,
             },
             resource_budget: None,
+            modes: Vec::new(),
             actions: Vec::new(),
         }
     }

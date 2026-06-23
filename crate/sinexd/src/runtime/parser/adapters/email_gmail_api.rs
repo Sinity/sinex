@@ -15,6 +15,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value as JsonValue};
 
 use sinex_primitives::events::SourceMaterial;
+use sinex_primitives::events::payloads::email::EMAIL_REQUIRED_ACTION_RESYNC_MAILBOX;
 use sinex_primitives::ids::Id;
 use sinex_primitives::parser::{InputShapeKind, MaterialAnchor, SourceRecord};
 
@@ -95,6 +96,7 @@ pub enum GmailApiRecordKind {
     Message,
     History,
     Cursor,
+    Continuity,
 }
 
 impl GmailApiRecordKind {
@@ -103,6 +105,7 @@ impl GmailApiRecordKind {
             Self::Message => "message",
             Self::History => "history",
             Self::Cursor => "cursor",
+            Self::Continuity => "continuity",
         }
     }
 }
@@ -128,6 +131,22 @@ impl GmailApiRecord {
             history_id,
             label_ids: Vec::new(),
             payload: serde_json::json!({ "page_token": page_token }),
+        }
+    }
+
+    #[must_use]
+    pub fn continuity_gap(history_id: Option<String>, reason: impl Into<String>) -> Self {
+        Self {
+            kind: GmailApiRecordKind::Continuity,
+            message_id: None,
+            thread_id: None,
+            history_id,
+            label_ids: Vec::new(),
+            payload: serde_json::json!({
+                "continuity_state": "gap",
+                "continuity_reason": reason.into(),
+                "required_action": EMAIL_REQUIRED_ACTION_RESYNC_MAILBOX,
+            }),
         }
     }
 }
@@ -274,12 +293,30 @@ impl fmt::Display for GmailHttpError {
 
 impl Error for GmailHttpError {}
 
+impl GmailHttpError {
+    fn is_history_gap(&self) -> bool {
+        matches!(self, Self::Status { status, .. } if status.as_u16() == 404)
+    }
+}
+
 impl GmailApiClient for GmailHttpClient {
     type Error = GmailHttpError;
 
     async fn fetch_page(&self, request: GmailApiPageRequest) -> Result<GmailApiPage, Self::Error> {
         if request.history_id.is_some() {
-            return self.fetch_history_page(request).await;
+            let history_id = request.history_id.clone();
+            return match self.fetch_history_page(request).await {
+                Ok(page) => Ok(page),
+                Err(error) if error.is_history_gap() => Ok(GmailApiPage {
+                    records: vec![GmailApiRecord::continuity_gap(
+                        history_id.clone(),
+                        "gmail-history-id-expired-or-unavailable",
+                    )],
+                    next_page_token: None,
+                    history_id,
+                }),
+                Err(error) => Err(error),
+            };
         }
         self.fetch_message_page(request).await
     }

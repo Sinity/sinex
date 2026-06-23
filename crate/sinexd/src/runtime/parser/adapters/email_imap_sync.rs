@@ -18,6 +18,7 @@ use tokio::io::{AsyncRead, AsyncWrite};
 use tokio::net::TcpStream;
 
 use sinex_primitives::events::SourceMaterial;
+use sinex_primitives::events::payloads::email::EMAIL_REQUIRED_ACTION_RESYNC_MAILBOX;
 use sinex_primitives::ids::Id;
 use sinex_primitives::parser::{InputShapeKind, MaterialAnchor, SourceRecord};
 
@@ -141,6 +142,7 @@ pub enum ImapSyncRecordKind {
     Expunge,
     IdleHeartbeat,
     Cursor,
+    Continuity,
 }
 
 impl ImapSyncRecordKind {
@@ -151,6 +153,7 @@ impl ImapSyncRecordKind {
             Self::Expunge => "expunge",
             Self::IdleHeartbeat => "idle-heartbeat",
             Self::Cursor => "cursor",
+            Self::Continuity => "continuity",
         }
     }
 }
@@ -177,6 +180,30 @@ impl ImapSyncRecord {
                 "uid_validity": uid_validity,
                 "uid_next": uid_next,
                 "highest_modseq": modseq,
+            }),
+        }
+    }
+
+    #[must_use]
+    pub fn uidvalidity_gap(
+        previous_uid_validity: u32,
+        uid_validity: u32,
+        uid_next: Option<u32>,
+        modseq: Option<u64>,
+    ) -> Self {
+        Self {
+            kind: ImapSyncRecordKind::Continuity,
+            uid: uid_next,
+            message_id: None,
+            flags: Vec::new(),
+            payload: serde_json::json!({
+                "continuity_state": "gap",
+                "continuity_reason": "imap-uidvalidity-reset",
+                "previous_uidvalidity": previous_uid_validity,
+                "uid_validity": uid_validity,
+                "uid_next": uid_next,
+                "highest_modseq": modseq,
+                "required_action": EMAIL_REQUIRED_ACTION_RESYNC_MAILBOX,
             }),
         }
     }
@@ -523,6 +550,31 @@ where
                         ));
                     }
                 };
+
+                if let (Some(previous), Some(current)) = (cursor.uid_validity, batch.uid_validity)
+                    && previous != current
+                {
+                    let reset_cursor = ImapSyncCursor {
+                        uid_validity: Some(current),
+                        uid_next: batch.uid_next,
+                        highest_modseq: batch.highest_modseq,
+                    };
+                    let record = ImapSyncRecord::uidvalidity_gap(
+                        previous,
+                        current,
+                        batch.uid_next,
+                        batch.highest_modseq,
+                    );
+                    let emitted = vec![build_imap_record(
+                        material_id,
+                        &request_seed,
+                        batch_index,
+                        0,
+                        record,
+                        &reset_cursor,
+                    )];
+                    return Some((emitted, None));
+                }
 
                 let batch_cursor = ImapSyncCursor {
                     uid_validity: batch.uid_validity.or(cursor.uid_validity),
