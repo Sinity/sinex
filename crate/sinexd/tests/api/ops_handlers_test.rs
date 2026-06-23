@@ -1,3 +1,4 @@
+use base64::Engine as _;
 use serde_json::json;
 use sinex_db::DbPoolExt;
 use sinex_db::repositories::EmailMailboxProjectionEvent;
@@ -1719,9 +1720,70 @@ async fn ops_start_executes_gmail_scheduled_sync_with_token_file(
             row.message_id.as_deref() == Some("m-1")
                 && row.mailbox_format.as_deref() == Some("gmail-api")
                 && row.body_bytes == 128
+                && row.attachment_count == 1
         }),
         "Gmail sync should project provider message material: {projections:?}"
     );
+    let gmail_row = projections
+        .iter()
+        .find(|row| row.message_id.as_deref() == Some("m-1"))
+        .expect("Gmail projection row should exist");
+    let raw_message =
+        b"Message-ID: <m-1@example.com>\r\nSubject: fixture\r\n\r\nprovider Gmail body\r\n";
+    let fetch_response: OpsStartResponse = serde_json::from_value(
+        handle_ops_start(
+            ctx.pool(),
+            json!({
+                "operation_type": "email.mailbox.fetch-attachments",
+                "scope": {
+                    "source_id": "email.mailbox",
+                    "mode_id": "source:email.mailbox.gmail-api-scheduled-sync",
+                    "account_binding_ref": "operator-mailbox:primary",
+                    "message_key": gmail_row.message_key.clone(),
+                    "gmail_token_file": token_file.to_string_lossy(),
+                    "gmail_api_base_url": server.base_url(),
+                    "attachment_material_policy_ref": "operator.email-mailbox.attachment-private"
+                },
+            }),
+            &auth,
+        )
+        .await?,
+    )?;
+    assert_eq!(
+        fetch_response.operation.result_status,
+        OperationStatus::Success
+    );
+    let fetch_scope = fetch_response
+        .operation
+        .scope
+        .as_ref()
+        .expect("Gmail materialization scope");
+    assert_eq!(
+        fetch_scope["executor_state"],
+        "email_attachment_materialized"
+    );
+    assert_eq!(fetch_scope["materialized_attachment_count"], 1);
+    assert_eq!(
+        fetch_scope["materialized_attachments"][0]["source"],
+        "gmail_api_raw_message"
+    );
+    assert_eq!(
+        fetch_scope["materialized_attachments"][0]["raw_message_blake3"],
+        blake3::hash(raw_message).to_hex().to_string()
+    );
+    let refreshed = ctx
+        .pool()
+        .email_mailbox_projections()
+        .list_current_by_source_mode(
+            "email.mailbox",
+            "source:email.mailbox.gmail-api-scheduled-sync",
+        )
+        .await?;
+    let gmail_row = refreshed
+        .iter()
+        .find(|row| row.message_id.as_deref() == Some("m-1"))
+        .expect("Gmail projection row should remain available");
+    assert_eq!(gmail_row.attachment_observed_count, 1);
     let persisted_scope = serde_json::to_string(scope)?;
     assert!(
         !persisted_scope.contains("test-token"),
@@ -2560,6 +2622,17 @@ impl GmailFixtureServer {
                         .any(|line| line.eq_ignore_ascii_case("authorization: Bearer test-token"));
                     let body = if !has_authorization {
                         json!({"error": "missing bearer token", "request": first_line})
+                    } else if first_line.contains("/gmail/v1/users/me/messages/m-1")
+                        && first_line.contains("format=raw")
+                    {
+                        let raw_message = b"Message-ID: <m-1@example.com>\r\nSubject: fixture\r\n\r\nprovider Gmail body\r\n";
+                        json!({
+                            "id": "m-1",
+                            "threadId": "t-1",
+                            "labelIds": ["INBOX"],
+                            "historyId": "history-1",
+                            "raw": base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(raw_message)
+                        })
                     } else if first_line.contains("/gmail/v1/users/me/messages/m-1") {
                         json!({
                             "id": "m-1",
@@ -2571,6 +2644,9 @@ impl GmailFixtureServer {
                                 "headers": [
                                     {"name": "Message-ID", "value": "<m-1@example.com>"},
                                     {"name": "Subject", "value": "fixture"}
+                                ],
+                                "parts": [
+                                    {"filename": "fixture.pdf"}
                                 ]
                             }
                         })
