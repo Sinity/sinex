@@ -634,6 +634,15 @@ impl TransportSemantics {
         backpressure: true,
     };
 
+    pub const EXTERNAL_API_CURSOR: Self = Self {
+        transport: TransportKind::ExternalApi,
+        delivery: DeliverySemantics::AtMostOnce,
+        ordering: OrderingSemantics::CursorOrder,
+        replayable: true,
+        dlq: true,
+        backpressure: true,
+    };
+
     #[must_use]
     pub const fn default_for(
         runner: RunnerPack,
@@ -1188,6 +1197,14 @@ mod tests {
         assert_eq!(external_transport.transport, TransportKind::JetStream);
         assert_eq!(external_transport.delivery, DeliverySemantics::AtLeastOnce);
         assert!(external_transport.dlq);
+
+        let api_cursor = TransportSemantics::EXTERNAL_API_CURSOR;
+        assert_eq!(api_cursor.transport, TransportKind::ExternalApi);
+        assert_eq!(api_cursor.delivery, DeliverySemantics::AtMostOnce);
+        assert_eq!(api_cursor.ordering, OrderingSemantics::CursorOrder);
+        assert!(api_cursor.replayable);
+        assert!(api_cursor.dlq);
+        assert!(api_cursor.backpressure);
         Ok(())
     }
 

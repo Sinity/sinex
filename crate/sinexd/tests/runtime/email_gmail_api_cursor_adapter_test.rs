@@ -4,12 +4,14 @@ use std::sync::{Arc, Mutex};
 
 use futures::StreamExt;
 use sinex_primitives::events::SourceMaterial;
+use sinex_primitives::events::payloads::email::EMAIL_REQUIRED_ACTION_RESYNC_MAILBOX;
 use sinex_primitives::ids::Id;
 use sinex_primitives::parser::{InputShapeAdapter, MaterialAnchor};
 use sinexd::runtime::parser::{
     GmailApiClient, GmailApiCursorAdapter, GmailApiCursorConfig, GmailApiPage, GmailApiPageRequest,
-    GmailApiRecord, GmailApiRecordKind, all_adapter_schemas,
+    GmailApiRecord, GmailApiRecordKind, GmailHttpClient, all_adapter_schemas,
 };
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use xtask::sandbox::prelude::sinex_test;
 
 fn dummy_material_id() -> Id<SourceMaterial> {
@@ -191,6 +193,95 @@ async fn gmail_api_empty_history_page_emits_cursor_checkpoint() -> xtask::sandbo
     let cursor = adapter.cursor_after(&checkpoint)?;
     assert_eq!(cursor.page_token, None);
     assert_eq!(cursor.history_id.as_deref(), Some("200"));
+    Ok(())
+}
+
+#[sinex_test]
+async fn gmail_api_history_gap_emits_continuity_record() -> xtask::sandbox::TestResult<()> {
+    let client = FakeGmailClient::new(vec![GmailApiPage {
+        records: vec![GmailApiRecord::continuity_gap(
+            Some("90".to_string()),
+            "gmail-history-id-expired-or-unavailable",
+        )],
+        next_page_token: None,
+        history_id: Some("90".to_string()),
+    }]);
+    let adapter = GmailApiCursorAdapter::new(client);
+
+    let mut stream = adapter.open(dummy_material_id(), &config(), None).await?;
+    let continuity = stream.next().await.expect("continuity record")?;
+    assert!(stream.next().await.is_none());
+
+    assert_eq!(continuity.metadata["gmail_record_kind"], "continuity");
+    assert_eq!(continuity.metadata["gmail_history_id"], "90");
+    let record: GmailApiRecord = serde_json::from_slice(&continuity.bytes)?;
+    assert_eq!(record.kind, GmailApiRecordKind::Continuity);
+    assert_eq!(record.payload["continuity_state"], "gap");
+    assert_eq!(
+        record.payload["continuity_reason"],
+        "gmail-history-id-expired-or-unavailable"
+    );
+    assert_eq!(
+        record.payload["required_action"],
+        EMAIL_REQUIRED_ACTION_RESYNC_MAILBOX
+    );
+
+    let cursor = adapter.cursor_after(&continuity)?;
+    assert_eq!(cursor.page_token, None);
+    assert_eq!(cursor.history_id.as_deref(), Some("90"));
+    Ok(())
+}
+
+#[sinex_test]
+async fn gmail_http_history_404_maps_to_continuity_record() -> xtask::sandbox::TestResult<()> {
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await?;
+    let endpoint = format!("http://{}", listener.local_addr()?);
+    let server = tokio::spawn(async move {
+        let (mut stream, _) = listener.accept().await?;
+        let mut request = [0_u8; 2048];
+        let _ = stream.read(&mut request).await?;
+        stream
+            .write_all(
+                b"HTTP/1.1 404 Not Found\r\ncontent-type: application/json\r\ncontent-length: 22\r\n\r\n{\"error\":\"not found\"}\n",
+            )
+            .await?;
+        stream.shutdown().await
+    });
+    let client = GmailHttpClient::with_endpoint(
+        reqwest::Client::new(),
+        endpoint,
+        "me".to_string(),
+        "test-token".to_string(),
+    );
+
+    let page = client
+        .fetch_page(GmailApiPageRequest {
+            account_binding_ref: "operator-mailbox:gmail-primary".to_string(),
+            mailbox_scope: Some("INBOX".to_string()),
+            page_token: None,
+            history_id: Some("90".to_string()),
+            page_size: 10,
+            label_ids: vec!["INBOX".to_string()],
+            include_spam_trash: false,
+        })
+        .await?;
+    server.await??;
+
+    assert_eq!(page.next_page_token, None);
+    assert_eq!(page.history_id.as_deref(), Some("90"));
+    assert_eq!(page.records.len(), 1);
+    let record = &page.records[0];
+    assert_eq!(record.kind, GmailApiRecordKind::Continuity);
+    assert_eq!(record.history_id.as_deref(), Some("90"));
+    assert_eq!(record.payload["continuity_state"], "gap");
+    assert_eq!(
+        record.payload["continuity_reason"],
+        "gmail-history-id-expired-or-unavailable"
+    );
+    assert_eq!(
+        record.payload["required_action"],
+        EMAIL_REQUIRED_ACTION_RESYNC_MAILBOX
+    );
     Ok(())
 }
 

@@ -137,6 +137,10 @@ name = "email_imap_sync_adapter_test"
 path = "tests/runtime/email_imap_sync_adapter_test.rs"
 
 [[test]]
+name = "media_parser_test"
+path = "tests/sources/media_parser_test.rs"
+
+[[test]]
 name = "terminal_history_parser_test"
 path = "tests/sources/terminal_history_parser_test.rs"
 
@@ -242,6 +246,7 @@ inventory = { workspace = true }
 regex = { workspace = true }
 serde_yml = { workspace = true }
 mime_guess = "2.0"
+mail-parser = { workspace = true }
 sinex-macros = { path = "../sinex-macros" }
 
 # runtime dependencies (formerly from sinexd crate)
