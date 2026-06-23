@@ -170,28 +170,23 @@ async fn seed_email_projection(
     attachment_count: u32,
     attachment_observed_count: u32,
 ) -> TestResult<()> {
-    let event_id = uuid::Uuid::now_v7();
-    ctx.pool()
-        .email_mailbox_projections()
-        .upsert_event(EmailMailboxProjectionEvent {
-            source_id: "email.mailbox".to_string(),
-            mode_id: mode_id.to_string(),
-            event_id,
-            event_type: "email.message.received".to_string(),
-            payload: json!({
-                "message_id": message_id,
-                "folder": "INBOX",
-                "source_file": format!("{message_id}.eml"),
-                "raw_material_id": format!("raw-{message_id}"),
-                "mailbox_format": "rfc822",
-                "subject": "Materialization fixture",
-                "from": ["sender@example.test"],
-                "to": ["recipient@example.test"],
-                "body_bytes": 128,
-                "attachment_count": attachment_count
-            }),
-        })
-        .await?;
+    seed_email_projection_message(
+        ctx,
+        mode_id,
+        json!({
+            "message_id": message_id,
+            "folder": "INBOX",
+            "source_file": format!("{message_id}.eml"),
+            "raw_material_id": format!("raw-{message_id}"),
+            "mailbox_format": "rfc822",
+            "subject": "Materialization fixture",
+            "from": ["sender@example.test"],
+            "to": ["recipient@example.test"],
+            "body_bytes": 128,
+            "attachment_count": attachment_count
+        }),
+    )
+    .await?;
     for index in 0..attachment_observed_count {
         ctx.pool()
             .email_mailbox_projections()
@@ -216,6 +211,51 @@ async fn seed_email_projection(
             })
             .await?;
     }
+    Ok(())
+}
+
+async fn seed_email_projection_message(
+    ctx: &TestContext,
+    mode_id: &str,
+    payload: serde_json::Value,
+) -> TestResult<()> {
+    let event_id = uuid::Uuid::now_v7();
+    ctx.pool()
+        .email_mailbox_projections()
+        .upsert_event(EmailMailboxProjectionEvent {
+            source_id: "email.mailbox".to_string(),
+            mode_id: mode_id.to_string(),
+            event_id,
+            event_type: "email.message.received".to_string(),
+            payload,
+        })
+        .await?;
+    Ok(())
+}
+
+async fn add_global_disclosure_rule(
+    ctx: &TestContext,
+    name: &str,
+    matcher_value: &str,
+    replacement: &str,
+) -> TestResult<()> {
+    ctx.pool()
+        .privacy_policy()
+        .add_rule(
+            name,
+            "test email export disclosure rule",
+            "regex",
+            matcher_value,
+            false,
+            "redact",
+            Some(replacement),
+            "default",
+        )
+        .await?;
+    ctx.pool()
+        .privacy_policy()
+        .bind_field_rule(name, None, None, None, 0)
+        .await?;
     Ok(())
 }
 
@@ -1117,6 +1157,152 @@ async fn ops_start_exports_email_mailbox_projection_metadata(ctx: TestContext) -
     );
     assert_eq!(exported["messages"][0]["body_bytes"], 128);
     assert_eq!(exported["disclosure_policy"]["attachment_bytes"], "omitted");
+    Ok(())
+}
+
+#[sinex_test]
+async fn ops_start_email_mailbox_export_applies_disclosure_policy(
+    ctx: TestContext,
+) -> TestResult<()> {
+    add_global_disclosure_rule(
+        &ctx,
+        "email-export-subject",
+        r"EMAIL_SUBJECT_SECRET_[A-Za-z0-9_]+",
+        "<EMAIL_SUBJECT>",
+    )
+    .await?;
+    add_global_disclosure_rule(
+        &ctx,
+        "email-export-recipient",
+        r"recipient_secret_[A-Za-z0-9_@.]+",
+        "<EMAIL_RECIPIENT>",
+    )
+    .await?;
+    add_global_disclosure_rule(
+        &ctx,
+        "email-export-material",
+        r"raw_email_secret_[A-Za-z0-9_]+",
+        "<EMAIL_MATERIAL>",
+    )
+    .await?;
+    add_global_disclosure_rule(
+        &ctx,
+        "email-export-source-file",
+        r"source_file_secret_[A-Za-z0-9_.-]+",
+        "<EMAIL_SOURCE_FILE>",
+    )
+    .await?;
+
+    seed_email_projection_message(
+        &ctx,
+        "source:email.mailbox",
+        json!({
+            "message_id": "sensitive-export@example.test",
+            "folder": "INBOX",
+            "source_file": "source_file_secret_maildir.eml",
+            "raw_material_id": "raw_email_secret_material_001",
+            "mailbox_format": "rfc822",
+            "subject": "EMAIL_SUBJECT_SECRET_board_packet",
+            "from": ["sender@example.test"],
+            "to": ["recipient_secret_private@example.test"],
+            "body_bytes": 4096,
+            "attachment_count": 1
+        }),
+    )
+    .await?;
+    let dir = tempfile::tempdir()?;
+    let output_path = dir.path().join("mailbox-export-redacted.json");
+
+    let auth = system_auth();
+    let response: OpsStartResponse = serde_json::from_value(
+        handle_ops_start(
+            ctx.pool(),
+            json!({
+                "operation_type": "email.mailbox.export",
+                "scope": {
+                    "source_id": "email.mailbox",
+                    "mode_id": "source:email.mailbox",
+                    "output_path": output_path.to_string_lossy()
+                },
+            }),
+            &auth,
+        )
+        .await?,
+    )?;
+
+    assert_eq!(response.operation.result_status, OperationStatus::Success);
+    let scope = response.operation.scope.as_ref().expect("scope");
+    let exported: serde_json::Value =
+        serde_json::from_slice(&tokio::fs::read(&output_path).await?)?;
+    let scope_json = serde_json::to_string(scope)?;
+    let exported_json = serde_json::to_string(&exported)?;
+    for token in [
+        "EMAIL_SUBJECT_SECRET_board_packet",
+        "recipient_secret_private@example.test",
+        "raw_email_secret_material_001",
+        "source_file_secret_maildir.eml",
+    ] {
+        assert!(
+            !scope_json.contains(token),
+            "operation scope must not leak email export token {token}: {scope_json}"
+        );
+        assert!(
+            !exported_json.contains(token),
+            "written email export must not leak email token {token}: {exported_json}"
+        );
+    }
+    for replacement in [
+        "<EMAIL_SUBJECT>",
+        "<EMAIL_RECIPIENT>",
+        "<EMAIL_MATERIAL>",
+        "<EMAIL_SOURCE_FILE>",
+    ] {
+        assert!(
+            exported_json.contains(replacement),
+            "written email export should show replacement {replacement}: {exported_json}"
+        );
+    }
+    assert_eq!(
+        exported["disclosure_policy"]["posture"], "metadata_only",
+        "export should remain a metadata-only artifact after disclosure"
+    );
+    assert_eq!(exported["disclosure_policy"]["body"], "omitted");
+    assert_eq!(exported["disclosure_policy"]["attachment_bytes"], "omitted");
+    assert_eq!(exported["messages"][0]["body_bytes"], 4096);
+    assert_eq!(scope["export_disclosure"]["redacted"], true);
+    assert!(
+        scope["export_disclosure"]["caveats"]
+            .as_array()
+            .is_some_and(|caveats| caveats
+                .iter()
+                .any(|caveat| caveat["id"] == "policy.disclosure_applied")),
+        "email export disclosure should keep policy caveats: {}",
+        scope["export_disclosure"]
+    );
+    for policy_ref in [
+        "db.email-export-subject",
+        "db.email-export-recipient",
+        "db.email-export-material",
+        "db.email-export-source-file",
+    ] {
+        assert!(
+            scope["export_disclosure"]["caveats"]
+                .as_array()
+                .is_some_and(|caveats| caveats
+                    .iter()
+                    .any(|caveat| caveat["ref"]["id"] == policy_ref)),
+            "email export disclosure should include policy ref {policy_ref}: {}",
+            scope["export_disclosure"]
+        );
+    }
+
+    let preview = response
+        .operation
+        .preview_summary
+        .as_ref()
+        .expect("email export preview should be recorded");
+    assert_eq!(preview["export"], scope["export"]);
+    assert_eq!(preview["export_disclosure"], scope["export_disclosure"]);
     Ok(())
 }
 
