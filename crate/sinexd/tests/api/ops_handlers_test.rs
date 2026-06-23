@@ -1,5 +1,6 @@
 use serde_json::json;
 use sinex_db::DbPoolExt;
+use sinex_db::repositories::EmailMailboxProjectionEvent;
 use sinex_primitives::domain::{OperationStatus, ReplayOutcome};
 use sinex_primitives::events::DynamicPayload;
 use sinex_primitives::events::payloads::email::{
@@ -160,6 +161,62 @@ async fn publish_event(
                 .build()?,
         )
         .await?)
+}
+
+async fn seed_email_projection(
+    ctx: &TestContext,
+    mode_id: &str,
+    message_id: &str,
+    attachment_count: u32,
+    attachment_observed_count: u32,
+) -> TestResult<()> {
+    let event_id = uuid::Uuid::now_v7();
+    ctx.pool()
+        .email_mailbox_projections()
+        .upsert_event(EmailMailboxProjectionEvent {
+            source_id: "email.mailbox".to_string(),
+            mode_id: mode_id.to_string(),
+            event_id,
+            event_type: "email.message.received".to_string(),
+            payload: json!({
+                "message_id": message_id,
+                "folder": "INBOX",
+                "source_file": format!("{message_id}.eml"),
+                "raw_material_id": format!("raw-{message_id}"),
+                "mailbox_format": "rfc822",
+                "subject": "Materialization fixture",
+                "from": ["sender@example.test"],
+                "to": ["recipient@example.test"],
+                "body_bytes": 128,
+                "attachment_count": attachment_count
+            }),
+        })
+        .await?;
+    for index in 0..attachment_observed_count {
+        ctx.pool()
+            .email_mailbox_projections()
+            .upsert_event(EmailMailboxProjectionEvent {
+                source_id: "email.mailbox".to_string(),
+                mode_id: mode_id.to_string(),
+                event_id: uuid::Uuid::now_v7(),
+                event_type: "email.attachment.observed".to_string(),
+                payload: json!({
+                    "message_id": message_id,
+                    "folder": "INBOX",
+                    "source_file": format!("{message_id}.eml"),
+                    "raw_material_id": format!("raw-{message_id}"),
+                    "mailbox_format": "rfc822",
+                    "attachment_index": index,
+                    "disposition": "attachment",
+                    "filename": format!("fixture-{index}.txt"),
+                    "content_type": "text/plain",
+                    "content_id": null,
+                    "material_policy_ref": "operator.email-mailbox.attachment-deferred"
+                }),
+            })
+            .await?;
+    }
+    Ok(())
 }
 
 #[sinex_test]
@@ -925,6 +982,15 @@ async fn ops_start_records_email_sync_for_provider_mode(ctx: TestContext) -> Tes
 async fn ops_start_records_email_attachment_materialization_operation(
     ctx: TestContext,
 ) -> TestResult<()> {
+    seed_email_projection(
+        &ctx,
+        "source:email.mailbox.mbox-staged",
+        "materialization-fixture@example.test",
+        3,
+        1,
+    )
+    .await?;
+
     let auth = system_auth();
     let response: OpsStartResponse = serde_json::from_value(
         handle_ops_start(
@@ -934,7 +1000,7 @@ async fn ops_start_records_email_attachment_materialization_operation(
                 "scope": {
                     "source_id": "email.mailbox",
                     "mode_id": "source:email.mailbox.mbox-staged",
-                    "message_key": "mailbox:inbox/message:<fixture>",
+                    "message_key": "materialization-fixture@example.test",
                     "material_policy_ref": "operator.email-mailbox.attachment-deferred"
                 },
             }),
@@ -947,10 +1013,10 @@ async fn ops_start_records_email_attachment_materialization_operation(
         response.operation.operation_type,
         "email.mailbox.fetch-attachments"
     );
-    assert_eq!(response.operation.result_status, OperationStatus::Running);
+    assert_eq!(response.operation.result_status, OperationStatus::Success);
     assert_eq!(
         response.operation.result_message.as_deref(),
-        Some("email_capture; executor pending")
+        Some("email_capture; attachment materialization selected")
     );
     let scope = response
         .operation
@@ -966,8 +1032,22 @@ async fn ops_start_records_email_attachment_materialization_operation(
         "operator.email-mailbox.attachment-deferred"
     );
     assert_eq!(
+        scope["attachment_material_policy_ref"],
+        "operator.email-mailbox.attachment-deferred"
+    );
+    assert_eq!(
         scope["mode_contract"]["binding"]["subject"],
         "source:email.mailbox.mbox-staged"
+    );
+    assert_eq!(
+        scope["executor_state"],
+        "email_attachment_materialization_selected"
+    );
+    assert_eq!(scope["selected_message_count"], 1);
+    assert_eq!(scope["outstanding_attachment_count"], 2);
+    assert_eq!(
+        scope["selected_messages"][0]["message_id"],
+        "materialization-fixture@example.test"
     );
     let preview = response
         .operation
@@ -978,8 +1058,143 @@ async fn ops_start_records_email_attachment_materialization_operation(
     assert_eq!(preview["operation_type"], "email.mailbox.fetch-attachments");
     assert_eq!(preview["mode_id"], "source:email.mailbox.mbox-staged");
     assert_eq!(
-        preview["message"],
-        "email attachment materialization executor pending"
+        preview["executor_state"],
+        "email_attachment_materialization_selected"
+    );
+    assert_eq!(preview["selected_message_count"], 1);
+    assert_eq!(preview["outstanding_attachment_count"], 2);
+    Ok(())
+}
+
+#[sinex_test]
+async fn ops_start_exports_email_mailbox_projection_metadata(ctx: TestContext) -> TestResult<()> {
+    seed_email_projection(
+        &ctx,
+        "source:email.mailbox.maildir-staged",
+        "export-fixture@example.test",
+        1,
+        0,
+    )
+    .await?;
+    let dir = tempfile::tempdir()?;
+    let output_path = dir.path().join("mailbox-export.json");
+
+    let auth = system_auth();
+    let response: OpsStartResponse = serde_json::from_value(
+        handle_ops_start(
+            ctx.pool(),
+            json!({
+                "operation_type": "email.mailbox.export",
+                "scope": {
+                    "source_id": "email.mailbox",
+                    "mode_id": "source:email.mailbox.maildir-staged",
+                    "output_path": output_path.to_string_lossy()
+                },
+            }),
+            &auth,
+        )
+        .await?,
+    )?;
+
+    assert_eq!(response.operation.result_status, OperationStatus::Success);
+    assert_eq!(
+        response.operation.result_message.as_deref(),
+        Some("email_capture; metadata export completed")
+    );
+    let scope = response.operation.scope.as_ref().expect("scope");
+    assert_eq!(scope["executor_state"], "email_mailbox_metadata_exported");
+    assert_eq!(scope["export"]["message_count"], 1);
+    assert_eq!(
+        scope["export"]["disclosure_policy"]["posture"],
+        "metadata_only"
+    );
+    let exported: serde_json::Value =
+        serde_json::from_slice(&tokio::fs::read(&output_path).await?)?;
+    assert_eq!(exported["message_count"], 1);
+    assert_eq!(
+        exported["messages"][0]["message_id"],
+        "export-fixture@example.test"
+    );
+    assert_eq!(exported["messages"][0]["body_bytes"], 128);
+    assert_eq!(exported["disclosure_policy"]["attachment_bytes"], "omitted");
+    Ok(())
+}
+
+#[sinex_test]
+async fn ops_start_rebuilds_email_mailbox_projection_from_events(
+    ctx: TestContext,
+) -> TestResult<()> {
+    let mode_id = "source:email.mailbox";
+    let material = sinex_db::repositories::SourceMaterial::blob_text("rebuild-email-fixture.eml")
+        .with_metadata(json!({
+            "source_material_contract": {
+                "origin": {
+                    "binding_id": mode_id
+                }
+            }
+        }));
+    let material_record = ctx
+        .pool()
+        .source_materials()
+        .register_material(material)
+        .await?;
+    let material_id = sinex_primitives::Id::<sinex_primitives::events::SourceMaterial>::from_uuid(
+        material_record.id,
+    );
+    let event = DynamicPayload::new(
+        "email",
+        "email.message.received",
+        json!({
+            "message_id": "rebuild-fixture@example.test",
+            "folder": "INBOX",
+            "source_file": "rebuild-email-fixture.eml",
+            "raw_material_id": material_record.id.to_string(),
+            "mailbox_format": "rfc822",
+            "subject": "Rebuild fixture",
+            "from": ["sender@example.test"],
+            "to": ["recipient@example.test"],
+            "body_bytes": 64,
+            "attachment_count": 0
+        }),
+    )
+    .from_material(material_id)
+    .build()?;
+    ctx.pool().events().insert(event).await?;
+
+    let auth = system_auth();
+    let response: OpsStartResponse = serde_json::from_value(
+        handle_ops_start(
+            ctx.pool(),
+            json!({
+                "operation_type": "email.mailbox.rebuild-projection",
+                "scope": {
+                    "source_id": "email.mailbox",
+                    "mode_id": mode_id
+                },
+            }),
+            &auth,
+        )
+        .await?,
+    )?;
+
+    assert_eq!(response.operation.result_status, OperationStatus::Success);
+    assert_eq!(
+        response.operation.result_message.as_deref(),
+        Some("email_capture; projection rebuild completed")
+    );
+    let scope = response.operation.scope.as_ref().expect("scope");
+    assert_eq!(scope["executor_state"], "email_mailbox_projection_rebuilt");
+    assert_eq!(scope["replayed_event_count"], 1);
+    assert_eq!(scope["projected_event_count"], 1);
+    let projections = ctx
+        .pool()
+        .email_mailbox_projections()
+        .list_current_by_source_mode("email.mailbox", mode_id)
+        .await?;
+    assert_eq!(projections.len(), 1);
+    assert_eq!(
+        projections[0].message_id.as_deref(),
+        Some("rebuild-fixture@example.test")
     );
     Ok(())
 }
