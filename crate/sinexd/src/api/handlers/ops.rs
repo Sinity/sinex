@@ -22,6 +22,7 @@ use sinex_primitives::parser::{
     maybe_occurrence_key_string,
 };
 use sinex_primitives::rpc::sources::{SourceMaterialMetadataContract, SourceOrigin};
+use sinex_primitives::source_contracts::source_runtime_bindings;
 use sinex_primitives::temporal::Timestamp;
 use sqlx::PgPool;
 use std::process::Stdio;
@@ -122,6 +123,11 @@ const MEDIA_WORKER_COMMAND_DEFAULT_TIMEOUT_MS: u64 = 30_000;
 const MEDIA_WORKER_OUTPUT_KEY: &str = "worker_output";
 const MEDIA_WORKER_OUTPUT_PATH_KEY: &str = "worker_output_path";
 const MEDIA_WORKER_COMMAND_KEY: &str = "worker_command";
+const MEDIA_WORKER_EXECUTOR_MESSAGE: &str =
+    "media operation consumes worker_output, worker_output_path, or worker_command when supplied";
+const MEDIA_SESSION_CONTROL_MESSAGE: &str = "media session-control operation records the requested runtime transition; runner evidence and SourceCoverage report observed state";
+const MEDIA_MATERIAL_OPERATION_MESSAGE: &str =
+    "media material operation records operator intent and lifecycle/debt requirements";
 const EMAIL_MAILDIR_STAGED_MODE_ID: &str = "source:email.mailbox.maildir-staged";
 const EMAIL_MBOX_STAGED_MODE_ID: &str = "source:email.mailbox.mbox-staged";
 const EMAIL_GMAIL_SCHEDULED_SYNC_MODE_ID: &str = "source:email.mailbox.gmail-api-scheduled-sync";
@@ -132,6 +138,10 @@ const EMAIL_GMAIL_SYNC_EXECUTOR_STATE: &str = "gmail_api_sync_admitted";
 const EMAIL_IMAP_SYNC_EXECUTOR_STATE: &str = "imap_sync_admitted";
 const EMAIL_GMAIL_SYNC_FAILED_EXECUTOR_STATE: &str = "gmail_api_sync_failed";
 const EMAIL_IMAP_SYNC_FAILED_EXECUTOR_STATE: &str = "imap_sync_failed";
+const EMAIL_PROVIDER_CONTROL_MESSAGE: &str =
+    "email provider control operation records provider account runtime intent";
+const EMAIL_STAGED_REPLAY_MESSAGE: &str =
+    "email staged replay operation records replay intent for staged mailbox material";
 const EMAIL_STAGED_SYNC_DEFAULT_MAX_MESSAGE_BYTES: u64 = 64 * 1024 * 1024;
 const EMAIL_GMAIL_SYNC_DEFAULT_PAGE_SIZE: u32 = 100;
 const EMAIL_IMAP_SYNC_DEFAULT_BATCH_SIZE: u32 = 100;
@@ -355,7 +365,7 @@ impl MediaCapturePackage {
     const fn material_class(self) -> MediaMaterialClass {
         match self {
             Self::AudioTranscript => MediaMaterialClass::AudioRecordingOrTranscript,
-            Self::ScreenOcr => MediaMaterialClass::ScreenshotOrOcr,
+            Self::ScreenOcr => MediaMaterialClass::ScreenCaptureOrOcr,
         }
     }
 
@@ -371,6 +381,7 @@ impl MediaCapturePackage {
             ],
             Self::ScreenOcr => &[
                 MediaDisclosureDestination::RawMaterial,
+                MediaDisclosureDestination::ScreenVideo,
                 MediaDisclosureDestination::OcrText,
                 MediaDisclosureDestination::WindowMetadata,
                 MediaDisclosureDestination::ModelOutput,
@@ -385,14 +396,14 @@ impl MediaCapturePackage {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum MediaMaterialClass {
     AudioRecordingOrTranscript,
-    ScreenshotOrOcr,
+    ScreenCaptureOrOcr,
 }
 
 impl MediaMaterialClass {
     const fn as_str(self) -> &'static str {
         match self {
             Self::AudioRecordingOrTranscript => "audio_recording_or_transcript",
-            Self::ScreenshotOrOcr => "screenshot_or_ocr",
+            Self::ScreenCaptureOrOcr => "screen_capture_or_ocr",
         }
     }
 }
@@ -402,6 +413,7 @@ enum MediaDisclosureDestination {
     RawMaterial,
     TranscriptText,
     OcrText,
+    ScreenVideo,
     WindowMetadata,
     ModelOutput,
     Dlq,
@@ -415,6 +427,7 @@ impl MediaDisclosureDestination {
             Self::RawMaterial => "raw_material",
             Self::TranscriptText => "transcript_text",
             Self::OcrText => "ocr_text",
+            Self::ScreenVideo => "screen_video",
             Self::WindowMetadata => "window_metadata",
             Self::ModelOutput => "model_output",
             Self::Dlq => "dlq",
@@ -432,6 +445,7 @@ enum MediaOperationAction {
     RebuildArtifact,
     CaptureSessionControl,
     CaptureRegion,
+    RecordVideo,
 }
 
 impl MediaOperationAction {
@@ -445,6 +459,7 @@ impl MediaOperationAction {
                 Some(Self::CaptureSessionControl)
             }
             "capture_region" => Some(Self::CaptureRegion),
+            "record_video" => Some(Self::RecordVideo),
             _ => None,
         }
     }
@@ -454,8 +469,21 @@ impl MediaOperationAction {
             Self::DeleteMaterial => "delete_redact_replay",
             Self::ModelRun | Self::Retry => "model_output",
             Self::RebuildArtifact => "artifact_rebuild",
-            Self::CaptureSessionControl | Self::CaptureRegion => "capture_session",
+            Self::CaptureSessionControl | Self::CaptureRegion | Self::RecordVideo => {
+                "capture_session"
+            }
         }
+    }
+
+    const fn consumes_worker_output(self) -> bool {
+        matches!(
+            self,
+            Self::ModelRun
+                | Self::Retry
+                | Self::RebuildArtifact
+                | Self::CaptureRegion
+                | Self::RecordVideo
+        )
     }
 
     const fn invalidation_triggers(self) -> &'static [InvalidationTrigger] {
@@ -476,7 +504,7 @@ impl MediaOperationAction {
                 InvalidationTrigger::ParserSemanticsChange,
                 InvalidationTrigger::DisclosurePolicyChange,
             ],
-            Self::CaptureSessionControl | Self::CaptureRegion => &[
+            Self::CaptureSessionControl | Self::CaptureRegion | Self::RecordVideo => &[
                 InvalidationTrigger::SourceMaterialChange,
                 InvalidationTrigger::DisclosurePolicyChange,
             ],
@@ -500,7 +528,7 @@ const PACKAGE_OPERATION_SPECS: &[PackageOperationSpec] = &[
         accepted_mode_ids: &["source:media.audio-transcript.local-model-batch"],
         action: "run_model",
         surface: "media_capture",
-        executor_message: "media operation recorded; runtime executor is not yet attached",
+        executor_message: MEDIA_WORKER_EXECUTOR_MESSAGE,
     },
     PackageOperationSpec {
         operation_type: "media.audio-transcript.retry",
@@ -509,7 +537,7 @@ const PACKAGE_OPERATION_SPECS: &[PackageOperationSpec] = &[
         accepted_mode_ids: &["source:media.audio-transcript.local-model-batch"],
         action: "retry",
         surface: "media_capture",
-        executor_message: "media operation recorded; runtime executor is not yet attached",
+        executor_message: MEDIA_WORKER_EXECUTOR_MESSAGE,
     },
     PackageOperationSpec {
         operation_type: "media.audio-transcript.rebuild-artifact",
@@ -518,7 +546,7 @@ const PACKAGE_OPERATION_SPECS: &[PackageOperationSpec] = &[
         accepted_mode_ids: &["source:media.audio-transcript.local-model-batch"],
         action: "rebuild_artifact",
         surface: "media_capture",
-        executor_message: "media operation recorded; runtime executor is not yet attached",
+        executor_message: MEDIA_WORKER_EXECUTOR_MESSAGE,
     },
     PackageOperationSpec {
         operation_type: "media.audio-transcript.enable-session",
@@ -527,7 +555,7 @@ const PACKAGE_OPERATION_SPECS: &[PackageOperationSpec] = &[
         accepted_mode_ids: &["source:media.audio-transcript.live-session"],
         action: "enable_session",
         surface: "media_capture",
-        executor_message: "media operation recorded; runtime executor is not yet attached",
+        executor_message: MEDIA_SESSION_CONTROL_MESSAGE,
     },
     PackageOperationSpec {
         operation_type: "media.audio-transcript.disable-session",
@@ -536,7 +564,7 @@ const PACKAGE_OPERATION_SPECS: &[PackageOperationSpec] = &[
         accepted_mode_ids: &["source:media.audio-transcript.live-session"],
         action: "disable_session",
         surface: "media_capture",
-        executor_message: "media operation recorded; runtime executor is not yet attached",
+        executor_message: MEDIA_SESSION_CONTROL_MESSAGE,
     },
     PackageOperationSpec {
         operation_type: "media.audio-transcript.pause",
@@ -545,7 +573,7 @@ const PACKAGE_OPERATION_SPECS: &[PackageOperationSpec] = &[
         accepted_mode_ids: &["source:media.audio-transcript.live-session"],
         action: "pause",
         surface: "media_capture",
-        executor_message: "media operation recorded; runtime executor is not yet attached",
+        executor_message: MEDIA_SESSION_CONTROL_MESSAGE,
     },
     PackageOperationSpec {
         operation_type: "media.audio-transcript.resume",
@@ -554,7 +582,7 @@ const PACKAGE_OPERATION_SPECS: &[PackageOperationSpec] = &[
         accepted_mode_ids: &["source:media.audio-transcript.live-session"],
         action: "resume",
         surface: "media_capture",
-        executor_message: "media operation recorded; runtime executor is not yet attached",
+        executor_message: MEDIA_SESSION_CONTROL_MESSAGE,
     },
     PackageOperationSpec {
         operation_type: "media.audio-transcript.delete-material",
@@ -563,7 +591,7 @@ const PACKAGE_OPERATION_SPECS: &[PackageOperationSpec] = &[
         accepted_mode_ids: &["source:media.audio-transcript.audio-bundle-staged"],
         action: "delete_material",
         surface: "media_capture",
-        executor_message: "media operation recorded; runtime executor is not yet attached",
+        executor_message: MEDIA_MATERIAL_OPERATION_MESSAGE,
     },
     PackageOperationSpec {
         operation_type: "media.screen-ocr.run-ocr",
@@ -572,7 +600,7 @@ const PACKAGE_OPERATION_SPECS: &[PackageOperationSpec] = &[
         accepted_mode_ids: &["source:media.screen-ocr.local-model-batch"],
         action: "run_ocr",
         surface: "media_capture",
-        executor_message: "media operation recorded; runtime executor is not yet attached",
+        executor_message: MEDIA_WORKER_EXECUTOR_MESSAGE,
     },
     PackageOperationSpec {
         operation_type: "media.screen-ocr.retry",
@@ -581,7 +609,7 @@ const PACKAGE_OPERATION_SPECS: &[PackageOperationSpec] = &[
         accepted_mode_ids: &["source:media.screen-ocr.local-model-batch"],
         action: "retry",
         surface: "media_capture",
-        executor_message: "media operation recorded; runtime executor is not yet attached",
+        executor_message: MEDIA_WORKER_EXECUTOR_MESSAGE,
     },
     PackageOperationSpec {
         operation_type: "media.screen-ocr.rebuild-artifact",
@@ -590,7 +618,7 @@ const PACKAGE_OPERATION_SPECS: &[PackageOperationSpec] = &[
         accepted_mode_ids: &["source:media.screen-ocr.local-model-batch"],
         action: "rebuild_artifact",
         surface: "media_capture",
-        executor_message: "media operation recorded; runtime executor is not yet attached",
+        executor_message: MEDIA_WORKER_EXECUTOR_MESSAGE,
     },
     PackageOperationSpec {
         operation_type: "media.screen-ocr.capture-region",
@@ -599,7 +627,16 @@ const PACKAGE_OPERATION_SPECS: &[PackageOperationSpec] = &[
         accepted_mode_ids: &["source:media.screen-ocr.on-demand-region"],
         action: "capture_region",
         surface: "media_capture",
-        executor_message: "media operation recorded; runtime executor is not yet attached",
+        executor_message: MEDIA_WORKER_EXECUTOR_MESSAGE,
+    },
+    PackageOperationSpec {
+        operation_type: "media.screen-ocr.record-video",
+        source_id: "media.screen-ocr",
+        default_mode_id: Some("source:media.screen-ocr.on-demand-video"),
+        accepted_mode_ids: &["source:media.screen-ocr.on-demand-video"],
+        action: "record_video",
+        surface: "media_capture",
+        executor_message: MEDIA_WORKER_EXECUTOR_MESSAGE,
     },
     PackageOperationSpec {
         operation_type: "media.screen-ocr.enable-session",
@@ -608,7 +645,7 @@ const PACKAGE_OPERATION_SPECS: &[PackageOperationSpec] = &[
         accepted_mode_ids: &["source:media.screen-ocr.live-session"],
         action: "enable_session",
         surface: "media_capture",
-        executor_message: "media operation recorded; runtime executor is not yet attached",
+        executor_message: MEDIA_SESSION_CONTROL_MESSAGE,
     },
     PackageOperationSpec {
         operation_type: "media.screen-ocr.disable-session",
@@ -617,7 +654,7 @@ const PACKAGE_OPERATION_SPECS: &[PackageOperationSpec] = &[
         accepted_mode_ids: &["source:media.screen-ocr.live-session"],
         action: "disable_session",
         surface: "media_capture",
-        executor_message: "media operation recorded; runtime executor is not yet attached",
+        executor_message: MEDIA_SESSION_CONTROL_MESSAGE,
     },
     PackageOperationSpec {
         operation_type: "media.screen-ocr.pause",
@@ -626,7 +663,7 @@ const PACKAGE_OPERATION_SPECS: &[PackageOperationSpec] = &[
         accepted_mode_ids: &["source:media.screen-ocr.live-session"],
         action: "pause",
         surface: "media_capture",
-        executor_message: "media operation recorded; runtime executor is not yet attached",
+        executor_message: MEDIA_SESSION_CONTROL_MESSAGE,
     },
     PackageOperationSpec {
         operation_type: "media.screen-ocr.resume",
@@ -635,16 +672,19 @@ const PACKAGE_OPERATION_SPECS: &[PackageOperationSpec] = &[
         accepted_mode_ids: &["source:media.screen-ocr.live-session"],
         action: "resume",
         surface: "media_capture",
-        executor_message: "media operation recorded; runtime executor is not yet attached",
+        executor_message: MEDIA_SESSION_CONTROL_MESSAGE,
     },
     PackageOperationSpec {
         operation_type: "media.screen-ocr.delete-material",
         source_id: "media.screen-ocr",
         default_mode_id: Some("source:media.screen-ocr.screenshot-ocr-staged"),
-        accepted_mode_ids: &["source:media.screen-ocr.screenshot-ocr-staged"],
+        accepted_mode_ids: &[
+            "source:media.screen-ocr.screenshot-ocr-staged",
+            "source:media.screen-ocr.video-staged",
+        ],
         action: "delete_material",
         surface: "media_capture",
-        executor_message: "media operation recorded; runtime executor is not yet attached",
+        executor_message: MEDIA_MATERIAL_OPERATION_MESSAGE,
     },
     PackageOperationSpec {
         operation_type: "email.mailbox.authorize",
@@ -653,7 +693,7 @@ const PACKAGE_OPERATION_SPECS: &[PackageOperationSpec] = &[
         accepted_mode_ids: EMAIL_PROVIDER_MODE_IDS,
         action: "authorize",
         surface: "email_capture",
-        executor_message: "email operation recorded; provider executor is not yet attached",
+        executor_message: EMAIL_PROVIDER_CONTROL_MESSAGE,
     },
     PackageOperationSpec {
         operation_type: "email.mailbox.sync",
@@ -662,7 +702,7 @@ const PACKAGE_OPERATION_SPECS: &[PackageOperationSpec] = &[
         accepted_mode_ids: EMAIL_SYNC_MODE_IDS,
         action: "sync",
         surface: "email_capture",
-        executor_message: "email operation recorded; provider or staged executor is not yet attached",
+        executor_message: "email sync executor runs when provider or staged scope is supplied",
     },
     PackageOperationSpec {
         operation_type: "email.mailbox.pause",
@@ -671,7 +711,7 @@ const PACKAGE_OPERATION_SPECS: &[PackageOperationSpec] = &[
         accepted_mode_ids: EMAIL_PROVIDER_MODE_IDS,
         action: "pause",
         surface: "email_capture",
-        executor_message: "email operation recorded; provider executor is not yet attached",
+        executor_message: EMAIL_PROVIDER_CONTROL_MESSAGE,
     },
     PackageOperationSpec {
         operation_type: "email.mailbox.resume",
@@ -680,7 +720,7 @@ const PACKAGE_OPERATION_SPECS: &[PackageOperationSpec] = &[
         accepted_mode_ids: EMAIL_PROVIDER_MODE_IDS,
         action: "resume",
         surface: "email_capture",
-        executor_message: "email operation recorded; provider executor is not yet attached",
+        executor_message: EMAIL_PROVIDER_CONTROL_MESSAGE,
     },
     PackageOperationSpec {
         operation_type: "email.mailbox.inspect",
@@ -689,7 +729,7 @@ const PACKAGE_OPERATION_SPECS: &[PackageOperationSpec] = &[
         accepted_mode_ids: EMAIL_PROVIDER_MODE_IDS,
         action: "inspect",
         surface: "email_capture",
-        executor_message: "email operation recorded; provider executor is not yet attached",
+        executor_message: EMAIL_PROVIDER_CONTROL_MESSAGE,
     },
     PackageOperationSpec {
         operation_type: "email.mailbox.replay",
@@ -698,7 +738,7 @@ const PACKAGE_OPERATION_SPECS: &[PackageOperationSpec] = &[
         accepted_mode_ids: EMAIL_STAGED_MODE_IDS,
         action: "replay",
         surface: "email_capture",
-        executor_message: "email operation recorded; staged replay executor is not yet attached",
+        executor_message: EMAIL_STAGED_REPLAY_MESSAGE,
     },
 ];
 
@@ -707,6 +747,14 @@ fn package_operation_spec(operation_type: &str) -> Option<PackageOperationSpec> 
         .iter()
         .copied()
         .find(|spec| spec.operation_type == operation_type)
+}
+
+fn package_mode_contract_metadata(mode_id: &str) -> Option<serde_json::Value> {
+    let binding = source_runtime_bindings().find(|binding| binding.subject.as_str() == mode_id)?;
+    Some(serde_json::json!({
+        "binding": binding,
+        "resource_budget": binding.resource_budget(),
+    }))
 }
 
 async fn start_package_operation(
@@ -773,6 +821,9 @@ async fn start_package_operation(
         "executor_state".to_string(),
         serde_json::json!(PACKAGE_OPERATION_EXECUTOR_STATE),
     );
+    if let Some(mode_contract) = package_mode_contract_metadata(&mode_id) {
+        scope.insert("mode_contract".to_string(), mode_contract);
+    }
     scope.remove("provider_runtime");
     scope.remove("provider_cursor");
     let operation_metadata = media_operation_metadata(&spec, &mode_id);
@@ -789,6 +840,12 @@ async fn start_package_operation(
         "executor_state": PACKAGE_OPERATION_EXECUTOR_STATE,
         "message": spec.executor_message,
     });
+    if let Some(mode_contract) = scope.get("mode_contract").cloned() {
+        preview_summary
+            .as_object_mut()
+            .expect("package operation preview is an object")
+            .insert("mode_contract".to_string(), mode_contract);
+    }
     if let Some(provider_metadata) = email_provider_mode_metadata(&mode_id) {
         let provider_scope = EmailProviderOperationScope::from_scope(
             operation_type,
@@ -1074,13 +1131,7 @@ async fn execute_media_worker_output(
             .with_operation("ops.start")
             .with_context("action", spec.action)
     })?;
-    if !matches!(
-        action,
-        MediaOperationAction::ModelRun
-            | MediaOperationAction::Retry
-            | MediaOperationAction::CaptureRegion
-            | MediaOperationAction::RebuildArtifact
-    ) {
+    if !action.consumes_worker_output() {
         return Err(SinexError::validation(format!(
             "media operation {} does not consume worker output",
             spec.operation_type
@@ -2807,6 +2858,7 @@ fn email_provider_cursor_metadata_value(
         page_token: scope.page_token.clone(),
         observed_at: Timestamp::now(),
         continuity_state: EmailContinuityState::Unknown,
+        required_action: None,
         caveats: email_provider_cursor_caveats(mode)
             .iter()
             .map(|caveat| caveat.to_string())
@@ -3118,7 +3170,7 @@ fn media_operation_metadata(
             "state": PACKAGE_OPERATION_EXECUTOR_STATE,
             "bounded_worker_required": action.producer_run_required(),
             "operator_visible_lifecycle_required": action.raw_material_policy_required(),
-            "attached_executor": false
+            "attached_executor": action.consumes_worker_output()
         }
     }))
 }

@@ -11,15 +11,17 @@ use sinex_primitives::rpc::{
     },
 };
 use sinex_primitives::source_contracts::{
-    AccessScope, BudgetPressureAction, ResourceBudgetSpec, ResourceProfile, SourceCapabilityKind,
-    SourceContract, SourceRuntimeBinding, WorkClass, all_source_contracts, source_runtime_bindings,
+    AccessScope, BudgetPressureAction, CheckpointFamily, DeliverySemantics,
+    MaterialLifecyclePolicy, OrderingSemantics, ResourceBudgetSpec, ResourceProfile, RunnerPack,
+    SourceCapabilityKind, SourceContract, SourceRuntimeBinding, TransportKind, WorkClass,
+    all_source_contracts, source_runtime_bindings,
 };
 use sinex_primitives::temporal::Timestamp;
 use sinex_primitives::views::{
     ActionAvailability, ActionAvailabilityState, ActionSideEffect, CaveatView, CoverageGapView,
     SinexObjectKind, SinexObjectRef, SourceCoverageContinuity, SourceCoverageListView,
-    SourceCoverageReadiness, SourceCoverageView, SourcePrivacyPosture, SourceResourceBudgetView,
-    ViewEnvelope,
+    SourceCoverageReadiness, SourceCoverageView, SourceModeStatusView, SourcePrivacyPosture,
+    SourceResourceBudgetView, ViewEnvelope,
 };
 use sqlx::FromRow;
 use sqlx::PgPool;
@@ -310,6 +312,10 @@ fn source_coverage_view(
         format!("{:?}", binding.privacy_context).to_ascii_lowercase()
     });
     let resource_budget = selected_binding.map(source_resource_budget_view);
+    let modes = bindings
+        .iter()
+        .map(|binding| source_mode_status_view(contract.id, binding, runtime_observations))
+        .collect();
 
     SourceCoverageView {
         source_id: contract.id.to_string(),
@@ -332,6 +338,7 @@ fn source_coverage_view(
             proposed: live_binding_count == 0 && proposed_binding_count > 0,
         },
         resource_budget,
+        modes,
         actions: source_actions(contract.id, bindings, pressure.is_some()),
     }
 }
@@ -380,6 +387,52 @@ fn source_runtime_observations(
             (status.module_name.to_string(), status)
         })
         .collect()
+}
+
+fn source_mode_status_view(
+    source_id: &str,
+    binding: &SourceRuntimeBinding,
+    runtime_observations: &HashMap<String, SourceStatus>,
+) -> SourceModeStatusView {
+    let runtime_observation = runtime_observation_for_source(source_id, runtime_observations);
+    SourceModeStatusView {
+        mode_id: binding.subject.as_str().to_string(),
+        binding_id: binding.id.to_string(),
+        implementation: binding.implementation.to_string(),
+        adapter: binding.adapter.to_string(),
+        output_event_type: binding.output_event_type.to_string(),
+        proposed: binding.proposed,
+        runner_pack: runner_pack_name(binding.runner_pack).to_string(),
+        runtime_shape: runtime_shape_name(binding.runtime_shape).to_string(),
+        checkpoint_family: checkpoint_family_name(binding.checkpoint_family).to_string(),
+        material_lifecycle: material_lifecycle_name(binding.material_lifecycle).to_string(),
+        transport: transport_kind_name(binding.transport_semantics.transport).to_string(),
+        delivery: delivery_semantics_name(binding.transport_semantics.delivery).to_string(),
+        ordering: ordering_semantics_name(binding.transport_semantics.ordering).to_string(),
+        replayable: binding.transport_semantics.replayable,
+        dlq: binding.transport_semantics.dlq,
+        backpressure: binding.transport_semantics.backpressure,
+        privacy_context: format!("{:?}", binding.privacy_context).to_ascii_lowercase(),
+        resource_budget: source_resource_budget_view(binding),
+        runtime_observed: runtime_observation.map(|_| true),
+        runtime_live: runtime_observation.map(|observation| observation.live),
+        last_heartbeat_at: runtime_observation
+            .and_then(|observation| observation.last_heartbeat_at),
+        last_output_at: runtime_observation.and_then(|observation| observation.last_output_at),
+        recent_output_count: runtime_observation.map(|observation| observation.recent_output_count),
+        actions: binding
+            .capability_refs()
+            .filter(|capability| capability.is_kind(SourceCapabilityKind::Operation))
+            .map(|capability| {
+                operation_capability_action(
+                    capability.target,
+                    source_id,
+                    Some(binding),
+                    operation_action_key(capability.target, source_id, binding),
+                )
+            })
+            .collect(),
+    }
 }
 
 fn runtime_observation_for_source<'a>(
@@ -580,6 +633,74 @@ fn pressure_action_name(action: BudgetPressureAction) -> &'static str {
     }
 }
 
+fn runner_pack_name(runner_pack: RunnerPack) -> &'static str {
+    match runner_pack {
+        RunnerPack::SinexdSource => "sinexd_source",
+        RunnerPack::Live => "live",
+        RunnerPack::Staged => "staged",
+        RunnerPack::External => "external",
+        RunnerPack::InProcess => "in_process",
+    }
+}
+
+fn runtime_shape_name(shape: sinex_primitives::source_contracts::RuntimeShape) -> &'static str {
+    match shape {
+        sinex_primitives::source_contracts::RuntimeShape::Continuous => "continuous",
+        sinex_primitives::source_contracts::RuntimeShape::OnDemand => "on_demand",
+        sinex_primitives::source_contracts::RuntimeShape::Scheduled => "scheduled",
+    }
+}
+
+fn checkpoint_family_name(family: CheckpointFamily) -> &'static str {
+    match family {
+        CheckpointFamily::AppendStream => "append_stream",
+        CheckpointFamily::MutableSnapshot { .. } => "mutable_snapshot",
+        CheckpointFamily::Journal => "journal",
+        CheckpointFamily::Polling => "polling",
+        CheckpointFamily::LiveObservation => "live_observation",
+    }
+}
+
+fn material_lifecycle_name(policy: MaterialLifecyclePolicy) -> &'static str {
+    match policy {
+        MaterialLifecyclePolicy::RetainRaw => "retain_raw",
+        MaterialLifecyclePolicy::EphemeralRaw => "ephemeral_raw",
+        MaterialLifecyclePolicy::DerivedOnly => "derived_only",
+        MaterialLifecyclePolicy::QuarantineUntilReviewed => "quarantine_until_reviewed",
+        MaterialLifecyclePolicy::ExternalReferenceOnly => "external_reference_only",
+    }
+}
+
+fn transport_kind_name(kind: TransportKind) -> &'static str {
+    match kind {
+        TransportKind::Direct => "direct",
+        TransportKind::LocalQueue => "local_queue",
+        TransportKind::CoreNats => "core_nats",
+        TransportKind::JetStream => "jet_stream",
+        TransportKind::Kv => "kv",
+        TransportKind::Filesystem => "filesystem",
+        TransportKind::ExternalApi => "external_api",
+    }
+}
+
+fn delivery_semantics_name(delivery: DeliverySemantics) -> &'static str {
+    match delivery {
+        DeliverySemantics::SameProcess => "same_process",
+        DeliverySemantics::AtMostOnce => "at_most_once",
+        DeliverySemantics::AtLeastOnce => "at_least_once",
+        DeliverySemantics::ExactlyOnceNotClaimed => "exactly_once_not_claimed",
+    }
+}
+
+fn ordering_semantics_name(ordering: OrderingSemantics) -> &'static str {
+    match ordering {
+        OrderingSemantics::MaterialOrder => "material_order",
+        OrderingSemantics::CursorOrder => "cursor_order",
+        OrderingSemantics::BestEffort => "best_effort",
+        OrderingSemantics::Unordered => "unordered",
+    }
+}
+
 fn max_timestamp(
     current: Option<OffsetDateTime>,
     candidate: Option<OffsetDateTime>,
@@ -736,15 +857,45 @@ fn operation_capability_action(
             package_operation_rpc_method(operation, source_id, binding),
             ActionSideEffect::Write,
         ),
+        "import-rfc822" => (
+            "Import RFC822 Message",
+            Some("sinexctl sources stage <path> --binding source:email.mailbox --format json".to_string()),
+            Some(methods::SOURCES_STAGE),
+            ActionSideEffect::Write,
+        ),
+        "import-maildir" => (
+            "Import Maildir Entry",
+            Some(
+                "sinexctl sources stage <path> --binding source:email.mailbox.maildir-staged --format json"
+                    .to_string(),
+            ),
+            Some(methods::SOURCES_STAGE),
+            ActionSideEffect::Write,
+        ),
+        "import-mbox" => (
+            "Import MBOX",
+            Some(
+                "sinexctl sources stage <path> --binding source:email.mailbox.mbox-staged --format json"
+                    .to_string(),
+            ),
+            Some(methods::SOURCES_STAGE),
+            ActionSideEffect::Write,
+        ),
         "import-transcript" => (
             "Import Transcript",
-            Some("sinexctl sources stage <path> --format json".to_string()),
+            Some(
+                "sinexctl sources stage <path> --binding source:media.audio-transcript --format json"
+                    .to_string(),
+            ),
             Some(methods::SOURCES_STAGE),
             ActionSideEffect::Write,
         ),
         "import-ocr" => (
             "Import OCR",
-            Some("sinexctl sources stage <path> --format json".to_string()),
+            Some(
+                "sinexctl sources stage <path> --binding source:media.screen-ocr --format json"
+                    .to_string(),
+            ),
             Some(methods::SOURCES_STAGE),
             ActionSideEffect::Write,
         ),
@@ -761,6 +912,15 @@ fn operation_capability_action(
             "Import Screenshot Bundle",
             Some(
                 "sinexctl sources stage <path> --binding source:media.screen-ocr.screenshot-ocr-staged --format json"
+                    .to_string(),
+            ),
+            Some(methods::SOURCES_STAGE),
+            ActionSideEffect::Write,
+        ),
+        "import-video" => (
+            "Import Screen Video",
+            Some(
+                "sinexctl sources stage <path> --binding source:media.screen-ocr.video-staged --format json"
                     .to_string(),
             ),
             Some(methods::SOURCES_STAGE),
@@ -826,6 +986,12 @@ fn operation_capability_action(
         ),
         "capture-region" => (
             "Capture Region",
+            package_operation_command_hint(operation, source_id, binding),
+            package_operation_rpc_method(operation, source_id, binding),
+            ActionSideEffect::Admin,
+        ),
+        "record-video" => (
+            "Record Screen Video",
             package_operation_command_hint(operation, source_id, binding),
             package_operation_rpc_method(operation, source_id, binding),
             ActionSideEffect::Admin,
@@ -908,6 +1074,7 @@ fn package_operation_mode_hint(
         | "media.screen-ocr.retry"
         | "media.screen-ocr.rebuild-artifact" => "source:media.screen-ocr.local-model-batch",
         "media.screen-ocr.capture-region" => "source:media.screen-ocr.on-demand-region",
+        "media.screen-ocr.record-video" => "source:media.screen-ocr.on-demand-video",
         "media.screen-ocr.enable-session"
         | "media.screen-ocr.disable-session"
         | "media.screen-ocr.pause"
@@ -958,8 +1125,6 @@ fn email_operation_label(
             "email.mailbox.authorize",
             "source:email.mailbox.imap-scheduled-sync" | "source:email.mailbox.imap-idle-live",
         ) => Some("Authorize IMAP"),
-        ("email.mailbox.sync", "source:email.mailbox.maildir-staged") => Some("Import Maildir"),
-        ("email.mailbox.sync", "source:email.mailbox.mbox-staged") => Some("Import MBOX"),
         ("email.mailbox.sync", "source:email.mailbox.gmail-api-scheduled-sync") => {
             Some("Sync Gmail")
         }
@@ -1365,7 +1530,9 @@ mod tests {
             .expect("transcript import action expected");
         assert_eq!(
             import_transcript.command_hint.as_deref(),
-            Some("sinexctl sources stage <path> --format json")
+            Some(
+                "sinexctl sources stage <path> --binding source:media.audio-transcript --format json"
+            )
         );
         assert_eq!(
             import_transcript.rpc_method.as_deref(),
@@ -1459,6 +1626,41 @@ mod tests {
                 "sinexctl ops start media.audio-transcript.delete-material --scope '{\"source_id\":\"media.audio-transcript\",\"mode_id\":\"source:media.audio-transcript.audio-bundle-staged\"}' --format json"
             )
         );
+        let local_model_mode = view
+            .modes
+            .iter()
+            .find(|mode| mode.mode_id == "source:media.audio-transcript.local-model-batch")
+            .expect("audio local model mode expected");
+        assert_eq!(
+            local_model_mode.implementation,
+            "local-transcription-worker"
+        );
+        assert_eq!(local_model_mode.adapter, "LocalProcessWorker");
+        assert_eq!(local_model_mode.runtime_shape, "on_demand");
+        assert_eq!(local_model_mode.material_lifecycle, "derived_only");
+        assert_eq!(local_model_mode.transport, "direct");
+        assert_eq!(local_model_mode.resource_budget.work_class, "bulk_import");
+        assert!(
+            local_model_mode
+                .actions
+                .iter()
+                .any(|action| action.id == "media.audio-transcript.run-model"
+                    && action.command_hint.as_deref()
+                        == Some(
+                            "sinexctl ops start media.audio-transcript.run-model --scope '{\"source_id\":\"media.audio-transcript\",\"mode_id\":\"source:media.audio-transcript.local-model-batch\"}' --format json"
+                        ))
+        );
+        let live_audio_mode = view
+            .modes
+            .iter()
+            .find(|mode| mode.mode_id == "source:media.audio-transcript.live-session")
+            .expect("audio live mode expected");
+        assert!(live_audio_mode.proposed);
+        assert_eq!(live_audio_mode.runner_pack, "live");
+        assert_eq!(live_audio_mode.runtime_shape, "continuous");
+        assert_eq!(live_audio_mode.material_lifecycle, "ephemeral_raw");
+        assert_eq!(live_audio_mode.transport, "local_queue");
+        assert!(live_audio_mode.backpressure);
 
         let screen_contract = all_source_contracts()
             .find(|contract| contract.id == "media.screen-ocr")
@@ -1475,6 +1677,19 @@ mod tests {
             &HashMap::new(),
             Timestamp::now(),
         );
+
+        let import_ocr = screen_view
+            .actions
+            .iter()
+            .find(|action| action.id == "media.screen-ocr.import-ocr")
+            .expect("OCR import action expected");
+        assert_eq!(
+            import_ocr.command_hint.as_deref(),
+            Some("sinexctl sources stage <path> --binding source:media.screen-ocr --format json")
+        );
+        assert_eq!(import_ocr.rpc_method.as_deref(), Some("sources.stage"));
+        assert_eq!(import_ocr.side_effect, ActionSideEffect::Write);
+        assert_eq!(import_ocr.state, ActionAvailabilityState::Enabled);
 
         let import_screenshots = screen_view
             .actions
@@ -1493,6 +1708,21 @@ mod tests {
         );
         assert_eq!(import_screenshots.side_effect, ActionSideEffect::Write);
         assert_eq!(import_screenshots.state, ActionAvailabilityState::Enabled);
+
+        let import_video = screen_view
+            .actions
+            .iter()
+            .find(|action| action.id == "media.screen-ocr.import-video")
+            .expect("screen-video import action expected");
+        assert_eq!(
+            import_video.command_hint.as_deref(),
+            Some(
+                "sinexctl sources stage <path> --binding source:media.screen-ocr.video-staged --format json"
+            )
+        );
+        assert_eq!(import_video.rpc_method.as_deref(), Some("sources.stage"));
+        assert_eq!(import_video.side_effect, ActionSideEffect::Write);
+        assert_eq!(import_video.state, ActionAvailabilityState::Enabled);
 
         let run_ocr = screen_view
             .actions
@@ -1522,6 +1752,41 @@ mod tests {
                 "sinexctl ops start media.screen-ocr.capture-region --scope '{\"source_id\":\"media.screen-ocr\",\"mode_id\":\"source:media.screen-ocr.on-demand-region\"}' --format json"
             )
         );
+
+        let record_video = screen_view
+            .actions
+            .iter()
+            .find(|action| action.id == "media.screen-ocr.record-video")
+            .expect("record-video action expected");
+        assert_eq!(record_video.state, ActionAvailabilityState::Enabled);
+        assert_eq!(record_video.side_effect, ActionSideEffect::Admin);
+        assert_eq!(record_video.rpc_method.as_deref(), Some("ops.start"));
+        assert_eq!(
+            record_video.command_hint.as_deref(),
+            Some(
+                "sinexctl ops start media.screen-ocr.record-video --scope '{\"source_id\":\"media.screen-ocr\",\"mode_id\":\"source:media.screen-ocr.on-demand-video\"}' --format json"
+            )
+        );
+        let video_mode = screen_view
+            .modes
+            .iter()
+            .find(|mode| mode.mode_id == "source:media.screen-ocr.video-staged")
+            .expect("screen-video staged mode expected");
+        assert_eq!(video_mode.implementation, "staged-screen-video-bundle");
+        assert_eq!(
+            video_mode.output_event_type,
+            "media.screen.video_segment_observed"
+        );
+        assert_eq!(video_mode.material_lifecycle, "retain_raw");
+        assert_eq!(video_mode.transport, "direct");
+        assert!(
+            video_mode
+                .actions
+                .iter()
+                .any(|action| action.id == "media.screen-ocr.import-video"
+                    && action.rpc_method.as_deref() == Some("sources.stage"))
+        );
+
         assert_action_rpc_methods_are_cataloged("media.audio-transcript", &view.actions)?;
         assert_action_rpc_methods_are_cataloged("media.screen-ocr", &screen_view.actions)?;
 
@@ -1574,20 +1839,50 @@ mod tests {
             .expect("IMAP authorize action expected");
         assert_eq!(authorize_imap.label, "Authorize IMAP");
 
-        let maildir_sync = view
+        let import_rfc822 = view
             .actions
             .iter()
             .find(|action| {
                 action.command_hint.as_deref()
                     == Some(
-                        "sinexctl ops start email.mailbox.sync --scope '{\"source_id\":\"email.mailbox\",\"mode_id\":\"source:email.mailbox.maildir-staged\"}' --format json",
+                        "sinexctl sources stage <path> --binding source:email.mailbox --format json",
                     )
             })
-            .expect("Maildir sync action expected");
-        assert_eq!(maildir_sync.state, ActionAvailabilityState::Enabled);
-        assert_eq!(maildir_sync.side_effect, ActionSideEffect::Write);
-        assert_eq!(maildir_sync.rpc_method.as_deref(), Some("ops.start"));
-        assert_eq!(maildir_sync.label, "Import Maildir");
+            .expect("RFC822 import action expected");
+        assert_eq!(import_rfc822.state, ActionAvailabilityState::Enabled);
+        assert_eq!(import_rfc822.side_effect, ActionSideEffect::Write);
+        assert_eq!(import_rfc822.rpc_method.as_deref(), Some("sources.stage"));
+        assert_eq!(import_rfc822.label, "Import RFC822 Message");
+
+        let import_maildir = view
+            .actions
+            .iter()
+            .find(|action| {
+                action.command_hint.as_deref()
+                    == Some(
+                        "sinexctl sources stage <path> --binding source:email.mailbox.maildir-staged --format json",
+                    )
+            })
+            .expect("Maildir import action expected");
+        assert_eq!(import_maildir.state, ActionAvailabilityState::Enabled);
+        assert_eq!(import_maildir.side_effect, ActionSideEffect::Write);
+        assert_eq!(import_maildir.rpc_method.as_deref(), Some("sources.stage"));
+        assert_eq!(import_maildir.label, "Import Maildir Entry");
+
+        let import_mbox = view
+            .actions
+            .iter()
+            .find(|action| {
+                action.command_hint.as_deref()
+                    == Some(
+                        "sinexctl sources stage <path> --binding source:email.mailbox.mbox-staged --format json",
+                    )
+            })
+            .expect("MBOX import action expected");
+        assert_eq!(import_mbox.state, ActionAvailabilityState::Enabled);
+        assert_eq!(import_mbox.side_effect, ActionSideEffect::Write);
+        assert_eq!(import_mbox.rpc_method.as_deref(), Some("sources.stage"));
+        assert_eq!(import_mbox.label, "Import MBOX");
 
         let gmail_sync = view
             .actions
@@ -1612,6 +1907,41 @@ mod tests {
             })
             .expect("IMAP sync action expected");
         assert_eq!(imap_sync.label, "Sync IMAP");
+        let gmail_mode = view
+            .modes
+            .iter()
+            .find(|mode| mode.mode_id == "source:email.mailbox.gmail-api-scheduled-sync")
+            .expect("Gmail scheduled mode expected");
+        assert_eq!(gmail_mode.implementation, "gmail-api-scheduled-sync");
+        assert_eq!(gmail_mode.adapter, "GmailApiCursorAdapter");
+        assert_eq!(gmail_mode.runtime_shape, "scheduled");
+        assert_eq!(gmail_mode.material_lifecycle, "external_reference_only");
+        assert_eq!(gmail_mode.transport, "external_api");
+        assert!(gmail_mode.dlq);
+        assert!(gmail_mode.backpressure);
+        assert!(
+            gmail_mode
+                .actions
+                .iter()
+                .any(|action| action.label == "Sync Gmail"
+                    && action.command_hint.as_deref()
+                        == Some(
+                            "sinexctl ops start email.mailbox.sync --scope '{\"source_id\":\"email.mailbox\",\"mode_id\":\"source:email.mailbox.gmail-api-scheduled-sync\"}' --format json"
+                        ))
+        );
+        let imap_idle = view
+            .modes
+            .iter()
+            .find(|mode| mode.mode_id == "source:email.mailbox.imap-idle-live")
+            .expect("IMAP IDLE mode expected");
+        assert_eq!(imap_idle.runtime_shape, "continuous");
+        assert_eq!(imap_idle.resource_budget.work_class, "capture_live");
+        assert!(
+            imap_idle
+                .actions
+                .iter()
+                .any(|action| action.label == "Pause IMAP IDLE")
+        );
 
         assert!(
             view.actions.iter().all(|action| {

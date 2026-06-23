@@ -274,6 +274,7 @@ rcgen = "0.13"
 jsonschema = "0.42"
 validator = { version = "0.20", features = ["derive"] }
 uncased = "0.9"
+mail-parser = "0.11"
 
 # Build-time registry
 inventory = "0.3"

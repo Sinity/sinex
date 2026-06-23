@@ -56,6 +56,7 @@ async fn typed_provider_runtime_payloads_keep_provider_coordinates_explicit()
         page_token: None,
         observed_at,
         continuity_state: EmailContinuityState::Current,
+        required_action: None,
         caveats: Vec::new(),
     })?;
 

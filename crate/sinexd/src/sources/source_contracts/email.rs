@@ -1,12 +1,13 @@
 //! Email capture source — `email.mailbox` (#1469).
 //!
 //! The accepted staged modes cover RFC822/`.eml`, Maildir entries, and MBOX
-//! message slices. Proposed Gmail/IMAP modes publish package-mode, cursor, and
-//! runtime contracts for coverage/debt/deployment inventory without claiming
-//! that this staged parser runs those provider clients.
+//! message slices. Accepted Gmail/IMAP modes publish provider cursor and runtime
+//! contracts for coverage/debt/deployment inventory; provider executors emit
+//! typed cursor material that this parser turns into sync observations.
 
 use async_trait::async_trait;
 use camino::Utf8PathBuf;
+use mail_parser::{ContentType, MessageParser, MessagePart, MimeHeaders};
 use serde::{Deserialize, Serialize};
 use sinex_macros::SourceMeta;
 use sinex_primitives::{
@@ -25,8 +26,9 @@ use sinex_primitives::{
     },
     privacy::{ProcessingContext, SensitivityHint},
     source_contracts::{
-        AccessScope, CheckpointFamily, Horizon, OccurrenceIdentity, PrivacyTier, ResourceProfile,
-        RetentionPolicy, RunnerPack, RuntimeShape,
+        AccessScope, CheckpointFamily, Horizon, MaterialLifecyclePolicy, OccurrenceIdentity,
+        PrivacyTier, ResourceProfile, RetentionPolicy, RunnerPack, RuntimeShape,
+        TransportSemantics,
     },
     temporal::Timestamp,
 };
@@ -53,12 +55,14 @@ pub struct EmailMailboxParserConfig;
     retention = RetentionPolicy::Forever,
     occurrence_identity = OccurrenceIdentity::Uuid5From("(message_id, folder)"),
     access_scope = AccessScope::StagedExport,
-    capabilities = "coverage:source-coverage, debt:unified-debt-view, operation:email.mailbox.check, operation:email.mailbox.sync, operation:email.mailbox.pause, operation:email.mailbox.resume, operation:email.mailbox.inspect, operation:email.mailbox.replay",
+    capabilities = "coverage:source-coverage, debt:unified-debt-view, operation:email.mailbox.check, operation:email.mailbox.import-rfc822, operation:email.mailbox.inspect, operation:email.mailbox.replay",
     privacy_context = ProcessingContext::Document,
     resource_profile = ResourceProfile::BoundedFile,
     runner_pack = RunnerPack::Staged,
     checkpoint_family = CheckpointFamily::AppendStream,
     runtime_shape = RuntimeShape::Scheduled,
+    material_lifecycle = MaterialLifecyclePolicy::RetainRaw,
+    transport_semantics = TransportSemantics::DIRECT_APPEND_STREAM,
     binding(
         subject = "source:email.mailbox.maildir-staged",
         event_type = "email.message.received",
@@ -68,7 +72,9 @@ pub struct EmailMailboxParserConfig;
         runner_pack = RunnerPack::Staged,
         checkpoint_family = CheckpointFamily::AppendStream,
         runtime_shape = RuntimeShape::Scheduled,
-        capabilities = "coverage:source-coverage, debt:unified-debt-view, operation:email.mailbox.sync, operation:email.mailbox.inspect, operation:email.mailbox.replay"
+        material_lifecycle = MaterialLifecyclePolicy::RetainRaw,
+        transport_semantics = TransportSemantics::DIRECT_APPEND_STREAM,
+        capabilities = "coverage:source-coverage, debt:unified-debt-view, operation:email.mailbox.import-maildir, operation:email.mailbox.inspect, operation:email.mailbox.replay"
     ),
     binding(
         subject = "source:email.mailbox.mbox-staged",
@@ -79,7 +85,9 @@ pub struct EmailMailboxParserConfig;
         runner_pack = RunnerPack::Staged,
         checkpoint_family = CheckpointFamily::AppendStream,
         runtime_shape = RuntimeShape::Scheduled,
-        capabilities = "coverage:source-coverage, debt:unified-debt-view, operation:email.mailbox.sync, operation:email.mailbox.inspect, operation:email.mailbox.replay"
+        material_lifecycle = MaterialLifecyclePolicy::RetainRaw,
+        transport_semantics = TransportSemantics::DIRECT_APPEND_STREAM,
+        capabilities = "coverage:source-coverage, debt:unified-debt-view, operation:email.mailbox.import-mbox, operation:email.mailbox.inspect, operation:email.mailbox.replay"
     ),
     binding(
         subject = "source:email.mailbox.sent",
@@ -95,32 +103,35 @@ pub struct EmailMailboxParserConfig;
         runner_pack = RunnerPack::SinexdSource,
         checkpoint_family = CheckpointFamily::Journal,
         runtime_shape = RuntimeShape::Scheduled,
-        capabilities = "coverage:source-coverage, debt:unified-debt-view, operation:email.mailbox.authorize, operation:email.mailbox.check, operation:email.mailbox.sync, operation:email.mailbox.pause, operation:email.mailbox.resume, operation:email.mailbox.inspect, operation:email.mailbox.replay",
-        proposed = true
+        material_lifecycle = MaterialLifecyclePolicy::ExternalReferenceOnly,
+        transport_semantics = TransportSemantics::EXTERNAL_API_CURSOR,
+        capabilities = "coverage:source-coverage, debt:unified-debt-view, operation:email.mailbox.authorize, operation:email.mailbox.check, operation:email.mailbox.sync, operation:email.mailbox.pause, operation:email.mailbox.resume, operation:email.mailbox.inspect, operation:email.mailbox.replay"
     ),
     binding(
         subject = "source:email.mailbox.imap-scheduled-sync",
         event_type = "email.sync_cursor.observed",
         implementation = "imap-scheduled-sync",
-        adapter = "ImapCursorAdapter",
+        adapter = "ImapSyncAdapter",
         resource_profile = ResourceProfile::BoundedStream,
         runner_pack = RunnerPack::SinexdSource,
         checkpoint_family = CheckpointFamily::Polling,
         runtime_shape = RuntimeShape::Scheduled,
-        capabilities = "coverage:source-coverage, debt:unified-debt-view, operation:email.mailbox.authorize, operation:email.mailbox.check, operation:email.mailbox.sync, operation:email.mailbox.pause, operation:email.mailbox.resume, operation:email.mailbox.inspect, operation:email.mailbox.replay",
-        proposed = true
+        material_lifecycle = MaterialLifecyclePolicy::ExternalReferenceOnly,
+        transport_semantics = TransportSemantics::EXTERNAL_API_CURSOR,
+        capabilities = "coverage:source-coverage, debt:unified-debt-view, operation:email.mailbox.authorize, operation:email.mailbox.check, operation:email.mailbox.sync, operation:email.mailbox.pause, operation:email.mailbox.resume, operation:email.mailbox.inspect, operation:email.mailbox.replay"
     ),
     binding(
         subject = "source:email.mailbox.imap-idle-live",
         event_type = "email.capture_runtime.observed",
         implementation = "imap-idle-live",
-        adapter = "ImapIdleAdapter",
+        adapter = "ImapSyncAdapter",
         resource_profile = ResourceProfile::LiveWatcher,
         runner_pack = RunnerPack::Live,
         checkpoint_family = CheckpointFamily::LiveObservation,
         runtime_shape = RuntimeShape::Continuous,
-        capabilities = "coverage:source-coverage, debt:unified-debt-view, operation:email.mailbox.authorize, operation:email.mailbox.check, operation:email.mailbox.pause, operation:email.mailbox.resume, operation:email.mailbox.inspect",
-        proposed = true
+        material_lifecycle = MaterialLifecyclePolicy::ExternalReferenceOnly,
+        transport_semantics = TransportSemantics::EXTERNAL_API_CURSOR,
+        capabilities = "coverage:source-coverage, debt:unified-debt-view, operation:email.mailbox.authorize, operation:email.mailbox.check, operation:email.mailbox.pause, operation:email.mailbox.resume, operation:email.mailbox.inspect"
     )
 )]
 pub struct EmailMailboxParser;
@@ -227,6 +238,12 @@ fn parse_gmail_provider_record(
         EmailSyncCursorKind::GmailHistoryId => gmail_history_id.clone(),
         EmailSyncCursorKind::ImapUidvalidityUid | EmailSyncCursorKind::ImapModseq => None,
     };
+    let continuity_state = provider_record_continuity_state(&provider_record.payload);
+    let required_action = provider_record_required_action(&provider_record.payload);
+    let caveats = provider_cursor_caveats(
+        gmail_cursor_caveats(provider_record.kind),
+        &provider_record.payload,
+    );
     let payload = EmailSyncCursorObservedPayload {
         provider: EmailProviderKind::Gmail,
         account_binding_ref: account_binding_ref.clone(),
@@ -238,11 +255,9 @@ fn parse_gmail_provider_record(
         gmail_history_id: gmail_history_id.clone(),
         page_token: page_token.clone(),
         observed_at: ctx.acquisition_time,
-        continuity_state: EmailContinuityState::Current,
-        caveats: gmail_cursor_caveats(provider_record.kind)
-            .iter()
-            .map(|caveat| (*caveat).to_string())
-            .collect(),
+        continuity_state,
+        required_action,
+        caveats,
     };
     Ok(vec![provider_cursor_intent(
         record,
@@ -295,6 +310,12 @@ fn parse_imap_provider_record(
         EmailSyncCursorKind::ImapModseq => highest_modseq.clone(),
         EmailSyncCursorKind::GmailHistoryId | EmailSyncCursorKind::GmailPageToken => None,
     };
+    let continuity_state = provider_record_continuity_state(&provider_record.payload);
+    let required_action = provider_record_required_action(&provider_record.payload);
+    let caveats = provider_cursor_caveats(
+        imap_cursor_caveats(provider_record.kind, imap_mode(&record)),
+        &provider_record.payload,
+    );
     let payload = EmailSyncCursorObservedPayload {
         provider: EmailProviderKind::Imap,
         account_binding_ref: account_binding_ref.clone(),
@@ -306,11 +327,9 @@ fn parse_imap_provider_record(
         gmail_history_id: None,
         page_token: None,
         observed_at: ctx.acquisition_time,
-        continuity_state: EmailContinuityState::Current,
-        caveats: imap_cursor_caveats(provider_record.kind, imap_mode(&record))
-            .iter()
-            .map(|caveat| (*caveat).to_string())
-            .collect(),
+        continuity_state,
+        required_action,
+        caveats,
     };
     Ok(vec![provider_cursor_intent(
         record,
@@ -917,28 +936,52 @@ struct ParsedEmailAttachment {
 }
 
 fn parse_rfc822(record: &SourceRecord) -> ParserResult<ParsedEmail> {
-    let text = std::str::from_utf8(&record.bytes).map_err(|error| {
-        ParserError::Parse(format!("email RFC822 material is not UTF-8: {error}"))
-    })?;
+    let text = String::from_utf8_lossy(&record.bytes);
+    let text = text.as_ref();
     let (headers, body) = split_headers_body(text);
     let headers = parse_headers(headers);
+    let parsed_message = MessageParser::default().parse(&record.bytes);
 
-    let attachments = attachment_headers(text);
+    let attachments = parsed_message
+        .as_ref()
+        .map(parsed_message_attachments)
+        .filter(|attachments| !attachments.is_empty())
+        .unwrap_or_else(|| attachment_headers(text));
     Ok(ParsedEmail {
         message_id: header(&headers, "message-id").and_then(message_id_token),
-        date: header(&headers, "date").and_then(parse_rfc822_date),
+        date: parsed_message
+            .as_ref()
+            .and_then(|message| message.date())
+            .and_then(|date| parse_mail_parser_date(date.to_rfc3339().as_str()))
+            .or_else(|| header(&headers, "date").and_then(parse_rfc822_date)),
         from: header(&headers, "from").map_or_else(Vec::new, address_list),
         to: header(&headers, "to").map_or_else(Vec::new, address_list),
         cc: header(&headers, "cc").map_or_else(Vec::new, address_list),
         bcc: header(&headers, "bcc").map_or_else(Vec::new, address_list),
-        subject: header(&headers, "subject").map(str::to_string),
+        subject: parsed_message
+            .as_ref()
+            .and_then(|message| message.subject())
+            .map(str::to_string)
+            .or_else(|| header(&headers, "subject").map(str::to_string)),
         in_reply_to: header(&headers, "in-reply-to").and_then(message_id_token),
         references: header(&headers, "references").map_or_else(Vec::new, references_list),
         list_id: header(&headers, "list-id").map(str::to_string),
-        body_bytes: body.as_bytes().len() as u64,
+        body_bytes: parsed_message
+            .as_ref()
+            .and_then(|message| message.body_text(0))
+            .map_or_else(
+                || body.as_bytes().len() as u64,
+                |body| body.as_bytes().len() as u64,
+            ),
         attachment_count: attachments.len().try_into().unwrap_or(u32::MAX),
         attachments,
     })
+}
+
+fn parse_mail_parser_date(value: &str) -> Option<Timestamp> {
+    let parsed =
+        time::OffsetDateTime::parse(value, &time::format_description::well_known::Rfc3339).ok()?;
+    Timestamp::from_unix_timestamp_nanos(parsed.unix_timestamp_nanos())
 }
 
 fn split_headers_body(text: &str) -> (&str, &str) {
@@ -1066,6 +1109,29 @@ fn attachment_headers(text: &str) -> Vec<ParsedEmailAttachment> {
     attachments
 }
 
+fn parsed_message_attachments(message: &mail_parser::Message<'_>) -> Vec<ParsedEmailAttachment> {
+    message.attachments().map(mime_part_attachment).collect()
+}
+
+fn mime_part_attachment(part: &MessagePart<'_>) -> ParsedEmailAttachment {
+    ParsedEmailAttachment {
+        disposition: part
+            .content_disposition()
+            .map(|disposition| disposition.ctype().to_string())
+            .unwrap_or_else(|| "attachment".to_string()),
+        filename: part.attachment_name().map(str::to_string),
+        content_type: part.content_type().map(render_content_type),
+        content_id: part.content_id().and_then(message_id_token),
+    }
+}
+
+fn render_content_type(content_type: &ContentType<'_>) -> String {
+    match content_type.subtype() {
+        Some(subtype) => format!("{}/{}", content_type.ctype(), subtype),
+        None => content_type.ctype().to_string(),
+    }
+}
+
 fn disposition_token(value: &str) -> Option<&str> {
     value
         .split(';')
@@ -1174,6 +1240,10 @@ fn gmail_cursor_caveats(kind: GmailApiRecordKind) -> &'static [&'static str] {
             "cursor checkpoint page contained no message/history records",
             "provider cursor is only committed after the adapter record is consumed",
         ],
+        GmailApiRecordKind::Continuity => &[
+            "Gmail history cursor is discontinuous and requires mailbox resync",
+            "provider cursor discontinuity must appear as email sync debt",
+        ],
     }
 }
 
@@ -1186,6 +1256,10 @@ fn imap_cursor_caveats(
             "cursor checkpoint batch contained no mailbox records",
             "UIDVALIDITY changes must be handled as continuity debt",
         ],
+        (ImapSyncRecordKind::Continuity, _) => &[
+            "IMAP UIDVALIDITY changed and old UID coordinates cannot be reused",
+            "provider cursor discontinuity must appear as email sync debt",
+        ],
         (ImapSyncRecordKind::IdleHeartbeat, Some(ImapSyncMode::Idle)) => &[
             "IDLE heartbeat updates runtime freshness without implying new messages",
             "UIDVALIDITY changes must be handled as continuity debt",
@@ -1195,6 +1269,47 @@ fn imap_cursor_caveats(
             "UIDVALIDITY changes must be handled as continuity debt",
         ],
     }
+}
+
+fn provider_record_continuity_state(payload: &serde_json::Value) -> EmailContinuityState {
+    payload
+        .get("continuity_state")
+        .cloned()
+        .and_then(|value| serde_json::from_value(value).ok())
+        .unwrap_or(EmailContinuityState::Current)
+}
+
+fn provider_record_required_action(payload: &serde_json::Value) -> Option<String> {
+    payload
+        .get("required_action")
+        .and_then(serde_json::Value::as_str)
+        .filter(|action| !action.trim().is_empty())
+        .map(str::to_string)
+}
+
+fn provider_cursor_caveats(
+    base: &'static [&'static str],
+    payload: &serde_json::Value,
+) -> Vec<String> {
+    let mut caveats = base
+        .iter()
+        .map(|caveat| (*caveat).to_string())
+        .collect::<Vec<_>>();
+    if let Some(reason) = payload
+        .get("continuity_reason")
+        .and_then(serde_json::Value::as_str)
+        .filter(|reason| !reason.trim().is_empty())
+    {
+        caveats.push(format!("provider continuity reason: {reason}"));
+    }
+    if let Some(action) = payload
+        .get("required_action")
+        .and_then(serde_json::Value::as_str)
+        .filter(|action| !action.trim().is_empty())
+    {
+        caveats.push(format!("required provider action: {action}"));
+    }
+    caveats
 }
 
 fn imap_mode(record: &SourceRecord) -> Option<ImapSyncMode> {

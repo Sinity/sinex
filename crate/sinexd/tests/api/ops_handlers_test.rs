@@ -382,6 +382,22 @@ async fn ops_start_records_media_operation_as_pending_executor(ctx: TestContext)
     assert_eq!(scope["mode_id"], "source:media.screen-ocr.on-demand-region");
     assert_eq!(scope["action"], "capture_region");
     assert_eq!(scope["executor_state"], "awaiting_runtime_executor");
+    assert_eq!(
+        scope["mode_contract"]["binding"]["subject"],
+        "source:media.screen-ocr.on-demand-region"
+    );
+    assert_eq!(
+        scope["mode_contract"]["binding"]["material_lifecycle"],
+        "ephemeral_raw"
+    );
+    assert_eq!(
+        scope["mode_contract"]["binding"]["transport_semantics"]["transport"],
+        "local_queue"
+    );
+    assert_eq!(
+        scope["mode_contract"]["resource_budget"]["work_class"],
+        "capture_live"
+    );
     let preview = response
         .operation
         .preview_summary
@@ -389,6 +405,10 @@ async fn ops_start_records_media_operation_as_pending_executor(ctx: TestContext)
         .expect("media operation preview should be recorded");
     assert_eq!(preview["executor_state"], "awaiting_runtime_executor");
     assert_eq!(preview["operation_type"], "media.screen-ocr.capture-region");
+    assert_eq!(
+        preview["mode_contract"]["binding"]["adapter"],
+        "ScreenRegionCaptureAdapter"
+    );
 
     let persisted = get_operation(&ctx, &auth, &response.operation.id).await?;
     assert_eq!(
@@ -797,6 +817,18 @@ async fn ops_start_records_email_sync_for_provider_mode(ctx: TestContext) -> Tes
         "source:email.mailbox.gmail-api-scheduled-sync"
     );
     assert_eq!(scope["action"], "sync");
+    assert_eq!(
+        scope["mode_contract"]["binding"]["subject"],
+        "source:email.mailbox.gmail-api-scheduled-sync"
+    );
+    assert_eq!(
+        scope["mode_contract"]["binding"]["transport_semantics"]["transport"],
+        "external_api"
+    );
+    assert_eq!(
+        scope["mode_contract"]["resource_budget"]["work_class"],
+        "admission_hot"
+    );
     assert_eq!(scope["account_ref"], "operator-mailbox:primary");
     assert_eq!(scope["account_binding_ref"], "operator-mailbox:primary");
     assert_eq!(
@@ -970,6 +1002,10 @@ async fn ops_start_executes_gmail_scheduled_sync_with_token_file(
     assert_eq!(preview["executor_state"], "gmail_api_sync_admitted");
     assert_eq!(preview["provider_record_count"], 1);
     assert_eq!(preview["admitted_event_count"], 1);
+    assert_eq!(
+        preview["mode_contract"]["binding"]["adapter"],
+        "GmailApiCursorAdapter"
+    );
     Ok(())
 }
 
@@ -1099,6 +1135,14 @@ async fn ops_start_executes_imap_scheduled_sync_with_password_file(
         .as_ref()
         .expect("email provider operation scope should be recorded");
     assert_eq!(scope["executor_state"], "imap_sync_admitted");
+    assert_eq!(
+        scope["mode_contract"]["binding"]["subject"],
+        "source:email.mailbox.imap-scheduled-sync"
+    );
+    assert_eq!(
+        scope["mode_contract"]["binding"]["adapter"],
+        "ImapSyncAdapter"
+    );
     assert_eq!(scope["imap_sync_input"]["host"], "127.0.0.1");
     assert_eq!(scope["imap_sync_input"]["tls_mode"], "none");
     assert_eq!(scope["imap_sync_input"]["fetch_bodies"], true);

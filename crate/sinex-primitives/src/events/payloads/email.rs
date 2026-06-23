@@ -89,6 +89,9 @@ pub enum EmailContinuityState {
     Unknown,
 }
 
+/// Provider action emitted when a cursor discontinuity requires mailbox resync.
+pub const EMAIL_REQUIRED_ACTION_RESYNC_MAILBOX: &str = "resync_mailbox";
+
 /// Authorization state visible to provider coverage/debt surfaces.
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 #[serde(rename_all = "kebab-case")]
@@ -239,6 +242,8 @@ pub struct EmailSyncCursorObservedPayload {
     pub page_token: Option<String>,
     pub observed_at: Timestamp,
     pub continuity_state: EmailContinuityState,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub required_action: Option<String>,
     pub caveats: Vec<String>,
 }
 

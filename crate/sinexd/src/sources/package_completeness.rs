@@ -26,9 +26,8 @@ use crate::sources::source_factory::registered_source_factory_ids;
 /// Bumped when the report JSON shape changes.
 pub const PACKAGE_COMPLETENESS_SCHEMA_VERSION: u32 = 2;
 
-/// Repo-relative path for a future committed report artifact, if the project
-/// chooses to check it in. The first slice exposes rendering + tests; it does
-/// not make this a new source of truth.
+/// Repo-relative path for the generated report artifact. The report compiles
+/// existing inventories into a review surface; it is not a new source of truth.
 pub const PACKAGE_COMPLETENESS_ARTIFACT_PATH: &str =
     "crate/sinexd/docs/sources/package-completeness.generated.json";
 
@@ -778,7 +777,7 @@ fn finalize_mode(
         "fixtures_and_tests",
         RequirementStatus::Caveat,
         false,
-        "first slice observes registry/parser/catalog/privacy tests but does not yet map fixture tests per package mode".to_string(),
+        "registry/parser/catalog/privacy tests exist; package-mode fixture mapping is reported separately from runtime acceptance".to_string(),
     );
     diagnostics.require(
         "coverage_and_debt_views",
