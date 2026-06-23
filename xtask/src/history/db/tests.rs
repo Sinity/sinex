@@ -1,9 +1,15 @@
 //! Regression tests for xtask history DB storage, cleanup, and query helpers.
 
+use super::integrity::{
+    HistoryIntegrityStamp, history_integrity_check_interval, history_integrity_stamp_path,
+    load_history_integrity_stamp, persist_history_integrity_stamp,
+    preserve_history_artifacts_for_recreation, should_run_history_integrity_check,
+};
 use super::*;
 use crate::commands::exercise::{ExerciseReport, ReportEntry, StepEntry};
 #[cfg(unix)]
 use std::os::unix::fs::PermissionsExt;
+use std::path::PathBuf;
 use tempfile::tempdir;
 use xtask::sandbox::{TestResult, sinex_test};
 
