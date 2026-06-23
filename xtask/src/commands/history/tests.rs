@@ -956,8 +956,8 @@ async fn test_execute_tests_slowest_classifies_optimization_candidates()
 
     assert_eq!(
         tests.len(),
-        1,
-        "only setup-overhead candidates are emitted above the default threshold"
+        2,
+        "current setup and runtime-path candidates should both be emitted"
     );
     assert_eq!(
         tests[0]
@@ -970,6 +970,18 @@ async fn test_execute_tests_slowest_classifies_optimization_candidates()
             .get("recommendation")
             .and_then(serde_json::Value::as_str)
             .is_some_and(|value| value.contains("setup"))
+    );
+    assert_eq!(
+        tests[1]
+            .get("optimization_kind")
+            .and_then(serde_json::Value::as_str),
+        Some("runtime_path_candidate")
+    );
+    assert!(
+        tests[1]
+            .get("recommendation")
+            .and_then(serde_json::Value::as_str)
+            .is_some_and(|value| value.contains("runtime startup"))
     );
     Ok(())
 }
