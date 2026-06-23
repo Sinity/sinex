@@ -1427,6 +1427,25 @@ fn mode_detail_lines(mode: &SourceModeStatusView) -> Vec<Line<'static>> {
         "  delivery={} ordering={} replay={} dlq={} pressure={}",
         mode.delivery, mode.ordering, mode.replayable, mode.dlq, mode.backpressure
     )));
+    if mode.provider_operation_status.is_some()
+        || mode.provider_required_action.is_some()
+        || mode.provider_reconnect_state.is_some()
+    {
+        lines.push(Line::from(format!(
+            "  provider status={} auth={} network={} sync={} rate={} failure={} action={} retry_after={} reconnect={}",
+            mode.provider_operation_status.as_deref().unwrap_or("-"),
+            mode.provider_auth_state.as_deref().unwrap_or("-"),
+            mode.provider_network_state.as_deref().unwrap_or("-"),
+            mode.provider_sync_state.as_deref().unwrap_or("-"),
+            mode.provider_rate_limit_state.as_deref().unwrap_or("-"),
+            mode.provider_failure_class.as_deref().unwrap_or("-"),
+            mode.provider_required_action.as_deref().unwrap_or("-"),
+            mode.provider_retry_after_secs
+                .map(|secs| secs.to_string())
+                .unwrap_or_else(|| "-".to_string()),
+            mode.provider_reconnect_state.as_deref().unwrap_or("-"),
+        )));
+    }
     for action in mode.actions.iter().take(3) {
         lines.push(Line::from(format!(
             "  action {} [{}] {}",
@@ -2536,6 +2555,10 @@ mod tests {
             provider_network_state: None,
             provider_sync_state: None,
             provider_rate_limit_state: None,
+            provider_failure_class: None,
+            provider_required_action: None,
+            provider_retry_after_secs: None,
+            provider_reconnect_state: None,
             provider_operation_id: None,
             provider_coverage_ref: None,
             provider_debt_ref: None,

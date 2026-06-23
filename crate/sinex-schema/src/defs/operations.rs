@@ -56,6 +56,10 @@ pub enum EmailProviderState {
     RuntimeStateRef,
     CoverageRef,
     DebtRef,
+    FailureClass,
+    RequiredAction,
+    RetryAfterSecs,
+    ReconnectState,
     CursorKind,
     CursorValue,
     ContinuityState,
@@ -153,6 +157,10 @@ impl EmailProviderState {
                     .text()
                     .not_null(),
             )
+            .col(ColumnDef::new(EmailProviderState::FailureClass).text())
+            .col(ColumnDef::new(EmailProviderState::RequiredAction).text())
+            .col(ColumnDef::new(EmailProviderState::RetryAfterSecs).integer())
+            .col(ColumnDef::new(EmailProviderState::ReconnectState).text())
             .col(ColumnDef::new(EmailProviderState::CursorKind).text())
             .col(ColumnDef::new(EmailProviderState::CursorValue).text())
             .col(ColumnDef::new(EmailProviderState::ContinuityState).text())

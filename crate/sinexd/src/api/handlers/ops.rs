@@ -1044,6 +1044,20 @@ async fn persist_email_provider_state_from_operation(
     let sync_state =
         json_string(runtime_contract, "sync_state").unwrap_or_else(|| "unknown".to_string());
     let rate_limit_state = json_string(runtime_contract, "rate_limit_state");
+    let failure_class = scope
+        .get("provider_failure")
+        .and_then(|failure| json_string(failure, "failure_class"));
+    let required_action = scope
+        .get("provider_failure")
+        .and_then(|failure| json_string(failure, "required_action"));
+    let retry_after_secs = scope
+        .get("provider_failure")
+        .and_then(|failure| failure.get("retry_after_secs"))
+        .and_then(serde_json::Value::as_i64)
+        .and_then(|value| i32::try_from(value).ok());
+    let reconnect_state = scope
+        .get("provider_failure")
+        .and_then(|failure| json_string(failure, "reconnect_state"));
     let runtime_state_ref = json_string(&provider_runtime, "runtime_state_ref")
         .unwrap_or_else(|| format!("email.provider_runtime.{provider}"));
     let coverage_ref = json_string(&provider_runtime, "coverage_ref")
@@ -1088,6 +1102,10 @@ async fn persist_email_provider_state_from_operation(
             runtime_state_ref,
             coverage_ref,
             debt_ref,
+            failure_class,
+            required_action,
+            retry_after_secs,
+            reconnect_state,
             cursor_kind,
             cursor_value,
             continuity_state,
@@ -3127,6 +3145,11 @@ fn email_provider_failed_execution(
     rate_limit_state: Option<EmailRateLimitState>,
     started: Instant,
 ) -> EmailSyncExecutionResult {
+    let failure_class = email_provider_failure_class(auth_state, network_state, rate_limit_state);
+    let required_action =
+        email_provider_required_action(auth_state, network_state, rate_limit_state);
+    let retry_after_secs = email_provider_retry_after_secs(rate_limit_state);
+    let reconnect_state = email_provider_reconnect_state(network_state);
     let runtime = email_provider_failed_runtime_value(
         mode,
         provider_scope,
@@ -3146,6 +3169,10 @@ fn email_provider_failed_execution(
             "reason": reason,
             "coverage_ref": mode.coverage_ref(),
             "debt_ref": mode.debt_ref(),
+            "failure_class": failure_class,
+            "required_action": required_action,
+            "retry_after_secs": retry_after_secs,
+            "reconnect_state": reconnect_state,
             "actions": email_provider_runtime_actions(mode),
         }),
     );
@@ -3212,6 +3239,60 @@ fn email_provider_failed_runtime_value(
         "caveats": [reason],
         "runtime_observation_contract": runtime_payload,
     })
+}
+
+fn email_provider_failure_class(
+    auth_state: EmailAuthorizationState,
+    network_state: EmailNetworkState,
+    rate_limit_state: Option<EmailRateLimitState>,
+) -> &'static str {
+    match (auth_state, network_state, rate_limit_state) {
+        (EmailAuthorizationState::Missing, _, _) => "authorization-missing",
+        (EmailAuthorizationState::Expired | EmailAuthorizationState::Rejected, _, _) => {
+            "authorization-rejected"
+        }
+        (_, EmailNetworkState::RateLimited, Some(EmailRateLimitState::Backoff)) => {
+            "rate-limited-backoff"
+        }
+        (_, EmailNetworkState::RateLimited, _) => "rate-limited",
+        (_, EmailNetworkState::Offline | EmailNetworkState::Error, _) => "network-reconnect",
+        _ => "provider-runtime-failed",
+    }
+}
+
+fn email_provider_required_action(
+    auth_state: EmailAuthorizationState,
+    network_state: EmailNetworkState,
+    rate_limit_state: Option<EmailRateLimitState>,
+) -> &'static str {
+    match (auth_state, network_state, rate_limit_state) {
+        (EmailAuthorizationState::Missing, _, _)
+        | (EmailAuthorizationState::Expired | EmailAuthorizationState::Rejected, _, _) => {
+            "email.mailbox.authorize"
+        }
+        (_, EmailNetworkState::RateLimited, Some(EmailRateLimitState::Backoff)) => {
+            "email.mailbox.wait-for-backoff"
+        }
+        (_, EmailNetworkState::RateLimited, _) => "email.mailbox.retry-after-rate-limit",
+        (_, EmailNetworkState::Offline | EmailNetworkState::Error, _) => "email.mailbox.reconnect",
+        _ => "email.mailbox.inspect-provider",
+    }
+}
+
+fn email_provider_retry_after_secs(rate_limit_state: Option<EmailRateLimitState>) -> Option<i32> {
+    match rate_limit_state {
+        Some(EmailRateLimitState::Backoff | EmailRateLimitState::Throttled) => Some(300),
+        Some(EmailRateLimitState::Exhausted) => Some(3600),
+        _ => None,
+    }
+}
+
+fn email_provider_reconnect_state(network_state: EmailNetworkState) -> Option<&'static str> {
+    match network_state {
+        EmailNetworkState::Offline | EmailNetworkState::Error => Some("reconnect-required"),
+        EmailNetworkState::RateLimited => Some("backoff-active"),
+        _ => None,
+    }
 }
 
 fn classify_gmail_provider_failure(

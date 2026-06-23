@@ -127,10 +127,17 @@ fn mode_summary(mode: &SourceModeStatusView) -> String {
     } else {
         "accepted"
     };
+    let provider = mode
+        .provider_required_action
+        .as_deref()
+        .or(mode.provider_reconnect_state.as_deref())
+        .or(mode.provider_failure_class.as_deref())
+        .map(|state| format!("/provider:{state}"))
+        .unwrap_or_default();
     format!(
         "{}:{}/{}/{}",
         mode.mode_id, state, mode.runtime_shape, mode.transport
-    )
+    ) + &provider
 }
 
 const fn action_state_label(state: ActionAvailabilityState) -> &'static str {
@@ -272,6 +279,10 @@ mod tests {
             provider_network_state: None,
             provider_sync_state: None,
             provider_rate_limit_state: None,
+            provider_failure_class: None,
+            provider_required_action: None,
+            provider_retry_after_secs: None,
+            provider_reconnect_state: None,
             provider_operation_id: None,
             provider_coverage_ref: None,
             provider_debt_ref: None,
