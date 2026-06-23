@@ -351,8 +351,9 @@ fn check_transport_publish_family_inventory() -> Result<Vec<String>> {
         // Inline private-mode listener regression publishes a synthetic
         // control message; the production listener only subscribes.
         "crate/sinexd/src/runtime/parser/adapter_source.rs",
-        // Event-engine confirmation and raw-ingest DLQ publishers (folded event_engine).
-        "crate/sinexd/src/event_engine/jetstream_consumer.rs",
+        // Event-engine confirmation and raw-ingest DLQ publishers.
+        "crate/sinexd/src/event_engine/jetstream_consumer/confirmation.rs",
+        "crate/sinexd/src/event_engine/jetstream_consumer/dlq.rs",
         // Source-material assembler DLQ routing.
         "crate/sinexd/src/event_engine/material_assembler/finalize.rs",
         // Active-schema broadcast control notification.
