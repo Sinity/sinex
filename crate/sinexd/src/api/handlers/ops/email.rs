@@ -208,7 +208,7 @@ async fn execute_email_mailbox_export(
         rows.retain(|row| row.message_key == message_key);
     }
     let material_exports = if include_material {
-        email_projection_material_exports(pool, &rows).await?
+        email_projection_material_exports(pool, &rows, scope).await?
     } else {
         Vec::new()
     };
@@ -389,59 +389,14 @@ async fn materialize_gmail_projection_attachments(
     material_policy_ref: &str,
     scope: &serde_json::Map<String, serde_json::Value>,
 ) -> Result<EmailAttachmentMaterialization> {
-    let Some(message_id) = row.message_id.as_deref() else {
-        return Ok(EmailAttachmentMaterialization::Blocked(
-            blocked_email_material(row, "gmail_message_id_required"),
-        ));
-    };
-    let Some(token_file) = optional_scope_string(scope, "gmail_token_file")
-        .or_else(|| optional_scope_string(scope, "access_token_file"))
-        .or_else(|| optional_scope_string(scope, "token_file"))
-    else {
-        return Ok(EmailAttachmentMaterialization::Blocked(
-            blocked_email_material(
-                row,
-                "gmail_token_file_required_for_provider_materialization",
-            ),
-        ));
-    };
-    let token = tokio::fs::read_to_string(&token_file)
-        .await
-        .map_err(|error| {
-            SinexError::io("failed to read Gmail token file for attachment materialization")
-                .with_context("token_file", token_file.clone())
-                .with_std_error(&error)
-                .with_operation("ops.start")
-        })?;
-    let token = token.trim().to_string();
-    if token.is_empty() {
-        return Ok(EmailAttachmentMaterialization::Blocked(
-            blocked_email_material(row, "gmail_token_file_empty"),
-        ));
-    }
-    let client = GmailHttpClient::with_endpoint(
-        reqwest::Client::new(),
-        optional_scope_string(scope, "gmail_api_base_url")
-            .or_else(|| optional_scope_string(scope, "api_base_url"))
-            .unwrap_or_else(|| "https://gmail.googleapis.com/gmail/v1".to_string()),
-        optional_scope_string(scope, "gmail_user_id")
-            .or_else(|| optional_scope_string(scope, "user_id"))
-            .unwrap_or_else(|| "me".to_string()),
-        token,
-    );
-    let raw = match client.fetch_raw_message(message_id).await {
-        Ok(raw) => raw,
-        Err(_) => {
+    let material = match gmail_projection_raw_message(row, scope).await? {
+        Ok(material) => material,
+        Err(reason) => {
             return Ok(EmailAttachmentMaterialization::Blocked(
-                blocked_email_material(row, "gmail_raw_message_fetch_failed"),
+                blocked_email_material(row, reason),
             ));
         }
     };
-    let material = projection_raw_message_from_bytes(
-        row,
-        format!("gmail://messages/{message_id}?format=raw"),
-        &raw,
-    )?;
     let mut materialized = Vec::new();
     for index in row.attachment_observed_count..row.attachment_count {
         let event_id = uuid::Uuid::now_v7();
@@ -494,9 +449,29 @@ async fn materialize_gmail_projection_attachments(
 async fn email_projection_material_exports(
     pool: &PgPool,
     rows: &[EmailMailboxProjectionRecord],
+    scope: &serde_json::Map<String, serde_json::Value>,
 ) -> Result<Vec<serde_json::Value>> {
     let mut exports = Vec::new();
     for row in rows {
+        if row.mailbox_format.as_deref() == Some("gmail-api") {
+            match gmail_projection_raw_message(row, scope).await? {
+                Ok(material) => exports.push(serde_json::json!({
+                    "message_key": row.message_key,
+                    "message_id": row.message_id,
+                    "raw_material_id": row.raw_material_id,
+                    "source": "gmail_api_raw_message",
+                    "source_uri": material.source_uri,
+                    "byte_range": material.byte_range,
+                    "raw_message_bytes": material.raw_message_bytes,
+                    "raw_message_blake3": material.raw_message_blake3,
+                    "raw_message_preview": material.preview,
+                    "attachment_observed_count": row.attachment_observed_count,
+                    "attachment_count": row.attachment_count,
+                })),
+                Err(reason) => exports.push(blocked_email_material(row, reason)),
+            }
+            continue;
+        }
         match load_projection_source_material(pool, row).await? {
             Some(material) => {
                 if let Some(path) = source_material_path(&material) {
@@ -526,6 +501,53 @@ async fn email_projection_material_exports(
         }
     }
     Ok(exports)
+}
+
+async fn gmail_projection_raw_message(
+    row: &EmailMailboxProjectionRecord,
+    scope: &serde_json::Map<String, serde_json::Value>,
+) -> Result<std::result::Result<ProjectionRawMessage, &'static str>> {
+    let Some(message_id) = row.message_id.as_deref() else {
+        return Ok(Err("gmail_message_id_required"));
+    };
+    let Some(token_file) = optional_scope_string(scope, "gmail_token_file")
+        .or_else(|| optional_scope_string(scope, "access_token_file"))
+        .or_else(|| optional_scope_string(scope, "token_file"))
+    else {
+        return Ok(Err("gmail_token_file_required_for_provider_materialization"));
+    };
+    let token = tokio::fs::read_to_string(&token_file)
+        .await
+        .map_err(|error| {
+            SinexError::io("failed to read Gmail token file for provider materialization")
+                .with_context("token_file", token_file.clone())
+                .with_std_error(&error)
+                .with_operation("ops.start")
+        })?;
+    let token = token.trim().to_string();
+    if token.is_empty() {
+        return Ok(Err("gmail_token_file_empty"));
+    }
+    let client = GmailHttpClient::with_endpoint(
+        reqwest::Client::new(),
+        optional_scope_string(scope, "gmail_api_base_url")
+            .or_else(|| optional_scope_string(scope, "api_base_url"))
+            .unwrap_or_else(|| "https://gmail.googleapis.com/gmail/v1".to_string()),
+        optional_scope_string(scope, "gmail_user_id")
+            .or_else(|| optional_scope_string(scope, "user_id"))
+            .unwrap_or_else(|| "me".to_string()),
+        token,
+    );
+    let raw = match client.fetch_raw_message(message_id).await {
+        Ok(raw) => raw,
+        Err(_) => return Ok(Err("gmail_raw_message_fetch_failed")),
+    };
+    projection_raw_message_from_bytes(
+        row,
+        format!("gmail://messages/{message_id}?format=raw"),
+        &raw,
+    )
+    .map(Ok)
 }
 
 struct ProjectionRawMessage {
