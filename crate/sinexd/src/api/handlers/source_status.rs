@@ -1,6 +1,7 @@
 //! Operator-facing source status handler.
 
 use crate::api::service_container::{ConfirmationBufferHealth, ServiceContainer};
+use serde_json::Value;
 use sinex_db::DbPoolExt;
 use sinex_primitives::SinexError;
 use sinex_primitives::rpc::{
@@ -28,6 +29,7 @@ use sqlx::PgPool;
 use std::collections::{BTreeSet, HashMap};
 use std::time::Duration;
 use time::OffsetDateTime;
+use uuid::Uuid;
 
 type Result<T> = std::result::Result<T, SinexError>;
 
@@ -44,6 +46,23 @@ struct SourceMaterialAggregateRow {
     source_identifier: String,
     material_count: i64,
     last_material_at: Option<OffsetDateTime>,
+}
+
+#[derive(Debug)]
+struct EmailProviderOperationState {
+    operation_id: Uuid,
+    result_status: String,
+    provider_runtime: Option<Value>,
+    provider_failure: Option<Value>,
+}
+
+#[derive(Debug, FromRow)]
+struct EmailProviderOperationStateRow {
+    operation_id: Uuid,
+    result_status: String,
+    mode_id: Option<String>,
+    provider_runtime: Option<Value>,
+    provider_failure: Option<Value>,
 }
 
 /// List registered sources with run, health, and recent-emission stats.
@@ -155,6 +174,7 @@ pub async fn handle_sources_status_view(
         .map(|row| (row.source_identifier.clone(), row))
         .collect();
     let runtime_observations = source_runtime_observations(source_status_rows);
+    let email_provider_states = latest_email_provider_operation_states(pool).await?;
 
     let bindings: Vec<&'static SourceRuntimeBinding> = source_runtime_bindings().collect();
     let mut contracts: Vec<&'static SourceContract> = all_source_contracts().collect();
@@ -174,6 +194,7 @@ pub async fn handle_sources_status_view(
             &material_aggregates,
             &confirmation_buffer,
             &runtime_observations,
+            &email_provider_states,
             now,
         ));
     }
@@ -191,6 +212,7 @@ fn source_coverage_view(
     material_aggregates: &HashMap<String, SourceMaterialAggregateRow>,
     confirmation_buffer: &ConfirmationBufferHealth,
     runtime_observations: &HashMap<String, SourceStatus>,
+    email_provider_states: &HashMap<String, EmailProviderOperationState>,
     now: Timestamp,
 ) -> SourceCoverageView {
     let mut event_count = 0i64;
@@ -284,6 +306,12 @@ fn source_coverage_view(
             ref_: None,
         });
     }
+    if contract.id == "email.mailbox" {
+        caveats.extend(email_provider_operation_caveats(
+            bindings,
+            email_provider_states,
+        ));
+    }
 
     let readiness = if !has_live_binding && proposed_binding_count > 0 {
         SourceCoverageReadiness::Proposed
@@ -314,7 +342,14 @@ fn source_coverage_view(
     let resource_budget = selected_binding.map(source_resource_budget_view);
     let modes = bindings
         .iter()
-        .map(|binding| source_mode_status_view(contract.id, binding, runtime_observations))
+        .map(|binding| {
+            source_mode_status_view(
+                contract.id,
+                binding,
+                runtime_observations,
+                email_provider_states,
+            )
+        })
         .collect();
 
     SourceCoverageView {
@@ -341,6 +376,158 @@ fn source_coverage_view(
         modes,
         actions: source_actions(contract.id, bindings, pressure.is_some()),
     }
+}
+
+async fn latest_email_provider_operation_states(
+    pool: &PgPool,
+) -> Result<HashMap<String, EmailProviderOperationState>> {
+    let rows = sqlx::query_as!(
+        EmailProviderOperationStateRow,
+        r#"
+        SELECT
+            id as "operation_id!: Uuid",
+            result_status,
+            scope->>'mode_id' as "mode_id",
+            scope->'provider_runtime' as "provider_runtime",
+            scope->'provider_failure' as "provider_failure"
+        FROM core.operations_log
+        WHERE operation_type = 'email.mailbox.sync'
+          AND result_status IN ('success', 'failure')
+          AND scope->>'source_id' = 'email.mailbox'
+          AND scope ? 'provider_runtime'
+        ORDER BY id DESC
+        LIMIT 32
+        "#,
+    )
+    .fetch_all(pool)
+    .await
+    .map_err(|error| {
+        SinexError::database("Failed to load email provider runtime operation state")
+            .with_std_error(&error)
+    })?;
+
+    Ok(email_provider_operation_states_from_rows(rows))
+}
+
+fn email_provider_operation_states_from_rows(
+    rows: Vec<EmailProviderOperationStateRow>,
+) -> HashMap<String, EmailProviderOperationState> {
+    let mut states = HashMap::new();
+    for row in rows {
+        if let Some(mode_id) = row.mode_id
+            && !states.contains_key(&mode_id)
+        {
+            states.insert(
+                mode_id,
+                EmailProviderOperationState {
+                    operation_id: row.operation_id,
+                    result_status: row.result_status,
+                    provider_runtime: row.provider_runtime,
+                    provider_failure: row.provider_failure,
+                },
+            );
+        }
+    }
+    states
+}
+
+fn email_provider_operation_caveats(
+    bindings: &[&SourceRuntimeBinding],
+    states: &HashMap<String, EmailProviderOperationState>,
+) -> Vec<CaveatView> {
+    bindings
+        .iter()
+        .filter_map(|binding| {
+            let mode_id = binding.subject.as_str();
+            let state = states.get(mode_id)?;
+            Some(email_provider_operation_caveat(mode_id, state))
+        })
+        .collect()
+}
+
+fn email_provider_operation_caveat(
+    mode_id: &str,
+    state: &EmailProviderOperationState,
+) -> CaveatView {
+    let reason = state
+        .provider_failure
+        .as_ref()
+        .and_then(|failure| failure.get("reason"))
+        .and_then(Value::as_str)
+        .unwrap_or("provider runtime observed");
+    let debt_ref = state
+        .provider_failure
+        .as_ref()
+        .and_then(|failure| failure.get("debt_ref"))
+        .and_then(Value::as_str)
+        .unwrap_or("debt:email.mailbox.provider_runtime");
+    let coverage_ref = state
+        .provider_failure
+        .as_ref()
+        .and_then(|failure| failure.get("coverage_ref"))
+        .and_then(Value::as_str)
+        .or_else(|| provider_runtime_field(state, "coverage_ref"))
+        .unwrap_or("coverage:email.mailbox.provider_runtime");
+    let auth_state = provider_runtime_field(state, "auth_state").unwrap_or("unknown");
+    let network_state = provider_runtime_field(state, "network_state").unwrap_or("unknown");
+    let sync_state = provider_runtime_field(state, "sync_state").unwrap_or("unknown");
+    let rate_limit_state = provider_runtime_field(state, "rate_limit_state");
+    let caveat_kind = if state.result_status == "failure" {
+        "failed"
+    } else {
+        "observed"
+    };
+    let rate_limit_fragment = rate_limit_state
+        .map(|state| format!("; rate_limit_state={state}"))
+        .unwrap_or_default();
+
+    CaveatView {
+        id: format!("email.provider_runtime.{caveat_kind}.{mode_id}"),
+        message: format!(
+            "latest provider sync for `{mode_id}` ended with {}; auth_state={auth_state}; network_state={network_state}; sync_state={sync_state}{rate_limit_fragment}; coverage_ref={coverage_ref}; debt_ref={debt_ref}; detail={reason}",
+            state.result_status
+        ),
+        ref_: Some(SinexObjectRef::new(
+            SinexObjectKind::Operation,
+            state.operation_id.to_string(),
+        )),
+    }
+}
+
+fn provider_runtime_field<'a>(
+    state: &'a EmailProviderOperationState,
+    field: &str,
+) -> Option<&'a str> {
+    state
+        .provider_runtime
+        .as_ref()
+        .and_then(|runtime| {
+            runtime
+                .get("runtime_observation_contract")
+                .and_then(|contract| contract.get(field))
+                .or_else(|| runtime.get(field))
+        })
+        .and_then(Value::as_str)
+}
+
+fn provider_failure_field<'a>(
+    state: &'a EmailProviderOperationState,
+    field: &str,
+) -> Option<&'a str> {
+    state
+        .provider_failure
+        .as_ref()
+        .and_then(|failure| failure.get(field))
+        .and_then(Value::as_str)
+}
+
+fn provider_coverage_ref(state: &EmailProviderOperationState) -> Option<&str> {
+    provider_failure_field(state, "coverage_ref")
+        .or_else(|| provider_runtime_field(state, "coverage_ref"))
+}
+
+fn provider_debt_ref(state: &EmailProviderOperationState) -> Option<&str> {
+    provider_failure_field(state, "debt_ref").or_else(|| provider_runtime_field(state, "debt_ref"))
 }
 
 fn runtime_bridge_unobserved_caveat(contract: &SourceContract) -> CaveatView {
@@ -393,8 +580,12 @@ fn source_mode_status_view(
     source_id: &str,
     binding: &SourceRuntimeBinding,
     runtime_observations: &HashMap<String, SourceStatus>,
+    email_provider_states: &HashMap<String, EmailProviderOperationState>,
 ) -> SourceModeStatusView {
     let runtime_observation = runtime_observation_for_source(source_id, runtime_observations);
+    let provider_state = (source_id == "email.mailbox")
+        .then(|| email_provider_states.get(binding.subject.as_str()))
+        .flatten();
     SourceModeStatusView {
         mode_id: binding.subject.as_str().to_string(),
         binding_id: binding.id.to_string(),
@@ -420,6 +611,26 @@ fn source_mode_status_view(
             .and_then(|observation| observation.last_heartbeat_at),
         last_output_at: runtime_observation.and_then(|observation| observation.last_output_at),
         recent_output_count: runtime_observation.map(|observation| observation.recent_output_count),
+        provider_operation_status: provider_state.map(|state| state.result_status.clone()),
+        provider_auth_state: provider_state
+            .and_then(|state| provider_runtime_field(state, "auth_state"))
+            .map(str::to_string),
+        provider_network_state: provider_state
+            .and_then(|state| provider_runtime_field(state, "network_state"))
+            .map(str::to_string),
+        provider_sync_state: provider_state
+            .and_then(|state| provider_runtime_field(state, "sync_state"))
+            .map(str::to_string),
+        provider_rate_limit_state: provider_state
+            .and_then(|state| provider_runtime_field(state, "rate_limit_state"))
+            .map(str::to_string),
+        provider_operation_id: provider_state.map(|state| state.operation_id.to_string()),
+        provider_coverage_ref: provider_state
+            .and_then(provider_coverage_ref)
+            .map(str::to_string),
+        provider_debt_ref: provider_state
+            .and_then(provider_debt_ref)
+            .map(str::to_string),
         actions: binding
             .capability_refs()
             .filter(|capability| capability.is_kind(SourceCapabilityKind::Operation))
@@ -1313,6 +1524,7 @@ mod tests {
             &materials,
             &healthy_confirmation_buffer(),
             &HashMap::new(),
+            &HashMap::new(),
             Timestamp::now(),
         );
 
@@ -1350,6 +1562,7 @@ mod tests {
             &events,
             &materials,
             &healthy_confirmation_buffer(),
+            &HashMap::new(),
             &HashMap::new(),
             Timestamp::now(),
         );
@@ -1413,6 +1626,7 @@ mod tests {
             &HashMap::new(),
             &HashMap::new(),
             &healthy_confirmation_buffer(),
+            &HashMap::new(),
             &HashMap::new(),
             Timestamp::now(),
         );
@@ -1519,6 +1733,7 @@ mod tests {
             &HashMap::new(),
             &HashMap::new(),
             &healthy_confirmation_buffer(),
+            &HashMap::new(),
             &HashMap::new(),
             Timestamp::now(),
         );
@@ -1675,6 +1890,7 @@ mod tests {
             &HashMap::new(),
             &healthy_confirmation_buffer(),
             &HashMap::new(),
+            &HashMap::new(),
             Timestamp::now(),
         );
 
@@ -1808,6 +2024,7 @@ mod tests {
             &HashMap::new(),
             &HashMap::new(),
             &healthy_confirmation_buffer(),
+            &HashMap::new(),
             &HashMap::new(),
             Timestamp::now(),
         );
@@ -1982,6 +2199,156 @@ mod tests {
     }
 
     #[sinex_test]
+    async fn email_provider_failure_operation_surfaces_source_coverage_debt_caveat()
+    -> xtask::TestResult<()> {
+        let contract = all_source_contracts()
+            .find(|contract| contract.id == "email.mailbox")
+            .expect("email mailbox contract expected");
+        let bindings = source_runtime_bindings()
+            .filter(|binding| binding.source_id == "email.mailbox")
+            .collect::<Vec<_>>();
+        let operation_id = Uuid::now_v7();
+        let mut provider_states = HashMap::new();
+        provider_states.insert(
+            "source:email.mailbox.gmail-api-scheduled-sync".to_string(),
+            EmailProviderOperationState {
+                operation_id,
+                result_status: "failure".to_string(),
+                provider_runtime: Some(serde_json::json!({
+                    "runtime_observation_contract": {
+                        "auth_state": "missing",
+                        "network_state": "unknown"
+                    }
+                })),
+                provider_failure: Some(serde_json::json!({
+                    "reason": "Gmail token file is unavailable",
+                    "coverage_ref": "coverage:email.mailbox.gmail.provider_runtime",
+                    "debt_ref": "debt:email.mailbox.gmail.provider_runtime",
+                    "actions": ["email.mailbox.authorize", "email.mailbox.sync"]
+                })),
+            },
+        );
+
+        let view = source_coverage_view(
+            contract,
+            &bindings,
+            &HashMap::new(),
+            &HashMap::new(),
+            &healthy_confirmation_buffer(),
+            &HashMap::new(),
+            &provider_states,
+            Timestamp::now(),
+        );
+
+        let caveat = view
+            .caveats
+            .iter()
+            .find(|caveat| {
+                caveat.id
+                    == "email.provider_runtime.failed.source:email.mailbox.gmail-api-scheduled-sync"
+            })
+            .expect("provider runtime failure caveat expected");
+        assert!(caveat.message.contains("ended with failure"));
+        assert!(caveat.message.contains("auth_state=missing"));
+        assert!(caveat.message.contains("network_state=unknown"));
+        assert!(
+            caveat
+                .message
+                .contains("debt:email.mailbox.gmail.provider_runtime")
+        );
+        assert!(caveat.message.contains("Gmail token file is unavailable"));
+        let ref_ = caveat
+            .ref_
+            .as_ref()
+            .expect("provider failure caveat should point at the operation");
+        assert_eq!(ref_.kind, SinexObjectKind::Operation);
+        assert_eq!(ref_.id, operation_id.to_string());
+        let gmail_mode = view
+            .modes
+            .iter()
+            .find(|mode| mode.mode_id == "source:email.mailbox.gmail-api-scheduled-sync")
+            .expect("Gmail provider mode expected");
+        assert_eq!(
+            gmail_mode.provider_operation_status.as_deref(),
+            Some("failure")
+        );
+        assert_eq!(gmail_mode.provider_auth_state.as_deref(), Some("missing"));
+        assert_eq!(
+            gmail_mode.provider_network_state.as_deref(),
+            Some("unknown")
+        );
+        assert_eq!(
+            gmail_mode.provider_operation_id.as_deref(),
+            Some(ref_.id.as_str())
+        );
+        assert_eq!(
+            gmail_mode.provider_debt_ref.as_deref(),
+            Some("debt:email.mailbox.gmail.provider_runtime")
+        );
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn latest_email_provider_state_prefers_newer_success_over_old_failure()
+    -> xtask::TestResult<()> {
+        let failed_operation_id = Uuid::now_v7();
+        let successful_operation_id = Uuid::now_v7();
+        let states = email_provider_operation_states_from_rows(vec![
+            EmailProviderOperationStateRow {
+                operation_id: successful_operation_id,
+                result_status: "success".to_string(),
+                mode_id: Some("source:email.mailbox.imap-scheduled-sync".to_string()),
+                provider_runtime: Some(serde_json::json!({
+                    "coverage_ref": "coverage:email.mailbox.imap.provider_runtime",
+                    "runtime_observation_contract": {
+                        "auth_state": "authorized",
+                        "network_state": "online",
+                        "sync_state": "synced"
+                    }
+                })),
+                provider_failure: None,
+            },
+            EmailProviderOperationStateRow {
+                operation_id: failed_operation_id,
+                result_status: "failure".to_string(),
+                mode_id: Some("source:email.mailbox.imap-scheduled-sync".to_string()),
+                provider_runtime: Some(serde_json::json!({
+                    "runtime_observation_contract": {
+                        "auth_state": "authorized",
+                        "network_state": "error",
+                        "sync_state": "failed"
+                    }
+                })),
+                provider_failure: Some(serde_json::json!({
+                    "reason": "older IMAP failure",
+                    "debt_ref": "debt:email.mailbox.imap.provider_runtime"
+                })),
+            },
+        ]);
+
+        let state = states
+            .get("source:email.mailbox.imap-scheduled-sync")
+            .expect("provider state expected");
+        assert_eq!(state.operation_id, successful_operation_id);
+        assert_eq!(state.result_status, "success");
+
+        let caveat =
+            email_provider_operation_caveat("source:email.mailbox.imap-scheduled-sync", state);
+        assert_eq!(
+            caveat.id,
+            "email.provider_runtime.observed.source:email.mailbox.imap-scheduled-sync"
+        );
+        assert!(caveat.message.contains("ended with success"));
+        assert!(caveat.message.contains("network_state=online"));
+        assert!(!caveat.message.contains("older IMAP failure"));
+        assert_eq!(
+            caveat.ref_.as_ref().map(|ref_| ref_.id.clone()),
+            Some(successful_operation_id.to_string())
+        );
+        Ok(())
+    }
+
+    #[sinex_test]
     async fn runtime_bridge_coverage_uses_runtime_observation_for_last_seen()
     -> xtask::TestResult<()> {
         let now = Timestamp::now();
@@ -1999,6 +2366,7 @@ mod tests {
             &HashMap::new(),
             &healthy_confirmation_buffer(),
             &observations,
+            &HashMap::new(),
             now,
         );
 
@@ -2046,6 +2414,7 @@ mod tests {
             &HashMap::new(),
             &healthy_confirmation_buffer(),
             &observations,
+            &HashMap::new(),
             now,
         );
 
@@ -2083,6 +2452,7 @@ mod tests {
             &HashMap::new(),
             &healthy_confirmation_buffer(),
             &observations,
+            &HashMap::new(),
             now,
         );
 
@@ -2115,6 +2485,7 @@ mod tests {
             &HashMap::new(),
             &healthy_confirmation_buffer(),
             &observations,
+            &HashMap::new(),
             now,
         );
 
@@ -2152,6 +2523,7 @@ mod tests {
             &HashMap::new(),
             &confirmation_buffer,
             &HashMap::new(),
+            &HashMap::new(),
             Timestamp::now(),
         );
 
@@ -2188,6 +2560,7 @@ mod tests {
             &HashMap::new(),
             &HashMap::new(),
             &confirmation_buffer,
+            &HashMap::new(),
             &HashMap::new(),
             Timestamp::now(),
         );
