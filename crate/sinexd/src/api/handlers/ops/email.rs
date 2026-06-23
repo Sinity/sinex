@@ -266,7 +266,7 @@ async fn execute_email_projection_rebuild(
             .upsert_event(EmailMailboxProjectionEvent {
                 source_id: spec.source_id.to_string(),
                 mode_id: mode_id.to_string(),
-                event_id: row.event_id,
+                observed_event_id: row.event_id,
                 event_type: row.event_type.clone(),
                 payload: row.payload.clone(),
             })
