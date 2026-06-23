@@ -3,7 +3,9 @@ use super::{
 };
 use crate::event_engine::policy::{DisclosureContext, PolicyEngine};
 use sinex_db::DbPoolExt;
+use sinex_db::SourceMaterialRecord;
 use sinex_db::repositories::{EmailMailboxProjectionEvent, EmailMailboxProjectionRecord};
+use sinex_primitives::Id;
 use sinex_primitives::SinexError;
 use sinex_primitives::domain::OperationStatus;
 use sqlx::PgPool;
@@ -62,7 +64,29 @@ async fn execute_email_attachment_fetch(
         .map(|row| i64::from(row.attachment_count - row.attachment_observed_count))
         .sum();
     let selected_messages = email_projection_selection_values(&rows);
-    let executor_state = "email_attachment_materialization_selected";
+    let mut materialized_attachments = Vec::new();
+    let mut blocked_materials = Vec::new();
+    for row in &rows {
+        match materialize_email_projection_attachments(pool, mode_id, row, &material_policy_ref)
+            .await?
+        {
+            EmailAttachmentMaterialization::Materialized(items) => {
+                materialized_attachments.extend(items);
+            }
+            EmailAttachmentMaterialization::Blocked(blocked) => {
+                blocked_materials.push(blocked);
+            }
+        }
+    }
+    let materialized_attachment_count = materialized_attachments.len();
+    let blocked_material_count = blocked_materials.len();
+    let executor_state = if blocked_materials.is_empty() {
+        "email_attachment_materialized"
+    } else if materialized_attachments.is_empty() {
+        "email_attachment_materialization_blocked"
+    } else {
+        "email_attachment_materialization_partial"
+    };
 
     scope.insert(
         "executor_state".to_string(),
@@ -81,8 +105,24 @@ async fn execute_email_attachment_fetch(
         serde_json::json!(outstanding_attachment_count),
     );
     scope.insert(
+        "materialized_attachment_count".to_string(),
+        serde_json::json!(materialized_attachment_count),
+    );
+    scope.insert(
+        "blocked_material_count".to_string(),
+        serde_json::json!(blocked_material_count),
+    );
+    scope.insert(
         "selected_messages".to_string(),
         serde_json::Value::Array(selected_messages.clone()),
+    );
+    scope.insert(
+        "materialized_attachments".to_string(),
+        serde_json::Value::Array(materialized_attachments.clone()),
+    );
+    scope.insert(
+        "blocked_materials".to_string(),
+        serde_json::Value::Array(blocked_materials.clone()),
     );
 
     let preview = preview_summary
@@ -101,17 +141,40 @@ async fn execute_email_attachment_fetch(
         serde_json::json!(outstanding_attachment_count),
     );
     preview.insert(
+        "materialized_attachment_count".to_string(),
+        serde_json::json!(materialized_attachment_count),
+    );
+    preview.insert(
+        "blocked_material_count".to_string(),
+        serde_json::json!(blocked_material_count),
+    );
+    preview.insert(
         "selected_messages".to_string(),
         serde_json::Value::Array(selected_messages),
     );
     preview.insert(
+        "materialized_attachments".to_string(),
+        serde_json::Value::Array(materialized_attachments),
+    );
+    preview.insert(
+        "blocked_materials".to_string(),
+        serde_json::Value::Array(blocked_materials),
+    );
+    preview.insert(
         "message".to_string(),
-        serde_json::json!("email attachment materialization selected from projection debt"),
+        serde_json::json!("email attachment materialization evaluated projection debt"),
     );
 
     Ok(EmailSyncExecutionResult {
-        status: OperationStatus::Success,
-        message: format!("{}; attachment materialization selected", spec.surface),
+        status: if blocked_material_count == 0 {
+            OperationStatus::Success
+        } else {
+            OperationStatus::Failed
+        },
+        message: format!(
+            "{}; attachment materialization materialized {materialized_attachment_count} and blocked {blocked_material_count}",
+            spec.surface
+        ),
         duration_ms: Some(elapsed_millis(started)),
     })
 }
@@ -125,6 +188,9 @@ async fn execute_email_mailbox_export(
 ) -> Result<EmailSyncExecutionResult> {
     let started = Instant::now();
     let message_key = optional_scope_string(scope, "message_key");
+    let include_material = optional_scope_bool(scope, "include_material")
+        || optional_scope_bool(scope, "include_body_material")
+        || optional_scope_bool(scope, "include_attachment_material");
     let output_path = optional_scope_string(scope, "output_path")
         .or_else(|| optional_scope_string(scope, "path"));
     let mut rows = pool
@@ -134,20 +200,26 @@ async fn execute_email_mailbox_export(
     if let Some(message_key) = message_key.as_deref() {
         rows.retain(|row| row.message_key == message_key);
     }
+    let material_exports = if include_material {
+        email_projection_material_exports(pool, &rows).await?
+    } else {
+        Vec::new()
+    };
     let export_manifest = serde_json::json!({
         "schema": "sinex.email.mailbox.export.metadata.v1",
         "source_id": spec.source_id,
         "mode_id": mode_id,
         "disclosure_context": "export",
         "disclosure_policy": {
-            "posture": "metadata_only",
-            "body": "omitted",
-            "attachment_bytes": "omitted",
-            "raw_message_bytes": "omitted",
+            "posture": if include_material { "metadata_with_material_evidence" } else { "metadata_only" },
+            "body": if include_material { "raw_message_preview_disclosed" } else { "omitted" },
+            "attachment_bytes": if include_material { "materialized_attachment_events_disclosed" } else { "omitted" },
+            "raw_message_bytes": if include_material { "digest_and_preview_disclosed" } else { "omitted" },
             "caveat": "mailbox export emits projection metadata only; raw body and attachment bytes require explicit materialization policy"
         },
         "message_count": rows.len(),
         "messages": rows.iter().map(email_projection_export_value).collect::<Vec<_>>(),
+        "material_exports": material_exports,
     });
     let policy = PolicyEngine::load(pool.clone()).await?;
     let disclosure = policy
@@ -210,6 +282,196 @@ async fn execute_email_mailbox_export(
         status: OperationStatus::Success,
         message: format!("{}; metadata export completed", spec.surface),
         duration_ms: Some(elapsed_millis(started)),
+    })
+}
+
+enum EmailAttachmentMaterialization {
+    Materialized(Vec<serde_json::Value>),
+    Blocked(serde_json::Value),
+}
+
+async fn materialize_email_projection_attachments(
+    pool: &PgPool,
+    mode_id: &str,
+    row: &EmailMailboxProjectionRecord,
+    material_policy_ref: &str,
+) -> Result<EmailAttachmentMaterialization> {
+    let outstanding = row.attachment_count - row.attachment_observed_count;
+    if outstanding == 0 {
+        return Ok(EmailAttachmentMaterialization::Materialized(Vec::new()));
+    }
+    let Some(material) = load_projection_source_material(pool, row).await? else {
+        return Ok(EmailAttachmentMaterialization::Blocked(
+            blocked_email_material(row, "source_material_not_found"),
+        ));
+    };
+    let Some(path) = source_material_path(&material) else {
+        return Ok(EmailAttachmentMaterialization::Blocked(
+            blocked_email_material(row, "source_material_has_no_file_uri"),
+        ));
+    };
+    let material = read_projection_raw_message(row, path, "attachment materialization").await?;
+    let mut materialized = Vec::new();
+    for index in row.attachment_observed_count..row.attachment_count {
+        let event_id = uuid::Uuid::now_v7();
+        let payload = serde_json::json!({
+            "message_id": row.message_id,
+            "folder": row.folder,
+            "source_file": row.source_file,
+            "raw_material_id": row.raw_material_id,
+            "mailbox_format": row.mailbox_format,
+            "attachment_index": index,
+            "disposition": "attachment",
+            "filename": null,
+            "content_type": null,
+            "content_id": null,
+            "material_policy_ref": material_policy_ref,
+            "materialization": {
+                "source": "source_material_file",
+                "source_uri": material.source_uri.clone(),
+                "byte_range": material.byte_range.clone(),
+                "raw_message_bytes": material.raw_message_bytes,
+                "raw_message_blake3": material.raw_message_blake3.clone()
+            }
+        });
+        pool.email_mailbox_projections()
+            .upsert_event(EmailMailboxProjectionEvent {
+                source_id: "email.mailbox".to_string(),
+                mode_id: mode_id.to_string(),
+                observed_event_id: event_id,
+                event_type: "email.attachment.observed".to_string(),
+                payload,
+            })
+            .await?;
+        materialized.push(serde_json::json!({
+            "message_key": row.message_key,
+            "message_id": row.message_id,
+            "raw_material_id": row.raw_material_id,
+            "attachment_index": index,
+            "material_policy_ref": material_policy_ref,
+            "source_uri": material.source_uri.clone(),
+            "byte_range": material.byte_range.clone(),
+            "raw_message_bytes": material.raw_message_bytes,
+            "raw_message_blake3": material.raw_message_blake3.clone(),
+            "observed_event_id": event_id,
+        }));
+    }
+    Ok(EmailAttachmentMaterialization::Materialized(materialized))
+}
+
+async fn email_projection_material_exports(
+    pool: &PgPool,
+    rows: &[EmailMailboxProjectionRecord],
+) -> Result<Vec<serde_json::Value>> {
+    let mut exports = Vec::new();
+    for row in rows {
+        match load_projection_source_material(pool, row).await? {
+            Some(material) => {
+                if let Some(path) = source_material_path(&material) {
+                    let material = read_projection_raw_message(row, path, "export").await?;
+                    exports.push(serde_json::json!({
+                        "message_key": row.message_key,
+                        "message_id": row.message_id,
+                        "raw_material_id": row.raw_material_id,
+                        "source_uri": material.source_uri,
+                        "byte_range": material.byte_range,
+                        "raw_message_bytes": material.raw_message_bytes,
+                        "raw_message_blake3": material.raw_message_blake3,
+                        "raw_message_preview": material.preview,
+                        "attachment_observed_count": row.attachment_observed_count,
+                        "attachment_count": row.attachment_count,
+                    }));
+                } else {
+                    exports.push(blocked_email_material(
+                        row,
+                        "source_material_has_no_file_uri",
+                    ));
+                }
+            }
+            None => exports.push(blocked_email_material(row, "source_material_not_found")),
+        }
+    }
+    Ok(exports)
+}
+
+struct ProjectionRawMessage {
+    source_uri: String,
+    byte_range: serde_json::Value,
+    raw_message_bytes: usize,
+    raw_message_blake3: String,
+    preview: String,
+}
+
+async fn read_projection_raw_message(
+    row: &EmailMailboxProjectionRecord,
+    path: String,
+    purpose: &str,
+) -> Result<ProjectionRawMessage> {
+    let bytes = tokio::fs::read(&path).await.map_err(|error| {
+        SinexError::io(format!(
+            "failed to read email source material for {purpose}"
+        ))
+        .with_context(
+            "raw_material_id",
+            row.raw_material_id.as_deref().unwrap_or("<missing>"),
+        )
+        .with_context("source_uri", path.clone())
+        .with_std_error(&error)
+        .with_operation("ops.start")
+    })?;
+    Ok(ProjectionRawMessage {
+        source_uri: path,
+        byte_range: serde_json::json!({
+            "kind": "full_source_material",
+            "start": 0,
+            "end": bytes.len(),
+        }),
+        raw_message_bytes: bytes.len(),
+        raw_message_blake3: blake3::hash(&bytes).to_hex().to_string(),
+        preview: String::from_utf8_lossy(&bytes)
+            .chars()
+            .take(512)
+            .collect::<String>(),
+    })
+}
+
+async fn load_projection_source_material(
+    pool: &PgPool,
+    row: &EmailMailboxProjectionRecord,
+) -> Result<Option<SourceMaterialRecord>> {
+    let Some(raw_material_id) = row.raw_material_id.as_deref() else {
+        return Ok(None);
+    };
+    let Ok(raw_material_id) = uuid::Uuid::parse_str(raw_material_id) else {
+        return Ok(None);
+    };
+    pool.source_materials()
+        .get_by_id(Id::<SourceMaterialRecord>::from_uuid(raw_material_id))
+        .await
+        .map_err(Into::into)
+}
+
+fn source_material_path(material: &SourceMaterialRecord) -> Option<String> {
+    material
+        .metadata
+        .pointer("/source_uri")
+        .and_then(serde_json::Value::as_str)
+        .or_else(|| {
+            material
+                .metadata
+                .pointer("/source_material_contract/origin/source_uri")
+                .and_then(serde_json::Value::as_str)
+        })
+        .map(str::to_string)
+}
+
+fn blocked_email_material(row: &EmailMailboxProjectionRecord, reason: &str) -> serde_json::Value {
+    serde_json::json!({
+        "message_key": row.message_key,
+        "message_id": row.message_id,
+        "raw_material_id": row.raw_material_id,
+        "outstanding_attachment_count": row.attachment_count - row.attachment_observed_count,
+        "reason": reason,
     })
 }
 
@@ -359,4 +621,15 @@ fn email_projection_export_value(row: &EmailMailboxProjectionRecord) -> serde_js
         "last_observed_at": row.last_observed_at,
         "updated_at": row.updated_at,
     })
+}
+
+fn optional_scope_bool(scope: &serde_json::Map<String, serde_json::Value>, key: &str) -> bool {
+    scope
+        .get(key)
+        .and_then(|value| {
+            value
+                .as_bool()
+                .or_else(|| value.as_str().map(|value| value == "true"))
+        })
+        .unwrap_or(false)
 }
