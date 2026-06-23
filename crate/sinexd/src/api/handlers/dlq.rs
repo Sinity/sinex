@@ -794,6 +794,289 @@ mod tests {
     }
 
     #[sinex_test]
+    async fn media_disclosure_policy_covers_event_cards_snippets_and_dlq_previews(
+        ctx: TestContext,
+    ) -> TestResult<()> {
+        ctx.pool()
+            .privacy_policy()
+            .add_rule(
+                "media-transcript-text",
+                "test field-scoped disclosure policy for audio transcript text",
+                "regex",
+                r"audio_secret_[A-Za-z0-9_]+",
+                false,
+                "redact",
+                Some("<MEDIA_TRANSCRIPT>"),
+                "default",
+            )
+            .await?;
+        ctx.pool()
+            .privacy_policy()
+            .bind_field_rule(
+                "media-transcript-text",
+                Some("media.audio"),
+                Some("media.audio.transcript_segment_observed"),
+                Some("text"),
+                0,
+            )
+            .await?;
+        ctx.pool()
+            .privacy_policy()
+            .add_rule(
+                "media-screen-text",
+                "test field-scoped disclosure policy for screen OCR text",
+                "regex",
+                r"screen_secret_[A-Za-z0-9_]+",
+                false,
+                "redact",
+                Some("<MEDIA_OCR>"),
+                "default",
+            )
+            .await?;
+        ctx.pool()
+            .privacy_policy()
+            .bind_field_rule(
+                "media-screen-text",
+                Some("media.screen"),
+                Some("media.screen.ocr_segment_observed"),
+                Some("text"),
+                0,
+            )
+            .await?;
+        ctx.pool()
+            .privacy_policy()
+            .add_rule(
+                "media-window-title",
+                "test field-scoped disclosure policy for captured window titles",
+                "regex",
+                r"window_secret_[A-Za-z0-9_]+",
+                false,
+                "redact",
+                Some("<MEDIA_WINDOW>"),
+                "default",
+            )
+            .await?;
+        ctx.pool()
+            .privacy_policy()
+            .bind_field_rule(
+                "media-window-title",
+                Some("media.screen"),
+                Some("media.screen.ocr_segment_observed"),
+                Some("window_title"),
+                0,
+            )
+            .await?;
+        ctx.pool()
+            .privacy_policy()
+            .add_rule(
+                "media-dlq-model-log",
+                "test global disclosure policy for media worker/model logs in DLQ previews",
+                "regex",
+                r"model_log_secret_[A-Za-z0-9_]+",
+                false,
+                "redact",
+                Some("<MEDIA_MODEL_LOG>"),
+                "default",
+            )
+            .await?;
+        ctx.pool()
+            .privacy_policy()
+            .bind_field_rule("media-dlq-model-log", None, None, None, 0)
+            .await?;
+        ctx.pool()
+            .privacy_policy()
+            .add_rule(
+                "media-dlq-ocr-text",
+                "test global disclosure policy for media OCR text in DLQ previews",
+                "regex",
+                r"screen_secret_[A-Za-z0-9_]+",
+                false,
+                "redact",
+                Some("<MEDIA_OCR>"),
+                "default",
+            )
+            .await?;
+        ctx.pool()
+            .privacy_policy()
+            .bind_field_rule("media-dlq-ocr-text", None, None, None, 0)
+            .await?;
+        ctx.pool()
+            .privacy_policy()
+            .add_rule(
+                "media-dlq-window-title",
+                "test global disclosure policy for captured window titles in DLQ previews",
+                "regex",
+                r"window_secret_[A-Za-z0-9_]+",
+                false,
+                "redact",
+                Some("<MEDIA_WINDOW>"),
+                "default",
+            )
+            .await?;
+        ctx.pool()
+            .privacy_policy()
+            .bind_field_rule("media-dlq-window-title", None, None, None, 0)
+            .await?;
+
+        let policy = PolicyEngine::load(ctx.pool().clone()).await?;
+        let material_id = Id::<SourceMaterial>::from_uuid(Uuid::from_u128(0x1043));
+        let audio_token = "audio_secret_alpha123";
+        let screen_token = "screen_secret_bravo456";
+        let window_token = "window_secret_charlie789";
+        let model_log_token = "model_log_secret_delta000";
+
+        let audio_event = DynamicPayload::new(
+            "media.audio",
+            "media.audio.transcript_segment_observed",
+            json!({
+                "segment_index": 1,
+                "text": format!("operator said {audio_token} during capture"),
+                "start_ms": 0,
+                "end_ms": 1200,
+                "speaker_label": "operator",
+                "language": "en",
+                "confidence": 0.98,
+                "source_file": "meeting.wav",
+                "raw_material_id": "raw-audio-1043",
+                "model_id": "whisper-fixture",
+                "producer_run_id": "producer-run-audio",
+                "timestamp_quality": "media_time",
+                "observed_at": "2026-06-23T11:00:00Z"
+            }),
+        )
+        .from_material(material_id)
+        .build()?;
+        let screen_event = DynamicPayload::new(
+            "media.screen",
+            "media.screen.ocr_segment_observed",
+            json!({
+                "segment_index": 2,
+                "text": format!("screen showed {screen_token}"),
+                "bbox": [10, 20, 300, 80],
+                "confidence": 0.91,
+                "display_id": "DP-1",
+                "window_title": format!("terminal {window_token}"),
+                "source_file": "screen.png",
+                "raw_material_id": "raw-screen-1043",
+                "engine": "tesseract-fixture",
+                "producer_run_id": "producer-run-screen",
+                "timestamp_quality": "capture_time",
+                "observed_at": "2026-06-23T11:00:01Z"
+            }),
+        )
+        .from_material(material_id)
+        .build()?;
+
+        let cards = event_card_list_with_policy(
+            &[
+                QueryResultEvent {
+                    event: audio_event,
+                    relevance_score: Some(1.0),
+                    snippet: Some(format!("audio transcript match: {audio_token}")),
+                },
+                QueryResultEvent {
+                    event: screen_event,
+                    relevance_score: Some(1.0),
+                    snippet: Some(format!("OCR match {screen_token} in window {window_token}")),
+                },
+            ],
+            &policy,
+        )
+        .await;
+        let cards_json = serde_json::to_string(&cards)?;
+
+        for token in [audio_token, screen_token, window_token] {
+            assert!(
+                !cards_json.contains(token),
+                "media event cards/snippets must not leak fixture token {token}: {cards_json}"
+            );
+        }
+        for replacement in ["<MEDIA_TRANSCRIPT>", "<MEDIA_OCR>", "<MEDIA_WINDOW>"] {
+            assert!(
+                cards_json.contains(replacement),
+                "media event cards should show replacement label {replacement}: {cards_json}"
+            );
+        }
+        assert_eq!(cards.cards.len(), 2);
+        for card in &cards.cards {
+            assert_eq!(card.privacy_state.state, PrivacyStateKind::Redacted);
+            assert!(
+                card.caveats
+                    .iter()
+                    .any(|caveat| caveat.id == "policy.disclosure_applied"),
+                "media card redaction must be caveated: {:?}",
+                card.caveats
+            );
+        }
+
+        let dlq_payload = format!(
+            r#"{{
+            "original_subject": "dev.sinex.events.raw.media.worker",
+            "original_payload": {{
+                "source": "media.screen",
+                "event_type": "media.screen.ocr_run_observed",
+                "stderr": "OCR model failed after logging {model_log_token}",
+                "worker_output": {{
+                    "text": "{screen_token}",
+                    "window_title": "{window_token}"
+                }}
+            }}
+        }}"#
+        );
+        let preview = payload_preview(&dlq_payload, 600, &policy).await;
+
+        assert!(preview.redacted);
+        for token in [model_log_token, screen_token, window_token] {
+            assert!(
+                !preview.text.contains(token),
+                "media DLQ preview must not leak fixture token {token}: {}",
+                preview.text
+            );
+        }
+        for replacement in ["<MEDIA_MODEL_LOG>", "<MEDIA_OCR>", "<MEDIA_WINDOW>"] {
+            assert!(
+                preview.text.contains(replacement),
+                "media DLQ preview must show replacement {replacement}: {}",
+                preview.text
+            );
+        }
+        assert!(
+            preview
+                .caveats
+                .iter()
+                .any(|caveat| caveat.id == "policy.disclosure_applied"),
+            "media DLQ redaction must be caveated: {:?}",
+            preview.caveats
+        );
+        assert!(
+            preview.caveats.iter().any(|caveat| caveat
+                .ref_
+                .as_ref()
+                .is_some_and(|ref_| ref_.id == "db.media-dlq-model-log")),
+            "media DLQ redaction must name the model-log policy: {:?}",
+            preview.caveats
+        );
+        assert!(
+            preview.caveats.iter().any(|caveat| caveat
+                .ref_
+                .as_ref()
+                .is_some_and(|ref_| ref_.id == "db.media-dlq-ocr-text")),
+            "media DLQ redaction must name the OCR policy: {:?}",
+            preview.caveats
+        );
+        assert!(
+            preview.caveats.iter().any(|caveat| caveat
+                .ref_
+                .as_ref()
+                .is_some_and(|ref_| ref_.id == "db.media-dlq-window-title")),
+            "media DLQ redaction must name the window-title policy: {:?}",
+            preview.caveats
+        );
+
+        Ok(())
+    }
+
+    #[sinex_test]
     async fn payload_preview_redacts_raw_dlq_secret_bytes_by_db_policy(
         ctx: TestContext,
     ) -> TestResult<()> {
