@@ -165,6 +165,20 @@ pub use sinex_primitives::parser::{
     SourceRecord,
 };
 
+/// Requested initial position for a continuous adapter stream when no
+/// checkpoint cursor exists yet.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Deserialize, serde::Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum InitialStreamPosition {
+    /// Use the adapter's natural beginning. This preserves historical/import
+    /// behavior for explicit scans and for sources that do not opt into live
+    /// tail startup.
+    Earliest,
+
+    /// Start at the substrate's current end for live-tail operation.
+    Latest,
+}
+
 // =============================================================================
 // InputShapeAdapterExt — cfg-gated methods that depend on runtime internals
 // =============================================================================
@@ -196,5 +210,20 @@ pub trait InputShapeAdapterExt: InputShapeAdapter {
         _config: &Self::Config,
     ) -> Option<crate::runtime::parser::adapters::SnapshotLaneSpec> {
         None
+    }
+
+    /// Return adapter config adjusted for an initial stream position.
+    ///
+    /// The generic source runtime owns the policy decision. Individual adapters
+    /// only translate that policy into substrate-specific config when needed.
+    fn configure_initial_stream_position(
+        &self,
+        config: &Self::Config,
+        _position: InitialStreamPosition,
+    ) -> sinex_primitives::parser::ParserResult<Self::Config>
+    where
+        Self::Config: Clone,
+    {
+        Ok(config.clone())
     }
 }

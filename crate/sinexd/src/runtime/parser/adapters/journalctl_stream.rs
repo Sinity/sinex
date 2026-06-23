@@ -72,6 +72,15 @@ pub struct JournalctlStreamConfig {
     /// directly in config; this field is for completeness.
     #[serde(default)]
     pub from_cursor: Option<String>,
+
+    /// Start at the current end of the journal when no cursor is available.
+    ///
+    /// This is set by the generic adapter source runtime when a continuous
+    /// binding declares `continuous_start_position = "latest"`. Historical
+    /// imports leave it false so a no-cursor run can still read retained
+    /// journal data deliberately.
+    #[serde(default)]
+    pub start_at_now_without_cursor: bool,
 }
 
 /// Cursor for [`JournalctlStreamAdapter`] — the journal cursor string.
@@ -104,31 +113,10 @@ impl InputShapeAdapter for JournalctlStreamAdapter {
         cursor: Option<Self::Cursor>,
     ) -> ParserResult<BoxStream<'static, ParserResult<SourceRecord>>> {
         let mut cmd = Command::new("journalctl");
-        cmd.arg("-f")
-            .arg("-o")
-            .arg("json")
-            .arg("--no-pager")
+        cmd.args(journalctl_args(config, cursor.as_ref()))
             .stdout(std::process::Stdio::piped())
             .stderr(std::process::Stdio::null())
             .kill_on_drop(true);
-
-        // Unit filters.
-        for unit in &config.units {
-            cmd.arg(format!("--unit={unit}"));
-        }
-
-        // Priority filter.
-        if let Some(p) = config.priority {
-            cmd.arg(format!("--priority={p}"));
-        }
-
-        // Cursor resumption — prefer runtime cursor over config.
-        let resume_cursor = cursor
-            .map(|c| c.cursor)
-            .or_else(|| config.from_cursor.clone());
-        if let Some(ref c) = resume_cursor {
-            cmd.arg(format!("--cursor={c}"));
-        }
 
         let mut child = cmd
             .spawn()
@@ -205,6 +193,37 @@ impl InputShapeAdapter for JournalctlStreamAdapter {
             }
         }
     }
+}
+
+fn journalctl_args(
+    config: &JournalctlStreamConfig,
+    cursor: Option<&JournalctlCursor>,
+) -> Vec<String> {
+    let mut args = vec![
+        "-f".to_string(),
+        "-o".to_string(),
+        "json".to_string(),
+        "--no-pager".to_string(),
+    ];
+
+    for unit in &config.units {
+        args.push(format!("--unit={unit}"));
+    }
+
+    if let Some(p) = config.priority {
+        args.push(format!("--priority={p}"));
+    }
+
+    let resume_cursor = cursor
+        .map(|c| c.cursor.clone())
+        .or_else(|| config.from_cursor.clone());
+    if let Some(c) = resume_cursor {
+        args.push(format!("--after-cursor={c}"));
+    } else if config.start_at_now_without_cursor {
+        args.push("--since=now".to_string());
+    }
+
+    args
 }
 
 // =============================================================================
@@ -541,6 +560,61 @@ mod tests {
         let json = serde_json::to_string(&cursor).unwrap();
         let back: JournalctlCursor = serde_json::from_str(&json).unwrap();
         assert_eq!(cursor, back);
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn journalctl_args_default_without_cursor_preserves_historical_import()
+    -> xtask::sandbox::TestResult<()> {
+        let args = journalctl_args(
+            &JournalctlStreamConfig {
+                units: vec!["sinexd.service".to_string()],
+                priority: Some(6),
+                from_cursor: None,
+                start_at_now_without_cursor: false,
+            },
+            None,
+        );
+
+        assert!(!args.contains(&"--since=now".to_string()));
+        assert!(!args.iter().any(|arg| arg.starts_with("--after-cursor=")));
+        assert!(args.contains(&"--unit=sinexd.service".to_string()));
+        assert!(args.contains(&"--priority=6".to_string()));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn journalctl_args_start_at_now_when_requested() -> xtask::sandbox::TestResult<()> {
+        let args = journalctl_args(
+            &JournalctlStreamConfig {
+                units: Vec::new(),
+                priority: None,
+                from_cursor: None,
+                start_at_now_without_cursor: true,
+            },
+            None,
+        );
+
+        assert!(args.contains(&"--since=now".to_string()));
+        assert!(!args.iter().any(|arg| arg.starts_with("--after-cursor=")));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn journalctl_args_resume_after_runtime_cursor() -> xtask::sandbox::TestResult<()> {
+        let args = journalctl_args(
+            &JournalctlStreamConfig {
+                units: Vec::new(),
+                priority: None,
+                from_cursor: Some("config-cursor".to_string()),
+                start_at_now_without_cursor: true,
+            },
+            Some(&JournalctlCursor::new("runtime-cursor")),
+        );
+
+        assert!(args.contains(&"--after-cursor=runtime-cursor".to_string()));
+        assert!(!args.contains(&"--since=now".to_string()));
+        assert!(!args.contains(&"--after-cursor=config-cursor".to_string()));
         Ok(())
     }
 

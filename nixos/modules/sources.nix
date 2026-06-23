@@ -1430,6 +1430,10 @@ let
       # Post-Wave-B fold (#1081): system source contracts share this config blob.
       # Each parser only reads what its source-specific code touches.
       runtimeConfig = {
+        # Hosted continuous system sources should live-tail on first daemon
+        # startup. Explicit historical scans remain available through the
+        # runtime historical path and do not consume this continuous-only knob.
+        continuous_start_position = "latest";
         dbus_enabled = true;
         journal_enabled = true;
         udev_enabled = true;
