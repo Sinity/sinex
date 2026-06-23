@@ -1681,6 +1681,14 @@ async fn ops_start_rebuilds_email_mailbox_projection_from_events(
 async fn ops_start_executes_gmail_scheduled_sync_with_token_file(
     ctx: TestContext,
 ) -> TestResult<()> {
+    add_email_export_disclosure_rule(
+        &ctx,
+        "gmail-provider-material-export-preview",
+        r"provider Gmail body",
+        "<GMAIL_RAW_BODY>",
+        "/material_exports/0/raw_message_preview",
+    )
+    .await?;
     let server = GmailFixtureServer::start().await?;
     let dir = tempfile::tempdir()?;
     let token_file = dir.path().join("gmail-token");
@@ -1821,6 +1829,61 @@ async fn ops_start_executes_gmail_scheduled_sync_with_token_file(
         .find(|row| row.message_id.as_deref() == Some("m-1"))
         .expect("Gmail projection row should remain available");
     assert_eq!(gmail_row.attachment_observed_count, 1);
+    let export_path = dir.path().join("gmail-provider-material-export.json");
+    let export_response: OpsStartResponse = serde_json::from_value(
+        handle_ops_start(
+            ctx.pool(),
+            json!({
+                "operation_type": "email.mailbox.export",
+                "scope": {
+                    "source_id": "email.mailbox",
+                    "mode_id": "source:email.mailbox.gmail-api-scheduled-sync",
+                    "account_binding_ref": "operator-mailbox:primary",
+                    "message_key": gmail_row.message_key.clone(),
+                    "gmail_token_file": token_file.to_string_lossy(),
+                    "gmail_api_base_url": server.base_url(),
+                    "include_material": true,
+                    "output_path": export_path.to_string_lossy()
+                },
+            }),
+            &auth,
+        )
+        .await?,
+    )?;
+    assert_eq!(
+        export_response.operation.result_status,
+        OperationStatus::Success
+    );
+    let export_scope = export_response
+        .operation
+        .scope
+        .as_ref()
+        .expect("Gmail material export scope");
+    let exported: serde_json::Value =
+        serde_json::from_slice(&tokio::fs::read(&export_path).await?)?;
+    assert_eq!(
+        exported["material_exports"][0]["source"],
+        "gmail_api_raw_message"
+    );
+    assert_eq!(
+        exported["material_exports"][0]["source_uri"],
+        "gmail://messages/m-1?format=raw"
+    );
+    assert_eq!(
+        exported["material_exports"][0]["raw_message_blake3"],
+        blake3::hash(raw_message).to_hex().to_string()
+    );
+    assert_eq!(exported["export_disclosure"], serde_json::Value::Null);
+    assert_eq!(export_scope["export_disclosure"]["redacted"], true);
+    let exported_json = serde_json::to_string(&exported)?;
+    let export_scope_json = serde_json::to_string(export_scope)?;
+    assert!(!exported_json.contains("provider Gmail body"));
+    assert!(!export_scope_json.contains("provider Gmail body"));
+    assert!(exported_json.contains("<GMAIL_RAW_BODY>"));
+    assert!(
+        !export_scope_json.contains("test-token"),
+        "Gmail token contents must not be persisted by provider material export"
+    );
     let persisted_scope = serde_json::to_string(scope)?;
     assert!(
         !persisted_scope.contains("test-token"),
