@@ -932,25 +932,24 @@ impl BaseDiagnostics {
 fn requirement_owner_file(id: &str) -> &'static str {
     match id {
         "package_identity" | "event_contract_refs" => {
-            "crate/sinex-primitives/src/event_contracts.rs"
+            "crate/sinex-primitives/src/event_contracts/<package-family>.rs"
         }
         "mode_identity"
         | "producer_runtime_binding"
-        | "material_class"
-        | "storage_material_lifecycle_policy"
-        | "resource_budget_spec"
-        | "transport_semantics"
-        | "runtime_profile" => "crate/sinex-primitives/src/source_contracts.rs",
+        | "runtime_profile"
+        | "coverage_and_debt_views"
+        | "operations" => "crate/sinex-primitives/src/source_contracts/runtime.rs",
+        "material_class" | "storage_material_lifecycle_policy" | "transport_semantics" => {
+            "crate/sinex-primitives/src/source_contracts/lifecycle.rs"
+        }
+        "resource_budget_spec" => "crate/sinex-primitives/src/source_contracts/resource.rs",
         "parser_binding" => "crate/sinexd/src/sources/source_contracts/",
         "source_factory" => "crate/sinexd/src/sources/source_factory.rs",
         "payload_schema" => "crate/sinex-primitives/src/events/payloads/",
-        "admission_policy_ref" => "crate/sinex-primitives/src/admission_policy.rs",
-        "identity_policy" => "crate/sinex-primitives/src/source_contracts.rs",
+        "admission_policy_ref" => "crate/sinex-primitives/src/event_contracts/<package-family>.rs",
+        "identity_policy" => "crate/sinex-primitives/src/source_contracts/contract.rs",
         "privacy_disclosure_policy" => "crate/sinexd/src/sources/privacy_coverage.rs",
         "fixtures_and_tests" => "crate/sinexd/tests/sources/",
-        "coverage_and_debt_views" | "operations" => {
-            "crate/sinex-primitives/src/source_contracts.rs"
-        }
         "deployment_catalog_projection" => "nixos/modules/source-catalog.generated.json",
         "review_output" => "crate/sinexd/src/sources/package_completeness.rs",
         _ => "crate/sinexd/src/sources/package_completeness.rs",
@@ -967,9 +966,9 @@ fn requirement_next_action(id: &str) -> &'static str {
         "parser_binding" => "register a parser manifest or mark the mode manual/external",
         "source_factory" => "register the runtime source factory or mark the mode manual/external",
         "payload_schema" => "add the EventPayload schema for every declared event pair",
-        "event_contract_refs" => "add EventContract refs for the package event pairs",
+        "event_contract_refs" => "add package-family EventContract refs for the mode event pairs",
         "admission_policy_ref" => {
-            "set EventContract.admission_policy_ref or extend the policy compatibility list"
+            "set EventContract.admission_policy_ref or add a policy-specific acceptance path"
         }
         "identity_policy" => "declare the occurrence identity contract",
         "privacy_disclosure_policy" => "add privacy coverage for the package mode",
