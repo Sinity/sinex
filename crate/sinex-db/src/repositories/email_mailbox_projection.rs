@@ -266,6 +266,101 @@ impl EmailMailboxProjectionRepository<'_> {
         .await
         .map_err(|error| db_error(error, "summarize email mailbox projections"))
     }
+
+    pub async fn list_current_by_source_mode(
+        &self,
+        source_id: &str,
+        mode_id: &str,
+    ) -> DbResult<Vec<EmailMailboxProjectionRecord>> {
+        sqlx::query_as!(
+            EmailMailboxProjectionRecord,
+            r#"
+            SELECT
+                id,
+                source_id,
+                mode_id,
+                message_key,
+                message_id,
+                thread_key,
+                thread_root_message_id,
+                direction,
+                folder,
+                mailbox_format,
+                source_file,
+                raw_material_id,
+                subject,
+                from_addresses,
+                to_addresses,
+                body_bytes,
+                attachment_count,
+                attachment_observed_count,
+                attachment_policy_refs,
+                last_message_event_id,
+                last_thread_event_id,
+                last_attachment_event_id,
+                last_observed_at,
+                updated_at
+            FROM core.email_mailbox_projection
+            WHERE source_id = $1 AND mode_id = $2
+            ORDER BY last_observed_at DESC, message_key
+            "#,
+            source_id,
+            mode_id
+        )
+        .fetch_all(self.pool)
+        .await
+        .map_err(|error| db_error(error, "list email mailbox projections by mode"))
+    }
+
+    pub async fn list_attachment_debt(
+        &self,
+        source_id: &str,
+        mode_id: &str,
+        message_key: Option<&str>,
+    ) -> DbResult<Vec<EmailMailboxProjectionRecord>> {
+        sqlx::query_as!(
+            EmailMailboxProjectionRecord,
+            r#"
+            SELECT
+                id,
+                source_id,
+                mode_id,
+                message_key,
+                message_id,
+                thread_key,
+                thread_root_message_id,
+                direction,
+                folder,
+                mailbox_format,
+                source_file,
+                raw_material_id,
+                subject,
+                from_addresses,
+                to_addresses,
+                body_bytes,
+                attachment_count,
+                attachment_observed_count,
+                attachment_policy_refs,
+                last_message_event_id,
+                last_thread_event_id,
+                last_attachment_event_id,
+                last_observed_at,
+                updated_at
+            FROM core.email_mailbox_projection
+            WHERE source_id = $1
+              AND mode_id = $2
+              AND ($3::text IS NULL OR message_key = $3)
+              AND attachment_count > attachment_observed_count
+            ORDER BY last_observed_at DESC, message_key
+            "#,
+            source_id,
+            mode_id,
+            message_key
+        )
+        .fetch_all(self.pool)
+        .await
+        .map_err(|error| db_error(error, "list email mailbox attachment debt"))
+    }
 }
 
 struct ProjectionUpsert {
