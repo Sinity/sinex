@@ -876,7 +876,7 @@ mod tests {
 
             let accepted_by_standard = admission_policies().any(|policy| {
                 policy.id == STANDARD_EVENT_ADMISSION_POLICY_ID
-                    && policy.accepted_event_contracts.contains(&contract_id)
+                    && policy.accepts_event_contract(contract_id)
             });
             assert!(
                 accepted_by_standard,
@@ -903,9 +903,7 @@ mod tests {
 
         let accepted_by_standard = admission_policies().any(|policy| {
             policy.id == STANDARD_EVENT_ADMISSION_POLICY_ID
-                && policy
-                    .accepted_event_contracts
-                    .contains(&BROWSER_PAGE_VISITED_CONTRACT_ID)
+                && policy.accepts_event_contract(BROWSER_PAGE_VISITED_CONTRACT_ID)
         });
         assert!(accepted_by_standard);
 
@@ -934,8 +932,7 @@ mod tests {
             );
 
             let accepted_by_standard = admission_policies().any(|policy| {
-                policy.id == STANDARD_EVENT_ADMISSION_POLICY_ID
-                    && policy.accepted_event_contracts.contains(&id)
+                policy.id == STANDARD_EVENT_ADMISSION_POLICY_ID && policy.accepts_event_contract(id)
             });
             assert!(accepted_by_standard, "{id} must be admission-addressable");
         }
@@ -985,7 +982,7 @@ mod tests {
 
             let accepted_by_standard = admission_policies().any(|policy| {
                 policy.id == STANDARD_EVENT_ADMISSION_POLICY_ID
-                    && policy.accepted_event_contracts.contains(&contract_id)
+                    && policy.accepts_event_contract(contract_id)
             });
             assert!(
                 accepted_by_standard,
@@ -1101,7 +1098,7 @@ mod tests {
 
             let accepted_by_standard = admission_policies().any(|policy| {
                 policy.id == STANDARD_EVENT_ADMISSION_POLICY_ID
-                    && policy.accepted_event_contracts.contains(&contract_id)
+                    && policy.accepts_event_contract(contract_id)
             });
             assert!(
                 accepted_by_standard,

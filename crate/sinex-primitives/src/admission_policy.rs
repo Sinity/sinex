@@ -6,7 +6,7 @@
 //! deferral are explicit outcomes with policy ids and operator-visible reasons.
 
 use crate::authority::ProposalKind;
-use crate::event_contracts::EventContractId;
+use crate::event_contracts::{EventContractId, event_contracts};
 use crate::events::builder::EventId;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -83,6 +83,29 @@ pub struct AdmissionPolicy {
     pub malformed_material: MalformedMaterialBehavior,
     pub resource_pressure: ResourcePressureBehavior,
     pub proposal_routing: ProposalRoutingBehavior,
+}
+
+impl AdmissionPolicy {
+    #[must_use]
+    pub fn accepts_event_contract(&self, event_contract_id: EventContractId) -> bool {
+        self.accepted_event_contracts.contains(&event_contract_id)
+            || event_contracts().any(|contract| {
+                contract.id == event_contract_id && contract.admission_policy_ref == Some(self.id)
+            })
+    }
+
+    #[must_use]
+    pub fn effective_event_contract_ids(&self) -> Vec<EventContractId> {
+        let mut ids = self.accepted_event_contracts.to_vec();
+        ids.extend(
+            event_contracts()
+                .filter(|contract| contract.admission_policy_ref == Some(self.id))
+                .map(|contract| contract.id),
+        );
+        ids.sort_unstable();
+        ids.dedup();
+        ids
+    }
 }
 
 inventory::collect!(AdmissionPolicy);

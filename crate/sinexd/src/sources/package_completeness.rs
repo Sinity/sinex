@@ -1109,10 +1109,9 @@ fn admission_policy_refs_for_event_contracts(contracts: &[&'static EventContract
         .collect::<BTreeSet<_>>();
     let mut policies = admission_policies()
         .filter(|policy| {
-            policy
-                .accepted_event_contracts
+            contract_ids
                 .iter()
-                .any(|contract_id| contract_ids.contains(contract_id))
+                .any(|contract_id| policy.accepts_event_contract(contract_id))
         })
         .map(|policy: &AdmissionPolicy| policy.id.to_string())
         .collect::<Vec<_>>();
