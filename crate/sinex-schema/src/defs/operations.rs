@@ -70,6 +70,190 @@ pub enum EmailProviderState {
     UpdatedAt,
 }
 
+/// **Table: `core.email_mailbox_projection`**
+///
+/// Durable metadata projection for mailbox message/thread/attachment events.
+/// It intentionally stores only operator-safe metadata and materialization
+/// debt, not message body text or attachment bytes.
+#[derive(Iden, Copy, Clone)]
+pub enum EmailMailboxProjection {
+    Table,
+    Id,
+    SourceId,
+    ModeId,
+    MessageKey,
+    MessageId,
+    ThreadKey,
+    ThreadRootMessageId,
+    Direction,
+    Folder,
+    MailboxFormat,
+    SourceFile,
+    RawMaterialId,
+    Subject,
+    FromAddresses,
+    ToAddresses,
+    BodyBytes,
+    AttachmentCount,
+    AttachmentObservedCount,
+    AttachmentPolicyRefs,
+    LastMessageEventId,
+    LastThreadEventId,
+    LastAttachmentEventId,
+    LastObservedAt,
+    UpdatedAt,
+}
+
+impl TableDef for EmailMailboxProjection {
+    fn table_name() -> &'static str {
+        "email_mailbox_projection"
+    }
+    fn schema_name() -> &'static str {
+        "core"
+    }
+    fn primary_key() -> &'static str {
+        "id"
+    }
+}
+
+impl EmailMailboxProjection {
+    #[must_use]
+    pub fn create_table_statement() -> TableCreateStatement {
+        Table::create()
+            .table(Self::table_iden())
+            .if_not_exists()
+            .col(
+                ColumnDef::new(EmailMailboxProjection::Id)
+                    .custom(Alias::new("UUID"))
+                    .primary_key()
+                    .extra("DEFAULT uuidv7()"),
+            )
+            .col(
+                ColumnDef::new(EmailMailboxProjection::SourceId)
+                    .text()
+                    .not_null(),
+            )
+            .col(
+                ColumnDef::new(EmailMailboxProjection::ModeId)
+                    .text()
+                    .not_null(),
+            )
+            .col(
+                ColumnDef::new(EmailMailboxProjection::MessageKey)
+                    .text()
+                    .not_null(),
+            )
+            .col(ColumnDef::new(EmailMailboxProjection::MessageId).text())
+            .col(ColumnDef::new(EmailMailboxProjection::ThreadKey).text())
+            .col(ColumnDef::new(EmailMailboxProjection::ThreadRootMessageId).text())
+            .col(ColumnDef::new(EmailMailboxProjection::Direction).text())
+            .col(ColumnDef::new(EmailMailboxProjection::Folder).text())
+            .col(ColumnDef::new(EmailMailboxProjection::MailboxFormat).text())
+            .col(ColumnDef::new(EmailMailboxProjection::SourceFile).text())
+            .col(ColumnDef::new(EmailMailboxProjection::RawMaterialId).text())
+            .col(ColumnDef::new(EmailMailboxProjection::Subject).text())
+            .col(
+                ColumnDef::new(EmailMailboxProjection::FromAddresses)
+                    .json_binary()
+                    .not_null()
+                    .default(Expr::cust("'[]'::jsonb")),
+            )
+            .col(
+                ColumnDef::new(EmailMailboxProjection::ToAddresses)
+                    .json_binary()
+                    .not_null()
+                    .default(Expr::cust("'[]'::jsonb")),
+            )
+            .col(
+                ColumnDef::new(EmailMailboxProjection::BodyBytes)
+                    .big_integer()
+                    .not_null()
+                    .default(0),
+            )
+            .col(
+                ColumnDef::new(EmailMailboxProjection::AttachmentCount)
+                    .integer()
+                    .not_null()
+                    .default(0),
+            )
+            .col(
+                ColumnDef::new(EmailMailboxProjection::AttachmentObservedCount)
+                    .integer()
+                    .not_null()
+                    .default(0),
+            )
+            .col(
+                ColumnDef::new(EmailMailboxProjection::AttachmentPolicyRefs)
+                    .json_binary()
+                    .not_null()
+                    .default(Expr::cust("'[]'::jsonb")),
+            )
+            .col(
+                ColumnDef::new(EmailMailboxProjection::LastMessageEventId)
+                    .custom(Alias::new("UUID")),
+            )
+            .col(
+                ColumnDef::new(EmailMailboxProjection::LastThreadEventId)
+                    .custom(Alias::new("UUID")),
+            )
+            .col(
+                ColumnDef::new(EmailMailboxProjection::LastAttachmentEventId)
+                    .custom(Alias::new("UUID")),
+            )
+            .col(
+                ColumnDef::new(EmailMailboxProjection::LastObservedAt)
+                    .custom(Alias::new("TIMESTAMPTZ"))
+                    .not_null()
+                    .default(Expr::cust("NOW()")),
+            )
+            .col(
+                ColumnDef::new(EmailMailboxProjection::UpdatedAt)
+                    .custom(Alias::new("TIMESTAMPTZ"))
+                    .not_null()
+                    .default(Expr::cust("NOW()")),
+            )
+            .to_owned()
+    }
+
+    #[must_use]
+    pub fn create_indexes() -> Vec<IndexCreateStatement> {
+        vec![
+            Index::create()
+                .if_not_exists()
+                .name("ux_email_mailbox_projection_current_message")
+                .table(Self::table_iden())
+                .col(EmailMailboxProjection::SourceId)
+                .col(EmailMailboxProjection::ModeId)
+                .col(EmailMailboxProjection::MessageKey)
+                .unique()
+                .to_owned(),
+            Index::create()
+                .if_not_exists()
+                .name("ix_email_mailbox_projection_source_mode")
+                .table(Self::table_iden())
+                .col(EmailMailboxProjection::SourceId)
+                .col(EmailMailboxProjection::ModeId)
+                .to_owned(),
+            Index::create()
+                .if_not_exists()
+                .name("ix_email_mailbox_projection_thread")
+                .table(Self::table_iden())
+                .col(EmailMailboxProjection::ThreadKey)
+                .to_owned(),
+        ]
+    }
+
+    #[must_use]
+    pub fn create_updated_at_trigger_sql() -> String {
+        "DROP TRIGGER IF EXISTS trg_email_mailbox_projection_updated_at ON core.email_mailbox_projection;
+CREATE TRIGGER trg_email_mailbox_projection_updated_at
+    BEFORE UPDATE ON core.email_mailbox_projection
+    FOR EACH ROW
+    EXECUTE FUNCTION public.set_current_timestamp_updated_at();"
+            .to_string()
+    }
+}
+
 impl TableDef for EmailProviderState {
     fn table_name() -> &'static str {
         "email_provider_state"
