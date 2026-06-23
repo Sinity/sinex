@@ -270,6 +270,14 @@ const ALL_TABLES: &[TableMeta] = &[
     },
     TableMeta {
         schema: "core",
+        name: "email_mailbox_projection",
+        qualified_name: "core.email_mailbox_projection",
+        is_hypertable: false,
+        has_triggers: true,
+        cleanup_protected: false,
+    },
+    TableMeta {
+        schema: "core",
         name: "tags",
         qualified_name: "core.tags",
         is_hypertable: false,

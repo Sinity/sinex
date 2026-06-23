@@ -1446,6 +1446,29 @@ fn mode_detail_lines(mode: &SourceModeStatusView) -> Vec<Line<'static>> {
             mode.provider_reconnect_state.as_deref().unwrap_or("-"),
         )));
     }
+    if mode.mailbox_projection_message_count.is_some() {
+        lines.push(Line::from(format!(
+            "  mailbox messages={} threads={} body_bytes={} attachments={}/{} last_observed={}",
+            mode.mailbox_projection_message_count
+                .map(|value| value.to_string())
+                .unwrap_or_else(|| "-".to_string()),
+            mode.mailbox_projection_thread_count
+                .map(|value| value.to_string())
+                .unwrap_or_else(|| "-".to_string()),
+            mode.mailbox_projection_body_bytes
+                .map(|value| value.to_string())
+                .unwrap_or_else(|| "-".to_string()),
+            mode.mailbox_projection_attachment_observed_count
+                .map(|value| value.to_string())
+                .unwrap_or_else(|| "-".to_string()),
+            mode.mailbox_projection_attachment_count
+                .map(|value| value.to_string())
+                .unwrap_or_else(|| "-".to_string()),
+            mode.mailbox_projection_last_observed_at
+                .map(|value| value.to_string())
+                .unwrap_or_else(|| "-".to_string()),
+        )));
+    }
     for action in mode.actions.iter().take(3) {
         lines.push(Line::from(format!(
             "  action {} [{}] {}",
@@ -2262,7 +2285,14 @@ mod tests {
                 .with_rpc_method("sources.continuity"),
             ],
         );
-        source.modes.push(mode_fixture());
+        let mut mode = mode_fixture();
+        mode.mailbox_projection_message_count = Some(2);
+        mode.mailbox_projection_thread_count = Some(1);
+        mode.mailbox_projection_body_bytes = Some(64);
+        mode.mailbox_projection_attachment_count = Some(3);
+        mode.mailbox_projection_attachment_observed_count = Some(1);
+        mode.mailbox_projection_last_observed_at = Some(Timestamp::UNIX_EPOCH);
+        source.modes.push(mode);
         let app = App {
             current_tab: Tab::Sources,
             should_quit: false,
@@ -2302,6 +2332,7 @@ mod tests {
         assert!(rendered.contains("Continuity [target] sources.continuity"));
         assert!(rendered.contains("fixture.mode [accepted] on_demand via direct"));
         assert!(rendered.contains("adapter=FixtureAdapter lifecycle=retain_raw"));
+        assert!(rendered.contains("mailbox messages=2 threads=1 body_bytes=64 attachments=1/3"));
         assert!(rendered.contains("action Import Fixture [enabled] sinexctl sources stage"));
         assert!(rendered.contains("latest material has no parsed event"));
         Ok(())
@@ -2562,6 +2593,12 @@ mod tests {
             provider_operation_id: None,
             provider_coverage_ref: None,
             provider_debt_ref: None,
+            mailbox_projection_message_count: None,
+            mailbox_projection_thread_count: None,
+            mailbox_projection_body_bytes: None,
+            mailbox_projection_attachment_count: None,
+            mailbox_projection_attachment_observed_count: None,
+            mailbox_projection_last_observed_at: None,
             actions: vec![
                 ActionAvailability::read(
                     "sources.stage.fixture",

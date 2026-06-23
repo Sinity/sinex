@@ -3,7 +3,7 @@
 use crate::api::service_container::{ConfirmationBufferHealth, ServiceContainer};
 use serde_json::Value;
 use sinex_db::DbPoolExt;
-use sinex_db::repositories::EmailProviderStateRecord;
+use sinex_db::repositories::{EmailMailboxProjectionSummary, EmailProviderStateRecord};
 use sinex_primitives::SinexError;
 use sinex_primitives::rpc::{
     methods,
@@ -59,6 +59,16 @@ struct EmailProviderOperationState {
     required_action: Option<String>,
     retry_after_secs: Option<i32>,
     reconnect_state: Option<String>,
+}
+
+#[derive(Debug, Clone)]
+struct EmailMailboxProjectionState {
+    message_count: i64,
+    thread_count: i64,
+    body_bytes: i64,
+    attachment_count: i64,
+    attachment_observed_count: i64,
+    last_observed_at: Timestamp,
 }
 
 /// List registered sources with run, health, and recent-emission stats.
@@ -171,6 +181,7 @@ pub async fn handle_sources_status_view(
         .collect();
     let runtime_observations = source_runtime_observations(source_status_rows);
     let email_provider_states = latest_email_provider_operation_states(pool).await?;
+    let email_projection_states = latest_email_mailbox_projection_states(pool).await?;
 
     let bindings: Vec<&'static SourceRuntimeBinding> = source_runtime_bindings().collect();
     let mut contracts: Vec<&'static SourceContract> = all_source_contracts().collect();
@@ -191,6 +202,7 @@ pub async fn handle_sources_status_view(
             &confirmation_buffer,
             &runtime_observations,
             &email_provider_states,
+            &email_projection_states,
             now,
         ));
     }
@@ -209,6 +221,7 @@ fn source_coverage_view(
     confirmation_buffer: &ConfirmationBufferHealth,
     runtime_observations: &HashMap<String, SourceStatus>,
     email_provider_states: &HashMap<String, EmailProviderOperationState>,
+    email_projection_states: &HashMap<String, EmailMailboxProjectionState>,
     now: Timestamp,
 ) -> SourceCoverageView {
     let mut event_count = 0i64;
@@ -307,6 +320,10 @@ fn source_coverage_view(
             bindings,
             email_provider_states,
         ));
+        caveats.extend(email_mailbox_projection_caveats(
+            bindings,
+            email_projection_states,
+        ));
     }
 
     let readiness = if !has_live_binding && proposed_binding_count > 0 {
@@ -344,6 +361,7 @@ fn source_coverage_view(
                 binding,
                 runtime_observations,
                 email_provider_states,
+                email_projection_states,
             )
         })
         .collect();
@@ -389,6 +407,21 @@ async fn latest_email_provider_operation_states(
     Ok(email_provider_operation_states_from_rows(rows))
 }
 
+async fn latest_email_mailbox_projection_states(
+    pool: &PgPool,
+) -> Result<HashMap<String, EmailMailboxProjectionState>> {
+    let rows = pool
+        .email_mailbox_projections()
+        .summarize_by_source("email.mailbox")
+        .await
+        .map_err(|error| {
+            SinexError::database("Failed to load email mailbox projection state")
+                .with_std_error(&error)
+        })?;
+
+    Ok(email_mailbox_projection_states_from_rows(rows))
+}
+
 fn email_provider_operation_states_from_rows(
     rows: Vec<EmailProviderStateRecord>,
 ) -> HashMap<String, EmailProviderOperationState> {
@@ -413,6 +446,26 @@ fn email_provider_operation_states_from_rows(
     states
 }
 
+fn email_mailbox_projection_states_from_rows(
+    rows: Vec<EmailMailboxProjectionSummary>,
+) -> HashMap<String, EmailMailboxProjectionState> {
+    rows.into_iter()
+        .map(|row| {
+            (
+                row.mode_id,
+                EmailMailboxProjectionState {
+                    message_count: row.message_count,
+                    thread_count: row.thread_count,
+                    body_bytes: row.body_bytes,
+                    attachment_count: row.attachment_count,
+                    attachment_observed_count: row.attachment_observed_count,
+                    last_observed_at: Timestamp::from(row.last_observed_at),
+                },
+            )
+        })
+        .collect()
+}
+
 fn email_provider_operation_caveats(
     bindings: &[&SourceRuntimeBinding],
     states: &HashMap<String, EmailProviderOperationState>,
@@ -423,6 +476,41 @@ fn email_provider_operation_caveats(
             let mode_id = binding.subject.as_str();
             let state = states.get(mode_id)?;
             Some(email_provider_operation_caveat(mode_id, state))
+        })
+        .collect()
+}
+
+fn email_mailbox_projection_caveats(
+    bindings: &[&SourceRuntimeBinding],
+    states: &HashMap<String, EmailMailboxProjectionState>,
+) -> Vec<CaveatView> {
+    bindings
+        .iter()
+        .filter_map(|binding| {
+            let mode_id = binding.subject.as_str();
+            let state = states.get(mode_id)?;
+            let mut debts = Vec::new();
+            if state.body_bytes > 0 {
+                debts.push(format!(
+                    "{} message body byte(s) are represented as metadata only",
+                    state.body_bytes
+                ));
+            }
+            if state.attachment_count > state.attachment_observed_count {
+                debts.push(format!(
+                    "{} attachment(s) declared, {} attachment metadata event(s) observed",
+                    state.attachment_count, state.attachment_observed_count
+                ));
+            }
+            (!debts.is_empty()).then(|| CaveatView {
+                id: format!("email.mailbox_projection.{mode_id}.materialization_debt"),
+                message: format!(
+                    "{mode_id} has {} projected message(s); {}; debt:email.mailbox.{mode_id}.projection_materialization",
+                    state.message_count,
+                    debts.join("; ")
+                ),
+                ref_: None,
+            })
         })
         .collect()
 }
@@ -580,10 +668,14 @@ fn source_mode_status_view(
     binding: &SourceRuntimeBinding,
     runtime_observations: &HashMap<String, SourceStatus>,
     email_provider_states: &HashMap<String, EmailProviderOperationState>,
+    email_projection_states: &HashMap<String, EmailMailboxProjectionState>,
 ) -> SourceModeStatusView {
     let runtime_observation = runtime_observation_for_source(source_id, runtime_observations);
     let provider_state = (source_id == "email.mailbox")
         .then(|| email_provider_states.get(binding.subject.as_str()))
+        .flatten();
+    let projection_state = (source_id == "email.mailbox")
+        .then(|| email_projection_states.get(binding.subject.as_str()))
         .flatten();
     SourceModeStatusView {
         mode_id: binding.subject.as_str().to_string(),
@@ -634,6 +726,13 @@ fn source_mode_status_view(
         provider_debt_ref: provider_state
             .and_then(provider_debt_ref)
             .map(str::to_string),
+        mailbox_projection_message_count: projection_state.map(|state| state.message_count),
+        mailbox_projection_thread_count: projection_state.map(|state| state.thread_count),
+        mailbox_projection_body_bytes: projection_state.map(|state| state.body_bytes),
+        mailbox_projection_attachment_count: projection_state.map(|state| state.attachment_count),
+        mailbox_projection_attachment_observed_count: projection_state
+            .map(|state| state.attachment_observed_count),
+        mailbox_projection_last_observed_at: projection_state.map(|state| state.last_observed_at),
         actions: binding
             .capability_refs()
             .filter(|capability| capability.is_kind(SourceCapabilityKind::Operation))
@@ -1528,6 +1627,7 @@ mod tests {
             &healthy_confirmation_buffer(),
             &HashMap::new(),
             &HashMap::new(),
+            &HashMap::new(),
             Timestamp::now(),
         );
 
@@ -1565,6 +1665,7 @@ mod tests {
             &events,
             &materials,
             &healthy_confirmation_buffer(),
+            &HashMap::new(),
             &HashMap::new(),
             &HashMap::new(),
             Timestamp::now(),
@@ -1629,6 +1730,7 @@ mod tests {
             &HashMap::new(),
             &HashMap::new(),
             &healthy_confirmation_buffer(),
+            &HashMap::new(),
             &HashMap::new(),
             &HashMap::new(),
             Timestamp::now(),
@@ -1736,6 +1838,7 @@ mod tests {
             &HashMap::new(),
             &HashMap::new(),
             &healthy_confirmation_buffer(),
+            &HashMap::new(),
             &HashMap::new(),
             &HashMap::new(),
             Timestamp::now(),
@@ -1894,6 +1997,7 @@ mod tests {
             &healthy_confirmation_buffer(),
             &HashMap::new(),
             &HashMap::new(),
+            &HashMap::new(),
             Timestamp::now(),
         );
 
@@ -2027,6 +2131,7 @@ mod tests {
             &HashMap::new(),
             &HashMap::new(),
             &healthy_confirmation_buffer(),
+            &HashMap::new(),
             &HashMap::new(),
             &HashMap::new(),
             Timestamp::now(),
@@ -2244,6 +2349,7 @@ mod tests {
             &healthy_confirmation_buffer(),
             &HashMap::new(),
             &provider_states,
+            &HashMap::new(),
             Timestamp::now(),
         );
 
@@ -2310,6 +2416,67 @@ mod tests {
             gmail_mode.provider_required_action.as_deref(),
             Some("email.mailbox.authorize")
         );
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn email_mailbox_projection_surfaces_materialization_debt_and_mode_counts()
+    -> xtask::TestResult<()> {
+        let contract = all_source_contracts()
+            .find(|contract| contract.id == "email.mailbox")
+            .expect("email mailbox contract expected");
+        let bindings = source_runtime_bindings()
+            .filter(|binding| binding.source_id == "email.mailbox")
+            .collect::<Vec<_>>();
+        let mode_id = "source:email.mailbox.mbox-staged".to_string();
+        let mut projection_states = HashMap::new();
+        projection_states.insert(
+            mode_id.clone(),
+            EmailMailboxProjectionState {
+                message_count: 3,
+                thread_count: 2,
+                body_bytes: 128,
+                attachment_count: 4,
+                attachment_observed_count: 1,
+                last_observed_at: Timestamp::now(),
+            },
+        );
+
+        let view = source_coverage_view(
+            contract,
+            &bindings,
+            &HashMap::new(),
+            &HashMap::new(),
+            &healthy_confirmation_buffer(),
+            &HashMap::new(),
+            &HashMap::new(),
+            &projection_states,
+            Timestamp::now(),
+        );
+
+        let caveat = view
+            .caveats
+            .iter()
+            .find(|caveat| {
+                caveat.id
+                    == "email.mailbox_projection.source:email.mailbox.mbox-staged.materialization_debt"
+            })
+            .expect("projection materialization debt caveat expected");
+        assert!(caveat.message.contains("3 projected message"));
+        assert!(caveat.message.contains("128 message body byte"));
+        assert!(caveat.message.contains("4 attachment(s) declared"));
+
+        let mode = view
+            .modes
+            .iter()
+            .find(|mode| mode.mode_id == mode_id)
+            .expect("mbox staged mode expected");
+        assert_eq!(mode.mailbox_projection_message_count, Some(3));
+        assert_eq!(mode.mailbox_projection_thread_count, Some(2));
+        assert_eq!(mode.mailbox_projection_body_bytes, Some(128));
+        assert_eq!(mode.mailbox_projection_attachment_count, Some(4));
+        assert_eq!(mode.mailbox_projection_attachment_observed_count, Some(1));
+        assert!(mode.mailbox_projection_last_observed_at.is_some());
         Ok(())
     }
 
@@ -2436,6 +2603,7 @@ mod tests {
             &healthy_confirmation_buffer(),
             &observations,
             &HashMap::new(),
+            &HashMap::new(),
             now,
         );
 
@@ -2484,6 +2652,7 @@ mod tests {
             &healthy_confirmation_buffer(),
             &observations,
             &HashMap::new(),
+            &HashMap::new(),
             now,
         );
 
@@ -2522,6 +2691,7 @@ mod tests {
             &healthy_confirmation_buffer(),
             &observations,
             &HashMap::new(),
+            &HashMap::new(),
             now,
         );
 
@@ -2554,6 +2724,7 @@ mod tests {
             &HashMap::new(),
             &healthy_confirmation_buffer(),
             &observations,
+            &HashMap::new(),
             &HashMap::new(),
             now,
         );
@@ -2593,6 +2764,7 @@ mod tests {
             &confirmation_buffer,
             &HashMap::new(),
             &HashMap::new(),
+            &HashMap::new(),
             Timestamp::now(),
         );
 
@@ -2629,6 +2801,7 @@ mod tests {
             &HashMap::new(),
             &HashMap::new(),
             &confirmation_buffer,
+            &HashMap::new(),
             &HashMap::new(),
             &HashMap::new(),
             Timestamp::now(),

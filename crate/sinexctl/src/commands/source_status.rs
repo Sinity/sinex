@@ -134,10 +134,15 @@ fn mode_summary(mode: &SourceModeStatusView) -> String {
         .or(mode.provider_failure_class.as_deref())
         .map(|state| format!("/provider:{state}"))
         .unwrap_or_default();
+    let projection = mode
+        .mailbox_projection_message_count
+        .map(|count| format!("/mailbox:{count}msg"))
+        .unwrap_or_default();
     format!(
         "{}:{}/{}/{}",
         mode.mode_id, state, mode.runtime_shape, mode.transport
     ) + &provider
+        + &projection
 }
 
 const fn action_state_label(state: ActionAvailabilityState) -> &'static str {
@@ -286,6 +291,12 @@ mod tests {
             provider_operation_id: None,
             provider_coverage_ref: None,
             provider_debt_ref: None,
+            mailbox_projection_message_count: None,
+            mailbox_projection_thread_count: None,
+            mailbox_projection_body_bytes: None,
+            mailbox_projection_attachment_count: None,
+            mailbox_projection_attachment_observed_count: None,
+            mailbox_projection_last_observed_at: None,
             actions: Vec::new(),
         }
     }
