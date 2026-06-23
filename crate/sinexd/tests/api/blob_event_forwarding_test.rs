@@ -1,29 +1,20 @@
 use camino::Utf8PathBuf;
-use color_eyre::eyre::WrapErr;
 use sinex_primitives::SinexError;
 use sinexd::api::ServiceContainer;
 use sinexd::runtime::content_store::MaterialContentStore;
 use tempfile::TempDir;
-use which::which;
 use xtask::sandbox::timing::WaitHelpers;
-use xtask::sandbox::{EnvGuard, TestResult, sinex_test};
-
-fn require_git_annex() -> TestResult<()> {
-    which("git-annex")
-        .wrap_err("git-annex binary is required for gateway blob forwarding tests")
-        .map(|_| ())
-}
+use xtask::sandbox::{EnvGuard, sinex_test};
 
 #[sinex_test]
 async fn blob_routes_do_not_persist_events(ctx: TestContext) -> TestResult<()> {
     let ctx = ctx.with_nats().shared().await?;
-    require_git_annex()?;
     let mut env_guard = EnvGuard::new();
     env_guard.set("SINEX_NATS_URL", ctx.nats_handle()?.client_url());
     let temp_dir = TempDir::new()?;
     let repo_path = Utf8PathBuf::from_path_buf(temp_dir.path().to_path_buf())
         .map_err(|_| color_eyre::eyre::eyre!("content-store path is not valid UTF-8"))?;
-    MaterialContentStore::init_with_config(&repo_path, Some("gateway-blob-forwarding"), true)
+    MaterialContentStore::init_with_config(&repo_path, Some("gateway-blob-forwarding"), false)
         .await?;
     env_guard.set("SINEX_CONTENT_STORE_PATH", repo_path.as_str());
     let _env_guard = env_guard;
@@ -33,7 +24,7 @@ async fn blob_routes_do_not_persist_events(ctx: TestContext) -> TestResult<()> {
     )
     .fetch_one(&ctx.pool)
     .await?
-    .unwrap_or(0);
+    .expect("COUNT(*) should always return one row");
 
     let container = ServiceContainer::from_database_url(ctx.database_url()).await?;
 
@@ -57,7 +48,7 @@ async fn blob_routes_do_not_persist_events(ctx: TestContext) -> TestResult<()> {
                 )
                 .fetch_one(&pool)
                 .await?
-                .unwrap_or(0);
+                .expect("COUNT(*) should always return one row");
                 Ok::<bool, SinexError>(count == initial_count)
             }
         },
@@ -70,7 +61,7 @@ async fn blob_routes_do_not_persist_events(ctx: TestContext) -> TestResult<()> {
     )
     .fetch_one(&ctx.pool)
     .await?
-    .unwrap_or(0);
+    .expect("COUNT(*) should always return one row");
 
     assert_eq!(
         after_count, initial_count,

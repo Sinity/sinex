@@ -501,8 +501,13 @@ mod test_runtime {
                 None,
             );
 
-            let work_dir = Utf8PathBuf::from_path_buf(sinex_primitives::environment().temp_dir())
-                .unwrap_or_else(|_| Utf8PathBuf::from("/tmp/sinex-test"));
+            let temp_dir = sinex_primitives::environment().temp_dir();
+            let work_dir = Utf8PathBuf::from_path_buf(temp_dir).map_err(|path| {
+                color_eyre::eyre::eyre!(
+                    "runtime output-contract fixture path is not valid UTF-8: {}",
+                    path.display()
+                )
+            })?;
 
             let service_info = ServiceInfo::new(
                 service_name.clone(),

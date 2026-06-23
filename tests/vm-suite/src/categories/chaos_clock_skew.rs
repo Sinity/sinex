@@ -6,10 +6,10 @@
 use std::process::Command;
 use std::time::Duration;
 
-use color_eyre::eyre::Result;
+use color_eyre::eyre::{Result, eyre};
 use sqlx::PgPool;
 
-use crate::runner::{TestOutcome, TestRunner};
+use crate::runner::{EvidenceKind, MissingEvidencePolicy, TestRunner};
 
 use super::chaos_support::{
     command_status, observed_event_count, report_service_active, report_watched_files_written,
@@ -43,34 +43,45 @@ impl ClockSkewState {
     }
 }
 
-fn read_epoch() -> Option<i64> {
-    Command::new("date")
-        .args(["+%s"])
-        .output()
-        .ok()
-        .and_then(|output| String::from_utf8(output.stdout).ok())
-        .and_then(|stdout| stdout.trim().parse().ok())
-        .filter(|epoch| *epoch > 0)
+fn read_epoch() -> Result<i64> {
+    let output = Command::new("date").args(["+%s"]).output()?;
+    if !output.status.success() {
+        return Err(eyre!(
+            "date +%s failed with status {}: {}",
+            output.status,
+            String::from_utf8_lossy(&output.stderr)
+        ));
+    }
+
+    let stdout = String::from_utf8(output.stdout)?;
+    let epoch = stdout
+        .trim()
+        .parse::<i64>()
+        .map_err(|e| eyre!("date +%s returned non-integer epoch {stdout:?}: {e}"))?;
+    if epoch <= 0 {
+        return Err(eyre!("date +%s returned non-positive epoch {epoch}"));
+    }
+    Ok(epoch)
 }
 
 fn skip_without_injected_skew(runner: &mut TestRunner, name: &str, skew: &ClockSkewState) -> bool {
-    if skew.skew_was_injected() {
-        false
-    } else {
-        runner.skip(
-            name,
-            "clock skew was not injected; VM lacks clock-setting capability or epoch capture failed",
-        );
-        true
-    }
+    !runner.require_evidence(
+        name,
+        EvidenceKind::FaultInjection,
+        skew.skew_was_injected(),
+        "clock skew was not injected; VM lacks clock-setting capability or epoch capture failed",
+        MissingEvidencePolicy::Skip,
+    )
 }
 
 fn restore_original_clock(runner: &mut TestRunner, name: &str, skew: &mut ClockSkewState) -> bool {
     let Some(original_epoch) = skew.original_epoch else {
-        runner.record(
+        runner.require_evidence(
             name,
-            TestOutcome::EvidenceMissing,
+            EvidenceKind::FaultInjection,
+            false,
             "original epoch was not captured before clock skew; cannot prove restore",
+            MissingEvidencePolicy::Block,
         );
         return false;
     };
@@ -78,10 +89,12 @@ fn restore_original_clock(runner: &mut TestRunner, name: &str, skew: &mut ClockS
     if command_status("date", &["-s", &format!("@{original_epoch}")]) {
         true
     } else {
-        runner.record(
+        runner.require_evidence(
             name,
-            TestOutcome::EvidenceMissing,
+            EvidenceKind::FaultInjection,
+            false,
             "date -s restore failed after successful clock skew injection",
+            MissingEvidencePolicy::Block,
         );
         false
     }
@@ -105,16 +118,18 @@ async fn test_baseline_monotonic(runner: &mut TestRunner, pool: &PgPool) {
          WHERE prev_ts IS NOT NULL AND ts_coided < prev_ts",
     )
     .fetch_one(pool)
-    .await
-    .ok();
+    .await;
 
     match violations {
-        Some(0) => runner.pass(name),
-        Some(v) => runner.fail(
+        Ok(0) => runner.pass(name),
+        Ok(v) => runner.fail(
             name,
             &format!("{v} timestamp ordering violations at baseline"),
         ),
-        None => runner.fail(name, "ts_coided monotonicity query failed"),
+        Err(error) => runner.fail(
+            name,
+            &format!("ts_coided monotonicity query failed: {error:#}"),
+        ),
     }
 }
 
@@ -125,9 +140,12 @@ async fn test_event_engine_survives_clock_advance(
 ) {
     let name = "chaos-clock-skew: event_engine survives clock advance";
 
-    let Some(current_epoch) = read_epoch() else {
-        runner.fail(name, "could not read current epoch");
-        return;
+    let current_epoch = match read_epoch() {
+        Ok(epoch) => epoch,
+        Err(error) => {
+            runner.fail(name, &format!("could not read current epoch: {error}"));
+            return;
+        }
     };
 
     // Advance clock by 1 hour (3600 seconds)
@@ -135,10 +153,12 @@ async fn test_event_engine_survives_clock_advance(
     let set_result = command_status("date", &["-s", &format!("@{new_epoch}")]);
 
     if !set_result {
-        runner.record(
+        runner.require_evidence(
             name,
-            TestOutcome::Skipped,
+            EvidenceKind::FaultInjection,
+            false,
             "date -s command failed; VM lacks clock-setting capability for this chaos scenario",
+            MissingEvidencePolicy::Skip,
         );
         return;
     }
@@ -225,10 +245,12 @@ async fn test_no_catastrophic_timestamp_corruption(
             return;
         }
         Err(error) => {
-            runner.record(
+            runner.require_evidence(
                 name,
-                TestOutcome::EvidenceMissing,
+                EvidenceKind::Database,
+                false,
                 &format!("event count query failed while waiting after clock restore: {error:#}"),
+                MissingEvidencePolicy::Block,
             );
             return;
         }
@@ -243,11 +265,10 @@ async fn test_no_catastrophic_timestamp_corruption(
          WHERE prev_ts IS NOT NULL AND ts_coided < prev_ts",
     )
     .fetch_one(pool)
-    .await
-    .ok();
+    .await;
 
     match violations {
-        Some(v) => {
+        Ok(v) => {
             let Some(final_count) = observed_event_count(runner, name, pool).await else {
                 return;
             };
@@ -263,7 +284,10 @@ async fn test_no_catastrophic_timestamp_corruption(
                 runner.pass(name);
             }
         }
-        None => runner.fail(name, "ts_coided violation check failed"),
+        Err(error) => runner.fail(
+            name,
+            &format!("ts_coided violation check failed: {error:#}"),
+        ),
     }
 }
 

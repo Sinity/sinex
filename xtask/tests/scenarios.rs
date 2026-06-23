@@ -366,7 +366,7 @@ fn find_workspace_root() -> color_eyre::eyre::Result<PathBuf> {
     loop {
         let cargo_toml = current.join("Cargo.toml");
         if cargo_toml.exists() {
-            let content = std::fs::read_to_string(&cargo_toml).unwrap_or_default();
+            let content = std::fs::read_to_string(&cargo_toml)?;
             if content.contains("[workspace]") {
                 return Ok(current);
             }

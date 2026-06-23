@@ -1,8 +1,8 @@
 //! Integration tests for the gateway-owned content service.
 //!
-//! Full roundtrip tests (store -> retrieve -> verify) require `git-annex` on PATH
-//! and are gated behind `#[ignore = "external"]`. Logic-level tests (error
-//! wrapping, operation logging, helpers) run unconditionally.
+//! Core roundtrip tests (store -> retrieve -> verify) run against the default
+//! local BLAKE3 CAS backend. The legacy git-annex compatibility roundtrip is
+//! gated behind `#[ignore = "external: requires git-annex on PATH"]`.
 
 use camino::Utf8PathBuf;
 use sinexd::api::content_service::ContentService;
@@ -11,19 +11,32 @@ use std::sync::Arc;
 use tempfile::TempDir;
 use xtask::sandbox::prelude::*;
 
-/// Preflight: bail early if git-annex is missing.
+/// Preflight: fail loudly when the explicit external git-annex gate is requested
+/// without its named prerequisite.
 fn require_git_annex() -> TestResult<()> {
     if which::which("git-annex").is_err() {
         return Err(color_eyre::eyre::eyre!(
-            "git-annex not found on PATH — skipping external test"
+            "git-annex not found on PATH; run this external test only where git-annex is installed"
         ));
     }
     Ok(())
 }
 
-#[allow(clippy::unused_async)]
-async fn content_service_fixture(ctx: &TestContext) -> TestResult<(ContentService, TempDir)> {
+fn content_service_fixture(ctx: &TestContext) -> TestResult<(ContentService, TempDir)> {
+    content_service_fixture_with_backend(ctx, false)
+}
+
+fn legacy_annex_content_service_fixture(
+    ctx: &TestContext,
+) -> TestResult<(ContentService, TempDir)> {
     require_git_annex()?;
+    content_service_fixture_with_backend(ctx, true)
+}
+
+fn content_service_fixture_with_backend(
+    ctx: &TestContext,
+    legacy_annex_enabled: bool,
+) -> TestResult<(ContentService, TempDir)> {
     let temp_dir = TempDir::new()?;
     let content_store_path = temp_dir.path().join("content-store");
     let repo_utf8 = Utf8PathBuf::from_path_buf(content_store_path)
@@ -33,7 +46,7 @@ async fn content_service_fixture(ctx: &TestContext) -> TestResult<(ContentServic
         root_path: repo_utf8,
         num_copies: Some(1),
         large_files: Some("anything".to_string()),
-        legacy_annex_enabled: true,
+        legacy_annex_enabled,
         ..Default::default()
     };
 
@@ -43,9 +56,8 @@ async fn content_service_fixture(ctx: &TestContext) -> TestResult<(ContentServic
 }
 
 #[sinex_test]
-#[ignore = "external"]
 async fn content_store_retrieve_roundtrip(ctx: TestContext) -> TestResult<()> {
-    let (service, _tmp) = content_service_fixture(&ctx).await?;
+    let (service, _tmp) = content_service_fixture(&ctx)?;
 
     let payload = b"sinex content roundtrip test payload";
     let content_key = service
@@ -74,9 +86,8 @@ async fn content_store_retrieve_roundtrip(ctx: TestContext) -> TestResult<()> {
 }
 
 #[sinex_test]
-#[ignore = "external"]
 async fn content_verify_after_store(ctx: TestContext) -> TestResult<()> {
-    let (service, _tmp) = content_service_fixture(&ctx).await?;
+    let (service, _tmp) = content_service_fixture(&ctx)?;
 
     let payload = b"verify me";
     let content_key = service
@@ -96,9 +107,8 @@ async fn content_verify_after_store(ctx: TestContext) -> TestResult<()> {
 }
 
 #[sinex_test]
-#[ignore = "external"]
 async fn content_metadata_after_store(ctx: TestContext) -> TestResult<()> {
-    let (service, _tmp) = content_service_fixture(&ctx).await?;
+    let (service, _tmp) = content_service_fixture(&ctx)?;
 
     let payload = b"metadata test";
     let content_key = service
@@ -123,9 +133,8 @@ async fn content_metadata_after_store(ctx: TestContext) -> TestResult<()> {
 }
 
 #[sinex_test]
-#[ignore = "external"]
 async fn content_deduplication(ctx: TestContext) -> TestResult<()> {
-    let (service, _tmp) = content_service_fixture(&ctx).await?;
+    let (service, _tmp) = content_service_fixture(&ctx)?;
 
     let payload = b"deduplicate this content";
     let key_a = service
@@ -156,9 +165,8 @@ async fn content_deduplication(ctx: TestContext) -> TestResult<()> {
 }
 
 #[sinex_test]
-#[ignore = "external"]
 async fn content_store_logs_operation(ctx: TestContext) -> TestResult<()> {
-    let (service, _tmp) = content_service_fixture(&ctx).await?;
+    let (service, _tmp) = content_service_fixture(&ctx)?;
 
     let payload = b"log this store operation";
     let _key = service
@@ -185,8 +193,39 @@ async fn content_store_logs_operation(ctx: TestContext) -> TestResult<()> {
 }
 
 #[sinex_test]
+#[ignore = "external: requires git-annex on PATH"]
+async fn legacy_annex_content_store_retrieve_roundtrip(ctx: TestContext) -> TestResult<()> {
+    let (service, _tmp) = legacy_annex_content_service_fixture(&ctx)?;
+
+    let payload = b"sinex legacy annex roundtrip test payload";
+    let content_key = service
+        .store_content(
+            payload,
+            "legacy-roundtrip.txt",
+            "text/plain",
+            "test-harness",
+            "test-harness",
+        )
+        .await?;
+
+    assert!(
+        !content_key.is_empty(),
+        "legacy content-store key should be non-empty"
+    );
+
+    let retrieved = service.retrieve_content(&content_key).await?;
+    assert_eq!(
+        retrieved.as_slice(),
+        payload,
+        "legacy annex retrieved content must match original"
+    );
+
+    Ok(())
+}
+
+#[sinex_test]
 async fn retrieve_nonexistent_key_returns_service_error(ctx: TestContext) -> TestResult<()> {
-    let (service, _tmp) = content_service_fixture(&ctx).await?;
+    let (service, _tmp) = content_service_fixture(&ctx)?;
 
     let result = service.retrieve_content("SHA256E-s0--nonexistent").await;
     assert!(result.is_err(), "retrieve of nonexistent key should fail");
@@ -203,7 +242,7 @@ async fn retrieve_nonexistent_key_returns_service_error(ctx: TestContext) -> Tes
 
 #[sinex_test]
 async fn verify_nonexistent_key_returns_service_error(ctx: TestContext) -> TestResult<()> {
-    let (service, _tmp) = content_service_fixture(&ctx).await?;
+    let (service, _tmp) = content_service_fixture(&ctx)?;
 
     let result = service.verify_content("SHA256E-s0--nonexistent").await;
     assert!(result.is_err(), "verify of nonexistent key should fail");
@@ -220,7 +259,7 @@ async fn verify_nonexistent_key_returns_service_error(ctx: TestContext) -> TestR
 
 #[sinex_test]
 async fn metadata_nonexistent_key_returns_service_error(ctx: TestContext) -> TestResult<()> {
-    let (service, _tmp) = content_service_fixture(&ctx).await?;
+    let (service, _tmp) = content_service_fixture(&ctx)?;
 
     let result = service
         .get_content_metadata("SHA256E-s0--nonexistent")

@@ -563,8 +563,7 @@ mod constraint_validation_tests {
                 Id::<SourceMaterial>::from_uuid(material.id),
                 Some("fk-retry"),
             )
-            .await
-            .ok();
+            .await?;
             result = sqlx::query!(
                 "INSERT INTO core.events (id, source, event_type, host, payload, ts_orig, source_material_id, anchor_byte) VALUES ($1::uuid, $2, $3, $4, $5, $6, $7::uuid, $8)",
                 event_id,
@@ -815,14 +814,14 @@ mod constraint_validation_tests {
         )
         .fetch_one(pool)
         .await?
-        .unwrap_or(0);
+        .expect("COUNT(*) should always return one row");
 
         if observed < valid_payloads.len() as i64 {
             let deficit = valid_payloads.len() as i64 - observed;
             for i in 0..deficit {
                 let event_id = Uuid::now_v7();
                 let payload = serde_json::json!({"topup": i});
-                let _ = sqlx::query!(
+                sqlx::query!(
                     "INSERT INTO core.events (id, source, event_type, host, payload, ts_orig, source_material_id, anchor_byte) VALUES ($1::uuid, $2, $3, $4, $5, $6, $7::uuid, $8)",
                     event_id,
                     &source,
@@ -834,7 +833,7 @@ mod constraint_validation_tests {
                     i
                 )
                 .execute(pool)
-                .await;
+                .await?;
             }
             observed = sqlx::query_scalar!(
                 r#"SELECT COUNT(*) FROM core.events WHERE source = $1"#,
@@ -842,7 +841,7 @@ mod constraint_validation_tests {
             )
             .fetch_one(pool)
             .await?
-            .unwrap_or(observed);
+            .expect("COUNT(*) should always return one row");
         }
         assert!(
             observed >= valid_payloads.len() as i64,
@@ -975,7 +974,7 @@ mod performance_constraint_tests {
     use super::*;
 
     #[sinex_serial_test]
-    #[ignore = "long"]
+    #[ignore = "long: constraint performance fixture, run via xtask test --heavy"]
     async fn test_constraint_check_performance() -> TestResult<()> {
         let ctx = prepare_constraint_context().await?;
         let pool = &ctx.pool;
@@ -1056,8 +1055,7 @@ mod performance_constraint_tests {
         }
         sqlx::query("CREATE INDEX IF NOT EXISTS ux_events_material_anchor_id ON core.events (source_material_id, anchor_byte)")
             .execute(pool)
-            .await
-            .ok();
+            .await?;
 
         // Create source material
         sqlx::query(
@@ -1090,7 +1088,7 @@ mod performance_constraint_tests {
         .fetch_one(pool)
         .await?;
         assert!(
-            index_exists.unwrap_or(0) >= 1,
+            index_exists.expect("COUNT(*) should always return one row") >= 1,
             "expected anchor index to exist"
         );
 
@@ -1145,7 +1143,7 @@ mod performance_constraint_tests {
         .fetch_one(pool)
         .await?;
         assert!(
-            duplicate_count.unwrap_or(0) >= 2,
+            duplicate_count.expect("COUNT(*) should always return one row") >= 2,
             "expected at least two events sharing anchor byte"
         );
         // Clean state before finalize to avoid residual rows.

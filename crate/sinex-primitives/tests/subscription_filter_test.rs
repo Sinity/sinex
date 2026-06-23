@@ -10,7 +10,7 @@ use xtask::sandbox::sinex_test;
 
 /// Build a test event with the given source, type, host, and payload.
 fn test_event(source: &str, event_type: &str, host: &str, payload: serde_json::Value) -> Event {
-    let host = HostName::new(host).unwrap_or_else(|_| HostName::from_static("invalid-test-host"));
+    let host = HostName::new(host).expect("subscription filter fixture host should be valid");
 
     Event {
         id: None,

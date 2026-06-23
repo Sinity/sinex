@@ -24,7 +24,7 @@ async fn publish_event(
     overrides: EventOverrides,
 ) -> TestResult<Uuid> {
     let env = sinex_primitives::environment();
-    let event_id = overrides.id.unwrap_or_default();
+    let event_id = overrides.id.unwrap_or_else(Uuid::now_v7);
     let ts_orig = overrides
         .ts_orig
         .unwrap_or_else(|| temporal::now().format_rfc3339());
@@ -152,13 +152,14 @@ async fn replaying_events_after_restart_does_not_duplicate(ctx: TestContext) -> 
             let pool = ctx.pool.clone();
             let expected = ids.len() as i64;
             async move {
-                let stored: Option<i64> = sqlx::query_scalar!(
+                let stored = sqlx::query_scalar!(
                     "SELECT COUNT(*) FROM core.events WHERE source = 'restart-suite'"
                 )
                 .fetch_one(&pool)
-                .await?;
+                .await?
+                .expect("COUNT(*) should always return one row");
 
-                Ok::<bool, color_eyre::eyre::Error>(stored.unwrap_or(0) >= expected)
+                Ok::<bool, color_eyre::eyre::Error>(stored >= expected)
             }
         },
         Timeouts::SHORT,
@@ -193,12 +194,13 @@ async fn replaying_events_after_restart_does_not_duplicate(ctx: TestContext) -> 
             let pool = ctx.pool.clone();
             let expected = ids.len() as i64;
             async move {
-                let stored: Option<i64> = sqlx::query_scalar!(
+                let stored = sqlx::query_scalar!(
                     "SELECT COUNT(*) FROM core.events WHERE source = 'restart-suite'"
                 )
                 .fetch_one(&pool)
-                .await?;
-                Ok::<bool, color_eyre::eyre::Error>(stored.unwrap_or(0) >= expected)
+                .await?
+                .expect("COUNT(*) should always return one row");
+                Ok::<bool, color_eyre::eyre::Error>(stored >= expected)
             }
         },
         Timeouts::SHORT,
@@ -210,12 +212,13 @@ async fn replaying_events_after_restart_does_not_duplicate(ctx: TestContext) -> 
             let pool = ctx.pool.clone();
             let expected = ids.len() as i64;
             async move {
-                let stored: Option<i64> = sqlx::query_scalar!(
+                let stored = sqlx::query_scalar!(
                     "SELECT COUNT(*) FROM core.events WHERE source = 'restart-suite'"
                 )
                 .fetch_one(&pool)
-                .await?;
-                Ok::<bool, color_eyre::eyre::Error>(stored.unwrap_or(0) >= expected)
+                .await?
+                .expect("COUNT(*) should always return one row");
+                Ok::<bool, color_eyre::eyre::Error>(stored >= expected)
             }
         },
         Timeouts::SHORT,
@@ -223,14 +226,13 @@ async fn replaying_events_after_restart_does_not_duplicate(ctx: TestContext) -> 
     .await?;
 
     for id in ids {
-        let occurrences: Option<i64> =
-            sqlx::query_scalar("SELECT COUNT(*) FROM core.events WHERE id = $1::uuid")
+        let occurrences =
+            sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM core.events WHERE id = $1::uuid")
                 .bind(id)
                 .fetch_one(&ctx.pool)
                 .await?;
         assert_eq!(
-            occurrences.unwrap_or(0),
-            1,
+            occurrences, 1,
             "event {id} should remain unique after replay"
         );
     }

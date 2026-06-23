@@ -32,6 +32,10 @@ pub fn build(data: &[u8]) -> Result<FixtureHandle, String> {
         .map(|(i, line)| -> Result<DbusMessage, String> {
             let v: serde_json::Value = serde_json::from_str(line)
                 .map_err(|e| format!("dbus fixture line {i}: failed to parse JSON: {e}"))?;
+            let body_json = v
+                .get("body_json")
+                .ok_or_else(|| format!("dbus fixture line {i}: missing 'body_json' field"))?
+                .clone();
             Ok(DbusMessage {
                 interface: v["interface"]
                     .as_str()
@@ -46,7 +50,7 @@ pub fn build(data: &[u8]) -> Result<FixtureHandle, String> {
                     .ok_or_else(|| format!("dbus fixture line {i}: missing 'path' field"))?
                     .to_string(),
                 sender: v["sender"].as_str().map(std::string::ToString::to_string),
-                body_json: v["body_json"].clone(),
+                body_json,
             })
         })
         .collect::<Result<_, _>>()?;
@@ -55,8 +59,12 @@ pub fn build(data: &[u8]) -> Result<FixtureHandle, String> {
     // feed them through the dispatch function.
     let record_bytes: Vec<Vec<u8>> = messages
         .iter()
-        .map(|m| serde_json::to_vec(&m.body_json).unwrap_or_default())
-        .collect();
+        .enumerate()
+        .map(|(i, m)| {
+            serde_json::to_vec(&m.body_json)
+                .map_err(|e| format!("dbus fixture line {i}: failed to serialize body_json: {e}"))
+        })
+        .collect::<Result<_, _>>()?;
 
     Ok(FixtureHandle::in_memory(FixtureBinding::InMemoryRecords(
         record_bytes,
@@ -69,7 +77,10 @@ pub fn build(data: &[u8]) -> Result<FixtureHandle, String> {
 pub fn build_from_messages(messages: Vec<DbusMessage>) -> FixtureHandle {
     let record_bytes: Vec<Vec<u8>> = messages
         .iter()
-        .map(|m| serde_json::to_vec(&m.body_json).unwrap_or_default())
+        .map(|m| {
+            serde_json::to_vec(&m.body_json)
+                .expect("typed D-Bus fixture body_json should serialize to JSON bytes")
+        })
         .collect();
     FixtureHandle::in_memory(FixtureBinding::InMemoryRecords(record_bytes))
 }

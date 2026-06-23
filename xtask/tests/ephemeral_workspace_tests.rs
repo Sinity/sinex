@@ -34,7 +34,7 @@ fn run_xtask_in(ws: &EphemeralWorkspace, args: &[&str]) -> Result<std::process::
 /// A compile error in the ephemeral workspace causes `xtask check` to fail and
 /// records a `FAILED` invocation in the history DB.
 #[test]
-#[ignore = "spawns real cargo; run with xtask test --heavy"]
+#[ignore = "heavy: spawns real cargo; run with xtask test --heavy"]
 fn test_check_fails_on_compile_error_and_records_history() -> Result<()> {
     let ws = EphemeralWorkspace::new()?;
     ws.inject_compile_error("ws-lib")?;
@@ -72,7 +72,7 @@ fn test_check_fails_on_compile_error_and_records_history() -> Result<()> {
 /// `xtask check --lint` on a workspace with a clippy warning records a diagnostic
 /// in the history DB for the ws-lib package.
 #[test]
-#[ignore = "spawns real cargo; run with xtask test --heavy"]
+#[ignore = "heavy: spawns real cargo; run with xtask test --heavy"]
 fn test_check_lint_records_clippy_warning_in_history() -> Result<()> {
     let ws = EphemeralWorkspace::new()?;
     ws.inject_clippy_warning("ws-lib")?;
@@ -107,7 +107,7 @@ fn test_check_lint_records_clippy_warning_in_history() -> Result<()> {
 
 /// A clean workspace compiles successfully and records a success invocation.
 #[test]
-#[ignore = "spawns real cargo; run with xtask test --heavy"]
+#[ignore = "heavy: spawns real cargo; run with xtask test --heavy"]
 fn test_check_succeeds_on_clean_workspace() -> Result<()> {
     let ws = EphemeralWorkspace::new()?;
 
@@ -137,7 +137,7 @@ fn test_check_succeeds_on_clean_workspace() -> Result<()> {
 
 /// A format error causes `xtask check --full` to fail.
 #[test]
-#[ignore = "spawns real cargo; run with xtask test --heavy"]
+#[ignore = "heavy: spawns real cargo; run with xtask test --heavy"]
 fn test_check_full_fails_on_format_error() -> Result<()> {
     let ws = EphemeralWorkspace::new()?;
     ws.inject_format_error("ws-lib")?;

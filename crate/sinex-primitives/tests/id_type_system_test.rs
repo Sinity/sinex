@@ -24,7 +24,7 @@
 mod trybuild_support;
 
 #[test]
-#[ignore = "heavy: trybuild compile-failure (run via --heavy)"]
+#[ignore = "heavy: trybuild compile-failure, run with xtask test --heavy"]
 fn id_type_mismatch_is_compile_error() {
     // Compiles `compile_errors/id_type_mismatch.rs` and asserts it produces
     // a type-mismatch error. The `.stderr` file (auto-generated on first run

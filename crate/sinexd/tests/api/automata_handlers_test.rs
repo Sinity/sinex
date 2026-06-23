@@ -29,7 +29,10 @@ async fn insert_metric_gauge(
     value: f64,
     labels: serde_json::Value,
 ) -> TestResult<()> {
-    let mut labels = labels.as_object().cloned().unwrap_or_default();
+    let mut labels = labels
+        .as_object()
+        .cloned()
+        .ok_or_else(|| color_eyre::eyre::eyre!("metric labels fixture must be a JSON object"))?;
     labels.insert("module".to_string(), json!(module_name));
     labels.insert("automaton_model".to_string(), json!("transducer"));
     labels.insert(

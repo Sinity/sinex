@@ -125,12 +125,17 @@ impl ConcurrentLoadMetrics {
             } else {
                 0.0
             };
-            let operation_latencies = latencies.get(operation_type).cloned().unwrap_or_default();
-            let average_latency = if operation_latencies.is_empty() {
-                StdDuration::from_millis(0)
-            } else {
-                operation_latencies.iter().sum::<StdDuration>() / operation_latencies.len() as u32
-            };
+            let operation_latencies = latencies.get(operation_type).cloned().unwrap_or_else(|| {
+                panic!(
+                    "operation {operation_type} recorded {total} outcomes but no latency samples"
+                )
+            });
+            assert!(
+                !operation_latencies.is_empty(),
+                "operation {operation_type} recorded {total} outcomes but no latency samples"
+            );
+            let average_latency =
+                operation_latencies.iter().sum::<StdDuration>() / operation_latencies.len() as u32;
             let mut sorted_latencies = operation_latencies;
             sorted_latencies.sort();
             let percentile_latency = |percentile: f64| {

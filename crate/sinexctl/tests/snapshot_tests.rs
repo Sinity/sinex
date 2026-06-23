@@ -14,27 +14,65 @@ fn sinexctl() -> Command {
 
 #[sinex_test]
 async fn snapshot_structured_completion_shape() -> TestResult<()> {
+    let line = "sinexctl events source:wm";
+    let cursor = line.len().to_string();
     let output = sinexctl()
         .args([
             "_complete",
             "--line",
-            "sinexctl events source:wm",
+            line,
             "--cursor",
-            "24",
+            cursor.as_str(),
             "--format",
             "json",
         ])
         .output()
         .expect("Failed to run structured completion endpoint");
 
-    let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(
-        stdout.contains("\"candidates\""),
-        "Should return candidates"
+        output.status.success(),
+        "_complete json should succeed; stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
     );
-    assert!(
-        stdout.contains("source:wm.hyprland"),
-        "Should complete sources"
+
+    let response: serde_json::Value = serde_json::from_slice(&output.stdout)
+        .expect("_complete --format json must emit a single JSON document");
+    assert_eq!(response["schema_version"], 1);
+    assert_eq!(response["line"], line);
+    assert_eq!(response["cursor"], line.len());
+    assert_eq!(response["active_token"], "source:wm");
+
+    let candidates = response["candidates"]
+        .as_array()
+        .expect("completion response must contain an array of candidates");
+    let hyprland = candidates
+        .iter()
+        .find(|candidate| candidate["value"] == "source:wm.hyprland")
+        .expect("structured completion should include wm.hyprland source candidate");
+
+    for field in [
+        "value",
+        "insert",
+        "replace_start",
+        "replace_end",
+        "display",
+        "kind",
+        "group",
+        "description",
+        "stale",
+        "danger",
+        "privacy",
+        "score",
+    ] {
+        assert!(
+            hyprland.get(field).is_some(),
+            "completion candidate must expose stable `{field}` field: {hyprland}"
+        );
+    }
+    assert_eq!(hyprland["stale"], true);
+    assert_eq!(
+        hyprland["privacy"],
+        "schema-key-only; payload values not sampled"
     );
     Ok(())
 }
@@ -46,19 +84,15 @@ async fn test_config_show_json_is_valid() -> TestResult<()> {
         .output()
         .expect("Failed to run sinexctl config show");
 
+    assert!(
+        output.status.success(),
+        "config show -f json should succeed; stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
     let stdout = String::from_utf8_lossy(&output.stdout);
-
-    // The output may have additional info after the JSON, so extract just the JSON part
-    // JSON ends with a closing brace
-    let json_str = if let Some(end_idx) = stdout.rfind('}') {
-        &stdout[..=end_idx]
-    } else {
-        &stdout
-    };
-
-    // Verify output is valid JSON
-    let json: serde_json::Value =
-        serde_json::from_str(json_str).expect("Output should be valid JSON");
+    let json: serde_json::Value = serde_json::from_str(stdout.trim())
+        .expect("config show -f json must emit one JSON document with no trailing prose");
 
     // Verify expected fields exist
     assert!(json.get("rpc_url").is_some(), "Should have rpc_url field");

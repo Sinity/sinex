@@ -7,7 +7,7 @@
 mod trybuild_support;
 
 #[test]
-#[ignore = "heavy: trybuild compile-failure (run via --heavy)"]
+#[ignore = "heavy: trybuild compile-failure, run with xtask test --heavy"]
 fn event_builder_requires_provenance_before_build() {
     let t = trybuild_support::cases();
     t.compile_fail("tests/event_builder_typestate/no_provenance_build.rs");
