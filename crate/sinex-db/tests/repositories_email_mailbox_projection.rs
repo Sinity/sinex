@@ -29,7 +29,20 @@ async fn email_mailbox_projection_merges_message_thread_and_attachment_events(
             "from": ["Sender <sender@example.com>"],
             "to": ["Receiver <receiver@example.com>"],
             "body_bytes": 42,
-            "attachment_count": 2
+            "attachment_count": 2,
+            "provider_material": {
+                "source": "imap_provider_body_snapshot",
+                "source_uri": "imap://inbox/uidvalidity/700/uid/40",
+                "byte_range": {
+                    "kind": "imap_provider_record_snapshot",
+                    "start": 0,
+                    "end": 128
+                },
+                "raw_message_bytes": 128,
+                "raw_message_blake3": "fixture-hash",
+                "raw_message_preview": "Message-ID: <projection@example.com>\r\n\r\nbody",
+                "material_policy_ref": "operator.email-mailbox.body-private"
+            }
         }),
     })
     .await?;
@@ -83,6 +96,20 @@ async fn email_mailbox_projection_merges_message_thread_and_attachment_events(
     assert_eq!(
         row.attachment_policy_refs,
         json!(["operator.email-mailbox.attachment-deferred"])
+    );
+    assert_eq!(
+        row.provider_material
+            .as_ref()
+            .and_then(|value| value.pointer("/source"))
+            .and_then(serde_json::Value::as_str),
+        Some("imap_provider_body_snapshot")
+    );
+    assert_eq!(
+        row.provider_material
+            .as_ref()
+            .and_then(|value| value.pointer("/material_policy_ref"))
+            .and_then(serde_json::Value::as_str),
+        Some("operator.email-mailbox.body-private")
     );
 
     let summaries = repo.summarize_by_source(&source_id).await?;
