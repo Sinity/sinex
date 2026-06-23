@@ -412,7 +412,15 @@ impl<I: SourceDriver> SourceDriverRuntime<I> {
 
         // 2. Try NATS KV
         if let Some(cm) = &self.checkpoint_manager {
-            let ckpt = cm.load_checkpoint().await?;
+            let mut ckpt = cm.load_checkpoint().await?;
+            if matches!(ckpt.checkpoint, Checkpoint::None)
+                && ckpt.data.is_none()
+                && !self.source.capabilities().supports_concurrent
+                && let Some(peer_ckpt) = cm.load_latest_peer_checkpoint().await?
+            {
+                ckpt = peer_ckpt;
+                ckpt.revision = 0;
+            }
             match ckpt.data {
                 Some(data) => {
                     self.state = decode_checkpoint_data(
@@ -475,6 +483,19 @@ impl<I: SourceDriver> SourceDriverRuntime<I> {
         }
 
         if let Some(cm) = &self.checkpoint_manager {
+            if self.state.revision == 0 {
+                let existing_state = cm.load_checkpoint().await?;
+                if existing_state.processed_count > ckpt_state.processed_count {
+                    ckpt_state.revision = existing_state.revision;
+                    ckpt_state.processed_count = existing_state.processed_count;
+                }
+            }
+            if ckpt_state.revision == 0
+                && let Some(peer_state) = cm.load_latest_peer_checkpoint().await?
+                && peer_state.processed_count > ckpt_state.processed_count
+            {
+                ckpt_state.processed_count = peer_state.processed_count;
+            }
             self.state.revision = cm.save_checkpoint(&ckpt_state).await?;
             ckpt_state.revision = self.state.revision;
             self.finalize_restored_hot_reload_file(&ckpt_state).await?;
@@ -1178,6 +1199,60 @@ mod tests {
         assert!(
             keys.try_next().await?.is_some(),
             "checkpoint KV entry should be recreated when only a stale hot reload file exists"
+        );
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn load_state_adopts_latest_peer_checkpoint_for_non_concurrent_source(
+        ctx: TestContext,
+    ) -> TestResult<()> {
+        let ctx = ctx.with_nats().shared().await?;
+        let kv = ctx.checkpoint_kv().await?;
+        let peer_manager = CheckpointManager::new(
+            kv.clone(),
+            "source-adapter-test".to_string(),
+            "default".to_string(),
+            "host-a-12345".to_string(),
+        );
+        peer_manager
+            .save_checkpoint(&CheckpointState {
+                checkpoint: Checkpoint::stream("peer-cursor", None),
+                processed_count: 42,
+                last_activity: Timestamp::now(),
+                data: Some(serde_json::to_value(SourceDriverState {
+                    user_state: TestState,
+                    last_checkpoint: Timestamp::now(),
+                    revision: 0,
+                    checkpoint: Checkpoint::stream("peer-cursor", None),
+                })?),
+                version: 2,
+                revision: 0,
+            })
+            .await?;
+
+        let stable_manager = Arc::new(CheckpointManager::new(
+            kv,
+            "source-adapter-test".to_string(),
+            "default".to_string(),
+            "source-adapter-test".to_string(),
+        ));
+        let mut adapter = SourceDriverRuntime::new(TestSource);
+        adapter.checkpoint_manager = Some(Arc::clone(&stable_manager));
+
+        adapter.load_state().await?;
+
+        assert_eq!(adapter.state.revision, 0);
+        assert_eq!(
+            adapter.state.checkpoint,
+            Checkpoint::stream("peer-cursor", None)
+        );
+
+        adapter.save_state(false).await?;
+        let stable_checkpoint = stable_manager.load_checkpoint().await?;
+        assert_eq!(
+            stable_checkpoint.checkpoint,
+            Checkpoint::stream("peer-cursor", None)
         );
         Ok(())
     }

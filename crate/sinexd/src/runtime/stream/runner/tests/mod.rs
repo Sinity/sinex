@@ -246,6 +246,54 @@ async fn automaton_consumer_config_keeps_raw_buffering_for_db_backed_confirmatio
     Ok(())
 }
 
+#[sinex_test]
+async fn checkpoint_consumer_name_is_stable_for_sources() -> TestResult<()> {
+    let raw_config = HashMap::new();
+
+    let consumer_name = RuntimeRunner::<RuntimeTestModule>::checkpoint_consumer_name(
+        ModuleKind::Source,
+        &raw_config,
+        "system.journald",
+        "host-a",
+    );
+
+    assert_eq!(consumer_name, "system.journald");
+    Ok(())
+}
+
+#[sinex_test]
+async fn checkpoint_consumer_name_keeps_process_identity_for_automata() -> TestResult<()> {
+    let raw_config = HashMap::new();
+
+    let consumer_name = RuntimeRunner::<RuntimeTestModule>::checkpoint_consumer_name(
+        ModuleKind::Automaton,
+        &raw_config,
+        "sinex.entity-extractor",
+        "host-a",
+    );
+
+    assert_eq!(consumer_name, format!("host-a-{}", std::process::id()));
+    Ok(())
+}
+
+#[sinex_test]
+async fn configured_checkpoint_consumer_name_overrides_source_default() -> TestResult<()> {
+    let raw_config = HashMap::from([(
+        "consumer_name".to_string(),
+        serde_json::json!("stable-consumer"),
+    )]);
+
+    let consumer_name = RuntimeRunner::<RuntimeTestModule>::checkpoint_consumer_name(
+        ModuleKind::Source,
+        &raw_config,
+        "system.journald",
+        "host-a",
+    );
+
+    assert_eq!(consumer_name, "stable-consumer");
+    Ok(())
+}
+
 impl RuntimeModule for FailingShutdownModule {
     type Config = ();
 
