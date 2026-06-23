@@ -615,6 +615,19 @@ async fn package_completeness_report_is_keyed_by_package_and_mode() -> TestResul
             .any(|field| field == "resource_budget_spec"),
         "runtime bindings derive ResourceBudgetSpec from the current ResourceProfile model"
     );
+    let operations_requirement = mode
+        .requirements
+        .iter()
+        .find(|requirement| requirement.id == "operations")
+        .expect("operations requirement row should be present");
+    assert_eq!(
+        operations_requirement.owner_file,
+        "crate/sinex-primitives/src/source_contracts.rs"
+    );
+    assert_eq!(
+        operations_requirement.next_action,
+        "add operation capability refs for operator actions"
+    );
     Ok(())
 }
 
