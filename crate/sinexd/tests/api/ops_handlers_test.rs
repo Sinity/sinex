@@ -1983,6 +1983,21 @@ async fn ops_start_imports_takeout_zip_for_staged_email_sync(ctx: TestContext) -
     assert_eq!(preview["staged_sync_material_count"], 1);
     assert_eq!(preview["staged_sync_record_count"], 2);
     assert_eq!(preview["admitted_event_count"], 4);
+
+    let projections = ctx
+        .pool()
+        .email_mailbox_projections()
+        .list_current_by_source("email.mailbox")
+        .await?;
+    assert_eq!(projections.len(), 2);
+    assert!(projections.iter().all(|projection| {
+        projection.mode_id == "source:email.mailbox.mbox-staged"
+            && projection.body_bytes > 0
+            && projection.attachment_count == 0
+            && projection.attachment_observed_count == 0
+            && projection.last_message_event_id.is_some()
+            && projection.last_thread_event_id.is_some()
+    }));
     Ok(())
 }
 
