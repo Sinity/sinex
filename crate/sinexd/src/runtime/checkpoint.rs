@@ -457,6 +457,64 @@ impl CheckpointManager {
         Ok(CheckpointState::default())
     }
 
+    /// Load the most recent checkpoint written by another consumer in this
+    /// module/group.
+    ///
+    /// This supports migration away from unstable per-process source consumer
+    /// names. It is intentionally opt-in at call sites because automata and
+    /// concurrent consumers must not silently adopt each other's cursors.
+    pub async fn load_latest_peer_checkpoint(&self) -> RuntimeResult<Option<CheckpointState>> {
+        let module = sanitize_kv_key_component(&self.module_name);
+        let consumer_group = sanitize_kv_key_component(&self.consumer_group);
+        let consumer = sanitize_kv_key_component(&self.consumer_name);
+        let mut keys = self.kv.keys().await.map_err(|error| {
+            SinexError::checkpoint("Failed to list checkpoint keys for peer adoption")
+                .with_source(error)
+        })?;
+        let mut latest: Option<(String, CheckpointState)> = None;
+
+        while let Some(key) = keys.try_next().await.map_err(|error| {
+            SinexError::checkpoint("Failed to read checkpoint key for peer adoption")
+                .with_source(error)
+        })? {
+            let Some((key_module, key_group, key_consumer)) = parse_checkpoint_key(&key) else {
+                continue;
+            };
+            if key_module != module || key_group != consumer_group || key_consumer == consumer {
+                continue;
+            }
+            let Some(state) = self.load_checkpoint_for_key(&key).await? else {
+                continue;
+            };
+            if matches!(state.checkpoint, Checkpoint::None) && state.data.is_none() {
+                continue;
+            }
+            if latest
+                .as_ref()
+                .is_none_or(|(_, current)| state.last_activity > current.last_activity)
+            {
+                latest = Some((key, state));
+            }
+        }
+
+        if let Some((key, state)) = latest {
+            warn!(
+                target: "sinex_metrics",
+                metric = "runtime.checkpoint_peer_adoptions_total",
+                module = %self.module_name,
+                consumer_group = %self.consumer_group,
+                consumer_name = %self.consumer_name,
+                adopted_key = %key,
+                adopted_revision = state.revision,
+                adopted_processed_count = state.processed_count,
+                "Adopting latest peer checkpoint for source consumer migration"
+            );
+            Ok(Some(state))
+        } else {
+            Ok(None)
+        }
+    }
+
     async fn load_checkpoint_for_key(&self, key: &str) -> RuntimeResult<Option<CheckpointState>> {
         // Retry transient NATS KV failures with exponential backoff. Startup is
         // the most likely time for transient unavailability (many concurrent KV

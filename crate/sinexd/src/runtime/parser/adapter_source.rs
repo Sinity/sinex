@@ -35,7 +35,8 @@
 //! ```json
 //! {
 //!   "path": "/path/to/file",
-//!   "binding_flags": { "private_mode_active": false }
+//!   "binding_flags": { "private_mode_active": false },
+//!   "continuous_start_position": "latest"
 //! }
 //! ```
 //!
@@ -106,12 +107,13 @@ use crate::runtime::RuntimeResult;
 use crate::runtime::acquisition_manager::{
     AcquisitionManager, AppendStreamAcquirer, RotationPolicy,
 };
+use crate::runtime::checkpoint::{CheckpointManager, CheckpointState};
 use crate::runtime::parser::adapters::{LatestSqliteSnapshotEvidence, SqliteSnapshotLane};
 use crate::runtime::parser::{
-    BindingConfig, DriftEvent, InputShapeAdapter, InputShapeAdapterExt, MaterialParser,
-    SourceRecord, SourceRecordFingerprint,
+    BindingConfig, DriftEvent, InitialStreamPosition, InputShapeAdapter, InputShapeAdapterExt,
+    MaterialParser, SourceRecord, SourceRecordFingerprint,
 };
-use crate::runtime::source_driver::SourceDriver;
+use crate::runtime::source_driver::{SourceDriver, SourceDriverState};
 use crate::runtime::stream::{
     Checkpoint, ContinuousStart, RuntimeCapabilities, RuntimeContext, ScanArgs, ScanReport,
     TimeHorizon,
@@ -121,6 +123,7 @@ use std::sync::Arc;
 
 const MAX_RECENT_INPUT_DRIFTS: usize = 16;
 const PRIVATE_MODE_CONTROL_SUBJECT: &str = "sinex.control.privacy.private_mode";
+const STREAM_CHECKPOINT_PERSIST_INTERVAL: Duration = Duration::from_secs(5);
 
 // =============================================================================
 // Typed runtime config — wraps adapter config + optional binding flags
@@ -147,6 +150,7 @@ const PRIVATE_MODE_CONTROL_SUBJECT: &str = "sinex.control.privacy.private_mode";
 /// {
 ///   "path": "/home/user/.weechat/logs/irc.log",
 ///   "binding_flags": { "private_mode_active": false },
+///   "continuous_start_position": "latest",
 ///   "continuous_poll_interval_secs": 30,
 ///   "private_mode_state_dir": "/var/lib/sinex",
 ///   "private_mode_source_class": "desktop",
@@ -171,6 +175,12 @@ pub struct AdapterSourceConfig {
     /// this interval before polling again. Defaults to 30 seconds.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub continuous_poll_interval_secs: Option<u64>,
+
+    /// Continuous startup policy used only when the source has no checkpoint
+    /// cursor yet. Explicit historical scans and checkpointed live restarts use
+    /// the normal adapter cursor path.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub continuous_start_position: Option<InitialStreamPosition>,
 
     /// Optional state root used to derive `private_mode_active` from the
     /// persisted runtime private-mode file.
@@ -391,6 +401,16 @@ where
     /// Runtime handles captured during `initialize`.
     runtime: Option<RuntimeContext>,
 
+    /// Runtime checkpoint manager used to durably persist streaming cursors
+    /// without waiting for continuous mode to exit.
+    checkpoint_manager: Option<Arc<CheckpointManager>>,
+
+    /// Last NATS KV revision observed from an adapter-owned checkpoint save.
+    checkpoint_revision: u64,
+
+    /// Wall-clock throttle for best-effort streaming checkpoint writes.
+    last_stream_checkpoint_persist: Option<Instant>,
+
     /// Long-lived stream acquirer that grows one source material across many
     /// drain cycles. Rotates automatically at the configured size/time limits.
     /// Initialized lazily on the first drain call after `initialize`.
@@ -464,6 +484,9 @@ where
             runtime_config: None,
             binding_config: BindingConfig::default(),
             runtime: None,
+            checkpoint_manager: None,
+            checkpoint_revision: 0,
+            last_stream_checkpoint_persist: None,
             stream_acquirer: None,
             acquisition_manager: None,
             rotation_policy: RotationPolicy::default(),
@@ -729,6 +752,7 @@ where
         &mut self,
         cursor: Option<A::Cursor>,
         state: &mut AdapterModuleState<A::Cursor>,
+        initial_position: Option<InitialStreamPosition>,
     ) -> RuntimeResult<u64> {
         self.refresh_binding_config()?;
         if self.binding_config.is_truthy("private_mode_active") {
@@ -765,6 +789,27 @@ where
             crate::runtime::SinexError::validation("invalid source_id in AdapterBackedSource")
                 .with_std_error(&e)
         })?;
+
+        let effective_config;
+        let config = if cursor.is_none()
+            && let Some(position) = initial_position
+        {
+            effective_config = self
+                .adapter
+                .configure_initial_stream_position(config, position)
+                .map_err(|e| {
+                    crate::runtime::SinexError::configuration(
+                        "adapter rejected requested initial stream position",
+                    )
+                    .with_context("source_id", self.source_id)
+                    .with_context("adapter_kind", A::KIND.as_str())
+                    .with_context("initial_position", format!("{position:?}"))
+                    .with_context("error", e.to_string())
+                })?;
+            &effective_config
+        } else {
+            config
+        };
 
         self.observe_input_fingerprint(config, state, &source_id);
 
@@ -865,6 +910,7 @@ where
                 .await;
             if let Some(cursor) = next_cursor {
                 state.cursor = Some(cursor);
+                self.persist_stream_checkpoint_if_due(state, false).await;
             }
 
             let ctx = ParserContext {
@@ -915,6 +961,8 @@ where
                             );
                         } else {
                             emitted += 1;
+                            state.total_events_emitted =
+                                state.total_events_emitted.saturating_add(1);
                         }
                     }
                     Err(e) => {
@@ -932,7 +980,7 @@ where
         // cycles. Finalization happens when run_continuous exits (shutdown signal)
         // or when the source is dropped.
 
-        state.total_events_emitted += emitted;
+        self.persist_stream_checkpoint_if_due(state, true).await;
         debug!(
             source = self.source_id,
             emitted,
@@ -940,6 +988,87 @@ where
             "drain_adapter complete"
         );
         Ok(emitted)
+    }
+
+    async fn persist_stream_checkpoint_if_due(
+        &mut self,
+        state: &AdapterModuleState<A::Cursor>,
+        force: bool,
+    ) {
+        if state.cursor.is_none() {
+            return;
+        }
+
+        let now = Instant::now();
+        if !force
+            && self
+                .last_stream_checkpoint_persist
+                .is_some_and(|last| now.duration_since(last) < STREAM_CHECKPOINT_PERSIST_INTERVAL)
+        {
+            return;
+        }
+
+        let Some(checkpoint_manager) = self.checkpoint_manager.clone() else {
+            return;
+        };
+
+        let checkpoint = cursor_to_checkpoint(state);
+        let timestamp = Timestamp::now();
+        let source_state = SourceDriverState {
+            user_state: state.clone(),
+            last_checkpoint: timestamp,
+            revision: self.checkpoint_revision,
+            checkpoint: checkpoint.clone(),
+        };
+        let data = match serde_json::to_value(&source_state) {
+            Ok(data) => data,
+            Err(error) => {
+                warn!(
+                    source = self.source_id,
+                    error = %error,
+                    "failed to encode adapter stream checkpoint"
+                );
+                return;
+            }
+        };
+
+        let mut checkpoint_state = CheckpointState {
+            checkpoint,
+            processed_count: state.total_events_emitted,
+            last_activity: timestamp,
+            data: Some(data),
+            version: 2,
+            revision: self.checkpoint_revision,
+        };
+
+        if checkpoint_state.revision == 0 {
+            match checkpoint_manager.load_checkpoint().await {
+                Ok(existing) => {
+                    checkpoint_state.revision = existing.revision;
+                }
+                Err(error) => {
+                    warn!(
+                        source = self.source_id,
+                        error = %error,
+                        "failed to inspect current checkpoint revision before streaming save"
+                    );
+                }
+            }
+        }
+
+        match checkpoint_manager.save_checkpoint(&checkpoint_state).await {
+            Ok(revision) => {
+                self.checkpoint_revision = revision;
+                self.last_stream_checkpoint_persist = Some(now);
+            }
+            Err(error) => {
+                warn!(
+                    source = self.source_id,
+                    error = %error,
+                    "failed to persist adapter stream checkpoint"
+                );
+            }
+        }
     }
 }
 
@@ -1031,6 +1160,7 @@ where
             })?;
 
         self.acquisition_manager = Some(Arc::new(acq));
+        self.checkpoint_manager = Some(runtime.checkpoint_manager());
         self.binding_config = config.to_binding_config_for_source(self.source_id)?;
         self.poll_interval = config.continuous_poll_interval()?;
         self.runtime_config = Some(config.clone());
@@ -1108,7 +1238,7 @@ where
         let start = Instant::now();
         // Snapshot: drain from cursor (resume after last known position).
         let cursor = state.cursor.clone();
-        let emitted = self.drain_adapter(cursor, state).await?;
+        let emitted = self.drain_adapter(cursor, state, None).await?;
         let checkpoint = cursor_to_checkpoint(state);
 
         Ok(ScanReport {
@@ -1135,7 +1265,7 @@ where
         // the source was offline). The adapter's cursor is the authoritative
         // resume position.
         let cursor = state.cursor.clone();
-        let emitted = self.drain_adapter(cursor, state).await?;
+        let emitted = self.drain_adapter(cursor, state, None).await?;
         let checkpoint = cursor_to_checkpoint(state);
 
         Ok(ScanReport {
@@ -1178,7 +1308,15 @@ where
             }
 
             let cursor = state.cursor.clone();
-            match self.drain_adapter(cursor, state).await {
+            let initial_position = cursor
+                .is_none()
+                .then(|| {
+                    self.runtime_config
+                        .as_ref()
+                        .and_then(|config| config.continuous_start_position)
+                })
+                .flatten();
+            match self.drain_adapter(cursor, state, initial_position).await {
                 Ok(n) => total_emitted += n,
                 Err(e) => {
                     warn!(
@@ -1835,6 +1973,23 @@ mod tests {
     }
 
     #[sinex_test]
+    async fn adapter_source_config_keeps_continuous_start_policy_out_of_adapter_json()
+    -> xtask::sandbox::TestResult<()> {
+        let config: AdapterSourceConfig = serde_json::from_value(json!({
+            "path": "/tmp/source.log",
+            "continuous_start_position": "latest"
+        }))?;
+
+        assert_eq!(
+            config.continuous_start_position,
+            Some(InitialStreamPosition::Latest)
+        );
+        assert_eq!(config.adapter["path"], "/tmp/source.log");
+        assert!(config.adapter.get("continuous_start_position").is_none());
+        Ok(())
+    }
+
+    #[sinex_test]
     async fn adapter_source_config_validates_continuous_poll_interval()
     -> xtask::sandbox::TestResult<()> {
         let default_config = AdapterSourceConfig::default();
@@ -1990,7 +2145,7 @@ mod tests {
         source
             .initialize(AdapterSourceConfig::default(), &runtime, &mut state)
             .await?;
-        let emitted = source.drain_adapter(None, &mut state).await?;
+        let emitted = source.drain_adapter(None, &mut state, None).await?;
 
         assert_eq!(emitted, 0);
         assert!(
@@ -2022,7 +2177,7 @@ mod tests {
         source
             .initialize(AdapterSourceConfig::default(), &runtime, &mut state)
             .await?;
-        let emitted = source.drain_adapter(None, &mut state).await?;
+        let emitted = source.drain_adapter(None, &mut state, None).await?;
         let event = event_receiver
             .recv()
             .await

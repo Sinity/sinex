@@ -701,8 +701,8 @@ in
                 };
                 materialSlicesMaxAckPending = mkOption {
                   type = positive;
-                  default = 1000;
-                  description = "JetStream max_ack_pending for the material slices consumer.";
+                  default = 32;
+                  description = "JetStream max_ack_pending for the material frames consumer.";
                 };
                 resources = mkOption {
                   type = resourceModule {
@@ -2199,7 +2199,7 @@ in
       stateRoot = cfg.stateRoot;
       runtimeDir = "${stateRoot}/run";
       spoolBase = "${stateRoot}/spool";
-      runtimeSpool = "${spoolBase}/runtime modules";
+      runtimeSpool = "${spoolBase}/runtime";
       ingestSpool = cfg.core.event_engine.spoolDir;
       logDir = cfg.observability.logDir;
       blobDir = cfg.storage.blob.repositoryPath;

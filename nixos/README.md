@@ -923,11 +923,15 @@ LIMIT 10;
 SELECT set_chunk_time_interval('core.events', INTERVAL '12 hours');
 ```
 
-### Compression Policy
+### Compression
 
 TimescaleDB compression can achieve 90-95% storage reduction on time-series data.
+The NixOS module configures `core.events` for manual compression only. Do not add
+an automatic compression policy for `core.events`: the background worker takes
+strong locks on the hot event hypertable and can block schema convergence or live
+ingest during boot.
 
-**Enable compression**:
+**Compression settings**:
 ```sql
 -- Configure compression settings
 ALTER TABLE core.events SET (
@@ -935,9 +939,6 @@ ALTER TABLE core.events SET (
     timescaledb.compress_orderby = 'ts_coided DESC, id',
     timescaledb.compress_segmentby = 'source, event_type'
 );
-
--- Add automatic compression for chunks older than 7 days
-SELECT add_compression_policy('core.events', INTERVAL '7 days');
 ```
 
 **Compression considerations**:

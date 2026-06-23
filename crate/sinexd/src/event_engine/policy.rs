@@ -850,6 +850,34 @@ impl PolicyEngine {
         value: JsonValue,
         context: DisclosureContext,
     ) -> DisclosureDecision {
+        self.disclose_json_value_with_identity(value, context, None, None)
+            .await
+    }
+
+    /// Apply operator disclosure policy to generated JSON with source/type identity.
+    ///
+    /// Some operator destinations expose derived JSON rather than a persisted
+    /// `Event`. Supplying the intended event source/type keeps field-scoped
+    /// policy active for those generated payloads instead of falling back to
+    /// only globally-scoped rules.
+    pub async fn disclose_json_value_for_event(
+        &self,
+        value: JsonValue,
+        context: DisclosureContext,
+        event_source: &str,
+        event_type: &str,
+    ) -> DisclosureDecision {
+        self.disclose_json_value_with_identity(value, context, Some(event_source), Some(event_type))
+            .await
+    }
+
+    async fn disclose_json_value_with_identity(
+        &self,
+        value: JsonValue,
+        context: DisclosureContext,
+        event_source: Option<&str>,
+        event_type: Option<&str>,
+    ) -> DisclosureDecision {
         self.ensure_fresh().await;
         let original = value.clone();
         let rules = self.rules.read().await.clone();
@@ -860,13 +888,23 @@ impl PolicyEngine {
         let mut result = value;
         let mut policy_refs = Vec::new();
         for scope in &rules.scopes {
-            if scope.event_source.is_none() && scope.event_type.is_none() {
+            if disclosure_scope_matches(
+                scope.event_source.as_deref(),
+                scope.event_type.as_deref(),
+                event_source,
+                event_type,
+            ) {
                 policy_refs.extend(scope.policy_refs.iter().cloned());
                 result = apply_scoped_engine_to_json(result, scope);
             }
         }
         for rule in &rules.external_rules {
-            if rule.event_source.is_none() && rule.event_type.is_none() {
+            if disclosure_scope_matches(
+                rule.event_source.as_deref(),
+                rule.event_type.as_deref(),
+                event_source,
+                event_type,
+            ) {
                 policy_refs.push(rule.name.clone());
                 result = apply_external_rule_to_json(&self.http_client, result, rule).await;
             }
@@ -880,6 +918,25 @@ impl PolicyEngine {
             .await
             .value
     }
+}
+
+fn disclosure_scope_matches(
+    rule_source: Option<&str>,
+    rule_event_type: Option<&str>,
+    event_source: Option<&str>,
+    event_type: Option<&str>,
+) -> bool {
+    let source_match = match (rule_source, event_source) {
+        (None, _) => true,
+        (Some(rule), Some(source)) => rule == source,
+        (Some(_), None) => false,
+    };
+    let type_match = match (rule_event_type, event_type) {
+        (None, _) => true,
+        (Some(rule), Some(kind)) => rule == kind,
+        (Some(_), None) => false,
+    };
+    source_match && type_match
 }
 
 fn recognizer_http_client() -> Result<reqwest::Client> {
@@ -2000,6 +2057,117 @@ mod tests {
             event.payload["filename"].as_str(),
             Some("signed-secret.pdf"),
             "presentation-time disclosure must not mutate stored event payload"
+        );
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn email_generated_json_disclosure_keeps_scoped_policy_across_destinations(
+        ctx: TestContext,
+    ) -> TestResult<()> {
+        let pool = ctx.pool();
+        for (name, matcher, label, field_path) in [
+            (
+                "email-generated-subject",
+                "GENERATED_SUBJECT_SECRET",
+                "<EMAIL_SUBJECT>",
+                "/messages/0/subject",
+            ),
+            (
+                "email-generated-recipient",
+                "generated-recipient@example.test",
+                "<EMAIL_RECIPIENT>",
+                "/messages/0/to/0",
+            ),
+            (
+                "email-generated-material",
+                "generated-material-secret",
+                "<EMAIL_MATERIAL>",
+                "/material_exports/0/raw_message_preview",
+            ),
+        ] {
+            insert_scoped_rule(
+                pool,
+                name,
+                matcher,
+                label,
+                "email",
+                "email.message.received",
+                field_path,
+            )
+            .await?;
+        }
+
+        let engine = PolicyEngine::load(pool.clone()).await?;
+        for context in [
+            DisclosureContext::Export,
+            DisclosureContext::Log,
+            DisclosureContext::Completion,
+            DisclosureContext::Telemetry,
+        ] {
+            let generated = serde_json::json!({
+                "schema": "sinex.email.mailbox.export.metadata.v1",
+                "messages": [{
+                    "subject": "GENERATED_SUBJECT_SECRET roadmap",
+                    "to": ["generated-recipient@example.test"],
+                    "body_bytes": 1024,
+                }],
+                "material_exports": [{
+                    "raw_message_preview": "prefix generated-material-secret suffix",
+                    "raw_message_bytes": 2048,
+                }],
+            });
+
+            let decision = engine
+                .disclose_json_value_for_event(
+                    generated,
+                    context,
+                    "email",
+                    "email.message.received",
+                )
+                .await;
+            let disclosed = serde_json::to_string(&decision.value)?;
+            assert!(
+                decision.changed,
+                "generated email JSON should be redacted for {context:?}"
+            );
+            for forbidden in [
+                "GENERATED_SUBJECT_SECRET",
+                "generated-recipient@example.test",
+                "generated-material-secret",
+            ] {
+                assert!(
+                    !disclosed.contains(forbidden),
+                    "generated email JSON leaked `{forbidden}` for {context:?}: {disclosed}"
+                );
+            }
+            for marker in ["<EMAIL_SUBJECT>", "<EMAIL_RECIPIENT>", "<EMAIL_MATERIAL>"] {
+                assert!(
+                    disclosed.contains(marker),
+                    "generated email JSON should contain marker `{marker}` for {context:?}: {disclosed}"
+                );
+            }
+            assert_eq!(
+                decision.caveats.len(),
+                3,
+                "each scoped generated email policy should surface for {context:?}"
+            );
+        }
+
+        let untyped = engine
+            .disclose_json_value(
+                serde_json::json!({
+                    "messages": [{
+                        "subject": "GENERATED_SUBJECT_SECRET roadmap",
+                        "to": ["generated-recipient@example.test"],
+                    }],
+                }),
+                DisclosureContext::Export,
+            )
+            .await;
+        assert!(
+            !untyped.changed,
+            "untyped generated JSON must not promote email-scoped rules globally"
         );
         Ok(())
     }

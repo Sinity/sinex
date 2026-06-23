@@ -936,16 +936,15 @@ async fn configure_timescaledb(pool: &PgPool) -> Result<(), ApplyError> {
     )
     .await?;
 
-    // Enable native compression. Remove any existing policy that used compress_after
-    // (which fails on UUID-partitioned hypertables because policy_compression's CASE has
-    // no uuid branch), then add the corrected compress_created_before policy.
+    // Enable native compression for manual maintenance, but do not install an
+    // automatic compression policy. The background worker takes strong locks on
+    // core.events and can starve boot-time schema convergence and live ingest.
     execute_sql(pool, Events::enable_compression_sql()).await?;
     execute_sql(
         pool,
         "SELECT remove_compression_policy('core.events', if_exists => true)",
     )
     .await?;
-    execute_sql(pool, Events::add_compression_policy_sql()).await?;
 
     execute_sql(
         pool,

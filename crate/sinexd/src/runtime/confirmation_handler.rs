@@ -19,6 +19,10 @@ use tokio::sync::RwLock;
 
 const DEFAULT_CONFIRMATION_BUFFER_PENDING_BYTES: Bytes = Bytes::from_mebibytes(512);
 const CONFIRMATION_BUFFER_WARNING_FILL_PCT: usize = 80;
+const PAYLOAD_BYTES_REJECTION_REDELIVERY_DELAY: std::time::Duration =
+    std::time::Duration::from_secs(2);
+const EVENT_CAPACITY_REJECTION_REDELIVERY_DELAY: std::time::Duration =
+    std::time::Duration::from_secs(30);
 
 /// Processing model for automata
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -134,10 +138,10 @@ impl ConfirmationBufferInsertDecision {
         }
         let delay = match self.rejection_reason {
             Some(ConfirmationBufferRejectionReason::PayloadBytes) => {
-                std::time::Duration::from_secs(2)
+                PAYLOAD_BYTES_REJECTION_REDELIVERY_DELAY
             }
             Some(ConfirmationBufferRejectionReason::EventCapacity) | None => {
-                std::time::Duration::from_millis(500)
+                EVENT_CAPACITY_REJECTION_REDELIVERY_DELAY
             }
         };
         Some(delay)
@@ -1175,9 +1179,9 @@ mod tests {
         );
         assert_eq!(
             rejected.rejected_redelivery_delay(),
-            Some(Duration::from_millis(500))
+            Some(Duration::from_secs(30))
         );
-        assert_eq!(rejected.rejected_redelivery_delay_ms(), Some(500));
+        assert_eq!(rejected.rejected_redelivery_delay_ms(), Some(30_000));
         assert_eq!(rejected.runtime_action(), RuntimePressureAction::Throttle);
         let saturated_snapshot = buffer.snapshot().await;
         assert_eq!(
@@ -1629,7 +1633,7 @@ mod tests {
                 Some(ConfirmationBufferRejectionReason::EventCapacity)
             );
             assert_eq!(rejected.runtime_action(), RuntimePressureAction::Throttle);
-            assert_eq!(rejected.rejected_redelivery_delay_ms(), Some(500));
+            assert_eq!(rejected.rejected_redelivery_delay_ms(), Some(30_000));
         }
 
         assert_eq!(buffer.check_timeouts().await.len(), LATE_EVENTS);

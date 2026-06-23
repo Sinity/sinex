@@ -22,6 +22,8 @@ use std::time::Duration;
 use tokio::sync::RwLock;
 use tracing::{debug, error, info, warn};
 
+const RAW_EVENT_BUFFER_BACKPRESSURE_SLEEP: Duration = Duration::from_secs(1);
+
 /// Configuration for `JetStream` event consumer
 #[derive(Debug, Clone)]
 pub struct JetStreamEventConsumerConfig {
@@ -338,6 +340,19 @@ impl JetStreamEventConsumer {
         running: Arc<RwLock<bool>>,
     ) -> RuntimeResult<()> {
         while *running.read().await {
+            if !raw_event_buffer_accepts_pull(&buffer).await {
+                let pending_count = buffer.len().await;
+                debug!(
+                    pending_count,
+                    max_capacity = buffer.max_capacity(),
+                    retained_payload_bytes = buffer.retained_payload_bytes(),
+                    max_payload_bytes = buffer.max_payload_bytes(),
+                    "Confirmation buffer saturated; delaying raw JetStream pull"
+                );
+                tokio::time::sleep(RAW_EVENT_BUFFER_BACKPRESSURE_SLEEP).await;
+                continue;
+            }
+
             let messages = pull_batch(&consumer, batch_size, Duration::from_secs(1)).await?;
             for msg in messages {
                 // Break promptly on stop() instead of finishing the whole batch,
@@ -395,7 +410,7 @@ impl JetStreamEventConsumer {
             // apply backpressure; redelivery re-buffers any siblings idempotently.
             let decision = buffer.add_provisional_with_pressure(event.clone()).await;
             if !decision.accepted {
-                warn!(
+                debug!(
                     target: "sinex_metrics",
                     metric = "runtime.confirmation_buffer_backpressure_total",
                     event_id = %event.event_id,
@@ -1061,18 +1076,29 @@ fn event_stream_confirmation_buffer(timeout: Duration) -> Arc<ConfirmationBuffer
     ))
 }
 
+async fn raw_event_buffer_accepts_pull(buffer: &ConfirmationBuffer) -> bool {
+    buffer.len().await < buffer.max_capacity()
+        && buffer.retained_payload_bytes() < buffer.max_payload_bytes()
+}
+
 #[cfg(test)]
 mod tests {
     // Small inline tests are justified here because they target private background-task
     // exit classification logic that is not exposed through the public consumer API.
     use super::{
-        EventConfirmation, JetStreamEventConsumer, JetStreamEventConsumerConfig,
-        event_stream_confirmation_buffer,
+        ConfirmationBuffer, EventConfirmation, JetStreamEventConsumer,
+        JetStreamEventConsumerConfig, ProvisionalEvent, event_stream_confirmation_buffer,
+        raw_event_buffer_accepts_pull,
     };
     use async_nats::jetstream::consumer::DeliverPolicy;
     use sinex_primitives::{
-        SinexError, Uuid, events::builder::EventId, source_contracts::ResourceProfile,
+        SinexError, Uuid,
+        domain::{EventSource, EventType},
+        events::builder::EventId,
+        source_contracts::ResourceProfile,
+        temporal::Timestamp,
     };
+    use std::time::Duration;
     use xtask::sandbox::sinex_test;
 
     #[sinex_test]
@@ -1133,6 +1159,27 @@ mod tests {
             buffer.max_payload_bytes(),
             usize::try_from(budget.max_pending_material_bytes)?
         );
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn raw_event_pull_gate_closes_when_confirmation_buffer_is_full()
+    -> xtask::sandbox::TestResult<()> {
+        let buffer = ConfirmationBuffer::with_capacity(Duration::from_secs(60), 1);
+
+        assert!(raw_event_buffer_accepts_pull(&buffer).await);
+        buffer
+            .add_provisional_with_pressure(ProvisionalEvent {
+                event_id: EventId::from_uuid(Uuid::now_v7()),
+                source: EventSource::from_static("test"),
+                event_type: EventType::from_static("test.event"),
+                payload: serde_json::json!({"ok": true}),
+                ts_orig: Timestamp::now(),
+                received_at: Timestamp::now(),
+            })
+            .await;
+
+        assert!(!raw_event_buffer_accepts_pull(&buffer).await);
         Ok(())
     }
 
