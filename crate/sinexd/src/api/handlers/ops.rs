@@ -2,6 +2,7 @@ use camino::Utf8PathBuf;
 use futures::StreamExt as _;
 use serde::Deserialize;
 use sinex_db::DbPoolExt;
+use sinex_db::repositories::EmailProviderStateUpsert;
 use sinex_db::repositories::state::Operation as DbOperation;
 use sinex_db::repositories::state::PROJECTION_REBUILD_OPERATION_TYPE;
 use sinex_primitives::Id;
@@ -887,9 +888,9 @@ async fn start_package_operation(
             execute_media_worker_output(pool, &spec, &mode_id, &mut scope, &mut preview_summary)
                 .await?
     {
-        return pool
-            .state()
-            .log_operation(DbOperation {
+        return log_package_operation(
+            pool,
+            DbOperation {
                 id: None,
                 operation_type: operation_type.to_string(),
                 operator: actor.to_string(),
@@ -898,8 +899,9 @@ async fn start_package_operation(
                 result_message: Some(media_result.message),
                 preview_summary: Some(preview_summary),
                 duration_ms: media_result.duration_ms,
-            })
-            .await;
+            },
+        )
+        .await;
     }
 
     if spec.surface == "email_capture"
@@ -909,9 +911,9 @@ async fn start_package_operation(
             execute_gmail_provider_sync(pool, &spec, &mode_id, &mut scope, &mut preview_summary)
                 .await?
     {
-        return pool
-            .state()
-            .log_operation(DbOperation {
+        return log_package_operation(
+            pool,
+            DbOperation {
                 id: None,
                 operation_type: operation_type.to_string(),
                 operator: actor.to_string(),
@@ -920,8 +922,9 @@ async fn start_package_operation(
                 result_message: Some(email_result.message),
                 preview_summary: Some(preview_summary),
                 duration_ms: email_result.duration_ms,
-            })
-            .await;
+            },
+        )
+        .await;
     }
 
     if spec.surface == "email_capture"
@@ -931,9 +934,9 @@ async fn start_package_operation(
             execute_imap_provider_sync(pool, &spec, &mode_id, &mut scope, &mut preview_summary)
                 .await?
     {
-        return pool
-            .state()
-            .log_operation(DbOperation {
+        return log_package_operation(
+            pool,
+            DbOperation {
                 id: None,
                 operation_type: operation_type.to_string(),
                 operator: actor.to_string(),
@@ -942,8 +945,9 @@ async fn start_package_operation(
                 result_message: Some(email_result.message),
                 preview_summary: Some(preview_summary),
                 duration_ms: email_result.duration_ms,
-            })
-            .await;
+            },
+        )
+        .await;
     }
 
     if spec.surface == "email_capture"
@@ -953,9 +957,9 @@ async fn start_package_operation(
             execute_staged_email_sync(pool, &spec, &mode_id, &mut scope, &mut preview_summary)
                 .await?
     {
-        return pool
-            .state()
-            .log_operation(DbOperation {
+        return log_package_operation(
+            pool,
+            DbOperation {
                 id: None,
                 operation_type: operation_type.to_string(),
                 operator: actor.to_string(),
@@ -964,12 +968,14 @@ async fn start_package_operation(
                 result_message: Some(email_result.message),
                 preview_summary: Some(preview_summary),
                 duration_ms: email_result.duration_ms,
-            })
-            .await;
+            },
+        )
+        .await;
     }
 
-    pool.state()
-        .log_operation(DbOperation {
+    log_package_operation(
+        pool,
+        DbOperation {
             id: None,
             operation_type: operation_type.to_string(),
             operator: actor.to_string(),
@@ -978,8 +984,142 @@ async fn start_package_operation(
             result_message: Some(format!("{}; executor pending", spec.surface)),
             preview_summary: Some(preview_summary),
             duration_ms: None,
+        },
+    )
+    .await
+}
+
+async fn log_package_operation(
+    pool: &PgPool,
+    operation: DbOperation,
+) -> Result<sinex_db::repositories::OperationRecord> {
+    let record = pool.state().log_operation(operation).await?;
+    persist_email_provider_state_from_operation(pool, &record).await?;
+    Ok(record)
+}
+
+async fn persist_email_provider_state_from_operation(
+    pool: &PgPool,
+    record: &sinex_db::repositories::OperationRecord,
+) -> Result<()> {
+    if record.operation_type != "email.mailbox.sync" {
+        return Ok(());
+    }
+    let Some(scope) = record.scope.as_ref() else {
+        return Ok(());
+    };
+    let Some(provider_runtime) = scope.get("provider_runtime").cloned() else {
+        return Ok(());
+    };
+
+    let Some(source_id) = json_string(scope, "source_id") else {
+        return Ok(());
+    };
+    let Some(mode_id) = json_string(scope, "mode_id") else {
+        return Ok(());
+    };
+    let Some(provider) = json_string(&provider_runtime, "provider") else {
+        return Ok(());
+    };
+    let Some(account_binding_ref) = json_string(&provider_runtime, "account_binding_ref")
+        .or_else(|| json_string(scope, "account_binding_ref"))
+    else {
+        return Ok(());
+    };
+    let mailbox_scope = json_string(&provider_runtime, "mailbox_scope")
+        .or_else(|| {
+            scope
+                .get("provider_operation_scope")
+                .and_then(|value| json_string(value, "mailbox_scope"))
         })
-        .await
+        .unwrap_or_else(|| "default".to_string());
+
+    let runtime_contract = provider_runtime
+        .get("runtime_observation_contract")
+        .unwrap_or(&provider_runtime);
+    let auth_state =
+        json_string(runtime_contract, "auth_state").unwrap_or_else(|| "unknown".to_string());
+    let network_state =
+        json_string(runtime_contract, "network_state").unwrap_or_else(|| "unknown".to_string());
+    let sync_state =
+        json_string(runtime_contract, "sync_state").unwrap_or_else(|| "unknown".to_string());
+    let rate_limit_state = json_string(runtime_contract, "rate_limit_state");
+    let runtime_state_ref = json_string(&provider_runtime, "runtime_state_ref")
+        .unwrap_or_else(|| format!("email.provider_runtime.{provider}"));
+    let coverage_ref = json_string(&provider_runtime, "coverage_ref")
+        .unwrap_or_else(|| format!("coverage:email.mailbox.{provider}.provider_runtime"));
+    let debt_ref = scope
+        .get("provider_failure")
+        .and_then(|failure| json_string(failure, "debt_ref"))
+        .or_else(|| json_string(&provider_runtime, "debt_ref"))
+        .unwrap_or_else(|| format!("debt:email.mailbox.{provider}.provider_runtime"));
+
+    let provider_cursor = scope.get("provider_cursor").cloned();
+    let cursor_payload = provider_cursor
+        .as_ref()
+        .and_then(|cursor| cursor.get("cursor_observation_contract"))
+        .or(provider_cursor.as_ref());
+    let cursor_kind = provider_cursor
+        .as_ref()
+        .and_then(|cursor| json_string(cursor, "cursor_kind"))
+        .or_else(|| cursor_payload.and_then(|payload| json_string(payload, "cursor_kind")));
+    let cursor_value = provider_cursor
+        .as_ref()
+        .and_then(|cursor| json_string(cursor, "cursor_value"))
+        .or_else(|| cursor_payload.and_then(provider_cursor_value));
+    let continuity_state = provider_cursor
+        .as_ref()
+        .and_then(|cursor| json_string(cursor, "continuity_state"))
+        .or_else(|| cursor_payload.and_then(|payload| json_string(payload, "continuity_state")));
+
+    pool.email_provider_states()
+        .upsert(EmailProviderStateUpsert {
+            source_id,
+            mode_id,
+            provider,
+            account_binding_ref,
+            mailbox_scope,
+            operation_id: record.id.to_uuid(),
+            result_status: record.result_status,
+            auth_state,
+            network_state,
+            sync_state,
+            rate_limit_state,
+            runtime_state_ref,
+            coverage_ref,
+            debt_ref,
+            cursor_kind,
+            cursor_value,
+            continuity_state,
+            provider_runtime,
+            provider_cursor,
+            provider_failure: scope.get("provider_failure").cloned(),
+        })
+        .await?;
+
+    Ok(())
+}
+
+fn json_string(value: &serde_json::Value, key: &str) -> Option<String> {
+    value
+        .get(key)
+        .and_then(serde_json::Value::as_str)
+        .map(ToString::to_string)
+}
+
+fn provider_cursor_value(payload: &serde_json::Value) -> Option<String> {
+    json_string(payload, "cursor_value")
+        .or_else(|| json_string(payload, "gmail_history_id"))
+        .or_else(|| json_string(payload, "page_token"))
+        .or_else(|| {
+            match (
+                json_string(payload, "uidvalidity"),
+                json_string(payload, "uid"),
+            ) {
+                (Some(uidvalidity), Some(uid)) => Some(format!("{uidvalidity}:{uid}")),
+                _ => None,
+            }
+        })
 }
 
 struct MediaWorkerOutputResult {
