@@ -138,6 +138,11 @@
               mold # .cargo/config.toml: link-arg=-fuse-ld=mold
             ];
 
+            # Packaged release builds happen inside the live NixOS rebuild
+            # budget. Keep rustc peak RSS below earlyoom thresholds; local
+            # developer release builds can still override this explicitly.
+            CARGO_PROFILE_RELEASE_CODEGEN_UNITS = "256";
+
           };
 
           # Build workspace dependencies once (cached layer).
