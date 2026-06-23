@@ -3,6 +3,7 @@
 use crate::api::service_container::{ConfirmationBufferHealth, ServiceContainer};
 use serde_json::Value;
 use sinex_db::DbPoolExt;
+use sinex_db::repositories::EmailProviderStateRecord;
 use sinex_primitives::SinexError;
 use sinex_primitives::rpc::{
     methods,
@@ -52,15 +53,6 @@ struct SourceMaterialAggregateRow {
 struct EmailProviderOperationState {
     operation_id: Uuid,
     result_status: String,
-    provider_runtime: Option<Value>,
-    provider_failure: Option<Value>,
-}
-
-#[derive(Debug, FromRow)]
-struct EmailProviderOperationStateRow {
-    operation_id: Uuid,
-    result_status: String,
-    mode_id: Option<String>,
     provider_runtime: Option<Value>,
     provider_failure: Option<Value>,
 }
@@ -381,48 +373,30 @@ fn source_coverage_view(
 async fn latest_email_provider_operation_states(
     pool: &PgPool,
 ) -> Result<HashMap<String, EmailProviderOperationState>> {
-    let rows = sqlx::query_as!(
-        EmailProviderOperationStateRow,
-        r#"
-        SELECT
-            id as "operation_id!: Uuid",
-            result_status,
-            scope->>'mode_id' as "mode_id",
-            scope->'provider_runtime' as "provider_runtime",
-            scope->'provider_failure' as "provider_failure"
-        FROM core.operations_log
-        WHERE operation_type = 'email.mailbox.sync'
-          AND result_status IN ('success', 'failure')
-          AND scope->>'source_id' = 'email.mailbox'
-          AND scope ? 'provider_runtime'
-        ORDER BY id DESC
-        LIMIT 32
-        "#,
-    )
-    .fetch_all(pool)
-    .await
-    .map_err(|error| {
-        SinexError::database("Failed to load email provider runtime operation state")
-            .with_std_error(&error)
-    })?;
+    let rows = pool
+        .email_provider_states()
+        .list_current_by_source("email.mailbox")
+        .await
+        .map_err(|error| {
+            SinexError::database("Failed to load email provider runtime state")
+                .with_std_error(&error)
+        })?;
 
     Ok(email_provider_operation_states_from_rows(rows))
 }
 
 fn email_provider_operation_states_from_rows(
-    rows: Vec<EmailProviderOperationStateRow>,
+    rows: Vec<EmailProviderStateRecord>,
 ) -> HashMap<String, EmailProviderOperationState> {
     let mut states = HashMap::new();
     for row in rows {
-        if let Some(mode_id) = row.mode_id
-            && !states.contains_key(&mode_id)
-        {
+        if !states.contains_key(&row.mode_id) {
             states.insert(
-                mode_id,
+                row.mode_id,
                 EmailProviderOperationState {
                     operation_id: row.operation_id,
-                    result_status: row.result_status,
-                    provider_runtime: row.provider_runtime,
+                    result_status: row.result_status.to_string(),
+                    provider_runtime: Some(row.provider_runtime),
                     provider_failure: row.provider_failure,
                 },
             );
@@ -2294,35 +2268,71 @@ mod tests {
         let failed_operation_id = Uuid::now_v7();
         let successful_operation_id = Uuid::now_v7();
         let states = email_provider_operation_states_from_rows(vec![
-            EmailProviderOperationStateRow {
+            EmailProviderStateRecord {
+                id: Uuid::now_v7(),
+                source_id: "email.mailbox".to_string(),
                 operation_id: successful_operation_id,
-                result_status: "success".to_string(),
-                mode_id: Some("source:email.mailbox.imap-scheduled-sync".to_string()),
-                provider_runtime: Some(serde_json::json!({
+                result_status: sinex_primitives::domain::OperationStatus::Success,
+                mode_id: "source:email.mailbox.imap-scheduled-sync".to_string(),
+                provider: "imap".to_string(),
+                account_binding_ref: "operator-mailbox:imap-primary".to_string(),
+                mailbox_scope: "default".to_string(),
+                auth_state: "authorized".to_string(),
+                network_state: "online".to_string(),
+                sync_state: "synced".to_string(),
+                rate_limit_state: None,
+                runtime_state_ref: "email.provider_runtime.imap".to_string(),
+                coverage_ref: "coverage:email.mailbox.imap.provider_runtime".to_string(),
+                debt_ref: "debt:email.mailbox.imap.provider_runtime".to_string(),
+                cursor_kind: None,
+                cursor_value: None,
+                continuity_state: None,
+                provider_runtime: serde_json::json!({
                     "coverage_ref": "coverage:email.mailbox.imap.provider_runtime",
                     "runtime_observation_contract": {
                         "auth_state": "authorized",
                         "network_state": "online",
                         "sync_state": "synced"
                     }
-                })),
+                }),
+                provider_cursor: None,
                 provider_failure: None,
+                observed_at: OffsetDateTime::now_utc(),
+                updated_at: OffsetDateTime::now_utc(),
             },
-            EmailProviderOperationStateRow {
+            EmailProviderStateRecord {
+                id: Uuid::now_v7(),
+                source_id: "email.mailbox".to_string(),
                 operation_id: failed_operation_id,
-                result_status: "failure".to_string(),
-                mode_id: Some("source:email.mailbox.imap-scheduled-sync".to_string()),
-                provider_runtime: Some(serde_json::json!({
+                result_status: sinex_primitives::domain::OperationStatus::Failed,
+                mode_id: "source:email.mailbox.imap-scheduled-sync".to_string(),
+                provider: "imap".to_string(),
+                account_binding_ref: "operator-mailbox:imap-primary".to_string(),
+                mailbox_scope: "default".to_string(),
+                auth_state: "authorized".to_string(),
+                network_state: "error".to_string(),
+                sync_state: "failed".to_string(),
+                rate_limit_state: None,
+                runtime_state_ref: "email.provider_runtime.imap".to_string(),
+                coverage_ref: "coverage:email.mailbox.imap.provider_runtime".to_string(),
+                debt_ref: "debt:email.mailbox.imap.provider_runtime".to_string(),
+                cursor_kind: None,
+                cursor_value: None,
+                continuity_state: None,
+                provider_runtime: serde_json::json!({
                     "runtime_observation_contract": {
                         "auth_state": "authorized",
                         "network_state": "error",
                         "sync_state": "failed"
                     }
-                })),
+                }),
+                provider_cursor: None,
                 provider_failure: Some(serde_json::json!({
                     "reason": "older IMAP failure",
                     "debt_ref": "debt:email.mailbox.imap.provider_runtime"
                 })),
+                observed_at: OffsetDateTime::now_utc(),
+                updated_at: OffsetDateTime::now_utc(),
             },
         ]);
 

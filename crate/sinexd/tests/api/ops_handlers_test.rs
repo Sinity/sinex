@@ -1072,6 +1072,33 @@ async fn ops_start_records_gmail_provider_failure_for_missing_token_file(
         .expect("failed Gmail provider preview should be recorded");
     assert_eq!(preview["executor_state"], "gmail_api_sync_failed");
     assert_eq!(preview["provider_failure"], scope["provider_failure"]);
+
+    let provider_states = ctx
+        .pool()
+        .email_provider_states()
+        .list_current_by_source("email.mailbox")
+        .await?;
+    let gmail_state = provider_states
+        .iter()
+        .find(|state| state.mode_id == "source:email.mailbox.gmail-api-scheduled-sync")
+        .expect("failed Gmail provider operation should update durable provider state");
+    assert_eq!(
+        gmail_state.operation_id,
+        uuid::Uuid::parse_str(&response.operation.id)?
+    );
+    assert_eq!(gmail_state.result_status, OperationStatus::Failed);
+    assert_eq!(gmail_state.provider, "gmail");
+    assert_eq!(
+        gmail_state.account_binding_ref,
+        "operator-mailbox:gmail-missing-token"
+    );
+    assert_eq!(gmail_state.auth_state, "missing");
+    assert_eq!(gmail_state.network_state, "unknown");
+    assert_eq!(gmail_state.sync_state, "failed");
+    assert_eq!(
+        gmail_state.debt_ref,
+        "debt:email.mailbox.gmail.provider_runtime"
+    );
     Ok(())
 }
 
@@ -1193,6 +1220,35 @@ async fn ops_start_executes_imap_scheduled_sync_with_password_file(
     assert_eq!(preview["executor_state"], "imap_sync_admitted");
     assert_eq!(preview["provider_record_count"], 1);
     assert_eq!(preview["admitted_event_count"], 1);
+
+    let provider_states = ctx
+        .pool()
+        .email_provider_states()
+        .list_current_by_source("email.mailbox")
+        .await?;
+    let imap_state = provider_states
+        .iter()
+        .find(|state| state.mode_id == "source:email.mailbox.imap-scheduled-sync")
+        .expect("successful IMAP provider operation should update durable provider state");
+    assert_eq!(
+        imap_state.operation_id,
+        uuid::Uuid::parse_str(&response.operation.id)?
+    );
+    assert_eq!(imap_state.result_status, OperationStatus::Success);
+    assert_eq!(imap_state.provider, "imap");
+    assert_eq!(
+        imap_state.account_binding_ref,
+        "operator-mailbox:imap-primary"
+    );
+    assert_eq!(imap_state.mailbox_scope, "default");
+    assert_eq!(imap_state.auth_state, "authorized");
+    assert_eq!(imap_state.network_state, "online");
+    assert_eq!(imap_state.sync_state, "idle");
+    assert_eq!(
+        imap_state.cursor_kind.as_deref(),
+        Some("imap-uidvalidity-uid")
+    );
+    assert_eq!(imap_state.cursor_value.as_deref(), Some("700:41"));
     Ok(())
 }
 

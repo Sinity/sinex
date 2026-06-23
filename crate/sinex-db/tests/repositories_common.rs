@@ -79,6 +79,10 @@ async fn table_def_constants_match_expectations() -> TestResult<()> {
     assert_eq!(OperationsLog::schema_name(), "core");
     assert_eq!(OperationsLog::primary_key(), "id");
 
+    assert_eq!(EmailProviderState::table_name(), "email_provider_state");
+    assert_eq!(EmailProviderState::schema_name(), "core");
+    assert_eq!(EmailProviderState::primary_key(), "id");
+
     assert_eq!(Entities::table_name(), "entities");
     assert_eq!(Entities::schema_name(), "core");
     assert_eq!(Entities::primary_key(), "id");
