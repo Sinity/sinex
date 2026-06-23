@@ -1170,6 +1170,18 @@ fn operation_capability_action(
             package_operation_rpc_method(operation, source_id, binding),
             ActionSideEffect::Write,
         ),
+        "fetch-attachments" => (
+            email_operation_label(operation, binding).unwrap_or("Fetch Attachments"),
+            package_operation_command_hint(operation, source_id, binding),
+            package_operation_rpc_method(operation, source_id, binding),
+            ActionSideEffect::Write,
+        ),
+        "rebuild-projection" => (
+            email_operation_label(operation, binding).unwrap_or("Rebuild Mailbox Projection"),
+            package_operation_command_hint(operation, source_id, binding),
+            package_operation_rpc_method(operation, source_id, binding),
+            ActionSideEffect::Write,
+        ),
         "import-rfc822" => (
             "Import RFC822 Message",
             Some("sinexctl sources stage <path> --binding source:email.mailbox --format json".to_string()),
@@ -1240,12 +1252,18 @@ fn operation_capability_action(
             ActionSideEffect::Write,
         ),
         "export" => (
-            "Export Source Events",
-            Some(format!(
-                "sinexctl privacy export --source {source_id} --output <file>"
-            )),
-            None,
-            ActionSideEffect::Read,
+            email_operation_label(operation, binding).unwrap_or("Export Source Events"),
+            package_operation_command_hint(operation, source_id, binding).or_else(|| {
+                Some(format!(
+                    "sinexctl privacy export --source {source_id} --output <file>"
+                ))
+            }),
+            package_operation_rpc_method(operation, source_id, binding),
+            if source_id == "email.mailbox" {
+                ActionSideEffect::Write
+            } else {
+                ActionSideEffect::Read
+            },
         ),
         "replay" => (
             email_operation_label(operation, binding).unwrap_or("Replay Source"),
@@ -1419,6 +1437,9 @@ fn email_operation_is_mode_scoped(operation: &str) -> bool {
             | "email.mailbox.resume"
             | "email.mailbox.inspect"
             | "email.mailbox.replay"
+            | "email.mailbox.fetch-attachments"
+            | "email.mailbox.export"
+            | "email.mailbox.rebuild-projection"
     )
 }
 
@@ -1474,6 +1495,56 @@ fn email_operation_label(
             Some("Replay IMAP Sync")
         }
         ("email.mailbox.replay", "source:email.mailbox.imap-idle-live") => Some("Replay IMAP IDLE"),
+        ("email.mailbox.fetch-attachments", "source:email.mailbox") => {
+            Some("Fetch RFC822 Attachments")
+        }
+        ("email.mailbox.fetch-attachments", "source:email.mailbox.maildir-staged") => {
+            Some("Fetch Maildir Attachments")
+        }
+        ("email.mailbox.fetch-attachments", "source:email.mailbox.mbox-staged") => {
+            Some("Fetch MBOX Attachments")
+        }
+        ("email.mailbox.fetch-attachments", "source:email.mailbox.gmail-api-scheduled-sync") => {
+            Some("Fetch Gmail Attachments")
+        }
+        ("email.mailbox.fetch-attachments", "source:email.mailbox.imap-scheduled-sync") => {
+            Some("Fetch IMAP Attachments")
+        }
+        ("email.mailbox.fetch-attachments", "source:email.mailbox.imap-idle-live") => {
+            Some("Fetch IMAP IDLE Attachments")
+        }
+        ("email.mailbox.export", "source:email.mailbox") => Some("Export RFC822 Mailbox"),
+        ("email.mailbox.export", "source:email.mailbox.maildir-staged") => {
+            Some("Export Maildir Mailbox")
+        }
+        ("email.mailbox.export", "source:email.mailbox.mbox-staged") => Some("Export MBOX Mailbox"),
+        ("email.mailbox.export", "source:email.mailbox.gmail-api-scheduled-sync") => {
+            Some("Export Gmail Mailbox")
+        }
+        ("email.mailbox.export", "source:email.mailbox.imap-scheduled-sync") => {
+            Some("Export IMAP Mailbox")
+        }
+        ("email.mailbox.export", "source:email.mailbox.imap-idle-live") => {
+            Some("Export IMAP IDLE Mailbox")
+        }
+        ("email.mailbox.rebuild-projection", "source:email.mailbox") => {
+            Some("Rebuild RFC822 Projection")
+        }
+        ("email.mailbox.rebuild-projection", "source:email.mailbox.maildir-staged") => {
+            Some("Rebuild Maildir Projection")
+        }
+        ("email.mailbox.rebuild-projection", "source:email.mailbox.mbox-staged") => {
+            Some("Rebuild MBOX Projection")
+        }
+        ("email.mailbox.rebuild-projection", "source:email.mailbox.gmail-api-scheduled-sync") => {
+            Some("Rebuild Gmail Projection")
+        }
+        ("email.mailbox.rebuild-projection", "source:email.mailbox.imap-scheduled-sync") => {
+            Some("Rebuild IMAP Projection")
+        }
+        ("email.mailbox.rebuild-projection", "source:email.mailbox.imap-idle-live") => {
+            Some("Rebuild IMAP IDLE Projection")
+        }
         _ => None,
     }
 }
@@ -2477,6 +2548,46 @@ mod tests {
         assert_eq!(mode.mailbox_projection_attachment_count, Some(4));
         assert_eq!(mode.mailbox_projection_attachment_observed_count, Some(1));
         assert!(mode.mailbox_projection_last_observed_at.is_some());
+        let fetch_attachments = mode
+            .actions
+            .iter()
+            .find(|action| {
+                action.id == "email.mailbox.fetch-attachments:source:email.mailbox.mbox-staged"
+            })
+            .expect("projection debt should advertise attachment fetch operation");
+        assert_eq!(fetch_attachments.state, ActionAvailabilityState::Enabled);
+        assert_eq!(fetch_attachments.side_effect, ActionSideEffect::Write);
+        assert_eq!(
+            fetch_attachments.rpc_method.as_deref(),
+            Some(methods::OPS_START)
+        );
+        assert!(
+            fetch_attachments
+                .command_hint
+                .as_deref()
+                .is_some_and(|hint| {
+                    hint.contains("email.mailbox.fetch-attachments")
+                        && hint.contains("source:email.mailbox.mbox-staged")
+                })
+        );
+        let export = mode
+            .actions
+            .iter()
+            .find(|action| action.id == "email.mailbox.export:source:email.mailbox.mbox-staged")
+            .expect("projection debt should advertise scoped mailbox export operation");
+        assert_eq!(export.state, ActionAvailabilityState::Enabled);
+        assert_eq!(export.side_effect, ActionSideEffect::Write);
+        assert_eq!(export.rpc_method.as_deref(), Some(methods::OPS_START));
+        let rebuild = mode
+            .actions
+            .iter()
+            .find(|action| {
+                action.id == "email.mailbox.rebuild-projection:source:email.mailbox.mbox-staged"
+            })
+            .expect("projection debt should advertise projection rebuild operation");
+        assert_eq!(rebuild.state, ActionAvailabilityState::Enabled);
+        assert_eq!(rebuild.side_effect, ActionSideEffect::Write);
+        assert_eq!(rebuild.rpc_method.as_deref(), Some(methods::OPS_START));
         Ok(())
     }
 
