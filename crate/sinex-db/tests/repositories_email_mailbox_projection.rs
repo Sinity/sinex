@@ -15,7 +15,7 @@ async fn email_mailbox_projection_merges_message_thread_and_attachment_events(
     repo.upsert_event(EmailMailboxProjectionEvent {
         source_id: source_id.clone(),
         mode_id: mode_id.clone(),
-        event_id: Uuid::now_v7(),
+        observed_event_id: Uuid::now_v7(),
         event_type: "email.message.received".to_string(),
         payload: json!({
             "message_id": message_id,
@@ -34,7 +34,7 @@ async fn email_mailbox_projection_merges_message_thread_and_attachment_events(
     repo.upsert_event(EmailMailboxProjectionEvent {
         source_id: source_id.clone(),
         mode_id: mode_id.clone(),
-        event_id: Uuid::now_v7(),
+        observed_event_id: Uuid::now_v7(),
         event_type: "email.thread.observed".to_string(),
         payload: json!({
             "thread_key": "thread:projection",
@@ -53,7 +53,7 @@ async fn email_mailbox_projection_merges_message_thread_and_attachment_events(
     repo.upsert_event(EmailMailboxProjectionEvent {
         source_id: source_id.clone(),
         mode_id: mode_id.clone(),
-        event_id: Uuid::now_v7(),
+        observed_event_id: Uuid::now_v7(),
         event_type: "email.attachment.observed".to_string(),
         payload: json!({
             "message_id": message_id,
