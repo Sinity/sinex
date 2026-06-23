@@ -1,3 +1,4 @@
+use super::cost::{CostInvocationRow, build_history_cost_summary};
 use super::*;
 use crate::cargo_diagnostics::CompilerDiagnostic;
 use crate::history::{HistoryDb, TestResult as StoredTestResult, TestStatus};
