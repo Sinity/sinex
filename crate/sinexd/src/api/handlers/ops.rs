@@ -2288,14 +2288,10 @@ fn email_provider_cursor_caveats(mode: EmailProviderRuntimeMode) -> &'static [&'
 fn email_provider_runtime_actions(mode: EmailProviderRuntimeMode) -> &'static [&'static str] {
     match mode {
         EmailProviderRuntimeMode::GmailScheduledSync
-        | EmailProviderRuntimeMode::ImapScheduledSync => &[
+        | EmailProviderRuntimeMode::ImapScheduledSync
+        | EmailProviderRuntimeMode::ImapIdleLive => &[
             "email.mailbox.sync",
             "email.mailbox.pause",
-            "email.mailbox.inspect",
-        ],
-        EmailProviderRuntimeMode::ImapIdleLive => &[
-            "email.mailbox.pause",
-            "email.mailbox.resume",
             "email.mailbox.inspect",
         ],
     }

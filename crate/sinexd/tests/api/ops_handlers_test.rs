@@ -2348,6 +2348,132 @@ async fn ops_start_executes_imap_scheduled_sync_with_password_file(
 }
 
 #[sinex_test]
+async fn ops_start_executes_imap_idle_live_with_password_file(ctx: TestContext) -> TestResult<()> {
+    let server = ImapFixtureServer::start().await?;
+    let dir = tempfile::tempdir()?;
+    let password_file = dir.path().join("imap-idle-password");
+    tokio::fs::write(&password_file, "fixture-password\n").await?;
+
+    let auth = system_auth();
+    let operation = timeout(
+        Duration::from_secs(10),
+        handle_ops_start(
+            ctx.pool(),
+            json!({
+                "operation_type": "email.mailbox.sync",
+                "scope": {
+                    "source_id": "email.mailbox",
+                    "mode_id": "source:email.mailbox.imap-idle-live",
+                    "account_binding_ref": "operator-mailbox:imap-idle",
+                    "imap_host": "127.0.0.1",
+                    "imap_port": server.addr.port(),
+                    "imap_username": "operator",
+                    "imap_password_file": password_file.to_string_lossy(),
+                    "imap_tls_mode": "none",
+                    "mailbox": "INBOX",
+                    "uidvalidity": "700",
+                    "uid": "40",
+                    "batch_size": 1,
+                    "idle_timeout_ms": 10,
+                    "fetch_bodies": true,
+                    "body_material_policy_ref": "operator.email-mailbox.body-private"
+                },
+            }),
+            &auth,
+        ),
+    )
+    .await;
+    let response_value = match operation {
+        Ok(value) => value?,
+        Err(_) => {
+            return Err(color_eyre::eyre::eyre!(
+                "IMAP IDLE operation timed out; fixture commands: {:?}",
+                server.commands().await
+            ));
+        }
+    };
+    let response: OpsStartResponse = serde_json::from_value(response_value)?;
+
+    assert_eq!(response.operation.operation_type, "email.mailbox.sync");
+    assert_eq!(response.operation.result_status, OperationStatus::Success);
+    let scope = response
+        .operation
+        .scope
+        .as_ref()
+        .expect("email IMAP IDLE operation scope should be recorded");
+    assert_eq!(scope["executor_state"], "imap_sync_admitted");
+    assert_eq!(
+        scope["mode_contract"]["binding"]["subject"],
+        "source:email.mailbox.imap-idle-live"
+    );
+    assert_eq!(scope["provider_runtime"]["provider_runtime"], "idle-live");
+    assert_eq!(
+        scope["provider_runtime"]["runtime_observation_contract"]["provider_runtime"],
+        "idle-live"
+    );
+    assert_eq!(
+        scope["provider_cursor"]["cursor_observation_contract"]["uid"],
+        "41"
+    );
+    assert_eq!(
+        scope["provider_event_ids"]
+            .as_array()
+            .expect("provider event ids should be recorded")
+            .len(),
+        3
+    );
+    assert!(
+        !serde_json::to_string(scope)?.contains("fixture-password"),
+        "IMAP IDLE password contents must not be persisted in operation scope"
+    );
+    let commands = server.commands().await;
+    assert!(
+        commands.iter().any(|command| command.contains(" IDLE")),
+        "IMAP IDLE live operation should issue IDLE before fetch: {commands:?}"
+    );
+    assert!(
+        commands.iter().any(|command| command == "DONE"),
+        "IMAP IDLE live operation should finish IDLE with DONE: {commands:?}"
+    );
+
+    let projections = ctx
+        .pool()
+        .email_mailbox_projections()
+        .list_current_by_source_mode("email.mailbox", "source:email.mailbox.imap-idle-live")
+        .await?;
+    assert!(
+        projections.iter().any(|row| {
+            row.message_id.as_deref() == Some("imap-40@example.com")
+                && row.mailbox_format.as_deref() == Some("imap-provider")
+                && row.body_bytes > 0
+        }),
+        "IMAP IDLE live sync should project provider message material: {projections:?}"
+    );
+
+    let provider_states = ctx
+        .pool()
+        .email_provider_states()
+        .list_current_by_source("email.mailbox")
+        .await?;
+    let imap_state = provider_states
+        .iter()
+        .find(|state| state.mode_id == "source:email.mailbox.imap-idle-live")
+        .expect("successful IMAP IDLE operation should update durable provider state");
+    assert_eq!(
+        imap_state.operation_id,
+        uuid::Uuid::parse_str(&response.operation.id)?
+    );
+    assert_eq!(imap_state.result_status, OperationStatus::Success);
+    assert_eq!(imap_state.provider, "imap");
+    assert_eq!(imap_state.account_binding_ref, "operator-mailbox:imap-idle");
+    assert_eq!(imap_state.auth_state, "authorized");
+    assert_eq!(imap_state.network_state, "online");
+    assert_eq!(imap_state.sync_state, "idle");
+    assert_eq!(imap_state.cursor_value.as_deref(), Some("700:41"));
+    Ok(())
+}
+
+#[sinex_test]
 async fn ops_start_records_imap_provider_network_failure_without_secret(
     ctx: TestContext,
 ) -> TestResult<()> {
@@ -2713,6 +2839,7 @@ impl ImapFixtureServer {
                 let commands = fixture_commands.clone();
                 tokio::spawn(async move {
                     let _ = stream.write_all(b"* OK IMAP fixture ready\r\n").await;
+                    let mut idle_tag: Option<String> = None;
                     while let Ok(command) = read_imap_command(&mut stream).await {
                         if command.is_empty() {
                             return;
@@ -2738,6 +2865,12 @@ impl ImapFixtureServer {
 * OK [HIGHESTMODSEQ 1200]\r\n\
 {tag} OK [READ-WRITE] SELECT completed\r\n"
                             )
+                        } else if command.contains(" IDLE") {
+                            idle_tag = Some(tag.to_string());
+                            "+ idling\r\n".to_string()
+                        } else if command.trim_end() == "DONE" {
+                            let tag = idle_tag.take().unwrap_or_else(|| "A0001".to_string());
+                            format!("{tag} OK IDLE completed\r\n")
                         } else if command.contains(" UID FETCH ") {
                             let header = "Message-ID: <imap-40@example.com>\r\nSubject: fixture\r\nFrom: imap@example.test\r\nTo: operator@example.test\r\n\r\n";
                             let body = "Message-ID: <imap-40@example.com>\r\nSubject: fixture\r\nFrom: imap@example.test\r\nTo: operator@example.test\r\n\r\nprovider IMAP body\r\n";

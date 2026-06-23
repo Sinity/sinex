@@ -1463,6 +1463,7 @@ fn email_operation_label(
             Some("Sync Gmail")
         }
         ("email.mailbox.sync", "source:email.mailbox.imap-scheduled-sync") => Some("Sync IMAP"),
+        ("email.mailbox.sync", "source:email.mailbox.imap-idle-live") => Some("Observe IMAP IDLE"),
         ("email.mailbox.pause", "source:email.mailbox.gmail-api-scheduled-sync") => {
             Some("Pause Gmail Sync")
         }
@@ -2332,6 +2333,16 @@ mod tests {
             .expect("IMAP IDLE mode expected");
         assert_eq!(imap_idle.runtime_shape, "continuous");
         assert_eq!(imap_idle.resource_budget.work_class, "capture_live");
+        assert!(
+            imap_idle
+                .actions
+                .iter()
+                .any(|action| action.label == "Observe IMAP IDLE"
+                    && action.command_hint.as_deref()
+                        == Some(
+                            "sinexctl ops start email.mailbox.sync --scope '{\"source_id\":\"email.mailbox\",\"mode_id\":\"source:email.mailbox.imap-idle-live\"}' --format json"
+                        ))
+        );
         assert!(
             imap_idle
                 .actions
