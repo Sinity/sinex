@@ -104,29 +104,39 @@ pub async fn ensure_pull_consumer(
         )));
     }
 
-    let mut cfg = PullConfig {
-        durable_name: Some(spec.durable_name.clone()),
-        ack_policy: jetstream::consumer::AckPolicy::Explicit,
-        ack_wait: spec.ack_wait,
-        deliver_policy: spec.deliver_policy,
-        max_deliver: spec.max_deliver,
-        max_ack_pending: spec.max_ack_pending,
-        ..Default::default()
-    };
-    if let Some(filter_subject) = &spec.filter_subject {
-        cfg.filter_subject = filter_subject.clone();
-    }
-
     let mut consumer = stream
-        .get_or_create_consumer(&spec.durable_name, cfg)
+        .get_or_create_consumer(&spec.durable_name, pull_consumer_config(spec))
         .await
         .map_err(|e| SinexError::processing(format!("Failed to get or create consumer: {e}")))?;
 
-    let info = consumer
+    let mut info = consumer
         .info()
         .await
         .cloned()
         .map_err(|e| SinexError::processing(format!("Failed to read consumer info: {e}")))?;
+
+    let mismatches = pull_consumer_config_mismatches(spec, &info.config);
+    if consumer_existed && can_reconcile_pull_consumer_config(&mismatches) {
+        warn!(
+            stream = %spec.stream_name,
+            durable = %spec.durable_name,
+            mismatches = %render_pull_consumer_config_mismatches(&mismatches),
+            "Reconciling existing JetStream pull consumer config"
+        );
+        consumer = stream
+            .update_consumer(pull_consumer_config(spec))
+            .await
+            .map_err(|e| {
+                SinexError::processing(format!(
+                    "Failed to update consumer {} on stream {}: {e}",
+                    spec.durable_name, spec.stream_name
+                ))
+            })?;
+        info =
+            consumer.info().await.cloned().map_err(|e| {
+                SinexError::processing(format!("Failed to read consumer info: {e}"))
+            })?;
+    }
 
     validate_pull_consumer_config(spec, &info.config)?;
     let snapshot = PullConsumerStartupSnapshot {
@@ -165,58 +175,154 @@ pub async fn ensure_pull_consumer(
     Ok(consumer)
 }
 
-pub fn validate_pull_consumer_config(
+fn pull_consumer_config(spec: &PullConsumerSpec) -> PullConfig {
+    let mut cfg = PullConfig {
+        durable_name: Some(spec.durable_name.clone()),
+        ack_policy: jetstream::consumer::AckPolicy::Explicit,
+        ack_wait: spec.ack_wait,
+        deliver_policy: spec.deliver_policy,
+        max_deliver: spec.max_deliver,
+        max_ack_pending: spec.max_ack_pending,
+        ..Default::default()
+    };
+    if let Some(filter_subject) = &spec.filter_subject {
+        cfg.filter_subject = filter_subject.clone();
+    }
+    cfg
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum PullConsumerConfigMismatchKind {
+    DurableName,
+    FilterSubject,
+    AckPolicy,
+    AckWait,
+    MaxAckPending,
+    MaxDeliver,
+    DeliverPolicy,
+    DeliverSubject,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct PullConsumerConfigMismatch {
+    kind: PullConsumerConfigMismatchKind,
+    message: String,
+}
+
+impl PullConsumerConfigMismatch {
+    fn new(kind: PullConsumerConfigMismatchKind, message: String) -> Self {
+        Self { kind, message }
+    }
+}
+
+fn can_reconcile_pull_consumer_config(mismatches: &[PullConsumerConfigMismatch]) -> bool {
+    !mismatches.is_empty()
+        && mismatches.iter().all(|mismatch| {
+            matches!(
+                mismatch.kind,
+                PullConsumerConfigMismatchKind::MaxAckPending
+                    | PullConsumerConfigMismatchKind::MaxDeliver
+            )
+        })
+}
+
+fn render_pull_consumer_config_mismatches(mismatches: &[PullConsumerConfigMismatch]) -> String {
+    mismatches
+        .iter()
+        .map(|mismatch| mismatch.message.as_str())
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
+fn pull_consumer_config_mismatches(
     spec: &PullConsumerSpec,
     config: &jetstream::consumer::Config,
-) -> RuntimeResult<()> {
+) -> Vec<PullConsumerConfigMismatch> {
     let mut mismatches = Vec::new();
 
     if config.durable_name.as_deref() != Some(spec.durable_name.as_str()) {
-        mismatches.push(format!(
-            "durable_name expected {}, got {:?}",
-            spec.durable_name, config.durable_name
+        mismatches.push(PullConsumerConfigMismatch::new(
+            PullConsumerConfigMismatchKind::DurableName,
+            format!(
+                "durable_name expected {}, got {:?}",
+                spec.durable_name, config.durable_name
+            ),
         ));
     }
 
     let expected_filter = spec.filter_subject.as_deref().unwrap_or("");
     if config.filter_subject != expected_filter {
-        mismatches.push(format!(
-            "filter_subject expected {}, got {}",
-            expected_filter, config.filter_subject
+        mismatches.push(PullConsumerConfigMismatch::new(
+            PullConsumerConfigMismatchKind::FilterSubject,
+            format!(
+                "filter_subject expected {}, got {}",
+                expected_filter, config.filter_subject
+            ),
         ));
     }
 
     if config.ack_policy != jetstream::consumer::AckPolicy::Explicit {
-        mismatches.push(format!(
-            "ack_policy expected Explicit, got {:?}",
-            config.ack_policy
+        mismatches.push(PullConsumerConfigMismatch::new(
+            PullConsumerConfigMismatchKind::AckPolicy,
+            format!("ack_policy expected Explicit, got {:?}", config.ack_policy),
         ));
     }
 
     if config.ack_wait != spec.ack_wait {
-        mismatches.push(format!(
-            "ack_wait expected {:?}, got {:?}",
-            spec.ack_wait, config.ack_wait
+        mismatches.push(PullConsumerConfigMismatch::new(
+            PullConsumerConfigMismatchKind::AckWait,
+            format!(
+                "ack_wait expected {:?}, got {:?}",
+                spec.ack_wait, config.ack_wait
+            ),
         ));
     }
 
     if config.max_ack_pending != spec.max_ack_pending {
-        mismatches.push(format!(
-            "max_ack_pending expected {}, got {}",
-            spec.max_ack_pending, config.max_ack_pending
+        mismatches.push(PullConsumerConfigMismatch::new(
+            PullConsumerConfigMismatchKind::MaxAckPending,
+            format!(
+                "max_ack_pending expected {}, got {}",
+                spec.max_ack_pending, config.max_ack_pending
+            ),
+        ));
+    }
+
+    if config.max_deliver != spec.max_deliver {
+        mismatches.push(PullConsumerConfigMismatch::new(
+            PullConsumerConfigMismatchKind::MaxDeliver,
+            format!(
+                "max_deliver expected {}, got {}",
+                spec.max_deliver, config.max_deliver
+            ),
         ));
     }
 
     if config.deliver_policy != spec.deliver_policy {
-        mismatches.push(format!(
-            "deliver_policy expected {:?}, got {:?}",
-            spec.deliver_policy, config.deliver_policy
+        mismatches.push(PullConsumerConfigMismatch::new(
+            PullConsumerConfigMismatchKind::DeliverPolicy,
+            format!(
+                "deliver_policy expected {:?}, got {:?}",
+                spec.deliver_policy, config.deliver_policy
+            ),
         ));
     }
 
     if config.deliver_subject.is_some() {
-        mismatches.push("deliver_subject expected None for pull consumer".to_string());
+        mismatches.push(PullConsumerConfigMismatch::new(
+            PullConsumerConfigMismatchKind::DeliverSubject,
+            "deliver_subject expected None for pull consumer".to_string(),
+        ));
     }
+
+    mismatches
+}
+
+pub fn validate_pull_consumer_config(
+    spec: &PullConsumerSpec,
+    config: &jetstream::consumer::Config,
+) -> RuntimeResult<()> {
+    let mismatches = pull_consumer_config_mismatches(spec, config);
 
     if mismatches.is_empty() {
         return Ok(());
@@ -226,7 +332,7 @@ pub fn validate_pull_consumer_config(
         "Consumer config mismatch for {} ({}): {}",
         spec.stream_name,
         spec.durable_name,
-        mismatches.join(", ")
+        render_pull_consumer_config_mismatches(&mismatches)
     )))
 }
 
@@ -392,4 +498,50 @@ pub async fn delete_consumer(
     })?;
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn matching_consumer_config(spec: &PullConsumerSpec) -> jetstream::consumer::Config {
+        jetstream::consumer::Config {
+            durable_name: Some(spec.durable_name.clone()),
+            filter_subject: spec.filter_subject.clone().unwrap_or_default(),
+            ack_policy: jetstream::consumer::AckPolicy::Explicit,
+            ack_wait: spec.ack_wait,
+            deliver_policy: spec.deliver_policy,
+            max_deliver: spec.max_deliver,
+            max_ack_pending: spec.max_ack_pending,
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn ack_window_drift_is_reconcilable() {
+        let mut spec = PullConsumerSpec::new("stream", "consumer");
+        spec.max_ack_pending = 32;
+        spec.max_deliver = 10;
+
+        let mut config = matching_consumer_config(&spec);
+        config.max_ack_pending = 1_000;
+        config.max_deliver = 20;
+
+        let mismatches = pull_consumer_config_mismatches(&spec, &config);
+
+        assert!(can_reconcile_pull_consumer_config(&mismatches));
+    }
+
+    #[test]
+    fn semantic_drift_is_not_reconcilable() {
+        let mut spec = PullConsumerSpec::new("stream", "consumer");
+        spec.filter_subject = Some("expected.>".to_string());
+
+        let mut config = matching_consumer_config(&spec);
+        config.filter_subject = "other.>".to_string();
+
+        let mismatches = pull_consumer_config_mismatches(&spec, &config);
+
+        assert!(!can_reconcile_pull_consumer_config(&mismatches));
+    }
 }

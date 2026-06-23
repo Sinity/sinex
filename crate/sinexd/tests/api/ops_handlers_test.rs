@@ -272,6 +272,39 @@ async fn add_global_disclosure_rule(
     Ok(())
 }
 
+async fn add_email_export_disclosure_rule(
+    ctx: &TestContext,
+    name: &str,
+    matcher_value: &str,
+    replacement: &str,
+    field_path: &str,
+) -> TestResult<()> {
+    ctx.pool()
+        .privacy_policy()
+        .add_rule(
+            name,
+            "test email export disclosure rule",
+            "regex",
+            matcher_value,
+            false,
+            "redact",
+            Some(replacement),
+            "default",
+        )
+        .await?;
+    ctx.pool()
+        .privacy_policy()
+        .bind_field_rule(
+            name,
+            Some("email"),
+            Some("email.message.received"),
+            Some(field_path),
+            0,
+        )
+        .await?;
+    Ok(())
+}
+
 #[sinex_test]
 async fn ops_start_creates_operation(ctx: TestContext) -> TestResult<()> {
     let auth = system_auth();
@@ -1337,32 +1370,36 @@ async fn ops_start_exports_email_mailbox_projection_metadata(ctx: TestContext) -
 async fn ops_start_email_mailbox_export_applies_disclosure_policy(
     ctx: TestContext,
 ) -> TestResult<()> {
-    add_global_disclosure_rule(
+    add_email_export_disclosure_rule(
         &ctx,
         "email-export-subject",
         r"EMAIL_SUBJECT_SECRET_[A-Za-z0-9_]+",
         "<EMAIL_SUBJECT>",
+        "/messages/0/subject",
     )
     .await?;
-    add_global_disclosure_rule(
+    add_email_export_disclosure_rule(
         &ctx,
         "email-export-recipient",
         r"recipient_secret_[A-Za-z0-9_@.]+",
         "<EMAIL_RECIPIENT>",
+        "/messages/0/to/0",
     )
     .await?;
-    add_global_disclosure_rule(
+    add_email_export_disclosure_rule(
         &ctx,
         "email-export-material",
         r"raw_email_secret_[A-Za-z0-9_]+",
         "<EMAIL_MATERIAL>",
+        "/messages/0/raw_material_id",
     )
     .await?;
-    add_global_disclosure_rule(
+    add_email_export_disclosure_rule(
         &ctx,
         "email-export-source-file",
         r"source_file_secret_[A-Za-z0-9_.-]+",
         "<EMAIL_SOURCE_FILE>",
+        "/messages/0/source_file",
     )
     .await?;
 

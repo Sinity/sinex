@@ -147,7 +147,20 @@ impl InputShapeAdapterExt for email_mbox_file::EmailMboxFileAdapter {}
 #[cfg(feature = "messaging")]
 impl InputShapeAdapterExt for file_drop::FileDropAdapter {}
 #[cfg(feature = "messaging")]
-impl InputShapeAdapterExt for journalctl_stream::JournalctlStreamAdapter {}
+impl InputShapeAdapterExt for journalctl_stream::JournalctlStreamAdapter {
+    fn configure_initial_stream_position(
+        &self,
+        config: &Self::Config,
+        position: crate::runtime::parser::InitialStreamPosition,
+    ) -> sinex_primitives::parser::ParserResult<Self::Config> {
+        let mut config = config.clone();
+        config.start_at_now_without_cursor = matches!(
+            position,
+            crate::runtime::parser::InitialStreamPosition::Latest
+        );
+        Ok(config)
+    }
+}
 #[cfg(feature = "messaging")]
 impl InputShapeAdapterExt for static_file::StaticFileAdapter {}
 #[cfg(feature = "messaging")]
