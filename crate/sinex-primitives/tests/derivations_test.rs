@@ -1,8 +1,10 @@
 use sinex_primitives::{
-    DerivationInputScope, DerivationOperationHook, FreshnessPolicy, InvalidationTrigger,
-    MEDIA_AUDIO_TRANSCRIPT_ARTIFACT_DERIVATION_ID, MEDIA_SCREEN_OCR_ARTIFACT_DERIVATION_ID,
-    MEDIA_TEXT_INDEX_PROJECTION_DERIVATION_ID, OutputKind, TASK_CURRENT_OBJECTS_DERIVATION_ID,
-    affected_derivations, derivations_for_output, find_derivation_spec,
+    DerivationInputScope, DerivationOperationHook, EMAIL_ATTACHMENT_INDEX_DERIVATION_ID,
+    EMAIL_BODY_TEXT_PROJECTION_DERIVATION_ID, EMAIL_THREAD_PROJECTION_DERIVATION_ID,
+    FreshnessPolicy, InvalidationTrigger, MEDIA_AUDIO_TRANSCRIPT_ARTIFACT_DERIVATION_ID,
+    MEDIA_SCREEN_OCR_ARTIFACT_DERIVATION_ID, MEDIA_TEXT_INDEX_PROJECTION_DERIVATION_ID, OutputKind,
+    TASK_CURRENT_OBJECTS_DERIVATION_ID, affected_derivations, derivations_for_output,
+    find_derivation_spec,
     task_domain::{TASK_REDUCER_INPUT_EVENT_TYPES, TASK_REDUCER_SPEC},
 };
 use xtask::sandbox::prelude::*;
@@ -24,6 +26,77 @@ async fn task_projection_declares_derivation_contract() -> TestResult<()> {
         spec.operation_hooks
             .contains(&DerivationOperationHook::Explain)
     );
+    Ok(())
+}
+
+#[sinex_test]
+async fn email_derivations_declare_projection_outputs_and_invalidation() -> TestResult<()> {
+    let expected = [
+        (
+            EMAIL_THREAD_PROJECTION_DERIVATION_ID,
+            "core.email_mailbox_projection.thread",
+            "email.thread.observed",
+        ),
+        (
+            EMAIL_BODY_TEXT_PROJECTION_DERIVATION_ID,
+            "core.email_mailbox_projection.body_text",
+            "email.message.received",
+        ),
+        (
+            EMAIL_ATTACHMENT_INDEX_DERIVATION_ID,
+            "core.email_mailbox_projection.attachment_index",
+            "email.attachment.observed",
+        ),
+    ];
+
+    for (id, output_id, event_type) in expected {
+        let spec = find_derivation_spec(id)
+            .ok_or_else(|| color_eyre::eyre::eyre!("missing email derivation spec: {id}"))?;
+        assert_eq!(spec.output_id, output_id);
+        assert_eq!(spec.output_kind, OutputKind::ProjectionRow);
+        assert_eq!(spec.freshness_policy, FreshnessPolicy::RebuildOnInputChange);
+        assert!(spec.invalidates_on(InvalidationTrigger::Replay));
+        assert!(spec.invalidates_on(InvalidationTrigger::Redaction));
+        assert!(spec.invalidates_on(InvalidationTrigger::DisclosurePolicyChange));
+        assert!(
+            spec.operation_hooks
+                .contains(&DerivationOperationHook::Rebuild)
+        );
+        assert!(
+            spec.operation_hooks
+                .contains(&DerivationOperationHook::Explain)
+        );
+        assert!(
+            spec.operation_hooks
+                .contains(&DerivationOperationHook::Redact)
+        );
+        match spec.input_scope {
+            DerivationInputScope::EventTypes {
+                domain_id,
+                event_types,
+            } => {
+                assert_eq!(domain_id, "email.mailbox");
+                assert!(
+                    event_types.contains(&event_type),
+                    "{id} should depend on {event_type}, got {event_types:?}"
+                );
+            }
+            other => panic!("email derivation should use email.mailbox EventTypes, got {other:?}"),
+        }
+
+        let output_ids: Vec<_> = derivations_for_output(output_id)
+            .map(|spec| spec.id)
+            .collect();
+        assert_eq!(output_ids, vec![id]);
+    }
+
+    let source_material_change_ids: Vec<_> =
+        affected_derivations(InvalidationTrigger::SourceMaterialChange)
+            .map(|spec| spec.id)
+            .collect();
+    assert!(source_material_change_ids.contains(&EMAIL_THREAD_PROJECTION_DERIVATION_ID));
+    assert!(source_material_change_ids.contains(&EMAIL_BODY_TEXT_PROJECTION_DERIVATION_ID));
+    assert!(source_material_change_ids.contains(&EMAIL_ATTACHMENT_INDEX_DERIVATION_ID));
     Ok(())
 }
 
