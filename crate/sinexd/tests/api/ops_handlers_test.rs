@@ -2110,6 +2110,14 @@ async fn ops_start_executes_imap_scheduled_sync_with_password_file(
     let dir = tempfile::tempdir()?;
     let password_file = dir.path().join("imap-password");
     tokio::fs::write(&password_file, "fixture-password\n").await?;
+    add_email_export_disclosure_rule(
+        &ctx,
+        "email-export-imap-provider-preview",
+        "provider IMAP body",
+        "<IMAP_PROVIDER_BODY>",
+        "/material_exports/0/raw_message_preview",
+    )
+    .await?;
 
     let auth = system_auth();
     let operation = timeout(
@@ -2225,13 +2233,87 @@ async fn ops_start_executes_imap_scheduled_sync_with_password_file(
         .email_mailbox_projections()
         .list_current_by_source_mode("email.mailbox", "source:email.mailbox.imap-scheduled-sync")
         .await?;
-    assert!(
-        projections.iter().any(|row| {
+    let imap_row = projections
+        .iter()
+        .find(|row| {
             row.message_id.as_deref() == Some("imap-40@example.com")
                 && row.mailbox_format.as_deref() == Some("imap-provider")
                 && row.body_bytes > 0
-        }),
-        "IMAP sync should project provider message material: {projections:?}"
+        })
+        .unwrap_or_else(|| {
+            panic!("IMAP sync should project provider message material: {projections:?}")
+        });
+    assert_eq!(
+        imap_row
+            .provider_material
+            .as_ref()
+            .and_then(|value| value.pointer("/source"))
+            .and_then(serde_json::Value::as_str),
+        Some("imap_provider_body_snapshot")
+    );
+    let imap_raw_message = b"Message-ID: <imap-40@example.com>\r\nSubject: fixture\r\nFrom: imap@example.test\r\nTo: operator@example.test\r\n\r\nprovider IMAP body\r\n";
+    let imap_raw_message_hash = blake3::hash(imap_raw_message).to_hex().to_string();
+    assert_eq!(
+        imap_row
+            .provider_material
+            .as_ref()
+            .and_then(|value| value.pointer("/raw_message_blake3"))
+            .and_then(serde_json::Value::as_str),
+        Some(imap_raw_message_hash.as_str())
+    );
+
+    let export_path = dir.path().join("imap-provider-material-export.json");
+    let export_response: OpsStartResponse = serde_json::from_value(
+        handle_ops_start(
+            ctx.pool(),
+            json!({
+                "operation_type": "email.mailbox.export",
+                "scope": {
+                    "source_id": "email.mailbox",
+                    "mode_id": "source:email.mailbox.imap-scheduled-sync",
+                    "account_binding_ref": "operator-mailbox:imap-primary",
+                    "message_key": imap_row.message_key.clone(),
+                    "include_material": true,
+                    "output_path": export_path.to_string_lossy()
+                },
+            }),
+            &auth,
+        )
+        .await?,
+    )?;
+    assert_eq!(
+        export_response.operation.result_status,
+        OperationStatus::Success
+    );
+    let export_scope = export_response
+        .operation
+        .scope
+        .as_ref()
+        .expect("IMAP provider material export scope");
+    let exported: serde_json::Value =
+        serde_json::from_slice(&tokio::fs::read(&export_path).await?)?;
+    assert_eq!(
+        exported["material_exports"][0]["source"],
+        "imap_provider_body_snapshot"
+    );
+    assert_eq!(
+        exported["material_exports"][0]["source_uri"],
+        "imap://INBOX/uidvalidity/700/uid/40"
+    );
+    assert_eq!(
+        exported["material_exports"][0]["raw_message_blake3"],
+        imap_raw_message_hash
+    );
+    assert_eq!(exported["export_disclosure"], serde_json::Value::Null);
+    assert_eq!(export_scope["export_disclosure"]["redacted"], true);
+    let exported_json = serde_json::to_string(&exported)?;
+    let export_scope_json = serde_json::to_string(export_scope)?;
+    assert!(!exported_json.contains("provider IMAP body"));
+    assert!(!export_scope_json.contains("provider IMAP body"));
+    assert!(exported_json.contains("<IMAP_PROVIDER_BODY>"));
+    assert!(
+        !export_scope_json.contains("fixture-password"),
+        "IMAP password contents must not be persisted by provider material export"
     );
 
     let provider_states = ctx
