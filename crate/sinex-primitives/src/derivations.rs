@@ -92,6 +92,22 @@ pub const MEDIA_SCREEN_OCR_ARTIFACT_DERIVATION_ID: DerivationSpecId =
     "derivation:media.screen.ocr_artifact@v1";
 pub const MEDIA_TEXT_INDEX_PROJECTION_DERIVATION_ID: DerivationSpecId =
     "derivation:media.text_index_projection@v1";
+pub const EMAIL_THREAD_PROJECTION_DERIVATION_ID: DerivationSpecId =
+    "derivation:email.thread_projection@v1";
+pub const EMAIL_BODY_TEXT_PROJECTION_DERIVATION_ID: DerivationSpecId =
+    "derivation:email.body_text_projection@v1";
+pub const EMAIL_ATTACHMENT_INDEX_DERIVATION_ID: DerivationSpecId =
+    "derivation:email.attachment_index@v1";
+
+pub const EMAIL_THREAD_PROJECTION_INPUT_EVENTS: &[&str] = &[
+    "email.message.received",
+    "email.message.sent",
+    "email.thread.observed",
+];
+pub const EMAIL_BODY_TEXT_PROJECTION_INPUT_EVENTS: &[&str] =
+    &["email.message.received", "email.message.sent"];
+pub const EMAIL_ATTACHMENT_INDEX_INPUT_EVENTS: &[&str] =
+    &["email.message.received", "email.attachment.observed"];
 
 pub const TASK_CURRENT_OBJECTS_DERIVATION: DerivationSpec = DerivationSpec {
     id: TASK_CURRENT_OBJECTS_DERIVATION_ID,
@@ -294,6 +310,84 @@ pub const MEDIA_TEXT_INDEX_PROJECTION_DERIVATION: DerivationSpec = DerivationSpe
     ],
 };
 
+pub const EMAIL_THREAD_PROJECTION_DERIVATION: DerivationSpec = DerivationSpec {
+    id: EMAIL_THREAD_PROJECTION_DERIVATION_ID,
+    input_scope: DerivationInputScope::EventTypes {
+        domain_id: "email.mailbox",
+        event_types: EMAIL_THREAD_PROJECTION_INPUT_EVENTS,
+    },
+    output_id: "core.email_mailbox_projection.thread",
+    output_kind: OutputKind::ProjectionRow,
+    freshness_policy: FreshnessPolicy::RebuildOnInputChange,
+    invalidates_on: &[
+        InvalidationTrigger::Replay,
+        InvalidationTrigger::Archive,
+        InvalidationTrigger::Redaction,
+        InvalidationTrigger::SourceMaterialChange,
+        InvalidationTrigger::ParserSemanticsChange,
+        InvalidationTrigger::DisclosurePolicyChange,
+    ],
+    rebuild_resource_policy_ref: Some("resource-policy:email.mailbox.projection-rebuild"),
+    disclosure_policy_ref: Some("operator.email-mailbox.default"),
+    operation_hooks: &[
+        DerivationOperationHook::Rebuild,
+        DerivationOperationHook::Explain,
+        DerivationOperationHook::Redact,
+    ],
+};
+
+pub const EMAIL_BODY_TEXT_PROJECTION_DERIVATION: DerivationSpec = DerivationSpec {
+    id: EMAIL_BODY_TEXT_PROJECTION_DERIVATION_ID,
+    input_scope: DerivationInputScope::EventTypes {
+        domain_id: "email.mailbox",
+        event_types: EMAIL_BODY_TEXT_PROJECTION_INPUT_EVENTS,
+    },
+    output_id: "core.email_mailbox_projection.body_text",
+    output_kind: OutputKind::ProjectionRow,
+    freshness_policy: FreshnessPolicy::RebuildOnInputChange,
+    invalidates_on: &[
+        InvalidationTrigger::Replay,
+        InvalidationTrigger::Archive,
+        InvalidationTrigger::Redaction,
+        InvalidationTrigger::SourceMaterialChange,
+        InvalidationTrigger::ParserSemanticsChange,
+        InvalidationTrigger::DisclosurePolicyChange,
+    ],
+    rebuild_resource_policy_ref: Some("resource-policy:email.mailbox.projection-rebuild"),
+    disclosure_policy_ref: Some("operator.email-mailbox.default"),
+    operation_hooks: &[
+        DerivationOperationHook::Rebuild,
+        DerivationOperationHook::Explain,
+        DerivationOperationHook::Redact,
+    ],
+};
+
+pub const EMAIL_ATTACHMENT_INDEX_DERIVATION: DerivationSpec = DerivationSpec {
+    id: EMAIL_ATTACHMENT_INDEX_DERIVATION_ID,
+    input_scope: DerivationInputScope::EventTypes {
+        domain_id: "email.mailbox",
+        event_types: EMAIL_ATTACHMENT_INDEX_INPUT_EVENTS,
+    },
+    output_id: "core.email_mailbox_projection.attachment_index",
+    output_kind: OutputKind::ProjectionRow,
+    freshness_policy: FreshnessPolicy::RebuildOnInputChange,
+    invalidates_on: &[
+        InvalidationTrigger::Replay,
+        InvalidationTrigger::Archive,
+        InvalidationTrigger::Redaction,
+        InvalidationTrigger::SourceMaterialChange,
+        InvalidationTrigger::ParserSemanticsChange,
+        InvalidationTrigger::DisclosurePolicyChange,
+    ],
+    rebuild_resource_policy_ref: Some("resource-policy:email.mailbox.projection-rebuild"),
+    disclosure_policy_ref: Some("operator.email-mailbox.default"),
+    operation_hooks: &[
+        DerivationOperationHook::Rebuild,
+        DerivationOperationHook::Explain,
+        DerivationOperationHook::Redact,
+    ],
+};
+
 pub const DERIVATION_SPECS: &[DerivationSpec] = &[
     TASK_CURRENT_OBJECTS_DERIVATION,
     DESKTOP_CONTEXT_CURRENT_VIEW_DERIVATION,
@@ -303,6 +397,9 @@ pub const DERIVATION_SPECS: &[DerivationSpec] = &[
     MEDIA_AUDIO_TRANSCRIPT_ARTIFACT_DERIVATION,
     MEDIA_SCREEN_OCR_ARTIFACT_DERIVATION,
     MEDIA_TEXT_INDEX_PROJECTION_DERIVATION,
+    EMAIL_THREAD_PROJECTION_DERIVATION,
+    EMAIL_BODY_TEXT_PROJECTION_DERIVATION,
+    EMAIL_ATTACHMENT_INDEX_DERIVATION,
 ];
 
 pub fn derivation_specs() -> impl Iterator<Item = &'static DerivationSpec> {
