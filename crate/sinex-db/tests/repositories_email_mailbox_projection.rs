@@ -23,6 +23,8 @@ async fn email_mailbox_projection_merges_message_thread_and_attachment_events(
             "source_file": "mailbox.mbox",
             "raw_material_id": Uuid::now_v7().to_string(),
             "mailbox_format": "mbox",
+            "mbox_byte_start": 128,
+            "mbox_byte_end": 512,
             "subject": "Projection fixture",
             "from": ["Sender <sender@example.com>"],
             "to": ["Receiver <receiver@example.com>"],
@@ -74,6 +76,8 @@ async fn email_mailbox_projection_merges_message_thread_and_attachment_events(
     assert_eq!(row.message_id.as_deref(), Some(message_id));
     assert_eq!(row.thread_key.as_deref(), Some("thread:projection"));
     assert_eq!(row.body_bytes, 42);
+    assert_eq!(row.mbox_byte_start, Some(128));
+    assert_eq!(row.mbox_byte_end, Some(512));
     assert_eq!(row.attachment_count, 2);
     assert_eq!(row.attachment_observed_count, 2);
     assert_eq!(
