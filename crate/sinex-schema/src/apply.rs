@@ -1,10 +1,11 @@
 use crate::defs::{
     ArchivedEventAnnotations, ArchivedEventEmbeddings, ArchivedEvents, ArchivedTaggedItems,
-    BinarySchemaVersion, Blobs, DocumentChunks, Documents, EmbeddingCache, EmbeddingModels,
-    Entities, EntityRelations, EventAnnotations, EventClusterMembers, EventClusters,
-    EventEmbeddings, EventPayloadSchemas, EventReplacements, EventTombstones, Events, Manifests,
-    ModelEffects, OperationsLog, Runs, SemanticEpochs, SemanticLaneDiffs, SemanticLaneOutputs,
-    SemanticLanes, SourceMaterialLinks, SourceMaterialRegistry, TaggedItems, Tags, TemporalLedger,
+    BinarySchemaVersion, Blobs, DocumentChunks, Documents, EmailProviderState, EmbeddingCache,
+    EmbeddingModels, Entities, EntityRelations, EventAnnotations, EventClusterMembers,
+    EventClusters, EventEmbeddings, EventPayloadSchemas, EventReplacements, EventTombstones,
+    Events, Manifests, ModelEffects, OperationsLog, Runs, SemanticEpochs, SemanticLaneDiffs,
+    SemanticLaneOutputs, SemanticLanes, SourceMaterialLinks, SourceMaterialRegistry, TaggedItems,
+    Tags, TemporalLedger,
 };
 use crate::registry;
 use sea_query::{IndexCreateStatement, PostgresQueryBuilder, TableCreateStatement};
@@ -769,6 +770,7 @@ async fn create_tables(pool: &PgPool) -> Result<(), ApplyError> {
         render_table(&EmbeddingModels::create_table_statement()),
         render_table(&EventClusters::create_table_statement()),
         render_table(&OperationsLog::create_table_statement()),
+        render_table(&EmailProviderState::create_table_statement()),
         render_table(&Tags::create_table_statement()),
         render_table(&SourceMaterialRegistry::create_table_statement()),
         render_table(&SourceMaterialLinks::create_table_statement()),
@@ -878,6 +880,7 @@ async fn create_indexes(pool: &PgPool) -> Result<(), ApplyError> {
     index_sql.extend(DocumentChunks::create_fts_indexes_sql());
     index_sql.extend(render_indexes(OperationsLog::create_indexes()));
     index_sql.extend(OperationsLog::create_gin_indexes_sql());
+    index_sql.extend(render_indexes(EmailProviderState::create_indexes()));
 
     for sql in index_sql {
         execute_sql(pool, &sql).await?;
@@ -901,6 +904,7 @@ async fn create_triggers_and_functions(pool: &PgPool) -> Result<(), ApplyError> 
     execute_sql(pool, &EntityRelations::create_updated_at_trigger_sql()).await?;
     execute_sql(pool, &EventAnnotations::create_updated_at_trigger_sql()).await?;
     execute_sql(pool, &EventPayloadSchemas::create_updated_at_trigger_sql()).await?;
+    execute_sql(pool, &EmailProviderState::create_updated_at_trigger_sql()).await?;
     execute_sql(pool, DocumentChunks::create_projection_trigger_sql()).await?;
 
     execute_sql(pool, OPERATIONS_AND_CASCADE_SQL).await?;

@@ -67,10 +67,10 @@ use std::collections::{HashMap, HashSet};
 
 use crate::apply::ApplyError;
 use crate::defs::{
-    Blobs, EmbeddingCache, EmbeddingModels, Entities, EntityRelations, EventAnnotations,
-    EventEmbeddings, EventPayloadSchemas, Events, ModelEffects, OperationsLog, SemanticEpochs,
-    SemanticLaneDiffs, SemanticLaneOutputs, SemanticLanes, SourceMaterialRegistry, TableMeta,
-    TaggedItems, Tags,
+    Blobs, EmailProviderState, EmbeddingCache, EmbeddingModels, Entities, EntityRelations,
+    EventAnnotations, EventEmbeddings, EventPayloadSchemas, Events, ModelEffects, OperationsLog,
+    SemanticEpochs, SemanticLaneDiffs, SemanticLaneOutputs, SemanticLanes, SourceMaterialRegistry,
+    TableMeta, TaggedItems, Tags,
 };
 use sea_query::{
     Alias, ColumnDef, ColumnSpec, ForeignKeyCreateStatement, PostgresQueryBuilder, Table,
@@ -1039,6 +1039,25 @@ pub fn convergible_tables() -> Result<Vec<ConvergibleTable>, ApplyError> {
                 NamedConstraint {
                     name: "operations_log_result_status_valid",
                     expression: "result_status IN ('success', 'failure', 'partial', 'running', 'cancelled')",
+                },
+            ],
+            foreign_keys: vec![],
+            columns_to_drop: &[],
+            mirror: None,
+        },
+        ConvergibleTable {
+            meta: find_meta("core.email_provider_state")?,
+            statement_fn: EmailProviderState::create_table_statement,
+            column_renames: &[],
+            pending_drop: &[],
+            named_constraints: vec![
+                NamedConstraint {
+                    name: "email_provider_state_result_status_valid",
+                    expression: "result_status IN ('success', 'failure', 'partial', 'running', 'cancelled')",
+                },
+                NamedConstraint {
+                    name: "email_provider_state_mailbox_scope_nonempty",
+                    expression: "length(BTRIM(mailbox_scope, E' \\t\\n\\r\\v\\f')) > 0",
                 },
             ],
             foreign_keys: vec![],
