@@ -7,6 +7,7 @@ use super::integrity::{
 };
 use super::*;
 use crate::commands::exercise::{ExerciseReport, ReportEntry, StepEntry};
+use std::fs;
 #[cfg(unix)]
 use std::os::unix::fs::PermissionsExt;
 use std::path::PathBuf;
