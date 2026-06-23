@@ -55,7 +55,7 @@ pub struct EmailMailboxParserConfig;
     retention = RetentionPolicy::Forever,
     occurrence_identity = OccurrenceIdentity::Uuid5From("(message_id, folder)"),
     access_scope = AccessScope::StagedExport,
-    capabilities = "coverage:source-coverage, debt:unified-debt-view, operation:email.mailbox.check, operation:email.mailbox.import-rfc822, operation:email.mailbox.inspect, operation:email.mailbox.replay",
+    capabilities = "coverage:source-coverage, debt:unified-debt-view, operation:email.mailbox.check, operation:email.mailbox.import-rfc822, operation:email.mailbox.inspect, operation:email.mailbox.replay, operation:email.mailbox.export, operation:email.mailbox.fetch-attachments, operation:email.mailbox.rebuild-projection",
     privacy_context = ProcessingContext::Document,
     resource_profile = ResourceProfile::BoundedFile,
     runner_pack = RunnerPack::Staged,
@@ -74,7 +74,7 @@ pub struct EmailMailboxParserConfig;
         runtime_shape = RuntimeShape::Scheduled,
         material_lifecycle = MaterialLifecyclePolicy::RetainRaw,
         transport_semantics = TransportSemantics::DIRECT_APPEND_STREAM,
-        capabilities = "coverage:source-coverage, debt:unified-debt-view, operation:email.mailbox.import-maildir, operation:email.mailbox.inspect, operation:email.mailbox.replay"
+        capabilities = "coverage:source-coverage, debt:unified-debt-view, operation:email.mailbox.import-maildir, operation:email.mailbox.inspect, operation:email.mailbox.replay, operation:email.mailbox.export, operation:email.mailbox.fetch-attachments, operation:email.mailbox.rebuild-projection"
     ),
     binding(
         subject = "source:email.mailbox.mbox-staged",
@@ -87,7 +87,7 @@ pub struct EmailMailboxParserConfig;
         runtime_shape = RuntimeShape::Scheduled,
         material_lifecycle = MaterialLifecyclePolicy::RetainRaw,
         transport_semantics = TransportSemantics::DIRECT_APPEND_STREAM,
-        capabilities = "coverage:source-coverage, debt:unified-debt-view, operation:email.mailbox.import-mbox, operation:email.mailbox.inspect, operation:email.mailbox.replay"
+        capabilities = "coverage:source-coverage, debt:unified-debt-view, operation:email.mailbox.import-mbox, operation:email.mailbox.inspect, operation:email.mailbox.replay, operation:email.mailbox.export, operation:email.mailbox.fetch-attachments, operation:email.mailbox.rebuild-projection"
     ),
     binding(
         subject = "source:email.mailbox.sent",
@@ -105,7 +105,7 @@ pub struct EmailMailboxParserConfig;
         runtime_shape = RuntimeShape::Scheduled,
         material_lifecycle = MaterialLifecyclePolicy::ExternalReferenceOnly,
         transport_semantics = TransportSemantics::EXTERNAL_API_CURSOR,
-        capabilities = "coverage:source-coverage, debt:unified-debt-view, operation:email.mailbox.authorize, operation:email.mailbox.check, operation:email.mailbox.sync, operation:email.mailbox.pause, operation:email.mailbox.resume, operation:email.mailbox.inspect, operation:email.mailbox.replay"
+        capabilities = "coverage:source-coverage, debt:unified-debt-view, operation:email.mailbox.authorize, operation:email.mailbox.check, operation:email.mailbox.sync, operation:email.mailbox.pause, operation:email.mailbox.resume, operation:email.mailbox.inspect, operation:email.mailbox.replay, operation:email.mailbox.export, operation:email.mailbox.fetch-attachments, operation:email.mailbox.rebuild-projection"
     ),
     binding(
         subject = "source:email.mailbox.imap-scheduled-sync",
@@ -118,7 +118,7 @@ pub struct EmailMailboxParserConfig;
         runtime_shape = RuntimeShape::Scheduled,
         material_lifecycle = MaterialLifecyclePolicy::ExternalReferenceOnly,
         transport_semantics = TransportSemantics::EXTERNAL_API_CURSOR,
-        capabilities = "coverage:source-coverage, debt:unified-debt-view, operation:email.mailbox.authorize, operation:email.mailbox.check, operation:email.mailbox.sync, operation:email.mailbox.pause, operation:email.mailbox.resume, operation:email.mailbox.inspect, operation:email.mailbox.replay"
+        capabilities = "coverage:source-coverage, debt:unified-debt-view, operation:email.mailbox.authorize, operation:email.mailbox.check, operation:email.mailbox.sync, operation:email.mailbox.pause, operation:email.mailbox.resume, operation:email.mailbox.inspect, operation:email.mailbox.replay, operation:email.mailbox.export, operation:email.mailbox.fetch-attachments, operation:email.mailbox.rebuild-projection"
     ),
     binding(
         subject = "source:email.mailbox.imap-idle-live",
@@ -131,7 +131,7 @@ pub struct EmailMailboxParserConfig;
         runtime_shape = RuntimeShape::Continuous,
         material_lifecycle = MaterialLifecyclePolicy::ExternalReferenceOnly,
         transport_semantics = TransportSemantics::EXTERNAL_API_CURSOR,
-        capabilities = "coverage:source-coverage, debt:unified-debt-view, operation:email.mailbox.authorize, operation:email.mailbox.check, operation:email.mailbox.pause, operation:email.mailbox.resume, operation:email.mailbox.inspect"
+        capabilities = "coverage:source-coverage, debt:unified-debt-view, operation:email.mailbox.authorize, operation:email.mailbox.check, operation:email.mailbox.pause, operation:email.mailbox.resume, operation:email.mailbox.inspect, operation:email.mailbox.export, operation:email.mailbox.fetch-attachments, operation:email.mailbox.rebuild-projection"
     )
 )]
 pub struct EmailMailboxParser;
