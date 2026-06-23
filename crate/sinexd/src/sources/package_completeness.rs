@@ -216,6 +216,8 @@ pub struct RequirementDiagnostic {
     pub status: RequirementStatus,
     pub blocking: bool,
     pub detail: String,
+    pub owner_file: &'static str,
+    pub next_action: &'static str,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq)]
@@ -917,11 +919,72 @@ impl BaseDiagnostics {
             status,
             blocking,
             detail,
+            owner_file: requirement_owner_file(id),
+            next_action: requirement_next_action(id),
         });
     }
 
     fn finish(self) -> (Vec<RequirementDiagnostic>, Vec<String>, Vec<String>) {
         (self.requirements, self.missing, self.caveats)
+    }
+}
+
+fn requirement_owner_file(id: &str) -> &'static str {
+    match id {
+        "package_identity" | "event_contract_refs" => {
+            "crate/sinex-primitives/src/event_contracts.rs"
+        }
+        "mode_identity"
+        | "producer_runtime_binding"
+        | "material_class"
+        | "storage_material_lifecycle_policy"
+        | "resource_budget_spec"
+        | "transport_semantics"
+        | "runtime_profile" => "crate/sinex-primitives/src/source_contracts.rs",
+        "parser_binding" => "crate/sinexd/src/sources/source_contracts/",
+        "source_factory" => "crate/sinexd/src/sources/source_factory.rs",
+        "payload_schema" => "crate/sinex-primitives/src/events/payloads/",
+        "admission_policy_ref" => "crate/sinex-primitives/src/admission_policy.rs",
+        "identity_policy" => "crate/sinex-primitives/src/source_contracts.rs",
+        "privacy_disclosure_policy" => "crate/sinexd/src/sources/privacy_coverage.rs",
+        "fixtures_and_tests" => "crate/sinexd/tests/sources/",
+        "coverage_and_debt_views" | "operations" => {
+            "crate/sinex-primitives/src/source_contracts.rs"
+        }
+        "deployment_catalog_projection" => "nixos/modules/source-catalog.generated.json",
+        "review_output" => "crate/sinexd/src/sources/package_completeness.rs",
+        _ => "crate/sinexd/src/sources/package_completeness.rs",
+    }
+}
+
+fn requirement_next_action(id: &str) -> &'static str {
+    match id {
+        "package_identity" => "declare or correct the SourceContract package id and namespace",
+        "mode_identity" | "producer_runtime_binding" => {
+            "register a SourceRuntimeBinding for the package mode"
+        }
+        "material_class" => "declare the package material class through the runtime binding",
+        "parser_binding" => "register a parser manifest or mark the mode manual/external",
+        "source_factory" => "register the runtime source factory or mark the mode manual/external",
+        "payload_schema" => "add the EventPayload schema for every declared event pair",
+        "event_contract_refs" => "add EventContract refs for the package event pairs",
+        "admission_policy_ref" => {
+            "set EventContract.admission_policy_ref or extend the policy compatibility list"
+        }
+        "identity_policy" => "declare the occurrence identity contract",
+        "privacy_disclosure_policy" => "add privacy coverage for the package mode",
+        "storage_material_lifecycle_policy" => {
+            "declare material lifecycle semantics on the runtime binding"
+        }
+        "resource_budget_spec" => "select a ResourceProfile that derives the budget spec",
+        "transport_semantics" => "declare transport semantics on the runtime binding",
+        "runtime_profile" => "declare checkpoint and runtime shape on the binding",
+        "fixtures_and_tests" => "add behavior fixtures for the parser/runtime contract",
+        "coverage_and_debt_views" => "add typed coverage and debt capability refs",
+        "operations" => "add operation capability refs for operator actions",
+        "deployment_catalog_projection" => "regenerate or fix the source catalog projection",
+        "review_output" => "review this package-completeness row in the authoring loop",
+        _ => "inspect the package-completeness requirement detail",
     }
 }
 
@@ -1109,10 +1172,9 @@ fn admission_policy_refs_for_event_contracts(contracts: &[&'static EventContract
         .collect::<BTreeSet<_>>();
     let mut policies = admission_policies()
         .filter(|policy| {
-            policy
-                .accepted_event_contracts
+            contract_ids
                 .iter()
-                .any(|contract_id| contract_ids.contains(contract_id))
+                .any(|contract_id| policy.accepts_event_contract(contract_id))
         })
         .map(|policy: &AdmissionPolicy| policy.id.to_string())
         .collect::<Vec<_>>();

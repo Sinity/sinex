@@ -55,16 +55,12 @@ async fn admission_policy_registry_references_event_contracts() -> TestResult<()
 
     assert_eq!(policy.id, STANDARD_EVENT_ADMISSION_POLICY_ID);
     assert_eq!(policy.scope, AdmissionPolicyScope::GlobalDefault);
+    assert!(policy.accepts_event_contract(SHELL_HISTORY_COMMAND_IMPORTED_CONTRACT_ID));
     assert!(
-        policy
-            .accepted_event_contracts
-            .contains(&SHELL_HISTORY_COMMAND_IMPORTED_CONTRACT_ID)
+        policy.effective_event_contract_ids().len() > 1,
+        "standard admission policy should accept EventContracts across packages"
     );
-    assert!(
-        policy.accepted_event_contracts.len() > 1,
-        "standard admission policy should enumerate accepted EventContracts across packages"
-    );
-    for contract_id in policy.accepted_event_contracts.iter().copied() {
+    for contract_id in policy.effective_event_contract_ids() {
         assert!(
             find_event_contract(contract_id).is_some(),
             "admission policy references unknown EventContract {contract_id}"
@@ -73,7 +69,7 @@ async fn admission_policy_registry_references_event_contracts() -> TestResult<()
     for contract in event_contracts() {
         if contract.admission_policy_ref == Some(STANDARD_EVENT_ADMISSION_POLICY_ID) {
             assert!(
-                policy.accepted_event_contracts.contains(&contract.id),
+                policy.accepts_event_contract(contract.id),
                 "EventContract {} names the standard admission policy but is not accepted by it",
                 contract.id
             );
@@ -107,16 +103,16 @@ async fn event_contract_id_decouples_package_ids_from_event_namespace() -> TestR
         "the event namespace must not be smuggled into package/source identity"
     );
 
-    assert!(policy.accepted_event_contracts.contains(&contract.id));
+    assert!(policy.accepts_event_contract(contract.id));
     assert!(
         !policy
-            .accepted_event_contracts
+            .effective_event_contract_ids()
             .contains(&contract.event_source),
         "admission policy must reference the event contract id, not the event source namespace"
     );
     for package_id in contract.package_refs.iter().copied() {
         assert!(
-            !policy.accepted_event_contracts.contains(&package_id),
+            !policy.effective_event_contract_ids().contains(&package_id),
             "admission policy must not treat package/source ids as event-contract ids"
         );
     }
