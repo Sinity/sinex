@@ -8,6 +8,7 @@
 use std::{error::Error, fmt, future::Future, sync::Arc};
 
 use async_trait::async_trait;
+use base64::Engine as _;
 use futures::StreamExt;
 use futures::stream::{self, BoxStream};
 use schemars::JsonSchema;
@@ -263,12 +264,22 @@ impl GmailHttpClient {
         )))
         .await
     }
+
+    pub async fn fetch_raw_message(&self, message_id: &str) -> Result<Vec<u8>, GmailHttpError> {
+        let message: GmailRawMessage = self
+            .fetch_json(self.http.get(
+                self.user_url_with_query(&format!("messages/{message_id}"), &[("format", "raw")]),
+            ))
+            .await?;
+        decode_gmail_raw_message(&message.raw)
+    }
 }
 
 #[derive(Debug)]
 pub enum GmailHttpError {
     Transport(reqwest::Error),
     Decode(reqwest::Error),
+    RawDecode(base64::DecodeError),
     Status {
         status: reqwest::StatusCode,
         body: String,
@@ -280,6 +291,7 @@ impl fmt::Display for GmailHttpError {
         match self {
             Self::Transport(error) => write!(f, "Gmail transport error: {error}"),
             Self::Decode(error) => write!(f, "Gmail response decode error: {error}"),
+            Self::RawDecode(error) => write!(f, "Gmail raw message decode error: {error}"),
             Self::Status { status, body } => {
                 if body.trim().is_empty() {
                     write!(f, "Gmail API returned HTTP {status}")
@@ -448,6 +460,12 @@ struct GmailRestMessage {
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
+struct GmailRawMessage {
+    raw: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
 struct GmailRestHistoryList {
     #[serde(default)]
     history: Vec<GmailRestHistory>,
@@ -484,6 +502,13 @@ fn gmail_rest_message_record(message: GmailRestMessage) -> GmailApiRecord {
         label_ids: message.label_ids.clone(),
         payload: serde_json::to_value(message).unwrap_or(JsonValue::Null),
     }
+}
+
+fn decode_gmail_raw_message(raw: &str) -> Result<Vec<u8>, GmailHttpError> {
+    base64::engine::general_purpose::URL_SAFE_NO_PAD
+        .decode(raw)
+        .or_else(|_| base64::engine::general_purpose::URL_SAFE.decode(raw))
+        .map_err(GmailHttpError::RawDecode)
 }
 
 fn gmail_history_record(
