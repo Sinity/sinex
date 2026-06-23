@@ -129,6 +129,7 @@ const MEDIA_WORKER_EXECUTOR_MESSAGE: &str =
 const MEDIA_SESSION_CONTROL_MESSAGE: &str = "media session-control operation records the requested runtime transition; runner evidence and SourceCoverage report observed state";
 const MEDIA_MATERIAL_OPERATION_MESSAGE: &str =
     "media material operation records operator intent and lifecycle/debt requirements";
+const EMAIL_RFC822_STAGED_MODE_ID: &str = "source:email.mailbox";
 const EMAIL_MAILDIR_STAGED_MODE_ID: &str = "source:email.mailbox.maildir-staged";
 const EMAIL_MBOX_STAGED_MODE_ID: &str = "source:email.mailbox.mbox-staged";
 const EMAIL_GMAIL_SCHEDULED_SYNC_MODE_ID: &str = "source:email.mailbox.gmail-api-scheduled-sync";
@@ -158,6 +159,14 @@ const EMAIL_SYNC_MODE_IDS: &[&str] = &[
     EMAIL_MBOX_STAGED_MODE_ID,
     EMAIL_GMAIL_SCHEDULED_SYNC_MODE_ID,
     EMAIL_IMAP_SCHEDULED_SYNC_MODE_ID,
+];
+const EMAIL_MATERIALIZATION_MODE_IDS: &[&str] = &[
+    EMAIL_RFC822_STAGED_MODE_ID,
+    EMAIL_MAILDIR_STAGED_MODE_ID,
+    EMAIL_MBOX_STAGED_MODE_ID,
+    EMAIL_GMAIL_SCHEDULED_SYNC_MODE_ID,
+    EMAIL_IMAP_SCHEDULED_SYNC_MODE_ID,
+    EMAIL_IMAP_IDLE_LIVE_MODE_ID,
 ];
 
 #[derive(Debug, Clone, Copy)]
@@ -740,6 +749,33 @@ const PACKAGE_OPERATION_SPECS: &[PackageOperationSpec] = &[
         action: "replay",
         surface: "email_capture",
         executor_message: EMAIL_STAGED_REPLAY_MESSAGE,
+    },
+    PackageOperationSpec {
+        operation_type: "email.mailbox.fetch-attachments",
+        source_id: "email.mailbox",
+        default_mode_id: None,
+        accepted_mode_ids: EMAIL_MATERIALIZATION_MODE_IDS,
+        action: "fetch_attachments",
+        surface: "email_capture",
+        executor_message: "email attachment materialization executor pending",
+    },
+    PackageOperationSpec {
+        operation_type: "email.mailbox.export",
+        source_id: "email.mailbox",
+        default_mode_id: None,
+        accepted_mode_ids: EMAIL_MATERIALIZATION_MODE_IDS,
+        action: "export",
+        surface: "email_capture",
+        executor_message: "email mailbox export executor pending",
+    },
+    PackageOperationSpec {
+        operation_type: "email.mailbox.rebuild-projection",
+        source_id: "email.mailbox",
+        default_mode_id: None,
+        accepted_mode_ids: EMAIL_MATERIALIZATION_MODE_IDS,
+        action: "rebuild_projection",
+        surface: "email_capture",
+        executor_message: "email mailbox projection rebuild executor pending",
     },
 ];
 

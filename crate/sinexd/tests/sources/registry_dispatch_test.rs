@@ -1036,6 +1036,24 @@ async fn package_completeness_report_consumes_coverage_debt_and_operation_refs()
             "email staged mode {mode_id} must declare the import action ref consumed by the package gate"
         );
         assert!(
+            email
+                .operation_refs
+                .contains(&"operation:email.mailbox.export".to_string()),
+            "email staged mode {mode_id} must declare the scoped export operation ref"
+        );
+        assert!(
+            email
+                .operation_refs
+                .contains(&"operation:email.mailbox.fetch-attachments".to_string()),
+            "email staged mode {mode_id} must declare the attachment fetch operation ref"
+        );
+        assert!(
+            email
+                .operation_refs
+                .contains(&"operation:email.mailbox.rebuild-projection".to_string()),
+            "email staged mode {mode_id} must declare the projection rebuild operation ref"
+        );
+        assert!(
             !email
                 .missing
                 .iter()

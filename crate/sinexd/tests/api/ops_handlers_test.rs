@@ -922,6 +922,69 @@ async fn ops_start_records_email_sync_for_provider_mode(ctx: TestContext) -> Tes
 }
 
 #[sinex_test]
+async fn ops_start_records_email_attachment_materialization_operation(
+    ctx: TestContext,
+) -> TestResult<()> {
+    let auth = system_auth();
+    let response: OpsStartResponse = serde_json::from_value(
+        handle_ops_start(
+            ctx.pool(),
+            json!({
+                "operation_type": "email.mailbox.fetch-attachments",
+                "scope": {
+                    "source_id": "email.mailbox",
+                    "mode_id": "source:email.mailbox.mbox-staged",
+                    "message_key": "mailbox:inbox/message:<fixture>",
+                    "material_policy_ref": "operator.email-mailbox.attachment-deferred"
+                },
+            }),
+            &auth,
+        )
+        .await?,
+    )?;
+
+    assert_eq!(
+        response.operation.operation_type,
+        "email.mailbox.fetch-attachments"
+    );
+    assert_eq!(response.operation.result_status, OperationStatus::Running);
+    assert_eq!(
+        response.operation.result_message.as_deref(),
+        Some("email_capture; executor pending")
+    );
+    let scope = response
+        .operation
+        .scope
+        .as_ref()
+        .expect("email materialization operation scope should be recorded");
+    assert_eq!(scope["surface"], "email_capture");
+    assert_eq!(scope["source_id"], "email.mailbox");
+    assert_eq!(scope["mode_id"], "source:email.mailbox.mbox-staged");
+    assert_eq!(scope["action"], "fetch_attachments");
+    assert_eq!(
+        scope["material_policy_ref"],
+        "operator.email-mailbox.attachment-deferred"
+    );
+    assert_eq!(
+        scope["mode_contract"]["binding"]["subject"],
+        "source:email.mailbox.mbox-staged"
+    );
+    let preview = response
+        .operation
+        .preview_summary
+        .as_ref()
+        .expect("email materialization operation preview should be recorded");
+    assert_eq!(preview["surface"], "email_capture");
+    assert_eq!(preview["operation_type"], "email.mailbox.fetch-attachments");
+    assert_eq!(preview["mode_id"], "source:email.mailbox.mbox-staged");
+    assert_eq!(
+        preview["message"],
+        "email attachment materialization executor pending"
+    );
+    Ok(())
+}
+
+#[sinex_test]
 async fn ops_start_executes_gmail_scheduled_sync_with_token_file(
     ctx: TestContext,
 ) -> TestResult<()> {
