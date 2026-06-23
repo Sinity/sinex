@@ -193,7 +193,7 @@ async fn seed_email_projection(
             .upsert_event(EmailMailboxProjectionEvent {
                 source_id: "email.mailbox".to_string(),
                 mode_id: mode_id.to_string(),
-                event_id: uuid::Uuid::now_v7(),
+                observed_event_id: uuid::Uuid::now_v7(),
                 event_type: "email.attachment.observed".to_string(),
                 payload: json!({
                     "message_id": message_id,
@@ -225,7 +225,7 @@ async fn seed_email_projection_message(
         .upsert_event(EmailMailboxProjectionEvent {
             source_id: "email.mailbox".to_string(),
             mode_id: mode_id.to_string(),
-            event_id,
+            observed_event_id: event_id,
             event_type: "email.message.received".to_string(),
             payload,
         })

@@ -1818,7 +1818,7 @@ async fn project_email_mailbox_event(
         .upsert_event(EmailMailboxProjectionEvent {
             source_id: "email.mailbox".to_string(),
             mode_id: mode_id.to_string(),
-            event_id,
+            observed_event_id: event_id,
             event_type,
             payload,
         })
