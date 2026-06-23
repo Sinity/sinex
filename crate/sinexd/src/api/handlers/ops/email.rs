@@ -2,6 +2,7 @@ use super::{
     EmailSyncExecutionResult, PackageOperationSpec, Result, elapsed_millis, optional_scope_string,
 };
 use crate::event_engine::policy::{DisclosureContext, PolicyEngine};
+use crate::runtime::parser::GmailHttpClient;
 use sinex_db::DbPoolExt;
 use sinex_db::SourceMaterialRecord;
 use sinex_db::repositories::{EmailMailboxProjectionEvent, EmailMailboxProjectionRecord};
@@ -67,8 +68,14 @@ async fn execute_email_attachment_fetch(
     let mut materialized_attachments = Vec::new();
     let mut blocked_materials = Vec::new();
     for row in &rows {
-        match materialize_email_projection_attachments(pool, mode_id, row, &material_policy_ref)
-            .await?
+        match materialize_email_projection_attachments(
+            pool,
+            mode_id,
+            row,
+            &material_policy_ref,
+            scope,
+        )
+        .await?
         {
             EmailAttachmentMaterialization::Materialized(items) => {
                 materialized_attachments.extend(items);
@@ -295,10 +302,21 @@ async fn materialize_email_projection_attachments(
     mode_id: &str,
     row: &EmailMailboxProjectionRecord,
     material_policy_ref: &str,
+    scope: &serde_json::Map<String, serde_json::Value>,
 ) -> Result<EmailAttachmentMaterialization> {
     let outstanding = row.attachment_count - row.attachment_observed_count;
     if outstanding == 0 {
         return Ok(EmailAttachmentMaterialization::Materialized(Vec::new()));
+    }
+    if row.mailbox_format.as_deref() == Some("gmail-api") {
+        return materialize_gmail_projection_attachments(
+            pool,
+            mode_id,
+            row,
+            material_policy_ref,
+            scope,
+        )
+        .await;
     }
     let Some(material) = load_projection_source_material(pool, row).await? else {
         return Ok(EmailAttachmentMaterialization::Blocked(
@@ -349,6 +367,115 @@ async fn materialize_email_projection_attachments(
             "raw_material_id": row.raw_material_id,
             "attachment_index": index,
             "material_policy_ref": material_policy_ref,
+            "source_uri": material.source_uri.clone(),
+            "byte_range": material.byte_range.clone(),
+            "raw_message_bytes": material.raw_message_bytes,
+            "raw_message_blake3": material.raw_message_blake3.clone(),
+            "observed_event_id": event_id,
+        }));
+    }
+    Ok(EmailAttachmentMaterialization::Materialized(materialized))
+}
+
+async fn materialize_gmail_projection_attachments(
+    pool: &PgPool,
+    mode_id: &str,
+    row: &EmailMailboxProjectionRecord,
+    material_policy_ref: &str,
+    scope: &serde_json::Map<String, serde_json::Value>,
+) -> Result<EmailAttachmentMaterialization> {
+    let Some(message_id) = row.message_id.as_deref() else {
+        return Ok(EmailAttachmentMaterialization::Blocked(
+            blocked_email_material(row, "gmail_message_id_required"),
+        ));
+    };
+    let Some(token_file) = optional_scope_string(scope, "gmail_token_file")
+        .or_else(|| optional_scope_string(scope, "access_token_file"))
+        .or_else(|| optional_scope_string(scope, "token_file"))
+    else {
+        return Ok(EmailAttachmentMaterialization::Blocked(
+            blocked_email_material(
+                row,
+                "gmail_token_file_required_for_provider_materialization",
+            ),
+        ));
+    };
+    let token = tokio::fs::read_to_string(&token_file)
+        .await
+        .map_err(|error| {
+            SinexError::io("failed to read Gmail token file for attachment materialization")
+                .with_context("token_file", token_file.clone())
+                .with_std_error(&error)
+                .with_operation("ops.start")
+        })?;
+    let token = token.trim().to_string();
+    if token.is_empty() {
+        return Ok(EmailAttachmentMaterialization::Blocked(
+            blocked_email_material(row, "gmail_token_file_empty"),
+        ));
+    }
+    let client = GmailHttpClient::with_endpoint(
+        reqwest::Client::new(),
+        optional_scope_string(scope, "gmail_api_base_url")
+            .or_else(|| optional_scope_string(scope, "api_base_url"))
+            .unwrap_or_else(|| "https://gmail.googleapis.com/gmail/v1".to_string()),
+        optional_scope_string(scope, "gmail_user_id")
+            .or_else(|| optional_scope_string(scope, "user_id"))
+            .unwrap_or_else(|| "me".to_string()),
+        token,
+    );
+    let raw = match client.fetch_raw_message(message_id).await {
+        Ok(raw) => raw,
+        Err(_) => {
+            return Ok(EmailAttachmentMaterialization::Blocked(
+                blocked_email_material(row, "gmail_raw_message_fetch_failed"),
+            ));
+        }
+    };
+    let material = projection_raw_message_from_bytes(
+        row,
+        format!("gmail://messages/{message_id}?format=raw"),
+        &raw,
+    )?;
+    let mut materialized = Vec::new();
+    for index in row.attachment_observed_count..row.attachment_count {
+        let event_id = uuid::Uuid::now_v7();
+        let payload = serde_json::json!({
+            "message_id": row.message_id,
+            "folder": row.folder,
+            "source_file": row.source_file,
+            "raw_material_id": row.raw_material_id,
+            "mailbox_format": row.mailbox_format,
+            "attachment_index": index,
+            "disposition": "attachment",
+            "filename": null,
+            "content_type": null,
+            "content_id": null,
+            "material_policy_ref": material_policy_ref,
+            "materialization": {
+                "source": "gmail_api_raw_message",
+                "source_uri": material.source_uri.clone(),
+                "byte_range": material.byte_range.clone(),
+                "raw_message_bytes": material.raw_message_bytes,
+                "raw_message_blake3": material.raw_message_blake3.clone()
+            }
+        });
+        pool.email_mailbox_projections()
+            .upsert_event(EmailMailboxProjectionEvent {
+                source_id: "email.mailbox".to_string(),
+                mode_id: mode_id.to_string(),
+                observed_event_id: event_id,
+                event_type: "email.attachment.observed".to_string(),
+                payload,
+            })
+            .await?;
+        materialized.push(serde_json::json!({
+            "message_key": row.message_key,
+            "message_id": row.message_id,
+            "raw_material_id": row.raw_material_id,
+            "attachment_index": index,
+            "material_policy_ref": material_policy_ref,
+            "source": "gmail_api_raw_message",
             "source_uri": material.source_uri.clone(),
             "byte_range": material.byte_range.clone(),
             "raw_message_bytes": material.raw_message_bytes,
@@ -421,9 +548,17 @@ async fn read_projection_raw_message(
         .with_std_error(&error)
         .with_operation("ops.start")
     })?;
-    let (bytes, byte_range) = projection_raw_message_slice(row, &bytes)?;
+    projection_raw_message_from_bytes(row, path, &bytes)
+}
+
+fn projection_raw_message_from_bytes(
+    row: &EmailMailboxProjectionRecord,
+    source_uri: String,
+    bytes: &[u8],
+) -> Result<ProjectionRawMessage> {
+    let (bytes, byte_range) = projection_raw_message_slice(row, bytes)?;
     Ok(ProjectionRawMessage {
-        source_uri: path,
+        source_uri,
         byte_range,
         raw_message_bytes: bytes.len(),
         raw_message_blake3: blake3::hash(bytes).to_hex().to_string(),
