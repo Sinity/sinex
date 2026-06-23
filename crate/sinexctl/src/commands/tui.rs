@@ -23,6 +23,7 @@ use sinex_primitives::views::{
     ActionAvailability, ActionAvailabilityState, ActionSideEffect, EventCardView,
     OperationControlCardView, OperationJobListView, OperationView, PrivacyStateKind,
     SinexObjectKind, SourceCoverageContinuity, SourceCoverageReadiness, SourceCoverageView,
+    SourceModeStatusView,
 };
 use std::io;
 use std::time::Instant;
@@ -1308,10 +1309,26 @@ fn render_source_detail(f: &mut Frame, area: Rect, app: &App) {
         ]),
         Line::from(""),
         Line::from(Span::styled(
-            "Gap Explanation",
+            "Modes",
             Style::default().add_modifier(Modifier::BOLD),
         )),
     ];
+
+    if source.modes.is_empty() {
+        lines.push(Line::from("none"));
+    } else {
+        for mode in source.modes.iter().take(8) {
+            lines.extend(mode_detail_lines(mode));
+        }
+    }
+
+    lines.extend([
+        Line::from(""),
+        Line::from(Span::styled(
+            "Gap Explanation",
+            Style::default().add_modifier(Modifier::BOLD),
+        )),
+    ]);
 
     if source.gaps.is_empty() {
         lines.push(Line::from(format!(
@@ -1387,6 +1404,42 @@ fn render_source_detail(f: &mut Frame, area: Rect, app: &App) {
             .wrap(Wrap { trim: true }),
         area,
     );
+}
+
+fn mode_detail_lines(mode: &SourceModeStatusView) -> Vec<Line<'static>> {
+    let state = if mode.proposed {
+        "proposed"
+    } else {
+        "accepted"
+    };
+    let mut lines = vec![Line::from(format!(
+        "{} [{}] {} via {} -> {}",
+        mode.mode_id, state, mode.runtime_shape, mode.transport, mode.output_event_type
+    ))];
+    lines.push(Line::from(format!(
+        "  adapter={} lifecycle={} budget={}/{}",
+        mode.adapter,
+        mode.material_lifecycle,
+        mode.resource_budget.work_class,
+        mode.resource_budget.resource_profile
+    )));
+    lines.push(Line::from(format!(
+        "  delivery={} ordering={} replay={} dlq={} pressure={}",
+        mode.delivery, mode.ordering, mode.replayable, mode.dlq, mode.backpressure
+    )));
+    for action in mode.actions.iter().take(3) {
+        lines.push(Line::from(format!(
+            "  action {} [{}] {}",
+            action.label,
+            source_action_state_label(action.state),
+            action
+                .command_hint
+                .as_deref()
+                .or(action.rpc_method.as_deref())
+                .unwrap_or(&action.id)
+        )));
+    }
+    lines
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -2161,7 +2214,36 @@ mod tests {
 
     #[sinex_test]
     async fn source_detail_renders_shared_coverage_actions() -> TestResult<()> {
-        let mut terminal = Terminal::new(TestBackend::new(96, 24))?;
+        let mut terminal = Terminal::new(TestBackend::new(96, 36))?;
+        let mut source = coverage_fixture(
+            "ux.runtime.actions",
+            SourceCoverageReadiness::Ready,
+            SourceCoverageContinuity::Gapped,
+            vec![caveat(
+                "parser.operation_evidence_unjoined",
+                "parser/source-worker operation evidence is reported by operation and debt surfaces",
+            )],
+            4,
+            vec![CoverageGapView {
+                kind: "gapped".to_string(),
+                message: "latest material has no parsed event".to_string(),
+            }],
+            vec![
+                ActionAvailability::read(
+                    "sources.readiness",
+                    "Readiness",
+                    ActionAvailabilityState::Enabled,
+                )
+                .with_command_hint("sinexctl sources readiness ux.runtime.actions"),
+                ActionAvailability::read(
+                    "sources.continuity",
+                    "Continuity",
+                    ActionAvailabilityState::Target,
+                )
+                .with_rpc_method("sources.continuity"),
+            ],
+        );
+        source.modes.push(mode_fixture());
         let app = App {
             current_tab: Tab::Sources,
             should_quit: false,
@@ -2178,34 +2260,7 @@ mod tests {
             replay_operations: Vec::new(),
             lifecycle_operation_card: None,
             private_mode: None,
-            source_coverage: vec![coverage_fixture(
-                "ux.runtime.actions",
-                SourceCoverageReadiness::Ready,
-                SourceCoverageContinuity::Gapped,
-                vec![caveat(
-                    "parser.operation_evidence_unjoined",
-                    "parser/source-worker operation evidence is reported by operation and debt surfaces",
-                )],
-                4,
-                vec![CoverageGapView {
-                    kind: "gapped".to_string(),
-                    message: "latest material has no parsed event".to_string(),
-                }],
-                vec![
-                    ActionAvailability::read(
-                        "sources.readiness",
-                        "Readiness",
-                        ActionAvailabilityState::Enabled,
-                    )
-                    .with_command_hint("sinexctl sources readiness ux.runtime.actions"),
-                    ActionAvailability::read(
-                        "sources.continuity",
-                        "Continuity",
-                        ActionAvailabilityState::Target,
-                    )
-                    .with_rpc_method("sources.continuity"),
-                ],
-            )],
+            source_coverage: vec![source],
             recent_events: Vec::new(),
             recent_event_rows: Vec::new(),
             gateway_version: "fixture".to_string(),
@@ -2226,6 +2281,9 @@ mod tests {
         assert!(rendered.contains("Readiness [enabled]"));
         assert!(rendered.contains("sinexctl sources readiness ux.runtime.actions"));
         assert!(rendered.contains("Continuity [target] sources.continuity"));
+        assert!(rendered.contains("fixture.mode [accepted] on_demand via direct"));
+        assert!(rendered.contains("adapter=FixtureAdapter lifecycle=retain_raw"));
+        assert!(rendered.contains("action Import Fixture [enabled] sinexctl sources stage"));
         assert!(rendered.contains("latest material has no parsed event"));
         Ok(())
     }
@@ -2428,7 +2486,59 @@ mod tests {
                 proposed: false,
             },
             resource_budget: None,
+            modes: Vec::new(),
             actions,
+        }
+    }
+
+    fn mode_fixture() -> SourceModeStatusView {
+        SourceModeStatusView {
+            mode_id: "fixture.mode".to_string(),
+            binding_id: "binding.fixture.mode".to_string(),
+            implementation: "fixture-implementation".to_string(),
+            adapter: "FixtureAdapter".to_string(),
+            output_event_type: "fixture.event".to_string(),
+            proposed: false,
+            runner_pack: "staged".to_string(),
+            runtime_shape: "on_demand".to_string(),
+            checkpoint_family: "file_cursor".to_string(),
+            material_lifecycle: "retain_raw".to_string(),
+            transport: "direct".to_string(),
+            delivery: "synchronous".to_string(),
+            ordering: "input_order".to_string(),
+            replayable: true,
+            dlq: false,
+            backpressure: false,
+            privacy_context: "metadata".to_string(),
+            resource_budget: sinex_primitives::views::SourceResourceBudgetView {
+                resource_profile: "bounded_file".to_string(),
+                work_class: "bulk_import".to_string(),
+                steady_memory_mib: 16,
+                burst_memory_mib: 32,
+                cpu_weight: 10,
+                max_input_bytes_per_sec: None,
+                max_input_events_per_sec: None,
+                max_pending_material_bytes: 1024,
+                max_pending_candidates: 16,
+                max_unacked_transport_messages: None,
+                batch_size: Some(8),
+                flush_interval_ms: None,
+                checkpoint_interval_ms: None,
+                pressure_actions: vec!["pause".to_string()],
+            },
+            runtime_observed: None,
+            runtime_live: None,
+            last_heartbeat_at: None,
+            last_output_at: None,
+            recent_output_count: None,
+            actions: vec![
+                ActionAvailability::read(
+                    "sources.stage.fixture",
+                    "Import Fixture",
+                    ActionAvailabilityState::Enabled,
+                )
+                .with_command_hint("sinexctl sources stage fixture.mode"),
+            ],
         }
     }
 

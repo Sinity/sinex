@@ -152,6 +152,12 @@ pub const MEDIA_AUDIO_TRANSCRIPTION_RUN_OBSERVED_CONTRACT_ID: EventContractId =
     "event-contract:media.audio/transcription_run.observed@v1";
 pub const MEDIA_SCREEN_SCREENSHOT_OBSERVED_CONTRACT_ID: EventContractId =
     "event-contract:media.screen/screenshot.observed@v1";
+pub const MEDIA_SCREEN_CAPTURE_SESSION_STARTED_CONTRACT_ID: EventContractId =
+    "event-contract:media.screen/capture_session.started@v1";
+pub const MEDIA_SCREEN_CAPTURE_SESSION_ENDED_CONTRACT_ID: EventContractId =
+    "event-contract:media.screen/capture_session.ended@v1";
+pub const MEDIA_SCREEN_VIDEO_SEGMENT_OBSERVED_CONTRACT_ID: EventContractId =
+    "event-contract:media.screen/video_segment.observed@v1";
 pub const MEDIA_SCREEN_OCR_SEGMENT_CONTRACT_ID: EventContractId =
     "event-contract:media.screen/ocr_segment.observed@v1";
 pub const MEDIA_SCREEN_OCR_RUN_OBSERVED_CONTRACT_ID: EventContractId =
@@ -233,6 +239,18 @@ const MEDIA_SCREEN_SCREENSHOT_SOURCE_OCCURRENCES: &[OccurrenceIdentity] =
     &[OccurrenceIdentity::Uuid5From(
         "(raw_material_id, capture_session_id, display_id, region)",
     )];
+const MEDIA_SCREEN_CAPTURE_STARTED_SOURCE_OCCURRENCES: &[OccurrenceIdentity] =
+    &[OccurrenceIdentity::Uuid5From(
+        "(capture_session_id, started_at)",
+    )];
+const MEDIA_SCREEN_CAPTURE_ENDED_SOURCE_OCCURRENCES: &[OccurrenceIdentity] =
+    &[OccurrenceIdentity::Uuid5From(
+        "(capture_session_id, ended_at)",
+    )];
+const MEDIA_SCREEN_VIDEO_SEGMENT_SOURCE_OCCURRENCES: &[OccurrenceIdentity] =
+    &[OccurrenceIdentity::Uuid5From(
+        "(raw_material_id, capture_session_id, display_id, region, duration_ms)",
+    )];
 const MEDIA_SCREEN_OCR_SOURCE_OCCURRENCES: &[OccurrenceIdentity] =
     &[OccurrenceIdentity::Uuid5From(
         "(material_id, segment_index, bbox)",
@@ -254,6 +272,16 @@ const MEDIA_SCREEN_SCREENSHOT_OCCURRENCE_FIELDS: &[&str] = &[
     "capture_session_id",
     "display_id",
     "region",
+];
+const MEDIA_SCREEN_CAPTURE_STARTED_OCCURRENCE_FIELDS: &[&str] =
+    &["capture_session_id", "started_at"];
+const MEDIA_SCREEN_CAPTURE_ENDED_OCCURRENCE_FIELDS: &[&str] = &["capture_session_id", "ended_at"];
+const MEDIA_SCREEN_VIDEO_SEGMENT_OCCURRENCE_FIELDS: &[&str] = &[
+    "raw_material_id",
+    "capture_session_id",
+    "display_id",
+    "region",
+    "duration_ms",
 ];
 const MEDIA_SCREEN_OCR_RUN_OCCURRENCE_FIELDS: &[&str] =
     &["producer_run_id", "engine_id", "input_material_ids"];
@@ -686,6 +714,75 @@ inventory::submit! {
 
 inventory::submit! {
     EventContract {
+        id: MEDIA_SCREEN_CAPTURE_SESSION_STARTED_CONTRACT_ID,
+        event_source: "media.screen",
+        event_type: "media.screen.capture_session_started",
+        payload_schema: PayloadSchemaContract::PayloadInventory {
+            source: "media.screen",
+            event_type: "media.screen.capture_session_started",
+            version: "1.0.0",
+        },
+        occurrence: EventOccurrenceContract::Fields {
+            fields: MEDIA_SCREEN_CAPTURE_STARTED_OCCURRENCE_FIELDS,
+        },
+        source_occurrences: MEDIA_SCREEN_CAPTURE_STARTED_SOURCE_OCCURRENCES,
+        temporal: EventTemporalContract::IntrinsicRequired,
+        provenance: EventProvenanceRequirement::Material,
+        disclosure_policy_ref: Some("operator.media.screen-ocr.default"),
+        admission_policy_ref: Some(crate::admission_policy::STANDARD_EVENT_ADMISSION_POLICY_ID),
+        package_refs: MEDIA_SCREEN_OCR_PACKAGES,
+        output_kind: OutputKind::CanonicalEvent,
+    }
+}
+
+inventory::submit! {
+    EventContract {
+        id: MEDIA_SCREEN_CAPTURE_SESSION_ENDED_CONTRACT_ID,
+        event_source: "media.screen",
+        event_type: "media.screen.capture_session_ended",
+        payload_schema: PayloadSchemaContract::PayloadInventory {
+            source: "media.screen",
+            event_type: "media.screen.capture_session_ended",
+            version: "1.0.0",
+        },
+        occurrence: EventOccurrenceContract::Fields {
+            fields: MEDIA_SCREEN_CAPTURE_ENDED_OCCURRENCE_FIELDS,
+        },
+        source_occurrences: MEDIA_SCREEN_CAPTURE_ENDED_SOURCE_OCCURRENCES,
+        temporal: EventTemporalContract::IntrinsicRequired,
+        provenance: EventProvenanceRequirement::Material,
+        disclosure_policy_ref: Some("operator.media.screen-ocr.default"),
+        admission_policy_ref: Some(crate::admission_policy::STANDARD_EVENT_ADMISSION_POLICY_ID),
+        package_refs: MEDIA_SCREEN_OCR_PACKAGES,
+        output_kind: OutputKind::CanonicalEvent,
+    }
+}
+
+inventory::submit! {
+    EventContract {
+        id: MEDIA_SCREEN_VIDEO_SEGMENT_OBSERVED_CONTRACT_ID,
+        event_source: "media.screen",
+        event_type: "media.screen.video_segment_observed",
+        payload_schema: PayloadSchemaContract::PayloadInventory {
+            source: "media.screen",
+            event_type: "media.screen.video_segment_observed",
+            version: "1.0.0",
+        },
+        occurrence: EventOccurrenceContract::Fields {
+            fields: MEDIA_SCREEN_VIDEO_SEGMENT_OCCURRENCE_FIELDS,
+        },
+        source_occurrences: MEDIA_SCREEN_VIDEO_SEGMENT_SOURCE_OCCURRENCES,
+        temporal: EventTemporalContract::IntrinsicOrMaterial,
+        provenance: EventProvenanceRequirement::Material,
+        disclosure_policy_ref: Some("operator.media.screen-ocr.default"),
+        admission_policy_ref: Some(crate::admission_policy::STANDARD_EVENT_ADMISSION_POLICY_ID),
+        package_refs: MEDIA_SCREEN_OCR_PACKAGES,
+        output_kind: OutputKind::CanonicalEvent,
+    }
+}
+
+inventory::submit! {
+    EventContract {
         id: MEDIA_SCREEN_OCR_SEGMENT_CONTRACT_ID,
         event_source: "media.screen",
         event_type: "media.screen.ocr_segment_observed",
@@ -938,6 +1035,24 @@ mod tests {
                 "media.screen-ocr",
                 "media.screen",
                 "media.screen.screenshot_observed",
+            ),
+            (
+                MEDIA_SCREEN_CAPTURE_SESSION_STARTED_CONTRACT_ID,
+                "media.screen-ocr",
+                "media.screen",
+                "media.screen.capture_session_started",
+            ),
+            (
+                MEDIA_SCREEN_CAPTURE_SESSION_ENDED_CONTRACT_ID,
+                "media.screen-ocr",
+                "media.screen",
+                "media.screen.capture_session_ended",
+            ),
+            (
+                MEDIA_SCREEN_VIDEO_SEGMENT_OBSERVED_CONTRACT_ID,
+                "media.screen-ocr",
+                "media.screen",
+                "media.screen.video_segment_observed",
             ),
             (
                 MEDIA_SCREEN_OCR_SEGMENT_CONTRACT_ID,

@@ -108,6 +108,58 @@ pub struct ScreenScreenshotObservedPayload {
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, EventPayload)]
 #[event_payload(
     source = "media.screen",
+    event_type = "media.screen.capture_session_started"
+)]
+pub struct MediaScreenCaptureSessionStartedPayload {
+    pub capture_session_id: String,
+    pub scope: String,
+    pub reason: String,
+    pub operator_binding_id: String,
+    pub display_id: Option<String>,
+    pub region: Option<Vec<i64>>,
+    pub policy_posture: String,
+    pub started_at: Timestamp,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, EventPayload)]
+#[event_payload(
+    source = "media.screen",
+    event_type = "media.screen.capture_session_ended"
+)]
+pub struct MediaScreenCaptureSessionEndedPayload {
+    pub capture_session_id: String,
+    pub reason: Option<String>,
+    pub ended_at: Timestamp,
+    pub duration_ms: Option<u64>,
+    pub final_state: String,
+    pub policy_posture: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, EventPayload)]
+#[event_payload(
+    source = "media.screen",
+    event_type = "media.screen.video_segment_observed"
+)]
+pub struct ScreenVideoSegmentObservedPayload {
+    pub raw_material_id: String,
+    pub file_format: Option<String>,
+    pub codec: Option<String>,
+    pub duration_ms: Option<u64>,
+    pub frame_rate_fps: Option<f64>,
+    pub width_px: Option<u32>,
+    pub height_px: Option<u32>,
+    pub display_id: Option<String>,
+    pub window_title: Option<String>,
+    pub region: Option<Vec<i64>>,
+    pub capture_session_id: Option<String>,
+    pub source_file: Option<String>,
+    pub policy_posture: String,
+    pub observed_at: Timestamp,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, EventPayload)]
+#[event_payload(
+    source = "media.screen",
     event_type = "media.screen.ocr_segment_observed"
 )]
 pub struct ScreenOcrSegmentObservedPayload {

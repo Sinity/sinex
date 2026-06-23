@@ -1,10 +1,10 @@
 //! Media capture source contracts (#1043).
 //!
 //! The implemented parsers consume transcript/OCR text material and staged
-//! bundle manifests that anchor raw recording/screenshot observations.
-//! Proposed bindings keep local model, on-demand, and live media modes visible
-//! to package-completeness, coverage, and deployment inventory without claiming
-//! that the corresponding runner is executable today.
+//! bundle manifests that anchor raw recording/screenshot/video observations.
+//! Worker-backed local model and on-demand capture modes consume bounded
+//! operation output. Long-lived session control bindings stay proposed until a
+//! durable live runner owns the capture process.
 
 use async_trait::async_trait;
 use serde::Deserialize;
@@ -12,6 +12,7 @@ use serde_json::{Map, Value, json};
 
 use crate::runtime::parser::{MaterialParser, ParserError, ParserResult};
 use sinex_macros::SourceMeta;
+use sinex_primitives::Timestamp;
 use sinex_primitives::domain::{EventSource, EventType};
 use sinex_primitives::parser::{
     InputShapeKind, MaterialAnchor, OccurrenceKey, ParsedEventIntent, ParserContext, ParserId,
@@ -19,8 +20,8 @@ use sinex_primitives::parser::{
 };
 use sinex_primitives::privacy::{ProcessingContext, SensitivityHint};
 use sinex_primitives::source_contracts::{
-    AccessScope, CheckpointFamily, Horizon, OccurrenceIdentity, PrivacyTier, ResourceProfile,
-    RetentionPolicy, RunnerPack, RuntimeShape,
+    AccessScope, CheckpointFamily, Horizon, MaterialLifecyclePolicy, OccurrenceIdentity,
+    PrivacyTier, ResourceProfile, RetentionPolicy, RunnerPack, RuntimeShape, TransportSemantics,
 };
 
 #[derive(Debug, Clone, Default, SourceMeta)]
@@ -43,6 +44,8 @@ use sinex_primitives::source_contracts::{
     runner_pack = RunnerPack::Staged,
     checkpoint_family = CheckpointFamily::AppendStream,
     runtime_shape = RuntimeShape::Scheduled,
+    material_lifecycle = MaterialLifecyclePolicy::RetainRaw,
+    transport_semantics = TransportSemantics::DIRECT_APPEND_STREAM,
     binding(
         subject = "source:media.audio-transcript.audio-bundle-staged",
         event_type = "media.audio.recording_observed",
@@ -52,6 +55,8 @@ use sinex_primitives::source_contracts::{
         runner_pack = RunnerPack::Staged,
         checkpoint_family = CheckpointFamily::AppendStream,
         runtime_shape = RuntimeShape::Scheduled,
+        material_lifecycle = MaterialLifecyclePolicy::RetainRaw,
+        transport_semantics = TransportSemantics::DIRECT_APPEND_STREAM,
         capabilities = "coverage:source-coverage, debt:unified-debt-view, operation:media.audio-transcript.import-bundle, operation:media.audio-transcript.inspect, operation:media.audio-transcript.delete-material, operation:media.audio-transcript.export"
     ),
     binding(
@@ -63,8 +68,9 @@ use sinex_primitives::source_contracts::{
         runner_pack = RunnerPack::SinexdSource,
         checkpoint_family = CheckpointFamily::AppendStream,
         runtime_shape = RuntimeShape::OnDemand,
-        capabilities = "coverage:source-coverage, debt:unified-debt-view, operation:media.audio-transcript.run-model, operation:media.audio-transcript.retry, operation:media.audio-transcript.rebuild-artifact, operation:media.audio-transcript.inspect",
-        proposed = true
+        material_lifecycle = MaterialLifecyclePolicy::DerivedOnly,
+        transport_semantics = TransportSemantics::DIRECT_APPEND_STREAM,
+        capabilities = "coverage:source-coverage, debt:unified-debt-view, operation:media.audio-transcript.run-model, operation:media.audio-transcript.retry, operation:media.audio-transcript.rebuild-artifact, operation:media.audio-transcript.inspect"
     ),
     binding(
         subject = "source:media.audio-transcript.on-demand-session",
@@ -75,6 +81,8 @@ use sinex_primitives::source_contracts::{
         runner_pack = RunnerPack::Live,
         checkpoint_family = CheckpointFamily::LiveObservation,
         runtime_shape = RuntimeShape::OnDemand,
+        material_lifecycle = MaterialLifecyclePolicy::EphemeralRaw,
+        transport_semantics = TransportSemantics::LOCAL_LIVE_QUEUE,
         capabilities = "coverage:source-coverage, debt:unified-debt-view, operation:media.audio-transcript.enable-session, operation:media.audio-transcript.disable-session, operation:media.audio-transcript.pause, operation:media.audio-transcript.resume, operation:media.audio-transcript.inspect",
         proposed = true
     ),
@@ -87,6 +95,8 @@ use sinex_primitives::source_contracts::{
         runner_pack = RunnerPack::Live,
         checkpoint_family = CheckpointFamily::LiveObservation,
         runtime_shape = RuntimeShape::Continuous,
+        material_lifecycle = MaterialLifecyclePolicy::EphemeralRaw,
+        transport_semantics = TransportSemantics::LOCAL_LIVE_QUEUE,
         capabilities = "coverage:source-coverage, debt:unified-debt-view, operation:media.audio-transcript.enable-session, operation:media.audio-transcript.disable-session, operation:media.audio-transcript.pause, operation:media.audio-transcript.resume, operation:media.audio-transcript.retry, operation:media.audio-transcript.inspect",
         proposed = true
     )
@@ -98,7 +108,7 @@ pub struct MediaAudioTranscriptParser;
     id = "media.screen-ocr",
     namespace = "media",
     event_type = "media.screen.ocr_segment_observed",
-    event_types = "media.screen.screenshot_observed, media.screen.ocr_run_observed",
+    event_types = "media.screen.screenshot_observed, media.screen.capture_session_started, media.screen.capture_session_ended, media.screen.video_segment_observed, media.screen.ocr_run_observed",
     event_source = "media.screen",
     adapter = "FileContentDropAdapter",
     implementation = "staged-parser",
@@ -113,6 +123,8 @@ pub struct MediaAudioTranscriptParser;
     runner_pack = RunnerPack::Staged,
     checkpoint_family = CheckpointFamily::AppendStream,
     runtime_shape = RuntimeShape::Scheduled,
+    material_lifecycle = MaterialLifecyclePolicy::RetainRaw,
+    transport_semantics = TransportSemantics::DIRECT_APPEND_STREAM,
     binding(
         subject = "source:media.screen-ocr.screenshot-ocr-staged",
         event_type = "media.screen.screenshot_observed",
@@ -122,7 +134,22 @@ pub struct MediaAudioTranscriptParser;
         runner_pack = RunnerPack::Staged,
         checkpoint_family = CheckpointFamily::AppendStream,
         runtime_shape = RuntimeShape::Scheduled,
+        material_lifecycle = MaterialLifecyclePolicy::RetainRaw,
+        transport_semantics = TransportSemantics::DIRECT_APPEND_STREAM,
         capabilities = "coverage:source-coverage, debt:unified-debt-view, operation:media.screen-ocr.import-screenshots, operation:media.screen-ocr.inspect, operation:media.screen-ocr.delete-material, operation:media.screen-ocr.export"
+    ),
+    binding(
+        subject = "source:media.screen-ocr.video-staged",
+        event_type = "media.screen.video_segment_observed",
+        implementation = "staged-screen-video-bundle",
+        adapter = "FileContentDropAdapter",
+        resource_profile = ResourceProfile::Oneshot,
+        runner_pack = RunnerPack::Staged,
+        checkpoint_family = CheckpointFamily::AppendStream,
+        runtime_shape = RuntimeShape::Scheduled,
+        material_lifecycle = MaterialLifecyclePolicy::RetainRaw,
+        transport_semantics = TransportSemantics::DIRECT_APPEND_STREAM,
+        capabilities = "coverage:source-coverage, debt:unified-debt-view, operation:media.screen-ocr.import-video, operation:media.screen-ocr.inspect, operation:media.screen-ocr.delete-material, operation:media.screen-ocr.export"
     ),
     binding(
         subject = "source:media.screen-ocr.local-model-batch",
@@ -133,8 +160,9 @@ pub struct MediaAudioTranscriptParser;
         runner_pack = RunnerPack::SinexdSource,
         checkpoint_family = CheckpointFamily::AppendStream,
         runtime_shape = RuntimeShape::OnDemand,
-        capabilities = "coverage:source-coverage, debt:unified-debt-view, operation:media.screen-ocr.run-ocr, operation:media.screen-ocr.retry, operation:media.screen-ocr.rebuild-artifact, operation:media.screen-ocr.inspect",
-        proposed = true
+        material_lifecycle = MaterialLifecyclePolicy::DerivedOnly,
+        transport_semantics = TransportSemantics::DIRECT_APPEND_STREAM,
+        capabilities = "coverage:source-coverage, debt:unified-debt-view, operation:media.screen-ocr.run-ocr, operation:media.screen-ocr.retry, operation:media.screen-ocr.rebuild-artifact, operation:media.screen-ocr.inspect"
     ),
     binding(
         subject = "source:media.screen-ocr.on-demand-region",
@@ -145,8 +173,22 @@ pub struct MediaAudioTranscriptParser;
         runner_pack = RunnerPack::Live,
         checkpoint_family = CheckpointFamily::LiveObservation,
         runtime_shape = RuntimeShape::OnDemand,
-        capabilities = "coverage:source-coverage, debt:unified-debt-view, operation:media.screen-ocr.capture-region, operation:media.screen-ocr.pause, operation:media.screen-ocr.resume, operation:media.screen-ocr.inspect",
-        proposed = true
+        material_lifecycle = MaterialLifecyclePolicy::EphemeralRaw,
+        transport_semantics = TransportSemantics::LOCAL_LIVE_QUEUE,
+        capabilities = "coverage:source-coverage, debt:unified-debt-view, operation:media.screen-ocr.capture-region, operation:media.screen-ocr.pause, operation:media.screen-ocr.resume, operation:media.screen-ocr.inspect"
+    ),
+    binding(
+        subject = "source:media.screen-ocr.on-demand-video",
+        event_type = "media.screen.video_segment_observed",
+        implementation = "live-capture",
+        adapter = "ScreenVideoCaptureAdapter",
+        resource_profile = ResourceProfile::LiveWatcher,
+        runner_pack = RunnerPack::Live,
+        checkpoint_family = CheckpointFamily::LiveObservation,
+        runtime_shape = RuntimeShape::OnDemand,
+        material_lifecycle = MaterialLifecyclePolicy::EphemeralRaw,
+        transport_semantics = TransportSemantics::LOCAL_LIVE_QUEUE,
+        capabilities = "coverage:source-coverage, debt:unified-debt-view, operation:media.screen-ocr.record-video, operation:media.screen-ocr.pause, operation:media.screen-ocr.resume, operation:media.screen-ocr.inspect"
     ),
     binding(
         subject = "source:media.screen-ocr.live-session",
@@ -157,6 +199,8 @@ pub struct MediaAudioTranscriptParser;
         runner_pack = RunnerPack::Live,
         checkpoint_family = CheckpointFamily::LiveObservation,
         runtime_shape = RuntimeShape::Continuous,
+        material_lifecycle = MaterialLifecyclePolicy::EphemeralRaw,
+        transport_semantics = TransportSemantics::LOCAL_LIVE_QUEUE,
         capabilities = "coverage:source-coverage, debt:unified-debt-view, operation:media.screen-ocr.enable-session, operation:media.screen-ocr.disable-session, operation:media.screen-ocr.pause, operation:media.screen-ocr.resume, operation:media.screen-ocr.retry, operation:media.screen-ocr.inspect",
         proposed = true
     )
@@ -217,6 +261,44 @@ struct ScreenshotObservation {
 }
 
 #[derive(Debug, Clone)]
+struct ScreenCaptureSessionStarted {
+    capture_session_id: String,
+    scope: Option<String>,
+    reason: Option<String>,
+    operator_binding_id: Option<String>,
+    display_id: Option<String>,
+    region: Option<Vec<i64>>,
+    policy_posture: Option<String>,
+    started_at: Option<String>,
+}
+
+#[derive(Debug, Clone)]
+struct ScreenCaptureSessionEnded {
+    capture_session_id: String,
+    reason: Option<String>,
+    duration_ms: Option<u64>,
+    final_state: Option<String>,
+    policy_posture: Option<String>,
+    ended_at: Option<String>,
+}
+
+#[derive(Debug, Clone)]
+struct ScreenVideoSegment {
+    file_format: Option<String>,
+    codec: Option<String>,
+    duration_ms: Option<u64>,
+    frame_rate_fps: Option<f64>,
+    width_px: Option<u32>,
+    height_px: Option<u32>,
+    display_id: Option<String>,
+    window_title: Option<String>,
+    region: Option<Vec<i64>>,
+    capture_session_id: Option<String>,
+    source_file: Option<String>,
+    policy_posture: Option<String>,
+}
+
+#[derive(Debug, Clone)]
 struct AudioTranscriptionRun {
     producer_run_id: String,
     model_id: String,
@@ -250,6 +332,9 @@ struct AudioTranscriptMaterial {
 #[derive(Debug, Clone)]
 struct ScreenOcrMaterial {
     screenshot: Option<ScreenshotObservation>,
+    capture_session_started: Option<ScreenCaptureSessionStarted>,
+    capture_session_ended: Option<ScreenCaptureSessionEnded>,
+    video_segment: Option<ScreenVideoSegment>,
     ocr_run: Option<ScreenOcrRun>,
     segments: Vec<OcrSegment>,
 }
@@ -341,6 +426,18 @@ impl MaterialParser for MediaScreenOcrParser {
                 ),
                 (
                     EventSource::from_static("media.screen"),
+                    EventType::from_static("media.screen.capture_session_started"),
+                ),
+                (
+                    EventSource::from_static("media.screen"),
+                    EventType::from_static("media.screen.capture_session_ended"),
+                ),
+                (
+                    EventSource::from_static("media.screen"),
+                    EventType::from_static("media.screen.video_segment_observed"),
+                ),
+                (
+                    EventSource::from_static("media.screen"),
                     EventType::from_static("media.screen.ocr_segment_observed"),
                 ),
                 (
@@ -372,12 +469,25 @@ impl MaterialParser for MediaScreenOcrParser {
         }
         let ScreenOcrMaterial {
             screenshot,
+            capture_session_started,
+            capture_session_ended,
+            video_segment,
             ocr_run,
             segments,
         } = material;
         let mut intents = Vec::new();
+        if let Some(session_started) = capture_session_started {
+            intents.push(screen_capture_session_started_intent(
+                session_started,
+                &record,
+                ctx,
+            ));
+        }
         if let Some(screenshot) = screenshot {
             intents.push(screenshot_intent(screenshot, &record, ctx));
+        }
+        if let Some(video_segment) = video_segment {
+            intents.push(screen_video_segment_intent(video_segment, &record, ctx));
         }
         if let Some(run) = ocr_run {
             intents.push(screen_ocr_run_intent(run, &record, ctx));
@@ -388,6 +498,13 @@ impl MaterialParser for MediaScreenOcrParser {
                 .enumerate()
                 .map(|(index, segment)| ocr_intent(index, segment, &record, ctx)),
         );
+        if let Some(session_ended) = capture_session_ended {
+            intents.push(screen_capture_session_ended_intent(
+                session_ended,
+                &record,
+                ctx,
+            ));
+        }
         Ok(intents)
     }
 
@@ -804,6 +921,9 @@ fn parse_screen_ocr_material(text: &str) -> ParserResult<ScreenOcrMaterial> {
         return match value {
             Value::Array(values) => Ok(ScreenOcrMaterial {
                 screenshot: None,
+                capture_session_started: None,
+                capture_session_ended: None,
+                video_segment: None,
                 ocr_run: None,
                 segments: values
                     .into_iter()
@@ -815,6 +935,32 @@ fn parse_screen_ocr_material(text: &str) -> ParserResult<ScreenOcrMaterial> {
                     .remove("screenshot")
                     .map(parse_screenshot)
                     .transpose()?;
+                let capture_session_started = remove_first_field(
+                    &mut object,
+                    &[
+                        "capture_session_started",
+                        "session_started",
+                        "screen_capture_session_started",
+                    ],
+                )
+                .map(parse_screen_capture_session_started)
+                .transpose()?;
+                let capture_session_ended = remove_first_field(
+                    &mut object,
+                    &[
+                        "capture_session_ended",
+                        "session_ended",
+                        "screen_capture_session_ended",
+                    ],
+                )
+                .map(parse_screen_capture_session_ended)
+                .transpose()?;
+                let video_segment = remove_first_field(
+                    &mut object,
+                    &["video_segment", "screen_video", "recording"],
+                )
+                .map(parse_screen_video_segment)
+                .transpose()?;
                 let ocr_run = remove_first_field(&mut object, &["ocr_run", "ocr", "model_run"])
                     .map(parse_screen_ocr_run)
                     .transpose()?;
@@ -828,16 +974,26 @@ fn parse_screen_ocr_material(text: &str) -> ParserResult<ScreenOcrMaterial> {
                             "screen OCR manifest segments field must be an array".into(),
                         ));
                     }
-                    None if screenshot.is_some() || ocr_run.is_some() => Vec::new(),
+                    None if screenshot.is_some()
+                        || capture_session_started.is_some()
+                        || capture_session_ended.is_some()
+                        || video_segment.is_some()
+                        || ocr_run.is_some() =>
+                    {
+                        Vec::new()
+                    }
                     None => {
                         return Err(ParserError::Parse(
-                            "screen OCR JSON object must contain screenshot, ocr_run, or segments[]"
+                            "screen OCR JSON object must contain screenshot, capture_session_started, capture_session_ended, video_segment, ocr_run, or segments[]"
                                 .into(),
                         ));
                     }
                 };
                 Ok(ScreenOcrMaterial {
                     screenshot,
+                    capture_session_started,
+                    capture_session_ended,
+                    video_segment,
                     ocr_run,
                     segments,
                 })
@@ -851,6 +1007,9 @@ fn parse_screen_ocr_material(text: &str) -> ParserResult<ScreenOcrMaterial> {
     if looks_like_tesseract_tsv(text) {
         return Ok(ScreenOcrMaterial {
             screenshot: None,
+            capture_session_started: None,
+            capture_session_ended: None,
+            video_segment: None,
             ocr_run: None,
             segments: parse_tesseract_tsv_segments(text)?,
         });
@@ -858,6 +1017,9 @@ fn parse_screen_ocr_material(text: &str) -> ParserResult<ScreenOcrMaterial> {
 
     Ok(ScreenOcrMaterial {
         screenshot: None,
+        capture_session_started: None,
+        capture_session_ended: None,
+        video_segment: None,
         ocr_run: None,
         segments: nonempty_lines(text)
             .into_iter()
@@ -913,6 +1075,73 @@ fn parse_screenshot(value: Value) -> ParserResult<ScreenshotObservation> {
             .or_else(|_| required_u32_field(&object, "height"))?,
         capture_session_id: string_field(&object, "capture_session_id")?,
         source_file: string_field(&object, "source_file")?,
+        policy_posture: string_field(&object, "policy_posture")?,
+    })
+}
+
+fn parse_screen_capture_session_started(value: Value) -> ParserResult<ScreenCaptureSessionStarted> {
+    let Value::Object(object) = value else {
+        return Err(ParserError::Parse(
+            "screen capture session_started manifest entry must be an object".into(),
+        ));
+    };
+    Ok(ScreenCaptureSessionStarted {
+        capture_session_id: required_any_string_field(
+            &object,
+            &["capture_session_id", "session_id"],
+        )?,
+        scope: string_field(&object, "scope")?,
+        reason: string_field(&object, "reason")?,
+        operator_binding_id: any_string_field(
+            &object,
+            &["operator_binding_id", "binding_id", "mode_id"],
+        )?,
+        display_id: string_field(&object, "display_id")?,
+        region: i64_array_field(&object, "region")?,
+        policy_posture: string_field(&object, "policy_posture")?,
+        started_at: string_field(&object, "started_at")?,
+    })
+}
+
+fn parse_screen_capture_session_ended(value: Value) -> ParserResult<ScreenCaptureSessionEnded> {
+    let Value::Object(object) = value else {
+        return Err(ParserError::Parse(
+            "screen capture session_ended manifest entry must be an object".into(),
+        ));
+    };
+    Ok(ScreenCaptureSessionEnded {
+        capture_session_id: required_any_string_field(
+            &object,
+            &["capture_session_id", "session_id"],
+        )?,
+        reason: string_field(&object, "reason")?,
+        duration_ms: u64_field(&object, "duration_ms")?,
+        final_state: string_field(&object, "final_state")?,
+        policy_posture: string_field(&object, "policy_posture")?,
+        ended_at: string_field(&object, "ended_at")?,
+    })
+}
+
+fn parse_screen_video_segment(value: Value) -> ParserResult<ScreenVideoSegment> {
+    let Value::Object(object) = value else {
+        return Err(ParserError::Parse(
+            "screen video manifest entry must be an object".into(),
+        ));
+    };
+    Ok(ScreenVideoSegment {
+        file_format: string_field(&object, "file_format")?
+            .or(string_field(&object, "format")?)
+            .or(string_field(&object, "container")?),
+        codec: string_field(&object, "codec")?,
+        duration_ms: u64_field(&object, "duration_ms")?,
+        frame_rate_fps: number_field(&object, "frame_rate_fps")?,
+        width_px: u32_field(&object, "width_px")?.or(u32_field(&object, "width")?),
+        height_px: u32_field(&object, "height_px")?.or(u32_field(&object, "height")?),
+        display_id: string_field(&object, "display_id")?,
+        window_title: string_field(&object, "window_title")?,
+        region: i64_array_field(&object, "region")?,
+        capture_session_id: string_field(&object, "capture_session_id")?,
+        source_file: string_field(&object, "source_file")?.or(string_field(&object, "path")?),
         policy_posture: string_field(&object, "policy_posture")?,
     })
 }
@@ -1225,6 +1454,201 @@ fn screenshot_intent(
         .build()
 }
 
+fn screen_capture_session_started_intent(
+    session: ScreenCaptureSessionStarted,
+    record: &SourceRecord,
+    ctx: &ParserContext,
+) -> ParsedEventIntent {
+    let observed_at = timestamp_or_acquisition(session.started_at.as_deref(), ctx);
+    let timing = record
+        .source_ts_hint
+        .clone()
+        .unwrap_or(TimingEvidence::StagedAtFallback);
+    let capture_session_id = session.capture_session_id;
+    let region_key = session
+        .region
+        .as_ref()
+        .map(|region| {
+            region
+                .iter()
+                .map(i64::to_string)
+                .collect::<Vec<_>>()
+                .join(",")
+        })
+        .unwrap_or_default();
+    let payload = json!({
+        "capture_session_id": capture_session_id.clone(),
+        "scope": session.scope.unwrap_or_else(|| "screen".to_string()),
+        "reason": session.reason.unwrap_or_else(|| "operator_requested".to_string()),
+        "operator_binding_id": session.operator_binding_id.unwrap_or_else(|| "source:media.screen-ocr.on-demand-region".to_string()),
+        "display_id": session.display_id,
+        "region": session.region,
+        "policy_posture": session.policy_posture.unwrap_or_else(|| "operator_controlled".to_string()),
+        "started_at": observed_at,
+    });
+    let occurrence_key = OccurrenceKey {
+        source_id: SourceId::from_static("media.screen-ocr"),
+        fields: vec![
+            ("capture_session_id".into(), capture_session_id),
+            ("started_at".into(), observed_at.format_rfc3339()),
+            ("region".into(), region_key),
+        ],
+    };
+
+    ParsedEventIntent::builder()
+        .source_id(ctx.source_id.clone())
+        .parser_id(ParserId::from_static("media-screen-ocr-staged"))
+        .parser_version("1.0.0")
+        .event_source(EventSource::from_static("media.screen"))
+        .event_type(EventType::from_static(
+            "media.screen.capture_session_started",
+        ))
+        .payload(payload)
+        .ts_orig(observed_at)
+        .timing(timing)
+        .anchor(MaterialAnchor::ByteRange {
+            start: 0,
+            len: record.bytes.len() as u64,
+        })
+        .occurrence_key(occurrence_key)
+        .privacy_context(ProcessingContext::Document)
+        .build()
+}
+
+fn screen_capture_session_ended_intent(
+    session: ScreenCaptureSessionEnded,
+    record: &SourceRecord,
+    ctx: &ParserContext,
+) -> ParsedEventIntent {
+    let observed_at = timestamp_or_acquisition(session.ended_at.as_deref(), ctx);
+    let timing = record
+        .source_ts_hint
+        .clone()
+        .unwrap_or(TimingEvidence::StagedAtFallback);
+    let capture_session_id = session.capture_session_id;
+    let payload = json!({
+        "capture_session_id": capture_session_id.clone(),
+        "reason": session.reason,
+        "ended_at": observed_at,
+        "duration_ms": session.duration_ms,
+        "final_state": session.final_state.unwrap_or_else(|| "completed".to_string()),
+        "policy_posture": session.policy_posture.unwrap_or_else(|| "operator_controlled".to_string()),
+    });
+    let occurrence_key = OccurrenceKey {
+        source_id: SourceId::from_static("media.screen-ocr"),
+        fields: vec![
+            ("capture_session_id".into(), capture_session_id),
+            ("ended_at".into(), observed_at.format_rfc3339()),
+        ],
+    };
+
+    ParsedEventIntent::builder()
+        .source_id(ctx.source_id.clone())
+        .parser_id(ParserId::from_static("media-screen-ocr-staged"))
+        .parser_version("1.0.0")
+        .event_source(EventSource::from_static("media.screen"))
+        .event_type(EventType::from_static("media.screen.capture_session_ended"))
+        .payload(payload)
+        .ts_orig(observed_at)
+        .timing(timing)
+        .anchor(MaterialAnchor::ByteRange {
+            start: 0,
+            len: record.bytes.len() as u64,
+        })
+        .occurrence_key(occurrence_key)
+        .privacy_context(ProcessingContext::Document)
+        .build()
+}
+
+fn screen_video_segment_intent(
+    video: ScreenVideoSegment,
+    record: &SourceRecord,
+    ctx: &ParserContext,
+) -> ParsedEventIntent {
+    let observed_at = ctx.acquisition_time;
+    let timing = record
+        .source_ts_hint
+        .clone()
+        .unwrap_or(TimingEvidence::StagedAtFallback);
+    let material_id = record.material_id.to_string();
+    let source_file = video.source_file.or_else(|| logical_path(record));
+    let display_id = video.display_id.clone();
+    let capture_session_id = video.capture_session_id.clone();
+    let region_key = video
+        .region
+        .as_ref()
+        .map(|region| {
+            region
+                .iter()
+                .map(i64::to_string)
+                .collect::<Vec<_>>()
+                .join(",")
+        })
+        .unwrap_or_default();
+    let payload = json!({
+        "raw_material_id": material_id,
+        "file_format": video.file_format,
+        "codec": video.codec,
+        "duration_ms": video.duration_ms,
+        "frame_rate_fps": video.frame_rate_fps,
+        "width_px": video.width_px,
+        "height_px": video.height_px,
+        "display_id": display_id.clone(),
+        "window_title": video.window_title,
+        "region": video.region,
+        "capture_session_id": capture_session_id.clone(),
+        "source_file": source_file,
+        "policy_posture": video.policy_posture.unwrap_or_else(|| "operator_controlled".to_string()),
+        "observed_at": observed_at,
+    });
+    let occurrence_key = OccurrenceKey {
+        source_id: SourceId::from_static("media.screen-ocr"),
+        fields: vec![
+            ("raw_material_id".into(), record.material_id.to_string()),
+            (
+                "capture_session_id".into(),
+                capture_session_id.unwrap_or_default(),
+            ),
+            ("display_id".into(), display_id.unwrap_or_default()),
+            ("region".into(), region_key),
+            (
+                "duration_ms".into(),
+                video
+                    .duration_ms
+                    .map_or_else(String::new, |value| value.to_string()),
+            ),
+        ],
+    };
+
+    ParsedEventIntent::builder()
+        .source_id(ctx.source_id.clone())
+        .parser_id(ParserId::from_static("media-screen-ocr-staged"))
+        .parser_version("1.0.0")
+        .event_source(EventSource::from_static("media.screen"))
+        .event_type(EventType::from_static(
+            "media.screen.video_segment_observed",
+        ))
+        .payload(payload)
+        .ts_orig(observed_at)
+        .timing(timing)
+        .anchor(MaterialAnchor::ByteRange {
+            start: 0,
+            len: record.bytes.len() as u64,
+        })
+        .occurrence_key(occurrence_key)
+        .privacy_context(ProcessingContext::Document)
+        .build()
+}
+
+fn timestamp_or_acquisition(value: Option<&str>, ctx: &ParserContext) -> Timestamp {
+    value
+        .and_then(|value| {
+            time::OffsetDateTime::parse(value, &time::format_description::well_known::Rfc3339).ok()
+        })
+        .and_then(|value| Timestamp::from_unix_timestamp_nanos(value.unix_timestamp_nanos()))
+        .unwrap_or(ctx.acquisition_time)
+}
+
 fn screen_ocr_run_intent(
     run: ScreenOcrRun,
     record: &SourceRecord,
@@ -1485,6 +1909,9 @@ mod tests {
             .collect::<Vec<_>>();
         for event_type in [
             "media.screen.screenshot_observed",
+            "media.screen.capture_session_started",
+            "media.screen.capture_session_ended",
+            "media.screen.video_segment_observed",
             "media.screen.ocr_segment_observed",
             "media.screen.ocr_run_observed",
         ] {
@@ -1523,7 +1950,10 @@ mod tests {
             binding("source:media.audio-transcript.local-model-batch").runtime_shape,
             RuntimeShape::OnDemand
         );
-        assert!(binding("source:media.audio-transcript.local-model-batch").proposed);
+        assert!(
+            !binding("source:media.audio-transcript.local-model-batch").proposed,
+            "audio local model worker output is executable through media operations"
+        );
         assert!(binding("source:media.audio-transcript.on-demand-session").proposed);
         assert_eq!(
             binding("source:media.audio-transcript.live-session").runner_pack,
@@ -1541,12 +1971,26 @@ mod tests {
             !binding("source:media.screen-ocr.screenshot-ocr-staged").proposed,
             "staged screenshot/OCR bundle parser is implemented and should be an accepted package mode"
         );
+        assert!(
+            !binding("source:media.screen-ocr.video-staged").proposed,
+            "staged screen-video bundle parser is implemented and should be an accepted package mode"
+        );
         assert_eq!(
             binding("source:media.screen-ocr.on-demand-region").runtime_shape,
             RuntimeShape::OnDemand
         );
-        assert!(binding("source:media.screen-ocr.local-model-batch").proposed);
-        assert!(binding("source:media.screen-ocr.on-demand-region").proposed);
+        assert!(
+            !binding("source:media.screen-ocr.local-model-batch").proposed,
+            "screen OCR local model worker output is executable through media operations"
+        );
+        assert!(
+            !binding("source:media.screen-ocr.on-demand-region").proposed,
+            "on-demand screen region capture is executable through bounded worker output"
+        );
+        assert!(
+            !binding("source:media.screen-ocr.on-demand-video").proposed,
+            "on-demand screen video capture is executable through bounded worker output"
+        );
         assert_eq!(
             binding("source:media.screen-ocr.live-session").runner_pack,
             RunnerPack::Live
@@ -1556,6 +2000,11 @@ mod tests {
             binding("source:media.screen-ocr.screenshot-ocr-staged")
                 .capabilities
                 .contains(&"operation:media.screen-ocr.import-screenshots")
+        );
+        assert!(
+            binding("source:media.screen-ocr.video-staged")
+                .capabilities
+                .contains(&"operation:media.screen-ocr.import-video")
         );
         Ok(())
     }

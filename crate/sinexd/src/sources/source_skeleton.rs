@@ -606,8 +606,8 @@ mod tests {
         assert!(rendered.contains("checkpoint_family = CheckpointFamily::Journal"));
         assert!(rendered.contains("runtime_shape = RuntimeShape::Scheduled"));
         assert!(rendered.contains("operation:email.mailbox.authorize"));
+        assert!(rendered.contains("operation:email.mailbox.sync"));
         assert!(rendered.contains("operation:email.mailbox.replay"));
-        assert!(rendered.contains("proposed = true"));
         assert!(!rendered.contains("ReplaceAdapter"));
         assert!(!rendered.contains("binding("));
         Ok(())

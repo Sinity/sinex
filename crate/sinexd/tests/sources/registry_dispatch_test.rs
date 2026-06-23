@@ -435,12 +435,15 @@ async fn source_meta_email_source_registers_staged_mailbox_modes_and_sent_propos
         "source:email.mailbox",
         "source:email.mailbox.maildir-staged",
         "source:email.mailbox.mbox-staged",
+        "source:email.mailbox.gmail-api-scheduled-sync",
+        "source:email.mailbox.imap-scheduled-sync",
+        "source:email.mailbox.imap-idle-live",
     ] {
         assert!(
             bindings
                 .iter()
                 .any(|binding| binding.subject.as_str() == subject && !binding.proposed),
-            "email staged mode {subject} must be an accepted runnable binding"
+            "email runnable mode {subject} must be an accepted binding"
         );
     }
     assert!(
@@ -449,18 +452,6 @@ async fn source_meta_email_source_registers_staged_mailbox_modes_and_sent_propos
         }),
         "email sent mode remains proposed until its runtime mode is accepted"
     );
-    for subject in [
-        "source:email.mailbox.gmail-api-scheduled-sync",
-        "source:email.mailbox.imap-scheduled-sync",
-        "source:email.mailbox.imap-idle-live",
-    ] {
-        assert!(
-            bindings
-                .iter()
-                .any(|binding| binding.subject.as_str() == subject && binding.proposed),
-            "email provider mode {subject} remains proposed until the runtime client is executable"
-        );
-    }
     assert!(
         find_source_factory(&source_id).is_some(),
         "accepted email staged mode must register a source factory"
@@ -638,8 +629,12 @@ async fn package_completeness_report_consumes_event_admission_and_budget_refs() 
         MEDIA_AUDIO_CAPTURE_SESSION_STARTED_CONTRACT_ID,
         MEDIA_AUDIO_RECORDING_OBSERVED_CONTRACT_ID, MEDIA_AUDIO_TRANSCRIPT_SEGMENT_CONTRACT_ID,
         MEDIA_AUDIO_TRANSCRIPTION_RUN_OBSERVED_CONTRACT_ID,
+        MEDIA_SCREEN_CAPTURE_SESSION_ENDED_CONTRACT_ID,
+        MEDIA_SCREEN_CAPTURE_SESSION_STARTED_CONTRACT_ID,
         MEDIA_SCREEN_OCR_RUN_OBSERVED_CONTRACT_ID, MEDIA_SCREEN_OCR_SEGMENT_CONTRACT_ID,
-        MEDIA_SCREEN_SCREENSHOT_OBSERVED_CONTRACT_ID, SHELL_HISTORY_COMMAND_IMPORTED_CONTRACT_ID,
+        MEDIA_SCREEN_SCREENSHOT_OBSERVED_CONTRACT_ID,
+        MEDIA_SCREEN_VIDEO_SEGMENT_OBSERVED_CONTRACT_ID,
+        SHELL_HISTORY_COMMAND_IMPORTED_CONTRACT_ID,
     };
     use sinexd::sources::package_completeness::build_package_completeness_report;
 
@@ -850,6 +845,9 @@ async fn package_completeness_report_consumes_event_admission_and_budget_refs() 
             MEDIA_SCREEN_OCR_SEGMENT_CONTRACT_ID,
             &[
                 MEDIA_SCREEN_SCREENSHOT_OBSERVED_CONTRACT_ID,
+                MEDIA_SCREEN_CAPTURE_SESSION_STARTED_CONTRACT_ID,
+                MEDIA_SCREEN_CAPTURE_SESSION_ENDED_CONTRACT_ID,
+                MEDIA_SCREEN_VIDEO_SEGMENT_OBSERVED_CONTRACT_ID,
                 MEDIA_SCREEN_OCR_SEGMENT_CONTRACT_ID,
                 MEDIA_SCREEN_OCR_RUN_OBSERVED_CONTRACT_ID,
             ][..],
@@ -992,10 +990,16 @@ async fn package_completeness_report_consumes_coverage_debt_and_operation_refs()
         "browser operation refs should satisfy the package completeness requirement"
     );
 
-    for mode_id in [
-        "email.mailbox",
-        "email.mailbox.maildir-staged",
-        "email.mailbox.mbox-staged",
+    for (mode_id, operation_ref) in [
+        ("email.mailbox", "operation:email.mailbox.import-rfc822"),
+        (
+            "email.mailbox.maildir-staged",
+            "operation:email.mailbox.import-maildir",
+        ),
+        (
+            "email.mailbox.mbox-staged",
+            "operation:email.mailbox.import-mbox",
+        ),
     ] {
         let email = report
             .packages
@@ -1015,10 +1019,8 @@ async fn package_completeness_report_consumes_coverage_debt_and_operation_refs()
             "email staged mode must declare the unified debt provider consumed by the package gate"
         );
         assert!(
-            email
-                .operation_refs
-                .contains(&"operation:email.mailbox.sync".to_string()),
-            "email staged mode must declare operator action refs consumed by the package gate"
+            email.operation_refs.contains(&operation_ref.to_string()),
+            "email staged mode {mode_id} must declare the import action ref consumed by the package gate"
         );
         assert!(
             !email
@@ -1053,6 +1055,11 @@ async fn package_completeness_report_consumes_coverage_debt_and_operation_refs()
             "media.screen-ocr",
             "media.screen-ocr.screenshot-ocr-staged",
             "operation:media.screen-ocr.import-screenshots",
+        ),
+        (
+            "media.screen-ocr",
+            "media.screen-ocr.video-staged",
+            "operation:media.screen-ocr.import-video",
         ),
     ] {
         let media = report
@@ -1124,12 +1131,15 @@ async fn package_completeness_report_distinguishes_proposed_and_manual_modes() -
         "email.mailbox",
         "email.mailbox.maildir-staged",
         "email.mailbox.mbox-staged",
+        "email.mailbox.gmail-api-scheduled-sync",
+        "email.mailbox.imap-scheduled-sync",
+        "email.mailbox.imap-idle-live",
     ] {
-        let mode = email.modes.get(mode_id).expect("email staged mode");
+        let mode = email.modes.get(mode_id).expect("email runnable mode");
         assert_eq!(mode.mode_state, PackageModeState::Accepted);
         assert!(
             mode.missing.is_empty(),
-            "accepted email staged mode {mode_id} should satisfy the package gate"
+            "accepted email runnable mode {mode_id} should satisfy the package gate"
         );
     }
     let sent = email
@@ -1148,8 +1158,16 @@ async fn package_completeness_report_distinguishes_proposed_and_manual_modes() -
             "media.audio-transcript",
             "media.audio-transcript.audio-bundle-staged",
         ),
+        (
+            "media.audio-transcript",
+            "media.audio-transcript.local-model-batch",
+        ),
         ("media.screen-ocr", "media.screen-ocr"),
         ("media.screen-ocr", "media.screen-ocr.screenshot-ocr-staged"),
+        ("media.screen-ocr", "media.screen-ocr.video-staged"),
+        ("media.screen-ocr", "media.screen-ocr.local-model-batch"),
+        ("media.screen-ocr", "media.screen-ocr.on-demand-region"),
+        ("media.screen-ocr", "media.screen-ocr.on-demand-video"),
     ] {
         let mode = report
             .packages
