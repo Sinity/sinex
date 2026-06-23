@@ -36,6 +36,7 @@ pub struct EmailMailboxProjectionRecord {
     pub attachment_count: i32,
     pub attachment_observed_count: i32,
     pub attachment_policy_refs: Value,
+    pub provider_material: Option<Value>,
     pub last_message_event_id: Option<Uuid>,
     pub last_thread_event_id: Option<Uuid>,
     pub last_attachment_event_id: Option<Uuid>,
@@ -101,6 +102,7 @@ impl EmailMailboxProjectionRepository<'_> {
                 attachment_count,
                 attachment_observed_count,
                 attachment_policy_refs,
+                provider_material,
                 last_message_event_id,
                 last_thread_event_id,
                 last_attachment_event_id,
@@ -109,7 +111,7 @@ impl EmailMailboxProjectionRepository<'_> {
             VALUES (
                 $1, $2, $3, $4, $5, $6, $7, $8, $9, $10,
                 $11, $12, $13, $14, $15, $16, $17, $18,
-                $19, $20, $21::uuid, $22::uuid, $23::uuid, NOW()
+                $19, $20, $21, $22::uuid, $23::uuid, $24::uuid, NOW()
             )
             ON CONFLICT (source_id, mode_id, message_key)
             DO UPDATE SET
@@ -145,6 +147,7 @@ impl EmailMailboxProjectionRepository<'_> {
                         || EXCLUDED.attachment_policy_refs
                     ) AS refs(ref)
                 ),
+                provider_material = COALESCE(EXCLUDED.provider_material, core.email_mailbox_projection.provider_material),
                 last_message_event_id = COALESCE(EXCLUDED.last_message_event_id, core.email_mailbox_projection.last_message_event_id),
                 last_thread_event_id = COALESCE(EXCLUDED.last_thread_event_id, core.email_mailbox_projection.last_thread_event_id),
                 last_attachment_event_id = COALESCE(EXCLUDED.last_attachment_event_id, core.email_mailbox_projection.last_attachment_event_id),
@@ -171,6 +174,7 @@ impl EmailMailboxProjectionRepository<'_> {
                 attachment_count,
                 attachment_observed_count,
                 attachment_policy_refs,
+                provider_material,
                 last_message_event_id,
                 last_thread_event_id,
                 last_attachment_event_id,
@@ -197,6 +201,7 @@ impl EmailMailboxProjectionRepository<'_> {
             upsert.attachment_count,
             upsert.attachment_observed_count,
             upsert.attachment_policy_refs,
+            upsert.provider_material,
             upsert.last_message_event_id,
             upsert.last_thread_event_id,
             upsert.last_attachment_event_id
@@ -236,6 +241,7 @@ impl EmailMailboxProjectionRepository<'_> {
                 attachment_count,
                 attachment_observed_count,
                 attachment_policy_refs,
+                provider_material,
                 last_message_event_id,
                 last_thread_event_id,
                 last_attachment_event_id,
@@ -309,6 +315,7 @@ impl EmailMailboxProjectionRepository<'_> {
                 attachment_count,
                 attachment_observed_count,
                 attachment_policy_refs,
+                provider_material,
                 last_message_event_id,
                 last_thread_event_id,
                 last_attachment_event_id,
@@ -357,6 +364,7 @@ impl EmailMailboxProjectionRepository<'_> {
                 attachment_count,
                 attachment_observed_count,
                 attachment_policy_refs,
+                provider_material,
                 last_message_event_id,
                 last_thread_event_id,
                 last_attachment_event_id,
@@ -400,6 +408,7 @@ struct ProjectionUpsert {
     attachment_count: i32,
     attachment_observed_count: i32,
     attachment_policy_refs: Value,
+    provider_material: Option<Value>,
     last_message_event_id: Option<Uuid>,
     last_thread_event_id: Option<Uuid>,
     last_attachment_event_id: Option<Uuid>,
@@ -440,6 +449,7 @@ impl ProjectionUpsert {
                         .unwrap_or(0),
                     attachment_observed_count: 0,
                     attachment_policy_refs: Value::Array(Vec::new()),
+                    provider_material: event.payload.get("provider_material").cloned(),
                     last_message_event_id: Some(event.observed_event_id),
                     last_thread_event_id: None,
                     last_attachment_event_id: None,
@@ -471,6 +481,7 @@ impl ProjectionUpsert {
                     attachment_count: 0,
                     attachment_observed_count: 0,
                     attachment_policy_refs: Value::Array(Vec::new()),
+                    provider_material: None,
                     last_message_event_id: None,
                     last_thread_event_id: Some(event.observed_event_id),
                     last_attachment_event_id: None,
@@ -505,6 +516,7 @@ impl ProjectionUpsert {
                     attachment_policy_refs: Value::Array(
                         policy_ref.into_iter().map(Value::String).collect(),
                     ),
+                    provider_material: None,
                     last_message_event_id: None,
                     last_thread_event_id: None,
                     last_attachment_event_id: Some(event.observed_event_id),

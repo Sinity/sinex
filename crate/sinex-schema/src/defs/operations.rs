@@ -99,6 +99,7 @@ pub enum EmailMailboxProjection {
     AttachmentCount,
     AttachmentObservedCount,
     AttachmentPolicyRefs,
+    ProviderMaterial,
     LastMessageEventId,
     LastThreadEventId,
     LastAttachmentEventId,
@@ -192,6 +193,7 @@ impl EmailMailboxProjection {
                     .not_null()
                     .default(Expr::cust("'[]'::jsonb")),
             )
+            .col(ColumnDef::new(EmailMailboxProjection::ProviderMaterial).json_binary())
             .col(
                 ColumnDef::new(EmailMailboxProjection::LastMessageEventId)
                     .custom(Alias::new("UUID")),

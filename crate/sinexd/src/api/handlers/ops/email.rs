@@ -472,6 +472,16 @@ async fn email_projection_material_exports(
             }
             continue;
         }
+        if row.mailbox_format.as_deref() == Some("imap-provider") {
+            match imap_projection_raw_message(row) {
+                Some(material) => exports.push(material),
+                None => exports.push(blocked_email_material(
+                    row,
+                    "imap_provider_material_not_available",
+                )),
+            }
+            continue;
+        }
         match load_projection_source_material(pool, row).await? {
             Some(material) => {
                 if let Some(path) = source_material_path(&material) {
@@ -503,6 +513,27 @@ async fn email_projection_material_exports(
     Ok(exports)
 }
 
+fn imap_projection_raw_message(row: &EmailMailboxProjectionRecord) -> Option<serde_json::Value> {
+    let material = row.provider_material.as_ref()?;
+    Some(serde_json::json!({
+        "message_key": row.message_key,
+        "message_id": row.message_id,
+        "raw_material_id": row.raw_material_id,
+        "source": material
+            .get("source")
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or("imap_provider_material"),
+        "source_uri": material.get("source_uri"),
+        "byte_range": material.get("byte_range"),
+        "raw_message_bytes": material.get("raw_message_bytes"),
+        "raw_message_blake3": material.get("raw_message_blake3"),
+        "raw_message_preview": material.get("raw_message_preview"),
+        "material_policy_ref": material.get("material_policy_ref"),
+        "attachment_observed_count": row.attachment_observed_count,
+        "attachment_count": row.attachment_count,
+    }))
+}
+
 async fn gmail_projection_raw_message(
     row: &EmailMailboxProjectionRecord,
     scope: &serde_json::Map<String, serde_json::Value>,
@@ -514,7 +545,9 @@ async fn gmail_projection_raw_message(
         .or_else(|| optional_scope_string(scope, "access_token_file"))
         .or_else(|| optional_scope_string(scope, "token_file"))
     else {
-        return Ok(Err("gmail_token_file_required_for_provider_materialization"));
+        return Ok(Err(
+            "gmail_token_file_required_for_provider_materialization",
+        ));
     };
     let token = tokio::fs::read_to_string(&token_file)
         .await
@@ -831,12 +864,25 @@ fn email_projection_export_value(row: &EmailMailboxProjectionRecord) -> serde_js
         "attachment_count": row.attachment_count,
         "attachment_observed_count": row.attachment_observed_count,
         "attachment_policy_refs": row.attachment_policy_refs,
+        "provider_material": provider_material_summary(row),
         "last_message_event_id": row.last_message_event_id,
         "last_thread_event_id": row.last_thread_event_id,
         "last_attachment_event_id": row.last_attachment_event_id,
         "last_observed_at": row.last_observed_at,
         "updated_at": row.updated_at,
     })
+}
+
+fn provider_material_summary(row: &EmailMailboxProjectionRecord) -> Option<serde_json::Value> {
+    let material = row.provider_material.as_ref()?;
+    Some(serde_json::json!({
+        "source": material.get("source"),
+        "source_uri": material.get("source_uri"),
+        "byte_range": material.get("byte_range"),
+        "raw_message_bytes": material.get("raw_message_bytes"),
+        "raw_message_blake3": material.get("raw_message_blake3"),
+        "material_policy_ref": material.get("material_policy_ref"),
+    }))
 }
 
 fn optional_scope_bool(scope: &serde_json::Map<String, serde_json::Value>, key: &str) -> bool {
