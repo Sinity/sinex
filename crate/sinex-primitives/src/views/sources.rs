@@ -107,6 +107,14 @@ pub struct SourceModeStatusView {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub provider_rate_limit_state: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub provider_failure_class: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub provider_required_action: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub provider_retry_after_secs: Option<i32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub provider_reconnect_state: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub provider_operation_id: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub provider_coverage_ref: Option<String>,

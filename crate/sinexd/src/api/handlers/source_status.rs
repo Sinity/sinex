@@ -55,6 +55,10 @@ struct EmailProviderOperationState {
     result_status: String,
     provider_runtime: Option<Value>,
     provider_failure: Option<Value>,
+    failure_class: Option<String>,
+    required_action: Option<String>,
+    retry_after_secs: Option<i32>,
+    reconnect_state: Option<String>,
 }
 
 /// List registered sources with run, health, and recent-emission stats.
@@ -398,6 +402,10 @@ fn email_provider_operation_states_from_rows(
                     result_status: row.result_status.to_string(),
                     provider_runtime: Some(row.provider_runtime),
                     provider_failure: row.provider_failure,
+                    failure_class: row.failure_class,
+                    required_action: row.required_action,
+                    retry_after_secs: row.retry_after_secs,
+                    reconnect_state: row.reconnect_state,
                 },
             );
         }
@@ -446,6 +454,8 @@ fn email_provider_operation_caveat(
     let network_state = provider_runtime_field(state, "network_state").unwrap_or("unknown");
     let sync_state = provider_runtime_field(state, "sync_state").unwrap_or("unknown");
     let rate_limit_state = provider_runtime_field(state, "rate_limit_state");
+    let failure_class = state.failure_class.as_deref();
+    let required_action = state.required_action.as_deref();
     let caveat_kind = if state.result_status == "failure" {
         "failed"
     } else {
@@ -454,11 +464,26 @@ fn email_provider_operation_caveat(
     let rate_limit_fragment = rate_limit_state
         .map(|state| format!("; rate_limit_state={state}"))
         .unwrap_or_default();
+    let failure_fragment = failure_class
+        .map(|class| format!("; failure_class={class}"))
+        .unwrap_or_default();
+    let action_fragment = required_action
+        .map(|action| format!("; required_action={action}"))
+        .unwrap_or_default();
+    let retry_after_fragment = state
+        .retry_after_secs
+        .map(|secs| format!("; retry_after_secs={secs}"))
+        .unwrap_or_default();
+    let reconnect_fragment = state
+        .reconnect_state
+        .as_deref()
+        .map(|state| format!("; reconnect_state={state}"))
+        .unwrap_or_default();
 
     CaveatView {
         id: format!("email.provider_runtime.{caveat_kind}.{mode_id}"),
         message: format!(
-            "latest provider sync for `{mode_id}` ended with {}; auth_state={auth_state}; network_state={network_state}; sync_state={sync_state}{rate_limit_fragment}; coverage_ref={coverage_ref}; debt_ref={debt_ref}; detail={reason}",
+            "latest provider sync for `{mode_id}` ended with {}; auth_state={auth_state}; network_state={network_state}; sync_state={sync_state}{rate_limit_fragment}{failure_fragment}{action_fragment}{retry_after_fragment}{reconnect_fragment}; coverage_ref={coverage_ref}; debt_ref={debt_ref}; detail={reason}",
             state.result_status
         ),
         ref_: Some(SinexObjectRef::new(
@@ -598,6 +623,10 @@ fn source_mode_status_view(
         provider_rate_limit_state: provider_state
             .and_then(|state| provider_runtime_field(state, "rate_limit_state"))
             .map(str::to_string),
+        provider_failure_class: provider_state.and_then(|state| state.failure_class.clone()),
+        provider_required_action: provider_state.and_then(|state| state.required_action.clone()),
+        provider_retry_after_secs: provider_state.and_then(|state| state.retry_after_secs),
+        provider_reconnect_state: provider_state.and_then(|state| state.reconnect_state.clone()),
         provider_operation_id: provider_state.map(|state| state.operation_id.to_string()),
         provider_coverage_ref: provider_state
             .and_then(provider_coverage_ref)
@@ -2200,6 +2229,10 @@ mod tests {
                     "debt_ref": "debt:email.mailbox.gmail.provider_runtime",
                     "actions": ["email.mailbox.authorize", "email.mailbox.sync"]
                 })),
+                failure_class: Some("authorization-missing".to_string()),
+                required_action: Some("email.mailbox.authorize".to_string()),
+                retry_after_secs: None,
+                reconnect_state: None,
             },
         );
 
@@ -2225,6 +2258,16 @@ mod tests {
         assert!(caveat.message.contains("ended with failure"));
         assert!(caveat.message.contains("auth_state=missing"));
         assert!(caveat.message.contains("network_state=unknown"));
+        assert!(
+            caveat
+                .message
+                .contains("failure_class=authorization-missing")
+        );
+        assert!(
+            caveat
+                .message
+                .contains("required_action=email.mailbox.authorize")
+        );
         assert!(
             caveat
                 .message
@@ -2259,6 +2302,14 @@ mod tests {
             gmail_mode.provider_debt_ref.as_deref(),
             Some("debt:email.mailbox.gmail.provider_runtime")
         );
+        assert_eq!(
+            gmail_mode.provider_failure_class.as_deref(),
+            Some("authorization-missing")
+        );
+        assert_eq!(
+            gmail_mode.provider_required_action.as_deref(),
+            Some("email.mailbox.authorize")
+        );
         Ok(())
     }
 
@@ -2284,6 +2335,10 @@ mod tests {
                 runtime_state_ref: "email.provider_runtime.imap".to_string(),
                 coverage_ref: "coverage:email.mailbox.imap.provider_runtime".to_string(),
                 debt_ref: "debt:email.mailbox.imap.provider_runtime".to_string(),
+                failure_class: None,
+                required_action: None,
+                retry_after_secs: None,
+                reconnect_state: None,
                 cursor_kind: None,
                 cursor_value: None,
                 continuity_state: None,
@@ -2316,6 +2371,10 @@ mod tests {
                 runtime_state_ref: "email.provider_runtime.imap".to_string(),
                 coverage_ref: "coverage:email.mailbox.imap.provider_runtime".to_string(),
                 debt_ref: "debt:email.mailbox.imap.provider_runtime".to_string(),
+                failure_class: Some("network-reconnect".to_string()),
+                required_action: Some("email.mailbox.reconnect".to_string()),
+                retry_after_secs: None,
+                reconnect_state: Some("reconnect-required".to_string()),
                 cursor_kind: None,
                 cursor_value: None,
                 continuity_state: None,
