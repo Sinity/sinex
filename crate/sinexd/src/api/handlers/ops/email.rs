@@ -1,6 +1,7 @@
 use super::{
     EmailSyncExecutionResult, PackageOperationSpec, Result, elapsed_millis, optional_scope_string,
 };
+use crate::event_engine::policy::{DisclosureContext, PolicyEngine};
 use sinex_db::DbPoolExt;
 use sinex_db::repositories::{EmailMailboxProjectionEvent, EmailMailboxProjectionRecord};
 use sinex_primitives::SinexError;
@@ -148,6 +149,25 @@ async fn execute_email_mailbox_export(
         "message_count": rows.len(),
         "messages": rows.iter().map(email_projection_export_value).collect::<Vec<_>>(),
     });
+    let policy = PolicyEngine::load(pool.clone()).await?;
+    let disclosure = policy
+        .disclose_json_value(export_manifest, DisclosureContext::Export)
+        .await;
+    let export_manifest = disclosure.value;
+    let export_disclosure = serde_json::json!({
+        "redacted": disclosure.changed,
+        "privacy_state": disclosure.privacy_state,
+        "caveats": disclosure.caveats.iter().map(|caveat| {
+            serde_json::json!({
+                "id": caveat.code,
+                "message": caveat.message,
+                "ref": {
+                    "kind": "privacy_policy",
+                    "id": caveat.policy_ref,
+                }
+            })
+        }).collect::<Vec<_>>(),
+    });
     if let Some(path) = output_path.as_deref() {
         let bytes = serde_json::to_vec_pretty(&export_manifest).map_err(|error| {
             SinexError::serialization("failed to render email mailbox export")
@@ -167,6 +187,7 @@ async fn execute_email_mailbox_export(
         serde_json::json!(executor_state),
     );
     scope.insert("export".to_string(), export_manifest.clone());
+    scope.insert("export_disclosure".to_string(), export_disclosure.clone());
     if let Some(path) = output_path {
         scope.insert("output_path".to_string(), serde_json::json!(path));
     }
@@ -179,6 +200,7 @@ async fn execute_email_mailbox_export(
         serde_json::json!(executor_state),
     );
     preview.insert("export".to_string(), export_manifest);
+    preview.insert("export_disclosure".to_string(), export_disclosure);
     preview.insert(
         "message".to_string(),
         serde_json::json!("email mailbox metadata export completed"),
