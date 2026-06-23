@@ -601,7 +601,7 @@ async fn replay_execute_dry_run_rejects_while_preserving_preview(
     assert!(
         execute_resp["message"]
             .as_str()
-            .unwrap_or_default()
+            .expect("dry-run execute response should include a message string")
             .contains("does not support dry-run semantics"),
         "dry-run execute should redirect callers back to preview, got {execute_resp:?}"
     );

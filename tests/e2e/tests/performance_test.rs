@@ -139,8 +139,16 @@ async fn test_query_latency_under_load(ctx: TestContext) -> TestResult<()> {
         latencies.push(start.elapsed());
     }
 
+    assert!(
+        !latencies.is_empty(),
+        "query benchmark must record at least one latency sample"
+    );
     let avg_latency: Duration = latencies.iter().sum::<Duration>() / query_count;
-    let max_latency = latencies.iter().max().copied().unwrap_or_default();
+    let max_latency = latencies
+        .iter()
+        .max()
+        .copied()
+        .expect("latency sample asserted above");
 
     println!("Query latency ({query_count} queries):");
     println!("  Avg: {avg_latency:?}");
@@ -470,9 +478,21 @@ async fn test_pipeline_latency_measurement(ctx: TestContext) -> TestResult<()> {
         latencies.push(start.elapsed());
     }
 
+    assert!(
+        !latencies.is_empty(),
+        "pipeline latency benchmark must record at least one latency sample"
+    );
     let avg: Duration = latencies.iter().sum::<Duration>() / event_count as u32;
-    let max = latencies.iter().max().copied().unwrap_or_default();
-    let min = latencies.iter().min().copied().unwrap_or_default();
+    let max = latencies
+        .iter()
+        .max()
+        .copied()
+        .expect("latency sample asserted above");
+    let min = latencies
+        .iter()
+        .min()
+        .copied()
+        .expect("latency sample asserted above");
 
     println!("Pipeline latency ({event_count} events):");
     println!("  Min: {min:?}");

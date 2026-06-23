@@ -32,7 +32,7 @@ async fn ensure_material(ctx: &TestContext, label: &str) -> TestResult<Id<Source
 
 fn rp(path: impl AsRef<str>) -> RecordedPath {
     RecordedPath::from_observed(path.as_ref())
-        .unwrap_or_else(|_| RecordedPath::from_static("/tmp/sinex-test-path"))
+        .expect("event type fixture path should be a non-empty path without null bytes")
 }
 
 // =============================================================================

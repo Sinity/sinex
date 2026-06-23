@@ -42,7 +42,7 @@ fn check_succeeded(output: &std::process::Output) -> bool {
 /// This verifies the recording contract: no matter whether check passes or
 /// fails, the history DB always grows by exactly one record per run.
 #[test]
-#[ignore = "spawns real cargo; run with xtask test --heavy -E 'test(workspace_property)'"]
+#[ignore = "heavy: spawns real cargo; run with xtask test --heavy -E 'test(workspace_property)'"]
 fn workspace_property_historydb_consistency() {
     let config = ProptestConfig {
         cases: 3,
@@ -119,7 +119,7 @@ fn workspace_property_historydb_consistency() {
 /// (exit 0, no modifications). This verifies that the fix operations are
 /// idempotent — applying them twice is equivalent to applying them once.
 #[test]
-#[ignore = "spawns real cargo; run with xtask test --heavy -E 'test(workspace_property)'"]
+#[ignore = "heavy: spawns real cargo; run with xtask test --heavy -E 'test(workspace_property)'"]
 fn workspace_property_fix_idempotency() -> Result<()> {
     let ws = EphemeralWorkspace::new()?;
     ws.inject_format_error("ws-lib")?;
@@ -166,7 +166,7 @@ fn workspace_property_fix_idempotency() -> Result<()> {
 ///
 /// Verified across 5 random mutation combinations using proptest.
 #[test]
-#[ignore = "spawns real cargo; run with xtask test --heavy -E 'test(workspace_property)'"]
+#[ignore = "heavy: spawns real cargo; run with xtask test --heavy -E 'test(workspace_property)'"]
 fn workspace_property_status_matches_exit_code() {
     let config = ProptestConfig {
         cases: 5,
@@ -189,16 +189,14 @@ fn workspace_property_status_matches_exit_code() {
                 .expect("failed to inject compile error");
         }
 
-        let output = run_xtask_in(&ws, &["check", "--json"]);
-        prop_assert!(
-            output.is_ok(),
-            "failed to execute xtask in ephemeral workspace: {:#}",
-            output
-                .as_ref()
-                .err()
-                .unwrap_or_else(|| unreachable!())
-        );
-        let output = output.unwrap_or_else(|_| unreachable!());
+        let output = match run_xtask_in(&ws, &["check", "--json"]) {
+            Ok(output) => output,
+            Err(error) => {
+                return Err(proptest::test_runner::TestCaseError::fail(format!(
+                    "failed to execute xtask in ephemeral workspace: {error:#}"
+                )));
+            }
+        };
         let exit_ok = output.status.code() == Some(0);
 
         let db = HistoryDb::open(&ws.history_db_path())
@@ -234,7 +232,7 @@ fn workspace_property_status_matches_exit_code() {
 /// Verifies that history accumulates without data loss, deduplication, or
 /// overwrite. Each run is a distinct record, even with identical outcomes.
 #[test]
-#[ignore = "spawns real cargo; run with xtask test --heavy -E 'test(workspace_property)'"]
+#[ignore = "heavy: spawns real cargo; run with xtask test --heavy -E 'test(workspace_property)'"]
 fn workspace_property_history_accumulates_monotonically() -> Result<()> {
     let ws = EphemeralWorkspace::new()?;
 

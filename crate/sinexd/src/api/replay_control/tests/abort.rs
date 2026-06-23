@@ -430,7 +430,7 @@ async fn replay_abort_before_scan_ack_restores_cascade_and_emits_compensating_in
 
     let payload_bytes = tokio::time::timeout(Duration::from_secs(1), invalidation_rx.recv())
         .await?
-        .expect("compensating invalidation should be published");
+        .ok_or_else(|| test_error("compensating invalidation should be published"))??;
     let payload = String::from_utf8(payload_bytes)?;
     assert!(payload.contains("scope://fs-test/replay-compensating-invalidation"));
     assert!(payload.contains(&event_id.to_string()));
@@ -660,9 +660,7 @@ async fn replay_execution_returns_cancelled_operation_when_cancelled_midflight(
         "cancelled replay should not leave archived rows behind when execution never emitted replacements"
     );
 
-    scan_handle
-        .await
-        .map_err(|e| test_error(format!("fake cancel-test source runtime task failed: {e}")))?;
+    await_fake_scan_source_runtime(scan_handle, "cancel-test").await?;
 
     Ok(())
 }

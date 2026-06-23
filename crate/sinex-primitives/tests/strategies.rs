@@ -24,9 +24,9 @@ pub fn arb_event_source() -> impl Strategy<Value = EventSource> {
         Just(EventSource::from_static("wm.hyprland")),
         Just(EventSource::from_static("test.source")),
         Just(EventSource::from_static("sinex.system")),
-        "[a-z][a-z0-9._]{0,49}".prop_map(
-            |s| EventSource::new(s).unwrap_or_else(|_| EventSource::from_static("test.source"))
-        ),
+        "[a-z][a-z0-9_]{0,24}(\\.[a-z][a-z0-9_]{0,24}){0,2}".prop_map(|s| {
+            EventSource::new(s).expect("regex-generated event source should be valid")
+        }),
     ]
 }
 
@@ -42,9 +42,9 @@ pub fn arb_event_type() -> impl Strategy<Value = EventType> {
         Just(EventType::from_static("command.executed")),
         Just(EventType::from_static("window.focused")),
         Just(EventType::from_static("test.event")),
-        "[a-z][a-z0-9._]{0,99}".prop_map(
-            |s| EventType::new(s).unwrap_or_else(|_| EventType::from_static("test.event"))
-        ),
+        "[a-z][a-z0-9_]{0,24}(\\.[a-z][a-z0-9_]{0,24}){1,3}".prop_map(|s| {
+            EventType::new(s).expect("regex-generated event type should be valid")
+        }),
     ]
 }
 
@@ -126,8 +126,9 @@ pub fn arb_module_name() -> impl Strategy<Value = String> {
 ///
 /// Generates timestamps within a reasonable range (2020-2030).
 pub fn arb_timestamp() -> impl Strategy<Value = Timestamp> {
-    (1577836800i64..1893456000i64)
-        .prop_map(|ts| Timestamp::from_unix_timestamp(ts).unwrap_or_else(Timestamp::now))
+    (1577836800i64..1893456000i64).prop_map(|ts| {
+        Timestamp::from_unix_timestamp(ts).expect("generated timestamp should be valid")
+    })
 }
 
 /// Strategy for generating timestamp ranges
@@ -167,7 +168,7 @@ pub fn arb_filesystem_event_payload() -> impl Strategy<Value = Value> {
             "size": size,
             "modified_time": (*modified)
                 .format(&time::format_description::well_known::Rfc3339)
-                .unwrap_or_default()
+                .expect("generated timestamp should format as RFC3339")
         })
     })
 }
@@ -298,9 +299,10 @@ mod tests {
             // Should be serializable
             let serialized =
                 serde_json::to_string(&payload).map_err(|e| color_eyre::eyre::eyre!("{e}"))?;
-            // Should be deserializable
-            let deserialized: Result<Value, _> = serde_json::from_str(&serialized);
-            assert!(deserialized.is_ok());
+            // Should be deserializable to the exact same JSON value.
+            let deserialized: Value =
+                serde_json::from_str(&serialized).map_err(|e| color_eyre::eyre::eyre!("{e}"))?;
+            assert_eq!(deserialized, payload);
         }
         Ok(())
     }

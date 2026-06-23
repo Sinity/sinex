@@ -56,6 +56,13 @@ fn admit(event: Event<serde_json::Value>) -> AdmittedEvent {
     }
 }
 
+fn payload_str<'a>(payload: &'a serde_json::Value, pointer: &str) -> &'a str {
+    payload
+        .pointer(pointer)
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or_else(|| panic!("payload field {pointer} should be a string: {payload}"))
+}
+
 /// Insert a rule scoped globally (NULL `source/type/field_path`).
 async fn insert_global_rule(
     pool: &sinex_db::DbPool,
@@ -326,7 +333,7 @@ async fn privacy_dictionary_matcher_redacts_from_db(ctx: TestContext) -> TestRes
     let event = make_material_event("test.source", "test.event", payload);
     let result = engine.redact_batch(vec![admit(event)]).await;
 
-    let title = result[0].event.payload["title"].as_str().unwrap_or("");
+    let title = payload_str(&result[0].event.payload, "/title");
     assert!(!title.contains("PRIVATE_PROJECT"), "got: {title}");
     assert!(title.contains("<DICT>"), "got: {title}");
 
@@ -363,7 +370,7 @@ async fn privacy_structural_matcher_redacts_from_db(ctx: TestContext) -> TestRes
     let event = make_material_event("test.source", "test.event", payload);
     let result = engine.redact_batch(vec![admit(event)]).await;
 
-    let note = result[0].event.payload["note"].as_str().unwrap_or("");
+    let note = payload_str(&result[0].event.payload, "/note");
     assert!(!note.contains(&card), "got: {note}");
     assert!(note.contains("<CARD>"), "got: {note}");
 
@@ -409,7 +416,7 @@ async fn privacy_secret_scanner_rule_redacts_from_db(ctx: TestContext) -> TestRe
     let event = make_material_event("test.source", "test.event", payload);
     let result = engine.redact_batch(vec![admit(event)]).await;
 
-    let command = result[0].event.payload["command"].as_str().unwrap_or("");
+    let command = payload_str(&result[0].event.payload, "/command");
     assert!(!command.contains("GLSECRET_ABCDEFGH"), "got: {command}");
     assert!(command.contains("<SECRET_SCANNER>"), "got: {command}");
 
@@ -463,8 +470,8 @@ async fn privacy_presidio_backend_redacts_from_http_spans(ctx: TestContext) -> T
     let event = make_material_event("test.source", "test.event", payload);
     let result = engine.redact_batch(vec![admit(event)]).await;
 
-    let title = result[0].event.payload["title"].as_str().unwrap_or("");
-    let body = result[0].event.payload["body"].as_str().unwrap_or("");
+    let title = payload_str(&result[0].event.payload, "/title");
+    let body = payload_str(&result[0].event.payload, "/body");
     assert!(!title.contains("SECRET_PERSON"), "got: {title}");
     assert!(title.contains("<PERSON>"), "got: {title}");
     assert!(body.contains("SECRET_PERSON"), "got: {body}");
@@ -516,9 +523,7 @@ async fn privacy_presidio_global_rule_walks_nested_json(ctx: TestContext) -> Tes
     let event = make_material_event("test.source", "test.event", payload);
     let result = engine.redact_batch(vec![admit(event)]).await;
 
-    let title = result[0].event.payload["nested"]["title"]
-        .as_str()
-        .unwrap_or("");
+    let title = payload_str(&result[0].event.payload, "/nested/title");
     assert!(!title.contains("SECRET_PERSON"), "got: {title}");
     assert!(title.contains("<PERSON>"), "got: {title}");
 
@@ -582,7 +587,7 @@ async fn privacy_presidio_context_words_forwarded_to_analyzer(ctx: TestContext) 
 
     // Because the fixture only matches when context arrived, redaction landing
     // proves the words influenced the response.
-    let title = result[0].event.payload["title"].as_str().unwrap_or("");
+    let title = payload_str(&result[0].event.payload, "/title");
     assert!(
         !title.contains("SECRET_PERSON"),
         "context-gated redaction did not occur: {title}"
@@ -663,7 +668,7 @@ async fn privacy_action_redact_regex(ctx: TestContext) -> TestResult<()> {
     let event = make_material_event("test.source", "test.event", payload);
     let result = engine.redact_batch(vec![admit(event)]).await;
 
-    let token_str = result[0].event.payload["token"].as_str().unwrap_or("");
+    let token_str = payload_str(&result[0].event.payload, "/token");
     assert!(
         !token_str.contains("SECRET_TOKEN_123"),
         "secret token should be redacted; got: {token_str}"
@@ -745,12 +750,8 @@ async fn privacy_field_scoped_rule(ctx: TestContext) -> TestResult<()> {
     let event = make_material_event("test.source", "test.event", payload);
     let result = engine.redact_batch(vec![admit(event)]).await;
 
-    let secret = result[0].event.payload["secret_field"]
-        .as_str()
-        .unwrap_or("");
-    let public = result[0].event.payload["public_field"]
-        .as_str()
-        .unwrap_or("");
+    let secret = payload_str(&result[0].event.payload, "/secret_field");
+    let public = payload_str(&result[0].event.payload, "/public_field");
 
     assert!(
         !secret.contains("SENSITIVE"),
@@ -807,12 +808,8 @@ async fn privacy_field_scoped_rule_supports_nested_json_pointer(
     let event = make_material_event("test.source", "test.event", payload);
     let result = engine.redact_batch(vec![admit(event)]).await;
 
-    let title = result[0].event.payload["outer"]["inner"]["title"]
-        .as_str()
-        .unwrap_or("");
-    let note = result[0].event.payload["outer"]["inner"]["note"]
-        .as_str()
-        .unwrap_or("");
+    let title = payload_str(&result[0].event.payload, "/outer/inner/title");
+    let note = payload_str(&result[0].event.payload, "/outer/inner/note");
     assert!(!title.contains("NESTED_SECRET"), "got: {title}");
     assert!(title.contains("<NESTED>"), "got: {title}");
     assert!(note.contains("NESTED_SECRET"), "got: {note}");
@@ -850,7 +847,7 @@ async fn privacy_source_scoped_rule(ctx: TestContext) -> TestResult<()> {
     let payload_match = json!({ "field": "PII_DATA here" });
     let event_match = make_material_event("sensitive.source", "test.event", payload_match);
     let results = engine.redact_batch(vec![admit(event_match)]).await;
-    let val = results[0].event.payload["field"].as_str().unwrap_or("");
+    let val = payload_str(&results[0].event.payload, "/field");
     assert!(
         !val.contains("PII_DATA"),
         "scoped-source event should be redacted; got: {val}"
@@ -860,9 +857,7 @@ async fn privacy_source_scoped_rule(ctx: TestContext) -> TestResult<()> {
     let payload_other = json!({ "field": "PII_DATA here" });
     let event_other = make_material_event("other.source", "test.event", payload_other);
     let results_other = engine.redact_batch(vec![admit(event_other)]).await;
-    let val_other = results_other[0].event.payload["field"]
-        .as_str()
-        .unwrap_or("");
+    let val_other = payload_str(&results_other[0].event.payload, "/field");
     assert!(
         val_other.contains("PII_DATA"),
         "unscoped-source event must be untouched; got: {val_other}"
@@ -902,7 +897,7 @@ async fn privacy_chokepoint_applies_to_derived_events(ctx: TestContext) -> TestR
 
     let result = engine.redact_batch(vec![admit(derived_event)]).await;
 
-    let summary = result[0].event.payload["summary"].as_str().unwrap_or("");
+    let summary = payload_str(&result[0].event.payload, "/summary");
     assert!(
         !summary.contains("DERIVED_SECRET_XYZ"),
         "derived event secret should be redacted; got: {summary}"
@@ -1020,9 +1015,7 @@ async fn privacy_cache_reload_picks_up_new_rule(ctx: TestContext) -> TestResult<
     let payload2 = json!({ "value": "CACHE_SENTINEL_XYZ" });
     let event2 = make_material_event("s", "t", payload2);
     let result_after = engine_after.redact_batch(vec![admit(event2)]).await;
-    let value = result_after[0].event.payload["value"]
-        .as_str()
-        .unwrap_or("");
+    let value = payload_str(&result_after[0].event.payload, "/value");
     assert!(
         !value.contains("CACHE_SENTINEL_XYZ"),
         "rule should apply after cache reload; got: {value}"
@@ -1082,10 +1075,7 @@ async fn privacy_redacted_term_not_reachable_via_text_search(ctx: TestContext) -
         .expect("one redacted event")
         .event;
     assert!(
-        !redacted_event.payload["content"]
-            .as_str()
-            .unwrap_or("")
-            .contains("LEAKSECRET_ABC"),
+        !payload_str(&redacted_event.payload, "/content").contains("LEAKSECRET_ABC"),
         "precondition: chokepoint must have stripped the secret before persistence"
     );
     pool.events().insert(redacted_event).await?;
