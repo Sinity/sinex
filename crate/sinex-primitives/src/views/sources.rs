@@ -67,6 +67,40 @@ pub struct SourceResourceBudgetView {
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub struct SourceModeStatusView {
+    pub mode_id: String,
+    pub binding_id: String,
+    pub implementation: String,
+    pub adapter: String,
+    pub output_event_type: String,
+    pub proposed: bool,
+    pub runner_pack: String,
+    pub runtime_shape: String,
+    pub checkpoint_family: String,
+    pub material_lifecycle: String,
+    pub transport: String,
+    pub delivery: String,
+    pub ordering: String,
+    pub replayable: bool,
+    pub dlq: bool,
+    pub backpressure: bool,
+    pub privacy_context: String,
+    pub resource_budget: SourceResourceBudgetView,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub runtime_observed: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub runtime_live: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_heartbeat_at: Option<Timestamp>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_output_at: Option<Timestamp>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub recent_output_count: Option<i64>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub actions: Vec<ActionAvailability>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct CoverageGapView {
     pub kind: String,
     pub message: String,
@@ -95,6 +129,8 @@ pub struct SourceCoverageView {
     pub privacy: SourcePrivacyPosture,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub resource_budget: Option<SourceResourceBudgetView>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub modes: Vec<SourceModeStatusView>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub actions: Vec<ActionAvailability>,
 }

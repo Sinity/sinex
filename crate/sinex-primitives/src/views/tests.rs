@@ -348,6 +348,7 @@ async fn source_coverage_list_view_serializes_status_shape() -> xtask::TestResul
                 "inspect".to_string(),
             ],
         }),
+        modes: Vec::new(),
         actions: vec![ActionAvailability::read(
             "sources.readiness",
             "Readiness",

@@ -3,7 +3,8 @@ use std::str::FromStr;
 use color_eyre::eyre::eyre;
 use sinex_primitives::domain::{
     ContentKey, EventSource, EventType, HostName, JobId, MaterialStorageKind, NatsSubject,
-    SanitizedPath, SchemaVersion, ServiceName,
+    OperationKind, OperationRunStatus, OperationStatus, SanitizedPath, SchemaVersion, ServiceName,
+    SourceMaterialFormat, SourceMaterialTimingInfoType, TemporalSourceType,
 };
 use sinex_primitives::events::EventPayload;
 use sinex_primitives::events::payloads::{
@@ -118,6 +119,73 @@ async fn material_storage_kind_parses_only_registry_backends() -> TestResult<()>
 
     assert!(MaterialStorageKind::from_str("session_document").is_err());
     assert!(MaterialStorageKind::from_str("shell_history").is_err());
+    Ok(())
+}
+
+#[sinex_test]
+async fn source_material_vocabularies_preserve_registry_and_parser_contracts() -> TestResult<()> {
+    assert_eq!(
+        SourceMaterialTimingInfoType::from_temporal_source(TemporalSourceType::RealtimeCapture),
+        SourceMaterialTimingInfoType::Realtime
+    );
+    assert_eq!(
+        SourceMaterialTimingInfoType::Inferred.to_temporal_source(),
+        TemporalSourceType::InferredMtime
+    );
+    assert_eq!(
+        SourceMaterialTimingInfoType::from_str("staged-at").map_err(|err| eyre!(err))?,
+        SourceMaterialTimingInfoType::StagedAt
+    );
+
+    assert_eq!(
+        SourceMaterialFormat::infer_from_path("capture.ndjson"),
+        SourceMaterialFormat::Jsonl
+    );
+    assert_eq!(
+        SourceMaterialFormat::infer_from_path("profile.sqlite3"),
+        SourceMaterialFormat::Sqlite
+    );
+    assert_eq!(
+        SourceMaterialFormat::infer_from_path("bundle.tar.zst"),
+        SourceMaterialFormat::Archive
+    );
+    assert_eq!(
+        SourceMaterialFormat::from_str("git").map_err(|err| eyre!(err))?,
+        SourceMaterialFormat::Repository
+    );
+    Ok(())
+}
+
+#[sinex_test]
+async fn operation_vocabularies_keep_log_and_run_lifecycle_statuses_distinct() -> TestResult<()> {
+    assert_eq!(
+        OperationKind::from("runtime.drain").as_str(),
+        "runtime.drain"
+    );
+    assert_eq!(
+        OperationKind::from("custom.operator.action").as_str(),
+        "custom.operator.action"
+    );
+
+    assert_eq!(
+        OperationStatus::from_str("failure").map_err(|err| eyre!(err))?,
+        OperationStatus::Failed
+    );
+    assert_eq!(
+        OperationStatus::from_str("expired").map_err(|err| eyre!(err))?,
+        OperationStatus::Failed
+    );
+
+    assert!(OperationRunStatus::Leased.is_active());
+    assert!(OperationRunStatus::RetryWait.is_active());
+    assert!(!OperationRunStatus::WaitingMaterial.is_active());
+    assert!(OperationRunStatus::CompletedWithCaveats.is_terminal());
+    assert!(OperationRunStatus::FailedPermanent.is_terminal());
+    assert!(!OperationRunStatus::FailedRetryable.is_terminal());
+    assert_eq!(
+        OperationRunStatus::from_str("blocked_by_policy").map_err(|err| eyre!(err))?,
+        OperationRunStatus::BlockedByPolicy
+    );
     Ok(())
 }
 
