@@ -38,11 +38,13 @@ use rusqlite::{Connection, OpenFlags, OptionalExtension, params};
 use serde::{Deserialize, Serialize};
 
 mod diagnostics;
+mod git;
 use diagnostics::row_to_diagnostic_full;
 pub use diagnostics::{
     DiagnosticCounts, DiagnosticDelta, DiagnosticLifecycle, DiagnosticTrendPoint, LifecycleStatus,
     StoredDiagnostic,
 };
+use git::current_git_snapshot;
 use sinex_primitives::temporal::Timestamp;
 
 /// A devshell wrapper rebuild event persisted into the `wrapper_events` table
@@ -64,7 +66,6 @@ pub struct WrapperEventRow {
 use std::collections::{BTreeMap, HashSet};
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::sync::LazyLock;
 use std::time::Duration;
 use tempfile::NamedTempFile;
 use time::OffsetDateTime;
@@ -171,17 +172,6 @@ impl HistoryDbOpenMode {
         }
     }
 }
-
-#[derive(Debug, Clone)]
-struct GitSnapshot {
-    commit: Option<String>,
-    dirty: bool,
-}
-
-static CURRENT_PROCESS_GIT_SNAPSHOT: LazyLock<GitSnapshot> = LazyLock::new(|| GitSnapshot {
-    commit: get_git_commit_uncached(),
-    dirty: is_git_dirty_uncached(),
-});
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct HistoryIntegrityStamp {
@@ -6265,29 +6255,6 @@ pub(super) fn row_to_invocation(row: &rusqlite::Row) -> rusqlite::Result<Invocat
         cwd: row.get(13)?,
         live_stage: row.get(14)?,
     })
-}
-
-/// Get current git commit hash (short form).
-fn current_git_snapshot() -> &'static GitSnapshot {
-    &CURRENT_PROCESS_GIT_SNAPSHOT
-}
-
-fn get_git_commit_uncached() -> Option<String> {
-    std::process::Command::new("git")
-        .args(["rev-parse", "--short", "HEAD"])
-        .output()
-        .ok()
-        .filter(|o| o.status.success())
-        .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
-}
-
-/// Check if the git working directory has uncommitted changes.
-fn is_git_dirty_uncached() -> bool {
-    std::process::Command::new("git")
-        .args(["status", "--porcelain"])
-        .output()
-        .ok()
-        .is_some_and(|o| !o.stdout.is_empty())
 }
 
 /// Sandbox infrastructure metadata extracted from slog events in test output.
