@@ -373,6 +373,8 @@ async fn email_projection_material_exports(
                         "message_key": row.message_key,
                         "message_id": row.message_id,
                         "raw_material_id": row.raw_material_id,
+                        "mbox_byte_start": row.mbox_byte_start,
+                        "mbox_byte_end": row.mbox_byte_end,
                         "source_uri": material.source_uri,
                         "byte_range": material.byte_range,
                         "raw_message_bytes": material.raw_message_bytes,
@@ -419,20 +421,68 @@ async fn read_projection_raw_message(
         .with_std_error(&error)
         .with_operation("ops.start")
     })?;
+    let (bytes, byte_range) = projection_raw_message_slice(row, &bytes)?;
     Ok(ProjectionRawMessage {
         source_uri: path,
-        byte_range: serde_json::json!({
-            "kind": "full_source_material",
-            "start": 0,
-            "end": bytes.len(),
-        }),
+        byte_range,
         raw_message_bytes: bytes.len(),
-        raw_message_blake3: blake3::hash(&bytes).to_hex().to_string(),
-        preview: String::from_utf8_lossy(&bytes)
+        raw_message_blake3: blake3::hash(bytes).to_hex().to_string(),
+        preview: String::from_utf8_lossy(bytes)
             .chars()
             .take(512)
             .collect::<String>(),
     })
+}
+
+fn projection_raw_message_slice<'a>(
+    row: &EmailMailboxProjectionRecord,
+    bytes: &'a [u8],
+) -> Result<(&'a [u8], serde_json::Value)> {
+    let Some(start) = row.mbox_byte_start else {
+        return Ok((
+            bytes,
+            serde_json::json!({
+                "kind": "full_source_material",
+                "start": 0,
+                "end": bytes.len(),
+            }),
+        ));
+    };
+    let Some(end) = row.mbox_byte_end else {
+        return Err(
+            SinexError::validation("email MBOX projection is missing byte-range end")
+                .with_context("message_key", &row.message_key)
+                .with_operation("ops.start"),
+        );
+    };
+    let start = usize::try_from(start).map_err(|error| {
+        SinexError::validation("email MBOX byte-range start does not fit usize")
+            .with_context("message_key", &row.message_key)
+            .with_std_error(&error)
+            .with_operation("ops.start")
+    })?;
+    let end = usize::try_from(end).map_err(|error| {
+        SinexError::validation("email MBOX byte-range end does not fit usize")
+            .with_context("message_key", &row.message_key)
+            .with_std_error(&error)
+            .with_operation("ops.start")
+    })?;
+    let slice = bytes.get(start..end).ok_or_else(|| {
+        SinexError::validation("email MBOX byte-range is outside source material")
+            .with_context("message_key", &row.message_key)
+            .with_context("start", start)
+            .with_context("end", end)
+            .with_context("source_bytes", bytes.len())
+            .with_operation("ops.start")
+    })?;
+    Ok((
+        slice,
+        serde_json::json!({
+            "kind": "mbox_message_byte_range",
+            "start": start,
+            "end": end,
+        }),
+    ))
 }
 
 async fn load_projection_source_material(
@@ -588,6 +638,8 @@ fn email_projection_selection_values(
                 "message_key": row.message_key,
                 "message_id": row.message_id,
                 "raw_material_id": row.raw_material_id,
+                "mbox_byte_start": row.mbox_byte_start,
+                "mbox_byte_end": row.mbox_byte_end,
                 "attachment_count": row.attachment_count,
                 "attachment_observed_count": row.attachment_observed_count,
                 "outstanding_attachment_count": row.attachment_count - row.attachment_observed_count,
@@ -608,6 +660,8 @@ fn email_projection_export_value(row: &EmailMailboxProjectionRecord) -> serde_js
         "mailbox_format": row.mailbox_format,
         "source_file": row.source_file,
         "raw_material_id": row.raw_material_id,
+        "mbox_byte_start": row.mbox_byte_start,
+        "mbox_byte_end": row.mbox_byte_end,
         "subject": row.subject,
         "from": row.from_addresses,
         "to": row.to_addresses,

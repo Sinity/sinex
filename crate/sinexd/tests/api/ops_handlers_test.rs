@@ -1207,6 +1207,78 @@ async fn ops_start_materializes_email_attachments_from_file_material(
 }
 
 #[sinex_test]
+async fn ops_start_materializes_email_mbox_attachment_from_projected_byte_range(
+    ctx: TestContext,
+) -> TestResult<()> {
+    let dir = tempfile::tempdir()?;
+    let path = dir.path().join("mailbox.mbox");
+    let first = b"Message-ID: <mbox-first@example.test>\r\nSubject: First\r\n\r\nfirst body\r\n";
+    let second =
+        b"Message-ID: <mbox-second@example.test>\r\nSubject: Second\r\n\r\nsecond body\r\n";
+    let mut bytes = Vec::new();
+    bytes.extend_from_slice(b"From first@example.test Tue Jan 14 12:00:00 2025\n");
+    let first_start = bytes.len();
+    bytes.extend_from_slice(first);
+    let first_end = bytes.len();
+    bytes.extend_from_slice(b"\nFrom second@example.test Tue Jan 14 12:01:00 2025\n");
+    bytes.extend_from_slice(second);
+    tokio::fs::write(&path, &bytes).await?;
+    let material = register_email_file_material(&ctx, &path).await?;
+    seed_email_projection_message(
+        &ctx,
+        "source:email.mailbox.mbox-staged",
+        json!({
+            "message_id": "mbox-first@example.test",
+            "folder": "mailbox",
+            "source_file": path.to_string_lossy(),
+            "raw_material_id": material.id.to_string(),
+            "mailbox_format": "mbox",
+            "mbox_byte_start": first_start,
+            "mbox_byte_end": first_end,
+            "subject": "First",
+            "from": ["first@example.test"],
+            "to": ["operator@example.test"],
+            "body_bytes": 10,
+            "attachment_count": 1
+        }),
+    )
+    .await?;
+
+    let auth = system_auth();
+    let response: OpsStartResponse = serde_json::from_value(
+        handle_ops_start(
+            ctx.pool(),
+            json!({
+                "operation_type": "email.mailbox.fetch-attachments",
+                "scope": {
+                    "source_id": "email.mailbox",
+                    "mode_id": "source:email.mailbox.mbox-staged",
+                    "message_key": "mbox-first@example.test",
+                    "attachment_material_policy_ref": "operator.email-mailbox.attachment-private"
+                },
+            }),
+            &auth,
+        )
+        .await?,
+    )?;
+
+    assert_eq!(response.operation.result_status, OperationStatus::Success);
+    let scope = response.operation.scope.as_ref().expect("scope");
+    assert_eq!(scope["materialized_attachment_count"], 1);
+    assert_eq!(
+        scope["materialized_attachments"][0]["byte_range"]["kind"],
+        "mbox_message_byte_range"
+    );
+    assert_eq!(
+        scope["materialized_attachments"][0]["raw_message_blake3"],
+        blake3::hash(&bytes[first_start..first_end])
+            .to_hex()
+            .to_string()
+    );
+    Ok(())
+}
+
+#[sinex_test]
 async fn ops_start_exports_email_mailbox_projection_metadata(ctx: TestContext) -> TestResult<()> {
     seed_email_projection(
         &ctx,
@@ -1632,7 +1704,23 @@ async fn ops_start_executes_gmail_scheduled_sync_with_token_file(
             .as_array()
             .expect("provider event ids should be recorded")
             .len(),
-        1
+        3
+    );
+    let projections = ctx
+        .pool()
+        .email_mailbox_projections()
+        .list_current_by_source_mode(
+            "email.mailbox",
+            "source:email.mailbox.gmail-api-scheduled-sync",
+        )
+        .await?;
+    assert!(
+        projections.iter().any(|row| {
+            row.message_id.as_deref() == Some("m-1")
+                && row.mailbox_format.as_deref() == Some("gmail-api")
+                && row.body_bytes == 128
+        }),
+        "Gmail sync should project provider message material: {projections:?}"
     );
     let persisted_scope = serde_json::to_string(scope)?;
     assert!(
@@ -1647,7 +1735,7 @@ async fn ops_start_executes_gmail_scheduled_sync_with_token_file(
         .expect("email provider preview should be recorded");
     assert_eq!(preview["executor_state"], "gmail_api_sync_admitted");
     assert_eq!(preview["provider_record_count"], 1);
-    assert_eq!(preview["admitted_event_count"], 1);
+    assert_eq!(preview["admitted_event_count"], 3);
     assert_eq!(
         preview["mode_contract"]["binding"]["adapter"],
         "GmailApiCursorAdapter"
@@ -1954,7 +2042,7 @@ async fn ops_start_executes_imap_scheduled_sync_with_password_file(
             .as_array()
             .expect("provider event ids should be recorded")
             .len(),
-        1
+        3
     );
     let persisted_scope = serde_json::to_string(scope)?;
     assert!(
@@ -1969,7 +2057,20 @@ async fn ops_start_executes_imap_scheduled_sync_with_password_file(
         .expect("email provider preview should be recorded");
     assert_eq!(preview["executor_state"], "imap_sync_admitted");
     assert_eq!(preview["provider_record_count"], 1);
-    assert_eq!(preview["admitted_event_count"], 1);
+    assert_eq!(preview["admitted_event_count"], 3);
+    let projections = ctx
+        .pool()
+        .email_mailbox_projections()
+        .list_current_by_source_mode("email.mailbox", "source:email.mailbox.imap-scheduled-sync")
+        .await?;
+    assert!(
+        projections.iter().any(|row| {
+            row.message_id.as_deref() == Some("imap-40@example.com")
+                && row.mailbox_format.as_deref() == Some("imap-provider")
+                && row.body_bytes > 0
+        }),
+        "IMAP sync should project provider message material: {projections:?}"
+    );
 
     let provider_states = ctx
         .pool()
@@ -2394,13 +2495,18 @@ impl ImapFixtureServer {
 {tag} OK [READ-WRITE] SELECT completed\r\n"
                             )
                         } else if command.contains(" UID FETCH ") {
-                            let header =
-                                "Message-ID: <imap-40@example.com>\r\nSubject: fixture\r\n\r\n";
-                            format!(
-                                "* 1 FETCH (UID 40 FLAGS (\\Seen) RFC822.SIZE {} BODY[HEADER] {{{}}}\r\n{})\r\n{tag} OK UID FETCH completed\r\n",
-                                header.len(),
-                                header.len(),
+                            let header = "Message-ID: <imap-40@example.com>\r\nSubject: fixture\r\nFrom: imap@example.test\r\nTo: operator@example.test\r\n\r\n";
+                            let body = "Message-ID: <imap-40@example.com>\r\nSubject: fixture\r\nFrom: imap@example.test\r\nTo: operator@example.test\r\n\r\nprovider IMAP body\r\n";
+                            let message = if command.contains("BODY.PEEK[]") {
+                                body
+                            } else {
                                 header
+                            };
+                            format!(
+                                "* 1 FETCH (UID 40 FLAGS (\\Seen) RFC822.SIZE {} BODY[] {{{}}}\r\n{})\r\n{tag} OK UID FETCH completed\r\n",
+                                message.len(),
+                                message.len(),
+                                message
                             )
                         } else if command.contains(" LOGOUT") {
                             format!("* BYE fixture logout\r\n{tag} OK LOGOUT completed\r\n")

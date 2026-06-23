@@ -259,8 +259,8 @@ fn parse_gmail_provider_record(
         required_action,
         caveats,
     };
-    Ok(vec![provider_cursor_intent(
-        record,
+    let mut intents = vec![provider_cursor_intent(
+        record.clone(),
         ctx,
         serde_json::to_value(&payload).map_err(|error| {
             ParserError::Parse(format!("failed to serialize Gmail cursor payload: {error}"))
@@ -276,7 +276,37 @@ fn parse_gmail_provider_record(
             None,
             None,
         ),
-    )])
+    )];
+    if matches!(
+        provider_record.kind,
+        GmailApiRecordKind::Message | GmailApiRecordKind::History
+    ) && let Some(message) = gmail_provider_message(&provider_record.payload)
+    {
+        intents.extend(provider_message_intents(
+            &record,
+            ctx,
+            ProviderMessageSource {
+                provider: EmailProviderKind::Gmail,
+                account_binding_ref,
+                mailbox_scope,
+                mailbox_format: EmailMailboxFormat::GmailApi,
+                message_id: provider_record.message_id.clone().or_else(|| {
+                    gmail_json_string(message, "id").map(|id| format!("{id}@gmail.provider"))
+                }),
+                thread_key: provider_record.thread_id.clone(),
+                subject: gmail_payload_header(message, "Subject"),
+                from: gmail_payload_header(message, "From").into_iter().collect(),
+                to: gmail_payload_header(message, "To").into_iter().collect(),
+                body_bytes: gmail_json_u64(message, "sizeEstimate").unwrap_or_else(|| {
+                    gmail_json_string(message, "snippet").map_or(0, |snippet| snippet.len() as u64)
+                }),
+                size_bytes: gmail_json_u64(message, "sizeEstimate")
+                    .unwrap_or(record.bytes.len() as u64),
+                attachment_count: gmail_attachment_count(message),
+            },
+        )?);
+    }
+    Ok(intents)
 }
 
 fn parse_imap_provider_record(
@@ -331,8 +361,8 @@ fn parse_imap_provider_record(
         required_action,
         caveats,
     };
-    Ok(vec![provider_cursor_intent(
-        record,
+    let mut intents = vec![provider_cursor_intent(
+        record.clone(),
         ctx,
         serde_json::to_value(&payload).map_err(|error| {
             ParserError::Parse(format!("failed to serialize IMAP cursor payload: {error}"))
@@ -348,7 +378,472 @@ fn parse_imap_provider_record(
             uid.as_deref(),
             highest_modseq.as_deref(),
         ),
-    )])
+    )];
+    if provider_record.kind == ImapSyncRecordKind::Message {
+        let header = provider_record
+            .payload
+            .get("header")
+            .and_then(serde_json::Value::as_str);
+        let body = provider_record
+            .payload
+            .get("body")
+            .and_then(serde_json::Value::as_str);
+        if let Some(message_text) = body.or(header) {
+            let message_record = SourceRecord {
+                material_id: record.material_id,
+                anchor: record.anchor.clone(),
+                bytes: message_text.as_bytes().to_vec(),
+                logical_path: record.logical_path.clone(),
+                source_ts_hint: record.source_ts_hint.clone(),
+                metadata: record.metadata.clone(),
+            };
+            let parsed = parse_rfc822(&message_record)?;
+            let body_fetched = provider_record
+                .payload
+                .get("body_fetched")
+                .and_then(serde_json::Value::as_bool)
+                .unwrap_or(false);
+            let attachments_fetched = provider_record
+                .payload
+                .get("attachments_fetched")
+                .and_then(serde_json::Value::as_bool)
+                .unwrap_or(false);
+            intents.extend(provider_parsed_message_intents(
+                &record,
+                ctx,
+                ProviderParsedMessageSource {
+                    mailbox_scope,
+                    mailbox_format: EmailMailboxFormat::ImapProvider,
+                    message_id: parsed
+                        .message_id
+                        .clone()
+                        .or(provider_record.message_id.clone()),
+                    thread_key: None,
+                    parsed,
+                    size_bytes: provider_record
+                        .payload
+                        .get("size")
+                        .and_then(serde_json::Value::as_u64)
+                        .unwrap_or(message_text.len() as u64),
+                    body_materialized: body_fetched,
+                    attachments_materialized: attachments_fetched,
+                    attachment_policy_ref: provider_record
+                        .payload
+                        .get("attachment_material_policy_ref")
+                        .and_then(serde_json::Value::as_str)
+                        .map(str::to_string),
+                },
+            )?);
+        }
+    }
+    Ok(intents)
+}
+
+struct ProviderMessageSource {
+    provider: EmailProviderKind,
+    account_binding_ref: String,
+    mailbox_scope: Option<String>,
+    mailbox_format: EmailMailboxFormat,
+    message_id: Option<String>,
+    thread_key: Option<String>,
+    subject: Option<String>,
+    from: Vec<String>,
+    to: Vec<String>,
+    body_bytes: u64,
+    size_bytes: u64,
+    attachment_count: u32,
+}
+
+struct ProviderParsedMessageSource {
+    mailbox_scope: Option<String>,
+    mailbox_format: EmailMailboxFormat,
+    message_id: Option<String>,
+    thread_key: Option<String>,
+    parsed: ParsedEmail,
+    size_bytes: u64,
+    body_materialized: bool,
+    attachments_materialized: bool,
+    attachment_policy_ref: Option<String>,
+}
+
+fn provider_message_intents(
+    record: &SourceRecord,
+    ctx: &ParserContext,
+    source: ProviderMessageSource,
+) -> ParserResult<Vec<ParsedEventIntent>> {
+    let raw_material_id = record.material_id.to_uuid().to_string();
+    let source_file = record
+        .logical_path
+        .as_ref()
+        .map(ToString::to_string)
+        .unwrap_or_default();
+    let thread_key = source.thread_key.clone().unwrap_or_else(|| {
+        format!(
+            "{}:{}:{}",
+            source.provider.as_str(),
+            source.account_binding_ref,
+            source
+                .message_id
+                .as_deref()
+                .unwrap_or(raw_material_id.as_str())
+        )
+    });
+    let message_payload = EmailMessageReceivedPayload {
+        message_id: source.message_id.clone(),
+        date: None,
+        from: source.from.clone(),
+        to: source.to.clone(),
+        cc: Vec::new(),
+        bcc: Vec::new(),
+        subject: source.subject.clone(),
+        in_reply_to: None,
+        references: Vec::new(),
+        list_id: None,
+        folder: source.mailbox_scope.clone(),
+        source_file: source_file.clone(),
+        raw_material_id: raw_material_id.clone(),
+        mailbox_format: source.mailbox_format,
+        maildir_subdir: None,
+        maildir_flags: Vec::new(),
+        maildir_stable_filename: None,
+        mbox_file: None,
+        mbox_byte_start: None,
+        mbox_byte_end: None,
+        size_bytes: source.size_bytes,
+        body_bytes: source.body_bytes,
+        attachment_count: source.attachment_count,
+    };
+    provider_observation_intents(
+        record,
+        ctx,
+        message_payload,
+        ProviderThreadFields {
+            thread_key,
+            subject: source.subject,
+            from: source.from,
+            to: source.to,
+            mailbox_scope: source.mailbox_scope,
+            source_file,
+            raw_material_id,
+            mailbox_format: source.mailbox_format,
+            date: None,
+            in_reply_to: None,
+            references: Vec::new(),
+        },
+        Vec::new(),
+    )
+}
+
+fn provider_parsed_message_intents(
+    record: &SourceRecord,
+    ctx: &ParserContext,
+    source: ProviderParsedMessageSource,
+) -> ParserResult<Vec<ParsedEventIntent>> {
+    let raw_material_id = record.material_id.to_uuid().to_string();
+    let source_file = record
+        .logical_path
+        .as_ref()
+        .map(ToString::to_string)
+        .unwrap_or_default();
+    let message_id = source.message_id.clone();
+    let thread_key = source.thread_key.clone().unwrap_or_else(|| {
+        email_thread_key(
+            message_id.as_deref(),
+            source.parsed.in_reply_to.as_deref(),
+            &source.parsed.references,
+            &EmailMaterialIdentity {
+                mailbox_format: source.mailbox_format,
+                folder: source.mailbox_scope.clone(),
+                source_file: source_file.clone(),
+                material_anchor: format!("{:?}", record.anchor),
+                maildir_subdir: None,
+                maildir_flags: Vec::new(),
+                maildir_stable_filename: None,
+                mbox_file: None,
+                mbox_byte_start: None,
+                mbox_byte_end: None,
+            },
+            &raw_material_id,
+        )
+    });
+    let body_bytes = if source.body_materialized {
+        source.parsed.body_bytes
+    } else {
+        0
+    };
+    let attachment_count = source.parsed.attachment_count;
+    let message_payload = EmailMessageReceivedPayload {
+        message_id: message_id.clone(),
+        date: source.parsed.date,
+        from: source.parsed.from.clone(),
+        to: source.parsed.to.clone(),
+        cc: source.parsed.cc.clone(),
+        bcc: source.parsed.bcc.clone(),
+        subject: source.parsed.subject.clone(),
+        in_reply_to: source.parsed.in_reply_to.clone(),
+        references: source.parsed.references.clone(),
+        list_id: source.parsed.list_id.clone(),
+        folder: source.mailbox_scope.clone(),
+        source_file: source_file.clone(),
+        raw_material_id: raw_material_id.clone(),
+        mailbox_format: source.mailbox_format,
+        maildir_subdir: None,
+        maildir_flags: Vec::new(),
+        maildir_stable_filename: None,
+        mbox_file: None,
+        mbox_byte_start: None,
+        mbox_byte_end: None,
+        size_bytes: source.size_bytes,
+        body_bytes,
+        attachment_count,
+    };
+    let attachment_policy_ref = source.attachment_policy_ref.unwrap_or_else(|| {
+        if source.attachments_materialized {
+            "operator.email-mailbox.attachment-materialized".to_string()
+        } else {
+            "operator.email-mailbox.attachment-deferred".to_string()
+        }
+    });
+    let attachments = source
+        .parsed
+        .attachments
+        .iter()
+        .enumerate()
+        .map(|(index, attachment)| EmailAttachmentObservedPayload {
+            message_id: message_id.clone(),
+            folder: source.mailbox_scope.clone(),
+            source_file: source_file.clone(),
+            raw_material_id: raw_material_id.clone(),
+            mailbox_format: source.mailbox_format,
+            attachment_index: u32::try_from(index).unwrap_or(u32::MAX),
+            disposition: attachment.disposition.clone(),
+            filename: attachment.filename.clone(),
+            content_type: attachment.content_type.clone(),
+            content_id: attachment.content_id.clone(),
+            material_policy_ref: attachment_policy_ref.clone(),
+        })
+        .collect();
+    provider_observation_intents(
+        record,
+        ctx,
+        message_payload,
+        ProviderThreadFields {
+            thread_key,
+            subject: source.parsed.subject,
+            from: source.parsed.from,
+            to: source.parsed.to,
+            mailbox_scope: source.mailbox_scope,
+            source_file,
+            raw_material_id,
+            mailbox_format: source.mailbox_format,
+            date: source.parsed.date,
+            in_reply_to: source.parsed.in_reply_to,
+            references: source.parsed.references,
+        },
+        attachments,
+    )
+}
+
+struct ProviderThreadFields {
+    thread_key: String,
+    subject: Option<String>,
+    from: Vec<String>,
+    to: Vec<String>,
+    mailbox_scope: Option<String>,
+    source_file: String,
+    raw_material_id: String,
+    mailbox_format: EmailMailboxFormat,
+    date: Option<Timestamp>,
+    in_reply_to: Option<String>,
+    references: Vec<String>,
+}
+
+fn provider_observation_intents(
+    record: &SourceRecord,
+    ctx: &ParserContext,
+    message_payload: EmailMessageReceivedPayload,
+    thread: ProviderThreadFields,
+    attachments: Vec<EmailAttachmentObservedPayload>,
+) -> ParserResult<Vec<ParsedEventIntent>> {
+    let message_id = message_payload.message_id.clone();
+    let raw_material_id = message_payload.raw_material_id.clone();
+    let mut intents = vec![
+        ParsedEventIntent::builder()
+            .source_id(SourceId::from_static("email.mailbox"))
+            .parser_id(ParserId::from_static("email-mailbox-rfc822"))
+            .parser_version("1.0.0")
+            .event_source(EventSource::from_static("email"))
+            .event_type(message_payload.event_type())
+            .payload(serde_json::to_value(&message_payload).map_err(|error| {
+                ParserError::Parse(format!(
+                    "failed to serialize provider message payload: {error}"
+                ))
+            })?)
+            .ts_orig(ctx.acquisition_time)
+            .timing(TimingEvidence::StagedAtFallback)
+            .anchor(record.anchor.clone())
+            .occurrence_key(provider_message_occurrence_key(
+                thread.mailbox_format,
+                &thread.raw_material_id,
+                message_id.as_deref(),
+                &thread.source_file,
+            ))
+            .privacy_context(ProcessingContext::Document)
+            .build(),
+    ];
+
+    let thread_payload = EmailThreadObservedPayload {
+        thread_key: thread.thread_key.clone(),
+        thread_root_message_id: message_id.clone(),
+        message_id: message_id.clone(),
+        in_reply_to: thread.in_reply_to,
+        references: thread.references,
+        date: thread.date,
+        subject: thread.subject,
+        from: thread.from,
+        to: thread.to,
+        cc: Vec::new(),
+        bcc: Vec::new(),
+        folder: thread.mailbox_scope,
+        source_file: thread.source_file.clone(),
+        raw_material_id: raw_material_id.clone(),
+        mailbox_format: thread.mailbox_format,
+    };
+    intents.push(
+        ParsedEventIntent::builder()
+            .source_id(SourceId::from_static("email.mailbox"))
+            .parser_id(ParserId::from_static("email-mailbox-rfc822"))
+            .parser_version("1.0.0")
+            .event_source(EventSource::from_static("email"))
+            .event_type(thread_payload.event_type())
+            .payload(serde_json::to_value(&thread_payload).map_err(|error| {
+                ParserError::Parse(format!(
+                    "failed to serialize provider thread payload: {error}"
+                ))
+            })?)
+            .ts_orig(ctx.acquisition_time)
+            .timing(TimingEvidence::StagedAtFallback)
+            .anchor(record.anchor.clone())
+            .occurrence_key(thread_occurrence_key(
+                &thread.thread_key,
+                message_id.as_deref(),
+                &raw_material_id,
+            ))
+            .privacy_context(ProcessingContext::Document)
+            .build(),
+    );
+    for attachment in attachments {
+        let attachment_index = attachment.attachment_index;
+        let filename = attachment.filename.clone();
+        let content_id = attachment.content_id.clone();
+        intents.push(
+            ParsedEventIntent::builder()
+                .source_id(SourceId::from_static("email.mailbox"))
+                .parser_id(ParserId::from_static("email-mailbox-rfc822"))
+                .parser_version("1.0.0")
+                .event_source(EventSource::from_static("email"))
+                .event_type(attachment.event_type())
+                .payload(serde_json::to_value(&attachment).map_err(|error| {
+                    ParserError::Parse(format!(
+                        "failed to serialize provider attachment payload: {error}"
+                    ))
+                })?)
+                .ts_orig(ctx.acquisition_time)
+                .timing(TimingEvidence::StagedAtFallback)
+                .anchor(record.anchor.clone())
+                .occurrence_key(OccurrenceKey {
+                    source_id: SourceId::from_static("email.mailbox"),
+                    fields: vec![
+                        (
+                            "message_id_or_material".to_string(),
+                            message_id
+                                .as_deref()
+                                .unwrap_or(&raw_material_id)
+                                .to_string(),
+                        ),
+                        ("attachment_index".to_string(), attachment_index.to_string()),
+                        ("filename".to_string(), filename.unwrap_or_default()),
+                        ("content_id".to_string(), content_id.unwrap_or_default()),
+                    ],
+                })
+                .privacy_context(ProcessingContext::Document)
+                .build(),
+        );
+    }
+    Ok(intents)
+}
+
+fn provider_message_occurrence_key(
+    mailbox_format: EmailMailboxFormat,
+    raw_material_id: &str,
+    message_id: Option<&str>,
+    source_file: &str,
+) -> OccurrenceKey {
+    OccurrenceKey {
+        source_id: SourceId::from_static("email.mailbox"),
+        fields: vec![
+            (
+                "message_id_or_material".to_string(),
+                message_id.unwrap_or(raw_material_id).to_string(),
+            ),
+            (
+                "mailbox_format".to_string(),
+                mailbox_format.as_str().to_string(),
+            ),
+            ("source_file".to_string(), source_file.to_string()),
+        ],
+    }
+}
+
+fn gmail_provider_message(payload: &serde_json::Value) -> Option<&serde_json::Value> {
+    payload.get("message").unwrap_or(payload).as_object()?;
+    Some(payload.get("message").unwrap_or(payload))
+}
+
+fn gmail_json_string(payload: &serde_json::Value, key: &str) -> Option<String> {
+    payload
+        .get(key)
+        .and_then(serde_json::Value::as_str)
+        .map(str::to_string)
+}
+
+fn gmail_json_u64(payload: &serde_json::Value, key: &str) -> Option<u64> {
+    payload.get(key).and_then(serde_json::Value::as_u64)
+}
+
+fn gmail_payload_header(payload: &serde_json::Value, name: &str) -> Option<String> {
+    payload
+        .pointer("/payload/headers")
+        .and_then(serde_json::Value::as_array)?
+        .iter()
+        .find(|header| {
+            header
+                .get("name")
+                .and_then(serde_json::Value::as_str)
+                .is_some_and(|value| value.eq_ignore_ascii_case(name))
+        })
+        .and_then(|header| header.get("value"))
+        .and_then(serde_json::Value::as_str)
+        .map(str::to_string)
+}
+
+fn gmail_attachment_count(payload: &serde_json::Value) -> u32 {
+    fn count_parts(value: &serde_json::Value) -> u32 {
+        let Some(parts) = value.get("parts").and_then(serde_json::Value::as_array) else {
+            return 0;
+        };
+        parts
+            .iter()
+            .map(|part| {
+                let self_count =
+                    part.get("filename")
+                        .and_then(serde_json::Value::as_str)
+                        .is_some_and(|filename| !filename.is_empty()) as u32;
+                self_count + count_parts(part)
+            })
+            .sum()
+    }
+    payload.pointer("/payload").map_or(0, count_parts)
 }
 
 fn provider_cursor_intent(
@@ -878,6 +1373,8 @@ fn email_mailbox_format_token(value: &str) -> Option<EmailMailboxFormat> {
         }
         "maildir" | "maildir-staged" | "maildir_staged" => Some(EmailMailboxFormat::MaildirStaged),
         "mbox" | "mbox-staged" | "mbox_staged" => Some(EmailMailboxFormat::MboxStaged),
+        "gmail-api" | "gmail_api" => Some(EmailMailboxFormat::GmailApi),
+        "imap-provider" | "imap_provider" => Some(EmailMailboxFormat::ImapProvider),
         _ => None,
     }
 }
@@ -936,11 +1433,10 @@ struct ParsedEmailAttachment {
 }
 
 fn parse_rfc822(record: &SourceRecord) -> ParserResult<ParsedEmail> {
-    let text = std::str::from_utf8(&record.bytes)
-        .map_err(|e| ParserError::Parse(format!("RFC822 email material is not UTF-8: {e}")))?;
-    let (headers, body) = split_headers_body(text);
+    let text = String::from_utf8_lossy(&record.bytes);
+    let (headers, body) = split_headers_body(&text);
     let headers = parse_headers(headers);
-    let header_attachments = attachment_headers(text);
+    let header_attachments = attachment_headers(&text);
     let parsed_message = MessageParser::default().parse(&record.bytes);
 
     let attachments = parsed_message
@@ -1088,7 +1584,7 @@ fn attachment_headers(text: &str) -> Vec<ParsedEmailAttachment> {
         let value = value.trim();
         match name.as_str() {
             "content-type" => {
-                current_content_type = Some(value.to_string());
+                current_content_type = content_type_token(value).map(str::to_string);
             }
             "content-id" => {
                 current_content_id = message_id_token(value);
@@ -1147,6 +1643,14 @@ fn enriched_attachment_value(parsed: Option<String>, header: Option<&str>) -> Op
         (None, Some(header)) => Some(header.to_string()),
         (None, None) => None,
     }
+}
+
+fn content_type_token(value: &str) -> Option<&str> {
+    value
+        .split(';')
+        .next()
+        .map(str::trim)
+        .filter(|token| !token.is_empty())
 }
 
 fn mime_part_attachment(part: &MessagePart<'_>) -> ParsedEmailAttachment {
@@ -1410,6 +1914,9 @@ fn occurrence_key(
         EmailMailboxFormat::Rfc822DropStaged => {
             fields.push(("source_file".to_string(), material.source_file.clone()));
         }
+        EmailMailboxFormat::GmailApi | EmailMailboxFormat::ImapProvider => {
+            fields.push(("source_file".to_string(), material.source_file.clone()));
+        }
     }
     fields.push((
         "material_anchor".to_string(),
@@ -1499,6 +2006,13 @@ fn material_fallback_identity(material: &EmailMaterialIdentity, raw_material_id:
             format!("{file}:{start}:{end}")
         }
         EmailMailboxFormat::Rfc822DropStaged => {
+            if material.source_file.is_empty() {
+                raw_material_id.to_string()
+            } else {
+                material.source_file.clone()
+            }
+        }
+        EmailMailboxFormat::GmailApi | EmailMailboxFormat::ImapProvider => {
             if material.source_file.is_empty() {
                 raw_material_id.to_string()
             } else {
