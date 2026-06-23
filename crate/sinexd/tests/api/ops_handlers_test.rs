@@ -233,6 +233,18 @@ async fn seed_email_projection_message(
     Ok(())
 }
 
+async fn register_email_file_material(
+    ctx: &TestContext,
+    path: &std::path::Path,
+) -> TestResult<sinex_db::SourceMaterialRecord> {
+    let material = sinex_db::repositories::SourceMaterial::file(path.to_string_lossy());
+    Ok(ctx
+        .pool()
+        .source_materials()
+        .register_material(material)
+        .await?)
+}
+
 async fn add_global_disclosure_rule(
     ctx: &TestContext,
     name: &str,
@@ -1019,7 +1031,7 @@ async fn ops_start_records_email_sync_for_provider_mode(ctx: TestContext) -> Tes
 }
 
 #[sinex_test]
-async fn ops_start_records_email_attachment_materialization_operation(
+async fn ops_start_records_blocked_email_attachment_materialization_operation(
     ctx: TestContext,
 ) -> TestResult<()> {
     seed_email_projection(
@@ -1053,10 +1065,10 @@ async fn ops_start_records_email_attachment_materialization_operation(
         response.operation.operation_type,
         "email.mailbox.fetch-attachments"
     );
-    assert_eq!(response.operation.result_status, OperationStatus::Success);
+    assert_eq!(response.operation.result_status, OperationStatus::Failed);
     assert_eq!(
         response.operation.result_message.as_deref(),
-        Some("email_capture; attachment materialization selected")
+        Some("email_capture; attachment materialization materialized 0 and blocked 1")
     );
     let scope = response
         .operation
@@ -1081,10 +1093,16 @@ async fn ops_start_records_email_attachment_materialization_operation(
     );
     assert_eq!(
         scope["executor_state"],
-        "email_attachment_materialization_selected"
+        "email_attachment_materialization_blocked"
     );
     assert_eq!(scope["selected_message_count"], 1);
     assert_eq!(scope["outstanding_attachment_count"], 2);
+    assert_eq!(scope["materialized_attachment_count"], 0);
+    assert_eq!(scope["blocked_material_count"], 1);
+    assert_eq!(
+        scope["blocked_materials"][0]["reason"],
+        "source_material_not_found"
+    );
     assert_eq!(
         scope["selected_messages"][0]["message_id"],
         "materialization-fixture@example.test"
@@ -1099,10 +1117,92 @@ async fn ops_start_records_email_attachment_materialization_operation(
     assert_eq!(preview["mode_id"], "source:email.mailbox.mbox-staged");
     assert_eq!(
         preview["executor_state"],
-        "email_attachment_materialization_selected"
+        "email_attachment_materialization_blocked"
     );
     assert_eq!(preview["selected_message_count"], 1);
     assert_eq!(preview["outstanding_attachment_count"], 2);
+    assert_eq!(preview["materialized_attachment_count"], 0);
+    assert_eq!(preview["blocked_material_count"], 1);
+    Ok(())
+}
+
+#[sinex_test]
+async fn ops_start_materializes_email_attachments_from_file_material(
+    ctx: TestContext,
+) -> TestResult<()> {
+    let dir = tempfile::tempdir()?;
+    let path = dir.path().join("materialized.eml");
+    tokio::fs::write(
+        &path,
+        b"Message-ID: <materialized@example.test>\r\nSubject: Materialized\r\nFrom: sender@example.test\r\nTo: recipient@example.test\r\nContent-Type: text/plain\r\n\r\nbody\r\n",
+    )
+    .await?;
+    let material = register_email_file_material(&ctx, &path).await?;
+    seed_email_projection_message(
+        &ctx,
+        "source:email.mailbox.maildir-staged",
+        json!({
+            "message_id": "materialized@example.test",
+            "folder": "INBOX",
+            "source_file": path.to_string_lossy(),
+            "raw_material_id": material.id.to_string(),
+            "mailbox_format": "rfc822",
+            "subject": "Materialized",
+            "from": ["sender@example.test"],
+            "to": ["recipient@example.test"],
+            "body_bytes": 4,
+            "attachment_count": 2
+        }),
+    )
+    .await?;
+
+    let auth = system_auth();
+    let response: OpsStartResponse = serde_json::from_value(
+        handle_ops_start(
+            ctx.pool(),
+            json!({
+                "operation_type": "email.mailbox.fetch-attachments",
+                "scope": {
+                    "source_id": "email.mailbox",
+                    "mode_id": "source:email.mailbox.maildir-staged",
+                    "message_key": "materialized@example.test",
+                    "attachment_material_policy_ref": "operator.email-mailbox.attachment-private"
+                },
+            }),
+            &auth,
+        )
+        .await?,
+    )?;
+
+    assert_eq!(response.operation.result_status, OperationStatus::Success);
+    assert_eq!(
+        response.operation.result_message.as_deref(),
+        Some("email_capture; attachment materialization materialized 2 and blocked 0")
+    );
+    let scope = response.operation.scope.as_ref().expect("scope");
+    assert_eq!(scope["executor_state"], "email_attachment_materialized");
+    assert_eq!(scope["materialized_attachment_count"], 2);
+    assert_eq!(scope["blocked_material_count"], 0);
+    assert_eq!(
+        scope["materialized_attachments"][0]["material_policy_ref"],
+        "operator.email-mailbox.attachment-private"
+    );
+    assert!(
+        scope["materialized_attachments"][0]["raw_message_blake3"]
+            .as_str()
+            .is_some_and(|hash| hash.len() == 64)
+    );
+    let rows = ctx
+        .pool()
+        .email_mailbox_projections()
+        .list_current_by_source_mode("email.mailbox", "source:email.mailbox.maildir-staged")
+        .await?;
+    let row = rows
+        .iter()
+        .find(|row| row.message_key == "materialized@example.test")
+        .expect("materialized projection row should exist");
+    assert_eq!(row.attachment_count, 2);
+    assert_eq!(row.attachment_observed_count, 2);
     Ok(())
 }
 
@@ -1303,6 +1403,88 @@ async fn ops_start_email_mailbox_export_applies_disclosure_policy(
         .expect("email export preview should be recorded");
     assert_eq!(preview["export"], scope["export"]);
     assert_eq!(preview["export_disclosure"], scope["export_disclosure"]);
+    Ok(())
+}
+
+#[sinex_test]
+async fn ops_start_email_mailbox_material_export_applies_disclosure_policy(
+    ctx: TestContext,
+) -> TestResult<()> {
+    add_global_disclosure_rule(
+        &ctx,
+        "email-export-raw-message",
+        r"RAW_BODY_SECRET_[A-Za-z0-9_]+",
+        "<EMAIL_RAW_BODY>",
+    )
+    .await?;
+    let dir = tempfile::tempdir()?;
+    let path = dir.path().join("material-export.eml");
+    tokio::fs::write(
+        &path,
+        b"Message-ID: <material-export@example.test>\r\nSubject: Material Export\r\nFrom: sender@example.test\r\nTo: recipient@example.test\r\n\r\nRAW_BODY_SECRET_board_packet\r\n",
+    )
+    .await?;
+    let material = register_email_file_material(&ctx, &path).await?;
+    seed_email_projection_message(
+        &ctx,
+        "source:email.mailbox.maildir-staged",
+        json!({
+            "message_id": "material-export@example.test",
+            "folder": "INBOX",
+            "source_file": path.to_string_lossy(),
+            "raw_material_id": material.id.to_string(),
+            "mailbox_format": "rfc822",
+            "subject": "Material Export",
+            "from": ["sender@example.test"],
+            "to": ["recipient@example.test"],
+            "body_bytes": 28,
+            "attachment_count": 0
+        }),
+    )
+    .await?;
+    let output_path = dir.path().join("mailbox-export-material.json");
+
+    let auth = system_auth();
+    let response: OpsStartResponse = serde_json::from_value(
+        handle_ops_start(
+            ctx.pool(),
+            json!({
+                "operation_type": "email.mailbox.export",
+                "scope": {
+                    "source_id": "email.mailbox",
+                    "mode_id": "source:email.mailbox.maildir-staged",
+                    "include_material": true,
+                    "output_path": output_path.to_string_lossy()
+                },
+            }),
+            &auth,
+        )
+        .await?,
+    )?;
+
+    assert_eq!(response.operation.result_status, OperationStatus::Success);
+    let scope = response.operation.scope.as_ref().expect("scope");
+    let exported: serde_json::Value =
+        serde_json::from_slice(&tokio::fs::read(&output_path).await?)?;
+    let scope_json = serde_json::to_string(scope)?;
+    let exported_json = serde_json::to_string(&exported)?;
+    assert!(!scope_json.contains("RAW_BODY_SECRET_board_packet"));
+    assert!(!exported_json.contains("RAW_BODY_SECRET_board_packet"));
+    assert!(exported_json.contains("<EMAIL_RAW_BODY>"));
+    assert_eq!(
+        exported["disclosure_policy"]["posture"],
+        "metadata_with_material_evidence"
+    );
+    assert_eq!(
+        exported["material_exports"][0]["message_id"],
+        "material-export@example.test"
+    );
+    assert!(
+        exported["material_exports"][0]["raw_message_blake3"]
+            .as_str()
+            .is_some_and(|hash| hash.len() == 64)
+    );
+    assert_eq!(scope["export_disclosure"]["redacted"], true);
     Ok(())
 }
 
