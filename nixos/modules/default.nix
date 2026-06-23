@@ -701,8 +701,8 @@ in
                 };
                 materialSlicesMaxAckPending = mkOption {
                   type = positive;
-                  default = 1000;
-                  description = "JetStream max_ack_pending for the material slices consumer.";
+                  default = 32;
+                  description = "JetStream max_ack_pending for the material frames consumer.";
                 };
                 resources = mkOption {
                   type = resourceModule {
