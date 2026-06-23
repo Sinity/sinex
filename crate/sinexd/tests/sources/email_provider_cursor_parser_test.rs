@@ -3,7 +3,8 @@ use sinex_primitives::{
     Uuid,
     events::payloads::email::{
         EMAIL_REQUIRED_ACTION_RESYNC_MAILBOX, EmailAttachmentObservedPayload, EmailContinuityState,
-        EmailProviderKind, EmailSyncCursorKind, EmailSyncCursorObservedPayload,
+        EmailMessageReceivedPayload, EmailProviderKind, EmailSyncCursorKind,
+        EmailSyncCursorObservedPayload,
     },
     ids::Id,
     parser::{MaterialAnchor, OccurrenceKey, ParserContext, SourceId, SourceRecord},
@@ -69,7 +70,20 @@ async fn gmail_provider_record_emits_sync_cursor_observation() -> xtask::sandbox
         thread_id: Some("thread-1".to_string()),
         history_id: Some("101".to_string()),
         label_ids: vec!["INBOX".to_string()],
-        payload: serde_json::json!({"id": "101"}),
+        payload: serde_json::json!({
+            "id": "gmail-msg-1",
+            "threadId": "thread-1",
+            "labelIds": ["INBOX"],
+            "historyId": "101",
+            "sizeEstimate": 128,
+            "payload": {
+                "headers": [
+                    {"name": "Subject", "value": "Gmail fixture"},
+                    {"name": "From", "value": "sender@gmail.example"},
+                    {"name": "To", "value": "receiver@example.test"}
+                ]
+            }
+        }),
     };
     let source_record = provider_record(
         serde_json::to_vec(&record)?,
@@ -84,7 +98,7 @@ async fn gmail_provider_record_emits_sync_cursor_observation() -> xtask::sandbox
     );
 
     let intents = parser.parse_record(source_record, &test_ctx()).await?;
-    assert_eq!(intents.len(), 1);
+    assert_eq!(intents.len(), 3);
     let intent = &intents[0];
     assert_eq!(intent.event_type.as_str(), "email.sync_cursor.observed");
     assert_eq!(intent.payload["provider"], "gmail");
@@ -110,6 +124,16 @@ async fn gmail_provider_record_emits_sync_cursor_observation() -> xtask::sandbox
     assert_eq!(payload.provider, EmailProviderKind::Gmail);
     assert_eq!(payload.cursor_kind, EmailSyncCursorKind::GmailHistoryId);
     assert_eq!(payload.gmail_history_id.as_deref(), Some("101"));
+    let message = intents
+        .iter()
+        .find(|intent| intent.event_type.as_str() == "email.message.received")
+        .expect("Gmail provider message should emit message observation");
+    assert_eq!(message.payload["mailbox_format"], "gmail-api");
+    assert_eq!(message.payload["message_id"], "gmail-msg-1");
+    assert_eq!(message.payload["subject"], "Gmail fixture");
+    let message_payload: EmailMessageReceivedPayload =
+        serde_json::from_value(message.payload.clone())?;
+    assert_eq!(message_payload.mailbox_format.as_str(), "gmail-api");
     Ok(())
 }
 
@@ -231,7 +255,14 @@ async fn imap_provider_record_emits_uidvalidity_cursor_observation()
         uid: Some(41),
         message_id: Some("imap-message-41@example.com".to_string()),
         flags: vec!["\\Seen".to_string()],
-        payload: serde_json::json!({"uid": 41}),
+        payload: serde_json::json!({
+            "uid": 41,
+            "header": "Message-ID: <imap-message-41@example.com>\r\nSubject: IMAP fixture\r\nFrom: imap@example.test\r\nTo: operator@example.test\r\n\r\n",
+            "body": "Message-ID: <imap-message-41@example.com>\r\nSubject: IMAP fixture\r\nFrom: imap@example.test\r\nTo: operator@example.test\r\n\r\nIMAP body text\r\n",
+            "body_fetched": true,
+            "attachments_fetched": false,
+            "body_material_policy_ref": "operator.email-mailbox.body-private"
+        }),
     };
     let source_record = provider_record(
         serde_json::to_vec(&record)?,
@@ -249,7 +280,7 @@ async fn imap_provider_record_emits_uidvalidity_cursor_observation()
     );
 
     let intents = parser.parse_record(source_record, &test_ctx()).await?;
-    assert_eq!(intents.len(), 1);
+    assert_eq!(intents.len(), 3);
     let intent = &intents[0];
     assert_eq!(intent.event_type.as_str(), "email.sync_cursor.observed");
     assert_eq!(intent.payload["provider"], "imap");
@@ -277,6 +308,13 @@ async fn imap_provider_record_emits_uidvalidity_cursor_observation()
     assert_eq!(payload.cursor_kind, EmailSyncCursorKind::ImapUidvalidityUid);
     assert_eq!(payload.uidvalidity.as_deref(), Some("700"));
     assert_eq!(payload.uid.as_deref(), Some("42"));
+    let message = intents
+        .iter()
+        .find(|intent| intent.event_type.as_str() == "email.message.received")
+        .expect("IMAP provider message should emit message observation");
+    assert_eq!(message.payload["mailbox_format"], "imap-provider");
+    assert_eq!(message.payload["message_id"], "imap-message-41@example.com");
+    assert_eq!(message.payload["body_bytes"], 16);
     Ok(())
 }
 

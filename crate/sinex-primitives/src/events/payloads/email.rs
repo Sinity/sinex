@@ -12,6 +12,8 @@ pub enum EmailMailboxFormat {
     Rfc822DropStaged,
     MaildirStaged,
     MboxStaged,
+    GmailApi,
+    ImapProvider,
 }
 
 impl EmailMailboxFormat {
@@ -20,6 +22,8 @@ impl EmailMailboxFormat {
             Self::Rfc822DropStaged => "rfc822-drop-staged",
             Self::MaildirStaged => "maildir-staged",
             Self::MboxStaged => "mbox-staged",
+            Self::GmailApi => "gmail-api",
+            Self::ImapProvider => "imap-provider",
         }
     }
 }

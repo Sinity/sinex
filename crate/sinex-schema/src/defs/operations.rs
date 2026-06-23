@@ -90,6 +90,8 @@ pub enum EmailMailboxProjection {
     MailboxFormat,
     SourceFile,
     RawMaterialId,
+    MboxByteStart,
+    MboxByteEnd,
     Subject,
     FromAddresses,
     ToAddresses,
@@ -151,6 +153,8 @@ impl EmailMailboxProjection {
             .col(ColumnDef::new(EmailMailboxProjection::MailboxFormat).text())
             .col(ColumnDef::new(EmailMailboxProjection::SourceFile).text())
             .col(ColumnDef::new(EmailMailboxProjection::RawMaterialId).text())
+            .col(ColumnDef::new(EmailMailboxProjection::MboxByteStart).big_integer())
+            .col(ColumnDef::new(EmailMailboxProjection::MboxByteEnd).big_integer())
             .col(ColumnDef::new(EmailMailboxProjection::Subject).text())
             .col(
                 ColumnDef::new(EmailMailboxProjection::FromAddresses)
