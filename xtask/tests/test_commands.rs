@@ -312,7 +312,7 @@ async fn test_jobs_output_json_surfaces_failed_vm_progress_summary()
     assert!(
         json["data"]["content"]
             .as_str()
-            .unwrap_or_default()
+            .expect("jobs output content should be a string")
             .contains("RequestedAssertionFailed: browser evidence missing"),
         "jobs output should keep the full VM stdout content"
     );

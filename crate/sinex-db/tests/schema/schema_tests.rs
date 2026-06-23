@@ -365,7 +365,7 @@ mod index_tests {
     }
 
     #[sinex_test]
-    #[ignore = "long"]
+    #[ignore = "long: index performance fixture, run via xtask test --heavy"]
     async fn test_index_performance_benefit() -> color_eyre::eyre::Result<()> {
         let ctx = TestContext::new().await.unwrap();
         let ctx = ctx.with_nats().shared().await?;
@@ -543,14 +543,22 @@ async fn get_table_columns(
     let columns = rows
         .into_iter()
         .map(|row| {
-            let name = row.column_name.unwrap_or_default();
-            let mut dtype = row.data_type.unwrap_or_default();
+            let name = row
+                .column_name
+                .expect("information_schema.columns must expose column_name");
+            let mut dtype = row
+                .data_type
+                .expect("information_schema.columns must expose data_type");
             if dtype == "USER-DEFINED" {
-                dtype = row.udt_name.unwrap_or_default();
+                dtype = row
+                    .udt_name
+                    .expect("USER-DEFINED column should expose udt_name");
             }
             let info = ColumnInfo {
                 data_type: dtype,
-                is_nullable: row.is_nullable.unwrap_or(false),
+                is_nullable: row
+                    .is_nullable
+                    .expect("information_schema.columns must expose is_nullable"),
                 is_primary_key: row.is_primary_key.unwrap_or(false),
             };
             (name, info)

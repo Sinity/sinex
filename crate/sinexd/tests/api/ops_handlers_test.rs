@@ -668,7 +668,7 @@ async fn ops_start_records_media_worker_command_failure_without_raw_output(
             .operation
             .result_message
             .as_deref()
-            .unwrap_or_default()
+            .expect("failed media worker operation should record a result message")
             .contains("media worker command exited with status")
     );
     assert!(

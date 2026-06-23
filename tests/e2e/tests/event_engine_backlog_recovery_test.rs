@@ -10,6 +10,15 @@ use tokio::time::{Duration, timeout};
 use xtask::sandbox::prelude::*;
 use xtask::sandbox::timing::{Timeouts, WaitHelpers};
 
+fn temp_dir_utf8_path(work_dir: &TempDir, label: &str) -> TestResult<Utf8PathBuf> {
+    Utf8PathBuf::from_path_buf(work_dir.path().to_path_buf()).map_err(|path| {
+        color_eyre::eyre::eyre!(
+            "{label} temp dir path is not valid UTF-8: {}",
+            path.display()
+        )
+    })
+}
+
 #[sinex_test]
 async fn event_engine_processes_backlog_after_downtime(ctx: TestContext) -> TestResult<()> {
     let ctx = ctx.with_nats().await?;
@@ -22,8 +31,7 @@ async fn event_engine_processes_backlog_after_downtime(ctx: TestContext) -> Test
     let consumer_name = format!("event-engine-backlog-{namespace}");
 
     let work_dir = TempDir::new()?;
-    let work_dir_utf8 = Utf8PathBuf::from_path_buf(work_dir.path().to_path_buf())
-        .unwrap_or_else(|_| Utf8PathBuf::from("/tmp"));
+    let work_dir_utf8 = temp_dir_utf8_path(&work_dir, "backlog recovery")?;
     let content_store_path = work_dir_utf8.join("content-store");
     let assembler_state_dir = work_dir_utf8.join("assembler_state");
     tokio::fs::create_dir_all(content_store_path.as_std_path()).await?;

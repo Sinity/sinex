@@ -25,6 +25,15 @@ use tokio::time::{Duration, timeout};
 use xtask::sandbox::prelude::*;
 use xtask::sandbox::timing::{Timeouts, WaitHelpers};
 
+fn temp_dir_utf8_path(work_dir: &TempDir, label: &str) -> TestResult<Utf8PathBuf> {
+    Utf8PathBuf::from_path_buf(work_dir.path().to_path_buf()).map_err(|path| {
+        color_eyre::eyre::eyre!(
+            "{label} temp dir path is not valid UTF-8: {}",
+            path.display()
+        )
+    })
+}
+
 async fn register_test_material(
     pool: &sinex_db::DbPool,
     source: &str,
@@ -99,8 +108,7 @@ async fn test_event_engine_graceful_shutdown_completes_inflight(
     let consumer_name = "event-engine-graceful".to_string();
 
     let work_dir = TempDir::new()?;
-    let work_dir_utf8 = Utf8PathBuf::from_path_buf(work_dir.path().to_path_buf())
-        .unwrap_or_else(|_| Utf8PathBuf::from("/tmp"));
+    let work_dir_utf8 = temp_dir_utf8_path(&work_dir, "graceful shutdown")?;
     let content_store_path = work_dir_utf8.join("content-store");
     let assembler_state_dir = work_dir_utf8.join("assembler_state");
     tokio::fs::create_dir_all(content_store_path.as_std_path()).await?;
@@ -207,8 +215,7 @@ async fn test_shutdown_under_continuous_load(ctx: TestContext) -> TestResult<()>
     let consumer_name = "event-engine-load".to_string();
 
     let work_dir = TempDir::new()?;
-    let work_dir_utf8 = Utf8PathBuf::from_path_buf(work_dir.path().to_path_buf())
-        .unwrap_or_else(|_| Utf8PathBuf::from("/tmp"));
+    let work_dir_utf8 = temp_dir_utf8_path(&work_dir, "continuous-load shutdown")?;
     let content_store_path = work_dir_utf8.join("content-store");
     let assembler_state_dir = work_dir_utf8.join("assembler_state");
     tokio::fs::create_dir_all(content_store_path.as_std_path()).await?;
@@ -302,14 +309,16 @@ async fn test_shutdown_under_continuous_load(ctx: TestContext) -> TestResult<()>
                 ts_quality: None,
                 anchor_payload_hash: None,
             };
-            if let Ok(p) = serde_json::to_vec(&event) {
-                let _ = publisher_client.publish(subject.clone(), p.into()).await;
-                let _ = publisher_client.flush().await;
-            }
+            let payload = serde_json::to_vec(&event)?;
+            publisher_client
+                .publish(subject.clone(), payload.into())
+                .await?;
+            publisher_client.flush().await?;
             published_count_clone.fetch_add(1, Ordering::SeqCst);
             idx += 1;
             tokio::time::sleep(Duration::from_millis(10)).await;
         }
+        Ok::<(), color_eyre::eyre::Report>(())
     });
 
     // Wait until the publisher is actively generating load and event_engine has
@@ -337,8 +346,11 @@ async fn test_shutdown_under_continuous_load(ctx: TestContext) -> TestResult<()>
     shutdown_flag.store(true, Ordering::SeqCst);
     service.shutdown().await?;
 
-    // Wait for publisher to stop
-    let _ = timeout(Duration::from_secs(Timeouts::SHORT), publisher_handle).await;
+    // Wait for publisher to stop and propagate serialization/NATS failures.
+    let publisher_result = timeout(Duration::from_secs(Timeouts::SHORT), publisher_handle)
+        .await
+        .map_err(|_| color_eyre::eyre::eyre!("continuous publisher shutdown timed out"))?;
+    publisher_result??;
 
     // Wait for service to stop
     let join_result = timeout(Duration::from_secs(Timeouts::SHORT), handle)
@@ -505,8 +517,7 @@ async fn test_shutdown_data_consistency(ctx: TestContext) -> TestResult<()> {
     let consumer_name = "event-engine-consistency".to_string();
 
     let work_dir = TempDir::new()?;
-    let work_dir_utf8 = Utf8PathBuf::from_path_buf(work_dir.path().to_path_buf())
-        .unwrap_or_else(|_| Utf8PathBuf::from("/tmp"));
+    let work_dir_utf8 = temp_dir_utf8_path(&work_dir, "data-consistency shutdown")?;
     let content_store_path = work_dir_utf8.join("content-store");
     let assembler_state_dir = work_dir_utf8.join("assembler_state");
     tokio::fs::create_dir_all(content_store_path.as_std_path()).await?;

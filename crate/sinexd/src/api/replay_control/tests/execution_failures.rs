@@ -91,11 +91,7 @@ async fn replay_execution_fails_when_outputs_never_become_query_visible(
     })?;
     assert_eq!(dispatched_command.operation_id, planned.operation_id);
 
-    scan_handle.await.map_err(|e| {
-        test_error(format!(
-            "fake visibility-timeout-test source runtime task failed: {e}"
-        ))
-    })?;
+    await_fake_scan_source_runtime(scan_handle, "visibility-timeout-test").await?;
 
     Ok(())
 }
@@ -200,9 +196,7 @@ async fn replay_execution_fails_when_source_runtime_never_reports_completion(
     })?;
     assert_eq!(dispatched_command.operation_id, approved.operation_id);
 
-    scan_handle
-        .await
-        .map_err(|e| test_error(format!("fake timeout-test source runtime task failed: {e}")))?;
+    await_fake_scan_source_runtime(scan_handle, "timeout-test").await?;
 
     Ok(())
 }
@@ -307,11 +301,7 @@ async fn replay_execution_fails_fast_when_progress_checkpoint_persist_fails(
         "checkpoint persistence failure before replacements should not leave archived rows behind"
     );
 
-    scan_handle.await.map_err(|e| {
-        test_error(format!(
-            "fake checkpoint-fail-test source runtime task failed: {e}"
-        ))
-    })?;
+    await_fake_scan_source_runtime(scan_handle, "checkpoint-fail-test").await?;
 
     Ok(())
 }
@@ -448,11 +438,7 @@ async fn replay_execution_fails_when_replacement_recording_fails(ctx: TestContex
         "failed replacement recording must not partially insert lineage rows"
     );
 
-    scan_handle.await.map_err(|e| {
-        test_error(format!(
-            "fake replacement-record-fail-test source runtime task failed: {e}"
-        ))
-    })?;
+    await_fake_scan_source_runtime(scan_handle, "replacement-record-fail-test").await?;
 
     Ok(())
 }
@@ -741,7 +727,9 @@ async fn replay_execution_restores_cascade_when_initial_scope_invalidation_publi
 
     let payload_bytes = tokio::time::timeout(Duration::from_secs(1), invalidation_rx.recv())
         .await?
-        .expect("compensating invalidation should still publish after restore");
+        .ok_or_else(|| {
+            test_error("compensating invalidation should still publish after restore")
+        })??;
     let payload = String::from_utf8(payload_bytes)?;
     assert!(payload.contains("scope://scope-invalidation-test/replay"));
     assert!(payload.contains(&target_id.to_string()));

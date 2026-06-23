@@ -344,14 +344,8 @@ async fn replay_execution_records_outcome(ctx: TestContext) -> Result<()> {
     assert_eq!(root_archived_after_reexecution, 1);
     assert_eq!(derived_archived_after_reexecution, 1);
 
-    scan_handle
-        .await
-        .map_err(|e| test_error(format!("fake fs-test source runtime task failed: {e}")))?;
-    reexecution_handle.await.map_err(|e| {
-        test_error(format!(
-            "fake reexecution-test source runtime task failed: {e}"
-        ))
-    })?;
+    await_fake_scan_source_runtime(scan_handle, "fs-test").await?;
+    await_fake_scan_source_runtime(reexecution_handle, "reexecution-test").await?;
 
     Ok(())
 }

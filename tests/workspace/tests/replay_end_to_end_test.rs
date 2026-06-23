@@ -121,9 +121,11 @@ async fn spawn_fake_scan_source_runtime(
                     event.created_by_operation_id = Some(operation_id);
                     event
                 }
-                Err(error) => return Err(color_eyre::eyre::eyre!(
-                    "fake scan source runtime `{module_name}` failed to build replay output event {index}: {error}"
-                )),
+                Err(error) => {
+                    return Err(color_eyre::eyre::eyre!(
+                        "fake scan source runtime `{module_name}` failed to build replay output event {index}: {error}"
+                    ));
+                }
             };
             pool.events().insert(event).await.map_err(|error| {
                 color_eyre::eyre::eyre!(

@@ -10,7 +10,7 @@ use std::time::{Duration, Instant};
 use color_eyre::eyre::{Context, Result};
 use sqlx::PgPool;
 
-use crate::runner::{TestOutcome, TestRunner};
+use crate::runner::{EvidenceKind, MissingEvidencePolicy, TestRunner};
 
 pub async fn run(runner: &mut TestRunner, database_url: &str) -> Result<()> {
     println!("\n── Smoke tests ────────────────────────────────");
@@ -130,10 +130,12 @@ async fn test_filesystem_pipeline(runner: &mut TestRunner, pool: &PgPool) {
     if let Err(error) = std::fs::create_dir_all(watched)
         .with_context(|| format!("failed to create watched directory {watched}"))
     {
-        runner.record(
+        runner.require_evidence(
             name,
-            TestOutcome::EvidenceMissing,
+            EvidenceKind::SourceMaterial,
+            false,
             &format!("filesystem fixture setup failed: {error:#}"),
+            MissingEvidencePolicy::Block,
         );
         return;
     }
@@ -145,10 +147,12 @@ async fn test_filesystem_pipeline(runner: &mut TestRunner, pool: &PgPool) {
         )
         .with_context(|| format!("failed to write smoke-test-{i}.txt"))
         {
-            runner.record(
+            runner.require_evidence(
                 name,
-                TestOutcome::EvidenceMissing,
+                EvidenceKind::SourceMaterial,
+                false,
                 &format!("filesystem fixture write failed: {error:#}"),
+                MissingEvidencePolicy::Block,
             );
             return;
         }
@@ -186,10 +190,12 @@ async fn test_batch_capture(runner: &mut TestRunner, pool: &PgPool) {
         if let Err(error) = std::fs::write(format!("{watched}/batch-{i}.txt"), format!("batch {i}"))
             .with_context(|| format!("failed to write batch-{i}.txt"))
         {
-            runner.record(
+            runner.require_evidence(
                 name,
-                TestOutcome::EvidenceMissing,
+                EvidenceKind::SourceMaterial,
+                false,
                 &format!("batch fixture write failed: {error:#}"),
+                MissingEvidencePolicy::Block,
             );
             return;
         }
@@ -261,10 +267,12 @@ async fn test_service_restart(runner: &mut TestRunner, pool: &PgPool) {
         )
         .with_context(|| format!("failed to write post-restart-{i}.txt"))
         {
-            runner.record(
+            runner.require_evidence(
                 name,
-                TestOutcome::EvidenceMissing,
+                EvidenceKind::SourceMaterial,
+                false,
                 &format!("post-restart fixture write failed: {error:#}"),
+                MissingEvidencePolicy::Block,
             );
             return;
         }
@@ -319,10 +327,12 @@ async fn observed_event_count(runner: &mut TestRunner, name: &str, pool: &PgPool
     match event_count(pool).await {
         Ok(count) => Some(count),
         Err(error) => {
-            runner.record(
+            runner.require_evidence(
                 name,
-                TestOutcome::EvidenceMissing,
+                EvidenceKind::Database,
+                false,
                 &format!("event count query failed: {error:#}"),
+                MissingEvidencePolicy::Block,
             );
             None
         }

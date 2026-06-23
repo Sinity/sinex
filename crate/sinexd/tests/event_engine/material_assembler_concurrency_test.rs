@@ -17,7 +17,8 @@ async fn fake_content_store() -> TestResult<(Arc<MaterialContentStore>, tempfile
     let dir = tempfile::tempdir()?;
     let repo_path = camino::Utf8PathBuf::from_path_buf(dir.path().to_path_buf())
         .map_err(|_| color_eyre::eyre::eyre!("tempdir not utf8"))?;
-    MaterialContentStore::init_with_config(&repo_path, Some("assembler-concurrency"), true).await?;
+    MaterialContentStore::init_with_config(&repo_path, Some("assembler-concurrency"), false)
+        .await?;
     let content_store = MaterialContentStore::new(ContentStoreConfig {
         root_path: repo_path,
         num_copies: None,

@@ -959,7 +959,10 @@ async fn test_gateway_client_replay_submit_previews_before_execute() -> TestResu
         .respond_with(move |req: &wiremock::Request| {
             let body: serde_json::Value =
                 serde_json::from_slice(&req.body).expect("valid rpc body");
-            let method = body["method"].as_str().unwrap_or_default().to_string();
+            let method = body["method"]
+                .as_str()
+                .expect("JSON-RPC request fixture must include a string method")
+                .to_string();
             seen_methods_clone
                 .lock()
                 .expect("record methods")

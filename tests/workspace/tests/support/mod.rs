@@ -21,7 +21,7 @@ pub struct TestGateway {
     pub port: u16,
     _env: EnvGuard,
     _shutdown_tx: watch::Sender<bool>,
-    handle: tokio::task::JoinHandle<()>,
+    handle: tokio::task::JoinHandle<color_eyre::Result<()>>,
     _cert_file: NamedTempFile,
     _key_file: NamedTempFile,
 }
@@ -72,9 +72,9 @@ pub async fn start_test_gateway(ctx: &TestContext) -> color_eyre::Result<TestGat
     let mut server_handle = tokio::spawn({
         let services = services.clone();
         async move {
-            if let Err(error) = rpc_server::run(&config, services, shutdown_rx).await {
-                eprintln!("Gateway startup failed: {error:#}");
-            }
+            rpc_server::run(&config, services, shutdown_rx)
+                .await
+                .map_err(|error| color_eyre::eyre::eyre!("Gateway server failed: {error:#}"))
         }
     });
 
@@ -85,11 +85,12 @@ pub async fn start_test_gateway(ctx: &TestContext) -> color_eyre::Result<TestGat
         }
         join_result = &mut server_handle => {
             match join_result {
-                Ok(()) => {
+                Ok(Ok(())) => {
                     return Err(color_eyre::eyre::eyre!(
                         "Gateway server exited before binding port {port}"
                     ));
                 }
+                Ok(Err(error)) => return Err(error),
                 Err(error) => {
                     return Err(color_eyre::eyre::eyre!(
                         "Gateway server task panicked: {error}"

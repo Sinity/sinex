@@ -83,8 +83,7 @@ pub fn event_fixture(
         payload,
         ts_orig: Some(Timestamp::now()),
         ts_quality: None,
-        host: HostName::new(gethostname::gethostname().to_string_lossy().to_string())
-            .unwrap_or_else(|_| HostName::from_static("unknown-host")),
+        host: HostName::from_static("test-host"),
         module_run_id: Some(Uuid::now_v7()),
         payload_schema_id: None,
         provenance: Provenance::Material {
@@ -147,7 +146,7 @@ pub mod strategies {
     pub fn sanitized_path() -> impl Strategy<Value = SanitizedPath> {
         r"/[a-z]{1,8}(/[a-z0-9._-]{1,12}){0,4}".prop_map(|s| {
             SanitizedPath::from_str_validated(&s)
-                .unwrap_or_else(|_| SanitizedPath::from_static("/tmp/test"))
+                .expect("regex-generated sanitized path should be valid")
         })
     }
 
@@ -155,7 +154,7 @@ pub mod strategies {
     pub fn timestamp() -> impl Strategy<Value = Timestamp> {
         (0i64..86400).prop_map(|secs_ago| {
             Timestamp::from_unix_timestamp(Timestamp::now().unix_timestamp() - secs_ago)
-                .unwrap_or_else(Timestamp::now)
+                .expect("generated recent timestamp should be representable")
         })
     }
 

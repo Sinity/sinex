@@ -939,32 +939,42 @@ async fn check_orphan_columns(pool: &PgPool) -> Result<Vec<StrictDrift>, ApplyEr
 
         // Build the declared-column set plus all allow-listed columns.
         let (declared_names, pending_drop) = declared_columns_for(ct);
-        let mut allowed: HashSet<&str> = declared_names.iter().map(String::as_str).collect();
-        // columns_to_drop are known-pending removals — not orphans.
-        for col in ct.columns_to_drop {
-            allowed.insert(col);
-        }
-        // pending_drop is the explicit allow-list for in-flight renames.
-        for col in pending_drop {
-            allowed.insert(col);
-        }
-
-        for live_col in &live_cols {
-            if !allowed.contains(live_col.as_str()) {
-                drifts.push(StrictDrift {
-                    category: DriftCategory::OrphanColumn,
-                    location: format!("{qname}.{live_col}"),
-                    declared_summary: "column not in source declaration".to_string(),
-                    observed_summary: format!(
-                        "column `{live_col}` exists in live {qname} but is not declared in source \
-                         (not in columns_to_drop or pending_drop allow-list)"
-                    ),
-                });
-            }
-        }
+        drifts.extend(orphan_column_drifts_for_table(
+            qname,
+            &live_cols,
+            &declared_names,
+            ct.columns_to_drop,
+            &pending_drop,
+        ));
     }
 
     Ok(drifts)
+}
+
+fn orphan_column_drifts_for_table(
+    qname: &str,
+    live_cols: &[String],
+    declared_names: &[String],
+    columns_to_drop: &[impl AsRef<str>],
+    pending_drop: &[impl AsRef<str>],
+) -> Vec<StrictDrift> {
+    let mut allowed: HashSet<String> = declared_names.iter().cloned().collect();
+    allowed.extend(columns_to_drop.iter().map(|col| col.as_ref().to_string()));
+    allowed.extend(pending_drop.iter().map(|col| col.as_ref().to_string()));
+
+    live_cols
+        .iter()
+        .filter(|live_col| !allowed.contains(live_col.as_str()))
+        .map(|live_col| StrictDrift {
+            category: DriftCategory::OrphanColumn,
+            location: format!("{qname}.{live_col}"),
+            declared_summary: "column not in source declaration".to_string(),
+            observed_summary: format!(
+                "column `{live_col}` exists in live {qname} but is not declared in source \
+                 (not in columns_to_drop or pending_drop allow-list)"
+            ),
+        })
+        .collect()
 }
 
 // ─── Tests ─────────────────────────────────────────────────────────────────
@@ -972,9 +982,10 @@ async fn check_orphan_columns(pool: &PgPool) -> Result<Vec<StrictDrift>, ApplyEr
 #[cfg(test)]
 mod tests {
     use super::{
-        DECLARED_FK_ACTIONS, DECLARED_INLINE_CHECKS, DriftCategory,
+        DECLARED_FK_ACTIONS, DECLARED_INLINE_CHECKS, DeclaredForeignKeyAction, DriftCategory,
         HYPERTABLE_CHUNK_INTERVAL_MICROS, StrictDrift, foreign_key_action_drifts,
         hypertable_chunk_interval_drift, hypertable_retention_policy_drift, inline_check_drift,
+        orphan_column_drifts_for_table,
     };
     use xtask::sandbox::prelude::sinex_test;
 
@@ -1067,6 +1078,25 @@ mod tests {
     }
 
     #[sinex_test]
+    async fn inline_check_drift_reports_partial_marker_subset() -> xtask::sandbox::TestResult<()> {
+        let declared = DECLARED_INLINE_CHECKS
+            .iter()
+            .find(|check| check.label == "offset_kind_enum")
+            .expect("offset-kind enum strict-diff expectation is declared");
+        let partial_definition =
+            vec!["CHECK ((offset_kind = ANY (ARRAY['byte', 'line', 'rowid'])))".to_string()];
+
+        let drift = inline_check_drift(declared, &partial_definition)
+            .expect("a CHECK missing one declared enum marker must not satisfy strict diff");
+
+        assert_eq!(drift.category, DriftCategory::InlineCheckExpr);
+        assert_eq!(drift.location, "core.events::offset_kind_enum");
+        assert!(drift.declared_summary.contains("'logical'"));
+        assert_eq!(drift.observed_summary, "1 CHECK constraint(s); none match");
+        Ok(())
+    }
+
+    #[sinex_test]
     async fn foreign_key_action_drift_reports_missing_delete_action()
     -> xtask::sandbox::TestResult<()> {
         let declared = DECLARED_FK_ACTIONS
@@ -1110,6 +1140,87 @@ mod tests {
             drift
                 .observed_summary
                 .contains("no FK on core.tags matches")
+        );
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn foreign_key_action_drift_reports_missing_update_action()
+    -> xtask::sandbox::TestResult<()> {
+        let declared = DeclaredForeignKeyAction {
+            schema: "core",
+            table: "child_rows",
+            fk_marker: "FOREIGN KEY (parent_id)",
+            expected_delete_action_marker: None,
+            expected_update_action_marker: Some("ON UPDATE CASCADE"),
+        };
+        let definitions = vec![
+            "FOREIGN KEY (parent_id) REFERENCES core.parent_rows(id) ON DELETE CASCADE".to_string(),
+        ];
+
+        let drifts = foreign_key_action_drifts(&declared, &definitions);
+
+        assert_eq!(drifts.len(), 1);
+        let drift = &drifts[0];
+        assert_eq!(drift.category, DriftCategory::ForeignKeyAction);
+        assert_eq!(
+            drift.location,
+            "core.child_rows FOREIGN KEY (parent_id) (ON UPDATE)"
+        );
+        assert_eq!(drift.declared_summary, "contains `ON UPDATE CASCADE`");
+        assert!(drift.observed_summary.contains("ON DELETE CASCADE"));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn orphan_column_drift_ignores_declared_and_drop_allowlisted_columns()
+    -> xtask::sandbox::TestResult<()> {
+        let live_cols = vec![
+            "id".to_string(),
+            "payload".to_string(),
+            "old_name".to_string(),
+            "pending_name".to_string(),
+        ];
+        let declared_names = vec!["id".to_string(), "payload".to_string()];
+        let pending_drop = vec!["pending_name".to_string()];
+
+        let drifts = orphan_column_drifts_for_table(
+            "core.events",
+            &live_cols,
+            &declared_names,
+            &["old_name"],
+            &pending_drop,
+        );
+
+        assert!(
+            drifts.is_empty(),
+            "allow-listed columns are not orphan drift: {drifts:?}"
+        );
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn orphan_column_drift_reports_live_column_outside_source_and_allowlists()
+    -> xtask::sandbox::TestResult<()> {
+        let live_cols = vec!["id".to_string(), "rogue_col".to_string()];
+        let declared_names = vec!["id".to_string()];
+        let pending_drop = Vec::<String>::new();
+
+        let drifts = orphan_column_drifts_for_table(
+            "core.events",
+            &live_cols,
+            &declared_names,
+            &[] as &[&str],
+            &pending_drop,
+        );
+
+        assert_eq!(drifts.len(), 1);
+        assert_eq!(drifts[0].category, DriftCategory::OrphanColumn);
+        assert_eq!(drifts[0].location, "core.events.rogue_col");
+        assert!(
+            drifts[0]
+                .observed_summary
+                .contains("not declared in source")
         );
         Ok(())
     }

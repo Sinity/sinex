@@ -10,7 +10,7 @@ use std::time::Duration;
 use color_eyre::eyre::Result;
 use sqlx::{PgPool, Row};
 
-use crate::runner::{TestOutcome, TestRunner};
+use crate::runner::{EvidenceKind, MissingEvidencePolicy, TestRunner};
 
 use super::chaos_support::{
     SINEXD_SERVICE, observed_event_count, report_event_count_increase,
@@ -83,18 +83,22 @@ async fn capture_restart_baseline(
     let event_ids = match event_ids(pool).await {
         Ok(event_ids) if !event_ids.is_empty() => event_ids,
         Ok(_) => {
-            runner.record(
+            runner.require_evidence(
                 name,
-                TestOutcome::EvidenceMissing,
+                EvidenceKind::Database,
+                false,
                 &format!("{phase} event count was positive but no event IDs could be snapshotted"),
+                MissingEvidencePolicy::Block,
             );
             return None;
         }
         Err(error) => {
-            runner.record(
+            runner.require_evidence(
                 name,
-                TestOutcome::EvidenceMissing,
+                EvidenceKind::Database,
+                false,
                 &format!("{phase} event-id snapshot failed: {error}"),
+                MissingEvidencePolicy::Block,
             );
             return None;
         }
@@ -103,20 +107,24 @@ async fn capture_restart_baseline(
     let material_occurrences = match material_occurrence_counts(pool).await {
         Ok(counts) if !counts.is_empty() => counts,
         Ok(_) => {
-            runner.record(
+            runner.require_evidence(
                 name,
-                TestOutcome::EvidenceMissing,
+                EvidenceKind::Database,
+                false,
                 &format!(
                     "{phase} events had no material occurrence anchors to compare after restart"
                 ),
+                MissingEvidencePolicy::Block,
             );
             return None;
         }
         Err(error) => {
-            runner.record(
+            runner.require_evidence(
                 name,
-                TestOutcome::EvidenceMissing,
+                EvidenceKind::Database,
+                false,
                 &format!("{phase} material occurrence snapshot failed: {error}"),
+                MissingEvidencePolicy::Block,
             );
             return None;
         }
@@ -197,35 +205,75 @@ async fn test_event_engine_restarts_after_sigkill(
 
     let baseline = capture_restart_baseline(runner, name, pool, "pre-SIGKILL").await;
 
-    // Get the PID of sinexd
-    let pid_output = Command::new("systemctl")
+    // Get the PID of sinexd.
+    let pid_output = match Command::new("systemctl")
         .args(["show", "-p", "MainPID", "--value", "sinexd"])
         .output()
-        .ok();
-
-    let pid_str = pid_output
-        .and_then(|o| String::from_utf8(o.stdout).ok())
-        .map(|s| s.trim().to_string())
-        .filter(|s| !s.is_empty() && s != "0");
-
-    let Some(pid) = pid_str else {
-        runner.record(
+    {
+        Ok(output) => output,
+        Err(error) => {
+            runner.require_evidence(
+                name,
+                EvidenceKind::Process,
+                false,
+                &format!("failed to invoke systemctl for MainPID: {error}"),
+                MissingEvidencePolicy::Block,
+            );
+            return baseline;
+        }
+    };
+    if !pid_output.status.success() {
+        runner.require_evidence(
             name,
-            TestOutcome::EvidenceMissing,
-            "systemd did not report a live sinexd MainPID, so SIGKILL restart recovery was not exercised",
+            EvidenceKind::Process,
+            false,
+            &format!(
+                "systemctl MainPID query failed with rc={}: {}",
+                pid_output.status.code().unwrap_or(-1),
+                String::from_utf8_lossy(&pid_output.stderr)
+            ),
+            MissingEvidencePolicy::Block,
         );
         return baseline;
+    }
+
+    let pid_str = match String::from_utf8(pid_output.stdout) {
+        Ok(stdout) => stdout.trim().to_string(),
+        Err(error) => {
+            runner.require_evidence(
+                name,
+                EvidenceKind::Process,
+                false,
+                &format!("systemctl MainPID output was not UTF-8: {error}"),
+                MissingEvidencePolicy::Block,
+            );
+            return baseline;
+        }
     };
+
+    if pid_str.is_empty() || pid_str == "0" {
+        runner.require_evidence(
+            name,
+            EvidenceKind::Process,
+            false,
+            "systemd did not report a live sinexd MainPID, so SIGKILL restart recovery was not exercised",
+            MissingEvidencePolicy::Block,
+        );
+        return baseline;
+    }
+    let pid = pid_str;
 
     let killed = Command::new("kill")
         .args(["-9", &pid])
         .status()
         .is_ok_and(|status| status.success());
     if !killed {
-        runner.record(
+        runner.require_evidence(
             name,
-            TestOutcome::EvidenceMissing,
+            EvidenceKind::FaultInjection,
+            false,
             &format!("failed to SIGKILL sinexd MainPID {pid}; restart recovery was not exercised"),
+            MissingEvidencePolicy::Block,
         );
         return baseline;
     }
@@ -258,10 +306,12 @@ async fn test_no_data_loss_after_restart(
     let name = "chaos-process-restart: no data loss after restart";
 
     let Some(baseline) = baseline else {
-        runner.record(
+        runner.require_evidence(
             name,
-            TestOutcome::EvidenceMissing,
+            EvidenceKind::Database,
+            false,
             "pre-SIGKILL event-id snapshot was not captured, so data-loss comparison cannot run",
+            MissingEvidencePolicy::Block,
         );
         return;
     };
@@ -270,10 +320,12 @@ async fn test_no_data_loss_after_restart(
     let current_ids = match event_ids(pool).await {
         Ok(ids) => ids,
         Err(error) => {
-            runner.record(
+            runner.require_evidence(
                 name,
-                TestOutcome::EvidenceMissing,
+                EvidenceKind::Database,
+                false,
                 &format!("current event-id query failed: {error}"),
+                MissingEvidencePolicy::Block,
             );
             return;
         }
@@ -298,10 +350,12 @@ async fn test_no_duplicate_events_after_restart(
     let name = "chaos-process-restart: no duplicate events after restart";
 
     let Some(baseline) = baseline else {
-        runner.record(
+        runner.require_evidence(
             name,
-            TestOutcome::EvidenceMissing,
+            EvidenceKind::Database,
+            false,
             "pre-SIGKILL material occurrence snapshot was not captured, so duplicate comparison cannot run",
+            MissingEvidencePolicy::Block,
         );
         return;
     };
@@ -309,10 +363,12 @@ async fn test_no_duplicate_events_after_restart(
     let current = match material_occurrence_counts(pool).await {
         Ok(counts) => counts,
         Err(error) => {
-            runner.record(
+            runner.require_evidence(
                 name,
-                TestOutcome::EvidenceMissing,
+                EvidenceKind::Database,
+                false,
                 &format!("current material occurrence query failed: {error}"),
+                MissingEvidencePolicy::Block,
             );
             return;
         }
