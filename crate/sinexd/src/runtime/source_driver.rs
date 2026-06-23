@@ -483,11 +483,16 @@ impl<I: SourceDriver> SourceDriverRuntime<I> {
         }
 
         if let Some(cm) = &self.checkpoint_manager {
-            if self.state.revision == 0 {
-                let existing_state = cm.load_checkpoint().await?;
+            let existing_state = cm.load_checkpoint().await?;
+            if existing_state.revision > 0 {
                 if existing_state.processed_count > ckpt_state.processed_count {
+                    ckpt_state = existing_state;
+                    ckpt_state.last_activity = sinex_primitives::temporal::Timestamp::now();
+                } else {
                     ckpt_state.revision = existing_state.revision;
-                    ckpt_state.processed_count = existing_state.processed_count;
+                    ckpt_state.processed_count = ckpt_state
+                        .processed_count
+                        .max(existing_state.processed_count);
                 }
             }
             if ckpt_state.revision == 0
@@ -1200,6 +1205,115 @@ mod tests {
             keys.try_next().await?.is_some(),
             "checkpoint KV entry should be recreated when only a stale hot reload file exists"
         );
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn save_state_updates_existing_zero_progress_checkpoint(
+        ctx: TestContext,
+    ) -> TestResult<()> {
+        let ctx = ctx.with_nats().shared().await?;
+        let kv = ctx.checkpoint_kv().await?;
+        let manager = Arc::new(CheckpointManager::new(
+            kv,
+            "source-adapter-test".to_string(),
+            "test-group".to_string(),
+            "existing-zero-progress-consumer".to_string(),
+        ));
+
+        let old_state = SourceDriverState {
+            user_state: TestState,
+            last_checkpoint: Timestamp::now(),
+            revision: 0,
+            checkpoint: Checkpoint::stream("old-cursor", None),
+        };
+        let baseline_revision = manager
+            .save_checkpoint(&CheckpointState {
+                checkpoint: Checkpoint::stream("old-cursor", None),
+                processed_count: 0,
+                last_activity: Timestamp::now(),
+                data: Some(serde_json::to_value(old_state)?),
+                version: 2,
+                revision: 0,
+            })
+            .await?;
+
+        let mut adapter = SourceDriverRuntime::new(TestSource);
+        adapter.checkpoint_manager = Some(Arc::clone(&manager));
+        adapter.state.checkpoint = Checkpoint::stream("new-cursor", None);
+
+        adapter.save_state(false).await?;
+
+        let saved = manager.load_checkpoint().await?;
+        assert!(
+            saved.revision > baseline_revision,
+            "save should update the existing key instead of attempting create"
+        );
+        assert_eq!(saved.checkpoint, Checkpoint::stream("new-cursor", None));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn save_state_preserves_newer_direct_checkpoint_for_stale_revision(
+        ctx: TestContext,
+    ) -> TestResult<()> {
+        let ctx = ctx.with_nats().shared().await?;
+        let kv = ctx.checkpoint_kv().await?;
+        let manager = Arc::new(CheckpointManager::new(
+            kv,
+            "source-adapter-test".to_string(),
+            "test-group".to_string(),
+            "stale-direct-revision-consumer".to_string(),
+        ));
+
+        let stale_state = SourceDriverState {
+            user_state: TestState,
+            last_checkpoint: Timestamp::now(),
+            revision: 0,
+            checkpoint: Checkpoint::stream("stale-cursor", None),
+        };
+        let stale_revision = manager
+            .save_checkpoint(&CheckpointState {
+                checkpoint: Checkpoint::stream("stale-cursor", None),
+                processed_count: 0,
+                last_activity: Timestamp::now(),
+                data: Some(serde_json::to_value(stale_state)?),
+                version: 2,
+                revision: 0,
+            })
+            .await?;
+
+        let newer_state = SourceDriverState {
+            user_state: TestState,
+            last_checkpoint: Timestamp::now(),
+            revision: 0,
+            checkpoint: Checkpoint::stream("newer-cursor", None),
+        };
+        let newer_revision = manager
+            .save_checkpoint(&CheckpointState {
+                checkpoint: Checkpoint::stream("newer-cursor", None),
+                processed_count: 70_000,
+                last_activity: Timestamp::now(),
+                data: Some(serde_json::to_value(newer_state)?),
+                version: 2,
+                revision: stale_revision,
+            })
+            .await?;
+
+        let mut adapter = SourceDriverRuntime::new(TestSource);
+        adapter.checkpoint_manager = Some(Arc::clone(&manager));
+        adapter.state.revision = stale_revision;
+        adapter.state.checkpoint = Checkpoint::stream("stale-cursor", None);
+
+        adapter.save_state(false).await?;
+
+        let saved = manager.load_checkpoint().await?;
+        assert!(
+            saved.revision > newer_revision,
+            "save should refresh the stale revision and succeed"
+        );
+        assert_eq!(saved.processed_count, 70_000);
+        assert_eq!(saved.checkpoint, Checkpoint::stream("newer-cursor", None));
         Ok(())
     }
 
