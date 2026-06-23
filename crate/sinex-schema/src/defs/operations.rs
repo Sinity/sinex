@@ -33,6 +33,193 @@ pub enum OperationsLog {
     DurationMs,
 }
 
+/// **Table: `core.email_provider_state`**
+///
+/// Durable current-state projection for operator-facing mailbox provider
+/// health, cursors, and sync debt. `operations_log` remains the audit trail;
+/// this table keeps the latest provider outcome per account/mailbox scope.
+#[derive(Iden, Copy, Clone)]
+pub enum EmailProviderState {
+    Table,
+    Id,
+    SourceId,
+    ModeId,
+    Provider,
+    AccountBindingRef,
+    MailboxScope,
+    OperationId,
+    ResultStatus,
+    AuthState,
+    NetworkState,
+    SyncState,
+    RateLimitState,
+    RuntimeStateRef,
+    CoverageRef,
+    DebtRef,
+    CursorKind,
+    CursorValue,
+    ContinuityState,
+    ProviderRuntime,
+    ProviderCursor,
+    ProviderFailure,
+    ObservedAt,
+    UpdatedAt,
+}
+
+impl TableDef for EmailProviderState {
+    fn table_name() -> &'static str {
+        "email_provider_state"
+    }
+    fn schema_name() -> &'static str {
+        "core"
+    }
+    fn primary_key() -> &'static str {
+        "id"
+    }
+}
+
+impl EmailProviderState {
+    #[must_use]
+    pub fn create_table_statement() -> TableCreateStatement {
+        Table::create()
+            .table(Self::table_iden())
+            .if_not_exists()
+            .col(
+                ColumnDef::new(EmailProviderState::Id)
+                    .custom(Alias::new("UUID"))
+                    .primary_key()
+                    .extra("DEFAULT uuidv7()"),
+            )
+            .col(
+                ColumnDef::new(EmailProviderState::SourceId)
+                    .text()
+                    .not_null(),
+            )
+            .col(ColumnDef::new(EmailProviderState::ModeId).text().not_null())
+            .col(
+                ColumnDef::new(EmailProviderState::Provider)
+                    .text()
+                    .not_null(),
+            )
+            .col(
+                ColumnDef::new(EmailProviderState::AccountBindingRef)
+                    .text()
+                    .not_null(),
+            )
+            .col(
+                ColumnDef::new(EmailProviderState::MailboxScope)
+                    .text()
+                    .not_null()
+                    .default("default"),
+            )
+            .col(
+                ColumnDef::new(EmailProviderState::OperationId)
+                    .custom(Alias::new("UUID"))
+                    .not_null(),
+            )
+            .col(
+                ColumnDef::new(EmailProviderState::ResultStatus)
+                    .text()
+                    .not_null(),
+            )
+            .col(
+                ColumnDef::new(EmailProviderState::AuthState)
+                    .text()
+                    .not_null(),
+            )
+            .col(
+                ColumnDef::new(EmailProviderState::NetworkState)
+                    .text()
+                    .not_null(),
+            )
+            .col(
+                ColumnDef::new(EmailProviderState::SyncState)
+                    .text()
+                    .not_null(),
+            )
+            .col(ColumnDef::new(EmailProviderState::RateLimitState).text())
+            .col(
+                ColumnDef::new(EmailProviderState::RuntimeStateRef)
+                    .text()
+                    .not_null(),
+            )
+            .col(
+                ColumnDef::new(EmailProviderState::CoverageRef)
+                    .text()
+                    .not_null(),
+            )
+            .col(
+                ColumnDef::new(EmailProviderState::DebtRef)
+                    .text()
+                    .not_null(),
+            )
+            .col(ColumnDef::new(EmailProviderState::CursorKind).text())
+            .col(ColumnDef::new(EmailProviderState::CursorValue).text())
+            .col(ColumnDef::new(EmailProviderState::ContinuityState).text())
+            .col(
+                ColumnDef::new(EmailProviderState::ProviderRuntime)
+                    .json_binary()
+                    .not_null()
+                    .default(Expr::cust("'{}'::jsonb")),
+            )
+            .col(ColumnDef::new(EmailProviderState::ProviderCursor).json_binary())
+            .col(ColumnDef::new(EmailProviderState::ProviderFailure).json_binary())
+            .col(
+                ColumnDef::new(EmailProviderState::ObservedAt)
+                    .custom(Alias::new("TIMESTAMPTZ"))
+                    .not_null()
+                    .default(Expr::cust("NOW()")),
+            )
+            .col(
+                ColumnDef::new(EmailProviderState::UpdatedAt)
+                    .custom(Alias::new("TIMESTAMPTZ"))
+                    .not_null()
+                    .default(Expr::cust("NOW()")),
+            )
+            .to_owned()
+    }
+
+    #[must_use]
+    pub fn create_indexes() -> Vec<IndexCreateStatement> {
+        vec![
+            Index::create()
+                .if_not_exists()
+                .name("ux_email_provider_state_current_scope")
+                .table(Self::table_iden())
+                .col(EmailProviderState::SourceId)
+                .col(EmailProviderState::ModeId)
+                .col(EmailProviderState::Provider)
+                .col(EmailProviderState::AccountBindingRef)
+                .col(EmailProviderState::MailboxScope)
+                .unique()
+                .to_owned(),
+            Index::create()
+                .if_not_exists()
+                .name("ix_email_provider_state_source_mode")
+                .table(Self::table_iden())
+                .col(EmailProviderState::SourceId)
+                .col(EmailProviderState::ModeId)
+                .to_owned(),
+            Index::create()
+                .if_not_exists()
+                .name("ix_email_provider_state_operation")
+                .table(Self::table_iden())
+                .col(EmailProviderState::OperationId)
+                .to_owned(),
+        ]
+    }
+
+    #[must_use]
+    pub fn create_updated_at_trigger_sql() -> String {
+        "DROP TRIGGER IF EXISTS trg_email_provider_state_updated_at ON core.email_provider_state;
+CREATE TRIGGER trg_email_provider_state_updated_at
+    BEFORE UPDATE ON core.email_provider_state
+    FOR EACH ROW
+    EXECUTE FUNCTION public.set_current_timestamp_updated_at();"
+            .to_string()
+    }
+}
+
 impl TableDef for OperationsLog {
     fn table_name() -> &'static str {
         "operations_log"
