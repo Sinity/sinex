@@ -882,7 +882,7 @@ fn default_consumer_max_ack_pending() -> i64 {
 fn default_material_slices_max_ack_pending() -> i64 {
     match shared_env::strict_parsed("SINEX_EVENT_ENGINE_MATERIAL_SLICES_MAX_ACK_PENDING") {
         Ok(Some(value)) => value,
-        Ok(None) => 1_000,
+        Ok(None) => 32,
         Err(error) => {
             error!(
                 target: "sinex_metrics",
@@ -891,7 +891,7 @@ fn default_material_slices_max_ack_pending() -> i64 {
                 %error,
                 "Invalid env override for material slices max_ack_pending; using default"
             );
-            1_000
+            32
         }
     }
 }

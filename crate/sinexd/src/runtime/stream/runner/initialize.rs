@@ -59,7 +59,6 @@ impl<T: RuntimeModule + 'static> RuntimeRunner<T> {
 
         // Get hostname
         let host = sinex_primitives::events::builder::get_hostname();
-        let consumer_name = format!("{host}-{}", std::process::id());
         let instance_id = Self::build_instance_id(host.as_str());
         let version = crate::runtime::version::runtime_version().map_or_else(
             |_| env!("CARGO_PKG_VERSION").to_string(),
@@ -128,6 +127,12 @@ impl<T: RuntimeModule + 'static> RuntimeRunner<T> {
         let checkpoint_identity = source_id
             .clone()
             .unwrap_or_else(|| service_name.to_string());
+        let consumer_name = Self::checkpoint_consumer_name(
+            self.module.module_kind(),
+            &raw_config,
+            &checkpoint_identity,
+            host.as_str(),
+        );
 
         // Initialize checkpoint manager with KV
         let checkpoint_manager = Arc::new(CheckpointManager::with_missing_checkpoint_warning(
@@ -306,11 +311,29 @@ impl<T: RuntimeModule + 'static> RuntimeRunner<T> {
             source = source_id.as_deref().unwrap_or("none"),
             runner_pack = runner_pack.as_deref().unwrap_or("none"),
             checkpoint_identity = %checkpoint_identity,
+            checkpoint_consumer = %consumer_name,
             module_kind = ?self.module.module_kind(),
             transport = transport_type,
             "RuntimeModule initialized"
         );
 
         Ok(())
+    }
+
+    pub(super) fn checkpoint_consumer_name(
+        module_kind: ModuleKind,
+        raw_config: &HashMap<String, serde_json::Value>,
+        checkpoint_identity: &str,
+        host: &str,
+    ) -> String {
+        if let Some(configured) = Self::config_identity_value(raw_config, "consumer_name") {
+            return configured;
+        }
+
+        if matches!(module_kind, ModuleKind::Source) {
+            checkpoint_identity.to_string()
+        } else {
+            format!("{host}-{}", std::process::id())
+        }
     }
 }

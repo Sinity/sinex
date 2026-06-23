@@ -230,7 +230,12 @@ async fn execute_email_mailbox_export(
     });
     let policy = PolicyEngine::load(pool.clone()).await?;
     let disclosure = policy
-        .disclose_json_value(export_manifest, DisclosureContext::Export)
+        .disclose_json_value_for_event(
+            export_manifest,
+            DisclosureContext::Export,
+            "email",
+            "email.message.received",
+        )
         .await;
     let export_manifest = disclosure.value;
     let export_disclosure = serde_json::json!({

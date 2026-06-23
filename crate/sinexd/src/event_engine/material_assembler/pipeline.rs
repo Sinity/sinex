@@ -10,10 +10,9 @@ use super::{MaterialAssembler, MaterialEndMessage, Uuid};
 use crate::runtime::{
     SOURCE_MATERIAL_BEGIN_SUBJECT, SOURCE_MATERIAL_END_SUBJECT, SOURCE_MATERIAL_FRAMES_SUBJECT,
     SOURCE_MATERIAL_SLICE_SUBJECT_PREFIX, SOURCE_MATERIAL_STREAM,
-    stream::{PullConsumerSpec, ensure_pull_consumer},
+    stream::{PullConsumerSpec, ensure_pull_consumer, pull_batch},
 };
 use async_nats::jetstream;
-use futures::StreamExt;
 use serde_json::json;
 use sinex_primitives::constants::env_vars;
 use std::str::FromStr;
@@ -26,7 +25,8 @@ use tracing::{error, info, warn};
 
 use crate::event_engine::{EventEngineResult, SinexError};
 
-const MATERIAL_CONSUMER_SHUTDOWN_POLL: std::time::Duration = std::time::Duration::from_millis(100);
+const MATERIAL_CONSUMER_BATCH_SIZE: usize = 8;
+const MATERIAL_CONSUMER_PULL_TIMEOUT: std::time::Duration = std::time::Duration::from_millis(500);
 // Keep SOURCE_MATERIAL stream caps aligned with the Nix bootstrap path. The current
 // nats CLI rejects --max-bytes values above signed 32-bit range.
 const JETSTREAM_BOOTSTRAP_MAX_BYTES: i64 = 2_147_483_647;
@@ -236,125 +236,119 @@ pub(super) async fn spawn_material_consumer(
         .await
         .map_err(|e| SinexError::network("Failed to create material consumer").with_source(e))?;
 
-    let mut messages = consumer.messages().await.map_err(|e| {
-        SinexError::network("Failed to open material frame consumer").with_source(e)
-    })?;
-
     Ok(tokio::spawn(async move {
         loop {
             if shutdown_flag.load(Ordering::Acquire) {
                 break;
             }
 
-            let message = tokio::select! {
-                maybe = messages.next() => maybe,
-                () = tokio::time::sleep(MATERIAL_CONSUMER_SHUTDOWN_POLL) => {
-                    continue;
-                }
-            };
-
-            let Some(message) = message else {
-                break;
-            };
-            let message = match message {
-                Ok(msg) => msg,
-                Err(e) => {
-                    warn!("Error receiving material frame message: {}", e);
-                    continue;
-                }
-            };
-
-            let frame = match decode_material_frame(
-                message.subject.as_str(),
-                message.headers.as_ref(),
-                &message.payload,
-            ) {
-                Ok(frame) => frame,
-                Err(error) => {
-                    let material_id = error.material_id;
-                    warn!(
-                        subject = %message.subject,
-                        material_id = ?material_id,
-                        error = %error.message,
-                        payload_len = message.payload.len(),
-                        "Rejecting malformed material frame"
-                    );
-                    let decision = RedeliveryDecision::for_error(
-                        RedeliveryErrorKind::MalformedFrame {
-                            reason: error.reason.to_string(),
-                        },
-                        message_delivery_attempt(&message)?,
-                    );
-                    apply_redelivery_decision(
-                        &assembler,
-                        &message,
-                        decision,
-                        material_id,
-                        json!({
-                            "error": error.message,
-                            "subject": message.subject.as_str(),
-                        }),
-                    )
-                    .await?;
-                    continue;
-                }
-            };
-            let material_id = frame.material_id();
-            let frame_kind = frame.kind();
-            let frame_offset = frame.offset();
-
-            let result = match frame {
-                MaterialFrame::Begin {
-                    material_id,
-                    message,
-                } => assembler.handle_begin(material_id, message).await,
-                MaterialFrame::Slice {
-                    material_id,
-                    offset,
-                    payload,
-                } => assembler.handle_slice(material_id, offset, payload).await,
-                MaterialFrame::End { message, .. } => assembler.handle_end(message).await,
-            };
-
-            match result {
-                Ok(()) => {}
-                Err(err) => {
-                    error!(
-                        target: "sinex_metrics",
-                        metric = "event_engine.material_pipeline_failures_total",
-                        material_id = %material_id,
-                        frame_kind,
-                        error = %err,
-                        "Failed to process material frame"
-                    );
-                    let decision = RedeliveryDecision::for_processing_error(
-                        &err,
-                        message_delivery_attempt(&message)?,
-                    );
-                    apply_redelivery_decision(
-                        &assembler,
-                        &message,
-                        decision,
-                        Some(material_id),
-                        json!({
-                            "error": err.to_string(),
-                            "frame_kind": frame_kind,
-                            "offset": frame_offset,
-                        }),
-                    )
-                    .await?;
-                    continue;
-                }
-            }
-
-            apply_redelivery_decision(
-                &assembler,
-                &message,
-                RedeliveryDecision::processed(),
-                Some(material_id),
-                json!({}),
+            let messages = pull_batch(
+                &consumer,
+                MATERIAL_CONSUMER_BATCH_SIZE,
+                MATERIAL_CONSUMER_PULL_TIMEOUT,
             )
-            .await?;
+            .await
+            .map_err(|e| {
+                SinexError::network("Failed to fetch material frame messages").with_source(e)
+            })?;
+
+            for message in messages {
+                if shutdown_flag.load(Ordering::Acquire) {
+                    break;
+                }
+
+                let frame = match decode_material_frame(
+                    message.subject.as_str(),
+                    message.headers.as_ref(),
+                    &message.payload,
+                ) {
+                    Ok(frame) => frame,
+                    Err(error) => {
+                        let material_id = error.material_id;
+                        warn!(
+                            subject = %message.subject,
+                            material_id = ?material_id,
+                            error = %error.message,
+                            payload_len = message.payload.len(),
+                            "Rejecting malformed material frame"
+                        );
+                        let decision = RedeliveryDecision::for_error(
+                            RedeliveryErrorKind::MalformedFrame {
+                                reason: error.reason.to_string(),
+                            },
+                            message_delivery_attempt(&message)?,
+                        );
+                        apply_redelivery_decision(
+                            &assembler,
+                            &message,
+                            decision,
+                            material_id,
+                            json!({
+                                "error": error.message,
+                                "subject": message.subject.as_str(),
+                            }),
+                        )
+                        .await?;
+                        continue;
+                    }
+                };
+                let material_id = frame.material_id();
+                let frame_kind = frame.kind();
+                let frame_offset = frame.offset();
+
+                let result = match frame {
+                    MaterialFrame::Begin {
+                        material_id,
+                        message,
+                    } => assembler.handle_begin(material_id, message).await,
+                    MaterialFrame::Slice {
+                        material_id,
+                        offset,
+                        payload,
+                    } => assembler.handle_slice(material_id, offset, payload).await,
+                    MaterialFrame::End { message, .. } => assembler.handle_end(message).await,
+                };
+
+                match result {
+                    Ok(()) => {}
+                    Err(err) => {
+                        error!(
+                            target: "sinex_metrics",
+                            metric = "event_engine.material_pipeline_failures_total",
+                            material_id = %material_id,
+                            frame_kind,
+                            error = %err,
+                            "Failed to process material frame"
+                        );
+                        let decision = RedeliveryDecision::for_processing_error(
+                            &err,
+                            message_delivery_attempt(&message)?,
+                        );
+                        apply_redelivery_decision(
+                            &assembler,
+                            &message,
+                            decision,
+                            Some(material_id),
+                            json!({
+                                "error": err.to_string(),
+                                "frame_kind": frame_kind,
+                                "offset": frame_offset,
+                            }),
+                        )
+                        .await?;
+                        continue;
+                    }
+                }
+
+                apply_redelivery_decision(
+                    &assembler,
+                    &message,
+                    RedeliveryDecision::processed(),
+                    Some(material_id),
+                    json!({}),
+                )
+                .await?;
+            }
         }
 
         Ok::<(), SinexError>(())
