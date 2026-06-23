@@ -267,6 +267,14 @@ mod tests {
             last_heartbeat_at: None,
             last_output_at: None,
             recent_output_count: None,
+            provider_operation_status: None,
+            provider_auth_state: None,
+            provider_network_state: None,
+            provider_sync_state: None,
+            provider_rate_limit_state: None,
+            provider_operation_id: None,
+            provider_coverage_ref: None,
+            provider_debt_ref: None,
             actions: Vec::new(),
         }
     }

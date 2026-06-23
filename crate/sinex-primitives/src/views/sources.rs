@@ -96,6 +96,22 @@ pub struct SourceModeStatusView {
     pub last_output_at: Option<Timestamp>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub recent_output_count: Option<i64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub provider_operation_status: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub provider_auth_state: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub provider_network_state: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub provider_sync_state: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub provider_rate_limit_state: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub provider_operation_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub provider_coverage_ref: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub provider_debt_ref: Option<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub actions: Vec<ActionAvailability>,
 }
