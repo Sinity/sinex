@@ -1058,6 +1058,14 @@ async fn ops_start_records_gmail_provider_failure_for_missing_token_file(
         scope["provider_failure"]["debt_ref"],
         "debt:email.mailbox.gmail.provider_runtime"
     );
+    assert_eq!(
+        scope["provider_failure"]["failure_class"],
+        "authorization-missing"
+    );
+    assert_eq!(
+        scope["provider_failure"]["required_action"],
+        "email.mailbox.authorize"
+    );
     assert!(
         scope["provider_failure"]["reason"]
             .as_str()
@@ -1098,6 +1106,102 @@ async fn ops_start_records_gmail_provider_failure_for_missing_token_file(
     assert_eq!(
         gmail_state.debt_ref,
         "debt:email.mailbox.gmail.provider_runtime"
+    );
+    assert_eq!(
+        gmail_state.failure_class.as_deref(),
+        Some("authorization-missing")
+    );
+    assert_eq!(
+        gmail_state.required_action.as_deref(),
+        Some("email.mailbox.authorize")
+    );
+    assert_eq!(gmail_state.retry_after_secs, None);
+    assert_eq!(gmail_state.reconnect_state, None);
+    Ok(())
+}
+
+#[sinex_test]
+async fn ops_start_records_gmail_rate_limit_backoff_state(ctx: TestContext) -> TestResult<()> {
+    let server = GmailFixtureServer::start_rate_limited().await?;
+    let dir = tempfile::tempdir()?;
+    let token_file = dir.path().join("gmail-token");
+    tokio::fs::write(&token_file, "test-token\n").await?;
+
+    let auth = system_auth();
+    let response: OpsStartResponse = serde_json::from_value(
+        handle_ops_start(
+            ctx.pool(),
+            json!({
+                "operation_type": "email.mailbox.sync",
+                "scope": {
+                    "source_id": "email.mailbox",
+                    "mode_id": "source:email.mailbox.gmail-api-scheduled-sync",
+                    "account_binding_ref": "operator-mailbox:gmail-rate-limited",
+                    "gmail_token_file": token_file.to_string_lossy(),
+                    "gmail_api_base_url": server.base_url(),
+                    "label_ids": ["INBOX"],
+                    "page_size": 10
+                },
+            }),
+            &auth,
+        )
+        .await?,
+    )?;
+
+    assert_eq!(response.operation.result_status, OperationStatus::Failed);
+    let scope = response
+        .operation
+        .scope
+        .as_ref()
+        .expect("rate-limited Gmail provider operation scope should be recorded");
+    let runtime_contract = provider_runtime_contract(scope)?;
+    assert_eq!(
+        runtime_contract.auth_state,
+        EmailAuthorizationState::Authorized
+    );
+    assert_eq!(
+        runtime_contract.network_state,
+        EmailNetworkState::RateLimited
+    );
+    assert_eq!(
+        runtime_contract.rate_limit_state,
+        Some(sinex_primitives::events::payloads::email::EmailRateLimitState::Backoff)
+    );
+    assert_eq!(
+        scope["provider_failure"]["failure_class"],
+        "rate-limited-backoff"
+    );
+    assert_eq!(
+        scope["provider_failure"]["required_action"],
+        "email.mailbox.wait-for-backoff"
+    );
+    assert_eq!(scope["provider_failure"]["retry_after_secs"], 300);
+    assert_eq!(
+        scope["provider_failure"]["reconnect_state"],
+        "backoff-active"
+    );
+
+    let provider_states = ctx
+        .pool()
+        .email_provider_states()
+        .list_current_by_source("email.mailbox")
+        .await?;
+    let gmail_state = provider_states
+        .iter()
+        .find(|state| state.account_binding_ref == "operator-mailbox:gmail-rate-limited")
+        .expect("rate-limited Gmail provider operation should update durable provider state");
+    assert_eq!(
+        gmail_state.failure_class.as_deref(),
+        Some("rate-limited-backoff")
+    );
+    assert_eq!(
+        gmail_state.required_action.as_deref(),
+        Some("email.mailbox.wait-for-backoff")
+    );
+    assert_eq!(gmail_state.retry_after_secs, Some(300));
+    assert_eq!(
+        gmail_state.reconnect_state.as_deref(),
+        Some("backoff-active")
     );
     Ok(())
 }
@@ -1311,6 +1415,18 @@ async fn ops_start_records_imap_provider_network_failure_without_secret(
         scope["provider_failure"]["debt_ref"],
         "debt:email.mailbox.imap.provider_runtime"
     );
+    assert_eq!(
+        scope["provider_failure"]["failure_class"],
+        "network-reconnect"
+    );
+    assert_eq!(
+        scope["provider_failure"]["required_action"],
+        "email.mailbox.reconnect"
+    );
+    assert_eq!(
+        scope["provider_failure"]["reconnect_state"],
+        "reconnect-required"
+    );
     assert!(
         scope["provider_failure"]["reason"]
             .as_str()
@@ -1325,6 +1441,28 @@ async fn ops_start_records_imap_provider_network_failure_without_secret(
         .expect("failed IMAP provider preview should be recorded");
     assert_eq!(preview["executor_state"], "imap_sync_failed");
     assert_eq!(preview["provider_failure"], scope["provider_failure"]);
+
+    let provider_states = ctx
+        .pool()
+        .email_provider_states()
+        .list_current_by_source("email.mailbox")
+        .await?;
+    let imap_state = provider_states
+        .iter()
+        .find(|state| state.account_binding_ref == "operator-mailbox:imap-network-failure")
+        .expect("failed IMAP provider operation should update durable provider state");
+    assert_eq!(
+        imap_state.failure_class.as_deref(),
+        Some("network-reconnect")
+    );
+    assert_eq!(
+        imap_state.required_action.as_deref(),
+        Some("email.mailbox.reconnect")
+    );
+    assert_eq!(
+        imap_state.reconnect_state.as_deref(),
+        Some("reconnect-required")
+    );
     Ok(())
 }
 
@@ -1700,6 +1838,38 @@ impl GmailFixtureServer {
                     let body = body.to_string();
                     let response = format!(
                         "{status}\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{body}",
+                        body.len()
+                    );
+                    let _ = stream.write_all(response.as_bytes()).await;
+                });
+            }
+        });
+        Ok(Self { addr })
+    }
+
+    async fn start_rate_limited() -> TestResult<Self> {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await?;
+        let addr = listener.local_addr()?;
+        tokio::spawn(async move {
+            while let Ok((mut stream, _)) = listener.accept().await {
+                tokio::spawn(async move {
+                    let mut request = vec![0_u8; 8192];
+                    let Ok(bytes_read) = stream.read(&mut request).await else {
+                        return;
+                    };
+                    let request = String::from_utf8_lossy(&request[..bytes_read]);
+                    let first_line = request.lines().next().unwrap_or_default();
+                    let body = json!({
+                        "error": {
+                            "code": 429,
+                            "message": "quota exhausted",
+                            "status": "RESOURCE_EXHAUSTED",
+                            "request": first_line,
+                        }
+                    })
+                    .to_string();
+                    let response = format!(
+                        "HTTP/1.1 429 Too Many Requests\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{body}",
                         body.len()
                     );
                     let _ = stream.write_all(response.as_bytes()).await;
