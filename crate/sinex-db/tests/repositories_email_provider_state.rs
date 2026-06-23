@@ -20,6 +20,10 @@ fn provider_state(operation_id: Uuid, sync_state: &str) -> EmailProviderStateUps
         runtime_state_ref: "email.provider_runtime.imap".to_string(),
         coverage_ref: "coverage:email.mailbox.imap.provider_runtime".to_string(),
         debt_ref: "debt:email.mailbox.imap.provider_runtime".to_string(),
+        failure_class: (sync_state == "failed").then(|| "network-reconnect".to_string()),
+        required_action: (sync_state == "failed").then(|| "email.mailbox.reconnect".to_string()),
+        retry_after_secs: None,
+        reconnect_state: (sync_state == "failed").then(|| "reconnect-required".to_string()),
         cursor_kind: Some("imap_uid".to_string()),
         cursor_value: Some("700:41".to_string()),
         continuity_state: Some("valid".to_string()),
@@ -57,6 +61,15 @@ async fn email_provider_state_upsert_keeps_current_scope_row(ctx: TestContext) -
     assert_eq!(first.id, second.id);
     assert_eq!(second.operation_id, second_operation_id);
     assert_eq!(second.sync_state, "failed");
+    assert_eq!(second.failure_class.as_deref(), Some("network-reconnect"));
+    assert_eq!(
+        second.required_action.as_deref(),
+        Some("email.mailbox.reconnect")
+    );
+    assert_eq!(
+        second.reconnect_state.as_deref(),
+        Some("reconnect-required")
+    );
 
     let rows = repo.list_current_by_source("email.mailbox").await?;
     assert_eq!(rows.len(), 1);
