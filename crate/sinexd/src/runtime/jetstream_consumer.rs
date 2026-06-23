@@ -1098,6 +1098,7 @@ mod tests {
         source_contracts::ResourceProfile,
         temporal::Timestamp,
     };
+    use std::time::Duration;
     use xtask::sandbox::sinex_test;
 
     #[sinex_test]
