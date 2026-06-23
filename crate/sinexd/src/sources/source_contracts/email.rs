@@ -17,7 +17,8 @@ use sinex_primitives::{
         payloads::email::{
             EmailAttachmentObservedPayload, EmailContinuityState, EmailMailboxFormat,
             EmailMessageReceivedPayload, EmailMessageSentPayload, EmailProviderKind,
-            EmailSyncCursorKind, EmailSyncCursorObservedPayload, EmailThreadObservedPayload,
+            EmailProviderMaterialEvidence, EmailSyncCursorKind, EmailSyncCursorObservedPayload,
+            EmailThreadObservedPayload,
         },
     },
     parser::{
@@ -389,6 +390,22 @@ fn parse_imap_provider_record(
             .get("body")
             .and_then(serde_json::Value::as_str);
         if let Some(message_text) = body.or(header) {
+            let provider_material_source = if body.is_some() {
+                "imap_provider_body_snapshot"
+            } else {
+                "imap_provider_header_snapshot"
+            };
+            let provider_material = imap_provider_material_evidence(
+                provider_material_source,
+                mailbox_scope.as_deref(),
+                uidvalidity.as_deref(),
+                provider_record.uid,
+                message_text,
+                provider_record
+                    .payload
+                    .get("body_material_policy_ref")
+                    .and_then(serde_json::Value::as_str),
+            );
             let message_record = SourceRecord {
                 material_id: record.material_id,
                 anchor: record.anchor.clone(),
@@ -432,11 +449,41 @@ fn parse_imap_provider_record(
                         .get("attachment_material_policy_ref")
                         .and_then(serde_json::Value::as_str)
                         .map(str::to_string),
+                    provider_material: Some(provider_material),
                 },
             )?);
         }
     }
     Ok(intents)
+}
+
+fn imap_provider_material_evidence(
+    source: &str,
+    mailbox_scope: Option<&str>,
+    uidvalidity: Option<&str>,
+    uid: Option<u32>,
+    message_text: &str,
+    material_policy_ref: Option<&str>,
+) -> EmailProviderMaterialEvidence {
+    let bytes = message_text.as_bytes();
+    let mailbox = mailbox_scope.unwrap_or("default");
+    let uidvalidity = uidvalidity.unwrap_or("unknown");
+    let uid = uid
+        .map(|value| value.to_string())
+        .unwrap_or_else(|| "unknown".to_string());
+    EmailProviderMaterialEvidence {
+        source: source.to_string(),
+        source_uri: format!("imap://{mailbox}/uidvalidity/{uidvalidity}/uid/{uid}"),
+        byte_range: serde_json::json!({
+            "kind": "imap_provider_record_snapshot",
+            "start": 0,
+            "end": bytes.len(),
+        }),
+        raw_message_bytes: bytes.len() as u64,
+        raw_message_blake3: blake3::hash(bytes).to_hex().to_string(),
+        raw_message_preview: message_text.chars().take(512).collect(),
+        material_policy_ref: material_policy_ref.map(str::to_string),
+    }
 }
 
 struct ProviderMessageSource {
@@ -464,6 +511,7 @@ struct ProviderParsedMessageSource {
     body_materialized: bool,
     attachments_materialized: bool,
     attachment_policy_ref: Option<String>,
+    provider_material: Option<EmailProviderMaterialEvidence>,
 }
 
 fn provider_message_intents(
@@ -512,6 +560,7 @@ fn provider_message_intents(
         size_bytes: source.size_bytes,
         body_bytes: source.body_bytes,
         attachment_count: source.attachment_count,
+        provider_material: None,
     };
     provider_observation_intents(
         record,
@@ -596,6 +645,7 @@ fn provider_parsed_message_intents(
         size_bytes: source.size_bytes,
         body_bytes,
         attachment_count,
+        provider_material: source.provider_material,
     };
     let attachment_policy_ref = source.attachment_policy_ref.unwrap_or_else(|| {
         if source.attachments_materialized {
@@ -929,6 +979,7 @@ fn parse_email_message_record(
                 size_bytes: record.bytes.len() as u64,
                 body_bytes: parsed.body_bytes,
                 attachment_count: parsed.attachment_count,
+                provider_material: None,
             };
             (
                 payload.event_type(),

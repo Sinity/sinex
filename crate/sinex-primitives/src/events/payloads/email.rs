@@ -166,6 +166,21 @@ pub struct EmailMessageReceivedPayload {
     pub size_bytes: u64,
     pub body_bytes: u64,
     pub attachment_count: u32,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub provider_material: Option<EmailProviderMaterialEvidence>,
+}
+
+/// Provider-held or provider-fetched raw message evidence for mailbox rows.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
+pub struct EmailProviderMaterialEvidence {
+    pub source: String,
+    pub source_uri: String,
+    pub byte_range: serde_json::Value,
+    pub raw_message_bytes: u64,
+    pub raw_message_blake3: String,
+    pub raw_message_preview: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub material_policy_ref: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, EventPayload)]

@@ -33,6 +33,7 @@ async fn typed_mailbox_format_serializes_as_package_mode_value() -> xtask::sandb
         size_bytes: 128,
         body_bytes: 32,
         attachment_count: 0,
+        provider_material: None,
     })?;
 
     assert_eq!(value["mailbox_format"], "maildir-staged");
