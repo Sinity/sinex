@@ -113,6 +113,25 @@ authoritative surfaces — not as separate substrates.
   Adopting one requires an active issue and a written contract for what it
   invokes.
 
+## `sinexctl` Grouping Map
+
+The CLI stays operator-shaped: top-level roots are acceptable when they map to
+distinct runtime authority, but read/report leaves should not create parallel
+vocabularies for the same evidence.
+
+| Surface family | Canonical group | Keep / fold decision |
+| --- | --- | --- |
+| Runtime health, readiness, presence, telemetry, metrics, throughput, trace, and current device/process state | `runtime` | Keep as runtime-status/read-model surfaces. New read leaves should share DTO/view vocabulary rather than introduce a second health language. |
+| Replay, DLQ, lifecycle, snapshot drills, evidence bundles, debt rows, source replay/rebuild/export/materialization, and package operations | `ops` | Fold write-capable or recovery-oriented leaves under `ops` unless they are already a mature root with gateway authority and format coverage. Existing roots may remain when moving them would only create compatibility churn. |
+| Source package coverage, source readiness/status/continuity/drift, source material posture, package completeness, and operator actions derived from source modes | `sources` | Keep source posture under `sources`; route actions through `ops`/gateway operation records. Do not let source-status caveats become a separate action vocabulary from debt or operation views. |
+| Privacy/disclosure previews, redaction/delete proposals, and destination-specific export policy | `privacy` plus gateway proposals/operations | Keep privacy authority explicit. No package-level privacy class or view layer decides final disclosure alone. |
+| MCP read tools, shell prompt adornments, completions, and Hyprland launchers | MCP read role or launchers | Keep read-only. They may expose cached summaries or launch canonical `sinexctl` commands, but they must not become new write paths. |
+
+This map is intentionally not a compatibility promise for every current command
+name. It is the grouping rule for future cleanup: fold only when the moved
+surface has stable DTO/format coverage and no external operator contract would
+be obscured by the move.
+
 ## Verification Expectations
 
 An operator-surface change is complete only when:
