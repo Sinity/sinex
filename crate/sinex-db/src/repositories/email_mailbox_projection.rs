@@ -8,7 +8,7 @@ use uuid::Uuid;
 pub struct EmailMailboxProjectionEvent {
     pub source_id: String,
     pub mode_id: String,
-    pub event_id: Uuid,
+    pub observed_event_id: Uuid,
     pub event_type: String,
     pub payload: Value,
 }
@@ -420,7 +420,7 @@ impl ProjectionUpsert {
                         .unwrap_or(0),
                     attachment_observed_count: 0,
                     attachment_policy_refs: Value::Array(Vec::new()),
-                    last_message_event_id: Some(event.event_id),
+                    last_message_event_id: Some(event.observed_event_id),
                     last_thread_event_id: None,
                     last_attachment_event_id: None,
                 })
@@ -450,7 +450,7 @@ impl ProjectionUpsert {
                     attachment_observed_count: 0,
                     attachment_policy_refs: Value::Array(Vec::new()),
                     last_message_event_id: None,
-                    last_thread_event_id: Some(event.event_id),
+                    last_thread_event_id: Some(event.observed_event_id),
                     last_attachment_event_id: None,
                 })
             }
@@ -483,7 +483,7 @@ impl ProjectionUpsert {
                     ),
                     last_message_event_id: None,
                     last_thread_event_id: None,
-                    last_attachment_event_id: Some(event.event_id),
+                    last_attachment_event_id: Some(event.observed_event_id),
                 })
             }
             _ => None,
