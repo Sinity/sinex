@@ -1948,10 +1948,10 @@ mod tests {
 
     #[sinex_test]
     async fn blob_gc_task_stops_promptly_on_shutdown() -> xtask::sandbox::TestResult<()> {
-        // We cannot easily seed a real content store without git-annex, but we
-        // can verify the spawned GC task observes the shutdown flag without
-        // waiting for its full interval. Use a dummy non-existent path; the
-        // first sweep will fail (warn-and-continue) but shutdown still wins.
+        // This test only verifies the spawned GC task observes the shutdown
+        // flag without waiting for its full interval. Use a dummy non-existent
+        // path; the first sweep will fail (warn-and-continue) but shutdown
+        // still wins.
         let mut service = test_service();
         // Use a long interval so the task is reliably parked in `interval.tick`
         // when shutdown fires, exercising the shutdown branch of the select.

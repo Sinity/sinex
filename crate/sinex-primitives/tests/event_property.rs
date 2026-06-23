@@ -115,12 +115,19 @@ fn arb_json_value() -> impl Strategy<Value = JsonValue> {
     )
 }
 
-/// Generate arbitrary valid source names
+/// Generate arbitrary valid source names.
 fn arb_source_name() -> impl Strategy<Value = String> {
     "[a-z][a-z0-9_.-]{2,50}"
 }
 
-/// Generate arbitrary valid event type names
+/// Generate arbitrary validated event sources.
+fn arb_event_source() -> impl Strategy<Value = EventSource> {
+    arb_source_name().prop_map(|source| {
+        EventSource::new(source).expect("arb_source_name should generate valid EventSource values")
+    })
+}
+
+/// Generate arbitrary valid event type names.
 fn arb_event_type_name() -> impl Strategy<Value = String> {
     prop_oneof![
         // Filesystem events
@@ -137,6 +144,14 @@ fn arb_event_type_name() -> impl Strategy<Value = String> {
         // Custom format
         "[a-z][a-z0-9_-]{1,30}\\.[a-z][a-z0-9_-]{1,30}"
     ]
+}
+
+/// Generate arbitrary validated event types.
+fn arb_event_type_value() -> impl Strategy<Value = EventType> {
+    arb_event_type_name().prop_map(|event_type| {
+        EventType::new(event_type)
+            .expect("arb_event_type_name should generate valid EventType values")
+    })
 }
 
 /// Generate arbitrary hostnames
@@ -166,27 +181,22 @@ fn arb_timestamp() -> impl Strategy<Value = Timestamp> {
 /// Strategy for generating complete Event instances
 fn arb_event() -> impl Strategy<Value = RawEvent> {
     (
-        arb_source_name(),
-        arb_event_type_name(),
+        arb_event_source(),
+        arb_event_type_value(),
         arb_json_value(),
         prop::option::of(arb_timestamp()),
     )
-        .prop_filter_map(
-            "source and event_type must satisfy domain validation",
-            |(source, event_type, payload, ts_orig)| {
-                let source = EventSource::new(source).ok()?;
-                let event_type = EventType::new(event_type).ok()?;
-                let mut event = test_event(source, event_type, payload);
-                // Simulate ingest by assigning an ID
-                event.id = Some(Id::from_uuid(Uuid::now_v7()));
+        .prop_map(|(source, event_type, payload, ts_orig)| {
+            let mut event = test_event(source, event_type, payload);
+            // Simulate ingest by assigning an ID.
+            event.id = Some(Id::from_uuid(Uuid::now_v7()));
 
-                if let Some(ts) = ts_orig {
-                    event.ts_orig = Some(ts);
-                }
+            if let Some(ts) = ts_orig {
+                event.ts_orig = Some(ts);
+            }
 
-                Some(event)
-            },
-        )
+            event
+        })
 }
 
 // =============================================================================
@@ -215,13 +225,13 @@ sinex_proptest! {
 
 sinex_proptest! {
     fn test_event_id_properties(
-        source: String in arb_source_name(),
-        event_type: String in arb_event_type_name(),
+        source: EventSource in arb_event_source(),
+        event_type: EventType in arb_event_type_value(),
         payload: Value in arb_json_value()
     ) {
         let mut event1 = test_event(
-            source.clone().into(),
-            event_type.clone().into(),
+            source.clone(),
+            event_type.clone(),
             payload.clone(),
         );
         event1.id = Some(Id::from_uuid(Uuid::now_v7()));
@@ -229,8 +239,8 @@ sinex_proptest! {
         std::thread::yield_now();
 
         let mut event2 = test_event(
-            source.into(),
-            event_type.into(),
+            source,
+            event_type,
             payload,
         );
         event2.id = Some(Id::from_uuid(Uuid::now_v7()));
@@ -271,23 +281,23 @@ sinex_proptest! {
     }
 
     fn test_event_builder_preserves_values(
-        source: String in arb_source_name(),
-        event_type: String in arb_event_type_name(),
+        source: EventSource in arb_event_source(),
+        event_type: EventType in arb_event_type_value(),
         payload: Value in arb_json_value(),
         ts_orig: Timestamp in arb_timestamp(),
         host: String in arb_hostname()
     ) {
         let mut event = test_event(
-            source.clone().into(),
-            event_type.clone().into(),
+            source.clone(),
+            event_type.clone(),
             payload.clone(),
         );
         event.ts_orig = Some(ts_orig);
         event.host = HostName::new(host.clone())?;
         event.id = Some(Id::from_uuid(Uuid::now_v7()));
 
-        prop_assert_eq!(event.source.as_str(), source);
-        prop_assert_eq!(event.event_type.as_str(), event_type);
+        prop_assert_eq!(&event.source, &source);
+        prop_assert_eq!(&event.event_type, &event_type);
         prop_assert_eq!(event.payload, payload);
         prop_assert_eq!(event.ts_orig, Some(ts_orig));
         // HostName::new normalizes to lowercase; compare against the normalized value.
@@ -296,16 +306,16 @@ sinex_proptest! {
     }
 
     fn test_multiple_events_created_in_sequence_should_have_ordered_timestamps(
-        source: String in arb_source_name(),
-        event_type: String in arb_event_type_name(),
+        source: EventSource in arb_event_source(),
+        event_type: EventType in arb_event_type_value(),
         payloads: Vec<Value> in prop::collection::vec(arb_json_value(), 2..20)
     ) {
         let mut events = Vec::new();
 
         for payload in payloads {
             let mut event = test_event(
-                source.clone().into(),
-                event_type.clone().into(),
+                source.clone(),
+                event_type.clone(),
                 payload,
             );
             event.id = Some(Id::from_uuid(Uuid::now_v7()));
@@ -322,8 +332,8 @@ sinex_proptest! {
     }
 
     fn test_event_edge_case_payloads(
-        source: String in arb_source_name(),
-        event_type: String in arb_event_type_name()
+        source: EventSource in arb_event_source(),
+        event_type: EventType in arb_event_type_value()
     ) {
         let edge_cases = vec![
             json!(null),
@@ -339,8 +349,8 @@ sinex_proptest! {
 
         for payload in edge_cases {
             let mut event = test_event(
-                source.clone().into(),
-                event_type.clone().into(),
+                source.clone(),
+                event_type.clone(),
                 payload.clone(),
             );
             event.id = Some(Id::from_uuid(Uuid::now_v7()));

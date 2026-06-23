@@ -86,7 +86,10 @@ async fn open_sse(
 
     let status = response.status();
     if !status.is_success() {
-        let body = response.text().await.unwrap_or_default();
+        let body = response
+            .text()
+            .await
+            .unwrap_or_else(|error| format!("<failed to read response body: {error}>"));
         return Err(eyre!("SSE HTTP {status}: {body}"));
     }
     Ok((Box::pin(response.bytes_stream()), String::new()))

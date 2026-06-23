@@ -25,7 +25,7 @@ async fn publish_event(
     overrides: EventOverrides,
 ) -> TestResult<Uuid> {
     let env = sinex_primitives::environment();
-    let event_id = overrides.id.unwrap_or_default();
+    let event_id = overrides.id.unwrap_or_else(Uuid::now_v7);
     let ts_orig = overrides
         .ts_orig
         .unwrap_or_else(|| temporal::now().format_rfc3339());
@@ -191,7 +191,7 @@ async fn run_duplicate_event_rejection(event_count: usize) -> color_eyre::Result
                     .fetch_one(&pool)
                     .await?
                     .count
-                    .unwrap_or(0);
+                    .expect("COUNT(*) should always return one row");
                     Ok::<bool, color_eyre::eyre::Error>(rows == 1)
                 }
             },
@@ -207,7 +207,9 @@ async fn run_duplicate_event_rejection(event_count: usize) -> color_eyre::Result
         .await?;
 
         assert_eq!(
-            all_events.count.unwrap_or(0),
+            all_events
+                .count
+                .expect("COUNT(*) should always return one row"),
             1,
             "Duplicate event should not create second row"
         );
@@ -269,7 +271,9 @@ async fn test_concurrent_duplicate_submission() -> color_eyre::Result<()> {
     .await?;
 
     assert_eq!(
-        event_count.count.unwrap_or(0),
+        event_count
+            .count
+            .expect("COUNT(*) should always return one row"),
         1,
         "Concurrent duplicates should result in exactly one event"
     );

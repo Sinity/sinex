@@ -34,7 +34,7 @@ fn make_diag(message: &str, package: &str) -> CompilerDiagnostic {
 fn temp_db_path() -> std::path::PathBuf {
     let nonce = SystemTime::now()
         .duration_since(UNIX_EPOCH)
-        .unwrap_or_default()
+        .expect("system clock must be after UNIX_EPOCH for history test temp paths")
         .as_nanos();
     std::env::temp_dir().join(format!("xtask-hist-test-{nonce}.db"))
 }

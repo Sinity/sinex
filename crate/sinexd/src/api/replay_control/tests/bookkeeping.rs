@@ -90,11 +90,7 @@ async fn replay_execution_surfaces_operation_state_corruption_after_failure(
         "unexpected error: {err:#}"
     );
 
-    scan_handle.await.map_err(|e| {
-        test_error(format!(
-            "fake corrupt-failure-test source runtime task failed: {e}"
-        ))
-    })?;
+    await_fake_scan_source_runtime(scan_handle, "corrupt-failure-test").await?;
 
     Ok(())
 }
@@ -208,11 +204,7 @@ async fn replay_execution_surfaces_cancellation_bookkeeping_corruption(
         "unexpected error: {err:#}"
     );
 
-    scan_handle.await.map_err(|e| {
-        test_error(format!(
-            "fake corrupt-cancel-test source runtime task failed: {e}"
-        ))
-    })?;
+    await_fake_scan_source_runtime(scan_handle, "corrupt-cancel-test").await?;
 
     Ok(())
 }

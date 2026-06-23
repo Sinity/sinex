@@ -373,16 +373,16 @@ async fn jetstream_consumer_survives_transient_db_failure(ctx: TestContext) -> T
     }
 
     // Ensure we only persisted a single copy despite redelivery.
-    let persisted: Option<i64> =
-        sqlx::query_scalar("SELECT COUNT(*) FROM core.events WHERE id = $1::uuid")
+    let persisted =
+        sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM core.events WHERE id = $1::uuid")
             .bind(event_id)
             .fetch_one(&ctx.pool)
             .await?;
-    if persisted.unwrap_or(0) != 1 {
+    if persisted != 1 {
         setup.handle.abort();
         return Err(eyre!(
             "redelivery must remain idempotent (got {})",
-            persisted.unwrap_or(0)
+            persisted
         ));
     }
 
@@ -533,7 +533,7 @@ async fn jetstream_consumer_isolates_poison_row_without_rolling_back_committed_s
     let rendered = dlq_entry
         .get("error")
         .and_then(|value| value.as_str())
-        .unwrap_or_default()
+        .ok_or_else(|| eyre!("DLQ entry missing string error field: {dlq_entry}"))?
         .to_string();
     assert!(
         rendered.contains("anchor_byte") || rendered.contains("provenance_anchor_byte"),

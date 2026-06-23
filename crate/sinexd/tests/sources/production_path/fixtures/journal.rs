@@ -9,7 +9,7 @@
 use sinex_primitives::events::SourceMaterial;
 use sinex_primitives::ids::Id;
 use sinex_primitives::parser::SourceRecord;
-use sinexd::runtime::parser::{ParserResult, records_from_journal_lines};
+use sinexd::runtime::parser::records_from_journal_lines;
 
 use super::{FixtureBinding, FixtureHandle};
 
@@ -24,7 +24,7 @@ use super::{FixtureBinding, FixtureHandle};
 ///
 /// # Errors
 ///
-/// Returns an error if `data` is not valid UTF-8.
+/// Returns an error if `data` is not valid UTF-8 or fixture record conversion fails.
 pub fn build(data: &[u8]) -> Result<FixtureHandle, String> {
     let text = std::str::from_utf8(data)
         .map_err(|e| format!("journal fixture data is not valid UTF-8: {e}"))?;
@@ -34,12 +34,17 @@ pub fn build(data: &[u8]) -> Result<FixtureHandle, String> {
 
     let records = records_from_journal_lines(material_id, &lines);
 
-    // Flatten the records to their raw bytes for the obligation layer.
+    // Flatten the records to their raw bytes for the obligation layer; parser
+    // errors are fixture failures, not absent evidence.
     let record_bytes: Vec<Vec<u8>> = records
         .into_iter()
-        .filter_map(|r: ParserResult<SourceRecord>| r.ok())
-        .map(|r| r.bytes)
-        .collect();
+        .enumerate()
+        .map(|(idx, record)| {
+            record
+                .map(|record: SourceRecord| record.bytes)
+                .map_err(|error| format!("journal fixture record {idx}: {error}"))
+        })
+        .collect::<Result<_, _>>()?;
 
     Ok(FixtureHandle::in_memory(FixtureBinding::InMemoryRecords(
         record_bytes,

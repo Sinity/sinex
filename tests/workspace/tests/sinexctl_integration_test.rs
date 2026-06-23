@@ -18,8 +18,10 @@ async fn assert_process_stays_running(
         Err(_) => Ok(()),
         Ok(Ok(status)) => {
             let mut stderr = String::new();
-            if let Some(mut stream) = child.stderr.take() {
-                stream.read_to_string(&mut stderr).await.ok();
+            if let Some(mut stream) = child.stderr.take()
+                && let Err(error) = stream.read_to_string(&mut stderr).await
+            {
+                stderr = format!("<failed to read child stderr: {error}>");
             }
             Err(color_eyre::eyre::eyre!(
                 "{label} exited before remaining stable for {duration:?}: {status}\nstderr: {stderr}"
@@ -194,8 +196,17 @@ async fn sinexctl_watch_command_streams_events(ctx: TestContext) -> color_eyre::
         "`sinexctl events watch`",
     )
     .await?;
-    child.kill().await.ok();
-    let _ = child.wait().await;
+    if let Err(error) = child.kill().await {
+        if let Some(status) = child.try_wait()? {
+            return Err(color_eyre::eyre::eyre!(
+                "`sinexctl events watch` exited before cleanup after the stability window: {status}"
+            ));
+        }
+        return Err(color_eyre::eyre::eyre!(
+            "failed to stop `sinexctl events watch` after stability assertion: {error}"
+        ));
+    }
+    child.wait().await?;
     Ok(())
 }
 

@@ -33,76 +33,75 @@ fn event_payloads() -> impl Strategy<Value = Value> {
 }
 
 fn valid_event_type_strings() -> impl Strategy<Value = String> {
-    "[a-z][a-z0-9_.-]{2,99}".prop_filter(
+    "[a-z][a-z0-9_.]{2,99}".prop_filter(
         "must not start/end with dot or contain consecutive dots",
         |value| !value.starts_with('.') && !value.ends_with('.') && !value.contains(".."),
     )
 }
 
-/// Strategy for generating arbitrary valid events
-fn arbitrary_event() -> impl Strategy<Value = RawEvent> {
-    let source = "[a-z][a-z0-9_]{2,49}".prop_map(|raw| format!("prop_{raw}"));
-    (
-        source, // source
-        valid_event_type_strings(),
-        "[a-zA-Z0-9][a-zA-Z0-9-]{0,62}(\\.[a-zA-Z0-9][a-zA-Z0-9-]{0,62}){0,3}", // host
-        event_payloads(),                                                       // payload
-        prop::bool::ANY, // random bool for ts_orig
-    )
-        .prop_filter_map(
-            "strategy generates valid hostnames",
-            |(source, event_type, host, payload, has_ts_orig)| {
-                let source = EventSource::new(source).ok()?;
-                let event_type = EventType::new(event_type).ok()?;
-                let host = HostName::new(host).ok()?;
-                let mut event = event_fixture(source, event_type, payload);
-                event.host = host;
-
-                // Simulate ingest by assigning an ID
-                event.id = Some(Id::from_uuid(Uuid::now_v7()));
-
-                // Conditionally set ts_orig
-                if has_ts_orig {
-                    let ingest_ts = event
-                        .id
-                        .as_ref()
-                        .map_or_else(Timestamp::now, sinex_db::Id::timestamp);
-                    event.ts_orig = Some(ingest_ts - Duration::seconds(60));
-                }
-
-                Some(event)
-            },
-        )
+fn valid_event_sources() -> impl Strategy<Value = EventSource> {
+    "[a-z][a-z0-9_]{0,49}"
+        .prop_map(|value| EventSource::new(value).expect("regex-generated source is valid"))
 }
 
-/// Strategy for generating events with metadata
-fn metadata_rich_events() -> impl Strategy<Value = RawEvent> {
+fn valid_event_types() -> impl Strategy<Value = EventType> {
+    valid_event_type_strings()
+        .prop_map(|value| EventType::new(value).expect("filtered regex event type is valid"))
+}
+
+fn valid_hosts() -> impl Strategy<Value = HostName> {
+    "[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?(\\.[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?){0,3}"
+        .prop_map(|value| HostName::new(value).expect("regex-generated host is valid"))
+}
+
+/// Strategy for generating arbitrary valid events.
+fn arbitrary_event() -> impl Strategy<Value = RawEvent> {
     (
-        "[a-z][a-z0-9_]{2,49}", // source
-        valid_event_type_strings(),
+        valid_event_sources(),
+        valid_event_types(),
+        valid_hosts(),
+        event_payloads(),
+        prop::bool::ANY,
     )
-        .prop_filter_map(
-            "metadata event source/type must be valid",
-            |(source, event_type)| {
-                let source = EventSource::new(source).ok()?;
-                let event_type = EventType::new(event_type).ok()?;
-                let metadata_timestamp = (*Timestamp::now())
-                    .format(&time::format_description::well_known::Rfc3339)
-                    .unwrap_or_default();
-                let payload = json!({
-                    "data": "test",
-                    "_metadata": {
-                        "source": source.as_str(),
-                        "timestamp": metadata_timestamp
-                    }
-                });
+        .prop_map(|(source, event_type, host, payload, has_ts_orig)| {
+            let mut event = event_fixture(source, event_type, payload);
+            event.host = host;
 
-                let mut event = event_fixture(source, event_type, payload);
-                event.id = Some(Id::from_uuid(Uuid::now_v7()));
+            // Simulate ingest by assigning an ID.
+            event.id = Some(Id::from_uuid(Uuid::now_v7()));
 
-                Some(event)
-            },
-        )
+            // Conditionally set ts_orig.
+            if has_ts_orig {
+                let ingest_ts = event
+                    .id
+                    .as_ref()
+                    .map_or_else(Timestamp::now, sinex_db::Id::timestamp);
+                event.ts_orig = Some(ingest_ts - Duration::seconds(60));
+            }
+
+            event
+        })
+}
+
+/// Strategy for generating events with metadata.
+fn metadata_rich_events() -> impl Strategy<Value = RawEvent> {
+    (valid_event_sources(), valid_event_types()).prop_map(|(source, event_type)| {
+        let metadata_timestamp = (*Timestamp::now())
+            .format(&time::format_description::well_known::Rfc3339)
+            .expect("Timestamp should format as RFC3339");
+        let payload = json!({
+            "data": "test",
+            "_metadata": {
+                "source": source.as_str(),
+                "timestamp": metadata_timestamp
+            }
+        });
+
+        let mut event = event_fixture(source, event_type, payload);
+        event.id = Some(Id::from_uuid(Uuid::now_v7()));
+
+        event
+    })
 }
 
 /// Strategy for generating boundary condition events
@@ -142,7 +141,11 @@ fn boundary_condition_events() -> impl Strategy<Value = RawEvent> {
     ];
 
     proptest::sample::select(edge_cases).prop_map(|(source, event_type, payload)| {
-        let mut event = event_fixture(source.into(), event_type.into(), payload);
+        let source = EventSource::new(source)
+            .expect("boundary source fixture should be a valid EventSource");
+        let event_type = EventType::new(event_type)
+            .expect("boundary event-type fixture should be a valid EventType");
+        let mut event = event_fixture(source, event_type, payload);
         event.id = Some(Id::from_uuid(Uuid::now_v7()));
         event
     })
@@ -241,20 +244,11 @@ sinex_proptest! {
     }
 
     fn test_event_field_constraints(
-        source in "[a-z][a-z0-9_]{0,49}",
-        event_type in "[a-z][a-z0-9_.]{0,99}",
-        host in "[a-zA-Z0-9][a-zA-Z0-9-]{0,62}(\\.[a-zA-Z0-9][a-zA-Z0-9-]{0,62}){0,3}",
+        source in valid_event_sources(),
+        event_type in valid_event_types(),
+        host in valid_hosts(),
         payload in event_payloads()
     ) -> TestResult<()> {
-        let Ok(source) = EventSource::new(source) else {
-            return Ok(());
-        };
-        let Ok(event_type) = EventType::new(event_type) else {
-            return Ok(());
-        };
-        let Ok(host) = HostName::new(host) else {
-            return Ok(());
-        };
         let mut event = event_fixture(
             source,
             event_type,
@@ -287,13 +281,17 @@ sinex_proptest! {
         );
         event.id = Some(Id::from_uuid(Uuid::now_v7()));
 
-        let serialized = serde_json::to_string(&event);
-        prop_assert!(serialized.is_ok(), "Should serialize large payload");
-
-        if let Ok(json_str) = serialized {
-            prop_assert!(json_str.len() > size_kb * 1024,
-                "Serialized size should exceed payload size");
-        }
+        let json_str = serde_json::to_string(&event).map_err(|error| {
+            TestCaseError::fail(format!("large payload event should serialize: {error}"))
+        })?;
+        let decoded = serde_json::from_str::<RawEvent>(&json_str).map_err(|error| {
+            TestCaseError::fail(format!("large payload event should deserialize: {error}"))
+        })?;
+        prop_assert_eq!(decoded.payload, event.payload);
+        prop_assert!(
+            json_str.len() > size_kb * 1024,
+            "Serialized size should exceed payload size"
+        );
         Ok(())
     }
 
@@ -355,8 +353,13 @@ sinex_proptest! {
             prop_assert_ne!(Into::<Uuid>::into(id), Uuid::nil(), "ID should not be nil");
         }
 
-        let payload_result = serde_json::to_string(&event.payload);
-        prop_assert!(payload_result.is_ok(), "Boundary payload should be serializable");
+        let payload_json = serde_json::to_string(&event.payload).map_err(|error| {
+            TestCaseError::fail(format!("boundary payload should serialize: {error}"))
+        })?;
+        let decoded_payload = serde_json::from_str::<Value>(&payload_json).map_err(|error| {
+            TestCaseError::fail(format!("boundary payload should deserialize: {error}"))
+        })?;
+        prop_assert_eq!(decoded_payload, event.payload);
         Ok(())
     }
 
@@ -430,21 +433,23 @@ mod performance_tests {
 
     sinex_proptest! {
         #![cases(16)]
-        #[ignore = "heavy: property throughput check"]
+        #[ignore = "heavy: property throughput check, run via xtask test --heavy"]
         fn property_event_creation_performance(
             events in performance_characteristic_events()
         ) -> TestResult<()> {
             // Property: Event creation should complete in reasonable time
             let start = Instant::now();
 
-            let serialized = serde_json::to_string(&events);
+            let serialized = serde_json::to_string(&events).map_err(|error| {
+                TestCaseError::fail(format!("performance test events should serialize: {error}"))
+            })?;
+            let decoded = serde_json::from_str::<Vec<RawEvent>>(&serialized).map_err(|error| {
+                TestCaseError::fail(format!("performance test events should deserialize: {error}"))
+            })?;
 
             let elapsed = start.elapsed();
 
-            prop_assert!(
-                serialized.is_ok(),
-                "Should serialize performance test event"
-            );
+            prop_assert_eq!(decoded.len(), events.len());
             prop_assert!(
                 elapsed.as_millis() < 1000, // Increased from 100ms to 1s for large batches
                 "Serialization should complete within 1000ms, took {}ms",

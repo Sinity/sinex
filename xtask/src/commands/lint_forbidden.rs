@@ -2,7 +2,8 @@
 
 use color_eyre::eyre::{Result, WrapErr, bail, eyre};
 use serde::Deserialize;
-use std::process::Command;
+use std::{fs, process::Command};
+use walkdir::WalkDir;
 
 use crate::command::{CommandContext, CommandMetadata, CommandResult, XtaskCommand};
 use crate::config::{ast_grep_config_path, workspace_root};
@@ -168,6 +169,9 @@ impl XtaskCommand for LintForbiddenCommand {
         violations.extend(check_privacy_metadata_for_sensitive_units()?);
         violations.extend(check_raw_source_registration_macros()?);
         violations.extend(check_coherence_boundary_assumptions()?);
+        violations.extend(check_ignored_test_contracts()?);
+        violations.extend(check_vm_suite_evidence_kind_contracts()?);
+        violations.extend(check_property_strategy_domain_fallbacks()?);
 
         // anyhow:: in library code is disallowed; libraries use the project error stack.
         let anyhow_allow: [&str; 0] = [];
@@ -795,6 +799,258 @@ where
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Property strategy typed-domain fallback guard
+// ─────────────────────────────────────────────────────────────────────────────
+
+const PROPERTY_STRATEGY_DOMAIN_FALLBACK_PATTERNS: &[&str] = &[
+    "unwrap_or_else(|_| EventSource::from_static",
+    "unwrap_or_else(|_| EventType::from_static",
+    "unwrap_or_else(|_| HostName::from_static",
+    "unwrap_or_else(|_| RecordedPath::from_static",
+    "unwrap_or_else(|_| SanitizedPath::from_static",
+    "unwrap_or_else(Timestamp::now",
+];
+
+fn check_property_strategy_domain_fallbacks() -> Result<Vec<String>> {
+    let workspace = workspace_root();
+    let mut violations = Vec::new();
+    let scan_roots = [
+        workspace.join("crate/sinex-primitives/tests"),
+        workspace.join("crate/sinex-primitives/src/testing.rs"),
+    ];
+
+    for root in scan_roots {
+        if !root.exists() {
+            continue;
+        }
+
+        if root.is_file() {
+            let rel_path = ignored_test_contract_rel_path(&root, &workspace);
+            let contents = fs::read_to_string(&root).with_context(|| {
+                format!("failed to read {rel_path} for property strategy fallback scan")
+            })?;
+            violations.extend(property_strategy_domain_fallback_violations_for_file(
+                &rel_path, &contents,
+            ));
+            continue;
+        }
+
+        for entry in WalkDir::new(&root) {
+            let entry = entry.with_context(|| "failed to walk property strategy tests")?;
+            let path = entry.path();
+            if !entry.file_type().is_file()
+                || path.extension().and_then(|ext| ext.to_str()) != Some("rs")
+            {
+                continue;
+            }
+
+            let rel_path = ignored_test_contract_rel_path(path, &workspace);
+            let contents = fs::read_to_string(path).with_context(|| {
+                format!("failed to read {rel_path} for property strategy fallback scan")
+            })?;
+            violations.extend(property_strategy_domain_fallback_violations_for_file(
+                &rel_path, &contents,
+            ));
+        }
+    }
+
+    Ok(violations)
+}
+
+fn property_strategy_domain_fallback_violations_for_file(
+    file: &str,
+    contents: &str,
+) -> Vec<String> {
+    let mut violations = Vec::new();
+    for (idx, line) in contents.lines().enumerate() {
+        let trimmed = line.trim_start();
+        if trimmed.starts_with("//") {
+            continue;
+        }
+        let Some(pattern) = PROPERTY_STRATEGY_DOMAIN_FALLBACK_PATTERNS
+            .iter()
+            .find(|pattern| trimmed.contains(**pattern))
+        else {
+            continue;
+        };
+        violations.push(format!(
+            "{file}:{}: property strategies must not turn invalid generated domain values into fixed fixtures via {pattern:?}; generate typed-valid values or assert constructor failure",
+            idx + 1
+        ));
+    }
+    violations
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// VM-suite evidence-kind contract guard
+// ─────────────────────────────────────────────────────────────────────────────
+
+fn check_vm_suite_evidence_kind_contracts() -> Result<Vec<String>> {
+    let workspace = workspace_root();
+    let suite_root = workspace.join("tests/vm-suite/src");
+    if !suite_root.exists() {
+        return Ok(Vec::new());
+    }
+
+    let mut violations = Vec::new();
+    for entry in WalkDir::new(&suite_root) {
+        let entry = entry.with_context(|| "failed to walk VM suite for evidence-kind contracts")?;
+        let path = entry.path();
+        if !entry.file_type().is_file()
+            || path.extension().and_then(|ext| ext.to_str()) != Some("rs")
+        {
+            continue;
+        }
+
+        let rel_path = ignored_test_contract_rel_path(path, &workspace);
+        if rel_path == "tests/vm-suite/src/runner.rs" {
+            continue;
+        }
+
+        let contents = fs::read_to_string(path).with_context(|| {
+            format!("failed to read {rel_path} for VM evidence-kind contract scan")
+        })?;
+        violations.extend(vm_suite_evidence_kind_violations_for_file(
+            &rel_path, &contents,
+        ));
+    }
+    Ok(violations)
+}
+
+fn vm_suite_evidence_kind_violations_for_file(file: &str, contents: &str) -> Vec<String> {
+    let mut violations = Vec::new();
+    for (idx, line) in contents.lines().enumerate() {
+        let trimmed = line.trim_start();
+        if trimmed.starts_with("//") || !trimmed.contains("TestOutcome::EvidenceMissing") {
+            continue;
+        }
+        violations.push(format!(
+            "{file}:{}: VM-suite evidence-missing outcomes outside runner.rs must use \
+             TestRunner::require_evidence(..., EvidenceKind::..., ..., MissingEvidencePolicy::...) \
+             instead of raw TestOutcome::EvidenceMissing",
+            idx + 1
+        ));
+    }
+    violations
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Ignored test contract guard
+// ─────────────────────────────────────────────────────────────────────────────
+
+const IGNORED_TEST_REASON_PREFIXES: &[&str] = &["heavy:", "long:", "external:"];
+
+fn check_ignored_test_contracts() -> Result<Vec<String>> {
+    let workspace = workspace_root();
+    let mut violations = Vec::new();
+
+    for entry in WalkDir::new(&workspace).into_iter().filter_entry(|entry| {
+        let rel_path = ignored_test_contract_rel_path(entry.path(), &workspace);
+        !entry.file_type().is_dir() || !is_ignored_test_contract_scan_skip_dir(&rel_path)
+    }) {
+        let entry = entry.with_context(|| "failed to walk workspace for ignored test contracts")?;
+        let path = entry.path();
+        if !entry.file_type().is_file()
+            || path.extension().and_then(|ext| ext.to_str()) != Some("rs")
+        {
+            continue;
+        }
+
+        let rel_path = ignored_test_contract_rel_path(path, &workspace);
+        if is_ignored_test_contract_scan_skip_file(&rel_path) {
+            continue;
+        }
+
+        let contents = fs::read_to_string(path)
+            .with_context(|| format!("failed to read {rel_path} for ignored test contract scan"))?;
+        violations.extend(ignored_test_contract_violations_for_file(
+            &rel_path, &contents,
+        ));
+    }
+
+    Ok(violations)
+}
+
+fn ignored_test_contract_rel_path(path: &std::path::Path, workspace: &std::path::Path) -> String {
+    path.strip_prefix(workspace)
+        .map(|path| path.to_string_lossy().replace('\\', "/"))
+        .unwrap_or_else(|_| path.to_string_lossy().replace('\\', "/"))
+}
+
+fn is_ignored_test_contract_scan_skip_dir(path: &str) -> bool {
+    matches!(path, ".git" | ".sinex" | ".agent" | "target" | "docs/agent")
+        || path.starts_with(".git/")
+        || path.starts_with(".sinex/")
+        || path.starts_with(".agent/")
+        || path.starts_with("target/")
+        || path.starts_with("docs/agent/")
+}
+
+fn is_ignored_test_contract_scan_skip_file(path: &str) -> bool {
+    is_ignored_test_contract_scan_skip_dir(path) || path == "xtask/src/commands/lint_forbidden.rs"
+}
+
+fn ignored_test_contract_violations_for_file(file: &str, contents: &str) -> Vec<String> {
+    let mut violations = Vec::new();
+    for (idx, line) in contents.lines().enumerate() {
+        let line_number = idx + 1;
+        let trimmed = line.trim_start();
+        if !trimmed.starts_with("#[ignore") {
+            continue;
+        }
+        let Some(reason) = ignored_test_reason(trimmed) else {
+            violations.push(format!(
+                "{file}:{line_number}: ignored tests must use #[ignore = \"heavy: ...\"], #[ignore = \"long: ...\"], or #[ignore = \"external: ...\"]"
+            ));
+            continue;
+        };
+        let Some(prefix) = IGNORED_TEST_REASON_PREFIXES
+            .iter()
+            .copied()
+            .find(|prefix| reason.starts_with(*prefix))
+        else {
+            violations.push(format!(
+                "{file}:{line_number}: ignored test reason {reason:?} must start with one of {IGNORED_TEST_REASON_PREFIXES:?}"
+            ));
+            continue;
+        };
+        let rationale = reason[prefix.len()..].trim();
+        if rationale.is_empty() {
+            violations.push(format!(
+                "{file}:{line_number}: ignored test reason {reason:?} must include an operator-visible rationale after {prefix:?}"
+            ));
+            continue;
+        }
+        if let Some(route_violation) = ignored_test_route_violation(prefix, rationale) {
+            violations.push(format!(
+                "{file}:{line_number}: ignored test reason {reason:?} {route_violation}"
+            ));
+        }
+    }
+    violations
+}
+
+fn ignored_test_route_violation(prefix: &str, rationale: &str) -> Option<&'static str> {
+    match prefix {
+        "heavy:" | "long:" => {
+            let names_heavy_route =
+                rationale.contains("--heavy") || rationale.contains("heavy slice");
+            (!names_heavy_route)
+                .then_some("must name the xtask test --heavy route or the CI heavy slice")
+        }
+        "external:" => (!rationale.contains("requires "))
+            .then_some("must name the external prerequisite with `requires ...`"),
+        _ => None,
+    }
+}
+
+fn ignored_test_reason(attribute: &str) -> Option<String> {
+    let start = attribute.find('"')? + 1;
+    let end = attribute[start..].find('"')? + start;
+    Some(attribute[start..end].to_string())
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Provider-shaped secret literal guard
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -1299,6 +1555,189 @@ mod tests {
         let error =
             parse_ast_grep_summary("not-json").expect_err("invalid ast-grep output should fail");
         assert!(format!("{error:#}").contains("failed to parse ast-grep JSON output"));
+        Ok(())
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // Ignored-test contract gate self-tests
+    // ─────────────────────────────────────────────────────────────────────────
+
+    #[sinex_test]
+    async fn ignored_test_contract_accepts_categorized_reasons() -> ::xtask::sandbox::TestResult<()>
+    {
+        let fixture = r#"
+            #[ignore = "heavy: run with xtask test --heavy"]
+            async fn heavy_case() {}
+
+            #[ignore = "long: performance matrix, run with xtask test --heavy"]
+            async fn long_case() {}
+
+            #[ignore = "external: requires git-annex on PATH"]
+            async fn external_case() {}
+        "#;
+
+        let violations = ignored_test_contract_violations_for_file("fixture.rs", fixture);
+        assert!(
+            violations.is_empty(),
+            "categorized ignore reasons should pass: {violations:?}"
+        );
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn ignored_test_contract_rejects_bare_ignore() -> ::xtask::sandbox::TestResult<()> {
+        let fixture = r#"
+            #[ignore]
+            async fn silently_skipped() {}
+        "#;
+
+        let violations = ignored_test_contract_violations_for_file("fixture.rs", fixture);
+        assert_eq!(violations.len(), 1);
+        assert!(violations[0].contains("ignored tests must use"));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn ignored_test_contract_rejects_uncategorized_reason() -> ::xtask::sandbox::TestResult<()>
+    {
+        let fixture = r#"
+            #[ignore = "flaky on my machine"]
+            async fn ambiguous_skip() {}
+        "#;
+
+        let violations = ignored_test_contract_violations_for_file("fixture.rs", fixture);
+        assert_eq!(violations.len(), 1);
+        assert!(violations[0].contains("must start with one of"));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn ignored_test_contract_rejects_empty_rationale_after_category()
+    -> ::xtask::sandbox::TestResult<()> {
+        let fixture = r#"
+            #[ignore = "heavy:"]
+            async fn unlabeled_heavy_case() {}
+        "#;
+
+        let violations = ignored_test_contract_violations_for_file("fixture.rs", fixture);
+        assert_eq!(violations.len(), 1);
+        assert!(violations[0].contains("operator-visible rationale"));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn ignored_test_contract_rejects_unrouted_heavy_reason()
+    -> ::xtask::sandbox::TestResult<()> {
+        let fixture = r#"
+            #[ignore = "heavy: slow on laptops"]
+            async fn unrouted_heavy_case() {}
+        "#;
+
+        let violations = ignored_test_contract_violations_for_file("fixture.rs", fixture);
+        assert_eq!(violations.len(), 1);
+        assert!(violations[0].contains("xtask test --heavy"));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn ignored_test_contract_rejects_external_without_prerequisite()
+    -> ::xtask::sandbox::TestResult<()> {
+        let fixture = r#"
+            #[ignore = "external: flaky network service"]
+            async fn vague_external_case() {}
+        "#;
+
+        let violations = ignored_test_contract_violations_for_file("fixture.rs", fixture);
+        assert_eq!(violations.len(), 1);
+        assert!(violations[0].contains("requires"));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn property_strategy_fallback_contract_accepts_expectations()
+    -> ::xtask::sandbox::TestResult<()> {
+        let fixture = r#"
+            "[a-z]+".prop_map(|raw| EventSource::new(raw).expect("generated source"));
+        "#;
+
+        let violations = property_strategy_domain_fallback_violations_for_file(
+            "crate/sinex-primitives/tests/strategies.rs",
+            fixture,
+        );
+        assert!(
+            violations.is_empty(),
+            "typed-valid generated domains should pass"
+        );
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn property_strategy_fallback_contract_rejects_fixed_fallback()
+    -> ::xtask::sandbox::TestResult<()> {
+        let fixture = r#"
+            EventSource::new(raw).unwrap_or_else(|_| EventSource::from_static("test.source"));
+        "#;
+
+        let violations = property_strategy_domain_fallback_violations_for_file(
+            "crate/sinex-primitives/tests/strategies.rs",
+            fixture,
+        );
+        assert_eq!(violations.len(), 1);
+        assert!(violations[0].contains("typed-valid values"));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn vm_suite_evidence_contract_accepts_typed_requirement()
+    -> ::xtask::sandbox::TestResult<()> {
+        let fixture = r#"
+            runner.require_evidence(
+                name,
+                EvidenceKind::Database,
+                false,
+                "database probe failed",
+                MissingEvidencePolicy::Block,
+            );
+        "#;
+
+        let violations = vm_suite_evidence_kind_violations_for_file(
+            "tests/vm-suite/src/categories/smoke.rs",
+            fixture,
+        );
+        assert!(
+            violations.is_empty(),
+            "typed evidence requirement should pass"
+        );
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn vm_suite_evidence_contract_rejects_raw_evidence_missing()
+    -> ::xtask::sandbox::TestResult<()> {
+        let fixture = r#"
+            runner.record(name, TestOutcome::EvidenceMissing, "probe failed");
+        "#;
+
+        let violations = vm_suite_evidence_kind_violations_for_file(
+            "tests/vm-suite/src/categories/smoke.rs",
+            fixture,
+        );
+        assert_eq!(violations.len(), 1);
+        assert!(violations[0].contains("require_evidence"));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn vm_suite_evidence_contract_ignores_comments() -> ::xtask::sandbox::TestResult<()> {
+        let fixture = r#"
+            // TestOutcome::EvidenceMissing appears in prose only.
+        "#;
+
+        let violations = vm_suite_evidence_kind_violations_for_file(
+            "tests/vm-suite/src/categories/smoke.rs",
+            fixture,
+        );
+        assert!(violations.is_empty(), "comment-only references should pass");
         Ok(())
     }
 

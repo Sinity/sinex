@@ -40,12 +40,12 @@ fn error_contains(error: &SinexError, needle: &str) -> bool {
 /// 1. `get_or_create_stream`s the canonical
 ///    `SINEX_RAW_EVENTS_DERIVED_INVALIDATIONS` stream so publishes succeed.
 /// 2. Creates an ephemeral push consumer and forwards each delivered
-///    payload onto an `mpsc::UnboundedReceiver<Vec<u8>>` so call sites
-///    can `.recv()` the bytes directly without juggling the
-///    `Result<jetstream::Message, _>` shape.
+///    payload onto an `mpsc::UnboundedReceiver<Result<Vec<u8>>>` so stream
+///    delivery and ack failures propagate instead of collapsing into a closed
+///    channel or timeout.
 async fn spawn_invalidation_listener_for_test(
     nats_client: &async_nats::Client,
-) -> Result<tokio::sync::mpsc::UnboundedReceiver<Vec<u8>>> {
+) -> Result<tokio::sync::mpsc::UnboundedReceiver<Result<Vec<u8>>>> {
     use async_nats::jetstream::{consumer::push, stream as js_stream};
     let env = sinex_primitives::environment::environment();
     let stream_name = env.nats_stream_name("SINEX_RAW_EVENTS_DERIVED_INVALIDATIONS");
@@ -75,9 +75,23 @@ async fn spawn_invalidation_listener_for_test(
     let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
     tokio::spawn(async move {
         while let Some(item) = messages.next().await {
-            let Ok(msg) = item else { break };
-            let _ = msg.ack().await;
-            if tx.send(msg.payload.to_vec()).is_err() {
+            let msg = match item {
+                Ok(msg) => msg,
+                Err(error) => {
+                    let _ = tx.send(Err(test_error(format!(
+                        "invalidation listener message stream failed: {error}"
+                    ))));
+                    break;
+                }
+            };
+            let payload = msg.payload.to_vec();
+            if let Err(error) = msg.ack().await {
+                let _ = tx.send(Err(test_error(format!(
+                    "invalidation listener failed to ack message: {error}"
+                ))));
+                break;
+            }
+            if tx.send(Ok(payload)).is_err() {
                 break;
             }
         }
@@ -159,7 +173,7 @@ async fn spawn_fake_scan_source_runtime(
     events_processed: u64,
 ) -> Result<(
     tokio::sync::oneshot::Receiver<SourceScanCommand>,
-    tokio::task::JoinHandle<()>,
+    tokio::task::JoinHandle<Result<()>>,
 )> {
     let module_name = module_name.to_string();
     let subject = env.nats_subject(&format!("sinex.control.sources.{module_name}.scan"));
@@ -171,52 +185,78 @@ async fn spawn_fake_scan_source_runtime(
     let (command_tx, command_rx) = tokio::sync::oneshot::channel();
 
     let handle = tokio::spawn(async move {
-        if let Some(msg) = sub.next().await {
-            let command: SourceScanCommand = serde_json::from_slice(&msg.payload)
-                .expect("fake source runtime must receive a valid scan command");
-            let operation_id = command.operation_id;
-            let progress_subject =
-                env.nats_subject(&format!("sinex.control.replay.progress.{operation_id}"));
+        let Some(msg) = sub.next().await else {
+            return Err(test_error(format!(
+                "fake {module_name} source runtime dispatcher ended before receiving a scan command"
+            )));
+        };
 
-            let _ = command_tx.send(command.clone());
+        let command: SourceScanCommand = serde_json::from_slice(&msg.payload).map_err(|error| {
+            test_error(format!(
+                "fake {module_name} source runtime received an invalid scan command: {error}"
+            ))
+        })?;
+        let operation_id = command.operation_id;
+        let progress_subject =
+            env.nats_subject(&format!("sinex.control.replay.progress.{operation_id}"));
 
-            if let Some(reply) = msg.reply {
-                let ack = SourceScanAck {
-                    operation_id,
-                    module_name: module_name.clone(),
-                    accepted: true,
-                    error: None,
-                };
-                nats.publish(reply, serde_json::to_vec(&ack).unwrap().into())
-                    .await
-                    .expect("fake source runtime ack publish should succeed");
-            }
+        command_tx.send(command.clone()).map_err(|_| {
+            test_error(format!(
+                "fake {module_name} source runtime could not hand scan command to test harness"
+            ))
+        })?;
 
-            let report = ScanReport {
-                events_processed,
-                duration: Duration::from_millis(5),
-                final_checkpoint: Checkpoint::None,
-                time_range: None,
-                runtime_stats: HashMap::from([("events_emitted".to_string(), events_processed)]),
-                successful_targets: vec![module_name.clone()],
-                failed_targets: Vec::new(),
-                warnings: Vec::new(),
-            };
-            let progress = SourceScanProgress {
+        if let Some(reply) = msg.reply {
+            let ack = SourceScanAck {
                 operation_id,
                 module_name: module_name.clone(),
-                events_processed,
-                events_emitted: events_processed,
-                final_report: Some(report),
+                accepted: true,
                 error: None,
             };
-            nats.publish(
-                progress_subject,
-                serde_json::to_vec(&progress).unwrap().into(),
-            )
-            .await
-            .expect("fake source runtime progress publish should succeed");
+            let payload = serde_json::to_vec(&ack).map_err(|error| {
+                test_error(format!(
+                    "fake {module_name} source runtime could not encode ack: {error}"
+                ))
+            })?;
+            nats.publish(reply, payload.into()).await.map_err(|error| {
+                test_error(format!(
+                    "fake {module_name} source runtime could not publish ack: {error}"
+                ))
+            })?;
         }
+
+        let report = ScanReport {
+            events_processed,
+            duration: Duration::from_millis(5),
+            final_checkpoint: Checkpoint::None,
+            time_range: None,
+            runtime_stats: HashMap::from([("events_emitted".to_string(), events_processed)]),
+            successful_targets: vec![module_name.clone()],
+            failed_targets: Vec::new(),
+            warnings: Vec::new(),
+        };
+        let progress = SourceScanProgress {
+            operation_id,
+            module_name: module_name.clone(),
+            events_processed,
+            events_emitted: events_processed,
+            final_report: Some(report),
+            error: None,
+        };
+        let payload = serde_json::to_vec(&progress).map_err(|error| {
+            test_error(format!(
+                "fake {module_name} source runtime could not encode progress: {error}"
+            ))
+        })?;
+        nats.publish(progress_subject, payload.into())
+            .await
+            .map_err(|error| {
+                test_error(format!(
+                    "fake {module_name} source runtime could not publish progress: {error}"
+                ))
+            })?;
+
+        Ok(())
     });
 
     Ok((command_rx, handle))
@@ -230,7 +270,7 @@ async fn spawn_fake_scan_source_runtime_with_progress(
     events_emitted: u64,
 ) -> Result<(
     tokio::sync::oneshot::Receiver<SourceScanCommand>,
-    tokio::task::JoinHandle<()>,
+    tokio::task::JoinHandle<Result<()>>,
 )> {
     let module_name = module_name.to_string();
     let subject = env.nats_subject(&format!("sinex.control.sources.{module_name}.scan"));
@@ -242,52 +282,78 @@ async fn spawn_fake_scan_source_runtime_with_progress(
     let (command_tx, command_rx) = tokio::sync::oneshot::channel();
 
     let handle = tokio::spawn(async move {
-        if let Some(msg) = sub.next().await {
-            let command: SourceScanCommand = serde_json::from_slice(&msg.payload)
-                .expect("fake source runtime must receive a valid scan command");
-            let operation_id = command.operation_id;
-            let progress_subject =
-                env.nats_subject(&format!("sinex.control.replay.progress.{operation_id}"));
+        let Some(msg) = sub.next().await else {
+            return Err(test_error(format!(
+                "fake {module_name} source runtime dispatcher ended before receiving a scan command"
+            )));
+        };
 
-            let _ = command_tx.send(command.clone());
+        let command: SourceScanCommand = serde_json::from_slice(&msg.payload).map_err(|error| {
+            test_error(format!(
+                "fake {module_name} source runtime received an invalid scan command: {error}"
+            ))
+        })?;
+        let operation_id = command.operation_id;
+        let progress_subject =
+            env.nats_subject(&format!("sinex.control.replay.progress.{operation_id}"));
 
-            if let Some(reply) = msg.reply {
-                let ack = SourceScanAck {
-                    operation_id,
-                    module_name: module_name.clone(),
-                    accepted: true,
-                    error: None,
-                };
-                nats.publish(reply, serde_json::to_vec(&ack).unwrap().into())
-                    .await
-                    .expect("fake source runtime ack publish should succeed");
-            }
+        command_tx.send(command.clone()).map_err(|_| {
+            test_error(format!(
+                "fake {module_name} source runtime could not hand scan command to test harness"
+            ))
+        })?;
 
-            let report = ScanReport {
-                events_processed,
-                duration: Duration::from_millis(5),
-                final_checkpoint: Checkpoint::None,
-                time_range: None,
-                runtime_stats: HashMap::from([("events_emitted".to_string(), events_emitted)]),
-                successful_targets: vec![module_name.clone()],
-                failed_targets: Vec::new(),
-                warnings: Vec::new(),
-            };
-            let progress = SourceScanProgress {
+        if let Some(reply) = msg.reply {
+            let ack = SourceScanAck {
                 operation_id,
                 module_name: module_name.clone(),
-                events_processed,
-                events_emitted,
-                final_report: Some(report),
+                accepted: true,
                 error: None,
             };
-            nats.publish(
-                progress_subject,
-                serde_json::to_vec(&progress).unwrap().into(),
-            )
-            .await
-            .expect("fake source runtime progress publish should succeed");
+            let payload = serde_json::to_vec(&ack).map_err(|error| {
+                test_error(format!(
+                    "fake {module_name} source runtime could not encode ack: {error}"
+                ))
+            })?;
+            nats.publish(reply, payload.into()).await.map_err(|error| {
+                test_error(format!(
+                    "fake {module_name} source runtime could not publish ack: {error}"
+                ))
+            })?;
         }
+
+        let report = ScanReport {
+            events_processed,
+            duration: Duration::from_millis(5),
+            final_checkpoint: Checkpoint::None,
+            time_range: None,
+            runtime_stats: HashMap::from([("events_emitted".to_string(), events_emitted)]),
+            successful_targets: vec![module_name.clone()],
+            failed_targets: Vec::new(),
+            warnings: Vec::new(),
+        };
+        let progress = SourceScanProgress {
+            operation_id,
+            module_name: module_name.clone(),
+            events_processed,
+            events_emitted,
+            final_report: Some(report),
+            error: None,
+        };
+        let payload = serde_json::to_vec(&progress).map_err(|error| {
+            test_error(format!(
+                "fake {module_name} source runtime could not encode progress: {error}"
+            ))
+        })?;
+        nats.publish(progress_subject, payload.into())
+            .await
+            .map_err(|error| {
+                test_error(format!(
+                    "fake {module_name} source runtime could not publish progress: {error}"
+                ))
+            })?;
+
+        Ok(())
     });
 
     Ok((command_rx, handle))
@@ -299,7 +365,7 @@ async fn spawn_fake_scan_source_runtime_ack_only(
     module_name: &str,
 ) -> Result<(
     tokio::sync::oneshot::Receiver<SourceScanCommand>,
-    tokio::task::JoinHandle<()>,
+    tokio::task::JoinHandle<Result<()>>,
 )> {
     let module_name = module_name.to_string();
     let subject = env.nats_subject(&format!("sinex.control.sources.{module_name}.scan"));
@@ -311,26 +377,65 @@ async fn spawn_fake_scan_source_runtime_ack_only(
     let (command_tx, command_rx) = tokio::sync::oneshot::channel();
 
     let handle = tokio::spawn(async move {
-        if let Some(msg) = sub.next().await {
-            let command: SourceScanCommand = serde_json::from_slice(&msg.payload)
-                .expect("fake source runtime must receive a valid scan command");
-            let _ = command_tx.send(command.clone());
+        let Some(msg) = sub.next().await else {
+            return Err(test_error(format!(
+                "fake {module_name} source runtime dispatcher ended before receiving a scan command"
+            )));
+        };
 
-            if let Some(reply) = msg.reply {
-                let ack = SourceScanAck {
-                    operation_id: command.operation_id,
-                    module_name: module_name.clone(),
-                    accepted: true,
-                    error: None,
-                };
-                nats.publish(reply, serde_json::to_vec(&ack).unwrap().into())
-                    .await
-                    .expect("fake source runtime ack publish should succeed");
-            }
+        let command: SourceScanCommand = serde_json::from_slice(&msg.payload).map_err(|error| {
+            test_error(format!(
+                "fake {module_name} source runtime received an invalid scan command: {error}"
+            ))
+        })?;
+        command_tx.send(command.clone()).map_err(|_| {
+            test_error(format!(
+                "fake {module_name} source runtime could not hand scan command to test harness"
+            ))
+        })?;
+
+        if let Some(reply) = msg.reply {
+            let ack = SourceScanAck {
+                operation_id: command.operation_id,
+                module_name: module_name.clone(),
+                accepted: true,
+                error: None,
+            };
+            let payload = serde_json::to_vec(&ack).map_err(|error| {
+                test_error(format!(
+                    "fake {module_name} source runtime could not encode ack: {error}"
+                ))
+            })?;
+            nats.publish(reply, payload.into()).await.map_err(|error| {
+                test_error(format!(
+                    "fake {module_name} source runtime could not publish ack: {error}"
+                ))
+            })?;
         }
+
+        Ok(())
     });
 
     Ok((command_rx, handle))
+}
+
+async fn await_fake_scan_source_runtime(
+    handle: tokio::task::JoinHandle<Result<()>>,
+    module_name: &str,
+) -> Result<()> {
+    tokio::time::timeout(Duration::from_secs(5), handle)
+        .await
+        .map_err(|_| {
+            test_error(format!(
+                "fake {module_name} source runtime task did not finish after receiving scan command"
+            ))
+        })?
+        .map_err(|error| {
+            test_error(format!(
+                "fake {module_name} source runtime task panicked before reporting its result: {error}"
+            ))
+        })??;
+    Ok(())
 }
 
 fn spawn_replay_output_inserter(

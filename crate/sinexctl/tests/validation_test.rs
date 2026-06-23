@@ -507,11 +507,12 @@ async fn mcp_source_gap_explain_call_uses_gateway_fixture() -> TestResult<()> {
     assert_eq!(response["query_echo"]["source_family"], "terminal");
     assert_eq!(response["query_echo"]["at"], "2026-05-19T12:05:00Z");
     assert_eq!(response["payload"]["result"]["gap"]["kind"], "private_mode");
+    let explanation = response["payload"]["result"]["explanation"]
+        .as_str()
+        .expect("source gap explanation must be a string");
     assert!(
-        response["payload"]["result"]["explanation"]
-            .as_str()
-            .unwrap_or_default()
-            .contains("coverage gap")
+        explanation.contains("coverage gap"),
+        "source gap explanation should describe the coverage gap: {explanation}"
     );
     assert_eq!(response["privacy_state"]["state"], "redacted");
     Ok(())

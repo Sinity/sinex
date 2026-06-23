@@ -82,7 +82,12 @@ xtask test vm --category integration
 ```
 
 The default GitHub Actions gate does not run the NixOS VM suite; use the VM
-commands separately when a change touches deployment/runtime behavior.
+commands separately when a change touches deployment/runtime behavior. VM tests
+must report explicit outcomes through `TestRunner` and declare missing probes with
+`require_evidence(...)` instead of returning early. Evidence kinds include DB,
+NATS, process, logs, source-material, output-contract, fault-injection, and
+custom proof artifacts; missing required evidence blocks the suite unless the test
+marks the prerequisite as an operator-visible skip.
 
 Do not model source-ingestion correctness as an `xtask exercise`. Source
 material, source adapter, stream runtime, replay, and provenance behavior belong in
@@ -100,3 +105,8 @@ does not own their semantics. The command-plane split is documented in
   [`xtask/docs/sandbox/README.md`](xtask/docs/sandbox/README.md).
 - Perf verification details live in
   [`xtask/docs/verification.md`](xtask/docs/verification.md).
+- Ignored Rust tests must carry an operator-visible category prefix in the
+  attribute reason: `heavy:`, `long:`, or `external:`. Heavy and long tests must
+  name the `xtask test --heavy` route or the CI heavy slice; external tests must
+  name their prerequisite with `requires ...`. The forbidden-pattern gate rejects
+  bare, ambiguous, or unrouted ignores so skipped behavior remains visible.

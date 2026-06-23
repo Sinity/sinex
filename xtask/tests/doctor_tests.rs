@@ -23,9 +23,14 @@ async fn test_doctor_tls_without_certs() -> ::xtask::sandbox::TestResult<()> {
         .arg("doctor")
         .output()?;
 
+    assert!(
+        output.status.success(),
+        "doctor should succeed. Stderr:\n{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
     let stdout = String::from_utf8_lossy(&output.stdout);
-    let report: serde_json::Value =
-        serde_json::from_str(&stdout).unwrap_or_else(|_| serde_json::json!({}));
+    let report: serde_json::Value = serde_json::from_str(&stdout)
+        .expect("doctor --json must emit a single valid JSON document");
     // tls field is None when no cert env vars set and no .tls/ dir
     let tls = &report["data"]["tls"];
     if !tls.is_null() {

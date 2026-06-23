@@ -441,7 +441,12 @@ async fn test_nested_text_search_populates_relevance_and_snippet(
     };
 
     assert_eq!(events.len(), 1);
-    assert!(events[0].relevance_score.unwrap_or_default() > 0.0);
+    assert!(
+        events[0]
+            .relevance_score
+            .expect("FTS query result should include a relevance score")
+            > 0.0
+    );
     assert!(
         events[0]
             .snippet

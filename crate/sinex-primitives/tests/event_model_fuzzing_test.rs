@@ -23,7 +23,7 @@
 use sinex_primitives::testing::event_fixture;
 use xtask::sandbox::prelude::*;
 
-use proptest::test_runner::TestCaseResult;
+use proptest::test_runner::{TestCaseError, TestCaseResult};
 use serde_json::{Map as JsonMap, Value as JsonValue};
 use sinex_primitives::{Event, Id};
 use sinex_primitives::{
@@ -36,6 +36,80 @@ fn regex_strategy(pattern: &str) -> proptest::strategy::BoxedStrategy<String> {
         Ok(strategy) => strategy.boxed(),
         Err(_) => Just(String::new()).boxed(),
     }
+}
+
+fn prop_event_json_roundtrip(event: &Event<JsonValue>, label: &str) -> TestCaseResult {
+    let compact_json = serde_json::to_string(event).map_err(|error| {
+        TestCaseError::fail(format!("{label} should serialize to compact JSON: {error}"))
+    })?;
+    let decoded = serde_json::from_str::<Event<JsonValue>>(&compact_json).map_err(|error| {
+        TestCaseError::fail(format!(
+            "{label} compact JSON should deserialize: {error}; json={compact_json}"
+        ))
+    })?;
+
+    prop_assert_eq!(
+        decoded.source.as_str(),
+        event.source.as_str(),
+        "{} source round-trip",
+        label
+    );
+    prop_assert_eq!(
+        decoded.event_type.as_str(),
+        event.event_type.as_str(),
+        "{} event_type round-trip",
+        label
+    );
+    prop_assert_eq!(
+        decoded.host.as_str(),
+        event.host.as_str(),
+        "{} host round-trip",
+        label
+    );
+    prop_assert_eq!(
+        &decoded.payload,
+        &event.payload,
+        "{} payload round-trip",
+        label
+    );
+    Ok(())
+}
+
+fn prop_event_pretty_json_roundtrip(event: &Event<JsonValue>, label: &str) -> TestCaseResult {
+    let pretty_json = serde_json::to_string_pretty(event).map_err(|error| {
+        TestCaseError::fail(format!("{label} should serialize to pretty JSON: {error}"))
+    })?;
+    let decoded = serde_json::from_str::<Event<JsonValue>>(&pretty_json).map_err(|error| {
+        TestCaseError::fail(format!(
+            "{label} pretty JSON should deserialize: {error}; json={pretty_json}"
+        ))
+    })?;
+
+    prop_assert_eq!(
+        decoded.source.as_str(),
+        event.source.as_str(),
+        "{} pretty source round-trip",
+        label
+    );
+    prop_assert_eq!(
+        decoded.event_type.as_str(),
+        event.event_type.as_str(),
+        "{} pretty event_type round-trip",
+        label
+    );
+    prop_assert_eq!(
+        decoded.host.as_str(),
+        event.host.as_str(),
+        "{} pretty host round-trip",
+        label
+    );
+    prop_assert_eq!(
+        &decoded.payload,
+        &event.payload,
+        "{} pretty payload round-trip",
+        label
+    );
+    Ok(())
 }
 
 // ============================================================================
@@ -78,6 +152,39 @@ fn problematic_strings() -> impl Strategy<Value = String> {
     ]
 }
 
+fn fuzz_valid_event_sources() -> impl Strategy<Value = EventSource> {
+    prop_oneof![
+        Just(EventSource::from_static("fs")),
+        Just(EventSource::from_static("clipboard")),
+        Just(EventSource::from_static("wm.hyprland")),
+        Just(EventSource::from_static("shell.kitty")),
+        regex_strategy("[a-z][a-z0-9_]{0,24}(\\.[a-z][a-z0-9_]{0,24}){0,2}")
+            .prop_map(|raw| { EventSource::new(raw).expect("regex yields valid EventSource") }),
+    ]
+}
+
+fn fuzz_valid_event_types() -> impl Strategy<Value = EventType> {
+    prop_oneof![
+        Just(EventType::from_static("file.created")),
+        Just(EventType::from_static("window.focused")),
+        Just(EventType::from_static("command.executed")),
+        Just(EventType::from_static("clipboard.copied")),
+        regex_strategy("[a-z][a-z0-9_]{1,20}\\.[a-z][a-z0-9_]{1,20}")
+            .prop_map(|raw| { EventType::new(raw).expect("regex yields valid EventType") }),
+    ]
+}
+
+fn fuzz_valid_hosts() -> impl Strategy<Value = HostName> {
+    prop_oneof![
+        Just(HostName::from_static("localhost")),
+        Just(HostName::from_static("host-1")),
+        regex_strategy("([a-zA-Z0-9]|[a-zA-Z0-9][a-zA-Z0-9-]{0,30}[a-zA-Z0-9])(\\.([a-zA-Z0-9]|[a-zA-Z0-9][a-zA-Z0-9-]{0,30}[a-zA-Z0-9])){0,2}")
+            .prop_map(|raw| {
+                HostName::new(raw).expect("regex yields valid HostName")
+            }),
+    ]
+}
+
 /// Strategy for generating edge case numbers
 fn edge_case_numbers() -> impl Strategy<Value = i64> {
     prop_oneof![
@@ -108,21 +215,24 @@ fn edge_case_u64() -> impl Strategy<Value = u64> {
     ]
 }
 
+fn valid_unix_timestamp(seconds: i64) -> Timestamp {
+    Timestamp::from_unix_timestamp(seconds).expect("fuzz timestamp fixture should be valid")
+}
+
 /// Strategy for generating problematic timestamps
 fn problematic_timestamps() -> impl Strategy<Value = Timestamp> {
     prop_oneof![
         // Unix epoch
-        Just(Timestamp::from_unix_timestamp(0).unwrap_or_else(Timestamp::now)),
+        Just(valid_unix_timestamp(0)),
         // Very early dates
-        Just(Timestamp::from_unix_timestamp(-2208988800).unwrap_or_else(Timestamp::now)), // 1900-01-01
+        Just(valid_unix_timestamp(-2208988800)), // 1900-01-01
         // Very far future dates
-        Just(Timestamp::from_unix_timestamp(4102444800).unwrap_or_else(Timestamp::now)), // 2100-01-01
+        Just(valid_unix_timestamp(4102444800)), // 2100-01-01
         // Edge of 32-bit time_t
-        Just(Timestamp::from_unix_timestamp(2147483647).unwrap_or_else(Timestamp::now)), // 2038-01-19
-        Just(Timestamp::from_unix_timestamp(-2147483648).unwrap_or_else(Timestamp::now)), // 1901-12-13
+        Just(valid_unix_timestamp(2147483647)),  // 2038-01-19
+        Just(valid_unix_timestamp(-2147483648)), // 1901-12-13
         // Random timestamps
-        (-2208988800i64..4102444800i64)
-            .prop_map(|ts| Timestamp::from_unix_timestamp(ts).unwrap_or_else(Timestamp::now)),
+        (-2208988800i64..4102444800i64).prop_map(valid_unix_timestamp),
     ]
 }
 
@@ -200,37 +310,11 @@ fn smoke_malformed_json_values() -> impl Strategy<Value = JsonValue> {
 }
 
 fn smoke_fuzzed_events() -> impl Strategy<Value = Event<JsonValue>> {
-    let sources = prop_oneof![
-        Just(EventSource::from_static("fs")),
-        Just(EventSource::from_static("clipboard")),
-        Just(EventSource::from_static("wm.hyprland")),
-        Just(EventSource::from_static("shell.kitty")),
-        regex_strategy("[a-z][a-z0-9_]{2,20}").prop_map(|raw| {
-            EventSource::new(raw).unwrap_or_else(|_| unreachable!("regex yields valid EventSource"))
-        }),
-    ];
-    let event_types = prop_oneof![
-        Just(EventType::from_static("file.created")),
-        Just(EventType::from_static("window.focused")),
-        Just(EventType::from_static("command.executed")),
-        Just(EventType::from_static("clipboard.copied")),
-        regex_strategy("[a-z][a-z0-9_-]{1,20}\\.[a-z][a-z0-9_-]{1,20}").prop_map(|raw| {
-            EventType::new(raw).unwrap_or_else(|_| unreachable!("regex yields valid EventType"))
-        }),
-    ];
-    let hosts = prop_oneof![
-        Just(HostName::from_static("localhost")),
-        Just(HostName::from_static("host-1")),
-        regex_strategy("([a-zA-Z0-9]|[a-zA-Z0-9][a-zA-Z0-9-]{0,30}[a-zA-Z0-9])(\\.([a-zA-Z0-9]|[a-zA-Z0-9][a-zA-Z0-9-]{0,30}[a-zA-Z0-9])){0,2}").prop_map(|raw| {
-            HostName::new(raw).unwrap_or_else(|_| unreachable!("regex yields valid HostName"))
-        }),
-    ];
-
     (
-        sources,
-        event_types,
+        fuzz_valid_event_sources(),
+        fuzz_valid_event_types(),
         problematic_timestamps(),
-        hosts,
+        fuzz_valid_hosts(),
         smoke_malformed_json_values(),
     )
         .prop_map(|(source, event_type, ts_orig, host, payload)| {
@@ -460,7 +544,7 @@ sinex_proptest! {
     fn test_event_creation_never_panics_with_fuzzed_data(
         event in smoke_fuzzed_events()
     ) -> TestResult<()> {
-        let _ = serde_json::to_string(&event);
+        prop_event_json_roundtrip(&event, "fuzzed event")?;
         let _ = event.source.as_str();
         let _ = event.event_type.as_str();
         let _ = event.host.as_str();
@@ -489,7 +573,7 @@ sinex_proptest! {
         );
         event.id = Some(Id::from_uuid(Uuid::now_v7()));
 
-        let _json_result = serde_json::to_string(&event);
+        prop_event_json_roundtrip(&event, "event robustness case")?;
         let _ = event.source.as_str();
         let _ = event.event_type.as_str();
         let _ = &event.payload;
@@ -520,7 +604,7 @@ sinex_proptest! {
         );
         event.id = Some(Id::from_uuid(Uuid::now_v7()));
 
-        let _json_result = serde_json::to_string(&event);
+        prop_event_json_roundtrip(&event, "event robustness case")?;
         let _ = event.source.as_str();
         let _ = event.event_type.as_str();
         let _ = &event.payload;
@@ -542,7 +626,7 @@ sinex_proptest! {
         );
         event.id = Some(Id::from_uuid(Uuid::now_v7()));
 
-        let _json_result = serde_json::to_string(&event);
+        prop_event_json_roundtrip(&event, "event robustness case")?;
         let _ = event.source.as_str();
         let _ = event.event_type.as_str();
         let _ = &event.payload;
@@ -573,7 +657,7 @@ sinex_proptest! {
         );
         event.id = Some(Id::from_uuid(Uuid::now_v7()));
 
-        let _json_result = serde_json::to_string(&event);
+        prop_event_json_roundtrip(&event, "event robustness case")?;
         let _ = event.source.as_str();
         let _ = event.event_type.as_str();
         let _ = &event.payload;
@@ -604,7 +688,7 @@ sinex_proptest! {
         );
         event.id = Some(Id::from_uuid(Uuid::now_v7()));
 
-        let _json_result = serde_json::to_string(&event);
+        prop_event_json_roundtrip(&event, "event robustness case")?;
         let _ = event.source.as_str();
         let _ = event.event_type.as_str();
         let _ = &event.payload;
@@ -622,10 +706,8 @@ sinex_proptest! {
         );
         event.id = Some(Id::from_uuid(Uuid::now_v7()));
 
-        let json_result = serde_json::to_string(&event);
-        let _ = json_result.is_ok();
-
-        let _ = serde_json::to_string_pretty(&event);
+        prop_event_json_roundtrip(&event, "malformed payload compact serialization")?;
+        prop_event_pretty_json_roundtrip(&event, "malformed payload pretty serialization")?;
         TestCaseResult::Ok(())
     }
 }
@@ -653,42 +735,67 @@ sinex_proptest! {
         event.id = Some(Id::from_uuid(Uuid::now_v7()));
         event.ts_orig = Some(timestamp);
 
-        // Verify the event can be serialized
-        let _json = serde_json::to_string(&event);
+        // Verify the event can be serialized.
+        prop_event_json_roundtrip(&event, "event with fuzzed timestamp")?;
         TestCaseResult::Ok(())
     }
 
-    // Test string handling robustness: source/event_type are now validated,
-    // so we filter to valid values and fuzz host/payload instead.
+    // Test string handling robustness with typed-valid domain identifiers and
+    // problematic text in payload, so every generated case exercises the event path.
     fn test_string_handling_robustness(
-        source in problematic_strings(),
-        event_type in problematic_strings(),
-        host in problematic_strings(),
+        source in fuzz_valid_event_sources(),
+        event_type in fuzz_valid_event_types(),
+        host in fuzz_valid_hosts(),
+        payload_text in problematic_strings(),
     ) -> TestResult<()> {
-        // Source and event_type are validated — skip invalid combinations
-        let Ok(source) = EventSource::new(source) else {
-            return TestCaseResult::Ok(());
-        };
-        let Ok(event_type) = EventType::new(event_type) else {
-            return TestCaseResult::Ok(());
-        };
         let mut event = event_fixture(
             source.clone(),
-            event_type,
-            serde_json::json!({}),
+            event_type.clone(),
+            serde_json::json!({ "fuzzed_text": payload_text }),
         );
-        let Ok(host) = HostName::new(host.clone()) else {
-            return TestCaseResult::Ok(());
-        };
         event.host = host.clone();
         event.id = Some(Id::from_uuid(Uuid::now_v7()));
 
-        // Test serialization with problematic strings in host/payload
-        let _json_result = serde_json::to_string(&event);
+        // Test serialization with problematic strings in payload.
+        prop_event_json_roundtrip(&event, "event with problematic payload strings")?;
 
-        // Verify validated source matches
+        // Verify validated identifiers survive event construction.
         prop_assert_eq!(event.source.as_str(), source.as_str());
+        prop_assert_eq!(event.event_type.as_str(), event_type.as_str());
         prop_assert_eq!(event.host.as_str(), host.as_str());
+        TestCaseResult::Ok(())
+    }
+
+    fn test_problematic_domain_strings_fail_loudly_or_normalize(
+        raw_source in problematic_strings(),
+        raw_event_type in problematic_strings(),
+        raw_host in problematic_strings(),
+    ) -> TestResult<()> {
+        match EventSource::new(raw_source.clone()) {
+            Ok(source) => {
+                prop_assert_eq!(source.as_str(), raw_source.as_str());
+                prop_assert!(!source.is_empty());
+            }
+            Err(error) => prop_assert!(!error.to_string().is_empty()),
+        }
+
+        match EventType::new(raw_event_type.clone()) {
+            Ok(event_type) => {
+                prop_assert_eq!(event_type.as_str(), raw_event_type.as_str());
+                prop_assert!(!event_type.is_empty());
+            }
+            Err(error) => prop_assert!(!error.to_string().is_empty()),
+        }
+
+        match HostName::new(raw_host.clone()) {
+            Ok(host) => {
+                let normalized = raw_host.to_lowercase();
+                prop_assert_eq!(host.as_str(), normalized.as_str());
+                prop_assert!(!host.is_empty());
+            }
+            Err(error) => prop_assert!(!error.to_string().is_empty()),
+        }
+
         TestCaseResult::Ok(())
     }
 }
@@ -741,25 +848,19 @@ async fn test_extreme_payload_serialization_handling() -> TestResult<()> {
             payload,
         );
 
-        // Test should not panic regardless of success or failure
-        // Focus on serialization since that's the critical path for storage handoff
-        let json_result = serde_json::to_string(&event);
-        match json_result {
-            Ok(json_str) => {
-                // If serialization succeeds, test deserialization too
-                let deserialize_result = serde_json::from_str::<Event<JsonValue>>(&json_str);
-                if deserialize_result.is_err() {
-                    // Log for debugging but don't fail - the important thing is no panic
-                    eprintln!(
-                        "Warning: Event {i} failed to deserialize after successful serialization"
-                    );
-                }
-            }
-            Err(e) => {
-                // Serialization errors are acceptable - log for analysis
-                eprintln!("Event {i} serialization failed gracefully: {e}");
-            }
-        }
+        // Focus on serialization since that is the critical path for storage handoff.
+        let json_str = serde_json::to_string(&event)?;
+        let deserialized = serde_json::from_str::<Event<JsonValue>>(&json_str)?;
+        assert_eq!(
+            deserialized.source.as_str(),
+            event.source.as_str(),
+            "event {i} source should survive serialization round-trip"
+        );
+        assert_eq!(
+            deserialized.event_type.as_str(),
+            event.event_type.as_str(),
+            "event {i} type should survive serialization round-trip"
+        );
     }
     Ok(())
 }
@@ -788,8 +889,10 @@ mod additional_tests {
         assert!(HostName::new("test\0host".to_string()).is_err());
         event.id = Some(Id::from_uuid(Uuid::now_v7()));
 
-        // Serialization should still work for payloads with null bytes.
-        let _result = serde_json::to_string(&event);
+        // Serialization should still work for payloads with null bytes and preserve the payload.
+        let json_str = serde_json::to_string(&event)?;
+        let decoded = serde_json::from_str::<Event<JsonValue>>(&json_str)?;
+        assert_eq!(decoded.payload, event.payload);
 
         Ok(())
     }
@@ -812,9 +915,14 @@ mod additional_tests {
         );
         event.id = Some(Id::from_uuid(Uuid::now_v7()));
 
-        // Should handle large payloads gracefully (may succeed or fail, but shouldn't panic)
-        // Test serialization instead of database insertion
-        let _result = serde_json::to_string(&event);
+        // Large payloads should remain serializable instead of disappearing behind a panic-only smoke test.
+        let json_str = serde_json::to_string(&event)?;
+        let decoded = serde_json::from_str::<Event<JsonValue>>(&json_str)?;
+        assert_eq!(decoded.event_type.as_str(), event.event_type.as_str());
+        assert_eq!(
+            decoded.payload["huge_field"].as_str().map(str::len),
+            Some(10_000_000)
+        );
 
         Ok(())
     }
@@ -836,9 +944,10 @@ mod additional_tests {
         );
         event.id = Some(Id::from_uuid(Uuid::now_v7()));
 
-        // Should handle special float values gracefully
-        // Test serialization instead of database insertion
-        let _result = serde_json::to_string(&event);
+        // Special float payload values should remain serializable after serde_json normalization.
+        let json_str = serde_json::to_string(&event)?;
+        let decoded = serde_json::from_str::<Event<JsonValue>>(&json_str)?;
+        assert_eq!(decoded.payload, event.payload);
 
         Ok(())
     }
@@ -865,8 +974,12 @@ mod additional_tests {
             assert!(HostName::new("🦀".to_string()).is_err());
             event.id = Some(Id::from_uuid(Uuid::now_v7()));
 
-            // Test JSON serialization
-            let _json_result = serde_json::to_string(&event);
+            // Test JSON serialization and payload preservation.
+            let json_str = serde_json::to_string(&event)
+                .expect("pathological payload event should serialize to JSON");
+            let decoded = serde_json::from_str::<Event<JsonValue>>(&json_str)
+                .expect("pathological payload event should deserialize from JSON");
+            assert_eq!(decoded.payload, event.payload);
 
             // Test field access
             let _ = event.source.as_str();
@@ -874,8 +987,11 @@ mod additional_tests {
             let _ = event.host.as_str();
         });
 
-        // This should not panic
-        assert!(result.is_ok());
+        // This should not panic.
+        assert!(
+            result.is_ok(),
+            "valid event construction and serialization path should not panic"
+        );
         Ok(())
     }
 }

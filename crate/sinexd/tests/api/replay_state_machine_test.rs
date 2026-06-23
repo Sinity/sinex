@@ -137,7 +137,10 @@ async fn scope_normalized_filters_drop_empty_and_dedupe() -> Result<()> {
     assert_eq!(normalized.material_ids.as_ref().map(Vec::len), Some(2));
     assert_eq!(normalized.event_types.as_ref().map(Vec::len), Some(2));
     assert_eq!(
-        normalized.event_types.clone().unwrap_or_default(),
+        normalized
+            .event_types
+            .clone()
+            .expect("normalized replay scope should preserve event types"),
         vec!["file.created".to_string(), "file.modified".to_string()]
     );
 

@@ -57,7 +57,11 @@ fn response_error_message(response: &NativeResponse) -> Result<String> {
     Ok(response_value
         .get("error")
         .and_then(|value| value.as_str())
-        .unwrap_or_default()
+        .ok_or_else(|| {
+            sinex_primitives::SinexError::validation(format!(
+                "native response missing string error field: {response_value}"
+            ))
+        })?
         .to_string())
 }
 

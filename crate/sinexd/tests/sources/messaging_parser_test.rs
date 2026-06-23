@@ -412,26 +412,17 @@ async fn messenger_replay_produces_identical_occurrence_keys() {
 }
 
 // ---------------------------------------------------------------------------
-// AC: Email parser — DEFERRED
+// AC: Email parser lives outside this Messenger fixture
 // ---------------------------------------------------------------------------
 //
-// The email/mailbox parser (RFC 2822 Message-ID anchors + IMAP fallback) is
-// not yet implemented. The acceptance criteria for:
+// Messenger exports and email mailboxes are separate communication package modes.
+// Email Message-ID anchoring, IMAP fallback identity, replay idempotency, body and
+// attachment privacy, and provider cursor parsing are covered by the dedicated
+// email parser suites instead of this Messenger JSON fixture:
 //
-//   - Staged email fixture parses message metadata with Message-ID anchors
-//   - Missing/duplicate Message-ID falls back to IMAP (mailbox, uid_validity, uid)
-//   - Bus-First source path produces event_engine confirmations
-//
-// are owned by #1469 (`email.mailbox`). Keep this Messenger test file honest
-// about the communication-export history, but do not imply the closed
-// Messenger parser issue still owns missing email behavior.
-// When EmailParser is added to sinexd::sources::source_contracts::messaging,
-// tests should be added here covering:
-//   - parse minimal RFC 2822 message (From/To/Subject/Date/Message-ID)
-//   - Message-ID as occurrence key field
-//   - Missing Message-ID falls back to IMAP tuple
-//   - Duplicate Message-ID (two messages with same ID) falls back to IMAP
-//   - Body/attachment content not in raw payload (only metadata + char counts)
+//   - `crate/sinexd/tests/sources/email_mailbox_parser_test.rs`
+//   - `crate/sinexd/tests/sources/email_provider_cursor_parser_test.rs`
+//   - `crate/sinexd/src/sources/source_contracts/email.rs`
 
 // ---------------------------------------------------------------------------
 // Error handling

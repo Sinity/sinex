@@ -112,7 +112,7 @@ async fn material_event_projected_through_ledger(ctx: TestContext) -> TestResult
     )
     .fetch_one(&ctx.pool)
     .await?
-    .unwrap_or_default();
+    .expect("COUNT(*) projection query should always return a row");
     assert_eq!(
         projected_count, 1,
         "material event should project only once"

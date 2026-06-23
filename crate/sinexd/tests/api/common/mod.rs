@@ -315,7 +315,7 @@ pub struct LiveGateway {
     port: u16,
     token: String,
     _shutdown_tx: watch::Sender<bool>,
-    _handle: tokio::task::JoinHandle<()>,
+    _handle: tokio::task::JoinHandle<TestResult<()>>,
     _cert_file: NamedTempFile,
     _key_file: NamedTempFile,
     client: reqwest::Client,
@@ -372,13 +372,23 @@ impl LiveGateway {
         let services = ServiceContainer::new(&config).await?;
         let (shutdown_tx, shutdown_rx) = watch::channel(false);
         let handle = tokio::spawn(async move {
-            if let Err(e) = rpc_server::run(&config, services, shutdown_rx).await {
-                eprintln!("Gateway RPC server failed: {e:#}");
-            }
+            rpc_server::run(&config, services, shutdown_rx)
+                .await
+                .map_err(|error| color_eyre::eyre::eyre!("Gateway RPC server failed: {error:#}"))
         });
 
         let deadline = tokio::time::Instant::now() + Duration::from_secs(30);
         loop {
+            if handle.is_finished() {
+                match handle.await {
+                    Ok(Ok(())) => bail!("Gateway RPC server exited before port readiness"),
+                    Ok(Err(error)) => return Err(error),
+                    Err(error) => {
+                        bail!("Gateway RPC server panicked before port readiness: {error}")
+                    }
+                }
+            }
+
             match tokio::net::TcpStream::connect(format!("127.0.0.1:{port}")).await {
                 Ok(_) => break,
                 Err(_) if tokio::time::Instant::now() < deadline => {

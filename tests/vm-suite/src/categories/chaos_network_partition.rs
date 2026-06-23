@@ -8,7 +8,7 @@ use std::time::Duration;
 use color_eyre::eyre::Result;
 use sqlx::PgPool;
 
-use crate::runner::{TestOutcome, TestRunner};
+use crate::runner::{EvidenceKind, MissingEvidencePolicy, TestRunner};
 
 use super::chaos_support::{
     command_status, observed_event_count, report_event_count_increase, report_service_active,
@@ -51,15 +51,13 @@ fn skip_without_injected_partition(
     name: &str,
     partition: &NetworkPartitionState,
 ) -> bool {
-    if partition.partition_was_injected() {
-        false
-    } else {
-        runner.skip(
-            name,
-            "network partition was not fully injected; partition-specific behavior was not exercised",
-        );
-        true
-    }
+    !runner.require_evidence(
+        name,
+        EvidenceKind::FaultInjection,
+        partition.partition_was_injected(),
+        "network partition was not fully injected; partition-specific behavior was not exercised",
+        MissingEvidencePolicy::Skip,
+    )
 }
 
 fn skip_without_healed_partition(
@@ -67,15 +65,13 @@ fn skip_without_healed_partition(
     name: &str,
     partition: &NetworkPartitionState,
 ) -> bool {
-    if partition.partition_was_healed() {
-        false
-    } else {
-        runner.skip(
-            name,
-            "network partition was not injected and healed; post-heal behavior was not exercised",
-        );
-        true
-    }
+    !runner.require_evidence(
+        name,
+        EvidenceKind::FaultInjection,
+        partition.partition_was_healed(),
+        "network partition was not injected and healed; post-heal behavior was not exercised",
+        MissingEvidencePolicy::Skip,
+    )
 }
 
 async fn test_baseline_pipeline(runner: &mut TestRunner, pool: &PgPool) {
@@ -136,13 +132,15 @@ async fn test_partition_event_engine_survives(
     }
 
     if !failed_injections.is_empty() {
-        runner.record(
+        runner.require_evidence(
             name,
-            TestOutcome::EvidenceMissing,
+            EvidenceKind::FaultInjection,
+            false,
             &format!(
                 "network partition was not fully injected; failed commands: {}",
                 failed_injections.join("; ")
             ),
+            MissingEvidencePolicy::Block,
         );
         return;
     }
@@ -208,13 +206,15 @@ async fn test_partition_healed_event_engine_active(
     }
 
     if !failed_heals.is_empty() {
-        runner.record(
+        runner.require_evidence(
             name,
-            TestOutcome::EvidenceMissing,
+            EvidenceKind::FaultInjection,
+            false,
             &format!(
                 "network partition was injected but not fully healed; failed commands: {}",
                 failed_heals.join("; ")
             ),
+            MissingEvidencePolicy::Block,
         );
         return;
     }

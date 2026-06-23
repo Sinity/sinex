@@ -4,7 +4,7 @@ use std::time::{Duration, Instant};
 use color_eyre::eyre::{Context, Result};
 use sqlx::PgPool;
 
-use crate::runner::{TestOutcome, TestRunner};
+use crate::runner::{EvidenceKind, MissingEvidencePolicy, TestRunner};
 
 pub const WATCHED_DIR: &str = "/var/lib/sinex/watched";
 pub const SINEXD_SERVICE: &str = "sinexd";
@@ -24,10 +24,12 @@ pub async fn observed_event_count(
     match event_count(pool).await {
         Ok(count) => Some(count),
         Err(error) => {
-            runner.record(
+            runner.require_evidence(
                 name,
-                TestOutcome::EvidenceMissing,
+                EvidenceKind::Database,
+                false,
                 &format!("event count query failed: {error:#}"),
+                MissingEvidencePolicy::Block,
             );
             None
         }
@@ -57,10 +59,12 @@ pub fn report_watched_files_written(
     match write_watched_files(prefix, count, body) {
         Ok(()) => true,
         Err(error) => {
-            runner.record(
+            runner.require_evidence(
                 name,
-                TestOutcome::EvidenceMissing,
+                EvidenceKind::SourceMaterial,
+                false,
                 &format!("watched-file fixture write failed: {error:#}"),
+                MissingEvidencePolicy::Block,
             );
             false
         }
@@ -147,10 +151,12 @@ where
             None
         }
         Err(error) => {
-            runner.record(
+            runner.require_evidence(
                 name,
-                TestOutcome::EvidenceMissing,
+                EvidenceKind::Database,
+                false,
                 &format!("event count query failed while waiting for new events: {error:#}"),
+                MissingEvidencePolicy::Block,
             );
             None
         }

@@ -1086,6 +1086,14 @@ struct ClosureMatrixItem {
 }
 
 #[derive(Debug, Clone, Serialize)]
+struct ClosureMatrixError {
+    source: String,
+    status: String,
+    text: String,
+    reason: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
 struct ClosureEvidenceManifestItem {
     source: String,
     ac_id: String,
@@ -1120,6 +1128,7 @@ struct ClosureVerificationReport {
     commands_passed: usize,
     commands_failed: usize,
     matrix_items_found: usize,
+    matrix_errors: Vec<ClosureMatrixError>,
     manifest_items_found: usize,
     manifest_errors: Vec<ClosureEvidenceManifestError>,
     overall_passed: bool,
@@ -1148,7 +1157,8 @@ fn execute_closure(
         )
         .collect::<Vec<_>>();
 
-    let manifest_errors = validate_closure_evidence_manifest(&evidence.manifest_items);
+    let matrix_errors = validate_closure_matrix_items(&evidence.matrix_items);
+    let manifest_errors = validate_closure_evidence_readiness(&evidence);
 
     if commands.is_empty() && evidence.matrix_items.is_empty() && evidence.manifest_items.is_empty()
     {
@@ -1160,6 +1170,7 @@ fn execute_closure(
             commands_passed: 0,
             commands_failed: 0,
             matrix_items_found: 0,
+            matrix_errors,
             manifest_items_found: 0,
             manifest_errors,
             overall_passed: false,
@@ -1202,6 +1213,12 @@ fn execute_closure(
             }
             for item in &evidence.matrix_items {
                 println!("  [{}] [{}] {}", item.source, item.status, item.text);
+            }
+            for error in &matrix_errors {
+                println!(
+                    "  [{}] matrix error [{}]: {} ({})",
+                    error.source, error.status, error.text, error.reason
+                );
             }
             for item in &evidence.manifest_items {
                 println!(
@@ -1248,7 +1265,8 @@ fn execute_closure(
     let commands_run = results.len();
     let commands_passed = results.iter().filter(|r| r.passed).count();
     let commands_failed = results.iter().filter(|r| !r.passed).count();
-    let overall_passed = commands_failed == 0 && manifest_errors.is_empty();
+    let overall_passed =
+        commands_failed == 0 && matrix_errors.is_empty() && manifest_errors.is_empty();
 
     let report = ClosureVerificationReport {
         issue,
@@ -1258,6 +1276,7 @@ fn execute_closure(
         commands_passed,
         commands_failed,
         matrix_items_found: evidence.matrix_items.len(),
+        matrix_errors: matrix_errors.clone(),
         manifest_items_found: evidence.manifest_items.len(),
         manifest_errors: manifest_errors.clone(),
         overall_passed,
@@ -1269,11 +1288,20 @@ fn execute_closure(
         println!("{}", serde_json::to_string_pretty(&report)?);
     } else if ctx.is_human() && !dry_run {
         println!(
-            "Issue #{issue}: {commands_passed}/{commands_run} passed{}",
+            "Issue #{issue}: {commands_passed}/{commands_run} passed{}{}",
             if commands_failed > 0 {
                 format!(", {commands_failed} FAILED")
             } else {
                 String::new()
+            },
+            if matrix_errors.is_empty() && manifest_errors.is_empty() {
+                String::new()
+            } else {
+                format!(
+                    ", {} closure matrix error(s), {} evidence manifest error(s)",
+                    matrix_errors.len(),
+                    manifest_errors.len()
+                )
             }
         );
     }
@@ -1285,7 +1313,8 @@ fn execute_closure(
         CommandResult::failure(crate::output::StructuredError::new(
             "CLOSURE_VERIFICATION_FAILED",
             format!(
-                "issue #{issue}: {commands_failed} verification command(s) failed, {} evidence manifest error(s)",
+                "issue #{issue}: {commands_failed} verification command(s) failed, {} closure matrix error(s), {} evidence manifest error(s)",
+                matrix_errors.len(),
                 manifest_errors.len()
             ),
         ))
@@ -1299,6 +1328,7 @@ fn execute_closure(
         .with_detail(format!("passed={commands_passed}"))
         .with_detail(format!("failed={commands_failed}"))
         .with_detail(format!("matrix_items={}", evidence.matrix_items.len()))
+        .with_detail(format!("matrix_errors={}", matrix_errors.len()))
         .with_detail(format!("manifest_items={}", evidence.manifest_items.len()))
         .with_detail(format!("manifest_errors={}", manifest_errors.len()))
         .with_data(serde_json::to_value(&report)?)
@@ -1614,6 +1644,43 @@ fn normalize_manifest_status(status: &str) -> String {
     }
 }
 
+fn validate_closure_evidence_readiness(
+    evidence: &ClosureEvidence,
+) -> Vec<ClosureEvidenceManifestError> {
+    let mut errors = validate_closure_evidence_manifest(&evidence.manifest_items);
+
+    if evidence.manifest_items.is_empty()
+        && (!evidence.commands.is_empty() || !evidence.matrix_items.is_empty())
+    {
+        let mut sources = evidence
+            .commands
+            .iter()
+            .map(|command| command.source.as_str())
+            .chain(
+                evidence
+                    .matrix_items
+                    .iter()
+                    .map(|item| item.source.as_str()),
+            )
+            .collect::<Vec<_>>();
+        sources.sort_unstable();
+        sources.dedup();
+
+        errors.push(ClosureEvidenceManifestError {
+            source: if sources.is_empty() {
+                "closure evidence".to_string()
+            } else {
+                sources.join(", ")
+            },
+            ac_id: None,
+            reason: "closure verification requires a Closure Evidence Manifest row mapping each satisfied AC to behavior/API/runtime/schema/test evidence"
+                .to_string(),
+        });
+    }
+
+    errors
+}
+
 fn validate_closure_evidence_manifest(
     items: &[ClosureEvidenceManifestItem],
 ) -> Vec<ClosureEvidenceManifestError> {
@@ -1711,6 +1778,35 @@ fn manifest_error(
         ac_id: (!item.ac_id.trim().is_empty()).then(|| item.ac_id.clone()),
         reason: reason.to_string(),
     }
+}
+
+fn validate_closure_matrix_items(items: &[ClosureMatrixItem]) -> Vec<ClosureMatrixError> {
+    items
+        .iter()
+        .filter_map(|item| closure_matrix_status_error(item))
+        .collect()
+}
+
+fn closure_matrix_status_error(item: &ClosureMatrixItem) -> Option<ClosureMatrixError> {
+    let status = item.status.trim().to_lowercase();
+    let reason = match status.as_str() {
+        "checked" | "satisfied" | "done" | "passed" | "deferred" | "misframed" => return None,
+        "" => "closure matrix item has no status",
+        "unchecked" => "unchecked acceptance criterion is not closed",
+        "failed" | "fail" => "failed acceptance criterion is not closed",
+        "required" => "required acceptance criterion still needs evidence or explicit deferral",
+        "todo" | "open" | "missing" => "open acceptance criterion is not closed",
+        "noted" => {
+            "unrecognized matrix table status; use Satisfied, Deferred, Misframed, or Failed"
+        }
+        _ => "unrecognized matrix status; use a supported closed/deferred status",
+    };
+    Some(ClosureMatrixError {
+        source: item.source.clone(),
+        status: item.status.clone(),
+        text: item.text.clone(),
+        reason: reason.to_string(),
+    })
 }
 
 fn extract_closure_matrix_items(body: &str, source: &str) -> Vec<ClosureMatrixItem> {
@@ -1847,7 +1943,12 @@ fn parse_closure_matrix_line(line: &str) -> Option<(String, String)> {
     if let Some(rest) = body.strip_prefix("[ ] ") {
         let text = rest.trim();
         let lower = text.to_lowercase();
-        let status = if lower.contains("defer") {
+        let status = if lower.contains("defer")
+            || lower.contains("tracked")
+            || lower.contains("owner")
+            || lower.contains("follow-up")
+            || lower.contains("out-of-scope")
+        {
             "deferred"
         } else if lower.contains("misframed") {
             "misframed"
@@ -2351,6 +2452,52 @@ Verification:
     }
 
     #[sinex_test]
+    async fn closure_matrix_validation_rejects_unchecked_and_failed_items()
+    -> ::xtask::sandbox::TestResult<()> {
+        let body = "## Acceptance Criteria Drift
+
+- [x] AC #1 satisfied by PR
+- [ ] AC #2 still missing
+- ❌ AC #3 failed in verification
+";
+        let items = extract_closure_matrix_items(body, "body");
+        let errors = validate_closure_matrix_items(&items);
+
+        assert_eq!(errors.len(), 2);
+        assert!(errors.iter().any(|error| error.status == "unchecked"));
+        assert!(errors.iter().any(|error| error.status == "failed"));
+        assert!(
+            errors
+                .iter()
+                .any(|error| error.reason.contains("not closed")),
+            "matrix errors must explain why closure is blocked: {errors:?}"
+        );
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn closure_matrix_validation_allows_checked_deferred_and_misframed_items()
+    -> ::xtask::sandbox::TestResult<()> {
+        let body = "## Acceptance Matrix
+
+- [x] AC #1 satisfied by PR
+- [ ] AC #2 tracked by follow-up #123
+- [ ] AC #3 misframed; replaced by #124
+";
+        let items = extract_closure_matrix_items(body, "comment[0]");
+        let statuses = items
+            .iter()
+            .map(|item| item.status.as_str())
+            .collect::<Vec<_>>();
+        assert_eq!(statuses, vec!["checked", "deferred", "misframed"]);
+        assert!(
+            validate_closure_matrix_items(&items).is_empty(),
+            "checked, deferred, and misframed rows are explicit closure states"
+        );
+        Ok(())
+    }
+
+    #[sinex_test]
     async fn extract_closure_matrix_items_reports_markdown_table_status()
     -> ::xtask::sandbox::TestResult<()> {
         let body = "\
@@ -2473,6 +2620,77 @@ Acceptance matrix:
             "comment[0]@2026-06-21T00:00:00Z"
         );
         assert!(validate_closure_evidence_manifest(&evidence.manifest_items).is_empty());
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn closure_evidence_readiness_rejects_commands_without_manifest()
+    -> ::xtask::sandbox::TestResult<()> {
+        let evidence = ClosureEvidence {
+            commands: vec![ClosureCommand {
+                command: "xtask check -p xtask".to_string(),
+                source: "comment[0]".to_string(),
+            }],
+            matrix_items: Vec::new(),
+            manifest_items: Vec::new(),
+        };
+
+        let errors = validate_closure_evidence_readiness(&evidence);
+        assert_eq!(errors.len(), 1);
+        assert_eq!(errors[0].source, "comment[0]");
+        assert!(
+            errors[0].reason.contains("Closure Evidence Manifest row"),
+            "commands-only closeout must ask for AC-to-behavior evidence: {errors:?}"
+        );
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn closure_evidence_readiness_rejects_matrix_without_manifest()
+    -> ::xtask::sandbox::TestResult<()> {
+        let evidence = ClosureEvidence {
+            commands: Vec::new(),
+            matrix_items: vec![ClosureMatrixItem {
+                source: "body".to_string(),
+                status: "checked".to_string(),
+                text: "AC-1 satisfied by PR".to_string(),
+            }],
+            manifest_items: Vec::new(),
+        };
+
+        let errors = validate_closure_evidence_readiness(&evidence);
+        assert_eq!(errors.len(), 1);
+        assert_eq!(errors[0].source, "body");
+        assert!(
+            errors[0].reason.contains("Closure Evidence Manifest row"),
+            "matrix-only closeout must map AC claims to behavior evidence: {errors:?}"
+        );
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn closure_evidence_readiness_accepts_behavior_manifest_without_commands()
+    -> ::xtask::sandbox::TestResult<()> {
+        let evidence = ClosureEvidence {
+            commands: Vec::new(),
+            matrix_items: Vec::new(),
+            manifest_items: vec![ClosureEvidenceManifestItem {
+                source: "body".to_string(),
+                ac_id: "AC-1".to_string(),
+                status: "satisfied".to_string(),
+                evidence_kind: "runtime".to_string(),
+                surface: "replay fake runtime integration test".to_string(),
+                evidence: "fake scan runtime failures propagate through the join helper"
+                    .to_string(),
+                command: Some("xtask test -p sinexd -E 'test(replay_control)'".to_string()),
+                artifact: None,
+            }],
+        };
+
+        assert!(
+            validate_closure_evidence_readiness(&evidence).is_empty(),
+            "manifest rows that name behavior surfaces should satisfy readiness"
+        );
         Ok(())
     }
 
