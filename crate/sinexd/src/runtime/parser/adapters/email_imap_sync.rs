@@ -255,6 +255,12 @@ pub struct NativeImapSyncClientConfig {
     pub port: u16,
     pub username: String,
     pub password: String,
+    /// OAuth2 access token for SASL `XOAUTH2` authentication. When set, the
+    /// client authenticates with `XOAUTH2` (required by Gmail and other modern
+    /// IMAP providers that have disabled password auth) instead of `LOGIN`;
+    /// `password` is then unused.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub access_token: Option<String>,
     #[serde(default = "default_native_imap_mailbox")]
     pub mailbox: String,
     #[serde(default = "default_native_imap_tls_mode")]
@@ -273,6 +279,25 @@ fn default_native_imap_tls_mode() -> NativeImapTlsMode {
 
 fn default_native_imap_idle_timeout_ms() -> u64 {
     30_000
+}
+
+/// SASL `XOAUTH2` authenticator. `async_imap` base64-encodes the response we
+/// return, so `process` yields the raw `user=...\x01auth=Bearer <token>\x01\x01`
+/// initial client response.
+struct XOAuth2Authenticator {
+    username: String,
+    access_token: String,
+}
+
+impl async_imap::Authenticator for &XOAuth2Authenticator {
+    type Response = String;
+
+    fn process(&mut self, _challenge: &[u8]) -> Self::Response {
+        format!(
+            "user={}\x01auth=Bearer {}\x01\x01",
+            self.username, self.access_token
+        )
+    }
 }
 
 /// Reqwest-equivalent native IMAP client used by email mailbox operations.
@@ -300,10 +325,22 @@ impl NativeImapSyncClient {
             .await
             .map_err(|error| NativeImapSyncError::new("read greeting", error))?
             .ok_or_else(|| NativeImapSyncError::message("IMAP server closed before greeting"))?;
-        let mut session = client
-            .login(&self.config.username, &self.config.password)
-            .await
-            .map_err(|(error, _client)| NativeImapSyncError::new("login", error))?;
+        let mut session = match &self.config.access_token {
+            Some(access_token) => {
+                let authenticator = XOAuth2Authenticator {
+                    username: self.config.username.clone(),
+                    access_token: access_token.clone(),
+                };
+                client
+                    .authenticate("XOAUTH2", &authenticator)
+                    .await
+                    .map_err(|(error, _client)| NativeImapSyncError::new("authenticate", error))?
+            }
+            None => client
+                .login(&self.config.username, &self.config.password)
+                .await
+                .map_err(|(error, _client)| NativeImapSyncError::new("login", error))?,
+        };
         let mailbox = match request.mode {
             ImapSyncMode::Scheduled => match session.select_condstore(&request.mailbox).await {
                 Ok(mailbox) => mailbox,
