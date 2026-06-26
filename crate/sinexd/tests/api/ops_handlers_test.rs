@@ -2215,6 +2215,102 @@ async fn ops_start_records_gmail_oauth_rejected_for_invalid_grant(
 }
 
 #[sinex_test]
+async fn ops_start_materializes_gmail_attachments_with_oauth_refresh(
+    ctx: TestContext,
+) -> TestResult<()> {
+    let token_server = OAuthTokenFixtureServer::start_success("test-token").await?;
+    let api_server = GmailFixtureServer::start().await?;
+    let dir = tempfile::tempdir()?;
+    let (client_id_file, client_secret_file, refresh_token_file) =
+        write_gmail_oauth_cred_files(dir.path()).await?;
+    let auth = system_auth();
+
+    // Sync first so a Gmail projection row with an outstanding attachment exists.
+    let sync: OpsStartResponse = serde_json::from_value(
+        handle_ops_start(
+            ctx.pool(),
+            json!({
+                "operation_type": "email.mailbox.sync",
+                "scope": {
+                    "source_id": "email.mailbox",
+                    "mode_id": "source:email.mailbox.gmail-api-scheduled-sync",
+                    "account_binding_ref": "operator-mailbox:oauth-materialize",
+                    "gmail_oauth_client_id_file": client_id_file.clone(),
+                    "gmail_oauth_client_secret_file": client_secret_file.clone(),
+                    "gmail_oauth_refresh_token_file": refresh_token_file.clone(),
+                    "gmail_oauth_token_url": token_server.token_url(),
+                    "gmail_api_base_url": api_server.base_url(),
+                    "label_ids": ["INBOX"],
+                    "page_size": 10
+                },
+            }),
+            &auth,
+        )
+        .await?,
+    )?;
+    assert_eq!(sync.operation.result_status, OperationStatus::Success);
+
+    let projections = ctx
+        .pool()
+        .email_mailbox_projections()
+        .list_current_by_source_mode(
+            "email.mailbox",
+            "source:email.mailbox.gmail-api-scheduled-sync",
+        )
+        .await?;
+    let gmail_row = projections
+        .iter()
+        .find(|row| row.message_id.as_deref() == Some("m-1"))
+        .expect("Gmail projection row should exist after OAuth sync");
+
+    // Materialize attachments through the OAuth credentials — no static token.
+    let fetch: OpsStartResponse = serde_json::from_value(
+        handle_ops_start(
+            ctx.pool(),
+            json!({
+                "operation_type": "email.mailbox.fetch-attachments",
+                "scope": {
+                    "source_id": "email.mailbox",
+                    "mode_id": "source:email.mailbox.gmail-api-scheduled-sync",
+                    "account_binding_ref": "operator-mailbox:oauth-materialize",
+                    "message_key": gmail_row.message_key.clone(),
+                    "gmail_oauth_client_id_file": client_id_file,
+                    "gmail_oauth_client_secret_file": client_secret_file,
+                    "gmail_oauth_refresh_token_file": refresh_token_file.clone(),
+                    "gmail_oauth_token_url": token_server.token_url(),
+                    "gmail_api_base_url": api_server.base_url(),
+                    "attachment_material_policy_ref": "operator.email-mailbox.attachment-private"
+                },
+            }),
+            &auth,
+        )
+        .await?,
+    )?;
+    assert_eq!(fetch.operation.result_status, OperationStatus::Success);
+    let fetch_scope = fetch
+        .operation
+        .scope
+        .as_ref()
+        .expect("Gmail OAuth materialization scope");
+    assert_eq!(
+        fetch_scope["executor_state"],
+        "email_attachment_materialized"
+    );
+    assert_eq!(fetch_scope["materialized_attachment_count"], 1);
+    assert_eq!(
+        fetch_scope["materialized_attachments"][0]["source"],
+        "gmail_api_raw_message"
+    );
+    // The refresh token must not leak into the recorded materialization scope.
+    let scope_text = serde_json::to_string(fetch_scope)?;
+    assert!(
+        !scope_text.contains("test-refresh-token"),
+        "refresh token leaked into materialization scope: {scope_text}"
+    );
+    Ok(())
+}
+
+#[sinex_test]
 async fn ops_start_records_gmail_rate_limit_backoff_state(ctx: TestContext) -> TestResult<()> {
     let server = GmailFixtureServer::start_rate_limited().await?;
     let dir = tempfile::tempdir()?;
