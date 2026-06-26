@@ -39,6 +39,24 @@ struct MediaWorkerCommandOutcome {
     summary: serde_json::Value,
     failure_message: Option<String>,
     duration_ms: Option<i32>,
+    /// Structured capture-debt entry recorded on failure/timeout/model-missing
+    /// so the local-model-batch outcome is visible as operator debt rather than
+    /// an opaque error.
+    debt: Option<serde_json::Value>,
+}
+
+/// Build a capture-debt entry for a media local-model-batch failure mode.
+fn media_capture_debt(
+    kind: &'static str,
+    reason: impl Into<String>,
+    required_action: &'static str,
+) -> serde_json::Value {
+    serde_json::json!({
+        "kind": kind,
+        "reason": reason.into(),
+        "required_action": required_action,
+        "debt_ref": format!("debt:media.local_model_batch.{kind}"),
+    })
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -124,6 +142,12 @@ pub(super) async fn execute_worker_output(
             "executor_state".to_string(),
             serde_json::json!(MEDIA_WORKER_COMMAND_FAILED_STATE),
         );
+        if let Some(budget) = worker_output.summary.get("worker_budget") {
+            scope.insert("worker_budget".to_string(), budget.clone());
+        }
+        if let Some(debt) = &worker_output.debt {
+            scope.insert("capture_debt".to_string(), debt.clone());
+        }
         let preview = preview_summary
             .as_object_mut()
             .expect("package operation preview is an object");
@@ -131,6 +155,9 @@ pub(super) async fn execute_worker_output(
             "executor_state".to_string(),
             serde_json::json!(MEDIA_WORKER_COMMAND_FAILED_STATE),
         );
+        if let Some(debt) = &worker_output.debt {
+            preview.insert("capture_debt".to_string(), debt.clone());
+        }
         preview.insert("worker_command".to_string(), worker_output.summary);
         return Ok(Some(MediaWorkerOutputResult {
             status: OperationStatus::Failed,
@@ -139,6 +166,7 @@ pub(super) async fn execute_worker_output(
         }));
     }
 
+    let success_budget = worker_output.summary.get("worker_budget").cloned();
     let worker_output = worker_output
         .output
         .expect("successful media worker resolution should include output");
@@ -214,6 +242,9 @@ pub(super) async fn execute_worker_output(
         "executor_state".to_string(),
         serde_json::json!(worker_output.executor_state),
     );
+    if let Some(budget) = success_budget {
+        scope.insert("worker_budget".to_string(), budget);
+    }
     scope.insert(
         "worker_output_material_id".to_string(),
         serde_json::json!(material_record.id.to_string()),
@@ -303,6 +334,7 @@ async fn resolve_media_worker_output(
         summary: serde_json::json!({ "kind": "direct_worker_output" }),
         failure_message: None,
         duration_ms: None,
+        debt: None,
     }))
 }
 
@@ -311,19 +343,49 @@ async fn execute_media_worker_command(
     preview_summary: &mut serde_json::Value,
 ) -> Result<MediaWorkerCommandOutcome> {
     let started = Instant::now();
-    let mut child = Command::new(&request.program)
+    let spawn_result = Command::new(&request.program)
         .args(&request.args)
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .kill_on_drop(true)
-        .spawn()
-        .map_err(|error| {
-            SinexError::io("Failed to spawn media worker command")
+        .spawn();
+    let mut child = match spawn_result {
+        Ok(child) => child,
+        // A missing model/worker binary is operator debt (install the model),
+        // not an internal error — surface it as model_unavailable.
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            let mut summary = serde_json::json!({
+                "program": request.program,
+                "args": request.args,
+                "timeout_ms": request.timeout().as_millis(),
+                "duration_ms": elapsed_millis(started),
+                "timed_out": false,
+                "model_available": false,
+            });
+            summary["worker_budget"] = worker_budget_block(&request, elapsed_millis(started), false);
+            return Ok(MediaWorkerCommandOutcome {
+                output: None,
+                summary,
+                failure_message: Some(format!(
+                    "media_capture; media worker program '{}' was not found",
+                    request.program
+                )),
+                duration_ms: Some(elapsed_millis(started)),
+                debt: Some(media_capture_debt(
+                    "model_unavailable",
+                    format!("worker program '{}' not found on PATH", request.program),
+                    "install_or_configure_model",
+                )),
+            });
+        }
+        Err(error) => {
+            return Err(SinexError::io("Failed to spawn media worker command")
                 .with_context("program", request.program.clone())
                 .with_std_error(&error)
-                .with_operation("ops.start")
-        })?;
+                .with_operation("ops.start"));
+        }
+    };
 
     let stdout = child.stdout.take().ok_or_else(|| {
         SinexError::io("Failed to capture media worker stdout").with_operation("ops.start")
@@ -370,7 +432,9 @@ async fn execute_media_worker_command(
         "timed_out": timed_out,
         "stdout_bytes": stdout_bytes,
         "stderr_bytes": stderr_bytes,
+        "model_available": true,
     });
+    summary["worker_budget"] = worker_budget_block(&request, duration_ms, timed_out);
     if let Some(status) = status {
         summary["exit_code"] = status
             .code()
@@ -383,6 +447,11 @@ async fn execute_media_worker_command(
                     "media_capture; media worker command exited with status {status}"
                 )),
                 duration_ms: Some(duration_ms),
+                debt: Some(media_capture_debt(
+                    "worker_failed",
+                    format!("worker command exited with status {status}"),
+                    "retry_or_inspect_worker_logs",
+                )),
             });
         }
     }
@@ -392,6 +461,14 @@ async fn execute_media_worker_command(
             summary,
             failure_message: Some("media_capture; media worker command timed out".to_string()),
             duration_ms: Some(duration_ms),
+            debt: Some(media_capture_debt(
+                "worker_timeout",
+                format!(
+                    "worker did not finish within {}ms budget",
+                    request.timeout().as_millis()
+                ),
+                "increase_timeout_or_retry",
+            )),
         });
     }
 
@@ -424,6 +501,29 @@ async fn execute_media_worker_command(
         summary,
         failure_message: None,
         duration_ms: Some(duration_ms),
+        debt: None,
+    })
+}
+
+/// Worker resource-budget block (timeout utilization, queue depth) surfaced for
+/// local-model-batch coverage.
+fn worker_budget_block(
+    request: &MediaWorkerCommandRequest,
+    duration_ms: i32,
+    timed_out: bool,
+) -> serde_json::Value {
+    let timeout_ms = request.timeout().as_millis();
+    let utilization_pct = if timeout_ms > 0 {
+        ((u128::from(duration_ms.max(0).unsigned_abs()) * 100) / timeout_ms).min(100)
+    } else {
+        0
+    };
+    serde_json::json!({
+        "timeout_ms": timeout_ms,
+        "duration_ms": duration_ms,
+        "utilization_pct": utilization_pct,
+        "over_budget": timed_out,
+        "queue_depth": 1,
     })
 }
 
