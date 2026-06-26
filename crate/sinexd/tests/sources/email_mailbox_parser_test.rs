@@ -133,3 +133,87 @@ Subject: Body from line\n\
     assert_eq!(messages[0].payload["folder"], "Inbox");
     Ok(())
 }
+
+#[sinex_test]
+async fn rfc822_drop_missing_message_id_falls_back_to_material_identity()
+-> xtask::sandbox::TestResult<()> {
+    let mut parser = EmailMailboxParser;
+    let eml = b"Date: Sat, 01 Jan 2022 00:00:00 +0000\n\
+From: Sender <sender@example.com>\n\
+To: Receiver <receiver@example.com>\n\
+Subject: No message id here\n\
+\n\
+Body without a Message-ID header.\n";
+    let record = record_for(eml, "drop/no-message-id.eml");
+
+    let intents = parser.parse_record(record, &test_ctx()).await?;
+    let messages: Vec<_> = intents
+        .iter()
+        .filter(|intent| intent.event_type.as_str() == "email.message.received")
+        .collect();
+
+    assert_eq!(messages.len(), 1);
+    // A drop-staged `.eml` with no Message-ID must still get a stable occurrence
+    // identity. The fallback for the RFC822 drop format is the logical source
+    // file, so duplicates and replay stay addressable without a Message-ID.
+    assert!(
+        messages[0].payload["message_id"].is_null(),
+        "missing Message-ID should stay null in the payload: {}",
+        messages[0].payload
+    );
+    assert_eq!(messages[0].payload["mailbox_format"], "rfc822-drop-staged");
+    assert_eq!(
+        occurrence_field(messages[0], "message_id_or_material"),
+        Some("drop/no-message-id.eml"),
+        "missing Message-ID must fall back to the source-file material identity"
+    );
+    Ok(())
+}
+
+#[sinex_test]
+async fn rfc822_drop_replay_preserves_occurrence_identity() -> xtask::sandbox::TestResult<()> {
+    // Re-reading the same staged bytes at the same logical path (a replay) must
+    // produce the same occurrence identity so the archive/replay cascade can
+    // relate the fresh interpretation to the one it supersedes. The event `id`
+    // differs across replay by design; the occurrence key does not.
+    let eml = b"Message-ID: <replay-1@example.com>\n\
+Date: Sat, 01 Jan 2022 00:00:00 +0000\n\
+From: Sender <sender@example.com>\n\
+To: Receiver <receiver@example.com>\n\
+Subject: Replay me\n\
+\n\
+Stable body.\n";
+
+    let mut first_parser = EmailMailboxParser;
+    let first = first_parser
+        .parse_record(record_for(eml, "drop/replay.eml"), &test_ctx())
+        .await?;
+    let mut second_parser = EmailMailboxParser;
+    let second = second_parser
+        .parse_record(record_for(eml, "drop/replay.eml"), &test_ctx())
+        .await?;
+
+    let occurrence_of = |intents: &[sinex_primitives::parser::ParsedEventIntent]| {
+        intents
+            .iter()
+            .find(|intent| intent.event_type.as_str() == "email.message.received")
+            .and_then(|intent| intent.occurrence_key.clone())
+            .map(|key| key.fields)
+    };
+
+    let first_key = occurrence_of(&first).expect("first parse should produce a message occurrence");
+    let second_key =
+        occurrence_of(&second).expect("second parse should produce a message occurrence");
+    assert_eq!(
+        first_key, second_key,
+        "replay of identical staged bytes must yield an identical occurrence key"
+    );
+    assert!(
+        first_key
+            .iter()
+            .any(|(field, value)| field == "message_id_or_material"
+                && value == "replay-1@example.com"),
+        "occurrence key should be anchored on the present Message-ID: {first_key:?}"
+    );
+    Ok(())
+}

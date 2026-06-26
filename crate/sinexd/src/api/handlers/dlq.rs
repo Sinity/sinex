@@ -1077,6 +1077,279 @@ mod tests {
     }
 
     #[sinex_test]
+    async fn email_disclosure_policy_covers_subject_recipients_attachments_and_dlq_previews(
+        ctx: TestContext,
+    ) -> TestResult<()> {
+        // Field-scoped View disclosure: subject (scalar), Bcc (array element),
+        // and attachment filename (different event type) must redact in rendered
+        // event cards/snippets without an operator opting every field in globally.
+        ctx.pool()
+            .privacy_policy()
+            .add_rule(
+                "email-subject-secret",
+                "test field-scoped disclosure policy for email subjects",
+                "regex",
+                r"email_secret_subject_[A-Za-z0-9_]+",
+                false,
+                "redact",
+                Some("<EMAIL_SUBJECT>"),
+                "default",
+            )
+            .await?;
+        ctx.pool()
+            .privacy_policy()
+            .bind_field_rule(
+                "email-subject-secret",
+                Some("email"),
+                Some("email.message.received"),
+                Some("subject"),
+                0,
+            )
+            .await?;
+        ctx.pool()
+            .privacy_policy()
+            .add_rule(
+                "email-bcc-secret",
+                "test field-scoped disclosure policy for email Bcc recipients",
+                "regex",
+                r"email_secret_recipient_[A-Za-z0-9_]+",
+                false,
+                "redact",
+                Some("<EMAIL_BCC>"),
+                "default",
+            )
+            .await?;
+        ctx.pool()
+            .privacy_policy()
+            .bind_field_rule(
+                "email-bcc-secret",
+                Some("email"),
+                Some("email.message.received"),
+                Some("bcc"),
+                0,
+            )
+            .await?;
+        ctx.pool()
+            .privacy_policy()
+            .add_rule(
+                "email-attachment-name-secret",
+                "test field-scoped disclosure policy for email attachment filenames",
+                "regex",
+                r"email_secret_attach_[A-Za-z0-9_]+",
+                false,
+                "redact",
+                Some("<EMAIL_ATTACHMENT>"),
+                "default",
+            )
+            .await?;
+        ctx.pool()
+            .privacy_policy()
+            .bind_field_rule(
+                "email-attachment-name-secret",
+                Some("email"),
+                Some("email.attachment.observed"),
+                Some("filename"),
+                0,
+            )
+            .await?;
+        // Global DLQ disclosure: provider material previews and raw subject/body
+        // bytes that surface in a dead-letter preview must redact even though the
+        // failed payload is untyped JSON.
+        ctx.pool()
+            .privacy_policy()
+            .add_rule(
+                "email-dlq-provider-secret",
+                "test global disclosure policy for email provider material in DLQ previews",
+                "regex",
+                r"email_secret_provider_[A-Za-z0-9_]+",
+                false,
+                "redact",
+                Some("<EMAIL_PROVIDER>"),
+                "default",
+            )
+            .await?;
+        ctx.pool()
+            .privacy_policy()
+            .bind_field_rule("email-dlq-provider-secret", None, None, None, 0)
+            .await?;
+        ctx.pool()
+            .privacy_policy()
+            .add_rule(
+                "email-dlq-subject-secret",
+                "test global disclosure policy for email subjects in DLQ previews",
+                "regex",
+                r"email_secret_subject_[A-Za-z0-9_]+",
+                false,
+                "redact",
+                Some("<EMAIL_SUBJECT>"),
+                "default",
+            )
+            .await?;
+        ctx.pool()
+            .privacy_policy()
+            .bind_field_rule("email-dlq-subject-secret", None, None, None, 0)
+            .await?;
+
+        let policy = PolicyEngine::load(ctx.pool().clone()).await?;
+        let material_id = Id::<SourceMaterial>::from_uuid(Uuid::from_u128(0x1469));
+        let subject_token = "email_secret_subject_alpha123";
+        let bcc_token = "email_secret_recipient_bravo456";
+        let attachment_token = "email_secret_attach_charlie789";
+        let provider_token = "email_secret_provider_delta000";
+
+        let message_event = DynamicPayload::new(
+            "email",
+            "email.message.received",
+            json!({
+                "message_id": "<msg-1469@example.test>",
+                "date": "2026-06-24T09:00:00Z",
+                "from": ["sender@example.test"],
+                "to": ["primary@example.test"],
+                "cc": [],
+                "bcc": [format!("hidden+{bcc_token}@example.test")],
+                "subject": format!("quarterly numbers {subject_token}"),
+                "in_reply_to": null,
+                "references": [],
+                "list_id": null,
+                "folder": "INBOX",
+                "source_file": "inbox.mbox",
+                "raw_material_id": "raw-email-1469",
+                "mailbox_format": "rfc822",
+                "maildir_subdir": null,
+                "maildir_flags": [],
+                "maildir_stable_filename": null,
+                "mbox_file": null,
+                "mbox_byte_start": null,
+                "mbox_byte_end": null,
+                "size_bytes": 2048,
+                "body_bytes": 1024,
+                "attachment_count": 1
+            }),
+        )
+        .from_material(material_id)
+        .build()?;
+        let attachment_event = DynamicPayload::new(
+            "email",
+            "email.attachment.observed",
+            json!({
+                "message_id": "<msg-1469@example.test>",
+                "folder": "INBOX",
+                "source_file": "inbox.mbox",
+                "raw_material_id": "raw-email-1469",
+                "mailbox_format": "rfc822",
+                "attachment_index": 0,
+                "disposition": "attachment",
+                "filename": format!("{attachment_token}.pdf"),
+                "content_type": "application/pdf",
+                "content_id": null,
+                "material_policy_ref": "policy.email.attachment.deferred"
+            }),
+        )
+        .from_material(material_id)
+        .build()?;
+
+        let cards = event_card_list_with_policy(
+            &[
+                QueryResultEvent {
+                    event: message_event,
+                    relevance_score: Some(1.0),
+                    snippet: Some(format!("subject match: {subject_token}; bcc {bcc_token}")),
+                },
+                QueryResultEvent {
+                    event: attachment_event,
+                    relevance_score: Some(1.0),
+                    snippet: Some(format!("attachment match {attachment_token}.pdf")),
+                },
+            ],
+            &policy,
+        )
+        .await;
+        let cards_json = serde_json::to_string(&cards)?;
+
+        for token in [subject_token, bcc_token, attachment_token] {
+            assert!(
+                !cards_json.contains(token),
+                "email event cards/snippets must not leak fixture token {token}: {cards_json}"
+            );
+        }
+        for replacement in ["<EMAIL_SUBJECT>", "<EMAIL_BCC>", "<EMAIL_ATTACHMENT>"] {
+            assert!(
+                cards_json.contains(replacement),
+                "email event cards should show replacement label {replacement}: {cards_json}"
+            );
+        }
+        assert_eq!(cards.cards.len(), 2);
+        for card in &cards.cards {
+            assert_eq!(card.privacy_state.state, PrivacyStateKind::Redacted);
+            assert!(
+                card.caveats
+                    .iter()
+                    .any(|caveat| caveat.id == "policy.disclosure_applied"),
+                "email card redaction must be caveated: {:?}",
+                card.caveats
+            );
+        }
+
+        let dlq_payload = format!(
+            r#"{{
+            "original_subject": "dev.sinex.events.raw.email.message",
+            "original_payload": {{
+                "source": "email",
+                "event_type": "email.message.received",
+                "subject": "quarterly numbers {subject_token}",
+                "provider_material": {{
+                    "source": "imap_provider_body_snapshot",
+                    "raw_message_preview": "From: ceo@example.test\nSecret token {provider_token}"
+                }}
+            }}
+        }}"#
+        );
+        let preview = payload_preview(&dlq_payload, 600, &policy).await;
+
+        assert!(preview.redacted);
+        for token in [subject_token, provider_token] {
+            assert!(
+                !preview.text.contains(token),
+                "email DLQ preview must not leak fixture token {token}: {}",
+                preview.text
+            );
+        }
+        for replacement in ["<EMAIL_SUBJECT>", "<EMAIL_PROVIDER>"] {
+            assert!(
+                preview.text.contains(replacement),
+                "email DLQ preview must show replacement {replacement}: {}",
+                preview.text
+            );
+        }
+        assert!(
+            preview
+                .caveats
+                .iter()
+                .any(|caveat| caveat.id == "policy.disclosure_applied"),
+            "email DLQ redaction must be caveated: {:?}",
+            preview.caveats
+        );
+        assert!(
+            preview.caveats.iter().any(|caveat| caveat
+                .ref_
+                .as_ref()
+                .is_some_and(|ref_| ref_.id == "db.email-dlq-provider-secret")),
+            "email DLQ redaction must name the provider-material policy: {:?}",
+            preview.caveats
+        );
+        assert!(
+            preview.caveats.iter().any(|caveat| caveat
+                .ref_
+                .as_ref()
+                .is_some_and(|ref_| ref_.id == "db.email-dlq-subject-secret")),
+            "email DLQ redaction must name the subject policy: {:?}",
+            preview.caveats
+        );
+
+        Ok(())
+    }
+
+    #[sinex_test]
     async fn payload_preview_redacts_raw_dlq_secret_bytes_by_db_policy(
         ctx: TestContext,
     ) -> TestResult<()> {
