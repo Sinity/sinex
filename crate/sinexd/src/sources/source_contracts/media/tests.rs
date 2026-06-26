@@ -353,6 +353,96 @@ async fn audio_manifest_emits_transcription_run_and_propagates_segment_provenanc
 }
 
 #[sinex_test]
+async fn transcription_rerun_with_different_model_keeps_recording_occurrence_but_new_producer_run()
+-> TestResult<()> {
+    // Issue #1043 identity invariant: a model rerun with a different
+    // model/version produces a new ProducerRun (and new derived identity) but
+    // does NOT create a new raw-material occurrence for the recording itself.
+    // Two manifests describe the SAME recording material (same material id +
+    // duration) but different transcription runs/models.
+    let material_id = Id::new();
+    let recording_block = r#""recording": { "format": "flac", "duration_ms": 4100 }"#;
+    let manifest = |run_id: &str, model: &str| {
+        format!(
+            "{{ {recording_block},
+               \"transcription_run\": {{
+                 \"producer_run_id\": \"{run_id}\",
+                 \"model_id\": \"{model}\",
+                 \"input_material_ids\": [\"raw-audio-shared\"]
+               }},
+               \"segments\": [ {{\"text\":\"shared audio\",\"start_ms\":0,\"end_ms\":4100}} ]
+             }}"
+        )
+        .into_bytes()
+    };
+    let record_with_shared_material = |bytes: Vec<u8>| SourceRecord {
+        material_id,
+        anchor: MaterialAnchor::ByteRange {
+            start: 0,
+            len: bytes.len() as u64,
+        },
+        bytes,
+        logical_path: Some(Utf8PathBuf::from("audio/shared/manifest.json")),
+        source_ts_hint: None,
+        metadata: Value::Null,
+    };
+
+    let mut parser = MediaAudioTranscriptParser;
+    let first = parser
+        .parse_record(
+            record_with_shared_material(manifest("transcribe-run-a", "whisper-large-v3")),
+            &test_ctx("media.audio-transcript"),
+        )
+        .await?;
+    let second = parser
+        .parse_record(
+            record_with_shared_material(manifest("transcribe-run-b", "whisper-medium")),
+            &test_ctx("media.audio-transcript"),
+        )
+        .await?;
+
+    let occurrence_of = |intents: &[ParsedEventIntent], event_type: &str| {
+        intents
+            .iter()
+            .find(|intent| intent.event_type.as_str() == event_type)
+            .and_then(|intent| intent.occurrence_key.clone())
+            .map(|key| key.fields)
+    };
+
+    // The recording is the same real-world occurrence across both runs.
+    let first_recording = occurrence_of(&first, "media.audio.recording_observed")
+        .expect("first parse should emit a recording observation");
+    let second_recording = occurrence_of(&second, "media.audio.recording_observed")
+        .expect("second parse should emit a recording observation");
+    assert_eq!(
+        first_recording, second_recording,
+        "a model rerun must not change the raw recording occurrence identity"
+    );
+
+    // The transcription runs are distinct producer-run identities.
+    let first_run = occurrence_of(&first, "media.audio.transcription_run_observed")
+        .expect("first parse should emit a transcription run observation");
+    let second_run = occurrence_of(&second, "media.audio.transcription_run_observed")
+        .expect("second parse should emit a transcription run observation");
+    assert_ne!(
+        first_run, second_run,
+        "a different model/run must produce a distinct ProducerRun occurrence"
+    );
+    let segment_run_id = |intents: &[ParsedEventIntent]| {
+        intents
+            .iter()
+            .find(|intent| intent.event_type.as_str() == "media.audio.transcript_segment_observed")
+            .map(|intent| intent.payload["producer_run_id"].clone())
+    };
+    assert_ne!(
+        segment_run_id(&first),
+        segment_run_id(&second),
+        "derived segments must carry the rerun's producer_run_id"
+    );
+    Ok(())
+}
+
+#[sinex_test]
 async fn ocr_json_segments_emit_bbox_observations() -> TestResult<()> {
     let mut parser = MediaScreenOcrParser;
     let record = record_for(

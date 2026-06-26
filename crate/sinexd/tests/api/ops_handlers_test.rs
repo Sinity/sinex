@@ -851,6 +851,90 @@ async fn ops_start_records_media_worker_command_failure_without_raw_output(
 }
 
 #[sinex_test]
+async fn ops_start_records_media_worker_command_timeout_without_raw_output(
+    ctx: TestContext,
+) -> TestResult<()> {
+    // A bounded media worker that exceeds its timeout budget must be killed and
+    // recorded as a failed operation. It must not admit material/events and must
+    // not persist raw stdout/stderr, even though the process was producing output.
+    let auth = system_auth();
+    let response: OpsStartResponse = serde_json::from_value(
+        handle_ops_start(
+            ctx.pool(),
+            json!({
+                "operation_type": "media.screen-ocr.run-ocr",
+                "scope": {
+                    "source_id": "media.screen-ocr",
+                    "mode_id": "source:media.screen-ocr.local-model-batch",
+                    "worker_command": {
+                        "program": "sh",
+                        "args": ["-c", "printf leaking-stdout; sleep 30"],
+                        "timeout_ms": 50
+                    }
+                },
+            }),
+            &auth,
+        )
+        .await?,
+    )?;
+
+    assert_eq!(response.operation.result_status, OperationStatus::Failed);
+    assert!(
+        response
+            .operation
+            .result_message
+            .as_deref()
+            .expect("timed-out media worker operation should record a result message")
+            .contains("media worker command timed out"),
+        "timeout result message should name the timeout: {:?}",
+        response.operation.result_message
+    );
+    assert!(
+        response.operation.duration_ms.is_some(),
+        "timed-out worker command operations should record elapsed execution time"
+    );
+    let scope = response
+        .operation
+        .scope
+        .as_ref()
+        .expect("timed-out media worker-command operation scope should be recorded");
+    assert_eq!(scope["executor_state"], "worker_command_failed");
+    assert!(
+        scope.get("worker_output_material_id").is_none(),
+        "timed-out worker command must not create admitted material"
+    );
+    assert!(
+        scope.get("worker_output_event_ids").is_none(),
+        "timed-out worker command must not create admitted events"
+    );
+    let preview = response
+        .operation
+        .preview_summary
+        .as_ref()
+        .expect("timed-out media worker-command preview should be recorded");
+    assert_eq!(preview["executor_state"], "worker_command_failed");
+    assert_eq!(
+        preview["worker_command"]["timed_out"], true,
+        "preview must mark the worker command as timed out"
+    );
+    assert!(
+        preview["worker_command"].get("exit_code").is_none()
+            || preview["worker_command"]["exit_code"].is_null(),
+        "a killed (timed-out) worker has no exit code: {}",
+        preview["worker_command"]
+    );
+    assert!(
+        preview["worker_command"].get("stdout").is_none(),
+        "timed-out previews must not persist raw stdout"
+    );
+    assert!(
+        preview["worker_command"].get("stderr").is_none(),
+        "timed-out previews must not persist raw stderr"
+    );
+    Ok(())
+}
+
+#[sinex_test]
 async fn ops_start_records_media_rebuild_invalidation_triggers(ctx: TestContext) -> TestResult<()> {
     let auth = system_auth();
     let response: OpsStartResponse = serde_json::from_value(
