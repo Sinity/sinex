@@ -385,6 +385,7 @@ async fn start_package_operation(
             pool,
             &spec,
             &mode_id,
+            actor,
             &mut scope,
             &mut preview_summary,
         )

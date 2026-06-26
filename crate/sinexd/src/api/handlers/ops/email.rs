@@ -8,6 +8,7 @@ use sinex_db::SourceMaterialRecord;
 use sinex_db::repositories::{
     EmailMailboxProjectionEvent, EmailMailboxProjectionRecord, EmailProviderStateUpsert,
 };
+use sinex_db::replay::state_machine::{ReplayScope, ReplayStateMachine};
 use sinex_primitives::Id;
 use sinex_primitives::SinexError;
 use sinex_primitives::Uuid;
@@ -19,6 +20,7 @@ pub(super) async fn execute_materialization_operation(
     pool: &PgPool,
     spec: &PackageOperationSpec,
     mode_id: &str,
+    actor: &str,
     scope: &mut serde_json::Map<String, serde_json::Value>,
     preview_summary: &mut serde_json::Value,
 ) -> Result<Option<EmailSyncExecutionResult>> {
@@ -50,6 +52,21 @@ pub(super) async fn execute_materialization_operation(
         }
         "email.mailbox.resume" => {
             execute_email_mailbox_pause_resume(pool, spec, mode_id, scope, preview_summary, false)
+                .await
+                .map(Some)
+        }
+        "email.mailbox.replay" => {
+            execute_email_mailbox_replay(pool, spec, actor, scope, preview_summary)
+                .await
+                .map(Some)
+        }
+        "email.mailbox.authorize" => {
+            execute_email_mailbox_authorize(pool, spec, mode_id, scope, preview_summary)
+                .await
+                .map(Some)
+        }
+        "email.mailbox.forget-account" => {
+            execute_email_mailbox_forget_account(pool, spec, mode_id, scope, preview_summary)
                 .await
                 .map(Some)
         }
@@ -1085,6 +1102,251 @@ async fn execute_email_mailbox_pause_resume(
     Ok(EmailSyncExecutionResult {
         status: OperationStatus::Success,
         message: format!("{}; mailbox binding {verb}", spec.surface),
+        duration_ms: Some(elapsed_millis(started)),
+    })
+}
+
+/// `email.mailbox.replay`: plan a generic replay operation scoped to the email
+/// source material. This does not reimplement replay — it creates a standard
+/// `Planning`-state replay operation through the same `ReplayStateMachine` the
+/// rest of the system uses, which the operator then drives through the existing
+/// replay control plane (preview/approve/execute, archive cascade, source-runtime
+/// re-read). Scoping by `source_id = email.mailbox` (optionally narrowed to a
+/// single `source_material_id`) routes execution through the email source host.
+async fn execute_email_mailbox_replay(
+    pool: &PgPool,
+    spec: &PackageOperationSpec,
+    actor: &str,
+    scope: &mut serde_json::Map<String, serde_json::Value>,
+    preview_summary: &mut serde_json::Value,
+) -> Result<EmailSyncExecutionResult> {
+    let started = Instant::now();
+    let source_material_id =
+        optional_scope_string(scope, "source_material_id").and_then(|raw| raw.parse::<Uuid>().ok());
+    let replay_scope = ReplayScope {
+        source_name: spec.source_id.to_string(),
+        source_id: Some(spec.source_id.to_string()),
+        source_material_id,
+        ..ReplayScope::default()
+    };
+    let operation = ReplayStateMachine::new(pool.clone())
+        .create_operation(replay_scope, actor.to_string())
+        .await?;
+
+    let executor_state = "email_mailbox_replay_planned";
+    let replay = serde_json::json!({
+        "replay_operation_id": operation.operation_id.to_string(),
+        "replay_state": operation.state,
+        "source_id": spec.source_id,
+        "source_material_id": source_material_id.map(|id| id.to_string()),
+        "next_step": "approve and execute via the replay control plane (e.g. sinexctl ops replay)",
+    });
+    scope.insert(
+        "executor_state".to_string(),
+        serde_json::json!(executor_state),
+    );
+    scope.insert("replay".to_string(), replay.clone());
+    let preview = preview_summary
+        .as_object_mut()
+        .expect("package operation preview is an object");
+    preview.insert(
+        "executor_state".to_string(),
+        serde_json::json!(executor_state),
+    );
+    preview.insert("replay".to_string(), replay);
+
+    Ok(EmailSyncExecutionResult {
+        status: OperationStatus::Success,
+        message: format!("{}; staged replay operation planned", spec.surface),
+        duration_ms: Some(elapsed_millis(started)),
+    })
+}
+
+/// `email.mailbox.authorize`: establish or refresh a provider account binding.
+/// Marks the binding `authorized`, records the operator-supplied secret ref, and
+/// clears any auth-failure remediation state (failure class / required action /
+/// provider failure) that a prior failed sync recorded. The actual secret
+/// material lives in the Sinnix secrets/deployment boundary (#1738); this
+/// operation records the operator's authorization posture, which the inspect
+/// surface and the sync auth-failure remediation flow consume.
+async fn execute_email_mailbox_authorize(
+    pool: &PgPool,
+    spec: &PackageOperationSpec,
+    mode_id: &str,
+    scope: &mut serde_json::Map<String, serde_json::Value>,
+    preview_summary: &mut serde_json::Value,
+) -> Result<EmailSyncExecutionResult> {
+    let started = Instant::now();
+    let account_binding_ref = optional_scope_string(scope, "account_binding_ref")
+        .or_else(|| optional_scope_string(scope, "account_ref"))
+        .ok_or_else(|| {
+            SinexError::validation("email authorize requires an account binding")
+                .with_operation("ops.start")
+        })?;
+    let secret_ref = optional_scope_string(scope, "secret_ref");
+
+    let existing = pool
+        .email_provider_states()
+        .list_current_by_source(spec.source_id)
+        .await?
+        .into_iter()
+        .find(|state| state.mode_id == mode_id && state.account_binding_ref == account_binding_ref);
+
+    let provider = existing.as_ref().map_or_else(
+        || {
+            if mode_id.contains("gmail") {
+                "gmail".to_string()
+            } else {
+                "imap".to_string()
+            }
+        },
+        |state| state.provider.clone(),
+    );
+    let mailbox_scope = existing
+        .as_ref()
+        .map_or_else(|| "default".to_string(), |state| state.mailbox_scope.clone());
+    let mut provider_runtime = existing
+        .as_ref()
+        .map_or_else(|| serde_json::json!({}), |state| state.provider_runtime.clone());
+    if let Some(secret_ref) = &secret_ref
+        && let Some(object) = provider_runtime.as_object_mut()
+    {
+        object.insert("secret_ref".to_string(), serde_json::json!(secret_ref));
+    }
+
+    pool.email_provider_states()
+        .upsert(EmailProviderStateUpsert {
+            source_id: spec.source_id.to_string(),
+            mode_id: mode_id.to_string(),
+            provider: provider.clone(),
+            account_binding_ref: account_binding_ref.clone(),
+            mailbox_scope,
+            operation_id: Uuid::now_v7(),
+            result_status: OperationStatus::Success,
+            auth_state: "authorized".to_string(),
+            network_state: existing
+                .as_ref()
+                .map_or_else(|| "unknown".to_string(), |state| state.network_state.clone()),
+            sync_state: existing
+                .as_ref()
+                .map_or_else(|| "idle".to_string(), |state| state.sync_state.clone()),
+            rate_limit_state: existing
+                .as_ref()
+                .and_then(|state| state.rate_limit_state.clone()),
+            runtime_state_ref: existing.as_ref().map_or_else(
+                || format!("email.provider_runtime.{provider}"),
+                |state| state.runtime_state_ref.clone(),
+            ),
+            coverage_ref: existing.as_ref().map_or_else(
+                || format!("coverage:email.mailbox.{provider}.provider_runtime"),
+                |state| state.coverage_ref.clone(),
+            ),
+            debt_ref: existing.as_ref().map_or_else(
+                || format!("debt:email.mailbox.{provider}.provider_runtime"),
+                |state| state.debt_ref.clone(),
+            ),
+            // Authorizing clears any prior auth-failure remediation state.
+            failure_class: None,
+            required_action: None,
+            retry_after_secs: None,
+            reconnect_state: existing
+                .as_ref()
+                .and_then(|state| state.reconnect_state.clone()),
+            cursor_kind: existing.as_ref().and_then(|state| state.cursor_kind.clone()),
+            cursor_value: existing.as_ref().and_then(|state| state.cursor_value.clone()),
+            continuity_state: existing
+                .as_ref()
+                .and_then(|state| state.continuity_state.clone()),
+            provider_runtime,
+            provider_cursor: existing
+                .as_ref()
+                .and_then(|state| state.provider_cursor.clone()),
+            provider_failure: None,
+        })
+        .await?;
+
+    let executor_state = "email_mailbox_authorized";
+    let binding_state = serde_json::json!({
+        "account_binding_ref": account_binding_ref,
+        "mode_id": mode_id,
+        "auth_state": "authorized",
+        "secret_ref": secret_ref,
+        "refreshed_existing": existing.is_some(),
+    });
+    scope.insert(
+        "executor_state".to_string(),
+        serde_json::json!(executor_state),
+    );
+    scope.insert("binding_state".to_string(), binding_state.clone());
+    let preview = preview_summary
+        .as_object_mut()
+        .expect("package operation preview is an object");
+    preview.insert(
+        "executor_state".to_string(),
+        serde_json::json!(executor_state),
+    );
+    preview.insert("binding_state".to_string(), binding_state);
+
+    Ok(EmailSyncExecutionResult {
+        status: OperationStatus::Success,
+        message: format!("{}; account binding authorized", spec.surface),
+        duration_ms: Some(elapsed_millis(started)),
+    })
+}
+
+/// `email.mailbox.forget-account`: remove a provider account binding's tracked
+/// state (sync cursor / auth / health). Historical email events and source
+/// material are immutable and are intentionally NOT removed — forgetting an
+/// account stops tracking it, it does not erase the record. After forget, the
+/// inspect surface no longer reports the binding and the paused gate no longer
+/// matches it; a fresh sync would recreate the state.
+async fn execute_email_mailbox_forget_account(
+    pool: &PgPool,
+    spec: &PackageOperationSpec,
+    mode_id: &str,
+    scope: &mut serde_json::Map<String, serde_json::Value>,
+    preview_summary: &mut serde_json::Value,
+) -> Result<EmailSyncExecutionResult> {
+    let started = Instant::now();
+    let account_binding_ref = optional_scope_string(scope, "account_binding_ref")
+        .or_else(|| optional_scope_string(scope, "account_ref"))
+        .ok_or_else(|| {
+            SinexError::validation("email forget-account requires an account binding")
+                .with_operation("ops.start")
+        })?;
+
+    let removed = pool
+        .email_provider_states()
+        .delete_by_binding(spec.source_id, mode_id, &account_binding_ref)
+        .await?;
+
+    let executor_state = "email_mailbox_account_forgotten";
+    let report = serde_json::json!({
+        "account_binding_ref": account_binding_ref,
+        "mode_id": mode_id,
+        "provider_state_rows_removed": removed,
+        "retained": "historical email events and source material are immutable and are not removed by forget-account",
+    });
+    scope.insert(
+        "executor_state".to_string(),
+        serde_json::json!(executor_state),
+    );
+    scope.insert("forget_account".to_string(), report.clone());
+    let preview = preview_summary
+        .as_object_mut()
+        .expect("package operation preview is an object");
+    preview.insert(
+        "executor_state".to_string(),
+        serde_json::json!(executor_state),
+    );
+    preview.insert("forget_account".to_string(), report);
+
+    Ok(EmailSyncExecutionResult {
+        status: OperationStatus::Success,
+        message: format!(
+            "{}; account binding forgotten ({removed} provider-state row(s) removed)",
+            spec.surface
+        ),
         duration_ms: Some(elapsed_millis(started)),
     })
 }
