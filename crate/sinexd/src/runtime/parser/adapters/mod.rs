@@ -33,6 +33,7 @@ mod directory_walk;
 mod email_gmail_api;
 mod email_imap_sync;
 mod email_mbox_file;
+mod email_oauth;
 mod file_drop;
 mod incremental_dump;
 mod journalctl_stream;
@@ -74,6 +75,10 @@ pub use email_imap_sync::{
     NativeImapSyncClientConfig, NativeImapTlsMode,
 };
 pub use email_mbox_file::{EmailMboxFileAdapter, EmailMboxFileConfig, EmailMboxFileCursor};
+pub use email_oauth::{
+    GmailOAuthCredentials, GoogleOAuthClient, OAuthError, OAuthTokenExchange, OAuthTokenProvider,
+    OAuthTokenResponse,
+};
 pub use sqlite_row::{SqliteRowAdapter, SqliteRowConfig, SqliteRowCursor};
 #[cfg(all(feature = "messaging", test))]
 pub use sqlite_snapshot::SqliteSnapshotEvidence;

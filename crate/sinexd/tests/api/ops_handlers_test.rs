@@ -1096,7 +1096,7 @@ async fn ops_start_records_email_sync_for_provider_mode(ctx: TestContext) -> Tes
             .expect("provider runtime caveats should be an array")
             .iter()
             .any(|caveat| caveat
-                == "provider executor requires explicit gmail_token_file at operation start")
+                == "provider executor requires a gmail_token_file or OAuth refresh credentials at operation start")
     );
     assert_eq!(
         provider_runtime["runtime_observation_contract"]["account_binding_ref"],
@@ -2097,6 +2097,120 @@ async fn ops_start_records_gmail_provider_failure_for_missing_token_file(
     );
     assert_eq!(gmail_state.retry_after_secs, None);
     assert_eq!(gmail_state.reconnect_state, None);
+    Ok(())
+}
+
+#[sinex_test]
+async fn ops_start_executes_gmail_scheduled_sync_with_oauth_refresh(
+    ctx: TestContext,
+) -> TestResult<()> {
+    let token_server = OAuthTokenFixtureServer::start_success("test-token").await?;
+    let api_server = GmailFixtureServer::start().await?;
+    let dir = tempfile::tempdir()?;
+    let (client_id_file, client_secret_file, refresh_token_file) =
+        write_gmail_oauth_cred_files(dir.path()).await?;
+
+    let auth = system_auth();
+    let response: OpsStartResponse = serde_json::from_value(
+        handle_ops_start(
+            ctx.pool(),
+            json!({
+                "operation_type": "email.mailbox.sync",
+                "scope": {
+                    "source_id": "email.mailbox",
+                    "mode_id": "source:email.mailbox.gmail-api-scheduled-sync",
+                    "account_binding_ref": "operator-mailbox:oauth-primary",
+                    "gmail_oauth_client_id_file": client_id_file,
+                    "gmail_oauth_client_secret_file": client_secret_file,
+                    "gmail_oauth_refresh_token_file": refresh_token_file,
+                    "gmail_oauth_token_url": token_server.token_url(),
+                    "gmail_api_base_url": api_server.base_url(),
+                    "label_ids": ["INBOX"],
+                    "page_size": 10
+                },
+            }),
+            &auth,
+        )
+        .await?,
+    )?;
+
+    assert_eq!(response.operation.result_status, OperationStatus::Success);
+    let scope = response
+        .operation
+        .scope
+        .as_ref()
+        .expect("email provider operation scope should be recorded");
+    assert_eq!(scope["executor_state"], "gmail_api_sync_admitted");
+    assert_eq!(scope["gmail_sync_input"]["auth_source"], "oauth_refresh");
+    assert_eq!(
+        scope["gmail_sync_input"]["oauth"]["refresh_token_file_ref"].as_str(),
+        Some(refresh_token_file.as_str())
+    );
+    // A static token file was never supplied; the bearer came from OAuth refresh.
+    assert!(scope["gmail_sync_input"]["token_file_ref"].is_null());
+    assert_eq!(scope["provider_record_count"], 1);
+    assert_eq!(
+        scope["provider_runtime"]["runtime_observation_contract"]["auth_state"],
+        "authorized"
+    );
+    // Secret contents must never be recorded in the operation scope.
+    let scope_text = serde_json::to_string(scope)?;
+    assert!(
+        !scope_text.contains("test-refresh-token"),
+        "refresh token leaked into scope: {scope_text}"
+    );
+    assert!(
+        !scope_text.contains("test-client-secret"),
+        "client secret leaked into scope: {scope_text}"
+    );
+    Ok(())
+}
+
+#[sinex_test]
+async fn ops_start_records_gmail_oauth_rejected_for_invalid_grant(
+    ctx: TestContext,
+) -> TestResult<()> {
+    let token_server = OAuthTokenFixtureServer::start_invalid_grant().await?;
+    let dir = tempfile::tempdir()?;
+    let (client_id_file, client_secret_file, refresh_token_file) =
+        write_gmail_oauth_cred_files(dir.path()).await?;
+
+    let auth = system_auth();
+    let response: OpsStartResponse = serde_json::from_value(
+        handle_ops_start(
+            ctx.pool(),
+            json!({
+                "operation_type": "email.mailbox.sync",
+                "scope": {
+                    "source_id": "email.mailbox",
+                    "mode_id": "source:email.mailbox.gmail-api-scheduled-sync",
+                    "account_binding_ref": "operator-mailbox:oauth-rejected",
+                    "gmail_oauth_client_id_file": client_id_file,
+                    "gmail_oauth_client_secret_file": client_secret_file,
+                    "gmail_oauth_refresh_token_file": refresh_token_file,
+                    "gmail_oauth_token_url": token_server.token_url()
+                },
+            }),
+            &auth,
+        )
+        .await?,
+    )?;
+
+    // A revoked refresh token surfaces as Rejected auth state with a failed
+    // executor outcome — not a silent skip.
+    assert_eq!(response.operation.result_status, OperationStatus::Failed);
+    let scope = response
+        .operation
+        .scope
+        .as_ref()
+        .expect("failed Gmail OAuth operation scope should be recorded");
+    assert_eq!(scope["executor_state"], "gmail_api_sync_failed");
+    let runtime_contract = provider_runtime_contract(scope)?;
+    assert_eq!(
+        runtime_contract.auth_state,
+        EmailAuthorizationState::Rejected
+    );
+    assert_eq!(runtime_contract.network_state, EmailNetworkState::Online);
     Ok(())
 }
 
@@ -3266,6 +3380,79 @@ async fn ops_start_strips_provider_runtime_for_staged_email_mode(
         "staged email previews must not advertise provider cursor metadata"
     );
     Ok(())
+}
+
+/// Minimal OAuth2 token endpoint that returns a canned response, used to drive
+/// the Gmail OAuth refresh runtime in tests without contacting Google.
+struct OAuthTokenFixtureServer {
+    addr: std::net::SocketAddr,
+}
+
+impl OAuthTokenFixtureServer {
+    async fn start(status_line: &'static str, body: String) -> TestResult<Self> {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await?;
+        let addr = listener.local_addr()?;
+        tokio::spawn(async move {
+            while let Ok((mut stream, _)) = listener.accept().await {
+                let body = body.clone();
+                tokio::spawn(async move {
+                    let mut request = vec![0_u8; 4096];
+                    let _ = stream.read(&mut request).await;
+                    let response = format!(
+                        "{status_line}\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{body}",
+                        body.len()
+                    );
+                    let _ = stream.write_all(response.as_bytes()).await;
+                });
+            }
+        });
+        Ok(Self { addr })
+    }
+
+    async fn start_success(access_token: &str) -> TestResult<Self> {
+        Self::start(
+            "HTTP/1.1 200 OK",
+            json!({
+                "access_token": access_token,
+                "expires_in": 3600,
+                "token_type": "Bearer"
+            })
+            .to_string(),
+        )
+        .await
+    }
+
+    async fn start_invalid_grant() -> TestResult<Self> {
+        Self::start(
+            "HTTP/1.1 400 Bad Request",
+            json!({
+                "error": "invalid_grant",
+                "error_description": "Token has been expired or revoked."
+            })
+            .to_string(),
+        )
+        .await
+    }
+
+    fn token_url(&self) -> String {
+        format!("http://{}/token", self.addr)
+    }
+}
+
+async fn write_gmail_oauth_cred_files(
+    dir: &std::path::Path,
+) -> TestResult<(String, String, String)> {
+    let client_id = dir.join("gmail-oauth-client-id");
+    let client_secret = dir.join("gmail-oauth-client-secret");
+    let refresh_token = dir.join("gmail-oauth-refresh-token");
+    tokio::fs::write(&client_id, "test-client-id\n").await?;
+    tokio::fs::write(&client_secret, "test-client-secret\n").await?;
+    tokio::fs::write(&refresh_token, "test-refresh-token\n").await?;
+    Ok((
+        client_id.to_string_lossy().into_owned(),
+        client_secret.to_string_lossy().into_owned(),
+        refresh_token.to_string_lossy().into_owned(),
+    ))
 }
 
 struct GmailFixtureServer {
