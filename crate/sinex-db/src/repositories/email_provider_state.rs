@@ -244,4 +244,29 @@ impl EmailProviderStateRepository<'_> {
         .await
         .map_err(|error| db_error(error, "list email provider state"))
     }
+
+    /// Remove all provider-state rows for a binding (its sync cursor / auth /
+    /// health tracking). Used by `email.mailbox.forget-account`. Returns the
+    /// number of rows removed. Historical events and source material are not
+    /// touched — they are immutable and owned by `core.events` / `raw`.
+    pub async fn delete_by_binding(
+        &self,
+        source_id: &str,
+        mode_id: &str,
+        account_binding_ref: &str,
+    ) -> DbResult<u64> {
+        sqlx::query!(
+            r#"
+            DELETE FROM core.email_provider_state
+            WHERE source_id = $1 AND mode_id = $2 AND account_binding_ref = $3
+            "#,
+            source_id,
+            mode_id,
+            account_binding_ref
+        )
+        .execute(self.pool)
+        .await
+        .map(|result| result.rows_affected())
+        .map_err(|error| db_error(error, "delete email provider state by binding"))
+    }
 }
