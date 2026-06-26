@@ -43,7 +43,8 @@ use package::{
     EMAIL_IMAP_IDLE_LIVE_MODE_ID, EMAIL_IMAP_SCHEDULED_SYNC_MODE_ID,
     EMAIL_IMAP_SYNC_DEFAULT_BATCH_SIZE, EMAIL_IMAP_SYNC_DEFAULT_IDLE_TIMEOUT_MS,
     EMAIL_IMAP_SYNC_EXECUTOR_STATE, EMAIL_IMAP_SYNC_FAILED_EXECUTOR_STATE,
-    EMAIL_MAILDIR_STAGED_MODE_ID, EMAIL_MBOX_STAGED_MODE_ID, EMAIL_STAGED_MODE_IDS,
+    EMAIL_MAILDIR_STAGED_MODE_ID, EMAIL_MBOX_STAGED_MODE_ID, EMAIL_PROVIDER_MODE_IDS,
+    EMAIL_STAGED_MODE_IDS,
     EMAIL_STAGED_SYNC_DEFAULT_MAX_MESSAGE_BYTES, EMAIL_STAGED_SYNC_EXECUTOR_STATE,
     EmailProviderModeMetadata, EmailProviderOperationScope, EmailProviderRuntimeMode,
     PACKAGE_OPERATION_EXECUTOR_STATE, PackageOperationSpec, email_provider_authorization_state_ref,
@@ -257,6 +258,54 @@ async fn start_package_operation(
                 result_message: Some(media_result.message),
                 preview_summary: Some(preview_summary),
                 duration_ms: media_result.duration_ms,
+            },
+        )
+        .await;
+    }
+
+    // Paused-binding gate: a provider sync for a binding the operator has paused
+    // is skipped (Cancelled) before any provider work runs. The pause/resume
+    // operations and this gate key on the same canonical `account_binding_ref`.
+    if spec.surface == "email_capture"
+        && spec.operation_type == "email.mailbox.sync"
+        && EMAIL_PROVIDER_MODE_IDS.contains(&mode_id.as_str())
+        && let Some(account_binding_ref) = optional_scope_string(&scope, "account_binding_ref")
+        && pool
+            .email_provider_states()
+            .list_current_by_source(spec.source_id)
+            .await?
+            .iter()
+            .any(|state| {
+                state.mode_id == mode_id
+                    && state.account_binding_ref == account_binding_ref
+                    && state.sync_state == "paused"
+            })
+    {
+        let executor_state = "email_sync_skipped_paused";
+        scope.insert(
+            "executor_state".to_string(),
+            serde_json::json!(executor_state),
+        );
+        preview_summary
+            .as_object_mut()
+            .expect("package operation preview is an object")
+            .insert(
+                "executor_state".to_string(),
+                serde_json::json!(executor_state),
+            );
+        return log_package_operation(
+            pool,
+            DbOperation {
+                id: None,
+                operation_type: operation_type.to_string(),
+                operator: actor.to_string(),
+                scope: Some(serde_json::Value::Object(scope)),
+                result_status: OperationStatus::Cancelled,
+                result_message: Some(format!(
+                    "email_capture; sync skipped: binding {account_binding_ref} is paused"
+                )),
+                preview_summary: Some(preview_summary),
+                duration_ms: Some(0),
             },
         )
         .await;
