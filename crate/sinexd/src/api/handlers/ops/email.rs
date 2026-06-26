@@ -35,6 +35,11 @@ pub(super) async fn execute_materialization_operation(
                 .await
                 .map(Some)
         }
+        "email.mailbox.inspect" => {
+            execute_email_mailbox_inspect(pool, spec, mode_id, scope, preview_summary)
+                .await
+                .map(Some)
+        }
         _ => Ok(None),
     }
 }
@@ -820,6 +825,112 @@ async fn execute_email_projection_rebuild(
     Ok(EmailSyncExecutionResult {
         status: OperationStatus::Success,
         message: format!("{}; projection rebuild completed", spec.surface),
+        duration_ms: Some(elapsed_millis(started)),
+    })
+}
+
+/// Read-only `email.mailbox.inspect`: report the operator-visible posture of a
+/// mailbox binding — per-mode projection counts, outstanding attachment debt,
+/// and provider cursor/auth/health state — without mutating any state.
+async fn execute_email_mailbox_inspect(
+    pool: &PgPool,
+    spec: &PackageOperationSpec,
+    mode_id: &str,
+    scope: &mut serde_json::Map<String, serde_json::Value>,
+    preview_summary: &mut serde_json::Value,
+) -> Result<EmailSyncExecutionResult> {
+    let started = Instant::now();
+    let summaries = pool
+        .email_mailbox_projections()
+        .summarize_by_source(spec.source_id)
+        .await?;
+    let attachment_debt = pool
+        .email_mailbox_projections()
+        .list_attachment_debt(spec.source_id, mode_id, None)
+        .await?;
+    let outstanding_attachment_count: i64 = attachment_debt
+        .iter()
+        .map(|row| i64::from(row.attachment_count - row.attachment_observed_count))
+        .sum();
+    let provider_states = pool
+        .email_provider_states()
+        .list_current_by_source(spec.source_id)
+        .await?;
+
+    let modes: Vec<serde_json::Value> = summaries
+        .iter()
+        .map(|summary| {
+            serde_json::json!({
+                "mode_id": summary.mode_id,
+                "message_count": summary.message_count,
+                "thread_count": summary.thread_count,
+                "body_bytes": summary.body_bytes,
+                "attachment_count": summary.attachment_count,
+                "attachment_observed_count": summary.attachment_observed_count,
+                "outstanding_attachment_count":
+                    summary.attachment_count - summary.attachment_observed_count,
+                "last_observed_at": summary.last_observed_at.to_string(),
+            })
+        })
+        .collect();
+    let provider_state: Vec<serde_json::Value> = provider_states
+        .iter()
+        .map(|state| {
+            serde_json::json!({
+                "mode_id": state.mode_id,
+                "provider": state.provider,
+                "account_binding_ref": state.account_binding_ref,
+                "mailbox_scope": state.mailbox_scope,
+                "result_status": state.result_status.to_string(),
+                "auth_state": state.auth_state,
+                "network_state": state.network_state,
+                "sync_state": state.sync_state,
+                "rate_limit_state": state.rate_limit_state,
+                "cursor_kind": state.cursor_kind,
+                "cursor_value": state.cursor_value,
+                "continuity_state": state.continuity_state,
+                "failure_class": state.failure_class,
+                "required_action": state.required_action,
+                "retry_after_secs": state.retry_after_secs,
+            })
+        })
+        .collect();
+
+    let message_count: i64 = summaries.iter().map(|summary| summary.message_count).sum();
+    let thread_count: i64 = summaries.iter().map(|summary| summary.thread_count).sum();
+    let inspection = serde_json::json!({
+        "capability_issue": 1469,
+        "mode_id": mode_id,
+        "message_count": message_count,
+        "thread_count": thread_count,
+        "outstanding_attachment_count": outstanding_attachment_count,
+        "modes": modes,
+        "provider_state": provider_state,
+    });
+
+    let executor_state = "email_mailbox_inspected";
+    scope.insert(
+        "executor_state".to_string(),
+        serde_json::json!(executor_state),
+    );
+    scope.insert("inspection".to_string(), inspection.clone());
+
+    let preview = preview_summary
+        .as_object_mut()
+        .expect("package operation preview is an object");
+    preview.insert(
+        "executor_state".to_string(),
+        serde_json::json!(executor_state),
+    );
+    preview.insert("inspection".to_string(), inspection);
+    preview.insert(
+        "message".to_string(),
+        serde_json::json!("email mailbox inspection completed"),
+    );
+
+    Ok(EmailSyncExecutionResult {
+        status: OperationStatus::Success,
+        message: format!("{}; mailbox inspection completed", spec.surface),
         duration_ms: Some(elapsed_millis(started)),
     })
 }
