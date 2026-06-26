@@ -2846,6 +2846,67 @@ async fn ops_start_rejects_imap_attachment_fetch_without_material_policy(
 }
 
 #[sinex_test]
+async fn ops_start_executes_email_mailbox_inspect_reports_projection_posture(
+    ctx: TestContext,
+) -> TestResult<()> {
+    // `email.mailbox.inspect` is a read-only operator operation: it reports the
+    // mailbox posture (per-mode projection counts, outstanding attachment debt,
+    // provider state) and must complete as a real executed operation, not the
+    // generic awaiting-runtime-executor placeholder.
+    let mode_id = "source:email.mailbox.gmail-api-scheduled-sync";
+    seed_email_projection(&ctx, mode_id, "inspect-fixture", 2, 1).await?;
+
+    let auth = system_auth();
+    let response: OpsStartResponse = serde_json::from_value(
+        handle_ops_start(
+            ctx.pool(),
+            json!({
+                "operation_type": "email.mailbox.inspect",
+                "scope": {
+                    "source_id": "email.mailbox",
+                    "mode_id": mode_id,
+                    "account_ref": "operator-mailbox:primary"
+                },
+            }),
+            &auth,
+        )
+        .await?,
+    )?;
+
+    assert_eq!(response.operation.operation_type, "email.mailbox.inspect");
+    assert_eq!(response.operation.result_status, OperationStatus::Success);
+    let scope = response
+        .operation
+        .scope
+        .as_ref()
+        .expect("inspect operation scope should be recorded");
+    assert_eq!(scope["executor_state"], "email_mailbox_inspected");
+    let preview = response
+        .operation
+        .preview_summary
+        .as_ref()
+        .expect("inspect operation preview should be recorded");
+    assert_eq!(preview["executor_state"], "email_mailbox_inspected");
+    let inspection = &preview["inspection"];
+    assert!(
+        inspection["message_count"].as_i64().unwrap_or_default() >= 1,
+        "inspection should count the seeded message: {inspection}"
+    );
+    assert_eq!(
+        inspection["outstanding_attachment_count"], 1,
+        "seeded 2 declared / 1 observed attachment leaves one outstanding: {inspection}"
+    );
+    let modes = inspection["modes"]
+        .as_array()
+        .expect("inspection should report per-mode summaries");
+    assert!(
+        modes.iter().any(|mode| mode["mode_id"] == mode_id),
+        "inspection should include the seeded mode: {inspection}"
+    );
+    Ok(())
+}
+
+#[sinex_test]
 async fn ops_start_strips_provider_runtime_for_staged_email_mode(
     ctx: TestContext,
 ) -> TestResult<()> {
