@@ -2907,6 +2907,135 @@ async fn ops_start_executes_email_mailbox_inspect_reports_projection_posture(
 }
 
 #[sinex_test]
+async fn ops_start_pauses_and_resumes_email_provider_binding(
+    ctx: TestContext,
+) -> TestResult<()> {
+    let auth = system_auth();
+    let mode_id = "source:email.mailbox.gmail-api-scheduled-sync";
+    let account_ref = "operator-mailbox:primary";
+
+    let paused: OpsStartResponse = serde_json::from_value(
+        handle_ops_start(
+            ctx.pool(),
+            json!({
+                "operation_type": "email.mailbox.pause",
+                "scope": {"source_id": "email.mailbox", "mode_id": mode_id, "account_ref": account_ref},
+            }),
+            &auth,
+        )
+        .await?,
+    )?;
+    assert_eq!(paused.operation.result_status, OperationStatus::Success);
+    assert_eq!(
+        paused.operation.scope.as_ref().expect("pause scope")["executor_state"],
+        "email_mailbox_paused"
+    );
+
+    let states = ctx
+        .pool()
+        .email_provider_states()
+        .list_current_by_source("email.mailbox")
+        .await?;
+    let row = states
+        .iter()
+        .find(|state| state.mode_id == mode_id && state.account_binding_ref == account_ref)
+        .expect("pause should persist a provider-state row");
+    assert_eq!(row.sync_state, "paused");
+    assert_eq!(row.required_action.as_deref(), Some("resume"));
+
+    let resumed: OpsStartResponse = serde_json::from_value(
+        handle_ops_start(
+            ctx.pool(),
+            json!({
+                "operation_type": "email.mailbox.resume",
+                "scope": {"source_id": "email.mailbox", "mode_id": mode_id, "account_ref": account_ref},
+            }),
+            &auth,
+        )
+        .await?,
+    )?;
+    assert_eq!(resumed.operation.result_status, OperationStatus::Success);
+    assert_eq!(
+        resumed.operation.scope.as_ref().expect("resume scope")["executor_state"],
+        "email_mailbox_resumed"
+    );
+
+    let states = ctx
+        .pool()
+        .email_provider_states()
+        .list_current_by_source("email.mailbox")
+        .await?;
+    let row = states
+        .iter()
+        .find(|state| state.mode_id == mode_id && state.account_binding_ref == account_ref)
+        .expect("resume should keep the provider-state row");
+    assert_eq!(row.sync_state, "active");
+    assert!(
+        row.required_action.is_none(),
+        "resume clears the required action: {:?}",
+        row.required_action
+    );
+    Ok(())
+}
+
+#[sinex_test]
+async fn ops_start_skips_email_sync_when_binding_paused(ctx: TestContext) -> TestResult<()> {
+    let auth = system_auth();
+    let mode_id = "source:email.mailbox.gmail-api-scheduled-sync";
+    let account_ref = "operator-mailbox:primary";
+
+    let _paused: OpsStartResponse = serde_json::from_value(
+        handle_ops_start(
+            ctx.pool(),
+            json!({
+                "operation_type": "email.mailbox.pause",
+                "scope": {"source_id": "email.mailbox", "mode_id": mode_id, "account_ref": account_ref},
+            }),
+            &auth,
+        )
+        .await?,
+    )?;
+
+    let synced: OpsStartResponse = serde_json::from_value(
+        handle_ops_start(
+            ctx.pool(),
+            json!({
+                "operation_type": "email.mailbox.sync",
+                "scope": {
+                    "source_id": "email.mailbox",
+                    "mode_id": mode_id,
+                    "account_ref": account_ref,
+                    "gmail_history_id": "12345"
+                },
+            }),
+            &auth,
+        )
+        .await?,
+    )?;
+    assert_eq!(
+        synced.operation.result_status,
+        OperationStatus::Cancelled,
+        "sync of a paused binding must be skipped: {:?}",
+        synced.operation.result_message
+    );
+    assert!(
+        synced
+            .operation
+            .result_message
+            .as_deref()
+            .unwrap_or_default()
+            .contains("paused"),
+        "skip message should mention paused: {:?}",
+        synced.operation.result_message
+    );
+    assert_eq!(
+        synced.operation.scope.as_ref().expect("sync scope")["executor_state"],
+        "email_sync_skipped_paused"
+    );
+    Ok(())
+}
+
+#[sinex_test]
 async fn ops_start_strips_provider_runtime_for_staged_email_mode(
     ctx: TestContext,
 ) -> TestResult<()> {
