@@ -662,6 +662,15 @@ const PACKAGE_OPERATION_SPECS: &[PackageOperationSpec] = &[
         executor_message: EMAIL_STAGED_REPLAY_MESSAGE,
     },
     PackageOperationSpec {
+        operation_type: "email.mailbox.forget-account",
+        source_id: "email.mailbox",
+        default_mode_id: None,
+        accepted_mode_ids: EMAIL_PROVIDER_MODE_IDS,
+        action: "forget_account",
+        surface: "email_capture",
+        executor_message: EMAIL_PROVIDER_CONTROL_MESSAGE,
+    },
+    PackageOperationSpec {
         operation_type: "email.mailbox.fetch-attachments",
         source_id: "email.mailbox",
         default_mode_id: None,

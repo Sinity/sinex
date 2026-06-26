@@ -3036,6 +3036,181 @@ async fn ops_start_skips_email_sync_when_binding_paused(ctx: TestContext) -> Tes
 }
 
 #[sinex_test]
+async fn ops_start_plans_email_mailbox_replay_operation(ctx: TestContext) -> TestResult<()> {
+    // email.mailbox.replay delegates to the generic replay state machine: it
+    // creates a standard Planning-state replay operation scoped to the email
+    // source material, which the operator then drives through the replay control
+    // plane. It does not reimplement archive/re-read.
+    let auth = system_auth();
+    let mode_id = "source:email.mailbox.mbox-staged";
+    let response: OpsStartResponse = serde_json::from_value(
+        handle_ops_start(
+            ctx.pool(),
+            json!({
+                "operation_type": "email.mailbox.replay",
+                "scope": {"source_id": "email.mailbox", "mode_id": mode_id},
+            }),
+            &auth,
+        )
+        .await?,
+    )?;
+
+    assert_eq!(response.operation.operation_type, "email.mailbox.replay");
+    assert_eq!(response.operation.result_status, OperationStatus::Success);
+    let preview = response
+        .operation
+        .preview_summary
+        .as_ref()
+        .expect("replay preview should be recorded");
+    assert_eq!(preview["executor_state"], "email_mailbox_replay_planned");
+    let replay = &preview["replay"];
+    assert_eq!(replay["source_id"], "email.mailbox");
+    assert_eq!(
+        replay["replay_state"], "Planning",
+        "a freshly created replay operation is in the planning state: {replay}"
+    );
+    let operation_id = replay["replay_operation_id"]
+        .as_str()
+        .expect("a planned replay operation id should be recorded");
+    let operation_id =
+        uuid::Uuid::parse_str(operation_id).expect("replay operation id should be a UUID");
+
+    // The generic replay state machine actually knows about the operation.
+    let loaded = sinex_db::replay::state_machine::ReplayStateMachine::new(ctx.pool().clone())
+        .load_operation(operation_id)
+        .await?;
+    assert_eq!(loaded.scope.source_id.as_deref(), Some("email.mailbox"));
+    Ok(())
+}
+
+#[sinex_test]
+async fn ops_start_authorizes_email_provider_binding_and_clears_remediation(
+    ctx: TestContext,
+) -> TestResult<()> {
+    let auth = system_auth();
+    let mode_id = "source:email.mailbox.gmail-api-scheduled-sync";
+    let account_ref = "operator-mailbox:primary";
+
+    // Pause first so the binding carries a required-action to be cleared.
+    let _paused: OpsStartResponse = serde_json::from_value(
+        handle_ops_start(
+            ctx.pool(),
+            json!({
+                "operation_type": "email.mailbox.pause",
+                "scope": {"source_id": "email.mailbox", "mode_id": mode_id, "account_ref": account_ref},
+            }),
+            &auth,
+        )
+        .await?,
+    )?;
+
+    let authorized: OpsStartResponse = serde_json::from_value(
+        handle_ops_start(
+            ctx.pool(),
+            json!({
+                "operation_type": "email.mailbox.authorize",
+                "scope": {
+                    "source_id": "email.mailbox",
+                    "mode_id": mode_id,
+                    "account_ref": account_ref,
+                    "secret_ref": "agenix:gmail-oauth-token"
+                },
+            }),
+            &auth,
+        )
+        .await?,
+    )?;
+    assert_eq!(authorized.operation.result_status, OperationStatus::Success);
+    assert_eq!(
+        authorized.operation.scope.as_ref().expect("authorize scope")["executor_state"],
+        "email_mailbox_authorized"
+    );
+
+    let states = ctx
+        .pool()
+        .email_provider_states()
+        .list_current_by_source("email.mailbox")
+        .await?;
+    let row = states
+        .iter()
+        .find(|state| state.mode_id == mode_id && state.account_binding_ref == account_ref)
+        .expect("authorize should persist a provider-state row");
+    assert_eq!(row.auth_state, "authorized");
+    assert!(
+        row.required_action.is_none(),
+        "authorize clears the prior remediation action: {:?}",
+        row.required_action
+    );
+    Ok(())
+}
+
+#[sinex_test]
+async fn ops_start_forgets_email_provider_account_keeping_history(
+    ctx: TestContext,
+) -> TestResult<()> {
+    let auth = system_auth();
+    let mode_id = "source:email.mailbox.gmail-api-scheduled-sync";
+    let account_ref = "operator-mailbox:primary";
+
+    // Establish a binding to forget.
+    let _authorized: OpsStartResponse = serde_json::from_value(
+        handle_ops_start(
+            ctx.pool(),
+            json!({
+                "operation_type": "email.mailbox.authorize",
+                "scope": {"source_id": "email.mailbox", "mode_id": mode_id, "account_ref": account_ref},
+            }),
+            &auth,
+        )
+        .await?,
+    )?;
+    let before = ctx
+        .pool()
+        .email_provider_states()
+        .list_current_by_source("email.mailbox")
+        .await?;
+    assert!(
+        before
+            .iter()
+            .any(|state| state.mode_id == mode_id && state.account_binding_ref == account_ref),
+        "binding should exist before forget"
+    );
+
+    let forgotten: OpsStartResponse = serde_json::from_value(
+        handle_ops_start(
+            ctx.pool(),
+            json!({
+                "operation_type": "email.mailbox.forget-account",
+                "scope": {"source_id": "email.mailbox", "mode_id": mode_id, "account_ref": account_ref},
+            }),
+            &auth,
+        )
+        .await?,
+    )?;
+    assert_eq!(forgotten.operation.result_status, OperationStatus::Success);
+    let preview = forgotten
+        .operation
+        .preview_summary
+        .as_ref()
+        .expect("forget preview should be recorded");
+    assert_eq!(preview["executor_state"], "email_mailbox_account_forgotten");
+    assert_eq!(preview["forget_account"]["provider_state_rows_removed"], 1);
+
+    let after = ctx
+        .pool()
+        .email_provider_states()
+        .list_current_by_source("email.mailbox")
+        .await?;
+    assert!(
+        !after
+            .iter()
+            .any(|state| state.mode_id == mode_id && state.account_binding_ref == account_ref),
+        "binding should be removed after forget"
+    );
+    Ok(())
+}
+
+#[sinex_test]
 async fn ops_start_strips_provider_runtime_for_staged_email_mode(
     ctx: TestContext,
 ) -> TestResult<()> {
