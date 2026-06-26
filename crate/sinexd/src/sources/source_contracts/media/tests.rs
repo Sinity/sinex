@@ -443,6 +443,71 @@ async fn transcription_rerun_with_different_model_keeps_recording_occurrence_but
 }
 
 #[sinex_test]
+async fn transcript_json_segment_missing_text_is_rejected() -> TestResult<()> {
+    // #1043 admission: a malformed transcript segment (no text) must be rejected
+    // at parse time, not silently admitted as an empty observation.
+    let mut parser = MediaAudioTranscriptParser;
+    let record = record_for(
+        br#"{"segments":[{"start_ms":0,"end_ms":100}]}"#,
+        "transcripts/missing-text.json",
+    );
+
+    let result = parser
+        .parse_record(record, &test_ctx("media.audio-transcript"))
+        .await;
+
+    let err = result.expect_err("a transcript segment without text must be rejected");
+    assert!(
+        format!("{err:?}").contains("missing text field"),
+        "rejection should name the missing text field: {err:?}"
+    );
+    Ok(())
+}
+
+#[sinex_test]
+async fn transcript_json_non_object_segment_is_rejected() -> TestResult<()> {
+    // A non-object segment entry is malformed input and must be rejected.
+    let mut parser = MediaAudioTranscriptParser;
+    let record = record_for(
+        br#"{"segments":[42]}"#,
+        "transcripts/non-object-segment.json",
+    );
+
+    let result = parser
+        .parse_record(record, &test_ctx("media.audio-transcript"))
+        .await;
+
+    let err = result.expect_err("a non-object transcript segment must be rejected");
+    assert!(
+        format!("{err:?}").contains("must be an object"),
+        "rejection should explain the segment must be an object: {err:?}"
+    );
+    Ok(())
+}
+
+#[sinex_test]
+async fn ocr_json_segment_missing_text_is_rejected() -> TestResult<()> {
+    // #1043 admission: a malformed OCR segment (no text) must be rejected at
+    // parse time.
+    let mut parser = MediaScreenOcrParser;
+    let record = record_for(
+        br#"[{"bbox":[10,20,300,60],"confidence":0.87}]"#,
+        "ocr/missing-text.json",
+    );
+
+    let result = parser
+        .parse_record(record, &test_ctx("media.screen-ocr"))
+        .await;
+
+    let err = result.expect_err("an OCR segment without text must be rejected");
+    assert!(
+        format!("{err:?}").contains("invalid OCR segment JSON"),
+        "rejection should name the invalid OCR segment JSON: {err:?}"
+    );
+    Ok(())
+}
+
+#[sinex_test]
 async fn ocr_json_segments_emit_bbox_observations() -> TestResult<()> {
     let mut parser = MediaScreenOcrParser;
     let record = record_for(
