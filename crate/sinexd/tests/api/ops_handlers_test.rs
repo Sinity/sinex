@@ -2397,6 +2397,85 @@ async fn ops_start_records_gmail_rate_limit_backoff_state(ctx: TestContext) -> T
 }
 
 #[sinex_test]
+async fn ops_start_executes_imap_scheduled_sync_with_xoauth2(
+    ctx: TestContext,
+) -> TestResult<()> {
+    let server = ImapFixtureServer::start().await?;
+    let token_server = OAuthTokenFixtureServer::start_success("imap-access-token").await?;
+    let dir = tempfile::tempdir()?;
+    let (client_id_file, client_secret_file, refresh_token_file) =
+        write_gmail_oauth_cred_files(dir.path()).await?;
+
+    let auth = system_auth();
+    let operation = timeout(
+        Duration::from_secs(10),
+        handle_ops_start(
+            ctx.pool(),
+            json!({
+                "operation_type": "email.mailbox.sync",
+                "scope": {
+                    "source_id": "email.mailbox",
+                    "mode_id": "source:email.mailbox.imap-scheduled-sync",
+                    "account_binding_ref": "operator-mailbox:imap-xoauth2",
+                    "imap_host": "127.0.0.1",
+                    "imap_port": server.addr.port(),
+                    "imap_username": "operator",
+                    "imap_oauth_client_id_file": client_id_file,
+                    "imap_oauth_client_secret_file": client_secret_file,
+                    "imap_oauth_refresh_token_file": refresh_token_file,
+                    "imap_oauth_token_url": token_server.token_url(),
+                    "imap_tls_mode": "none",
+                    "mailbox": "INBOX",
+                    "uidvalidity": "700",
+                    "uid": "40",
+                    "batch_size": 10,
+                    "fetch_bodies": true,
+                    "body_material_policy_ref": "operator.email-mailbox.body-private"
+                },
+            }),
+            &auth,
+        ),
+    )
+    .await;
+    let response_value = match operation {
+        Ok(value) => value?,
+        Err(_) => {
+            return Err(color_eyre::eyre::eyre!(
+                "IMAP XOAUTH2 sync timed out; fixture commands: {:?}",
+                server.commands().await
+            ));
+        }
+    };
+    let response: OpsStartResponse = serde_json::from_value(response_value)?;
+
+    assert_eq!(response.operation.result_status, OperationStatus::Success);
+    let scope = response
+        .operation
+        .scope
+        .as_ref()
+        .expect("email provider operation scope should be recorded");
+    assert_eq!(scope["executor_state"], "imap_sync_admitted");
+    assert_eq!(scope["imap_sync_input"]["auth_source"], "oauth_xoauth2");
+    // The fixture must have negotiated XOAUTH2, never password LOGIN.
+    let commands = server.commands().await;
+    assert!(
+        commands.iter().any(|c| c.contains("AUTHENTICATE XOAUTH2")),
+        "expected XOAUTH2 authentication, fixture saw: {commands:?}"
+    );
+    assert!(
+        !commands.iter().any(|c| c.contains(" LOGIN ")),
+        "password LOGIN must not be used for XOAUTH2: {commands:?}"
+    );
+    // The refresh token must not be recorded in the operation scope.
+    let scope_text = serde_json::to_string(scope)?;
+    assert!(
+        !scope_text.contains("test-refresh-token"),
+        "refresh token leaked into IMAP scope: {scope_text}"
+    );
+    Ok(())
+}
+
+#[sinex_test]
 async fn ops_start_executes_imap_scheduled_sync_with_password_file(
     ctx: TestContext,
 ) -> TestResult<()> {
@@ -3572,6 +3651,7 @@ impl ImapFixtureServer {
                 tokio::spawn(async move {
                     let _ = stream.write_all(b"* OK IMAP fixture ready\r\n").await;
                     let mut idle_tag: Option<String> = None;
+                    let mut auth_pending: Option<String> = None;
                     while let Ok(command) = read_imap_command(&mut stream).await {
                         if command.is_empty() {
                             return;
@@ -3581,8 +3661,19 @@ impl ImapFixtureServer {
                             command_log.push(command.trim_end().to_owned());
                         }
                         drop(command_log);
+                        // After an AUTHENTICATE continuation, the next line is the
+                        // base64 SASL response (no tag) — complete the handshake.
+                        if let Some(auth_tag) = auth_pending.take() {
+                            let response =
+                                format!("{auth_tag} OK XOAUTH2 authentication successful\r\n");
+                            let _ = stream.write_all(response.as_bytes()).await;
+                            continue;
+                        }
                         let tag = command.split_whitespace().next().unwrap_or("A0001");
-                        let response = if command.contains(" LOGIN ") {
+                        let response = if command.contains(" AUTHENTICATE XOAUTH2") {
+                            auth_pending = Some(tag.to_string());
+                            "+ \r\n".to_string()
+                        } else if command.contains(" LOGIN ") {
                             format!("{tag} OK LOGIN completed\r\n")
                         } else if command.contains(" CAPABILITY") {
                             format!(
