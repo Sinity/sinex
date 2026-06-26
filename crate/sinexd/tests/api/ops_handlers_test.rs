@@ -747,6 +747,10 @@ async fn ops_start_runs_media_worker_command_and_admits_stdout(ctx: TestContext)
         scope["worker_command"]["stdout_max_bytes"],
         10 * 1024 * 1024
     );
+    // A successful local-model-batch run records its worker budget for coverage.
+    assert_eq!(scope["worker_budget"]["over_budget"], false);
+    assert!(scope["worker_budget"]["utilization_pct"].is_number());
+    assert!(scope.get("capture_debt").is_none());
 
     let material_id = scope["worker_output_material_id"]
         .as_str()
@@ -847,6 +851,79 @@ async fn ops_start_records_media_worker_command_failure_without_raw_output(
         preview["worker_command"].get("stderr").is_none(),
         "failed previews must not persist raw stderr"
     );
+    // A non-zero exit is recorded as worker_failed capture debt with a budget block.
+    assert_eq!(scope["capture_debt"]["kind"], "worker_failed");
+    assert_eq!(
+        scope["capture_debt"]["required_action"],
+        "retry_or_inspect_worker_logs"
+    );
+    assert_eq!(
+        scope["capture_debt"]["debt_ref"],
+        "debt:media.local_model_batch.worker_failed"
+    );
+    assert_eq!(scope["worker_budget"]["over_budget"], false);
+    assert_eq!(preview["capture_debt"]["kind"], "worker_failed");
+    Ok(())
+}
+
+#[sinex_test]
+async fn ops_start_records_media_model_unavailable_debt(ctx: TestContext) -> TestResult<()> {
+    // A missing worker/model binary is operator debt (install the model), not an
+    // internal error: the operation fails cleanly with model_unavailable debt.
+    let auth = system_auth();
+    let response: OpsStartResponse = serde_json::from_value(
+        handle_ops_start(
+            ctx.pool(),
+            json!({
+                "operation_type": "media.screen-ocr.run-ocr",
+                "scope": {
+                    "source_id": "media.screen-ocr",
+                    "mode_id": "source:media.screen-ocr.local-model-batch",
+                    "worker_command": {
+                        "program": "sinex-nonexistent-ocr-model-binary",
+                        "args": [],
+                        "timeout_ms": 5000
+                    }
+                },
+            }),
+            &auth,
+        )
+        .await?,
+    )?;
+
+    assert_eq!(response.operation.result_status, OperationStatus::Failed);
+    assert!(
+        response
+            .operation
+            .result_message
+            .as_deref()
+            .unwrap_or_default()
+            .contains("was not found"),
+        "missing-program message should name the failure: {:?}",
+        response.operation.result_message
+    );
+    let scope = response
+        .operation
+        .scope
+        .as_ref()
+        .expect("model-unavailable operation scope should be recorded");
+    assert_eq!(scope["executor_state"], "worker_command_failed");
+    assert_eq!(scope["capture_debt"]["kind"], "model_unavailable");
+    assert_eq!(
+        scope["capture_debt"]["required_action"],
+        "install_or_configure_model"
+    );
+    assert!(
+        scope.get("worker_output_material_id").is_none(),
+        "model-unavailable must not create admitted material"
+    );
+    let preview = response
+        .operation
+        .preview_summary
+        .as_ref()
+        .expect("model-unavailable preview should be recorded");
+    assert_eq!(preview["worker_command"]["model_available"], false);
+    assert_eq!(preview["capture_debt"]["kind"], "model_unavailable");
     Ok(())
 }
 
@@ -931,6 +1008,15 @@ async fn ops_start_records_media_worker_command_timeout_without_raw_output(
         preview["worker_command"].get("stderr").is_none(),
         "timed-out previews must not persist raw stderr"
     );
+    // The timeout is recorded as worker_timeout capture debt over the budget.
+    assert_eq!(scope["capture_debt"]["kind"], "worker_timeout");
+    assert_eq!(
+        scope["capture_debt"]["required_action"],
+        "increase_timeout_or_retry"
+    );
+    assert_eq!(scope["worker_budget"]["over_budget"], true);
+    assert_eq!(scope["worker_budget"]["timeout_ms"], 50);
+    assert_eq!(preview["capture_debt"]["kind"], "worker_timeout");
     Ok(())
 }
 
