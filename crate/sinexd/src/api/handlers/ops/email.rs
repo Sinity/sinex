@@ -5,9 +5,12 @@ use crate::event_engine::policy::{DisclosureContext, PolicyEngine};
 use crate::runtime::parser::GmailHttpClient;
 use sinex_db::DbPoolExt;
 use sinex_db::SourceMaterialRecord;
-use sinex_db::repositories::{EmailMailboxProjectionEvent, EmailMailboxProjectionRecord};
+use sinex_db::repositories::{
+    EmailMailboxProjectionEvent, EmailMailboxProjectionRecord, EmailProviderStateUpsert,
+};
 use sinex_primitives::Id;
 use sinex_primitives::SinexError;
+use sinex_primitives::Uuid;
 use sinex_primitives::domain::OperationStatus;
 use sqlx::PgPool;
 use std::time::Instant;
@@ -37,6 +40,16 @@ pub(super) async fn execute_materialization_operation(
         }
         "email.mailbox.inspect" => {
             execute_email_mailbox_inspect(pool, spec, mode_id, scope, preview_summary)
+                .await
+                .map(Some)
+        }
+        "email.mailbox.pause" => {
+            execute_email_mailbox_pause_resume(pool, spec, mode_id, scope, preview_summary, true)
+                .await
+                .map(Some)
+        }
+        "email.mailbox.resume" => {
+            execute_email_mailbox_pause_resume(pool, spec, mode_id, scope, preview_summary, false)
                 .await
                 .map(Some)
         }
@@ -931,6 +944,147 @@ async fn execute_email_mailbox_inspect(
     Ok(EmailSyncExecutionResult {
         status: OperationStatus::Success,
         message: format!("{}; mailbox inspection completed", spec.surface),
+        duration_ms: Some(elapsed_millis(started)),
+    })
+}
+
+/// `email.mailbox.pause` / `email.mailbox.resume`: record an operator-visible
+/// pause/resume on a provider binding. This is a read-modify-write on the
+/// provider state — it preserves the binding's cursor/auth/health fields and
+/// only flips `sync_state` (and the `resume` required-action), so a paused
+/// binding keeps its sync position. The sync executor honors the paused state
+/// by skipping (see the paused gate in `start_package_operation`).
+async fn execute_email_mailbox_pause_resume(
+    pool: &PgPool,
+    spec: &PackageOperationSpec,
+    mode_id: &str,
+    scope: &mut serde_json::Map<String, serde_json::Value>,
+    preview_summary: &mut serde_json::Value,
+    pause: bool,
+) -> Result<EmailSyncExecutionResult> {
+    let started = Instant::now();
+    // `account_binding_ref` is canonically populated for provider-mode ops
+    // before executor dispatch, so pause/resume/gate/sync all key on the same value.
+    let account_binding_ref = optional_scope_string(scope, "account_binding_ref")
+        .or_else(|| optional_scope_string(scope, "account_ref"))
+        .ok_or_else(|| {
+            SinexError::validation("email pause/resume requires an account binding")
+                .with_operation("ops.start")
+        })?;
+
+    let existing = pool
+        .email_provider_states()
+        .list_current_by_source(spec.source_id)
+        .await?
+        .into_iter()
+        .find(|state| state.mode_id == mode_id && state.account_binding_ref == account_binding_ref);
+
+    let provider = existing.as_ref().map_or_else(
+        || {
+            if mode_id.contains("gmail") {
+                "gmail".to_string()
+            } else {
+                "imap".to_string()
+            }
+        },
+        |state| state.provider.clone(),
+    );
+    let mailbox_scope = existing
+        .as_ref()
+        .map_or_else(|| "default".to_string(), |state| state.mailbox_scope.clone());
+    let (sync_state, required_action) = if pause {
+        ("paused".to_string(), Some("resume".to_string()))
+    } else {
+        ("active".to_string(), None)
+    };
+
+    pool.email_provider_states()
+        .upsert(EmailProviderStateUpsert {
+            source_id: spec.source_id.to_string(),
+            mode_id: mode_id.to_string(),
+            provider: provider.clone(),
+            account_binding_ref: account_binding_ref.clone(),
+            mailbox_scope,
+            operation_id: Uuid::now_v7(),
+            result_status: OperationStatus::Success,
+            auth_state: existing
+                .as_ref()
+                .map_or_else(|| "unknown".to_string(), |state| state.auth_state.clone()),
+            network_state: existing
+                .as_ref()
+                .map_or_else(|| "unknown".to_string(), |state| state.network_state.clone()),
+            sync_state: sync_state.clone(),
+            rate_limit_state: existing
+                .as_ref()
+                .and_then(|state| state.rate_limit_state.clone()),
+            runtime_state_ref: existing.as_ref().map_or_else(
+                || format!("email.provider_runtime.{provider}"),
+                |state| state.runtime_state_ref.clone(),
+            ),
+            coverage_ref: existing.as_ref().map_or_else(
+                || format!("coverage:email.mailbox.{provider}.provider_runtime"),
+                |state| state.coverage_ref.clone(),
+            ),
+            debt_ref: existing.as_ref().map_or_else(
+                || format!("debt:email.mailbox.{provider}.provider_runtime"),
+                |state| state.debt_ref.clone(),
+            ),
+            failure_class: existing
+                .as_ref()
+                .and_then(|state| state.failure_class.clone()),
+            required_action: required_action.clone(),
+            retry_after_secs: existing.as_ref().and_then(|state| state.retry_after_secs),
+            reconnect_state: existing
+                .as_ref()
+                .and_then(|state| state.reconnect_state.clone()),
+            cursor_kind: existing.as_ref().and_then(|state| state.cursor_kind.clone()),
+            cursor_value: existing.as_ref().and_then(|state| state.cursor_value.clone()),
+            continuity_state: existing
+                .as_ref()
+                .and_then(|state| state.continuity_state.clone()),
+            provider_runtime: existing.as_ref().map_or_else(
+                || serde_json::json!({}),
+                |state| state.provider_runtime.clone(),
+            ),
+            provider_cursor: existing
+                .as_ref()
+                .and_then(|state| state.provider_cursor.clone()),
+            provider_failure: existing
+                .as_ref()
+                .and_then(|state| state.provider_failure.clone()),
+        })
+        .await?;
+
+    let executor_state = if pause {
+        "email_mailbox_paused"
+    } else {
+        "email_mailbox_resumed"
+    };
+    let binding_state = serde_json::json!({
+        "account_binding_ref": account_binding_ref,
+        "mode_id": mode_id,
+        "sync_state": sync_state,
+        "required_action": required_action,
+        "preserved_existing_state": existing.is_some(),
+    });
+    scope.insert(
+        "executor_state".to_string(),
+        serde_json::json!(executor_state),
+    );
+    scope.insert("binding_state".to_string(), binding_state.clone());
+    let preview = preview_summary
+        .as_object_mut()
+        .expect("package operation preview is an object");
+    preview.insert(
+        "executor_state".to_string(),
+        serde_json::json!(executor_state),
+    );
+    preview.insert("binding_state".to_string(), binding_state);
+
+    let verb = if pause { "paused" } else { "resumed" };
+    Ok(EmailSyncExecutionResult {
+        status: OperationStatus::Success,
+        message: format!("{}; mailbox binding {verb}", spec.surface),
         duration_ms: Some(elapsed_millis(started)),
     })
 }
