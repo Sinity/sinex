@@ -28,8 +28,9 @@ use std::time::Instant;
 
 use crate::runtime::parser::{
     EmailMboxFileAdapter, EmailMboxFileConfig, GmailApiCursorAdapter, GmailApiCursorConfig,
-    GmailHttpClient, ImapSyncAdapter, ImapSyncConfig, ImapSyncMode, NativeImapSyncClient,
-    NativeImapSyncClientConfig, NativeImapTlsMode,
+    GmailHttpClient, GmailOAuthCredentials, GoogleOAuthClient, ImapSyncAdapter, ImapSyncConfig,
+    ImapSyncMode, NativeImapSyncClient, NativeImapSyncClientConfig, NativeImapTlsMode, OAuthError,
+    OAuthTokenProvider,
 };
 use crate::sources::source_contracts::email::EmailMailboxParser;
 
@@ -590,7 +591,15 @@ struct EmailProviderSyncSummary {
 #[derive(Debug, Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct EmailGmailSyncRequest {
-    token_file: Utf8PathBuf,
+    /// Pre-fetched static access-token file. Operator-owned and short-lived;
+    /// used when no OAuth refresh credentials are supplied.
+    #[serde(default)]
+    token_file: Option<Utf8PathBuf>,
+    /// OAuth refresh credentials. Preferred over a static token: the runtime
+    /// exchanges the refresh token for a live access token, so scheduled sync
+    /// survives the ~1h access-token lifetime.
+    #[serde(default)]
+    oauth: Option<GmailOAuthRequest>,
     #[serde(default)]
     api_base_url: Option<String>,
     #[serde(default)]
@@ -601,6 +610,20 @@ struct EmailGmailSyncRequest {
     label_ids: Vec<String>,
     #[serde(default)]
     include_spam_trash: bool,
+}
+
+/// Operator-owned OAuth refresh credential file references for Gmail sync.
+/// Only file *paths* are held here; secret contents are read at exchange time
+/// and never serialized into scope, previews, or errors.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct GmailOAuthRequest {
+    client_id_file: Utf8PathBuf,
+    client_secret_file: Utf8PathBuf,
+    refresh_token_file: Utf8PathBuf,
+    /// Token endpoint override (tests point this at a local server).
+    #[serde(default)]
+    token_url: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -735,38 +758,23 @@ async fn execute_gmail_provider_sync(
         request.sanitized_scope_value(),
     );
     let started = Instant::now();
-    let token = match tokio::fs::read_to_string(&request.token_file).await {
+    let token = match request.resolve_bearer_token().await {
         Ok(token) => token,
-        Err(error) => {
+        Err(failure) => {
             return Ok(Some(email_provider_failed_execution(
                 scope,
                 preview_summary,
                 EmailProviderRuntimeMode::GmailScheduledSync,
                 &provider_scope,
                 EMAIL_GMAIL_SYNC_FAILED_EXECUTOR_STATE,
-                format!("Gmail API token file is unavailable: {error}"),
-                EmailAuthorizationState::Missing,
-                EmailNetworkState::Unknown,
+                failure.message,
+                failure.auth_state,
+                failure.network_state,
                 None,
                 started,
             )));
         }
     };
-    let token = token.trim().to_string();
-    if token.is_empty() {
-        return Ok(Some(email_provider_failed_execution(
-            scope,
-            preview_summary,
-            EmailProviderRuntimeMode::GmailScheduledSync,
-            &provider_scope,
-            EMAIL_GMAIL_SYNC_FAILED_EXECUTOR_STATE,
-            "Gmail API token file is empty".to_string(),
-            EmailAuthorizationState::Missing,
-            EmailNetworkState::Unknown,
-            None,
-            started,
-        )));
-    }
 
     let material_record = register_email_provider_material(
         pool,
@@ -1061,14 +1069,19 @@ async fn execute_imap_provider_sync(
 
 impl EmailGmailSyncRequest {
     fn from_scope(scope: &serde_json::Map<String, serde_json::Value>) -> Result<Option<Self>> {
-        let Some(token_file) = optional_scope_string(scope, "gmail_token_file")
+        let token_file = optional_scope_string(scope, "gmail_token_file")
             .or_else(|| optional_scope_string(scope, "access_token_file"))
             .or_else(|| optional_scope_string(scope, "token_file"))
-        else {
+            .map(Utf8PathBuf::from);
+        let oauth = GmailOAuthRequest::from_scope(scope);
+        // A Gmail sync request needs at least one credential source. With
+        // neither, this is not a Gmail provider sync request — fall through.
+        if token_file.is_none() && oauth.is_none() {
             return Ok(None);
-        };
+        }
         Ok(Some(Self {
-            token_file: Utf8PathBuf::from(token_file),
+            token_file,
+            oauth,
             api_base_url: optional_scope_string(scope, "gmail_api_base_url")
                 .or_else(|| optional_scope_string(scope, "api_base_url")),
             user_id: optional_scope_string(scope, "gmail_user_id")
@@ -1093,13 +1106,116 @@ impl EmailGmailSyncRequest {
 
     fn sanitized_scope_value(&self) -> serde_json::Value {
         serde_json::json!({
-            "token_file_ref": self.token_file.to_string(),
+            "token_file_ref": self.token_file.as_ref().map(ToString::to_string),
+            "oauth": self.oauth.as_ref().map(GmailOAuthRequest::sanitized_scope_value),
+            "auth_source": if self.oauth.is_some() {
+                "oauth_refresh"
+            } else {
+                "static_token_file"
+            },
             "api_base_url": self.api_base_url,
             "user_id": self.user_id,
             "page_size": self.page_size.unwrap_or(EMAIL_GMAIL_SYNC_DEFAULT_PAGE_SIZE),
             "label_ids": self.label_ids.clone(),
             "include_spam_trash": self.include_spam_trash,
         })
+    }
+
+    /// Resolve a live bearer access token from OAuth refresh credentials when
+    /// present, else from the static token file. OAuth/token failures map to the
+    /// provider authorization/network states surfaced by coverage/debt rows.
+    async fn resolve_bearer_token(&self) -> std::result::Result<String, GmailTokenFailure> {
+        if let Some(oauth) = &self.oauth {
+            let credentials = GmailOAuthCredentials::load_from_files(
+                oauth.client_id_file.as_str(),
+                oauth.client_secret_file.as_str(),
+                oauth.refresh_token_file.as_str(),
+            )
+            .await
+            .map_err(GmailTokenFailure::from_oauth)?;
+            let exchange = match &oauth.token_url {
+                Some(url) => GoogleOAuthClient::with_endpoint(reqwest::Client::new(), url.clone()),
+                None => GoogleOAuthClient::new(),
+            };
+            return OAuthTokenProvider::new(credentials, exchange)
+                .bearer_token()
+                .await
+                .map_err(GmailTokenFailure::from_oauth);
+        }
+
+        let Some(token_file) = &self.token_file else {
+            return Err(GmailTokenFailure {
+                message: "Gmail sync requires gmail_token_file or OAuth refresh credentials"
+                    .to_string(),
+                auth_state: EmailAuthorizationState::Missing,
+                network_state: EmailNetworkState::Unknown,
+            });
+        };
+        let token = tokio::fs::read_to_string(token_file).await.map_err(|error| {
+            GmailTokenFailure {
+                message: format!("Gmail API token file is unavailable: {error}"),
+                auth_state: EmailAuthorizationState::Missing,
+                network_state: EmailNetworkState::Unknown,
+            }
+        })?;
+        let token = token.trim().to_string();
+        if token.is_empty() {
+            return Err(GmailTokenFailure {
+                message: "Gmail API token file is empty".to_string(),
+                auth_state: EmailAuthorizationState::Missing,
+                network_state: EmailNetworkState::Unknown,
+            });
+        }
+        Ok(token)
+    }
+}
+
+impl GmailOAuthRequest {
+    fn from_scope(scope: &serde_json::Map<String, serde_json::Value>) -> Option<Self> {
+        let client_id_file = optional_scope_string(scope, "gmail_oauth_client_id_file")?;
+        let client_secret_file = optional_scope_string(scope, "gmail_oauth_client_secret_file")?;
+        let refresh_token_file = optional_scope_string(scope, "gmail_oauth_refresh_token_file")?;
+        Some(Self {
+            client_id_file: Utf8PathBuf::from(client_id_file),
+            client_secret_file: Utf8PathBuf::from(client_secret_file),
+            refresh_token_file: Utf8PathBuf::from(refresh_token_file),
+            token_url: optional_scope_string(scope, "gmail_oauth_token_url"),
+        })
+    }
+
+    fn sanitized_scope_value(&self) -> serde_json::Value {
+        // Only file-path references are surfaced; secret contents never are.
+        serde_json::json!({
+            "client_id_file_ref": self.client_id_file.to_string(),
+            "client_secret_file_ref": self.client_secret_file.to_string(),
+            "refresh_token_file_ref": self.refresh_token_file.to_string(),
+            "token_url": self.token_url,
+        })
+    }
+}
+
+/// Token-resolution failure carrying the provider states for a failed-execution
+/// runtime observation.
+struct GmailTokenFailure {
+    message: String,
+    auth_state: EmailAuthorizationState,
+    network_state: EmailNetworkState,
+}
+
+impl GmailTokenFailure {
+    fn from_oauth(error: OAuthError) -> Self {
+        let network_state = match &error {
+            OAuthError::Transport(_) => EmailNetworkState::Offline,
+            OAuthError::Status { .. } | OAuthError::Decode(_) | OAuthError::EmptyAccessToken => {
+                EmailNetworkState::Online
+            }
+            OAuthError::MissingCredential { .. } => EmailNetworkState::Unknown,
+        };
+        Self {
+            message: format!("Gmail OAuth token exchange failed: {error}"),
+            auth_state: error.authorization_state(),
+            network_state,
+        }
     }
 }
 
@@ -1920,8 +2036,8 @@ fn email_provider_mode_metadata(mode_id: &str) -> Option<EmailProviderModeMetada
         EmailProviderRuntimeMode::GmailScheduledSync => Some(EmailProviderModeMetadata {
             mode,
             caveats: &[
-                "provider executor requires explicit gmail_token_file at operation start",
-                "OAuth refresh remains operator/runtime-owned outside this operation",
+                "provider executor requires a gmail_token_file or OAuth refresh credentials at operation start",
+                "OAuth refresh-token exchange runs in-operation when oauth credentials are supplied",
                 "provider cursor is unknown until an executable sync admits records",
             ],
         }),
