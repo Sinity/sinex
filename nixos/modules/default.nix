@@ -1574,6 +1574,66 @@ in
         description = "Desktop source runtime.";
       };
 
+      media = mkOption {
+        type = submodule {
+          options = {
+            enable = mkOption {
+              type = bool;
+              default = false;
+              description = ''
+                Enable the live media screen-capture source runtime
+                (<literal>media.screen-ocr</literal>). Disabled by default: it
+                captures the screen on an interval and depends on the desktop
+                source for Wayland session access
+                (<option>services.sinex.sources.desktop.enable</option>).
+              '';
+            };
+            captureCommand = mkOption {
+              type = listOf str;
+              default = [ "grim" "-" ];
+              description = ''
+                Command (argv) that writes a PNG screenshot to stdout. Default
+                <literal>grim -</literal> (Wayland). The driver appends
+                <literal>-g &lt;region&gt;</literal> when <option>region</option>
+                is set and the command does not already pass <literal>-g</literal>.
+              '';
+            };
+            region = mkOption {
+              type = nullOr str;
+              default = null;
+              description = "Optional capture region as `x,y WxH`. Null captures the whole output.";
+            };
+            display = mkOption {
+              type = nullOr str;
+              default = null;
+              description = "Optional display/output identifier recorded on each screenshot event.";
+            };
+            intervalSec = mkOption {
+              type = positive;
+              default = 300;
+              description = "Seconds between captures in continuous (live-session) mode.";
+            };
+            captureTimeoutMs = mkOption {
+              type = positive;
+              default = 10000;
+              description = "Per-capture command timeout in milliseconds.";
+            };
+            policyPosture = mkOption {
+              type = str;
+              default = "operator_default";
+              description = "Disclosure/storage posture recorded on each screenshot event.";
+            };
+            resources = mkOption {
+              type = nullOr (resourceModule { defaultMemory = "2G"; defaultCpu = "25%"; });
+              default = null;
+              description = "Resource override for the media capture source.";
+            };
+          };
+        };
+        default = { };
+        description = "Live media screen-capture source runtime.";
+      };
+
       system = mkOption {
         type = submodule {
           options = {
@@ -2360,6 +2420,14 @@ in
             hyprland_instance_signature = cfg.sources.desktop.session.hyprlandInstanceSignature;
             hyprland_event_socket = cfg.sources.desktop.session.hyprlandEventSocket;
             hyprland_command_socket = cfg.sources.desktop.session.hyprlandCommandSocket;
+          };
+        media =
+          (mkDeploymentSurface (sourcesEnabled && cfg.sources.media.enable) null)
+          // {
+            capture_command = cfg.sources.media.captureCommand;
+            region = cfg.sources.media.region;
+            interval_secs = cfg.sources.media.intervalSec;
+            policy_posture = cfg.sources.media.policyPosture;
           };
         system = mkDeploymentSurface (sourcesEnabled && cfg.sources.system.enable) cfg.sources.system.instances;
         document =
