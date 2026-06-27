@@ -149,7 +149,9 @@ async fn media_runtime_bindings_cover_staged_model_on_demand_and_live_modes() ->
         binding("source:media.screen-ocr.live-session").runner_pack,
         RunnerPack::Live
     );
-    assert!(binding("source:media.screen-ocr.live-session").proposed);
+    // Screen live-session now has a real continuous SourceDriver
+    // (MediaScreenCaptureDriver), so it is no longer proposed.
+    assert!(!binding("source:media.screen-ocr.live-session").proposed);
     assert!(
         binding("source:media.screen-ocr.screenshot-ocr-staged")
             .capabilities
