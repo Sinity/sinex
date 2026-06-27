@@ -297,3 +297,20 @@ strip = true
 # deps remain non-incremental and are cached normally in the target dir.
 incremental = true
 codegen-units = 256
+
+# Release profile tuned for CHEAP COMPILATION (low peak memory first, fast
+# compile second) over runtime performance, per operator priority (2026-06-28).
+# At the Cargo defaults (opt-level=3, codegen-units=16) the sinexd crate peaked
+# ~9.8 GiB rustc RSS, which this 32 GB workstation cannot build without OOM/
+# earlyoom thrash. opt-level=1 does basic optimization at a fraction of opt-3's
+# compile memory and time; codegen-units=256 splits the large crates into many
+# small units so peak per-unit memory stays low and codegen parallelizes. LTO
+# off and no debuginfo keep the build light. The trade is some runtime
+# optimization, acceptable for a single-user capture daemon — revisit if a
+# genuinely perf-sensitive deployment ever needs it.
+[profile.release]
+opt-level = 1
+codegen-units = 256
+lto = false
+debug = false
+strip = true
