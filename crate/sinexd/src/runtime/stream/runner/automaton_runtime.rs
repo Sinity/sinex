@@ -463,6 +463,39 @@ impl<T: RuntimeModule + 'static> RuntimeRunner<T> {
         Ok(())
     }
 
+    /// NATS `max_ack_pending` for an automaton's confirmation-buffered raw
+    /// consumer.
+    ///
+    /// Every automaton subscribes to the *raw* events stream so its confirmation
+    /// buffer can resolve provisional inputs, so on a backlog drain the in-flight
+    /// unacked messages are multiplied by the automaton count. At the old
+    /// `Default` of 1000 this fan-out (14 automata × 1000 × ~120 KB messages,
+    /// held client-side once the confirmation buffer saturates and starts
+    /// NAK-redelivering) drove the boot OOM that crash-looped prod. Bounding it
+    /// keeps aggregate boot memory flat; the confirmation buffer's own
+    /// capacity/byte caps remain the steady-state holding bound.
+    ///
+    /// Overridable via `SINEX_AUTOMATON_CONSUMER_MAX_ACK_PENDING`.
+    #[cfg(feature = "messaging")]
+    const DEFAULT_AUTOMATON_CONSUMER_MAX_ACK_PENDING: i64 = 128;
+
+    #[cfg(feature = "messaging")]
+    fn automaton_consumer_max_ack_pending() -> i64 {
+        match sinex_primitives::env::strict_parsed::<i64>(
+            "SINEX_AUTOMATON_CONSUMER_MAX_ACK_PENDING",
+        ) {
+            Ok(Some(value)) if value > 0 => value,
+            Ok(_) => Self::DEFAULT_AUTOMATON_CONSUMER_MAX_ACK_PENDING,
+            Err(error) => {
+                warn!(
+                    %error,
+                    "invalid SINEX_AUTOMATON_CONSUMER_MAX_ACK_PENDING; using default"
+                );
+                Self::DEFAULT_AUTOMATON_CONSUMER_MAX_ACK_PENDING
+            }
+        }
+    }
+
     #[cfg(feature = "messaging")]
     pub(super) fn automaton_consumer_config(
         service_name: &str,
@@ -472,6 +505,7 @@ impl<T: RuntimeModule + 'static> RuntimeRunner<T> {
         JetStreamEventConsumerConfig {
             processing_model,
             batch_size: 128,
+            max_ack_pending: Self::automaton_consumer_max_ack_pending(),
             confirmation_timeout: std::time::Duration::from_mins(1),
             consumer_name: if db_backed_confirmations {
                 format!("{}-automaton-confirmed-v2", service_name.replace('.', "_"))
