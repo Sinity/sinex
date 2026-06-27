@@ -42,6 +42,7 @@ impl JetStreamConsumer {
             stats: ConsumerStats::default(),
             route_db_errors_to_dlq: false,
             batch_fetch_max_messages: DEFAULT_BATCH_FETCH_MAX_MESSAGES,
+            batch_fetch_max_bytes: DEFAULT_BATCH_FETCH_MAX_BYTES,
             batch_fetch_timeout: DEFAULT_BATCH_FETCH_TIMEOUT,
             ready_set: None,
             observer: None,

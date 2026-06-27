@@ -152,10 +152,20 @@ let
     effective_cache_size = mkDefault "8GB";
     work_mem = mkDefault "32MB";
     maintenance_work_mem = mkDefault "512MB";
+    # Cap each autovacuum worker's memory. Default (-1) inherits the 512MB
+    # maintenance_work_mem, so autovacuum_max_workers (3) can hold up to 1.5GB
+    # concurrently — a real spike when autovacuum touches a multi-GB hypertable
+    # chunk (e.g. the journald mega-chunk, #2182). 256MB halves that worst case.
+    autovacuum_work_mem = mkDefault "256MB";
 
     # Parallelism - utilize multi-core CPUs
     max_parallel_workers_per_gather = mkDefault 4;
     max_parallel_workers = mkDefault 8;
+    # Hard ceiling on ALL background workers (parallel query + TimescaleDB
+    # background workers + continuous-aggregate refresh). Left unset PostgreSQL
+    # defaults to 8, which silently under-caps the TimescaleDB worker count
+    # below; set explicitly so the configured values are honored.
+    max_worker_processes = mkDefault 12;
 
     # Checkpointing
     checkpoint_completion_target = mkDefault "0.9";
@@ -199,6 +209,15 @@ let
     # deployment because mismatches are always intentional upgrade windows,
     # never unexpected drift.
     "timescaledb.allow_elevated_versions" = mkDefault "on";
+
+    # Bound TimescaleDB's background-worker fan-out. The library default is 16,
+    # which is absurd for a single-user 32GB host: each compression/retention/
+    # continuous-aggregate worker can grab up to maintenance_work_mem, so a
+    # mega-chunk maintenance pass could fan out to many simultaneous 512MB ops
+    # (the kind of spike that filled swap and thrashed the host, #2182). Four is
+    # plenty of concurrency for one user and keeps concurrent maintenance memory
+    # bounded. Pairs with max_worker_processes above as the hard ceiling.
+    "timescaledb.max_background_workers" = mkDefault 4;
 
     # Computed/required settings
     max_connections = mkDefault computedMaxConnections;
