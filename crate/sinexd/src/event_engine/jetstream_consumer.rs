@@ -24,7 +24,9 @@
 
 use crate::runtime::SelfObserver;
 use crate::runtime::heartbeat::HeartbeatCounterHandle;
-use crate::runtime::stream::{PullConsumerSpec, ensure_pull_consumer, pull_batch};
+use crate::runtime::stream::{
+    PullConsumerSpec, ensure_pull_consumer, pull_batch, pull_batch_bounded,
+};
 use async_nats::jetstream::stream::DiscardPolicy;
 use async_nats::{Client as NatsClient, jetstream};
 use futures::future::{BoxFuture, join_all};
@@ -116,6 +118,9 @@ pub struct JetStreamConsumer {
     /// would add more noise than the 1 byte of struct memory it would save.
     route_db_errors_to_dlq: bool,
     batch_fetch_max_messages: usize,
+    /// Cumulative payload-byte budget per fetch; caps the decode high-watermark
+    /// independent of per-message size. See `DEFAULT_BATCH_FETCH_MAX_BYTES`.
+    batch_fetch_max_bytes: usize,
     batch_fetch_timeout: Duration,
     /// Shared coordination set: when present, events whose `source_material_id` hasn't
     /// been registered yet are NAK'd with a short delay instead of attempting a DB insert

@@ -341,9 +341,33 @@ pub async fn pull_batch(
     max_messages: usize,
     expires: Duration,
 ) -> RuntimeResult<Vec<jetstream::Message>> {
-    let mut stream = consumer
-        .batch()
-        .max_messages(max_messages.max(1))
+    pull_batch_bounded(consumer, max_messages, 0, expires).await
+}
+
+/// Like [`pull_batch`], but additionally caps the cumulative payload bytes the
+/// server may deliver in a single fetch. `max_bytes == 0` means unbounded (the
+/// message count is the only limit, identical to [`pull_batch`]).
+///
+/// The byte cap bounds a consumer's in-flight decode high-watermark
+/// *independent of per-message size*. This matters on the event-engine persist
+/// path: each fetched message is itself an event batch whose payloads can reach
+/// the 10 MiB NATS limit, and every message is materialized into a fully-owned
+/// `serde_json::Value` DOM (~5-10x the wire bytes) before persistence. Without a
+/// byte budget a single `max_messages`-sized fetch (default 100) can expand to
+/// multiple GiB of transient heap during a backlog drain — heap-profiled as the
+/// dominant source of sinexd's drain-time RSS. Capping by bytes keeps the
+/// high-watermark flat regardless of backlog depth.
+pub async fn pull_batch_bounded(
+    consumer: &PullConsumerHandle,
+    max_messages: usize,
+    max_bytes: usize,
+    expires: Duration,
+) -> RuntimeResult<Vec<jetstream::Message>> {
+    let mut builder = consumer.batch().max_messages(max_messages.max(1));
+    if max_bytes > 0 {
+        builder = builder.max_bytes(max_bytes);
+    }
+    let mut stream = builder
         .expires(expires)
         .messages()
         .await
