@@ -278,6 +278,14 @@ const ALL_TABLES: &[TableMeta] = &[
     },
     TableMeta {
         schema: "core",
+        name: "source_session_state",
+        qualified_name: "core.source_session_state",
+        is_hypertable: false,
+        has_triggers: true,
+        cleanup_protected: false,
+    },
+    TableMeta {
+        schema: "core",
         name: "tags",
         qualified_name: "core.tags",
         is_hypertable: false,

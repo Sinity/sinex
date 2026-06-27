@@ -19,6 +19,7 @@ pub mod schema_cache;
 pub mod schema_management;
 pub mod semantic;
 pub mod source_materials;
+pub mod source_session_state;
 pub mod state;
 
 // Re-export main types
@@ -36,6 +37,9 @@ pub use email_mailbox_projection::{
 };
 pub use email_provider_state::{
     EmailProviderStateRecord, EmailProviderStateRepository, EmailProviderStateUpsert,
+};
+pub use source_session_state::{
+    SourceSessionStateRecord, SourceSessionStateRepository, SourceSessionStateUpsert,
 };
 pub use embeddings::{
     CacheEntry, CachedEmbeddingHit, EmbeddingModelRecord, EmbeddingRepository, EmbeddingTarget,
@@ -88,6 +92,7 @@ pub trait DbPoolExt {
         &self,
     ) -> email_mailbox_projection::EmailMailboxProjectionRepository<'_>;
     fn email_provider_states(&self) -> email_provider_state::EmailProviderStateRepository<'_>;
+    fn source_session_states(&self) -> source_session_state::SourceSessionStateRepository<'_>;
     fn events(&self) -> events::EventRepository<'_>;
     fn source_materials(&self) -> source_materials::SourceMaterialRepository<'_>;
     fn knowledge_graph(&self) -> knowledge_graph::KnowledgeGraphRepository<'_>;
@@ -123,6 +128,10 @@ impl DbPoolExt for PgPool {
 
     fn email_provider_states(&self) -> email_provider_state::EmailProviderStateRepository<'_> {
         email_provider_state::EmailProviderStateRepository::new(self)
+    }
+
+    fn source_session_states(&self) -> source_session_state::SourceSessionStateRepository<'_> {
+        source_session_state::SourceSessionStateRepository::new(self)
     }
 
     fn events(&self) -> events::EventRepository<'_> {
