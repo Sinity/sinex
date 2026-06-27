@@ -4,6 +4,17 @@ use tokio::time::Duration;
 
 pub(super) const DEFAULT_BATCH_FETCH_MAX_MESSAGES: usize = 100;
 pub(super) const DEFAULT_BATCH_FETCH_TIMEOUT: Duration = Duration::from_secs(1);
+/// Cumulative payload-byte budget for a single event-engine fetch.
+///
+/// Bounds the in-flight decode high-watermark *independent of per-message size*.
+/// Each fetched message is itself an event batch whose payloads can reach the
+/// 10 MiB NATS limit, and every message is expanded into a fully-owned
+/// `serde_json::Value` DOM (~5-10x the wire bytes) before persistence. With only
+/// the 100-message count limit, a single fetch during a backlog drain can balloon
+/// to multiple GiB of transient heap (heap-profiled as the dominant source of
+/// sinexd's drain-time RSS). Capping the fetch at 64 MiB of raw payload keeps the
+/// transient heap to a few hundred MiB regardless of backlog depth.
+pub(super) const DEFAULT_BATCH_FETCH_MAX_BYTES: usize = 64 * 1024 * 1024;
 pub(super) const DEFAULT_MAX_ACK_PENDING: i64 = 100;
 /// NATS-side `max_deliver` on the events consumer. Must be >= the highest
 /// application-side terminal threshold below so app-level DLQ routing fires

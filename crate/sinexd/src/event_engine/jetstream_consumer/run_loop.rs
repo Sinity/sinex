@@ -298,9 +298,10 @@ impl JetStreamConsumer {
     ) -> EventEngineResult<()> {
         let batch_start = std::time::Instant::now();
         let mut batch = Vec::new();
-        let messages = pull_batch(
+        let messages = pull_batch_bounded(
             consumer,
             self.batch_fetch_max_messages,
+            self.batch_fetch_max_bytes,
             self.batch_fetch_timeout,
         )
         .await
