@@ -8,13 +8,15 @@
   },
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "properties": {
-    "producer_run_id": {
-      "type": "string"
+    "duration_ms": {
+      "format": "uint64",
+      "minimum": 0,
+      "type": [
+        "integer",
+        "null"
+      ]
     },
-    "model_id": {
-      "type": "string"
-    },
-    "model_version": {
+    "failure_class": {
       "type": [
         "string",
         "null"
@@ -26,24 +28,10 @@
       },
       "type": "array"
     },
-    "output_refs": {
-      "items": {
-        "type": "string"
-      },
-      "type": "array"
-    },
-    "duration_ms": {
-      "format": "uint64",
-      "minimum": 0,
-      "type": [
-        "integer",
-        "null"
-      ]
-    },
-    "resource_posture": {
+    "model_id": {
       "type": "string"
     },
-    "failure_class": {
+    "model_version": {
       "type": [
         "string",
         "null"
@@ -51,6 +39,18 @@
     },
     "observed_at": {
       "$ref": "#/$defs/DateTime"
+    },
+    "output_refs": {
+      "items": {
+        "type": "string"
+      },
+      "type": "array"
+    },
+    "producer_run_id": {
+      "type": "string"
+    },
+    "resource_posture": {
+      "type": "string"
     }
   },
   "required": [

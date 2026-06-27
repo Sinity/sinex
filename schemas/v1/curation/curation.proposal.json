@@ -1,5 +1,30 @@
 {
   "$defs": {
+    "CaveatView": {
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "message": {
+          "type": "string"
+        },
+        "ref": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/SinexObjectRef"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "id",
+        "message"
+      ],
+      "type": "object"
+    },
     "CurationProposalStatus": {
       "description": "Lifecycle state for a proposal record.",
       "enum": [
@@ -10,11 +35,178 @@
         "expired"
       ],
       "type": "string"
+    },
+    "DateTime": {
+      "description": "RFC 3339 formatted date-time string",
+      "format": "date-time",
+      "type": "string"
+    },
+    "Proposal": {
+      "description": "A proposed change awaiting an operator judgment.\n\nThe only way to extract the `proposed_value` through Rust code is\n[`Proposal::apply`], which requires a matching, accepted [`Judgment`].\nThis is the authority seam: model confidence scores and heuristic\noutputs cannot promote a value to truth without an explicit verdict.\n\nNote: the value IS present in the JSON serialization so operator UIs\ncan display it for review — but the extraction gate lives in [`apply`].\n\n[`apply`]: Proposal::apply",
+      "properties": {
+        "caveats": {
+          "description": "Operator-visible caveats attached to this proposal.",
+          "items": {
+            "$ref": "#/$defs/CaveatView"
+          },
+          "type": "array"
+        },
+        "confidence": {
+          "description": "Model or heuristic confidence in this proposal (0.0–1.0).\n\nHigh confidence does NOT bypass the judgment gate — it is\ndisplay/informational only until an operator judges the proposal.",
+          "format": "float",
+          "type": "number"
+        },
+        "id": {
+          "description": "Stable opaque identifier for this proposal.",
+          "type": "string"
+        },
+        "kind": {
+          "$ref": "#/$defs/ProposalKind",
+          "description": "What kind of change is being proposed."
+        },
+        "proposed_value": {
+          "description": "The proposed value. Not extractable without an accepted Judgment."
+        },
+        "proposer": {
+          "description": "Who/what generated this proposal.\n\nConvention: `\"model:<model-id>\"` or `\"rule:<rule-name>\"`.",
+          "type": "string"
+        },
+        "subject_ref": {
+          "$ref": "#/$defs/SinexObjectRef",
+          "description": "The subject being affected (e.g. an event reference)."
+        },
+        "ts_proposed": {
+          "$ref": "#/$defs/DateTime",
+          "description": "When the proposal was generated."
+        }
+      },
+      "required": [
+        "id",
+        "kind",
+        "subject_ref",
+        "confidence",
+        "proposed_value",
+        "proposer",
+        "ts_proposed"
+      ],
+      "type": "object"
+    },
+    "ProposalKind": {
+      "description": "Classifies what a [`Proposal`] is proposing.",
+      "oneOf": [
+        {
+          "const": "duplicate_candidate",
+          "description": "Two events are duplicates (same real-world occurrence).",
+          "type": "string"
+        },
+        {
+          "const": "entity_extraction",
+          "description": "An entity extraction or relation suggestion.",
+          "type": "string"
+        },
+        {
+          "const": "categorization",
+          "description": "A semantic category or tag assignment.",
+          "type": "string"
+        },
+        {
+          "additionalProperties": false,
+          "description": "Other/extensible kind.",
+          "properties": {
+            "other": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "other"
+          ],
+          "type": "object"
+        }
+      ]
+    },
+    "SinexObjectKind": {
+      "enum": [
+        "event",
+        "source_driver",
+        "source_material",
+        "material_anchor",
+        "document",
+        "document_chunk",
+        "task",
+        "semantic_lane",
+        "semantic_entity",
+        "semantic_relation",
+        "operation",
+        "projection",
+        "artifact",
+        "query_run",
+        "admission_outcome",
+        "debt_row",
+        "proposal",
+        "judgment",
+        "external_ref",
+        "policy",
+        "replay_run",
+        "snapshot",
+        "dlq_message",
+        "context_pack",
+        "moment_candidate",
+        "privacy_session",
+        "caveat",
+        "rpc_method",
+        "runtime_module",
+        "command"
+      ],
+      "type": "string"
+    },
+    "SinexObjectRef": {
+      "properties": {
+        "command_hint": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "id": {
+          "type": "string"
+        },
+        "kind": {
+          "$ref": "#/$defs/SinexObjectKind"
+        },
+        "label": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "rpc_method": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "kind",
+        "id"
+      ],
+      "type": "object"
     }
   },
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "description": "Producer-owned candidate assertion or operation.",
   "properties": {
+    "authority_proposal": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/Proposal"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "description": "Shared authority proposal, when this curation proposal is governed by\nthe `Proposal -> Judgment -> Operation` authority seam.\n\nLegacy curation proposals can still use the curation-local fields above\nfor replay/listing compatibility. Finalizers must prefer this shared\nDTO when it is present so confidence cannot become authority."
+    },
     "candidate_event_type": {
       "description": "Candidate canonical event type to emit if finalized.",
       "type": "string"

@@ -1,0 +1,224 @@
+{
+  "$defs": {
+    "DateTime": {
+      "description": "RFC 3339 formatted date-time string",
+      "format": "date-time",
+      "type": "string"
+    },
+    "EmailMailboxFormat": {
+      "description": "Staged mailbox acquisition shape for email message/attachment/thread events.",
+      "enum": [
+        "rfc822-drop-staged",
+        "maildir-staged",
+        "mbox-staged",
+        "gmail-api",
+        "imap-provider"
+      ],
+      "type": "string"
+    },
+    "EmailProviderMaterialEvidence": {
+      "description": "Provider-held or provider-fetched raw message evidence for mailbox rows.",
+      "properties": {
+        "byte_range": true,
+        "material_policy_ref": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "raw_message_blake3": {
+          "type": "string"
+        },
+        "raw_message_bytes": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "raw_message_preview": {
+          "type": "string"
+        },
+        "source": {
+          "type": "string"
+        },
+        "source_uri": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "source",
+        "source_uri",
+        "byte_range",
+        "raw_message_bytes",
+        "raw_message_blake3",
+        "raw_message_preview"
+      ],
+      "type": "object"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "properties": {
+    "attachment_count": {
+      "format": "uint32",
+      "minimum": 0,
+      "type": "integer"
+    },
+    "bcc": {
+      "items": {
+        "type": "string"
+      },
+      "type": "array"
+    },
+    "body_bytes": {
+      "format": "uint64",
+      "minimum": 0,
+      "type": "integer"
+    },
+    "cc": {
+      "items": {
+        "type": "string"
+      },
+      "type": "array"
+    },
+    "date": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/DateTime"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "folder": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "from": {
+      "items": {
+        "type": "string"
+      },
+      "type": "array"
+    },
+    "in_reply_to": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "list_id": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "mailbox_format": {
+      "$ref": "#/$defs/EmailMailboxFormat"
+    },
+    "maildir_flags": {
+      "items": {
+        "type": "string"
+      },
+      "type": "array"
+    },
+    "maildir_stable_filename": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "maildir_subdir": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "mbox_byte_end": {
+      "format": "uint64",
+      "minimum": 0,
+      "type": [
+        "integer",
+        "null"
+      ]
+    },
+    "mbox_byte_start": {
+      "format": "uint64",
+      "minimum": 0,
+      "type": [
+        "integer",
+        "null"
+      ]
+    },
+    "mbox_file": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "message_id": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "provider_material": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/EmailProviderMaterialEvidence"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "raw_material_id": {
+      "type": "string"
+    },
+    "references": {
+      "items": {
+        "type": "string"
+      },
+      "type": "array"
+    },
+    "size_bytes": {
+      "format": "uint64",
+      "minimum": 0,
+      "type": "integer"
+    },
+    "source_file": {
+      "type": "string"
+    },
+    "subject": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "to": {
+      "items": {
+        "type": "string"
+      },
+      "type": "array"
+    }
+  },
+  "required": [
+    "from",
+    "to",
+    "cc",
+    "bcc",
+    "references",
+    "source_file",
+    "raw_material_id",
+    "mailbox_format",
+    "maildir_flags",
+    "size_bytes",
+    "body_bytes",
+    "attachment_count"
+  ],
+  "title": "EmailMessageReceivedPayload",
+  "type": "object",
+  "x-sinex-event-type": "email.message.received",
+  "x-sinex-source": "email",
+  "x-sinex-version": "1.0.0"
+}

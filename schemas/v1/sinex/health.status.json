@@ -27,7 +27,7 @@
     }
   },
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "description": "Component health status change\n\nEmitted when a component's health status changes (healthy -> degraded, etc.)",
+  "description": "Component health status observation\n\nEmitted for initial health, status changes, and periodic unchanged refreshes\nthat keep event-derived runtime liveness fresh.",
   "properties": {
     "component": {
       "description": "Component name",
@@ -45,7 +45,7 @@
       "description": "Previous status (typed; serializes as `snake_case` string)"
     },
     "reason": {
-      "description": "Reason for status change",
+      "description": "Reason for this status observation",
       "type": [
         "string",
         "null"

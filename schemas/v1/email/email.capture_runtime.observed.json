@@ -1,0 +1,151 @@
+{
+  "$defs": {
+    "DateTime": {
+      "description": "RFC 3339 formatted date-time string",
+      "format": "date-time",
+      "type": "string"
+    },
+    "EmailAuthorizationState": {
+      "description": "Authorization state visible to provider coverage/debt surfaces.",
+      "enum": [
+        "authorized",
+        "missing",
+        "expired",
+        "rejected",
+        "unknown"
+      ],
+      "type": "string"
+    },
+    "EmailNetworkState": {
+      "description": "Provider transport state visible to provider runtime observations.",
+      "enum": [
+        "online",
+        "offline",
+        "rate-limited",
+        "error",
+        "unknown"
+      ],
+      "type": "string"
+    },
+    "EmailProviderKind": {
+      "description": "Provider family behind an email live/scheduled acquisition mode.",
+      "enum": [
+        "gmail",
+        "imap"
+      ],
+      "type": "string"
+    },
+    "EmailProviderRuntime": {
+      "description": "Runtime shape for a provider-backed email mode.",
+      "enum": [
+        "scheduled-sync",
+        "idle-live"
+      ],
+      "type": "string"
+    },
+    "EmailRateLimitState": {
+      "description": "Provider quota/backoff state for scheduled and live sync modes.",
+      "enum": [
+        "clear",
+        "throttled",
+        "backoff",
+        "exhausted"
+      ],
+      "type": "string"
+    },
+    "EmailSyncState": {
+      "description": "Provider worker state for scheduled and live sync modes.",
+      "enum": [
+        "idle",
+        "syncing",
+        "backfilling",
+        "paused",
+        "degraded",
+        "failed"
+      ],
+      "type": "string"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "properties": {
+    "account_binding_ref": {
+      "type": "string"
+    },
+    "actions": {
+      "items": {
+        "type": "string"
+      },
+      "type": "array"
+    },
+    "auth_state": {
+      "$ref": "#/$defs/EmailAuthorizationState"
+    },
+    "caveats": {
+      "items": {
+        "type": "string"
+      },
+      "type": "array"
+    },
+    "mode_id": {
+      "type": "string"
+    },
+    "network_state": {
+      "$ref": "#/$defs/EmailNetworkState"
+    },
+    "observed_at": {
+      "$ref": "#/$defs/DateTime"
+    },
+    "pending_material_bytes": {
+      "format": "uint64",
+      "minimum": 0,
+      "type": [
+        "integer",
+        "null"
+      ]
+    },
+    "pending_messages": {
+      "format": "uint32",
+      "minimum": 0,
+      "type": [
+        "integer",
+        "null"
+      ]
+    },
+    "provider": {
+      "$ref": "#/$defs/EmailProviderKind"
+    },
+    "provider_runtime": {
+      "$ref": "#/$defs/EmailProviderRuntime"
+    },
+    "rate_limit_state": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/EmailRateLimitState"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "sync_state": {
+      "$ref": "#/$defs/EmailSyncState"
+    }
+  },
+  "required": [
+    "provider",
+    "account_binding_ref",
+    "mode_id",
+    "observed_at",
+    "provider_runtime",
+    "auth_state",
+    "network_state",
+    "sync_state",
+    "caveats",
+    "actions"
+  ],
+  "title": "EmailCaptureRuntimeObservedPayload",
+  "type": "object",
+  "x-sinex-event-type": "email.capture_runtime.observed",
+  "x-sinex-source": "email",
+  "x-sinex-version": "1.0.0"
+}
