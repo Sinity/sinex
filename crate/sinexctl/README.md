@@ -37,6 +37,8 @@ The public root command tree is deliberately small. Older shortcut roots such as
 `state` are nested under the canonical groups below.
 
 - `events`: event search, filtering, relations, tracing, streaming, and annotation
+- `query`: shared query-unit selection via a query expression (e.g. `query 'events where source = "terminal" limit 50'`)
+- `show`: resolve and inspect a public Sinex object ref (`<kind>:<id>`)
 - `sources`: source material inventory, staging, readiness, continuity, drift, and coverage
 - `runtime`: gateway reachability, runtime health, module list/status/drain/resume/horizon, and automata health
 - `ops`: operations, operation jobs, DLQ, replay, lifecycle, audit, blob, state, instructions, bounded verification, and demo seeding
