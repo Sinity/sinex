@@ -563,6 +563,114 @@ async fn ops_start_records_media_operation_as_pending_executor(ctx: TestContext)
 }
 
 #[sinex_test]
+async fn ops_start_media_session_control_is_real(ctx: TestContext) -> TestResult<()> {
+    let auth = system_auth();
+
+    // enable-session writes an `enabled` control row.
+    let enabled: OpsStartResponse = serde_json::from_value(
+        handle_ops_start(
+            ctx.pool(),
+            json!({
+                "operation_type": "media.screen-ocr.enable-session",
+                "scope": {
+                    "source_id": "media.screen-ocr",
+                    "mode_id": "source:media.screen-ocr.live-session"
+                },
+            }),
+            &auth,
+        )
+        .await?,
+    )?;
+    assert_eq!(enabled.operation.result_status, OperationStatus::Success);
+    let scope = enabled.operation.scope.as_ref().expect("scope recorded");
+    assert_eq!(scope["session_state"]["lifecycle_state"], "enabled");
+    assert_eq!(scope["executor_state"], "session_control_applied");
+
+    // pause flips the same current-scope row to `paused`.
+    let paused: OpsStartResponse = serde_json::from_value(
+        handle_ops_start(
+            ctx.pool(),
+            json!({
+                "operation_type": "media.screen-ocr.pause",
+                "scope": {
+                    "source_id": "media.screen-ocr",
+                    "mode_id": "source:media.screen-ocr.live-session",
+                    "reason": "operator stepped away"
+                },
+            }),
+            &auth,
+        )
+        .await?,
+    )?;
+    assert_eq!(paused.operation.result_status, OperationStatus::Success);
+
+    // The control plane reflects the paused state — exactly what the live
+    // capture driver gate reads before each capture cycle.
+    let current = ctx
+        .pool()
+        .source_session_states()
+        .current_for_scope(
+            "media.screen-ocr",
+            "source:media.screen-ocr.live-session",
+            "default",
+        )
+        .await?
+        .expect("session control row exists after pause");
+    assert_eq!(current.lifecycle_state, "paused");
+    assert_eq!(current.reason.as_deref(), Some("operator stepped away"));
+
+    // inspect reports the current session state without mutating it.
+    let inspected: OpsStartResponse = serde_json::from_value(
+        handle_ops_start(
+            ctx.pool(),
+            json!({
+                "operation_type": "media.screen-ocr.inspect",
+                "scope": {
+                    "source_id": "media.screen-ocr",
+                    "mode_id": "source:media.screen-ocr.live-session"
+                },
+            }),
+            &auth,
+        )
+        .await?,
+    )?;
+    assert_eq!(inspected.operation.result_status, OperationStatus::Success);
+    let inspect_scope = inspected.operation.scope.as_ref().expect("scope recorded");
+    assert_eq!(inspect_scope["session_inspect"]["controlled"], true);
+    let sessions = inspect_scope["session_inspect"]["sessions"]
+        .as_array()
+        .expect("sessions array");
+    assert_eq!(sessions.len(), 1);
+    assert_eq!(sessions[0]["lifecycle_state"], "paused");
+
+    // resume returns the row to `enabled`.
+    handle_ops_start(
+        ctx.pool(),
+        json!({
+            "operation_type": "media.screen-ocr.resume",
+            "scope": {
+                "source_id": "media.screen-ocr",
+                "mode_id": "source:media.screen-ocr.live-session"
+            },
+        }),
+        &auth,
+    )
+    .await?;
+    let resumed = ctx
+        .pool()
+        .source_session_states()
+        .current_for_scope(
+            "media.screen-ocr",
+            "source:media.screen-ocr.live-session",
+            "default",
+        )
+        .await?
+        .expect("session control row exists after resume");
+    assert_eq!(resumed.lifecycle_state, "enabled");
+    Ok(())
+}
+
+#[sinex_test]
 async fn ops_start_admits_media_worker_output(ctx: TestContext) -> TestResult<()> {
     let auth = system_auth();
     let response: OpsStartResponse = serde_json::from_value(
