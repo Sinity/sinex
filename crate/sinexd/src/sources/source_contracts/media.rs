@@ -83,8 +83,7 @@ use sinex_primitives::source_contracts::{
         runtime_shape = RuntimeShape::OnDemand,
         material_lifecycle = MaterialLifecyclePolicy::EphemeralRaw,
         transport_semantics = TransportSemantics::LOCAL_LIVE_QUEUE,
-        capabilities = "coverage:source-coverage, debt:unified-debt-view, operation:media.audio-transcript.enable-session, operation:media.audio-transcript.disable-session, operation:media.audio-transcript.pause, operation:media.audio-transcript.resume, operation:media.audio-transcript.inspect",
-        proposed = true
+        capabilities = "coverage:source-coverage, debt:unified-debt-view, operation:media.audio-transcript.enable-session, operation:media.audio-transcript.disable-session, operation:media.audio-transcript.pause, operation:media.audio-transcript.resume, operation:media.audio-transcript.inspect"
     ),
     binding(
         subject = "source:media.audio-transcript.live-session",
@@ -97,8 +96,7 @@ use sinex_primitives::source_contracts::{
         runtime_shape = RuntimeShape::Continuous,
         material_lifecycle = MaterialLifecyclePolicy::EphemeralRaw,
         transport_semantics = TransportSemantics::LOCAL_LIVE_QUEUE,
-        capabilities = "coverage:source-coverage, debt:unified-debt-view, operation:media.audio-transcript.enable-session, operation:media.audio-transcript.disable-session, operation:media.audio-transcript.pause, operation:media.audio-transcript.resume, operation:media.audio-transcript.retry, operation:media.audio-transcript.inspect",
-        proposed = true
+        capabilities = "coverage:source-coverage, debt:unified-debt-view, operation:media.audio-transcript.enable-session, operation:media.audio-transcript.disable-session, operation:media.audio-transcript.pause, operation:media.audio-transcript.resume, operation:media.audio-transcript.retry, operation:media.audio-transcript.inspect"
     )
 )]
 pub struct MediaAudioTranscriptParser;
