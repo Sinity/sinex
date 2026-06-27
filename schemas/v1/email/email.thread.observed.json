@@ -1,0 +1,121 @@
+{
+  "$defs": {
+    "DateTime": {
+      "description": "RFC 3339 formatted date-time string",
+      "format": "date-time",
+      "type": "string"
+    },
+    "EmailMailboxFormat": {
+      "description": "Staged mailbox acquisition shape for email message/attachment/thread events.",
+      "enum": [
+        "rfc822-drop-staged",
+        "maildir-staged",
+        "mbox-staged",
+        "gmail-api",
+        "imap-provider"
+      ],
+      "type": "string"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "properties": {
+    "bcc": {
+      "items": {
+        "type": "string"
+      },
+      "type": "array"
+    },
+    "cc": {
+      "items": {
+        "type": "string"
+      },
+      "type": "array"
+    },
+    "date": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/DateTime"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "folder": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "from": {
+      "items": {
+        "type": "string"
+      },
+      "type": "array"
+    },
+    "in_reply_to": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "mailbox_format": {
+      "$ref": "#/$defs/EmailMailboxFormat"
+    },
+    "message_id": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "raw_material_id": {
+      "type": "string"
+    },
+    "references": {
+      "items": {
+        "type": "string"
+      },
+      "type": "array"
+    },
+    "source_file": {
+      "type": "string"
+    },
+    "subject": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "thread_key": {
+      "type": "string"
+    },
+    "thread_root_message_id": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "to": {
+      "items": {
+        "type": "string"
+      },
+      "type": "array"
+    }
+  },
+  "required": [
+    "thread_key",
+    "references",
+    "from",
+    "to",
+    "cc",
+    "bcc",
+    "source_file",
+    "raw_material_id",
+    "mailbox_format"
+  ],
+  "title": "EmailThreadObservedPayload",
+  "type": "object",
+  "x-sinex-event-type": "email.thread.observed",
+  "x-sinex-source": "email",
+  "x-sinex-version": "1.0.0"
+}

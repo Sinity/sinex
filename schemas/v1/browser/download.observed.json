@@ -1,0 +1,69 @@
+{
+  "$defs": {
+    "DateTime": {
+      "description": "RFC 3339 formatted date-time string",
+      "format": "date-time",
+      "type": "string"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "properties": {
+    "batch_id": {
+      "type": "string"
+    },
+    "download_id": {
+      "type": "string"
+    },
+    "filename": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "observed_at": {
+      "$ref": "#/$defs/DateTime"
+    },
+    "producer_instance_id": {
+      "type": "string"
+    },
+    "profile_id": {
+      "type": "string"
+    },
+    "sequence": {
+      "format": "uint64",
+      "minimum": 0,
+      "type": "integer"
+    },
+    "state": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "total_bytes": {
+      "format": "uint64",
+      "minimum": 0,
+      "type": [
+        "integer",
+        "null"
+      ]
+    },
+    "url": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "profile_id",
+    "producer_instance_id",
+    "batch_id",
+    "sequence",
+    "observed_at",
+    "download_id",
+    "url"
+  ],
+  "title": "BrowserDownloadObservedPayload",
+  "type": "object",
+  "x-sinex-event-type": "download.observed",
+  "x-sinex-source": "browser",
+  "x-sinex-version": "1.0.0"
+}

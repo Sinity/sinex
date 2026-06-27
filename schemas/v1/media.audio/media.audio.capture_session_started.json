@@ -11,16 +11,16 @@
     "capture_session_id": {
       "type": "string"
     },
-    "scope": {
+    "operator_binding_id": {
+      "type": "string"
+    },
+    "policy_posture": {
       "type": "string"
     },
     "reason": {
       "type": "string"
     },
-    "operator_binding_id": {
-      "type": "string"
-    },
-    "policy_posture": {
+    "scope": {
       "type": "string"
     },
     "started_at": {

@@ -14,15 +14,13 @@
         "null"
       ]
     },
-    "channel_count": {
-      "format": "uint32",
-      "minimum": 0,
+    "codec": {
       "type": [
-        "integer",
+        "string",
         "null"
       ]
     },
-    "codec": {
+    "display_id": {
       "type": [
         "string",
         "null"
@@ -42,6 +40,21 @@
         "null"
       ]
     },
+    "frame_rate_fps": {
+      "format": "double",
+      "type": [
+        "number",
+        "null"
+      ]
+    },
+    "height_px": {
+      "format": "uint32",
+      "minimum": 0,
+      "type": [
+        "integer",
+        "null"
+      ]
+    },
     "observed_at": {
       "$ref": "#/$defs/DateTime"
     },
@@ -51,7 +64,23 @@
     "raw_material_id": {
       "type": "string"
     },
-    "sample_rate_hz": {
+    "region": {
+      "items": {
+        "format": "int64",
+        "type": "integer"
+      },
+      "type": [
+        "array",
+        "null"
+      ]
+    },
+    "source_file": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "width_px": {
       "format": "uint32",
       "minimum": 0,
       "type": [
@@ -59,7 +88,7 @@
         "null"
       ]
     },
-    "source_file": {
+    "window_title": {
       "type": [
         "string",
         "null"
@@ -71,9 +100,9 @@
     "policy_posture",
     "observed_at"
   ],
-  "title": "AudioRecordingObservedPayload",
+  "title": "ScreenVideoSegmentObservedPayload",
   "type": "object",
-  "x-sinex-event-type": "media.audio.recording_observed",
-  "x-sinex-source": "media.audio",
+  "x-sinex-event-type": "media.screen.video_segment_observed",
+  "x-sinex-source": "media.screen",
   "x-sinex-version": "1.0.0"
 }
