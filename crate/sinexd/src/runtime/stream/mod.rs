@@ -20,7 +20,7 @@ pub use handles::{
 pub use kernel::{
     PullConsumerSpec, PullConsumerStartupSnapshot, ShadowConsumerSpec, consume_pull_loop,
     create_shadow_consumer, delete_consumer, ensure_pull_consumer, list_consumers, pull_batch,
-    validate_pull_consumer_config,
+    pull_batch_bounded, validate_pull_consumer_config,
 };
 pub use runner::RuntimeRunner;
 pub use runtime_module::RuntimeModule;
