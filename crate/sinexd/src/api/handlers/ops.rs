@@ -16,6 +16,7 @@ use sinex_primitives::events::payloads::email::{
     EmailNetworkState, EmailProviderKind, EmailRateLimitState, EmailSyncCursorObservedPayload,
     EmailSyncState,
 };
+use sinex_primitives::events::EventPayload;
 use sinex_primitives::events::{Event, SourceMaterial};
 use sinex_primitives::parser::{
     InputShapeAdapter, MaterialAnchor, MaterialParser, ParserContext, SourceId, SourceRecord,
@@ -839,6 +840,15 @@ async fn execute_gmail_provider_sync(
         EmailProviderRuntimeMode::GmailScheduledSync,
         &provider_scope,
     );
+    emit_email_capture_runtime_observed(
+        pool,
+        &material_record,
+        email_provider_executed_runtime_payload(
+            EmailProviderRuntimeMode::GmailScheduledSync,
+            &provider_scope,
+        ),
+    )
+    .await?;
 
     scope.insert(
         "executor_state".to_string(),
@@ -1041,6 +1051,12 @@ async fn execute_imap_provider_sync(
         .clone()
         .map(|cursor| email_provider_cursor_payload_metadata_value(mode, cursor));
     let runtime = email_provider_executed_runtime_value(mode, &provider_scope);
+    emit_email_capture_runtime_observed(
+        pool,
+        &material_record,
+        email_provider_executed_runtime_payload(mode, &provider_scope),
+    )
+    .await?;
 
     scope.insert(
         "executor_state".to_string(),
@@ -2224,14 +2240,15 @@ fn email_provider_cursor_payload_metadata_value(
     })
 }
 
-fn email_provider_executed_runtime_value(
+/// Build the executed (success) provider runtime observation payload. Shared by
+/// the scope-JSON builder and the event emitter so the observation recorded in
+/// scope and the emitted `email.capture_runtime.observed` event never diverge.
+fn email_provider_executed_runtime_payload(
     mode: EmailProviderRuntimeMode,
     scope: &EmailProviderOperationScope,
-) -> serde_json::Value {
-    let provider = mode.provider();
-    let cursor_kind = email_provider_sync_cursor_kind(provider);
-    let runtime_payload = EmailCaptureRuntimeObservedPayload {
-        provider,
+) -> EmailCaptureRuntimeObservedPayload {
+    EmailCaptureRuntimeObservedPayload {
+        provider: mode.provider(),
         account_binding_ref: scope.account_binding_ref.clone(),
         mode_id: mode.mode_id().to_string(),
         observed_at: Timestamp::now(),
@@ -2250,7 +2267,46 @@ fn email_provider_executed_runtime_value(
             .iter()
             .map(|action| action.to_string())
             .collect(),
-    };
+    }
+}
+
+/// Emit the `email.capture_runtime.observed` event for a completed provider sync,
+/// anchored to the provider sync material. This makes the runtime observation a
+/// real, queryable event (not only a scope blob / state row), so automata and
+/// `events.query` can see provider auth/sync/network observations over time.
+async fn emit_email_capture_runtime_observed(
+    pool: &PgPool,
+    material_record: &sinex_db::SourceMaterialRecord,
+    payload: EmailCaptureRuntimeObservedPayload,
+) -> Result<()> {
+    let material_id = Id::<SourceMaterial>::from_uuid(material_record.id);
+    let event = payload
+        .from_material(material_id)
+        .build()
+        .map_err(|error| {
+            SinexError::processing(format!(
+                "failed to build email.capture_runtime.observed event: {error}"
+            ))
+            .with_operation("ops.start")
+        })?
+        .to_json_event()
+        .map_err(|error| {
+            SinexError::serialization(format!(
+                "failed to serialize email.capture_runtime.observed event: {error}"
+            ))
+            .with_operation("ops.start")
+        })?;
+    pool.events().insert(event).await?;
+    Ok(())
+}
+
+fn email_provider_executed_runtime_value(
+    mode: EmailProviderRuntimeMode,
+    scope: &EmailProviderOperationScope,
+) -> serde_json::Value {
+    let provider = mode.provider();
+    let cursor_kind = email_provider_sync_cursor_kind(provider);
+    let runtime_payload = email_provider_executed_runtime_payload(mode, scope);
     serde_json::json!({
         "provider": provider.as_str(),
         "provider_runtime": mode.runtime().as_str(),
