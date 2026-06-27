@@ -184,6 +184,41 @@ impl SourceSessionStateRepository<'_> {
         .map_err(|error| db_error(error, "list source session state"))
     }
 
+    /// Every current control row across all sources/modes/scopes. Each
+    /// `(source_id, mode_id, session_scope)` has exactly one row (upsert keeps
+    /// the latest), so every row is current. Used by operator read surfaces
+    /// (e.g. `sinexctl sources status`) to show live session posture.
+    pub async fn list_all_current(&self) -> DbResult<Vec<SourceSessionStateRecord>> {
+        sqlx::query_as!(
+            SourceSessionStateRecord,
+            r#"
+            SELECT
+                id,
+                source_id,
+                mode_id,
+                session_scope,
+                operation_id,
+                result_status as "result_status!: OperationStatus",
+                lifecycle_state,
+                visibility_state,
+                private_mode_blocked,
+                runtime_state_ref,
+                coverage_ref,
+                debt_ref,
+                requested_by,
+                reason,
+                detail,
+                observed_at,
+                updated_at
+            FROM core.source_session_state
+            ORDER BY source_id, mode_id, session_scope
+            "#
+        )
+        .fetch_all(self.pool)
+        .await
+        .map_err(|error| db_error(error, "list all current source session state"))
+    }
+
     /// Resolve the current control state for one specific session scope.
     pub async fn current_for_scope(
         &self,

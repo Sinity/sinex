@@ -66,6 +66,23 @@ async fn source_session_state_upsert_keeps_current_scope_row(ctx: TestContext) -
 }
 
 #[sinex_test]
+async fn source_session_state_rejects_invalid_lifecycle(ctx: TestContext) -> TestResult<()> {
+    // The converged `source_session_state_lifecycle_valid` CHECK constraint must
+    // reject lifecycle values outside enabled/disabled/paused, so a typo can
+    // never persist a state the capture gate cannot interpret.
+    let result = ctx
+        .pool()
+        .source_session_states()
+        .upsert(session_state(Uuid::now_v7(), "halted", "idle"))
+        .await;
+    assert!(
+        result.is_err(),
+        "invalid lifecycle_state must be rejected by the CHECK constraint"
+    );
+    Ok(())
+}
+
+#[sinex_test]
 async fn source_session_state_distinct_scopes_coexist(ctx: TestContext) -> TestResult<()> {
     let repo = ctx.pool().source_session_states();
 
