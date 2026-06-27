@@ -245,9 +245,15 @@ async fn start_package_operation(
     }
 
     if spec.surface == "media_capture"
-        && let Some(media_result) =
-            media::execute_worker_output(pool, &spec, &mode_id, &mut scope, &mut preview_summary)
-                .await?
+        && let Some(media_result) = media::execute_media_operation(
+            pool,
+            &spec,
+            &mode_id,
+            actor,
+            &mut scope,
+            &mut preview_summary,
+        )
+        .await?
     {
         return log_package_operation(
             pool,

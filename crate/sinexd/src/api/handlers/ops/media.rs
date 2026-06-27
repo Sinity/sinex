@@ -109,6 +109,196 @@ impl MediaWorkerCommandRequest {
     }
 }
 
+/// Resolve the canonical control-plane refs for a media live-session mode.
+///
+/// These mirror the coverage/debt ref shapes the rest of the media surface
+/// uses, derived generally from `(source_id, mode_id)` rather than hand-mapped
+/// per source.
+fn media_session_refs(source_id: &str, mode_id: &str) -> (String, String, String) {
+    (
+        format!("media.session_runtime.observed:{source_id}:{mode_id}"),
+        format!("coverage:{source_id}.live_session"),
+        format!("debt:{source_id}.live_session"),
+    )
+}
+
+/// The session scope a media session-control operation targets. Live capture is
+/// host-singleton per mode by default, but the column is general so a future
+/// multi-display / multi-device deployment can address sessions independently.
+fn media_session_scope(scope: &serde_json::Map<String, serde_json::Value>) -> String {
+    super::optional_scope_string(scope, "session_scope")
+        .or_else(|| super::optional_scope_string(scope, "session_id"))
+        .unwrap_or_else(|| "default".to_string())
+}
+
+/// Map a session-control spec action to its target lifecycle/visibility state.
+fn media_session_transition(action: &str) -> Option<(&'static str, &'static str)> {
+    match action {
+        "enable_session" | "resume" => Some(("enabled", "idle")),
+        "disable_session" => Some(("disabled", "suspended")),
+        "pause" => Some(("paused", "suspended")),
+        _ => None,
+    }
+}
+
+/// Execute an operator media live-session control transition
+/// (enable/disable/pause/resume) by upserting the general
+/// `core.source_session_state` control plane. The live capture driver consults
+/// this state before each capture cycle, so pause/disable genuinely suspend
+/// capture rather than only recording intent.
+pub(super) async fn execute_session_control(
+    pool: &PgPool,
+    spec: &PackageOperationSpec,
+    mode_id: &str,
+    actor: &str,
+    scope: &mut serde_json::Map<String, serde_json::Value>,
+    preview_summary: &mut serde_json::Value,
+) -> Result<Option<MediaWorkerOutputResult>> {
+    let Some((lifecycle_state, visibility_state)) = media_session_transition(spec.action) else {
+        return Ok(None);
+    };
+    let started = Instant::now();
+    let session_scope = media_session_scope(scope);
+    let reason = super::optional_scope_string(scope, "reason");
+    let (runtime_state_ref, coverage_ref, debt_ref) =
+        media_session_refs(spec.source_id, mode_id);
+
+    let record = pool
+        .source_session_states()
+        .upsert(sinex_db::repositories::SourceSessionStateUpsert {
+            source_id: spec.source_id.to_string(),
+            mode_id: mode_id.to_string(),
+            session_scope: session_scope.clone(),
+            operation_id: uuid::Uuid::now_v7(),
+            result_status: OperationStatus::Success,
+            lifecycle_state: lifecycle_state.to_string(),
+            visibility_state: visibility_state.to_string(),
+            private_mode_blocked: false,
+            runtime_state_ref,
+            coverage_ref,
+            debt_ref,
+            requested_by: Some(actor.to_string()),
+            reason: reason.clone(),
+            detail: serde_json::json!({
+                "action": spec.action,
+                "capability_issue": 1043,
+            }),
+        })
+        .await?;
+
+    let session_state = serde_json::json!({
+        "source_id": record.source_id,
+        "mode_id": record.mode_id,
+        "session_scope": record.session_scope,
+        "lifecycle_state": record.lifecycle_state,
+        "visibility_state": record.visibility_state,
+        "private_mode_blocked": record.private_mode_blocked,
+        "runtime_state_ref": record.runtime_state_ref,
+        "coverage_ref": record.coverage_ref,
+        "debt_ref": record.debt_ref,
+        "observed_at": record.observed_at.to_string(),
+    });
+    scope.insert("session_state".to_string(), session_state.clone());
+    scope.insert(
+        "executor_state".to_string(),
+        serde_json::json!("session_control_applied"),
+    );
+    if let Some(preview) = preview_summary.as_object_mut() {
+        preview.insert("session_state".to_string(), session_state);
+        preview.insert(
+            "executor_state".to_string(),
+            serde_json::json!("session_control_applied"),
+        );
+    }
+
+    Ok(Some(MediaWorkerOutputResult {
+        status: OperationStatus::Success,
+        message: format!(
+            "media_capture; session {} -> {lifecycle_state} (scope {session_scope})",
+            spec.action
+        ),
+        duration_ms: Some(elapsed_millis(started)),
+    }))
+}
+
+/// Report the current media live-session control state for a mode (the
+/// operator-facing `inspect` read). Returns every session scope's current
+/// lifecycle/visibility, or a not-yet-controlled posture when none exists.
+pub(super) async fn execute_session_inspect(
+    pool: &PgPool,
+    spec: &PackageOperationSpec,
+    mode_id: &str,
+    scope: &mut serde_json::Map<String, serde_json::Value>,
+    preview_summary: &mut serde_json::Value,
+) -> Result<Option<MediaWorkerOutputResult>> {
+    let started = Instant::now();
+    let sessions: Vec<serde_json::Value> = pool
+        .source_session_states()
+        .list_current_by_source(spec.source_id)
+        .await?
+        .into_iter()
+        .filter(|record| record.mode_id == mode_id)
+        .map(|record| {
+            serde_json::json!({
+                "session_scope": record.session_scope,
+                "lifecycle_state": record.lifecycle_state,
+                "visibility_state": record.visibility_state,
+                "private_mode_blocked": record.private_mode_blocked,
+                "requested_by": record.requested_by,
+                "reason": record.reason,
+                "observed_at": record.observed_at.to_string(),
+            })
+        })
+        .collect();
+
+    let (runtime_state_ref, coverage_ref, debt_ref) =
+        media_session_refs(spec.source_id, mode_id);
+    let inspect = serde_json::json!({
+        "source_id": spec.source_id,
+        "mode_id": mode_id,
+        "runtime_state_ref": runtime_state_ref,
+        "coverage_ref": coverage_ref,
+        "debt_ref": debt_ref,
+        // No row yet means the mode has never been operator-controlled; it
+        // captures iff its deployment binding is enabled.
+        "controlled": !sessions.is_empty(),
+        "sessions": sessions,
+    });
+    scope.insert("session_inspect".to_string(), inspect.clone());
+    if let Some(preview) = preview_summary.as_object_mut() {
+        preview.insert("session_inspect".to_string(), inspect);
+    }
+
+    Ok(Some(MediaWorkerOutputResult {
+        status: OperationStatus::Success,
+        message: format!("media_capture; inspected live-session state for {mode_id}"),
+        duration_ms: Some(elapsed_millis(started)),
+    }))
+}
+
+/// Dispatch a `media_capture` package operation to its real executor.
+///
+/// Session-control actions (enable/disable/pause/resume) and `inspect` resolve
+/// against the general `core.source_session_state` control plane; everything
+/// else (run-model/run-ocr/retry/rebuild/capture-region/record-video) consumes
+/// worker output. Returns `None` only when no executor matched the request.
+pub(super) async fn execute_media_operation(
+    pool: &PgPool,
+    spec: &PackageOperationSpec,
+    mode_id: &str,
+    actor: &str,
+    scope: &mut serde_json::Map<String, serde_json::Value>,
+    preview_summary: &mut serde_json::Value,
+) -> Result<Option<MediaWorkerOutputResult>> {
+    match spec.action {
+        "enable_session" | "disable_session" | "pause" | "resume" => {
+            execute_session_control(pool, spec, mode_id, actor, scope, preview_summary).await
+        }
+        "inspect" => execute_session_inspect(pool, spec, mode_id, scope, preview_summary).await,
+        _ => execute_worker_output(pool, spec, mode_id, scope, preview_summary).await,
+    }
+}
+
 pub(super) async fn execute_worker_output(
     pool: &PgPool,
     spec: &PackageOperationSpec,
