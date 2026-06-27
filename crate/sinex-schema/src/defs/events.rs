@@ -313,9 +313,28 @@ impl Events {
 
     /// Enables native `TimescaleDB` compression on `core.events`.
     ///
-    /// Uses `source_material_id` as the segmentby column (groups related events by
-    /// provenance material) and `id DESC` as the orderby (aligns with the `UUIDv7`
-    /// partition key for efficient time-range pruning within compressed segments).
+    /// Segments by `(source, event_type)` and orders by `id DESC`.
+    ///
+    /// ## Why not `source_material_id` (the original, pathological choice)
+    ///
+    /// TimescaleDB compresses by grouping rows into per-`segmentby`-value batches
+    /// (≤1000 rows each) and column-compressing each batch. A good `segmentby` is
+    /// a **low-cardinality** column the workload filters on, so each segment holds
+    /// thousands of rows and batches are full.
+    ///
+    /// `source_material_id` is near-unique (a 14-month journald import had ~900K
+    /// distinct materials in a single chunk, ~60 rows each). That made compression
+    /// build ~900K micro-segments → enormous metadata, terrible ratio, and
+    /// pathological time/memory — compression of the chunk failed *forever*, and
+    /// because the failing/retrying policy held locks, it blocked `sinexd`
+    /// startup schema-apply. The chunk size (tens of GB) was never the problem;
+    /// the segmentby cardinality was.
+    ///
+    /// `(source, event_type)` is low-cardinality (a few hundred distinct combos)
+    /// and matches the dominant query filter (source + type + time), so segments
+    /// hold tens of thousands of rows. `id DESC` keeps within-segment ordering
+    /// aligned with the `UUIDv7` partition for time-range pruning. Tunable once
+    /// real ingest is measured (see #2182).
     #[must_use]
     pub fn enable_compression_sql() -> &'static str {
         r"
@@ -329,7 +348,7 @@ impl Events {
             ) THEN
                 ALTER TABLE core.events SET (
                     timescaledb.compress,
-                    timescaledb.compress_segmentby = 'source_material_id',
+                    timescaledb.compress_segmentby = 'source, event_type',
                     timescaledb.compress_orderby = 'id DESC'
                 );
             END IF;
