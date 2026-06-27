@@ -1682,6 +1682,33 @@ let
   # — ProtectHome / ReadWritePaths / ExecStartPre ACL / EnvironmentFile /
   # SupplementaryGroups / unit path packages — merged into sinexd.service).
   emptyGlue = { bindings = { }; supportUnits = { }; overlay = { }; };
+  # Media screen-capture binding. The driver (media.screen-ocr) reuses the
+  # desktop source's Wayland session access (env + ACL bridge), so this glue
+  # only declares the manifest binding + its config and adds `grim` to PATH.
+  mkMediaGlue =
+    let
+      sat = sourceCfg.media;
+    in
+    {
+      bindings = {
+        "media.screen-ocr" = {
+          enable = true;
+          adapterConfig =
+            {
+              capture_command = sat.captureCommand;
+              interval_secs = sat.intervalSec;
+              capture_timeout_ms = sat.captureTimeoutMs;
+              policy_posture = sat.policyPosture;
+            }
+            // optionalAttrs (sat.region != null) { region = sat.region; }
+            // optionalAttrs (sat.display != null) { display = sat.display; };
+        };
+      };
+      overlay = { path = [ pkgs.grim ]; };
+    };
+  mediaGlue =
+    if sourceRuntimeEnabled && sourceCfg.media.enable then mkMediaGlue
+    else { bindings = { }; overlay = { }; };
   terminalGlue =
     if sourceRuntimeEnabled && sourceCfg.terminal.enable then mkTerminalGlue
     else emptyGlue;
@@ -1704,7 +1731,8 @@ let
     // terminalGlue.bindings
     // browserGlue.bindings
     // desktopGlue.bindings
-    // systemGlue.bindings;
+    // systemGlue.bindings
+    // mediaGlue.bindings;
 
   # Support units (ACL/env bridges) that generate their own systemd services.
   runtimeSupportUnits =
@@ -1724,6 +1752,7 @@ let
     browserGlue.overlay
     desktopGlue.overlay
     systemGlue.overlay
+    mediaGlue.overlay
   ];
   collectList = field: concatMap (o: o.${field} or [ ]) glueOverlays;
   runtimeOverlay = {
