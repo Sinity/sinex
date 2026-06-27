@@ -1,0 +1,81 @@
+{
+  "$defs": {
+    "EmailMailboxFormat": {
+      "description": "Staged mailbox acquisition shape for email message/attachment/thread events.",
+      "enum": [
+        "rfc822-drop-staged",
+        "maildir-staged",
+        "mbox-staged",
+        "gmail-api",
+        "imap-provider"
+      ],
+      "type": "string"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "properties": {
+    "attachment_index": {
+      "format": "uint32",
+      "minimum": 0,
+      "type": "integer"
+    },
+    "content_id": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "content_type": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "disposition": {
+      "type": "string"
+    },
+    "filename": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "folder": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "mailbox_format": {
+      "$ref": "#/$defs/EmailMailboxFormat"
+    },
+    "material_policy_ref": {
+      "type": "string"
+    },
+    "message_id": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "raw_material_id": {
+      "type": "string"
+    },
+    "source_file": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "source_file",
+    "raw_material_id",
+    "mailbox_format",
+    "attachment_index",
+    "disposition",
+    "material_policy_ref"
+  ],
+  "title": "EmailAttachmentObservedPayload",
+  "type": "object",
+  "x-sinex-event-type": "email.attachment.observed",
+  "x-sinex-source": "email",
+  "x-sinex-version": "1.0.0"
+}

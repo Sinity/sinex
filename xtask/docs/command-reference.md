@@ -744,6 +744,7 @@ Update Cargo.lock through the xtask dependency surface
 | Flag | Value | Required | Description |
 |---|---|---|---|
 | `-p, --package` | yes | no | Package spec to update; forwarded as repeated `cargo update -p <SPEC>` |
+| `--resolve` | no | no | Resolve current manifests into Cargo.lock without upgrading existing locked packages |
 | `--recursive` | no | no | Update dependencies recursively for the selected packages |
 | `--dry-run` | no | no | Preview the update without writing Cargo.lock |
 | `--all` | no | no | Update the whole lockfile instead of named packages |

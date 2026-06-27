@@ -1,0 +1,116 @@
+{
+  "$defs": {
+    "DateTime": {
+      "description": "RFC 3339 formatted date-time string",
+      "format": "date-time",
+      "type": "string"
+    },
+    "EmailContinuityState": {
+      "description": "Whether a provider cursor is currently replay-continuous.",
+      "enum": [
+        "current",
+        "gap",
+        "degraded",
+        "unknown"
+      ],
+      "type": "string"
+    },
+    "EmailProviderKind": {
+      "description": "Provider family behind an email live/scheduled acquisition mode.",
+      "enum": [
+        "gmail",
+        "imap"
+      ],
+      "type": "string"
+    },
+    "EmailSyncCursorKind": {
+      "description": "Provider cursor coordinate persisted by email sync observations.",
+      "enum": [
+        "gmail-history-id",
+        "gmail-page-token",
+        "imap-uidvalidity-uid",
+        "imap-modseq"
+      ],
+      "type": "string"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "properties": {
+    "account_binding_ref": {
+      "type": "string"
+    },
+    "caveats": {
+      "items": {
+        "type": "string"
+      },
+      "type": "array"
+    },
+    "continuity_state": {
+      "$ref": "#/$defs/EmailContinuityState"
+    },
+    "cursor_kind": {
+      "$ref": "#/$defs/EmailSyncCursorKind"
+    },
+    "cursor_value": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "gmail_history_id": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "mailbox_scope": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "observed_at": {
+      "$ref": "#/$defs/DateTime"
+    },
+    "page_token": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "provider": {
+      "$ref": "#/$defs/EmailProviderKind"
+    },
+    "required_action": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "uid": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "uidvalidity": {
+      "type": [
+        "string",
+        "null"
+      ]
+    }
+  },
+  "required": [
+    "provider",
+    "account_binding_ref",
+    "cursor_kind",
+    "observed_at",
+    "continuity_state",
+    "caveats"
+  ],
+  "title": "EmailSyncCursorObservedPayload",
+  "type": "object",
+  "x-sinex-event-type": "email.sync_cursor.observed",
+  "x-sinex-source": "email",
+  "x-sinex-version": "1.0.0"
+}

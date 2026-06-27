@@ -8,14 +8,6 @@
   },
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "properties": {
-    "segment_index": {
-      "format": "uint32",
-      "minimum": 0,
-      "type": "integer"
-    },
-    "text": {
-      "type": "string"
-    },
     "bbox": {
       "items": {
         "format": "int64",
@@ -39,13 +31,16 @@
         "null"
       ]
     },
-    "window_title": {
+    "engine": {
       "type": [
         "string",
         "null"
       ]
     },
-    "source_file": {
+    "observed_at": {
+      "$ref": "#/$defs/DateTime"
+    },
+    "producer_run_id": {
       "type": [
         "string",
         "null"
@@ -54,17 +49,19 @@
     "raw_material_id": {
       "type": "string"
     },
-    "engine": {
+    "segment_index": {
+      "format": "uint32",
+      "minimum": 0,
+      "type": "integer"
+    },
+    "source_file": {
       "type": [
         "string",
         "null"
       ]
     },
-    "producer_run_id": {
-      "type": [
-        "string",
-        "null"
-      ]
+    "text": {
+      "type": "string"
     },
     "timestamp_quality": {
       "type": [
@@ -72,8 +69,11 @@
         "null"
       ]
     },
-    "observed_at": {
-      "$ref": "#/$defs/DateTime"
+    "window_title": {
+      "type": [
+        "string",
+        "null"
+      ]
     }
   },
   "required": [

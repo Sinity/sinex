@@ -1,7 +1,32 @@
 {
+  "$defs": {
+    "StreamPressureDimension": {
+      "description": "Stream capacity dimension carrying the highest pressure.",
+      "enum": [
+        "messages",
+        "bytes"
+      ],
+      "type": "string"
+    },
+    "StreamPressureLevel": {
+      "description": "Operator-facing pressure classification for a `JetStream` stream sample.",
+      "enum": [
+        "nominal",
+        "warning",
+        "critical"
+      ],
+      "type": "string"
+    }
+  },
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "description": "NATS `JetStream` stream statistics\n\nAddresses Issue 3: Stream Capacity Monitoring",
   "properties": {
+    "byte_fill_pct": {
+      "default": 0.0,
+      "description": "Byte-capacity fill percentage (0.0 - 100.0).",
+      "format": "double",
+      "type": "number"
+    },
     "bytes": {
       "description": "Current byte count",
       "format": "uint64",
@@ -31,6 +56,17 @@
       "minimum": 0,
       "type": "integer"
     },
+    "limiting_dimension": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/StreamPressureDimension"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "description": "Capacity dimension carrying the highest pressure, when a limit exists."
+    },
     "max_bytes": {
       "description": "Maximum bytes",
       "format": "uint64",
@@ -43,11 +79,22 @@
       "minimum": 0,
       "type": "integer"
     },
+    "message_fill_pct": {
+      "default": 0.0,
+      "description": "Message-count fill percentage (0.0 - 100.0).",
+      "format": "double",
+      "type": "number"
+    },
     "messages": {
       "description": "Current message count",
       "format": "uint64",
       "minimum": 0,
       "type": "integer"
+    },
+    "pressure_level": {
+      "$ref": "#/$defs/StreamPressureLevel",
+      "default": "nominal",
+      "description": "Classified capacity pressure for this sample."
     },
     "stream": {
       "description": "Stream name",

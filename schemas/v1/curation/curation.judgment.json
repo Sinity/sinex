@@ -24,6 +24,66 @@
       "description": "RFC 3339 formatted date-time string",
       "format": "date-time",
       "type": "string"
+    },
+    "Judgment": {
+      "description": "An operator's explicit verdict on a [`Proposal`].\n\nCreated by the operator (or a trusted rule system acting on their behalf)\nto either accept, reject, or defer a proposal.",
+      "properties": {
+        "id": {
+          "description": "Stable opaque identifier for this judgment.",
+          "type": "string"
+        },
+        "note": {
+          "description": "Optional operator note explaining the verdict.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "operator": {
+          "description": "Who rendered this judgment (actor identifier).",
+          "type": "string"
+        },
+        "proposal_id": {
+          "description": "The proposal this judgment applies to (references [`Proposal::id`]).",
+          "type": "string"
+        },
+        "ts_judged": {
+          "$ref": "#/$defs/DateTime",
+          "description": "When the judgment was rendered."
+        },
+        "verdict": {
+          "$ref": "#/$defs/JudgmentVerdict",
+          "description": "The operator's verdict."
+        }
+      },
+      "required": [
+        "id",
+        "proposal_id",
+        "verdict",
+        "operator",
+        "ts_judged"
+      ],
+      "type": "object"
+    },
+    "JudgmentVerdict": {
+      "description": "The operator's verdict on a [`Proposal`].",
+      "oneOf": [
+        {
+          "const": "accept",
+          "description": "Proposal accepted; the caller may apply the proposed value.",
+          "type": "string"
+        },
+        {
+          "const": "reject",
+          "description": "Proposal rejected; the proposed value must be discarded.",
+          "type": "string"
+        },
+        {
+          "const": "defer",
+          "description": "Decision deferred; the proposal stays alive for later review.",
+          "type": "string"
+        }
+      ]
     }
   },
   "$schema": "https://json-schema.org/draft/2020-12/schema",
@@ -34,6 +94,17 @@
     },
     "actor_kind": {
       "$ref": "#/$defs/CurationJudgmentActorKind"
+    },
+    "authority_judgment": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/Judgment"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "description": "Shared authority judgment for proposals carrying\n[`CurationProposalPayload::authority_proposal`]."
     },
     "authorization_context": true,
     "comment": {

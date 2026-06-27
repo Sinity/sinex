@@ -8,19 +8,10 @@
   },
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "properties": {
-    "segment_index": {
-      "format": "uint32",
-      "minimum": 0,
-      "type": "integer"
-    },
-    "text": {
-      "type": "string"
-    },
-    "start_ms": {
-      "format": "uint64",
-      "minimum": 0,
+    "confidence": {
+      "format": "double",
       "type": [
-        "integer",
+        "number",
         "null"
       ]
     },
@@ -32,26 +23,22 @@
         "null"
       ]
     },
-    "speaker_label": {
-      "type": [
-        "string",
-        "null"
-      ]
-    },
     "language": {
       "type": [
         "string",
         "null"
       ]
     },
-    "confidence": {
-      "format": "double",
+    "model_id": {
       "type": [
-        "number",
+        "string",
         "null"
       ]
     },
-    "source_file": {
+    "observed_at": {
+      "$ref": "#/$defs/DateTime"
+    },
+    "producer_run_id": {
       "type": [
         "string",
         "null"
@@ -60,26 +47,39 @@
     "raw_material_id": {
       "type": "string"
     },
-    "model_id": {
+    "segment_index": {
+      "format": "uint32",
+      "minimum": 0,
+      "type": "integer"
+    },
+    "source_file": {
       "type": [
         "string",
         "null"
       ]
     },
-    "producer_run_id": {
+    "speaker_label": {
       "type": [
         "string",
         "null"
       ]
+    },
+    "start_ms": {
+      "format": "uint64",
+      "minimum": 0,
+      "type": [
+        "integer",
+        "null"
+      ]
+    },
+    "text": {
+      "type": "string"
     },
     "timestamp_quality": {
       "type": [
         "string",
         "null"
       ]
-    },
-    "observed_at": {
-      "$ref": "#/$defs/DateTime"
     }
   },
   "required": [
