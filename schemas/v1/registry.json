@@ -51,6 +51,27 @@
       "content_hash": "fe708664d39ea7cbee69dd93785cc3ff73600636bf1ce9d192ad9eac8261b192"
     },
     {
+      "source": "browser",
+      "event_type": "download.observed",
+      "version": "1.0.0",
+      "path": "browser/download.observed.json",
+      "content_hash": "16e101810f162ae40093093aaabe36ad67f2e7798223d75f55774e8289dd6e88"
+    },
+    {
+      "source": "browser",
+      "event_type": "navigation.observed",
+      "version": "1.0.0",
+      "path": "browser/navigation.observed.json",
+      "content_hash": "54fe5517223461ce88a4e23b0afdb0ae455d597658c68529ced1d4d7a46e1bbe"
+    },
+    {
+      "source": "browser",
+      "event_type": "tab.activated",
+      "version": "1.0.0",
+      "path": "browser/tab.activated.json",
+      "content_hash": "cb944544b6960a275a088a2cf86748925065ddc7511a3d5595b75f728e53cd72"
+    },
+    {
       "source": "chatgpt",
       "event_type": "ai.message",
       "version": "1.0.0",
@@ -90,14 +111,14 @@
       "event_type": "curation.judgment",
       "version": "1.0.0",
       "path": "curation/curation.judgment.json",
-      "content_hash": "f55dad3d2e741c131f8c47c92c158620a7aa51586d3a58faf729d9a05dfd6f75"
+      "content_hash": "ccdefc46b8e7c0a701a5314bf64f132a22f6f9c6ff7b1640264bde31553cb131"
     },
     {
       "source": "curation",
       "event_type": "curation.proposal",
       "version": "1.0.0",
       "path": "curation/curation.proposal.json",
-      "content_hash": "2a9969450f4a4bec38f1474d623733bbe50d1fe46efcd61ff4b156db5baea5b4"
+      "content_hash": "28f2c1147b9dcfe5203ea91d5ab29b6323b3a00092e3265e313efd219a4ce371"
     },
     {
       "source": "dbus",
@@ -238,6 +259,48 @@
       "version": "1.0.0",
       "path": "document-source/document.ingested.json",
       "content_hash": "6a7a664807b9ca51634a533e6426d76e8960dfb1884c249e1b041f9fce2e2f9c"
+    },
+    {
+      "source": "email",
+      "event_type": "email.attachment.observed",
+      "version": "1.0.0",
+      "path": "email/email.attachment.observed.json",
+      "content_hash": "196dc3d5991707e4738a1cf6dc0f87e724ac98c3c52d4146593fd396d7465b1c"
+    },
+    {
+      "source": "email",
+      "event_type": "email.capture_runtime.observed",
+      "version": "1.0.0",
+      "path": "email/email.capture_runtime.observed.json",
+      "content_hash": "3a9910595330692b8c53a6a92fd9f72aa48612d02de43cac956ab8daf0145153"
+    },
+    {
+      "source": "email",
+      "event_type": "email.message.received",
+      "version": "1.0.0",
+      "path": "email/email.message.received.json",
+      "content_hash": "4508760a4f0a3fcedf2d4c207783efea4f9cf7b8ec9067371a5b786b7c506327"
+    },
+    {
+      "source": "email",
+      "event_type": "email.message.sent",
+      "version": "1.0.0",
+      "path": "email/email.message.sent.json",
+      "content_hash": "c61d47311b588485b5b6410e23755eea8314488d715db9e2f598565a5de6cfc3"
+    },
+    {
+      "source": "email",
+      "event_type": "email.sync_cursor.observed",
+      "version": "1.0.0",
+      "path": "email/email.sync_cursor.observed.json",
+      "content_hash": "231525fc829d9d81bb327a78b43dd042e0dc4f94708cbfeca437191acd36e7a5"
+    },
+    {
+      "source": "email",
+      "event_type": "email.thread.observed",
+      "version": "1.0.0",
+      "path": "email/email.thread.observed.json",
+      "content_hash": "0791fc76820f60667737dda3404403097cb73482c60abb4c130ef484326a351d"
     },
     {
       "source": "entity-enricher",
@@ -433,56 +496,77 @@
       "event_type": "media.audio.capture_session_ended",
       "version": "1.0.0",
       "path": "media.audio/media.audio.capture_session_ended.json",
-      "content_hash": "0c80ddbb28bd6a09e6e468b359635a0b7557d6db5bc089b581d12a19390e0587"
+      "content_hash": "6c0c9ee988135471ea3faf7c99e78076f1e6a4e2d8699f9798425385d1da964d"
     },
     {
       "source": "media.audio",
       "event_type": "media.audio.capture_session_started",
       "version": "1.0.0",
       "path": "media.audio/media.audio.capture_session_started.json",
-      "content_hash": "5bf11bd9f06351dab15383ca7ccab336a7aff658b7f8a0cb53c1b8a06e8ee40d"
+      "content_hash": "a4dbf0cc725063b2b61f11f24a7549bb1775fd6e00e858fdd7159964b889299f"
     },
     {
       "source": "media.audio",
       "event_type": "media.audio.recording_observed",
       "version": "1.0.0",
       "path": "media.audio/media.audio.recording_observed.json",
-      "content_hash": "797728a7794ad3c40584369e9b1645c5f9cbbb5e1a145d256319bacaf4fc4b01"
+      "content_hash": "0a4182cf1514bea5099a7d5c25d7bf5c644e88363fda6504e1a2f7a208607bb6"
     },
     {
       "source": "media.audio",
       "event_type": "media.audio.transcript_segment_observed",
       "version": "1.0.0",
       "path": "media.audio/media.audio.transcript_segment_observed.json",
-      "content_hash": "3989cc943e8b94e8f3b22c31e4300a3c254f927f4ecddc0ba0274c11ee746ccd"
+      "content_hash": "4cb70c0b49e8cf63e3e09552c3beed9cd089fb9a58080b025e574b4f6de52d5a"
     },
     {
       "source": "media.audio",
       "event_type": "media.audio.transcription_run_observed",
       "version": "1.0.0",
       "path": "media.audio/media.audio.transcription_run_observed.json",
-      "content_hash": "6867b56461e660c274d54d06a2047f6dffedf82bf25e2fae6b78fe652cffea22"
+      "content_hash": "640b281c6dda529b81a21d031849ebc302d7d619dfb3afe08b3a85a2ca2d43d9"
+    },
+    {
+      "source": "media.screen",
+      "event_type": "media.screen.capture_session_ended",
+      "version": "1.0.0",
+      "path": "media.screen/media.screen.capture_session_ended.json",
+      "content_hash": "0481f07380679427e1bd4567cd50624793dbe633c799c94e51a3b2458db48a97"
+    },
+    {
+      "source": "media.screen",
+      "event_type": "media.screen.capture_session_started",
+      "version": "1.0.0",
+      "path": "media.screen/media.screen.capture_session_started.json",
+      "content_hash": "abf4a6e2ab424646776b8215bf3c95550c9049b4bd2d811ac710355dcf96dcfe"
     },
     {
       "source": "media.screen",
       "event_type": "media.screen.ocr_run_observed",
       "version": "1.0.0",
       "path": "media.screen/media.screen.ocr_run_observed.json",
-      "content_hash": "a633e6a42007e806265614a42b436d30077ee5582b63e8a315ace026692a7f3a"
+      "content_hash": "9c98336a601728a9d9bc7d464d2bf58c0198d74e7e0f8968961e96867d03c6bc"
     },
     {
       "source": "media.screen",
       "event_type": "media.screen.ocr_segment_observed",
       "version": "1.0.0",
       "path": "media.screen/media.screen.ocr_segment_observed.json",
-      "content_hash": "999b6e23078831535a4269cc95194cafbe6dc55d5b477cdc472b6d66bc63bc29"
+      "content_hash": "4fc82e2d8b8a9ab064520363be57f4a7ad4539505046d7b74f7f6583fd1e8f08"
     },
     {
       "source": "media.screen",
       "event_type": "media.screen.screenshot_observed",
       "version": "1.0.0",
       "path": "media.screen/media.screen.screenshot_observed.json",
-      "content_hash": "2a06bc37a9fc65f16b166b9591ca2461d2b5c5d6423e5365cd3a0a1f47e2274c"
+      "content_hash": "2cc7102dfeeabfbb2b47517bfe4a33b168c9b0656e65e852339e9aa66d61270d"
+    },
+    {
+      "source": "media.screen",
+      "event_type": "media.screen.video_segment_observed",
+      "version": "1.0.0",
+      "path": "media.screen/media.screen.video_segment_observed.json",
+      "content_hash": "583e3f73e1a95f493c542f921d6bceac05a1c7ca31af70996fd3a631f772c178"
     },
     {
       "source": "messenger",
@@ -643,7 +727,7 @@
       "event_type": "health.status",
       "version": "1.0.0",
       "path": "sinex/health.status.json",
-      "content_hash": "15e7d19ae32cb38bb6a5986444014a00df5c765d6c327f09bd9f92adfc00882e"
+      "content_hash": "96ec8c2d228ba2fb8cc7a30a62fcaca188d60c48c2305a0f0257c003d1f5a92e"
     },
     {
       "source": "sinex",
@@ -783,7 +867,7 @@
       "event_type": "stream.stats",
       "version": "1.0.0",
       "path": "sinexd.event_engine/stream.stats.json",
-      "content_hash": "5da9a3f2ed816407750144699822ef835e553e45f177cd97443f18eb98bcc0a7"
+      "content_hash": "a6b4d3388d90cec7e1fc4f3cefbe9b862df922e661d402d8f9d7a713fbd73f8e"
     },
     {
       "source": "sinexd.source",

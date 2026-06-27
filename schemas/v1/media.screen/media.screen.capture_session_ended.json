@@ -41,9 +41,9 @@
     "final_state",
     "policy_posture"
   ],
-  "title": "MediaAudioCaptureSessionEndedPayload",
+  "title": "MediaScreenCaptureSessionEndedPayload",
   "type": "object",
-  "x-sinex-event-type": "media.audio.capture_session_ended",
-  "x-sinex-source": "media.audio",
+  "x-sinex-event-type": "media.screen.capture_session_ended",
+  "x-sinex-source": "media.screen",
   "x-sinex-version": "1.0.0"
 }

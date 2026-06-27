@@ -9,10 +9,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "properties": {
     "capture_session_id": {
-      "type": [
-        "string",
-        "null"
-      ]
+      "type": "string"
     },
     "display_id": {
       "type": [
@@ -20,18 +17,13 @@
         "null"
       ]
     },
-    "height_px": {
-      "format": "uint32",
-      "minimum": 0,
-      "type": "integer"
-    },
-    "observed_at": {
-      "$ref": "#/$defs/DateTime"
+    "operator_binding_id": {
+      "type": "string"
     },
     "policy_posture": {
       "type": "string"
     },
-    "raw_material_id": {
+    "reason": {
       "type": "string"
     },
     "region": {
@@ -44,34 +36,24 @@
         "null"
       ]
     },
-    "source_file": {
-      "type": [
-        "string",
-        "null"
-      ]
+    "scope": {
+      "type": "string"
     },
-    "width_px": {
-      "format": "uint32",
-      "minimum": 0,
-      "type": "integer"
-    },
-    "window_title": {
-      "type": [
-        "string",
-        "null"
-      ]
+    "started_at": {
+      "$ref": "#/$defs/DateTime"
     }
   },
   "required": [
-    "raw_material_id",
-    "width_px",
-    "height_px",
+    "capture_session_id",
+    "scope",
+    "reason",
+    "operator_binding_id",
     "policy_posture",
-    "observed_at"
+    "started_at"
   ],
-  "title": "ScreenScreenshotObservedPayload",
+  "title": "MediaScreenCaptureSessionStartedPayload",
   "type": "object",
-  "x-sinex-event-type": "media.screen.screenshot_observed",
+  "x-sinex-event-type": "media.screen.capture_session_started",
   "x-sinex-source": "media.screen",
   "x-sinex-version": "1.0.0"
 }
