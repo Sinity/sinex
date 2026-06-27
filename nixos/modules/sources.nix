@@ -262,6 +262,16 @@ let
     # Both event_engine and API access the same content-store root; set here
     # so all core services share a consistent path without per-service repetition.
     "SINEX_CONTENT_STORE_PATH=${blobDir}"
+    # Return freed heap to the OS eagerly. sinexd uses mimalloc (main.rs); by
+    # default it retains freed segments in its arenas, so a burst of large
+    # short-lived allocations during a backlog drain (512 KiB frame payloads ×
+    # hundreds of thousands of frames, full-file re-hash) leaves the anonymous
+    # RSS pinned near the cgroup MemoryMax long after the objects are freed
+    # (observed: anon 5.81 GiB / file 0 while live structures were tens of MB).
+    # Eager purge trades some madvise syscalls for an RSS that tracks live usage,
+    # which matters more than raw throughput for this memory-bounded daemon.
+    # Ref #2187 (material-assembler backlog-drain heap retention).
+    "MIMALLOC_PURGE_DELAY=0"
   ]
     ++ optional inferredNatsTls "SINEX_NATS_REQUIRE_TLS=1"
     ++ optional (effectiveNatsCaCertFile != null) "SINEX_NATS_CA_CERT=${toString effectiveNatsCaCertFile}"
