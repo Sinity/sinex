@@ -70,6 +70,42 @@ pub enum EmailProviderState {
     UpdatedAt,
 }
 
+/// **Table: `core.source_session_state`**
+///
+/// General current-state projection for operator-controlled *live-session*
+/// runtime control of any session-capable source (screen/audio capture today;
+/// any future continuous source). It records whether a live-session mode is
+/// enabled, disabled, or paused, whether capture is currently visible, and
+/// whether private mode is suppressing capture.
+///
+/// This is the shared live-session control plane — deliberately NOT
+/// per-source. Email keeps its richer, domain-specialized
+/// `email_provider_state` (auth/cursor/network specifics that a general
+/// control table should not carry); this table holds only the control-plane
+/// columns common to every live session. `operations_log` remains the audit
+/// trail; this table keeps the latest control outcome per session scope.
+#[derive(Iden, Copy, Clone)]
+pub enum SourceSessionState {
+    Table,
+    Id,
+    SourceId,
+    ModeId,
+    SessionScope,
+    OperationId,
+    ResultStatus,
+    LifecycleState,
+    VisibilityState,
+    PrivateModeBlocked,
+    RuntimeStateRef,
+    CoverageRef,
+    DebtRef,
+    RequestedBy,
+    Reason,
+    Detail,
+    ObservedAt,
+    UpdatedAt,
+}
+
 /// **Table: `core.email_mailbox_projection`**
 ///
 /// Durable metadata projection for mailbox message/thread/attachment events.
@@ -412,6 +448,146 @@ impl EmailProviderState {
         "DROP TRIGGER IF EXISTS trg_email_provider_state_updated_at ON core.email_provider_state;
 CREATE TRIGGER trg_email_provider_state_updated_at
     BEFORE UPDATE ON core.email_provider_state
+    FOR EACH ROW
+    EXECUTE FUNCTION public.set_current_timestamp_updated_at();"
+            .to_string()
+    }
+}
+
+impl TableDef for SourceSessionState {
+    fn table_name() -> &'static str {
+        "source_session_state"
+    }
+    fn schema_name() -> &'static str {
+        "core"
+    }
+    fn primary_key() -> &'static str {
+        "id"
+    }
+}
+
+impl SourceSessionState {
+    #[must_use]
+    pub fn create_table_statement() -> TableCreateStatement {
+        Table::create()
+            .table(Self::table_iden())
+            .if_not_exists()
+            .col(
+                ColumnDef::new(SourceSessionState::Id)
+                    .custom(Alias::new("UUID"))
+                    .primary_key()
+                    .extra("DEFAULT uuidv7()"),
+            )
+            .col(
+                ColumnDef::new(SourceSessionState::SourceId)
+                    .text()
+                    .not_null(),
+            )
+            .col(ColumnDef::new(SourceSessionState::ModeId).text().not_null())
+            .col(
+                ColumnDef::new(SourceSessionState::SessionScope)
+                    .text()
+                    .not_null()
+                    .default("default"),
+            )
+            .col(
+                ColumnDef::new(SourceSessionState::OperationId)
+                    .custom(Alias::new("UUID"))
+                    .not_null(),
+            )
+            .col(
+                ColumnDef::new(SourceSessionState::ResultStatus)
+                    .text()
+                    .not_null(),
+            )
+            .col(
+                ColumnDef::new(SourceSessionState::LifecycleState)
+                    .text()
+                    .not_null(),
+            )
+            .col(
+                ColumnDef::new(SourceSessionState::VisibilityState)
+                    .text()
+                    .not_null()
+                    .default("idle"),
+            )
+            .col(
+                ColumnDef::new(SourceSessionState::PrivateModeBlocked)
+                    .boolean()
+                    .not_null()
+                    .default(false),
+            )
+            .col(
+                ColumnDef::new(SourceSessionState::RuntimeStateRef)
+                    .text()
+                    .not_null(),
+            )
+            .col(
+                ColumnDef::new(SourceSessionState::CoverageRef)
+                    .text()
+                    .not_null(),
+            )
+            .col(
+                ColumnDef::new(SourceSessionState::DebtRef)
+                    .text()
+                    .not_null(),
+            )
+            .col(ColumnDef::new(SourceSessionState::RequestedBy).text())
+            .col(ColumnDef::new(SourceSessionState::Reason).text())
+            .col(
+                ColumnDef::new(SourceSessionState::Detail)
+                    .json_binary()
+                    .not_null()
+                    .default(Expr::cust("'{}'::jsonb")),
+            )
+            .col(
+                ColumnDef::new(SourceSessionState::ObservedAt)
+                    .custom(Alias::new("TIMESTAMPTZ"))
+                    .not_null()
+                    .default(Expr::cust("NOW()")),
+            )
+            .col(
+                ColumnDef::new(SourceSessionState::UpdatedAt)
+                    .custom(Alias::new("TIMESTAMPTZ"))
+                    .not_null()
+                    .default(Expr::cust("NOW()")),
+            )
+            .to_owned()
+    }
+
+    #[must_use]
+    pub fn create_indexes() -> Vec<IndexCreateStatement> {
+        vec![
+            Index::create()
+                .if_not_exists()
+                .name("ux_source_session_state_current_scope")
+                .table(Self::table_iden())
+                .col(SourceSessionState::SourceId)
+                .col(SourceSessionState::ModeId)
+                .col(SourceSessionState::SessionScope)
+                .unique()
+                .to_owned(),
+            Index::create()
+                .if_not_exists()
+                .name("ix_source_session_state_source_mode")
+                .table(Self::table_iden())
+                .col(SourceSessionState::SourceId)
+                .col(SourceSessionState::ModeId)
+                .to_owned(),
+            Index::create()
+                .if_not_exists()
+                .name("ix_source_session_state_operation")
+                .table(Self::table_iden())
+                .col(SourceSessionState::OperationId)
+                .to_owned(),
+        ]
+    }
+
+    #[must_use]
+    pub fn create_updated_at_trigger_sql() -> String {
+        "DROP TRIGGER IF EXISTS trg_source_session_state_updated_at ON core.source_session_state;
+CREATE TRIGGER trg_source_session_state_updated_at
+    BEFORE UPDATE ON core.source_session_state
     FOR EACH ROW
     EXECUTE FUNCTION public.set_current_timestamp_updated_at();"
             .to_string()
