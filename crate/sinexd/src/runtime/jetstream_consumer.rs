@@ -7,7 +7,7 @@ use crate::runtime::confirmation_handler::{
     ConfirmationBuffer, ConfirmedEventHandler, EventConfirmation, ProcessingModel,
     ProvisionalEvent, ProvisionalEventHandler,
 };
-use crate::runtime::stream::{PullConsumerSpec, ensure_pull_consumer, pull_batch};
+use crate::runtime::stream::{PullConsumerSpec, ensure_pull_consumer, pull_batch_bounded};
 use crate::runtime::{RuntimeResult, SinexError};
 use async_nats::jetstream;
 use sinex_primitives::error::SinexErrorKind;
@@ -23,6 +23,17 @@ use tokio::sync::RwLock;
 use tracing::{debug, error, info, warn};
 
 const RAW_EVENT_BUFFER_BACKPRESSURE_SLEEP: Duration = Duration::from_secs(1);
+
+/// Cumulative payload-byte budget per raw-event fetch for an automaton consumer.
+///
+/// Every automaton (14 of them) runs its own raw-events consumer. Without a byte
+/// cap, a single count-only fetch (`batch_size`, default 128) can stage up to
+/// `batch_size` × the 10 MiB NATS payload limit ≈ 1 GiB of raw `Bytes` per
+/// consumer before decode — the same drain-time heap blowup fixed on the
+/// event-engine path. The confirmation-buffer pull gate bounds the *retained
+/// decoded* set, not this per-fetch raw staging. 64 MiB keeps each fetch's raw
+/// footprint flat regardless of message size. Ref #2187.
+const RAW_EVENT_FETCH_MAX_BYTES: usize = 64 * 1024 * 1024;
 
 /// Configuration for `JetStream` event consumer
 #[derive(Debug, Clone)]
@@ -353,7 +364,9 @@ impl JetStreamEventConsumer {
                 continue;
             }
 
-            let messages = pull_batch(&consumer, batch_size, Duration::from_secs(1)).await?;
+            let messages =
+                pull_batch_bounded(&consumer, batch_size, RAW_EVENT_FETCH_MAX_BYTES, Duration::from_secs(1))
+                    .await?;
             for msg in messages {
                 // Break promptly on stop() instead of finishing the whole batch,
                 // so graceful shutdown completes well under the stop timeout.
@@ -485,7 +498,9 @@ impl JetStreamEventConsumer {
         accept_unbuffered_confirmations: bool,
     ) -> RuntimeResult<()> {
         while *running.read().await {
-            let messages = pull_batch(&consumer, batch_size, Duration::from_secs(1)).await?;
+            let messages =
+                pull_batch_bounded(&consumer, batch_size, RAW_EVENT_FETCH_MAX_BYTES, Duration::from_secs(1))
+                    .await?;
             for msg in messages {
                 // Break promptly on stop() instead of finishing the whole batch,
                 // so graceful shutdown completes well under the stop timeout.
