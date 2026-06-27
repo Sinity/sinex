@@ -182,6 +182,7 @@ pub async fn handle_sources_status_view(
     let runtime_observations = source_runtime_observations(source_status_rows);
     let email_provider_states = latest_email_provider_operation_states(pool).await?;
     let email_projection_states = latest_email_mailbox_projection_states(pool).await?;
+    let session_states = latest_source_session_states(pool).await?;
 
     let bindings: Vec<&'static SourceRuntimeBinding> = source_runtime_bindings().collect();
     let mut contracts: Vec<&'static SourceContract> = all_source_contracts().collect();
@@ -203,6 +204,7 @@ pub async fn handle_sources_status_view(
             &runtime_observations,
             &email_provider_states,
             &email_projection_states,
+            &session_states,
             now,
         ));
     }
@@ -222,6 +224,7 @@ fn source_coverage_view(
     runtime_observations: &HashMap<String, SourceStatus>,
     email_provider_states: &HashMap<String, EmailProviderOperationState>,
     email_projection_states: &HashMap<String, EmailMailboxProjectionState>,
+    session_states: &HashMap<String, Vec<sinex_db::repositories::SourceSessionStateRecord>>,
     now: Timestamp,
 ) -> SourceCoverageView {
     let mut event_count = 0i64;
@@ -324,6 +327,9 @@ fn source_coverage_view(
             bindings,
             email_projection_states,
         ));
+    }
+    if let Some(sessions) = session_states.get(contract.id) {
+        caveats.extend(sessions.iter().map(session_control_caveat));
     }
 
     let readiness = if !has_live_binding && proposed_binding_count > 0 {
@@ -464,6 +470,65 @@ fn email_mailbox_projection_states_from_rows(
             )
         })
         .collect()
+}
+
+async fn latest_source_session_states(
+    pool: &PgPool,
+) -> Result<HashMap<String, Vec<sinex_db::repositories::SourceSessionStateRecord>>> {
+    let mut by_source: HashMap<String, Vec<sinex_db::repositories::SourceSessionStateRecord>> =
+        HashMap::new();
+    for record in pool.source_session_states().list_all_current().await? {
+        by_source
+            .entry(record.source_id.clone())
+            .or_default()
+            .push(record);
+    }
+    Ok(by_source)
+}
+
+/// Passive operator read of a live-session control row: what state the operator
+/// last set, and whether capture is currently suspended. Surfaced in
+/// `sinexctl sources status` so the operator can see pause/disable/private
+/// posture without invoking the `inspect` operation.
+fn session_control_caveat(
+    record: &sinex_db::repositories::SourceSessionStateRecord,
+) -> CaveatView {
+    let suspended = record.private_mode_blocked
+        || matches!(record.lifecycle_state.as_str(), "disabled" | "paused");
+    let posture = if suspended {
+        "capture suspended"
+    } else {
+        "capture active"
+    };
+    let private_fragment = if record.private_mode_blocked {
+        "; private_mode_blocked=true"
+    } else {
+        ""
+    };
+    let reason_fragment = record
+        .reason
+        .as_deref()
+        .map(|reason| format!("; reason={reason}"))
+        .unwrap_or_default();
+    CaveatView {
+        id: format!(
+            "source.live_session.{}.{}",
+            record.lifecycle_state, record.session_scope
+        ),
+        message: format!(
+            "live-session `{}` (scope `{}`) is {} — {posture}; visibility={}{private_fragment}{reason_fragment}; coverage_ref={}; debt_ref={}",
+            record.mode_id,
+            record.session_scope,
+            record.lifecycle_state,
+            record.visibility_state,
+            record.coverage_ref,
+            record.debt_ref,
+        ),
+        ref_: Some(SinexObjectRef::new(
+            SinexObjectKind::Operation,
+            record.operation_id.to_string(),
+        )),
+    }
 }
 
 fn email_provider_operation_caveats(
@@ -1580,6 +1645,48 @@ mod tests {
     use std::collections::BTreeMap;
     use xtask::sandbox::sinex_test;
 
+    fn session_record(
+        lifecycle_state: &str,
+        private_mode_blocked: bool,
+    ) -> sinex_db::repositories::SourceSessionStateRecord {
+        sinex_db::repositories::SourceSessionStateRecord {
+            id: uuid::Uuid::now_v7(),
+            source_id: "media.screen-ocr".to_string(),
+            mode_id: "source:media.screen-ocr.live-session".to_string(),
+            session_scope: "default".to_string(),
+            operation_id: uuid::Uuid::now_v7(),
+            result_status: sinex_primitives::domain::OperationStatus::Success,
+            lifecycle_state: lifecycle_state.to_string(),
+            visibility_state: "idle".to_string(),
+            private_mode_blocked,
+            runtime_state_ref: "media.session_runtime.observed:test".to_string(),
+            coverage_ref: "coverage:media.screen-ocr.live_session".to_string(),
+            debt_ref: "debt:media.screen-ocr.live_session".to_string(),
+            requested_by: Some("operator".to_string()),
+            reason: Some("operator stepped away".to_string()),
+            detail: serde_json::json!({}),
+            observed_at: time::OffsetDateTime::UNIX_EPOCH,
+            updated_at: time::OffsetDateTime::UNIX_EPOCH,
+        }
+    }
+
+    #[sinex_test]
+    async fn session_control_caveat_reports_operator_posture() -> xtask::sandbox::TestResult<()> {
+        let paused = session_control_caveat(&session_record("paused", false));
+        assert!(paused.message.contains("capture suspended"));
+        assert!(paused.message.contains("paused"));
+        assert!(paused.message.contains("reason=operator stepped away"));
+
+        let enabled = session_control_caveat(&session_record("enabled", false));
+        assert!(enabled.message.contains("capture active"));
+
+        // The per-session private flag suspends even when lifecycle is enabled.
+        let private = session_control_caveat(&session_record("enabled", true));
+        assert!(private.message.contains("capture suspended"));
+        assert!(private.message.contains("private_mode_blocked=true"));
+        Ok(())
+    }
+
     static CONTRACT: SourceContract = SourceContract {
         id: "fixture.source",
         namespace: "fixture",
@@ -1708,6 +1815,7 @@ mod tests {
             &HashMap::new(),
             &HashMap::new(),
             &HashMap::new(),
+            &HashMap::new(),
             Timestamp::now(),
         );
 
@@ -1745,6 +1853,7 @@ mod tests {
             &events,
             &materials,
             &healthy_confirmation_buffer(),
+            &HashMap::new(),
             &HashMap::new(),
             &HashMap::new(),
             &HashMap::new(),
@@ -1810,6 +1919,7 @@ mod tests {
             &HashMap::new(),
             &HashMap::new(),
             &healthy_confirmation_buffer(),
+            &HashMap::new(),
             &HashMap::new(),
             &HashMap::new(),
             &HashMap::new(),
@@ -1918,6 +2028,7 @@ mod tests {
             &HashMap::new(),
             &HashMap::new(),
             &healthy_confirmation_buffer(),
+            &HashMap::new(),
             &HashMap::new(),
             &HashMap::new(),
             &HashMap::new(),
@@ -2078,6 +2189,7 @@ mod tests {
             &HashMap::new(),
             &HashMap::new(),
             &HashMap::new(),
+            &HashMap::new(),
             Timestamp::now(),
         );
 
@@ -2211,6 +2323,7 @@ mod tests {
             &HashMap::new(),
             &HashMap::new(),
             &healthy_confirmation_buffer(),
+            &HashMap::new(),
             &HashMap::new(),
             &HashMap::new(),
             &HashMap::new(),
@@ -2440,6 +2553,7 @@ mod tests {
             &HashMap::new(),
             &provider_states,
             &HashMap::new(),
+            &HashMap::new(),
             Timestamp::now(),
         );
 
@@ -2541,6 +2655,7 @@ mod tests {
             &HashMap::new(),
             &HashMap::new(),
             &projection_states,
+            &HashMap::new(),
             Timestamp::now(),
         );
 
@@ -2734,6 +2849,7 @@ mod tests {
             &observations,
             &HashMap::new(),
             &HashMap::new(),
+            &HashMap::new(),
             now,
         );
 
@@ -2783,6 +2899,7 @@ mod tests {
             &observations,
             &HashMap::new(),
             &HashMap::new(),
+            &HashMap::new(),
             now,
         );
 
@@ -2822,6 +2939,7 @@ mod tests {
             &observations,
             &HashMap::new(),
             &HashMap::new(),
+            &HashMap::new(),
             now,
         );
 
@@ -2854,6 +2972,7 @@ mod tests {
             &HashMap::new(),
             &healthy_confirmation_buffer(),
             &observations,
+            &HashMap::new(),
             &HashMap::new(),
             &HashMap::new(),
             now,
@@ -2895,6 +3014,7 @@ mod tests {
             &HashMap::new(),
             &HashMap::new(),
             &HashMap::new(),
+            &HashMap::new(),
             Timestamp::now(),
         );
 
@@ -2931,6 +3051,7 @@ mod tests {
             &HashMap::new(),
             &HashMap::new(),
             &confirmation_buffer,
+            &HashMap::new(),
             &HashMap::new(),
             &HashMap::new(),
             &HashMap::new(),

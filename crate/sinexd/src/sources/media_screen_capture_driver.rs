@@ -427,7 +427,7 @@ impl SourceDriver for MediaScreenCaptureDriver<CommandScreenCaptureBackend> {
     async fn run_continuous(
         &mut self,
         _state: &mut Self::State,
-        start: ContinuousStart,
+        _start: ContinuousStart,
         mut shutdown_rx: watch::Receiver<bool>,
     ) -> RuntimeResult<ScanReport> {
         let started = Instant::now();
@@ -436,24 +436,28 @@ impl SourceDriver for MediaScreenCaptureDriver<CommandScreenCaptureBackend> {
             .clone()
             .ok_or_else(|| SinexError::invalid_state("screen capture runtime not initialized"))?;
         let period = Duration::from_secs(self.config.interval_secs.max(1));
+        let private_mode_state_dir =
+            sinex_primitives::privacy::resolve_private_mode_state_dir(None);
         let mut captures = 0_u64;
         loop {
-            let suspended = match runtime.handles().db_pool() {
+            let gate = match runtime.handles().db_pool() {
                 Some(pool) => {
-                    crate::sources::session_gate::live_capture_suspended(
+                    crate::sources::session_gate::evaluate_capture_gate(
                         pool,
+                        &private_mode_state_dir,
                         SOURCE_ID,
                         LIVE_SESSION_MODE_ID,
                         "default",
                     )
                     .await
                 }
-                None => false,
+                None => crate::sources::session_gate::CaptureGateDecision::active(),
             };
-            if suspended {
+            if gate.is_suspended() {
                 debug!(
                     source_id = SOURCE_ID,
-                    "screen capture suspended by operator session control"
+                    reason = gate.reason_label(),
+                    "screen capture suspended"
                 );
             } else if let Err(error) = self.capture_once(&runtime).await {
                 warn!(source_id = SOURCE_ID, error = %error, "screenshot capture failed");
