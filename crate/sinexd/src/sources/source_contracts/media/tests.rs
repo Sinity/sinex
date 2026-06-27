@@ -108,12 +108,12 @@ async fn media_runtime_bindings_cover_staged_model_on_demand_and_live_modes() ->
         !binding("source:media.audio-transcript.local-model-batch").proposed,
         "audio local model worker output is executable through media operations"
     );
-    assert!(binding("source:media.audio-transcript.on-demand-session").proposed);
+    assert!(!binding("source:media.audio-transcript.on-demand-session").proposed);
     assert_eq!(
         binding("source:media.audio-transcript.live-session").runner_pack,
         RunnerPack::Live
     );
-    assert!(binding("source:media.audio-transcript.live-session").proposed);
+    assert!(!binding("source:media.audio-transcript.live-session").proposed);
     assert!(
         binding("source:media.audio-transcript.audio-bundle-staged")
             .capabilities

@@ -8,6 +8,7 @@ pub mod bindings;
 pub mod catalog_export;
 pub mod dispatch;
 pub mod drain;
+pub mod media_audio_capture_driver;
 pub mod media_screen_capture_driver;
 pub mod monitor_driver;
 pub mod noop;
