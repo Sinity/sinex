@@ -239,8 +239,14 @@ in
 
     jetstreamMaxMemory = mkOption {
       type = nullOr str;
-      default = null;
-      description = "Optional JetStream memory cap (e.g., \"1GB\").";
+      # Sinex streams are all File-backed (storage = file), so memory-backed
+      # JetStream is effectively unused. Left null, the server defaults its
+      # max_memory to ~75% of host RAM (~24GB on a 32GB box) — an unbounded
+      # latent ceiling if a memory-backed stream ever appears. Cap it small as
+      # defense-in-depth; raise only if a deployment intentionally uses
+      # memory-backed streams.
+      default = "256M";
+      description = "JetStream memory cap (e.g., \"1GB\"). Small by default since Sinex streams are file-backed.";
     };
 
     jetstreamMaxStore = mkOption {
