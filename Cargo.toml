@@ -1,3 +1,8 @@
+# Cranelift codegen backend for cheap/fast dev compilation (nightly). Scoped to
+# workspace crates below; dependencies stay on LLVM (ring/aws-lc/blake3 use asm
+# Cranelift can't lower). Experimental — see [profile.dev].
+cargo-features = ["codegen-backend"]
+
 [workspace]
 members = [
   # The daemon (#1054)
@@ -291,12 +296,22 @@ rusqlite = { version = "0.32.1", features = ["backup", "bundled"] }
 opt-level = 0
 debug = false
 strip = true
+# Cranelift: much faster codegen + far lower compile memory than LLVM, at the
+# cost of unoptimized runtime — irrelevant for dev (check/test) builds. Workspace
+# crates only; deps stay on LLVM (see [profile.dev.package."*"]).
+codegen-backend = "cranelift"
 # Incremental compilation for workspace crates — ~3x faster warm rebuilds of the
 # iterating crate (e.g. xtask: ~15s -> ~5s; see .agent/scratch/048). The sinex
 # devshell disables sccache (RUSTC_WRAPPER) so this is not forced off; registry
 # deps remain non-incremental and are cached normally in the target dir.
 incremental = true
 codegen-units = 256
+
+# Dependencies keep the LLVM backend in dev: ring/aws-lc-sys/blake3/etc. use
+# inline asm and SIMD intrinsics Cranelift cannot lower, and they're cached
+# anyway so there's no iteration benefit to recompiling them.
+[profile.dev.package."*"]
+codegen-backend = "llvm"
 
 # Release profile tuned for CHEAP COMPILATION (low peak memory first, fast
 # compile second) over runtime performance, per operator priority (2026-06-28).
