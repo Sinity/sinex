@@ -1682,32 +1682,52 @@ let
   # — ProtectHome / ReadWritePaths / ExecStartPre ACL / EnvironmentFile /
   # SupplementaryGroups / unit path packages — merged into sinexd.service).
   emptyGlue = { bindings = { }; supportUnits = { }; overlay = { }; };
-  # Media screen-capture binding. The driver (media.screen-ocr) reuses the
-  # desktop source's Wayland session access (env + ACL bridge), so this glue
-  # only declares the manifest binding + its config and adds `grim` to PATH.
+  # Media capture bindings. The drivers (media.screen-ocr / media.audio-transcript)
+  # reuse the desktop source's session access (env + ACL bridge), so this glue
+  # only declares the enabled manifest bindings + their config and adds the
+  # capture tools (grim / ffmpeg) to PATH.
   mkMediaGlue =
     let
       sat = sourceCfg.media;
-    in
-    {
-      bindings = {
+      screenBinding = optionalAttrs sat.screen.enable {
         "media.screen-ocr" = {
           enable = true;
           adapterConfig =
             {
-              capture_command = sat.captureCommand;
-              interval_secs = sat.intervalSec;
-              capture_timeout_ms = sat.captureTimeoutMs;
-              policy_posture = sat.policyPosture;
+              capture_command = sat.screen.captureCommand;
+              interval_secs = sat.screen.intervalSec;
+              capture_timeout_ms = sat.screen.captureTimeoutMs;
+              policy_posture = sat.screen.policyPosture;
             }
-            // optionalAttrs (sat.region != null) { region = sat.region; }
-            // optionalAttrs (sat.display != null) { display = sat.display; };
+            // optionalAttrs (sat.screen.region != null) { region = sat.screen.region; }
+            // optionalAttrs (sat.screen.display != null) { display = sat.screen.display; };
         };
       };
-      overlay = { path = [ pkgs.grim ]; };
+      audioBinding = optionalAttrs sat.audio.enable {
+        "media.audio-transcript" = {
+          enable = true;
+          adapterConfig =
+            {
+              capture_command = sat.audio.captureCommand;
+              interval_secs = sat.audio.intervalSec;
+              capture_timeout_ms = sat.audio.captureTimeoutMs;
+              policy_posture = sat.audio.policyPosture;
+            }
+            // optionalAttrs (sat.audio.device != null) { device = sat.audio.device; };
+        };
+      };
+    in
+    {
+      bindings = screenBinding // audioBinding;
+      overlay = {
+        path =
+          optionals sat.screen.enable [ pkgs.grim ]
+          ++ optionals sat.audio.enable [ pkgs.ffmpeg ];
+      };
     };
   mediaGlue =
-    if sourceRuntimeEnabled && sourceCfg.media.enable then mkMediaGlue
+    if sourceRuntimeEnabled && (sourceCfg.media.screen.enable || sourceCfg.media.audio.enable)
+    then mkMediaGlue
     else { bindings = { }; overlay = { }; };
   terminalGlue =
     if sourceRuntimeEnabled && sourceCfg.terminal.enable then mkTerminalGlue

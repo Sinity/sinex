@@ -1577,61 +1577,137 @@ in
       media = mkOption {
         type = submodule {
           options = {
-            enable = mkOption {
-              type = bool;
-              default = false;
-              description = ''
-                Enable the live media screen-capture source runtime
-                (<literal>media.screen-ocr</literal>). Disabled by default: it
-                captures the screen on an interval and depends on the desktop
-                source for Wayland session access
-                (<option>services.sinex.sources.desktop.enable</option>).
-              '';
+            screen = mkOption {
+              type = submodule {
+                options = {
+                  enable = mkOption {
+                    type = bool;
+                    default = false;
+                    description = ''
+                      Enable the live screen-capture source
+                      (<literal>media.screen-ocr</literal>). Disabled by default:
+                      it captures the screen on an interval and depends on the
+                      desktop source for Wayland session access
+                      (<option>services.sinex.sources.desktop.enable</option>).
+                    '';
+                  };
+                  captureCommand = mkOption {
+                    type = listOf str;
+                    default = [ "grim" "-" ];
+                    description = ''
+                      Command (argv) that writes a PNG screenshot to stdout.
+                      Default <literal>grim -</literal> (Wayland). The driver
+                      appends <literal>-g &lt;region&gt;</literal> when
+                      <option>region</option> is set and the command does not
+                      already pass <literal>-g</literal>.
+                    '';
+                  };
+                  region = mkOption {
+                    type = nullOr str;
+                    default = null;
+                    description = "Optional capture region as `x,y WxH`. Null captures the whole output.";
+                  };
+                  display = mkOption {
+                    type = nullOr str;
+                    default = null;
+                    description = "Optional display/output identifier recorded on each screenshot event.";
+                  };
+                  intervalSec = mkOption {
+                    type = positive;
+                    default = 300;
+                    description = "Seconds between captures in continuous (live-session) mode.";
+                  };
+                  captureTimeoutMs = mkOption {
+                    type = positive;
+                    default = 10000;
+                    description = "Per-capture command timeout in milliseconds.";
+                  };
+                  policyPosture = mkOption {
+                    type = str;
+                    default = "operator_default";
+                    description = "Disclosure/storage posture recorded on each screenshot event.";
+                  };
+                  resources = mkOption {
+                    type = nullOr (resourceModule { defaultMemory = "2G"; defaultCpu = "25%"; });
+                    default = null;
+                    description = "Resource override for the screen-capture source.";
+                  };
+                };
+              };
+              default = { };
+              description = "Live screen-capture source runtime.";
             };
-            captureCommand = mkOption {
-              type = listOf str;
-              default = [ "grim" "-" ];
-              description = ''
-                Command (argv) that writes a PNG screenshot to stdout. Default
-                <literal>grim -</literal> (Wayland). The driver appends
-                <literal>-g &lt;region&gt;</literal> when <option>region</option>
-                is set and the command does not already pass <literal>-g</literal>.
-              '';
-            };
-            region = mkOption {
-              type = nullOr str;
-              default = null;
-              description = "Optional capture region as `x,y WxH`. Null captures the whole output.";
-            };
-            display = mkOption {
-              type = nullOr str;
-              default = null;
-              description = "Optional display/output identifier recorded on each screenshot event.";
-            };
-            intervalSec = mkOption {
-              type = positive;
-              default = 300;
-              description = "Seconds between captures in continuous (live-session) mode.";
-            };
-            captureTimeoutMs = mkOption {
-              type = positive;
-              default = 10000;
-              description = "Per-capture command timeout in milliseconds.";
-            };
-            policyPosture = mkOption {
-              type = str;
-              default = "operator_default";
-              description = "Disclosure/storage posture recorded on each screenshot event.";
-            };
-            resources = mkOption {
-              type = nullOr (resourceModule { defaultMemory = "2G"; defaultCpu = "25%"; });
-              default = null;
-              description = "Resource override for the media capture source.";
+            audio = mkOption {
+              type = submodule {
+                options = {
+                  enable = mkOption {
+                    type = bool;
+                    default = false;
+                    description = ''
+                      Enable the live audio-recording source
+                      (<literal>media.audio-transcript</literal>). Disabled by
+                      default: it records a self-terminating segment on an
+                      interval and depends on the desktop source for audio
+                      session access.
+                    '';
+                  };
+                  captureCommand = mkOption {
+                    type = listOf str;
+                    default = [
+                      "ffmpeg"
+                      "-hide_banner"
+                      "-loglevel"
+                      "error"
+                      "-f"
+                      "pulse"
+                      "-i"
+                      "default"
+                      "-t"
+                      "10"
+                      "-f"
+                      "wav"
+                      "-"
+                    ];
+                    description = ''
+                      Command (argv) recording one self-terminating audio segment
+                      (WAV) to stdout. Default is a 10s `ffmpeg`
+                      PulseAudio/PipeWire capture; tune for your audio server.
+                    '';
+                  };
+                  device = mkOption {
+                    type = nullOr str;
+                    default = null;
+                    description = "Optional input device identifier (encode in the command today).";
+                  };
+                  intervalSec = mkOption {
+                    type = positive;
+                    default = 60;
+                    description = "Seconds between recorded segments in continuous (live-session) mode.";
+                  };
+                  captureTimeoutMs = mkOption {
+                    type = positive;
+                    default = 60000;
+                    description = "Per-capture command timeout in milliseconds (must exceed the segment length).";
+                  };
+                  policyPosture = mkOption {
+                    type = str;
+                    default = "operator_default";
+                    description = "Disclosure/storage posture recorded on each recording event.";
+                  };
+                  resources = mkOption {
+                    type = nullOr (resourceModule { defaultMemory = "2G"; defaultCpu = "25%"; });
+                    default = null;
+                    description = "Resource override for the audio-capture source.";
+                  };
+                };
+              };
+              default = { };
+              description = "Live audio-recording source runtime.";
             };
           };
         };
         default = { };
-        description = "Live media screen-capture source runtime.";
+        description = "Live media capture source runtimes (screen, audio).";
       };
 
       system = mkOption {
@@ -2422,12 +2498,23 @@ in
             hyprland_command_socket = cfg.sources.desktop.session.hyprlandCommandSocket;
           };
         media =
-          (mkDeploymentSurface (sourcesEnabled && cfg.sources.media.enable) null)
+          (mkDeploymentSurface
+            (sourcesEnabled && (cfg.sources.media.screen.enable || cfg.sources.media.audio.enable))
+            null)
           // {
-            capture_command = cfg.sources.media.captureCommand;
-            region = cfg.sources.media.region;
-            interval_secs = cfg.sources.media.intervalSec;
-            policy_posture = cfg.sources.media.policyPosture;
+            screen = {
+              enabled = sourcesEnabled && cfg.sources.media.screen.enable;
+              capture_command = cfg.sources.media.screen.captureCommand;
+              region = cfg.sources.media.screen.region;
+              interval_secs = cfg.sources.media.screen.intervalSec;
+              policy_posture = cfg.sources.media.screen.policyPosture;
+            };
+            audio = {
+              enabled = sourcesEnabled && cfg.sources.media.audio.enable;
+              capture_command = cfg.sources.media.audio.captureCommand;
+              interval_secs = cfg.sources.media.audio.intervalSec;
+              policy_posture = cfg.sources.media.audio.policyPosture;
+            };
           };
         system = mkDeploymentSurface (sourcesEnabled && cfg.sources.system.enable) cfg.sources.system.instances;
         document =
