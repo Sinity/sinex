@@ -201,8 +201,7 @@ pub struct MediaAudioTranscriptParser;
         runtime_shape = RuntimeShape::Continuous,
         material_lifecycle = MaterialLifecyclePolicy::EphemeralRaw,
         transport_semantics = TransportSemantics::LOCAL_LIVE_QUEUE,
-        capabilities = "coverage:source-coverage, debt:unified-debt-view, operation:media.screen-ocr.enable-session, operation:media.screen-ocr.disable-session, operation:media.screen-ocr.pause, operation:media.screen-ocr.resume, operation:media.screen-ocr.retry, operation:media.screen-ocr.inspect",
-        proposed = true
+        capabilities = "coverage:source-coverage, debt:unified-debt-view, operation:media.screen-ocr.enable-session, operation:media.screen-ocr.disable-session, operation:media.screen-ocr.pause, operation:media.screen-ocr.resume, operation:media.screen-ocr.retry, operation:media.screen-ocr.inspect"
     )
 )]
 pub struct MediaScreenOcrParser;
