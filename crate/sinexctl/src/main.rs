@@ -156,8 +156,16 @@ enum Commands {
 
 #[tokio::main]
 async fn main() -> color_eyre::Result<()> {
-    // Initialize error handling
-    color_eyre::install()?;
+    // Initialize error handling. sinexctl is an operator surface: expected
+    // failures (missing token, gateway unreachable) should read as clean
+    // messages, not as a dev crash report. Suppress color-eyre's source-location
+    // and "Run with RUST_BACKTRACE" sections by default; restore full detail when
+    // a developer opts in via RUST_BACKTRACE.
+    let dev_detail = std::env::var_os("RUST_BACKTRACE").is_some();
+    color_eyre::config::HookBuilder::default()
+        .display_location_section(dev_detail)
+        .display_env_section(dev_detail)
+        .install()?;
 
     // Initialize tracing
     tracing_subscriber::fmt()
