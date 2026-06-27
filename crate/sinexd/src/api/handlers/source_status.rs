@@ -1315,6 +1315,12 @@ fn operation_capability_action(
             package_operation_rpc_method(operation, source_id, binding),
             ActionSideEffect::Admin,
         ),
+        "inspect" => (
+            "Inspect Live Session",
+            package_operation_command_hint(operation, source_id, binding),
+            package_operation_rpc_method(operation, source_id, binding),
+            ActionSideEffect::Read,
+        ),
         "capture-region" => (
             "Capture Region",
             package_operation_command_hint(operation, source_id, binding),
@@ -1397,7 +1403,8 @@ fn package_operation_mode_hint(
         "media.audio-transcript.enable-session"
         | "media.audio-transcript.disable-session"
         | "media.audio-transcript.pause"
-        | "media.audio-transcript.resume" => "source:media.audio-transcript.live-session",
+        | "media.audio-transcript.resume"
+        | "media.audio-transcript.inspect" => "source:media.audio-transcript.live-session",
         "media.audio-transcript.delete-material" => {
             "source:media.audio-transcript.audio-bundle-staged"
         }
@@ -1409,7 +1416,8 @@ fn package_operation_mode_hint(
         "media.screen-ocr.enable-session"
         | "media.screen-ocr.disable-session"
         | "media.screen-ocr.pause"
-        | "media.screen-ocr.resume" => "source:media.screen-ocr.live-session",
+        | "media.screen-ocr.resume"
+        | "media.screen-ocr.inspect" => "source:media.screen-ocr.live-session",
         "media.screen-ocr.delete-material" => "source:media.screen-ocr.screenshot-ocr-staged",
         _ => return None,
     };

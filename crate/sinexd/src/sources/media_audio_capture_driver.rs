@@ -23,7 +23,7 @@ use serde::{Deserialize, Serialize};
 use tokio::io::AsyncReadExt;
 use tokio::process::Command;
 use tokio::sync::watch;
-use tracing::{info, warn};
+use tracing::{debug, info, warn};
 
 use crate::runtime::{
     RuntimeResult, SourceDriver,
@@ -40,6 +40,10 @@ use sinex_primitives::ids::Id;
 use sinex_primitives::{JsonValue, SinexError, Timestamp};
 
 const SOURCE_ID: &str = "media.audio-transcript";
+/// Live-session mode whose operator session-control state gates continuous
+/// capture. Matches the binding subject and the
+/// `media.audio-transcript.{enable,disable,pause,resume}-session` operations.
+const LIVE_SESSION_MODE_ID: &str = "source:media.audio-transcript.live-session";
 const DEFAULT_CAPTURE_TIMEOUT_MS: u64 = 60_000;
 const MAX_CAPTURE_BYTES: usize = 256 * 1024 * 1024;
 
@@ -482,7 +486,24 @@ impl SourceDriver for MediaAudioCaptureDriver<CommandAudioCaptureBackend> {
         let period = Duration::from_secs(self.config.interval_secs.max(1));
         let mut captures = 0_u64;
         loop {
-            if let Err(error) = self.capture_once(&runtime).await {
+            let suspended = match runtime.handles().db_pool() {
+                Some(pool) => {
+                    crate::sources::session_gate::live_capture_suspended(
+                        pool,
+                        SOURCE_ID,
+                        LIVE_SESSION_MODE_ID,
+                        "default",
+                    )
+                    .await
+                }
+                None => false,
+            };
+            if suspended {
+                debug!(
+                    source_id = SOURCE_ID,
+                    "audio capture suspended by operator session control"
+                );
+            } else if let Err(error) = self.capture_once(&runtime).await {
                 warn!(source_id = SOURCE_ID, error = %error, "audio capture failed");
             } else {
                 captures += 1;
