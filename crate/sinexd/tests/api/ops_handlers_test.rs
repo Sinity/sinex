@@ -1922,6 +1922,17 @@ async fn ops_start_executes_gmail_scheduled_sync_with_token_file(
             .len(),
         3
     );
+    // The provider runtime observation is now a real, queryable event in
+    // core.events (not only a scope blob).
+    let runtime_observed: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM core.events WHERE event_type = 'email.capture_runtime.observed'",
+    )
+    .fetch_one(ctx.pool())
+    .await?;
+    assert!(
+        runtime_observed >= 1,
+        "a successful Gmail sync should emit an email.capture_runtime.observed event"
+    );
     let projections = ctx
         .pool()
         .email_mailbox_projections()
