@@ -653,19 +653,28 @@ impl CheckpointManager {
                                 );
                                 current_revision
                             } else if checkpoint_conflict_would_regress(&current_state, state) {
-                                return Err(SinexError::checkpoint(
-                                    "Refusing to overwrite newer checkpoint after CAS conflict",
-                                )
-                                .with_context("stale_revision", state.revision.to_string())
-                                .with_context("current_revision", current_revision.to_string())
-                                .with_context(
-                                    "candidate_processed_count",
-                                    state.processed_count.to_string(),
-                                )
-                                .with_context(
-                                    "current_processed_count",
-                                    current_state.processed_count.to_string(),
-                                ));
+                                // KV already holds equal-or-greater progress (a prior
+                                // incarnation advanced the cursor past this stale local
+                                // state). Do NOT overwrite it — that would regress the
+                                // cursor — but do NOT treat it as fatal either: crashing
+                                // here is exactly what drove the automaton restart/replay
+                                // loop (each restart re-hydrates the replay scope and pins
+                                // memory). No-op the save and keep our stale revision, so a
+                                // later save — once this automaton's own progress surpasses
+                                // the KV position — CAS-advances forward normally.
+                                warn!(
+                                    target: "sinex_metrics",
+                                    metric = "runtime.checkpoint_kv_behind_total",
+                                    module = %self.module_name,
+                                    consumer_group = %self.consumer_group,
+                                    consumer_name = %self.consumer_name,
+                                    stale_revision = state.revision,
+                                    current_revision,
+                                    candidate_processed_count = state.processed_count,
+                                    current_processed_count = current_state.processed_count,
+                                    "Checkpoint KV is ahead of this save; skipping without regressing or crashing"
+                                );
+                                state.revision
                             } else {
                                 warn!(
                                     target: "sinex_metrics",
@@ -716,15 +725,51 @@ impl CheckpointManager {
                                 "Checkpoint create reported an error but the matching entry already exists; treating as an idempotent save"
                             );
                             existing_entry.revision
+                        } else if checkpoint_conflict_would_regress(&existing_state, state) {
+                            // We took the create path (local revision 0) but the KV key
+                            // already holds equal-or-greater progress — a fresh restore
+                            // that missed the live KV revision, or an older incarnation's
+                            // entry. Adopt the existing revision as an idempotent no-op
+                            // instead of crashing the automaton (the create-path arm of
+                            // the same restart/replay loop).
+                            warn!(
+                                target: "sinex_metrics",
+                                metric = "runtime.checkpoint_kv_behind_total",
+                                module = %self.module_name,
+                                consumer_group = %self.consumer_group,
+                                consumer_name = %self.consumer_name,
+                                existing_revision = existing_entry.revision,
+                                candidate_processed_count = state.processed_count,
+                                current_processed_count = existing_state.processed_count,
+                                "Checkpoint create found a newer KV entry; adopting it without regressing or crashing"
+                            );
+                            existing_entry.revision
                         } else {
-                            return Err(SinexError::checkpoint(
-                                "Failed to create checkpoint in KV (already exists or create failed)",
-                            )
-                            .with_source(create_error));
+                            // Our candidate is a forward move but the key already exists
+                            // (local revision was 0). Rebase onto the live KV revision and
+                            // update forward rather than failing the create.
+                            warn!(
+                                target: "sinex_metrics",
+                                metric = "runtime.checkpoint_kv_create_rebased_total",
+                                module = %self.module_name,
+                                consumer_group = %self.consumer_group,
+                                consumer_name = %self.consumer_name,
+                                existing_revision = existing_entry.revision,
+                                "Checkpoint create raced an existing KV entry; rebasing onto live revision and updating forward"
+                            );
+                            self.kv
+                                .update(&key, encoded.into(), existing_entry.revision)
+                                .await
+                                .map_err(|retry_error| {
+                                    SinexError::checkpoint(
+                                        "Failed to update checkpoint in KV after create-path rebase",
+                                    )
+                                    .with_source(retry_error)
+                                })?
                         }
                     } else {
                         return Err(SinexError::checkpoint(
-                            "Failed to create checkpoint in KV (already exists or create failed)",
+                            "Failed to create checkpoint in KV (create failed and no entry present)",
                         )
                         .with_source(create_error));
                     }

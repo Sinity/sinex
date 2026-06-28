@@ -19,6 +19,14 @@ use std::path::Path;
 use std::time::{Duration, Instant};
 use tracing::{debug, info, warn};
 
+/// Progress markers extracted from a hot-reload checkpoint file, used to
+/// reconcile the file against the durable NATS KV checkpoint in `load_state`.
+#[derive(Debug)]
+pub(super) struct FileCandidate {
+    processed_count: u64,
+    revision: u64,
+}
+
 impl<N> AutomatonRuntime<N>
 where
     N: Automaton,
@@ -73,14 +81,13 @@ where
         let hot_reload_path = self.shutdown_config.checkpoint_path(self.automaton.name());
         let mut invalid_hot_reload_file = None;
 
-        // Priority 1: file-based checkpoint (hot reload)
+        // Stage 1: take the hot-reload (SIGTERM fast-save) file as a *candidate*,
+        // not an unconditional winner. It is committed only after reconciling
+        // against the durable KV checkpoint below.
+        let mut file_candidate: Option<(PersistedState<N::State>, FileCandidate)> = None;
         if self.shutdown_config.restore_state_on_startup {
             match self.try_restore_from_file().await {
-                Ok(Some((persisted, revision))) => {
-                    self.persisted_state = persisted;
-                    self.last_revision = revision;
-                    return Ok(());
-                }
+                Ok(Some(candidate)) => file_candidate = Some(candidate),
                 Ok(None) => {}
                 Err(error) if self.checkpoint_manager.is_some() => {
                     warn!(
@@ -95,12 +102,51 @@ where
             }
         }
 
-        // Priority 2: NATS KV checkpoint
+        // Without a KV manager the file is the only source of truth (local/dev).
         let Some(checkpoint_mgr) = &self.checkpoint_manager else {
+            if let Some((persisted, file)) = file_candidate {
+                self.persisted_state = persisted;
+                self.last_revision = file.revision;
+            }
             return Ok(());
         };
 
         let checkpoint_state = checkpoint_mgr.load_checkpoint().await?;
+
+        // Stage 2: reconcile file vs KV. Trust the hot-reload file when it is
+        // ahead-or-equal to the durable KV checkpoint (a genuine SIGTERM save that
+        // may not yet be flushed to KV). In EITHER case rebase `last_revision` onto
+        // the LIVE KV revision — this is the actual fix for the checkpoint CAS
+        // crash-loop: the file's recorded revision can lag KV (older incarnation, or
+        // KV advanced past the last fast-save), and seeding `last_revision` from it
+        // makes every CAS save fail and crash-loops the automaton through replay (the
+        // memory-pinning restart loop). A file that is strictly BEHIND KV is stale —
+        // discard it and restore KV's more-advanced state instead.
+        if let Some((file_persisted, file)) = file_candidate {
+            if file.processed_count >= checkpoint_state.processed_count {
+                info!(
+                    automaton = %self.automaton.name(),
+                    file_processed_count = file.processed_count,
+                    kv_processed_count = checkpoint_state.processed_count,
+                    file_revision = file.revision,
+                    kv_revision = checkpoint_state.revision,
+                    "Hot reload file is ahead-or-equal to KV; resuming from file, rebasing onto live KV revision"
+                );
+                self.persisted_state = file_persisted;
+                self.last_revision = checkpoint_state.revision;
+                return Ok(());
+            }
+            warn!(
+                automaton = %self.automaton.name(),
+                file_processed_count = file.processed_count,
+                kv_processed_count = checkpoint_state.processed_count,
+                "Hot reload file is stale (strictly behind KV); discarding it and restoring from KV"
+            );
+            // We are not resuming from the file, so cancel its finalize-on-save
+            // cleanup and remove it as a stale artifact instead.
+            self.pending_hot_reload_cleanup = None;
+            invalid_hot_reload_file = Some(hot_reload_path.clone());
+        }
         match checkpoint_state.data {
             Some(data) => {
                 let mut persisted: PersistedState<N::State> =
@@ -148,11 +194,15 @@ where
 
     pub(super) async fn try_restore_from_file(
         &mut self,
-    ) -> RuntimeResult<Option<(PersistedState<N::State>, u64)>> {
+    ) -> RuntimeResult<Option<(PersistedState<N::State>, FileCandidate)>> {
         let checkpoint_path = self.shutdown_config.checkpoint_path(self.automaton.name());
         let Some(file_state) = CheckpointState::load_from_file(&checkpoint_path).await? else {
             return Ok(None);
         };
+        // Capture the progress markers before `data` is moved out below; these
+        // drive file-vs-KV reconciliation in `load_state`.
+        let file_processed_count = file_state.processed_count;
+        let file_revision = file_state.revision;
         let Some(data) = file_state.data else {
             return Err(SinexError::checkpoint(
                 "Derived hot reload checkpoint file is missing state data",
@@ -174,7 +224,13 @@ where
             "Restored state from hot reload file"
         );
         self.pending_hot_reload_cleanup = Some(checkpoint_path);
-        Ok(Some((persisted, file_state.revision)))
+        Ok(Some((
+            persisted,
+            FileCandidate {
+                processed_count: file_processed_count,
+                revision: file_revision,
+            },
+        )))
     }
 
     pub async fn save_state_to_file(&self) -> std::io::Result<()> {

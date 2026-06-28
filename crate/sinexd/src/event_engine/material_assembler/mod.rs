@@ -229,6 +229,11 @@ pub struct MaterialAssembler {
     pub(super) slice_arrival_timeout: std::time::Duration,
     /// Age threshold for orphaned temp files (from config)
     pub(super) orphaned_file_age_threshold: std::time::Duration,
+    /// Upper bound on a single material finalization (content-store CAS + DB
+    /// transaction). A finalize that exceeds it is treated as commit-outcome-
+    /// unknown and NAKed for redelivery, so one wedged finalize cannot pin the
+    /// single-threaded material consumer for the full DB lock timeout. See #2187.
+    pub(super) finalize_timeout: std::time::Duration,
     /// WAL and staged-material flush/fsync policy.
     durability_policy: DefaultDurabilityPolicy,
 }
@@ -323,6 +328,11 @@ impl MaterialAssembler {
             max_material_size_bytes,
             slice_arrival_timeout: std::time::Duration::from_secs(slice_timeout_secs),
             orphaned_file_age_threshold: std::time::Duration::from_secs(orphan_threshold_secs),
+            finalize_timeout: std::time::Duration::from_secs(sinex_primitives::env::parse_or(
+                "SINEX_MATERIAL_FINALIZE_TIMEOUT_SECS",
+                120_u64,
+                "material finalize timeout",
+            )),
             durability_policy: DefaultDurabilityPolicy::new(durability_thresholds),
         })
     }
@@ -734,6 +744,7 @@ impl MaterialAssembler {
             max_material_size_bytes: self.max_material_size_bytes,
             slice_arrival_timeout: self.slice_arrival_timeout,
             orphaned_file_age_threshold: self.orphaned_file_age_threshold,
+            finalize_timeout: self.finalize_timeout,
             durability_policy: self.durability_policy,
         }
     }
