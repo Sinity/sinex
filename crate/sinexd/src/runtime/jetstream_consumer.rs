@@ -17,9 +17,9 @@ use sinex_primitives::{
     source_contracts::ResourceProfile,
     temporal::Timestamp,
 };
-use std::sync::Arc;
+use std::sync::{Arc, LazyLock};
 use std::time::Duration;
-use tokio::sync::RwLock;
+use tokio::sync::{RwLock, Semaphore};
 use tracing::{debug, error, info, warn};
 
 const RAW_EVENT_BUFFER_BACKPRESSURE_SLEEP: Duration = Duration::from_secs(1);
@@ -34,6 +34,56 @@ const RAW_EVENT_BUFFER_BACKPRESSURE_SLEEP: Duration = Duration::from_secs(1);
 /// decoded* set, not this per-fetch raw staging. 64 MiB keeps each fetch's raw
 /// footprint flat regardless of message size. Ref #2187.
 const RAW_EVENT_FETCH_MAX_BYTES: usize = 64 * 1024 * 1024;
+
+/// Permit granularity for the process-global raw-event in-flight budget (1 MiB).
+const RAW_EVENT_INFLIGHT_PERMIT_BYTES: usize = 1024 * 1024;
+
+/// Default *aggregate* raw-event in-flight byte budget shared across every
+/// automaton's raw consumer in this process.
+///
+/// `RAW_EVENT_FETCH_MAX_BYTES` bounds a *single* consumer's fetch, but sinexd
+/// hosts ~14 automata that each run their own raw consumer. On a backlog drain
+/// they all fetch at once, so the per-consumer cap multiplies: 14 × 64 MiB of
+/// raw `Bytes`, then ~2.5× more once decoded into owned JSON DOMs — measured as
+/// a ~2.2 GiB anon-heap burst the instant sinexd starts, climbing past the
+/// cgroup cap into an OOM kill (#2187). This process-global semaphore caps the
+/// *combined* raw fetch+decode footprint regardless of how many consumers run,
+/// so adding automata cannot reintroduce the blowup. 512 MiB of raw staging
+/// (~1.3 GiB decoded peak) leaves comfortable headroom under the prod cap while
+/// keeping several consumers draining concurrently.
+const DEFAULT_RAW_EVENT_INFLIGHT_BUDGET_BYTES: usize = 512 * 1024 * 1024;
+
+/// Clamp the configured aggregate budget so it can never drop below a single
+/// fetch — otherwise `acquire_many` for one fetch would block forever (deadlock).
+const fn clamp_raw_event_inflight_budget_bytes(requested: usize) -> usize {
+    if requested < RAW_EVENT_FETCH_MAX_BYTES {
+        RAW_EVENT_FETCH_MAX_BYTES
+    } else {
+        requested
+    }
+}
+
+/// Convert a byte count to whole permits (at least one).
+const fn raw_event_inflight_permits(bytes: usize) -> u32 {
+    let permits = bytes / RAW_EVENT_INFLIGHT_PERMIT_BYTES;
+    if permits == 0 { 1 } else { permits as u32 }
+}
+
+/// Configured aggregate budget in bytes (env-overridable, then clamped).
+fn raw_event_inflight_budget_bytes() -> usize {
+    let requested = std::env::var("SINEX_RAW_EVENT_INFLIGHT_BUDGET_BYTES")
+        .ok()
+        .and_then(|v| v.parse::<usize>().ok())
+        .unwrap_or(DEFAULT_RAW_EVENT_INFLIGHT_BUDGET_BYTES);
+    clamp_raw_event_inflight_budget_bytes(requested)
+}
+
+/// Process-global raw-event in-flight budget shared across all automaton raw
+/// consumers in this process. Each consumer acquires `RAW_EVENT_FETCH_MAX_BYTES`
+/// worth of permits before fetching+decoding a batch and releases them once the
+/// batch has drained into the (separately bounded) confirmation buffer. Ref #2187.
+static RAW_EVENT_INFLIGHT_BUDGET: LazyLock<Semaphore> =
+    LazyLock::new(|| Semaphore::new(raw_event_inflight_permits(raw_event_inflight_budget_bytes()) as usize));
 
 /// Configuration for `JetStream` event consumer
 #[derive(Debug, Clone)]
@@ -363,6 +413,20 @@ impl JetStreamEventConsumer {
                 tokio::time::sleep(RAW_EVENT_BUFFER_BACKPRESSURE_SLEEP).await;
                 continue;
             }
+
+            // Acquire from the process-global in-flight budget BEFORE fetch+decode
+            // so the ~14 automata consumers cannot collectively stage unbounded raw
+            // batches (the #2187 startup-drain OOM). Acquired here — after the buffer
+            // gate's sleep, so the permit is never held while idle — and released when
+            // `_inflight_permit` drops at the end of this iteration, after the batch
+            // has drained into the confirmation buffer.
+            let _inflight_permit = RAW_EVENT_INFLIGHT_BUDGET
+                .acquire_many(raw_event_inflight_permits(RAW_EVENT_FETCH_MAX_BYTES))
+                .await
+                .map_err(|e| {
+                    SinexError::processing("raw-event in-flight budget semaphore closed")
+                        .with_source(e.to_string())
+                })?;
 
             let messages =
                 pull_batch_bounded(&consumer, batch_size, RAW_EVENT_FETCH_MAX_BYTES, Duration::from_secs(1))
@@ -1102,8 +1166,10 @@ mod tests {
     // exit classification logic that is not exposed through the public consumer API.
     use super::{
         ConfirmationBuffer, EventConfirmation, JetStreamEventConsumer,
-        JetStreamEventConsumerConfig, ProvisionalEvent, event_stream_confirmation_buffer,
-        raw_event_buffer_accepts_pull,
+        JetStreamEventConsumerConfig, ProvisionalEvent, RAW_EVENT_FETCH_MAX_BYTES,
+        RAW_EVENT_INFLIGHT_PERMIT_BYTES, clamp_raw_event_inflight_budget_bytes,
+        event_stream_confirmation_buffer, raw_event_buffer_accepts_pull,
+        raw_event_inflight_permits,
     };
     use async_nats::jetstream::consumer::DeliverPolicy;
     use sinex_primitives::{
@@ -1134,6 +1200,36 @@ mod tests {
         let result = handle.await;
 
         JetStreamEventConsumer::background_task_exit_result("confirmation task", result, true)?;
+        Ok(())
+    }
+
+    /// The aggregate budget must never clamp below a single fetch, or
+    /// `acquire_many(fetch_permits)` would block forever (a hard deadlock that
+    /// would silently wedge every automaton's raw consumer). Guards the #2187 fix.
+    #[sinex_test]
+    async fn inflight_budget_never_below_one_fetch() -> xtask::sandbox::TestResult<()> {
+        // Even an absurdly small (or zero) requested budget is raised to one fetch.
+        for requested in [0usize, 1, RAW_EVENT_FETCH_MAX_BYTES / 2, RAW_EVENT_FETCH_MAX_BYTES - 1] {
+            let clamped = clamp_raw_event_inflight_budget_bytes(requested);
+            assert!(
+                raw_event_inflight_permits(clamped) >= raw_event_inflight_permits(RAW_EVENT_FETCH_MAX_BYTES),
+                "budget {requested} clamped to {clamped} must hold at least one fetch worth of permits"
+            );
+        }
+        // A larger requested budget is preserved verbatim.
+        let big = RAW_EVENT_FETCH_MAX_BYTES * 8;
+        assert_eq!(clamp_raw_event_inflight_budget_bytes(big), big);
+        Ok(())
+    }
+
+    /// Permit accounting: whole 1 MiB permits, always at least one.
+    #[sinex_test]
+    async fn inflight_permits_round_down_with_floor() -> xtask::sandbox::TestResult<()> {
+        assert_eq!(raw_event_inflight_permits(0), 1);
+        assert_eq!(raw_event_inflight_permits(1), 1);
+        assert_eq!(raw_event_inflight_permits(RAW_EVENT_INFLIGHT_PERMIT_BYTES), 1);
+        assert_eq!(raw_event_inflight_permits(RAW_EVENT_INFLIGHT_PERMIT_BYTES * 64), 64);
+        assert_eq!(raw_event_inflight_permits(RAW_EVENT_FETCH_MAX_BYTES), 64);
         Ok(())
     }
 
