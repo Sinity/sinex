@@ -4,7 +4,15 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 const NATS_JETSTREAM_MAX_MEM: &str = "64MB";
-const NATS_JETSTREAM_MAX_FILE: &str = "256MB";
+// The dev event bus must host the SAME streams the real daemon declares. sinexd
+// creates several File-backed streams reserving up to ~2 GiB each
+// (events / dlq / processing_failures / source_material, plus confirmations and
+// KV buckets) — JetStream reserves a stream's `max_bytes` against the account
+// `max_file` at creation, so the previous 256 MB cap made `xtask run core` fail
+// every stream create with "insufficient storage resources" (10047). This cap is
+// a ceiling, not a preallocation; the dev NVMe has ample room. Sized to fit all
+// declared streams with headroom.
+const NATS_JETSTREAM_MAX_FILE: &str = "16GB";
 
 /// Kill stale nats-server processes that may be orphaned.
 ///

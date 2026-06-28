@@ -285,10 +285,6 @@ pub fn build() -> HashMap<&'static str, FormatCapability> {
             .with_note("dot format emits Graphviz DOT for provenance graphs"),
     );
     m.insert(
-        "events inspect",
-        FormatCapability::single_shot(TABLE_JSON_YAML),
-    );
-    m.insert(
         "events explain",
         FormatCapability::single_shot(TABLE_JSON_YAML),
     );
@@ -1059,7 +1055,7 @@ fn backing_rpc_methods_for_path(path: &str) -> &'static [&'static str] {
         | "events relations sequence"
         | "events relations within" => &[methods::EVENTS_RELATION_EVIDENCE],
         "ops verify baseline" => &[],
-        "events trace" | "events inspect" | "events explain" => &[methods::EVENTS_LINEAGE],
+        "events trace" | "events explain" => &[methods::EVENTS_LINEAGE],
         "events watch" => &[],
         "ops start" => &[methods::OPS_START],
         "ops list" | "ops jobs list" => &[methods::OPS_LIST],
@@ -1421,7 +1417,6 @@ mod tests {
         assert!(validate_format("events timeline", OutputFormat::Ndjson).is_err());
         assert!(validate_format("events trace", OutputFormat::Json).is_ok());
         assert!(validate_format("events trace", OutputFormat::Dot).is_ok());
-        assert!(validate_format("events inspect", OutputFormat::Json).is_ok());
         assert!(validate_format("events trace", OutputFormat::Ndjson).is_err());
         assert!(validate_format("events watch", OutputFormat::Json).is_ok());
         assert!(validate_format("events watch", OutputFormat::Ndjson).is_ok());
@@ -1770,7 +1765,7 @@ mod tests {
         let reg = build();
         let required = [
             "events query",
-            "events inspect",
+            "events explain",
             "events annotate",
             "events relations within",
             "events context",
