@@ -654,19 +654,39 @@ impl MaterialAssembler {
             }
         };
 
-        let finalized = match FinalizationTransaction::new(self)
-            .finalize(FinalizationRequest {
+        let finalized = match tokio::time::timeout(
+            self.finalize_timeout,
+            FinalizationTransaction::new(self).finalize(FinalizationRequest {
                 final_state: &final_state,
                 content_key: &content_key,
                 content_hash: &end.content_hash,
                 total_size_bytes: end.total_size_bytes,
                 metadata: finalize_metadata,
                 final_status,
-            })
-            .await
+            }),
+        )
+        .await
         {
-            Ok(handle) => handle,
-            Err(e) => {
+            Ok(Ok(handle)) => handle,
+            Err(_elapsed) => {
+                // Finalize exceeded its bound: commit outcome is unknown (the DB
+                // transaction may still be in flight or wedged on a lock). Preserve
+                // retry state and NAK for redelivery rather than pinning the
+                // single-threaded material consumer for the full DB lock timeout
+                // (#2187: tiny finalizes were observed taking ~15 min head-of-line).
+                self.stats_inc_commit_outcome_unknown();
+                warn!(
+                    material_id = %material_id,
+                    timeout_secs = self.finalize_timeout.as_secs(),
+                    "Material finalization exceeded timeout; preserving retry state and NAKing for redelivery"
+                );
+                Self::revert_finalization_start(&state_handle, end).await;
+                return Err(SinexError::processing("material finalization exceeded timeout")
+                    .with_context("material_id", material_id.to_string())
+                    .with_context("timeout_secs", self.finalize_timeout.as_secs().to_string())
+                    .with_context("finalization_stage", "commit_outcome_unknown"));
+            }
+            Ok(Err(e)) => {
                 let commit_outcome_unknown = e.is_commit_outcome_unknown();
                 let e = e.into_inner();
                 if commit_outcome_unknown {
