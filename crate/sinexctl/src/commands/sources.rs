@@ -165,9 +165,14 @@ pub struct StageCommand {
     #[arg(long)]
     reason: Option<String>,
 
-    /// Explicit file material format (jsonl, sqlite, markdown, archive, etc.)
-    #[arg(long)]
-    format: Option<SourceMaterialFormat>,
+    /// Explicit file material format (jsonl, sqlite, markdown, archive, etc.).
+    ///
+    /// Named `--material-format` (not `--format`) to avoid colliding with the
+    /// global `--format` output selector: clap registers both under the arg id
+    /// `format`, and the typed-access mismatch (SourceMaterialFormat vs
+    /// OutputFormat) panicked at runtime on every `sources stage` invocation.
+    #[arg(long = "material-format")]
+    material_format: Option<SourceMaterialFormat>,
 
     /// Source binding/package mode to attach to the staged material.
     #[arg(long, value_name = "BINDING")]
@@ -182,7 +187,7 @@ impl StageCommand {
     fn request(&self) -> SourcesStageRequest {
         SourcesStageRequest {
             file_path: self.file.clone(),
-            format: self.format,
+            format: self.material_format,
             timing_info_type: None,
             reason: self.reason.clone(),
             tags: self.tags.clone(),
@@ -1366,7 +1371,7 @@ mod tests {
         let command = StageCommand {
             file: "/realm/data/captures/audio/session.json".to_string(),
             reason: Some("operator import".to_string()),
-            format: Some(SourceMaterialFormat::Json),
+            material_format: Some(SourceMaterialFormat::Json),
             binding: Some("source:media.audio-transcript.audio-bundle-staged".to_string()),
             tags: vec!["media".to_string()],
         };

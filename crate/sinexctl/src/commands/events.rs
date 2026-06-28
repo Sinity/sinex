@@ -29,10 +29,12 @@ pub enum EventsCommand {
     /// Trace event provenance chain.
     Trace(TraceCommand),
 
-    /// Inspect a single event with immediate provenance context.
-    Inspect(ExplainCommand),
-
     /// Explain a single event with immediate provenance context.
+    ///
+    /// `inspect` is a visible alias — it was previously a separate, identical
+    /// subcommand (same `ExplainCommand`, same execution), which was pure
+    /// redundancy. It is now one command with two names.
+    #[command(visible_alias = "inspect")]
     Explain(ExplainCommand),
 
     /// List recent events as a timeline.
@@ -54,7 +56,7 @@ impl EventsCommand {
             Self::Watch(cmd) => cmd.execute(client, format).await,
             Self::Relations(cmd) => cmd.execute(client, format).await,
             Self::Trace(cmd) => cmd.execute(client, format).await,
-            Self::Inspect(cmd) | Self::Explain(cmd) => cmd.execute(client, format).await,
+            Self::Explain(cmd) => cmd.execute(client, format).await,
             Self::Timeline(cmd) => cmd.execute(client, format).await,
             Self::Context(cmd) => cmd.execute(client, format).await,
             Self::Annotate(cmd) => cmd.execute(client, format).await,
@@ -70,7 +72,6 @@ impl EventsCommand {
             Self::Watch(_) => "events watch",
             Self::Relations(cmd) => cmd.command_path_with_root("events relations"),
             Self::Trace(_) => "events trace",
-            Self::Inspect(_) => "events inspect",
             Self::Explain(_) => "events explain",
             Self::Timeline(_) => "events timeline",
             Self::Context(_) => "events context",
