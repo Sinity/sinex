@@ -196,7 +196,26 @@ impl<T: RuntimeModule + 'static> RuntimeRunner<T> {
                             {
                                 Some(event)
                             } else {
-                                return Err(Self::confirmed_event_missing_error(event_id));
+                                // The confirmation arrived but the row is not (yet)
+                                // visible — a commit/confirmation-visibility race that
+                                // is common under high-volume backlog drain. Crashing
+                                // the automaton here turns a transient race into a
+                                // restart→replay→re-accumulate loop that churns memory
+                                // toward OOM (#2187). The provisional payload we are
+                                // already holding is a faithful representation of the
+                                // confirmed event, so fall back to it (as the no-DB
+                                // path does) instead of failing the whole batch.
+                                tracing::warn!(
+                                    target: "sinex_metrics",
+                                    metric = "runtime.confirmed_event_db_miss_fallback_total",
+                                    event_id = %event_id,
+                                    "Confirmed event not yet visible in DB; reconstructing from provisional payload"
+                                );
+                                Some(
+                                    Self::build_event_from_provisional(provisional).map_err(
+                                        |error| Self::provisional_decode_error(event_id, error),
+                                    )?,
+                                )
                             }
                         }
                         None => Some(
@@ -224,12 +243,6 @@ impl<T: RuntimeModule + 'static> RuntimeRunner<T> {
             events,
             last_event_id,
         })
-    }
-
-    #[cfg(feature = "messaging")]
-    pub(super) fn confirmed_event_missing_error(event_id: &EventId) -> SinexError {
-        SinexError::processing("Confirmed event missing from database")
-            .with_context("event_id", event_id.to_string())
     }
 
     #[cfg(feature = "messaging")]
