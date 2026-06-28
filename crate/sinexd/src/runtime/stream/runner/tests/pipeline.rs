@@ -246,31 +246,45 @@ async fn finish_replay_forwarder_surfaces_join_error() -> TestResult<()> {
 }
 
 #[sinex_test]
-async fn resolve_provisionals_to_events_surfaces_missing_confirmed_event(
+async fn resolve_provisionals_to_events_falls_back_when_confirmed_event_missing(
     ctx: TestContext,
 ) -> TestResult<()> {
+    // A confirmation can arrive before its row is visible in the DB (a
+    // commit/confirmation-visibility race common under high-volume backlog
+    // drain). The resolver must NOT crash — crashing turns a transient race into
+    // a restart→replay→re-accumulate loop that churns memory toward OOM (#2187).
+    // It must reconstruct the event from the provisional payload it already holds.
+    let event_id = EventId::from(Uuid::now_v7());
     let provisional = ProvisionalEvent {
-        event_id: EventId::from(Uuid::now_v7()),
+        event_id,
         source: EventSource::new("runtime-test-source")?,
         event_type: EventType::new("runtime.test")?,
-        payload: serde_json::json!({"ok": true}),
+        payload: serde_json::json!({
+            "source": "runtime-test-source",
+            "event_type": "runtime.test",
+            "host": "runtime-test-host",
+            "payload": {"ok": true},
+            "source_event_ids": [Uuid::now_v7().to_string()]
+        }),
         ts_orig: Timestamp::now(),
         received_at: Timestamp::now(),
     };
 
-    let Err(error) = RuntimeRunner::<RuntimeTestModule>::resolve_provisionals_to_events(
+    // event_id is not persisted in this fresh test DB, so the DB lookup misses
+    // and the resolver must exercise the provisional-payload fallback (Ok, not Err).
+    let resolved = RuntimeRunner::<RuntimeTestModule>::resolve_provisionals_to_events(
         &[provisional],
         &Some(ctx.pool().clone()),
     )
-    .await
-    else {
-        return Err(color_eyre::eyre::eyre!(
-            "missing confirmed events must fail honestly"
-        ));
-    };
+    .await?;
 
-    let message = format!("{error:#}");
-    assert!(message.contains("Confirmed event missing from database"));
+    assert_eq!(
+        resolved.events.len(),
+        1,
+        "missing DB row must fall back to the provisional payload, not fail the batch"
+    );
+    assert_eq!(resolved.events[0].event_type.as_str(), "runtime.test");
+    assert_eq!(resolved.last_event_id, Some(*event_id.as_uuid()));
     Ok(())
 }
 
