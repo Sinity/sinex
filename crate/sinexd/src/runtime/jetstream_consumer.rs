@@ -1155,9 +1155,30 @@ fn event_stream_confirmation_buffer(timeout: Duration) -> Arc<ConfirmationBuffer
     ))
 }
 
+/// High-water fraction of the confirmation buffer below which a consumer may
+/// pull another raw batch.
+///
+/// The old gate pulled whenever the buffer was anything below 100% full. A pull
+/// stages a whole batch (up to `batch_size` messages, each an envelope of N
+/// events), so pulling at 99% overflows the buffer mid-batch: the tail events
+/// are rejected and the message NAK'd, which redelivers it, which is re-fetched
+/// and re-decoded. With ~14 automata on the same raw stream this becomes a
+/// redelivery storm — a 2 GiB backlog drained ~6× (~12.7 GiB of NATS traffic),
+/// and the repeated decode churn keeps the allocator resident set high even
+/// though the live heap is bounded. Requiring real headroom before pulling turns
+/// the storm into clean sleep-backpressure: a consumer stops pulling at the
+/// high-water mark and waits for confirmations to drain the buffer, so a pulled
+/// batch fits without overflowing. Ref #2187.
+const RAW_EVENT_BUFFER_PULL_HIGH_WATER: f64 = 0.5;
+
+fn below_high_water(used: usize, capacity: usize) -> bool {
+    // Saturating: a zero/expanding capacity should not wedge the consumer.
+    capacity == 0 || (used as f64) < (capacity as f64) * RAW_EVENT_BUFFER_PULL_HIGH_WATER
+}
+
 async fn raw_event_buffer_accepts_pull(buffer: &ConfirmationBuffer) -> bool {
-    buffer.len().await < buffer.max_capacity()
-        && buffer.retained_payload_bytes() < buffer.max_payload_bytes()
+    below_high_water(buffer.len().await, buffer.max_capacity())
+        && below_high_water(buffer.retained_payload_bytes(), buffer.max_payload_bytes())
 }
 
 #[cfg(test)]
@@ -1167,7 +1188,7 @@ mod tests {
     use super::{
         ConfirmationBuffer, EventConfirmation, JetStreamEventConsumer,
         JetStreamEventConsumerConfig, ProvisionalEvent, RAW_EVENT_FETCH_MAX_BYTES,
-        RAW_EVENT_INFLIGHT_PERMIT_BYTES, clamp_raw_event_inflight_budget_bytes,
+        RAW_EVENT_INFLIGHT_PERMIT_BYTES, below_high_water, clamp_raw_event_inflight_budget_bytes,
         event_stream_confirmation_buffer, raw_event_buffer_accepts_pull,
         raw_event_inflight_permits,
     };
@@ -1219,6 +1240,23 @@ mod tests {
         // A larger requested budget is preserved verbatim.
         let big = RAW_EVENT_FETCH_MAX_BYTES * 8;
         assert_eq!(clamp_raw_event_inflight_budget_bytes(big), big);
+        Ok(())
+    }
+
+    /// The pull gate must leave real headroom: a buffer at/over the high-water
+    /// mark must refuse pulls (so a staged batch can't overflow → NAK → redelivery
+    /// storm), while a near-empty buffer must accept. Guards the #2187 storm fix.
+    #[sinex_test]
+    async fn pull_gate_requires_headroom() -> xtask::sandbox::TestResult<()> {
+        // Empty / low usage accepts.
+        assert!(below_high_water(0, 20_000));
+        assert!(below_high_water(9_999, 20_000));
+        // At/over the 50% high-water mark refuses.
+        assert!(!below_high_water(10_000, 20_000));
+        assert!(!below_high_water(19_999, 20_000));
+        assert!(!below_high_water(20_000, 20_000));
+        // Degenerate zero capacity must not wedge the consumer (accepts).
+        assert!(below_high_water(0, 0));
         Ok(())
     }
 
