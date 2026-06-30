@@ -400,6 +400,185 @@ async fn handle_end_before_slice_waits_for_missing_slice_instead_of_failing(
 }
 
 #[sinex_test]
+async fn slice_completed_pending_end_claims_finalization_before_extra_slice(
+    ctx: TestContext,
+) -> TestResult<()> {
+    let ctx = ctx.with_nats().shared().await?;
+    let (assembler, _content_store_dir, _state_dir) = test_assembler(&ctx).await?;
+    let material_id = Uuid::now_v7();
+    let material_id_typed = Id::from_uuid(material_id);
+    let started_at = Timestamp::now();
+    let payload = b"data".to_vec();
+
+    let finalize_permit = assembler.finalize_semaphore.clone().acquire_owned().await?;
+
+    assembler
+        .handle_end(MaterialEndMessage {
+            material_id: material_id.to_string(),
+            ended_at: sinex_primitives::temporal::format_rfc3339(Timestamp::now()),
+            content_hash: blake3::hash(&payload).to_hex().to_string(),
+            total_slices: 1,
+            total_size_bytes: payload.len() as i64,
+            metadata: json!({}),
+        })
+        .await?;
+    state::handle_begin(
+        &assembler,
+        material_id,
+        state::MaterialBeginMessage {
+            material_id: material_id.to_string(),
+            material_kind: "test".to_string(),
+            source_identifier: "test://slice-completed-claim".to_string(),
+            metadata: json!({}),
+            started_at: sinex_primitives::temporal::format_rfc3339(started_at),
+        },
+    )
+    .await?;
+
+    io::handle_slice(&assembler, material_id, 0, payload.clone()).await?;
+
+    let state_handle = assembler
+        .get_state_handle(&material_id)
+        .ok_or_else(|| SinexError::invalid_state("missing claimed assembler state"))?;
+    {
+        let state = state_handle.lock().await;
+        assert_eq!(state.phase, AssemblyPhase::Finalizing);
+        assert_eq!(state.expected_offset, payload.len() as i64);
+    }
+
+    io::handle_slice(
+        &assembler,
+        material_id,
+        payload.len() as i64,
+        b"late".to_vec(),
+    )
+    .await?;
+    {
+        let state = state_handle.lock().await;
+        assert_eq!(
+            state.expected_offset,
+            payload.len() as i64,
+            "extra slice must not mutate a material already claimed for finalization"
+        );
+        assert_eq!(state.slice_count, 1);
+    }
+
+    drop(finalize_permit);
+    let state_map = assembler.assembler_state.clone();
+    WaitHelpers::wait_for_condition(
+        || {
+            let state_map = state_map.clone();
+            async move { Ok::<bool, SinexError>(!state_map.contains_key(&material_id)) }
+        },
+        Timeouts::STANDARD,
+    )
+    .await?;
+
+    let material = ctx
+        .pool
+        .source_materials()
+        .get_by_id(material_id_typed)
+        .await?
+        .expect("material should exist");
+    assert_eq!(material.status, MaterialStatus::Completed);
+    assert_eq!(material.total_bytes, Some(payload.len() as i64));
+
+    Ok(())
+}
+
+#[sinex_test]
+async fn pending_end_ignores_late_slice_beyond_contract_before_completion(
+    ctx: TestContext,
+) -> TestResult<()> {
+    let ctx = ctx.with_nats().shared().await?;
+    let (assembler, _content_store_dir, _state_dir) = test_assembler(&ctx).await?;
+    let material_id = Uuid::now_v7();
+    let material_id_typed = Id::from_uuid(material_id);
+    let started_at = Timestamp::now();
+    let payload = b"data".to_vec();
+
+    let finalize_permit = assembler.finalize_semaphore.clone().acquire_owned().await?;
+
+    assembler
+        .handle_end(MaterialEndMessage {
+            material_id: material_id.to_string(),
+            ended_at: sinex_primitives::temporal::format_rfc3339(Timestamp::now()),
+            content_hash: blake3::hash(&payload).to_hex().to_string(),
+            total_slices: 1,
+            total_size_bytes: payload.len() as i64,
+            metadata: json!({}),
+        })
+        .await?;
+    state::handle_begin(
+        &assembler,
+        material_id,
+        state::MaterialBeginMessage {
+            material_id: material_id.to_string(),
+            material_kind: "test".to_string(),
+            source_identifier: "test://late-slice-before-complete".to_string(),
+            metadata: json!({}),
+            started_at: sinex_primitives::temporal::format_rfc3339(started_at),
+        },
+    )
+    .await?;
+
+    io::handle_slice(
+        &assembler,
+        material_id,
+        payload.len() as i64,
+        b"late".to_vec(),
+    )
+    .await?;
+
+    let state_handle = assembler
+        .get_state_handle(&material_id)
+        .ok_or_else(|| SinexError::invalid_state("missing assembler state"))?;
+    {
+        let state = state_handle.lock().await;
+        assert_eq!(
+            state.expected_offset, 0,
+            "late slice beyond END must not advance assembly"
+        );
+        assert_eq!(state.slice_count, 0);
+        assert!(
+            state.buffered_slices.is_empty(),
+            "late slice beyond END must not be buffered as future material"
+        );
+        assert!(state.pending_end.is_some());
+    }
+
+    io::handle_slice(&assembler, material_id, 0, payload.clone()).await?;
+    {
+        let state = state_handle.lock().await;
+        assert_eq!(state.phase, AssemblyPhase::Finalizing);
+        assert_eq!(state.expected_offset, payload.len() as i64);
+        assert_eq!(state.slice_count, 1);
+    }
+
+    drop(finalize_permit);
+    let state_map = assembler.assembler_state.clone();
+    WaitHelpers::wait_for_condition(
+        || {
+            let state_map = state_map.clone();
+            async move { Ok::<bool, SinexError>(!state_map.contains_key(&material_id)) }
+        },
+        Timeouts::STANDARD,
+    )
+    .await?;
+
+    let material = ctx
+        .pool
+        .source_materials()
+        .get_by_id(material_id_typed)
+        .await?
+        .expect("material should exist");
+    assert_eq!(material.status, MaterialStatus::Completed);
+    assert_eq!(material.total_bytes, Some(payload.len() as i64));
+
+    Ok(())
+}
+
+#[sinex_test]
 async fn finalization_transaction_is_idempotent_after_commit_lands(
     ctx: TestContext,
 ) -> TestResult<()> {
