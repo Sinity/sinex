@@ -890,10 +890,13 @@ SQL
 
                   first=1
                   printf '['
+                  # Only include files whose changes can affect the checkout-local
+                  # Cargo-built xtask binary. flake.nix changes are picked up by
+                  # re-entering nix develop; rebuilding target/debug/xtask from an
+                  # already-loaded shell cannot apply wrapper/devshell changes.
                   for extra_dep in \
                     "$root_dir/Cargo.toml" \
                     "$root_dir/Cargo.lock" \
-                    "$root_dir/flake.nix" \
                     "$root_dir/xtask/Cargo.toml" \
                     "$root_dir/.cargo/config.toml"
                   do
@@ -1082,10 +1085,11 @@ SQL
                   [ ! -e "$ref_path" ] && return 0
                   [ ! -r "$depfile_path" ] && return 0
 
+                  # Keep this list in sync with _sinex_xtask_collect_source_triggers:
+                  # these are Cargo-built xtask binary inputs, not devshell inputs.
                   for extra_dep in \
                     "$root_dir/Cargo.toml" \
                     "$root_dir/Cargo.lock" \
-                    "$root_dir/flake.nix" \
                     "$root_dir/xtask/Cargo.toml" \
                     "$root_dir/.cargo/config.toml"
                   do
@@ -1509,10 +1513,19 @@ SQL
                 }
 
                 _sinex_xtask_wait_for_existing_build() {
+                  local _lock_pid _lock_age
                   while [ -d "$build_lock_dir" ]; do
                     if [ -r "$build_lock_dir/pid" ]; then
                       _lock_pid="$(cat "$build_lock_dir/pid" 2>/dev/null || true)"
                       if [ -n "$_lock_pid" ] && ! kill -0 "$_lock_pid" 2>/dev/null; then
+                        echo "⚠  Removing stale xtask build lock from dead pid $_lock_pid: $build_lock_dir" >&2
+                        rm -rf "$build_lock_dir"
+                        continue
+                      fi
+                    else
+                      _lock_age="$(($(date +%s) - $(stat -c %Y "$build_lock_dir" 2>/dev/null || date +%s)))"
+                      if [ "$_lock_age" -ge 5 ]; then
+                        echo "⚠  Removing stale xtask build lock with no pid file: $build_lock_dir" >&2
                         rm -rf "$build_lock_dir"
                         continue
                       fi
