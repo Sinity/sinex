@@ -1504,11 +1504,17 @@ SQL
                 }
 
                 _sinex_xtask_exec_nix_readonly_fallback() {
+                  if [ "''${SINEX_XTASK_ALLOW_NIX_READONLY_FALLBACK:-0}" != "1" ]; then
+                    echo "✗ no checkout-local xtask binary is available for this read-only command" >&2
+                    echo "  refusing to run 'nix run $root_dir#xtask' because that can trigger an unexpected build" >&2
+                    echo "  run a normal xtask build/check command to rebuild the checkout-local binary, or set SINEX_XTASK_ALLOW_NIX_READONLY_FALLBACK=1 for an intentional Nix fallback" >&2
+                    return 127
+                  fi
                   if ! command -v nix >/dev/null 2>&1; then
                     echo "✗ no checkout-local xtask binary exists and nix is unavailable for the read-only fallback" >&2
                     return 127
                   fi
-                  echo "ℹ  Using Nix-built xtask fallback for read-only command; checkout-local Postgres/NATS will not be started" >&2
+                  echo "ℹ  Using explicitly allowed Nix-built xtask fallback for read-only command; checkout-local Postgres/NATS will not be started" >&2
                   exec nix run "$root_dir#xtask" -- "$@"
                 }
 
