@@ -1894,6 +1894,8 @@ SQL
                       fi
                     elif _sinex_xtask_is_observability_command "$@"; then
                       echo "ℹ  Using existing xtask binary for read-only command while sources are newer" >&2
+                    elif _sinex_xtask_is_no_compile_subcommand "$@"; then
+                      echo "ℹ  Using existing xtask binary for no-compile command while sources are newer" >&2
                     else
                       if ! _sinex_xtask_build_with_lock "$@"; then
                         if _sinex_xtask_failed_build_is_current; then
