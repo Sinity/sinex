@@ -1558,11 +1558,13 @@ SQL
                   fi
 
                   if [ "$force_rebuild" = "1" ] || _sinex_xtask_needs_build; then
-                    local rebuild_started_at rebuild_started_ns rebuild_finished_at rebuild_finished_ns rebuild_duration_ms
+                    local rebuild_started_at rebuild_started_ns rebuild_finished_at rebuild_finished_ns rebuild_duration_ms stage_started_ns
                     rebuild_started_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
                     rebuild_started_ns="$(date +%s%N)"
                     rm -f "$build_stage_metrics" "$build_stage_metrics.tmp" "$build_rebuild_trigger"
+                    stage_started_ns="$(_sinex_xtask_stage_start)"
                     _sinex_xtask_write_current_rebuild_trigger
+                    _sinex_xtask_stage_record "rebuild_trigger_capture" "$stage_started_ns"
                     echo "ℹ  Rebuilding checkout-local xtask (bootstraps SQLx Postgres/schema first)..." >&2
                     if _sinex_xtask_build_checkout_binary >"$build_failure_log" 2>&1; then
                       rebuild_finished_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
@@ -1593,11 +1595,13 @@ SQL
 
                     _sinex_xtask_postgres_preexisting=0
                     rm -f "$build_postgres_owned_marker"
+                    stage_started_ns="$(_sinex_xtask_stage_start)"
                     if _sinex_xtask_postgres_ready; then
                       _sinex_xtask_postgres_preexisting=1
                     else
                       touch "$build_postgres_owned_marker"
                     fi
+                    _sinex_xtask_stage_record "sqlx_postgres_probe" "$stage_started_ns"
                     trap '_sinex_xtask_stop_bootstrap_postgres' EXIT
 
                     build_rc=0
@@ -1608,7 +1612,9 @@ SQL
                     if [ "$build_rc" -eq 0 ]; then
                       touch "$bin_path" "$cargo_target_dir/debug/xtask.d" 2>/dev/null || true
                     fi
+                    stage_started_ns="$(_sinex_xtask_stage_start)"
                     _sinex_xtask_stop_bootstrap_postgres
+                    _sinex_xtask_stage_record "sqlx_postgres_stop" "$stage_started_ns"
                     trap - EXIT
                     return "$build_rc"
                   )
