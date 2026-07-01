@@ -914,6 +914,8 @@ mod tests {
     use super::test_support::{build_test_assembler, build_test_content_store};
     use super::{MaterialAssembler, maintenance::MaterialTaskOutcome, signal_ready};
     use crate::event_engine::MaterialReadySet;
+    use sinex_db::DbPoolExt;
+    use sinex_primitives::{Id, domain::MaterialStatus};
     #[cfg(unix)]
     use std::os::unix::ffi::OsStringExt;
     use std::time::Duration;
@@ -964,6 +966,42 @@ mod tests {
         drop(rx);
 
         assert!(!signal_ready(Some(tx), "material-assembler"));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn stale_cleanup_marks_orphaned_sensing_registry_rows_failed(
+        ctx: TestContext,
+    ) -> TestResult<()> {
+        let ctx = ctx.with_nats().shared().await?;
+        let (assembler, _content_store_dir, _state_dir) = test_assembler(&ctx).await?;
+        let material_id = Uuid::new_v4();
+        let started_at = Timestamp::now() - time::Duration::hours(2);
+
+        ctx.pool
+            .source_materials()
+            .register_external_in_flight(
+                material_id,
+                "test.orphaned-sensing",
+                Some("test://orphaned-sensing"),
+                serde_json::json!({"test": "orphaned-sensing"}),
+                started_at,
+            )
+            .await?;
+
+        assembler.reconcile_orphaned_sensing_materials().await?;
+
+        let record = ctx
+            .pool
+            .source_materials()
+            .get_by_id(Id::from_uuid(material_id))
+            .await?
+            .expect("orphaned material row should still exist");
+        assert_eq!(record.status, MaterialStatus::Failed);
+        assert_eq!(
+            record.metadata["failure_reason"],
+            serde_json::json!("orphaned_sensing_material")
+        );
         Ok(())
     }
 
