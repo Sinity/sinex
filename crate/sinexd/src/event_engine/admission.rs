@@ -26,19 +26,19 @@ use tokio::sync::{Mutex, RwLock};
 use tokio::time::{Duration, timeout};
 use tracing::{error, warn};
 
-const DB_WRITE_TIMEOUT_BASE: Duration = Duration::from_secs(5);
-const DB_WRITE_TIMEOUT_PER_ROW: Duration = Duration::from_millis(1);
+const DB_WRITE_TIMEOUT_BASE: Duration = Duration::from_secs(10);
+const DB_WRITE_TIMEOUT_PER_ROW: Duration = Duration::from_millis(2);
 const RECENT_ID_CACHE_SIZE: usize = 50_000;
 
 /// Dynamic write timeout that scales with batch size.
 ///
-/// Larger batches get proportionally more time rather than hitting a fixed
-/// 5 s ceiling during backlog catchup (common post-deploy with 35K+
-/// queued NATS messages). The per-row overhead is negligible for small
-/// batches but keeps 6000+-row COPY batches from tripping the timeout.
+/// Larger batches get base time plus proportionally more time rather than
+/// hitting a fixed ceiling during backlog catchup. This avoids canceling
+/// in-flight COPY work under I/O pressure and then redelivering the same raw
+/// batch into another expensive attempt.
 fn db_write_timeout(batch_size: usize) -> Duration {
     let per_row = DB_WRITE_TIMEOUT_PER_ROW * batch_size as u32;
-    std::cmp::max(DB_WRITE_TIMEOUT_BASE, per_row)
+    DB_WRITE_TIMEOUT_BASE + per_row
 }
 
 /// SQLSTATE classes that indicate a deterministic row-level persistence fault.
