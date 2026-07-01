@@ -42,8 +42,7 @@ async fn test_require_spawned_pid_accepts_present_pid() -> ::xtask::sandbox::Tes
 
 #[sinex_test]
 async fn test_require_spawned_pid_rejects_missing_pid() -> ::xtask::sandbox::TestResult<()> {
-    let error =
-        require_spawned_pid(None, "sinexd").expect_err("missing PID must fail honestly");
+    let error = require_spawned_pid(None, "sinexd").expect_err("missing PID must fail honestly");
     let rendered = error.to_string();
     assert!(rendered.contains("sinexd"));
     assert!(rendered.contains("did not expose a PID"));
@@ -51,8 +50,8 @@ async fn test_require_spawned_pid_rejects_missing_pid() -> ::xtask::sandbox::Tes
 }
 
 #[sinex_test]
-async fn test_runtime_cli_args_serve_supervisor_without_source()
--> ::xtask::sandbox::TestResult<()> {
+async fn test_runtime_cli_args_serve_supervisor_without_source() -> ::xtask::sandbox::TestResult<()>
+{
     // Post-collapse: no source → empty args (sinexd defaults to `serve`).
     assert_eq!(
         runtime_cli_args("sinexd", "gateway-123", None),
@@ -75,6 +74,113 @@ async fn test_runtime_cli_args_dispatch_scan_source() -> ::xtask::sandbox::TestR
             "terminal.zsh-history".to_string(),
             "--service-name".to_string(),
             "terminal-source-123".to_string(),
+        ]
+    );
+    Ok(())
+}
+
+#[sinex_test]
+async fn test_append_source_binding_args_for_scan_source_driver() -> ::xtask::sandbox::TestResult<()>
+{
+    let mut args = vec![
+        "scan-source-driver".to_string(),
+        "--source".to_string(),
+        "terminal.zsh-history".to_string(),
+    ];
+    append_source_binding_args(
+        &mut args,
+        DevSourceBinding {
+            source_id: "terminal.zsh-history".to_string(),
+            instance_idx: 1,
+            service_name: None,
+            runtime_config: Some(serde_json::json!({
+                "path": "/home/sinity/.zsh_history",
+                "skip_empty": true
+            })),
+            extra_args: vec![
+                "scan".to_string(),
+                "--until".to_string(),
+                "snapshot".to_string(),
+            ],
+            extra_env: HashMap::from([("SINEX_DEMO".to_string(), "1".to_string())]),
+        },
+    );
+
+    assert_eq!(
+        args,
+        vec![
+            "scan-source-driver".to_string(),
+            "--source".to_string(),
+            "terminal.zsh-history".to_string(),
+            "--runtime-config".to_string(),
+            r#"{"path":"/home/sinity/.zsh_history","skip_empty":true}"#.to_string(),
+            "--extra-arg".to_string(),
+            "scan".to_string(),
+            "--extra-arg".to_string(),
+            "--until".to_string(),
+            "--extra-arg".to_string(),
+            "snapshot".to_string(),
+            "--extra-env".to_string(),
+            "SINEX_DEMO=1".to_string(),
+        ]
+    );
+    Ok(())
+}
+
+#[sinex_test]
+async fn test_default_all_source_bindings_excludes_journald() -> ::xtask::sandbox::TestResult<()> {
+    let manifest = DevSourceBindingsManifest {
+        bindings: vec![
+            DevSourceBinding {
+                source_id: "terminal.atuin-history".to_string(),
+                instance_idx: 1,
+                service_name: None,
+                runtime_config: None,
+                extra_args: Vec::new(),
+                extra_env: HashMap::new(),
+            },
+            DevSourceBinding {
+                source_id: "system.journald".to_string(),
+                instance_idx: 1,
+                service_name: None,
+                runtime_config: None,
+                extra_args: Vec::new(),
+                extra_env: HashMap::new(),
+            },
+        ],
+    };
+
+    let bindings = default_all_source_bindings_from_manifest(manifest);
+
+    assert_eq!(bindings.len(), 1);
+    assert_eq!(bindings[0].source_id, "terminal.atuin-history");
+    Ok(())
+}
+
+#[sinex_test]
+async fn test_source_binding_runtime_args_uses_manifest_identity()
+-> ::xtask::sandbox::TestResult<()> {
+    let binding = DevSourceBinding {
+        source_id: "git-commit-history".to_string(),
+        instance_idx: 3,
+        service_name: None,
+        runtime_config: Some(serde_json::json!({"repo": "/realm/project/sinex"})),
+        extra_args: Vec::new(),
+        extra_env: HashMap::new(),
+    };
+    let service_name = default_source_binding_service_name(&binding);
+
+    assert_eq!(service_name, "source-driver-git-commit-history-3");
+    assert_eq!(
+        source_binding_runtime_args(&binding, &service_name),
+        vec![
+            "scan-source-driver".to_string(),
+            "--source".to_string(),
+            "git-commit-history".to_string(),
+            "--service-name".to_string(),
+            "source-driver-git-commit-history-3".to_string(),
+            "--runtime-config".to_string(),
+            r#"{"repo":"/realm/project/sinex"}"#.to_string(),
         ]
     );
     Ok(())
@@ -147,8 +253,8 @@ async fn test_local_runtime_coordinates_describe_current_checkout()
 }
 
 #[sinex_test]
-async fn test_source_bundle_contains_only_real_runtime_sources()
--> ::xtask::sandbox::TestResult<()> {
+async fn test_source_bundle_contains_only_real_runtime_sources() -> ::xtask::sandbox::TestResult<()>
+{
     assert_eq!(
         SOURCE_TARGETS,
         &[
@@ -162,8 +268,8 @@ async fn test_source_bundle_contains_only_real_runtime_sources()
 }
 
 #[sinex_test]
-async fn test_automaton_bundle_includes_non_suffix_automatons()
--> ::xtask::sandbox::TestResult<()> {
+async fn test_automaton_bundle_includes_non_suffix_automatons() -> ::xtask::sandbox::TestResult<()>
+{
     assert_eq!(
         AUTOMATON_TARGETS,
         &[
@@ -282,8 +388,7 @@ async fn test_dev_journal_rejects_watch_mode() -> ::xtask::sandbox::TestResult<(
 }
 
 #[sinex_test]
-async fn test_unix_timestamp_helpers_reject_pre_epoch_clock() -> ::xtask::sandbox::TestResult<()>
-{
+async fn test_unix_timestamp_helpers_reject_pre_epoch_clock() -> ::xtask::sandbox::TestResult<()> {
     let before_epoch = std::time::UNIX_EPOCH
         .checked_sub(std::time::Duration::from_secs(1))
         .expect("pre-epoch timestamp");
@@ -291,8 +396,7 @@ async fn test_unix_timestamp_helpers_reject_pre_epoch_clock() -> ::xtask::sandbo
     let secs_error =
         unix_timestamp_secs(before_epoch, "boot timestamp").expect_err("pre-epoch secs");
     assert!(
-        format!("{secs_error:#}")
-            .contains("boot timestamp: system clock is before the unix epoch")
+        format!("{secs_error:#}").contains("boot timestamp: system clock is before the unix epoch")
     );
 
     let micros_error =
@@ -347,8 +451,7 @@ async fn test_tether_rejects_conflicting_start_flags() -> ::xtask::sandbox::Test
 }
 
 #[sinex_test]
-async fn test_local_run_failure_suggestion_without_journal() -> ::xtask::sandbox::TestResult<()>
-{
+async fn test_local_run_failure_suggestion_without_journal() -> ::xtask::sandbox::TestResult<()> {
     assert_eq!(
         local_run_failure_suggestion(None),
         "Inspect the process output above"
@@ -367,8 +470,7 @@ async fn test_local_run_failure_suggestion_with_journal() -> ::xtask::sandbox::T
 }
 
 #[sinex_test]
-async fn test_stop_bundle_child_succeeds_for_exited_process() -> ::xtask::sandbox::TestResult<()>
-{
+async fn test_stop_bundle_child_succeeds_for_exited_process() -> ::xtask::sandbox::TestResult<()> {
     let mut child = tokio::process::Command::new("sh")
         .arg("-c")
         .arg("exit 0")
@@ -380,8 +482,7 @@ async fn test_stop_bundle_child_succeeds_for_exited_process() -> ::xtask::sandbo
 }
 
 #[sinex_test]
-async fn test_stop_bundle_child_kills_child_process_group() -> ::xtask::sandbox::TestResult<()>
-{
+async fn test_stop_bundle_child_kills_child_process_group() -> ::xtask::sandbox::TestResult<()> {
     use std::os::unix::process::ExitStatusExt;
 
     let mut command = tokio::process::Command::new("sh");
