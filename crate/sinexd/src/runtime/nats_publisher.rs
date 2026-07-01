@@ -543,9 +543,10 @@ impl NatsPublisher {
 
     async fn wait_for_raw_events_stream_capacity(&self) -> RuntimeResult<()> {
         let mut state = self.raw_stream_pressure.lock().await;
-        if state.last_capacity_check.is_some_and(|last_check| {
-            last_check.elapsed() < RAW_STREAM_BACKPRESSURE_POLL_INTERVAL
-        }) {
+        if state
+            .last_capacity_check
+            .is_some_and(|last_check| last_check.elapsed() < RAW_STREAM_BACKPRESSURE_POLL_INTERVAL)
+        {
             return Ok(());
         }
 
@@ -845,19 +846,19 @@ fn offset_kind_label(kind: OffsetKind) -> &'static str {
 #[cfg(test)]
 mod tests {
     use super::{
-        DEFAULT_RAW_EVENT_PUBLISH_CONCURRENCY, NatsPublisher,
-        RAW_STREAM_BACKPRESSURE_HIGH_PENDING, RAW_STREAM_BACKPRESSURE_LOW_PENDING,
-        build_publish_payload, destructure_provenance, wait_for_publish_ack,
+        DEFAULT_RAW_EVENT_PUBLISH_CONCURRENCY, NatsPublisher, RAW_STREAM_BACKPRESSURE_HIGH_PENDING,
+        RAW_STREAM_BACKPRESSURE_LOW_PENDING, build_publish_payload, destructure_provenance,
+        wait_for_publish_ack,
     };
     use sinex_primitives::{
         DynamicPayload, Id, Uuid,
         domain::{AutomatonModel, HostName, SyntheticTemporalPolicy},
-        events::admission::EventIntent,
         events::Event,
+        events::admission::EventIntent,
         transport,
     };
     use std::{future, io, time::Duration};
-    use xtask::sandbox::{TestContext, TestResult, sinex_test};
+    use xtask::sandbox::sinex_test;
 
     #[sinex_test]
     async fn publish_ack_timeout_is_reported() -> TestResult<()> {

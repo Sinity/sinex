@@ -1059,8 +1059,7 @@ where
                 }
             };
             let mut pending_batch = vec![first_pending];
-            let batch_unmaterialized =
-                pending_batch[0].record.material_id.to_uuid() == Uuid::nil();
+            let batch_unmaterialized = pending_batch[0].record.material_id.to_uuid() == Uuid::nil();
             let mut batch_bytes = pending_batch[0]
                 .materialization_bytes
                 .as_ref()

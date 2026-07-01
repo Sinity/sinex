@@ -94,7 +94,10 @@ impl std::fmt::Debug for SelfObserver {
         f.debug_struct("SelfObserver")
             .field("component", &self.component)
             .field("enabled", &self.enabled)
-            .field("emission_enabled", &self.emission_enabled.load(Ordering::Relaxed))
+            .field(
+                "emission_enabled",
+                &self.emission_enabled.load(Ordering::Relaxed),
+            )
             .field("has_runtime", &self.runtime.lock().is_some())
             .field("can_initialize_runtime", &self.nats_client.is_some())
             .field("min_interval", &self.min_interval)
@@ -160,7 +163,11 @@ impl SelfObserver {
             min_emission_interval,
         } = config;
         let runtime = if enabled {
-            Some(Self::build_runtime(&nats_client, namespace.clone(), &component))
+            Some(Self::build_runtime(
+                &nats_client,
+                namespace.clone(),
+                &component,
+            ))
         } else {
             None
         };
@@ -246,13 +253,21 @@ impl SelfObserver {
         namespace: Option<String>,
         component: &str,
     ) -> SelfObservationRuntime {
+        let rotation_policy =
+            RotationPolicy::from_env("self_observation", RotationPolicy::default());
+        let writer_config = BufferedAppendStreamWriterConfig {
+            max_open_duration: Some(std::time::Duration::from_secs(
+                rotation_policy.max_age_seconds.into(),
+            )),
+            ..BufferedAppendStreamWriterConfig::default()
+        };
         let acquisition_manager = Arc::new(AcquisitionManager::new_with_namespace(
             nats_client.clone(),
             // Operator-tunable per-source granularity (#2184 prong B). Defaults
             // to the standard 100 MB / 1 h batching so reflection materials are
             // large by default, overridable via
             // SINEX_MATERIAL_ROTATION_SELF_OBSERVATION_MAX_{MB,AGE_SECS}.
-            RotationPolicy::from_env("self_observation", RotationPolicy::default()),
+            rotation_policy,
             "self_observation".to_string(),
             namespace.clone(),
         ));
@@ -261,7 +276,7 @@ impl SelfObserver {
             materializer: BufferedAppendStreamWriter::from_manager(
                 acquisition_manager,
                 self_observation_source_identifier(component),
-                BufferedAppendStreamWriterConfig::default(),
+                writer_config,
             ),
         }
     }

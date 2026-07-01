@@ -102,8 +102,7 @@ impl Supervisor {
         };
 
         if let Some(ready_rx) = event_engine_ready_rx
-            && let Err(error) =
-                await_event_engine_ready(ready_rx, EVENT_ENGINE_READY_TIMEOUT).await
+            && let Err(error) = await_event_engine_ready(ready_rx, EVENT_ENGINE_READY_TIMEOUT).await
         {
             error!(
                 ?error,
@@ -317,10 +316,10 @@ async fn await_event_engine_ready(
         Ok(Err(_)) => Err(SinexError::service(
             "event_engine exited before supervisor startup readiness",
         )),
-        Err(_) => Err(SinexError::timeout(
-            "timed out waiting for event_engine startup readiness",
-        )
-        .with_duration(timeout)),
+        Err(_) => Err(
+            SinexError::timeout("timed out waiting for event_engine startup readiness")
+                .with_duration(timeout),
+        ),
     }
 }
 

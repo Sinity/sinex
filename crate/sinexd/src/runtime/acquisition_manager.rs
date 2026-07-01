@@ -1750,7 +1750,9 @@ mod tests {
         let mut handle = manager.begin_material("test://oversized").await?;
         let oversized = vec![0u8; AcquisitionManager::MAX_NATS_PAYLOAD_BYTES + 1];
 
-        let anchors = manager.append_record_batch(&mut handle, &[&oversized]).await?;
+        let anchors = manager
+            .append_record_batch(&mut handle, &[&oversized])
+            .await?;
 
         assert_eq!(anchors.len(), 1);
         assert_eq!(anchors[0].offset_start, 0);

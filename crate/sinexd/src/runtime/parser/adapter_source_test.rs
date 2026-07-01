@@ -640,9 +640,7 @@ async fn adapter_backed_source_refreshes_private_mode_binding() -> xtask::sandbo
 }
 
 #[sinex_test]
-async fn adapter_oversized_record_is_chunked_and_emitted(
-    ctx: TestContext,
-) -> TestResult<()> {
+async fn adapter_oversized_record_is_chunked_and_emitted(ctx: TestContext) -> TestResult<()> {
     let ctx = ctx.with_nats().shared().await?;
     let (runtime, mut event_receiver) = make_adapter_runtime(&ctx).await?;
     let mut source =
