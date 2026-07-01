@@ -4,6 +4,7 @@ use super::{
     Checkpoint, ModuleKind, ProcessingStats, RuntimeCapabilities, RuntimeInitContext, ScanArgs,
     ScanEstimate, ScanReport, TimeHorizon,
 };
+use crate::runtime::automaton::traits::InputProvenanceFilter;
 use crate::runtime::{RuntimeResult, SinexError};
 use serde::Deserialize;
 use sinex_primitives::JsonValue;
@@ -43,6 +44,15 @@ pub trait RuntimeModule: Send + Sync {
     /// every event (the default), preserving existing behavior. Ref #2187.
     fn raw_event_type_filter(&self) -> Option<&'static str> {
         None
+    }
+
+    /// Provenance class this module consumes from the confirmed-event stream.
+    ///
+    /// Most runtime modules do not consume confirmed events directly. Automata
+    /// override this so the confirmed-event durable consumer can filter
+    /// material-only or synthesized-only inputs at the NATS subject level.
+    fn confirmed_event_provenance_filter(&self) -> InputProvenanceFilter {
+        InputProvenanceFilter::Any
     }
 
     fn current_checkpoint(
