@@ -19,6 +19,12 @@ use crate::config::config;
 use crate::history::{BackgroundJob, HistoryDb, InvocationStatus, JobLifecycleStatus};
 use crate::process::configure_background_job_child_tokio;
 
+#[cfg(not(test))]
+const CANCEL_SIGTERM_GRACE: Duration = Duration::from_secs(5);
+#[cfg(test)]
+const CANCEL_SIGTERM_GRACE: Duration = Duration::from_millis(100);
+const CANCEL_POLL_INTERVAL: Duration = Duration::from_millis(25);
+
 /// A handle to a background job (backed by `HistoryDb`).
 #[derive(Clone)]
 pub struct Job {
@@ -695,8 +701,8 @@ impl JobManager {
 
     /// Cancel a running job.
     ///
-    /// Sends SIGTERM to the process group, marks the job as Cancelled in the DB,
-    /// then spawns a background thread to SIGKILL after a 5s grace period (X10 fix).
+    /// Sends SIGTERM to the process group, escalates to SIGKILL after a bounded
+    /// grace period if needed, then marks the job as cancelled in the DB.
     pub fn cancel(&self, id: i64) -> Result<bool> {
         let Some(job) = self.get(id)? else {
             return Ok(false);
@@ -705,26 +711,13 @@ impl JobManager {
         if matches!(job.job_status, JobLifecycleStatus::Running) {
             if let Some(job_pid) = job.pid {
                 let pid = nix::unistd::Pid::from_raw(job_pid as i32);
-                match send_job_signal(pid, nix::sys::signal::Signal::SIGTERM)? {
+                match terminate_job_process(pid)? {
                     SignalDelivery::Delivered => {}
                     SignalDelivery::Missing => {
                         self.reap_zombies()?;
                         return Ok(false);
                     }
                 }
-
-                // Grace period then SIGKILL if still alive (X10 fix)
-                std::thread::spawn(move || {
-                    std::thread::sleep(std::time::Duration::from_secs(5));
-                    if job_process_is_alive(pid)
-                        && let Err(error) = send_job_signal(pid, nix::sys::signal::Signal::SIGKILL)
-                    {
-                        eprintln!(
-                            "Warning: failed to send SIGKILL to cancelled background job pid {}: {error}",
-                            pid.as_raw()
-                        );
-                    }
-                });
             }
 
             // Update both the job handle and the invocation record.
@@ -803,6 +796,27 @@ impl JobManager {
 
         Ok(count)
     }
+}
+
+fn terminate_job_process(pid: nix::unistd::Pid) -> Result<SignalDelivery> {
+    match send_job_signal(pid, nix::sys::signal::Signal::SIGTERM)? {
+        SignalDelivery::Delivered => {}
+        SignalDelivery::Missing => return Ok(SignalDelivery::Missing),
+    }
+
+    let deadline = std::time::Instant::now() + CANCEL_SIGTERM_GRACE;
+    while std::time::Instant::now() < deadline {
+        if !job_process_is_alive(pid) {
+            return Ok(SignalDelivery::Delivered);
+        }
+        std::thread::sleep(CANCEL_POLL_INTERVAL);
+    }
+
+    if job_process_is_alive(pid) {
+        send_job_signal(pid, nix::sys::signal::Signal::SIGKILL)?;
+    }
+
+    Ok(SignalDelivery::Delivered)
 }
 
 fn job_process_is_alive(pid: nix::unistd::Pid) -> bool {
@@ -1261,6 +1275,49 @@ mod tests {
             .get_background_job_by_id(job_id)?
             .ok_or_else(|| eyre!("missing background job after cancellation"))?;
         assert!(matches!(job.job_status, JobLifecycleStatus::Killed));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_cancel_escalates_when_process_ignores_sigterm() -> TestResult<()> {
+        let dir = tempdir()?;
+        let db_path = dir.path().join("xtask-history.db");
+        let db = HistoryDb::open(&db_path)?;
+        let jobs_dir = dir.path().join("jobs");
+        fs::create_dir_all(&jobs_dir)?;
+        let manager = JobManager {
+            jobs_dir: jobs_dir.clone(),
+            db: std::sync::Mutex::new(db),
+        };
+
+        let mut child = std::process::Command::new("sh")
+            .arg("-c")
+            .arg("trap '' TERM; while true; do sleep 1; done")
+            .spawn()
+            .map_err(|error| eyre!("failed to spawn TERM-ignoring child: {error}"))?;
+        let stdout_path = jobs_dir.join("stdout.log");
+        let stderr_path = jobs_dir.join("stderr.log");
+        let (_invocation_id, job_id) = manager
+            .db
+            .lock()
+            .map_err(|_| eyre!("db lock poisoned"))?
+            .start_background_job("run", &[], Some(child.id()), &stdout_path, &stderr_path)?;
+
+        assert!(manager.cancel(job_id)?);
+
+        let mut child_exited = false;
+        for _ in 0..40 {
+            if child.try_wait()?.is_some() {
+                child_exited = true;
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        }
+        assert!(
+            child_exited,
+            "cancel must escalate to SIGKILL before reporting success when SIGTERM is ignored"
+        );
+
         Ok(())
     }
 
