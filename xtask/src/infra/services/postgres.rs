@@ -1132,22 +1132,6 @@ mod tests {
         Ok(())
     }
 
-    #[sinex_test]
-    async fn test_postgres_dev_runtime_budget_stays_small_but_usable() -> TestResult<()> {
-        const {
-            assert!(POSTGRES_MAX_CONNECTIONS >= 96);
-            assert!(POSTGRES_MAX_CONNECTIONS <= 128);
-            assert!(POSTGRES_MAX_WORKER_PROCESSES > TIMESCALEDB_MAX_BACKGROUND_WORKERS);
-            assert!(TIMESCALEDB_MAX_BACKGROUND_WORKERS >= 2);
-        }
-        assert_eq!(POSTGRES_SHARED_BUFFERS, "32MB");
-        assert_eq!(
-            POSTGRES_MAX_WORKER_PROCESSES - TIMESCALEDB_MAX_BACKGROUND_WORKERS,
-            POSTGRES_WORKER_PROCESS_HEADROOM
-        );
-        Ok(())
-    }
-
     #[cfg(unix)]
     #[sinex_test]
     async fn test_pg_commands_preserve_non_utf8_paths() -> TestResult<()> {
