@@ -49,7 +49,10 @@ use sinex_primitives::events::payloads::{
 use sinex_primitives::events::{Event, Provenance, SourceMaterial};
 use sinex_primitives::{Id, JsonValue, SinexError, Timestamp};
 use std::collections::HashMap;
-use std::sync::{Arc, OnceLock};
+use std::sync::{
+    Arc, OnceLock,
+    atomic::{AtomicBool, Ordering},
+};
 use std::time::{Duration, Instant};
 use tokio::sync::RwLock;
 use tracing::{debug, warn};
@@ -59,22 +62,18 @@ use tracing::{debug, warn};
 /// Provides methods for Sinex components to emit internal telemetry as events.
 #[derive(Clone)]
 pub struct SelfObserver {
-    /// Shared publisher path for raw events (None when disabled)
-    publisher: Option<NatsPublisher>,
-    /// Source-material stream used to record the emitted observation bytes.
-    ///
-    /// A `BufferedAppendStreamWriter` owns the active source material behind a
-    /// background task: it appends through an `&self` channel (interior
-    /// mutability), creates the BEGIN frame lazily on the first append, and
-    /// rotates streams without holding a mutex across NATS I/O. This is the same
-    /// substrate the deleted `BufferedRecordMaterializer` wrapped; the wrapper's
-    /// only added behavior was JSONL serialization, which now lives in
-    /// `stable_json_line` below.
-    materializer: Option<BufferedAppendStreamWriter>,
+    /// Lazily initialized publisher/materializer pair.
+    runtime: Arc<parking_lot::Mutex<Option<SelfObservationRuntime>>>,
+    /// NATS client retained only when the runtime pair may be initialized later.
+    nats_client: Option<NatsClient>,
+    /// Optional NATS namespace for lazy initialization.
+    namespace: Option<String>,
     /// Component name
     component: String,
     /// Whether self-observation is enabled
     enabled: bool,
+    /// Runtime gate used to suppress emissions until the hosting substrate is ready.
+    emission_enabled: Arc<AtomicBool>,
     /// Per-metric emission tracking (`metric_key` -> `last_emission_time`)
     metric_emissions: Arc<RwLock<HashMap<String, Instant>>>,
     /// Minimum interval between emissions (rate limiting)
@@ -84,13 +83,20 @@ pub struct SelfObserver {
     module_run_id: Arc<OnceLock<sinex_primitives::Uuid>>,
 }
 
+#[derive(Clone)]
+struct SelfObservationRuntime {
+    publisher: NatsPublisher,
+    materializer: BufferedAppendStreamWriter,
+}
+
 impl std::fmt::Debug for SelfObserver {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("SelfObserver")
             .field("component", &self.component)
             .field("enabled", &self.enabled)
-            .field("has_publisher", &self.publisher.is_some())
-            .field("has_materializer", &self.materializer.is_some())
+            .field("emission_enabled", &self.emission_enabled.load(Ordering::Relaxed))
+            .field("has_runtime", &self.runtime.lock().is_some())
+            .field("can_initialize_runtime", &self.nats_client.is_some())
             .field("min_interval", &self.min_interval)
             .finish()
     }
@@ -153,34 +159,42 @@ impl SelfObserver {
             enabled,
             min_emission_interval,
         } = config;
-        let (publisher, materializer) = if enabled {
-            let acquisition_manager = Arc::new(AcquisitionManager::new_with_namespace(
-                nats_client.clone(),
-                // Operator-tunable per-source granularity (#2184 prong B). Defaults
-                // to the standard 100 MB / 1 h batching so reflection materials are
-                // large by default, overridable via
-                // SINEX_MATERIAL_ROTATION_SELF_OBSERVATION_MAX_{MB,AGE_SECS}.
-                RotationPolicy::from_env("self_observation", RotationPolicy::default()),
-                "self_observation".to_string(),
-                namespace.clone(),
-            ));
-            (
-                Some(NatsPublisher::with_namespace(nats_client, namespace)),
-                Some(BufferedAppendStreamWriter::from_manager(
-                    acquisition_manager,
-                    self_observation_source_identifier(&component),
-                    BufferedAppendStreamWriterConfig::default(),
-                )),
-            )
+        let runtime = if enabled {
+            Some(Self::build_runtime(&nats_client, namespace.clone(), &component))
         } else {
-            (None, None)
+            None
         };
 
         Self {
-            publisher,
-            materializer,
+            runtime: Arc::new(parking_lot::Mutex::new(runtime)),
+            nats_client: None,
+            namespace,
             component,
             enabled,
+            emission_enabled: Arc::new(AtomicBool::new(true)),
+            metric_emissions: Arc::new(RwLock::new(HashMap::new())),
+            min_interval: min_emission_interval,
+            module_run_id: Arc::new(OnceLock::new()),
+        }
+    }
+
+    /// Create a self-observer whose emissions stay suppressed until
+    /// [`SelfObserver::enable_emission`] is called.
+    #[must_use]
+    pub fn new_deferred(nats_client: NatsClient, config: SelfObserverConfig) -> Self {
+        let SelfObserverConfig {
+            component,
+            namespace,
+            enabled,
+            min_emission_interval,
+        } = config;
+        Self {
+            runtime: Arc::new(parking_lot::Mutex::new(None)),
+            nats_client: enabled.then_some(nats_client),
+            namespace,
+            component,
+            enabled,
+            emission_enabled: Arc::new(AtomicBool::new(false)),
             metric_emissions: Arc::new(RwLock::new(HashMap::new())),
             min_interval: min_emission_interval,
             module_run_id: Arc::new(OnceLock::new()),
@@ -191,14 +205,22 @@ impl SelfObserver {
     #[must_use]
     pub fn disabled() -> Self {
         Self {
-            publisher: None,
-            materializer: None,
+            runtime: Arc::new(parking_lot::Mutex::new(None)),
+            nats_client: None,
+            namespace: None,
             component: "disabled".to_string(),
             enabled: false,
+            emission_enabled: Arc::new(AtomicBool::new(false)),
             metric_emissions: Arc::new(RwLock::new(HashMap::new())),
             min_interval: Duration::from_secs(1),
             module_run_id: Arc::new(OnceLock::new()),
         }
+    }
+
+    /// Open the runtime emission gate for observers constructed with
+    /// [`SelfObserver::new_deferred`].
+    pub fn enable_emission(&self) {
+        self.emission_enabled.store(true, Ordering::Release);
     }
 
     /// Attach the `core.runs` row ID so every emitted event carries provenance
@@ -214,50 +236,50 @@ impl SelfObserver {
     /// Check if self-observation is enabled
     #[must_use]
     pub fn is_enabled(&self) -> bool {
-        self.enabled && self.publisher.is_some() && self.materializer.is_some()
+        self.enabled
+            && self.emission_enabled.load(Ordering::Acquire)
+            && (self.runtime.lock().is_some() || self.nats_client.is_some())
     }
 
-    /// Eagerly open the underlying source material and commit its `BEGIN` frame
-    /// to the NATS `SOURCE_MATERIAL` `JetStream` before any telemetry events are
-    /// emitted.
-    ///
-    /// # Why this exists (#1241 prong 2)
-    ///
-    /// `BufferedAppendStreamWriter` creates its source material lazily on the
-    /// first `append` call.  When the adapter emits a `metric.gauge` event,
-    /// the event carries a `source_material_id` that was assigned by the
-    /// materializer at append time.  If the BEGIN frame hasn't been committed to
-    /// `JetStream` yet — or if event_engine's `MaterialAssembler` consumer hasn't
-    /// processed it yet — event_engine's `MaterialReadySet` pre-check returns false
-    /// and the event is NAK'd for retry.  Under a fast startup this retry window
-    /// is often exhausted before the material lands, causing DLQ routing.
-    ///
-    /// Calling `prime()` before storing the observer (and therefore before any
-    /// event is published) flushes the BEGIN frame synchronously, so the
-    /// material is registered in `JetStream` before the first telemetry event can
-    /// reference it.
-    ///
-    /// Returns `Ok(())` immediately when the observer is disabled.
-    pub async fn prime(&self) -> Result<(), SelfObservationError> {
-        let Some(materializer) = self.materializer.as_ref() else {
-            return Ok(());
-        };
-        // Publish the BEGIN frame eagerly WITHOUT staging a content byte. The
-        // earlier `append(vec![b'\n'])` minted a 1-byte source material per
-        // observer instance — with the automata restart churn this produced the
-        // ~30K degenerate 1-byte `self-observation.*` materials found in prod
-        // (#2184 prong E). The first real telemetry record now anchors at offset 0
-        // of a clean, size/age-batched material instead.
-        materializer.prime().await.map_err(|e| {
-            SelfObservationError::Materialization(format!(
-                "failed to prime self-observation material stream: {e}"
-            ))
-        })?;
-        debug!(
-            component = %self.component,
-            "Primed self-observation material stream (BEGIN frame committed, no content)"
-        );
-        Ok(())
+    fn build_runtime(
+        nats_client: &NatsClient,
+        namespace: Option<String>,
+        component: &str,
+    ) -> SelfObservationRuntime {
+        let acquisition_manager = Arc::new(AcquisitionManager::new_with_namespace(
+            nats_client.clone(),
+            // Operator-tunable per-source granularity (#2184 prong B). Defaults
+            // to the standard 100 MB / 1 h batching so reflection materials are
+            // large by default, overridable via
+            // SINEX_MATERIAL_ROTATION_SELF_OBSERVATION_MAX_{MB,AGE_SECS}.
+            RotationPolicy::from_env("self_observation", RotationPolicy::default()),
+            "self_observation".to_string(),
+            namespace.clone(),
+        ));
+        SelfObservationRuntime {
+            publisher: NatsPublisher::with_namespace(nats_client.clone(), namespace),
+            materializer: BufferedAppendStreamWriter::from_manager(
+                acquisition_manager,
+                self_observation_source_identifier(component),
+                BufferedAppendStreamWriterConfig::default(),
+            ),
+        }
+    }
+
+    fn runtime_paths(&self) -> Option<SelfObservationRuntime> {
+        if !self.is_enabled() {
+            return None;
+        }
+        let mut runtime = self.runtime.lock();
+        if runtime.is_none() {
+            let nats_client = self.nats_client.as_ref()?;
+            *runtime = Some(Self::build_runtime(
+                nats_client,
+                self.namespace.clone(),
+                &self.component,
+            ));
+        }
+        runtime.clone()
     }
 
     fn metric_identity_key(event_type: &str, payload: &JsonValue) -> String {
@@ -349,9 +371,7 @@ impl SelfObserver {
             return Ok(());
         }
 
-        let (Some(materializer), Some(publisher)) =
-            (self.materializer.as_ref(), self.publisher.as_ref())
-        else {
+        let Some(runtime) = self.runtime_paths() else {
             self.release_metric_slot(&metric_key).await;
             warn!(
                 component = %self.component,
@@ -374,7 +394,7 @@ impl SelfObserver {
 
         let anchor = match async {
             let line = stable_json_line(&record)?;
-            materializer.append(line).await
+            runtime.materializer.append(line).await
         }
         .await
         {
@@ -424,7 +444,8 @@ impl SelfObserver {
             }
         };
 
-        if let Err(e) = publisher
+        if let Err(e) = runtime
+            .publisher
             .publish_telemetry(&event, sinex_primitives::transport::Class::Telemetry)
             .await
         {
@@ -1000,5 +1021,139 @@ impl SelfObservationTask {
 }
 
 #[cfg(test)]
-#[path = "self_observation_test.rs"]
-mod tests;
+mod tests {
+    use super::*;
+    use xtask::sandbox::prelude::*;
+
+    fn test_observer() -> SelfObserver {
+        SelfObserver {
+            runtime: Arc::new(parking_lot::Mutex::new(None)),
+            nats_client: None,
+            namespace: None,
+            component: "test-component".to_string(),
+            enabled: true,
+            emission_enabled: Arc::new(AtomicBool::new(true)),
+            metric_emissions: Arc::new(RwLock::new(HashMap::new())),
+            min_interval: Duration::from_secs(1),
+            module_run_id: Arc::new(OnceLock::new()),
+        }
+    }
+
+    #[sinex_test]
+    async fn test_metric_identity_key_distinguishes_name_and_labels() -> TestResult<()> {
+        let first = JsonValue::Object(
+            serde_json::json!({
+                "component": "event_engine",
+                "name": "event_engine.consumer.lag.pending",
+                "labels": { "consumer": "alpha" },
+                "value": 1.0
+            })
+            .as_object()
+            .cloned()
+            .expect("json object"),
+        );
+        let second = JsonValue::Object(
+            serde_json::json!({
+                "component": "event_engine",
+                "name": "event_engine.consumer.lag.ack_pending",
+                "labels": { "consumer": "alpha" },
+                "value": 1.0
+            })
+            .as_object()
+            .cloned()
+            .expect("json object"),
+        );
+
+        let first_key = SelfObserver::metric_identity_key("metric.gauge", &first);
+        let second_key = SelfObserver::metric_identity_key("metric.gauge", &second);
+
+        assert_ne!(first_key, second_key);
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn health_status_metric_identity_includes_transition() -> TestResult<()> {
+        let initial = JsonValue::Object(
+            serde_json::json!({
+                "component": "source.email",
+                "previous_status": "healthy",
+                "current_status": "healthy",
+                "reason": "initial observation"
+            })
+            .as_object()
+            .cloned()
+            .expect("json object"),
+        );
+        let degraded = JsonValue::Object(
+            serde_json::json!({
+                "component": "source.email",
+                "previous_status": "healthy",
+                "current_status": "degraded",
+                "reason": "status changed"
+            })
+            .as_object()
+            .cloned()
+            .expect("json object"),
+        );
+
+        let initial_key = SelfObserver::metric_identity_key("health.status", &initial);
+        let degraded_key = SelfObserver::metric_identity_key("health.status", &degraded);
+
+        assert_ne!(
+            initial_key, degraded_key,
+            "health.status rate limiting must not collapse a real status transition into the initial observation slot"
+        );
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_metric_reservations_are_per_metric_identity() -> TestResult<()> {
+        let observer = test_observer();
+
+        assert!(
+            observer
+                .reserve_metric_slot("metric.counter|name=assembly_started")
+                .await
+        );
+        assert!(
+            observer
+                .reserve_metric_slot("metric.counter|name=assembly_completed")
+                .await
+        );
+        assert!(
+            !observer
+                .reserve_metric_slot("metric.counter|name=assembly_started")
+                .await
+        );
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_release_metric_slot_clears_failed_publish_reservation() -> TestResult<()> {
+        let observer = test_observer();
+        let key = "metric.counter|name=assembly_completed";
+
+        assert!(observer.reserve_metric_slot(key).await);
+        observer.release_metric_slot(key).await;
+        assert!(observer.reserve_metric_slot(key).await);
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_publish_fails_honestly_without_nats_client() -> TestResult<()> {
+        let observer = test_observer();
+
+        let first_error = observer
+            .emit_counter("requests.total", 1, None)
+            .await
+            .expect_err("expected missing NATS client to fail");
+        assert!(matches!(first_error, SelfObservationError::Unavailable));
+
+        let second_error = observer
+            .emit_counter("requests.total", 1, None)
+            .await
+            .expect_err("expected reservation to be released after missing client");
+        assert!(matches!(second_error, SelfObservationError::Unavailable));
+        Ok(())
+    }
+}
