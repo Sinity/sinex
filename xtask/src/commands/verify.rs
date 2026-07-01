@@ -612,7 +612,6 @@ pub fn execute_perf(args: PerfArgs, ctx: &CommandContext) -> Result<CommandResul
         target: args.target,
         db_pool_sizes: Vec::new(),
         continue_on_fail: false,
-        allow_contended_host: false,
         fail_fast: false,
     };
 
@@ -2383,8 +2382,8 @@ Either add the missing verification commands to the closing comment / issue body
         let body = "\
 Verification:
 
-- `SINEX_PREFLIGHT_SKIP_DISK_CHECK=1 xtask check -p sinexctl --allow-contended-host` - passed.
-- `xtask test -p sinexctl -E 'test(mcp)' --allow-contended-host` - passed.
+- `SINEX_PREFLIGHT_SKIP_DISK_CHECK=1 xtask check -p sinexctl` - passed.
+- `xtask test -p sinexctl -E 'test(mcp)'` - passed.
 ";
         let cmds = extract_closure_command_entries(body, "body");
         assert_eq!(cmds.len(), 2);

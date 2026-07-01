@@ -86,7 +86,6 @@ pub(super) fn execute_bench(bench: &BenchArgs, ctx: &CommandContext) -> Result<C
         target: bench.target.clone(),
         db_pool_sizes,
         continue_on_fail,
-        allow_contended_host: bench.allow_contended_host,
         fail_fast: false,
     };
     bench::run(config).map(|()| CommandResult::success())

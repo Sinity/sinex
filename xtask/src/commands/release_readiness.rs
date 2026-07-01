@@ -212,13 +212,13 @@ fn release_checks(base_ref: &str) -> Vec<ReleaseCheck> {
         ReleaseCheck {
             id: "nix-eval",
             family: "format-lint-static",
-            command: "xtask check --nix --allow-contended-host".to_string(),
+            command: "xtask check --nix".to_string(),
             proves: "flake outputs and generated devshell wiring evaluate through the repo-native check gate",
         },
         ReleaseCheck {
             id: "changed-strict",
             family: "focused-rust",
-            command: format!("xtask check --changed-strict {base_ref} --allow-contended-host"),
+            command: format!("xtask check --changed-strict {base_ref}"),
             proves: "changed Rust/API surfaces compile through the affected-package gate",
         },
         ReleaseCheck {
@@ -242,7 +242,7 @@ fn release_checks(base_ref: &str) -> Vec<ReleaseCheck> {
         ReleaseCheck {
             id: "source-catalog-drift",
             family: "generated-artifacts",
-            command: "xtask test -p sinexd -E 'test(source_catalog_artifact_matches_inventory)' --allow-contended-host"
+            command: "xtask test -p sinexd -E 'test(source_catalog_artifact_matches_inventory)'"
                 .to_string(),
             proves: "checked-in NixOS source catalog artifact matches the linked Rust source inventory",
         },
@@ -340,7 +340,7 @@ fn generated_artifacts() -> Vec<GeneratedArtifact> {
         },
         GeneratedArtifact {
             path: "nixos/modules/source-catalog.generated.json",
-            validation_command: "xtask test -p sinexd -E 'test(source_catalog_artifact_matches_inventory)' --allow-contended-host",
+            validation_command: "xtask test -p sinexd -E 'test(source_catalog_artifact_matches_inventory)'",
         },
     ]
 }
@@ -445,7 +445,7 @@ mod tests {
 
         assert_eq!(
             source_catalog.validation_command,
-            "xtask test -p sinexd -E 'test(source_catalog_artifact_matches_inventory)' --allow-contended-host"
+            "xtask test -p sinexd -E 'test(source_catalog_artifact_matches_inventory)'"
         );
         Ok(())
     }
