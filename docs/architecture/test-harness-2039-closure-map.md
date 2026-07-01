@@ -49,7 +49,7 @@ The current boundary is:
 
 | AC | Evidence kind | Surface | Evidence | Command / artifact | Status |
 | --- | --- | --- | --- | --- | --- |
-| ignored-skipped-tests | harness | forbidden scan and ignored-test taxonomy | Ambiguous ignored tests are rejected; current ignored tests are categorized as `heavy:`, `long:`, or `external:`. | `xtask check --forbidden --allow-contended-host`; `TESTING.md`; `xtask/src/commands/lint_forbidden.rs` | Satisfied |
+| ignored-skipped-tests | harness | forbidden scan and ignored-test taxonomy | Ambiguous ignored tests are rejected; current ignored tests are categorized as `heavy:`, `long:`, or `external:`. | `xtask check --forbidden`; `TESTING.md`; `xtask/src/commands/lint_forbidden.rs` | Satisfied |
 | closure-evidence-semantics | harness | closure/phase verification | Closure and phase verification parse AC-to-evidence manifests and reject grep-only/source-text-only behavior claims. | `xtask verify plan --check`; `xtask/src/commands/verify.rs`; `xtask/config/phase-verification.json` | Satisfied |
 | vm-runtime-evidence | runtime | VM-suite and `xtask vm` | VM reports typed pass/fail/skip/inconclusive/evidence-missing outcomes and hardened chaos/concurrency scenarios require observed faults before pass claims. | `tests/vm-suite/src/**`; `xtask/src/commands/vm.rs` | Satisfied |
 | replay-runtime-propagation | replay | replay-control/workspace replay tests | Fake source runtime task failures propagate to parent tests with receive/decode/build/insert/publish/progress context. | `crate/sinexd/src/api/replay_control/tests/**`; `tests/workspace/tests/replay_end_to_end_test.rs` | Satisfied |

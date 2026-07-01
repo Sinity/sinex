@@ -101,25 +101,21 @@ fn guard_db_benchmark_resources(config: &BenchConfig) -> Result<()> {
     }
 
     let conflicts = active_heavy_processes();
-    if !config.allow_contended_host && !conflicts.is_empty() {
+    if !conflicts.is_empty() {
         let details = conflicts
             .iter()
             .take(8)
             .map(|process| format!("  pid {}: {}", process.pid, process.command))
             .collect::<Vec<_>>()
             .join("\n");
-        bail!(
-            "Refusing DB benchmark while another heavy development process is active:\n{}\n\
-             Wait for those jobs or stop them before running the DB pool matrix.",
-            details
+        eprintln!(
+            "  ⚠ DB benchmark is starting while another heavy development process is active:\n{details}"
         );
     }
 
-    if !config.allow_contended_host {
-        let pressure = crate::resources::PressureRecommendation::capture();
-        if let Some(error) = pressure.broad_start_error("DB benchmark") {
-            bail!("{error}");
-        }
+    let pressure = crate::resources::PressureRecommendation::capture();
+    if let Some(warning) = pressure.warning("DB benchmark") {
+        eprintln!("  ⚠ {warning}");
     }
 
     Ok(())
