@@ -133,35 +133,44 @@ impl JetStreamConsumer {
                         tokio::time::sleep(delay).await;
                     }
                     // Publish each FINAL persisted+redacted event onto the
-                    // confirmed-events stream for direct automaton/SSE delivery
-                    // (one decode downstream, fan out in-process; no provisional
-                    // buffer, no DB refetch, no visibility race). Tombstoned
-                    // events are intentionally excluded (confirmation_batch only),
-                    // preserving tombstone-suppression. The per-kind watermark
-                    // publish below is retained transitionally until the automaton
-                    // dispatcher and SSE bus migrate off it; this addition is
-                    // best-effort and the end-state routes confirmed-publish
-                    // failures through the durability-gap path.
+                    // confirmed-events stream. This is the authoritative delivery
+                    // channel automata and the SSE bus consume directly (no
+                    // provisional buffer, no DB refetch, no visibility race).
+                    // Tombstoned events are intentionally excluded
+                    // (confirmation_batch only), preserving tombstone-suppression.
+                    // The raw message is acked below only if this publish also
+                    // succeeds; otherwise JetStream must redeliver and re-publish
+                    // rather than silently dropping the event downstream.
                     let confirmed_event_futs: Vec<_> = confirmation_batch
                         .iter()
                         .map(|prepared| {
                             let sem = Arc::clone(&self.confirmation_semaphore);
                             async move {
-                                let _permit = sem.acquire().await.ok()?;
-                                if let Err(err) =
-                                    self.publish_confirmed_event(&prepared.event).await
-                                {
-                                    warn!(
-                                        event_id = %prepared.parsed_id,
-                                        error = %err,
-                                        "Failed to publish confirmed event"
-                                    );
-                                }
-                                Some(())
+                                let _permit = match sem.acquire().await {
+                                    Ok(permit) => permit,
+                                    Err(error) => {
+                                        return (
+                                            prepared.parsed_id,
+                                            Err(SinexError::processing(
+                                                "confirmation semaphore closed",
+                                            )
+                                            .with_std_error(&error)),
+                                        );
+                                    }
+                                };
+                                let result = self
+                                    .publish_confirmed_event_with_retry(&prepared.event)
+                                    .await;
+                                (prepared.parsed_id, result)
                             }
                         })
                         .collect();
-                    join_all(confirmed_event_futs).await;
+                    let confirmed_publish_failures: HashMap<Uuid, SinexError> =
+                        join_all(confirmed_event_futs)
+                            .await
+                            .into_iter()
+                            .filter_map(|(id, result)| result.err().map(|err| (id, err)))
+                            .collect();
                     // Per #1306: group by (source, event_type) and publish one
                     // watermark per kind, not one confirmation per event id.
                     // Skip publishes when the in-memory watermark is already at
@@ -250,6 +259,18 @@ impl JetStreamConsumer {
                         match result {
                             Ok(()) => {
                                 for prepared in preps {
+                                    if let Some(err) =
+                                        confirmed_publish_failures.get(&prepared.parsed_id)
+                                    {
+                                        confirmation_durability_gaps.push((
+                                            prepared.parsed_id,
+                                            Self::confirmed_event_durability_gap_error(
+                                                prepared.parsed_id,
+                                                err,
+                                            ),
+                                        ));
+                                        continue;
+                                    }
                                     if let Some(set) = &inserted_set
                                         && !set.contains(&prepared.parsed_id)
                                     {
@@ -292,6 +313,18 @@ impl JetStreamConsumer {
                                             .confirmation_retries_enqueued
                                             .fetch_add(1, Ordering::Relaxed);
                                         for prepared in preps {
+                                            if let Some(err) =
+                                                confirmed_publish_failures.get(&prepared.parsed_id)
+                                            {
+                                                confirmation_durability_gaps.push((
+                                                    prepared.parsed_id,
+                                                    Self::confirmed_event_durability_gap_error(
+                                                        prepared.parsed_id,
+                                                        err,
+                                                    ),
+                                                ));
+                                                continue;
+                                            }
                                             ack_messages.push(&prepared.message);
                                         }
                                     }
