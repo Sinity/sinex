@@ -147,7 +147,9 @@ impl JetStreamConsumer {
 
     /// Publish a FINAL persisted+redacted event onto the confirmed-events stream.
     ///
-    /// Subject: `{env}.events.confirmed.<source>.<event_type>`. The body is the
+    /// Subject:
+    /// `{env}.events.confirmed.<provenance>.<encoded-source>.<encoded-event-type>`.
+    /// The body is the
     /// full `Event<JsonValue>` exactly as persisted (post-redaction). Downstream
     /// consumers (the shared in-process automaton dispatcher and the SSE bus)
     /// deserialize it directly — no Postgres refetch, no provisional buffer, no
@@ -165,9 +167,17 @@ impl JetStreamConsumer {
         };
         let source = event.source.as_str();
         let event_type = event.event_type.as_str();
+        let provenance = if event.is_synthesized_event() {
+            "synthesized"
+        } else {
+            "material"
+        };
         let subject = format!(
-            "{}{}.{}",
-            self.topology.confirmed_events_prefix, source, event_type
+            "{}{}.{}.{}",
+            self.topology.confirmed_events_prefix,
+            provenance,
+            sinex_primitives::environment::SinexEnvironment::nats_subject_token(source),
+            sinex_primitives::environment::SinexEnvironment::nats_subject_token(event_type),
         );
         let payload = serde_json::to_vec(event)?;
 
@@ -185,6 +195,56 @@ impl JetStreamConsumer {
 
         debug!(event_id = %event_id, source = %source, event_type = %event_type, "Published confirmed event");
         Ok(())
+    }
+
+    /// Build a per-event durability-gap error for a confirmed-event publish that
+    /// failed after retries. Collapsed into the batch-level
+    /// `confirmation_durability_gap_error`, which stamps the fatal error class so
+    /// the consumer halts and JetStream redelivers the unsettled raw message.
+    pub(super) fn confirmed_event_durability_gap_error(
+        event_id: Uuid,
+        source_err: &SinexError,
+    ) -> SinexError {
+        SinexError::network("Persisted event could not be published to the confirmed-events stream")
+            .with_context("event_id", event_id.to_string())
+            .with_context("confirmed_publish_error", source_err.to_string())
+    }
+
+    /// Publish a confirmed event, retrying transient transport failures with
+    /// bounded backoff. On final failure the caller routes the raw message
+    /// through the durability-gap path (leave unsettled for JetStream
+    /// redelivery) rather than acking it — otherwise the event would be silently
+    /// lost from the confirmed-events stream that automata and the SSE bus read.
+    pub(super) async fn publish_confirmed_event_with_retry(
+        &self,
+        event: &Event<JsonValue>,
+    ) -> EventEngineResult<()> {
+        let mut backoff = CONFIRM_PUBLISH_BACKOFF_BASE;
+        let mut last_error: Option<SinexError> = None;
+
+        for attempt in 1..=CONFIRM_PUBLISH_MAX_ATTEMPTS {
+            match self.publish_confirmed_event(event).await {
+                Ok(()) => return Ok(()),
+                Err(err) => {
+                    warn!(
+                        attempt,
+                        event_id = ?event.id,
+                        error = %err,
+                        "Confirmed-event publish attempt failed"
+                    );
+                    last_error = Some(err);
+                }
+            }
+
+            if attempt < CONFIRM_PUBLISH_MAX_ATTEMPTS {
+                tokio::time::sleep(backoff).await;
+                backoff = std::cmp::min(backoff.saturating_mul(2), CONFIRM_PUBLISH_BACKOFF_MAX);
+            }
+        }
+
+        Err(last_error.unwrap_or_else(|| {
+            SinexError::network("Failed to publish confirmed event after retries")
+        }))
     }
 
     pub(super) async fn publish_confirmation_with_retry(

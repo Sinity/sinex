@@ -2,11 +2,13 @@
 //! loop, schema-broadcast cache hookup, and checkpoint KV bootstrap.
 
 use super::{SchemaBroadcastCache, SchemaBroadcastEntry};
-use crate::runtime::confirmation_handler::{ConfirmedEventHandler, ProvisionalEvent};
+use crate::runtime::confirmation_handler::ConfirmedEventHandler;
 use crate::runtime::event_transport::EventTransport;
 use crate::runtime::{RuntimeResult, SinexError};
 use async_nats::jetstream::kv;
 use async_trait::async_trait;
+use sinex_primitives::JsonValue;
+use sinex_primitives::events::Event;
 use sinex_primitives::nats::create_or_open_kv_store;
 use std::future::Future;
 use std::sync::{Arc, Mutex};
@@ -106,18 +108,18 @@ pub(super) async fn run_resubscribing_listener<S, E, Subscribe, SubscribeFut, Ha
 }
 
 pub(super) struct RunnerConfirmedEventHandler {
-    sender: mpsc::Sender<ProvisionalEvent>,
+    sender: mpsc::Sender<Event<JsonValue>>,
 }
 
 impl RunnerConfirmedEventHandler {
-    pub(super) fn new(sender: mpsc::Sender<ProvisionalEvent>) -> Self {
+    pub(super) fn new(sender: mpsc::Sender<Event<JsonValue>>) -> Self {
         Self { sender }
     }
 }
 
 #[async_trait]
 impl ConfirmedEventHandler for RunnerConfirmedEventHandler {
-    async fn handle_confirmed(&self, event: &ProvisionalEvent) -> RuntimeResult<()> {
+    async fn handle_confirmed(&self, event: &Event<JsonValue>) -> RuntimeResult<()> {
         self.sender.send(event.clone()).await.map_err(|_| {
             // Channel closed = receiver dropped = shutdown in progress.
             // Return a shutdown-specific error so callers can distinguish

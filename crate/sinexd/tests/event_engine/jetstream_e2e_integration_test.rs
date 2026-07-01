@@ -2,11 +2,13 @@
 
 use serde_json::json;
 use sinex_db::DbPoolExt;
+use sinex_primitives::JsonValue;
 use sinex_primitives::events::builder::EventId;
+use sinex_primitives::events::Event;
 use sinex_primitives::{error::SinexError, temporal};
 use sinexd::runtime::{
-    ConfirmedEventHandler, JetStreamEventConsumer, JetStreamEventConsumerConfig, ProcessingModel,
-    ProvisionalEvent, RuntimeResult, prelude::async_trait,
+    ConfirmedEventHandler, JetStreamEventConsumer, JetStreamEventConsumerConfig, RuntimeResult,
+    prelude::async_trait,
 };
 use std::sync::Arc;
 use std::time::Duration;
@@ -32,11 +34,10 @@ impl TrackingConfirmedEventHandler {
 
 #[async_trait]
 impl ConfirmedEventHandler for TrackingConfirmedEventHandler {
-    async fn handle_confirmed(&self, provisional: &ProvisionalEvent) -> RuntimeResult<()> {
-        self.processed_event_ids
-            .write()
-            .await
-            .push(provisional.event_id);
+    async fn handle_confirmed(&self, event: &Event<JsonValue>) -> RuntimeResult<()> {
+        if let Some(event_id) = event.id {
+            self.processed_event_ids.write().await.push(event_id);
+        }
         Ok(())
     }
 }
@@ -54,25 +55,22 @@ async fn test_jetstream_e2e_event_flow(ctx: TestContext) -> Result<()> {
 
     let automaton_handler = Arc::new(TrackingConfirmedEventHandler::new());
     let automaton_config = JetStreamEventConsumerConfig {
-        processing_model: ProcessingModel::StatelessWorker,
         batch_size: 100,
-        confirmation_timeout: Duration::from_secs(30),
         consumer_name: format!("test-automaton-{namespace}"),
-        enable_provisional_processing: false,
         ..Default::default()
     };
-    // Wait for the confirmations stream to exist before starting the automaton consumer.
+    // Wait for the confirmed-events stream to exist before starting the automaton consumer.
     // event_engine (started by PipelineScope) creates this stream on startup; the automaton
     // consumer's run() immediately calls js.get_stream() which fails if it doesn't exist.
     let js = async_nats::jetstream::new(nats_client.clone());
-    let confirmations_stream = format!(
-        "{}_CONFIRMATIONS",
+    let confirmed_events_stream = format!(
+        "{}_CONFIRMED",
         env.nats_stream_name_with_namespace(Some(&namespace), "SINEX_RAW_EVENTS")
     );
     WaitHelpers::wait_for_condition(
         || {
             let js = js.clone();
-            let stream = confirmations_stream.clone();
+            let stream = confirmed_events_stream.clone();
             async move { Ok::<bool, SinexError>(js.get_stream(&stream).await.is_ok()) }
         },
         Timeouts::STANDARD,
@@ -101,7 +99,6 @@ async fn test_jetstream_e2e_event_flow(ctx: TestContext) -> Result<()> {
         env.clone(),
         automaton_config,
         automaton_handler.clone(),
-        None,
         Some(namespace.clone()),
     );
     let mut automaton_handle = tokio::spawn(async move { automaton_consumer.run().await });

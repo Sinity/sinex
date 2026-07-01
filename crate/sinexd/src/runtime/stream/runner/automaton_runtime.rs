@@ -6,8 +6,8 @@
 //! materialized inputs and feeds them into the module implementation.
 
 use super::{
-    Arc, CONFIRMED_EVENT_CHANNEL_CAPACITY, Checkpoint, JetStreamEventConsumer,
-    JetStreamEventConsumerConfig, LeaderState, ProcessingModel, ProvisionalEvent,
+    Arc, CONFIRMED_EVENT_CHANNEL_CAPACITY, Checkpoint, Event, JetStreamEventConsumer,
+    JetStreamEventConsumerConfig, JsonValue, LeaderState, ProcessingModel,
     RunnerConfirmedEventHandler, RuntimeModule, RuntimeResult, RuntimeRunner, ScanArgs, SinexError,
     TimeHorizon, Uuid, debug, info, mpsc, systemd_notify, warn,
 };
@@ -193,13 +193,6 @@ impl<T: RuntimeModule + 'static> RuntimeRunner<T> {
             .ok_or_else(|| SinexError::lifecycle("Runner handles not initialized".to_string()))?;
         let drain_controller = handles.runtime_drain();
 
-        #[cfg(feature = "db")]
-        let db_pool = handles.db_pool().cloned();
-        // No db_pool variable if db feature is off
-        #[cfg(feature = "db")]
-        let db_backed_confirmations = db_pool.is_some();
-        #[cfg(not(feature = "db"))]
-        let db_backed_confirmations = false;
         let transport = handles.transport().clone();
 
         let service_name = self.service_info.as_ref().map_or_else(
@@ -208,7 +201,7 @@ impl<T: RuntimeModule + 'static> RuntimeRunner<T> {
         );
 
         let (sender, mut receiver) =
-            mpsc::channel::<ProvisionalEvent>(CONFIRMED_EVENT_CHANNEL_CAPACITY);
+            mpsc::channel::<Event<JsonValue>>(CONFIRMED_EVENT_CHANNEL_CAPACITY);
         let handler = Arc::new(RunnerConfirmedEventHandler::new(sender));
 
         let env = sinex_primitives::environment::environment().clone();
@@ -217,8 +210,7 @@ impl<T: RuntimeModule + 'static> RuntimeRunner<T> {
 
         let consumer_config = Self::automaton_consumer_config(
             service_name.as_str(),
-            db_backed_confirmations,
-            self.processing_model,
+            self.module.confirmed_event_provenance_filter(),
             self.module.raw_event_type_filter(),
         );
 
@@ -227,7 +219,6 @@ impl<T: RuntimeModule + 'static> RuntimeRunner<T> {
             env,
             consumer_config,
             handler,
-            None,
         ));
 
         // Process historical backlog BEFORE starting the JetStream consumer.
@@ -326,7 +317,7 @@ impl<T: RuntimeModule + 'static> RuntimeRunner<T> {
             // Once drain is requested the consumer is aborted; switch to draining
             // whatever is still buffered before exiting cleanly.
             enum LoopAction {
-                Event(Option<ProvisionalEvent>),
+                Event(Option<Event<JsonValue>>),
                 FlushTick,
             }
 
@@ -358,37 +349,30 @@ impl<T: RuntimeModule + 'static> RuntimeRunner<T> {
                         break;
                     };
 
-                    // Non-blocking drain: grab whatever else is already queued
-                    let mut provisionals = vec![first];
-                    while provisionals.len() < BATCH_SIZE {
+                    // Non-blocking drain: grab whatever else is already queued.
+                    // Confirmed events arrive as fully materialized
+                    // `Event<JsonValue>` from the confirmed-events stream — no DB
+                    // refetch, no provisional resolution (#2187 / #2202).
+                    let mut events = vec![first];
+                    while events.len() < BATCH_SIZE {
                         match receiver.try_recv() {
-                            Ok(p) => provisionals.push(p),
+                            Ok(e) => events.push(e),
                             Err(_) => break,
                         }
                     }
 
-                    // Resolve each provisional to a full Event
-                    let resolve_result = Self::resolve_provisionals_to_events(
-                        &provisionals,
-                        #[cfg(feature = "db")]
-                        &db_pool,
-                    )
-                    .await?;
+                    let batch_last_event_id = events
+                        .last()
+                        .and_then(|event| event.id)
+                        .map(|id| *id.as_uuid());
 
-                    if resolve_result.events.is_empty() {
-                        continue;
-                    }
-
-                    let batch_count = Self::process_batch_with_dlq_fallback(
-                        &mut self.module,
-                        &transport,
-                        resolve_result.events,
-                    )
-                    .await?;
+                    let batch_count =
+                        Self::process_batch_with_dlq_fallback(&mut self.module, &transport, events)
+                            .await?;
 
                     processed_events += batch_count;
                     events_since_checkpoint += batch_count;
-                    if let Some(eid) = resolve_result.last_event_id {
+                    if let Some(eid) = batch_last_event_id {
                         last_event_id = Some(eid);
                     }
 
@@ -500,33 +484,40 @@ impl<T: RuntimeModule + 'static> RuntimeRunner<T> {
     #[cfg(feature = "messaging")]
     pub(super) fn automaton_consumer_config(
         service_name: &str,
-        db_backed_confirmations: bool,
-        processing_model: ProcessingModel,
-        raw_event_type_filter: Option<&str>,
+        provenance_filter: crate::runtime::automaton::traits::InputProvenanceFilter,
+        event_type_filter: Option<&str>,
     ) -> JetStreamEventConsumerConfig {
+        let sanitized_service_name = service_name.replace('.', "_");
+        let provenance_suffix = match provenance_filter {
+            crate::runtime::automaton::traits::InputProvenanceFilter::Any => "",
+            crate::runtime::automaton::traits::InputProvenanceFilter::MaterialOnly => "-material",
+            crate::runtime::automaton::traits::InputProvenanceFilter::SynthesizedOnly => {
+                "-synthesized"
+            }
+        };
+        let filter_suffix = event_type_filter.map(|event_type| {
+            format!(
+                "-filter-{}",
+                sinex_primitives::environment::SinexEnvironment::nats_subject_token(event_type)
+            )
+        });
         JetStreamEventConsumerConfig {
-            processing_model,
-            raw_event_type_filter: raw_event_type_filter.map(str::to_string),
+            provenance_filter,
+            event_type_filter: event_type_filter.map(str::to_string),
             batch_size: 128,
             max_ack_pending: Self::automaton_consumer_max_ack_pending(),
-            confirmation_timeout: std::time::Duration::from_mins(1),
-            consumer_name: if db_backed_confirmations {
-                format!("{}-automaton-confirmed-v2", service_name.replace('.', "_"))
-            } else {
-                format!("{}-automaton", service_name.replace('.', "_"))
-            },
-            enable_provisional_processing: false,
-            // Even with DB-backed confirmation hydration, payload-driven
-            // automata need the raw event stream so confirmation watermarks can
-            // resolve buffered inputs instead of synthetic kind stand-ins.
-            buffer_raw_events: true,
-            accept_unbuffered_confirmations: db_backed_confirmations,
-            deliver_policy: if db_backed_confirmations {
-                async_nats::jetstream::consumer::DeliverPolicy::New
-            } else {
-                async_nats::jetstream::consumer::DeliverPolicy::All
-            },
-            ..Default::default()
+            consumer_name: format!(
+                "{}-confirmed-events{}{}",
+                sanitized_service_name,
+                provenance_suffix,
+                filter_suffix.as_deref().unwrap_or("")
+            ),
+            // Anything before the consumer's creation point is covered by the
+            // per-automaton checkpoint + historical scan that runs before the
+            // consumer starts, so live delivery only needs new confirmed events.
+            // This also avoids re-delivering the whole retained confirmed stream
+            // on first start.
+            deliver_policy: async_nats::jetstream::consumer::DeliverPolicy::New,
         }
     }
 }
