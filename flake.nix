@@ -1503,6 +1503,21 @@ SQL
                   exec "$bin_path" "$@"
                 }
 
+                _sinex_xtask_exec_observability_with_existing_binary() {
+                  local observed_at
+                  observed_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+                  _sinex_xtask_write_current_rebuild_trigger
+                  _sinex_xtask_record_wrapper_event \
+                    "checkout-local-rebuild" \
+                    "deferred-observability" \
+                    "$observed_at" \
+                    "$observed_at" \
+                    0 \
+                    "" \
+                    "$@"
+                  _sinex_xtask_exec_checkout_binary "$@"
+                }
+
                 _sinex_xtask_exec_nix_readonly_fallback() {
                   if [ "''${SINEX_XTASK_ALLOW_NIX_READONLY_FALLBACK:-0}" != "1" ]; then
                     echo "✗ no checkout-local xtask binary is available for this read-only command" >&2
@@ -1893,6 +1908,9 @@ SQL
                   && _sinex_xtask_can_use_existing_binary "$@"
                 then
                   if _sinex_xtask_needs_build; then
+                    if _sinex_xtask_is_observability_command "$@"; then
+                      _sinex_xtask_exec_observability_with_existing_binary "$@"
+                    fi
                     if _sinex_xtask_failed_build_is_current; then
                       echo "ℹ  Using existing xtask binary; local rebuild is currently broken for these sources" >&2
                       if [ -r "$build_failure_log" ]; then
