@@ -457,6 +457,15 @@ where
         ModuleKind::Automaton
     }
 
+    fn raw_event_type_filter(&self) -> Option<&'static str> {
+        // A wildcard automaton needs the whole raw stream; a type-specific one
+        // can be filtered server-side to just its input type (#2187).
+        match self.automaton.input_event_type() {
+            "*" => None,
+            event_type => Some(event_type),
+        }
+    }
+
     fn capabilities(&self) -> RuntimeCapabilities {
         RuntimeCapabilities {
             supports_continuous: true,

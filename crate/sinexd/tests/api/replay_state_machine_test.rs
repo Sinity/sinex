@@ -1,4 +1,6 @@
+use sinex_db::DbPoolExt;
 use sinex_primitives::domain::ReplayOutcome;
+use sinex_primitives::events::{EventPayload, payloads::FileCreatedPayload};
 use sinex_primitives::{Uuid, temporal::Timestamp};
 use sinexd::api::{ReplayCheckpoint, ReplayOperation, ReplayScope, ReplayState};
 use std::collections::HashMap;
@@ -708,6 +710,131 @@ async fn recover_stale_executing_clears_executor_module(ctx: TestContext) -> Res
             .error_details
             .as_deref()
             .is_some_and(|details| details.contains("stale executing state"))
+    );
+
+    Ok(())
+}
+
+/// #2194 F1: a crash after the archive cascade commits but before re-ingest
+/// completes must NOT lose the archived events. Crash-recovery must restore the
+/// cascade from `audit.archived_events` (driven by the durable journal in the
+/// scope-invalidation marker) before marking the operation Failed — not just
+/// flip the state and leave the events gone forever.
+#[sinex_test]
+async fn recover_stale_executing_restores_archived_cascade(ctx: TestContext) -> Result<()> {
+    let replay = sinexd::api::ReplayStateMachine::new(ctx.pool.clone());
+    let scope = ReplayScope {
+        source_name: "test-source".to_string(),
+        time_window: None,
+        material_filter: None,
+        filters: HashMap::new(),
+        ..Default::default()
+    };
+
+    // Drive an operation into Executing.
+    let operation = replay
+        .create_operation(scope, "test:planner".to_string())
+        .await?;
+    replay
+        .update_preview(operation.operation_id, serde_json::json!({ "total_events": 1 }))
+        .await?;
+    replay
+        .approve(operation.operation_id, "admin:approver".to_string())
+        .await?;
+    replay
+        .transition(operation.operation_id, ReplayState::Executing)
+        .await?;
+
+    // A live material event that the replay archives.
+    let material_id = ctx
+        .create_source_material(Some("replay-recovery-material"))
+        .await?;
+    let event = ctx
+        .pool()
+        .events()
+        .insert(
+            FileCreatedPayload {
+                path: "/tmp/replay-recovery.txt".into(),
+                size: 42,
+                created_at: Timestamp::now(),
+                permissions: None,
+            }
+            .from_material(material_id)
+            .build()?,
+        )
+        .await?;
+    let event_id = event.id.expect("inserted event should have an id");
+
+    // Simulate the committed archive step: events leave core.events, and the
+    // durable journal (cascade_ids) is recorded in the operation marker.
+    ctx.pool()
+        .events()
+        .execute_cascade_archive(
+            &[*event_id.as_uuid()],
+            "superseded by replay re-execution",
+            &operation.operation_id.to_string(),
+            "test",
+        )
+        .await?;
+    let mut tx = ctx.pool.begin().await?;
+    replay
+        .record_scope_invalidations_pending_with_tx(
+            &mut tx,
+            operation.operation_id,
+            1,
+            0,
+            0,
+            1,
+            &[*event_id.as_uuid()],
+        )
+        .await?;
+    tx.commit().await?;
+
+    // The event is gone from the live tier — the data-loss window.
+    assert!(
+        ctx.pool().events().get_by_id(event_id).await?.is_none(),
+        "event must be archived (out of core.events) before recovery"
+    );
+
+    // Mark the operation stale, as a crash would leave it.
+    let stale_started_at = sinex_primitives::temporal::now() - time::Duration::hours(2);
+    sqlx::query!(
+        r#"
+        UPDATE core.operations_log
+        SET preview_summary = jsonb_set(
+                preview_summary,
+                '{started_at}',
+                to_jsonb($2::timestamptz),
+                true
+            )
+        WHERE id = $1::uuid
+        "#,
+        operation.operation_id,
+        *stale_started_at,
+    )
+    .execute(&ctx.pool)
+    .await?;
+
+    let recovered = replay
+        .recover_stale_executing(std::time::Duration::from_secs(1))
+        .await?;
+    assert_eq!(recovered, 1);
+
+    let failed = replay.load_operation(operation.operation_id).await?;
+    assert_eq!(failed.state, ReplayState::Failed);
+    assert!(
+        failed
+            .error_details
+            .as_deref()
+            .is_some_and(|details| details.contains("restored")),
+        "recovery must report the cascade restore: {:?}",
+        failed.error_details
+    );
+
+    // The archived event is back in the live tier — no permanent loss.
+    assert!(
+        ctx.pool().events().get_by_id(event_id).await?.is_some(),
+        "crash recovery must restore the archived cascade to core.events"
     );
 
     Ok(())

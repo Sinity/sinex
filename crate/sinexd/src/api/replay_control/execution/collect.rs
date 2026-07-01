@@ -457,6 +457,10 @@ impl ReplayExecutionEngine {
                     bucket_count,
                     scope_key_count,
                     event_count,
+                    // Durable replay journal (#2194): persist the archived
+                    // cascade ids inside the archive TX so crash-recovery can
+                    // restore them instead of losing them permanently.
+                    &cascade_ids,
                 )
                 .await
                 .map_err(|e| {

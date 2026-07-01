@@ -242,6 +242,32 @@ pub(super) async fn spawn_material_consumer(
                 break;
             }
 
+            // Backpressure gate (#2187 prong b): while the decoupled finalize
+            // backlog is saturated, stop admitting new material frames. Unpulled
+            // frames stay durably in the NATS WorkQueue; in-flight finalizes drain
+            // the counter and pulling resumes. This is the material-side analogue
+            // of the raw consumer's pull gate and bounds dispatched finalize work
+            // so a backlog drain can no longer grow admission without bound.
+            let mut gate_engaged = false;
+            while !shutdown_flag.load(Ordering::Acquire)
+                && assembler.finalize_in_flight() >= assembler.max_pending_finalizes
+            {
+                if !gate_engaged {
+                    gate_engaged = true;
+                    tracing::debug!(
+                        target: "sinex_metrics",
+                        metric = "material_consumer_backpressure_engaged",
+                        finalize_in_flight = assembler.finalize_in_flight() as u64,
+                        max_pending_finalizes = assembler.max_pending_finalizes as u64,
+                        "Material consumer pausing pulls while finalize backlog drains"
+                    );
+                }
+                tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+            }
+            if shutdown_flag.load(Ordering::Acquire) {
+                break;
+            }
+
             let messages = pull_batch(
                 &consumer,
                 MATERIAL_CONSUMER_BATCH_SIZE,

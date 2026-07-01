@@ -191,6 +191,8 @@ impl MaterialAssembler {
                 total_disk_backpressure = stats.disk_backpressure,
                 total_commit_outcome_unknown = stats.commit_outcome_unknown,
                 buffered_slices = buffered_slices,
+                finalize_in_flight = self.finalize_in_flight() as u64,
+                max_pending_finalizes = self.max_pending_finalizes as u64,
             );
 
             if let Some(ref observer) = self.observer
@@ -216,6 +218,13 @@ impl MaterialAssembler {
             for (material_id, elapsed_secs) in stale_materials {
                 self.process_stale_material(material_id, elapsed_secs).await;
             }
+
+            // Re-drive finalizations that were dispatched off the consumer but
+            // failed-and-reverted under transient DB/IO stress (#2187 prong d).
+            // The decoupled finalize path no longer relies on a redelivered NATS
+            // frame, so this maintenance pass is the live retry channel between
+            // crashes (WAL replay covers the across-restart case).
+            self.redrive_pending_finalizes().await;
 
             if let Err(error) = self.cleanup_orphaned_temp_files().await {
                 warn!("Failed to cleanup orphaned temp files: {}", error);
@@ -253,6 +262,48 @@ impl MaterialAssembler {
             }
         }
         stale
+    }
+
+    /// Re-dispatch finalization for materials that hold a recorded `End` but are
+    /// not currently finalizing — i.e. a decoupled finalize failed-and-reverted,
+    /// or an `End` was restored from the WAL on a previous boot and never landed.
+    ///
+    /// Gated on a minimum idle age so the consumer's own immediate dispatch (on the
+    /// END / last-slice frame) is not duplicated for freshly-completed materials.
+    /// `try_finalize_pending_end` is idempotent under the per-material lock + phase
+    /// guard, so a redundant re-drive against an in-flight finalize simply no-ops.
+    pub(super) async fn redrive_pending_finalizes(&self) {
+        const REDRIVE_MIN_IDLE_SECS: i64 = 30;
+        let now = Timestamp::now();
+
+        let state_handles: Vec<_> = self
+            .assembler_state
+            .iter()
+            .map(|entry| (*entry.key(), entry.value().clone()))
+            .collect();
+
+        let mut to_redrive = Vec::new();
+        for (material_id, state_handle) in state_handles {
+            let Ok(state) = state_handle.try_lock() else {
+                continue;
+            };
+            let idle = (now - state.last_slice_received).whole_seconds();
+            if state.pending_end.is_some()
+                && state.phase != state::AssemblyPhase::Finalizing
+                && state.phase != state::AssemblyPhase::PendingBegin
+                && idle >= REDRIVE_MIN_IDLE_SECS
+            {
+                to_redrive.push((material_id, state_handle.clone()));
+            }
+        }
+
+        for (material_id, state_handle) in to_redrive {
+            debug!(
+                material_id = %material_id,
+                "Re-driving stuck pending-end finalize from maintenance loop"
+            );
+            self.dispatch_finalize(material_id, state_handle);
+        }
     }
 
     async fn process_stale_material(&self, material_id: Uuid, elapsed_secs: i64) {

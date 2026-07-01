@@ -34,6 +34,30 @@ impl JetStreamConsumer {
             .await
             .map_err(|e| SinexError::network("Failed to create events stream").with_source(e))?;
 
+        // Confirmed-events stream — the FINAL persisted+redacted events that
+        // automata and the SSE bus consume directly. Carries full event payloads
+        // (NOT a watermark), so it is sized like the raw events stream and is
+        // NON-compacted (every confirmed event is delivered exactly once to each
+        // durable consumer). This replaces the raw-provisional-buffer + watermark
+        // + Postgres-refetch path: automata receive authoritative redacted events
+        // with no DB round-trip and no commit/confirmation visibility race.
+        self.js
+            .create_or_update_stream(jetstream::stream::Config {
+                name: self.topology.confirmed_events_stream.to_string(),
+                subjects: vec![self.topology.confirmed_events_subject.to_string()],
+                retention: jetstream::stream::RetentionPolicy::Limits,
+                max_messages: 2_000_000,
+                max_bytes: JETSTREAM_BOOTSTRAP_MAX_BYTES,
+                max_age: Duration::from_hours(72), // 3 days
+                storage: jetstream::stream::StorageType::File,
+                discard: DiscardPolicy::New,
+                ..Default::default()
+            })
+            .await
+            .map_err(|e| {
+                SinexError::network("Failed to create confirmed-events stream").with_source(e)
+            })?;
+
         // Confirmations stream — ephemeral operational notifications, not durable
         // history. Per-event-id subject pattern means `max_messages_per_subject = 1`
         // is structurally a no-op (each subject only ever holds one message); see

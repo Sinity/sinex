@@ -219,6 +219,7 @@ impl<T: RuntimeModule + 'static> RuntimeRunner<T> {
             service_name.as_str(),
             db_backed_confirmations,
             self.processing_model,
+            self.module.raw_event_type_filter(),
         );
 
         let consumer = Arc::new(JetStreamEventConsumer::new(
@@ -501,9 +502,11 @@ impl<T: RuntimeModule + 'static> RuntimeRunner<T> {
         service_name: &str,
         db_backed_confirmations: bool,
         processing_model: ProcessingModel,
+        raw_event_type_filter: Option<&str>,
     ) -> JetStreamEventConsumerConfig {
         JetStreamEventConsumerConfig {
             processing_model,
+            raw_event_type_filter: raw_event_type_filter.map(str::to_string),
             batch_size: 128,
             max_ack_pending: Self::automaton_consumer_max_ack_pending(),
             confirmation_timeout: std::time::Duration::from_mins(1),

@@ -325,6 +325,46 @@ impl SinexEnvironment {
         )
     }
 
+    /// Build a raw-event consumer *filter* subject that matches every source but
+    /// a single event type: `events.raw.*.<type>`.
+    ///
+    /// Raw events are published to `events.raw.<source>.<event_type>`, so a
+    /// type-specific consumer can let the NATS server filter the stream instead
+    /// of receiving and decoding the entire `events.raw.>` firehose. Used by
+    /// automata whose `input_event_type()` is a single concrete type (not `*`),
+    /// cutting redundant fan-out decode across the ~14 automata (#2187).
+    #[must_use]
+    pub fn nats_raw_event_type_filter_subject(
+        &self,
+        namespace: Option<&str>,
+        event_type: &str,
+    ) -> String {
+        self.nats_subject_with_namespace(
+            namespace,
+            &format!("events.raw.*.{}", Self::nats_subject_token(event_type)),
+        )
+    }
+
+    /// Build a confirmed-event consumer *filter* subject that matches every
+    /// source but a single event type: `events.confirmed.*.<type>`.
+    ///
+    /// Confirmed events are published to `events.confirmed.<source>.<event_type>`,
+    /// so a type-specific automaton can let the NATS server filter the
+    /// confirmed-events stream instead of receiving and decoding every confirmed
+    /// event. The mirror of `nats_raw_event_type_filter_subject` for the
+    /// confirmed-delivery path (#2187).
+    #[must_use]
+    pub fn nats_confirmed_event_type_filter_subject(
+        &self,
+        namespace: Option<&str>,
+        event_type: &str,
+    ) -> String {
+        self.nats_subject_with_namespace(
+            namespace,
+            &format!("events.confirmed.*.{}", Self::nats_subject_token(event_type)),
+        )
+    }
+
     /// Get an environment-namespaced stream name with an additional namespace suffix.
     #[must_use]
     pub fn nats_stream_name_with_namespace(
