@@ -458,6 +458,21 @@ impl Events {
                 .col(Events::CreatedByOperationId)
                 .cond_where(Expr::col(Events::CreatedByOperationId).is_not_null())
                 .to_owned(),
+            // Source runtime liveness: latest material-provenance output for a
+            // module run. Mirrors ix_events_module_run_synthesis_latest for
+            // automata and keeps source-status views off full hypertable scans.
+            Index::create()
+                .if_not_exists()
+                .name("ix_events_module_run_material_latest")
+                .table(Self::table_iden())
+                .col(Events::ModuleRunId)
+                .col((Events::Id, IndexOrder::Desc))
+                .cond_where(
+                    Expr::col(Events::ModuleRunId)
+                        .is_not_null()
+                        .and(Expr::col(Events::SourceMaterialId).is_not_null()),
+                )
+                .to_owned(),
             // Note: GIN indexes require raw SQL - see create_gin_indexes_sql()
         ]
     }

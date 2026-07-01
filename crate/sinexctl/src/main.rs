@@ -763,6 +763,8 @@ fn dlq_command_path(cmd: &DlqCommands) -> String {
         DlqCommands::Peek { .. } => "dlq peek".to_string(),
         DlqCommands::Requeue { .. } => "dlq requeue".to_string(),
         DlqCommands::Purge { .. } => "dlq purge".to_string(),
+        DlqCommands::Triage { .. } => "dlq triage".to_string(),
+        DlqCommands::CleanupPlan { .. } => "dlq cleanup-plan".to_string(),
     }
 }
 

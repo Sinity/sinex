@@ -1530,8 +1530,21 @@ impl StateRepository<'_> {
         stale_after: Duration,
         recent_window: Duration,
     ) -> DbResult<Vec<SourcesStatusRow>> {
+        self.list_sources_status_for_modules(stale_after, recent_window, &[])
+            .await
+    }
+
+    /// List source status for the provided module names. An empty name slice
+    /// preserves the full source-status view.
+    pub async fn list_sources_status_for_modules(
+        &self,
+        stale_after: Duration,
+        recent_window: Duration,
+        module_names: &[String],
+    ) -> DbResult<Vec<SourcesStatusRow>> {
         let stale_secs = stale_after.as_secs() as f64;
         let recent_secs = recent_window.as_secs() as f64;
+        let module_names = module_names.to_vec();
 
         sqlx::query_as!(
             SourcesStatusRow,
@@ -1594,10 +1607,12 @@ impl StateRepository<'_> {
                   AND e.source_material_id IS NOT NULL
             ) outputs ON true
             WHERE nm.manifest_type = 'source'
+              AND (cardinality($3::text[]) = 0 OR nm.name::text = ANY($3::text[]))
             ORDER BY nm.name, nm.version
             "#,
             stale_secs,
-            recent_secs
+            recent_secs,
+            &module_names
         )
         .fetch_all(self.pool)
         .await

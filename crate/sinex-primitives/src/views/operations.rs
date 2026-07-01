@@ -4,6 +4,7 @@ use crate::domain::{OperationKind, OperationStatus};
 use crate::rpc::dlq::{DlqListResponse, DlqMessagePeek};
 use crate::rpc::lifecycle::LifecycleStatusResponse;
 use crate::rpc::replay::{ReplayOperation, ReplayState};
+use crate::runtime_pressure::RuntimePressureLevel;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
@@ -12,6 +13,7 @@ use super::common::truncate_chars;
 pub const OPERATION_JOB_LIST_SCHEMA_VERSION: &str = "sinex.operation-job-list/v1";
 pub const OPERATION_CONTROL_CARD_SCHEMA_VERSION: &str = "sinex.operation-control-card/v1";
 pub const OPERATION_VIEW_SCHEMA_VERSION: &str = "sinex.operation-view/v1";
+pub const DLQ_CLEANUP_PLAN_SCHEMA_VERSION: &str = "sinex.dlq-cleanup-plan/v1";
 
 /// Read-only view of a single `core.operations_log` row rendered for operator
 /// and agent consumption.
@@ -143,6 +145,61 @@ pub struct OperationJobListView {
     pub schema_version: String,
     pub count: usize,
     pub jobs: Vec<OperationView>,
+}
+
+/// Read-only operator plan for retained raw-ingest DLQ cleanup.
+///
+/// This is a projection, not a mutation request. It is shared so CLI, TUI, MCP,
+/// demos, and future API views can render the same evidence/caveat shape instead
+/// of each growing its own DLQ cleanup DTO.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub struct DlqCleanupPlanView {
+    pub schema_version: String,
+    pub total_messages: u64,
+    pub pressure_level: RuntimePressureLevel,
+    pub retained_sequence_span: String,
+    pub inspected_tail: usize,
+    pub candidate_count: usize,
+    pub blocked_count: usize,
+    pub purge_candidate_messages: usize,
+    #[serde(default)]
+    pub requeue_candidate_messages: usize,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub coalesced_actions: Vec<DlqCleanupActionView>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub items: Vec<DlqCleanupPlanItemView>,
+    pub recommended_next: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct DlqCleanupActionView {
+    pub action: String,
+    pub sequence_range: String,
+    pub message_count: usize,
+    pub group_count: usize,
+    pub reason_buckets: Vec<String>,
+    pub command: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub purge_command: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub requeue_command: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct DlqCleanupPlanItemView {
+    pub decision: String,
+    pub reason_bucket: String,
+    pub count: usize,
+    pub sequence_range: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub purge_command: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub requeue_command: Option<String>,
+    pub inspect_command: String,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub evidence: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub blockers: Vec<String>,
 }
 
 /// Shared read-model card for operation-room style control panels.
