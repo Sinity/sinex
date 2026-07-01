@@ -158,6 +158,43 @@ async fn test_default_all_source_bindings_excludes_journald() -> ::xtask::sandbo
 }
 
 #[sinex_test]
+async fn test_core_source_bindings_env_preserves_explicit_override()
+-> ::xtask::sandbox::TestResult<()> {
+    let mut env = vec![(
+        "SINEX_SOURCE_BINDINGS_PATH".to_string(),
+        "/tmp/custom-bindings.json".to_string(),
+    )];
+
+    append_core_source_bindings_env(&mut env);
+
+    assert_eq!(
+        env.iter()
+            .filter(|(key, _)| key == "SINEX_SOURCE_BINDINGS_PATH")
+            .count(),
+        1
+    );
+    assert_eq!(env[0].1, "/tmp/custom-bindings.json");
+    Ok(())
+}
+
+#[sinex_test]
+async fn test_core_source_bindings_env_defaults_to_checkout_manifest()
+-> ::xtask::sandbox::TestResult<()> {
+    let mut env = Vec::new();
+
+    append_core_source_bindings_env(&mut env);
+
+    assert!(
+        env.iter().any(|(key, value)| {
+            key == "SINEX_SOURCE_BINDINGS_PATH"
+                && value.ends_with(".agent/dev/dev-source-bindings.json")
+        }),
+        "core run should default to the checkout dev source binding manifest when it exists: {env:?}"
+    );
+    Ok(())
+}
+
+#[sinex_test]
 async fn test_source_binding_runtime_args_uses_manifest_identity()
 -> ::xtask::sandbox::TestResult<()> {
     let binding = DevSourceBinding {

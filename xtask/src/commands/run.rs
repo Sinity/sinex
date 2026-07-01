@@ -128,6 +128,40 @@ fn default_all_source_bindings_from_manifest(
         .collect()
 }
 
+fn default_dev_source_bindings_path() -> PathBuf {
+    crate::config::workspace_root().join(DEV_SOURCE_BINDINGS_PATH)
+}
+
+fn source_bindings_env_override() -> Option<(String, String)> {
+    if std::env::var("SINEX_SOURCE_BINDINGS_PATH")
+        .ok()
+        .is_some_and(|value| !value.trim().is_empty())
+    {
+        return None;
+    }
+
+    let path = default_dev_source_bindings_path();
+    path.exists().then(|| {
+        (
+            "SINEX_SOURCE_BINDINGS_PATH".to_string(),
+            path.display().to_string(),
+        )
+    })
+}
+
+fn append_core_source_bindings_env(env: &mut Vec<(String, String)>) {
+    if env
+        .iter()
+        .any(|(key, value)| key == "SINEX_SOURCE_BINDINGS_PATH" && !value.trim().is_empty())
+    {
+        return;
+    }
+
+    if let Some(binding_env) = source_bindings_env_override() {
+        env.push(binding_env);
+    }
+}
+
 fn source_binding_runtime_args(binding: &DevSourceBinding, run_identity: &str) -> Vec<String> {
     let mut args = vec![
         "scan-source-driver".to_string(),
@@ -851,6 +885,12 @@ impl RunCommand {
         crate::preflight::local_runtime_env_overrides()
     }
 
+    fn core_bundle_env_vars(&self) -> Vec<(String, String)> {
+        let mut env = self.local_run_env_vars();
+        append_core_source_bindings_env(&mut env);
+        env
+    }
+
     fn local_runtime_coordinates(&self) -> Result<LocalRuntimeCoordinates> {
         LocalRuntimeCoordinates::gather()
     }
@@ -1121,7 +1161,11 @@ impl RunCommand {
         let cfg = config();
         let manager = JobManager::new(cfg.jobs_dir())?;
         let mut job_ids = Vec::new();
-        let runtime_env = self.local_run_env_vars();
+        let runtime_env = if binaries == CORE_TARGETS {
+            self.core_bundle_env_vars()
+        } else {
+            self.local_run_env_vars()
+        };
         let packages: Vec<&str> = binaries
             .iter()
             .map(|name| {
