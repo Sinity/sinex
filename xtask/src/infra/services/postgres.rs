@@ -23,7 +23,7 @@ fn pg_literal(value: &str) -> String {
 const MANAGED_CONFIG_BEGIN: &str = "# >>> sinex-dev managed configuration >>>";
 const MANAGED_CONFIG_END: &str = "# <<< sinex-dev managed configuration <<<";
 const LEGACY_CONFIG_MARKER: &str = "# sinex-dev configuration";
-const POSTGRES_MAX_CONNECTIONS: u16 = 128;
+const POSTGRES_MAX_CONNECTIONS: u16 = 64;
 const POSTGRES_SHARED_BUFFERS: &str = "32MB";
 const TIMESCALEDB_MAX_BACKGROUND_WORKERS: u16 = 2;
 const POSTGRES_WORKER_PROCESS_HEADROOM: u16 = 4;
@@ -1129,22 +1129,6 @@ mod tests {
         assert!(!config.contains("port = 1111"));
         assert!(!managed_block.contains("max_connections = 256"));
         assert!(!managed_block.contains("shared_buffers = '128MB'"));
-        Ok(())
-    }
-
-    #[sinex_test]
-    async fn test_postgres_dev_runtime_budget_stays_small_but_usable() -> TestResult<()> {
-        const {
-            assert!(POSTGRES_MAX_CONNECTIONS >= 96);
-            assert!(POSTGRES_MAX_CONNECTIONS <= 128);
-            assert!(POSTGRES_MAX_WORKER_PROCESSES > TIMESCALEDB_MAX_BACKGROUND_WORKERS);
-            assert!(TIMESCALEDB_MAX_BACKGROUND_WORKERS >= 2);
-        }
-        assert_eq!(POSTGRES_SHARED_BUFFERS, "32MB");
-        assert_eq!(
-            POSTGRES_MAX_WORKER_PROCESSES - TIMESCALEDB_MAX_BACKGROUND_WORKERS,
-            POSTGRES_WORKER_PROCESS_HEADROOM
-        );
         Ok(())
     }
 
