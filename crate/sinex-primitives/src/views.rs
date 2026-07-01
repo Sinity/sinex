@@ -1,6 +1,7 @@
 //! Shared human/agent view DTOs.
 
 mod common;
+mod completion;
 mod debt;
 mod desktop;
 mod events;
@@ -11,6 +12,7 @@ mod sources;
 mod tests;
 
 pub use common::*;
+pub use completion::*;
 pub use debt::*;
 pub use desktop::*;
 pub use events::*;

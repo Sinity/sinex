@@ -23,6 +23,19 @@ pub enum SourceCoverageReadiness {
     MissingBinding,
 }
 
+impl SourceCoverageReadiness {
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Ready => "ready",
+            Self::Proposed => "proposed",
+            Self::MissingMaterial => "missing_material",
+            Self::MissingEvents => "missing_events",
+            Self::MissingBinding => "missing_binding",
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum SourceCoverageContinuity {
@@ -31,6 +44,19 @@ pub enum SourceCoverageContinuity {
     EventOnly,
     Gapped,
     Unknown,
+}
+
+impl SourceCoverageContinuity {
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Active => "active",
+            Self::MaterialOnly => "material_only",
+            Self::EventOnly => "event_only",
+            Self::Gapped => "gapped",
+            Self::Unknown => "unknown",
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
@@ -156,7 +182,7 @@ pub struct SourceCoverageView {
     pub material_count: i64,
     pub event_count: i64,
     pub binding_count: usize,
-    pub live_binding_count: usize,
+    pub accepted_binding_count: usize,
     pub proposed_binding_count: usize,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub gaps: Vec<CoverageGapView>,
@@ -175,6 +201,7 @@ pub struct SourceCoverageView {
 pub struct SourceCoverageListView {
     pub schema_version: String,
     pub count: usize,
+    pub summary: SourceCoverageSummaryView,
     pub sources: Vec<SourceCoverageView>,
 }
 
@@ -182,10 +209,75 @@ impl SourceCoverageListView {
     #[must_use]
     pub fn new(sources: Vec<SourceCoverageView>) -> Self {
         let count = sources.len();
+        let summary = SourceCoverageSummaryView::from_sources(&sources);
         Self {
             schema_version: SOURCE_COVERAGE_LIST_SCHEMA_VERSION.to_string(),
             count,
+            summary,
             sources,
+        }
+    }
+
+    pub fn refresh_summary(&mut self) {
+        self.count = self.sources.len();
+        self.summary = SourceCoverageSummaryView::from_sources(&self.sources);
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct SourceCoverageSummaryView {
+    pub total_sources: usize,
+    pub readiness: std::collections::BTreeMap<String, usize>,
+    pub continuity: std::collections::BTreeMap<String, usize>,
+    pub accepted_bindings: usize,
+    pub proposed_bindings: usize,
+    pub eventful_sources: usize,
+    pub materialized_sources: usize,
+    pub total_events: i64,
+    pub total_materials: i64,
+}
+
+impl SourceCoverageSummaryView {
+    #[must_use]
+    pub fn from_sources(sources: &[SourceCoverageView]) -> Self {
+        let mut readiness = std::collections::BTreeMap::new();
+        let mut continuity = std::collections::BTreeMap::new();
+        let mut accepted_bindings = 0_usize;
+        let mut proposed_bindings = 0_usize;
+        let mut eventful_sources = 0_usize;
+        let mut materialized_sources = 0_usize;
+        let mut total_events = 0_i64;
+        let mut total_materials = 0_i64;
+
+        for source in sources {
+            *readiness
+                .entry(source.readiness.as_str().to_string())
+                .or_insert(0) += 1;
+            *continuity
+                .entry(source.continuity.as_str().to_string())
+                .or_insert(0) += 1;
+            accepted_bindings += source.accepted_binding_count;
+            proposed_bindings += source.proposed_binding_count;
+            if source.event_count > 0 {
+                eventful_sources += 1;
+            }
+            if source.material_count > 0 {
+                materialized_sources += 1;
+            }
+            total_events += source.event_count;
+            total_materials += source.material_count;
+        }
+
+        Self {
+            total_sources: sources.len(),
+            readiness,
+            continuity,
+            accepted_bindings,
+            proposed_bindings,
+            eventful_sources,
+            materialized_sources,
+            total_events,
+            total_materials,
         }
     }
 }

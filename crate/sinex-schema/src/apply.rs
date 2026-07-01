@@ -44,6 +44,7 @@ const EVENTS_REQUIRED_INDEXES: &[&str] = &[
     "ix_events_created_by_operation_id",
     "ix_events_sinex_metric_gauge_latest",
     "ix_events_module_run_synthesis_latest",
+    "ix_events_module_run_material_latest",
     // Load-bearing for admission dedup (`event_engine/admission.rs`
     // `exists_with_equivalence_key`). Without it a dropped index degrades the
     // dedup lookup to a sequential scan on the hypertable and `apply::diff`
@@ -985,6 +986,15 @@ async fn configure_timescaledb(pool: &PgPool) -> Result<(), ApplyError> {
         CREATE INDEX IF NOT EXISTS ix_events_module_run_synthesis_latest
         ON core.events (module_run_id, id DESC)
         WHERE module_run_id IS NOT NULL AND source_event_ids IS NOT NULL
+        ",
+    )
+    .await?;
+    execute_sql(
+        pool,
+        r"
+        CREATE INDEX IF NOT EXISTS ix_events_module_run_material_latest
+        ON core.events (module_run_id, id DESC)
+        WHERE module_run_id IS NOT NULL AND source_material_id IS NOT NULL
         ",
     )
     .await?;

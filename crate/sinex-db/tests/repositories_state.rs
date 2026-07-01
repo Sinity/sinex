@@ -581,6 +581,69 @@ async fn health_events_attach_live_run_identity(ctx: TestContext) -> TestResult<
 }
 
 #[sinex_test]
+async fn runtime_presence_uses_latest_nonterminal_run_per_manifest(
+    ctx: TestContext,
+) -> TestResult<()> {
+    let repo = ctx.pool.state();
+    let module_name = ModuleName::new("latest-run-presence-module");
+
+    let manifest = repo
+        .register_module(
+            &module_name,
+            ModuleKind::Source,
+            "1.0.0",
+            Some("restartable source"),
+        )
+        .await?;
+    let _older_run = repo
+        .start_module_run(
+            manifest.id,
+            "sinexd",
+            "old-instance",
+            "test-host",
+            None,
+            None,
+        )
+        .await?;
+    let latest_run = repo
+        .start_module_run(
+            manifest.id,
+            "sinexd",
+            "new-instance",
+            "test-host",
+            None,
+            None,
+        )
+        .await?;
+
+    insert_runtime_health_status(
+        &ctx,
+        module_name.as_ref(),
+        "healthy",
+        "runtime health observed",
+    )
+    .await?;
+
+    let live_modules = repo
+        .list_live_runtime_presence(Duration::from_mins(2))
+        .await?;
+    let matches: Vec<_> = live_modules
+        .iter()
+        .filter(|module| module.module_name == module_name)
+        .collect();
+
+    assert_eq!(
+        matches.len(),
+        1,
+        "one fresh health row must not revive every historical non-terminal run"
+    );
+    assert_eq!(matches[0].module_run_id, Some(latest_run.id.to_uuid()));
+    assert_eq!(matches[0].instance_id.as_deref(), Some("new-instance"));
+
+    Ok(())
+}
+
+#[sinex_test]
 async fn concrete_runs_without_health_are_not_runtime_liveness(ctx: TestContext) -> TestResult<()> {
     let repo = ctx.pool.state();
     let module_name = ModuleName::new("run-without-health-evidence");
@@ -611,6 +674,103 @@ async fn concrete_runs_without_health_are_not_runtime_liveness(ctx: TestContext)
     assert_eq!(health.active_count, 0);
     assert_eq!(health.inactive_count, 1);
     assert_eq!(health.active_run_count, 0);
+
+    Ok(())
+}
+
+#[sinex_test]
+async fn source_status_treats_recent_output_as_runtime_liveness(
+    ctx: TestContext,
+) -> TestResult<()> {
+    let repo = ctx.pool.state();
+    let module_name = ModuleName::new("source-output-backed-liveness");
+
+    let manifest = repo
+        .register_module(
+            &module_name,
+            ModuleKind::Source,
+            "1.0.0",
+            Some("source emits without health row"),
+        )
+        .await?;
+    let run = repo
+        .start_module_run(
+            manifest.id,
+            "sinexd",
+            "source-output-instance",
+            "test-host",
+            None,
+            None,
+        )
+        .await?;
+    let material_id = ctx.create_source_material(Some("fixture.source")).await?;
+
+    sqlx::query!(
+        r#"
+        INSERT INTO core.events (
+            id,
+            source,
+            event_type,
+            host,
+            payload,
+            ts_orig,
+            module_run_id,
+            source_material_id,
+            anchor_byte
+        )
+        VALUES ($1::uuid, $2, $3, $4, $5, $6, $7::uuid, $8::uuid, $9)
+        "#,
+        Uuid::now_v7(),
+        "fixture.source",
+        "fixture.event",
+        "test-host",
+        json!({"observed": true}),
+        *sinex_primitives::temporal::now(),
+        run.id.to_uuid(),
+        material_id.to_uuid(),
+        0_i64,
+    )
+    .execute(ctx.pool())
+    .await?;
+
+    let rows = repo
+        .list_sources_status(Duration::from_mins(2), Duration::from_mins(2))
+        .await?;
+    let row = rows
+        .iter()
+        .find(|row| row.module_name == module_name)
+        .expect("source status row for output-backed module");
+
+    assert_eq!(row.current_health, None);
+    assert_eq!(
+        row.recent_output_count, 1,
+        "recent output should be counted"
+    );
+    assert_eq!(row.module_run_id, Some(run.id.to_uuid()));
+    assert!(row.last_output_at.is_some());
+    assert!(
+        row.live,
+        "recent source output is runtime liveness evidence even without health telemetry"
+    );
+
+    let filtered_rows = repo
+        .list_sources_status_for_modules(
+            Duration::from_mins(2),
+            Duration::from_mins(2),
+            &[module_name.to_string()],
+        )
+        .await?;
+    assert_eq!(filtered_rows.len(), 1);
+    assert_eq!(filtered_rows[0].module_name, module_name);
+
+    let missing_rows = repo
+        .list_sources_status_for_modules(
+            Duration::from_mins(2),
+            Duration::from_mins(2),
+            &["missing-source-module".to_string()],
+        )
+        .await?;
+    assert!(missing_rows.is_empty());
 
     Ok(())
 }

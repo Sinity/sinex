@@ -371,11 +371,9 @@ impl CheckCommand {
                     }
                 })?;
         let success = clippy_summary.success;
-        if ctx.is_human() {
+        if ctx.is_human() || !success {
             for diag in &clippy_summary.diagnostics {
-                if let Some(rendered) = &diag.rendered {
-                    eprint!("{rendered}");
-                }
+                eprint!("{}", diag.rendered_or_compact());
             }
         }
         self.process_diagnostics(ctx, &clippy_summary, result, "clippy");
@@ -465,11 +463,9 @@ impl CheckCommand {
                 }
             })?;
         let success = check_summary.success;
-        if ctx.is_human() {
+        if ctx.is_human() || !success {
             for diag in &check_summary.diagnostics {
-                if let Some(rendered) = &diag.rendered {
-                    eprint!("{rendered}");
-                }
+                eprint!("{}", diag.rendered_or_compact());
             }
         }
         self.process_diagnostics(ctx, &check_summary, result, "cargo check");

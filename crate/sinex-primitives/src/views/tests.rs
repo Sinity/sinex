@@ -318,7 +318,7 @@ async fn source_coverage_list_view_serializes_status_shape() -> xtask::TestResul
         material_count: 2,
         event_count: 3,
         binding_count: 1,
-        live_binding_count: 1,
+        accepted_binding_count: 1,
         proposed_binding_count: 0,
         gaps: Vec::new(),
         caveats: Vec::new(),

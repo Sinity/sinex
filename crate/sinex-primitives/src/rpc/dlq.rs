@@ -79,16 +79,36 @@ pub const DLQ_PEEK_METHOD: RpcMethod<DlqPeekRequest, DlqPeekResponse> = RpcMetho
 pub struct DlqPeekRequest {
     #[serde(default = "default_peek_limit")]
     pub limit: usize,
+    /// Maximum characters of each sanitized payload preview to return.
+    ///
+    /// The server applies disclosure policy before truncation. Keep the default
+    /// compact for human tables, and let projection commands request a wider
+    /// bounded preview when the failure classifier depends on nested context.
+    #[serde(default = "default_payload_preview_chars")]
+    pub payload_preview_chars: usize,
+    /// Optional DLQ stream sequence to start peeking from.
+    ///
+    /// When omitted, the server returns the oldest retained DLQ messages.
+    /// Operator surfaces can use this to inspect the current tail without
+    /// introducing a parallel "latest failures" endpoint.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub start_sequence: Option<u64>,
 }
 
 fn default_peek_limit() -> usize {
     10
 }
 
+fn default_payload_preview_chars() -> usize {
+    200
+}
+
 impl Default for DlqPeekRequest {
     fn default() -> Self {
         Self {
             limit: default_peek_limit(),
+            payload_preview_chars: default_payload_preview_chars(),
+            start_sequence: None,
         }
     }
 }
@@ -111,10 +131,118 @@ fn is_false(value: &bool) -> bool {
     !*value
 }
 
+/// Grouped explanation of similar raw-ingest DLQ message previews.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DlqMessageGroup {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub original_subject: Option<String>,
+    pub reason_bucket: String,
+    pub count: usize,
+    pub first_sequence: u64,
+    pub last_sequence: u64,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub sample_previews: Vec<String>,
+}
+
+impl DlqMessageGroup {
+    fn new(message: &DlqMessagePeek) -> Self {
+        Self {
+            original_subject: message.original_subject.clone(),
+            reason_bucket: dlq_reason_bucket(&message.payload_preview),
+            count: 1,
+            first_sequence: message.sequence,
+            last_sequence: message.sequence,
+            sample_previews: vec![message.payload_preview.clone()],
+        }
+    }
+
+    fn add(&mut self, message: &DlqMessagePeek) {
+        self.count += 1;
+        self.first_sequence = self.first_sequence.min(message.sequence);
+        self.last_sequence = self.last_sequence.max(message.sequence);
+        if self.sample_previews.len() < 3
+            && !self
+                .sample_previews
+                .iter()
+                .any(|preview| preview == &message.payload_preview)
+        {
+            self.sample_previews.push(message.payload_preview.clone());
+        }
+    }
+}
+
 /// Response: dlq.peek
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DlqPeekResponse {
     pub messages: Vec<DlqMessagePeek>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub groups: Vec<DlqMessageGroup>,
+}
+
+impl DlqPeekResponse {
+    pub fn from_messages(messages: Vec<DlqMessagePeek>) -> Self {
+        let groups = group_dlq_messages(&messages);
+        Self { messages, groups }
+    }
+}
+
+fn group_dlq_messages(messages: &[DlqMessagePeek]) -> Vec<DlqMessageGroup> {
+    let mut groups: Vec<DlqMessageGroup> = Vec::new();
+    for message in messages {
+        let reason_bucket = dlq_reason_bucket(&message.payload_preview);
+        if let Some(existing) = groups.iter_mut().find(|group| {
+            group.original_subject == message.original_subject && group.reason_bucket == reason_bucket
+        }) {
+            existing.add(message);
+        } else {
+            groups.push(DlqMessageGroup::new(message));
+        }
+    }
+    groups.sort_by(|a, b| {
+        b.count
+            .cmp(&a.count)
+            .then_with(|| a.first_sequence.cmp(&b.first_sequence))
+    });
+    groups
+}
+
+fn dlq_reason_bucket(preview: &str) -> String {
+    if preview.contains("equivalence_key") && preview.contains("already exists") {
+        "occurrence_duplicate.equivalence_key_exists".to_string()
+    } else if let Some(error_code) = preview_error_code(preview) {
+        format!("error_payload.{error_code}")
+    } else if preview.contains("\"error\"") {
+        "error_payload.unparsed".to_string()
+    } else if preview.contains("[payload contains dangerous Unicode characters]") {
+        "unsafe_unicode_preview".to_string()
+    } else if preview.is_empty() {
+        "empty_preview".to_string()
+    } else {
+        "unclassified_preview".to_string()
+    }
+}
+
+fn preview_error_code(preview: &str) -> Option<String> {
+    if let Ok(value) = serde_json::from_str::<serde_json::Value>(preview)
+        && let Some(error) = value.get("error").and_then(|error| error.as_str())
+    {
+        return Some(sanitize_reason_token(error));
+    }
+    None
+}
+
+fn sanitize_reason_token(value: &str) -> String {
+    let mut token = String::with_capacity(value.len().min(64));
+    for ch in value.chars().take(64) {
+        if ch.is_ascii_alphanumeric() {
+            token.push(ch.to_ascii_lowercase());
+        } else if matches!(ch, '_' | '-' | '.') {
+            token.push(ch);
+        } else if !token.ends_with('_') {
+            token.push('_');
+        }
+    }
+    token.trim_matches('_').to_string()
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -135,6 +263,12 @@ pub struct DlqRequeueRequest {
     /// Optional event ID to requeue a specific raw-ingest DLQ message
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub event_id: Option<String>,
+    /// Inclusive first DLQ stream sequence to requeue.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub start_sequence: Option<u64>,
+    /// Inclusive last DLQ stream sequence to requeue.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub end_sequence: Option<u64>,
     /// Requeue all raw-ingest DLQ messages
     #[serde(default)]
     pub all: bool,
@@ -165,6 +299,12 @@ pub const DLQ_PURGE_METHOD: RpcMethod<DlqPurgeRequest, DlqPurgeResponse> = RpcMe
 pub struct DlqPurgeRequest {
     /// Must be true to confirm purge
     pub confirm: bool,
+    /// Inclusive first DLQ stream sequence to purge.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub start_sequence: Option<u64>,
+    /// Inclusive last DLQ stream sequence to purge.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub end_sequence: Option<u64>,
 }
 
 /// Response: dlq.purge
