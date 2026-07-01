@@ -1287,13 +1287,12 @@ pub(super) async fn handle_slice(
     }
 
     if should_finalize {
-        assembler
-            .try_finalize_pending_end(
-                material_id,
-                state_handle,
-                super::finalize::PendingEndBehavior::Ignore,
-            )
-            .await?;
+        // Decouple the slice-completed finalize from the ordered consumer too
+        // (#2187): the last slice that completes a material must not run the heavy
+        // finalize inline, or it head-of-line blocks every following frame exactly
+        // like the END-driven path did. State is durable (staged bytes + WAL), so
+        // dispatch onto the bounded finalize worker set and let the consumer ACK.
+        assembler.dispatch_finalize(material_id, state_handle);
     }
     Ok(())
 }

@@ -132,6 +132,36 @@ impl JetStreamConsumer {
                     if let Some(delay) = self.processing_delay {
                         tokio::time::sleep(delay).await;
                     }
+                    // Publish each FINAL persisted+redacted event onto the
+                    // confirmed-events stream for direct automaton/SSE delivery
+                    // (one decode downstream, fan out in-process; no provisional
+                    // buffer, no DB refetch, no visibility race). Tombstoned
+                    // events are intentionally excluded (confirmation_batch only),
+                    // preserving tombstone-suppression. The per-kind watermark
+                    // publish below is retained transitionally until the automaton
+                    // dispatcher and SSE bus migrate off it; this addition is
+                    // best-effort and the end-state routes confirmed-publish
+                    // failures through the durability-gap path.
+                    let confirmed_event_futs: Vec<_> = confirmation_batch
+                        .iter()
+                        .map(|prepared| {
+                            let sem = Arc::clone(&self.confirmation_semaphore);
+                            async move {
+                                let _permit = sem.acquire().await.ok()?;
+                                if let Err(err) =
+                                    self.publish_confirmed_event(&prepared.event).await
+                                {
+                                    warn!(
+                                        event_id = %prepared.parsed_id,
+                                        error = %err,
+                                        "Failed to publish confirmed event"
+                                    );
+                                }
+                                Some(())
+                            }
+                        })
+                        .collect();
+                    join_all(confirmed_event_futs).await;
                     // Per #1306: group by (source, event_type) and publish one
                     // watermark per kind, not one confirmation per event id.
                     // Skip publishes when the in-memory watermark is already at

@@ -597,6 +597,17 @@ impl Provenance {
 
     /// Get the operation ID if this is Derived provenance.
     #[must_use]
+    /// The material anchor byte for material-provenance events; `None` for
+    /// derived provenance. This is the stable occurrence coordinate
+    /// (`(source_material_id, anchor_byte)`), not the interpretation id.
+    #[must_use]
+    pub fn anchor_byte(&self) -> Option<i64> {
+        match self {
+            Provenance::Material { anchor_byte, .. } => Some(*anchor_byte),
+            Provenance::Derived { .. } => None,
+        }
+    }
+
     pub fn operation_id(&self) -> Option<Id<OperationMarker>> {
         match self {
             Provenance::Derived { operation_id, .. } => *operation_id,

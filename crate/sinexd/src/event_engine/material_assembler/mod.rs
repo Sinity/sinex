@@ -30,12 +30,12 @@ use sinex_db::{DbPool, DbPoolExt};
 use sinex_primitives::Timestamp;
 use sinex_primitives::{Id, JsonValue, Uuid, environment::SinexEnvironment};
 use std::future::Future;
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::{collections::BTreeMap, path::PathBuf, sync::Arc};
 use tokio::{
     fs,
     fs::File,
-    sync::{Mutex, Notify},
+    sync::{Mutex, Notify, Semaphore},
     task::JoinSet,
     time::Duration,
 };
@@ -236,6 +236,21 @@ pub struct MaterialAssembler {
     pub(super) finalize_timeout: std::time::Duration,
     /// WAL and staged-material flush/fsync policy.
     durability_policy: DefaultDurabilityPolicy,
+    /// Bounds the number of finalizations executing concurrently off the ordered
+    /// frame consumer (#2187 keystone). Finalize is decoupled from the single
+    /// in-order consumer loop and dispatched onto this semaphore-gated worker set
+    /// so one wedged finalize (DB lock / slow IO) can no longer head-of-line block
+    /// the 400K-frame backlog.
+    finalize_semaphore: Arc<Semaphore>,
+    /// Count of finalizations dispatched but not yet completed (queued on the
+    /// semaphore or running). First-class in-flight accounting (#2187 prong a),
+    /// read by the consumer backpressure gate (#2187 prong b).
+    finalize_in_flight: Arc<AtomicUsize>,
+    /// Pull-side backpressure ceiling: when `finalize_in_flight` reaches this
+    /// value the ordered consumer stops admitting new frames (they stay durably
+    /// in the NATS WorkQueue) until the finalize backlog drains. Mirrors the raw
+    /// consumer's `raw_event_buffer_accepts_pull` gate.
+    pub(super) max_pending_finalizes: usize,
 }
 
 impl MaterialAssembler {
@@ -308,6 +323,23 @@ impl MaterialAssembler {
         ));
         let max_material_size_bytes = encode_max_material_size_bytes(max_material_size_bytes)?;
 
+        // Finalize is decoupled from the ordered frame consumer onto a bounded
+        // worker set (#2187). `finalize_concurrency` caps simultaneous finalize
+        // transactions; `max_pending_finalizes` caps the dispatched-but-unfinished
+        // backlog and drives the consumer pull gate.
+        let finalize_concurrency = sinex_primitives::env::parse_or(
+            "SINEX_MATERIAL_FINALIZE_CONCURRENCY",
+            4_usize,
+            "material finalize concurrency",
+        )
+        .max(1);
+        let max_pending_finalizes = sinex_primitives::env::parse_or(
+            "SINEX_MATERIAL_MAX_PENDING_FINALIZES",
+            256_usize,
+            "material max pending finalizes",
+        )
+        .max(finalize_concurrency);
+
         Ok(Self {
             js,
             nats_client,
@@ -334,7 +366,18 @@ impl MaterialAssembler {
                 "material finalize timeout",
             )),
             durability_policy: DefaultDurabilityPolicy::new(durability_thresholds),
+            finalize_semaphore: Arc::new(Semaphore::new(finalize_concurrency)),
+            finalize_in_flight: Arc::new(AtomicUsize::new(0)),
+            max_pending_finalizes,
         })
+    }
+
+    /// Number of finalizations dispatched but not yet completed.
+    ///
+    /// Read by the consumer backpressure gate (#2187): when this reaches
+    /// `max_pending_finalizes` the ordered consumer pauses admitting new frames.
+    pub(super) fn finalize_in_flight(&self) -> usize {
+        self.finalize_in_flight.load(Ordering::Acquire)
     }
 
     /// Set self-observer for emitting assembly metrics
@@ -746,6 +789,9 @@ impl MaterialAssembler {
             orphaned_file_age_threshold: self.orphaned_file_age_threshold,
             finalize_timeout: self.finalize_timeout,
             durability_policy: self.durability_policy,
+            finalize_semaphore: self.finalize_semaphore.clone(),
+            finalize_in_flight: self.finalize_in_flight.clone(),
+            max_pending_finalizes: self.max_pending_finalizes,
         }
     }
 

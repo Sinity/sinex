@@ -1,6 +1,7 @@
 //! Confirmation publishing, retry, and durability-gap handling for `JetStreamConsumer`.
 
 use serde::{Deserialize, Serialize};
+use sinex_primitives::events::Event;
 use std::sync::atomic::Ordering;
 
 use super::*;
@@ -141,6 +142,48 @@ impl JetStreamConsumer {
             .map_err(|e| SinexError::network("Confirmation ack failed").with_source(e))?;
 
         debug!(event_id = %event_id, source = %source, event_type = %event_type, "Published confirmation watermark");
+        Ok(())
+    }
+
+    /// Publish a FINAL persisted+redacted event onto the confirmed-events stream.
+    ///
+    /// Subject: `{env}.events.confirmed.<source>.<event_type>`. The body is the
+    /// full `Event<JsonValue>` exactly as persisted (post-redaction). Downstream
+    /// consumers (the shared in-process automaton dispatcher and the SSE bus)
+    /// deserialize it directly — no Postgres refetch, no provisional buffer, no
+    /// commit/confirmation visibility race. `Nats-Msg-Id` is the event id so a
+    /// duplicate publish of the same event (NATS at-least-once redelivery of the
+    /// raw message) is coalesced server-side within the dedup window.
+    pub(super) async fn publish_confirmed_event(
+        &self,
+        event: &Event<JsonValue>,
+    ) -> EventEngineResult<()> {
+        let Some(event_id) = event.id else {
+            return Err(SinexError::processing(
+                "Cannot publish confirmed event without an id",
+            ));
+        };
+        let source = event.source.as_str();
+        let event_type = event.event_type.as_str();
+        let subject = format!(
+            "{}{}.{}",
+            self.topology.confirmed_events_prefix, source, event_type
+        );
+        let payload = serde_json::to_vec(event)?;
+
+        let event_id_str = event_id.to_string();
+        let mut headers = async_nats::HeaderMap::new();
+        headers.insert("Nats-Msg-Id", event_id_str.as_str());
+        transport::insert_transport_class_headers(&mut headers, transport::Class::Confirmation);
+
+        self.js
+            .publish_with_headers(subject, headers, payload.into())
+            .await
+            .map_err(|e| SinexError::network("Failed to publish confirmed event").with_source(e))?
+            .await
+            .map_err(|e| SinexError::network("Confirmed-event ack failed").with_source(e))?;
+
+        debug!(event_id = %event_id, source = %source, event_type = %event_type, "Published confirmed event");
         Ok(())
     }
 

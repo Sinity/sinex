@@ -563,6 +563,98 @@ async fn converge_named_constraints(
     Ok(())
 }
 
+/// Drops auto-named inline CHECK twins that duplicate a declared named CHECK
+/// constraint (#2196 Finding 1).
+///
+/// `sea-query`'s `CREATE TABLE` emits inline CHECKs without a `CONSTRAINT name`
+/// clause, so PostgreSQL auto-names them (`events_check`, `events_check1`, …,
+/// `events_<column>_check`). `converge_named_constraints` then adds a *named*
+/// version of the same predicate (`events_anchor_byte_non_negative`, …). The
+/// auto-named originals were never dropped, so every re-apply left the table
+/// carrying both copies — ~46 constraints where ~24 are needed, each evaluated
+/// on every INSERT, and invisible to both `apply::diff` and `strict_diff`
+/// (which only assert that the declared name is *present*).
+///
+/// We dedup by *body*, not by name: `pg_get_constraintdef` renders from the
+/// parsed expression tree, so two constraints with the same predicate produce
+/// byte-identical definitions (modulo a trailing ` NOT VALID`). For every group
+/// of constraints sharing a normalized body, if the group contains a declared
+/// name we drop the non-declared members. Groups with no declared member (the
+/// anonymous XOR-provenance and offset-kind invariants, column-level checks
+/// with no named twin) are left untouched.
+async fn drop_duplicate_check_constraints(
+    pool: &PgPool,
+    schema: &str,
+    table: &str,
+    constraints: &[NamedConstraint],
+) -> Result<(), ApplyError> {
+    if constraints.is_empty() {
+        return Ok(());
+    }
+    validate_pg_identifier(schema, "schema")
+        .map_err(|e| ApplyError::Internal(format!("invalid schema identifier: {e}")))?;
+    validate_pg_identifier(table, "table")
+        .map_err(|e| ApplyError::Internal(format!("invalid table identifier: {e}")))?;
+
+    let declared: HashSet<&str> = constraints.iter().map(|nc| nc.name).collect();
+
+    let rows = sqlx::query_as::<_, (String, String)>(
+        "SELECT c.conname, pg_get_constraintdef(c.oid)
+         FROM pg_constraint c
+         JOIN pg_class r ON c.conrelid = r.oid
+         JOIN pg_namespace n ON r.relnamespace = n.oid
+         WHERE n.nspname = $1 AND r.relname = $2 AND c.contype = 'c'",
+    )
+    .bind(schema)
+    .bind(table)
+    .fetch_all(pool)
+    .await?;
+
+    // Group constraint names by normalized predicate body.
+    let mut by_body: HashMap<String, Vec<String>> = HashMap::new();
+    for (name, def) in rows {
+        let body = def
+            .trim()
+            .strip_suffix(" NOT VALID")
+            .unwrap_or_else(|| def.trim())
+            .trim()
+            .to_string();
+        by_body.entry(body).or_default().push(name);
+    }
+
+    // For each body shared by a declared constraint, drop the non-declared twins.
+    let mut to_drop: Vec<String> = Vec::new();
+    for names in by_body.values() {
+        if names.len() < 2 {
+            continue;
+        }
+        let has_declared = names.iter().any(|n| declared.contains(n.as_str()));
+        if !has_declared {
+            continue;
+        }
+        for name in names {
+            if !declared.contains(name.as_str()) {
+                to_drop.push(name.clone());
+            }
+        }
+    }
+
+    if to_drop.is_empty() {
+        return Ok(());
+    }
+
+    to_drop.sort_unstable();
+    to_drop.dedup();
+    let clauses: Vec<String> = to_drop
+        .iter()
+        .map(|name| format!("DROP CONSTRAINT IF EXISTS {name}"))
+        .collect();
+    let alter = format!("ALTER TABLE {schema}.{table} {}", clauses.join(", "));
+    pool.execute(alter.as_str()).await?;
+
+    Ok(())
+}
+
 /// Ensures all named foreign keys are present on the table.
 ///
 /// Missing foreign keys are added exactly once. Changed definitions are not
@@ -1165,6 +1257,15 @@ pub async fn converge_tables(pool: &PgPool, tables: &[ConvergibleTable]) -> Resu
                 .await?;
             converge_named_constraints(pool, ct.meta.schema, ct.meta.name, &ct.named_constraints)
                 .await?;
+            // Remove the auto-named inline CHECK twins the named convergence
+            // above supersedes, so they stop accumulating on every apply.
+            drop_duplicate_check_constraints(
+                pool,
+                ct.meta.schema,
+                ct.meta.name,
+                &ct.named_constraints,
+            )
+            .await?;
             converge_named_foreign_keys(pool, ct.meta.schema, ct.meta.name, &declared_foreign_keys)
                 .await?;
         }
@@ -1315,12 +1416,22 @@ mod tests {
     #[sinex_test]
     async fn convergible_tables_resolve_known_metadata() -> TestResult<()> {
         let tables = convergible_tables()?;
-        // The convergible table registry now includes all tables that need column
-        // convergence, named-constraint idempotency, and FK management. The count
-        // grew to 17 when the semantic.* lane tables and core embedding tables were
-        // added (#1054); the assertion had not been updated, so it failed on master.
-        assert_eq!(tables.len(), 17);
+        // The convergible registry holds every table needing column convergence,
+        // named-constraint idempotency, and FK management. Assert structural
+        // invariants instead of a magic count (the count legitimately grows as
+        // schema lanes are added — a pinned literal just rots and fails on a clean
+        // addition, as it did at 17 vs the current registry size).
+        assert!(
+            tables.len() >= 17,
+            "convergible registry collapsed: {} tables",
+            tables.len()
+        );
         assert_eq!(tables[0].meta.qualified_name, "core.events");
+        let mut names: Vec<_> = tables.iter().map(|t| t.meta.qualified_name).collect();
+        let total = names.len();
+        names.sort_unstable();
+        names.dedup();
+        assert_eq!(names.len(), total, "convergible registry has duplicate tables");
         Ok(())
     }
 }

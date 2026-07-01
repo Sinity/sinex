@@ -293,6 +293,15 @@ pub struct ReplayScopeInvalidationRecovery {
     pub recorded_at: Timestamp,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub published_at: Option<Timestamp>,
+    /// Ids of the events archived by this operation's cascade, captured inside
+    /// the archive transaction. This is the durable replay journal that makes a
+    /// crash between archive-commit and re-ingest recoverable (#2194): on
+    /// crash-recovery the events are restored from `audit.archived_events`
+    /// rather than lost permanently. Empty for operations whose marker predates
+    /// this field (recovery then degrades to the prior mark-Failed-only
+    /// behavior).
+    #[serde(default)]
+    pub cascade_ids: Vec<Uuid>,
 }
 
 impl ReplayScopeInvalidationRecovery {
@@ -301,6 +310,7 @@ impl ReplayScopeInvalidationRecovery {
         bucket_count: usize,
         scope_key_count: usize,
         event_count: usize,
+        cascade_ids: Vec<Uuid>,
     ) -> Self {
         Self {
             phase: ReplayScopeInvalidationPhase::Pending,
@@ -310,6 +320,7 @@ impl ReplayScopeInvalidationRecovery {
             event_count,
             recorded_at: temporal::now(),
             published_at: None,
+            cascade_ids,
         }
     }
 
@@ -949,6 +960,7 @@ impl ReplayStateMachine {
         bucket_count: usize,
         scope_key_count: usize,
         event_count: usize,
+        cascade_ids: &[Uuid],
     ) -> Result<()> {
         let repo = self.repo();
         let existing = repo.fetch_meta_for_update(tx, operation_id).await?;
@@ -958,6 +970,7 @@ impl ReplayStateMachine {
             bucket_count,
             scope_key_count,
             event_count,
+            cascade_ids.to_vec(),
         ));
         let meta_json = serde_json::to_value(&meta)?;
         repo.update_operation_meta_only(tx, operation_id, meta_json)
@@ -1200,14 +1213,68 @@ impl ReplayStateMachine {
     ) -> Result<bool> {
         let recovered_state = meta.state;
 
+        // Crash-safe replay recovery (#2194). A replay archives its cascade
+        // (events leave `core.events` for `audit.archived_events`) in one
+        // committed transaction, then re-ingests outside that transaction. A
+        // crash in that window previously left the operation marked Failed with
+        // the archived events never restored — silent permanent loss. If this
+        // operation recorded an archive cascade (the durable journal written
+        // inside the archive TX), restore it from the archive BEFORE marking
+        // Failed. The restore is occurrence-safe (it will not re-create a
+        // material interpretation whose (source_material_id, anchor_byte) is
+        // already live again from re-emission) and idempotent (ON CONFLICT (id)
+        // DO NOTHING), so a crash mid-recovery simply re-runs it next sweep.
+        let restore_note = if let Some(invalidation) = meta.scope_invalidation.as_ref() {
+            if invalidation.cascade_ids.is_empty() {
+                // Marker predates the journal, or zero events were archived.
+                // Nothing durable to restore; degrade to mark-Failed only.
+                Some("no archived cascade journal to restore".to_string())
+            } else {
+                let cascade_ids = invalidation.cascade_ids.clone();
+                let restored = self
+                    .pool
+                    .events()
+                    .execute_cascade_restore(&cascade_ids, &operation_id.to_string())
+                    .await
+                    .map_err(|e| {
+                        SinexError::database(
+                            "Failed to restore archived replay cascade during crash recovery",
+                        )
+                        .with_source(e.to_string())
+                        .with_id("operation_id", operation_id.to_string())
+                        .with_context("cascade_ids", cascade_ids.len().to_string())
+                        .with_operation("recover_stale_executing")
+                    })?;
+                warn!(
+                    operation_id = %operation_id,
+                    restored,
+                    cascade_size = cascade_ids.len(),
+                    "Restored archived replay cascade during crash recovery (#2194)"
+                );
+                Some(format!(
+                    "restored {restored}/{} archived events from cascade journal",
+                    cascade_ids.len()
+                ))
+            }
+        } else {
+            // No archive committed (crash before archive); nothing to restore.
+            None
+        };
+
         meta.state = ReplayState::Failed;
         meta.finished_at = Some(temporal::now());
         meta.outcome = Some(ReplayOutcome::Failed);
         meta.executor_module = None;
-        meta.error_details = Some(format!(
-            "recovered from stale {} state (likely process crash)",
-            state_json_label(recovered_state).to_ascii_lowercase()
-        ));
+        meta.error_details = Some(match restore_note {
+            Some(note) => format!(
+                "recovered from stale {} state (likely process crash); {note}",
+                state_json_label(recovered_state).to_ascii_lowercase()
+            ),
+            None => format!(
+                "recovered from stale {} state (likely process crash)",
+                state_json_label(recovered_state).to_ascii_lowercase()
+            ),
+        });
 
         let (status, msg) = map_state_to_status(&meta.state);
         let meta_json = serde_json::to_value(&meta).map_err(|e| {

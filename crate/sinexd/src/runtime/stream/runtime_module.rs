@@ -34,6 +34,17 @@ pub trait RuntimeModule: Send + Sync {
         RuntimeCapabilities::default()
     }
 
+    /// Single concrete raw event type this module consumes, if any.
+    ///
+    /// When `Some(t)`, the raw-event consumer can filter the stream server-side
+    /// to `events.raw.*.<t>` instead of subscribing to the whole `events.raw.>`
+    /// firehose — so this module no longer receives and decodes events it would
+    /// immediately discard. Returns `None` for wildcard consumers that need
+    /// every event (the default), preserving existing behavior. Ref #2187.
+    fn raw_event_type_filter(&self) -> Option<&'static str> {
+        None
+    }
+
     fn current_checkpoint(
         &self,
     ) -> impl std::future::Future<Output = RuntimeResult<Checkpoint>> + Send;

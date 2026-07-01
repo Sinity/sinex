@@ -274,6 +274,57 @@ impl MaterialAssembler {
         Ok(())
     }
 
+    /// Decouple finalization from the ordered frame consumer (#2187 keystone).
+    ///
+    /// The END frame's durable state (staged bytes on disk + the WAL `End`
+    /// entry) is already persisted by the caller before this runs, so the
+    /// consumer can ACK the frame and continue immediately while the heavy
+    /// finalize (content-store CAS copy + Postgres commit) executes on a
+    /// semaphore-gated worker. This is what stops a single wedged finalize from
+    /// head-of-line blocking the 400K-frame backlog.
+    ///
+    /// On transient failure the finalize path preserves retry state
+    /// (`pending_end` is restored), and the maintenance loop re-drives it; a
+    /// crash before commit is recovered by WAL replay on restart. Both retry
+    /// channels are independent of the now-dropped NATS frame.
+    pub(super) fn dispatch_finalize(
+        &self,
+        material_id: Uuid,
+        state_handle: Arc<Mutex<super::state::AssemblerState>>,
+    ) {
+        self.finalize_in_flight
+            .fetch_add(1, std::sync::atomic::Ordering::AcqRel);
+        let assembler = self.clone_for_task();
+        let semaphore = self.finalize_semaphore.clone();
+        let in_flight = self.finalize_in_flight.clone();
+        tokio::spawn(async move {
+            // Decrement exactly once when the worker finishes, even on panic or
+            // early return, so the backpressure gate cannot leak permits.
+            struct InFlightGuard(Arc<std::sync::atomic::AtomicUsize>);
+            impl Drop for InFlightGuard {
+                fn drop(&mut self) {
+                    self.0.fetch_sub(1, std::sync::atomic::Ordering::AcqRel);
+                }
+            }
+            let _guard = InFlightGuard(in_flight);
+
+            let _permit = match semaphore.acquire().await {
+                Ok(permit) => permit,
+                Err(_) => return,
+            };
+            if let Err(error) = assembler
+                .try_finalize_pending_end(material_id, state_handle, PendingEndBehavior::Ignore)
+                .await
+            {
+                warn!(
+                    material_id = %material_id,
+                    error = %error,
+                    "Decoupled material finalize failed; retry state preserved for maintenance re-drive"
+                );
+            }
+        });
+    }
+
     pub(super) async fn try_finalize_pending_end(
         &self,
         material_id: Uuid,
@@ -860,8 +911,13 @@ impl MaterialAssembler {
                 .await?;
         }
 
-        self.try_finalize_pending_end(material_id, state_handle, PendingEndBehavior::Ignore)
-            .await
+        // The END frame is now durable (staged bytes + WAL `End` entry recorded
+        // above), so hand finalization to the decoupled worker set and let the
+        // ordered consumer ACK this frame and move on (#2187). A complete material
+        // finalizes promptly on a worker; an incomplete one no-ops until its
+        // remaining slices arrive and re-drive finalization.
+        self.dispatch_finalize(material_id, state_handle);
+        Ok(())
     }
 }
 
@@ -1186,6 +1242,20 @@ mod tests {
         .await?;
 
         io::handle_slice(&assembler, material_id, 0, payload).await?;
+
+        // Finalization is decoupled from the frame path onto a bounded worker set
+        // (#2187), so the slice that completes an out-of-order material schedules
+        // the finalize rather than running it inline. Await the worker's commit
+        // (in-memory state removal is its last step) before asserting.
+        let state_map = assembler.assembler_state.clone();
+        WaitHelpers::wait_for_condition(
+            || {
+                let state_map = state_map.clone();
+                async move { Ok::<bool, SinexError>(!state_map.contains_key(&material_id)) }
+            },
+            Timeouts::STANDARD,
+        )
+        .await?;
 
         let material = ctx
             .pool
