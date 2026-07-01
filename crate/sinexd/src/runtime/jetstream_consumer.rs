@@ -106,6 +106,10 @@ pub struct JetStreamEventConsumerConfig {
     pub accept_unbuffered_confirmations: bool,
     /// Where a newly-created durable consumer should begin delivering messages.
     pub deliver_policy: jetstream::consumer::DeliverPolicy,
+    /// Single concrete raw event type to filter the raw stream by, if any.
+    /// `Some(t)` makes the raw consumer subscribe to `events.raw.*.<t>` instead
+    /// of the whole `events.raw.>` firehose; `None` receives everything. (#2187)
+    pub raw_event_type_filter: Option<String>,
 }
 
 impl Default for JetStreamEventConsumerConfig {
@@ -120,6 +124,7 @@ impl Default for JetStreamEventConsumerConfig {
             buffer_raw_events: true,
             accept_unbuffered_confirmations: false,
             deliver_policy: jetstream::consumer::DeliverPolicy::All,
+            raw_event_type_filter: None,
         }
     }
 }
@@ -243,9 +248,22 @@ impl JetStreamEventConsumer {
             .env
             .nats_stream_name_with_namespace(self.namespace.as_deref(), "SINEX_RAW_EVENTS");
         let confirmations_stream = format!("{raw_stream}_CONFIRMATIONS");
-        let raw_subject = self
-            .env
-            .nats_subject_with_namespace(self.namespace.as_deref(), "events.raw.>");
+        // Filter the raw stream server-side to a single event type when the
+        // module only consumes one, instead of decoding the whole firehose (#2187).
+        let raw_subject = match self.config.raw_event_type_filter.as_deref() {
+            Some(event_type) => {
+                info!(
+                    consumer = %self.config.consumer_name,
+                    event_type,
+                    "Raw consumer filtering stream to single event type"
+                );
+                self.env
+                    .nats_raw_event_type_filter_subject(self.namespace.as_deref(), event_type)
+            }
+            None => self
+                .env
+                .nats_subject_with_namespace(self.namespace.as_deref(), "events.raw.>"),
+        };
         let confirmations_subject = self
             .env
             .nats_subject_with_namespace(self.namespace.as_deref(), "events.confirmations.>");

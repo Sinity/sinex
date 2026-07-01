@@ -156,7 +156,11 @@ impl SelfObserver {
         let (publisher, materializer) = if enabled {
             let acquisition_manager = Arc::new(AcquisitionManager::new_with_namespace(
                 nats_client.clone(),
-                RotationPolicy::default(),
+                // Operator-tunable per-source granularity (#2184 prong B). Defaults
+                // to the standard 100 MB / 1 h batching so reflection materials are
+                // large by default, overridable via
+                // SINEX_MATERIAL_ROTATION_SELF_OBSERVATION_MAX_{MB,AGE_SECS}.
+                RotationPolicy::from_env("self_observation", RotationPolicy::default()),
                 "self_observation".to_string(),
                 namespace.clone(),
             ));
@@ -238,14 +242,20 @@ impl SelfObserver {
         let Some(materializer) = self.materializer.as_ref() else {
             return Ok(());
         };
-        materializer.append(vec![b'\n']).await.map_err(|e| {
+        // Publish the BEGIN frame eagerly WITHOUT staging a content byte. The
+        // earlier `append(vec![b'\n'])` minted a 1-byte source material per
+        // observer instance — with the automata restart churn this produced the
+        // ~30K degenerate 1-byte `self-observation.*` materials found in prod
+        // (#2184 prong E). The first real telemetry record now anchors at offset 0
+        // of a clean, size/age-batched material instead.
+        materializer.prime().await.map_err(|e| {
             SelfObservationError::Materialization(format!(
                 "failed to prime self-observation material stream: {e}"
             ))
         })?;
         debug!(
             component = %self.component,
-            "Primed self-observation material stream (BEGIN frame committed)"
+            "Primed self-observation material stream (BEGIN frame committed, no content)"
         );
         Ok(())
     }

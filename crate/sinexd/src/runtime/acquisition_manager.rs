@@ -78,6 +78,64 @@ impl Default for RotationPolicy {
     }
 }
 
+impl RotationPolicy {
+    /// Build a per-source rotation policy from operator env overrides (#2184
+    /// prong B — per-source granularity configuration).
+    ///
+    /// Resolution order for each of `max_bytes` / `max_age_seconds`:
+    /// 1. source-specific `SINEX_MATERIAL_ROTATION_<KEY>_MAX_MB` /
+    ///    `SINEX_MATERIAL_ROTATION_<KEY>_MAX_AGE_SECS`
+    /// 2. global `SINEX_MATERIAL_ROTATION_MAX_MB` / `..._MAX_AGE_SECS`
+    /// 3. the supplied `default`
+    ///
+    /// `<KEY>` is `source_key` uppercased with every non-alphanumeric byte mapped
+    /// to `_`, so a source key such as `self_observation` reads
+    /// `SINEX_MATERIAL_ROTATION_SELF_OBSERVATION_MAX_MB`.
+    #[must_use]
+    pub fn from_env(source_key: &str, default: Self) -> Self {
+        let key = source_key
+            .chars()
+            .map(|c| {
+                if c.is_ascii_alphanumeric() {
+                    c.to_ascii_uppercase()
+                } else {
+                    '_'
+                }
+            })
+            .collect::<String>();
+
+        let default_mb = default.max_bytes.as_u64() / (1024 * 1024);
+        let global_mb = sinex_primitives::env::parse_or(
+            "SINEX_MATERIAL_ROTATION_MAX_MB",
+            default_mb,
+            "material rotation max mb",
+        );
+        let max_mb = sinex_primitives::env::parse_or(
+            &format!("SINEX_MATERIAL_ROTATION_{key}_MAX_MB"),
+            global_mb,
+            "material rotation max mb (per-source)",
+        )
+        .max(1);
+
+        let global_age = sinex_primitives::env::parse_or(
+            "SINEX_MATERIAL_ROTATION_MAX_AGE_SECS",
+            default.max_age_seconds.as_secs(),
+            "material rotation max age secs",
+        );
+        let max_age = sinex_primitives::env::parse_or(
+            &format!("SINEX_MATERIAL_ROTATION_{key}_MAX_AGE_SECS"),
+            global_age,
+            "material rotation max age secs (per-source)",
+        )
+        .max(1);
+
+        Self {
+            max_bytes: Bytes::from_mebibytes(max_mb),
+            max_age_seconds: Seconds::from_secs(max_age),
+        }
+    }
+}
+
 /// Material acquisition manager
 pub struct AcquisitionManager {
     nats_client: NatsClient,
@@ -1046,6 +1104,33 @@ impl AppendStreamAcquirer {
         self.manager.append_record_batch(handle, records).await
     }
 
+    /// Ensure the active stream material exists (publishing its BEGIN frame) for
+    /// the given source identifier, without appending any content.
+    ///
+    /// This eagerly registers the source material so emitters can reference its
+    /// id before the first real record — preserving the begin-before-anchor
+    /// guarantee — *without* staging a placeholder byte that would otherwise mint
+    /// a degenerate 1-byte material (#2184 prong E). The first real record then
+    /// anchors at offset 0 of a clean, size/age-batched material.
+    pub async fn ensure_open(&mut self, source_identifier: &str) -> RuntimeResult<()> {
+        match self.current_handle {
+            None => self.begin_stream_material(source_identifier).await,
+            Some(_) if self.current_source_identifier.as_deref() != Some(source_identifier) => {
+                let old_handle = self.current_handle.take().ok_or_else(|| {
+                    SinexError::invalid_state(
+                        "current_handle should exist for source identifier rotation",
+                    )
+                })?;
+                self.manager
+                    .finalize(old_handle, "source-identifier-change")
+                    .await?;
+                self.current_source_identifier = None;
+                self.begin_stream_material(source_identifier).await
+            }
+            Some(_) => Ok(()),
+        }
+    }
+
     /// Serialize one record as JSONL, append it, and return its byte anchor.
     pub async fn append_json_line<T>(
         &mut self,
@@ -1154,6 +1239,11 @@ struct BufferedAppendRequest {
     payload: Option<Vec<u8>>,
     reason: Option<String>,
     continue_after_finalize: bool,
+    /// Ensure the underlying source material is begun (BEGIN frame published)
+    /// without appending any content. Used to eagerly register the material
+    /// before the first real record so events can reference it, *without*
+    /// minting a degenerate 1-byte material (#2184 prong E).
+    prime: bool,
     reply: oneshot::Sender<RuntimeResult<Option<SourceRecordAnchor>>>,
 }
 
@@ -1220,6 +1310,7 @@ async fn buffered_append_writer_task(
                                     payload: Some(next_payload),
                                     reason: next.reason,
                                     continue_after_finalize: next.continue_after_finalize,
+                                    prime: next.prime,
                                     reply: next.reply,
                                 });
                                 break;
@@ -1231,6 +1322,7 @@ async fn buffered_append_writer_task(
                                 payload: None,
                                 reason: next.reason,
                                 continue_after_finalize: next.continue_after_finalize,
+                                prime: next.prime,
                                 reply: next.reply,
                             });
                             break;
@@ -1242,6 +1334,20 @@ async fn buffered_append_writer_task(
             }
 
             append_buffered_batch(&mut stream, &source_identifier, batch).await;
+        } else if request.prime {
+            // Eagerly begin the material (publish BEGIN) without staging content,
+            // so the first real record anchors at offset 0 of a clean material
+            // instead of inheriting a placeholder byte (#2184 prong E).
+            let result = stream
+                .ensure_open(&source_identifier)
+                .await
+                .map(|()| None)
+                .map_err(|error| {
+                    SinexError::lifecycle(format!(
+                        "failed to prime buffered append stream: {error}"
+                    ))
+                });
+            let _ = request.reply.send(result);
         } else {
             let reason = request
                 .reason
@@ -1316,6 +1422,7 @@ impl BufferedAppendStreamWriter {
                 payload: Some(payload),
                 reason: None,
                 continue_after_finalize: false,
+                prime: false,
                 reply,
             })
             .await
@@ -1338,6 +1445,34 @@ impl BufferedAppendStreamWriter {
             })
     }
 
+    /// Eagerly begin the underlying source material (publishing its BEGIN frame)
+    /// without appending content, so the first emitted event can reference the
+    /// material id without minting a degenerate 1-byte material (#2184 prong E).
+    pub async fn prime(&self) -> RuntimeResult<()> {
+        let (reply, response) = oneshot::channel();
+        let send_result = self
+            .writer_tx
+            .send(BufferedAppendRequest {
+                payload: None,
+                reason: None,
+                continue_after_finalize: true,
+                prime: true,
+                reply,
+            })
+            .await;
+
+        if send_result.is_err() {
+            return Ok(());
+        }
+
+        response
+            .await
+            .map_err(|_| {
+                SinexError::processing("buffered append writer dropped prime reply channel")
+            })?
+            .map(|_| ())
+    }
+
     pub async fn finalize(&self, reason: &str) -> RuntimeResult<()> {
         let (reply, response) = oneshot::channel();
         let send_result = self
@@ -1346,6 +1481,7 @@ impl BufferedAppendStreamWriter {
                 payload: None,
                 reason: Some(reason.to_string()),
                 continue_after_finalize: false,
+                prime: false,
                 reply,
             })
             .await;
@@ -1372,6 +1508,7 @@ impl BufferedAppendStreamWriter {
                 payload: None,
                 reason: Some(reason.to_string()),
                 continue_after_finalize: true,
+                prime: false,
                 reply,
             })
             .await;
@@ -1834,6 +1971,41 @@ mod tests {
         assert_ne!(first.material_id, second.material_id);
         assert_eq!((first.offset_start, first.offset_end), (0, 3));
         assert_eq!((second.offset_start, second.offset_end), (0, 3));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn prime_begins_material_without_staging_content(ctx: TestContext) -> TestResult<()> {
+        let ctx = ctx.with_nats().shared().await?;
+        let namespace = format!("buffered-append-prime-{}", Uuid::now_v7());
+        let work_dir = tempfile::tempdir()?;
+        let manager = Arc::new(
+            AcquisitionManager::new_with_namespace(
+                ctx.nats_client(),
+                RotationPolicy::default(),
+                "buffered-writer-prime-test".to_string(),
+                Some(namespace),
+            )
+            .with_work_dir(work_dir.path()),
+        );
+        let writer = BufferedAppendStreamWriter::from_manager(
+            manager,
+            "test://buffered-writer-prime",
+            BufferedAppendStreamWriterConfig {
+                batch_coalesce_window: std::time::Duration::from_millis(1),
+                ..BufferedAppendStreamWriterConfig::default()
+            },
+        );
+
+        // Prime publishes BEGIN eagerly, then the first real record must anchor at
+        // offset 0 — proving no placeholder byte was staged (#2184 prong E: this is
+        // what stopped the ~30K degenerate 1-byte self-observation materials).
+        writer.prime().await?;
+        let first = writer.append(b"first-record\n".to_vec()).await?;
+        writer.finalize("test-complete").await?;
+
+        assert_eq!(first.offset_start, 0);
+        assert_eq!(first.offset_end, b"first-record\n".len() as i64);
         Ok(())
     }
 }

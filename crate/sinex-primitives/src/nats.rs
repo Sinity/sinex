@@ -432,6 +432,14 @@ mod tests {
 pub struct JetStreamTopology {
     pub events_stream: crate::domain::StreamName,
     pub events_subject: crate::domain::NatsSubject,
+    /// Stream carrying the FINAL persisted+redacted events, published by the
+    /// event engine after admission. Automata and the SSE bus consume this
+    /// directly (one decode, fan out in-process) — no raw-provisional buffer,
+    /// no per-kind watermark, no Postgres refetch. Non-compacted, real retention.
+    pub confirmed_events_stream: crate::domain::StreamName,
+    pub confirmed_events_subject: crate::domain::NatsSubject,
+    /// Publish prefix for per-kind confirmed events: `events.confirmed.<source>.<event_type>`.
+    pub confirmed_events_prefix: String,
     pub confirmations_stream: crate::domain::StreamName,
     pub confirmations_subject: crate::domain::NatsSubject,
     pub confirmations_prefix: String,
@@ -460,6 +468,7 @@ impl JetStreamTopology {
     ) -> Self {
         use crate::domain::{NatsSubject, StreamName};
 
+        let confirmed_events_stream = StreamName::new(format!("{base_stream}_CONFIRMED"));
         let confirmations_stream = StreamName::new(format!("{base_stream}_CONFIRMATIONS"));
         let confirmation_retry_stream =
             StreamName::new(format!("{base_stream}_CONFIRMATION_RETRIES"));
@@ -468,6 +477,7 @@ impl JetStreamTopology {
             StreamName::new(format!("{base_stream}_PROCESSING_FAILURES"));
         let invalidation_stream = StreamName::new(format!("{base_stream}_DERIVED_INVALIDATIONS"));
         let namespaced = |subject: &str| env.nats_subject_with_namespace(namespace, subject);
+        let confirmed_events_prefix = format!("{}.", namespaced("events.confirmed"));
         let confirmations_prefix = format!("{}.", namespaced("events.confirmations"));
         let confirmation_retry_prefix = format!("{}.", namespaced("events.confirmation_retries"));
         let processing_failures_prefix = format!("{}.", namespaced("events.processing_failures"));
@@ -475,6 +485,9 @@ impl JetStreamTopology {
         Self {
             events_stream: StreamName::new(base_stream),
             events_subject: NatsSubject::new(namespaced("events.raw.>")),
+            confirmed_events_stream,
+            confirmed_events_subject: NatsSubject::new(namespaced("events.confirmed.>")),
+            confirmed_events_prefix,
             confirmations_stream,
             confirmations_subject: NatsSubject::new(namespaced("events.confirmations.>")),
             confirmations_prefix,

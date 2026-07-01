@@ -600,6 +600,18 @@ const DECLARED_INLINE_CHECKS: &[DeclaredInlineCheck] = &[
         // 'byte', 'line', 'rowid', 'logical' (maps to OffsetKind variants in builder.rs).
         expected_markers: &["offset_kind", "'byte'", "'line'", "'rowid'", "'logical'"],
     },
+    DeclaredInlineCheck {
+        schema: "core",
+        table: "events",
+        label: "ts_orig_not_after_ts_coided",
+        // Temporal ordering safety net (anonymous inline CHECK, auto-named
+        // `events_check7`): ts_orig must not exceed ts_coided by more than the
+        // 1-second tolerance. Load-bearing for the three-clock invariant but
+        // converged by neither apply::diff nor strict_diff before #2196 Finding 4.
+        // `interval` (lowercase) matches PostgreSQL's `'00:00:01'::interval`
+        // rendering of `INTERVAL '1 second'`.
+        expected_markers: &["ts_orig", "ts_coided", "interval"],
+    },
 ];
 
 async fn check_inline_check_exprs(pool: &PgPool) -> Result<Vec<StrictDrift>, ApplyError> {
