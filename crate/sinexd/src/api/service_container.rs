@@ -100,7 +100,6 @@ impl ConfirmationBufferMemoryOwner {
     }
 }
 
-const CONFIRMATION_BUFFER_DEGRADED_BYTES: usize = 64 * 1024 * 1024;
 
 /// Type alias — gateway uses the canonical `HealthStatus` domain enum.
 pub type GatewayHealthStatus = sinex_primitives::domain::HealthStatus;

@@ -23,7 +23,7 @@ fn pg_literal(value: &str) -> String {
 const MANAGED_CONFIG_BEGIN: &str = "# >>> sinex-dev managed configuration >>>";
 const MANAGED_CONFIG_END: &str = "# <<< sinex-dev managed configuration <<<";
 const LEGACY_CONFIG_MARKER: &str = "# sinex-dev configuration";
-const POSTGRES_MAX_CONNECTIONS: u16 = 128;
+const POSTGRES_MAX_CONNECTIONS: u16 = 64;
 const POSTGRES_SHARED_BUFFERS: &str = "32MB";
 const TIMESCALEDB_MAX_BACKGROUND_WORKERS: u16 = 2;
 const POSTGRES_WORKER_PROCESS_HEADROOM: u16 = 4;
