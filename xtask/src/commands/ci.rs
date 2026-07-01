@@ -251,7 +251,6 @@ fn check_command_for_ci() -> crate::commands::check::CheckCommand {
         by_file: false,
         nix: false, // nix flake check runs in a dedicated CI stage if needed
         plan: false,
-        allow_contended_host: true,
         skip_preflight: false,
         changed_strict: None, // CI uses the full workspace check, not the delta guard
     }
@@ -347,7 +346,6 @@ async fn execute_workspace(
             "--prime",
             "--exclude",
             "sinex-e2e-tests",
-            "--allow-contended-host",
         ])
         .run_ok()?;
     ctx.finish_stage(stage, true);
@@ -365,7 +363,6 @@ async fn execute_workspace(
             "--heavy",
             "-p",
             "sinex-macros",
-            "--allow-contended-host",
         ])
         .run_ok()?;
     ctx.finish_stage(stage, true);
@@ -384,7 +381,6 @@ async fn execute_workspace(
             "--heavy",
             "-p",
             "sinex-primitives",
-            "--allow-contended-host",
         ])
         .run_ok()?;
     ctx.finish_stage(stage, true);

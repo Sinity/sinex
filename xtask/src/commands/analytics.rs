@@ -604,7 +604,7 @@ fn execute_pressure(
                 "level": pressure_level_name(pressure.level),
                 "summary": pressure.summary(),
                 "recommendation": pressure.recommendation(),
-                "broad_start_blocked": pressure.broad_start_error("check/test").is_some(),
+                "broad_start_advisory": pressure.warning("check/test").is_some(),
                 "top_io": top_io_processes,
                 "sinnix_observe": observe_output.as_ref().map(|output| serde_json::json!({
                     "command": output.command,

@@ -96,10 +96,6 @@ pub struct BenchConfig {
     #[arg(long)]
     pub continue_on_fail: bool,
 
-    /// Allow DB benchmark runs while other heavy workloads or high IO pressure are active.
-    #[arg(long)]
-    pub allow_contended_host: bool,
-
     /// Don't use nextest --no-fail-fast (allow early exit on test failure)
     #[arg(long)]
     pub fail_fast: bool,

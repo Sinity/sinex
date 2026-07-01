@@ -74,9 +74,6 @@ pub struct CheckCommand {
     /// Fails if `nix` is unavailable or unhealthy.
     #[arg(long)]
     pub nix: bool,
-    /// Allow broad checks to start even when host PSI is already severe.
-    #[arg(long)]
-    pub allow_contended_host: bool,
     /// Internal: child checks invoked by `--changed-strict` inherit the parent
     /// compile-ready environment and must not run their own preflight.
     #[arg(long, hide = true)]
@@ -126,11 +123,6 @@ impl CheckCommand {
         push_flag(&mut args, self.lint_breakdown, "--lint-breakdown");
         push_flag(&mut args, self.by_file, "--by-file");
         push_flag(&mut args, self.nix, "--nix");
-        push_flag(
-            &mut args,
-            self.allow_contended_host,
-            "--allow-contended-host",
-        );
         push_flag(&mut args, self.skip_preflight, "--skip-preflight");
         if let Some(base_ref) = &self.changed_strict {
             args.push("--changed-strict".to_string());
@@ -170,9 +162,6 @@ impl CheckCommand {
         if self.heavy {
             args.push("--heavy".to_string());
         }
-        if self.allow_contended_host {
-            args.push("--allow-contended-host".to_string());
-        }
         if self.skip_tests {
             args.push("--skip-tests".to_string());
         }
@@ -188,14 +177,11 @@ impl CheckCommand {
     }
 
     fn guard_broad_start_pressure(&self, ctx: &CommandContext) -> Result<()> {
-        if self.allow_contended_host || !self.is_broad_pressure_sensitive() {
+        if !self.is_broad_pressure_sensitive() {
             return Ok(());
         }
 
         let pressure = resources::PressureRecommendation::capture();
-        if let Some(error) = pressure.broad_start_error("check") {
-            return Err(eyre!(error));
-        }
         if let Some(warning) = pressure.warning("check")
             && ctx.is_human()
         {
@@ -1012,7 +998,6 @@ mod tests {
             by_file: false,
             nix: false,
             plan: false,
-            allow_contended_host: true,
             skip_preflight: false,
             changed_strict: None,
         }

@@ -339,14 +339,14 @@ if [[ -z "$(git diff --name-only "$BASE_REF" HEAD -- '*.rs' 2>/dev/null)" ]]; th
   exit 0
 fi
 
-echo "[pre-push] Running xtask check --changed-strict $BASE_REF --allow-contended-host ..." >&2
+echo "[pre-push] Running xtask check --changed-strict $BASE_REF ..." >&2
 pre_push_owned_postgres=0
 if ! _sinex_pre_push_checkout_postgres_running; then
   pre_push_owned_postgres=1
 fi
 
 pre_push_status=0
-_sinex_pre_push_run_xtask check --changed-strict "$BASE_REF" --allow-contended-host >&2 || pre_push_status=$?
+_sinex_pre_push_run_xtask check --changed-strict "$BASE_REF" >&2 || pre_push_status=$?
 
 if [[ "$pre_push_owned_postgres" == "1" ]]; then
   _sinex_pre_push_stop_checkout_postgres

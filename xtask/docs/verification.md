@@ -19,7 +19,7 @@ integration tests, schema strict-diff, or generated-surface checks can own.
 | Release readiness | release contract/report command | `xtask release-readiness --run-required-checks` | Emits claims, non-claims, caveats, artifacts, and required check results. |
 | Event admission and event-engine runtime | `sinexd` event-engine tests | `xtask test -p sinexd -E 'test(admission|event_engine)'` | Use focused integration tests for NATS, DLQ, admission, material assembly, schema sync, and runtime behavior. |
 | VM runtime and fault-injection evidence | VM-suite `TestRunner` required-evidence outcomes | `xtask test vm --category <category>` | VM categories must emit pass/fail/skipped/inconclusive/evidence-missing records and use typed evidence kinds for DB, NATS, process, logs, source-material, output-contract, fault-injection, or custom proof artifacts. Missing required evidence is not a green result. |
-| Source catalog drift | `sinexd` source catalog integration test | `xtask test -p sinexd -E 'test(source_catalog_artifact_matches_inventory)' --allow-contended-host` | The generated NixOS source catalog is rendered from the linked Rust source inventory and compared to the checked-in artifact. |
+| Source catalog drift | `sinexd` source catalog integration test | `xtask test -p sinexd -E 'test(source_catalog_artifact_matches_inventory)'` | The generated NixOS source catalog is rendered from the linked Rust source inventory and compared to the checked-in artifact. |
 | Privacy catalog loading | privacy command/runtime | `xtask privacy catalog --format json` | This proves the catalog loads. Destination enforcement is covered by focused privacy/disclosure tests. |
 | Replay invalidation recovery | `ops.start` projection-rebuild recovery path | `xtask test -p sinexd -E 'test(ops_start_projection_rebuild_recovers_pending_replay_invalidation)'` | Proves pending replay scope invalidation metadata can be drained through a durable operation instead of relying solely on post-commit NATS publish. |
 | Database schema drift | schema strict-diff | `xtask schema strict-diff` | Owns DB shape and migration drift against the checkout-local development database. |
@@ -33,7 +33,7 @@ integration tests, schema strict-diff, or generated-surface checks can own.
 | Cadence | Gates | Use when |
 | --- | --- | --- |
 | Focused PR loop | `xtask test` with the owning package/test filter; `xtask impact explain --json` when scope selection matters | During implementation and review of a coherent issue phase. This is the default agent loop: prove the changed behavior and make the selected test scope explainable. |
-| PR publish boundary | `xtask check --changed-strict origin/master --allow-contended-host`; generated-surface checks touched by the diff, such as `xtask docs command-reference --check` or `xtask docs schema-bundle --check` | Before pushing/opening a PR that changes Rust API, command/docs/schema surfaces, source catalogs, or package metadata. The installed pre-push hook computes the pushed checkout's devshell cache, target, database socket, NATS, state, and port env before running `xtask`. It prefers that checkout's built `target/debug/xtask`, then a non-`.direnv` PATH xtask, then a current read-only xtask binary from another `/var/cache/sinex/$USER/*/target/debug/xtask` checkout while still using the pushed checkout's computed env. It uses `nix develop "$REPO_ROOT" --command xtask ...` only when no usable binary exists, so ordinary worktree pushes do not inherit another checkout's env or start a surprise bootstrap. |
+| PR publish boundary | `xtask check --changed-strict origin/master`; generated-surface checks touched by the diff, such as `xtask docs command-reference --check` or `xtask docs schema-bundle --check` | Before pushing/opening a PR that changes Rust API, command/docs/schema surfaces, source catalogs, or package metadata. The installed pre-push hook computes the pushed checkout's devshell cache, target, database socket, NATS, state, and port env before running `xtask`. It prefers that checkout's built `target/debug/xtask`, then a non-`.direnv` PATH xtask, then a current read-only xtask binary from another `/var/cache/sinex/$USER/*/target/debug/xtask` checkout while still using the pushed checkout's computed env. It uses `nix develop "$REPO_ROOT" --command xtask ...` only when no usable binary exists, so ordinary worktree pushes do not inherit another checkout's env or start a surprise bootstrap. |
 | Verification-policy PRs | `xtask impact audit --sample-skips N`; focused `xtask` unit tests for the planner/history command being changed | When editing impact planning, history proof reuse, affected-test selection, or verification docs. Keep sampled audits bounded in PRs and report the sample size. |
 | Release boundary | `xtask release-readiness --target rc-local --base-ref origin/master --run-required-checks`; `xtask schema strict-diff` when DB/schema claims are part of the release | Before claiming release readiness or broad shipped/non-shipped scope. This aggregates required checks; it does not replace focused behavior tests for changed code. |
 | Scheduled or human-requested broad sweep | `xtask test --impact-mode=off --all`; larger `xtask impact audit` samples; heavy trybuild/fuzz/mutation suites | When validating planner quality, finding stale evidence, or exercising expensive suites outside the normal PR loop. Do not turn these into default per-PR gates without measurement. |
@@ -101,7 +101,7 @@ xtask impact explain --json
 xtask impact audit --sample-skips 20
 xtask test -p xtask -E 'test(test_dependency_hygiene_doc_matches_duplicate_classifier)'
 xtask test -p xtask --lib -E 'test(release_readiness)'
-xtask test -p sinexd -E 'test(source_catalog_artifact_matches_inventory)' --allow-contended-host
+xtask test -p sinexd -E 'test(source_catalog_artifact_matches_inventory)'
 xtask docs command-reference --check
 xtask docs schema-bundle --check
 xtask schema strict-diff
@@ -117,8 +117,8 @@ xtask test --debug --heavy -p sinex-primitives -E 'test(source_contract_compile_
 Use broad gates only after the focused owner tests are green:
 
 ```bash
-xtask check --changed-strict origin/master --allow-contended-host
-xtask check --full --allow-contended-host
+xtask check --changed-strict origin/master
+xtask check --full
 xtask test --impact-mode=off --all
 ```
 

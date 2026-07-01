@@ -280,10 +280,6 @@ pub struct TestCommand {
     #[arg(long)]
     pub no_reuse: bool,
 
-    /// Allow broad tests to start even when host PSI is already severe.
-    #[arg(long)]
-    pub allow_contended_host: bool,
-
     /// Update insta snapshots (sets `INSTA_UPDATE=always`).
     #[arg(long)]
     pub update_snapshots: bool,
@@ -389,10 +385,6 @@ pub struct BenchArgs {
     /// Continue running benchmark scenarios after a scenario fails
     #[arg(long)]
     pub continue_on_fail: bool,
-
-    /// Allow DB benchmark runs while other heavy workloads or high IO pressure are active.
-    #[arg(long)]
-    pub allow_contended_host: bool,
 
     /// Verbose output
     #[arg(long)]
@@ -704,14 +696,11 @@ impl TestCommand {
         effective_filter: Option<&str>,
         effective_test_binaries: &[String],
     ) -> Result<()> {
-        if self.allow_contended_host || self.list || self.dry_run {
+        if self.list || self.dry_run {
             return Ok(());
         }
 
         let pressure = crate::resources::PressureRecommendation::capture();
-        if let Some(error) = pressure.start_error("test execution") {
-            return Err(color_eyre::eyre::eyre!(error));
-        }
         if self.is_broad_pressure_sensitive(
             execution_plan,
             effective_filter,
@@ -1104,11 +1093,6 @@ impl TestCommand {
         push_flag(&mut args, self.prime, "--prime");
         push_flag(&mut args, self.dry_run, "--dry-run");
         push_flag(&mut args, self.update_snapshots, "--update-snapshots");
-        push_flag(
-            &mut args,
-            self.allow_contended_host,
-            "--allow-contended-host",
-        );
         push_flag(&mut args, self.no_reuse, "--no-reuse");
         push_flag(&mut args, self.lib, "--lib");
         for feature in normalize_packages(&self.cargo_features) {
@@ -1541,11 +1525,6 @@ fn bench_background_args(bench: &BenchArgs) -> Vec<String> {
     }
     push_flag(&mut args, bench.dry_run, "--dry-run");
     push_flag(&mut args, bench.continue_on_fail, "--continue-on-fail");
-    push_flag(
-        &mut args,
-        bench.allow_contended_host,
-        "--allow-contended-host",
-    );
     push_flag(&mut args, bench.verbose, "--verbose");
     args
 }

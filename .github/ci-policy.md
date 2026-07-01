@@ -11,7 +11,7 @@ workspace passes are phase-boundary checks, not a tax on every small PR.
 
 ### Every PR
 
-- **`xtask check --changed-strict origin/master --allow-contended-host`** —
+- **`xtask check --changed-strict origin/master`** —
   Required for Rust/API changes. This is the pre-push drift guard and records
   the changed-file to affected-package result.
 - **Focused `xtask test ...` evidence** — Required when behavior changes. Use
