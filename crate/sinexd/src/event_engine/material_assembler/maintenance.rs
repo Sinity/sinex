@@ -13,12 +13,15 @@ use tokio::{
 };
 use tracing::{debug, info, warn};
 
+use sinex_db::DbPoolExt;
 use sinex_primitives::{Timestamp, Uuid};
 
 use super::{MaterialAssembler, state};
 use crate::event_engine::{EventEngineResult, SinexError};
 
 const STALE_ASSEMBLY_CHECK_INTERVAL: std::time::Duration = std::time::Duration::from_mins(1);
+const STALE_REGISTRY_RECONCILE_LIMIT: i64 = 128;
+const ORPHANED_SENSING_REASON: &str = "orphaned_sensing_material";
 
 pub(super) type MaterialTaskOutcome = (
     &'static str,
@@ -219,6 +222,13 @@ impl MaterialAssembler {
                 self.process_stale_material(material_id, elapsed_secs).await;
             }
 
+            if let Err(error) = self.reconcile_orphaned_sensing_materials().await {
+                warn!(
+                    error = %error,
+                    "Failed to reconcile orphaned sensing source materials"
+                );
+            }
+
             // Re-drive finalizations that were dispatched off the consumer but
             // failed-and-reverted under transient DB/IO stress (#2187 prong d).
             // The decoupled finalize path no longer relies on a redelivered NATS
@@ -327,6 +337,52 @@ impl MaterialAssembler {
 
         self.finalize_failed_material(material_id, "slice_arrival_timeout")
             .await;
+    }
+
+    pub(super) async fn reconcile_orphaned_sensing_materials(&self) -> EventEngineResult<()> {
+        let cutoff =
+            Timestamp::now() - time::Duration::seconds(self.slice_arrival_timeout.as_secs() as i64);
+        let stale_rows = self
+            .pool
+            .source_materials()
+            .list_stale_sensing(cutoff, STALE_REGISTRY_RECONCILE_LIMIT)
+            .await
+            .map_err(|error| {
+                SinexError::database("Failed to list orphaned sensing source materials")
+                    .with_source(error)
+            })?;
+
+        for row in stale_rows {
+            let material_id = row.id;
+            if self.assembler_state.contains_key(&material_id) {
+                continue;
+            }
+
+            let material_started_at = row.start_time.unwrap_or(row.staged_at);
+            let elapsed_secs = (Timestamp::now() - material_started_at).whole_seconds();
+            warn!(
+                material_id = %material_id,
+                source_identifier = %row.source_identifier,
+                elapsed_secs,
+                "Reconciling orphaned sensing source material with no active assembly state"
+            );
+            self.route_material_error(
+                material_id,
+                ORPHANED_SENSING_REASON,
+                serde_json::json!({
+                    "timeout_seconds": self.slice_arrival_timeout.as_secs(),
+                    "elapsed_seconds": elapsed_secs,
+                    "source_identifier": row.source_identifier,
+                    "staged_at": row.staged_at.to_string(),
+                    "start_time": row.start_time.map(|ts| ts.to_string()),
+                }),
+            )
+            .await;
+            self.finalize_failed_material(material_id, ORPHANED_SENSING_REASON)
+                .await;
+        }
+
+        Ok(())
     }
 
     /// Scan state root for orphaned temp files from crashed/terminated assemblies.

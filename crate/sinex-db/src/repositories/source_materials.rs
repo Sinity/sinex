@@ -410,6 +410,52 @@ impl SourceMaterialRepository<'_> {
         .await
         .map_err(|e| db_error(e, "get material by id"))
     }
+
+    /// List in-flight material rows that are old enough to need owner
+    /// reconciliation.
+    ///
+    /// The material assembler owns active assembly in memory and on disk. If a
+    /// runtime dies after registering a material but before landing a terminal
+    /// state, the durable registry can otherwise keep reporting `sensing`
+    /// forever with no corresponding frame/WAL owner.
+    pub async fn list_stale_sensing(
+        &self,
+        older_than: Timestamp,
+        limit: i64,
+    ) -> DbResult<Vec<SourceMaterialRecord>> {
+        sqlx::query_as!(
+            SourceMaterialRecord,
+            r#"
+            SELECT
+                id as "id!: uuid::Uuid",
+                material_kind,
+                source_identifier,
+                status,
+                timing_info_type,
+                metadata,
+                staged_at as "staged_at: Timestamp",
+                start_time as "start_time: Timestamp",
+                end_time as "end_time: Timestamp",
+                staged_by,
+                staged_on_host,
+                optional_blob_id as "optional_blob_id?: uuid::Uuid",
+                total_bytes as "total_bytes?: i64",
+                coverage_contract as "coverage_contract!: JsonValue",
+                privacy_class as "privacy_class!: String"
+            FROM raw.source_material_registry
+            WHERE status = 'sensing'
+              AND COALESCE(start_time, staged_at) < $1
+            ORDER BY staged_at ASC, id ASC
+            LIMIT $2
+            "#,
+            *older_than,
+            limit
+        )
+        .fetch_all(self.pool)
+        .await
+        .map_err(|e| db_error(e, "list stale sensing source materials"))
+    }
+
     /// Find source material by blob ID
     pub async fn find_by_blob_id(
         &self,
