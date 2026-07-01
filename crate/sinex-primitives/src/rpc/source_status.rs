@@ -51,9 +51,34 @@ pub struct SourcesStatusRequest {
     pub recent_window_secs: u64,
 }
 
+fn default_exact_counts() -> bool {
+    true
+}
+
 /// Request: `sources.status.view`
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
-pub struct SourcesStatusViewRequest {}
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SourcesStatusViewRequest {
+    /// Optional source id or substring to inspect.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source: Option<String>,
+    /// Optional source family filter, matching the CLI family aliases.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub family: Option<String>,
+    /// Whether event counts must be exact. Filtered interactive views may set
+    /// this false to use bounded presence probes instead of full-table counts.
+    #[serde(default = "default_exact_counts")]
+    pub exact_counts: bool,
+}
+
+impl Default for SourcesStatusViewRequest {
+    fn default() -> Self {
+        Self {
+            source: None,
+            family: None,
+            exact_counts: default_exact_counts(),
+        }
+    }
+}
 
 impl Default for SourcesStatusRequest {
     fn default() -> Self {

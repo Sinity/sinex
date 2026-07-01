@@ -364,9 +364,7 @@ impl MockGatewayClient {
                     None
                 }
             })
-            .unwrap_or_else(|| DlqPeekResponse {
-                messages: Vec::new(),
-            }))
+            .unwrap_or_else(|| DlqPeekResponse::from_messages(Vec::new())))
     }
 
     pub(crate) async fn dlq_requeue(&self, event_ids: Vec<String>) -> Result<DlqRequeueResponse> {

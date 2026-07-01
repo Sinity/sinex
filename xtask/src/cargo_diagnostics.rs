@@ -161,6 +161,50 @@ impl DiagnosticSummary {
     }
 }
 
+impl CompilerDiagnostic {
+    /// Render a useful fallback when cargo's JSON message lacks a pre-rendered
+    /// diagnostic. Without this, `xtask check` can report "cargo check failed"
+    /// while hiding the actual source error.
+    #[must_use]
+    pub fn compact_render(&self) -> String {
+        let mut rendered = String::new();
+        if let Some(path) = &self.file_path {
+            rendered.push_str(path);
+            if let Some(line) = self.line {
+                rendered.push(':');
+                rendered.push_str(&line.to_string());
+                if let Some(column) = self.column {
+                    rendered.push(':');
+                    rendered.push_str(&column.to_string());
+                }
+            }
+            rendered.push_str(": ");
+        }
+        rendered.push_str(&self.level);
+        if let Some(code) = &self.code {
+            rendered.push('[');
+            rendered.push_str(code);
+            rendered.push(']');
+        }
+        rendered.push_str(": ");
+        rendered.push_str(&self.message);
+        rendered.push('\n');
+        if let Some(suggestion) = &self.suggestion {
+            rendered.push_str("help: ");
+            rendered.push_str(suggestion);
+            rendered.push('\n');
+        }
+        rendered
+    }
+
+    #[must_use]
+    pub fn rendered_or_compact(&self) -> String {
+        self.rendered
+            .clone()
+            .unwrap_or_else(|| self.compact_render())
+    }
+}
+
 /// Run a cargo subcommand with piped output and a configurable timeout.
 ///
 /// Uses `SINEX_CARGO_TIMEOUT` (default: 600s) to prevent indefinite hangs when
@@ -520,7 +564,8 @@ pub fn parse_cargo_json_output(
     }
 
     let diagnostics = dedupe_diagnostics(diagnostics);
-    let errors = diagnostics
+    let mut diagnostics = diagnostics;
+    let mut errors = diagnostics
         .iter()
         .filter(|diag| diag.level == "error")
         .count();
@@ -528,6 +573,10 @@ pub fn parse_cargo_json_output(
         .iter()
         .filter(|diag| diag.level == "warning")
         .count();
+    if !success && errors == 0 {
+        diagnostics.push(unparsed_cargo_failure_diagnostic(output));
+        errors = 1;
+    }
 
     Ok(DiagnosticSummary {
         errors,
@@ -536,6 +585,31 @@ pub fn parse_cargo_json_output(
         success,
         compiled_packages,
     })
+}
+
+fn unparsed_cargo_failure_diagnostic(output: &str) -> CompilerDiagnostic {
+    let tail = output_tail(output, 24);
+    let message = if tail.is_empty() {
+        "cargo failed without parseable compiler diagnostics and emitted no stdout".to_string()
+    } else {
+        format!("cargo failed without parseable compiler diagnostics; raw output tail:\n{tail}")
+    };
+    CompilerDiagnostic {
+        level: "error".to_string(),
+        code: Some("XTASK_UNPARSED_CARGO_FAILURE".to_string()),
+        message: message.clone(),
+        rendered: Some(format!("error[XTASK_UNPARSED_CARGO_FAILURE]: {message}\n")),
+        ..CompilerDiagnostic::default()
+    }
+}
+
+fn output_tail(output: &str, max_lines: usize) -> String {
+    let lines: Vec<&str> = output
+        .lines()
+        .filter(|line| !line.trim().is_empty())
+        .collect();
+    let start = lines.len().saturating_sub(max_lines);
+    lines[start..].join("\n")
 }
 
 /// Extract the crate name from a cargo `package_id` string.
@@ -735,6 +809,54 @@ mod tests {
         assert_eq!(result.warnings, 0);
         assert!(result.success);
         assert!(result.compiled_packages.is_empty());
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_compact_render_keeps_unrendered_errors_visible() -> TestResult<()> {
+        let diagnostic = CompilerDiagnostic {
+            level: "error".to_string(),
+            code: Some("E0063".to_string()),
+            message: "missing field `groups`".to_string(),
+            file_path: Some("crate/sinexctl/tests/common/mock_client.rs".to_string()),
+            line: Some(367),
+            column: Some(32),
+            rendered: None,
+            suggestion: Some("add the missing field".to_string()),
+            package: Some("sinexctl".to_string()),
+            fix_replacement: None,
+            fix_applicability: None,
+            fix_byte_start: None,
+            fix_byte_end: None,
+        };
+
+        let rendered = diagnostic.rendered_or_compact();
+        assert!(rendered.contains("mock_client.rs:367:32"));
+        assert!(rendered.contains("error[E0063]: missing field `groups`"));
+        assert!(rendered.contains("help: add the missing field"));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_failed_unparsed_cargo_output_becomes_visible_diagnostic() -> TestResult<()> {
+        let output = r#"{"reason":"build-finished","success":false}"#;
+        let result = parse_cargo_json_output(output, false)?;
+        assert_eq!(result.errors, 1);
+        let diagnostic = &result.diagnostics[0];
+        assert_eq!(
+            diagnostic.code.as_deref(),
+            Some("XTASK_UNPARSED_CARGO_FAILURE")
+        );
+        assert!(
+            diagnostic
+                .rendered_or_compact()
+                .contains("raw output tail")
+        );
+        assert!(
+            diagnostic
+                .rendered_or_compact()
+                .contains("\"build-finished\"")
+        );
         Ok(())
     }
 

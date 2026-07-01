@@ -2526,7 +2526,7 @@ mod tests {
             material_count: 1,
             event_count,
             binding_count: 1,
-            live_binding_count: 1,
+            accepted_binding_count: 1,
             proposed_binding_count: 0,
             gaps,
             caveats,

@@ -285,6 +285,83 @@ impl DlqRetryHandler {
         )))
     }
 
+    /// Retry messages by inclusive DLQ stream sequence range.
+    ///
+    /// This is the bounded operator recovery path for cleanup-plan/peek output:
+    /// it republishes each retained stream message in the range to its original
+    /// raw subject, then deletes only the successfully settled DLQ message.
+    pub async fn retry_sequence_range(
+        &self,
+        start_sequence: u64,
+        end_sequence: u64,
+    ) -> RuntimeResult<DlqRetryResult> {
+        if start_sequence == 0 || end_sequence == 0 {
+            return Err(SinexError::processing(
+                "DLQ sequence bounds must be positive",
+            ));
+        }
+        if start_sequence > end_sequence {
+            return Err(
+                SinexError::processing("DLQ start sequence must be <= end sequence")
+                    .with_context("start_sequence", start_sequence.to_string())
+                    .with_context("end_sequence", end_sequence.to_string()),
+            );
+        }
+
+        let js = jetstream::new(self.nats_client.clone());
+        let dlq_stream = self.env.nats_stream_name("SINEX_RAW_EVENTS_DLQ");
+
+        let stream = js
+            .get_stream(&dlq_stream)
+            .await
+            .map_err(|e| SinexError::processing("Failed to get DLQ stream").with_source(e))?;
+
+        let mut result = DlqRetryResult::default();
+        for sequence in start_sequence..=end_sequence {
+            let message = match stream.direct_get(sequence).await {
+                Ok(message) => message,
+                Err(error)
+                    if matches!(
+                        error.kind(),
+                        async_nats::jetstream::stream::DirectGetErrorKind::NotFound
+                    ) =>
+                {
+                    continue;
+                }
+                Err(error) => {
+                    return Err(
+                        SinexError::processing("Failed to inspect DLQ stream message")
+                            .with_context("sequence", sequence.to_string())
+                            .with_source(error),
+                    );
+                }
+            };
+
+            let retry_count = dlq_stored_retry_count(&message.headers)?;
+            if retry_count >= self.config.max_retries() {
+                warn!(
+                    sequence,
+                    retry_count,
+                    max_retries = self.config.max_retries(),
+                    "DLQ sequence-range message exceeded max retries; permanently failing it instead of requeueing"
+                );
+                self.permanently_fail_stream_message(&stream, &message)
+                    .await?;
+                result.permanently_failed += 1;
+                continue;
+            }
+
+            self.retry_stream_message(&js, &stream, &message).await?;
+            result.retried += 1;
+
+            if self.config.per_message_delay_ms > 0 {
+                tokio::time::sleep(Duration::from_millis(self.config.per_message_delay_ms)).await;
+            }
+        }
+
+        Ok(result)
+    }
+
     /// Process a single DLQ message: check retry count, retry or permanently fail.
     /// Returns `true` if the message was successfully retried.
     async fn handle_dlq_message(

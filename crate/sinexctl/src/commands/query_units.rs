@@ -191,7 +191,7 @@ fn source_driver_row(source: SourceCoverageView) -> SinexQueryResultRow {
     .with_field("source_id", source.source_id)
     .with_field("family", source.namespace)
     .with_field("readiness", readiness_text)
-    .with_field("enabled", source.live_binding_count > 0)
+    .with_field("enabled", source.accepted_binding_count > 0)
     .with_caveats(source.caveats)
 }
 
