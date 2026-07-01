@@ -1,5 +1,6 @@
 ---
 source: xtask/tests/command_consistency.rs
+assertion_line: 29
 expression: json
 ---
 {
@@ -247,19 +248,6 @@ expression: json
           "help": "Run `nix flake check --no-build` (evaluation only, ~2-5s). Included in --full. Fails if `nix` is unavailable or unhealthy",
           "long": "nix",
           "name": "nix",
-          "possible_values": [
-            "true",
-            "false"
-          ],
-          "required": false,
-          "short": null,
-          "takes_value": false
-        },
-        {
-          "global": false,
-          "help": "Allow broad checks to start even when host PSI is already severe",
-          "long": "allow-contended-host",
-          "name": "allow_contended_host",
           "possible_values": [
             "true",
             "false"
@@ -537,19 +525,6 @@ expression: json
         },
         {
           "global": false,
-          "help": "Allow broad tests to start even when host PSI is already severe",
-          "long": "allow-contended-host",
-          "name": "allow_contended_host",
-          "possible_values": [
-            "true",
-            "false"
-          ],
-          "required": false,
-          "short": null,
-          "takes_value": false
-        },
-        {
-          "global": false,
           "help": "Update insta snapshots (sets `INSTA_UPDATE=always`)",
           "long": "update-snapshots",
           "name": "update_snapshots",
@@ -749,19 +724,6 @@ expression: json
               "help": "Continue running benchmark scenarios after a scenario fails",
               "long": "continue-on-fail",
               "name": "continue_on_fail",
-              "possible_values": [
-                "true",
-                "false"
-              ],
-              "required": false,
-              "short": null,
-              "takes_value": false
-            },
-            {
-              "global": false,
-              "help": "Allow DB benchmark runs while other heavy workloads or high IO pressure are active",
-              "long": "allow-contended-host",
-              "name": "allow_contended_host",
               "possible_values": [
                 "true",
                 "false"
@@ -2279,6 +2241,19 @@ expression: json
               "required": false,
               "short": "p",
               "takes_value": true
+            },
+            {
+              "global": false,
+              "help": "Resolve current manifests into Cargo.lock without upgrading existing locked packages",
+              "long": "resolve",
+              "name": "resolve",
+              "possible_values": [
+                "true",
+                "false"
+              ],
+              "required": false,
+              "short": null,
+              "takes_value": false
             },
             {
               "global": false,

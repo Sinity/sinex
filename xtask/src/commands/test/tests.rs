@@ -304,7 +304,6 @@ async fn test_semantic_invocation_args_ignore_success_irrelevant_scheduling_flag
 -> ::xtask::sandbox::TestResult<()> {
     let command = TestCommand {
         fail_fast: true,
-        allow_contended_host: true,
         ..Default::default()
     };
 
@@ -318,10 +317,6 @@ async fn test_semantic_invocation_args_ignore_success_irrelevant_scheduling_flag
     assert!(
         !args.contains(&"--fail-fast".to_string()),
         "--fail-fast affects failure scheduling, not successful proof identity: {args:?}"
-    );
-    assert!(
-        !args.contains(&"--allow-contended-host".to_string()),
-        "host-pressure override affects command admission, not proof identity: {args:?}"
     );
     Ok(())
 }

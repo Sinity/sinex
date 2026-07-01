@@ -91,30 +91,6 @@ impl PressureRecommendation {
     }
 
     #[must_use]
-    pub fn broad_start_error(&self, workload: &str) -> Option<String> {
-        if self.level != PressureLevel::Severe {
-            return None;
-        }
-        Some(format!(
-            "Refusing broad {workload} while host pressure is already severe: {}. \
-             This protects interactive use; rerun with --allow-contended-host for an intentional batch run.",
-            self.summary()
-        ))
-    }
-
-    #[must_use]
-    pub fn start_error(&self, workload: &str) -> Option<String> {
-        if self.level != PressureLevel::Severe {
-            return None;
-        }
-        Some(format!(
-            "Refusing {workload} while host pressure is already severe: {}. \
-             This protects interactive use; rerun with --allow-contended-host for an intentional batch run.",
-            self.summary()
-        ))
-    }
-
-    #[must_use]
     pub fn warning(&self, workload: &str) -> Option<String> {
         if self.level == PressureLevel::Clear {
             return None;
@@ -145,7 +121,7 @@ impl PressureRecommendation {
                 "Prefer scoped checks/tests now. Broad work is allowed but should stay backgrounded and low-priority; use `xtask analytics pressure --top-io` if the machine feels stuck."
             }
             PressureLevel::Severe => {
-                "Delay broad checks/tests until IO or memory pressure falls. Use `xtask analytics pressure --top-io` to attribute current IO; pass --allow-contended-host only for an intentional batch run."
+                "Broad work is allowed, but current pressure is severe. Use `xtask analytics pressure --top-io` to attribute IO if the machine feels stuck."
             }
         }
     }
@@ -462,7 +438,7 @@ mod tests {
             Some((512.0, 15_000.0)),
         );
         assert_eq!(clear.level, PressureLevel::Clear);
-        assert!(clear.broad_start_error("test").is_none());
+        assert!(clear.warning("test").is_none());
 
         let elevated = PressureRecommendation::from_snapshots(
             PressureSnapshot::default(),
@@ -475,7 +451,6 @@ mod tests {
             None,
         );
         assert_eq!(elevated.level, PressureLevel::Elevated);
-        assert!(elevated.broad_start_error("test").is_none());
         assert!(elevated.warning("test").is_some());
 
         let severe = PressureRecommendation::from_snapshots(
@@ -493,7 +468,7 @@ mod tests {
             None,
         );
         assert_eq!(severe.level, PressureLevel::Severe);
-        assert!(severe.broad_start_error("test").is_some());
+        assert!(severe.warning("test").is_some());
         Ok(())
     }
 }

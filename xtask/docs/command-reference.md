@@ -86,7 +86,6 @@ Run the fast workspace verification pipeline
 | `--lint-breakdown` | no | no | Show breakdown of warning counts by lint code (top 10) |
 | `--by-file` | no | no | Show breakdown of warning counts by file path (top 20) |
 | `--nix` | no | no | Run `nix flake check --no-build` (evaluation only, ~2-5s). Included in --full. Fails if `nix` is unavailable or unhealthy |
-| `--allow-contended-host` | no | no | Allow broad checks to start even when host PSI is already severe |
 | `--skip-preflight` | no | no | Internal: child checks invoked by `--changed-strict` inherit the parent compile-ready environment and must not run their own preflight |
 | `--changed-strict` | yes | no | API drift guard: check only packages that own Rust files changed between HEAD and the merge-base of the given ref (default `origin/master`). Emits a JSON report of changed files, affected packages, and per-package results. Non-zero exit if any per-package check fails. This flag is opt-in and does not alter the default check behaviour |
 
@@ -119,7 +118,6 @@ Run the repo's primary nextest-backed test workflows
 | `-a, --all` | no | no | Run ALL packages (disables affected mode default) |
 | `--impact-mode` | yes | no | Impact planner mode for bare `xtask test` |
 | `--no-reuse` | no | no | Bypass exact proof reuse for this invocation |
-| `--allow-contended-host` | no | no | Allow broad tests to start even when host PSI is already severe |
 | `--update-snapshots` | no | no | Update insta snapshots (sets `INSTA_UPDATE=always`) |
 | `args` | yes | no | Arguments passed to the test binary (not supported by nextest directly, usually) |
 
@@ -157,7 +155,6 @@ Run benchmarks with optional contract enforcement
 | `--history-db` | yes | no | History DB path for benchmark series |
 | `--dry-run` | no | no | Dry run (compile only, no test execution) |
 | `--continue-on-fail` | no | no | Continue running benchmark scenarios after a scenario fails |
-| `--allow-contended-host` | no | no | Allow DB benchmark runs while other heavy workloads or high IO pressure are active |
 | `--verbose` | no | no | Verbose output |
 
 

@@ -289,7 +289,7 @@ async fn test_scope_key_different() -> TestResult<()> {
 
 #[sinex_test]
 async fn test_scope_key_ignores_irrelevant() -> TestResult<()> {
-    // --fail-fast, --skip-preflight, and host-contention overrides are not
+    // --fail-fast and --skip-preflight are not
     // proof-relevant for successful test runs: if the run is green, the
     // selected tests passed regardless of those scheduling guards.
     let args1 = vec!["-p".into(), "sinex-db".into()];
@@ -298,7 +298,6 @@ async fn test_scope_key_ignores_irrelevant() -> TestResult<()> {
         "sinex-db".into(),
         "--fail-fast".into(),
         "--skip-preflight".into(),
-        "--allow-contended-host".into(),
     ];
     assert_eq!(scope_key("test", &args1), scope_key("test", &args2));
     Ok(())

@@ -109,11 +109,7 @@ fn seed(
     filter: Option<&str>,
 ) -> Result<CommandResult> {
     let xtask = current_xtask()?;
-    let mut args = vec![
-        "test".to_string(),
-        "--impact-mode=off".to_string(),
-        "--allow-contended-host".to_string(),
-    ];
+    let mut args = vec!["test".to_string(), "--impact-mode=off".to_string()];
     if let Some(package) = package {
         args.push("-p".to_string());
         args.push(package.to_string());
@@ -468,11 +464,7 @@ fn print_plan(plan: &crate::impact::ImpactPlan) {
 
 fn audit_command_for_plan(plan: &crate::impact::ImpactPlan) -> Option<(String, Vec<String>)> {
     let xtask = current_xtask().ok()?;
-    let mut args = vec![
-        "test".to_string(),
-        "--impact-mode=off".to_string(),
-        "--allow-contended-host".to_string(),
-    ];
+    let mut args = vec!["test".to_string(), "--impact-mode=off".to_string()];
     let packages = crate::impact::packages_for_plan(plan);
     if let Some(packages) = packages {
         for package in packages {
