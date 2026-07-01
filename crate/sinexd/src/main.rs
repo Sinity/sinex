@@ -43,7 +43,7 @@ struct Cli {
     #[arg(
         long,
         env = "SINEX_EVENT_ENGINE_POOL_SIZE",
-        default_value = "50",
+        default_value = "16",
         global = true
     )]
     pool_size: u32,

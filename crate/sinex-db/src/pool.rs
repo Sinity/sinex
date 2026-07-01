@@ -135,12 +135,12 @@ pub enum PoolSessionPolicy {
 impl Default for PoolConfig {
     fn default() -> Self {
         Self {
-            max_connections: 100,
-            min_connections: 10,
+            max_connections: 16,
+            min_connections: 0,
             acquire_timeout_secs: Seconds::from_secs(30),
-            idle_timeout_secs: Seconds::from_secs(300),
+            idle_timeout_secs: Seconds::from_secs(60),
             statement_timeout_secs: Seconds::from_secs(60),
-            max_lifetime_secs: None,
+            max_lifetime_secs: Some(Seconds::from_secs(30 * 60)),
             validate_against_postgres_max: true,
         }
     }

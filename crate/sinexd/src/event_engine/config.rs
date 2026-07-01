@@ -34,7 +34,7 @@ pub struct EventEngineConfig {
 
     /// Database connection pool size
     #[validate(range(min = 1, max = 1000, message = "Pool size must be between 1 and 1000"))]
-    #[builder(default = 50)]
+    #[builder(default = 16)]
     pub database_pool_size: u32,
 
     /// Connection acquisition timeout in seconds
@@ -736,7 +736,7 @@ impl Default for EventEngineConfig {
         let env = environment();
         Self {
             database_url: default_database_url_fallback(),
-            database_pool_size: 50,
+            database_pool_size: 16,
             pool_acquire_timeout_secs: default_pool_acquire_timeout_secs(),
             pool_idle_timeout_secs: default_pool_idle_timeout_secs(),
             nats: sinex_primitives::nats::NatsConnectionConfig::from_env(),
@@ -825,7 +825,7 @@ fn default_pool_acquire_timeout_secs() -> u64 {
 }
 
 fn default_pool_idle_timeout_secs() -> u64 {
-    600
+    60
 }
 
 fn default_consumer_fetch_max_messages() -> usize {
