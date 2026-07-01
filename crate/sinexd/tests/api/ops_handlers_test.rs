@@ -394,7 +394,7 @@ async fn ops_start_projection_rebuild_recovers_pending_replay_invalidation(
 
     let mut tx = ctx.pool().begin().await?;
     replay
-        .record_scope_invalidations_pending_with_tx(&mut tx, operation.operation_id, 7, 2, 3, 4)
+        .record_scope_invalidations_pending_with_tx(&mut tx, operation.operation_id, 7, 2, 3, 4, &[])
         .await?;
     tx.commit().await?;
 

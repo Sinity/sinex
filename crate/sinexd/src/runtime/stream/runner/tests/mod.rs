@@ -218,8 +218,10 @@ async fn automaton_consumer_config_keeps_raw_buffering_for_db_backed_confirmatio
         "sinex.entity-extractor",
         true,
         ProcessingModel::LeaderStandby,
+        Some("entity.extracted"),
     );
 
+    assert_eq!(config.raw_event_type_filter.as_deref(), Some("entity.extracted"));
     assert!(config.buffer_raw_events);
     assert!(config.accept_unbuffered_confirmations);
     assert!(matches!(
@@ -235,8 +237,10 @@ async fn automaton_consumer_config_keeps_raw_buffering_for_db_backed_confirmatio
         "sinex.entity-extractor",
         false,
         ProcessingModel::LeaderStandby,
+        None,
     );
 
+    assert_eq!(config_without_db.raw_event_type_filter, None);
     assert!(config_without_db.buffer_raw_events);
     assert!(!config_without_db.accept_unbuffered_confirmations);
     assert!(matches!(

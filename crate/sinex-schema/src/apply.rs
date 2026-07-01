@@ -44,6 +44,14 @@ const EVENTS_REQUIRED_INDEXES: &[&str] = &[
     "ix_events_created_by_operation_id",
     "ix_events_sinex_metric_gauge_latest",
     "ix_events_module_run_synthesis_latest",
+    // Load-bearing for admission dedup (`event_engine/admission.rs`
+    // `exists_with_equivalence_key`). Without it a dropped index degrades the
+    // dedup lookup to a sequential scan on the hypertable and `apply::diff`
+    // never reports the loss (#2196 Finding 2).
+    "ix_events_equivalence_key",
+    // Partial index backing self-telemetry queries (created by
+    // `configure_timescaledb`). Listed here so drift detection covers it.
+    "ix_events_sinex_telemetry",
 ];
 const ARCHIVED_EVENTS_REQUIRED_INDEXES: &[&str] = &[
     "ix_archived_events_ts_orig",
@@ -71,6 +79,9 @@ const TELEMETRY_CONTINUOUS_AGGREGATES: &[&str] = &[
     "metric_counters_1h",
     "event_engine_batch_stats_1h",
     "current_window_focus",
+    // 5-minute CAGG created at the `current_system_state` definition below;
+    // listed here so `apply::diff` reports a manual drop (#2196 Finding 3).
+    "current_system_state",
     "command_frequency_hourly",
     "file_activity_summary",
 ];
@@ -1756,6 +1767,24 @@ BEGIN
             ae.created_by_operation_id, ae.automaton_model
         FROM audit.archived_events ae
         WHERE ae.id = ANY(p_archived_ids)
+          -- Occurrence safety (#2194 F2): never restore a material
+          -- interpretation whose occurrence (source_material_id, anchor_byte)
+          -- already has a live row. During a crashed replay the source may
+          -- have re-emitted fresh material events (new id, same occurrence)
+          -- before the crash; restoring the archived twin by PK (ON CONFLICT
+          -- (id) is occurrence-blind, new id != old id) would leave two live
+          -- interpretations for one occurrence, violating the single-live
+          -- invariant. Derived rows (source_material_id IS NULL) have no
+          -- material occurrence and stay governed by ON CONFLICT (id).
+          AND NOT (
+              ae.source_material_id IS NOT NULL
+              AND EXISTS (
+                  SELECT 1
+                  FROM core.events le
+                  WHERE le.source_material_id = ae.source_material_id
+                    AND le.anchor_byte IS NOT DISTINCT FROM ae.anchor_byte
+              )
+          )
         ON CONFLICT (id) DO NOTHING
         RETURNING id
     )
