@@ -1,8 +1,6 @@
 //! Comprehensive tests for raw-ingest DLQ handlers
 //!
 //! Tests DLQ statistics and purge operations.
-//! Note: Peek tests are excluded because `handle_dlq_peek` waits indefinitely
-//! for messages from the consumer stream without timeout.
 
 mod common;
 
@@ -14,8 +12,12 @@ use sinex_db::DbPoolExt;
 use sinex_primitives::Timestamp;
 use sinex_primitives::domain::OperationStatus;
 use sinex_primitives::error::{ErrorClass, SinexError};
-use sinex_primitives::rpc::dlq::{DlqListRequest, DlqPurgeRequest, DlqRequeueRequest};
-use sinexd::api::handlers::dlq::{handle_dlq_list, handle_dlq_purge, handle_dlq_requeue};
+use sinex_primitives::rpc::dlq::{
+    DlqListRequest, DlqPeekRequest, DlqPurgeRequest, DlqRequeueRequest,
+};
+use sinexd::api::handlers::dlq::{
+    handle_dlq_list, handle_dlq_peek, handle_dlq_purge, handle_dlq_requeue,
+};
 use std::time::Duration;
 use xtask::sandbox::prelude::*;
 use xtask::sandbox::timing::{Timeouts, WaitHelpers};
@@ -213,7 +215,11 @@ async fn dlq_purge_requires_confirm_parameter(ctx: TestContext) -> TestResult<()
     // Try purge without confirm
     let err = handle_dlq_purge(
         &harness.services,
-        DlqPurgeRequest { confirm: false },
+        DlqPurgeRequest {
+            confirm: false,
+            start_sequence: None,
+            end_sequence: None,
+        },
         &admin_auth(),
     )
     .await
@@ -258,7 +264,11 @@ async fn dlq_purge_clears_all_messages(ctx: TestContext) -> TestResult<()> {
     // Purge with confirmation
     let response = handle_dlq_purge(
         &harness.services,
-        DlqPurgeRequest { confirm: true },
+        DlqPurgeRequest {
+            confirm: true,
+            start_sequence: None,
+            end_sequence: None,
+        },
         &admin_auth(),
     )
     .await?;
@@ -311,7 +321,11 @@ async fn dlq_purge_handles_empty_stream(ctx: TestContext) -> TestResult<()> {
     // Purge empty stream should succeed
     let response = handle_dlq_purge(
         &harness.services,
-        DlqPurgeRequest { confirm: true },
+        DlqPurgeRequest {
+            confirm: true,
+            start_sequence: None,
+            end_sequence: None,
+        },
         &admin_auth(),
     )
     .await?;
@@ -335,6 +349,169 @@ async fn dlq_purge_handles_empty_stream(ctx: TestContext) -> TestResult<()> {
             .and_then(|scope| scope["messages_before"].as_u64()),
         Some(0)
     );
+
+    Ok(())
+}
+
+#[sinex_test]
+async fn dlq_purge_deletes_only_selected_sequence_range(ctx: TestContext) -> TestResult<()> {
+    let harness = NatsHarness::start(ctx).await?;
+
+    ensure_dlq_stream(
+        &harness.client,
+        &harness.env,
+        jetstream::stream::StorageType::Memory,
+    )
+    .await?;
+
+    for i in 0..5 {
+        publish_dlq_message(
+            &harness.client,
+            &harness.env,
+            &format!("range-{i}"),
+            r#"{"range": true}"#,
+            1,
+        )
+        .await?;
+    }
+    wait_for_dlq_stream_messages(&harness.client, &harness.env, 5).await?;
+
+    let response = handle_dlq_purge(
+        &harness.services,
+        DlqPurgeRequest {
+            confirm: true,
+            start_sequence: Some(2),
+            end_sequence: Some(4),
+        },
+        &admin_auth(),
+    )
+    .await?;
+
+    assert_eq!(response.status, "success");
+    assert_eq!(response.purged_count, 3);
+
+    let rerun = handle_dlq_purge(
+        &harness.services,
+        DlqPurgeRequest {
+            confirm: true,
+            start_sequence: Some(2),
+            end_sequence: Some(4),
+        },
+        &admin_auth(),
+    )
+    .await?;
+    assert_eq!(rerun.status, "success");
+    assert_eq!(rerun.purged_count, 0);
+
+    let after = handle_dlq_list(&harness.services, DlqListRequest {}).await?;
+    assert_eq!(after.total_messages, 2);
+
+    let js = jetstream::new(harness.client.clone());
+    let stream_name = harness.env.nats_stream_name("SINEX_RAW_EVENTS_DLQ");
+    let stream = js.get_stream(&stream_name).await?;
+    assert!(
+        stream.direct_get(1).await.is_ok(),
+        "sequence 1 should be retained"
+    );
+    assert!(
+        stream.direct_get(5).await.is_ok(),
+        "sequence 5 should be retained"
+    );
+    for deleted in 2..=4 {
+        let err = stream
+            .direct_get(deleted)
+            .await
+            .expect_err("selected sequence should be deleted");
+        assert!(
+            matches!(
+                err.kind(),
+                async_nats::jetstream::stream::DirectGetErrorKind::NotFound
+            ),
+            "deleted sequence {deleted} should be absent"
+        );
+    }
+
+    let operations = harness
+        .services
+        .pool()
+        .state()
+        .list_operations(Some("dlq.purge"), Some(OperationStatus::Success), 10)
+        .await?;
+    let operation = operations
+        .first()
+        .expect("range purge should write a successful operation record");
+    assert_eq!(
+        operation
+            .scope
+            .as_ref()
+            .and_then(|scope| scope["selector"].as_str()),
+        Some("sequence_range")
+    );
+    assert_eq!(
+        operation
+            .scope
+            .as_ref()
+            .and_then(|scope| scope["start_sequence"].as_u64()),
+        Some(2)
+    );
+    assert_eq!(
+        operation
+            .scope
+            .as_ref()
+            .and_then(|scope| scope["end_sequence"].as_u64()),
+        Some(4)
+    );
+
+    Ok(())
+}
+
+#[sinex_test]
+async fn dlq_peek_start_sequence_skips_deleted_stream_holes(ctx: TestContext) -> TestResult<()> {
+    let harness = NatsHarness::start(ctx).await?;
+
+    ensure_dlq_stream(
+        &harness.client,
+        &harness.env,
+        jetstream::stream::StorageType::Memory,
+    )
+    .await?;
+
+    for i in 0..5 {
+        publish_dlq_message(
+            &harness.client,
+            &harness.env,
+            &format!("hole-{i}"),
+            r#"{"hole": true}"#,
+            1,
+        )
+        .await?;
+    }
+    wait_for_dlq_stream_messages(&harness.client, &harness.env, 5).await?;
+
+    let response = handle_dlq_purge(
+        &harness.services,
+        DlqPurgeRequest {
+            confirm: true,
+            start_sequence: Some(4),
+            end_sequence: Some(5),
+        },
+        &admin_auth(),
+    )
+    .await?;
+    assert_eq!(response.purged_count, 2);
+
+    let peek = handle_dlq_peek(
+        &harness.services,
+        DlqPeekRequest {
+            limit: 10,
+            payload_preview_chars: 200,
+            start_sequence: Some(4),
+        },
+    )
+    .await?;
+
+    assert!(peek.messages.is_empty());
+    assert!(peek.groups.is_empty());
 
     Ok(())
 }
@@ -369,7 +546,11 @@ async fn dlq_list_after_publish_and_purge_cycle(ctx: TestContext) -> TestResult<
     // Purge
     handle_dlq_purge(
         &harness.services,
-        DlqPurgeRequest { confirm: true },
+        DlqPurgeRequest {
+            confirm: true,
+            start_sequence: None,
+            end_sequence: None,
+        },
         &admin_auth(),
     )
     .await?;
@@ -400,6 +581,8 @@ async fn dlq_requeue_requires_selector_params(ctx: TestContext) -> TestResult<()
         &harness.services,
         DlqRequeueRequest {
             event_id: None,
+            start_sequence: None,
+            end_sequence: None,
             all: false,
         },
         &admin_auth(),
@@ -407,7 +590,7 @@ async fn dlq_requeue_requires_selector_params(ctx: TestContext) -> TestResult<()
     .await
     .expect_err("requeue without selector should fail");
     assert_eq!(err.error_class(), ErrorClass::DataError);
-    assert!(err.to_string().contains("Must specify either"));
+    assert!(err.to_string().contains("Must specify exactly one"));
     Ok(())
 }
 
@@ -476,6 +659,8 @@ async fn dlq_requeue_by_id_requeues_event_engine_style_entry(ctx: TestContext) -
         &harness.services,
         DlqRequeueRequest {
             event_id: Some(event_id.clone()),
+            start_sequence: None,
+            end_sequence: None,
             all: false,
         },
         &admin_auth(),

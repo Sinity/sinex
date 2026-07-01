@@ -638,8 +638,29 @@ impl GatewayClient {
 
     /// List source coverage/readiness status as the operator ViewEnvelope surface.
     pub async fn sources_status_view(&self) -> Result<ViewEnvelope<SourceCoverageListView>> {
-        self.call_typed(SOURCES_STATUS_VIEW_METHOD, &SourcesStatusViewRequest {})
-            .await
+        self.call_typed(
+            SOURCES_STATUS_VIEW_METHOD,
+            &SourcesStatusViewRequest::default(),
+        )
+        .await
+    }
+
+    /// List source coverage/readiness status with server-side filtering.
+    pub async fn sources_status_view_filtered(
+        &self,
+        source: Option<String>,
+        family: Option<String>,
+        exact_counts: bool,
+    ) -> Result<ViewEnvelope<SourceCoverageListView>> {
+        self.call_typed(
+            SOURCES_STATUS_VIEW_METHOD,
+            &SourcesStatusViewRequest {
+                source,
+                family,
+                exact_counts,
+            },
+        )
+        .await
     }
 
     /// List all modules, optionally filtered by role.
@@ -954,9 +975,16 @@ impl GatewayClient {
 
     /// Peek at messages in a DLQ
     pub async fn dlq_peek(&self, limit: Option<usize>) -> Result<DlqPeekResponse> {
-        let req = DlqPeekRequest {
+        self.dlq_peek_request(DlqPeekRequest {
             limit: limit.unwrap_or(10),
-        };
+            payload_preview_chars: 200,
+            start_sequence: None,
+        })
+        .await
+    }
+
+    /// Peek at messages in a DLQ using the typed request surface.
+    pub async fn dlq_peek_request(&self, req: DlqPeekRequest) -> Result<DlqPeekResponse> {
         self.call_typed(DLQ_PEEK_METHOD, &req).await
     }
 
@@ -964,15 +992,31 @@ impl GatewayClient {
     pub async fn dlq_requeue(
         &self,
         event_id: Option<String>,
+        start_sequence: Option<u64>,
+        end_sequence: Option<u64>,
         all: bool,
     ) -> Result<DlqRequeueResponse> {
-        let req = DlqRequeueRequest { event_id, all };
+        let req = DlqRequeueRequest {
+            event_id,
+            start_sequence,
+            end_sequence,
+            all,
+        };
         self.call_typed(DLQ_REQUEUE_METHOD, &req).await
     }
 
-    /// Purge all messages from DLQ
-    pub async fn dlq_purge(&self, confirm: bool) -> Result<DlqPurgeResponse> {
-        let req = DlqPurgeRequest { confirm };
+    /// Purge messages from DLQ.
+    pub async fn dlq_purge(
+        &self,
+        confirm: bool,
+        start_sequence: Option<u64>,
+        end_sequence: Option<u64>,
+    ) -> Result<DlqPurgeResponse> {
+        let req = DlqPurgeRequest {
+            confirm,
+            start_sequence,
+            end_sequence,
+        };
         self.call_typed(DLQ_PURGE_METHOD, &req).await
     }
 

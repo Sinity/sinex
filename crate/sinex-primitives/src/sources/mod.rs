@@ -101,6 +101,50 @@ impl std::fmt::Display for SourceFamily {
     }
 }
 
+/// Return the namespace before the first `.` in a source identifier.
+///
+/// Grouping by source family lets query, context, and source-status surfaces
+/// share one algebra instead of each carrying per-source special cases.
+#[must_use]
+pub fn source_family(source: &str) -> &str {
+    source.split_once('.').map_or(source, |(head, _)| head)
+}
+
+/// Additional source prefixes that belong to a coarse operator-facing family.
+///
+/// These aliases keep query and source-status projections aligned when a
+/// source contract's deployment namespace differs from its emitted event
+/// source. For example, browser-adjacent acquisition lives under the `web`
+/// source-contract namespace, while emitted events may use `webhistory` or
+/// `raindrop`.
+#[must_use]
+pub fn source_family_aliases(family: &str) -> &'static [&'static str] {
+    match family {
+        "browser" => &["web", "webhistory", "raindrop"],
+        "terminal" => &["shell", "shell.atuin", "shell.history"],
+        _ => &[],
+    }
+}
+
+/// True when a source identifier or source-contract namespace belongs to the
+/// requested operator-facing family.
+#[must_use]
+pub fn source_identity_matches_family(
+    source_identifier: &str,
+    namespace: &str,
+    family: &str,
+) -> bool {
+    source_family(source_identifier) == family
+        || namespace == family
+        || source_family_aliases(family).iter().any(|alias| {
+            source_identifier == *alias
+                || namespace == *alias
+                || source_identifier
+                    .strip_prefix(alias)
+                    .is_some_and(|rest| rest.starts_with('.'))
+        })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -131,6 +175,33 @@ mod tests {
         assert_eq!(json, "\"terminal\"");
         let back: SourceFamily = serde_json::from_str(&json).unwrap();
         assert_eq!(back, family);
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn source_identity_family_aliases_match_operator_families()
+    -> xtask::sandbox::TestResult<()> {
+        assert_eq!(source_family("terminal.atuin-history"), "terminal");
+        assert_eq!(source_family("git"), "git");
+        assert_eq!(
+            source_family_aliases("browser"),
+            &["web", "webhistory", "raindrop"]
+        );
+        assert!(source_identity_matches_family(
+            "raindrop-bookmarks",
+            "web",
+            "browser"
+        ));
+        assert!(source_identity_matches_family(
+            "webhistory",
+            "generic",
+            "browser"
+        ));
+        assert!(!source_identity_matches_family(
+            "terminal.atuin-history",
+            "terminal",
+            "browser"
+        ));
         Ok(())
     }
 }

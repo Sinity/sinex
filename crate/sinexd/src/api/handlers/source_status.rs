@@ -18,6 +18,7 @@ use sinex_primitives::source_contracts::{
     SourceCapabilityKind, SourceContract, SourceRuntimeBinding, TransportKind, WorkClass,
     all_source_contracts, source_runtime_bindings,
 };
+use sinex_primitives::sources::source_identity_matches_family;
 use sinex_primitives::temporal::Timestamp;
 use sinex_primitives::views::{
     ActionAvailability, ActionAvailabilityState, ActionSideEffect, CaveatView, CoverageGapView,
@@ -120,40 +121,31 @@ pub async fn handle_sources_status(
 
 pub async fn handle_sources_status_view(
     services: &ServiceContainer,
-    _request: SourcesStatusViewRequest,
+    request: SourcesStatusViewRequest,
 ) -> Result<ViewEnvelope<SourceCoverageListView>> {
     let pool = services.pool();
     let confirmation_buffer = services.probe_confirmation_buffer_pressure().await;
     let now = Timestamp::now();
     let status_defaults = SourcesStatusRequest::default();
-    let source_status_rows = pool
-        .state()
-        .list_sources_status(
-            Duration::from_secs(status_defaults.stale_after_secs),
-            Duration::from_secs(status_defaults.recent_window_secs),
-        )
-        .await
-        .map_err(|error| {
-            SinexError::database("Failed to compute source runtime status").with_std_error(&error)
-        })?;
-    let event_rows = sqlx::query_as!(
-        SourceEventAggregateRow,
-        r#"
-        SELECT
-            source,
-            event_type,
-            COUNT(*)::bigint as "event_count!",
-            MAX(ts_orig) as "last_event_at: _"
-        FROM core.events
-        GROUP BY source, event_type
-        "#,
-    )
-    .fetch_all(pool)
-    .await
-    .map_err(|error| {
-        SinexError::database("Failed to compute source event coverage").with_std_error(&error)
-    })?;
-
+    let bindings: Vec<&'static SourceRuntimeBinding> = source_runtime_bindings().collect();
+    let mut contracts = matching_source_contracts(&request);
+    contracts.sort_by_key(|contract| contract.id);
+    let source_status_module_names = source_status_module_names(&contracts);
+    let source_status_rows = if contracts.is_empty() && source_status_view_has_filter(&request) {
+        Vec::new()
+    } else {
+        pool.state()
+            .list_sources_status_for_modules(
+                Duration::from_secs(status_defaults.stale_after_secs),
+                Duration::from_secs(status_defaults.recent_window_secs),
+                &source_status_module_names,
+            )
+            .await
+            .map_err(|error| {
+                SinexError::database("Failed to compute source runtime status")
+                    .with_std_error(&error)
+            })?
+    };
     let material_rows = sqlx::query_as!(
         SourceMaterialAggregateRow,
         r#"
@@ -171,6 +163,8 @@ pub async fn handle_sources_status_view(
         SinexError::database("Failed to compute source material coverage").with_std_error(&error)
     })?;
 
+    let event_rows = load_source_event_aggregates(pool, &contracts, request.exact_counts).await?;
+
     let mut event_aggregates = HashMap::<(String, String), SourceEventAggregateRow>::new();
     for row in event_rows {
         event_aggregates.insert((row.source.clone(), row.event_type.clone()), row);
@@ -183,10 +177,6 @@ pub async fn handle_sources_status_view(
     let email_provider_states = latest_email_provider_operation_states(pool).await?;
     let email_projection_states = latest_email_mailbox_projection_states(pool).await?;
     let session_states = latest_source_session_states(pool).await?;
-
-    let bindings: Vec<&'static SourceRuntimeBinding> = source_runtime_bindings().collect();
-    let mut contracts: Vec<&'static SourceContract> = all_source_contracts().collect();
-    contracts.sort_by_key(|contract| contract.id);
 
     let mut views = Vec::with_capacity(contracts.len());
     for contract in contracts {
@@ -209,10 +199,146 @@ pub async fn handle_sources_status_view(
         ));
     }
 
-    Ok(ViewEnvelope::new(
+    let mut envelope = ViewEnvelope::new(
         "sinexd.sources.status.view",
         SourceCoverageListView::new(views),
-    ))
+    );
+    if source_status_view_has_filter(&request) || !request.exact_counts {
+        envelope.query_echo = Some(serde_json::json!({
+            "source": request.source.as_deref().filter(|value| !value.is_empty()),
+            "family": request.family.as_deref().filter(|value| !value.is_empty()),
+            "exact_counts": request.exact_counts,
+        }));
+    }
+    if !request.exact_counts {
+        envelope.caveats.push(CaveatView {
+            id: "source.status.event_counts.presence_probe".to_string(),
+            message: "filtered source status uses bounded event-presence probes; event_count is the number of declared event kinds with at least one live event, not the lifetime row count".to_string(),
+            ref_: None,
+        });
+    }
+    Ok(envelope)
+}
+
+fn source_status_view_has_filter(request: &SourcesStatusViewRequest) -> bool {
+    request
+        .source
+        .as_deref()
+        .is_some_and(|value| !value.is_empty())
+        || request
+            .family
+            .as_deref()
+            .is_some_and(|value| !value.is_empty())
+}
+
+fn matching_source_contracts(request: &SourcesStatusViewRequest) -> Vec<&'static SourceContract> {
+    let source_filter = request.source.as_deref().filter(|value| !value.is_empty());
+    let family_filter = request.family.as_deref().filter(|value| !value.is_empty());
+    all_source_contracts()
+        .filter(|contract| {
+            source_filter.is_none_or(|filter| contract.id.contains(filter))
+                && family_filter.is_none_or(|family| {
+                    source_identity_matches_family(contract.id, contract.namespace, family)
+                })
+        })
+        .collect()
+}
+
+fn source_status_module_names(contracts: &[&SourceContract]) -> Vec<String> {
+    let mut names = BTreeSet::new();
+    for contract in contracts {
+        names.insert(contract.id.to_string());
+        if let Some(module_name) = source_runtime_module(contract.id) {
+            names.insert(module_name.to_string());
+        }
+    }
+    names.into_iter().collect()
+}
+
+async fn load_source_event_aggregates(
+    pool: &PgPool,
+    contracts: &[&SourceContract],
+    exact_counts: bool,
+) -> Result<Vec<SourceEventAggregateRow>> {
+    let (sources, event_types) = source_event_pairs(contracts);
+    if sources.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    if exact_counts {
+        sqlx::query_as!(
+            SourceEventAggregateRow,
+            r#"
+            WITH wanted AS (
+                SELECT *
+                FROM unnest($1::text[], $2::text[]) AS pair(source, event_type)
+            )
+            SELECT
+                wanted.source as "source!",
+                wanted.event_type as "event_type!",
+                COUNT(*)::bigint as "event_count!",
+                MAX(events.ts_orig) as "last_event_at: _"
+            FROM wanted
+            JOIN core.events events
+              ON events.source = wanted.source
+             AND events.event_type = wanted.event_type
+            GROUP BY wanted.source, wanted.event_type
+            "#,
+            &sources,
+            &event_types,
+        )
+        .fetch_all(pool)
+        .await
+        .map_err(|error| {
+            SinexError::database("Failed to compute source event coverage").with_std_error(&error)
+        })
+    } else {
+        sqlx::query_as!(
+            SourceEventAggregateRow,
+            r#"
+            WITH wanted AS (
+                SELECT *
+                FROM unnest($1::text[], $2::text[]) AS pair(source, event_type)
+            )
+            SELECT
+                wanted.source as "source!",
+                wanted.event_type as "event_type!",
+                1::bigint as "event_count!",
+                latest.ts_orig as "last_event_at: _"
+            FROM wanted
+            JOIN LATERAL (
+                SELECT events.ts_orig
+                FROM core.events events
+                WHERE events.source = wanted.source
+                  AND events.event_type = wanted.event_type
+                ORDER BY events.ts_orig DESC
+                LIMIT 1
+            ) latest ON true
+            "#,
+            &sources,
+            &event_types,
+        )
+        .fetch_all(pool)
+        .await
+        .map_err(|error| {
+            SinexError::database("Failed to compute source event presence").with_std_error(&error)
+        })
+    }
+}
+
+fn source_event_pairs(contracts: &[&SourceContract]) -> (Vec<String>, Vec<String>) {
+    let mut seen = BTreeSet::new();
+    let mut sources = Vec::new();
+    let mut event_types = Vec::new();
+    for contract in contracts {
+        for (source, event_type) in contract.event_types {
+            if seen.insert((*source, *event_type)) {
+                sources.push((*source).to_string());
+                event_types.push((*event_type).to_string());
+            }
+        }
+    }
+    (sources, event_types)
 }
 
 fn source_coverage_view(
@@ -245,9 +371,9 @@ fn source_coverage_view(
     let material_count = material.map_or(0, |row| row.material_count);
     let last_material_at = material.and_then(|row| row.last_material_at.map(Timestamp::from));
     let last_event_at = last_event_at.map(Timestamp::from);
-    let live_binding_count = bindings.iter().filter(|binding| !binding.proposed).count();
-    let proposed_binding_count = bindings.len().saturating_sub(live_binding_count);
-    let has_live_binding = live_binding_count > 0;
+    let accepted_binding_count = bindings.iter().filter(|binding| !binding.proposed).count();
+    let proposed_binding_count = bindings.len().saturating_sub(accepted_binding_count);
+    let has_live_binding = accepted_binding_count > 0;
     let has_material = material_count > 0;
     let has_events = event_count > 0;
 
@@ -383,14 +509,14 @@ fn source_coverage_view(
         material_count,
         event_count,
         binding_count: bindings.len(),
-        live_binding_count,
+        accepted_binding_count,
         proposed_binding_count,
         gaps,
         caveats,
         privacy: SourcePrivacyPosture {
             tier: format!("{:?}", contract.privacy_tier).to_ascii_lowercase(),
             context: privacy_context,
-            proposed: live_binding_count == 0 && proposed_binding_count > 0,
+            proposed: accepted_binding_count == 0 && proposed_binding_count > 0,
         },
         resource_budget,
         modes,

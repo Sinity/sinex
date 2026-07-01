@@ -1,5 +1,6 @@
 //! Typed runtime-pressure response vocabulary.
 
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::fmt;
 
@@ -8,7 +9,7 @@ use std::fmt;
 /// This is a transport-safe enum for the stable snake_case wire values that
 /// used to be passed around as raw strings. `Unknown` is reserved for probes
 /// that cannot observe the underlying runtime owner.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum RuntimePressureLevel {
     Unknown,
@@ -50,7 +51,7 @@ impl fmt::Display for RuntimePressureLevel {
 /// This is an observation/response vocabulary, not a scheduler policy. Health
 /// and DLQ DTOs use it so code compares typed values while preserving stable
 /// snake_case wire strings.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum RuntimePressureAction {
     /// No runtime response is available or required.
