@@ -212,40 +212,53 @@ impl RuntimeModule for RuntimeTestModule {
 
 #[cfg(feature = "messaging")]
 #[sinex_test]
-async fn automaton_consumer_config_keeps_raw_buffering_for_db_backed_confirmations()
--> TestResult<()> {
+async fn automaton_consumer_config_targets_confirmed_events_stream() -> TestResult<()> {
+    // Option C: each automaton runs one durable consumer on the confirmed-events
+    // stream. A type-specific automaton filters server-side to a single event
+    // type; the consumer name is derived from the service name; delivery is
+    // `New` because the per-automaton checkpoint + historical scan cover anything
+    // before the consumer starts (#2187 / #2202).
     let config = RuntimeRunner::<RuntimeTestModule>::automaton_consumer_config(
         "sinex.entity-extractor",
-        true,
-        ProcessingModel::LeaderStandby,
+        crate::runtime::automaton::traits::InputProvenanceFilter::MaterialOnly,
         Some("entity.extracted"),
     );
 
-    assert_eq!(config.raw_event_type_filter.as_deref(), Some("entity.extracted"));
-    assert!(config.buffer_raw_events);
-    assert!(config.accept_unbuffered_confirmations);
+    assert_eq!(
+        config.event_type_filter.as_deref(),
+        Some("entity.extracted")
+    );
+    assert_eq!(
+        config.provenance_filter,
+        crate::runtime::automaton::traits::InputProvenanceFilter::MaterialOnly
+    );
     assert!(matches!(
         config.deliver_policy,
         async_nats::jetstream::consumer::DeliverPolicy::New
     ));
     assert_eq!(
         config.consumer_name,
-        "sinex_entity-extractor-automaton-confirmed-v2"
+        "sinex_entity-extractor-confirmed-events-material-filter-entity_d_extracted"
     );
 
-    let config_without_db = RuntimeRunner::<RuntimeTestModule>::automaton_consumer_config(
+    let wildcard_config = RuntimeRunner::<RuntimeTestModule>::automaton_consumer_config(
         "sinex.entity-extractor",
-        false,
-        ProcessingModel::LeaderStandby,
+        crate::runtime::automaton::traits::InputProvenanceFilter::Any,
         None,
     );
 
-    assert_eq!(config_without_db.raw_event_type_filter, None);
-    assert!(config_without_db.buffer_raw_events);
-    assert!(!config_without_db.accept_unbuffered_confirmations);
+    assert_eq!(wildcard_config.event_type_filter, None);
+    assert_eq!(
+        wildcard_config.provenance_filter,
+        crate::runtime::automaton::traits::InputProvenanceFilter::Any
+    );
+    assert_eq!(
+        wildcard_config.consumer_name,
+        "sinex_entity-extractor-confirmed-events"
+    );
     assert!(matches!(
-        config_without_db.deliver_policy,
-        async_nats::jetstream::consumer::DeliverPolicy::All
+        wildcard_config.deliver_policy,
+        async_nats::jetstream::consumer::DeliverPolicy::New
     ));
     Ok(())
 }

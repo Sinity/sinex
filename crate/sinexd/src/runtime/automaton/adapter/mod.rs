@@ -11,7 +11,7 @@ mod process;
 mod run;
 mod state_io;
 
-use super::traits::{Automaton, AutomatonAdapterConfig};
+use super::traits::{Automaton, AutomatonAdapterConfig, InputProvenanceFilter};
 
 use crate::runtime::checkpoint::CheckpointManager;
 use crate::runtime::processing::PersistedState;
@@ -464,6 +464,10 @@ where
             "*" => None,
             event_type => Some(event_type),
         }
+    }
+
+    fn confirmed_event_provenance_filter(&self) -> InputProvenanceFilter {
+        self.automaton.input_provenance_filter()
     }
 
     fn capabilities(&self) -> RuntimeCapabilities {

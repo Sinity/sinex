@@ -8,7 +8,9 @@ use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use sinex_primitives::constants::buffers::DEFAULT_CONFIRMATION_BUFFER_CAPACITY;
 use sinex_primitives::domain::{EventSource, EventType};
+use sinex_primitives::events::Event;
 use sinex_primitives::events::builder::EventId;
+use sinex_primitives::JsonValue;
 use sinex_primitives::runtime_pressure::RuntimePressureAction;
 use sinex_primitives::source_contracts::ResourceBudgetSpec;
 use sinex_primitives::units::Bytes;
@@ -248,7 +250,7 @@ pub trait ConfirmedEventHandler: Send + Sync {
     ///
     /// This is called after the event has been successfully persisted to the database
     /// and confirmation published to `JetStream`.
-    async fn handle_confirmed(&self, event: &ProvisionalEvent) -> RuntimeResult<()>;
+    async fn handle_confirmed(&self, event: &Event<JsonValue>) -> RuntimeResult<()>;
 }
 
 /// Buffer for provisional events awaiting confirmation.
