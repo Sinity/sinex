@@ -22,7 +22,7 @@ use crate::Result;
 use crate::client::GatewayClient;
 use crate::commands::ops::{
     debt_rows_from_derivation_trigger, debt_rows_from_dlq, debt_rows_from_source_coverage,
-    operations_to_views,
+    debt_rows_from_source_material_remediation, operations_to_views,
 };
 use crate::fmt::render_envelope;
 use crate::model::OutputFormat;
@@ -250,6 +250,9 @@ async fn query_debt(
     let mut debt_rows = debt_rows_from_dlq(&dlq);
     let coverage = client.sources_coverage(SourcesCoverageRequest {}).await?;
     debt_rows.extend(debt_rows_from_source_coverage(&coverage.sources));
+    debt_rows.extend(
+        debt_rows_from_source_material_remediation(client, query.pagination.limit).await?,
+    );
     debt_rows.extend(debt_rows_from_derivation_trigger(
         sinex_primitives::InvalidationTrigger::Replay,
     ));
@@ -268,9 +271,10 @@ fn debt_row(row: DebtRowView) -> SinexQueryResultRow {
         .unwrap_or_else(|| "unknown".to_string());
     let severity = debt_severity(&row);
     let source = row
-        .refs
-        .first()
-        .map(|ref_| ref_.id.clone())
+        .owner
+        .as_ref()
+        .and_then(|owner| owner.package_ref.clone())
+        .or_else(|| row.refs.first().map(|ref_| ref_.id.clone()))
         .unwrap_or_default();
     let payload = serde_json::to_value(&row).unwrap_or(Value::Null);
     SinexQueryResultRow::new(

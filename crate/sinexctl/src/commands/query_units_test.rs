@@ -150,3 +150,37 @@ async fn numeric_query_sort_does_not_use_lexicographic_ordering() -> xtask::Test
     assert_eq!(rows[1].title, "age 20");
     Ok(())
 }
+
+#[sinex_test]
+async fn debt_query_row_uses_owner_package_as_filter_source() -> xtask::TestResult<()> {
+    let row = debt_row(sinex_primitives::views::DebtRowView {
+        id: "debt:capture:browser.history:material".to_string(),
+        kind: sinex_primitives::views::DebtKind::Capture,
+        stage: sinex_primitives::views::DebtStage::CandidateDeferred,
+        summary: "browser history material needs remediation".to_string(),
+        refs: vec![SinexObjectRef::new(
+            SinexObjectKind::RpcMethod,
+            "sources.list",
+        )],
+        owner: Some(sinex_primitives::views::DebtOwnerView {
+            package_ref: Some("browser.history".to_string()),
+            mode_ref: None,
+            policy_ref: None,
+            operation_ref: None,
+        }),
+        age_secs: None,
+        freshness: None,
+        caveats: vec![],
+        actions: vec![],
+    });
+
+    assert_eq!(
+        row.fields.get("source").and_then(|value| value.as_str()),
+        Some("browser.history")
+    );
+    assert!(row_matches_query(
+        &parse_sinex_query("debt where source contains browser limit 10")?,
+        &row
+    ));
+    Ok(())
+}
