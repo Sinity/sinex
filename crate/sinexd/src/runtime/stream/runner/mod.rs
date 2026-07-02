@@ -140,4 +140,5 @@ use super::control_protocol::encode_control_message;
 use super::{ContinuousStart, ProcessingStats};
 
 #[cfg(test)]
+#[path = "runner_test.rs"]
 mod tests;

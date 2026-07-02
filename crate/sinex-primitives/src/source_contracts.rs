@@ -11,6 +11,7 @@ mod resource;
 mod runtime;
 mod subject;
 #[cfg(test)]
+#[path = "source_contracts_test.rs"]
 mod tests;
 
 pub use capability::*;

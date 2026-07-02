@@ -518,4 +518,5 @@ fn rust_type_name(value: &str) -> String {
 }
 
 #[cfg(test)]
+#[path = "source_skeleton_test.rs"]
 mod tests;

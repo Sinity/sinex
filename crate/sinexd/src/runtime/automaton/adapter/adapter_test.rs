@@ -1,4 +1,5 @@
 #[cfg(test)]
+#[path = "tests/processing_replay.rs"]
 mod processing_replay;
 // Inline because these cover a private shutdown-signaling helper.
 #[cfg(feature = "messaging")]
