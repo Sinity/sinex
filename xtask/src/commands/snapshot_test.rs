@@ -10,10 +10,7 @@ use std::process::Output;
 #[cfg(unix)]
 use std::os::unix::process::ExitStatusExt;
 
-fn write_executable_script(
-    path: &std::path::Path,
-    body: &str,
-) -> ::xtask::sandbox::TestResult<()> {
+fn write_executable_script(path: &std::path::Path, body: &str) -> ::xtask::sandbox::TestResult<()> {
     fs::write(path, body)?;
     let mut permissions = fs::metadata(path)?.permissions();
     permissions.set_mode(0o755);
@@ -95,8 +92,7 @@ exit 1
 }
 
 #[sinex_test]
-async fn test_collect_crate_scope_reports_metadata_failures() -> ::xtask::sandbox::TestResult<()>
-{
+async fn test_collect_crate_scope_reports_metadata_failures() -> ::xtask::sandbox::TestResult<()> {
     let temp = tempfile::tempdir()?;
     let bin_dir = temp.path().join("bin");
     fs::create_dir_all(&bin_dir)?;
@@ -133,8 +129,8 @@ printf '%s\n' '{"packages":[{"id":"path+file:///realm/project/sinex/crate/sinex-
     let mut env = EnvGuard::new();
     env.set("PATH", bin_dir.display().to_string());
 
-    let error = collect_crate_scope("missing-crate")
-        .expect_err("unknown workspace package should surface");
+    let error =
+        collect_crate_scope("missing-crate").expect_err("unknown workspace package should surface");
     assert!(
         error.to_string().contains("missing-crate"),
         "unexpected error: {error:?}"
@@ -181,8 +177,7 @@ printf '%s\n' '{"packages":[{"id":"path+file:///tmp/outside#0.1.0","name":"sinex
     let mut env = EnvGuard::new();
     env.set("PATH", bin_dir.display().to_string());
 
-    let error =
-        collect_crate_scope("sinex-db").expect_err("workspace path drift should surface");
+    let error = collect_crate_scope("sinex-db").expect_err("workspace path drift should surface");
     let message = error.to_string();
     assert!(message.contains("outside workspace root"));
     assert!(message.contains("/tmp/outside/Cargo.toml"));

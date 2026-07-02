@@ -105,8 +105,7 @@ name = "helper"
 }
 
 #[sinex_test]
-async fn test_find_fuzz_dir_resolves_manifest_package_name() -> ::xtask::sandbox::TestResult<()>
-{
+async fn test_find_fuzz_dir_resolves_manifest_package_name() -> ::xtask::sandbox::TestResult<()> {
     let dir = tempfile::tempdir()?;
     let fuzz_dir = dir.path().join("fuzz");
     fs::create_dir_all(&fuzz_dir)?;
@@ -127,8 +126,7 @@ name = "fuzz_input_validation"
 }
 
 #[sinex_test]
-async fn test_find_fuzz_dir_rejects_unknown_manifest_package()
--> ::xtask::sandbox::TestResult<()> {
+async fn test_find_fuzz_dir_rejects_unknown_manifest_package() -> ::xtask::sandbox::TestResult<()> {
     let dir = tempfile::tempdir()?;
     let fuzz_dir = dir.path().join("fuzz");
     fs::create_dir_all(&fuzz_dir)?;
@@ -175,8 +173,7 @@ async fn test_parse_fuzz_manifest_reports_malformed_toml() -> ::xtask::sandbox::
 }
 
 #[sinex_test]
-async fn test_collect_dir_entry_names_reports_entry_failures()
--> ::xtask::sandbox::TestResult<()> {
+async fn test_collect_dir_entry_names_reports_entry_failures() -> ::xtask::sandbox::TestResult<()> {
     let error = collect_dir_entry_names(
         Path::new("/tmp/corpus"),
         [

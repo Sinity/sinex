@@ -28,8 +28,7 @@ async fn test_watch_loop_stops_on_shutdown_signal() -> ::xtask::sandbox::TestRes
 }
 
 #[sinex_test]
-async fn test_watch_loop_surfaces_shutdown_listener_failure() -> ::xtask::sandbox::TestResult<()>
-{
+async fn test_watch_loop_surfaces_shutdown_listener_failure() -> ::xtask::sandbox::TestResult<()> {
     let loop_ = WatchLoop::new(Duration::from_millis(1));
 
     let error = loop_

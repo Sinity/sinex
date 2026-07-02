@@ -139,8 +139,7 @@ async fn test_client_cert_has_correct_properties() -> TestResult<()> {
 #[sinex_test]
 async fn test_server_cert_signed_by_ca() -> TestResult<()> {
     let (ca_cert, ca_key, ca_pem, _) = generate_ca_internal("Signing Test CA", 365)?;
-    let (server_pem, _) =
-        generate_server_cert(&ca_cert, &ca_key, &["localhost".to_string()], 365)?;
+    let (server_pem, _) = generate_server_cert(&ca_cert, &ca_key, &["localhost".to_string()], 365)?;
 
     // Parse both certs and verify issuer matches CA subject
     let (_, ca_block) = x509_parser::pem::parse_x509_pem(ca_pem.as_bytes()).unwrap();

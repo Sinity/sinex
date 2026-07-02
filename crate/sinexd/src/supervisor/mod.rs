@@ -37,6 +37,8 @@ const ENV_AUTOMATA_ENABLED: &str = "SINEX_AUTOMATA_ENABLED";
 /// out-of-band source, for example).
 const ENV_SOURCE_BINDINGS_PATH: &str = "SINEX_SOURCE_BINDINGS_PATH";
 
+const EVENT_ENGINE_READY_TIMEOUT: Duration = Duration::from_secs(45);
+
 #[derive(Debug)]
 pub struct Supervisor {
     pub event_engine_enabled: bool,
@@ -88,15 +90,30 @@ impl Supervisor {
         let (escalate_tx, escalate_rx) = watch::channel(false);
         let shutdown_rx = os_shutdown_rx.clone();
 
-        let mut event_engine_handle = if self.event_engine_enabled {
-            Some(start_event_engine(
+        let (mut event_engine_handle, event_engine_ready_rx) = if self.event_engine_enabled {
+            let (handle, ready_rx) = start_event_engine(
                 event_engine_config,
                 shutdown_rx.clone(),
                 escalate_tx.clone(),
-            ))
+            );
+            (Some(handle), Some(ready_rx))
         } else {
-            None
+            (None, None)
         };
+
+        if let Some(ready_rx) = event_engine_ready_rx
+            && let Err(error) = await_event_engine_ready(ready_rx, EVENT_ENGINE_READY_TIMEOUT).await
+        {
+            error!(
+                ?error,
+                "event_engine failed to become ready; tearing down supervisor startup"
+            );
+            let _ = escalate_tx.send(true);
+            if let Some(handle) = event_engine_handle.take() {
+                join_event_engine_after_startup_failure(handle).await;
+            }
+            return Err(error);
+        }
 
         // If API setup fails after the event-engine task has already been
         // spawned, the engine task would otherwise be orphaned: its
@@ -232,8 +249,12 @@ fn start_event_engine(
     config: EventEngineConfig,
     shutdown_rx: watch::Receiver<bool>,
     escalate_tx: watch::Sender<bool>,
-) -> tokio::task::JoinHandle<()> {
-    tokio::spawn(async move {
+) -> (
+    tokio::task::JoinHandle<()>,
+    tokio::sync::oneshot::Receiver<()>,
+) {
+    let (ready_tx, ready_rx) = tokio::sync::oneshot::channel();
+    let handle = tokio::spawn(async move {
         let mut service = match IngestService::new(config).await {
             Ok(s) => s,
             Err(error) => {
@@ -256,7 +277,7 @@ fn start_event_engine(
             let _ = service_for_shutdown.shutdown().await;
         });
 
-        let outcome = service.run().await;
+        let outcome = service.run_with_ready_signal(Some(ready_tx)).await;
         // If the supervisor already triggered teardown, an Ok exit is the
         // intended outcome; don't re-escalate or log noisily. We only fire
         // the escalation channel when the task exits *without* a shutdown
@@ -279,7 +300,44 @@ fn start_event_engine(
                 let _ = escalate_tx.send(true);
             }
         }
-    })
+    });
+    (handle, ready_rx)
+}
+
+async fn await_event_engine_ready(
+    ready_rx: tokio::sync::oneshot::Receiver<()>,
+    timeout: Duration,
+) -> Result<()> {
+    match tokio::time::timeout(timeout, ready_rx).await {
+        Ok(Ok(())) => {
+            info!("event_engine reached supervisor startup ready state");
+            Ok(())
+        }
+        Ok(Err(_)) => Err(SinexError::service(
+            "event_engine exited before supervisor startup readiness",
+        )),
+        Err(_) => Err(
+            SinexError::timeout("timed out waiting for event_engine startup readiness")
+                .with_duration(timeout),
+        ),
+    }
+}
+
+async fn join_event_engine_after_startup_failure(handle: tokio::task::JoinHandle<()>) {
+    match tokio::time::timeout(Duration::from_secs(5), handle).await {
+        Ok(Ok(())) => {
+            info!("event_engine drained after supervisor startup failure");
+        }
+        Ok(Err(join_error)) => {
+            error!(
+                ?join_error,
+                "event_engine task join error during startup-failure teardown"
+            );
+        }
+        Err(_elapsed) => {
+            warn!("event_engine did not drain within 5s of startup failure; detaching");
+        }
+    }
 }
 
 async fn start_api(

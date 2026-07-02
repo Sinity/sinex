@@ -205,16 +205,15 @@ async fn test_discover_vm_test_files_includes_preflight_and_sorted_scenarios()
 }
 
 #[sinex_test]
-async fn test_display_vm_test_label_falls_back_to_full_path() -> ::xtask::sandbox::TestResult<()>
-{
+async fn test_display_vm_test_label_falls_back_to_full_path() -> ::xtask::sandbox::TestResult<()> {
     let root = Path::new("/");
     assert_eq!(display_vm_test_label(root), root.display().to_string());
     Ok(())
 }
 
 #[sinex_test]
-async fn test_append_stream_task_output_surfaces_join_failures()
--> ::xtask::sandbox::TestResult<()> {
+async fn test_append_stream_task_output_surfaces_join_failures() -> ::xtask::sandbox::TestResult<()>
+{
     let mut combined_output = String::new();
     let handle = tokio::spawn(async {
         tokio::time::sleep(std::time::Duration::from_secs(30)).await;
@@ -230,8 +229,7 @@ async fn test_append_stream_task_output_surfaces_join_failures()
 }
 
 #[sinex_test]
-async fn test_collect_vm_stream_output_collects_utf8_lines() -> ::xtask::sandbox::TestResult<()>
-{
+async fn test_collect_vm_stream_output_collects_utf8_lines() -> ::xtask::sandbox::TestResult<()> {
     use tokio::io::AsyncWriteExt;
 
     let (reader, mut writer) = tokio::io::duplex(64);
@@ -244,8 +242,7 @@ async fn test_collect_vm_stream_output_collects_utf8_lines() -> ::xtask::sandbox
 }
 
 #[sinex_test]
-async fn test_collect_vm_stream_output_surfaces_invalid_utf8()
--> ::xtask::sandbox::TestResult<()> {
+async fn test_collect_vm_stream_output_surfaces_invalid_utf8() -> ::xtask::sandbox::TestResult<()> {
     use tokio::io::AsyncWriteExt;
 
     let (reader, mut writer) = tokio::io::duplex(64);
@@ -262,8 +259,8 @@ async fn test_collect_vm_stream_output_surfaces_invalid_utf8()
 }
 
 #[sinex_test]
-async fn test_strip_ansi_escape_sequences_preserves_utf8_text()
--> ::xtask::sandbox::TestResult<()> {
+async fn test_strip_ansi_escape_sequences_preserves_utf8_text() -> ::xtask::sandbox::TestResult<()>
+{
     let input = "\u{1b}[31mVerification FAILED\u{1b}[0m – żółć";
     assert_eq!(
         strip_ansi_escape_sequences(input),
@@ -286,8 +283,7 @@ async fn test_classify_vm_progress_line_extracts_subtest_from_prefixed_output()
 #[sinex_test]
 async fn test_classify_vm_progress_line_strips_ansi_failure_prefixes()
 -> ::xtask::sandbox::TestResult<()> {
-    let line =
-        "\u{1b}[31mvm-test > RequestedAssertionFailed: browser evidence missing\u{1b}[0m";
+    let line = "\u{1b}[31mvm-test > RequestedAssertionFailed: browser evidence missing\u{1b}[0m";
     assert_eq!(
         classify_vm_progress_line(line),
         Some("RequestedAssertionFailed: browser evidence missing".to_string())
@@ -310,8 +306,8 @@ async fn test_classify_vm_progress_line_summarizes_vm_outcome_report()
 }
 
 #[sinex_test]
-async fn test_classify_vm_progress_line_ignores_nix_build_noise()
--> ::xtask::sandbox::TestResult<()> {
+async fn test_classify_vm_progress_line_ignores_nix_build_noise() -> ::xtask::sandbox::TestResult<()>
+{
     let line = "building '/nix/store/abc123-sinex-vm-basic.drv'...";
     assert_eq!(classify_vm_progress_line(line), None);
     Ok(())
@@ -358,8 +354,8 @@ async fn test_update_vm_progress_summary_records_terminal_summary()
 }
 
 #[sinex_test]
-async fn test_append_stream_task_output_surfaces_stream_errors()
--> ::xtask::sandbox::TestResult<()> {
+async fn test_append_stream_task_output_surfaces_stream_errors() -> ::xtask::sandbox::TestResult<()>
+{
     let mut combined_output = String::new();
     append_stream_task_output(
         &mut combined_output,

@@ -10,7 +10,7 @@
 
 use color_eyre::eyre::{Result, WrapErr, bail, eyre};
 use console::style;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
@@ -48,6 +48,160 @@ fn make_instance_id(name: &str, prefix: Option<&str>) -> String {
     )
 }
 
+const DEV_SOURCE_BINDINGS_PATH: &str = ".agent/dev/dev-source-bindings.json";
+
+#[derive(Debug, Clone, Deserialize)]
+struct DevSourceBindingsManifest {
+    #[serde(default)]
+    bindings: Vec<DevSourceBinding>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+struct DevSourceBinding {
+    source_id: String,
+    #[serde(default = "default_source_binding_instance_idx")]
+    instance_idx: u32,
+    #[serde(default)]
+    service_name: Option<String>,
+    #[serde(default)]
+    runtime_config: Option<serde_json::Value>,
+    #[serde(default)]
+    extra_args: Vec<String>,
+    #[serde(default)]
+    extra_env: HashMap<String, String>,
+}
+
+const DEFAULT_EXCLUDED_ALL_SOURCE_BINDINGS: &[&str] = &["system.journald"];
+
+fn default_source_binding_instance_idx() -> u32 {
+    1
+}
+
+fn default_source_binding_service_name(binding: &DevSourceBinding) -> String {
+    binding.service_name.clone().unwrap_or_else(|| {
+        format!(
+            "source-driver-{}-{}",
+            binding.source_id, binding.instance_idx
+        )
+    })
+}
+
+fn is_default_excluded_all_source_binding(source_id: &str) -> bool {
+    DEFAULT_EXCLUDED_ALL_SOURCE_BINDINGS.contains(&source_id)
+}
+
+fn load_dev_source_binding(source_id: &str) -> Option<DevSourceBinding> {
+    if cfg!(test) {
+        return None;
+    }
+
+    let explicit_path = std::env::var("SINEX_SOURCE_BINDINGS_PATH").ok();
+    let path = explicit_path
+        .as_deref()
+        .map(PathBuf::from)
+        .unwrap_or_else(|| crate::config::workspace_root().join(DEV_SOURCE_BINDINGS_PATH));
+    let bytes = std::fs::read(path).ok()?;
+    let manifest: DevSourceBindingsManifest = serde_json::from_slice(&bytes).ok()?;
+    manifest
+        .bindings
+        .into_iter()
+        .find(|binding| binding.source_id == source_id)
+}
+
+fn load_dev_source_bindings_manifest() -> Option<DevSourceBindingsManifest> {
+    let explicit_path = std::env::var("SINEX_SOURCE_BINDINGS_PATH").ok();
+    let path = explicit_path
+        .as_deref()
+        .map(PathBuf::from)
+        .unwrap_or_else(|| crate::config::workspace_root().join(DEV_SOURCE_BINDINGS_PATH));
+    let bytes = std::fs::read(path).ok()?;
+    serde_json::from_slice(&bytes).ok()
+}
+
+fn default_all_source_bindings_from_manifest(
+    manifest: DevSourceBindingsManifest,
+) -> Vec<DevSourceBinding> {
+    manifest
+        .bindings
+        .into_iter()
+        .filter(|binding| !is_default_excluded_all_source_binding(&binding.source_id))
+        .collect()
+}
+
+fn default_dev_source_bindings_path() -> PathBuf {
+    crate::config::workspace_root().join(DEV_SOURCE_BINDINGS_PATH)
+}
+
+fn source_bindings_env_override() -> Option<(String, String)> {
+    if std::env::var("SINEX_SOURCE_BINDINGS_PATH")
+        .ok()
+        .is_some_and(|value| !value.trim().is_empty())
+    {
+        return None;
+    }
+
+    let path = default_dev_source_bindings_path();
+    path.exists().then(|| {
+        (
+            "SINEX_SOURCE_BINDINGS_PATH".to_string(),
+            path.display().to_string(),
+        )
+    })
+}
+
+fn append_core_source_bindings_env(env: &mut Vec<(String, String)>) {
+    if env
+        .iter()
+        .any(|(key, value)| key == "SINEX_SOURCE_BINDINGS_PATH" && !value.trim().is_empty())
+    {
+        return;
+    }
+
+    if let Some(binding_env) = source_bindings_env_override() {
+        env.push(binding_env);
+    }
+}
+
+fn source_binding_runtime_args(binding: &DevSourceBinding, run_identity: &str) -> Vec<String> {
+    let mut args = vec![
+        "scan-source-driver".to_string(),
+        "--source".to_string(),
+        binding.source_id.clone(),
+        "--service-name".to_string(),
+        run_identity.to_string(),
+    ];
+    append_source_binding_args(&mut args, binding.clone());
+    args
+}
+
+fn append_source_binding_args(args: &mut Vec<String>, binding: DevSourceBinding) {
+    if let Some(config) = binding.runtime_config
+        && !config.is_null()
+    {
+        args.push("--runtime-config".to_string());
+        args.push(config.to_string());
+    }
+
+    for extra_arg in binding.extra_args {
+        args.push("--extra-arg".to_string());
+        args.push(extra_arg);
+    }
+
+    let mut extra_env: Vec<(String, String)> = binding.extra_env.into_iter().collect();
+    extra_env.sort_by(|left, right| left.0.cmp(&right.0));
+    for (key, value) in extra_env {
+        args.push("--extra-env".to_string());
+        args.push(format!("{key}={value}"));
+    }
+}
+
+fn append_dev_source_binding_args(args: &mut Vec<String>, source_id: &str) {
+    let Some(binding) = load_dev_source_binding(source_id) else {
+        return;
+    };
+    append_source_binding_args(args, binding);
+}
+
 /// Build the runtime CLI arguments for the unified `sinexd` binary.
 ///
 /// Post-collapse, every short name (`sinexd`, automatons, source contracts)
@@ -56,13 +210,15 @@ fn make_instance_id(name: &str, prefix: Option<&str>) -> String {
 /// the default `serve` subcommand which runs the full supervisor.
 fn runtime_cli_args(_package: &str, run_identity: &str, source: Option<&str>) -> Vec<String> {
     source.map_or_else(Vec::new, |id| {
-        vec![
+        let mut args = vec![
             "scan-source-driver".to_string(),
             "--source".to_string(),
             id.to_string(),
             "--service-name".to_string(),
             run_identity.to_string(),
-        ]
+        ];
+        append_dev_source_binding_args(&mut args, id);
+        args
     })
 }
 
@@ -613,7 +769,7 @@ impl XtaskCommand for RunCommand {
                     .await
             }
             RunSubcommand::AllSources { instance_id } => {
-                self.run_bundle(SOURCE_TARGETS, instance_id.clone(), ctx)
+                self.run_source_bindings_bundle(instance_id.clone(), ctx)
                     .await
             }
             RunSubcommand::AllAutomatons { instance_id } => {
@@ -727,6 +883,12 @@ impl RunCommand {
 
     fn local_run_env_vars(&self) -> Vec<(String, String)> {
         crate::preflight::local_runtime_env_overrides()
+    }
+
+    fn core_bundle_env_vars(&self) -> Vec<(String, String)> {
+        let mut env = self.local_run_env_vars();
+        append_core_source_bindings_env(&mut env);
+        env
     }
 
     fn local_runtime_coordinates(&self) -> Result<LocalRuntimeCoordinates> {
@@ -884,6 +1046,112 @@ impl RunCommand {
             .await
     }
 
+    async fn run_source_bindings_bundle(
+        &self,
+        instance_prefix: Option<String>,
+        ctx: &CommandContext,
+    ) -> Result<CommandResult> {
+        let manifest = load_dev_source_bindings_manifest().ok_or_else(|| {
+            eyre!("No dev source bindings manifest found. Run `xtask infra dev-bindings` first.")
+        })?;
+        let excluded: Vec<String> = manifest
+            .bindings
+            .iter()
+            .filter(|binding| is_default_excluded_all_source_binding(&binding.source_id))
+            .map(|binding| binding.source_id.clone())
+            .collect();
+        let bindings = default_all_source_bindings_from_manifest(manifest);
+        if bindings.is_empty() {
+            bail!("dev source bindings manifest has no runnable bindings after default exclusions");
+        }
+
+        if !self.dry_run {
+            self.ensure_ready_staged(ctx)?;
+        }
+
+        let runtime = self.local_runtime_coordinates()?;
+        if self.dry_run {
+            let sources: Vec<&str> = bindings
+                .iter()
+                .map(|binding| binding.source_id.as_str())
+                .collect();
+            if ctx.is_human() {
+                println!("Would run source bindings: {sources:?}");
+                if !excluded.is_empty() {
+                    println!("Default-excluded source bindings: {excluded:?}");
+                }
+                runtime.print_human();
+            }
+            return Ok(CommandResult::success()
+                .with_detail("dry-run passed")
+                .with_data(serde_json::json!({
+                    "sources": sources,
+                    "excluded_sources": excluded,
+                    "runtime": runtime,
+                })));
+        }
+
+        self.print_local_runtime_coordinates(ctx)?;
+
+        if ctx.is_background() {
+            return self
+                .run_source_bindings_background(
+                    &bindings,
+                    &excluded,
+                    instance_prefix.as_deref(),
+                    runtime,
+                    ctx,
+                )
+                .await;
+        }
+
+        bail!(
+            "foreground all-sources is not supported for manifest-driven source bindings yet; use `xtask run all-sources --bg`"
+        )
+    }
+
+    async fn run_source_bindings_background(
+        &self,
+        bindings: &[DevSourceBinding],
+        excluded: &[String],
+        instance_prefix: Option<&str>,
+        runtime: LocalRuntimeCoordinates,
+        ctx: &CommandContext,
+    ) -> Result<CommandResult> {
+        let cfg = config();
+        let manager = JobManager::new(cfg.jobs_dir())?;
+        let runtime_env = self.local_run_env_vars();
+        self.build_packages(&["sinexd"], ctx).await?;
+
+        let binary_command = target_binary_path(self.release, "sinexd")
+            .to_string_lossy()
+            .into_owned();
+        let mut job_ids = Vec::with_capacity(bindings.len());
+        let mut sources = Vec::with_capacity(bindings.len());
+        for binding in bindings {
+            let default_service_name = default_source_binding_service_name(binding);
+            let run_identity = instance_prefix.map_or(default_service_name.clone(), |prefix| {
+                format!("{prefix}-{default_service_name}")
+            });
+            let args = source_binding_runtime_args(binding, &run_identity);
+            let job = manager.spawn_with_env(&binary_command, &args, &runtime_env)?;
+            job_ids.push(job.id);
+            sources.push(binding.source_id.clone());
+        }
+
+        Ok(CommandResult::success()
+            .with_message(format!(
+                "Started {} source bindings in background",
+                bindings.len()
+            ))
+            .with_data(serde_json::json!({
+                "sources": sources,
+                "excluded_sources": excluded,
+                "job_ids": job_ids,
+                "runtime": runtime,
+            })))
+    }
+
     async fn run_bundle_background(
         &self,
         binaries: &[&str],
@@ -893,7 +1161,11 @@ impl RunCommand {
         let cfg = config();
         let manager = JobManager::new(cfg.jobs_dir())?;
         let mut job_ids = Vec::new();
-        let runtime_env = self.local_run_env_vars();
+        let runtime_env = if binaries == CORE_TARGETS {
+            self.core_bundle_env_vars()
+        } else {
+            self.local_run_env_vars()
+        };
         let packages: Vec<&str> = binaries
             .iter()
             .map(|name| {
@@ -1376,7 +1648,11 @@ fn execute_list(ctx: &CommandContext) -> CommandResult {
 
         println!("\nBundles:");
         println!("  {:<25} {}", "core", CORE_TARGETS.join(", "));
-        println!("  {:<25} {}", "all-sources", SOURCE_TARGETS.join(", "));
+        println!(
+            "  {:<25} dev source bindings manifest (default excludes: {})",
+            "all-sources",
+            DEFAULT_EXCLUDED_ALL_SOURCE_BINDINGS.join(", ")
+        );
         println!(
             "  {:<25} {}",
             "all-automatons",

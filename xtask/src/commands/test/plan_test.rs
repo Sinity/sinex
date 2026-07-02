@@ -1,7 +1,5 @@
 use super::*;
-use crate::sandbox::orchestrator::{
-    RuntimeBinaryFreshnessReport, RuntimeBinaryFreshnessStatus,
-};
+use crate::sandbox::orchestrator::{RuntimeBinaryFreshnessReport, RuntimeBinaryFreshnessStatus};
 use crate::sandbox::sinex_test;
 use std::path::PathBuf;
 use std::time::SystemTime;
@@ -30,8 +28,8 @@ async fn runtime_binary_manifest_stale_after_build_is_cargo_authoritative()
 }
 
 #[sinex_test]
-async fn runtime_binary_source_stale_after_build_still_blocks()
--> ::xtask::sandbox::TestResult<()> {
+async fn runtime_binary_source_stale_after_build_still_blocks() -> ::xtask::sandbox::TestResult<()>
+{
     let report = stale_runtime_report("crate/sinexd/src/main.rs");
 
     assert!(!runtime_binary_manifest_only_stale_after_build(&report));
@@ -242,8 +240,7 @@ async fn runtime_binary_requirements_skip_unrelated_package_tests()
 }
 
 #[sinex_test]
-async fn runtime_binary_requirements_skip_lib_only_targets() -> ::xtask::sandbox::TestResult<()>
-{
+async fn runtime_binary_requirements_skip_lib_only_targets() -> ::xtask::sandbox::TestResult<()> {
     let plan = NextestExecutionPlan {
         runner_packages: vec!["sinexd".to_string()],
         excluded_packages: Vec::new(),
@@ -290,8 +287,7 @@ async fn runtime_binary_requirements_skip_runtime_independent_sinexd_test_target
 }
 
 #[sinex_test]
-async fn test_default_heavy_test_threads_caps_parallelism() -> ::xtask::sandbox::TestResult<()>
-{
+async fn test_default_heavy_test_threads_caps_parallelism() -> ::xtask::sandbox::TestResult<()> {
     assert_eq!(default_heavy_test_threads(1), 1);
     assert_eq!(default_heavy_test_threads(2), 2);
     assert_eq!(default_heavy_test_threads(4), 4);

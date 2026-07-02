@@ -20,8 +20,7 @@ async fn test_event_spec_builder() -> ::xtask::sandbox::TestResult<()> {
 }
 
 #[sinex_test]
-async fn test_event_spec_from_typed_captures_source_and_type()
--> ::xtask::sandbox::TestResult<()> {
+async fn test_event_spec_from_typed_captures_source_and_type() -> ::xtask::sandbox::TestResult<()> {
     let spec = EventSpec::from_typed(&FileCreatedPayload::test_default("/test"))?;
     assert_eq!(spec.source, FileCreatedPayload::SOURCE.as_static_str());
     assert_eq!(

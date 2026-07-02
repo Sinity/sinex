@@ -16,23 +16,18 @@ impl JetStreamConsumer {
 
         info!("Bootstrapping JetStream streams");
 
-        // Events stream - durable event log for automata replay.
-        // Keep enough history for downstream catch-up, but bound the store so
-        // the event bus does not become the primary archive.
-        self.js
-            .create_or_update_stream(jetstream::stream::Config {
-                name: self.topology.events_stream.to_string(),
-                subjects: vec![self.topology.events_subject.to_string()],
-                retention: jetstream::stream::RetentionPolicy::Limits,
-                max_messages: 2_000_000,
-                max_bytes: JETSTREAM_BOOTSTRAP_MAX_BYTES,
-                max_age: Duration::from_hours(72), // 3 days
-                storage: jetstream::stream::StorageType::File,
-                discard: DiscardPolicy::New,
-                ..Default::default()
-            })
-            .await
-            .map_err(|e| SinexError::network("Failed to create events stream").with_source(e))?;
+        // Events stream - bounded delivery buffer for the event engine.
+        // Source material/archive are the replay authority, not JetStream. A
+        // full raw stream must not reject fresh source or self-observation
+        // publishes: with discard: New, a saturated dev stream wedges ingestion
+        // with "maximum bytes exceeded" while the database already holds older
+        // admitted interpretations. Discard oldest when the bounded buffer is
+        // full so current work continues flowing.
+        crate::runtime::jetstream_streams::ensure_raw_events_stream_for_topology(
+            &self.js,
+            &self.topology,
+        )
+        .await?;
 
         // Confirmed-events stream — the FINAL persisted+redacted events that
         // automata and the SSE bus consume directly. Carries full event payloads
@@ -41,6 +36,22 @@ impl JetStreamConsumer {
         // durable consumer). This replaces the raw-provisional-buffer + watermark
         // + Postgres-refetch path: automata receive authoritative redacted events
         // with no DB round-trip and no commit/confirmation visibility race.
+        //
+        // discard: Old (NOT New). Every message here is an event already durably
+        // persisted in Postgres, so this stream is a bounded *delivery bus*, never
+        // an archive — Postgres is the archive. It must NEVER reject a publish:
+        // the durability gate acks a raw event only after its confirmed-event
+        // publish succeeds (`gate raw-ack on confirmed-event publish`), so a full
+        // stream with discard: New rejects the publish, the raw event is never
+        // acked, JetStream redelivers it, it re-persists (ON CONFLICT no-op) and
+        // re-publishes — an unbounded redelivery storm that wedges the whole
+        // pipeline (observed: tens of thousands of "maximum messages exceeded"
+        // and a stalled engine). discard: Old makes the publish always succeed by
+        // dropping the oldest already-persisted confirmed event; a consumer that
+        // falls >max_messages behind loses that tail (recoverable from Postgres),
+        // which is a far better failure mode than jamming production. The ideal
+        // shape is RetentionPolicy::Interest (drain once every durable automaton
+        // has acked, retain only for a lagging consumer) — tracked as follow-up.
         self.js
             .create_or_update_stream(jetstream::stream::Config {
                 name: self.topology.confirmed_events_stream.to_string(),
@@ -50,7 +61,7 @@ impl JetStreamConsumer {
                 max_bytes: JETSTREAM_BOOTSTRAP_MAX_BYTES,
                 max_age: Duration::from_hours(72), // 3 days
                 storage: jetstream::stream::StorageType::File,
-                discard: DiscardPolicy::New,
+                discard: DiscardPolicy::Old,
                 ..Default::default()
             })
             .await

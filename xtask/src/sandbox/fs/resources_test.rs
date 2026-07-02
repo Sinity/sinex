@@ -40,8 +40,7 @@ async fn test_short_test_temp_prefix_keeps_unix_socket_paths_short()
 }
 
 #[sinex_test]
-async fn test_workspace_test_temp_root_honors_env_override() -> ::xtask::sandbox::TestResult<()>
-{
+async fn test_workspace_test_temp_root_honors_env_override() -> ::xtask::sandbox::TestResult<()> {
     let temp_dir = tempfile::tempdir()?;
     let override_root = temp_dir.path().join("sinex-test-root");
     let _guard = EnvGuard::set_single("SINEX_TEST_TMPDIR", override_root.as_os_str());
@@ -113,8 +112,7 @@ async fn test_create_test_binary_file() -> ::xtask::sandbox::TestResult<()> {
     let temp_dir = temp_dir()?;
     let binary_content = b"Binary test content\x00\x01\x02\xFF";
 
-    let file_path =
-        create_test_binary_file(temp_dir.path(), "binary_test.bin", binary_content)?;
+    let file_path = create_test_binary_file(temp_dir.path(), "binary_test.bin", binary_content)?;
 
     // File should exist
     assert!(file_path.exists());

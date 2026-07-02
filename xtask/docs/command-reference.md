@@ -26,6 +26,7 @@ Regenerate with `xtask docs sync` or `xtask docs command-reference`; verify drif
 | `check` | Run the fast workspace verification pipeline |
 | `test` | Run the repo's primary nextest-backed test workflows |
 | `build` | Build workspace packages while capturing compiler diagnostics |
+| `version` | Print xtask build and git version metadata |
 | `run` | Run command for binary lifecycle management |
 | `infra` | Manage local infrastructure (Postgres, NATS, VMs) |
 | `jobs` | Inspect and manage background xtask jobs |
@@ -86,6 +87,7 @@ Run the fast workspace verification pipeline
 | `--lint-breakdown` | no | no | Show breakdown of warning counts by lint code (top 10) |
 | `--by-file` | no | no | Show breakdown of warning counts by file path (top 20) |
 | `--nix` | no | no | Run `nix flake check --no-build` (evaluation only, ~2-5s). Included in --full. Fails if `nix` is unavailable or unhealthy |
+| `--allow-contended-host` | no | no | Allow broad checks to start even when host PSI is already severe |
 | `--skip-preflight` | no | no | Internal: child checks invoked by `--changed-strict` inherit the parent compile-ready environment and must not run their own preflight |
 | `--changed-strict` | yes | no | API drift guard: check only packages that own Rust files changed between HEAD and the merge-base of the given ref (default `origin/master`). Emits a JSON report of changed files, affected packages, and per-package results. Non-zero exit if any per-package check fails. This flag is opt-in and does not alter the default check behaviour |
 
@@ -118,6 +120,7 @@ Run the repo's primary nextest-backed test workflows
 | `-a, --all` | no | no | Run ALL packages (disables affected mode default) |
 | `--impact-mode` | yes | no | Impact planner mode for bare `xtask test` |
 | `--no-reuse` | no | no | Bypass exact proof reuse for this invocation |
+| `--allow-contended-host` | no | no | Allow broad tests to start even when host PSI is already severe |
 | `--update-snapshots` | no | no | Update insta snapshots (sets `INSTA_UPDATE=always`) |
 | `args` | yes | no | Arguments passed to the test binary (not supported by nextest directly, usually) |
 
@@ -155,6 +158,7 @@ Run benchmarks with optional contract enforcement
 | `--history-db` | yes | no | History DB path for benchmark series |
 | `--dry-run` | no | no | Dry run (compile only, no test execution) |
 | `--continue-on-fail` | no | no | Continue running benchmark scenarios after a scenario fails |
+| `--allow-contended-host` | no | no | Allow DB benchmark runs while other heavy workloads or high IO pressure are active |
 | `--verbose` | no | no | Verbose output |
 
 
@@ -229,6 +233,11 @@ Build workspace packages while capturing compiler diagnostics
 | `-r, --release` | no | no | Build in release mode |
 | `-a, --all` | no | no | Build ALL packages (disables affected mode default) |
 | `--dry-run` | no | no | Print what would happen without building |
+
+
+## `xtask version`
+
+Print xtask build and git version metadata
 
 
 ## `xtask run`
@@ -327,6 +336,8 @@ Manage local infrastructure (Postgres, NATS, VMs)
 | `tls-init-gateway` | Generate gateway TLS certificates using rcgen |
 | `vm` | Manage VM integration |
 | `flake-stage` | Stage a flake-safe checkout copy for local Nix builds and deploys |
+| `dev-bindings` | Generate the dogfood dev-loop source-bindings manifest |
+| `runtime-target` | Write the checkout-local runtime target descriptor for sinexctl/MCP clients |
 
 ### `xtask infra start`
 
@@ -523,6 +534,34 @@ Stage a flake-safe checkout copy for local Nix builds and deploys
 | `--force` | no | no | Replace an existing output directory instead of failing |
 
 
+### `xtask infra dev-bindings`
+
+Generate the dogfood dev-loop source-bindings manifest
+
+**Arguments**
+
+| Flag | Value | Required | Description |
+|---|---|---|---|
+| `--output` | yes | no | Output manifest path. Defaults to .agent/dev/dev-source-bindings.json |
+| `--stdout` | no | no | Print the manifest JSON to stdout instead of writing a file |
+| `--check` | no | no | Exit non-zero if the output file differs from the generated manifest |
+| `--watch-root` | yes | no | Root to watch and scan for git/fs sources. Defaults to the workspace root |
+| `--source` | yes | no | Include only the named source id. Repeat for multiple sources |
+| `--exclude-source` | yes | no | Exclude the named source id from the generated manifest. Repeat for multiple sources |
+
+
+### `xtask infra runtime-target`
+
+Write the checkout-local runtime target descriptor for sinexctl/MCP clients
+
+**Arguments**
+
+| Flag | Value | Required | Description |
+|---|---|---|---|
+| `--output` | yes | no | Output descriptor path. Defaults to .sinex/state/runtime-target.json |
+| `--stdout` | no | no | Print the descriptor JSON to stdout instead of writing a file |
+
+
 ## `xtask jobs`
 
 Inspect and manage background xtask jobs
@@ -585,6 +624,7 @@ Show full output of a job
 | `id` | yes | yes |  |
 | `--stdout` | no | no | Show stdout explicitly (default) |
 | `--stderr` | no | no | Show stderr instead of stdout |
+| `--stream` | yes | no | Show the selected output stream (`stdout` or `stderr`) |
 
 
 ### `xtask jobs wait`
@@ -1348,8 +1388,8 @@ Current host pressure snapshot, with Sinnix observability join when available
 | Flag | Value | Required | Description |
 |---|---|---|---|
 | `--observe` | no | no | Also run sinnix-observe for a host-level attribution report when available |
-| `--top-swap` | no | no | Show current processes with nonzero swap residency |
 | `--top-io` | no | no | Sample /proc/PID/io and show the processes doing the most physical IO |
+| `--top-swap` | no | no | Show processes currently occupying the most swap |
 | `--sample-ms` | yes | no | Sampling window for --top-io, in milliseconds |
 | `--since` | yes | no | Time window passed to sinnix-observe --since |
 | `--duration` | yes | no | Duration passed to sinnix-observe --duration |

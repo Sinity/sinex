@@ -3,6 +3,8 @@
 use clap::Subcommand;
 use color_eyre::eyre::{Result, WrapErr, bail, eyre};
 use serde::Serialize;
+use serde_json::{Value, json};
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
@@ -14,6 +16,10 @@ use crate::infra::flake_stage::stage_checkout_for_flake;
 use crate::infra::stack::{self, AllCheckoutsStatus, StackConfig, StackStatus};
 use crate::infra::state::CheckoutState;
 use crate::jobs::JobManager;
+use crate::runtime_target::{
+    checkout_dev_gateway_url, checkout_runtime_target, checkout_runtime_target_path,
+    checkout_runtime_target_token_file,
+};
 
 /// Infra command - manages the isolated development environment.
 pub struct InfraCommand {
@@ -118,6 +124,40 @@ pub enum InfraSubcommand {
         #[arg(long)]
         force: bool,
     },
+    /// Generate the dogfood dev-loop source-bindings manifest
+    DevBindings {
+        /// Output manifest path. Defaults to .agent/dev/dev-source-bindings.json.
+        #[arg(long)]
+        output: Option<PathBuf>,
+        /// Print the manifest JSON to stdout instead of writing a file.
+        #[arg(long, conflicts_with = "check")]
+        stdout: bool,
+        /// Exit non-zero if the output file differs from the generated manifest.
+        #[arg(long)]
+        check: bool,
+        /// Root to watch and scan for git/fs sources. Defaults to the workspace root.
+        #[arg(long)]
+        watch_root: Option<PathBuf>,
+        /// Include only the named source id. Repeat for multiple sources.
+        #[arg(
+            long = "source",
+            value_name = "SOURCE_ID",
+            conflicts_with = "exclude_source"
+        )]
+        source: Vec<String>,
+        /// Exclude the named source id from the generated manifest. Repeat for multiple sources.
+        #[arg(long = "exclude-source", value_name = "SOURCE_ID")]
+        exclude_source: Vec<String>,
+    },
+    /// Write the checkout-local runtime target descriptor for sinexctl/MCP clients
+    RuntimeTarget {
+        /// Output descriptor path. Defaults to .sinex/state/runtime-target.json.
+        #[arg(long)]
+        output: Option<PathBuf>,
+        /// Print the descriptor JSON to stdout instead of writing a file.
+        #[arg(long)]
+        stdout: bool,
+    },
 }
 
 impl XtaskCommand for InfraCommand {
@@ -189,6 +229,25 @@ impl XtaskCommand for InfraCommand {
             }
             InfraSubcommand::FlakeStage { output_dir, force } => {
                 execute_flake_stage(output_dir.as_deref(), *force, ctx)
+            }
+            InfraSubcommand::DevBindings {
+                output,
+                stdout,
+                check,
+                watch_root,
+                source,
+                exclude_source,
+            } => execute_dev_bindings(
+                output.as_deref(),
+                *stdout,
+                *check,
+                watch_root.as_deref(),
+                source,
+                exclude_source,
+                ctx,
+            ),
+            InfraSubcommand::RuntimeTarget { output, stdout } => {
+                execute_runtime_target(output.as_deref(), *stdout, ctx)
             }
         }
     }
@@ -352,6 +411,74 @@ fn execute_tls_init_gateway(
 }
 
 #[derive(Debug, Clone, Serialize)]
+struct RuntimeTargetWriteResult {
+    descriptor_path: Option<PathBuf>,
+    token_file: PathBuf,
+    gateway_url: String,
+}
+
+fn execute_runtime_target(
+    output: Option<&Path>,
+    stdout: bool,
+    ctx: &CommandContext,
+) -> Result<CommandResult> {
+    ctx.heading("infra runtime-target");
+
+    let token_file = checkout_runtime_target_token_file();
+    if let Some(parent) = token_file.parent() {
+        std::fs::create_dir_all(parent)
+            .wrap_err_with(|| format!("create token directory {}", parent.display()))?;
+    }
+    let token = crate::preflight::default_dev_rpc_token();
+    std::fs::write(&token_file, format!("{token}\n"))
+        .wrap_err_with(|| format!("write dev API token {}", token_file.display()))?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&token_file, std::fs::Permissions::from_mode(0o600))
+            .wrap_err_with(|| format!("chmod dev API token {}", token_file.display()))?;
+    }
+
+    let target = checkout_runtime_target(xtask_config())?;
+    let json = serde_json::to_string_pretty(&target)?;
+    let descriptor_path = if stdout {
+        println!("{json}");
+        None
+    } else {
+        let path = output
+            .map(Path::to_path_buf)
+            .unwrap_or_else(checkout_runtime_target_path);
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent)
+                .wrap_err_with(|| format!("create descriptor directory {}", parent.display()))?;
+        }
+        std::fs::write(&path, format!("{json}\n"))
+            .wrap_err_with(|| format!("write runtime target {}", path.display()))?;
+        Some(path)
+    };
+
+    let data = RuntimeTargetWriteResult {
+        descriptor_path: descriptor_path.clone(),
+        token_file,
+        gateway_url: target
+            .gateway
+            .base_url
+            .clone()
+            .unwrap_or_else(|| checkout_dev_gateway_url().to_string()),
+    };
+    let mut result = CommandResult::success()
+        .with_message("Runtime target descriptor ready")
+        .with_data(json!(data));
+    if let Some(path) = descriptor_path {
+        result = result.with_detail(format!(
+            "Use: sinexctl --runtime-target {} <command>",
+            path.display()
+        ));
+    }
+    Ok(result)
+}
+
+#[derive(Debug, Clone, Serialize)]
 struct FlakeStageResult {
     staged_root: String,
     flake_uri: String,
@@ -408,6 +535,355 @@ fn execute_flake_stage(
     }
 
     Ok(command_result)
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+struct DevSourceBindingsManifest {
+    #[serde(rename = "_comment")]
+    comment: String,
+    bindings: Vec<DevSourceBinding>,
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+struct DevSourceBinding {
+    source_id: String,
+    instance_idx: u32,
+    service_name: String,
+    runtime_config: Value,
+    extra_args: Vec<String>,
+    extra_env: BTreeMap<String, String>,
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+struct DevBindingsResult {
+    output: Option<String>,
+    env: String,
+    binding_count: usize,
+    sources: Vec<String>,
+    manifest: DevSourceBindingsManifest,
+}
+
+fn default_dev_bindings_output_path() -> PathBuf {
+    crate::config::workspace_root()
+        .join(".agent")
+        .join("dev")
+        .join("dev-source-bindings.json")
+}
+
+fn dev_source_binding(
+    source_id: &str,
+    instance_idx: u32,
+    runtime_config: Value,
+) -> DevSourceBinding {
+    DevSourceBinding {
+        source_id: source_id.to_string(),
+        instance_idx,
+        service_name: format!("source-driver-{source_id}-{instance_idx}"),
+        runtime_config,
+        extra_args: Vec::new(),
+        extra_env: BTreeMap::new(),
+    }
+}
+
+fn generate_dev_source_bindings_manifest(watch_root: &Path) -> DevSourceBindingsManifest {
+    let home = dirs::home_dir().unwrap_or_else(|| PathBuf::from("/home/sinity"));
+    generate_dev_source_bindings_manifest_for_home_and_exports(
+        watch_root,
+        &home,
+        default_browser_history_dump_path().as_deref(),
+        default_raindrop_bookmarks_export_path().as_deref(),
+    )
+}
+
+#[cfg(test)]
+fn generate_dev_source_bindings_manifest_for_home(
+    watch_root: &Path,
+    home: &Path,
+) -> DevSourceBindingsManifest {
+    generate_dev_source_bindings_manifest_for_home_and_exports(watch_root, home, None, None)
+}
+
+fn default_browser_history_dump_path() -> Option<PathBuf> {
+    let path = PathBuf::from("/realm/data/captures/webhistory/gestalt/derived/full_history.ndjson");
+    path.exists().then_some(path)
+}
+
+fn default_raindrop_bookmarks_export_path() -> Option<PathBuf> {
+    let path = PathBuf::from("/realm/data/exports/raindrop/processed/bookmarks.csv");
+    path.exists().then_some(path)
+}
+
+fn generate_dev_source_bindings_manifest_for_home_and_exports(
+    watch_root: &Path,
+    home: &Path,
+    browser_history_dump: Option<&Path>,
+    raindrop_bookmarks_export: Option<&Path>,
+) -> DevSourceBindingsManifest {
+    let zsh_history = home.join(".zsh_history");
+    let atuin_history = home.join(".local/share/atuin/history.db");
+    let qutebrowser_history = home.join(".local/share/qutebrowser/history.sqlite");
+    let watch_root = watch_root.to_string_lossy().to_string();
+
+    let mut bindings = Vec::new();
+    if zsh_history.exists() {
+        bindings.push(dev_source_binding(
+            "terminal.zsh-history",
+            1,
+            json!({
+                "path": zsh_history,
+                "skip_empty": true,
+            }),
+        ));
+    }
+    bindings.push(dev_source_binding(
+        "terminal.atuin-history",
+        1,
+        json!({
+            "path": atuin_history,
+            "query": "history",
+            "table": "history",
+            "immutable": false,
+            "read_only": false,
+        }),
+    ));
+    if qutebrowser_history.exists() {
+        bindings.push(dev_source_binding(
+            "browser.history",
+            1,
+            json!({
+                "primary": {
+                    "path": qutebrowser_history,
+                    "query": "SELECT rowid, * FROM History",
+                    "table": "History",
+                    "read_only": true,
+                    "immutable": false
+                },
+                "secondary": {
+                    "path": browser_history_dump.unwrap_or_else(|| Path::new("")),
+                    "skip_empty": true
+                },
+                "interleaved": false
+            }),
+        ));
+    }
+    if let Some(raindrop_bookmarks_export) = raindrop_bookmarks_export {
+        bindings.push(dev_source_binding(
+            "raindrop-bookmarks",
+            1,
+            json!({
+                "path": raindrop_bookmarks_export,
+                "source_identifier": "raindrop-bookmarks",
+            }),
+        ));
+    }
+    bindings.push(dev_source_binding(
+        "git-commit-history",
+        1,
+        json!({
+            "path": watch_root,
+            "continuous_poll_interval_secs": 30,
+        }),
+    ));
+    bindings.push(dev_source_binding(
+        "fs",
+        1,
+        json!({
+            "watch_paths": [watch_root],
+            "recursive": true,
+            "ignored_directory_names": [
+                "target",
+                ".git",
+                ".sinex",
+                ".direnv",
+                ".claude",
+                "node_modules",
+                "result",
+            ],
+            "ignored_file_suffixes": [
+                "-wal",
+                "-shm",
+                "-journal",
+                ".tmp",
+                ".swp",
+                ".swo",
+                "~",
+                ".lock",
+                ".o",
+                ".d",
+                ".rmeta",
+            ],
+            "ignored_file_substrings": [
+                ".tmp.",
+                ".swp",
+                ".swx",
+                ".goutputstream-",
+            ],
+            "max_capture_bytes": 1048576,
+        }),
+    ));
+    bindings.push(dev_source_binding(
+        "system.journald",
+        1,
+        json!({
+            "units": [],
+            "start_at_now_without_cursor": true,
+        }),
+    ));
+
+    DevSourceBindingsManifest {
+        comment: "Generated by `xtask infra dev-bindings`. Point SINEX_SOURCE_BINDINGS_PATH at this file before `xtask run core` to run the fast dogfood dev loop with real terminal/git/fs/journald/browser sources when their local materials exist.".to_string(),
+        bindings,
+    }
+}
+
+fn filter_dev_source_bindings_manifest(
+    mut manifest: DevSourceBindingsManifest,
+    include_sources: &[String],
+    exclude_sources: &[String],
+) -> Result<DevSourceBindingsManifest> {
+    if include_sources.is_empty() && exclude_sources.is_empty() {
+        return Ok(manifest);
+    }
+
+    let available = manifest
+        .bindings
+        .iter()
+        .map(|binding| binding.source_id.as_str())
+        .collect::<BTreeSet<_>>();
+    validate_dev_binding_filter("source", include_sources, &available)?;
+    validate_dev_binding_filter("exclude-source", exclude_sources, &available)?;
+
+    if !include_sources.is_empty() {
+        let include = include_sources
+            .iter()
+            .map(String::as_str)
+            .collect::<BTreeSet<_>>();
+        manifest
+            .bindings
+            .retain(|binding| include.contains(binding.source_id.as_str()));
+    }
+    if !exclude_sources.is_empty() {
+        let exclude = exclude_sources
+            .iter()
+            .map(String::as_str)
+            .collect::<BTreeSet<_>>();
+        manifest
+            .bindings
+            .retain(|binding| !exclude.contains(binding.source_id.as_str()));
+    }
+
+    Ok(manifest)
+}
+
+fn validate_dev_binding_filter(
+    flag: &str,
+    requested: &[String],
+    available: &BTreeSet<&str>,
+) -> Result<()> {
+    let unknown = requested
+        .iter()
+        .filter(|source| !available.contains(source.as_str()))
+        .map(String::as_str)
+        .collect::<Vec<_>>();
+    if unknown.is_empty() {
+        return Ok(());
+    }
+
+    let available = available.iter().copied().collect::<Vec<_>>().join(", ");
+    Err(eyre!(
+        "unknown --{flag} value(s): {}; available dev sources: {}",
+        unknown.join(", "),
+        available
+    ))
+}
+
+fn execute_dev_bindings(
+    output: Option<&Path>,
+    stdout: bool,
+    check: bool,
+    watch_root: Option<&Path>,
+    include_sources: &[String],
+    exclude_sources: &[String],
+    ctx: &CommandContext,
+) -> Result<CommandResult> {
+    ctx.heading("infra dev-bindings");
+
+    let output = output
+        .map(Path::to_path_buf)
+        .unwrap_or_else(default_dev_bindings_output_path);
+    let watch_root = watch_root
+        .map(Path::to_path_buf)
+        .unwrap_or_else(crate::config::workspace_root);
+    let manifest = filter_dev_source_bindings_manifest(
+        generate_dev_source_bindings_manifest(&watch_root),
+        include_sources,
+        exclude_sources,
+    )?;
+    let manifest_json = serde_json::to_string_pretty(&manifest)?;
+    let sources = manifest
+        .bindings
+        .iter()
+        .map(|binding| binding.source_id.clone())
+        .collect::<Vec<_>>();
+
+    if stdout {
+        println!("{manifest_json}");
+        return Ok(CommandResult::success()
+            .with_message("Dev source-bindings manifest generated")
+            .with_silent()
+            .with_duration(ctx.elapsed()));
+    }
+
+    if check {
+        let existing = std::fs::read_to_string(&output).with_context(|| {
+            format!("read dev source-bindings manifest at {}", output.display())
+        })?;
+        if existing.trim_end() != manifest_json {
+            return Ok(CommandResult::failure(crate::output::StructuredError {
+                code: "DEV_BINDINGS_STALE".to_string(),
+                message: format!("{} is not up to date", output.display()),
+                location: Some("infra::dev-bindings".to_string()),
+                suggestion: Some(format!(
+                    "run `xtask infra dev-bindings --output {}`",
+                    output.display()
+                )),
+            }));
+        }
+        return Ok(CommandResult::success()
+            .with_message("Dev source-bindings manifest is up to date")
+            .with_detail(format!("Output: {}", output.display()))
+            .with_data(serde_json::to_value(DevBindingsResult {
+                output: Some(output.display().to_string()),
+                env: format!("SINEX_SOURCE_BINDINGS_PATH={}", output.display()),
+                binding_count: manifest.bindings.len(),
+                sources,
+                manifest,
+            })?)
+            .with_duration(ctx.elapsed()));
+    }
+
+    if let Some(parent) = output.parent() {
+        std::fs::create_dir_all(parent)
+            .with_context(|| format!("create dev source-bindings dir {}", parent.display()))?;
+    }
+    std::fs::write(&output, format!("{manifest_json}\n"))
+        .with_context(|| format!("write dev source-bindings manifest at {}", output.display()))?;
+
+    Ok(CommandResult::success()
+        .with_message("Dev source-bindings manifest written")
+        .with_detail(format!("Output: {}", output.display()))
+        .with_detail(format!(
+            "Run with: SINEX_SOURCE_BINDINGS_PATH={} xtask run core",
+            output.display()
+        ))
+        .with_data(serde_json::to_value(DevBindingsResult {
+            output: Some(output.display().to_string()),
+            env: format!("SINEX_SOURCE_BINDINGS_PATH={}", output.display()),
+            binding_count: manifest.bindings.len(),
+            sources,
+            manifest,
+        })?)
+        .with_duration(ctx.elapsed()))
 }
 
 fn execute_stop(
@@ -1322,4 +1798,259 @@ fn execute_logs(
     }
 
     Ok(CommandResult::success())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use xtask_macros::sinex_test;
+
+    #[sinex_test]
+    async fn dev_bindings_manifest_contains_dogfood_source_families()
+    -> crate::sandbox::prelude::TestResult<()> {
+        let home = tempfile::tempdir()?;
+        std::fs::write(home.path().join(".zsh_history"), ": 1:0;echo test\n")?;
+        let qutebrowser_dir = home.path().join(".local/share/qutebrowser");
+        std::fs::create_dir_all(&qutebrowser_dir)?;
+        std::fs::write(qutebrowser_dir.join("history.sqlite"), "")?;
+        let manifest = generate_dev_source_bindings_manifest_for_home(
+            Path::new("/workspace/sinex"),
+            home.path(),
+        );
+        let source_ids = manifest
+            .bindings
+            .iter()
+            .map(|binding| binding.source_id.as_str())
+            .collect::<Vec<_>>();
+
+        assert_eq!(
+            source_ids,
+            vec![
+                "terminal.zsh-history",
+                "terminal.atuin-history",
+                "browser.history",
+                "git-commit-history",
+                "fs",
+                "system.journald",
+            ]
+        );
+        assert!(
+            manifest.comment.contains("SINEX_SOURCE_BINDINGS_PATH"),
+            "manifest comment should include the env var needed to start the dogfood loop"
+        );
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn dev_bindings_manifest_skips_absent_zsh_history()
+    -> crate::sandbox::prelude::TestResult<()> {
+        let home = tempfile::tempdir()?;
+        let manifest = generate_dev_source_bindings_manifest_for_home(
+            Path::new("/workspace/sinex"),
+            home.path(),
+        );
+        let source_ids = manifest
+            .bindings
+            .iter()
+            .map(|binding| binding.source_id.as_str())
+            .collect::<Vec<_>>();
+
+        assert_eq!(
+            source_ids,
+            vec![
+                "terminal.atuin-history",
+                "git-commit-history",
+                "fs",
+                "system.journald",
+            ]
+        );
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn dev_bindings_manifest_adds_browser_history_when_material_exists()
+    -> crate::sandbox::prelude::TestResult<()> {
+        let home = tempfile::tempdir()?;
+        let qutebrowser_dir = home.path().join(".local/share/qutebrowser");
+        std::fs::create_dir_all(&qutebrowser_dir)?;
+        let qutebrowser_history = qutebrowser_dir.join("history.sqlite");
+        std::fs::write(&qutebrowser_history, "")?;
+        let dump_dir = tempfile::tempdir()?;
+        let dump_path = dump_dir.path().join("full_history.ndjson");
+        std::fs::write(&dump_path, "{}\n")?;
+
+        let manifest = generate_dev_source_bindings_manifest_for_home_and_exports(
+            Path::new("/workspace/sinex"),
+            home.path(),
+            Some(&dump_path),
+            None,
+        );
+        let browser = manifest
+            .bindings
+            .iter()
+            .find(|binding| binding.source_id == "browser.history")
+            .expect("browser binding exists");
+
+        assert_eq!(
+            browser.runtime_config["primary"]["path"],
+            qutebrowser_history.to_string_lossy().as_ref()
+        );
+        assert_eq!(
+            browser.runtime_config["primary"]["query"],
+            "SELECT rowid, * FROM History"
+        );
+        assert_eq!(browser.runtime_config["primary"]["table"], "History");
+        assert_eq!(browser.runtime_config["primary"]["read_only"], true);
+        assert_eq!(browser.runtime_config["primary"]["immutable"], false);
+        assert_eq!(
+            browser.runtime_config["secondary"]["path"],
+            dump_path.to_string_lossy().as_ref()
+        );
+        assert_eq!(browser.runtime_config["secondary"]["skip_empty"], true);
+        assert_eq!(browser.runtime_config["interleaved"], false);
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn dev_bindings_manifest_adds_raindrop_bookmarks_when_export_exists()
+    -> crate::sandbox::prelude::TestResult<()> {
+        let home = tempfile::tempdir()?;
+        let export_dir = tempfile::tempdir()?;
+        let export_path = export_dir.path().join("bookmarks.csv");
+        std::fs::write(
+            &export_path,
+            "id,url,created,favorite\n1,https://example.com,2026-01-01T00:00:00Z,false\n",
+        )?;
+
+        let manifest = generate_dev_source_bindings_manifest_for_home_and_exports(
+            Path::new("/workspace/sinex"),
+            home.path(),
+            None,
+            Some(&export_path),
+        );
+        let raindrop = manifest
+            .bindings
+            .iter()
+            .find(|binding| binding.source_id == "raindrop-bookmarks")
+            .expect("raindrop binding exists");
+
+        assert_eq!(
+            raindrop.runtime_config["path"],
+            export_path.to_string_lossy().as_ref()
+        );
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn dev_bindings_manifest_can_focus_selected_sources()
+    -> crate::sandbox::prelude::TestResult<()> {
+        let home = tempfile::tempdir()?;
+        let export_dir = tempfile::tempdir()?;
+        let export_path = export_dir.path().join("bookmarks.csv");
+        std::fs::write(&export_path, "id,url,created,favorite\n")?;
+        let manifest = generate_dev_source_bindings_manifest_for_home_and_exports(
+            Path::new("/workspace/sinex"),
+            home.path(),
+            None,
+            Some(&export_path),
+        );
+
+        let focused = filter_dev_source_bindings_manifest(
+            manifest,
+            &[String::from("raindrop-bookmarks")],
+            &[],
+        )?;
+
+        let source_ids = focused
+            .bindings
+            .iter()
+            .map(|binding| binding.source_id.as_str())
+            .collect::<Vec<_>>();
+        assert_eq!(source_ids, vec!["raindrop-bookmarks"]);
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn dev_bindings_manifest_can_exclude_heavy_sources()
+    -> crate::sandbox::prelude::TestResult<()> {
+        let home = tempfile::tempdir()?;
+        let qutebrowser_dir = home.path().join(".local/share/qutebrowser");
+        std::fs::create_dir_all(&qutebrowser_dir)?;
+        std::fs::write(qutebrowser_dir.join("history.sqlite"), "")?;
+        let manifest = generate_dev_source_bindings_manifest_for_home(
+            Path::new("/workspace/sinex"),
+            home.path(),
+        );
+
+        let filtered =
+            filter_dev_source_bindings_manifest(manifest, &[], &[String::from("browser.history")])?;
+
+        assert!(
+            filtered
+                .bindings
+                .iter()
+                .all(|binding| binding.source_id != "browser.history")
+        );
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn dev_bindings_manifest_rejects_unknown_source_filter()
+    -> crate::sandbox::prelude::TestResult<()> {
+        let home = tempfile::tempdir()?;
+        let manifest = generate_dev_source_bindings_manifest_for_home(
+            Path::new("/workspace/sinex"),
+            home.path(),
+        );
+
+        let error =
+            filter_dev_source_bindings_manifest(manifest, &[String::from("missing.source")], &[])
+                .expect_err("unknown source filters must fail loudly");
+
+        assert!(format!("{error:#}").contains("unknown --source value"));
+        assert!(format!("{error:#}").contains("available dev sources"));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn dev_bindings_manifest_uses_watch_root_for_git_and_fs()
+    -> crate::sandbox::prelude::TestResult<()> {
+        let home = tempfile::tempdir()?;
+        let manifest = generate_dev_source_bindings_manifest_for_home(
+            Path::new("/workspace/sinex"),
+            home.path(),
+        );
+        let git = manifest
+            .bindings
+            .iter()
+            .find(|binding| binding.source_id == "git-commit-history")
+            .expect("git binding exists");
+        let fs = manifest
+            .bindings
+            .iter()
+            .find(|binding| binding.source_id == "fs")
+            .expect("fs binding exists");
+
+        assert_eq!(git.runtime_config["path"], "/workspace/sinex");
+        assert_eq!(fs.runtime_config["watch_paths"][0], "/workspace/sinex");
+        assert_eq!(git.runtime_config["continuous_poll_interval_secs"], 30);
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn dev_bindings_manifest_uses_stable_service_names()
+    -> crate::sandbox::prelude::TestResult<()> {
+        let manifest = generate_dev_source_bindings_manifest(Path::new("/workspace/sinex"));
+
+        for binding in &manifest.bindings {
+            assert_eq!(binding.instance_idx, 1);
+            assert_eq!(
+                binding.service_name,
+                format!("source-driver-{}-1", binding.source_id)
+            );
+            assert!(binding.extra_args.is_empty());
+            assert!(binding.extra_env.is_empty());
+        }
+        Ok(())
+    }
 }

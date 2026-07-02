@@ -1,6 +1,7 @@
 //! NATS `JetStream` event publisher
 
 use crate::runtime::RuntimeResult;
+use async_nats::jetstream::context::ConsumerInfoErrorKind;
 use serde::Serialize;
 use sinex_primitives::env as shared_env;
 use sinex_primitives::{
@@ -13,16 +14,26 @@ use sinex_primitives::{
 use std::{
     future::IntoFuture,
     sync::Arc,
-    sync::atomic::{AtomicU64, Ordering},
-    time::Duration,
+    sync::atomic::{AtomicBool, AtomicU64, Ordering},
+    time::{Duration, Instant},
 };
-use tokio::sync::Semaphore;
+use tokio::sync::{Mutex, Semaphore};
 
 const DEFAULT_PUBLISH_ACK_TIMEOUT: Duration = Duration::from_secs(10);
 const DEFAULT_RAW_EVENT_PUBLISH_CONCURRENCY: usize = 100;
 const DEFAULT_TELEMETRY_PUBLISH_CONCURRENCY: usize = 16;
 const DEFAULT_RAW_INGEST_DLQ_PUBLISH_CONCURRENCY: usize = 16;
 const DEFAULT_PROCESSING_FAILURE_PUBLISH_CONCURRENCY: usize = 16;
+const RAW_STREAM_BACKPRESSURE_HIGH_PENDING: u64 = 10_000;
+const RAW_STREAM_BACKPRESSURE_LOW_PENDING: u64 = 2_000;
+const RAW_STREAM_BACKPRESSURE_POLL_INTERVAL: Duration = Duration::from_millis(250);
+const RAW_STREAM_BACKPRESSURE_LOG_EVERY: u64 = 1_200;
+
+#[derive(Debug, Default)]
+struct RawStreamPressureState {
+    last_capacity_check: Option<Instant>,
+    pressure_checks: u64,
+}
 
 #[derive(Debug, Clone)]
 struct PublishSemaphores {
@@ -55,6 +66,9 @@ pub struct NatsPublisher {
     env: SinexEnvironment,
     namespace: Option<String>,
     semaphores: PublishSemaphores,
+    raw_events_stream_ready: Arc<AtomicBool>,
+    raw_events_stream_bootstrap_lock: Arc<Mutex<()>>,
+    raw_stream_pressure: Arc<Mutex<RawStreamPressureState>>,
     processing_failure_log_count: Arc<AtomicU64>,
     publish_ack_timeout: Duration,
 }
@@ -180,6 +194,9 @@ impl NatsPublisher {
                 raw_ingest_dlq_concurrency,
                 processing_failure_concurrency,
             ),
+            raw_events_stream_ready: Arc::new(AtomicBool::new(false)),
+            raw_events_stream_bootstrap_lock: Arc::new(Mutex::new(())),
+            raw_stream_pressure: Arc::new(Mutex::new(RawStreamPressureState::default())),
             processing_failure_log_count: Arc::new(AtomicU64::new(0)),
             publish_ack_timeout: Duration::from_millis(publish_ack_timeout),
         }
@@ -327,6 +344,8 @@ impl NatsPublisher {
         }
 
         let _permit = acquire_lane_permit(&self.semaphores.raw_event, "raw event intent").await?;
+        self.ensure_raw_events_stream_ready().await?;
+        self.wait_for_raw_events_stream_capacity().await?;
 
         let payload = serde_json::to_vec(intent).map_err(sinex_primitives::SinexError::from)?;
 
@@ -405,6 +424,8 @@ impl NatsPublisher {
     async fn publish_raw_event(&self, event: &Event, class: transport::Class) -> RuntimeResult<()> {
         let _permit =
             acquire_lane_permit(&self.semaphores.raw_event, "raw event (escape hatch)").await?;
+        self.ensure_raw_events_stream_ready().await?;
+        self.wait_for_raw_events_stream_capacity().await?;
 
         let prov = destructure_provenance(event.provenance());
 
@@ -460,6 +481,10 @@ impl NatsPublisher {
             "publish_telemetry is exclusively for Class::Telemetry; got {class:?}"
         );
         let _permit = acquire_lane_permit(&self.semaphores.telemetry, "telemetry event").await?;
+        self.ensure_raw_events_stream_ready().await?;
+        // Telemetry is lossy and may be emitted by the event-engine consumer.
+        // Waiting for raw backlog capacity here can deadlock the consumer that
+        // must drain that same backlog.
 
         let event_id_str = event
             .id
@@ -514,6 +539,89 @@ impl NatsPublisher {
         );
 
         Ok(())
+    }
+
+    async fn wait_for_raw_events_stream_capacity(&self) -> RuntimeResult<()> {
+        let mut state = self.raw_stream_pressure.lock().await;
+        if state
+            .last_capacity_check
+            .is_some_and(|last_check| last_check.elapsed() < RAW_STREAM_BACKPRESSURE_POLL_INTERVAL)
+        {
+            return Ok(());
+        }
+
+        let stream_name = self
+            .env
+            .nats_stream_name_with_namespace(self.namespace.as_deref(), "SINEX_RAW_EVENTS");
+        let consumer_name = std::env::var("SINEX_EVENT_ENGINE_CONSUMER_NAME")
+            .unwrap_or_else(|_| format!("event-engine-{}", self.env.name()));
+
+        loop {
+            state.last_capacity_check = Some(Instant::now());
+            let mut stream = self.js.get_stream(&stream_name).await.map_err(|error| {
+                sinex_primitives::SinexError::network("Failed to inspect raw-events stream")
+                    .with_source(error)
+            })?;
+            let consumer_info = match stream.consumer_info(&consumer_name).await {
+                Ok(info) => info,
+                Err(error) if error.kind() == ConsumerInfoErrorKind::NotFound => {
+                    return Ok(());
+                }
+                Err(error) => {
+                    return Err(sinex_primitives::SinexError::network(
+                        "Failed to inspect event-engine raw consumer",
+                    )
+                    .with_source(error));
+                }
+            };
+            let info = stream.info().await.map_err(|error| {
+                sinex_primitives::SinexError::network("Failed to inspect raw-events stream info")
+                    .with_source(error)
+            })?;
+            let bytes = info.state.bytes;
+            let pending = consumer_info.num_pending;
+            let ack_pending = consumer_info.num_ack_pending;
+            let target_watermark = if state.pressure_checks > 0 {
+                RAW_STREAM_BACKPRESSURE_LOW_PENDING
+            } else {
+                RAW_STREAM_BACKPRESSURE_HIGH_PENDING
+            };
+            if pending < target_watermark {
+                if state.pressure_checks > 0 && pending <= RAW_STREAM_BACKPRESSURE_LOW_PENDING {
+                    tracing::info!(
+                        stream = %stream_name,
+                        consumer = %consumer_name,
+                        pending,
+                        ack_pending,
+                        bytes,
+                        pressure_checks = state.pressure_checks,
+                        "Raw-events consumer backlog pressure cleared"
+                    );
+                    state.pressure_checks = 0;
+                }
+                return Ok(());
+            }
+
+            state.pressure_checks = state.pressure_checks.saturating_add(1);
+            if state.pressure_checks == 1
+                || state
+                    .pressure_checks
+                    .is_multiple_of(RAW_STREAM_BACKPRESSURE_LOG_EVERY)
+            {
+                tracing::warn!(
+                    stream = %stream_name,
+                    consumer = %consumer_name,
+                    pending,
+                    ack_pending,
+                    bytes,
+                    high_pending = RAW_STREAM_BACKPRESSURE_HIGH_PENDING,
+                    low_pending = RAW_STREAM_BACKPRESSURE_LOW_PENDING,
+                    pressure_checks = state.pressure_checks,
+                    "Raw-events consumer backlog high; delaying publishers until the event engine drains"
+                );
+            }
+            tokio::time::sleep(RAW_STREAM_BACKPRESSURE_POLL_INTERVAL).await;
+        }
     }
 
     /// Publish a automaton processing failure envelope.
@@ -625,6 +733,25 @@ impl NatsPublisher {
                 sinex_primitives::SinexError::processing(error_message).with_source(error)
             })
     }
+
+    async fn ensure_raw_events_stream_ready(&self) -> RuntimeResult<()> {
+        if self.raw_events_stream_ready.load(Ordering::Acquire) {
+            return Ok(());
+        }
+
+        let _bootstrap_guard = self.raw_events_stream_bootstrap_lock.lock().await;
+        if self.raw_events_stream_ready.load(Ordering::Acquire) {
+            return Ok(());
+        }
+
+        crate::runtime::jetstream_streams::bootstrap_raw_events_stream(
+            &self.nats_client,
+            self.namespace.as_deref(),
+        )
+        .await?;
+        self.raw_events_stream_ready.store(true, Ordering::Release);
+        Ok(())
+    }
 }
 
 async fn acquire_lane_permit(
@@ -717,5 +844,159 @@ fn offset_kind_label(kind: OffsetKind) -> &'static str {
 }
 
 #[cfg(test)]
-#[path = "nats_publisher_test.rs"]
-mod tests;
+mod tests {
+    use super::{
+        DEFAULT_RAW_EVENT_PUBLISH_CONCURRENCY, NatsPublisher, RAW_STREAM_BACKPRESSURE_HIGH_PENDING,
+        RAW_STREAM_BACKPRESSURE_LOW_PENDING, build_publish_payload, destructure_provenance,
+        wait_for_publish_ack,
+    };
+    use sinex_primitives::{
+        DynamicPayload, Id, Uuid,
+        domain::{AutomatonModel, HostName, SyntheticTemporalPolicy},
+        events::Event,
+        events::admission::EventIntent,
+        transport,
+    };
+    use std::{future, io, time::Duration};
+    use xtask::sandbox::sinex_test;
+
+    #[sinex_test]
+    async fn publish_ack_timeout_is_reported() -> TestResult<()> {
+        let result =
+            wait_for_publish_ack::<(), io::Error, _>(future::pending(), Duration::from_millis(10))
+                .await;
+        assert!(result.is_err());
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn raw_stream_backpressure_uses_ordered_pending_hysteresis() -> TestResult<()> {
+        assert!(RAW_STREAM_BACKPRESSURE_LOW_PENDING < RAW_STREAM_BACKPRESSURE_HIGH_PENDING);
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn publish_payload_serializes_json_once() -> TestResult<()> {
+        let mut event = DynamicPayload::new(
+            "publisher.test",
+            "payload.check",
+            serde_json::json!({"nested": {"a": 1}}),
+        )
+        .from_parents([Id::from_uuid(Uuid::now_v7())])?
+        .build()
+        .expect("infallible: test provenance set");
+        event.id = Some(Id::from_uuid(Uuid::now_v7()));
+
+        let (event_id, payload) =
+            build_publish_payload(&event, None, None, None, None, None, None)?;
+        let value: serde_json::Value = serde_json::from_slice(&payload)?;
+
+        assert_eq!(value["id"], event_id);
+        assert!(value["payload"].is_object());
+        assert_eq!(value["payload"]["nested"]["a"], 1);
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn publish_payload_preserves_replay_and_synthetic_metadata() -> TestResult<()> {
+        let source_material_id = Id::from_uuid(Uuid::now_v7());
+        let mut event = DynamicPayload::new(
+            "publisher.test",
+            "payload.replay",
+            serde_json::json!({"path": "/tmp/replay.txt"}),
+        )
+        .from_material(source_material_id)
+        .build()
+        .expect("infallible: test provenance set");
+        let operation_id = Uuid::now_v7();
+        event.id = Some(Id::from_uuid(Uuid::now_v7()));
+        event.temporal_policy = Some(SyntheticTemporalPolicy::LatestInput);
+        event.semantics_version = Some("2026-04-13".to_string());
+        event.scope_key = Some("scope:publisher".to_string());
+        event.equivalence_key = Some("publisher-slot".to_string());
+        event.created_by_operation_id = Some(operation_id);
+        event.automaton_model = Some(AutomatonModel::Windowed);
+
+        let prov = destructure_provenance(event.provenance());
+        let (_, payload) = build_publish_payload(
+            &event,
+            prov.source_material_id,
+            prov.anchor_byte,
+            prov.offset_start,
+            prov.offset_end,
+            prov.offset_kind,
+            prov.source_event_ids,
+        )?;
+        let decoded: Event<serde_json::Value> = serde_json::from_slice(&payload)?;
+
+        assert_eq!(
+            decoded.temporal_policy,
+            Some(SyntheticTemporalPolicy::LatestInput)
+        );
+        assert_eq!(decoded.semantics_version.as_deref(), Some("2026-04-13"));
+        assert_eq!(decoded.scope_key.as_deref(), Some("scope:publisher"));
+        assert_eq!(decoded.equivalence_key.as_deref(), Some("publisher-slot"));
+        assert_eq!(decoded.created_by_operation_id, Some(operation_id));
+        assert_eq!(decoded.automaton_model, Some(AutomatonModel::Windowed));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn invalid_publish_concurrency_override_falls_back_to_default(
+        ctx: TestContext,
+    ) -> TestResult<()> {
+        let ctx = ctx.with_nats().shared().await?;
+        let previous = std::env::var("SINEX_PUBLISH_CONCURRENCY").ok();
+        unsafe { std::env::set_var("SINEX_PUBLISH_CONCURRENCY", "bogus") };
+
+        let publisher = NatsPublisher::new(ctx.nats_client());
+
+        unsafe {
+            match previous {
+                Some(value) => std::env::set_var("SINEX_PUBLISH_CONCURRENCY", value),
+                None => std::env::remove_var("SINEX_PUBLISH_CONCURRENCY"),
+            }
+        }
+
+        assert_eq!(
+            publisher.semaphores.raw_event.available_permits(),
+            DEFAULT_RAW_EVENT_PUBLISH_CONCURRENCY
+        );
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn publish_intent_bootstraps_raw_events_stream(ctx: TestContext) -> TestResult<()> {
+        let ctx = ctx.with_nats().shared().await?;
+        let mut event = DynamicPayload::new(
+            "publisher.test",
+            "stream.bootstrap",
+            serde_json::json!({"ok": true}),
+        )
+        .from_parents([Id::from_uuid(Uuid::now_v7())])?
+        .build()
+        .expect("infallible: test provenance set");
+        event.id = Some(Id::from_uuid(Uuid::now_v7()));
+
+        let intent = EventIntent::new(
+            "publisher.test".to_string(),
+            "publisher-test",
+            "1.0.0",
+            vec![event],
+            HostName::from_static("test-host"),
+        );
+        let publisher = NatsPublisher::new(ctx.nats_client());
+
+        publisher
+            .publish_intent(&intent, transport::Class::Critical)
+            .await?;
+
+        let stream_name = sinex_primitives::environment::environment()
+            .nats_stream_name_with_namespace(None, "SINEX_RAW_EVENTS");
+        let mut stream = async_nats::jetstream::new(ctx.nats_client())
+            .get_stream(&stream_name)
+            .await?;
+        assert_eq!(stream.info().await?.state.messages, 1);
+        Ok(())
+    }
+}

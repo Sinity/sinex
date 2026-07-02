@@ -42,6 +42,8 @@ use tokio::sync::watch;
 use tracing::{error, info, warn};
 use tracing_subscriber::EnvFilter;
 
+const DEFAULT_SQLX_QUERY_FILTER: &str = "sqlx::query=off";
+
 /// Output format for tracing (log) messages.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TracingFormat {
@@ -60,12 +62,31 @@ pub enum TracingFormat {
 /// know what to fix.
 pub fn load_env_filter(default_filter: &str) -> Result<EnvFilter> {
     let raw = strict_env_filter_source(default_filter)?;
+    let raw = with_default_sqlx_query_filter(&raw);
     EnvFilter::try_new(&raw).map_err(|error| {
         SinexError::configuration(format!(
             "Invalid {} directive `{raw}`",
             EnvFilter::DEFAULT_ENV
         ))
         .with_std_error(&error)
+    })
+}
+
+fn with_default_sqlx_query_filter(raw: &str) -> String {
+    if has_sqlx_query_filter(raw) {
+        raw.to_string()
+    } else {
+        format!("{raw},{DEFAULT_SQLX_QUERY_FILTER}")
+    }
+}
+
+fn has_sqlx_query_filter(raw: &str) -> bool {
+    raw.split(',').any(|directive| {
+        let target = directive
+            .trim()
+            .split_once('=')
+            .map_or(directive.trim(), |(target, _)| target.trim());
+        matches!(target, "sqlx" | "sqlx::query")
     })
 }
 

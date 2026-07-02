@@ -4,10 +4,7 @@ use ::xtask::sandbox::EnvGuard;
 use std::fs;
 use std::os::unix::fs::PermissionsExt;
 
-fn write_executable_script(
-    path: &std::path::Path,
-    body: &str,
-) -> ::xtask::sandbox::TestResult<()> {
+fn write_executable_script(path: &std::path::Path, body: &str) -> ::xtask::sandbox::TestResult<()> {
     fs::write(path, body)?;
     let mut permissions = fs::metadata(path)?.permissions();
     permissions.set_mode(0o755);
