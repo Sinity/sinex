@@ -1,5 +1,7 @@
 use crate::error::SinexError;
-use crate::query::Pagination;
+use crate::domain::{EventSource, EventType, HostName};
+use crate::query::{EventQuery, Pagination, PayloadFilter, SortDirection, TimeRange};
+use crate::temporal::Timestamp;
 use crate::views::{CaveatView, SinexObjectKind, SinexObjectRef};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -390,6 +392,169 @@ impl SinexQuery {
     }
 }
 
+/// Lower a Sinex-native `events` query expression into the composable event
+/// query request used by the gateway and database layer.
+pub fn event_query_from_sinex_query(query: &SinexQuery) -> Result<EventQuery, SinexError> {
+    if query.unit != QueryUnitId::Events {
+        return Err(SinexError::validation(format!(
+            "cannot lower query unit `{}` to EventQuery",
+            query.unit
+        )));
+    }
+
+    query.validate()?;
+    let mut request = EventQuery {
+        limit: query.pagination.limit + query.pagination.offset,
+        direction: SortDirection::Desc,
+        ..Default::default()
+    };
+
+    if let Some(predicate) = &query.predicate {
+        apply_event_query_predicate(predicate, &mut request)?;
+    }
+
+    Ok(request)
+}
+
+fn apply_event_query_predicate(
+    predicate: &SinexQueryPredicate,
+    request: &mut EventQuery,
+) -> Result<(), SinexError> {
+    match predicate {
+        SinexQueryPredicate::Compare {
+            field,
+            operator,
+            value,
+        } => lower_event_compare(field, *operator, value, request),
+        SinexQueryPredicate::And { predicates } => {
+            for child in predicates {
+                apply_event_query_predicate(child, request)?;
+            }
+            Ok(())
+        }
+        other => Err(SinexError::validation(format!(
+            "events query predicate `{other:?}` cannot lower to EventQuery; only comparison predicates joined by `and` are supported"
+        ))),
+    }
+}
+
+fn lower_event_compare(
+    field: &str,
+    operator: QueryOperator,
+    value: &QueryValue,
+    request: &mut EventQuery,
+) -> Result<(), SinexError> {
+    match field {
+        "source" if operator == QueryOperator::Eq => {
+            request.sources.push(EventSource::new(query_value_string(value)?)?);
+            Ok(())
+        }
+        "event_type" if operator == QueryOperator::Eq => {
+            request
+                .event_types
+                .push(EventType::new(query_value_string(value)?)?);
+            Ok(())
+        }
+        "host" if operator == QueryOperator::Eq => {
+            request.hosts.push(HostName::new(query_value_string(value)?)?);
+            Ok(())
+        }
+        "scope_key" if operator == QueryOperator::Eq => {
+            request.scope_key = Some(query_value_string(value)?.to_string());
+            Ok(())
+        }
+        "equivalence_key" if operator == QueryOperator::Eq => {
+            request.equivalence_key = Some(query_value_string(value)?.to_string());
+            Ok(())
+        }
+        "text" if matches!(operator, QueryOperator::Eq | QueryOperator::Contains) => {
+            merge_payload_filter(
+                &mut request.payload,
+                PayloadFilter::TextSearch {
+                    text: query_value_string(value)?.to_string(),
+                },
+            );
+            Ok(())
+        }
+        "ts_orig"
+            if matches!(
+                operator,
+                QueryOperator::GreaterThan
+                    | QueryOperator::GreaterThanOrEq
+                    | QueryOperator::LessThan
+                    | QueryOperator::LessThanOrEq
+            ) =>
+        {
+            apply_time_bound(request, operator, parse_query_timestamp(value)?)?;
+            Ok(())
+        }
+        "has_lineage" if operator == QueryOperator::Eq => {
+            request.has_lineage = Some(query_value_bool(value)?);
+            Ok(())
+        }
+        other => Err(SinexError::validation(format!(
+            "events query field `{other}` with operator `{}` is descriptor-valid but cannot lower to EventQuery",
+            operator.as_str()
+        ))),
+    }
+}
+
+fn merge_payload_filter(slot: &mut Option<PayloadFilter>, filter: PayloadFilter) {
+    match slot.take() {
+        None => *slot = Some(filter),
+        Some(existing) => {
+            *slot = Some(PayloadFilter::And {
+                filters: vec![existing, filter],
+            });
+        }
+    }
+}
+
+fn apply_time_bound(
+    request: &mut EventQuery,
+    operator: QueryOperator,
+    timestamp: Timestamp,
+) -> Result<(), SinexError> {
+    let (start, end) = request
+        .time_range
+        .map(|range| (range.start(), range.end()))
+        .unwrap_or((None, None));
+    let (start, end) = match operator {
+        QueryOperator::GreaterThan | QueryOperator::GreaterThanOrEq => (Some(timestamp), end),
+        QueryOperator::LessThan | QueryOperator::LessThanOrEq => (start, Some(timestamp)),
+        _ => unreachable!("operator prechecked by caller"),
+    };
+    request.time_range = Some(TimeRange::new(start, end)?);
+    Ok(())
+}
+
+fn query_value_string(value: &QueryValue) -> Result<&str, SinexError> {
+    match value {
+        QueryValue::String(value) => Ok(value),
+        other => Err(SinexError::validation(format!(
+            "expected string query value, got {other:?}"
+        ))),
+    }
+}
+
+fn query_value_bool(value: &QueryValue) -> Result<bool, SinexError> {
+    match value {
+        QueryValue::Boolean(value) => Ok(*value),
+        other => Err(SinexError::validation(format!(
+            "expected boolean query value, got {other:?}"
+        ))),
+    }
+}
+
+fn parse_query_timestamp(value: &QueryValue) -> Result<Timestamp, SinexError> {
+    let value = query_value_string(value)?;
+    Timestamp::parse_rfc3339(value).map_err(|error| {
+        SinexError::parse(format!(
+            "event query timestamp `{value}` must be RFC3339: {error}"
+        ))
+    })
+}
+
 fn validate_predicate(
     descriptor: &QueryUnitDescriptor,
     predicate: &SinexQueryPredicate,
@@ -465,6 +630,12 @@ const ORDERED: &[QueryOperator] = &[
     QueryOperator::LessThan,
     QueryOperator::LessThanOrEq,
 ];
+const RANGE: &[QueryOperator] = &[
+    QueryOperator::GreaterThan,
+    QueryOperator::GreaterThanOrEq,
+    QueryOperator::LessThan,
+    QueryOperator::LessThanOrEq,
+];
 
 const EVENT_FIELDS: &[QueryFieldDescriptor] = &[
     QueryFieldDescriptor {
@@ -494,6 +665,24 @@ const EVENT_FIELDS: &[QueryFieldDescriptor] = &[
     QueryFieldDescriptor {
         name: "equivalence_key",
         field_type: QueryFieldType::Text,
+        operators: EXACT,
+        enum_values: &[],
+    },
+    QueryFieldDescriptor {
+        name: "text",
+        field_type: QueryFieldType::Text,
+        operators: &[QueryOperator::Eq, QueryOperator::Contains],
+        enum_values: &[],
+    },
+    QueryFieldDescriptor {
+        name: "ts_orig",
+        field_type: QueryFieldType::Timestamp,
+        operators: RANGE,
+        enum_values: &[],
+    },
+    QueryFieldDescriptor {
+        name: "has_lineage",
+        field_type: QueryFieldType::Boolean,
         operators: EXACT,
         enum_values: &[],
     },
