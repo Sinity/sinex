@@ -1,11 +1,17 @@
     #![allow(clippy::unwrap_used)]
 
     use super::*;
+    use super::catchup::material_remediation_signal;
     use super::debt::*;
     use super::evidence::*;
     use sinex_primitives::domain::OperationStatus;
     use sinex_primitives::public_ref::ResolvedObjectView;
+    use sinex_primitives::rpc::sources::{
+        SourceMaterialRemediationCandidate, SourceMaterialRemediationPage,
+        SourceMaterialRemediationSummary, SourceMaterialSummary, SourcesRemediationPlanResponse,
+    };
     use sinex_primitives::views::CoverageGapView;
+    use std::collections::BTreeMap;
     use xtask::sandbox::sinex_test;
 
     fn fixture_operation(id: &str, operation_type: &str) -> OpsOperation {
@@ -66,6 +72,62 @@
                     operation_refs: vec!["terminal.activity.pause".to_string()],
                 },
             ],
+        }
+    }
+
+    fn fixture_remediation_plan_response() -> SourcesRemediationPlanResponse {
+        let mut by_status = BTreeMap::new();
+        by_status.insert("failed".to_string(), 1);
+        let mut by_decision = BTreeMap::new();
+        by_decision.insert("recover_timeout_partial".to_string(), 1);
+        let mut by_severity = BTreeMap::new();
+        by_severity.insert("high".to_string(), 1);
+        let mut by_reason = BTreeMap::new();
+        by_reason.insert("slice_arrival_timeout".to_string(), 1);
+
+        SourcesRemediationPlanResponse {
+            summary: SourceMaterialRemediationSummary {
+                total_candidates: 1,
+                total_admitted_events: 206_899,
+                by_status,
+                by_decision,
+                by_severity,
+                by_reason,
+            },
+            page: SourceMaterialRemediationPage {
+                limit: 5,
+                offset: 0,
+                returned_count: 1,
+                total_candidates: 1,
+                has_more: false,
+                sort: "event-count".to_string(),
+            },
+            items: vec![SourceMaterialRemediationCandidate {
+                material: SourceMaterialSummary {
+                    id: "019f2105-b86b-78d2-a220-94f027e7e81f".to_string(),
+                    material_kind: sinex_primitives::MaterialStorageKind::Annex,
+                    source_identifier:
+                        "browser.history#material=019f2105-b86b-78d2-a220-94f027e7e81f"
+                            .to_string(),
+                    status: sinex_primitives::domain::MaterialStatus::Failed,
+                    timing_info_type:
+                        sinex_primitives::domain::SourceMaterialTimingInfoType::Intrinsic,
+                    format: None,
+                    contract_version: None,
+                    staged_at: Some("2026-07-02T00:00:00Z".to_string()),
+                    staged_by: Some("test".to_string()),
+                    size_bytes: Some(1024),
+                    event_count: Some(206_899),
+                    mime_type: None,
+                },
+                failure_reason: Some("slice_arrival_timeout".to_string()),
+                recovery_reason: None,
+                decision: "recover_timeout_partial".to_string(),
+                severity: "high".to_string(),
+                suggested_action:
+                    "mark timed-out material recovered_partial because events were admitted"
+                        .to_string(),
+            }],
         }
     }
 
@@ -461,6 +523,7 @@
         for method in [
             "dlq.list",
             "sources.coverage",
+            "sources.remediation_plan",
             "runtime.health",
             "telemetry.stream_stats",
             "shadow.list",
@@ -470,6 +533,31 @@
                 "ops catchup status should advertise backing RPC `{method}`"
             );
         }
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn catchup_material_remediation_signal_preserves_policy_summary()
+    -> xtask::TestResult<()> {
+        let signal = material_remediation_signal(&fixture_remediation_plan_response());
+
+        assert_eq!(signal.total_candidates, 1);
+        assert_eq!(signal.total_admitted_events, 206_899);
+        assert_eq!(
+            signal.by_decision.get("recover_timeout_partial").copied(),
+            Some(1)
+        );
+        let candidate = signal
+            .top_candidates
+            .first()
+            .expect("top remediation candidate");
+        assert_eq!(
+            candidate.source_identifier,
+            "browser.history#material=019f2105-b86b-78d2-a220-94f027e7e81f"
+        );
+        assert_eq!(candidate.event_count, 206_899);
+        assert_eq!(candidate.decision, "recover_timeout_partial");
+        assert_eq!(candidate.failure_reason.as_deref(), Some("slice_arrival_timeout"));
         Ok(())
     }
 
