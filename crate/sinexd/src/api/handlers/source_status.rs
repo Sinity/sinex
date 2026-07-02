@@ -425,11 +425,7 @@ fn source_coverage_view(
                 .to_string(),
         });
     }
-    if matches!(contract.access_scope, AccessScope::RuntimeBridge { .. })
-        && has_live_binding
-        && !has_material
-        && !has_events
-    {
+    if matches!(contract.access_scope, AccessScope::RuntimeBridge { .. }) && has_live_binding {
         if let Some(observation) = runtime_observation_for_source(contract.id, runtime_observations)
         {
             if !observation.live {
