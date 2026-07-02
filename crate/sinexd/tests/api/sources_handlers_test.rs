@@ -228,6 +228,7 @@ async fn sources_list_respects_limit(ctx: TestContext) -> TestResult<()> {
         ctx.pool(),
         SourcesListRequest {
             status: None,
+            source_identifier: None,
             limit: Some(1),
         },
     )

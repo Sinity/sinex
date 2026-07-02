@@ -58,6 +58,7 @@ struct MaterialListRow {
     staged_at: OffsetDateTime,
     staged_by: Option<String>,
     total_bytes: Option<i64>,
+    parsed_event_count: i64,
     mime_type: Option<String>,
 }
 
@@ -299,14 +300,21 @@ pub async fn handle_sources_list(
             sm.staged_at as "staged_at!",
             sm.staged_by,
             sm.total_bytes,
+            sm.parsed_event_count as "parsed_event_count!",
             b.mime_type
         FROM raw.source_material_registry sm
         LEFT JOIN core.blobs b ON b.id = sm.optional_blob_id
         WHERE ($1::text IS NULL OR sm.status = $1)
+          AND (
+            $2::text IS NULL
+            OR sm.source_identifier = $2
+            OR sm.source_identifier LIKE ($2 || '#material=%')
+          )
         ORDER BY sm.staged_at DESC
-        LIMIT $2
+        LIMIT $3
         "#,
         req.status.as_deref(),
+        req.source_identifier.as_deref(),
         limit
     )
     .fetch_all(pool)
@@ -338,6 +346,7 @@ pub async fn handle_sources_list(
                 staged_at: Some(row.staged_at.to_string()),
                 staged_by: row.staged_by,
                 size_bytes: row.total_bytes,
+                event_count: Some(row.parsed_event_count),
                 mime_type: row.mime_type,
             })
         })

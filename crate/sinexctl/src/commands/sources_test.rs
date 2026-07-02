@@ -58,6 +58,7 @@ fn fixture_material(id: &str) -> SourceMaterialSummary {
         staged_at: Some("2026-06-01T00:00:00Z".to_string()),
         staged_by: Some("test".to_string()),
         size_bytes: Some(128),
+        event_count: Some(7),
         mime_type: Some("application/jsonl".to_string()),
     }
 }
@@ -128,6 +129,7 @@ async fn source_material_list_envelope_renders_finite_json_document() -> TestRes
     )
     .with_query_echo(serde_json::json!({
         "status": "completed",
+        "source": "fixture.source",
         "limit": 1,
     }));
 
@@ -143,7 +145,9 @@ async fn source_material_list_envelope_renders_finite_json_document() -> TestRes
     );
     assert_eq!(value["payload"]["count"], 1);
     assert_eq!(value["payload"]["materials"][0]["id"], "material-1");
+    assert_eq!(value["payload"]["materials"][0]["event_count"], 7);
     assert_eq!(value["query_echo"]["status"], "completed");
+    assert_eq!(value["query_echo"]["source"], "fixture.source");
     Ok(())
 }
 
@@ -344,6 +348,8 @@ async fn source_material_table_renderer_stays_on_raw_response() -> TestResult<()
     assert!(table.contains("abcdef12..."));
     assert!(table.contains("fixture.source"));
     assert!(table.contains("completed"));
+    assert!(table.contains("EVENTS"));
+    assert!(table.contains("7"));
     Ok(())
 }
 
