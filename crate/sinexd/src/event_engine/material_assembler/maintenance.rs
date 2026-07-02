@@ -1,11 +1,8 @@
 //! Runtime maintenance loops and task lifecycle handling for material assembly.
 
-use std::{
-    collections::HashSet,
-    sync::{
-        Arc,
-        atomic::{AtomicBool, Ordering},
-    },
+use std::sync::{
+    Arc,
+    atomic::{AtomicBool, Ordering},
 };
 
 use tokio::{
@@ -19,13 +16,12 @@ use tracing::{debug, info, warn};
 use sinex_db::DbPoolExt;
 use sinex_primitives::{Timestamp, Uuid};
 
-use super::{MaterialAssembler, RESTORED_SELF_OBSERVATION_ORPHAN_TIMEOUT_SECS, state};
+use super::{MaterialAssembler, state};
 use crate::event_engine::{EventEngineResult, SinexError};
 
 const STALE_ASSEMBLY_CHECK_INTERVAL: std::time::Duration = std::time::Duration::from_mins(1);
 const STALE_REGISTRY_RECONCILE_LIMIT: i64 = 128;
 const ORPHANED_SENSING_REASON: &str = "orphaned_sensing_material";
-const SELF_OBSERVATION_SOURCE_PREFIX: &str = "sinex.self-observation.";
 
 pub(super) type MaterialTaskOutcome = (
     &'static str,
@@ -346,7 +342,7 @@ impl MaterialAssembler {
     pub(super) async fn reconcile_orphaned_sensing_materials(&self) -> EventEngineResult<()> {
         let global_cutoff =
             Timestamp::now() - time::Duration::seconds(self.slice_arrival_timeout.as_secs() as i64);
-        let mut stale_rows = self
+        let stale_rows = self
             .pool
             .source_materials()
             .list_stale_sensing(global_cutoff, STALE_REGISTRY_RECONCILE_LIMIT)
@@ -355,37 +351,6 @@ impl MaterialAssembler {
                 SinexError::database("Failed to list orphaned sensing source materials")
                     .with_source(error)
             })?;
-
-        let self_observation_cutoff = Timestamp::now()
-            - time::Duration::seconds(
-                self.slice_arrival_timeout
-                    .as_secs()
-                    .min(RESTORED_SELF_OBSERVATION_ORPHAN_TIMEOUT_SECS as u64)
-                    as i64,
-            );
-        if self_observation_cutoff > global_cutoff {
-            let existing: HashSet<Uuid> = stale_rows.iter().map(|row| row.id).collect();
-            let self_observation_rows = self
-                .pool
-                .source_materials()
-                .list_stale_sensing_by_source_prefix(
-                    self_observation_cutoff,
-                    SELF_OBSERVATION_SOURCE_PREFIX,
-                    STALE_REGISTRY_RECONCILE_LIMIT,
-                )
-                .await
-                .map_err(|error| {
-                    SinexError::database(
-                        "Failed to list orphaned self-observation sensing source materials",
-                    )
-                    .with_source(error)
-                })?;
-            stale_rows.extend(
-                self_observation_rows
-                    .into_iter()
-                    .filter(|row| !existing.contains(&row.id)),
-            );
-        }
 
         for row in stale_rows {
             let material_id = row.id;
