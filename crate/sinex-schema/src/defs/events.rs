@@ -420,6 +420,14 @@ impl Events {
                 .to_owned(),
             Index::create()
                 .if_not_exists()
+                .name("ix_events_source_type_ts_orig")
+                .table(Self::table_iden())
+                .col(Events::Source)
+                .col(Events::EventType)
+                .col((Events::TsOrig, IndexOrder::Desc))
+                .to_owned(),
+            Index::create()
+                .if_not_exists()
                 .name("ix_events_ts_persisted")
                 .table(Self::table_iden())
                 .col((Events::TsPersisted, IndexOrder::Desc))

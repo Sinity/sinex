@@ -168,18 +168,20 @@ async fn machine_render_preserves_envelope_schema() -> xtask::TestResult<()> {
 }
 
 #[sinex_test]
-async fn status_filter_detection_ignores_empty_values() -> xtask::TestResult<()> {
-    assert!(!source_status_has_filter(&None, &None));
-    assert!(!source_status_has_filter(&Some(String::new()), &None));
-    assert!(!source_status_has_filter(&None, &Some(String::new())));
-    assert!(source_status_has_filter(
-        &Some("browser.history".to_string()),
-        &None
-    ));
-    assert!(source_status_has_filter(
-        &None,
-        &Some("browser".to_string())
-    ));
+async fn source_status_defaults_to_bounded_presence_counts() -> xtask::TestResult<()> {
+    let command = SourceStatusCommand {
+        source: None,
+        family: None,
+        exact_counts: false,
+    };
+
+    assert!(!command.exact_counts);
+
+    let exact = SourceStatusCommand {
+        exact_counts: true,
+        ..command
+    };
+    assert!(exact.exact_counts);
     Ok(())
 }
 

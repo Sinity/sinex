@@ -36,18 +36,20 @@ pub struct SourceStatusCommand {
     /// Optional source family filter (e.g. "terminal", "browser", "chat").
     #[arg(long)]
     family: Option<String>,
+
+    /// Compute exact lifetime event counts instead of bounded presence probes.
+    #[arg(long)]
+    exact_counts: bool,
 }
 
 impl SourceStatusCommand {
     pub async fn execute(&self, client: &GatewayClient, format: OutputFormat) -> Result<()> {
-        let has_filter = source_status_has_filter(&self.source, &self.family);
-        let exact_counts = !has_filter;
         let envelope = filter_sources_status_envelope(
             client
                 .sources_status_view_filtered(
                     self.source.clone(),
                     self.family.clone(),
-                    exact_counts,
+                    self.exact_counts,
                 )
                 .await?,
             &self.source,
@@ -59,11 +61,6 @@ impl SourceStatusCommand {
         CommandOutput::single(envelope, format_sources_status_table).display(&format)?;
         Ok(())
     }
-}
-
-fn source_status_has_filter(source: &Option<String>, family: &Option<String>) -> bool {
-    source.as_deref().is_some_and(|value| !value.is_empty())
-        || family.as_deref().is_some_and(|value| !value.is_empty())
 }
 
 fn filter_sources_status_envelope(
