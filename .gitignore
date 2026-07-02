@@ -74,6 +74,7 @@ xtask/.sinex/
 !.agent/conductor-devloop/PROCESS.md
 !.agent/conductor-devloop/TACTICS.md
 !.agent/conductor-devloop/VELOCITY.md
+!.agent/conductor-devloop/SIDE-RESEARCH.md
 !.agent/conductor-devloop/ADVERSARIAL-REVIEW.md
 !.agent/conductor-devloop/SELF-PROMPTS.md
 !.agent/dev/

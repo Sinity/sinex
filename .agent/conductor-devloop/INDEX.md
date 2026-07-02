@@ -37,6 +37,8 @@ This directory is the active Sinex conductor/devloop packet.
 - `PHASES.jsonl` — generated phase/focus stream for timing and velocity review.
 - `VELOCITY.md` — time model and acceleration rubric for the conductor loop.
 - `AHEAD.md` — non-blocking backlog/audit lanes for productive wait time.
+- `SIDE-RESEARCH.md` — canonical register for side-research/subagent waves,
+  leases, reconciliation status, and priority order.
 - `INTEGRATION.md`, when present locally, is branch-specific integration state
   and should be treated as the current PR-boundary plan for the long-lived
   devloop branch. It is ignored live state, not durable scaffold.
