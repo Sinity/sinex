@@ -33,6 +33,9 @@ async fn checkout_runtime_target_uses_checkout_stack_without_descriptor() -> Tes
             .is_some_and(|url| url.contains("sinex_dev"))
     );
     assert_eq!(target.nats.servers.len(), 1);
-    assert!(target.gateway.base_url.is_none());
+    assert_eq!(
+        target.gateway.base_url.as_deref(),
+        Some(CHECKOUT_DEV_GATEWAY_URL)
+    );
     Ok(())
 }

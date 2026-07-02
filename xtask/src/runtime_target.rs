@@ -1,4 +1,4 @@
-use crate::config::{Config, workspace_state_root};
+use crate::config::{Config, workspace_root, workspace_state_root};
 use crate::infra::stack::StackConfig;
 use color_eyre::eyre::{Result, WrapErr};
 use serde::Serialize;
@@ -8,6 +8,8 @@ use sinex_primitives::{
     RuntimeTargetNats, RuntimeTargetServices, RuntimeTargetState,
 };
 use std::path::PathBuf;
+
+const CHECKOUT_DEV_GATEWAY_URL: &str = "https://127.0.0.1:19086";
 
 /// Condensed target surface serialized by xtask status commands.
 #[derive(Debug, Clone, Serialize)]
@@ -57,6 +59,11 @@ pub fn checkout_runtime_target(cfg: &Config) -> Result<RuntimeTargetDescriptor> 
         .nats_url
         .clone()
         .unwrap_or_else(|| stack_config.nats_url());
+    let tls_dir = workspace_root().join(".sinex/tls");
+    let ca_cert_file = existing_path(tls_dir.join("ca.pem"));
+    let client_cert_file = existing_path(tls_dir.join("client.pem"));
+    let client_key_file = existing_path(tls_dir.join("client-key.pem"));
+    let token_file = existing_path(checkout_runtime_target_token_file());
 
     Ok(RuntimeTargetDescriptor {
         version: 1,
@@ -74,13 +81,17 @@ pub fn checkout_runtime_target(cfg: &Config) -> Result<RuntimeTargetDescriptor> 
             password_required: false,
         },
         gateway: RuntimeTargetGateway {
-            base_url: cfg.gateway_url.clone(),
-            token_file: None,
+            base_url: Some(
+                cfg.gateway_url
+                    .clone()
+                    .unwrap_or_else(|| CHECKOUT_DEV_GATEWAY_URL.to_string()),
+            ),
+            token_file,
             token_role: None,
-            ca_cert_file: None,
-            client_cert_file: None,
-            client_key_file: None,
-            require_client_tls: false,
+            ca_cert_file,
+            client_cert_file,
+            client_key_file,
+            require_client_tls: true,
             insecure: false,
         },
         nats: RuntimeTargetNats {
@@ -108,6 +119,25 @@ pub fn checkout_runtime_target(cfg: &Config) -> Result<RuntimeTargetDescriptor> 
                 .to_string(),
         ],
     })
+}
+
+#[must_use]
+pub fn checkout_runtime_target_path() -> PathBuf {
+    workspace_state_root().join("state/runtime-target.json")
+}
+
+#[must_use]
+pub fn checkout_runtime_target_token_file() -> PathBuf {
+    workspace_state_root().join("state/dev-api-token")
+}
+
+#[must_use]
+pub fn checkout_dev_gateway_url() -> &'static str {
+    CHECKOUT_DEV_GATEWAY_URL
+}
+
+fn existing_path(path: PathBuf) -> Option<PathBuf> {
+    path.exists().then_some(path)
 }
 
 #[must_use]

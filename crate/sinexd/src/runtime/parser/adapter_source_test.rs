@@ -386,6 +386,7 @@ async fn make_adapter_runtime(
         emitter,
         EventTransport::Nats(publisher),
         None,
+        None,
     );
     let work_dir = tempfile::tempdir()?;
     let work_dir_path = work_dir.keep();
@@ -431,6 +432,7 @@ async fn make_adapter_runtime_with_db(
         checkpoint_manager,
         emitter,
         EventTransport::Nats(publisher),
+        None,
         None,
     );
     let work_dir = tempfile::tempdir()?;
