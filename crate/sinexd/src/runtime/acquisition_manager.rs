@@ -1264,6 +1264,19 @@ impl AppendStreamAcquirer {
         })
     }
 
+    fn current_material_remaining_open_duration(
+        &self,
+        duration: std::time::Duration,
+    ) -> Option<std::time::Duration> {
+        let handle = self.current_handle.as_ref()?;
+        let elapsed_ms = (Timestamp::now() - handle.started_at).whole_milliseconds();
+        if elapsed_ms <= 0 {
+            return Some(duration);
+        }
+        let elapsed = std::time::Duration::from_millis(elapsed_ms as u64);
+        Some(duration.saturating_sub(elapsed))
+    }
+
     /// Finalize the active stream material when it has been open for at least
     /// `duration`.
     ///
@@ -1388,9 +1401,12 @@ async fn buffered_append_writer_task(
                 if let Some(max_open_duration) = config.max_open_duration
                     && stream.current_material_id().is_some()
                 {
+                    let sleep_duration = stream
+                        .current_material_remaining_open_duration(max_open_duration)
+                        .unwrap_or(max_open_duration);
                     match tokio::select! {
                         request = rx.recv() => request,
-                        () = tokio::time::sleep(max_open_duration) => {
+                        () = tokio::time::sleep(sleep_duration) => {
                             flush_buffered_stream_if_open_too_long(&mut stream, &config).await;
                             continue;
                         }

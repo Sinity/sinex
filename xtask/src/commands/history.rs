@@ -827,4 +827,5 @@ fn exercise_results_probe_from_result(
 }
 
 #[cfg(test)]
+#[path = "history_test.rs"]
 mod tests;

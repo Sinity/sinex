@@ -2133,4 +2133,5 @@ impl XtaskCommand for TestCommand {
 }
 
 #[cfg(test)]
+#[path = "test_test.rs"]
 mod tests;

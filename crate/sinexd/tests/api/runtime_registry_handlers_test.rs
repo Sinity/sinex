@@ -128,7 +128,7 @@ async fn list_active_surfaces_run_identity_when_available(ctx: TestContext) -> T
 }
 
 #[sinex_test]
-async fn list_active_keeps_parallel_runs_distinct(ctx: TestContext) -> TestResult<()> {
+async fn list_active_collapses_component_health_to_latest_run(ctx: TestContext) -> TestResult<()> {
     let pool = ctx.pool();
     let manifest = register_test_module(
         pool,
@@ -186,13 +186,10 @@ async fn list_active_keeps_parallel_runs_distinct(ctx: TestContext) -> TestResul
         .collect::<Vec<_>>();
     assert_eq!(
         parallel_modules.len(),
-        2,
-        "parallel runs must stay distinct"
+        1,
+        "component-level health does not identify distinct parallel run IDs"
     );
-    assert_ne!(
-        parallel_modules[0]["instance_id"].as_str(),
-        parallel_modules[1]["instance_id"].as_str()
-    );
+    assert_eq!(parallel_modules[0]["instance_id"].as_str(), Some("instance-b"));
 
     Ok(())
 }

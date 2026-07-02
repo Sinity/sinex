@@ -16,7 +16,7 @@
 use crate::runtime::confirmation_handler::ConfirmedEventHandler;
 use crate::runtime::automaton::traits::InputProvenanceFilter;
 use crate::runtime::stream::{
-    PullConsumerSpec, delete_consumer, ensure_pull_consumer, list_consumers, pull_batch_bounded,
+    PullConsumerSpec, ensure_pull_consumer, list_consumers, pull_batch_bounded,
 };
 use crate::runtime::{RuntimeResult, SinexError};
 use async_nats::jetstream;
@@ -243,12 +243,11 @@ impl JetStreamEventConsumer {
                 continue;
             }
             if existing.iter().any(|info| info.name == legacy_name) {
-                delete_consumer(js, stream_name, &legacy_name).await?;
                 info!(
                     stream = %stream_name,
                     consumer = %self.config.consumer_name,
-                    retired_consumer = %legacy_name,
-                    "Retired legacy broad confirmed-event consumer after binding filtered durable"
+                    retained_consumer = %legacy_name,
+                    "Retaining legacy broad confirmed-event consumer; safe drain/adoption is required before deletion"
                 );
             }
         }

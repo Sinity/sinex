@@ -1015,7 +1015,8 @@ fn backing_rpc_methods_for_path(path: &str) -> &'static [&'static str] {
         "runtime gateway ping" => &[methods::SYSTEM_PING],
         "runtime gateway version" => &[methods::SYSTEM_VERSION],
         "runtime health" => &[methods::SYSTEM_HEALTH],
-        "runtime list" | "runtime modules" => &[methods::COORDINATION_LIST_INSTANCES],
+        "runtime list" => &[methods::COORDINATION_LIST_INSTANCES],
+        "runtime modules" => &[methods::RUNTIME_LIST_ACTIVE],
         "tui" => &[
             methods::SYSTEM_VERSION,
             methods::COORDINATION_LIST_INSTANCES,

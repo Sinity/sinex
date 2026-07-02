@@ -37,6 +37,7 @@ const EVENTS_REQUIRED_INDEXES: &[&str] = &[
     "ix_events_source_ts_coided",
     "ix_events_event_type_ts_coided",
     "ix_events_source_type_ts_coided",
+    "ix_events_source_type_ts_orig",
     "ix_events_source_ts_orig",
     "ix_events_source_event_ids",
     "ix_events_payload_gin",

@@ -112,14 +112,14 @@ impl JetStreamConsumer {
             dlq_publish_msg_id(msg, original_nats_msg_id.as_deref(), &original_payload);
         let original_event_id = dlq_event_id(&original_payload);
 
-        let dlq_entry = DlqEntry {
+        let mut dlq_entry = DlqEntry {
             nats_msg_id: original_nats_msg_id,
             error,
             original_payload,
             failed_at: Timestamp::now(),
         };
 
-        let payload = serde_json::to_vec(&dlq_entry).map_err(|e| {
+        let mut payload = serde_json::to_vec(&dlq_entry).map_err(|e| {
             SinexError::serialization(format!("Failed to serialize DLQ entry: {e}"))
         })?;
         let mut headers = async_nats::HeaderMap::new();
@@ -131,11 +131,33 @@ impl JetStreamConsumer {
         if let Some(event_id) = original_event_id.as_deref() {
             headers.insert("Event-Id", event_id);
         }
-        ensure_nats_payload_fits(
+        if let Err(error) = ensure_nats_payload_fits(
             "event-engine DLQ entry",
             &self.topology.dlq_publish_subject,
             payload.len(),
-        )?;
+        ) {
+            warn!(
+                error = %error,
+                payload_len = payload.len(),
+                original_payload_len = msg.payload.len(),
+                "DLQ envelope exceeds publish budget; replacing stored original payload with metadata stub"
+            );
+            dlq_entry.original_payload = serde_json::json!({
+                "_dlq_note": "original payload omitted because DLQ envelope exceeded NATS publish budget",
+                "_original_payload_omitted": true,
+                "_original_payload_len": msg.payload.len(),
+                "_original_subject": msg.subject.as_str(),
+                "_original_event_id": original_event_id,
+            });
+            payload = serde_json::to_vec(&dlq_entry).map_err(|e| {
+                SinexError::serialization(format!("Failed to serialize compact DLQ entry: {e}"))
+            })?;
+            ensure_nats_payload_fits(
+                "event-engine compact DLQ entry",
+                &self.topology.dlq_publish_subject,
+                payload.len(),
+            )?;
+        }
 
         let mut backoff = DLQ_PUBLISH_BACKOFF_BASE;
         let mut last_error: Option<SinexError> = None;

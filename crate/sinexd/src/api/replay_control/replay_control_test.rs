@@ -724,7 +724,11 @@ async fn replay_preview_surfaces_safety_analysis_failure(ctx: TestContext) -> Re
     Ok(())
 }
 
+#[path = "tests/abort.rs"]
 mod abort;
+#[path = "tests/bookkeeping.rs"]
 mod bookkeeping;
+#[path = "tests/execution_failures.rs"]
 mod execution_failures;
+#[path = "tests/execution_outcome.rs"]
 mod execution_outcome;

@@ -1120,7 +1120,7 @@ impl RunCommand {
     ) -> Result<CommandResult> {
         let cfg = config();
         let manager = JobManager::new(cfg.jobs_dir())?;
-        let runtime_env = self.local_run_env_vars();
+        let runtime_env = self.core_bundle_env_vars();
         self.build_packages(&["sinexd"], ctx).await?;
 
         let binary_command = target_binary_path(self.release, "sinexd")
@@ -1234,7 +1234,11 @@ impl RunCommand {
             Vec::new();
         // Pipe stdout/stderr when --logs (prefix display) or --dev-journal (journal write)
         let pipe_output = self.logs || self.dev_journal;
-        let runtime_env = self.local_run_env_vars();
+        let runtime_env = if binaries == CORE_TARGETS {
+            self.core_bundle_env_vars()
+        } else {
+            self.local_run_env_vars()
+        };
 
         for name in binaries {
             let (_, package, binary, automaton) = BINARIES

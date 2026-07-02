@@ -9,6 +9,7 @@ mod operations;
 mod sources;
 
 #[cfg(test)]
+#[path = "views_test.rs"]
 mod tests;
 
 pub use common::*;
