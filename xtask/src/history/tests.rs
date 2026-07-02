@@ -897,8 +897,8 @@ fn classify_host_pressure_for_failures(
     let usage = usage?;
     let io_full = usage.host_io_pressure_full_avg10_max.unwrap_or(0.0);
     let memory_full = usage.host_memory_pressure_full_avg10_max.unwrap_or(0.0);
-    let level = if io_full >= crate::resources::thresholds::PSI_IO_FULL_REFUSE
-        || memory_full >= crate::resources::thresholds::PSI_MEMORY_FULL_REFUSE
+    let level = if io_full >= crate::resources::thresholds::PSI_IO_FULL_SEVERE
+        || memory_full >= crate::resources::thresholds::PSI_MEMORY_FULL_SEVERE
     {
         "severe"
     } else if io_full >= crate::resources::thresholds::PSI_IO_FULL_WARN

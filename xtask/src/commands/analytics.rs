@@ -57,6 +57,9 @@ pub enum AnalyticsSubcommand {
         /// Also run sinnix-observe for a host-level attribution report when available.
         #[arg(long)]
         observe: bool,
+        /// Show current processes with nonzero swap residency.
+        #[arg(long)]
+        top_swap: bool,
         /// Sample /proc/PID/io and show the processes doing the most physical IO.
         #[arg(long)]
         top_io: bool,
@@ -100,6 +103,7 @@ impl XtaskCommand for AnalyticsCommand {
         let sub = &self.subcommand;
         if let AnalyticsSubcommand::Pressure {
             observe,
+            top_swap,
             top_io,
             sample_ms,
             since,
@@ -108,7 +112,7 @@ impl XtaskCommand for AnalyticsCommand {
         } = sub
         {
             return Ok(execute_pressure(
-                *observe, *top_io, *sample_ms, since, duration, *limit, ctx,
+                *observe, *top_swap, *top_io, *sample_ms, since, duration, *limit, ctx,
             ));
         }
         ctx.try_with_history_db_query(|db| {
@@ -566,6 +570,7 @@ fn execute_resources(
 
 fn execute_pressure(
     observe: bool,
+    top_swap: bool,
     top_io: bool,
     sample_ms: u64,
     since: &str,
@@ -589,6 +594,11 @@ fn execute_pressure(
     } else {
         Vec::new()
     };
+    let top_swap_processes = if top_swap {
+        read_top_swap_processes(limit)
+    } else {
+        Vec::new()
+    };
 
     if ctx.is_json() {
         return CommandResult::success()
@@ -605,6 +615,7 @@ fn execute_pressure(
                 "summary": pressure.summary(),
                 "recommendation": pressure.recommendation(),
                 "broad_start_advisory": pressure.warning("check/test").is_some(),
+                "top_swap": top_swap_processes,
                 "top_io": top_io_processes,
                 "sinnix_observe": observe_output.as_ref().map(|output| serde_json::json!({
                     "command": output.command,
@@ -638,6 +649,28 @@ fn execute_pressure(
         style(pressure_level_name(pressure.level)).bold()
     );
     println!("  recommendation: {}", pressure.recommendation());
+    if !top_swap_processes.is_empty() {
+        println!();
+        println!("{}", style("Processes with nonzero swap residency:").bold());
+        let mut builder = Builder::new();
+        builder.push_record(["PID", "SWAP", "RSS", "CGROUP", "COMMAND"]);
+        for row in &top_swap_processes {
+            builder.push_record([
+                &row.pid.to_string(),
+                &format_kib(row.swap_kb),
+                &format_kib(row.rss_kb),
+                &truncate_for_table(&row.cgroup, 42),
+                &truncate_for_table(&row.command, 88),
+            ]);
+        }
+        let mut table = builder.build();
+        table.with(Style::sharp());
+        println!("{table}");
+    } else if top_swap {
+        println!();
+        println!("{}", style("No process swap residency observed.").dim());
+    }
+
     if !top_io_processes.is_empty() {
         println!();
         println!(
@@ -714,6 +747,93 @@ struct ProcessIoSample {
     write_bytes: u64,
     read_syscalls: u64,
     write_syscalls: u64,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct ProcessMemoryRow {
+    pid: u32,
+    command: String,
+    cgroup: String,
+    rss_kb: u64,
+    swap_kb: u64,
+}
+
+fn read_top_swap_processes(limit: usize) -> Vec<ProcessMemoryRow> {
+    let mut rows = read_process_memory_rows()
+        .into_iter()
+        .filter(|row| row.swap_kb > 0)
+        .collect::<Vec<_>>();
+    rows.sort_by(|left, right| {
+        right
+            .swap_kb
+            .cmp(&left.swap_kb)
+            .then_with(|| right.rss_kb.cmp(&left.rss_kb))
+            .then_with(|| left.pid.cmp(&right.pid))
+    });
+    rows.truncate(limit);
+    rows
+}
+
+fn read_process_memory_rows() -> Vec<ProcessMemoryRow> {
+    let mut rows = Vec::new();
+    let Ok(entries) = std::fs::read_dir("/proc") else {
+        return rows;
+    };
+
+    for entry in entries.flatten() {
+        let Some(pid) = entry
+            .file_name()
+            .to_str()
+            .and_then(|name| name.parse::<u32>().ok())
+        else {
+            continue;
+        };
+        let proc_dir = entry.path();
+        let Some((rss_kb, swap_kb)) = read_proc_status_memory(&proc_dir.join("status")) else {
+            continue;
+        };
+        rows.push(ProcessMemoryRow {
+            pid,
+            command: read_proc_command(&proc_dir),
+            cgroup: read_proc_cgroup(&proc_dir),
+            rss_kb,
+            swap_kb,
+        });
+    }
+
+    rows
+}
+
+fn read_proc_status_memory(path: &std::path::Path) -> Option<(u64, u64)> {
+    let contents = std::fs::read_to_string(path).ok()?;
+    let mut rss_kb = None;
+    let mut swap_kb = None;
+    for line in contents.lines() {
+        if let Some(value) = parse_status_kb_line(line, "VmRSS:") {
+            rss_kb = Some(value);
+        } else if let Some(value) = parse_status_kb_line(line, "VmSwap:") {
+            swap_kb = Some(value);
+        }
+    }
+    Some((rss_kb.unwrap_or(0), swap_kb.unwrap_or(0)))
+}
+
+fn parse_status_kb_line(line: &str, prefix: &str) -> Option<u64> {
+    let rest = line.strip_prefix(prefix)?;
+    rest.split_whitespace().next()?.parse().ok()
+}
+
+fn read_proc_cgroup(proc_dir: &std::path::Path) -> String {
+    std::fs::read_to_string(proc_dir.join("cgroup"))
+        .ok()
+        .and_then(|contents| {
+            contents
+                .lines()
+                .filter_map(|line| line.rsplit_once(':').map(|(_, path)| path))
+                .find(|path| !path.is_empty())
+                .map(ToString::to_string)
+        })
+        .unwrap_or_else(|| "-".to_string())
 }
 
 fn sample_top_io(sample_window: Duration, limit: usize) -> Vec<ProcessIoDelta> {
@@ -849,6 +969,10 @@ fn format_bytes(bytes: u64) -> String {
     } else {
         format!("{bytes} B")
     }
+}
+
+fn format_kib(kib: u64) -> String {
+    format_bytes(kib.saturating_mul(1024))
 }
 
 fn truncate_for_table(value: &str, max_chars: usize) -> String {
