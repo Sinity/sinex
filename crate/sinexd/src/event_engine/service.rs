@@ -1030,6 +1030,17 @@ impl IngestService {
             };
 
             let state_dir: PathBuf = assembler_state_dir.into();
+            info!(
+                content_store_path = %content_store_path,
+                assembler_state_dir = %state_dir.display(),
+                slices_max_ack_pending,
+                max_buffered_slices,
+                max_material_size_bytes,
+                slice_timeout_secs,
+                orphan_threshold_secs,
+                disk_threshold_percent,
+                "Starting material assembler with resolved runtime paths"
+            );
 
             let assembler =
                 match crate::event_engine::MaterialAssembler::new_with_durability_thresholds(
