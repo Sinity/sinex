@@ -324,6 +324,10 @@ pub fn build() -> HashMap<&'static str, FormatCapability> {
         FormatCapability::single_shot(TABLE_JSON_YAML),
     );
     m.insert(
+        "ops catchup status",
+        FormatCapability::single_shot(TABLE_JSON_YAML),
+    );
+    m.insert(
         "ops evidence compile",
         FormatCapability::single_shot(TABLE_JSON_YAML),
     );
@@ -1073,7 +1077,14 @@ fn backing_rpc_methods_for_path(path: &str) -> &'static [&'static str] {
         "ops start" => &[methods::OPS_START],
         "ops list" | "ops jobs list" => &[methods::OPS_LIST],
         "ops get" | "ops jobs show" => &[methods::OPS_GET],
-        "ops debt list" => &[methods::DLQ_LIST, methods::SOURCES_STATUS_VIEW],
+        "ops debt list" => &[methods::DLQ_LIST, methods::SOURCES_COVERAGE],
+        "ops catchup status" => &[
+            methods::DLQ_LIST,
+            methods::SOURCES_COVERAGE,
+            methods::RUNTIME_HEALTH,
+            methods::TELEMETRY_STREAM_STATS,
+            methods::SHADOW_LIST,
+        ],
         "ops evidence compile" => &[
             methods::OPS_GET,
             methods::DLQ_LIST,

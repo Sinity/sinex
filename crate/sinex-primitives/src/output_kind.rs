@@ -125,6 +125,12 @@ pub const OUTPUT_KIND_DECLARATIONS: &[OutputKindDeclaration] = &[
         rationale: "operator debt read model for capture, admission, and projection gaps",
     },
     OutputKindDeclaration {
+        output_id: "views.ops_catchup_readiness",
+        kind: OutputKind::EphemeralView,
+        owner: "sinex-primitives::views::OpsCatchupReadinessView",
+        rationale: "bounded operator read model over existing runtime, DLQ, source, stream, and consumer signals",
+    },
+    OutputKindDeclaration {
         output_id: "desktop.context.current_view",
         kind: OutputKind::EphemeralView,
         owner: "sinex-primitives::views::DesktopContextView",

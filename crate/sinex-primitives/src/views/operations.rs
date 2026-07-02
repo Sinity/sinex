@@ -14,6 +14,7 @@ pub const OPERATION_JOB_LIST_SCHEMA_VERSION: &str = "sinex.operation-job-list/v1
 pub const OPERATION_CONTROL_CARD_SCHEMA_VERSION: &str = "sinex.operation-control-card/v1";
 pub const OPERATION_VIEW_SCHEMA_VERSION: &str = "sinex.operation-view/v1";
 pub const DLQ_CLEANUP_PLAN_SCHEMA_VERSION: &str = "sinex.dlq-cleanup-plan/v1";
+pub const OPS_CATCHUP_READINESS_SCHEMA_VERSION: &str = "sinex.ops-catchup-readiness/v1";
 
 /// Read-only view of a single `core.operations_log` row rendered for operator
 /// and agent consumption.
@@ -145,6 +146,118 @@ pub struct OperationJobListView {
     pub schema_version: String,
     pub count: usize,
     pub jobs: Vec<OperationView>,
+}
+
+/// Read-only operator verdict for whether the runtime is caught up enough to
+/// trust live demos and continued dogfooding.
+///
+/// This intentionally composes existing bounded read surfaces instead of
+/// introducing a new state owner. CLI/TUI/API/demo renderers can reuse it while
+/// deeper remediation remains in domain-specific commands.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub struct OpsCatchupReadinessView {
+    pub schema_version: String,
+    pub verdict: String,
+    pub pressure_level: RuntimePressureLevel,
+    pub summary: String,
+    pub dlq: OpsCatchupDlqSignalView,
+    pub source_materials: OpsCatchupSourceMaterialSignalView,
+    pub runtime: OpsCatchupRuntimeSignalView,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub streams: Vec<OpsCatchupStreamSignalView>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub shadow_consumers: Vec<OpsCatchupConsumerSignalView>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub caveats: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub actions: Vec<ActionAvailability>,
+}
+
+impl OpsCatchupReadinessView {
+    #[must_use]
+    pub fn new(
+        pressure_level: RuntimePressureLevel,
+        summary: impl Into<String>,
+        dlq: OpsCatchupDlqSignalView,
+        source_materials: OpsCatchupSourceMaterialSignalView,
+        runtime: OpsCatchupRuntimeSignalView,
+    ) -> Self {
+        let verdict = match pressure_level {
+            RuntimePressureLevel::Critical => "blocked",
+            RuntimePressureLevel::Warning => "degraded",
+            RuntimePressureLevel::Nominal => "caught_up",
+            RuntimePressureLevel::Unknown => "unknown",
+        }
+        .to_string();
+
+        Self {
+            schema_version: OPS_CATCHUP_READINESS_SCHEMA_VERSION.to_string(),
+            verdict,
+            pressure_level,
+            summary: summary.into(),
+            dlq,
+            source_materials,
+            runtime,
+            streams: Vec::new(),
+            shadow_consumers: Vec::new(),
+            caveats: Vec::new(),
+            actions: Vec::new(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct OpsCatchupDlqSignalView {
+    pub total_messages: u64,
+    pub total_bytes: u64,
+    pub pressure_level: RuntimePressureLevel,
+    pub pending_sequence_span: u64,
+    pub recommended_action: String,
+    pub action_reason: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct OpsCatchupSourceMaterialSignalView {
+    pub source_count: usize,
+    pub material_count: i64,
+    pub event_count: i64,
+    pub completed_material_count: i64,
+    pub failed_material_count: i64,
+    pub recovered_partial_material_count: i64,
+    pub sensing_material_count: i64,
+    pub cancelled_material_count: i64,
+    pub total_bytes: i64,
+    pub pressure_level: RuntimePressureLevel,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct OpsCatchupRuntimeSignalView {
+    pub active_count: i64,
+    pub inactive_count: i64,
+    pub unique_modules: i64,
+    pub active_run_count: i64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub oldest_heartbeat: Option<String>,
+    pub pressure_level: RuntimePressureLevel,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub struct OpsCatchupStreamSignalView {
+    pub stream_name: String,
+    pub max_messages: Option<i64>,
+    pub max_fill_pct: Option<f64>,
+    pub pressure_level: RuntimePressureLevel,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub limiting_dimension: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct OpsCatchupConsumerSignalView {
+    pub consumer_name: String,
+    pub stream_name: String,
+    pub subject_filter: String,
+    pub pending_messages: u64,
+    pub pressure_level: RuntimePressureLevel,
 }
 
 /// Read-only operator plan for retained raw-ingest DLQ cleanup.
