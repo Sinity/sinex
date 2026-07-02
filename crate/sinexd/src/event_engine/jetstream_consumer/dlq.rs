@@ -131,6 +131,11 @@ impl JetStreamConsumer {
         if let Some(event_id) = original_event_id.as_deref() {
             headers.insert("Event-Id", event_id);
         }
+        ensure_nats_payload_fits(
+            "event-engine DLQ entry",
+            &self.topology.dlq_publish_subject,
+            payload.len(),
+        )?;
 
         let mut backoff = DLQ_PUBLISH_BACKOFF_BASE;
         let mut last_error: Option<SinexError> = None;

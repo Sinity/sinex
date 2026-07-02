@@ -3,6 +3,7 @@
 //! This module provides utilities for manually retrying messages from the
 //! operator-facing raw-ingest DLQ.
 
+use crate::runtime::nats_payload::ensure_nats_payload_fits;
 use crate::runtime::{RuntimeResult, SinexError};
 use async_nats::jetstream;
 use futures::StreamExt;
@@ -455,6 +456,12 @@ impl DlqRetryHandler {
         }
         transport::insert_transport_class_headers(&mut headers, transport::Class::Critical);
 
+        ensure_nats_payload_fits(
+            "DLQ retry republish",
+            &target.original_subject,
+            target.original_payload.len(),
+        )?;
+
         js.publish_with_headers(
             target.original_subject,
             headers,
@@ -490,6 +497,12 @@ impl DlqRetryHandler {
             headers.insert("Nats-Msg-Id", msg_id);
         }
         transport::insert_transport_class_headers(&mut headers, transport::Class::Critical);
+
+        ensure_nats_payload_fits(
+            "DLQ stream retry republish",
+            &target.original_subject,
+            target.original_payload.len(),
+        )?;
 
         js.publish_with_headers(
             target.original_subject,

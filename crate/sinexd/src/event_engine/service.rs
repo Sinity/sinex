@@ -10,6 +10,7 @@ use crate::event_engine::{
 // External crates
 use crate::runtime::content_store::{ContentStoreConfig, MaterialContentStore};
 use crate::runtime::heartbeat::HeartbeatEmitter;
+use crate::runtime::nats_payload::ensure_nats_payload_fits;
 use crate::runtime::systemd_notify;
 use crate::runtime::{SelfObserver, SelfObserverConfig};
 use async_nats::{Client as NatsClient, jetstream};
@@ -1030,6 +1031,17 @@ impl IngestService {
             };
 
             let state_dir: PathBuf = assembler_state_dir.into();
+            info!(
+                content_store_path = %content_store_path,
+                assembler_state_dir = %state_dir.display(),
+                slices_max_ack_pending,
+                max_buffered_slices,
+                max_material_size_bytes,
+                slice_timeout_secs,
+                orphan_threshold_secs,
+                disk_threshold_percent,
+                "Starting material assembler with resolved runtime paths"
+            );
 
             let assembler =
                 match crate::event_engine::MaterialAssembler::new_with_durability_thresholds(
@@ -1442,12 +1454,10 @@ impl IngestService {
         // This is fire-and-forget since it's just a notification - no durability needed.
         let mut headers = async_nats::HeaderMap::new();
         transport::insert_transport_class_headers(&mut headers, transport::Class::Control);
+        let payload = serde_json::to_vec(&entries)?;
+        ensure_nats_payload_fits("schema broadcast", &subject, payload.len())?;
         nats_client
-            .publish_with_headers(
-                subject.clone(),
-                headers,
-                serde_json::to_vec(&entries)?.into(),
-            )
+            .publish_with_headers(subject.clone(), headers, payload.into())
             .await
             .map_err(|e| {
                 SinexError::network("Failed to publish schema broadcast").with_source(e)

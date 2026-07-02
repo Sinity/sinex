@@ -16,6 +16,7 @@ use tokio::sync::Mutex;
 use tracing::{debug, error, info, warn};
 
 use crate::event_engine::{EventEngineResult, SinexError};
+use crate::runtime::nats_payload::ensure_nats_payload_fits;
 
 use super::assembly_state_machine::{
     AssemblyInput, AssemblyLogicalState, AssemblyStateMachine, AssemblyTransition,
@@ -151,7 +152,22 @@ impl MaterialAssembler {
                     transport::Class::SourceMaterial,
                 );
 
-                if let Err(e) = self
+                let publish_result = ensure_nats_payload_fits(
+                    "source-material DLQ entry",
+                    &self.dlq_subject,
+                    bytes.len(),
+                )
+                .map_err(|error| error.with_context("material_id", material_id.to_string()));
+
+                if let Err(e) = publish_result {
+                    error!(
+                        target: "sinex_metrics",
+                        metric = "event_engine.material_dlq_publish_failures_total",
+                        material_id = %material_id,
+                        error = %e,
+                        "Failed to publish material DLQ entry"
+                    );
+                } else if let Err(e) = self
                     .nats_client
                     .publish_with_headers(self.dlq_subject.clone(), headers, bytes.into())
                     .await

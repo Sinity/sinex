@@ -64,6 +64,7 @@ use crate::event_engine::{
     validator::IngestEventValidator,
 };
 use crate::runtime::ingestion_helpers::{LedgerEntry, LedgerReader, MaterialTiming};
+use crate::runtime::nats_payload::ensure_nats_payload_fits;
 use sinex_primitives::Id;
 use sinex_primitives::domain::SourceMaterialTimingInfoType;
 use sinex_primitives::events::builder::Provenance;

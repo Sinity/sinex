@@ -48,6 +48,7 @@ async fn publish_event(
         "host": "test-host",
         "source_material_id": FIXTURE_SOURCE_MATERIAL_ID,
         "anchor_byte": 0,
+        "equivalence_key": overrides.equivalence_key,
     });
     let envelope = admission_envelope(source, event);
 
@@ -629,6 +630,98 @@ async fn duplicate_events_are_idempotent(ctx: TestContext) -> TestResult<()> {
         Timeouts::MEDIUM,
     )
     .await?;
+
+    setup.handle.abort();
+    Ok(())
+}
+
+#[sinex_test]
+async fn duplicate_equivalence_key_is_suppressed_without_dlq(ctx: TestContext) -> TestResult<()> {
+    let ctx = ctx.with_nats().shared().await?;
+
+    let setup = start_isolated_consumer(&ctx, "equivalence-suppression").await?;
+    let nats_client = ctx.nats_client();
+    let dlq_stream = setup.topology.dlq_stream.clone();
+    let mut dlq_handle = setup.js.get_stream(&dlq_stream).await?;
+    let initial_dlq_messages = dlq_handle.info().await?.state.messages;
+    let equivalence_key = "equivalence-suppression-key".to_string();
+
+    let first_id = publish_event(
+        &ctx.pool,
+        &nats_client,
+        &setup.namespace,
+        "equivalence-suppression",
+        "pipeline.event",
+        json!({"sequence": 1}),
+        EventOverrides {
+            equivalence_key: Some(equivalence_key.clone()),
+            ..Default::default()
+        },
+    )
+    .await?;
+
+    WaitHelpers::wait_for_event_id(&ctx.pool, first_id.into(), Timeouts::SHORT).await?;
+
+    let duplicate_id = publish_event(
+        &ctx.pool,
+        &nats_client,
+        &setup.namespace,
+        "equivalence-suppression",
+        "pipeline.event",
+        json!({"sequence": 2}),
+        EventOverrides {
+            equivalence_key: Some(equivalence_key.clone()),
+            ..Default::default()
+        },
+    )
+    .await?;
+
+    WaitHelpers::wait_for_condition(
+        || {
+            let js = setup.js.clone();
+            let stream_name = setup.topology.events_stream.clone();
+            let consumer_name = setup.topology.consumer_durable.clone();
+            async move {
+                let stream = js
+                    .get_stream(&stream_name)
+                    .await
+                    .map_err(|error| SinexError::network(error.to_string()))?;
+                let mut consumer = stream
+                    .get_consumer::<jetstream::consumer::pull::Config>(&consumer_name)
+                    .await
+                    .map_err(|error| SinexError::network(error.to_string()))?;
+                let info = consumer
+                    .info()
+                    .await
+                    .map_err(|error| SinexError::network(error.to_string()))?;
+                Ok::<bool, SinexError>(info.num_pending == 0 && info.num_ack_pending == 0)
+            }
+        },
+        Timeouts::SHORT,
+    )
+    .await?;
+
+    let persisted_with_key: Option<i64> =
+        sqlx::query_scalar("SELECT COUNT(*) FROM core.events WHERE equivalence_key = $1")
+            .bind(&equivalence_key)
+            .fetch_one(&ctx.pool)
+            .await?;
+    assert_eq!(persisted_with_key.unwrap_or(0), 1);
+    assert!(
+        ctx.pool
+            .events()
+            .get_by_id(duplicate_id.into())
+            .await?
+            .is_none(),
+        "duplicate equivalence-key event must be suppressed, not persisted"
+    );
+
+    dlq_handle = setup.js.get_stream(&dlq_stream).await?;
+    let dlq_messages = dlq_handle.info().await?.state.messages;
+    assert_eq!(
+        dlq_messages, initial_dlq_messages,
+        "duplicate equivalence-key suppression must not route to DLQ"
+    );
 
     setup.handle.abort();
     Ok(())

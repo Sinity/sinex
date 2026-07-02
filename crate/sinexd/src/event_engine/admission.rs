@@ -650,6 +650,33 @@ impl AdmissionService {
                 ),
             )));
         }
+        if let Some(source_event_ids) = event.get_source_event_ids()
+            && let Some(invalid_parent_id) = source_event_ids
+                .iter()
+                .map(EventId::to_uuid)
+                .find(|source_id| !is_uuid_v7(source_id))
+        {
+            error!(
+                target: "sinex_metrics",
+                metric = "event_engine.admission_rejections_total",
+                kind = "invalid_event_id",
+                event_id = %event_id,
+                source = %event.source,
+                event_type = %event.event_type,
+                parent_event_id = %invalid_parent_id,
+                uuid_version = invalid_parent_id.get_version_num(),
+                uuid_variant = ?invalid_parent_id.get_variant(),
+                "Derived event parent ID is not UUIDv7 - violates hypertable partition contract"
+            );
+            return Ok(AdmissionDecision::Rejected(AdmissionRejection::new(
+                AdmissionRejectionKind::InvalidEventId,
+                format!(
+                    "Invalid derived parent event ID: {invalid_parent_id} is UUID version {} with variant {:?}, expected RFC4122 UUIDv7",
+                    invalid_parent_id.get_version_num(),
+                    invalid_parent_id.get_variant()
+                ),
+            )));
+        }
 
         Ok(AdmissionDecision::Admitted(AdmittedEvent {
             event,
