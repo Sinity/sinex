@@ -9,6 +9,8 @@ use std::time::Duration;
 use tokio::sync::Semaphore;
 use tracing::{error, info, warn};
 
+use crate::runtime::nats_payload::ensure_nats_payload_fits;
+
 use super::execution::{ReplayExecutionEngine, ReplayPreviewSummary};
 use super::protocol::{ReplayControlRequest, ReplayControlResponse};
 use super::validation::{
@@ -218,6 +220,19 @@ impl ReplayControlServer {
                         &mut headers,
                         transport::Class::Control,
                     );
+                    if let Err(err) = ensure_nats_payload_fits(
+                        "replay control response",
+                        &reply_subject,
+                        bytes.len(),
+                    ) {
+                        error!(
+                            target: "sinex_metrics",
+                            metric = "gateway.replay_control_failures_total",
+                            ?err,
+                            "Replay control response exceeded NATS payload limit; reply not sent"
+                        );
+                        return Ok(());
+                    }
                     if let Err(err) = client
                         .publish_with_headers(reply_subject, headers, bytes.into())
                         .await

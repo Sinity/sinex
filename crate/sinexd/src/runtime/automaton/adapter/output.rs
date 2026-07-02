@@ -3,6 +3,12 @@
 //! Carved out of `adapter/mod.rs` as part of #697. Pure mechanical move; the
 //! methods, control flow, and instrumentation are unchanged.
 
+use std::{
+    collections::HashMap,
+    sync::{LazyLock, Mutex},
+    time::{Duration, Instant},
+};
+
 #[cfg(feature = "messaging")]
 use super::log_self_observation_failure;
 use super::{
@@ -21,6 +27,54 @@ use sinex_primitives::non_empty::NonEmptyVec;
 use sinex_primitives::{EventSource, EventType, HostName, Id, JsonValue};
 
 use tracing::warn;
+
+const DERIVED_OUTPUT_PARENT_WARN_LOG_INTERVAL: Duration = Duration::from_secs(60);
+
+static DERIVED_PARENT_WARN_LIMITER: LazyLock<Mutex<ParentLimitWarnState>> =
+    LazyLock::new(|| Mutex::new(ParentLimitWarnState::default()));
+
+#[derive(Debug, Default)]
+struct ParentLimitWarnState {
+    entries: HashMap<ParentLimitWarnKey, ParentLimitWarnEntry>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+struct ParentLimitWarnKey {
+    automaton: &'static str,
+    phase: &'static str,
+    output_event_type: &'static str,
+}
+
+#[derive(Debug)]
+struct ParentLimitWarnEntry {
+    last_logged_at: Instant,
+    suppressed: u64,
+}
+
+impl ParentLimitWarnState {
+    fn should_log(&mut self, key: ParentLimitWarnKey, now: Instant) -> Option<u64> {
+        let Some(entry) = self.entries.get_mut(&key) else {
+            self.entries.insert(
+                key,
+                ParentLimitWarnEntry {
+                    last_logged_at: now,
+                    suppressed: 0,
+                },
+            );
+            return Some(0);
+        };
+
+        if now.duration_since(entry.last_logged_at) >= DERIVED_OUTPUT_PARENT_WARN_LOG_INTERVAL {
+            let suppressed = entry.suppressed;
+            entry.last_logged_at = now;
+            entry.suppressed = 0;
+            return Some(suppressed);
+        }
+
+        entry.suppressed = entry.suppressed.saturating_add(1);
+        None
+    }
+}
 
 impl<N> AutomatonRuntime<N>
 where
@@ -62,16 +116,28 @@ where
         }
 
         if max_parent_count > DERIVED_OUTPUT_PARENT_WARN_THRESHOLD {
-            warn!(
-                automaton = %self.automaton.name(),
+            let key = ParentLimitWarnKey {
+                automaton: self.automaton.name(),
                 phase,
-                output_event_type = %self.automaton.output_event_type(),
-                output_count = outputs.len(),
-                max_parent_count,
-                threshold = DERIVED_OUTPUT_PARENT_WARN_THRESHOLD,
-                hard_limit = DERIVED_OUTPUT_PARENT_HARD_LIMIT,
-                "Derived output batch is approaching derived parent limits"
-            );
+                output_event_type: self.automaton.output_event_type(),
+            };
+            let suppressed_since_last_log = DERIVED_PARENT_WARN_LIMITER
+                .lock()
+                .map(|mut limiter| limiter.should_log(key, Instant::now()))
+                .unwrap_or(Some(0));
+            if let Some(suppressed_since_last_log) = suppressed_since_last_log {
+                warn!(
+                    automaton = %self.automaton.name(),
+                    phase,
+                    output_event_type = %self.automaton.output_event_type(),
+                    output_count = outputs.len(),
+                    max_parent_count,
+                    threshold = DERIVED_OUTPUT_PARENT_WARN_THRESHOLD,
+                    hard_limit = DERIVED_OUTPUT_PARENT_HARD_LIMIT,
+                    suppressed_since_last_log,
+                    "Derived output batch is approaching derived parent limits"
+                );
+            }
         }
 
         Ok(())
@@ -273,3 +339,7 @@ where
         })
     }
 }
+
+#[cfg(test)]
+#[path = "output_test.rs"]
+mod tests;

@@ -688,6 +688,62 @@ async fn restore_state_cleans_up_assemblies_already_past_slice_timeout(
 }
 
 #[sinex_test]
+async fn restore_state_cleans_up_stale_self_observation_before_global_slice_timeout(
+    ctx: TestContext,
+) -> TestResult<()> {
+    let ctx = ctx.with_nats().shared().await?;
+    let (assembler, _content_store_dir, state_dir) =
+        test_assembler_with_config(&ctx, 3_600).await?;
+    let material_id = Uuid::now_v7();
+    let material_dir = state_dir.path().join(material_id.to_string());
+    tokio::fs::create_dir_all(&material_dir).await?;
+
+    let last_slice_received =
+        Timestamp::now() - time::Duration::seconds(RESTORED_SELF_OBSERVATION_ORPHAN_TIMEOUT_SECS + 1);
+
+    write_wal_entry(
+        &material_dir.join(WAL_FILE_NAME),
+        WalEntry::Begin(super::super::state::MaterialBeginMessage {
+            material_id: material_id.to_string(),
+            material_kind: "self_observation".to_string(),
+            source_identifier: format!("sinex.self-observation.test#material={material_id}"),
+            metadata: json!({}),
+            started_at: last_slice_received.format_rfc3339(),
+        }),
+    )
+    .await?;
+    write_wal_entry(
+        &material_dir.join(WAL_FILE_NAME),
+        WalEntry::Checkpoint(PersistedState {
+            material_id: material_id.to_string(),
+            expected_offset: 0,
+            slice_count: 0,
+            started_at: last_slice_received.format_rfc3339(),
+            last_slice_received: Some(last_slice_received.format_rfc3339()),
+            material_kind: "self_observation".to_string(),
+            source_identifier: format!("sinex.self-observation.test#material={material_id}"),
+            metadata: json!({}),
+            pending_write: None,
+            pending_end: None,
+            phase: AssemblyPhase::Accumulating,
+        }),
+    )
+    .await?;
+
+    restore_state(&assembler).await?;
+
+    assert!(
+        !material_dir.exists(),
+        "stale restored self-observation streams should not wait for the global slice timeout"
+    );
+    assert!(
+        assembler.get_state_handle(&material_id).is_none(),
+        "stale restored self-observation state must not occupy the active set"
+    );
+    Ok(())
+}
+
+#[sinex_test]
 async fn restore_state_cleans_up_stale_incomplete_pending_end(
     ctx: TestContext,
 ) -> TestResult<()> {
