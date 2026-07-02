@@ -2,7 +2,8 @@
 """Split Rust test modules into *_test.rs files.
 
 The tool is intentionally conservative:
-- it skips existing *_test.rs, tests.rs, and paths under tests/
+- it scans crate/, tests/, and xtask/ by default
+- it skips tests.rs and existing *_test.rs unless --include-split-test-files is set
 - it only handles files with exactly one true inline `mod tests { ... }`
 - it writes sibling `<stem>_test.rs` files and leaves `#[path = "..."] mod tests;`
 - it fails instead of overwriting an existing target file
@@ -21,7 +22,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 
-DEFAULT_ROOTS = ("crate", "xtask")
+DEFAULT_ROOTS = ("crate", "tests", "xtask")
 
 
 @dataclass
@@ -44,20 +45,41 @@ class SplitModuleCandidate:
     decl_end: int
 
 
-def is_skipped(path: Path, *, include_test_directories: bool) -> bool:
-    if path.name.endswith("_test.rs") or path.name == "tests.rs":
+def is_skipped(
+    path: Path,
+    *,
+    include_test_directories: bool,
+    include_split_test_files: bool,
+) -> bool:
+    if path.name.endswith("_test.rs") and not include_split_test_files:
+        return True
+    if path.name == "tests.rs":
         return True
     return (not include_test_directories) and "tests" in path.parts
 
 
-def iter_rust_files(roots: list[Path], *, include_test_directories: bool) -> list[Path]:
+def iter_rust_files(
+    roots: list[Path],
+    *,
+    include_test_directories: bool,
+    include_split_test_files: bool,
+) -> list[Path]:
     files: list[Path] = []
     for root in roots:
         if root.is_file() and root.suffix == ".rs":
-            files.append(root)
+            if not is_skipped(
+                root,
+                include_test_directories=include_test_directories,
+                include_split_test_files=include_split_test_files,
+            ):
+                files.append(root)
             continue
         for path in root.rglob("*.rs"):
-            if not is_skipped(path, include_test_directories=include_test_directories):
+            if not is_skipped(
+                path,
+                include_test_directories=include_test_directories,
+                include_split_test_files=include_split_test_files,
+            ):
                 files.append(path)
     return sorted(files)
 
@@ -429,6 +451,11 @@ def main() -> int:
         action="store_true",
         help="also scan Rust files below tests/ directories",
     )
+    parser.add_argument(
+        "--include-split-test-files",
+        action="store_true",
+        help="also scan *_test.rs files for nested inline test modules",
+    )
     parser.add_argument("--root", action="append", default=[])
     parser.add_argument("--json", action="store_true")
     args = parser.parse_args()
@@ -437,6 +464,7 @@ def main() -> int:
     files = iter_rust_files(
         roots,
         include_test_directories=args.include_test_directories,
+        include_split_test_files=args.include_split_test_files,
     )
     found: list[Candidate] = []
     split_found: list[SplitModuleCandidate] = []
