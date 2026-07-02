@@ -2734,4 +2734,5 @@ impl ProcessBuilder {
 }
 
 #[cfg(test)]
+#[path = "process_test.rs"]
 mod tests;

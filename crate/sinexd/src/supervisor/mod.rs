@@ -511,14 +511,49 @@ fn spawn_source_binding(
 ) -> JoinHandle<()> {
     let label = format!("{}-{}", binding.source_id, binding.instance_idx);
     tokio::spawn(async move {
-        let _shutdown_rx = shutdown_rx;
-        match source_bindings::run_binding(binding).await {
-            Ok(()) => info!(source_binding = %label, "source host exited"),
-            Err(error) => warn!(
-                source_binding = %label,
-                ?error,
-                "source host exited with error"
-            ),
+        let mut backoff = Duration::from_secs(1);
+        const MAX_BACKOFF: Duration = Duration::from_secs(30);
+        const STABLE_THRESHOLD: Duration = Duration::from_secs(60);
+
+        loop {
+            if *shutdown_rx.borrow() {
+                break;
+            }
+
+            let started = std::time::Instant::now();
+            match source_bindings::run_binding(binding.clone()).await {
+                Ok(()) => {
+                    info!(source_binding = %label, "source host exited cleanly");
+                    break;
+                }
+                Err(error) if *shutdown_rx.borrow() => {
+                    debug!(
+                        source_binding = %label,
+                        ?error,
+                        "source host exited during shutdown"
+                    );
+                    break;
+                }
+                Err(error) => {
+                    if started.elapsed() >= STABLE_THRESHOLD {
+                        backoff = Duration::from_secs(1);
+                    }
+                    warn!(
+                        source_binding = %label,
+                        backoff_ms = backoff.as_millis(),
+                        ?error,
+                        "source host exited with error; restarting after backoff"
+                    );
+                    tokio::select! {
+                        () = tokio::time::sleep(backoff) => {}
+                        _ = {
+                            let mut rx = shutdown_rx.clone();
+                            async move { let _ = rx.wait_for(|&v| v).await; }
+                        } => { break; }
+                    }
+                    backoff = (backoff * 2).min(MAX_BACKOFF);
+                }
+            }
         }
     })
 }

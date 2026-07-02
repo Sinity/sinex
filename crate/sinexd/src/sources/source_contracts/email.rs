@@ -2074,4 +2074,5 @@ fn material_fallback_identity(material: &EmailMaterialIdentity, raw_material_id:
 }
 
 #[cfg(test)]
+#[path = "email_test.rs"]
 mod tests;

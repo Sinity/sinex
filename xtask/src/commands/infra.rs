@@ -586,7 +586,7 @@ fn dev_source_binding(
 }
 
 fn generate_dev_source_bindings_manifest(watch_root: &Path) -> DevSourceBindingsManifest {
-    let home = dirs::home_dir().unwrap_or_else(|| PathBuf::from("/home/sinity"));
+    let home = dirs::home_dir().unwrap_or_else(|| PathBuf::from("/"));
     generate_dev_source_bindings_manifest_for_home_and_exports(
         watch_root,
         &home,

@@ -2004,4 +2004,5 @@ pub fn compute_scope_key(command: &str, args: &[String]) -> String {
 // --- R2: Workflow Dependency Graph ---
 
 #[cfg(test)]
+#[path = "coordinator_test.rs"]
 mod tests;

@@ -717,4 +717,5 @@ pub type MultiOutputTransducerAdapter<N> =
     AutomatonRuntime<super::traits::MultiOutputTransducerWrapper<N>>;
 
 #[cfg(test)]
+#[path = "adapter_test.rs"]
 mod tests;

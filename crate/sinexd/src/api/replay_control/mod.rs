@@ -8,6 +8,7 @@ mod telemetry;
 mod validation;
 
 #[cfg(test)]
+#[path = "replay_control_test.rs"]
 mod tests;
 
 pub use client::ReplayControlClient;

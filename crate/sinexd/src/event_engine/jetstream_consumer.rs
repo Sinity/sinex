@@ -155,4 +155,5 @@ pub struct JetStreamConsumer {
 }
 
 #[cfg(test)]
+#[path = "jetstream_consumer_test.rs"]
 mod tests;

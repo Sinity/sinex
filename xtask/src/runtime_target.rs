@@ -63,6 +63,7 @@ pub fn checkout_runtime_target(cfg: &Config) -> Result<RuntimeTargetDescriptor> 
     let ca_cert_file = existing_path(tls_dir.join("ca.pem"));
     let client_cert_file = existing_path(tls_dir.join("client.pem"));
     let client_key_file = existing_path(tls_dir.join("client-key.pem"));
+    let require_client_tls = client_cert_file.is_some() && client_key_file.is_some();
     let token_file = existing_path(checkout_runtime_target_token_file());
 
     Ok(RuntimeTargetDescriptor {
@@ -91,7 +92,7 @@ pub fn checkout_runtime_target(cfg: &Config) -> Result<RuntimeTargetDescriptor> 
             ca_cert_file,
             client_cert_file,
             client_key_file,
-            require_client_tls: true,
+            require_client_tls,
             insecure: false,
         },
         nats: RuntimeTargetNats {

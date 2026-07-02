@@ -20,8 +20,6 @@ use std::path::Path;
 use std::time::{Duration, Instant};
 use tracing::{debug, info, warn};
 
-const OVERSIZED_FILE_CHECKPOINT_MIN_INTERVAL: Duration = Duration::from_secs(10);
-
 /// Progress markers extracted from a hot-reload checkpoint file, used to
 /// reconcile the file against the durable NATS KV checkpoint in `load_state`.
 #[derive(Debug)]
@@ -278,15 +276,9 @@ where
         let kv_payload_bytes = checkpoint_state.kv_payload_len()?;
         if kv_payload_bytes > NATS_PUBLISH_PAYLOAD_HARD_LIMIT_BYTES {
             let now = Instant::now();
-            if self
+            let checkpoint_interval = self
                 .last_oversized_file_checkpoint_time
-                .is_some_and(|last| now.duration_since(last) < OVERSIZED_FILE_CHECKPOINT_MIN_INTERVAL)
-            {
-                self.events_since_checkpoint = 0;
-                self.last_checkpoint_time = now;
-                return Ok(());
-            }
-
+                .map(|last| now.duration_since(last));
             warn!(
                 target: "sinex_metrics",
                 metric = "runtime.checkpoint_file_backed_oversized_total",
@@ -294,6 +286,8 @@ where
                 kv_payload_bytes,
                 max_payload_bytes = NATS_PUBLISH_PAYLOAD_HARD_LIMIT_BYTES,
                 events_processed = self.persisted_state.events_processed,
+                since_last_file_checkpoint_ms = checkpoint_interval
+                    .map(|duration| duration.as_millis()),
                 "Checkpoint state exceeds NATS KV payload budget; saving directly to file"
             );
             self.save_state_to_file().await.map_err(|error| {

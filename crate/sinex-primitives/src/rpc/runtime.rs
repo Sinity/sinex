@@ -122,6 +122,7 @@ pub struct RuntimeListActiveResponse {
 pub enum RuntimeHeartbeatSource {
     Run,
     Manifest,
+    Output,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

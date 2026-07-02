@@ -19,6 +19,7 @@ fn parse_runtime_heartbeat_source(value: &str) -> Result<RuntimeHeartbeatSource>
     match value {
         "run" => Ok(RuntimeHeartbeatSource::Run),
         "manifest" => Ok(RuntimeHeartbeatSource::Manifest),
+        "output" => Ok(RuntimeHeartbeatSource::Output),
         other => Err(SinexError::processing(format!(
             "Unknown runtime heartbeat source '{other}'"
         ))),

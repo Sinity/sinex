@@ -699,5 +699,7 @@ async fn module_run_status(pool: &sinex_db::DbPool, module_run_id: Uuid) -> Test
     Ok(status)
 }
 
+#[path = "tests/pipeline.rs"]
 mod pipeline;
+#[path = "tests/runtime.rs"]
 mod runtime;

@@ -535,4 +535,5 @@ impl HistoryDb {
 impl HistoryDb {}
 
 #[cfg(test)]
+#[path = "db_test.rs"]
 mod tests;

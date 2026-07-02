@@ -119,6 +119,7 @@ mod email;
 mod media;
 mod shell;
 #[cfg(test)]
+#[path = "event_contracts_test.rs"]
 mod tests;
 
 pub use browser::*;
