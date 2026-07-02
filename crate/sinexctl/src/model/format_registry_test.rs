@@ -42,6 +42,8 @@ async fn validate_format_accepts_supported() -> xtask::sandbox::TestResult<()> {
     assert!(validate_format("events trace", OutputFormat::Ndjson).is_err());
     assert!(validate_format("events watch", OutputFormat::Json).is_ok());
     assert!(validate_format("events watch", OutputFormat::Ndjson).is_ok());
+    assert!(validate_format("ops dlq triage", OutputFormat::Json).is_ok());
+    assert!(validate_format("ops dlq cleanup-plan", OutputFormat::Json).is_ok());
     assert!(validate_format("ops replay watch", OutputFormat::Ndjson).is_ok());
     Ok(())
 }
