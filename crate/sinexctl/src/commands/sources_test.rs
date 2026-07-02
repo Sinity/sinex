@@ -229,6 +229,8 @@ async fn source_remediation_plan_envelope_renders_finite_json_document() -> Test
     )
     .with_query_echo(serde_json::json!({
         "limit": 10,
+        "sort": "event-count",
+        "candidate_limit": 1000,
         "include_empty": false,
     }));
 
@@ -254,6 +256,8 @@ async fn source_remediation_plan_envelope_renders_finite_json_document() -> Test
         1
     );
     assert_eq!(value["payload"]["summary"]["by_severity"]["medium"], 1);
+    assert_eq!(value["query_echo"]["sort"], "event-count");
+    assert_eq!(value["query_echo"]["candidate_limit"], 1000);
     assert_eq!(value["payload"]["items"][0]["status"], "recovered_partial");
     assert_eq!(
         value["payload"]["items"][0]["decision"],
@@ -494,6 +498,75 @@ async fn source_remediation_plan_table_surfaces_actions_and_reasons() -> TestRes
     assert_eq!(plan.summary.total_admitted_events, 17);
     assert_eq!(plan.summary.by_decision["inspect_failed_eventful"], 1);
     assert_eq!(plan.summary.by_decision["review_partial_recovery"], 1);
+    Ok(())
+}
+
+#[sinex_test]
+async fn source_remediation_candidates_sort_by_event_count_first() -> TestResult<()> {
+    let mut low_recent = fixture_material("low-recent");
+    low_recent.event_count = Some(10);
+    low_recent.staged_at = Some("2026-06-03T00:00:00Z".to_string());
+
+    let mut high_old = fixture_material("high-old");
+    high_old.event_count = Some(100);
+    high_old.staged_at = Some("2026-06-01T00:00:00Z".to_string());
+
+    let mut middle = fixture_material("middle");
+    middle.event_count = Some(50);
+    middle.staged_at = Some("2026-06-02T00:00:00Z".to_string());
+
+    let mut candidates = vec![low_recent, high_old, middle];
+
+    sort_remediation_candidates(&mut candidates, RemediationPlanSort::EventCount);
+
+    let ids = candidates
+        .into_iter()
+        .map(|material| material.id)
+        .collect::<Vec<_>>();
+    assert_eq!(ids, vec!["high-old", "middle", "low-recent"]);
+    Ok(())
+}
+
+#[sinex_test]
+async fn source_remediation_candidates_sort_by_staged_at_when_requested() -> TestResult<()> {
+    let mut low_recent = fixture_material("low-recent");
+    low_recent.event_count = Some(10);
+    low_recent.staged_at = Some("2026-06-03T00:00:00Z".to_string());
+
+    let mut high_old = fixture_material("high-old");
+    high_old.event_count = Some(100);
+    high_old.staged_at = Some("2026-06-01T00:00:00Z".to_string());
+
+    let mut middle = fixture_material("middle");
+    middle.event_count = Some(50);
+    middle.staged_at = Some("2026-06-02T00:00:00Z".to_string());
+
+    let mut candidates = vec![high_old, middle, low_recent];
+
+    sort_remediation_candidates(&mut candidates, RemediationPlanSort::StagedAt);
+
+    let ids = candidates
+        .into_iter()
+        .map(|material| material.id)
+        .collect::<Vec<_>>();
+    assert_eq!(ids, vec!["low-recent", "middle", "high-old"]);
+    Ok(())
+}
+
+#[sinex_test]
+async fn source_remediation_event_count_sort_scans_wider_candidate_window() -> TestResult<()> {
+    assert_eq!(
+        RemediationPlanSort::EventCount.candidate_fetch_limit(20),
+        1000
+    );
+    assert_eq!(
+        RemediationPlanSort::EventCount.candidate_fetch_limit(1200),
+        1200
+    );
+    assert_eq!(
+        RemediationPlanSort::StagedAt.candidate_fetch_limit(20),
+        20
+    );
     Ok(())
 }
 
