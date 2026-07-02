@@ -957,6 +957,9 @@ SQL
 
                 _sinex_xtask_is_observability_command() {
                   local command_name
+                  if _sinex_xtask_is_help_request "$@"; then
+                    return 0
+                  fi
                   command_name="$(_sinex_xtask_command_name "$@")"
                   case "$command_name" in
                     ""|-h|--help|--version|--list-commands|status|history|analytics|jobs|snapshot)
@@ -1244,7 +1247,7 @@ SQL
                   local command_name
                   command_name="$(_sinex_xtask_command_name "$@")"
                   case "$command_name" in
-                    ""|-h|--help|--version|--list-commands|status|history|analytics|jobs|snapshot|check|test|build|deps|doctor|infra|run|docs|fix)
+                    ""|-h|--help|--version|--list-commands|status|history|analytics|jobs|snapshot|schema|check|test|build|deps|doctor|infra|run|docs|fix)
                       return 0
                       ;;
                     *)
