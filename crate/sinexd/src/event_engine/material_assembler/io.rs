@@ -6,6 +6,7 @@
 
 use super::{
     MaterialAssembler,
+    RESTORED_SELF_OBSERVATION_ORPHAN_TIMEOUT_SECS,
     assembly_state_machine::{
         AssemblyInput, AssemblyLogicalState, AssemblyStateMachine, AssemblyTransition,
     },
@@ -504,11 +505,27 @@ fn restored_state_is_stale(
     let elapsed = Timestamp::now() - last_slice_received;
     let pending_end_blocked = state_snapshot.pending_end.is_some()
         && !restored_pending_end_is_complete(state_snapshot, buffered_slices);
-    elapsed.whole_seconds() > slice_arrival_timeout.as_secs() as i64
+    let timeout_secs = restored_state_stale_timeout_secs(state_snapshot, slice_arrival_timeout);
+    elapsed.whole_seconds() > timeout_secs
         && (state_snapshot.pending_end.is_none()
             || pending_end_blocked
             || !buffered_slices.is_empty()
             || state_snapshot.phase == AssemblyPhase::PendingBegin)
+}
+
+fn restored_state_stale_timeout_secs(
+    state_snapshot: &ReplayedState,
+    slice_arrival_timeout: std::time::Duration,
+) -> i64 {
+    let slice_timeout_secs = slice_arrival_timeout.as_secs() as i64;
+    if state_snapshot.pending_end.is_none()
+        && state_snapshot
+            .source_identifier
+            .starts_with("sinex.self-observation.")
+    {
+        return slice_timeout_secs.min(RESTORED_SELF_OBSERVATION_ORPHAN_TIMEOUT_SECS);
+    }
+    slice_timeout_secs
 }
 
 fn restored_pending_end_is_complete(

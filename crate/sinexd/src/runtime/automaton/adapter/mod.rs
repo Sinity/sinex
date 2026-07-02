@@ -96,6 +96,7 @@ where
     host: String,
     events_since_checkpoint: u64,
     last_checkpoint_time: Instant,
+    last_oversized_file_checkpoint_time: Option<Instant>,
     last_revision: u64,
     pending_hot_reload_cleanup: Option<PathBuf>,
     /// Consecutive checkpoint save failures. Reset to 0 on any successful save.
@@ -138,6 +139,7 @@ where
             host: gethostname::gethostname().to_string_lossy().to_string(),
             events_since_checkpoint: 0,
             last_checkpoint_time: Instant::now(),
+            last_oversized_file_checkpoint_time: None,
             last_revision: 0,
             pending_hot_reload_cleanup: None,
             consecutive_checkpoint_failures: 0,

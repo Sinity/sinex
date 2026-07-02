@@ -206,7 +206,10 @@ where
                 // Periodic checkpoint
                 () = tokio::time::sleep(Duration::from_mins(1)) => {
                     if self.events_since_checkpoint > 0 {
-                        match self.save_state().await {
+                        match self
+                            .save_state_with_file_fallback("periodic continuous checkpoint")
+                            .await
+                        {
                             Ok(()) => {
                                 self.consecutive_checkpoint_failures = 0;
                             }
@@ -242,7 +245,10 @@ where
             }
         }
 
-        if let Err(e) = self.save_state().await {
+        if let Err(e) = self
+            .save_state_with_file_fallback("final invalidation checkpoint")
+            .await
+        {
             error!(
                 target: "sinex_metrics",
                 metric = "derive.checkpoint_failures_total",
@@ -415,7 +421,12 @@ where
                                 let failure_err = self
                                     .send_to_processing_failure_queue_or_fail(&failed_event, &e)
                                     .await;
-                                if let Err(cp_err) = self.save_state().await {
+                                if let Err(cp_err) = self
+                                    .save_state_with_file_fallback(
+                                        "historical replay processing-failure checkpoint",
+                                    )
+                                    .await
+                                {
                                     error!(
                                         target: "sinex_metrics",
                                         metric = "derive.checkpoint_failures_total",
@@ -434,7 +445,12 @@ where
                                     error = %e,
                                     "Retryable error in historical replay; halting replay"
                                 );
-                                if let Err(cp_err) = self.save_state().await {
+                                if let Err(cp_err) = self
+                                    .save_state_with_file_fallback(
+                                        "historical replay retry-error checkpoint",
+                                    )
+                                    .await
+                                {
                                     error!(
                                         target: "sinex_metrics",
                                         metric = "derive.checkpoint_failures_total",
@@ -460,7 +476,12 @@ where
                                     reason = ?reason,
                                     "Halting module during historical replay; runtime drain requested"
                                 );
-                                if let Err(cp_err) = self.save_state().await {
+                                if let Err(cp_err) = self
+                                    .save_state_with_file_fallback(
+                                        "historical replay halt-error checkpoint",
+                                    )
+                                    .await
+                                {
                                     error!(
                                         target: "sinex_metrics",
                                         metric = "derive.checkpoint_failures_total",
@@ -485,7 +506,12 @@ where
                                     reason = %reason,
                                     "Draining runtime unit during historical replay"
                                 );
-                                if let Err(cp_err) = self.save_state().await {
+                                if let Err(cp_err) = self
+                                    .save_state_with_file_fallback(
+                                        "historical replay drain-error checkpoint",
+                                    )
+                                    .await
+                                {
                                     error!(
                                         target: "sinex_metrics",
                                         metric = "derive.checkpoint_failures_total",
@@ -507,16 +533,18 @@ where
             }
 
             if self.should_checkpoint() {
-                self.save_state().await.map_err(|e| {
-                    error!(
-                        target: "sinex_metrics",
-                        metric = "derive.checkpoint_failures_total",
-                        automaton = %self.automaton.name(),
-                        error = %e,
-                        "Failed to save checkpoint during historical replay"
-                    );
-                    e
-                })?;
+                self.save_state_with_file_fallback("historical replay periodic checkpoint")
+                    .await
+                    .map_err(|e| {
+                        error!(
+                            target: "sinex_metrics",
+                            metric = "derive.checkpoint_failures_total",
+                            automaton = %self.automaton.name(),
+                            error = %e,
+                            "Failed to save checkpoint during historical replay"
+                        );
+                        e
+                    })?;
             }
 
             match next_cursor {
@@ -527,7 +555,10 @@ where
             }
         }
 
-        if let Err(e) = self.save_state().await {
+        if let Err(e) = self
+            .save_state_with_file_fallback("historical replay final checkpoint")
+            .await
+        {
             error!(
                 target: "sinex_metrics",
                 metric = "derive.checkpoint_failures_total",

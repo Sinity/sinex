@@ -7,6 +7,7 @@
 //! - Set processing horizon (control replay boundaries)
 
 use crate::api::service_container::ServiceContainer;
+use crate::runtime::nats_payload::ensure_nats_payload_fits;
 use serde_json::{Value, json};
 use sinex_db::repositories::Operation;
 use sinex_db::{DbPool, DbPoolExt};
@@ -138,18 +139,16 @@ async fn publish_runtime_control(
 ) -> Result<()> {
     let mut headers = async_nats::HeaderMap::new();
     transport::insert_transport_class_headers(&mut headers, transport::Class::Control);
+    let payload_bytes = serde_json::to_vec(&payload)
+        .map_err(|e| {
+            SinexError::serialization(format!("failed to serialize {operation} payload"))
+                .with_std_error(&e)
+        })?;
+
+    ensure_nats_payload_fits("runtime control operation", &subject, payload_bytes.len())?;
 
     nats_client
-        .publish_with_headers(
-            subject.clone(),
-            headers,
-            serde_json::to_vec(&payload)
-                .map_err(|e| {
-                    SinexError::serialization(format!("failed to serialize {operation} payload"))
-                        .with_std_error(&e)
-                })?
-                .into(),
-        )
+        .publish_with_headers(subject.clone(), headers, payload_bytes.into())
         .await
         .map_err(|e| {
             SinexError::nats_publish(operation)

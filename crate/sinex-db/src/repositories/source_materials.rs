@@ -456,6 +456,53 @@ impl SourceMaterialRepository<'_> {
         .map_err(|e| db_error(e, "list stale sensing source materials"))
     }
 
+    /// List stale in-flight material rows for one logical source namespace.
+    ///
+    /// This keeps source-specific reconciliation policy out of SQL callers: the
+    /// caller supplies the prefix and cutoff, while the repository owns the
+    /// registry projection and ordering contract.
+    pub async fn list_stale_sensing_by_source_prefix(
+        &self,
+        older_than: Timestamp,
+        source_identifier_prefix: &str,
+        limit: i64,
+    ) -> DbResult<Vec<SourceMaterialRecord>> {
+        let prefix = format!("{source_identifier_prefix}%");
+        sqlx::query_as!(
+            SourceMaterialRecord,
+            r#"
+            SELECT
+                id as "id!: uuid::Uuid",
+                material_kind,
+                source_identifier,
+                status,
+                timing_info_type,
+                metadata,
+                staged_at as "staged_at: Timestamp",
+                start_time as "start_time: Timestamp",
+                end_time as "end_time: Timestamp",
+                staged_by,
+                staged_on_host,
+                optional_blob_id as "optional_blob_id?: uuid::Uuid",
+                total_bytes as "total_bytes?: i64",
+                coverage_contract as "coverage_contract!: JsonValue",
+                privacy_class as "privacy_class!: String"
+            FROM raw.source_material_registry
+            WHERE status = 'sensing'
+              AND COALESCE(start_time, staged_at) < $1
+              AND source_identifier LIKE $2
+            ORDER BY staged_at ASC, id ASC
+            LIMIT $3
+            "#,
+            *older_than,
+            prefix,
+            limit
+        )
+        .fetch_all(self.pool)
+        .await
+        .map_err(|e| db_error(e, "list stale sensing source materials by prefix"))
+    }
+
     /// Find source material by blob ID
     pub async fn find_by_blob_id(
         &self,

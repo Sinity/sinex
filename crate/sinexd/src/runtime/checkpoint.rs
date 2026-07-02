@@ -37,7 +37,9 @@
 //! - Frequent checkpoint updates are batched for better performance
 //! - Historical checkpoint queries are limited to prevent memory issues
 
-use crate::runtime::{RuntimeResult, SinexError, stream::Checkpoint};
+use crate::runtime::{
+    RuntimeResult, SinexError, nats_payload::ensure_nats_payload_fits, stream::Checkpoint,
+};
 use futures::TryStreamExt;
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use sinex_macros::SinexConfig;
@@ -100,7 +102,22 @@ fn checkpoint_conflict_would_regress(
         && candidate.processed_count <= existing.processed_count
 }
 
+fn ensure_checkpoint_kv_payload_fits(key: &str, payload_bytes: usize) -> RuntimeResult<()> {
+    ensure_nats_payload_fits("checkpoint KV entry", key, payload_bytes).map_err(|error| {
+        SinexError::checkpoint("Checkpoint KV payload exceeds NATS max payload")
+            .with_context("key", key.to_string())
+            .with_context("payload_bytes", payload_bytes.to_string())
+            .with_context("guard_error", error.to_string())
+    })
+}
+
 impl CheckpointState {
+    pub(crate) fn kv_payload_len(&self) -> RuntimeResult<usize> {
+        serde_json::to_vec(self)
+            .map(|encoded| encoded.len())
+            .map_err(SinexError::serialization)
+    }
+
     #[must_use]
     pub fn last_processed_id(&self) -> Option<String> {
         match &self.checkpoint {
@@ -596,6 +613,7 @@ impl CheckpointManager {
         // Save to NATS KV only
         let encoded = serde_json::to_vec(state).map_err(SinexError::serialization)?;
         let key = self.kv_key();
+        ensure_checkpoint_kv_payload_fits(&key, encoded.len())?;
 
         let revision = if state.revision > 0 {
             match self

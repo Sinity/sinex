@@ -33,8 +33,11 @@ impl HistoryDb {
             let pid_alive = candidate.pid.is_some_and(history_process_is_alive);
 
             if pid_alive {
-                let escape_threshold =
-                    background_watchdog_escape_threshold_secs(&candidate.command);
+                let Some(escape_threshold) =
+                    background_watchdog_escape_threshold_secs(&candidate.command)
+                else {
+                    continue; // explicitly long-lived dev runtime, skip
+                };
                 if candidate.age_secs.unwrap_or(0.0) < escape_threshold {
                     continue; // legitimate long-running bg job, skip
                 }
