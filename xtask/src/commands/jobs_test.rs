@@ -70,7 +70,13 @@ async fn test_status_to_str() -> ::xtask::sandbox::TestResult<()> {
 async fn jobs_output_accepts_explicit_stdout_selector() -> ::xtask::sandbox::TestResult<()> {
     let cli = crate::Cli::try_parse_from(["xtask", "jobs", "output", "42", "--stdout"])?;
     let Some(crate::Commands::Jobs(JobsCommand {
-        subcommand: JobsSubcommand::Output { id, stdout, stderr },
+        subcommand:
+            JobsSubcommand::Output {
+                id,
+                stdout,
+                stderr,
+                stream,
+            },
     })) = cli.command
     else {
         panic!("expected jobs output command");
@@ -79,6 +85,55 @@ async fn jobs_output_accepts_explicit_stdout_selector() -> ::xtask::sandbox::Tes
     assert_eq!(id, 42);
     assert!(stdout);
     assert!(!stderr);
+    assert_eq!(stream, None);
+    Ok(())
+}
+
+#[sinex_test]
+async fn jobs_output_accepts_stream_stderr_alias() -> ::xtask::sandbox::TestResult<()> {
+    let cli = crate::Cli::try_parse_from(["xtask", "jobs", "output", "42", "--stream", "stderr"])?;
+    let Some(crate::Commands::Jobs(JobsCommand {
+        subcommand:
+            JobsSubcommand::Output {
+                id,
+                stdout,
+                stderr,
+                stream,
+            },
+    })) = cli.command
+    else {
+        panic!("expected jobs output command");
+    };
+
+    assert_eq!(id, 42);
+    assert!(!stdout);
+    assert!(!stderr);
+    assert_eq!(stream, Some(JobOutputStream::Stderr));
+    assert!(output_stream_is_stderr(stderr, &stream));
+    Ok(())
+}
+
+#[sinex_test]
+async fn jobs_output_accepts_stream_stdout_alias() -> ::xtask::sandbox::TestResult<()> {
+    let cli = crate::Cli::try_parse_from(["xtask", "jobs", "output", "42", "--stream", "stdout"])?;
+    let Some(crate::Commands::Jobs(JobsCommand {
+        subcommand:
+            JobsSubcommand::Output {
+                id,
+                stdout,
+                stderr,
+                stream,
+            },
+    })) = cli.command
+    else {
+        panic!("expected jobs output command");
+    };
+
+    assert_eq!(id, 42);
+    assert!(!stdout);
+    assert!(!stderr);
+    assert_eq!(stream, Some(JobOutputStream::Stdout));
+    assert!(!output_stream_is_stderr(stderr, &stream));
     Ok(())
 }
 
@@ -91,6 +146,30 @@ async fn jobs_output_rejects_conflicting_stream_selectors() -> ::xtask::sandbox:
     };
 
     assert_eq!(error.kind(), clap::error::ErrorKind::ArgumentConflict);
+    Ok(())
+}
+
+#[sinex_test]
+async fn jobs_output_rejects_conflicting_stream_alias() -> ::xtask::sandbox::TestResult<()> {
+    let Err(error) = crate::Cli::try_parse_from([
+        "xtask", "jobs", "output", "42", "--stderr", "--stream", "stderr",
+    ]) else {
+        panic!("stderr and stream selectors should conflict")
+    };
+
+    assert_eq!(error.kind(), clap::error::ErrorKind::ArgumentConflict);
+    Ok(())
+}
+
+#[sinex_test]
+async fn jobs_output_rejects_unknown_stream_alias() -> ::xtask::sandbox::TestResult<()> {
+    let Err(error) =
+        crate::Cli::try_parse_from(["xtask", "jobs", "output", "42", "--stream", "combined"])
+    else {
+        panic!("unknown stream selector should be rejected")
+    };
+
+    assert_eq!(error.kind(), clap::error::ErrorKind::InvalidValue);
     Ok(())
 }
 
