@@ -37,6 +37,14 @@ pub struct ResolverState {
     /// Pending resolution to emit on the next `emit()` call.
     /// If `None`, the window is not complete.
     pending: Option<EntityResolvedPayload>,
+
+    /// Provenance parent for the pending resolution.
+    ///
+    /// Entity IDs are deterministic UUIDv5 occurrence identities and must stay
+    /// in the payload/equivalence key. Derived provenance must point at the
+    /// triggering event interpretation, which is a UUIDv7.
+    #[serde(default)]
+    pending_source_event_id: Option<Uuid>,
 }
 
 #[derive(Default)]
@@ -70,7 +78,7 @@ impl Windowed for EntityResolver {
         &mut self,
         state: &mut Self::State,
         input: Self::Input,
-        _context: &AutomatonContext,
+        context: &AutomatonContext,
     ) -> Result<(), AutomatonLogicError> {
         // ── Type-aware canonicalization ──────────────────────────────────
         let canonical_name = canonicalize_name(&input.entity_type, &input.raw_name);
@@ -88,6 +96,7 @@ impl Windowed for EntityResolver {
         state.candidates_processed += 1;
 
         // ── Stage for emission ───────────────────────────────────────────
+        state.pending_source_event_id = Some(context.trigger_uuid());
         state.pending = Some(EntityResolvedPayload {
             entity_id,
             canonical_name,
@@ -105,16 +114,20 @@ impl Windowed for EntityResolver {
     async fn emit(
         &mut self,
         state: &mut Self::State,
-        _context: &AutomatonContext,
+        context: &AutomatonContext,
     ) -> Result<Option<DerivedOutput<Self::Output>>, AutomatonLogicError> {
         let Some(payload) = state.pending.take() else {
             return Ok(None);
         };
+        let source_event_id = state
+            .pending_source_event_id
+            .take()
+            .unwrap_or_else(|| context.trigger_uuid());
 
         let entity_id = payload.entity_id;
         let canonical_name = payload.canonical_name.clone();
 
-        let output = DerivedOutput::windowed_now(payload, vec![entity_id])
+        let output = DerivedOutput::windowed_now(payload, vec![source_event_id])
             .with_temporal_policy(SyntheticTemporalPolicy::DeclaredEffective)
             .with_semantics_version("1.0.0")
             .with_equivalence_key(format!("entity-resolver:{entity_id}:{canonical_name}"));
@@ -210,3 +223,7 @@ register_source_runtime_binding! {
     .build_impact(sinex_primitives::source_contracts::SourceBuildImpact::ZERO)
     .build()
 }
+
+#[cfg(test)]
+#[path = "entity_resolver_test.rs"]
+mod tests;
