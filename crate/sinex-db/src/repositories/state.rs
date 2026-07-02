@@ -1275,7 +1275,8 @@ impl StateRepository<'_> {
                           OR (nm.manifest_type = 'automaton' AND e.source_event_ids IS NOT NULL)
                       )
                 ) outputs ON true
-                WHERE health.status IN ('healthy', 'degraded')
+                WHERE (latest_run.module_run_id IS NOT NULL
+                       AND health.status IN ('healthy', 'degraded'))
                    OR outputs.last_output_at IS NOT NULL
             )
             SELECT

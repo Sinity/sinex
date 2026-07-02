@@ -142,7 +142,7 @@ async fn oversized_material_begin_frame_is_rejected_before_nats(
         .expect_err("oversized begin metadata should fail before NATS publish");
 
     let error_text = error.to_string();
-    assert!(error_text.contains("source-material frame exceeds NATS hard payload limit"));
+    assert!(error_text.contains("NATS payload exceeds configured hard limit"));
     assert!(error_text.contains("begin"));
     Ok(())
 }

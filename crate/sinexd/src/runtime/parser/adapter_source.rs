@@ -1070,6 +1070,17 @@ where
                 && pending_batch.len() < ADAPTER_MATERIAL_BATCH_MAX_RECORDS
                 && batch_bytes < ADAPTER_MATERIAL_BATCH_MAX_BYTES
             {
+                self.refresh_binding_config()?;
+                if self.binding_config.is_truthy("private_mode_active") {
+                    info!(
+                        source = self.source_id,
+                        adapter_kind = A::KIND.as_str(),
+                        pending_records = pending_batch.len(),
+                        "private mode became active while batching; materializing only records already accepted"
+                    );
+                    break;
+                }
+
                 let next_record_result =
                     match tokio::time::timeout(ADAPTER_BATCH_DRAIN_WINDOW, stream.next()).await {
                         Ok(Some(next_record_result)) => next_record_result,
@@ -1781,12 +1792,8 @@ fn merge_json_over(base: JsonValue, over: JsonValue) -> JsonValue {
 
 fn merge_cursor_json_update(base: JsonValue, over: JsonValue) -> JsonValue {
     match (base, over) {
-        (base, JsonValue::Null) => base,
         (JsonValue::Object(mut base_map), JsonValue::Object(over_map)) => {
             for (key, value) in over_map {
-                if value.is_null() {
-                    continue;
-                }
                 let merged = match base_map.remove(&key) {
                     Some(existing) => merge_cursor_json_update(existing, value),
                     None => value,
