@@ -11,6 +11,8 @@ pub struct EventOverrides {
     pub ts_orig: Option<String>,
     /// Override the event ID.
     pub id: Option<Uuid>,
+    /// Stamp an occurrence-level equivalence key.
+    pub equivalence_key: Option<String>,
 }
 
 static PIPELINE_SEMAPHORE: std::sync::LazyLock<Arc<Semaphore>> = std::sync::LazyLock::new(|| {
