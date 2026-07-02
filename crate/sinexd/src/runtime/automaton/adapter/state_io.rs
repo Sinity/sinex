@@ -7,6 +7,7 @@ use super::{AutomatonRuntime, restore_resume_position};
 
 use crate::runtime::automaton::traits::Automaton;
 use crate::runtime::checkpoint::CheckpointState;
+use crate::runtime::nats_payload::NATS_PUBLISH_PAYLOAD_HARD_LIMIT_BYTES;
 use crate::runtime::processing::PersistedState;
 use crate::runtime::stream::Checkpoint;
 use crate::runtime::{RuntimeResult, SinexError};
@@ -18,6 +19,8 @@ use sinex_primitives::{Id, JsonValue};
 use std::path::Path;
 use std::time::{Duration, Instant};
 use tracing::{debug, info, warn};
+
+const OVERSIZED_FILE_CHECKPOINT_MIN_INTERVAL: Duration = Duration::from_secs(10);
 
 /// Progress markers extracted from a hot-reload checkpoint file, used to
 /// reconcile the file against the durable NATS KV checkpoint in `load_state`.
@@ -271,6 +274,40 @@ where
             version: 2,
             revision: self.last_revision,
         };
+
+        let kv_payload_bytes = checkpoint_state.kv_payload_len()?;
+        if kv_payload_bytes > NATS_PUBLISH_PAYLOAD_HARD_LIMIT_BYTES {
+            let now = Instant::now();
+            if self
+                .last_oversized_file_checkpoint_time
+                .is_some_and(|last| now.duration_since(last) < OVERSIZED_FILE_CHECKPOINT_MIN_INTERVAL)
+            {
+                self.events_since_checkpoint = 0;
+                self.last_checkpoint_time = now;
+                return Ok(());
+            }
+
+            warn!(
+                target: "sinex_metrics",
+                metric = "runtime.checkpoint_file_backed_oversized_total",
+                automaton = %self.automaton.name(),
+                kv_payload_bytes,
+                max_payload_bytes = NATS_PUBLISH_PAYLOAD_HARD_LIMIT_BYTES,
+                events_processed = self.persisted_state.events_processed,
+                "Checkpoint state exceeds NATS KV payload budget; saving directly to file"
+            );
+            self.save_state_to_file().await.map_err(|error| {
+                SinexError::checkpoint("Failed to save oversized checkpoint to fallback file")
+                    .with_context("automaton", self.automaton.name())
+                    .with_context("kv_payload_bytes", kv_payload_bytes.to_string())
+                    .with_std_error(&error)
+            })?;
+            self.events_since_checkpoint = 0;
+            self.last_checkpoint_time = now;
+            self.last_oversized_file_checkpoint_time = Some(now);
+            self.observe_checkpoint_state(&checkpoint_state).await;
+            return Ok(());
+        }
 
         self.last_revision = checkpoint_mgr.save_checkpoint(&checkpoint_state).await?;
         checkpoint_state.revision = self.last_revision;
