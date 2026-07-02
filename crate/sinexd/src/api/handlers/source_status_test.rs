@@ -1427,6 +1427,64 @@ async fn runtime_bridge_coverage_surfaces_heartbeat_without_output_as_stalled()
 }
 
 #[sinex_test]
+async fn runtime_bridge_coverage_surfaces_stall_even_with_historical_output()
+-> xtask::TestResult<()> {
+    let now = Timestamp::now();
+    let bridge_binding = terminal_bridge_binding();
+    let mut observations = HashMap::new();
+    observations.insert("terminal-source".to_string(), terminal_bridge_status(now));
+    let event_aggregates = HashMap::from([(
+        ("shell.kitty".to_string(), "command.executed".to_string()),
+        SourceEventAggregateRow {
+            source: "shell.kitty".to_string(),
+            event_type: "command.executed".to_string(),
+            event_count: 42,
+            last_event_at: Some((now - time::Duration::hours(2)).into()),
+        },
+    )]);
+    let material_aggregates = HashMap::from([(
+        "terminal.kitty-osc-live".to_string(),
+        SourceMaterialAggregateRow {
+            source_identifier: "terminal.kitty-osc-live".to_string(),
+            material_count: 7,
+            last_material_at: Some((now - time::Duration::hours(2)).into()),
+        },
+    )]);
+
+    let view = source_coverage_view(
+        &terminal_bridge_contract(),
+        &[&bridge_binding],
+        &event_aggregates,
+        &material_aggregates,
+        &healthy_confirmation_buffer(),
+        &observations,
+        &HashMap::new(),
+        &HashMap::new(),
+        &HashMap::new(),
+        now,
+    );
+
+    assert_eq!(
+        view.continuity,
+        SourceCoverageContinuity::Active,
+        "historical material/events should still make the source coverage active"
+    );
+    assert!(
+        view.gaps
+            .iter()
+            .any(|gap| gap.kind == "runtime_bridge_stalled"),
+        "current runtime stalls must surface even for historically active sources"
+    );
+    assert!(
+        view.caveats
+            .iter()
+            .any(|caveat| caveat.id == "source.runtime_bridge.stalled"),
+        "current runtime stalls must produce an operator-visible caveat"
+    );
+    Ok(())
+}
+
+#[sinex_test]
 async fn source_coverage_view_surfaces_attributed_confirmation_pressure() -> xtask::TestResult<()> {
     let mut confirmation_buffer = healthy_confirmation_buffer();
     confirmation_buffer.status = HealthStatus::Degraded;
