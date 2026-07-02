@@ -1218,36 +1218,41 @@ impl StateRepository<'_> {
         sqlx::query_as!(
             LiveModulePresence,
             r#"
-            WITH candidate_runs AS (
-                SELECT
-                    nr.manifest_id,
-                    nr.service_name,
-                    nr.instance_id,
-                    nr.id AS module_run_id,
-                    nr.host,
-                    nr.status,
-                    nr.started_at
-                FROM core.runs nr
-                WHERE nr.manifest_id IS NOT NULL
-                  AND nr.status NOT IN ('failed', 'stopped')
-            ),
-            active_runs AS (
+            WITH observed_modules AS (
                 SELECT
                     nm.name,
                     nm.manifest_type::text as module_kind,
                     nm.version,
                     nm.description,
-                    cr.service_name,
-                    cr.instance_id,
-                    cr.module_run_id,
-                    cr.host,
-                    cr.status,
-                    health.last_update AS last_heartbeat_at,
-                    cr.started_at,
-                    'run'::text as heartbeat_source
+                    latest_run.service_name,
+                    latest_run.instance_id,
+                    latest_run.module_run_id,
+                    latest_run.host,
+                    latest_run.status,
+                    COALESCE(health.last_update, outputs.last_output_at) AS last_heartbeat_at,
+                    latest_run.started_at,
+                    CASE
+                        WHEN health.last_update IS NOT NULL THEN 'run'
+                        WHEN outputs.last_output_at IS NOT NULL THEN 'output'
+                        ELSE 'manifest'
+                    END::text as heartbeat_source
                 FROM core.manifests nm
-                JOIN candidate_runs cr ON cr.manifest_id = nm.id
-                JOIN LATERAL (
+                LEFT JOIN LATERAL (
+                    SELECT
+                        nr.service_name,
+                        nr.instance_id,
+                        nr.id AS module_run_id,
+                        nr.host,
+                        nr.status,
+                        nr.started_at
+                    FROM core.runs nr
+                    WHERE nr.manifest_id = nm.id
+                      AND nr.status NOT IN ('failed', 'stopped')
+                    ORDER BY (CASE WHEN nr.status IN ('running', 'draining', 'paused') THEN 1 ELSE 0 END) DESC,
+                             nr.started_at DESC
+                    LIMIT 1
+                ) latest_run ON true
+                LEFT JOIN LATERAL (
                     SELECT
                         ch.status,
                         ch.last_update
@@ -1258,7 +1263,21 @@ impl StateRepository<'_> {
                     ORDER BY ch.last_update DESC
                     LIMIT 1
                 ) health ON true
-                WHERE health.status IN ('healthy', 'degraded')
+                LEFT JOIN LATERAL (
+                    SELECT
+                        MAX(e.ts_coided) AS last_output_at
+                    FROM core.events e
+                    WHERE latest_run.module_run_id IS NOT NULL
+                      AND e.module_run_id = latest_run.module_run_id
+                      AND e.ts_coided > NOW() - make_interval(secs => $1::float8)
+                      AND (
+                          (nm.manifest_type = 'source' AND e.source_material_id IS NOT NULL)
+                          OR (nm.manifest_type = 'automaton' AND e.source_event_ids IS NOT NULL)
+                      )
+                ) outputs ON true
+                WHERE (latest_run.module_run_id IS NOT NULL
+                       AND health.status IN ('healthy', 'degraded'))
+                   OR outputs.last_output_at IS NOT NULL
             )
             SELECT
                 live_modules.name as "module_name!: ModuleName",
@@ -1287,7 +1306,7 @@ impl StateRepository<'_> {
                     last_heartbeat_at,
                     started_at,
                     heartbeat_source
-                FROM active_runs
+                FROM observed_modules
             ) live_modules
             "#,
             stale_secs

@@ -1838,4 +1838,5 @@ fn logical_path(record: &SourceRecord) -> Option<String> {
 }
 
 #[cfg(test)]
+#[path = "media_test.rs"]
 mod tests;

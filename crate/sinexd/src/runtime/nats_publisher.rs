@@ -587,7 +587,7 @@ impl NatsPublisher {
             } else {
                 RAW_STREAM_BACKPRESSURE_HIGH_PENDING
             };
-            if pending < target_watermark {
+            if pending <= target_watermark {
                 if state.pressure_checks > 0 && pending <= RAW_STREAM_BACKPRESSURE_LOW_PENDING {
                     tracing::info!(
                         stream = %stream_name,

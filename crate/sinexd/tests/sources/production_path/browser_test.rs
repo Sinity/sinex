@@ -1,0 +1,51 @@
+/// Qutebrowser `SQLite` row serialised as JSON.
+///
+/// Fields match what `SqliteRowAdapter` produces from the `History` table:
+/// `rowid`, `url`, `title`, `atime` (Unix seconds), `redirect` (0/1).
+const QUTEBROWSER_FIXTURE: &[u8] =
+    br#"{"rowid":1,"url":"https://example.com","title":"Example","atime":1700000000,"redirect":0}"#;
+
+/// Chromium `SQLite` row serialised as JSON.
+///
+/// Fields match what `SqliteRowAdapter` produces from the `visits` table:
+/// `rowid`, `url`, `title`, `visit_time` (Windows FILETIME µs), `transition`, `visit_duration` (µs).
+const CHROMIUM_FIXTURE: &[u8] =
+    br#"{"rowid":1,"url":"https://chromium.org","title":"Chromium","visit_time":13305000000000000,"transition":0,"visit_duration":5000000}"#;
+
+/// Minimal JSONL dump fixture (secondary leg).
+const JSONL_DUMP_FIXTURE: &[u8] =
+    b"{\"url\":\"https://dump.example.com\",\"title\":\"Dump\",\"time\":1700002000}\n";
+
+const QUTEBROWSER_CASE: crate::ProductionPathCase = crate::ProductionPathCase::new(
+    "browser.history qutebrowser",
+    "browser.history",
+    crate::AdapterKind::SqliteRow,
+    QUTEBROWSER_FIXTURE,
+    &["page.visited"],
+);
+
+const CHROMIUM_CASE: crate::ProductionPathCase = crate::ProductionPathCase::new(
+    "browser.history chromium",
+    "browser.history",
+    crate::AdapterKind::SqliteRow,
+    CHROMIUM_FIXTURE,
+    &["page.visited"],
+);
+
+const JSONL_DUMP_CASE: crate::ProductionPathCase = crate::ProductionPathCase::new(
+    "browser.history JSONL dump",
+    "browser.history",
+    crate::AdapterKind::AppendOnlyFile,
+    JSONL_DUMP_FIXTURE,
+    &["page.visited"],
+);
+
+crate::production_path_case_test!(
+    browser_history_qutebrowser_initial_ingestion,
+    QUTEBROWSER_CASE
+);
+crate::production_path_case_test!(browser_history_chromium_initial_ingestion, CHROMIUM_CASE);
+crate::production_path_case_test!(
+    browser_history_jsonl_dump_initial_ingestion,
+    JSONL_DUMP_CASE
+);

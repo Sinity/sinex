@@ -783,9 +783,18 @@ impl EventBatcher {
         let mut pending_iter = pending.into_iter();
         let mut published = 0usize;
         let mut chunk = Vec::new();
+        let mut estimated_chunk_payload_bytes =
+            Self::intent_payload_base_estimate(source_id, parser_id, parser_version);
 
         while let Some(event) = pending_iter.next() {
+            let event_payload_estimate = Self::event_payload_estimate(&event);
             chunk.push(event);
+            estimated_chunk_payload_bytes =
+                estimated_chunk_payload_bytes.saturating_add(event_payload_estimate);
+
+            if estimated_chunk_payload_bytes <= NATS_INTENT_PAYLOAD_SOFT_LIMIT_BYTES {
+                continue;
+            }
 
             match Self::intent_payload_len(source_id, parser_id, parser_version, &chunk) {
                 Ok(payload_len)
@@ -794,6 +803,9 @@ impl EventBatcher {
                     let overflow = chunk
                         .pop()
                         .expect("chunk len checked above; overflow event must exist");
+                    estimated_chunk_payload_bytes =
+                        Self::intent_payload_base_estimate(source_id, parser_id, parser_version)
+                            .saturating_add(Self::event_payload_estimate(&overflow));
                     match Self::publish_intent_chunk(
                         publisher,
                         source_id,
@@ -822,6 +834,7 @@ impl EventBatcher {
                     }
                 }
                 Ok(payload_len) => {
+                    estimated_chunk_payload_bytes = payload_len;
                     if payload_len > NATS_INTENT_PAYLOAD_SOFT_LIMIT_BYTES {
                         warn!(
                             payload_len,
@@ -882,6 +895,23 @@ impl EventBatcher {
         serde_json::to_vec(&intent)
             .map(|payload| payload.len())
             .map_err(SinexError::from)
+    }
+
+    fn intent_payload_base_estimate(
+        source_id: &str,
+        parser_id: &str,
+        parser_version: &str,
+    ) -> usize {
+        1024usize
+            .saturating_add(source_id.len())
+            .saturating_add(parser_id.len())
+            .saturating_add(parser_version.len())
+    }
+
+    fn event_payload_estimate(event: &Event<JsonValue>) -> usize {
+        serde_json::to_vec(event)
+            .map(|payload| payload.len().saturating_add(64))
+            .unwrap_or(NATS_INTENT_PAYLOAD_SOFT_LIMIT_BYTES)
     }
 
     async fn publish_intent_chunk(

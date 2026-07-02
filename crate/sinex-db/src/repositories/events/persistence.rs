@@ -2162,4 +2162,5 @@ impl<'a, 't> EventRepositoryTx<'a, 't> {
 }
 
 #[cfg(test)]
+#[path = "persistence_test.rs"]
 mod tests;
