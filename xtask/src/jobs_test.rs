@@ -40,6 +40,20 @@ async fn test_require_spawned_pid_rejects_missing_pid() -> TestResult<()> {
 }
 
 #[sinex_test]
+async fn test_default_watchdog_secs_classifies_finite_jobs() -> TestResult<()> {
+    assert_eq!(
+        default_watchdog_secs(
+            "xtask",
+            &["test".to_string(), "-p".to_string(), "xtask".to_string()]
+        ),
+        3600
+    );
+    assert_eq!(default_watchdog_secs("xtask", &["check".to_string()]), 1800);
+    assert_eq!(default_watchdog_secs("/bin/echo", &[]), 1800);
+    Ok(())
+}
+
+#[sinex_test]
 async fn test_terminal_status_from_exit_code_file() -> TestResult<()> {
     let dir = tempdir()?;
     fs::write(dir.path().join("exit_code"), "124\n")?;

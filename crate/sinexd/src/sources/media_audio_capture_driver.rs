@@ -128,7 +128,7 @@ impl AudioCaptureBackend for CommandAudioCaptureBackend {
             })?;
 
         let capture = async move {
-            let mut stdout = child
+            let stdout = child
                 .stdout
                 .take()
                 .ok_or_else(|| SinexError::io("failed to capture audio-capture stdout"))?;

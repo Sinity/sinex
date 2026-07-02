@@ -5,11 +5,14 @@
 //! load checkpoint state, fetch persisted events, parse identifiers, and
 //! build typed errors when a provisional reference cannot be resolved.
 
+use super::{CheckpointManager, RuntimeModule, RuntimeResult, RuntimeRunner, SinexError};
+#[cfg(test)]
 use super::{
-    CheckpointManager, DbPoolExt, Deserialize, Event, EventId, EventSource, EventType, HostName,
-    Id, JsonValue, NonEmptyVec, OffsetKind, PgPool, Provenance, ProvisionalEvent, ResolvedBatch,
-    RuntimeModule, RuntimeResult, RuntimeRunner, SinexError, SourceMaterial, Uuid,
+    Deserialize, Event, EventId, EventSource, EventType, HostName, Id, JsonValue, NonEmptyVec,
+    OffsetKind, Provenance, ProvisionalEvent, ResolvedBatch, SourceMaterial, Uuid,
 };
+#[cfg(all(test, feature = "db"))]
+use super::{DbPoolExt, PgPool};
 
 impl<T: RuntimeModule + 'static> RuntimeRunner<T> {
     #[cfg(feature = "messaging")]
@@ -22,7 +25,7 @@ impl<T: RuntimeModule + 'static> RuntimeRunner<T> {
         })
     }
 
-    #[cfg(feature = "db")]
+    #[cfg(all(test, feature = "db"))]
     pub(super) async fn fetch_persisted_event(
         pool: &PgPool,
         event_id: &EventId,
@@ -35,12 +38,14 @@ impl<T: RuntimeModule + 'static> RuntimeRunner<T> {
         })
     }
 
+    #[cfg(test)]
     pub(super) fn parse_uuid(value: &str, field: &str) -> RuntimeResult<Uuid> {
         value.parse::<Uuid>().map_err(|err| {
             SinexError::processing(format!("Invalid UUID for {field}: {value} ({err})"))
         })
     }
 
+    #[cfg(test)]
     pub(super) fn parse_offset_kind(kind: Option<&str>) -> RuntimeResult<OffsetKind> {
         match kind {
             Some("line") => Ok(OffsetKind::Line),
@@ -53,6 +58,7 @@ impl<T: RuntimeModule + 'static> RuntimeRunner<T> {
         }
     }
 
+    #[cfg(test)]
     pub(super) fn build_event_from_provisional(
         provisional: &ProvisionalEvent,
     ) -> RuntimeResult<Event<JsonValue>> {
@@ -177,7 +183,7 @@ impl<T: RuntimeModule + 'static> RuntimeRunner<T> {
     /// With `db` feature: fetches persisted events from the database when a pool
     /// is available, falling back to parsing the provisional payload directly.
     /// Without `db`: always parses from the provisional payload.
-    #[cfg(feature = "messaging")]
+    #[cfg(test)]
     pub(super) async fn resolve_provisionals_to_events(
         provisionals: &[ProvisionalEvent],
         #[cfg(feature = "db")] db_pool: &Option<PgPool>,
@@ -245,7 +251,7 @@ impl<T: RuntimeModule + 'static> RuntimeRunner<T> {
         })
     }
 
-    #[cfg(feature = "messaging")]
+    #[cfg(test)]
     pub(super) fn provisional_decode_error(event_id: &EventId, error: SinexError) -> SinexError {
         SinexError::processing(
             "Confirmed event could not be reconstructed from provisional payload",
