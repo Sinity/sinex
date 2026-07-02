@@ -73,6 +73,7 @@ struct CoverageRow {
     sensing_material_count: i64,
     cancelled_material_count: i64,
     total_bytes: i64,
+    event_count: i64,
 }
 
 #[cfg(test)]
@@ -453,7 +454,8 @@ pub async fn handle_sources_coverage(
             COUNT(*) FILTER (WHERE sm.status = 'failed') as "failed_material_count!",
             COUNT(*) FILTER (WHERE sm.status = 'sensing') as "sensing_material_count!",
             COUNT(*) FILTER (WHERE sm.status = 'cancelled') as "cancelled_material_count!",
-            COALESCE(SUM(sm.total_bytes), 0)::bigint as "total_bytes!"
+            COALESCE(SUM(sm.total_bytes), 0)::bigint as "total_bytes!",
+            COALESCE(SUM(sm.parsed_event_count), 0)::bigint as "event_count!"
         FROM raw.source_material_registry sm
         GROUP BY regexp_replace(sm.source_identifier, '#material=.*$', ''), sm.material_kind
         ORDER BY regexp_replace(sm.source_identifier, '#material=.*$', '')
@@ -474,7 +476,7 @@ pub async fn handle_sources_coverage(
                 material_kind,
                 earliest_ts: row.earliest_ts.map(|ts| ts.to_string()),
                 latest_ts: row.latest_ts.map(|ts| ts.to_string()),
-                event_count: None,
+                event_count: Some(row.event_count),
                 material_count: Some(row.material_count),
                 completed_material_count: Some(row.completed_material_count),
                 failed_material_count: Some(row.failed_material_count),

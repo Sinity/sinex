@@ -909,6 +909,10 @@ pub fn convergible_tables() -> Result<Vec<ConvergibleTable>, ApplyError> {
                     name: "source_material_registry_privacy_class_check",
                     expression: "privacy_class IN ('public', 'personal', 'secret', 'redacted', 'unknown')",
                 },
+                NamedConstraint {
+                    name: "source_material_registry_parsed_event_count_nonnegative",
+                    expression: "parsed_event_count >= 0",
+                },
             ],
             foreign_keys: vec![],
             columns_to_drop: &[],

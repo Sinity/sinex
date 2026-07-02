@@ -665,6 +665,58 @@ impl Events {
         FOR EACH ROW EXECUTE FUNCTION core.fn_events_validate_material_bounds();
         "
     }
+
+    /// Maintains the registry-side exact live event count per source material.
+    ///
+    /// `sources.coverage` and readiness surfaces need this count, but computing
+    /// it directly from the hypertable is too expensive on large materialized
+    /// imports. The hot INSERT path uses a statement-level transition-table
+    /// trigger so COPY/batch inserts update each material once per statement.
+    /// TimescaleDB currently rejects DELETE transition-table triggers on
+    /// hypertables, so deletes use a row-level decrement; replay/delete paths
+    /// remain exact and can be optimized separately if they become hot.
+    #[must_use]
+    pub fn create_material_event_count_trigger_sql() -> &'static str {
+        r"
+        CREATE OR REPLACE FUNCTION core.fn_events_increment_material_event_count()
+        RETURNS trigger LANGUAGE plpgsql AS $$
+        BEGIN
+            UPDATE raw.source_material_registry sm
+            SET parsed_event_count = sm.parsed_event_count + counts.event_count
+            FROM (
+                SELECT source_material_id, COUNT(*)::bigint AS event_count
+                FROM new_events
+                WHERE source_material_id IS NOT NULL
+                GROUP BY source_material_id
+            ) counts
+            WHERE sm.id = counts.source_material_id;
+            RETURN NULL;
+        END $$;
+
+        CREATE OR REPLACE FUNCTION core.fn_events_decrement_material_event_count()
+        RETURNS trigger LANGUAGE plpgsql AS $$
+        BEGIN
+            UPDATE raw.source_material_registry sm
+            SET parsed_event_count = GREATEST(sm.parsed_event_count - 1, 0)
+            WHERE OLD.source_material_id IS NOT NULL
+              AND sm.id = OLD.source_material_id;
+            RETURN OLD;
+        END $$;
+
+        DROP TRIGGER IF EXISTS trg_events_maintain_material_event_count ON core.events;
+        DROP TRIGGER IF EXISTS trg_events_maintain_material_event_count_insert ON core.events;
+        DROP TRIGGER IF EXISTS trg_events_maintain_material_event_count_delete ON core.events;
+
+        CREATE TRIGGER trg_events_maintain_material_event_count_insert
+        AFTER INSERT ON core.events
+        REFERENCING NEW TABLE AS new_events
+        FOR EACH STATEMENT EXECUTE FUNCTION core.fn_events_increment_material_event_count();
+
+        CREATE TRIGGER trg_events_maintain_material_event_count_delete
+        AFTER DELETE ON core.events
+        FOR EACH ROW EXECUTE FUNCTION core.fn_events_decrement_material_event_count();
+        "
+    }
 }
 
 // =============================================================================
