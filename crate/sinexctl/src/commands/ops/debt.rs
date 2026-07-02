@@ -1,7 +1,8 @@
 use super::*;
 use sinex_primitives::domain::MaterialStatus;
 use sinex_primitives::rpc::sources::{
-    SourceMaterialDetail, SourcesCoverageRequest, SourcesListRequest, SourcesShowRequest,
+    SourceMaterialDetail, SourceMaterialRemediationCandidate, SourcesCoverageRequest,
+    SourcesRemediationPlanRequest,
 };
 
 const SOURCE_MATERIAL_REMEDIATION_DEBT_LIMIT: i64 = 50;
@@ -65,13 +66,13 @@ impl DebtCommands {
                 let dlq = client.dlq_list().await?;
                 let mut rows = debt_rows_from_dlq(&dlq);
                 if *include_capture {
-                    let coverage = client.sources_coverage(SourcesCoverageRequest {}).await?;
-                    rows.extend(debt_rows_from_source_coverage(&coverage.sources));
                     rows.extend(debt_rows_from_source_material_remediation(
                         client,
                         SOURCE_MATERIAL_REMEDIATION_DEBT_LIMIT,
                     )
                     .await?);
+                    let coverage = client.sources_coverage(SourcesCoverageRequest {}).await?;
+                    rows.extend(debt_rows_from_source_coverage(&coverage.sources));
                 }
                 if let Some(trigger) = projection_trigger {
                     rows.extend(debt_rows_from_derivation_trigger(
@@ -172,32 +173,116 @@ pub(crate) async fn debt_rows_from_source_material_remediation(
     limit: i64,
 ) -> Result<Vec<DebtRowView>> {
     let effective_limit = limit.max(0);
-    let mut materials = Vec::new();
-    for status in [MaterialStatus::Failed, MaterialStatus::RecoveredPartial] {
-        let response = client
-            .sources_list(SourcesListRequest {
-                status: Some(status.as_str().to_string()),
-                source_identifier: None,
-                limit: Some(effective_limit),
-            })
-            .await?;
-        materials.extend(response.materials);
-    }
+    let response = client
+        .sources_remediation_plan(SourcesRemediationPlanRequest {
+            source_identifier: None,
+            limit: Some(effective_limit),
+            offset: Some(0),
+            sort: Some("event-count".to_string()),
+            include_empty: false,
+        })
+        .await?;
 
-    materials.retain(|material| material.event_count.is_some_and(|count| count > 0));
-    materials.sort_by(|left, right| right.staged_at.cmp(&left.staged_at));
-    materials.truncate(usize::try_from(effective_limit).unwrap_or(0));
+    Ok(response
+        .items
+        .iter()
+        .map(debt_row_from_source_material_candidate)
+        .collect())
+}
 
-    let mut rows = Vec::with_capacity(materials.len());
-    for material in materials {
-        let detail = client
-            .sources_show(SourcesShowRequest {
-                material_id: material.id,
-            })
-            .await?;
-        rows.push(debt_row_from_source_material_detail(&detail.material));
+pub(super) fn debt_row_from_source_material_candidate(
+    candidate: &SourceMaterialRemediationCandidate,
+) -> DebtRowView {
+    let material = &candidate.material;
+    let event_count = material.event_count.unwrap_or_default();
+    let source = logical_source_identifier(&material.source_identifier);
+    let reason = candidate
+        .failure_reason
+        .as_deref()
+        .or(candidate.recovery_reason.as_deref())
+        .unwrap_or("unknown");
+    let (id_segment, summary_prefix, caveat_id, action_label) = match material.status {
+        MaterialStatus::RecoveredPartial => (
+            "recovered-partial",
+            "recovered-partial source material needs review",
+            "source_material.recovered_partial",
+            "Review Remediation",
+        ),
+        MaterialStatus::Failed => (
+            "failed-eventful",
+            "failed source material has admitted events",
+            "source_material.failed_eventful",
+            "Inspect Remediation",
+        ),
+        _ => (
+            "not-remediation-candidate",
+            "source material is not a remediation candidate",
+            "source_material.not_remediation_candidate",
+            "Inspect Material",
+        ),
+    };
+
+    let remediation_command = format!("sinexctl sources remediation-plan --source {source}");
+    let material_ref = SinexObjectRef::new(SinexObjectKind::SourceMaterial, material.id.clone())
+        .with_label(short_material_id(&material.id))
+        .with_command_hint(format!("sinexctl sources show {}", material.id))
+        .with_rpc_method("sources.show");
+
+    DebtRowView {
+        id: format!(
+            "debt:capture:{}:{}:{}",
+            debt_id_segment(&source),
+            debt_id_segment(&material.id),
+            id_segment
+        ),
+        kind: DebtKind::Capture,
+        stage: DebtStage::CandidateDeferred,
+        summary: format!(
+            "{summary_prefix}: `{}` has {event_count} admitted event(s), status={}, reason={reason}, decision={}, severity={}",
+            material.source_identifier, material.status, candidate.decision, candidate.severity
+        ),
+        refs: vec![
+            SinexObjectRef::new(SinexObjectKind::RpcMethod, "sources.remediation_plan"),
+            SinexObjectRef::new(SinexObjectKind::Command, "sources remediation-plan")
+                .with_command_hint(remediation_command.clone()),
+            material_ref,
+        ],
+        owner: Some(DebtOwnerView {
+            package_ref: Some(source.clone()),
+            mode_ref: Some(material.source_identifier.clone()),
+            policy_ref: Some(candidate.decision.clone()),
+            operation_ref: None,
+        }),
+        age_secs: None,
+        freshness: None,
+        caveats: vec![CaveatView {
+            id: caveat_id.to_string(),
+            message: format!(
+                "source material `{}` is terminal but still carries admitted events; remediation decision `{}` recommends: {}",
+                material.id, candidate.decision, candidate.suggested_action
+            ),
+            ref_: Some(SinexObjectRef::new(
+                SinexObjectKind::SourceMaterial,
+                material.id.clone(),
+            )),
+        }],
+        actions: vec![
+            ActionAvailability::read(
+                "source_material.remediation_plan",
+                action_label,
+                ActionAvailabilityState::Enabled,
+            )
+            .with_command_hint(remediation_command)
+            .with_rpc_method("sources.remediation_plan"),
+            ActionAvailability::read(
+                "source_material.inspect",
+                "Inspect Material",
+                ActionAvailabilityState::Enabled,
+            )
+            .with_command_hint(format!("sinexctl sources show {}", material.id))
+            .with_rpc_method("sources.show"),
+        ],
     }
-    Ok(rows)
 }
 
 pub(super) fn debt_row_from_source_material_detail(

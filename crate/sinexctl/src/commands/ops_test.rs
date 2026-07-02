@@ -865,6 +865,36 @@
         }
     }
 
+    fn fixture_remediation_candidate(
+        id: &str,
+        status: sinex_primitives::domain::MaterialStatus,
+        event_count: i64,
+        decision: &str,
+        severity: &str,
+    ) -> sinex_primitives::rpc::sources::SourceMaterialRemediationCandidate {
+        sinex_primitives::rpc::sources::SourceMaterialRemediationCandidate {
+            material: sinex_primitives::rpc::sources::SourceMaterialSummary {
+                id: id.to_string(),
+                material_kind: sinex_primitives::MaterialStorageKind::Annex,
+                source_identifier: format!("browser.history#material={id}"),
+                status,
+                timing_info_type: sinex_primitives::domain::SourceMaterialTimingInfoType::Intrinsic,
+                format: None,
+                contract_version: None,
+                staged_at: Some("2026-07-02T00:00:00Z".to_string()),
+                staged_by: Some("test".to_string()),
+                size_bytes: Some(1024),
+                event_count: Some(event_count),
+                mime_type: None,
+            },
+            failure_reason: Some("slice_arrival_timeout".to_string()),
+            recovery_reason: None,
+            decision: decision.to_string(),
+            severity: severity.to_string(),
+            suggested_action: "mark timed-out material recovered_partial".to_string(),
+        }
+    }
+
     #[sinex_test]
     async fn debt_rows_from_dlq_reports_only_pending_admission_debt() -> xtask::TestResult<()> {
         assert!(debt_rows_from_dlq(&fixture_dlq(0)).is_empty());
@@ -959,6 +989,36 @@
             action.id == "source_material.remediation_plan"
                 && action.command_hint.as_deref()
                     == Some("sinexctl sources remediation-plan --source browser.history")
+        }));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn debt_row_from_remediation_candidate_uses_eventful_plan() -> xtask::TestResult<()> {
+        let candidate = fixture_remediation_candidate(
+            "019f2105-b86b-78d2-a220-94f027e7e81f",
+            sinex_primitives::domain::MaterialStatus::Failed,
+            206_899,
+            "recover_timeout_partial",
+            "high",
+        );
+
+        let row = debt_row_from_source_material_candidate(&candidate);
+
+        assert_eq!(row.kind, DebtKind::Capture);
+        assert_eq!(row.stage, DebtStage::CandidateDeferred);
+        assert!(row.summary.contains("206899 admitted event"));
+        assert!(row.summary.contains("recover_timeout_partial"));
+        assert_eq!(
+            row.owner
+                .as_ref()
+                .and_then(|owner| owner.policy_ref.as_deref()),
+            Some("recover_timeout_partial")
+        );
+        assert_eq!(row.refs[0].id, "sources.remediation_plan");
+        assert!(row.actions.iter().any(|action| {
+            action.id == "source_material.remediation_plan"
+                && action.rpc_method.as_deref() == Some("sources.remediation_plan")
         }));
         Ok(())
     }
