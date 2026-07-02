@@ -2,6 +2,10 @@
     use crate::runtime::SinexError;
     use futures::StreamExt;
     use std::io::Write;
+    use std::sync::{
+        Arc as StdArc,
+        atomic::{AtomicBool, Ordering},
+    };
     use tempfile::TempDir;
     use tokio::time::{Duration, sleep};
     use xtask::sandbox::prelude::sinex_test;
@@ -469,6 +473,101 @@
 
         assert_eq!(unknown.event_kind(), None);
         assert_eq!(unknown.move_role(), None);
+        Ok(())
+    }
+
+    struct DropTrackingWatcher {
+        dropped: StdArc<AtomicBool>,
+    }
+
+    impl Drop for DropTrackingWatcher {
+        fn drop(&mut self) {
+            self.dropped.store(true, Ordering::SeqCst);
+        }
+    }
+
+    impl Watcher for DropTrackingWatcher {
+        fn new<F: notify::EventHandler>(
+            _event_handler: F,
+            _config: notify::Config,
+        ) -> notify::Result<Self>
+        where
+            Self: Sized,
+        {
+            Ok(Self {
+                dropped: StdArc::new(AtomicBool::new(false)),
+            })
+        }
+
+        fn watch(
+            &mut self,
+            _path: &std::path::Path,
+            _recursive_mode: RecursiveMode,
+        ) -> notify::Result<()> {
+            Ok(())
+        }
+
+        fn unwatch(&mut self, _path: &std::path::Path) -> notify::Result<()> {
+            Ok(())
+        }
+
+        fn kind() -> notify::WatcherKind
+        where
+            Self: Sized,
+        {
+            notify::WatcherKind::NullWatcher
+        }
+    }
+
+    #[sinex_test]
+    async fn file_drop_stream_keeps_watcher_alive_until_stream_drop()
+    -> xtask::sandbox::TestResult<()> {
+        let dropped = StdArc::new(AtomicBool::new(false));
+        let watcher = DropTrackingWatcher {
+            dropped: StdArc::clone(&dropped),
+        };
+        let (tx, rx) = mpsc::channel::<notify::Result<Event>>(1);
+        let material_id = dummy_material_id();
+        let path = std::path::PathBuf::from("/tmp/sinex-file-drop-keepalive");
+        let event =
+            Event::new(EventKind::Create(notify::event::CreateKind::File)).add_path(path.clone());
+
+        let mut stream = build_file_drop_stream(
+            material_id,
+            rx,
+            vec![FileDropEventKind::Created],
+            FileDropPathFilter::unrestricted(),
+            watcher,
+        );
+
+        assert!(
+            !dropped.load(Ordering::SeqCst),
+            "watcher must stay alive after stream construction"
+        );
+
+        tx.send(Ok(event)).await?;
+        let record = tokio::time::timeout(Duration::from_secs(3), stream.next())
+            .await?
+            .expect("stream should remain open")?;
+
+        assert_eq!(record.material_id, material_id);
+        assert_eq!(
+            record
+                .logical_path
+                .as_deref()
+                .map(camino::Utf8Path::as_str),
+            path.to_str()
+        );
+        assert!(
+            !dropped.load(Ordering::SeqCst),
+            "watcher must stay alive while stream is still held"
+        );
+
+        drop(stream);
+        assert!(
+            dropped.load(Ordering::SeqCst),
+            "watcher should drop with the stream"
+        );
         Ok(())
     }
 
