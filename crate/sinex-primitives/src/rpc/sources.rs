@@ -570,6 +570,11 @@ pub struct SourceCoverageEntry {
     pub latest_ts: Option<String>,
     pub event_count: Option<i64>,
     pub material_count: Option<i64>,
+    pub completed_material_count: Option<i64>,
+    pub failed_material_count: Option<i64>,
+    pub sensing_material_count: Option<i64>,
+    pub cancelled_material_count: Option<i64>,
+    pub total_bytes: Option<i64>,
 }
 
 /// Response: `sources.coverage`
