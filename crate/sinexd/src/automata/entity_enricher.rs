@@ -43,6 +43,8 @@ pub struct EntityStats {
     pub entity_id: Uuid,
     pub canonical_name: String,
     pub entity_type: String,
+    #[serde(default)]
+    pub source_event_ids: Vec<Uuid>,
     pub first_seen: Timestamp,
     pub last_seen: Timestamp,
     pub occurrence_count: u64,
@@ -128,6 +130,7 @@ impl ScopeReconciler for EntityEnricher {
                 entity_id: input.entity_id,
                 canonical_name: input.canonical_name.clone(),
                 entity_type: input.entity_type.as_str().to_string(),
+                source_event_ids: Vec::new(),
                 first_seen: now,
                 last_seen: now,
                 occurrence_count: 0,
@@ -144,6 +147,10 @@ impl ScopeReconciler for EntityEnricher {
         }
         stats.occurrence_count += 1;
         *stats.active_hours.entry(hour).or_insert(0) += 1;
+        let trigger_uuid = context.trigger_uuid();
+        if !stats.source_event_ids.contains(&trigger_uuid) {
+            stats.source_event_ids.push(trigger_uuid);
+        }
 
         // Track dirty entities for periodic sweep.
         if !state.dirty_entities.contains(&input.entity_id) {
@@ -164,11 +171,16 @@ impl ScopeReconciler for EntityEnricher {
         let mut outputs = Vec::with_capacity(dirty.len());
         for entity_id in &dirty {
             let key = entity_id.to_string();
-            let Some(stats) = state.entities.get(&key) else {
+            let Some(stats) = state.entities.get_mut(&key) else {
                 continue;
             };
 
             let category = refine_category(&stats.entity_type);
+            let source_event_ids = if stats.source_event_ids.is_empty() {
+                vec![trigger_uuid]
+            } else {
+                std::mem::take(&mut stats.source_event_ids)
+            };
 
             let payload = EntityEnrichedPayload {
                 entity_id: *entity_id,
@@ -182,7 +194,7 @@ impl ScopeReconciler for EntityEnricher {
             };
 
             let output =
-                DerivedOutput::reconciled(payload, now, vec![*entity_id], entity_key.clone())
+                DerivedOutput::reconciled(payload, now, source_event_ids, entity_key.clone())
                     .with_temporal_policy(SyntheticTemporalPolicy::DeclaredEffective)
                     .with_semantics_version("1.0.0")
                     .with_equivalence_key(format!("entity-enricher:{entity_id}:{now}"));
@@ -265,3 +277,7 @@ register_source_runtime_binding! {
     .build_impact(sinex_primitives::source_contracts::SourceBuildImpact::ZERO)
     .build()
 }
+
+#[cfg(test)]
+#[path = "entity_enricher_test.rs"]
+mod tests;

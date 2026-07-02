@@ -1,6 +1,7 @@
 //! NATS `JetStream` event publisher
 
 use crate::runtime::RuntimeResult;
+use crate::runtime::nats_payload::ensure_nats_payload_fits;
 use async_nats::jetstream::context::ConsumerInfoErrorKind;
 use serde::Serialize;
 use sinex_primitives::env as shared_env;
@@ -28,7 +29,6 @@ const RAW_STREAM_BACKPRESSURE_HIGH_PENDING: u64 = 10_000;
 const RAW_STREAM_BACKPRESSURE_LOW_PENDING: u64 = 2_000;
 const RAW_STREAM_BACKPRESSURE_POLL_INTERVAL: Duration = Duration::from_millis(250);
 const RAW_STREAM_BACKPRESSURE_LOG_EVERY: u64 = 1_200;
-const NATS_PUBLISH_PAYLOAD_HARD_LIMIT_BYTES: usize = 1024 * 1024;
 
 #[derive(Debug, Default)]
 struct RawStreamPressureState {
@@ -727,26 +727,7 @@ impl NatsPublisher {
         payload: Vec<u8>,
         error_message: &'static str,
     ) -> RuntimeResult<async_nats::jetstream::context::PublishAckFuture> {
-        if payload.len() > NATS_PUBLISH_PAYLOAD_HARD_LIMIT_BYTES {
-            let payload_bytes = payload.len();
-            tracing::error!(
-                subject = %subject,
-                payload_bytes,
-                max_payload_bytes = NATS_PUBLISH_PAYLOAD_HARD_LIMIT_BYTES,
-                error_message,
-                "Refusing oversized NATS publish before server disconnect"
-            );
-            return Err(sinex_primitives::SinexError::validation(
-                "NATS payload exceeds configured hard limit",
-            )
-            .with_context("subject", subject)
-            .with_context("payload_bytes", payload_bytes.to_string())
-            .with_context(
-                "max_payload_bytes",
-                NATS_PUBLISH_PAYLOAD_HARD_LIMIT_BYTES.to_string(),
-            )
-            .with_context("publish_context", error_message));
-        }
+        ensure_nats_payload_fits(error_message, &subject, payload.len())?;
 
         self.js
             .publish_with_headers(subject, headers, payload.into())
@@ -868,11 +849,11 @@ fn offset_kind_label(kind: OffsetKind) -> &'static str {
 #[cfg(test)]
 mod tests {
     use super::{
-        NATS_PUBLISH_PAYLOAD_HARD_LIMIT_BYTES,
         DEFAULT_RAW_EVENT_PUBLISH_CONCURRENCY, NatsPublisher, RAW_STREAM_BACKPRESSURE_HIGH_PENDING,
         RAW_STREAM_BACKPRESSURE_LOW_PENDING, build_publish_payload, destructure_provenance,
         wait_for_publish_ack,
     };
+    use crate::runtime::nats_payload::NATS_PUBLISH_PAYLOAD_HARD_LIMIT_BYTES;
     use sinex_primitives::{
         DynamicPayload, Id, Uuid,
         domain::{AutomatonModel, HostName, SyntheticTemporalPolicy},

@@ -53,6 +53,7 @@
 //! ```
 
 use crate::runtime::error_helpers::unix_timestamp_secs_with_warning;
+use crate::runtime::nats_payload::ensure_nats_payload_fits;
 use crate::runtime::stream::{RuntimeContext, RuntimeDrainController};
 use crate::runtime::version::{RuntimeInstance, RuntimeVersion};
 
@@ -784,6 +785,7 @@ impl RuntimeCoordination {
 
         let mut headers = async_nats::HeaderMap::new();
         transport::insert_transport_class_headers(&mut headers, transport::Class::Control);
+        ensure_nats_payload_fits("coordination handoff ready", &subject, payload.len())?;
 
         self.nats_client
             .publish_with_headers(subject, headers, payload.into())
@@ -846,6 +848,7 @@ impl RuntimeCoordination {
 
         let mut headers = async_nats::HeaderMap::new();
         transport::insert_transport_class_headers(&mut headers, transport::Class::Control);
+        ensure_nats_payload_fits("coordination handoff request", &subject, payload.len())?;
 
         self.nats_client
             .publish_with_headers(subject, headers, payload.into())
@@ -1103,6 +1106,7 @@ impl RuntimeCoordination {
 
         let mut headers = async_nats::HeaderMap::new();
         transport::insert_transport_class_headers(&mut headers, transport::Class::Control);
+        ensure_nats_payload_fits("coordination failure signal", &subject, bytes.len())?;
 
         self.nats_client
             .publish_with_headers(subject, headers, bytes.into())

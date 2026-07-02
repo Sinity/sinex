@@ -5,6 +5,7 @@
 //! with rotation, hashing, and NATS publishing.
 
 use crate::runtime::error_helpers::env_nonempty_string_optional;
+use crate::runtime::nats_payload::ensure_nats_payload_fits;
 use crate::runtime::stream::RuntimeHandles;
 use crate::runtime::{RuntimeResult, SinexError};
 use async_nats::{Client as NatsClient, jetstream};
@@ -31,7 +32,7 @@ use tokio::fs::{File, OpenOptions};
 use tokio::io::AsyncWriteExt;
 use tokio::sync::{Mutex, mpsc, oneshot};
 use tokio::time::sleep;
-use tracing::{debug, error, info, warn};
+use tracing::{debug, info, warn};
 
 // Keep SOURCE_MATERIAL stream caps aligned with the Nix bootstrap path. The current
 // nats CLI rejects --max-bytes values above signed 32-bit range.
@@ -722,7 +723,6 @@ impl AcquisitionManager {
     /// The actual NATS default is 1MB but we use a conservative limit to account for
     /// headers and protocol overhead.
     const MAX_NATS_PAYLOAD_BYTES: usize = 512 * 1024;
-    const MAX_SOURCE_MATERIAL_FRAME_PAYLOAD_BYTES: usize = 1024 * 1024;
 
     /// Physical material-slice payload target. Keep this below
     /// `MAX_NATS_PAYLOAD_BYTES` so headers and server framing cannot push a
@@ -909,27 +909,14 @@ impl AcquisitionManager {
         subject: &str,
         payload_bytes: usize,
     ) -> RuntimeResult<()> {
-        if payload_bytes <= Self::MAX_SOURCE_MATERIAL_FRAME_PAYLOAD_BYTES {
-            return Ok(());
-        }
-
-        error!(
-            frame_kind,
-            subject,
-            payload_bytes,
-            max_payload_bytes = Self::MAX_SOURCE_MATERIAL_FRAME_PAYLOAD_BYTES,
-            "Refusing oversized source-material frame before NATS disconnect"
-        );
-        Err(SinexError::validation(
-            "source-material frame exceeds NATS hard payload limit",
-        )
-        .with_context("frame_kind", frame_kind)
-        .with_context("subject", subject.to_string())
-        .with_context("payload_bytes", payload_bytes.to_string())
-        .with_context(
-            "max_payload_bytes",
-            Self::MAX_SOURCE_MATERIAL_FRAME_PAYLOAD_BYTES.to_string(),
-        ))
+        let context = match frame_kind {
+            "begin" => "source-material begin frame",
+            "slice" => "source-material slice frame",
+            "end" => "source-material end frame",
+            _ => "source-material frame",
+        };
+        ensure_nats_payload_fits(context, subject, payload_bytes)
+            .map_err(|error| error.with_context("frame_kind", frame_kind))
     }
 
     /// Check if rotation is needed (ported from `MaterialRotationManager`)
@@ -1790,7 +1777,7 @@ mod tests {
                 "test://oversized-material-begin",
                 json!({
                     "oversized": "x".repeat(
-                        AcquisitionManager::MAX_SOURCE_MATERIAL_FRAME_PAYLOAD_BYTES + 1
+                        crate::runtime::nats_payload::NATS_PUBLISH_PAYLOAD_HARD_LIMIT_BYTES + 1
                     ),
                 }),
                 Timestamp::now(),
