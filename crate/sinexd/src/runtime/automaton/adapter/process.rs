@@ -387,7 +387,10 @@ where
         }
 
         if self.should_checkpoint() {
-            match self.save_state().await {
+            match self
+                .save_state_with_file_fallback("event bridge batch checkpoint")
+                .await
+            {
                 Ok(()) => {
                     self.consecutive_checkpoint_failures = 0;
                 }

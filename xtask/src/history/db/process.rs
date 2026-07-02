@@ -1,3 +1,4 @@
+use std::path::Path;
 use std::time::Duration;
 
 #[cfg(not(test))]
@@ -16,12 +17,24 @@ pub(super) struct StaleInvocationCandidate {
     pub(super) age_secs: Option<f64>,
 }
 
-fn background_watchdog_timeout_secs(command: &str) -> f64 {
-    if command == "test" { 3600.0 } else { 1800.0 }
+fn background_watchdog_timeout_secs(command: &str) -> Option<f64> {
+    if Path::new(command)
+        .file_name()
+        .and_then(|value| value.to_str())
+        .is_some_and(|binary| binary == "sinexd")
+    {
+        return None;
+    }
+
+    match command {
+        "run" => None,
+        "test" => Some(3600.0),
+        _ => Some(1800.0),
+    }
 }
 
-pub(super) fn background_watchdog_escape_threshold_secs(command: &str) -> f64 {
-    background_watchdog_timeout_secs(command) * 2.0
+pub(super) fn background_watchdog_escape_threshold_secs(command: &str) -> Option<f64> {
+    background_watchdog_timeout_secs(command).map(|timeout| timeout * 2.0)
 }
 
 /// Best-effort zombie reaper: SIGTERM, 2s grace, SIGKILL if still alive.

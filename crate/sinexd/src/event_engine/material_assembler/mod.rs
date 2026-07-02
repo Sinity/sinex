@@ -19,6 +19,8 @@ mod state;
 #[cfg(test)]
 mod test_support;
 
+pub(super) const RESTORED_SELF_OBSERVATION_ORPHAN_TIMEOUT_SECS: i64 = 300;
+
 use crate::runtime::content_store::MaterialContentStore;
 use crate::runtime::{SelfObservationError, SelfObserver};
 use async_nats::{Client as NatsClient, jetstream};

@@ -1,5 +1,6 @@
 use super::*;
 use crate::runtime::checkpoint::CheckpointManager;
+use crate::runtime::parser::adapters::{AppendOnlyCursor, ChainedCursor, SqliteRowCursor};
 use crate::runtime::parser::{InputShapeKind, ParserError, ParserResult, SourceRecord};
 use crate::runtime::stream::{EventEmitter, RuntimeHandles, ServiceInfo};
 use crate::runtime::{EventTransport, NatsPublisher, SOURCE_MATERIAL_STREAM};
@@ -922,6 +923,47 @@ async fn adapter_source_state_defaults_missing_input_fingerprint() -> xtask::san
     assert_eq!(state.total_events_emitted, 12);
     assert!(state.last_input_fingerprint.is_none());
     assert!(state.recent_input_drifts.is_empty());
+    Ok(())
+}
+
+#[sinex_test]
+async fn adapter_cursor_update_preserves_chained_leg_state() -> xtask::sandbox::TestResult<()> {
+    let current = ChainedCursor {
+        primary: Some(SqliteRowCursor { last_rowid: 10_000 }),
+        secondary: Some(AppendOnlyCursor {
+            last_line: 42,
+            last_byte_offset: 4096,
+            inode: Some(7),
+        }),
+    };
+    let primary_update = ChainedCursor {
+        primary: Some(SqliteRowCursor { last_rowid: 20_000 }),
+        secondary: None,
+    };
+    let merged = merge_cursor_update(Some(current.clone()), primary_update);
+
+    assert_eq!(merged.primary, Some(SqliteRowCursor { last_rowid: 20_000 }));
+    assert_eq!(merged.secondary, current.secondary);
+
+    let secondary_update = ChainedCursor {
+        primary: None,
+        secondary: Some(AppendOnlyCursor {
+            last_line: 43,
+            last_byte_offset: 5000,
+            inode: Some(8),
+        }),
+    };
+    let merged = merge_cursor_update(Some(merged), secondary_update);
+
+    assert_eq!(merged.primary, Some(SqliteRowCursor { last_rowid: 20_000 }));
+    assert_eq!(
+        merged.secondary,
+        Some(AppendOnlyCursor {
+            last_line: 43,
+            last_byte_offset: 5000,
+            inode: Some(8),
+        })
+    );
     Ok(())
 }
 

@@ -1,5 +1,6 @@
 use crate::api::rpc_server::RpcAuthContext;
 use crate::api::service_container::ServiceContainer;
+use crate::runtime::nats_payload::ensure_nats_payload_fits;
 use serde_json::{Value, json};
 use sinex_db::DbPoolExt;
 use sinex_db::repositories::state::Operation;
@@ -444,18 +445,16 @@ async fn publish_private_mode_control(
     let payload = private_mode_control_payload(action, state);
     let mut headers = async_nats::HeaderMap::new();
     transport::insert_transport_class_headers(&mut headers, transport::Class::Control);
+    let payload_bytes = serde_json::to_vec(&payload)
+        .map_err(|err| {
+            SinexError::serialization("failed to serialize private-mode control payload")
+                .with_std_error(&err)
+        })?;
+
+    ensure_nats_payload_fits("private-mode control update", &subject, payload_bytes.len())?;
 
     nats_client
-        .publish_with_headers(
-            subject.clone(),
-            headers,
-            serde_json::to_vec(&payload)
-                .map_err(|err| {
-                    SinexError::serialization("failed to serialize private-mode control payload")
-                        .with_std_error(&err)
-                })?
-                .into(),
-        )
+        .publish_with_headers(subject.clone(), headers, payload_bytes.into())
         .await
         .map_err(|err| {
             SinexError::nats_publish("private-mode control update")

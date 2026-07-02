@@ -7,6 +7,7 @@ use super::{
     ReplayExecutionEngine, ScopeInvalidationBucket,
 };
 use crate::runtime::automaton::invalidation::{DerivedScopeInvalidation, INVALIDATION_SUBJECT};
+use crate::runtime::nats_payload::ensure_nats_payload_fits;
 use crate::runtime::stream::ResolvedReplayMaterial;
 use sinex_db::repositories::{DbPoolExt, EventRepositoryTx};
 use sinex_primitives::domain::{EventSource, EventType, SourceIdentifier};
@@ -589,6 +590,11 @@ impl ReplayExecutionEngine {
                     // transport::Class::Invalidation — JetStream-backed scope
                     // fan-out; failure propagated to caller (replay operation
                     // decides abort/continue).
+                    ensure_nats_payload_fits(
+                        "replay scope invalidation",
+                        &invalidation_subject,
+                        payload.len(),
+                    )?;
                     let mut headers = async_nats::HeaderMap::new();
                     transport::insert_transport_class_headers(
                         &mut headers,

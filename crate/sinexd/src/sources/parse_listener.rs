@@ -19,6 +19,7 @@ use sqlx::PgPool;
 use std::sync::Arc;
 use tracing::{error, info, warn};
 
+use crate::runtime::nats_payload::ensure_nats_payload_fits;
 use crate::runtime::content_store::ContentStoreManager;
 use crate::sources::dispatch::ParserDispatchFn;
 
@@ -273,6 +274,7 @@ async fn handle_parse_command(
 
     if let Some(reply) = reply_subject {
         let payload = serde_json::to_vec(&ack)?;
+        ensure_nats_payload_fits("source parse ack", reply.as_str(), payload.len())?;
         if let Err(e) = client.publish(reply, payload.into()).await {
             error!(
                 target: "sinex_metrics",

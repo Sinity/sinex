@@ -1,5 +1,9 @@
 // Inline because this covers local checkpoint env/default semantics.
-use super::{CheckpointCleanupConfig, CheckpointManager, checkpoint_cleanup_cutoff};
+use super::{
+    CheckpointCleanupConfig, CheckpointManager, checkpoint_cleanup_cutoff,
+    ensure_checkpoint_kv_payload_fits,
+};
+use crate::runtime::nats_payload::NATS_PUBLISH_PAYLOAD_HARD_LIMIT_BYTES;
 use sinex_primitives::prelude::Timestamp;
 use xtask::sandbox::{EnvGuard, sinex_serial_test, sinex_test};
 
@@ -51,5 +55,22 @@ async fn checkpoint_manager_can_enable_warning_for_missing_checkpoint(
     );
 
     assert!(manager.missing_checkpoint_logs_as_warning());
+    Ok(())
+}
+
+#[sinex_test]
+async fn checkpoint_kv_payload_guard_rejects_oversized_entries()
+-> xtask::sandbox::TestResult<()> {
+    let error = ensure_checkpoint_kv_payload_fits(
+        "oversized.module.consumer",
+        NATS_PUBLISH_PAYLOAD_HARD_LIMIT_BYTES + 1,
+    )
+    .expect_err("oversized checkpoint KV entries must be rejected before NATS publish");
+
+    assert!(
+        error
+            .to_string()
+            .contains("Checkpoint KV payload exceeds NATS max payload")
+    );
     Ok(())
 }

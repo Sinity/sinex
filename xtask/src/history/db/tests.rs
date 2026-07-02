@@ -478,6 +478,76 @@ async fn test_history_db_open_kills_overage_background_job_rows() -> TestResult<
     Ok(())
 }
 
+#[sinex_test(timeout = 30)]
+async fn test_history_db_open_preserves_old_sinexd_background_job_rows() -> TestResult<()> {
+    let dir = tempdir()?;
+    let db_path = dir
+        .path()
+        .join("test-history-open-old-sinexd-background-job.db");
+    let mut child = std::process::Command::new("sleep").arg("3600").spawn()?;
+    let child_pid = i64::from(child.id());
+
+    let db = HistoryDb::open(&db_path)?;
+    db.conn.execute(
+        r"
+        INSERT INTO invocations (
+            command, started_at, status, host, cwd, is_background
+        ) VALUES (?1, ?2, 'running', ?3, ?4, 1)
+        ",
+        params![
+            "/var/cache/sinex/current/target/debug/sinexd",
+            "2000-01-01T00:00:00Z",
+            "localhost",
+            "/tmp"
+        ],
+    )?;
+    let invocation_id = db.conn.last_insert_rowid();
+    db.conn.execute(
+        r"
+        INSERT INTO background_jobs (
+            invocation_id, command, pid, job_status, started_at
+        ) VALUES (?1, ?2, ?3, 'running', ?4)
+        ",
+        params![
+            invocation_id,
+            "/var/cache/sinex/current/target/debug/sinexd",
+            child_pid,
+            "2000-01-01T00:00:00Z"
+        ],
+    )?;
+    drop(db);
+
+    let reopened = HistoryDb::open(&db_path)?;
+    let invocation_status: String = reopened.conn.query_row(
+        "SELECT status FROM invocations WHERE id = ?1",
+        params![invocation_id],
+        |row| row.get(0),
+    )?;
+    let background_status: String = reopened.conn.query_row(
+        "SELECT job_status FROM background_jobs WHERE invocation_id = ?1",
+        params![invocation_id],
+        |row| row.get(0),
+    )?;
+    let child_still_alive = history_process_is_alive(child_pid);
+
+    child.kill()?;
+    let _ = child.wait();
+
+    assert_eq!(
+        invocation_status, "running",
+        "old live sinexd invocations are legitimate dev runtimes, not zombie proof jobs"
+    );
+    assert_eq!(
+        background_status, "running",
+        "old live sinexd background job handles must not be marked killed"
+    );
+    assert!(
+        child_still_alive,
+        "open-time cleanup must not signal a live sinexd job"
+    );
+    Ok(())
+}
+
 #[sinex_test]
 async fn test_history_db_open_cancels_dead_background_job_rows() -> TestResult<()> {
     let dir = tempdir()?;
