@@ -28,6 +28,7 @@ const RAW_STREAM_BACKPRESSURE_HIGH_PENDING: u64 = 10_000;
 const RAW_STREAM_BACKPRESSURE_LOW_PENDING: u64 = 2_000;
 const RAW_STREAM_BACKPRESSURE_POLL_INTERVAL: Duration = Duration::from_millis(250);
 const RAW_STREAM_BACKPRESSURE_LOG_EVERY: u64 = 1_200;
+const NATS_PUBLISH_PAYLOAD_HARD_LIMIT_BYTES: usize = 1024 * 1024;
 
 #[derive(Debug, Default)]
 struct RawStreamPressureState {
@@ -726,6 +727,27 @@ impl NatsPublisher {
         payload: Vec<u8>,
         error_message: &'static str,
     ) -> RuntimeResult<async_nats::jetstream::context::PublishAckFuture> {
+        if payload.len() > NATS_PUBLISH_PAYLOAD_HARD_LIMIT_BYTES {
+            let payload_bytes = payload.len();
+            tracing::error!(
+                subject = %subject,
+                payload_bytes,
+                max_payload_bytes = NATS_PUBLISH_PAYLOAD_HARD_LIMIT_BYTES,
+                error_message,
+                "Refusing oversized NATS publish before server disconnect"
+            );
+            return Err(sinex_primitives::SinexError::validation(
+                "NATS payload exceeds configured hard limit",
+            )
+            .with_context("subject", subject)
+            .with_context("payload_bytes", payload_bytes.to_string())
+            .with_context(
+                "max_payload_bytes",
+                NATS_PUBLISH_PAYLOAD_HARD_LIMIT_BYTES.to_string(),
+            )
+            .with_context("publish_context", error_message));
+        }
+
         self.js
             .publish_with_headers(subject, headers, payload.into())
             .await
@@ -846,6 +868,7 @@ fn offset_kind_label(kind: OffsetKind) -> &'static str {
 #[cfg(test)]
 mod tests {
     use super::{
+        NATS_PUBLISH_PAYLOAD_HARD_LIMIT_BYTES,
         DEFAULT_RAW_EVENT_PUBLISH_CONCURRENCY, NatsPublisher, RAW_STREAM_BACKPRESSURE_HIGH_PENDING,
         RAW_STREAM_BACKPRESSURE_LOW_PENDING, build_publish_payload, destructure_provenance,
         wait_for_publish_ack,
@@ -866,6 +889,28 @@ mod tests {
             wait_for_publish_ack::<(), io::Error, _>(future::pending(), Duration::from_millis(10))
                 .await;
         assert!(result.is_err());
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn publish_with_headers_rejects_oversized_payload_before_nats(
+        ctx: xtask::sandbox::TestContext,
+    ) -> TestResult<()> {
+        let ctx = ctx.with_nats().dedicated().await?;
+        let publisher = NatsPublisher::new(ctx.nats_client());
+        let error = publisher
+            .publish_with_headers(
+                "oversized.test".to_string(),
+                async_nats::HeaderMap::new(),
+                vec![0; NATS_PUBLISH_PAYLOAD_HARD_LIMIT_BYTES + 1],
+                "oversized test publish",
+            )
+            .await
+            .expect_err("oversized payload should fail before NATS publish");
+
+        let error_text = error.to_string();
+        assert!(error_text.contains("NATS payload exceeds configured hard limit"));
+        assert!(error_text.contains("oversized test publish"));
         Ok(())
     }
 
