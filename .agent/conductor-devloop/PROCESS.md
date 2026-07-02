@@ -309,3 +309,41 @@ Focus: Direction -> Evidence
 Trigger: first live query contradicted the assumed blocker
 Decision: inspect ActivityWatch extraction before touching renderer
 ```
+
+## External-Proof Campaigns
+
+A campaign is a bounded goal whose terminal state is an externally legible
+artifact — one a stranger with no repo context can read, believe, and
+reproduce. Campaigns outrank open-ended substrate slices; enabler substrate
+work is in scope only when the specific campaign artifact would be false or
+fragile without it.
+
+Current campaign sequence (operator direction; supersede only with recorded
+evidence, never delete as duplicate):
+
+1. sinex-recall v2 — multi-source (fs+git+shell+browser) dev-runtime
+   reconstruction of one real work window with a committed side-by-side
+   baseline arm (raw atuin + git log), stranger-readable README, one-command
+   regeneration. Suggested window: the 2026-07-01 afternoon PR-train window
+   (externally presentable; ground truth checkable against merged PRs).
+2. Production restore — read-only verification plan, then the restore as an
+   explicit operator-visible operation, then proof: prod sinexd healthy,
+   74M events queryable, one recall query answered from prod data.
+
+Campaign rules:
+
+- **Capabilities may not be silos; demos may.** A demo is a derivative
+  product; its packaging is a legitimate one-off. The facts it relies on
+  must land as composable capability (query units/fields, shared view
+  primitives, projections) the product keeps. Test: after the demo ships,
+  can the next differently-shaped question about the same facts be answered
+  by composition, without another script?
+- **Cold-reader gate.** A campaign artifact reaches terminal state only
+  after a fresh agent, given ONLY the artifact directory, can state what it
+  proves, name its sample frame and caveats, and reproduce it.
+- **Slice closure is not campaign closure.** Committing a bounded slice
+  does not retire the campaign; it stays at the top of the priority order
+  until its terminal state is recorded.
+- **Operator-direction preservation.** Operator-sourced directives, queue
+  entries, and backlog items are superseded with recorded rationale in the
+  operating log, never deleted as duplicates during sync/cleanup.
