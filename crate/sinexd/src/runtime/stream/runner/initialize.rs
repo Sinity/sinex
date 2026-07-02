@@ -321,19 +321,15 @@ impl<T: RuntimeModule + 'static> RuntimeRunner<T> {
     }
 
     pub(super) fn checkpoint_consumer_name(
-        module_kind: ModuleKind,
+        _module_kind: ModuleKind,
         raw_config: &HashMap<String, serde_json::Value>,
         checkpoint_identity: &str,
-        host: &str,
+        _host: &str,
     ) -> String {
         if let Some(configured) = Self::config_identity_value(raw_config, "consumer_name") {
             return configured;
         }
 
-        if matches!(module_kind, ModuleKind::Source) {
-            checkpoint_identity.to_string()
-        } else {
-            format!("{host}-{}", std::process::id())
-        }
+        checkpoint_identity.to_string()
     }
 }

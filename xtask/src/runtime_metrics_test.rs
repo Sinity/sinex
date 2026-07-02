@@ -1,5 +1,15 @@
 use super::*;
 use crate::sandbox::sinex_test;
+use sinex_primitives::events::{EventEngineBatchStatsPayload, EventPayload};
+
+#[sinex_test]
+async fn test_batch_stats_source_matches_payload_contract() -> xtask::sandbox::TestResult<()> {
+    assert_eq!(
+        event_engine_batch_stats_source(),
+        EventEngineBatchStatsPayload::SOURCE.as_static_str()
+    );
+    Ok(())
+}
 
 #[sinex_test]
 async fn test_summary_fragment_marks_stale_samples() -> xtask::sandbox::TestResult<()> {

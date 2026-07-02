@@ -9,7 +9,6 @@ use crate::Result;
 use crate::client::GatewayClient;
 use crate::fmt::{CommandOutput, Spinner, format_bytes, with_spinner_result};
 use crate::model::OutputFormat;
-use crate::prompt;
 
 /// Dead letter queue operations
 #[derive(Debug, Subcommand)]
@@ -229,20 +228,6 @@ impl DlqCommands {
                     eprintln!();
                     eprintln!("Use --confirm to proceed with purge");
                     std::process::exit(1);
-                }
-
-                // Interactive confirmation for human table output. Machine formats rely on
-                // the explicit --confirm flag so stdout remains parseable.
-                let proceed = if table_output {
-                    let prompt_msg = format!("Delete {target} from DLQ? This cannot be undone.");
-                    prompt::confirm(&prompt_msg, false)?
-                } else {
-                    true
-                };
-
-                if !proceed {
-                    println!("Cancelled");
-                    return Ok(());
                 }
 
                 // Proceed with purge

@@ -976,8 +976,18 @@ impl StateRepository<'_> {
         sqlx::query_as!(
             ModuleRun,
             r#"
-            INSERT INTO core.runs (manifest_id, service_name, instance_id, host, started_at, status, effective_config_hash, effective_config)
-            VALUES ($1, $2, $3, $4, now(), 'running', $5, $6)
+            INSERT INTO core.runs (
+                manifest_id,
+                service_name,
+                instance_id,
+                host,
+                started_at,
+                status,
+                last_heartbeat_at,
+                effective_config_hash,
+                effective_config
+            )
+            VALUES ($1, $2, $3, $4, now(), 'running', now(), $5, $6)
             ON CONFLICT DO NOTHING
             RETURNING
                 id as "id: _",
@@ -1005,6 +1015,31 @@ impl StateRepository<'_> {
             sqlx::Error::RowNotFound,
             "start_run: ON CONFLICT DO NOTHING returned no row"
         ))
+    }
+
+    /// Refresh the mutable heartbeat timestamp for a running module run.
+    ///
+    /// Operator status surfaces use append-only health telemetry where
+    /// available, but core service runs such as the event engine also expose
+    /// liveness through `core.runs` while their health projection is unavailable
+    /// or delayed.
+    pub async fn record_module_run_heartbeat(
+        &self,
+        module_run_id: Id<ModuleRun>,
+    ) -> DbResult<bool> {
+        let result = sqlx::query!(
+            r#"
+            UPDATE core.runs
+            SET last_heartbeat_at = NOW()
+            WHERE id = $1::uuid
+              AND status NOT IN ('failed', 'stopped')
+            "#,
+            module_run_id.as_uuid(),
+        )
+        .execute(self.pool)
+        .await
+        .map_err(|e| db_error(e, "record module run heartbeat"))?;
+        Ok(result.rows_affected() > 0)
     }
 
     /// Get all modules in the manifest

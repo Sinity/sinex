@@ -67,6 +67,10 @@ impl Transducer for EntityExtractor {
         "*"
     }
 
+    fn input_event_types(&self) -> Vec<&'static str> {
+        vec!["document.chunked", "command.canonical", "command.executed"]
+    }
+
     fn output_event_type(&self) -> &'static str {
         "entity.extracted"
     }

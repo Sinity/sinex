@@ -14,8 +14,8 @@
 //!
 //! ## Input
 //!
-//! Any event type via `input_event_type = "*"`. The automaton inspects
-//! payload fields and applies matching rules.
+//! Any material event type via `input_event_type = "*"`. The automaton inspects
+//! source identity plus payload fields and applies matching rules.
 //!
 //! ## Output
 //!
@@ -53,7 +53,7 @@ impl Transducer for TagApplier {
         KnowledgeTagAppliedPayload::SOURCE.as_static_str()
     }
     fn input_provenance_filter(&self) -> InputProvenanceFilter {
-        InputProvenanceFilter::Any
+        InputProvenanceFilter::MaterialOnly
     }
 
     async fn process(

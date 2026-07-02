@@ -12,6 +12,7 @@ pub struct PullConsumerSpec {
     pub stream_name: String,
     pub durable_name: String,
     pub filter_subject: Option<String>,
+    pub filter_subjects: Vec<String>,
     pub deliver_policy: jetstream::consumer::DeliverPolicy,
     pub ack_wait: Duration,
     pub max_ack_pending: i64,
@@ -54,6 +55,7 @@ impl PullConsumerSpec {
             stream_name: stream_name.into(),
             durable_name: durable_name.into(),
             filter_subject: None,
+            filter_subjects: Vec::new(),
             deliver_policy: jetstream::consumer::DeliverPolicy::All,
             ack_wait: Duration::from_secs(30),
             max_ack_pending: 1000,
@@ -161,6 +163,7 @@ pub async fn ensure_pull_consumer(
         initial_replay_risk = snapshot.has_initial_replay_risk(),
         deliver_policy = ?snapshot.deliver_policy,
         filter_subject = spec.filter_subject.as_deref().unwrap_or(""),
+        filter_subjects = ?spec.filter_subjects,
         stream_messages = snapshot.stream_messages,
         stream_bytes = snapshot.stream_bytes,
         stream_first_sequence = snapshot.stream_first_sequence,
@@ -187,6 +190,9 @@ fn pull_consumer_config(spec: &PullConsumerSpec) -> PullConfig {
     };
     if let Some(filter_subject) = &spec.filter_subject {
         cfg.filter_subject = filter_subject.clone();
+    }
+    if !spec.filter_subjects.is_empty() {
+        cfg.filter_subjects = spec.filter_subjects.clone();
     }
     cfg
 }
@@ -257,6 +263,16 @@ fn pull_consumer_config_mismatches(
             format!(
                 "filter_subject expected {}, got {}",
                 expected_filter, config.filter_subject
+            ),
+        ));
+    }
+
+    if config.filter_subjects != spec.filter_subjects {
+        mismatches.push(PullConsumerConfigMismatch::new(
+            PullConsumerConfigMismatchKind::FilterSubject,
+            format!(
+                "filter_subjects expected {:?}, got {:?}",
+                spec.filter_subjects, config.filter_subjects
             ),
         ));
     }

@@ -546,7 +546,7 @@ pub struct TelemetryEventEngineBatchStatsResponse {
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct TelemetryEventEngineValidationRequest {}
 
-/// Latest event_engine validation / batch snapshot emitted via `sinex.event_engine batch.stats`.
+/// Latest event_engine validation / batch snapshot emitted via `sinexd.event_engine batch.stats`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct EventEngineValidationSnapshot {
     pub observed_at: String,

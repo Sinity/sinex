@@ -56,6 +56,13 @@ impl ScopeReconciler for InstructionExpectationReconciler {
         "*"
     }
 
+    fn input_event_types(&self) -> Vec<&'static str> {
+        vec![
+            DesktopWorkspaceSwitchInstructionPayload::EVENT_TYPE.as_static_str(),
+            HyprlandWorkspaceSwitchedPayload::EVENT_TYPE.as_static_str(),
+        ]
+    }
+
     fn output_event_type(&self) -> &'static str {
         InstructionExpectationStatusPayload::EVENT_TYPE.as_static_str()
     }

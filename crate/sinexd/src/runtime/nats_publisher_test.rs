@@ -1,14 +1,18 @@
 use super::{
-    DEFAULT_RAW_EVENT_PUBLISH_CONCURRENCY, NatsPublisher, build_publish_payload,
-    destructure_provenance, wait_for_publish_ack,
+    DEFAULT_RAW_EVENT_PUBLISH_CONCURRENCY, NatsPublisher, RAW_STREAM_BACKPRESSURE_HIGH_PENDING,
+    RAW_STREAM_BACKPRESSURE_LOW_PENDING, build_publish_payload, destructure_provenance,
+    wait_for_publish_ack,
 };
+use crate::runtime::nats_payload::NATS_PUBLISH_PAYLOAD_HARD_LIMIT_BYTES;
 use sinex_primitives::{
     DynamicPayload, Id, Uuid,
-    domain::{AutomatonModel, SyntheticTemporalPolicy},
+    domain::{AutomatonModel, HostName, SyntheticTemporalPolicy},
     events::Event,
+    events::admission::EventIntent,
+    transport,
 };
 use std::{future, io, time::Duration};
-use xtask::sandbox::sinex_test;
+use xtask::sandbox::prelude::*;
 
 #[sinex_test]
 async fn publish_ack_timeout_is_reported() -> TestResult<()> {
@@ -16,6 +20,34 @@ async fn publish_ack_timeout_is_reported() -> TestResult<()> {
         wait_for_publish_ack::<(), io::Error, _>(future::pending(), Duration::from_millis(10))
             .await;
     assert!(result.is_err());
+    Ok(())
+}
+
+#[sinex_test]
+async fn publish_with_headers_rejects_oversized_payload_before_nats(
+    ctx: xtask::sandbox::TestContext,
+) -> TestResult<()> {
+    let ctx = ctx.with_nats().dedicated().await?;
+    let publisher = NatsPublisher::new(ctx.nats_client());
+    let error = publisher
+        .publish_with_headers(
+            "oversized.test".to_string(),
+            async_nats::HeaderMap::new(),
+            vec![0; NATS_PUBLISH_PAYLOAD_HARD_LIMIT_BYTES + 1],
+            "oversized test publish",
+        )
+        .await
+        .expect_err("oversized payload should fail before NATS publish");
+
+    let error_text = error.to_string();
+    assert!(error_text.contains("NATS payload exceeds configured hard limit"));
+    assert!(error_text.contains("oversized test publish"));
+    Ok(())
+}
+
+#[sinex_test]
+async fn raw_stream_backpressure_uses_ordered_pending_hysteresis() -> TestResult<()> {
+    assert!(RAW_STREAM_BACKPRESSURE_LOW_PENDING < RAW_STREAM_BACKPRESSURE_HIGH_PENDING);
     Ok(())
 }
 
@@ -106,5 +138,40 @@ async fn invalid_publish_concurrency_override_falls_back_to_default(
         publisher.semaphores.raw_event.available_permits(),
         DEFAULT_RAW_EVENT_PUBLISH_CONCURRENCY
     );
+    Ok(())
+}
+
+#[sinex_test]
+async fn publish_intent_bootstraps_raw_events_stream(ctx: TestContext) -> TestResult<()> {
+    let ctx = ctx.with_nats().shared().await?;
+    let mut event = DynamicPayload::new(
+        "publisher.test",
+        "stream.bootstrap",
+        serde_json::json!({"ok": true}),
+    )
+    .from_parents([Id::from_uuid(Uuid::now_v7())])?
+    .build()
+    .expect("infallible: test provenance set");
+    event.id = Some(Id::from_uuid(Uuid::now_v7()));
+
+    let intent = EventIntent::new(
+        "publisher.test".to_string(),
+        "publisher-test",
+        "1.0.0",
+        vec![event],
+        HostName::from_static("test-host"),
+    );
+    let publisher = NatsPublisher::new(ctx.nats_client());
+
+    publisher
+        .publish_intent(&intent, transport::Class::Critical)
+        .await?;
+
+    let stream_name = sinex_primitives::environment::environment()
+        .nats_stream_name_with_namespace(None, "SINEX_RAW_EVENTS");
+    let mut stream = async_nats::jetstream::new(ctx.nats_client())
+        .get_stream(&stream_name)
+        .await?;
+    assert_eq!(stream.info().await?.state.messages, 1);
     Ok(())
 }

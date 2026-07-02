@@ -221,12 +221,12 @@ async fn automaton_consumer_config_targets_confirmed_events_stream() -> TestResu
     let config = RuntimeRunner::<RuntimeTestModule>::automaton_consumer_config(
         "sinex.entity-extractor",
         crate::runtime::automaton::traits::InputProvenanceFilter::MaterialOnly,
-        Some("entity.extracted"),
+        vec!["entity.extracted"],
     );
 
     assert_eq!(
-        config.event_type_filter.as_deref(),
-        Some("entity.extracted")
+        config.event_type_filters,
+        vec!["entity.extracted".to_string()]
     );
     assert_eq!(
         config.provenance_filter,
@@ -244,10 +244,10 @@ async fn automaton_consumer_config_targets_confirmed_events_stream() -> TestResu
     let wildcard_config = RuntimeRunner::<RuntimeTestModule>::automaton_consumer_config(
         "sinex.entity-extractor",
         crate::runtime::automaton::traits::InputProvenanceFilter::Any,
-        None,
+        Vec::new(),
     );
 
-    assert_eq!(wildcard_config.event_type_filter, None);
+    assert!(wildcard_config.event_type_filters.is_empty());
     assert_eq!(
         wildcard_config.provenance_filter,
         crate::runtime::automaton::traits::InputProvenanceFilter::Any
@@ -260,6 +260,30 @@ async fn automaton_consumer_config_targets_confirmed_events_stream() -> TestResu
         wildcard_config.deliver_policy,
         async_nats::jetstream::consumer::DeliverPolicy::New
     ));
+    Ok(())
+}
+
+#[cfg(feature = "messaging")]
+#[sinex_test]
+async fn automaton_consumer_config_names_multi_type_filters() -> TestResult<()> {
+    let config = RuntimeRunner::<RuntimeTestModule>::automaton_consumer_config(
+        "sinex.entity-extractor",
+        crate::runtime::automaton::traits::InputProvenanceFilter::Any,
+        vec!["document.chunked", "command.executed", "command.canonical"],
+    );
+
+    assert_eq!(
+        config.event_type_filters,
+        vec![
+            "document.chunked".to_string(),
+            "command.executed".to_string(),
+            "command.canonical".to_string(),
+        ]
+    );
+    assert_eq!(
+        config.consumer_name,
+        "sinex_entity-extractor-confirmed-events-filter-document_d_chunked_or_command_d_executed_or_command_d_canonical"
+    );
     Ok(())
 }
 
@@ -279,7 +303,7 @@ async fn checkpoint_consumer_name_is_stable_for_sources() -> TestResult<()> {
 }
 
 #[sinex_test]
-async fn checkpoint_consumer_name_keeps_process_identity_for_automata() -> TestResult<()> {
+async fn checkpoint_consumer_name_is_stable_for_automata() -> TestResult<()> {
     let raw_config = HashMap::new();
 
     let consumer_name = RuntimeRunner::<RuntimeTestModule>::checkpoint_consumer_name(
@@ -289,7 +313,7 @@ async fn checkpoint_consumer_name_keeps_process_identity_for_automata() -> TestR
         "host-a",
     );
 
-    assert_eq!(consumer_name, format!("host-a-{}", std::process::id()));
+    assert_eq!(consumer_name, "sinex.entity-extractor");
     Ok(())
 }
 

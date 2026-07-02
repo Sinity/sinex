@@ -882,6 +882,73 @@ async fn module_run_lifecycle_persists_status_and_config(ctx: TestContext) -> Te
 }
 
 #[sinex_test]
+async fn start_run_records_and_refreshes_heartbeat(ctx: TestContext) -> TestResult<()> {
+    let repo = ctx.pool.state();
+    let module_name = ModuleName::new("start-run-heartbeat");
+
+    let manifest = repo
+        .register_module(&module_name, ModuleKind::Service, "1.0.0", None)
+        .await?;
+
+    let run = repo
+        .start_run(
+            Some(manifest.id),
+            "sinexd",
+            "default",
+            "test-host",
+            None,
+            None,
+        )
+        .await?;
+
+    assert!(
+        run.last_heartbeat_at.is_some(),
+        "start_run should seed liveness immediately"
+    );
+
+    sqlx::query!(
+        r#"
+        UPDATE core.runs
+        SET last_heartbeat_at = NOW() - INTERVAL '5 minutes'
+        WHERE id = $1::uuid
+        "#,
+        run.id.as_uuid()
+    )
+    .execute(ctx.pool())
+    .await?;
+
+    assert!(repo.record_module_run_heartbeat(run.id).await?);
+
+    let refreshed = sqlx::query!(
+        r#"
+        SELECT
+            last_heartbeat_at as "last_heartbeat_at!: sinex_primitives::temporal::Timestamp"
+        FROM core.runs
+        WHERE id = $1::uuid
+        "#,
+        run.id.as_uuid()
+    )
+    .fetch_one(ctx.pool())
+    .await?;
+
+    assert!(
+        refreshed.last_heartbeat_at > run.last_heartbeat_at.unwrap(),
+        "heartbeat refresh should move the run liveness timestamp forward"
+    );
+
+    assert!(
+        repo.update_module_run_status(run.id, ModuleState::Stopped)
+            .await?
+    );
+    assert!(
+        !repo.record_module_run_heartbeat(run.id).await?,
+        "terminal runs must not be refreshed"
+    );
+
+    Ok(())
+}
+
+#[sinex_test]
 async fn fresh_runtime_health_preserves_live_run_identity(ctx: TestContext) -> TestResult<()> {
     let repo = ctx.pool.state();
     let module_name = ModuleName::new("run-health-liveness");

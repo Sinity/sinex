@@ -234,6 +234,14 @@ pub fn build() -> HashMap<&'static str, FormatCapability> {
         "ops dlq peek",
         FormatCapability::single_shot(TABLE_JSON_YAML),
     );
+    m.insert(
+        "ops dlq triage",
+        FormatCapability::single_shot(TABLE_JSON_YAML),
+    );
+    m.insert(
+        "ops dlq cleanup-plan",
+        FormatCapability::single_shot(TABLE_JSON_YAML),
+    );
     m.insert("ops dlq requeue", FormatCapability::single_shot(TABLE_ONLY));
     m.insert("ops dlq purge", FormatCapability::single_shot(TABLE_ONLY));
 
