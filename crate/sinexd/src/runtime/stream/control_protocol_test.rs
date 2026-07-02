@@ -1,8 +1,8 @@
 use super::{ControlCommandKind, control_command_kind};
-use xtask::sandbox::{TestResult, sinex_test};
+use xtask::sandbox::sinex_test;
 
 #[sinex_test]
-async fn classifies_known_control_subjects() -> TestResult<()> {
+async fn classifies_known_control_subjects() -> xtask::sandbox::TestResult<()> {
     assert_eq!(
         control_command_kind("sinex.control.sources.weechat.scan"),
         Some(ControlCommandKind::Scan)

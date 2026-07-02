@@ -1,4 +1,3 @@
-use super::*;
 use super::super::RESTORED_SELF_OBSERVATION_ORPHAN_TIMEOUT_SECS;
 
 use serde_json::json;
