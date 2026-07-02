@@ -1536,12 +1536,6 @@ fn operation_capability_action(
             package_operation_rpc_method(operation, source_id, binding),
             ActionSideEffect::Admin,
         ),
-        "inspect" => (
-            "Inspect Live Session",
-            package_operation_command_hint(operation, source_id, binding),
-            package_operation_rpc_method(operation, source_id, binding),
-            ActionSideEffect::Read,
-        ),
         "capture-region" => (
             "Capture Region",
             package_operation_command_hint(operation, source_id, binding),
