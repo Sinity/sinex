@@ -64,14 +64,13 @@ async fn test_state_dir_uses_configured_state_dir_preflight_child() -> TestResul
 }
 
 #[sinex_test]
-async fn test_open_schema_apply_lock_file_surfaces_state_dir_creation_failure() -> TestResult<()>
-{
+async fn test_open_schema_apply_lock_file_surfaces_state_dir_creation_failure() -> TestResult<()> {
     let dir = tempdir()?;
     let blocking_file = dir.path().join("not-a-directory");
     std::fs::write(&blocking_file, "occupied")?;
 
-    let error = open_schema_apply_lock_file(&blocking_file)
-        .expect_err("state-dir collision must surface");
+    let error =
+        open_schema_apply_lock_file(&blocking_file).expect_err("state-dir collision must surface");
     let rendered = format!("{error:#}");
     assert!(rendered.contains("failed to create preflight state dir"));
     assert!(rendered.contains(&blocking_file.display().to_string()));
@@ -180,25 +179,22 @@ async fn test_hash_contracts_dir_from_rejects_non_utf8_source_names() -> TestRes
 }
 
 #[sinex_test]
-async fn test_ensure_compiled_contracts_inventory_current_accepts_matching_hash()
--> TestResult<()> {
+async fn test_ensure_compiled_contracts_inventory_current_accepts_matching_hash() -> TestResult<()>
+{
     ensure_compiled_contracts_inventory_current("deadbeefcafebabe", "deadbeefcafebabe")?;
     Ok(())
 }
 
 #[sinex_test]
-async fn test_ensure_compiled_contracts_inventory_current_rejects_stale_hash() -> TestResult<()>
-{
-    let error =
-        ensure_compiled_contracts_inventory_current("deadbeefcafebabe", "feedface00000000")
-            .unwrap_err();
+async fn test_ensure_compiled_contracts_inventory_current_rejects_stale_hash() -> TestResult<()> {
+    let error = ensure_compiled_contracts_inventory_current("deadbeefcafebabe", "feedface00000000")
+        .unwrap_err();
     assert!(format!("{error:#}").contains("stale event payload inventory"));
     Ok(())
 }
 
 #[sinex_test]
-async fn test_ensure_compiled_contracts_inventory_current_rejects_missing_hash()
--> TestResult<()> {
+async fn test_ensure_compiled_contracts_inventory_current_rejects_missing_hash() -> TestResult<()> {
     let error =
         ensure_compiled_contracts_inventory_current("deadbeefcafebabe", "unknown").unwrap_err();
     assert!(
@@ -255,8 +251,7 @@ async fn test_parse_schema_apply_probe_output_reports_invalid_output() -> TestRe
 }
 
 #[sinex_test]
-async fn test_parse_schema_apply_probe_output_accepts_statement_timeout_prefix()
--> TestResult<()> {
+async fn test_parse_schema_apply_probe_output_accepts_statement_timeout_prefix() -> TestResult<()> {
     let pending = parse_schema_apply_probe_output(&std::process::Output {
         status: std::process::ExitStatus::from_raw(0),
         stdout: b"SET\n0\n".to_vec(),
@@ -304,8 +299,8 @@ async fn test_wait_for_schema_apply_completion_returns_when_pending_clears() -> 
 }
 
 #[sinex_test]
-async fn test_wait_for_schema_apply_completion_times_out_if_pending_never_clears()
--> TestResult<()> {
+async fn test_wait_for_schema_apply_completion_times_out_if_pending_never_clears() -> TestResult<()>
+{
     let error = wait_for_schema_apply_completion_with(
         std::time::Duration::from_millis(1),
         std::time::Duration::ZERO,
@@ -391,22 +386,21 @@ async fn test_check_required_tools_with_accepts_healthy_tools() -> TestResult<()
 
 #[sinex_test]
 async fn test_check_required_tools_with_surfaces_missing_and_broken_tools() -> TestResult<()> {
-    let error =
-        check_required_tools_with(&["pg_isready", "psql", "createdb"], |tool| match tool {
-            "pg_isready" => Ok(ToolInfo {
-                path: "/nix/store/pg_isready".into(),
-                version: "pg_isready 16".to_string(),
-                probe_issue: None,
-            }),
-            "psql" => Err(eyre!("Tool 'psql' not found in PATH")),
-            "createdb" => Ok(ToolInfo {
-                path: "/nix/store/createdb".into(),
-                version: "unknown".to_string(),
-                probe_issue: Some("Failed to run 'createdb --version'".to_string()),
-            }),
-            _ => unreachable!(),
-        })
-        .unwrap_err();
+    let error = check_required_tools_with(&["pg_isready", "psql", "createdb"], |tool| match tool {
+        "pg_isready" => Ok(ToolInfo {
+            path: "/nix/store/pg_isready".into(),
+            version: "pg_isready 16".to_string(),
+            probe_issue: None,
+        }),
+        "psql" => Err(eyre!("Tool 'psql' not found in PATH")),
+        "createdb" => Ok(ToolInfo {
+            path: "/nix/store/createdb".into(),
+            version: "unknown".to_string(),
+            probe_issue: Some("Failed to run 'createdb --version'".to_string()),
+        }),
+        _ => unreachable!(),
+    })
+    .unwrap_err();
 
     let message = format!("{error:#}");
     assert!(message.contains("psql"));
@@ -433,8 +427,7 @@ async fn test_set_dev_token_if_missing_adds_admin_role_suffix() -> TestResult<()
 }
 
 #[sinex_test]
-async fn test_local_runtime_env_overrides_include_dev_token_and_tls_defaults() -> TestResult<()>
-{
+async fn test_local_runtime_env_overrides_include_dev_token_and_tls_defaults() -> TestResult<()> {
     let mut _guard = EnvGuard::new();
     _guard.set_optional("SINEX_ENVIRONMENT", None);
     _guard.set_optional("SINEX_API_TOKEN", None);
@@ -449,13 +442,15 @@ async fn test_local_runtime_env_overrides_include_dev_token_and_tls_defaults() -
         key == "SINEX_API_TOKEN" && value.starts_with("dev-token-") && value.ends_with(":admin")
     }));
     assert!(
+        overrides
+            .iter()
+            .any(|(key, value)| { key == "SINEX_API_TLS_CERT" && value.ends_with("server.pem") })
+    );
+    assert!(
         overrides.iter().any(|(key, value)| {
-            key == "SINEX_API_TLS_CERT" && value.ends_with("server.pem")
+            key == "SINEX_API_TLS_KEY" && value.ends_with("server-key.pem")
         })
     );
-    assert!(overrides.iter().any(|(key, value)| {
-        key == "SINEX_API_TLS_KEY" && value.ends_with("server-key.pem")
-    }));
     Ok(())
 }
 

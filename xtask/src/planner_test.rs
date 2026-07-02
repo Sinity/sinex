@@ -17,8 +17,8 @@ async fn test_affected_packages_maps_crate_paths() -> ::xtask::sandbox::TestResu
 }
 
 #[sinex_test]
-async fn test_affected_packages_unknown_path_returns_workspace()
--> ::xtask::sandbox::TestResult<()> {
+async fn test_affected_packages_unknown_path_returns_workspace() -> ::xtask::sandbox::TestResult<()>
+{
     let pkgs = affected_packages(&["src/main.rs"]);
     assert_eq!(pkgs, vec!["--workspace"]);
     Ok(())

@@ -890,7 +890,7 @@ pub fn ensure_tls_certs(is_interactive: bool) -> Result<()> {
     Ok(())
 }
 
-fn default_dev_rpc_token() -> String {
+pub(crate) fn default_dev_rpc_token() -> String {
     let hostname = gethostname::gethostname().to_string_lossy().to_string();
     format!("dev-token-{hostname}:admin")
 }

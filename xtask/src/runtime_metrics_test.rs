@@ -62,8 +62,8 @@ async fn test_runtime_assessment_marks_unknown_runtime_unavailable()
 }
 
 #[sinex_test]
-async fn test_runtime_assessment_marks_degraded_on_stale_signals()
--> xtask::sandbox::TestResult<()> {
+async fn test_runtime_assessment_marks_degraded_on_stale_signals() -> xtask::sandbox::TestResult<()>
+{
     let metrics = RuntimeMetrics {
         event_engine_status: EventEngineStatus::Stale,
         last_heartbeat_age_secs: Some(300),

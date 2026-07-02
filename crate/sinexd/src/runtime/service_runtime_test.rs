@@ -12,6 +12,20 @@ async fn load_env_filter_defaults_when_rust_log_is_missing() -> TestResult<()> {
 }
 
 #[sinex_serial_test]
+async fn default_filter_suppresses_sqlx_query_statement_logs() -> TestResult<()> {
+    let raw = with_default_sqlx_query_filter("info");
+    assert_eq!(raw, "info,sqlx::query=off");
+    Ok(())
+}
+
+#[sinex_serial_test]
+async fn explicit_sqlx_query_filter_is_preserved() -> TestResult<()> {
+    let raw = with_default_sqlx_query_filter("info,sqlx::query=warn");
+    assert_eq!(raw, "info,sqlx::query=warn");
+    Ok(())
+}
+
+#[sinex_serial_test]
 async fn load_env_filter_rejects_invalid_directive() -> TestResult<()> {
     let mut env = EnvGuard::new();
     env.set("RUST_LOG", "test_service=wat");

@@ -73,8 +73,8 @@ async fn rejects_non_numeric_listener_ports() -> TestResult<()> {
 
 #[sinex_test]
 async fn listener_port_for_pid_probe_reports_ss_spawn_failures() -> TestResult<()> {
-    let error = listener_port_for_pid_probe(123, Err(std::io::Error::other("ss exploded")))
-        .unwrap_err();
+    let error =
+        listener_port_for_pid_probe(123, Err(std::io::Error::other("ss exploded"))).unwrap_err();
     let message = format!("{error:#}");
     assert!(message.contains("failed to inspect NATS listeners with ss"));
     assert!(message.contains("ss exploded"));
@@ -142,8 +142,7 @@ LISTEN 0      4096   malformed-listener   0.0.0.0:*    users:(("nats-server",pid
 
 #[cfg(unix)]
 #[sinex_test]
-async fn find_running_nats_pid_for_port_matches_live_server_without_pid_file() -> TestResult<()>
-{
+async fn find_running_nats_pid_for_port_matches_live_server_without_pid_file() -> TestResult<()> {
     use std::os::unix::process::ExitStatusExt;
 
     let pid = find_running_nats_pid_for_port(
@@ -220,8 +219,7 @@ async fn wait_for_nats_startup_probe_rejects_unexpected_listener_port() -> TestR
 
 #[sinex_test]
 async fn parse_nats_pgrep_output_reports_spawn_failures() -> TestResult<()> {
-    let error =
-        parse_nats_pgrep_output(Err(std::io::Error::other("pgrep exploded"))).unwrap_err();
+    let error = parse_nats_pgrep_output(Err(std::io::Error::other("pgrep exploded"))).unwrap_err();
     let message = format!("{error:#}");
     assert!(message.contains("failed to inspect running nats-server processes with pgrep"));
     assert!(message.contains("pgrep exploded"));

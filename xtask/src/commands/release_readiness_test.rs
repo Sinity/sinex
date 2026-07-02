@@ -51,8 +51,8 @@ async fn generated_source_catalog_artifact_points_at_behavior_owner_test()
 
 #[sinex_test]
 async fn failing_required_check_blocks_release_readiness() -> ::xtask::sandbox::TestResult<()> {
-    let report = build_release_readiness_report("rc", "origin/master", true, |check| {
-        ReleaseCheckResult {
+    let report =
+        build_release_readiness_report("rc", "origin/master", true, |check| ReleaseCheckResult {
             id: check.id,
             command: check.command.clone(),
             status: if check.id == "schema-strict-diff" {
@@ -61,8 +61,7 @@ async fn failing_required_check_blocks_release_readiness() -> ::xtask::sandbox::
                 CheckStatus::Passed
             },
             detail: "synthetic check result".to_string(),
-        }
-    });
+        });
 
     assert_eq!(report.status, ReleaseReadinessStatus::Blocked);
     assert_eq!(report.summary.failed_check_count, 1);
@@ -75,14 +74,13 @@ async fn failing_required_check_blocks_release_readiness() -> ::xtask::sandbox::
 
 #[sinex_test]
 async fn all_required_checks_pass_makes_release_ready() -> ::xtask::sandbox::TestResult<()> {
-    let report = build_release_readiness_report("rc", "origin/master", true, |check| {
-        ReleaseCheckResult {
+    let report =
+        build_release_readiness_report("rc", "origin/master", true, |check| ReleaseCheckResult {
             id: check.id,
             command: check.command.clone(),
             status: CheckStatus::Passed,
             detail: "synthetic pass".to_string(),
-        }
-    });
+        });
 
     assert_eq!(report.status, ReleaseReadinessStatus::Ready);
     assert_eq!(report.summary.failed_check_count, 0);

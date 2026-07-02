@@ -32,8 +32,7 @@ async fn llvm_json_segments_become_hunk_addressable_regions() -> TestResult<()> 
         }]
     })
     .to_string();
-    let regions =
-        coverage_regions_from_llvm_json(&rendered, "some_test", Some("xtask"), &root)?;
+    let regions = coverage_regions_from_llvm_json(&rendered, "some_test", Some("xtask"), &root)?;
     assert_eq!(regions.len(), 2);
     assert_eq!(regions[0]["file_path"], "xtask/src/impact.rs");
     assert_eq!(regions[0]["line_start"], 10);

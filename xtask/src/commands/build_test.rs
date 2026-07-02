@@ -2,8 +2,7 @@ use super::*;
 use crate::sandbox::sinex_test;
 
 #[sinex_test]
-async fn explicit_packages_do_not_expand_to_affected_scope() -> ::xtask::sandbox::TestResult<()>
-{
+async fn explicit_packages_do_not_expand_to_affected_scope() -> ::xtask::sandbox::TestResult<()> {
     let cmd = BuildCommand {
         packages: vec!["xtask".to_string()],
         release: false,

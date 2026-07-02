@@ -52,8 +52,6 @@ async fn reference_renders_global_flags() -> ::xtask::sandbox::TestResult<()> {
     assert!(rendered.contains("# xtask Command Reference"));
     assert!(rendered.contains("## Global Flags"));
     assert!(rendered.contains("## `xtask check`"));
-    assert!(
-        rendered.contains("| `-p, --package` | yes | no | Check specific package(s) only |")
-    );
+    assert!(rendered.contains("| `-p, --package` | yes | no | Check specific package(s) only |"));
     Ok(())
 }
