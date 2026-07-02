@@ -1,0 +1,7 @@
+Context (last 24h): 3 sources
+────────────────────────────────────────────────────────────
+  sinex                4s ago  derived.events_processed.run
+  sinexd.automaton     4s ago  latency_snapshot with 8 payload field(s)
+  sinexd.event_engine  5s ago  batch.stats with 15 payload field(s)
+────────────────────────────────────────────────────────────
+  500 events across 3 sources in last 24h
