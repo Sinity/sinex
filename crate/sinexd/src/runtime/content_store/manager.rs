@@ -424,20 +424,40 @@ impl ContentStoreManager {
     /// Retrieve blob content as bytes
     pub async fn retrieve_content(&self, content_key: &str) -> RuntimeResult<Vec<u8>> {
         let start = Instant::now();
+        let blob = self.get_blob_metadata(content_key).await?;
+        if blob.size_bytes < 0 {
+            return Err(SinexError::processing(format!(
+                "Blob metadata reported negative size for {content_key}: {}",
+                blob.size_bytes
+            )));
+        }
+        let max_size = self.content_store.config.max_blob_size;
+        if max_size > 0 && blob.size_bytes as usize > max_size {
+            return Err(SinexError::blob_storage(format!(
+                "blob metadata size {} exceeds retrieval limit {max_size} for {content_key}",
+                blob.size_bytes
+            )));
+        }
+        let canonical_key = blob.content_key();
 
         // Ensure content is available locally
         self.content_store
-            .ensure_content_local(content_key)
+            .ensure_content_local(&canonical_key)
             .await
             .map_err(|e| SinexError::blob_storage(e).with_operation("retrieve"))?;
 
         // Find the actual file path
-        let path = self.find_symlink_path(content_key).await?;
+        let path = self.find_symlink_path(&canonical_key).await?;
+
+        let file_len = tokio::fs::metadata(&path).await.map_err(SinexError::io)?.len();
+        if max_size > 0 && file_len as usize > max_size {
+            return Err(SinexError::blob_storage(format!(
+                "blob content size {file_len} exceeds retrieval limit {max_size} for {content_key}"
+            )));
+        }
 
         // Read the content
         let content = tokio::fs::read(&path).await.map_err(SinexError::io)?;
-
-        let blob = self.get_blob_metadata(content_key).await?;
 
         // Verify integrity against the stored hashes if available. Prefer the
         // canonical content hash (git-annex SHA256), but fall back to the
@@ -463,10 +483,10 @@ impl ContentStoreManager {
 
             if !expected.is_empty() && computed != expected {
                 let mismatch_error = SinexError::processing(format!(
-                    "Blob content hash mismatch for {content_key} (expected {expected}, got {computed})"
+                    "Blob content hash mismatch for {canonical_key} (expected {expected}, got {computed})"
                 ));
                 if let Err(status_error) = self
-                    .persist_verification_status(content_key, BlobVerificationStatus::Corrupted)
+                    .persist_verification_status(&canonical_key, BlobVerificationStatus::Corrupted)
                     .await
                 {
                     return Err(attach_verification_status_update_error(
@@ -476,7 +496,7 @@ impl ContentStoreManager {
                 }
                 return Err(mismatch_error);
             } else if !expected.is_empty() {
-                self.persist_verification_status(content_key, BlobVerificationStatus::Verified)
+                self.persist_verification_status(&canonical_key, BlobVerificationStatus::Verified)
                     .await?;
                 verified = true;
             }
@@ -486,10 +506,10 @@ impl ContentStoreManager {
             let computed = blake3::hash(&content).to_hex();
             if computed.as_str() != expected_blake3 {
                 let mismatch_error = SinexError::processing(format!(
-                    "Blob BLAKE3 hash mismatch for {content_key} (expected {expected_blake3}, got {computed})"
+                    "Blob BLAKE3 hash mismatch for {canonical_key} (expected {expected_blake3}, got {computed})"
                 ));
                 if let Err(status_error) = self
-                    .persist_verification_status(content_key, BlobVerificationStatus::Corrupted)
+                    .persist_verification_status(&canonical_key, BlobVerificationStatus::Corrupted)
                     .await
                 {
                     return Err(attach_verification_status_update_error(
@@ -499,14 +519,14 @@ impl ContentStoreManager {
                 }
                 return Err(mismatch_error);
             }
-            self.persist_verification_status(content_key, BlobVerificationStatus::Verified)
+            self.persist_verification_status(&canonical_key, BlobVerificationStatus::Verified)
                 .await?;
         }
 
         self.publish_blob_event(
             "blob.retrieved",
             BlobRetrievedPayload {
-                blob_id: content_key.to_string(),
+                blob_id: canonical_key,
                 retrieval_time_ms: start.elapsed().as_millis().min(u128::from(u64::MAX)) as u64,
                 cache_hit: true,
             },
