@@ -22,7 +22,7 @@ use std::path::{Path, PathBuf};
 #[cfg(feature = "messaging")]
 use std::sync::Arc;
 use tokio::sync::mpsc;
-use tracing::warn;
+use tracing::{debug, info, warn};
 
 use sinex_primitives::events::SourceMaterial;
 use sinex_primitives::ids::Id;
@@ -751,7 +751,23 @@ impl InputShapeAdapter for FileDropAdapter {
         })
         .map_err(|e| ParserError::Adapter(format!("failed to create file watcher: {e}")))?;
 
-        for (path, mode) in planned_file_drop_watch_targets(config)? {
+        let watch_targets = planned_file_drop_watch_targets(config)?;
+        info!(
+            target_count = watch_targets.len(),
+            recursive = config.recursive,
+            max_depth = ?config.max_depth,
+            ignored_directory_count = config.ignored_directory_names.len(),
+            ignored_suffix_count = config.ignored_file_suffixes.len(),
+            event_filter_count = config.events.len(),
+            "file-drop adapter starting native watches"
+        );
+
+        for (path, mode) in watch_targets {
+            debug!(
+                path = %path.display(),
+                mode = ?mode,
+                "file-drop adapter watching path"
+            );
             watcher.watch(&path, mode).map_err(|e| {
                 ParserError::Adapter(format!("failed to watch {}: {e}", path.display()))
             })?;
@@ -829,23 +845,45 @@ fn build_file_drop_stream(
     mut rx: mpsc::Receiver<notify::Result<Event>>,
     event_filter: Vec<FileDropEventKind>,
     path_filter: FileDropPathFilter,
-    _watcher: impl Watcher + 'static, // keep alive until stream ends
+    watcher: impl Watcher + Send + 'static,
 ) -> BoxStream<'static, ParserResult<SourceRecord>> {
     let stream = async_stream::stream! {
-        // `_watcher` is moved into this async block and lives until the
-        // stream is dropped.
+        // Keep the native watcher alive for the lifetime of the stream.
+        let _watcher = watcher;
+        let mut notify_events_seen: u64 = 0;
+        let mut records_emitted: u64 = 0;
         while let Some(notify_result) = rx.recv().await {
             match notify_result {
                 Err(e) => {
                     yield Err(ParserError::Adapter(format!("notify error: {e}")));
                 }
                 Ok(event) => {
-                    for record in records_from_file_drop_event(
+                    notify_events_seen = notify_events_seen.saturating_add(1);
+                    let records = records_from_file_drop_event(
                         material_id,
                         &event,
                         &event_filter,
                         &path_filter,
-                    ) {
+                    );
+                    if notify_events_seen <= 16 || !records.is_empty() {
+                        info!(
+                            notify_events_seen,
+                            records = records.len(),
+                            kind = ?event.kind,
+                            paths = ?event.paths,
+                            "file-drop adapter observed notify event"
+                        );
+                    }
+                    for record in records {
+                        records_emitted = records_emitted.saturating_add(1);
+                        if records_emitted <= 16 {
+                            info!(
+                                records_emitted,
+                                logical_path = ?record.logical_path,
+                                anchor = ?record.anchor,
+                                "file-drop adapter emitting source record"
+                            );
+                        }
                         yield Ok(record);
                     }
                 }
