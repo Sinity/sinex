@@ -25,6 +25,15 @@ use std::collections::HashMap;
 const MAX_FOCUS_SESSION_EVIDENCE_REFS: usize = 12;
 const MAX_NOTIFICATION_PRESSURE_EVIDENCE_REFS: usize = 12;
 const MAX_PROJECT_CONTEXT_EVIDENCE_REFS: usize = 12;
+const CONTEXT_DIVERSITY_SOURCES: &[&str] = &[
+    "shell.atuin",
+    "shell.kitty",
+    "shell.scrollback",
+    "wm.hyprland",
+    "activitywatch",
+    "browser.history",
+    "fs-watcher",
+];
 
 use crate::client::GatewayClient;
 use crate::fmt::format_duration_age;
@@ -112,7 +121,8 @@ impl ContextCommand {
             ..Default::default()
         };
 
-        let event_cards = client.event_cards(query).await?;
+        let mut event_cards = client.event_cards(query).await?;
+        top_up_context_diversity(client, &mut event_cards, &window).await?;
 
         let sources = grouped_context_sources(&event_cards.cards);
         if self.desktop {
@@ -252,6 +262,50 @@ fn grouped_context_sources(cards: &[EventCardView]) -> Vec<(String, &EventCardVi
         ts_b.inner().cmp(&ts_a.inner())
     });
     sources
+}
+
+async fn top_up_context_diversity(
+    client: &GatewayClient,
+    event_cards: &mut EventCardListView,
+    window: &ContextWindow,
+) -> Result<()> {
+    for source in CONTEXT_DIVERSITY_SOURCES {
+        if context_cards_include_source(&event_cards.cards, source) {
+            continue;
+        }
+
+        let query = EventQuery {
+            sources: vec![(*source).to_string().into()],
+            event_types: vec![],
+            time_range: Some(window.time_range),
+            payload: None,
+            limit: 1,
+            direction: SortDirection::Desc,
+            ..Default::default()
+        };
+
+        let source_cards = client.event_cards(query).await?;
+        merge_context_diversity_cards(event_cards, source_cards.cards);
+    }
+
+    Ok(())
+}
+
+fn merge_context_diversity_cards(
+    event_cards: &mut EventCardListView,
+    candidates: impl IntoIterator<Item = EventCardView>,
+) {
+    for candidate in candidates {
+        if context_cards_include_source(&event_cards.cards, &candidate.source.raw) {
+            continue;
+        }
+        event_cards.cards.push(candidate);
+        event_cards.count += 1;
+    }
+}
+
+fn context_cards_include_source(cards: &[EventCardView], source: &str) -> bool {
+    cards.iter().any(|card| card.source.raw == source)
 }
 
 fn render_context_machine_output(
