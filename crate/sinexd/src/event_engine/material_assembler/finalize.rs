@@ -214,7 +214,7 @@ impl MaterialAssembler {
             })
     }
 
-    async fn mark_timeout_material_recovered_partial_if_eventful(
+    pub(super) async fn mark_timeout_material_recovered_partial_if_eventful(
         &self,
         material_id: Uuid,
         reason: &str,

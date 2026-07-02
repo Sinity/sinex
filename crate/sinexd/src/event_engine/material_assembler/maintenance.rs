@@ -327,6 +327,28 @@ impl MaterialAssembler {
 
         self.stats_inc_timed_out();
 
+        match self
+            .mark_timeout_material_recovered_partial_if_eventful(
+                material_id,
+                "slice_arrival_timeout",
+            )
+            .await
+        {
+            Ok(true) => {
+                self.cleanup_state(material_id).await;
+                let _ = self.assembler_state.remove(&material_id);
+                return;
+            }
+            Ok(false) => {}
+            Err(error) => {
+                warn!(
+                    material_id = %material_id,
+                    error = %error,
+                    "Could not classify timed-out material for partial recovery; routing timeout to DLQ"
+                );
+            }
+        }
+
         self.route_material_error(
             material_id,
             "slice_arrival_timeout",

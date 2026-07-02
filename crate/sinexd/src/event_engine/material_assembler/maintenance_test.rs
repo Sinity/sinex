@@ -1,8 +1,10 @@
 use super::super::RESTORED_SELF_OBSERVATION_ORPHAN_TIMEOUT_SECS;
 
+use futures::StreamExt;
 use serde_json::json;
 use sinex_db::repositories::DbPoolExt;
 use sinex_primitives::{Id, MaterialStatus, Timestamp, Uuid};
+use tokio::time::{Duration, timeout};
 use xtask::sandbox::prelude::*;
 
 #[sinex_test]
@@ -107,6 +109,59 @@ async fn orphan_reconcile_recovers_globally_stale_self_observation_without_dlq(
     assert_eq!(
         material.metadata["orphaned_sensing_material"]["dlq_policy"],
         json!("suppressed_self_observation_restart_orphan")
+    );
+    Ok(())
+}
+
+#[sinex_test]
+async fn stale_eventful_timeout_recovers_partial_without_dlq(
+    ctx: TestContext,
+) -> TestResult<()> {
+    let ctx = ctx.with_nats().shared().await?;
+    let (assembler, _content_store_dir, _state_dir) =
+        super::super::test_support::TestAssemblerBuilder::new("maintenance-test")
+            .slice_timeout_secs(60)
+            .build(&ctx)
+            .await?;
+    let dlq_subject = ctx.pipeline_namespace().subject("events.dlq.event_engine");
+    let mut dlq_sub = ctx.nats_client().subscribe(dlq_subject).await?;
+
+    let material_id = Uuid::now_v7();
+    ctx.pool
+        .source_materials()
+        .register_external_in_flight(
+            material_id,
+            "browser.history",
+            Some(&format!("browser.history#material={material_id}")),
+            json!({}),
+            Timestamp::now() - time::Duration::minutes(5),
+        )
+        .await?;
+    sqlx::query!(
+        "UPDATE raw.source_material_registry SET parsed_event_count = 42 WHERE id = $1",
+        material_id,
+    )
+    .execute(ctx.pool())
+    .await?;
+
+    assembler.process_stale_material(material_id, 61).await;
+
+    let material = ctx
+        .pool
+        .source_materials()
+        .get_by_id(Id::from_uuid(material_id))
+        .await?
+        .expect("material should exist");
+    assert_eq!(material.status, MaterialStatus::RecoveredPartial);
+    assert_eq!(
+        material.metadata["recovery_info"]["recovery_reason"],
+        json!("slice_arrival_timeout_with_admitted_events")
+    );
+    assert!(
+        timeout(Duration::from_millis(200), dlq_sub.next())
+            .await
+            .is_err(),
+        "eventful timeout recovery should not publish a DLQ message"
     );
     Ok(())
 }
