@@ -766,7 +766,13 @@ static QUERY_UNITS: &[QueryUnitDescriptor] = &[
         supports_aggregation: false,
         fields: DEBT_FIELDS,
         sort_keys: DEBT_SORT,
-        backing_rpc_methods: &["dlq.list", "sources.coverage", "automata.derivation_debt"],
+        backing_rpc_methods: &[
+            "dlq.list",
+            "sources.coverage",
+            "sources.list",
+            "sources.show",
+            "automata.derivation_debt",
+        ],
         disclosure_context: "view",
     },
     QueryUnitDescriptor {
