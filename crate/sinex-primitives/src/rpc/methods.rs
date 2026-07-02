@@ -161,6 +161,7 @@ pub const SOURCES_STAGE: &str = "sources.stage";
 pub const SOURCES_LIST: &str = "sources.list";
 pub const SOURCES_SHOW: &str = "sources.show";
 pub const SOURCES_COVERAGE: &str = "sources.coverage";
+pub const SOURCES_REMEDIATION_PLAN: &str = "sources.remediation_plan";
 pub const SOURCES_PACKAGE_COMPLETENESS: &str = "sources.package_completeness";
 pub const SOURCES_ANNOTATE: &str = "sources.annotate";
 pub const SOURCES_ARCHIVE: &str = "sources.archive";

@@ -3,8 +3,10 @@ use crate::fmt::render_finite_envelope;
 use sinex_primitives::domain::{MaterialStatus, SourceMaterialTimingInfoType};
 use sinex_primitives::parser::ParserId;
 use sinex_primitives::rpc::sources::{
-    SourceReadinessCost, SourceReadinessStatus, SourceShapeDriftObservation,
-    SourceShapeTypeChange, caveat_codes,
+    SourceMaterialRemediationCandidate, SourceMaterialRemediationPage,
+    SourceMaterialRemediationSummary, SourceReadinessCost, SourceReadinessStatus,
+    SourceShapeDriftObservation, SourceShapeTypeChange, SourcesRemediationPlanResponse,
+    caveat_codes,
 };
 use sinex_primitives::views::{
     SOURCE_CONTINUITY_DETAIL_SCHEMA_VERSION, SOURCE_CONTINUITY_GAP_SCHEMA_VERSION,
@@ -86,6 +88,73 @@ fn fixture_material_detail(
         optional_blob_id: None,
         total_bytes: Some(128),
         event_count: Some(event_count),
+    }
+}
+
+fn fixture_remediation_candidate(
+    id: &str,
+    status: MaterialStatus,
+    event_count: i64,
+    failure_reason: Option<&str>,
+    recovery_reason: Option<&str>,
+    decision: &str,
+    severity: &str,
+) -> SourceMaterialRemediationCandidate {
+    let mut material = fixture_material(id);
+    material.status = status;
+    material.event_count = Some(event_count);
+    SourceMaterialRemediationCandidate {
+        material,
+        failure_reason: failure_reason.map(ToOwned::to_owned),
+        recovery_reason: recovery_reason.map(ToOwned::to_owned),
+        decision: decision.to_string(),
+        severity: severity.to_string(),
+        suggested_action: "inspect fixture material".to_string(),
+    }
+}
+
+fn fixture_remediation_response(
+    items: Vec<SourceMaterialRemediationCandidate>,
+) -> SourcesRemediationPlanResponse {
+    let mut by_status = std::collections::BTreeMap::new();
+    let mut by_decision = std::collections::BTreeMap::new();
+    let mut by_severity = std::collections::BTreeMap::new();
+    let mut by_reason = std::collections::BTreeMap::new();
+    let mut total_admitted_events = 0_i64;
+
+    for item in &items {
+        total_admitted_events += item.material.event_count.unwrap_or_default();
+        *by_status
+            .entry(item.material.status.to_string())
+            .or_insert(0) += 1;
+        *by_decision.entry(item.decision.clone()).or_insert(0) += 1;
+        *by_severity.entry(item.severity.clone()).or_insert(0) += 1;
+        let reason = item
+            .failure_reason
+            .as_deref()
+            .or(item.recovery_reason.as_deref())
+            .unwrap_or("unknown");
+        *by_reason.entry(reason.to_string()).or_insert(0) += 1;
+    }
+
+    SourcesRemediationPlanResponse {
+        summary: SourceMaterialRemediationSummary {
+            total_candidates: items.len(),
+            total_admitted_events,
+            by_status,
+            by_decision,
+            by_severity,
+            by_reason,
+        },
+        page: SourceMaterialRemediationPage {
+            limit: 50,
+            offset: 0,
+            returned_count: items.len(),
+            total_candidates: items.len(),
+            has_more: false,
+            sort: "event-count".to_string(),
+        },
+        items,
     }
 }
 
@@ -212,25 +281,23 @@ async fn source_coverage_envelope_renders_finite_json_document() -> TestResult<(
 
 #[sinex_test]
 async fn source_remediation_plan_envelope_renders_finite_json_document() -> TestResult<()> {
-    let item = remediation_item_from_material(&fixture_material_detail(
+    let item = fixture_remediation_candidate(
         "material-1",
         MaterialStatus::RecoveredPartial,
         7,
-        serde_json::json!({
-            "failure_reason": "slice_arrival_timeout",
-            "recovery_info": {
-                "recovery_reason": "slice_arrival_timeout_with_admitted_events"
-            }
-        }),
-    ));
+        Some("slice_arrival_timeout"),
+        Some("slice_arrival_timeout_with_admitted_events"),
+        "review_partial_recovery",
+        "medium",
+    );
     let envelope = ViewEnvelope::new(
         "sinexctl.sources.remediation_plan",
-        SourceMaterialRemediationPlanView::new(vec![item]),
+        SourceMaterialRemediationPlanView::from_response(fixture_remediation_response(vec![item])),
     )
     .with_query_echo(serde_json::json!({
         "limit": 10,
+        "offset": 0,
         "sort": "event-count",
-        "candidate_limit": 1000,
         "include_empty": false,
     }));
 
@@ -256,8 +323,13 @@ async fn source_remediation_plan_envelope_renders_finite_json_document() -> Test
         1
     );
     assert_eq!(value["payload"]["summary"]["by_severity"]["medium"], 1);
+    assert_eq!(
+        value["payload"]["summary"]["by_reason"]["slice_arrival_timeout"],
+        1
+    );
+    assert_eq!(value["payload"]["page"]["total_candidates"], 1);
+    assert_eq!(value["payload"]["page"]["has_more"], false);
     assert_eq!(value["query_echo"]["sort"], "event-count");
-    assert_eq!(value["query_echo"]["candidate_limit"], 1000);
     assert_eq!(value["payload"]["items"][0]["status"], "recovered_partial");
     assert_eq!(
         value["payload"]["items"][0]["decision"],
@@ -386,8 +458,8 @@ async fn source_continuity_empty_views_render_finite_json_documents() -> TestRes
         SourceContinuityDetailView::new(None),
     );
 
-    let list_json = render_finite_envelope(&list, OutputFormat::Json)?
-        .expect("json renders finite envelope");
+    let list_json =
+        render_finite_envelope(&list, OutputFormat::Json)?.expect("json renders finite envelope");
     let list_value: serde_json::Value = serde_json::from_str(&list_json)?;
     assert_eq!(
         list_value["payload"]["schema_version"],
@@ -395,8 +467,8 @@ async fn source_continuity_empty_views_render_finite_json_documents() -> TestRes
     );
     assert_eq!(list_value["payload"]["count"], 0);
 
-    let detail_json = render_finite_envelope(&detail, OutputFormat::Json)?
-        .expect("json renders finite envelope");
+    let detail_json =
+        render_finite_envelope(&detail, OutputFormat::Json)?.expect("json renders finite envelope");
     let detail_value: serde_json::Value = serde_json::from_str(&detail_json)?;
     assert_eq!(
         detail_value["payload"]["schema_version"],
@@ -464,27 +536,29 @@ async fn source_coverage_table_renderer_stays_on_raw_response() -> TestResult<()
 
 #[sinex_test]
 async fn source_remediation_plan_table_surfaces_actions_and_reasons() -> TestResult<()> {
-    let failed = remediation_item_from_material(&fixture_material_detail(
+    let failed = fixture_remediation_candidate(
         "failed123456",
         MaterialStatus::Failed,
         12,
-        serde_json::json!({"failure_reason": "material_persist_failed"}),
-    ));
-    let recovered = remediation_item_from_material(&fixture_material_detail(
+        Some("material_persist_failed"),
+        None,
+        "inspect_failed_eventful",
+        "high",
+    );
+    let recovered = fixture_remediation_candidate(
         "partial123456",
         MaterialStatus::RecoveredPartial,
         5,
-        serde_json::json!({
-            "timeout_partial_recovery": {
-                "failure_reason": "slice_arrival_timeout"
-            },
-            "recovery_info": {
-                "recovery_reason": "slice_arrival_timeout_with_admitted_events"
-            }
-        }),
-    ));
+        Some("slice_arrival_timeout"),
+        Some("slice_arrival_timeout_with_admitted_events"),
+        "review_partial_recovery",
+        "medium",
+    );
 
-    let plan = SourceMaterialRemediationPlanView::new(vec![failed, recovered]);
+    let plan =
+        SourceMaterialRemediationPlanView::from_response(fixture_remediation_response(vec![
+            failed, recovered,
+        ]));
     let table = format_remediation_plan_table(&plan);
 
     assert!(table.contains("failed12..."));
@@ -498,75 +572,6 @@ async fn source_remediation_plan_table_surfaces_actions_and_reasons() -> TestRes
     assert_eq!(plan.summary.total_admitted_events, 17);
     assert_eq!(plan.summary.by_decision["inspect_failed_eventful"], 1);
     assert_eq!(plan.summary.by_decision["review_partial_recovery"], 1);
-    Ok(())
-}
-
-#[sinex_test]
-async fn source_remediation_candidates_sort_by_event_count_first() -> TestResult<()> {
-    let mut low_recent = fixture_material("low-recent");
-    low_recent.event_count = Some(10);
-    low_recent.staged_at = Some("2026-06-03T00:00:00Z".to_string());
-
-    let mut high_old = fixture_material("high-old");
-    high_old.event_count = Some(100);
-    high_old.staged_at = Some("2026-06-01T00:00:00Z".to_string());
-
-    let mut middle = fixture_material("middle");
-    middle.event_count = Some(50);
-    middle.staged_at = Some("2026-06-02T00:00:00Z".to_string());
-
-    let mut candidates = vec![low_recent, high_old, middle];
-
-    sort_remediation_candidates(&mut candidates, RemediationPlanSort::EventCount);
-
-    let ids = candidates
-        .into_iter()
-        .map(|material| material.id)
-        .collect::<Vec<_>>();
-    assert_eq!(ids, vec!["high-old", "middle", "low-recent"]);
-    Ok(())
-}
-
-#[sinex_test]
-async fn source_remediation_candidates_sort_by_staged_at_when_requested() -> TestResult<()> {
-    let mut low_recent = fixture_material("low-recent");
-    low_recent.event_count = Some(10);
-    low_recent.staged_at = Some("2026-06-03T00:00:00Z".to_string());
-
-    let mut high_old = fixture_material("high-old");
-    high_old.event_count = Some(100);
-    high_old.staged_at = Some("2026-06-01T00:00:00Z".to_string());
-
-    let mut middle = fixture_material("middle");
-    middle.event_count = Some(50);
-    middle.staged_at = Some("2026-06-02T00:00:00Z".to_string());
-
-    let mut candidates = vec![high_old, middle, low_recent];
-
-    sort_remediation_candidates(&mut candidates, RemediationPlanSort::StagedAt);
-
-    let ids = candidates
-        .into_iter()
-        .map(|material| material.id)
-        .collect::<Vec<_>>();
-    assert_eq!(ids, vec!["low-recent", "middle", "high-old"]);
-    Ok(())
-}
-
-#[sinex_test]
-async fn source_remediation_event_count_sort_scans_wider_candidate_window() -> TestResult<()> {
-    assert_eq!(
-        RemediationPlanSort::EventCount.candidate_fetch_limit(20),
-        1000
-    );
-    assert_eq!(
-        RemediationPlanSort::EventCount.candidate_fetch_limit(1200),
-        1200
-    );
-    assert_eq!(
-        RemediationPlanSort::StagedAt.candidate_fetch_limit(20),
-        20
-    );
     Ok(())
 }
 
