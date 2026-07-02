@@ -764,6 +764,15 @@ async fn source_status_treats_recent_output_as_runtime_liveness(
     assert_eq!(live_row.heartbeat_source, "output");
     assert!(live_row.last_heartbeat_at.is_some());
 
+    let health = repo.get_runtime_health(Duration::from_mins(2)).await?;
+    assert_eq!(health.unique_modules, 1);
+    assert_eq!(health.active_count, 1);
+    assert_eq!(health.inactive_count, 0);
+    assert_eq!(
+        health.active_run_count, 1,
+        "runtime health should share output-backed liveness semantics with runtime presence"
+    );
+
     let filtered_rows = repo
         .list_sources_status_for_modules(
             Duration::from_mins(2),

@@ -1344,42 +1344,58 @@ impl StateRepository<'_> {
                 FROM core.runs nr
                 JOIN core.manifests nm ON nm.id = nr.manifest_id
             ),
-            candidate_runs AS (
+            observed_modules AS (
                 SELECT
-                    nr.manifest_id,
-                    nr.id,
-                    nm.name
-                FROM core.runs nr
-                JOIN core.manifests nm ON nm.id = nr.manifest_id
-                WHERE nr.status NOT IN ('failed', 'stopped')
-            ),
-            active_modules AS (
-                SELECT
-                    cr.name,
-                    cr.id AS module_run_id,
-                    health.last_update
-                FROM candidate_runs cr
-                JOIN LATERAL (
+                    nm.name,
+                    latest_run.module_run_id,
+                    COALESCE(health.last_update, outputs.last_output_at) AS last_heartbeat_at
+                FROM core.manifests nm
+                LEFT JOIN LATERAL (
+                    SELECT
+                        nr.id AS module_run_id,
+                        nr.status
+                    FROM core.runs nr
+                    WHERE nr.manifest_id = nm.id
+                      AND nr.status NOT IN ('failed', 'stopped')
+                    ORDER BY (CASE WHEN nr.status IN ('running', 'draining', 'paused') THEN 1 ELSE 0 END) DESC,
+                             nr.started_at DESC
+                    LIMIT 1
+                ) latest_run ON true
+                LEFT JOIN LATERAL (
                     SELECT
                         ch.status,
                         ch.last_update
                     FROM sinex_telemetry.current_health ch
                     WHERE ch.source = 'sinex'
-                      AND ch.component = cr.name::text
+                      AND ch.component = nm.name::text
                       AND ch.last_update > NOW() - make_interval(secs => $1::float8)
                     ORDER BY ch.last_update DESC
                     LIMIT 1
                 ) health ON true
-                WHERE health.status IN ('healthy', 'degraded')
+                LEFT JOIN LATERAL (
+                    SELECT
+                        MAX(e.ts_coided) AS last_output_at
+                    FROM core.events e
+                    WHERE latest_run.module_run_id IS NOT NULL
+                      AND e.module_run_id = latest_run.module_run_id
+                      AND e.ts_coided > NOW() - make_interval(secs => $1::float8)
+                      AND (
+                          (nm.manifest_type = 'source' AND e.source_material_id IS NOT NULL)
+                          OR (nm.manifest_type = 'automaton' AND e.source_event_ids IS NOT NULL)
+                      )
+                ) outputs ON true
+                WHERE (latest_run.module_run_id IS NOT NULL
+                       AND health.status IN ('healthy', 'degraded'))
+                   OR outputs.last_output_at IS NOT NULL
             ),
             module_status AS (
                 SELECT
                     ni.name,
-                    COALESCE(COUNT(am.module_run_id), 0)::bigint AS active_run_count,
-                    MAX(am.last_update) AS latest_heartbeat_at,
-                    (COUNT(am.module_run_id) > 0) AS has_live_instance
+                    COALESCE(COUNT(om.module_run_id), 0)::bigint AS active_run_count,
+                    MAX(om.last_heartbeat_at) AS latest_heartbeat_at,
+                    (COUNT(om.module_run_id) > 0) AS has_live_instance
                 FROM module_inventory ni
-                LEFT JOIN active_modules am ON am.name = ni.name
+                LEFT JOIN observed_modules om ON om.name = ni.name
                 GROUP BY ni.name
             )
             SELECT
@@ -1427,7 +1443,10 @@ impl StateRepository<'_> {
                 nm.version as "version!",
                 nm.description,
                 nr.status as "manifest_status?",
-                COALESCE(health.status IN ('healthy', 'degraded'), false) as "live!",
+                (
+                    COALESCE(health.status IN ('healthy', 'degraded'), false)
+                    OR outputs.last_output_at IS NOT NULL
+                ) as "live!",
                 nr.service_name,
                 nr.instance_id,
                 nr.id as "module_run_id: uuid::Uuid",
@@ -1608,7 +1627,10 @@ impl StateRepository<'_> {
                 nm.version as "version!",
                 nm.description,
                 nr.status as "manifest_status?",
-                COALESCE(health.status IN ('healthy', 'degraded'), false) as "live!",
+                (
+                    COALESCE(health.status IN ('healthy', 'degraded'), false)
+                    OR outputs.last_output_at IS NOT NULL
+                ) as "live!",
                 nr.service_name,
                 nr.instance_id,
                 nr.id as "module_run_id: uuid::Uuid",
