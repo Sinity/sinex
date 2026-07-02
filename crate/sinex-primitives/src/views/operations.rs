@@ -7,6 +7,7 @@ use crate::rpc::replay::{ReplayOperation, ReplayState};
 use crate::runtime_pressure::RuntimePressureLevel;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
+use std::collections::BTreeMap;
 
 use super::common::truncate_chars;
 
@@ -162,6 +163,8 @@ pub struct OpsCatchupReadinessView {
     pub summary: String,
     pub dlq: OpsCatchupDlqSignalView,
     pub source_materials: OpsCatchupSourceMaterialSignalView,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub material_remediation: Option<OpsCatchupMaterialRemediationView>,
     pub runtime: OpsCatchupRuntimeSignalView,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub streams: Vec<OpsCatchupStreamSignalView>,
@@ -197,6 +200,7 @@ impl OpsCatchupReadinessView {
             summary: summary.into(),
             dlq,
             source_materials,
+            material_remediation: None,
             runtime,
             streams: Vec::new(),
             shadow_consumers: Vec::new(),
@@ -204,6 +208,33 @@ impl OpsCatchupReadinessView {
             actions: Vec::new(),
         }
     }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct OpsCatchupMaterialRemediationView {
+    pub total_candidates: usize,
+    pub total_admitted_events: i64,
+    pub by_status: BTreeMap<String, usize>,
+    pub by_decision: BTreeMap<String, usize>,
+    pub by_severity: BTreeMap<String, usize>,
+    pub by_reason: BTreeMap<String, usize>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub top_candidates: Vec<OpsCatchupMaterialRemediationCandidateView>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct OpsCatchupMaterialRemediationCandidateView {
+    pub material_id: String,
+    pub source_identifier: String,
+    pub status: String,
+    pub event_count: i64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub failure_reason: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub recovery_reason: Option<String>,
+    pub decision: String,
+    pub severity: String,
+    pub suggested_action: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
