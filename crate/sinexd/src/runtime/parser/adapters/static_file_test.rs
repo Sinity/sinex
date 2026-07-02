@@ -135,6 +135,41 @@ async fn test_static_file_empty_file_yields_one_empty_record() -> xtask::sandbox
 }
 
 #[sinex_test]
+async fn static_file_directory_yields_path_only_record() -> xtask::sandbox::TestResult<()> {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().to_str().unwrap().to_string();
+
+    let adapter = StaticFileAdapter;
+    let config = StaticFileConfig { path: path.clone() };
+    let mut stream = adapter
+        .open(dummy_material_id(), &config, None)
+        .await
+        .unwrap();
+
+    let record = stream.next().await.unwrap().unwrap();
+    assert!(record.bytes.is_empty());
+    assert_eq!(record.logical_path.as_ref().unwrap().as_str(), path);
+    assert!(matches!(
+        record.anchor,
+        MaterialAnchor::ByteRange { start: 0, len: 0 }
+    ));
+    assert!(stream.next().await.is_none());
+    Ok(())
+}
+
+#[sinex_test]
+async fn static_file_directory_has_no_input_fingerprint() -> xtask::sandbox::TestResult<()> {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().to_str().unwrap().to_string();
+
+    let adapter = StaticFileAdapter;
+    let config = StaticFileConfig { path };
+
+    assert!(adapter.input_fingerprint(&config).unwrap().is_none());
+    Ok(())
+}
+
+#[sinex_test]
 async fn static_file_csv_input_fingerprint_reports_header_shape()
 -> xtask::sandbox::TestResult<()> {
     let mut f = Builder::new().suffix(".csv").tempfile().unwrap();
