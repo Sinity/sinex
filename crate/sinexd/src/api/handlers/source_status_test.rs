@@ -424,6 +424,82 @@ async fn runtime_bridge_coverage_surfaces_unobserved_bridge_and_declared_actions
 }
 
 #[sinex_test]
+async fn browser_history_actions_reflect_runtime_module() -> xtask::TestResult<()> {
+    let contract = all_source_contracts()
+        .find(|contract| contract.id == "browser.history")
+        .expect("browser history contract expected");
+    let bindings = source_runtime_bindings()
+        .filter(|binding| binding.source_id == "browser.history")
+        .collect::<Vec<_>>();
+
+    let view = source_coverage_view(
+        contract,
+        &bindings,
+        &HashMap::new(),
+        &HashMap::new(),
+        &healthy_confirmation_buffer(),
+        &HashMap::new(),
+        &HashMap::new(),
+        &HashMap::new(),
+        &HashMap::new(),
+        Timestamp::now(),
+    );
+
+    let reconnect = view
+        .actions
+        .iter()
+        .find(|action| action.id == "browser.web.reconnect")
+        .expect("reconnect action expected");
+    assert_eq!(reconnect.state, ActionAvailabilityState::Enabled);
+    assert_eq!(reconnect.side_effect, ActionSideEffect::Admin);
+    assert!(reconnect.requires_confirmation);
+    assert_eq!(reconnect.rpc_method.as_deref(), Some("runtime.resume"));
+    assert_eq!(
+        reconnect.command_hint.as_deref(),
+        Some("sinexctl runtime resume browser.history")
+    );
+
+    let pause = view
+        .actions
+        .iter()
+        .find(|action| action.id == "browser.web.pause")
+        .expect("pause action expected");
+    assert_eq!(pause.state, ActionAvailabilityState::Enabled);
+    assert_eq!(pause.side_effect, ActionSideEffect::Admin);
+    assert_eq!(pause.rpc_method.as_deref(), Some("runtime.drain"));
+    assert_eq!(
+        pause.command_hint.as_deref(),
+        Some("sinexctl runtime drain browser.history --reason source-paused")
+    );
+
+    let resume = view
+        .actions
+        .iter()
+        .find(|action| action.id == "browser.web.resume")
+        .expect("resume action expected");
+    assert_eq!(resume.state, ActionAvailabilityState::Enabled);
+    assert_eq!(resume.rpc_method.as_deref(), Some("runtime.resume"));
+    assert_eq!(
+        resume.command_hint.as_deref(),
+        Some("sinexctl runtime resume browser.history")
+    );
+
+    let drain = view
+        .actions
+        .iter()
+        .find(|action| action.id == "browser.web.drain")
+        .expect("drain action expected");
+    assert_eq!(drain.state, ActionAvailabilityState::Enabled);
+    assert_eq!(drain.rpc_method.as_deref(), Some("runtime.drain"));
+    assert_eq!(
+        drain.command_hint.as_deref(),
+        Some("sinexctl runtime drain browser.history --reason source-coverage")
+    );
+    assert_action_rpc_methods_are_cataloged(contract.id, &view.actions)?;
+    Ok(())
+}
+
+#[sinex_test]
 async fn media_package_operations_surface_operator_actions() -> xtask::TestResult<()> {
     let contract = all_source_contracts()
         .find(|contract| contract.id == "media.audio-transcript")
