@@ -79,8 +79,7 @@ async fn test_dot_renderer_builder_pattern() -> TestResult<()> {
         let focus_pkg = packages[0].name().to_string();
 
         // Test forward mode
-        let renderer_forward =
-            DotRenderer::new(graph.clone()).with_focus(focus_pkg.clone(), false);
+        let renderer_forward = DotRenderer::new(graph.clone()).with_focus(focus_pkg.clone(), false);
         let output_forward = renderer_forward.render()?;
         assert!(output_forward.starts_with("digraph dependencies {"));
         assert!(output_forward.ends_with("}\n"));

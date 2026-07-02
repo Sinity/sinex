@@ -64,6 +64,10 @@
 //! transparently. This ensures `raw.source_material_registry` grows at
 //! `O(rotation_count)`, not `O(poll_count)`.
 //!
+//! If a streaming adapter goes idle while a material is open, the drain loop
+//! periodically finalizes the material before event-engine's stale-slice
+//! watchdog can classify it as failed. Busy streams still rotate on append.
+//!
 //! When `run_continuous` exits cleanly (shutdown signal), the current material
 //! is finalized. On source drop the [`AppendStreamAcquirer`] finalizes via its
 //! own `finalize` path.
@@ -124,6 +128,10 @@ use std::sync::Arc;
 const MAX_RECENT_INPUT_DRIFTS: usize = 16;
 const PRIVATE_MODE_CONTROL_SUBJECT: &str = "sinex.control.privacy.private_mode";
 const STREAM_CHECKPOINT_PERSIST_INTERVAL: Duration = Duration::from_secs(5);
+const ADAPTER_MATERIAL_BATCH_MAX_RECORDS: usize = 1024;
+const ADAPTER_MATERIAL_BATCH_MAX_BYTES: usize = 256 * 1024;
+const ADAPTER_BATCH_DRAIN_WINDOW: Duration = Duration::from_millis(1);
+const STREAM_IDLE_FINALIZE_REASON: &str = "adapter-stream-idle";
 
 // =============================================================================
 // Typed runtime config — wraps adapter config + optional binding flags
@@ -462,6 +470,13 @@ struct MaterializedAdapterRecord {
     anchor_payload_hash: Option<[u8; 32]>,
 }
 
+struct PendingAdapterRecord<C> {
+    record: SourceRecord,
+    next_cursor: Option<C>,
+    materialization_bytes: Option<Vec<u8>>,
+    anchor_payload_hash: Option<[u8; 32]>,
+}
+
 impl<A, P> AdapterBackedSource<A, P>
 where
     A: InputShapeAdapter + Default + InputShapeAdapterExt,
@@ -530,6 +545,21 @@ where
         self.stream_acquirer
             .as_ref()
             .and_then(super::super::acquisition_manager::AppendStreamAcquirer::current_material_id)
+    }
+
+    fn idle_stream_finalize_interval(&self) -> Duration {
+        let max_age = self.rotation_policy.max_age_seconds.as_secs();
+        Duration::from_secs((max_age / 2).max(1))
+    }
+
+    async fn finalize_idle_stream_material_if_due(&mut self) -> RuntimeResult<bool> {
+        let interval = self.idle_stream_finalize_interval();
+        let Some(acquirer) = self.stream_acquirer.as_mut() else {
+            return Ok(false);
+        };
+        acquirer
+            .finalize_if_age_exceeds(interval, STREAM_IDLE_FINALIZE_REASON)
+            .await
     }
 
     /// Observe adapter-level input shape before draining records.
@@ -648,12 +678,12 @@ where
         // within the growing material blob. The acquirer handles size/time-based
         // rotation transparently, so raw.source_material_registry grows at
         // O(rotation_count) across drain cycles rather than O(poll_count).
-        let record_bytes = record.bytes.as_slice();
-        let anchor_payload_hash = blake3::hash(record_bytes).as_bytes().to_owned();
+        let record_bytes = materialization_bytes_for_adapter_record(&record)?;
+        let anchor_payload_hash = blake3::hash(record_bytes.as_slice()).as_bytes().to_owned();
         let source_id_for_anchor = self.source_id;
         let anchor = self
             .ensure_stream_acquirer()?
-            .append_with_anchor(record_bytes, source_id_for_anchor)
+            .append_with_anchor(record_bytes.as_slice(), source_id_for_anchor)
             .await
             .map_err(|error| {
                 crate::runtime::SinexError::processing("append_with_anchor failed")
@@ -669,6 +699,108 @@ where
             offset_end: Some(anchor.offset_end),
             anchor_payload_hash: Some(anchor_payload_hash),
         })
+    }
+
+    fn prepare_pending_adapter_record(
+        &self,
+        record: SourceRecord,
+    ) -> RuntimeResult<PendingAdapterRecord<A::Cursor>> {
+        let next_cursor = match self.adapter.cursor_after(&record) {
+            Ok(c) => Some(c),
+            Err(e) => {
+                warn!(
+                    source = self.source_id,
+                    error = %e,
+                    "cursor_after failed — checkpoint may regress"
+                );
+                None
+            }
+        };
+
+        if record.material_id.to_uuid() != Uuid::nil() {
+            return Ok(PendingAdapterRecord {
+                record,
+                next_cursor,
+                materialization_bytes: None,
+                anchor_payload_hash: None,
+            });
+        }
+
+        let record_bytes = materialization_bytes_for_adapter_record(&record)?;
+        let anchor_payload_hash = blake3::hash(record_bytes.as_slice()).as_bytes().to_owned();
+
+        Ok(PendingAdapterRecord {
+            record,
+            next_cursor,
+            materialization_bytes: Some(record_bytes),
+            anchor_payload_hash: Some(anchor_payload_hash),
+        })
+    }
+
+    async fn materialize_adapter_batch(
+        &mut self,
+        pending_records: Vec<PendingAdapterRecord<A::Cursor>>,
+    ) -> RuntimeResult<Vec<(MaterializedAdapterRecord, Option<A::Cursor>)>> {
+        if pending_records.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        if pending_records
+            .iter()
+            .any(|pending| pending.record.material_id.to_uuid() != Uuid::nil())
+        {
+            let mut materialized = Vec::with_capacity(pending_records.len());
+            for pending in pending_records {
+                materialized.push((
+                    self.materialize_adapter_record(pending.record).await?,
+                    pending.next_cursor,
+                ));
+            }
+            return Ok(materialized);
+        }
+
+        let records: Vec<Vec<u8>> = pending_records
+            .iter()
+            .map(|pending| {
+                pending.materialization_bytes.clone().ok_or_else(|| {
+                    crate::runtime::SinexError::invalid_state(
+                        "missing materialization bytes for adapter batch record",
+                    )
+                })
+            })
+            .collect::<RuntimeResult<_>>()?;
+
+        let source_id_for_anchor = self.source_id;
+        let anchors = self
+            .ensure_stream_acquirer()?
+            .append_many_with_anchors(&records, source_id_for_anchor)
+            .await
+            .map_err(|error| {
+                crate::runtime::SinexError::processing("append_many_with_anchors failed")
+                    .with_context("source_id", self.source_id)
+                    .with_context("records", records.len().to_string())
+                    .with_std_error(&error)
+            })?;
+
+        let materialized = pending_records
+            .into_iter()
+            .zip(anchors)
+            .map(|(pending, anchor)| {
+                (
+                    MaterializedAdapterRecord {
+                        record: pending.record,
+                        material_id: Id::<SourceMaterial>::from_uuid(anchor.material_id),
+                        anchor_byte: anchor.offset_start,
+                        offset_start: Some(anchor.offset_start),
+                        offset_end: Some(anchor.offset_end),
+                        anchor_payload_hash: pending.anchor_payload_hash,
+                    },
+                    pending.next_cursor,
+                )
+            })
+            .collect();
+
+        Ok(materialized)
     }
 
     async fn link_latest_sqlite_snapshot_backing_material(
@@ -852,127 +984,231 @@ where
         };
 
         let mut emitted: u64 = 0;
+        let mut deferred_pending_record: Option<PendingAdapterRecord<A::Cursor>> = None;
 
-        while let Some(record_result) = stream.next().await {
-            self.refresh_binding_config()?;
-            if self.binding_config.is_truthy("private_mode_active") {
-                info!(
-                    source = self.source_id,
-                    adapter_kind = A::KIND.as_str(),
-                    emitted,
-                    "private mode became active during adapter drain; stopping acquisition"
-                );
-                return Ok(emitted);
+        loop {
+            let first_pending = if let Some(pending) = deferred_pending_record.take() {
+                pending
+            } else {
+                let record_result = match tokio::time::timeout(
+                    self.idle_stream_finalize_interval(),
+                    stream.next(),
+                )
+                .await
+                {
+                    Ok(Some(record_result)) => record_result,
+                    Ok(None) => break,
+                    Err(_) => {
+                        match self.finalize_idle_stream_material_if_due().await {
+                            Ok(true) => {
+                                info!(
+                                    source = self.source_id,
+                                    "Finalized idle adapter stream material before stale-slice timeout"
+                                );
+                            }
+                            Ok(false) => {
+                                debug!(
+                                    source = self.source_id,
+                                    "Adapter stream idle tick found no material old enough to finalize"
+                                );
+                            }
+                            Err(error) => {
+                                warn!(
+                                    source = self.source_id,
+                                    error = %error,
+                                    "Failed to finalize idle adapter stream material"
+                                );
+                            }
+                        }
+                        continue;
+                    }
+                };
+                self.refresh_binding_config()?;
+                if self.binding_config.is_truthy("private_mode_active") {
+                    info!(
+                        source = self.source_id,
+                        adapter_kind = A::KIND.as_str(),
+                        emitted,
+                        "private mode became active during adapter drain; stopping acquisition"
+                    );
+                    return Ok(emitted);
+                }
+
+                let record = match record_result {
+                    Ok(r) => r,
+                    Err(e) => {
+                        warn!(
+                            source = self.source_id,
+                            error = %e,
+                            "Adapter stream error — skipping record"
+                        );
+                        continue;
+                    }
+                };
+
+                match self.prepare_pending_adapter_record(record) {
+                    Ok(pending) => pending,
+                    Err(e) => {
+                        warn!(
+                            source = self.source_id,
+                            error = %e,
+                            "record materialization preparation failed — skipping record"
+                        );
+                        continue;
+                    }
+                }
+            };
+            let mut pending_batch = vec![first_pending];
+            let batch_unmaterialized = pending_batch[0].record.material_id.to_uuid() == Uuid::nil();
+            let mut batch_bytes = pending_batch[0]
+                .materialization_bytes
+                .as_ref()
+                .map_or(0, Vec::len);
+            let mut stream_exhausted = false;
+
+            while batch_unmaterialized
+                && pending_batch.len() < ADAPTER_MATERIAL_BATCH_MAX_RECORDS
+                && batch_bytes < ADAPTER_MATERIAL_BATCH_MAX_BYTES
+            {
+                let next_record_result =
+                    match tokio::time::timeout(ADAPTER_BATCH_DRAIN_WINDOW, stream.next()).await {
+                        Ok(Some(next_record_result)) => next_record_result,
+                        Ok(None) => {
+                            stream_exhausted = true;
+                            break;
+                        }
+                        Err(_) => break,
+                    };
+
+                let next_record = match next_record_result {
+                    Ok(record) => record,
+                    Err(e) => {
+                        warn!(
+                            source = self.source_id,
+                            error = %e,
+                            "Adapter stream error while batching — skipping record"
+                        );
+                        continue;
+                    }
+                };
+
+                let next_pending = match self.prepare_pending_adapter_record(next_record) {
+                    Ok(pending) => pending,
+                    Err(e) => {
+                        warn!(
+                            source = self.source_id,
+                            error = %e,
+                            "record materialization preparation failed while batching — skipping record"
+                        );
+                        continue;
+                    }
+                };
+
+                if next_pending.record.material_id.to_uuid() != Uuid::nil() {
+                    deferred_pending_record = Some(next_pending);
+                    break;
+                }
+
+                let next_bytes = next_pending
+                    .materialization_bytes
+                    .as_ref()
+                    .map_or(0, Vec::len);
+                if !pending_batch.is_empty()
+                    && batch_bytes.saturating_add(next_bytes) > ADAPTER_MATERIAL_BATCH_MAX_BYTES
+                {
+                    deferred_pending_record = Some(next_pending);
+                    break;
+                }
+                batch_bytes = batch_bytes.saturating_add(next_bytes);
+                pending_batch.push(next_pending);
             }
 
-            let record = match record_result {
-                Ok(r) => r,
-                Err(e) => {
-                    warn!(
-                        source = self.source_id,
-                        error = %e,
-                        "Adapter stream error — skipping record"
-                    );
-                    continue;
-                }
-            };
-
-            // Compute the next cursor before parsing, but only commit it after
-            // the source bytes have been anchored in material storage. Parser
-            // failures may still advance the cursor because the record was
-            // observed and preserved; append failures must remain retryable.
-            let next_cursor = match self.adapter.cursor_after(&record) {
-                Ok(c) => Some(c),
-                Err(e) => {
-                    warn!(
-                        source = self.source_id,
-                        error = %e,
-                        "cursor_after failed — checkpoint may regress"
-                    );
-                    None
-                }
-            };
-
-            let materialized = match self.materialize_adapter_record(record).await {
+            let materialized_batch = match self.materialize_adapter_batch(pending_batch).await {
                 Ok(materialized) => materialized,
                 Err(e) => {
                     warn!(
                         source = self.source_id,
                         error = %e,
-                        "record materialization failed — skipping record so material provenance can be retried"
+                        "record materialization batch failed — skipping batch so material provenance can be retried"
                     );
                     continue;
                 }
             };
 
-            let material_id = materialized.material_id;
-            self.link_latest_sqlite_snapshot_backing_material(material_id)
-                .await;
-            if let Some(cursor) = next_cursor {
-                state.cursor = Some(cursor);
-                self.persist_stream_checkpoint_if_due(state, false).await;
-            }
-
-            let ctx = ParserContext {
-                source_id: source_id.clone(),
-                source_material_id: material_id,
-                record_anchor: materialized.record.anchor.clone(),
-                operation_id,
-                job_id,
-                host: host.clone(),
-                acquisition_time: Timestamp::now(),
-            };
-
-            let intents = match self
-                .parser
-                .parse_record_with_binding(materialized.record, &ctx, &self.binding_config)
-                .await
-            {
-                Ok(v) => v,
-                Err(e) => {
-                    warn!(
-                        source = self.source_id,
-                        error = %e,
-                        "parse_record error — skipping"
-                    );
-                    continue;
+            for (materialized, next_cursor) in materialized_batch {
+                let material_id = materialized.material_id;
+                self.link_latest_sqlite_snapshot_backing_material(material_id)
+                    .await;
+                if let Some(cursor) = next_cursor {
+                    state.cursor = Some(cursor);
+                    self.persist_stream_checkpoint_if_due(state, false).await;
                 }
-            };
 
-            let anchor_payload_hash = materialized.anchor_payload_hash;
-            for intent in intents {
-                // Use the materialization anchor so events reference their real
-                // material location, whether the record came from the default
-                // append stream or from an adapter-staged content material.
-                match intent_to_event_with_anchor(
-                    intent,
-                    material_id,
-                    materialized.anchor_byte,
-                    materialized.offset_start,
-                    materialized.offset_end,
-                    anchor_payload_hash,
-                ) {
-                    Ok(event) => {
-                        if let Err(e) = event_emitter.emit(event).await {
-                            warn!(
-                                source = self.source_id,
-                                error = %e,
-                                "emit failed — event dropped"
-                            );
-                        } else {
-                            emitted += 1;
-                            state.total_events_emitted =
-                                state.total_events_emitted.saturating_add(1);
-                        }
-                    }
+                let ctx = ParserContext {
+                    source_id: source_id.clone(),
+                    source_material_id: material_id,
+                    record_anchor: materialized.record.anchor.clone(),
+                    operation_id,
+                    job_id,
+                    host: host.clone(),
+                    acquisition_time: Timestamp::now(),
+                };
+
+                let intents = match self
+                    .parser
+                    .parse_record_with_binding(materialized.record, &ctx, &self.binding_config)
+                    .await
+                {
+                    Ok(v) => v,
                     Err(e) => {
                         warn!(
                             source = self.source_id,
                             error = %e,
-                            "intent_to_event_with_anchor conversion failed — skipping"
+                            "parse_record error — skipping"
                         );
+                        continue;
+                    }
+                };
+
+                let anchor_payload_hash = materialized.anchor_payload_hash;
+                for intent in intents {
+                    // Use the materialization anchor so events reference their real
+                    // material location, whether the record came from the default
+                    // append stream or from an adapter-staged content material.
+                    match intent_to_event_with_anchor(
+                        intent,
+                        material_id,
+                        materialized.anchor_byte,
+                        materialized.offset_start,
+                        materialized.offset_end,
+                        anchor_payload_hash,
+                    ) {
+                        Ok(event) => {
+                            if let Err(e) = event_emitter.emit(event).await {
+                                warn!(
+                                    source = self.source_id,
+                                    error = %e,
+                                    "emit failed — event dropped"
+                                );
+                            } else {
+                                emitted += 1;
+                                state.total_events_emitted =
+                                    state.total_events_emitted.saturating_add(1);
+                            }
+                        }
+                        Err(e) => {
+                            warn!(
+                                source = self.source_id,
+                                error = %e,
+                                "intent_to_event_with_anchor conversion failed — skipping"
+                            );
+                        }
                     }
                 }
+            }
+
+            if stream_exhausted {
+                break;
             }
         }
 
@@ -1072,6 +1308,31 @@ where
     }
 }
 
+fn materialization_bytes_for_adapter_record(record: &SourceRecord) -> RuntimeResult<Vec<u8>> {
+    if !record.bytes.is_empty() {
+        return Ok(record.bytes.clone());
+    }
+
+    let Some(logical_path) = record.logical_path.as_ref() else {
+        return Ok(Vec::new());
+    };
+
+    let descriptor = json!({
+        "kind": "logical_adapter_record",
+        "logical_path": logical_path.as_str(),
+        "anchor": record.anchor,
+        "metadata": record.metadata,
+    });
+    let mut bytes = serde_json::to_vec(&descriptor).map_err(|error| {
+        crate::runtime::SinexError::serialization(
+            "failed to serialize logical adapter record descriptor",
+        )
+        .with_std_error(&error)
+    })?;
+    bytes.push(b'\n');
+    Ok(bytes)
+}
+
 impl<A, P> Drop for AdapterBackedSource<A, P>
 where
     A: InputShapeAdapter + Default + InputShapeAdapterExt,
@@ -1147,10 +1408,7 @@ where
     ) -> RuntimeResult<()> {
         // Build the AcquisitionManager from the runtime's NATS handles.
         let acq = runtime
-            .acquisition_manager(
-                crate::runtime::acquisition_manager::RotationPolicy::default(),
-                self.source_id,
-            )
+            .acquisition_manager(self.rotation_policy.clone(), self.source_id)
             .map_err(|e| {
                 crate::runtime::SinexError::lifecycle(
                     "AdapterBackedSource: failed to build AcquisitionManager",
@@ -1316,14 +1574,33 @@ where
                         .and_then(|config| config.continuous_start_position)
                 })
                 .flatten();
-            match self.drain_adapter(cursor, state, initial_position).await {
-                Ok(n) => total_emitted += n,
-                Err(e) => {
-                    warn!(
-                        source = self.source_id,
-                        error = %e,
-                        "drain_adapter error in continuous mode — retrying after interval"
-                    );
+            // Drain the adapter, but stay responsive to shutdown *while draining*.
+            // Event-driven adapters (e.g. file-drop / notify) legitimately block
+            // in `drain_adapter` indefinitely — the stream never ends because the
+            // watcher stays alive. Selecting against the shutdown signal lets such
+            // a blocking drain be cancelled cleanly (dropping the drain future
+            // tears down the watcher) so the loop reaches the material-finalize
+            // path below instead of being force-aborted. Poll-drain adapters that
+            // return normally fall through to the poll-interval wait as before.
+            let source_id = self.source_id;
+            tokio::select! {
+                drained = self.drain_adapter(cursor, state, initial_position) => {
+                    match drained {
+                        Ok(n) => total_emitted += n,
+                        Err(e) => {
+                            warn!(
+                                source = source_id,
+                                error = %e,
+                                "drain_adapter error in continuous mode — retrying after interval"
+                            );
+                        }
+                    }
+                }
+                result = shutdown_rx.changed() => {
+                    if result.is_err() || *shutdown_rx.borrow() {
+                        info!(source = source_id, "Drain signal received; exiting continuous loop");
+                        break;
+                    }
                 }
             }
 

@@ -1,9 +1,8 @@
 use super::{
     AllCheckoutsCleanup, AllCheckoutsStatus, CleanupActionKind, GIT_REPOSITORY_ENV_KEYS,
     collect_snapshot_names, dir_size, discover_nats_port, git_subprocess, list_snapshots,
-    parse_cmdline_bytes, parse_proc_stat_ppid, probe_annex_available,
-    require_successful_command, service_pid_state, stop_dev_sinexd_pid,
-    sync_event_payload_schemas_for_database_url,
+    parse_cmdline_bytes, parse_proc_stat_ppid, probe_annex_available, require_successful_command,
+    service_pid_state, stop_dev_sinexd_pid, sync_event_payload_schemas_for_database_url,
 };
 use super::{StackConfig, StackStatus};
 use crate::infra::state::{CheckoutInventoryRoot, LockInfo, LockInspection};
@@ -217,8 +216,7 @@ async fn all_checkouts_cleanup_dry_run_reports_dev_local_sinexd() -> Result<()> 
                 cleanup.checkouts[0]
                     .actions
                     .iter()
-                    .any(|action| action.action == CleanupActionKind::StopSinexd
-                        && action.dry_run)
+                    .any(|action| action.action == CleanupActionKind::StopSinexd && action.dry_run)
             );
             stop_dev_sinexd_pid(pid, false).ok();
             child.wait().ok();
@@ -299,8 +297,8 @@ async fn parse_proc_stat_ppid_handles_comm_with_spaces() -> ::xtask::sandbox::Te
 }
 
 #[sinex_test]
-async fn probe_annex_available_treats_missing_binary_as_absent()
--> ::xtask::sandbox::TestResult<()> {
+async fn probe_annex_available_treats_missing_binary_as_absent() -> ::xtask::sandbox::TestResult<()>
+{
     let available = probe_annex_available(Err(std::io::Error::new(
         std::io::ErrorKind::NotFound,
         "missing",
@@ -323,8 +321,7 @@ async fn probe_annex_available_reports_nonzero_status() -> ::xtask::sandbox::Tes
 }
 
 #[sinex_test]
-async fn require_successful_command_reports_failure_output() -> ::xtask::sandbox::TestResult<()>
-{
+async fn require_successful_command_reports_failure_output() -> ::xtask::sandbox::TestResult<()> {
     let error = require_successful_command(
         "git init for annex repository",
         Ok(std::process::Output {
@@ -411,8 +408,7 @@ async fn collect_snapshot_names_reports_entry_failures_without_dropping_snapshot
 
 #[cfg(unix)]
 #[sinex_test]
-async fn collect_snapshot_names_reports_non_utf8_entry_names()
--> ::xtask::sandbox::TestResult<()> {
+async fn collect_snapshot_names_reports_non_utf8_entry_names() -> ::xtask::sandbox::TestResult<()> {
     use std::os::unix::ffi::OsStringExt;
 
     let probe = collect_snapshot_names(
@@ -453,9 +449,7 @@ async fn dir_size_reports_non_directory_paths() -> TestResult<()> {
 }
 
 #[sinex_test]
-async fn sync_event_payload_schemas_uses_in_process_registry(
-    ctx: TestContext,
-) -> TestResult<()> {
+async fn sync_event_payload_schemas_uses_in_process_registry(ctx: TestContext) -> TestResult<()> {
     let result = sync_event_payload_schemas_for_database_url(ctx.database_url(), false)?;
     assert!(result.discovered > 0);
     assert_eq!(

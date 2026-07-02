@@ -340,13 +340,7 @@ async fn execute_workspace(
     }
     let stage = ctx.start_stage("full_tests");
     ProcessBuilder::new("xtask")
-        .args([
-            "test",
-            "--all",
-            "--prime",
-            "--exclude",
-            "sinex-e2e-tests",
-        ])
+        .args(["test", "--all", "--prime", "--exclude", "sinex-e2e-tests"])
         .run_ok()?;
     ctx.finish_stage(stage, true);
 
@@ -358,12 +352,7 @@ async fn execute_workspace(
     }
     let stage = ctx.start_stage("heavy_macros_tests");
     ProcessBuilder::new("xtask")
-        .args([
-            "test",
-            "--heavy",
-            "-p",
-            "sinex-macros",
-        ])
+        .args(["test", "--heavy", "-p", "sinex-macros"])
         .run_ok()?;
     ctx.finish_stage(stage, true);
 
@@ -376,12 +365,7 @@ async fn execute_workspace(
     }
     let stage = ctx.start_stage("heavy_primitives_tests");
     ProcessBuilder::new("xtask")
-        .args([
-            "test",
-            "--heavy",
-            "-p",
-            "sinex-primitives",
-        ])
+        .args(["test", "--heavy", "-p", "sinex-primitives"])
         .run_ok()?;
     ctx.finish_stage(stage, true);
 

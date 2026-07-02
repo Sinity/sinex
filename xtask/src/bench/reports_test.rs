@@ -62,8 +62,7 @@ async fn html_probe_section_escapes_issues() -> crate::sandbox::TestResult<()> {
 }
 
 #[sinex_test]
-async fn html_escape_covers_text_and_attribute_metacharacters() -> crate::sandbox::TestResult<()>
-{
+async fn html_escape_covers_text_and_attribute_metacharacters() -> crate::sandbox::TestResult<()> {
     assert_eq!(
         html_escape("<tag attr=\"x&y\">it's</tag>"),
         "&lt;tag attr=&quot;x&amp;y&quot;&gt;it&#39;s&lt;/tag&gt;"

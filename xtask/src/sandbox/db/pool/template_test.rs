@@ -101,8 +101,8 @@ async fn template_name_for_key_is_stable() -> TestResult<()> {
 }
 
 #[sinex_test]
-async fn template_name_for_key_reuses_semantic_adhoc_family_across_pid_suffixes()
--> TestResult<()> {
+async fn template_name_for_key_reuses_semantic_adhoc_family_across_pid_suffixes() -> TestResult<()>
+{
     assert_eq!(
         normalize_adhoc_template_key("sinex_test_pool_prune_repair_1234"),
         "sinex_test_pool_prune_repair"
@@ -145,8 +145,7 @@ async fn template_name_for_key_isolates_distinct_adhoc_semantic_families() -> Te
     let first = template_name_for_key("sinex_test_pool_recreate_1234");
     let second = template_name_for_key("sinex_test_template_shared_drift_1234");
     assert!(
-        first.starts_with(ADHOC_TEMPLATE_BASE_NAME)
-            && second.starts_with(ADHOC_TEMPLATE_BASE_NAME),
+        first.starts_with(ADHOC_TEMPLATE_BASE_NAME) && second.starts_with(ADHOC_TEMPLATE_BASE_NAME),
         "non-managed names should use the dedicated ad hoc template family"
     );
     assert_ne!(

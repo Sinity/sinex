@@ -103,8 +103,7 @@ async fn test_barrier_basic() -> TestResult<()> {
 
     // Wait for all to complete with a generous timeout to avoid scheduler noise flaking the test.
     let results =
-        tokio::time::timeout(Duration::from_secs(30), futures::future::join_all(handles))
-            .await?;
+        tokio::time::timeout(Duration::from_secs(30), futures::future::join_all(handles)).await?;
 
     // All should succeed
     for result in results {
@@ -235,8 +234,7 @@ async fn test_wait_helpers_source_events(ctx: Sandbox) -> TestResult<()> {
                             .build()?;
                     ctx.pool.events().insert(event).await?;
                 }
-                count_a =
-                    WaitHelpers::wait_for_source_events(&ctx.pool, "source-a", 3, 10).await?;
+                count_a = WaitHelpers::wait_for_source_events(&ctx.pool, "source-a", 3, 10).await?;
             }
             assert_eq!(count_a, 3);
 
@@ -251,8 +249,7 @@ async fn test_wait_helpers_source_events(ctx: Sandbox) -> TestResult<()> {
                             .build()?;
                     ctx.pool.events().insert(event).await?;
                 }
-                count_b =
-                    WaitHelpers::wait_for_source_events(&ctx.pool, "source-b", 2, 10).await?;
+                count_b = WaitHelpers::wait_for_source_events(&ctx.pool, "source-b", 2, 10).await?;
             }
             assert_eq!(count_b, 2);
 

@@ -186,12 +186,6 @@ impl IngestService {
         }
 
         let observer = Self::init_observer(&nats_client);
-        if let Err(error) = observer.prime().await {
-            warn!(
-                %error,
-                "Failed to prime event_engine self-observation materializer; telemetry events may retry before the source material is registered"
-            );
-        }
 
         let service = Self {
             config: config.clone(),
@@ -325,7 +319,7 @@ impl IngestService {
         match nats_client {
             Some(nats) => {
                 let config = SelfObserverConfig::from_env("sinexd");
-                SelfObserver::new(nats.clone(), config)
+                SelfObserver::new_deferred(nats.clone(), config)
             }
             None => SelfObserver::disabled(),
         }
@@ -333,6 +327,15 @@ impl IngestService {
 
     /// Run the ingestion service
     pub async fn run(&mut self) -> EventEngineResult<()> {
+        self.run_with_ready_signal(None).await
+    }
+
+    /// Run the ingestion service and optionally notify a parent supervisor
+    /// once the critical event-engine streams/consumers are ready.
+    pub async fn run_with_ready_signal(
+        &mut self,
+        service_ready_tx: Option<oneshot::Sender<()>>,
+    ) -> EventEngineResult<()> {
         info!("Starting ingestion service");
 
         // Create shared MaterialReadySet for event/material coordination. Events and
@@ -355,6 +358,17 @@ impl IngestService {
             let handle = self.start_material_ready_set_maintenance_task(set);
             self.track_task(handle).await;
         }
+
+        let heartbeat_emitter = if self.db_pool.is_some() {
+            let emitter = HeartbeatEmitter::new(
+                ServiceName::new("sinexd"),
+                sinex_primitives::Seconds::from_secs(60),
+            );
+            self.heartbeat_counter_handle = Some(emitter.get_counter_handle());
+            Some(emitter)
+        } else {
+            None
+        };
 
         // Start JetStream and MaterialAssembler tasks (critical - failure stops service)
         let (mut js_handle, mut js_ready_rx) = match (&self.nats_client, &self.db_pool) {
@@ -397,8 +411,32 @@ impl IngestService {
             );
         }
 
-        // Register a run for event_engine and start periodic heartbeat
-        if let Some(ref pool) = self.db_pool {
+        // Wait for both critical tasks to signal they're past their setup phase
+        // (streams bound, WAL restored) before telling systemd we're ready.
+        // Use a 30s timeout so a hung startup doesn't prevent systemd from detecting failure.
+        let ready_timeout = Duration::from_secs(30);
+        if let Some(rx) = js_ready_rx.take()
+            && let Err(error) = await_ready_signal("JetStream consumer", ready_timeout, rx).await
+        {
+            return self
+                .finish_startup_failure(error, js_handle.take(), ma_handle.take())
+                .await;
+        }
+        if let Some(rx) = ma_ready_rx.take()
+            && let Err(error) = await_ready_signal("MaterialAssembler", ready_timeout, rx).await
+        {
+            return self
+                .finish_startup_failure(error, js_handle.take(), ma_handle.take())
+                .await;
+        }
+
+        self.observer.enable_emission();
+
+        // Register a run and start heartbeat emission only after the raw-event
+        // durable consumer exists. The first heartbeat emits immediately; doing
+        // this earlier can seed the raw stream before the cold-start replay
+        // guard has a durable consumer to bind.
+        if let (Some(pool), Some(emitter)) = (self.db_pool.clone(), heartbeat_emitter) {
             let host = std::env::var("HOSTNAME").unwrap_or_else(|_| "unknown".to_string());
             let module_name = ModuleName::new("sinexd");
             let manifest_id = match pool
@@ -437,15 +475,6 @@ impl IngestService {
                 }
             };
 
-            // Emit health-aware heartbeats on a fixed cadence.
-            // Tracks error window for Healthy/Degraded/Failed status determination.
-            // Counter handle is passed to JetStreamConsumer so batch counts feed health status.
-            let emitter = HeartbeatEmitter::new(
-                ServiceName::new("sinexd"),
-                sinex_primitives::Seconds::from_secs(60),
-            );
-            self.heartbeat_counter_handle = Some(emitter.get_counter_handle());
-
             let shutdown_flag = self.shutdown_flag.clone();
             let shutdown_notify = self.shutdown_notify.clone();
             let runtime_failure_flag = self.runtime_failure_flag.clone();
@@ -482,23 +511,10 @@ impl IngestService {
             self.track_task(handle).await;
         }
 
-        // Wait for both critical tasks to signal they're past their setup phase
-        // (streams bound, WAL restored) before telling systemd we're ready.
-        // Use a 30s timeout so a hung startup doesn't prevent systemd from detecting failure.
-        let ready_timeout = Duration::from_secs(30);
-        if let Some(rx) = js_ready_rx.take()
-            && let Err(error) = await_ready_signal("JetStream consumer", ready_timeout, rx).await
+        if let Some(tx) = service_ready_tx
+            && tx.send(()).is_err()
         {
-            return self
-                .finish_startup_failure(error, js_handle.take(), ma_handle.take())
-                .await;
-        }
-        if let Some(rx) = ma_ready_rx.take()
-            && let Err(error) = await_ready_signal("MaterialAssembler", ready_timeout, rx).await
-        {
-            return self
-                .finish_startup_failure(error, js_handle.take(), ma_handle.take())
-                .await;
+            warn!("Supervisor readiness receiver dropped before event_engine became ready");
         }
 
         systemd_notify::notify_ready("sinexd");

@@ -2,8 +2,8 @@ use super::*;
 use crate::sandbox::sinex_test;
 
 #[sinex_test]
-async fn test_format_http_failure_body_includes_non_empty_body()
--> ::xtask::sandbox::TestResult<()> {
+async fn test_format_http_failure_body_includes_non_empty_body() -> ::xtask::sandbox::TestResult<()>
+{
     let message = format_http_failure_body(
         reqwest::StatusCode::BAD_REQUEST,
         Ok::<String, &str>("bad request details".to_string()),
@@ -82,8 +82,8 @@ async fn test_shadow_create_params_include_from_sequence() -> ::xtask::sandbox::
 }
 
 #[sinex_test]
-async fn test_invalid_gateway_certs_only_allowed_for_loopback()
--> ::xtask::sandbox::TestResult<()> {
+async fn test_invalid_gateway_certs_only_allowed_for_loopback() -> ::xtask::sandbox::TestResult<()>
+{
     assert!(should_accept_invalid_gateway_certs(
         "https://localhost:9999"
     ));

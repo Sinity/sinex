@@ -88,8 +88,8 @@ async fn test_defaults_are_compile_only() -> ::xtask::sandbox::TestResult<()> {
 }
 
 #[sinex_test]
-async fn test_changed_strict_child_checks_skip_nested_preflight()
--> ::xtask::sandbox::TestResult<()> {
+async fn test_changed_strict_child_checks_skip_nested_preflight() -> ::xtask::sandbox::TestResult<()>
+{
     let cmd = CheckCommand {
         lint: true,
         forbidden: true,
@@ -160,8 +160,7 @@ fn error_summary() -> DiagnosticSummary {
 }
 
 fn warning_summary(n: usize) -> DiagnosticSummary {
-    let packages: std::collections::HashSet<String> =
-        (0..n).map(|i| format!("pkg-{i}")).collect();
+    let packages: std::collections::HashSet<String> = (0..n).map(|i| format!("pkg-{i}")).collect();
     DiagnosticSummary {
         errors: 0,
         warnings: n,
@@ -278,8 +277,8 @@ async fn test_execute_lint_routes_to_clippy_not_check() -> ::xtask::sandbox::Tes
 }
 
 #[sinex_test]
-async fn test_execute_compile_only_routes_to_check_not_clippy()
--> ::xtask::sandbox::TestResult<()> {
+async fn test_execute_compile_only_routes_to_check_not_clippy() -> ::xtask::sandbox::TestResult<()>
+{
     let runner = Arc::new(MockCargoRunner::clean());
     let ctx = mock_ctx(runner.clone());
     let cmd = make_cmd(CheckFlags::default()); // default: compile-only
@@ -312,8 +311,7 @@ async fn test_execute_clippy_errors_yield_failure() -> ::xtask::sandbox::TestRes
 }
 
 #[sinex_test]
-async fn test_execute_fmt_fail_short_circuits_before_compile()
--> ::xtask::sandbox::TestResult<()> {
+async fn test_execute_fmt_fail_short_circuits_before_compile() -> ::xtask::sandbox::TestResult<()> {
     // --fmt with a formatting violation should bail before running cargo check.
     let runner = Arc::new(MockCargoRunner::clean().with_fmt_fail());
     let ctx = mock_ctx(runner.clone());
@@ -351,8 +349,8 @@ async fn test_execute_fmt_uses_package_scope() -> ::xtask::sandbox::TestResult<(
 }
 
 #[sinex_test]
-async fn test_execute_fmt_includes_xtask_macro_path_dependency()
--> ::xtask::sandbox::TestResult<()> {
+async fn test_execute_fmt_includes_xtask_macro_path_dependency() -> ::xtask::sandbox::TestResult<()>
+{
     let runner = Arc::new(MockCargoRunner::clean());
     let ctx = mock_ctx(runner.clone());
     let cmd = CheckCommand {
@@ -411,8 +409,7 @@ async fn test_execute_warnings_recorded_in_result() -> ::xtask::sandbox::TestRes
 }
 
 #[sinex_test]
-async fn test_execute_progress_callback_fired_per_package() -> ::xtask::sandbox::TestResult<()>
-{
+async fn test_execute_progress_callback_fired_per_package() -> ::xtask::sandbox::TestResult<()> {
     // Verify that the progress callback is fired once per compiled package.
     // MockCargoRunner fires on_package_done N times for N compiled_packages.
     let runner = Arc::new(MockCargoRunner::clean().with_check(warning_summary(5)));
@@ -427,8 +424,7 @@ async fn test_execute_progress_callback_fired_per_package() -> ::xtask::sandbox:
 #[sinex_test]
 async fn test_ambient_optimizations_only_enabled_for_human_foreground()
 -> ::xtask::sandbox::TestResult<()> {
-    let human =
-        CommandContext::new(OutputWriter::new(OutputFormat::Human), false, None, "check");
+    let human = CommandContext::new(OutputWriter::new(OutputFormat::Human), false, None, "check");
     assert!(human.allows_ambient_optimizations());
 
     let json = CommandContext::new(OutputWriter::new(OutputFormat::Json), false, None, "check");

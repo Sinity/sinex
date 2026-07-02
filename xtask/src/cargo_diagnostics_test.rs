@@ -46,11 +46,7 @@ async fn test_failed_unparsed_cargo_output_becomes_visible_diagnostic() -> TestR
         diagnostic.code.as_deref(),
         Some("XTASK_UNPARSED_CARGO_FAILURE")
     );
-    assert!(
-        diagnostic
-            .rendered_or_compact()
-            .contains("raw output tail")
-    );
+    assert!(diagnostic.rendered_or_compact().contains("raw output tail"));
     assert!(
         diagnostic
             .rendered_or_compact()

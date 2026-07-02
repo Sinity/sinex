@@ -592,11 +592,12 @@ impl AcquisitionManager {
         Ok(())
     }
 
-    /// Append multiple logical source records as one physical material slice.
+    /// Append multiple logical source records to the material.
     ///
-    /// Each input record receives its own byte anchor, but the transport sees one
-    /// ordered slice frame. Hot event streams should prefer this over calling
-    /// [`append_slice`](Self::append_slice) once per tiny record.
+    /// Each input record receives its own byte anchor. The transport sees one or
+    /// more ordered slice frames, capped below the NATS payload ceiling. Hot
+    /// event streams should prefer this over calling [`append_slice`](Self::append_slice)
+    /// once per tiny record.
     pub async fn append_record_batch<T>(
         &self,
         handle: &mut SourceMaterialHandle,
@@ -644,20 +645,58 @@ impl AcquisitionManager {
             return Ok(anchors);
         }
 
-        if total_bytes > Self::MAX_NATS_PAYLOAD_BYTES {
-            return Err(SinexError::validation(format!(
-                "Material record batch exceeds NATS max payload ({} bytes > {} bytes). \
-                 Caller must split records into smaller batches.",
-                total_bytes,
-                Self::MAX_NATS_PAYLOAD_BYTES
-            )));
-        }
-
-        let mut data = Vec::with_capacity(total_bytes);
+        let mut data = Vec::with_capacity(total_bytes.min(Self::MATERIAL_SLICE_PAYLOAD_BYTES));
+        let mut publish_offset = offset_start;
+        let mut publish_slice_index = slice_index;
         for record in records {
-            data.extend_from_slice(record.as_ref());
+            let mut remaining = record.as_ref();
+            while !remaining.is_empty() {
+                let available = Self::MATERIAL_SLICE_PAYLOAD_BYTES - data.len();
+                let take = remaining.len().min(available);
+                data.extend_from_slice(&remaining[..take]);
+                remaining = &remaining[take..];
+
+                if data.len() == Self::MATERIAL_SLICE_PAYLOAD_BYTES {
+                    self.publish_material_data_chunk(
+                        handle,
+                        publish_slice_index,
+                        publish_offset,
+                        std::mem::take(&mut data),
+                    )
+                    .await?;
+                    publish_offset = handle.bytes_written;
+                    publish_slice_index = handle.slice_count;
+                    data = Vec::with_capacity(Self::MATERIAL_SLICE_PAYLOAD_BYTES);
+                }
+            }
         }
 
+        if !data.is_empty() {
+            self.publish_material_data_chunk(handle, publish_slice_index, publish_offset, data)
+                .await?;
+        }
+
+        debug!(
+            material_id = %handle.material_id,
+            slice_index,
+            slices = handle.slice_count.saturating_sub(slice_index),
+            records = records.len(),
+            bytes = total_bytes,
+            offset_start,
+            offset_end = handle.bytes_written,
+            "Appended material record batch"
+        );
+
+        Ok(anchors)
+    }
+
+    async fn publish_material_data_chunk(
+        &self,
+        handle: &mut SourceMaterialHandle,
+        slice_index: usize,
+        offset_start: i64,
+        data: Vec<u8>,
+    ) -> RuntimeResult<()> {
         self.publish_slice(handle.material_id, slice_index, &data, offset_start)
             .await?;
 
@@ -675,23 +714,18 @@ impl AcquisitionManager {
                 ));
         }
 
-        debug!(
-            material_id = %handle.material_id,
-            slice_index,
-            records = records.len(),
-            bytes = total_bytes,
-            offset_start,
-            offset_end = handle.bytes_written,
-            "Appended material record batch"
-        );
-
-        Ok(anchors)
+        Ok(())
     }
 
     /// NATS maximum message payload size. Messages exceeding this will be rejected.
     /// The actual NATS default is 1MB but we use a conservative limit to account for
     /// headers and protocol overhead.
     const MAX_NATS_PAYLOAD_BYTES: usize = 512 * 1024;
+
+    /// Physical material-slice payload target. Keep this below
+    /// `MAX_NATS_PAYLOAD_BYTES` so headers and server framing cannot push a
+    /// nominally-valid material frame over the live NATS ceiling.
+    const MATERIAL_SLICE_PAYLOAD_BYTES: usize = 256 * 1024;
 
     /// Publish material slice to NATS
     async fn publish_slice(
@@ -788,7 +822,6 @@ impl AcquisitionManager {
         // Close temp file
         if let Some(mut file) = handle.temp_file.take() {
             file.flush().await?;
-            file.sync_all().await?;
         }
 
         // Compute final hash
@@ -1206,6 +1239,30 @@ impl AppendStreamAcquirer {
         self.current_handle.as_ref().map(|h| h.material_id)
     }
 
+    fn current_material_age_exceeds(&self, duration: std::time::Duration) -> bool {
+        self.current_handle.as_ref().is_some_and(|handle| {
+            (Timestamp::now() - handle.started_at).whole_seconds() >= duration.as_secs() as i64
+        })
+    }
+
+    /// Finalize the active stream material when it has been open for at least
+    /// `duration`.
+    ///
+    /// This is used by source runtimes that may go idle while a stream material
+    /// is open. Rotation-on-append cannot fire when no more records arrive.
+    pub async fn finalize_if_age_exceeds(
+        &mut self,
+        duration: std::time::Duration,
+        reason: &str,
+    ) -> RuntimeResult<bool> {
+        if !self.current_material_age_exceeds(duration) {
+            return Ok(false);
+        }
+
+        self.finalize(reason).await?;
+        Ok(true)
+    }
+
     /// Finalize current material
     pub async fn finalize(&mut self, reason: &str) -> RuntimeResult<()> {
         if let Some(handle) = self.current_handle.take() {
@@ -1222,6 +1279,7 @@ pub struct BufferedAppendStreamWriterConfig {
     pub batch_max_records: usize,
     pub batch_max_bytes: usize,
     pub batch_coalesce_window: std::time::Duration,
+    pub max_open_duration: Option<std::time::Duration>,
 }
 
 impl Default for BufferedAppendStreamWriterConfig {
@@ -1231,6 +1289,7 @@ impl Default for BufferedAppendStreamWriterConfig {
             batch_max_records: 64,
             batch_max_bytes: 128 * 1024,
             batch_coalesce_window: std::time::Duration::from_millis(20),
+            max_open_duration: None,
         }
     }
 }
@@ -1277,6 +1336,24 @@ async fn append_buffered_batch(
     }
 }
 
+async fn flush_buffered_stream_if_open_too_long(
+    stream: &mut AppendStreamAcquirer,
+    config: &BufferedAppendStreamWriterConfig,
+) {
+    let Some(max_open_duration) = config.max_open_duration else {
+        return;
+    };
+    if !stream.current_material_age_exceeds(max_open_duration) {
+        return;
+    }
+    if let Err(error) = stream
+        .finalize("buffered append writer max open duration")
+        .await
+    {
+        warn!(%error, "Failed to finalize buffered append stream after max open duration");
+    }
+}
+
 async fn buffered_append_writer_task(
     mut stream: AppendStreamAcquirer,
     source_identifier: String,
@@ -1288,10 +1365,27 @@ async fn buffered_append_writer_task(
     loop {
         let request = match pending_request.take() {
             Some(request) => request,
-            None => match rx.recv().await {
-                Some(request) => request,
-                None => break,
-            },
+            None => {
+                if let Some(max_open_duration) = config.max_open_duration
+                    && stream.current_material_id().is_some()
+                {
+                    match tokio::select! {
+                        request = rx.recv() => request,
+                        () = tokio::time::sleep(max_open_duration) => {
+                            flush_buffered_stream_if_open_too_long(&mut stream, &config).await;
+                            continue;
+                        }
+                    } {
+                        Some(request) => request,
+                        None => break,
+                    }
+                } else {
+                    match rx.recv().await {
+                        Some(request) => request,
+                        None => break,
+                    }
+                }
+            }
         };
 
         if let Some(payload) = request.payload {
@@ -1334,6 +1428,7 @@ async fn buffered_append_writer_task(
             }
 
             append_buffered_batch(&mut stream, &source_identifier, batch).await;
+            flush_buffered_stream_if_open_too_long(&mut stream, &config).await;
         } else if request.prime {
             // Eagerly begin the material (publish BEGIN) without staging content,
             // so the first real record anchors at offset 0 of a clean material
@@ -1527,5 +1622,524 @@ impl BufferedAppendStreamWriter {
 }
 
 #[cfg(test)]
-#[path = "acquisition_manager_test.rs"]
-mod tests;
+mod tests {
+    // Inline because these tests exercise private bootstrap coordination state;
+    // extracting them would require widening the test surface of AcquisitionManager.
+    use super::{
+        AcquisitionManager, AppendStreamAcquirer, BufferedAppendStreamWriter,
+        BufferedAppendStreamWriterConfig, RotationPolicy,
+    };
+    use serde_json::json;
+    use sinex_primitives::{Bytes, Seconds};
+    use std::sync::{
+        Arc,
+        atomic::{AtomicUsize, Ordering},
+    };
+    use tokio::sync::oneshot;
+    use tokio::time::{Duration, sleep};
+    use xtask::sandbox::prelude::*;
+
+    #[sinex_test]
+    async fn concurrent_stream_bootstrap_waits_for_completion(ctx: TestContext) -> TestResult<()> {
+        let ctx = ctx.with_nats().shared().await?;
+        let manager = Arc::new(AcquisitionManager::with_defaults(
+            ctx.nats_client(),
+            "bootstrap-test",
+        ));
+        let attempts = Arc::new(AtomicUsize::new(0));
+        let (started_tx, started_rx) = oneshot::channel();
+        let (release_tx, release_rx) = oneshot::channel();
+
+        let first = {
+            let manager = manager.clone();
+            let attempts = attempts.clone();
+            tokio::spawn(async move {
+                manager
+                    .ensure_streams_ready_with(|| async move {
+                        attempts.fetch_add(1, Ordering::SeqCst);
+                        let _ = started_tx.send(());
+                        let _ = release_rx.await;
+                        Ok(())
+                    })
+                    .await
+            })
+        };
+
+        started_rx.await?;
+
+        let second = {
+            let manager = manager.clone();
+            let attempts = attempts.clone();
+            tokio::spawn(async move {
+                manager
+                    .ensure_streams_ready_with(|| async move {
+                        attempts.fetch_add(1, Ordering::SeqCst);
+                        Ok(())
+                    })
+                    .await
+            })
+        };
+
+        sleep(Duration::from_millis(100)).await;
+        assert!(
+            !second.is_finished(),
+            "concurrent callers must wait for stream bootstrap to finish"
+        );
+
+        let _ = release_tx.send(());
+        first.await??;
+        second.await??;
+
+        assert_eq!(
+            attempts.load(Ordering::SeqCst),
+            1,
+            "only the first caller should perform bootstrap work"
+        );
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn failed_stream_bootstrap_remains_retryable(ctx: TestContext) -> TestResult<()> {
+        let ctx = ctx.with_nats().shared().await?;
+        let manager = AcquisitionManager::with_defaults(ctx.nats_client(), "retry-test");
+        let attempts = Arc::new(AtomicUsize::new(0));
+
+        let err = manager
+            .ensure_streams_ready_with({
+                let attempts = attempts.clone();
+                || async move {
+                    attempts.fetch_add(1, Ordering::SeqCst);
+                    Err(sinex_primitives::error::SinexError::messaging(
+                        "bootstrap failed",
+                    ))
+                }
+            })
+            .await
+            .expect_err("failed bootstrap should surface immediately");
+        assert!(
+            err.to_string().contains("bootstrap failed"),
+            "unexpected error: {err}"
+        );
+
+        manager
+            .ensure_streams_ready_with({
+                let attempts = attempts.clone();
+                || async move {
+                    attempts.fetch_add(1, Ordering::SeqCst);
+                    Ok(())
+                }
+            })
+            .await?;
+
+        assert_eq!(
+            attempts.load(Ordering::SeqCst),
+            2,
+            "failed bootstrap should not poison future retries"
+        );
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn oversized_logical_record_is_chunked_without_losing_anchor(
+        ctx: TestContext,
+    ) -> TestResult<()> {
+        let ctx = ctx.with_nats().shared().await?;
+        let work_dir = tempfile::tempdir()?;
+        let manager = AcquisitionManager::with_defaults(ctx.nats_client(), "oversized-test")
+            .with_work_dir(work_dir.path());
+        let mut handle = manager.begin_material("test://oversized").await?;
+        let oversized = vec![0u8; AcquisitionManager::MAX_NATS_PAYLOAD_BYTES + 1];
+
+        let anchors = manager
+            .append_record_batch(&mut handle, &[&oversized])
+            .await?;
+
+        assert_eq!(anchors.len(), 1);
+        assert_eq!(anchors[0].offset_start, 0);
+        assert_eq!(anchors[0].offset_end, oversized.len() as i64);
+        assert_eq!(handle.bytes_written(), oversized.len() as i64);
+        assert_eq!(
+            handle.slice_count, 3,
+            "a 512KiB+1 logical record should publish as three 256KiB transport slices"
+        );
+        assert_eq!(
+            handle.hasher.clone().finalize().to_hex().to_string(),
+            blake3::hash(&oversized).to_hex().to_string()
+        );
+
+        let metadata = tokio::fs::metadata(handle.temp_path()).await?;
+        assert_eq!(
+            metadata.len(),
+            oversized.len() as u64,
+            "logical record bytes should be mirrored exactly once"
+        );
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn append_record_batch_returns_per_record_anchors(ctx: TestContext) -> TestResult<()> {
+        let ctx = ctx.with_nats().shared().await?;
+        let work_dir = tempfile::tempdir()?;
+        let manager = AcquisitionManager::with_defaults(ctx.nats_client(), "record-batch-test")
+            .with_work_dir(work_dir.path());
+        let mut handle = manager.begin_material("test://record-batch").await?;
+        let records = vec![
+            b"alpha".to_vec(),
+            b"beta".to_vec(),
+            Vec::new(),
+            b"gamma".to_vec(),
+        ];
+
+        let anchors = manager.append_record_batch(&mut handle, &records).await?;
+
+        assert_eq!(anchors.len(), 4);
+        assert_eq!(anchors[0].offset_start, 0);
+        assert_eq!(anchors[0].offset_end, 5);
+        assert_eq!(anchors[1].offset_start, 5);
+        assert_eq!(anchors[1].offset_end, 9);
+        assert_eq!(anchors[2].offset_start, 9);
+        assert_eq!(anchors[2].offset_end, 9);
+        assert_eq!(anchors[3].offset_start, 9);
+        assert_eq!(anchors[3].offset_end, 14);
+        assert!(
+            anchors
+                .iter()
+                .all(|anchor| anchor.material_id == handle.material_id)
+        );
+        assert_eq!(handle.bytes_written(), 14);
+        assert_eq!(handle.slice_count, 1);
+        assert_eq!(
+            tokio::fs::read(handle.temp_path()).await?,
+            b"alphabetagamma"
+        );
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn append_stream_returns_contiguous_anchors(ctx: TestContext) -> TestResult<()> {
+        let ctx = ctx.with_nats().shared().await?;
+        let work_dir = tempfile::tempdir()?;
+        let manager = Arc::new(
+            AcquisitionManager::with_defaults(ctx.nats_client(), "append-stream-test")
+                .with_work_dir(work_dir.path()),
+        );
+        let mut stream = AppendStreamAcquirer::new(manager);
+
+        let first = stream
+            .append_json_line(&json!({ "row": 1, "value": "alpha" }), "test://history")
+            .await?;
+        let second = stream
+            .append_json_line(&json!({ "row": 2, "value": "beta" }), "test://history")
+            .await?;
+        let third = stream
+            .append_json_line(
+                &json!({ "row": 1, "value": "gamma" }),
+                "test://other-history",
+            )
+            .await?;
+        stream.finalize("test-complete").await?;
+
+        assert_eq!(
+            first.material_id, second.material_id,
+            "one logical source stream should use one material until rotation"
+        );
+        assert_ne!(
+            second.material_id, third.material_id,
+            "changing logical sources must rotate instead of mixing records"
+        );
+        assert_eq!(
+            first.offset_end, second.offset_start,
+            "source record anchors should be contiguous byte ranges"
+        );
+        assert_eq!(
+            third.offset_start, 0,
+            "a rotated source material should restart byte anchors at zero"
+        );
+        assert!(
+            first.offset_start < first.offset_end,
+            "first record must occupy a non-empty range"
+        );
+        assert!(
+            second.offset_start < second.offset_end,
+            "second record must occupy a non-empty range"
+        );
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn append_stream_batches_records_into_one_slice(ctx: TestContext) -> TestResult<()> {
+        let ctx = ctx.with_nats().shared().await?;
+        let work_dir = tempfile::tempdir()?;
+        let manager = Arc::new(
+            AcquisitionManager::with_defaults(ctx.nats_client(), "append-stream-batch-test")
+                .with_work_dir(work_dir.path()),
+        );
+        let mut stream = AppendStreamAcquirer::new(manager);
+        let records = vec![b"one\n".to_vec(), b"two\n".to_vec(), b"three\n".to_vec()];
+
+        let anchors = stream
+            .append_many_with_anchors(&records, "test://batched-history")
+            .await?;
+
+        assert_eq!(anchors.len(), records.len());
+        assert_eq!(anchors[0].offset_start, 0);
+        assert_eq!(anchors[0].offset_end, 4);
+        assert_eq!(anchors[1].offset_start, 4);
+        assert_eq!(anchors[1].offset_end, 8);
+        assert_eq!(anchors[2].offset_start, 8);
+        assert_eq!(anchors[2].offset_end, 14);
+        let handle = stream
+            .current_handle
+            .as_ref()
+            .ok_or_else(|| SinexError::invalid_state("stream material should be active"))?;
+        assert_eq!(handle.slice_count, 1);
+        assert_eq!(
+            tokio::fs::read(handle.temp_path()).await?,
+            b"one\ntwo\nthree\n"
+        );
+        stream.finalize("test-complete").await?;
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn append_stream_publishes_begin_before_exposing_material_id(
+        ctx: TestContext,
+    ) -> TestResult<()> {
+        let ctx = ctx.with_nats().shared().await?;
+        let namespace = format!("append-stream-eager-begin-{}", Uuid::now_v7());
+        let work_dir = tempfile::tempdir()?;
+        let manager = Arc::new(
+            AcquisitionManager::new_with_namespace(
+                ctx.nats_client(),
+                RotationPolicy {
+                    max_bytes: Bytes::from(4),
+                    max_age_seconds: Seconds::from_secs(3600),
+                },
+                "append-stream-eager-begin-test".to_string(),
+                Some(namespace),
+            )
+            .with_work_dir(work_dir.path()),
+        );
+        let mut stream = AppendStreamAcquirer::new(manager);
+
+        let first = stream
+            .append_with_anchor(b"1234", "test://eager-begin")
+            .await?;
+        let first_handle = stream
+            .current_handle
+            .as_ref()
+            .ok_or_else(|| SinexError::invalid_state("stream material should be active"))?;
+        assert!(
+            first_handle.pending_begin.is_none(),
+            "stream material BEGIN must be acked before callers can observe the material ID"
+        );
+        let first_material_id = first.material_id;
+
+        let second = stream
+            .append_with_anchor(b"5", "test://eager-begin")
+            .await?;
+        let rotated_handle = stream
+            .current_handle
+            .as_ref()
+            .ok_or_else(|| SinexError::invalid_state("rotated stream material should be active"))?;
+        assert_ne!(
+            second.material_id, first_material_id,
+            "append after a full material should rotate to a fresh source material"
+        );
+        assert_eq!(
+            rotated_handle.material_id, second.material_id,
+            "current handle should be the rotated material used for the second anchor"
+        );
+        assert!(
+            rotated_handle.pending_begin.is_none(),
+            "rotated stream material BEGIN must be acked before event anchors use it"
+        );
+
+        stream.finalize("test-complete").await?;
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn append_stream_can_start_from_active_handle(ctx: TestContext) -> TestResult<()> {
+        let ctx = ctx.with_nats().shared().await?;
+        let namespace = format!("append-stream-existing-{}", Uuid::now_v7());
+        let work_dir = tempfile::tempdir()?;
+        let manager = Arc::new(
+            AcquisitionManager::new_with_namespace(
+                ctx.nats_client(),
+                RotationPolicy {
+                    max_bytes: Bytes::from(8),
+                    max_age_seconds: Seconds::from_secs(3600),
+                },
+                "append-stream-existing-test".to_string(),
+                Some(namespace),
+            )
+            .with_work_dir(work_dir.path()),
+        );
+        let handle = manager.begin_material("test://existing-stream").await?;
+        let first_material_id = handle.material_id;
+        let mut stream =
+            AppendStreamAcquirer::from_active_handle(manager, handle, "test://existing-stream");
+
+        let first = stream
+            .append_with_anchor(b"1234", "test://existing-stream")
+            .await?;
+        let second = stream
+            .append_with_anchor(b"56789", "test://existing-stream")
+            .await?;
+
+        assert_eq!(
+            first.material_id, first_material_id,
+            "first append should use the provided active material"
+        );
+        assert_ne!(
+            second.material_id, first_material_id,
+            "append that would exceed the rotation policy should rotate"
+        );
+        assert_eq!(second.offset_start, 0);
+
+        stream.finalize("test-complete").await?;
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn buffered_append_writer_preserves_record_offsets(ctx: TestContext) -> TestResult<()> {
+        let ctx = ctx.with_nats().shared().await?;
+        let namespace = format!("buffered-append-writer-{}", Uuid::now_v7());
+        let work_dir = tempfile::tempdir()?;
+        let manager = Arc::new(
+            AcquisitionManager::new_with_namespace(
+                ctx.nats_client(),
+                RotationPolicy::default(),
+                "buffered-writer-test".to_string(),
+                Some(namespace),
+            )
+            .with_work_dir(work_dir.path()),
+        );
+        let writer = BufferedAppendStreamWriter::from_manager(
+            manager,
+            "test://buffered-writer",
+            BufferedAppendStreamWriterConfig {
+                batch_coalesce_window: std::time::Duration::from_millis(1),
+                ..BufferedAppendStreamWriterConfig::default()
+            },
+        );
+
+        let first = writer.append(b"one".to_vec()).await?;
+        let second = writer.append(b"two".to_vec()).await?;
+        writer.finalize("test-complete").await?;
+
+        assert_eq!((first.offset_start, first.offset_end), (0, 3));
+        assert_eq!((second.offset_start, second.offset_end), (3, 6));
+        assert_eq!(first.material_id, second.material_id);
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn buffered_append_writer_flushes_material_without_stopping(
+        ctx: TestContext,
+    ) -> TestResult<()> {
+        let ctx = ctx.with_nats().shared().await?;
+        let namespace = format!("buffered-append-flush-{}", Uuid::now_v7());
+        let work_dir = tempfile::tempdir()?;
+        let manager = Arc::new(
+            AcquisitionManager::new_with_namespace(
+                ctx.nats_client(),
+                RotationPolicy::default(),
+                "buffered-writer-flush-test".to_string(),
+                Some(namespace),
+            )
+            .with_work_dir(work_dir.path()),
+        );
+        let writer = BufferedAppendStreamWriter::from_manager(
+            manager,
+            "test://buffered-writer-flush",
+            BufferedAppendStreamWriterConfig {
+                batch_coalesce_window: std::time::Duration::from_millis(1),
+                ..BufferedAppendStreamWriterConfig::default()
+            },
+        );
+
+        let first = writer.append(b"one".to_vec()).await?;
+        writer.flush("snapshot-evidence-boundary").await?;
+        let second = writer.append(b"two".to_vec()).await?;
+        writer.finalize("test-complete").await?;
+
+        assert_ne!(first.material_id, second.material_id);
+        assert_eq!((first.offset_start, first.offset_end), (0, 3));
+        assert_eq!((second.offset_start, second.offset_end), (0, 3));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn buffered_append_writer_flushes_after_max_open_duration(
+        ctx: TestContext,
+    ) -> TestResult<()> {
+        let ctx = ctx.with_nats().shared().await?;
+        let namespace = format!("buffered-append-max-open-{}", Uuid::now_v7());
+        let work_dir = tempfile::tempdir()?;
+        let manager = Arc::new(
+            AcquisitionManager::new_with_namespace(
+                ctx.nats_client(),
+                RotationPolicy::default(),
+                "buffered-writer-max-open-test".to_string(),
+                Some(namespace),
+            )
+            .with_work_dir(work_dir.path()),
+        );
+        let writer = BufferedAppendStreamWriter::from_manager(
+            manager,
+            "test://buffered-writer-max-open",
+            BufferedAppendStreamWriterConfig {
+                batch_coalesce_window: std::time::Duration::from_millis(1),
+                max_open_duration: Some(std::time::Duration::from_millis(50)),
+                ..BufferedAppendStreamWriterConfig::default()
+            },
+        );
+
+        let first = writer.append(b"one".to_vec()).await?;
+        tokio::time::sleep(std::time::Duration::from_millis(120)).await;
+        let second = writer.append(b"two".to_vec()).await?;
+        writer.finalize("test-complete").await?;
+
+        assert_ne!(first.material_id, second.material_id);
+        assert_eq!((first.offset_start, first.offset_end), (0, 3));
+        assert_eq!((second.offset_start, second.offset_end), (0, 3));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn prime_begins_material_without_staging_content(ctx: TestContext) -> TestResult<()> {
+        let ctx = ctx.with_nats().shared().await?;
+        let namespace = format!("buffered-append-prime-{}", Uuid::now_v7());
+        let work_dir = tempfile::tempdir()?;
+        let manager = Arc::new(
+            AcquisitionManager::new_with_namespace(
+                ctx.nats_client(),
+                RotationPolicy::default(),
+                "buffered-writer-prime-test".to_string(),
+                Some(namespace),
+            )
+            .with_work_dir(work_dir.path()),
+        );
+        let writer = BufferedAppendStreamWriter::from_manager(
+            manager,
+            "test://buffered-writer-prime",
+            BufferedAppendStreamWriterConfig {
+                batch_coalesce_window: std::time::Duration::from_millis(1),
+                ..BufferedAppendStreamWriterConfig::default()
+            },
+        );
+
+        // Prime publishes BEGIN eagerly, then the first real record must anchor at
+        // offset 0 — proving no placeholder byte was staged (#2184 prong E: this is
+        // what stopped the ~30K degenerate 1-byte self-observation materials).
+        writer.prime().await?;
+        let first = writer.append(b"first-record\n".to_vec()).await?;
+        writer.finalize("test-complete").await?;
+
+        assert_eq!(first.offset_start, 0);
+        assert_eq!(first.offset_end, b"first-record\n".len() as i64);
+        Ok(())
+    }
+}

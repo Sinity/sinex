@@ -84,15 +84,15 @@ fn valid_phase_manifest() -> PhaseVerificationManifest {
 }
 
 #[sinex_test]
-async fn phase_manifest_validation_accepts_supported_commands()
--> ::xtask::sandbox::TestResult<()> {
+async fn phase_manifest_validation_accepts_supported_commands() -> ::xtask::sandbox::TestResult<()>
+{
     validate_phase_manifest(&valid_phase_manifest())?;
     Ok(())
 }
 
 #[sinex_test]
-async fn phase_manifest_validation_rejects_duplicate_phase_ids()
--> ::xtask::sandbox::TestResult<()> {
+async fn phase_manifest_validation_rejects_duplicate_phase_ids() -> ::xtask::sandbox::TestResult<()>
+{
     let mut manifest = valid_phase_manifest();
     manifest.phases.push(manifest.phases[0].clone());
 
@@ -113,8 +113,8 @@ async fn phase_manifest_validation_rejects_empty_required_checks()
 }
 
 #[sinex_test]
-async fn phase_manifest_validation_rejects_unsupported_commands()
--> ::xtask::sandbox::TestResult<()> {
+async fn phase_manifest_validation_rejects_unsupported_commands() -> ::xtask::sandbox::TestResult<()>
+{
     let mut manifest = valid_phase_manifest();
     manifest.phases[0]
         .required_checks
@@ -153,8 +153,7 @@ async fn phase_manifest_validation_rejects_grep_only_behavior_evidence()
         "expected grep-only rejection, got {reasons:?}"
     );
 
-    let error =
-        validate_phase_manifest(&manifest).expect_err("grep-only phase evidence must fail");
+    let error = validate_phase_manifest(&manifest).expect_err("grep-only phase evidence must fail");
     assert!(format!("{error:#}").contains("source text"));
     Ok(())
 }
@@ -320,8 +319,7 @@ Verification:
 }
 
 #[sinex_test]
-async fn collect_closure_evidence_includes_comment_commands() -> ::xtask::sandbox::TestResult<()>
-{
+async fn collect_closure_evidence_includes_comment_commands() -> ::xtask::sandbox::TestResult<()> {
     let payload = ClosureIssuePayload {
         body: "## Summary\nNo command here.".to_string(),
         comments: vec![ClosureIssueComment {
@@ -356,8 +354,8 @@ async fn collect_closure_evidence_is_empty_without_commands_or_matrix()
 }
 
 #[sinex_test]
-async fn extract_closure_matrix_items_reports_checkbox_status()
--> ::xtask::sandbox::TestResult<()> {
+async fn extract_closure_matrix_items_reports_checkbox_status() -> ::xtask::sandbox::TestResult<()>
+{
     let body = "\
 ## Acceptance Criteria Drift
 
@@ -518,8 +516,7 @@ async fn closure_evidence_manifest_rejects_grep_only_runtime_claim()
 }
 
 #[sinex_test]
-async fn collect_closure_evidence_includes_manifest_items() -> ::xtask::sandbox::TestResult<()>
-{
+async fn collect_closure_evidence_includes_manifest_items() -> ::xtask::sandbox::TestResult<()> {
     let payload = ClosureIssuePayload {
         body: "## Summary\nNo command here.".to_string(),
         comments: vec![ClosureIssueComment {
@@ -602,8 +599,7 @@ async fn closure_evidence_readiness_accepts_behavior_manifest_without_commands()
             status: "satisfied".to_string(),
             evidence_kind: "runtime".to_string(),
             surface: "replay fake runtime integration test".to_string(),
-            evidence: "fake scan runtime failures propagate through the join helper"
-                .to_string(),
+            evidence: "fake scan runtime failures propagate through the join helper".to_string(),
             command: Some("xtask test -p sinexd -E 'test(replay_control)'".to_string()),
             artifact: None,
         }],

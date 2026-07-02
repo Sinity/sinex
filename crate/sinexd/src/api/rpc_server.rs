@@ -67,9 +67,9 @@ mod protocol;
 mod transport;
 
 pub use auth::RpcAuthContext;
-pub(crate) use auth::{
-    AccessOutcome, GatewayAuth, RateLimiter, constant_time_eq, extract_token, log_access_audit,
-};
+pub(crate) use auth::{AccessOutcome, GatewayAuth, RateLimiter, log_access_audit};
+#[cfg(any(test, feature = "test-support"))]
+pub(crate) use auth::{constant_time_eq, extract_token};
 pub(crate) use protocol::{JsonRpcRequest, validate_jsonrpc_request};
 use protocol::{JsonRpcResponse, rpc_error_data, sinex_error_to_rpc_code};
 pub(crate) use transport::{

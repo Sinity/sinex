@@ -17,8 +17,7 @@ async fn reset_slot_database_for_test(
 }
 
 #[sinex_test]
-async fn test_format_acquisition_timeout_message_includes_hint_and_attempts() -> TestResult<()>
-{
+async fn test_format_acquisition_timeout_message_includes_hint_and_attempts() -> TestResult<()> {
     let msg = format_acquisition_timeout_message(Duration::from_mins(1), 120, "");
     assert!(msg.contains("permanently locked"), "got: {msg}");
     assert!(msg.contains("120 attempts"), "got: {msg}");
@@ -271,8 +270,7 @@ async fn test_prune_stale_lazy_slot_databases_drops_actual_schema_drift_with_cle
 }
 
 #[sinex_test]
-async fn test_eagerly_recreate_pruned_lazy_slot_databases_repairs_drifted_slot()
--> TestResult<()> {
+async fn test_eagerly_recreate_pruned_lazy_slot_databases_repairs_drifted_slot() -> TestResult<()> {
     let config = PoolConfig::default();
     let db_name = format!("sinex_test_pool_prune_repair_{}", std::process::id());
     let slot_url = url_with_db_name(&config.base_url, &db_name)?;
@@ -434,8 +432,7 @@ async fn test_lazy_slot_schema_drift_reason_skips_clean_slot_when_schema_probe_l
         "unexpected schema probe error: {probe_error:#}"
     );
 
-    let stale_reason =
-        lazy_slot_schema_drift_reason(&mut admin_conn, &db_name, &slot_pool).await?;
+    let stale_reason = lazy_slot_schema_drift_reason(&mut admin_conn, &db_name, &slot_pool).await?;
     assert!(
         stale_reason.is_none(),
         "transient schema verification loss should be treated as clean/deferred, got {stale_reason:?}"
@@ -457,8 +454,8 @@ async fn test_lazy_slot_schema_drift_reason_skips_clean_slot_when_schema_probe_l
 }
 
 #[sinex_test]
-async fn test_try_lock_slot_database_for_drop_returns_gone_for_missing_database()
--> TestResult<()> {
+async fn test_try_lock_slot_database_for_drop_returns_gone_for_missing_database() -> TestResult<()>
+{
     let config = PoolConfig::default();
     let db_name = format!("sinex_test_pool_missing_{}", std::process::id());
     let slot_url = url_with_db_name(&config.base_url, &db_name)?;

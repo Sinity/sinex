@@ -23,8 +23,7 @@ async fn test_history_tracing_layer_is_lazy_until_first_persisted_event() -> Tes
 async fn test_history_tracing_layer_persists_first_warn_event() -> TestResult<()> {
     let temp = tempdir().context("failed to create tempdir")?;
     let db_path = temp.path().join("history.db");
-    let subscriber =
-        tracing_subscriber::registry().with(HistoryTracingLayer::new(db_path.clone()));
+    let subscriber = tracing_subscriber::registry().with(HistoryTracingLayer::new(db_path.clone()));
 
     tracing::subscriber::with_default(subscriber, || {
         tracing::warn!(target: "xtask::history.tests", code = 17_i64, "persist trace event");

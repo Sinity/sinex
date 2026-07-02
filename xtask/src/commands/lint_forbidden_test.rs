@@ -53,8 +53,7 @@ async fn test_filter_allowlist() -> ::xtask::sandbox::TestResult<()> {
 }
 
 #[sinex_test]
-async fn test_filter_allowlist_rejects_malformed_match_lines()
--> ::xtask::sandbox::TestResult<()> {
+async fn test_filter_allowlist_rejects_malformed_match_lines() -> ::xtask::sandbox::TestResult<()> {
     let error = filter_allowlist(vec!["malformed line".to_string()], &[], |_| false)
         .expect_err("malformed ripgrep output should fail");
     assert!(format!("{error:#}").contains("missing a file prefix"));
@@ -70,8 +69,7 @@ async fn test_filter_allowlist_rejects_empty_match_paths() -> ::xtask::sandbox::
 }
 
 #[sinex_test]
-async fn test_transport_publish_family_inventory_is_current() -> ::xtask::sandbox::TestResult<()>
-{
+async fn test_transport_publish_family_inventory_is_current() -> ::xtask::sandbox::TestResult<()> {
     let violations = check_transport_publish_family_inventory()?;
     assert!(
         violations.is_empty(),
@@ -81,8 +79,7 @@ async fn test_transport_publish_family_inventory_is_current() -> ::xtask::sandbo
 }
 
 #[sinex_test]
-async fn test_ensure_rg_completed_reports_signal_termination()
--> ::xtask::sandbox::TestResult<()> {
+async fn test_ensure_rg_completed_reports_signal_termination() -> ::xtask::sandbox::TestResult<()> {
     let output = std::process::Output {
         status: std::process::ExitStatus::from_raw(9),
         stdout: Vec::new(),
@@ -109,8 +106,7 @@ async fn test_ensure_rg_completed_allows_no_matches() -> ::xtask::sandbox::TestR
 }
 
 #[sinex_test]
-async fn coherence_boundary_skip_keeps_scope_on_core_runtime()
--> ::xtask::sandbox::TestResult<()> {
+async fn coherence_boundary_skip_keeps_scope_on_core_runtime() -> ::xtask::sandbox::TestResult<()> {
     assert!(is_coherence_boundary_skip("tests/e2e/tests/foo.rs"));
     assert!(is_coherence_boundary_skip(
         "crate/sinexd/src/runtime/tests.rs"
@@ -145,8 +141,7 @@ async fn test_parse_ast_grep_summary_tracks_blocking_and_advisory_findings()
 }
 
 #[sinex_test]
-async fn test_parse_ast_grep_summary_rejects_invalid_json() -> ::xtask::sandbox::TestResult<()>
-{
+async fn test_parse_ast_grep_summary_rejects_invalid_json() -> ::xtask::sandbox::TestResult<()> {
     let error =
         parse_ast_grep_summary("not-json").expect_err("invalid ast-grep output should fail");
     assert!(format!("{error:#}").contains("failed to parse ast-grep JSON output"));
@@ -158,8 +153,7 @@ async fn test_parse_ast_grep_summary_rejects_invalid_json() -> ::xtask::sandbox:
 // ─────────────────────────────────────────────────────────────────────────
 
 #[sinex_test]
-async fn ignored_test_contract_accepts_categorized_reasons() -> ::xtask::sandbox::TestResult<()>
-{
+async fn ignored_test_contract_accepts_categorized_reasons() -> ::xtask::sandbox::TestResult<()> {
     let fixture = r#"
         #[ignore = "heavy: run with xtask test --heavy"]
         async fn heavy_case() {}
@@ -193,8 +187,7 @@ async fn ignored_test_contract_rejects_bare_ignore() -> ::xtask::sandbox::TestRe
 }
 
 #[sinex_test]
-async fn ignored_test_contract_rejects_uncategorized_reason() -> ::xtask::sandbox::TestResult<()>
-{
+async fn ignored_test_contract_rejects_uncategorized_reason() -> ::xtask::sandbox::TestResult<()> {
     let fixture = r#"
         #[ignore = "flaky on my machine"]
         async fn ambiguous_skip() {}
@@ -221,8 +214,7 @@ async fn ignored_test_contract_rejects_empty_rationale_after_category()
 }
 
 #[sinex_test]
-async fn ignored_test_contract_rejects_unrouted_heavy_reason()
--> ::xtask::sandbox::TestResult<()> {
+async fn ignored_test_contract_rejects_unrouted_heavy_reason() -> ::xtask::sandbox::TestResult<()> {
     let fixture = r#"
         #[ignore = "heavy: slow on laptops"]
         async fn unrouted_heavy_case() {}
@@ -283,8 +275,8 @@ async fn property_strategy_fallback_contract_rejects_fixed_fallback()
 }
 
 #[sinex_test]
-async fn vm_suite_evidence_contract_accepts_typed_requirement()
--> ::xtask::sandbox::TestResult<()> {
+async fn vm_suite_evidence_contract_accepts_typed_requirement() -> ::xtask::sandbox::TestResult<()>
+{
     let fixture = r#"
         runner.require_evidence(
             name,
@@ -428,8 +420,8 @@ async fn privacy_gate_catches_secret_unit_without_privacy_metadata()
 }
 
 #[sinex_test]
-async fn privacy_gate_passes_public_unit_without_privacy_call()
--> ::xtask::sandbox::TestResult<()> {
+async fn privacy_gate_passes_public_unit_without_privacy_call() -> ::xtask::sandbox::TestResult<()>
+{
     let fixture = r#"
         register_source_contract! {
             SourceContract {
@@ -474,8 +466,8 @@ async fn privacy_gate_ignores_privacy_engine_call_without_metadata()
 }
 
 #[sinex_test]
-async fn privacy_gate_passes_with_processing_context_metadata()
--> ::xtask::sandbox::TestResult<()> {
+async fn privacy_gate_passes_with_processing_context_metadata() -> ::xtask::sandbox::TestResult<()>
+{
     let fixture = r#"
         register_source_contract! {
             SourceContract {
@@ -560,8 +552,8 @@ async fn privacy_gate_live_workspace_has_no_violations() -> ::xtask::sandbox::Te
 }
 
 #[sinex_test]
-async fn provider_secret_literal_pattern_catches_known_shapes()
--> ::xtask::sandbox::TestResult<()> {
+async fn provider_secret_literal_pattern_catches_known_shapes() -> ::xtask::sandbox::TestResult<()>
+{
     let pattern = provider_shaped_secret_pattern();
     let regex = regex::Regex::new(&pattern)?;
 

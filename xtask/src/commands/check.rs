@@ -967,7 +967,11 @@ fn changed_strict_failure_detail(
     report: &crate::strict_changed::ChangedStrictReport,
 ) -> String {
     let mut detail = msg.to_string();
-    for result in report.package_results.iter().filter(|result| !result.success) {
+    for result in report
+        .package_results
+        .iter()
+        .filter(|result| !result.success)
+    {
         detail.push_str("\n\n== ");
         detail.push_str(&result.package);
         detail.push_str(" ==");

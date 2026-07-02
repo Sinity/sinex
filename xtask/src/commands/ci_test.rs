@@ -38,8 +38,8 @@ async fn test_check_schema_contract_guard_rejects_new_required_fields()
 }
 
 #[sinex_test]
-async fn test_check_schema_contract_guard_rejects_type_changes()
--> ::xtask::sandbox::TestResult<()> {
+async fn test_check_schema_contract_guard_rejects_type_changes() -> ::xtask::sandbox::TestResult<()>
+{
     let success = check_schema_contract_guard(
         r#"{"type":"object","properties":{"count":{"type":"integer"}}}"#,
         r#"{"type":"object","properties":{"count":{"type":"string"}}}"#,
@@ -94,8 +94,8 @@ async fn test_check_schema_contract_guard_allows_enum_value_additions()
 }
 
 #[sinex_test]
-async fn test_resolve_socket_dir_reports_current_dir_failures()
--> ::xtask::sandbox::TestResult<()> {
+async fn test_resolve_socket_dir_reports_current_dir_failures() -> ::xtask::sandbox::TestResult<()>
+{
     let error = resolve_socket_dir(None, Err(std::io::Error::other("cwd exploded")))
         .expect_err("current_dir failure should surface");
     let message = format!("{error:#}");
