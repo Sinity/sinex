@@ -20,12 +20,14 @@ pub mod thresholds {
     /// runnable non-idle task was waiting on IO, so even single-digit values
     /// can make an interactive workstation feel sticky.
     pub const PSI_IO_FULL_WARN: f64 = 3.0;
-    /// Refuse broad checks/tests unless explicitly overridden.
-    pub const PSI_IO_FULL_REFUSE: f64 = 10.0;
+    /// Mark broad checks/tests as severe pressure. The command still starts;
+    /// this is an attribution/advisory threshold, not a scheduling veto.
+    pub const PSI_IO_FULL_SEVERE: f64 = 10.0;
     /// Warn when memory stalls are present before broad work starts.
     pub const PSI_MEMORY_FULL_WARN: f64 = 5.0;
-    /// Refuse broad checks/tests unless explicitly overridden.
-    pub const PSI_MEMORY_FULL_REFUSE: f64 = 10.0;
+    /// Mark broad checks/tests as severe pressure. The command still starts;
+    /// this is an attribution/advisory threshold, not a scheduling veto.
+    pub const PSI_MEMORY_FULL_SEVERE: f64 = 10.0;
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -66,8 +68,8 @@ impl PressureRecommendation {
     ) -> Self {
         let io_full = io.full_avg10.unwrap_or(0.0);
         let memory_full = memory.full_avg10.unwrap_or(0.0);
-        let level = if io_full >= thresholds::PSI_IO_FULL_REFUSE
-            || memory_full >= thresholds::PSI_MEMORY_FULL_REFUSE
+        let level = if io_full >= thresholds::PSI_IO_FULL_SEVERE
+            || memory_full >= thresholds::PSI_MEMORY_FULL_SEVERE
         {
             PressureLevel::Severe
         } else if io_full >= thresholds::PSI_IO_FULL_WARN
@@ -118,10 +120,10 @@ impl PressureRecommendation {
                 "Pressure is low enough for normal scoped work. Broad work can start if it is actually needed."
             }
             PressureLevel::Elevated => {
-                "Prefer scoped checks/tests now. Broad work is allowed but should stay backgrounded and low-priority; use `xtask analytics pressure --top-io` if the machine feels stuck."
+                "Prefer scoped checks/tests now. Broad work is allowed but should stay backgrounded and low-priority; use `xtask analytics pressure --top-io` or `--top-swap` if the machine feels stuck."
             }
             PressureLevel::Severe => {
-                "Broad work is allowed, but current pressure is severe. Use `xtask analytics pressure --top-io` to attribute IO if the machine feels stuck."
+                "Broad work is allowed, but current pressure is severe. Use `xtask analytics pressure --top-io` or `--top-swap` to attribute pressure if the machine feels stuck."
             }
         }
     }

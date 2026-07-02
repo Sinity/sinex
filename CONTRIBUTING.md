@@ -82,7 +82,10 @@ CARGO_TARGET_DIR=/var/cache/sinex/sinity/SOMEOTHERHASH000/target xtask check -p 
 
 When a check/test run is slow on a contended host:
 - xtask reports host pressure as an advisory signal; it does not refuse to
-  start checks or tests because of live PSI alone.
+  start checks or tests because of live PSI alone. Use
+  `xtask analytics pressure --top-io` and
+  `xtask analytics pressure --top-swap` to attribute pressure before changing
+  workload shape.
 - Clippy over the whole workspace can exceed the default 600s cargo timeout under
   load. The symptom is `cargo timed out after 600s`, not a code error — raise the
   ceiling with `SINEX_CARGO_TIMEOUT=1800` rather than assuming lock contention.
