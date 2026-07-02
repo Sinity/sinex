@@ -28,7 +28,10 @@ use crate::runtime::automaton::{
 };
 use crate::runtime::processing::AutomatonLogicError;
 use sinex_primitives::JsonValue;
-use sinex_primitives::events::payloads::DocumentKind;
+use sinex_primitives::events::EventPayload;
+use sinex_primitives::events::payloads::{
+    CanonicalCommandPayload, DocumentIngestedPayload, DocumentKind,
+};
 use sinex_primitives::ids::derive_document_id;
 use std::collections::HashMap;
 
@@ -71,11 +74,18 @@ impl MultiOutputTransducer for DocumentParserAutomaton {
         "*"
     }
 
+    fn input_event_types(&self) -> Vec<&'static str> {
+        vec![
+            DocumentIngestedPayload::EVENT_TYPE.as_static_str(),
+            CanonicalCommandPayload::EVENT_TYPE.as_static_str(),
+        ]
+    }
+
     fn output_event_types(&self) -> &[&'static str] {
         &["document.parsed", "document.chunked"]
     }
     fn input_provenance_filter(&self) -> InputProvenanceFilter {
-        InputProvenanceFilter::MaterialOnly
+        InputProvenanceFilter::Any
     }
 
     async fn process(
