@@ -1,4 +1,4 @@
-use clap::Args;
+use clap::{Args, ValueEnum};
 use console::style;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
@@ -447,21 +447,51 @@ pub struct RemediationPlanCommand {
     #[arg(long, default_value_t = 50)]
     limit: i64,
 
+    /// Sort candidates before applying the final limit.
+    #[arg(long, value_enum, default_value_t = RemediationPlanSort::EventCount)]
+    sort: RemediationPlanSort,
+
     /// Include failed materials that have not admitted any events.
     #[arg(long)]
     include_empty: bool,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
+enum RemediationPlanSort {
+    /// Prioritize materials with the largest admitted event count.
+    EventCount,
+    /// Prioritize most recently staged materials.
+    StagedAt,
+}
+
+impl RemediationPlanSort {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::EventCount => "event-count",
+            Self::StagedAt => "staged-at",
+        }
+    }
+}
+
+const REMEDIATION_PLAN_EVENT_COUNT_SCAN_LIMIT: i64 = 1000;
+
+impl std::fmt::Display for RemediationPlanSort {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
 impl RemediationPlanCommand {
     async fn execute(&self, client: &GatewayClient, format: OutputFormat) -> Result<()> {
         let effective_limit = self.limit.max(0);
+        let candidate_limit = self.sort.candidate_fetch_limit(effective_limit);
         let mut candidates = Vec::new();
         for status in [MaterialStatus::Failed, MaterialStatus::RecoveredPartial] {
             let response = client
                 .sources_list(SourcesListRequest {
                     status: Some(status.as_str().to_string()),
                     source_identifier: self.source.clone(),
-                    limit: Some(effective_limit),
+                    limit: Some(candidate_limit),
                 })
                 .await?;
             candidates.extend(response.materials);
@@ -470,7 +500,7 @@ impl RemediationPlanCommand {
         candidates.retain(|material| {
             self.include_empty || material.event_count.is_some_and(|count| count > 0)
         });
-        candidates.sort_by(|left, right| right.staged_at.cmp(&left.staged_at));
+        sort_remediation_candidates(&mut candidates, self.sort);
         candidates.truncate(usize::try_from(effective_limit).unwrap_or(0));
 
         let mut items = Vec::with_capacity(candidates.len());
@@ -488,6 +518,8 @@ impl RemediationPlanCommand {
             .with_query_echo(serde_json::json!({
                 "source": self.source,
                 "limit": self.limit,
+                "sort": self.sort.as_str(),
+                "candidate_limit": candidate_limit,
                 "include_empty": self.include_empty,
             }));
 
@@ -496,6 +528,43 @@ impl RemediationPlanCommand {
         }
         CommandOutput::single(plan, format_remediation_plan_table).display(&format)?;
         Ok(())
+    }
+}
+
+impl RemediationPlanSort {
+    fn candidate_fetch_limit(self, effective_limit: i64) -> i64 {
+        match self {
+            Self::EventCount => effective_limit.max(REMEDIATION_PLAN_EVENT_COUNT_SCAN_LIMIT),
+            Self::StagedAt => effective_limit,
+        }
+    }
+}
+
+fn sort_remediation_candidates(
+    candidates: &mut [SourceMaterialSummary],
+    sort: RemediationPlanSort,
+) {
+    match sort {
+        RemediationPlanSort::EventCount => candidates.sort_by(|left, right| {
+            right
+                .event_count
+                .unwrap_or_default()
+                .cmp(&left.event_count.unwrap_or_default())
+                .then_with(|| right.staged_at.cmp(&left.staged_at))
+                .then_with(|| left.id.cmp(&right.id))
+        }),
+        RemediationPlanSort::StagedAt => candidates.sort_by(|left, right| {
+            right
+                .staged_at
+                .cmp(&left.staged_at)
+                .then_with(|| {
+                    right
+                        .event_count
+                        .unwrap_or_default()
+                        .cmp(&left.event_count.unwrap_or_default())
+                })
+                .then_with(|| left.id.cmp(&right.id))
+        }),
     }
 }
 
