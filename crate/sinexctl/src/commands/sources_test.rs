@@ -243,6 +243,17 @@ async fn source_remediation_plan_envelope_renders_finite_json_document() -> Test
         SOURCE_MATERIAL_REMEDIATION_PLAN_SCHEMA_VERSION
     );
     assert_eq!(value["payload"]["count"], 1);
+    assert_eq!(value["payload"]["summary"]["total_candidates"], 1);
+    assert_eq!(value["payload"]["summary"]["total_admitted_events"], 7);
+    assert_eq!(
+        value["payload"]["summary"]["by_status"]["recovered_partial"],
+        1
+    );
+    assert_eq!(
+        value["payload"]["summary"]["by_decision"]["review_partial_recovery"],
+        1
+    );
+    assert_eq!(value["payload"]["summary"]["by_severity"]["medium"], 1);
     assert_eq!(value["payload"]["items"][0]["status"], "recovered_partial");
     assert_eq!(
         value["payload"]["items"][0]["decision"],
@@ -469,9 +480,8 @@ async fn source_remediation_plan_table_surfaces_actions_and_reasons() -> TestRes
         }),
     ));
 
-    let table = format_remediation_plan_table(&SourceMaterialRemediationPlanView::new(vec![
-        failed, recovered,
-    ]));
+    let plan = SourceMaterialRemediationPlanView::new(vec![failed, recovered]);
+    let table = format_remediation_plan_table(&plan);
 
     assert!(table.contains("failed12..."));
     assert!(table.contains("partial1..."));
@@ -480,6 +490,10 @@ async fn source_remediation_plan_table_surfaces_actions_and_reasons() -> TestRes
     assert!(table.contains("material_persist_failed"));
     assert!(table.contains("slice_arrival_timeout"));
     assert!(table.contains("sinexctl sources show failed123456"));
+    assert_eq!(plan.summary.total_candidates, 2);
+    assert_eq!(plan.summary.total_admitted_events, 17);
+    assert_eq!(plan.summary.by_decision["inspect_failed_eventful"], 1);
+    assert_eq!(plan.summary.by_decision["review_partial_recovery"], 1);
     Ok(())
 }
 
