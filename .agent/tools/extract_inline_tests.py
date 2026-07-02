@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import argparse
 import json
+from collections import defaultdict
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -43,22 +44,20 @@ class SplitModuleCandidate:
     decl_end: int
 
 
-def is_skipped(path: Path) -> bool:
-    return (
-        path.name.endswith("_test.rs")
-        or path.name == "tests.rs"
-        or "tests" in path.parts
-    )
+def is_skipped(path: Path, *, include_test_directories: bool) -> bool:
+    if path.name.endswith("_test.rs") or path.name == "tests.rs":
+        return True
+    return (not include_test_directories) and "tests" in path.parts
 
 
-def iter_rust_files(roots: list[Path]) -> list[Path]:
+def iter_rust_files(roots: list[Path], *, include_test_directories: bool) -> list[Path]:
     files: list[Path] = []
     for root in roots:
         if root.is_file() and root.suffix == ".rs":
             files.append(root)
             continue
         for path in root.rglob("*.rs"):
-            if not is_skipped(path):
+            if not is_skipped(path, include_test_directories=include_test_directories):
                 files.append(path)
     return sorted(files)
 
@@ -157,7 +156,7 @@ def find_matching_brace(text: str, open_idx: int) -> int:
             string_quote = ch
             i += 1
             continue
-        if ch == "'":
+        if ch == "'" and not (nxt.isalpha() or nxt == "_"):
             char_lit = True
             i += 1
             continue
@@ -234,7 +233,7 @@ def find_candidates(path: Path) -> list[Candidate]:
                     target_name = f"{path.stem}_test.rs"
                 else:
                     target_name = f"{path.stem}_{module_name}.rs"
-                target = path.with_name(target_name)
+                target = inline_test_target(path, target_name)
                 candidates.append(
                     Candidate(
                         source=path,
@@ -258,22 +257,49 @@ def find_candidates(path: Path) -> list[Candidate]:
 
 
 def split_candidate(candidate: Candidate) -> None:
-    if candidate.target.exists() and not candidate.merge_existing:
-        raise FileExistsError(f"target already exists: {candidate.target}")
-    text = candidate.source.read_text()
-    indent = text[candidate.cfg_start : text.find("#[cfg(test)]", candidate.cfg_start)]
-    replacement = (
-        f"{indent}#[cfg(test)]\n"
-        f"{indent}#[path = \"{candidate.target.name}\"]\n"
-        f"{indent}mod {candidate.module_name};\n"
-    )
-    candidate.source.write_text(
-        text[: candidate.cfg_start] + replacement + text[candidate.module_end :]
-    )
-    if candidate.merge_existing and candidate.target.exists():
-        candidate.target.write_text(merge_existing_target(candidate.body, candidate.target.read_text()))
-    else:
-        candidate.target.write_text(candidate.body)
+    split_candidates_for_source([candidate])
+
+
+def rust_path_attr_target(source: Path, target: Path) -> str:
+    return target.relative_to(source.parent).as_posix()
+
+
+def inline_test_target(path: Path, target_name: str) -> Path:
+    if path.parent.name == "tests":
+        return path.with_name(path.stem) / target_name
+    return path.with_name(target_name)
+
+
+def split_candidates_for_source(candidates: list[Candidate]) -> None:
+    if not candidates:
+        return
+    source = candidates[0].source
+    if any(candidate.source != source for candidate in candidates):
+        raise ValueError("split_candidates_for_source received multiple sources")
+    target_names = [candidate.target for candidate in candidates]
+    if len(target_names) != len(set(target_names)):
+        raise ValueError(f"multiple candidates share a target in {source}")
+    for candidate in candidates:
+        if candidate.target.exists() and not candidate.merge_existing:
+            raise FileExistsError(f"target already exists: {candidate.target}")
+    text = source.read_text()
+    for candidate in sorted(candidates, key=lambda item: item.cfg_start, reverse=True):
+        indent = text[candidate.cfg_start : text.find("#[cfg(test)]", candidate.cfg_start)]
+        replacement = (
+            f"{indent}#[cfg(test)]\n"
+            f"{indent}#[path = \"{rust_path_attr_target(source, candidate.target)}\"]\n"
+            f"{indent}mod {candidate.module_name};\n"
+        )
+        text = text[: candidate.cfg_start] + replacement + text[candidate.module_end :]
+    source.write_text(text)
+    for candidate in candidates:
+        candidate.target.parent.mkdir(parents=True, exist_ok=True)
+        if candidate.merge_existing and candidate.target.exists():
+            candidate.target.write_text(
+                merge_existing_target(candidate.body, candidate.target.read_text())
+            )
+        else:
+            candidate.target.write_text(candidate.body)
 
 
 def target_name_for_source(path: Path) -> str:
@@ -398,37 +424,67 @@ def main() -> int:
     parser.add_argument("--apply", action="store_true")
     parser.add_argument("--merge-existing", action="store_true")
     parser.add_argument("--canonicalize-existing-split", action="store_true")
+    parser.add_argument(
+        "--include-test-directories",
+        action="store_true",
+        help="also scan Rust files below tests/ directories",
+    )
     parser.add_argument("--root", action="append", default=[])
     parser.add_argument("--json", action="store_true")
     args = parser.parse_args()
 
     roots = [Path(root) for root in (args.root or DEFAULT_ROOTS)]
-    files = iter_rust_files(roots)
+    files = iter_rust_files(
+        roots,
+        include_test_directories=args.include_test_directories,
+    )
     found: list[Candidate] = []
     split_found: list[SplitModuleCandidate] = []
     skipped: list[dict[str, str]] = []
     split_skipped: list[dict[str, str]] = []
     for path in files:
-        candidates = find_candidates(path)
+        try:
+            candidates = find_candidates(path)
+        except ValueError as error:
+            skipped.append({"path": str(path), "reason": f"parse error: {error}"})
+            continue
         if not candidates:
             continue
-        if len(candidates) != 1:
-            skipped.append({"path": str(path), "reason": "multiple inline test modules"})
+        target_counts: dict[Path, int] = {}
+        for candidate in candidates:
+            target_counts[candidate.target] = target_counts.get(candidate.target, 0) + 1
+        if duplicate_targets := [
+            str(target) for target, count in target_counts.items() if count > 1
+        ]:
+            skipped.append(
+                {
+                    "path": str(path),
+                    "reason": f"multiple modules would share target(s): {', '.join(duplicate_targets)}",
+                }
+            )
             continue
-        candidate = candidates[0]
-        if candidate.target.exists():
-            if not args.merge_existing:
-                skipped.append({"path": str(path), "reason": f"target exists: {candidate.target}"})
-                continue
-            candidate.merge_existing = True
-        found.append(candidate)
+        for candidate in candidates:
+            if candidate.target.exists():
+                if not args.merge_existing:
+                    skipped.append(
+                        {
+                            "path": str(path),
+                            "reason": f"target exists: {candidate.target}",
+                        }
+                    )
+                    continue
+                candidate.merge_existing = True
+            found.append(candidate)
 
     if args.canonicalize_existing_split:
         split_found, split_skipped = find_existing_split_candidates(files)
 
     if args.apply:
+        candidates_by_source: dict[Path, list[Candidate]] = defaultdict(list)
         for candidate in found:
-            split_candidate(candidate)
+            candidates_by_source[candidate.source].append(candidate)
+        for candidates in candidates_by_source.values():
+            split_candidates_for_source(candidates)
         for candidate in split_found:
             canonicalize_existing_split(candidate)
 
