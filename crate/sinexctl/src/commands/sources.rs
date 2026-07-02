@@ -231,6 +231,10 @@ pub struct ListCommand {
     #[arg(long)]
     status: Option<String>,
 
+    /// Filter by source identifier, including material-suffixed rows for that source.
+    #[arg(long)]
+    source: Option<String>,
+
     /// Maximum number of results
     #[arg(long, default_value_t = 50)]
     limit: i64,
@@ -279,6 +283,7 @@ impl ListCommand {
     async fn execute(&self, client: &GatewayClient, format: OutputFormat) -> Result<()> {
         let req = SourcesListRequest {
             status: self.status.clone(),
+            source_identifier: self.source.clone(),
             limit: Some(self.limit),
         };
 
@@ -289,6 +294,7 @@ impl ListCommand {
         )
         .with_query_echo(serde_json::json!({
             "status": self.status,
+            "source": self.source,
             "limit": self.limit,
         }));
 
@@ -316,6 +322,7 @@ fn format_source_materials_table(response: &SourcesListResponse) -> String {
         "FORMAT",
         "TIMING",
         "SIZE",
+        "EVENTS",
         "STAGED AT",
         "STAGED BY",
     ]);
@@ -325,6 +332,9 @@ fn format_source_materials_table(response: &SourcesListResponse) -> String {
         let size = m
             .size_bytes
             .map_or_else(|| style("-").dim().to_string(), |b| b.to_string());
+        let events = m
+            .event_count
+            .map_or_else(|| style("-").dim().to_string(), |c| c.to_string());
         let staged_at = m.staged_at.as_deref().unwrap_or("-");
         let staged_by = m.staged_by.as_deref().unwrap_or("-");
 
@@ -337,6 +347,7 @@ fn format_source_materials_table(response: &SourcesListResponse) -> String {
                 .map_or_else(|| style("-").dim().to_string(), |format| format.to_string()),
             m.timing_info_type.to_string(),
             size,
+            events,
             staged_at.to_string(),
             staged_by.to_string(),
         ]);

@@ -475,6 +475,10 @@ pub struct SourcesListRequest {
     /// Optional status filter (e.g. "completed", "sensing", "failed")
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub status: Option<String>,
+    /// Optional source identifier filter. Matches the exact identifier and
+    /// material-suffixed rows for the same logical source.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_identifier: Option<String>,
     /// Maximum number of rows to return.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub limit: Option<i64>,
@@ -502,6 +506,9 @@ pub struct SourceMaterialSummary {
     pub staged_by: Option<String>,
     /// Total size in bytes
     pub size_bytes: Option<i64>,
+    /// Trigger-maintained event count for this source material.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub event_count: Option<i64>,
     /// MIME type from the associated blob, if any
     pub mime_type: Option<String>,
 }
