@@ -200,9 +200,11 @@ async fn query_source_materials(
     query: &SinexQuery,
 ) -> Result<Vec<SinexQueryResultRow>> {
     let status = exact_string_filter(query.predicate.as_ref(), "status")?;
+    let source_identifier = exact_string_filter(query.predicate.as_ref(), "source_identifier")?;
     let response = client
         .sources_list(SourcesListRequest {
             status,
+            source_identifier,
             limit: None,
         })
         .await?;
@@ -237,6 +239,7 @@ fn source_material_row(material: SourceMaterialSummary) -> SinexQueryResultRow {
     .with_field("source_identifier", material.source_identifier)
     .with_field("material_kind", material.material_kind.to_string())
     .with_field("status", status)
+    .with_field("event_count", material.event_count)
 }
 
 async fn query_debt(

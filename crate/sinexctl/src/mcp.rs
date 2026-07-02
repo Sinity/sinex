@@ -358,6 +358,8 @@ struct SourceMaterialsArgs {
     #[serde(default)]
     status: Option<String>,
     #[serde(default)]
+    source_identifier: Option<String>,
+    #[serde(default)]
     limit: Option<i64>,
 }
 
@@ -1294,6 +1296,7 @@ pub fn tools() -> Vec<McpTool> {
                 "type": "object",
                 "properties": {
                     "status": { "type": "string" },
+                    "source_identifier": { "type": "string" },
                     "limit": {
                         "type": "integer",
                         "minimum": 1,
@@ -2403,6 +2406,7 @@ async fn source_materials(client: &GatewayClient, arguments: Value) -> Result<Va
     let response = client
         .sources_list(SourcesListRequest {
             status: args.status.clone(),
+            source_identifier: args.source_identifier.clone(),
             limit: args.limit,
         })
         .await?;
