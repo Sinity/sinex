@@ -1,4 +1,5 @@
 use crate::parse::parse_duration;
+use crate::validation::parse_time_input_with_now;
 use clap::Args;
 use color_eyre::Result;
 use console::style;
@@ -42,11 +43,18 @@ EXAMPLES:
 
     # Narrow to last 30 minutes
     sinexctl events context --since 30m
+
+    # Exact bounded window
+    sinexctl events context --since 2026-07-02T18:00:00Z --until 2026-07-02T19:00:00Z
 ")]
 pub struct ContextCommand {
-    /// Time window to look back (default: last 2 hours)
+    /// Time window start: duration lookback or absolute time (default: last 2 hours)
     #[arg(long, short = 's', default_value = "2h")]
     since: String,
+
+    /// Time window end. When --since is a duration, the duration is measured back from this bound.
+    #[arg(long, short = 'u')]
+    until: Option<String>,
 
     /// Number of events to fetch (increase for busy systems)
     #[arg(long, default_value = "200")]
@@ -91,14 +99,13 @@ pub struct ContextCommand {
 
 impl ContextCommand {
     pub async fn execute(&self, client: &GatewayClient, format: OutputFormat) -> Result<()> {
-        let since = parse_duration(&self.since)?;
         let now = Timestamp::now();
-        let cutoff = now - since;
+        let window = build_context_window(&self.since, self.until.as_deref(), now)?;
 
         let query = EventQuery {
             sources: vec![],
             event_types: vec![],
-            time_range: TimeRange::new(Some(cutoff), None).ok(),
+            time_range: Some(window.time_range),
             payload: None,
             limit: i64::from(self.limit),
             direction: SortDirection::Desc,
@@ -112,7 +119,7 @@ impl ContextCommand {
             let output = render_desktop_context_output(
                 &event_cards,
                 &sources,
-                &self.since,
+                &window.since,
                 format,
                 self.explain,
                 self.notification_pressure,
@@ -124,7 +131,7 @@ impl ContextCommand {
         }
 
         if let Some(output) =
-            render_context_machine_output(&event_cards, &sources, &self.since, format)?
+            render_context_machine_output(&event_cards, &sources, &window, format)?
         {
             println!("{output}");
             return Ok(());
@@ -132,16 +139,16 @@ impl ContextCommand {
 
         if event_cards.cards.is_empty() {
             println!(
-                "{} No activity found in the last {}",
+                "{} No activity found in {}",
                 style("○").dim(),
-                self.since
+                window.label()
             );
             return Ok(());
         }
 
         println!(
             "{} {}",
-            style(format!("Context (last {}):", self.since))
+            style(format!("Context ({}):", window.label()))
                 .bold()
                 .cyan(),
             style(format!("{} sources", sources.len())).dim()
@@ -176,14 +183,59 @@ impl ContextCommand {
 
         println!("{}", style("─".repeat(60)).dim());
         println!(
-            "  {} events across {} sources in last {}",
+            "  {} events across {} sources in {}",
             style(event_cards.count).bold(),
             style(sources.len()).bold(),
-            self.since,
+            window.label(),
         );
 
         Ok(())
     }
+}
+
+#[derive(Debug, Clone)]
+struct ContextWindow {
+    since: String,
+    until: Option<String>,
+    time_range: TimeRange,
+}
+
+impl ContextWindow {
+    fn label(&self) -> String {
+        match self.until.as_deref() {
+            Some(until) => format!("{} to {}", self.since, until),
+            None => format!("last {}", self.since),
+        }
+    }
+
+    fn query_echo(&self) -> serde_json::Value {
+        match self.until.as_deref() {
+            Some(until) => json!({
+                "since": self.since,
+                "until": until
+            }),
+            None => json!({
+                "since": self.since
+            }),
+        }
+    }
+}
+
+fn build_context_window(since: &str, until: Option<&str>, now: Timestamp) -> Result<ContextWindow> {
+    let end = until
+        .map(|value| parse_time_input_with_now(value, now))
+        .transpose()?;
+    let start = match parse_duration(since) {
+        Ok(duration) => Some(end.unwrap_or(now) - duration),
+        Err(_) => Some(parse_time_input_with_now(since, now)?),
+    };
+    let time_range = TimeRange::new(start, end)?;
+
+    Ok(ContextWindow {
+        since: since.to_string(),
+        until: until.map(str::to_string),
+        time_range,
+    })
 }
 
 fn grouped_context_sources(cards: &[EventCardView]) -> Vec<(String, &EventCardView)> {
@@ -205,7 +257,7 @@ fn grouped_context_sources(cards: &[EventCardView]) -> Vec<(String, &EventCardVi
 fn render_context_machine_output(
     event_cards: &EventCardListView,
     sources: &[(String, &EventCardView)],
-    since: &str,
+    window: &ContextWindow,
     format: OutputFormat,
 ) -> Result<Option<String>> {
     match format {
@@ -222,9 +274,9 @@ fn render_context_machine_output(
                 .collect();
             let envelope = ViewEnvelope::new(
                 "sinexctl.context",
-                ContextSummaryView::new(since, event_cards.count, source_views),
+                ContextSummaryView::new(&window.since, event_cards.count, source_views),
             )
-            .with_query_echo(json!({ "since": since }));
+            .with_query_echo(window.query_echo());
 
             render_envelope(&envelope, &envelope.payload.sources, format)
         }
