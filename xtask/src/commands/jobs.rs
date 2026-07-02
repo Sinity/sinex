@@ -48,11 +48,14 @@ pub enum JobsSubcommand {
         #[arg(value_name = "JOB_ID")]
         id: i64,
         /// Show stdout explicitly (default)
-        #[arg(long, conflicts_with = "stderr")]
+        #[arg(long, conflicts_with_all = ["stderr", "stream"])]
         stdout: bool,
         /// Show stderr instead of stdout
-        #[arg(long)]
+        #[arg(long, conflicts_with = "stream")]
         stderr: bool,
+        /// Select output stream by name. Alias for --stdout/--stderr.
+        #[arg(long, value_enum, conflicts_with_all = ["stdout", "stderr"])]
+        stream: Option<JobOutputStream>,
     },
     /// Wait for a job to complete
     Wait {
@@ -97,9 +100,16 @@ impl XtaskCommand for JobsCommand {
                 let job_query = JobQueryManager::new(cfg.jobs_dir())?;
                 execute_status(&job_query, *id, *follow, ctx).await
             }
-            JobsSubcommand::Output { id, stderr, .. } => {
+            JobsSubcommand::Output {
+                id, stderr, stream, ..
+            } => {
                 let job_query = JobQueryManager::new(cfg.jobs_dir())?;
-                execute_output(&job_query, *id, *stderr, ctx)
+                execute_output(
+                    &job_query,
+                    *id,
+                    output_stream_is_stderr(*stderr, stream),
+                    ctx,
+                )
             }
             JobsSubcommand::Wait { id, timeout } => {
                 let job_query = JobQueryManager::new(cfg.jobs_dir())?;
@@ -131,6 +141,16 @@ impl XtaskCommand for JobsCommand {
             }
         }
     }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, clap::ValueEnum)]
+pub enum JobOutputStream {
+    Stdout,
+    Stderr,
+}
+
+fn output_stream_is_stderr(stderr: bool, stream: &Option<JobOutputStream>) -> bool {
+    stderr || matches!(stream, Some(JobOutputStream::Stderr))
 }
 
 fn format_job_pid(pid: Option<u32>) -> String {
