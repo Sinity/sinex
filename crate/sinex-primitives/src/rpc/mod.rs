@@ -286,6 +286,7 @@ pub fn method_catalog() -> Vec<RpcMethodInfo> {
         sources::SOURCES_PRESETS_LIST_METHOD.info(),
         sources::SOURCES_READINESS_GET_METHOD.info(),
         sources::SOURCES_READINESS_LIST_METHOD.info(),
+        sources::SOURCES_REMEDIATION_PLAN_METHOD.info(),
         sources::SOURCES_SHOW_METHOD.info(),
         sources::SOURCES_STAGE_METHOD.info(),
         system::SYSTEM_HEALTH_METHOD.info(),

@@ -1126,7 +1126,7 @@ fn backing_rpc_methods_for_path(path: &str) -> &'static [&'static str] {
             methods::OPS_GET,
         ],
         "sources coverage" => &[methods::SOURCES_COVERAGE],
-        "sources remediation-plan" => &[methods::SOURCES_LIST, methods::SOURCES_SHOW],
+        "sources remediation-plan" => &[methods::SOURCES_REMEDIATION_PLAN],
         "sources annotate" => &[methods::SOURCES_ANNOTATE],
         "sources archive" => &[methods::SOURCES_ARCHIVE],
         "sources continuity" => &[

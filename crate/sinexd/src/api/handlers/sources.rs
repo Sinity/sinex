@@ -7,7 +7,7 @@ use serde::{Deserialize, Serialize};
 use sinex_db::DbPoolExt;
 use sinex_db::repositories::SourceMaterial;
 use sinex_primitives::domain::{
-    MaterialStorageKind, SourceMaterialFormat, SourceMaterialTimingInfoType,
+    MaterialStatus, MaterialStorageKind, SourceMaterialFormat, SourceMaterialTimingInfoType,
 };
 use sinex_primitives::privacy::{RuntimePrivateModeState, load_private_mode_state};
 use sinex_primitives::rpc::sources::{
@@ -25,9 +25,13 @@ use sinex_primitives::rpc::sources::{
     SourcesListResponse, SourcesPackageCompletenessRequest, SourcesPackageCompletenessResponse,
     SourcesPackageCompletenessSummaryView, SourcesPresetsListRequest, SourcesPresetsListResponse,
     SourcesReadinessGetRequest, SourcesReadinessGetResponse, SourcesReadinessListRequest,
-    SourcesReadinessListResponse, SourcesShowRequest, SourcesShowResponse, SourcesStageRequest,
-    SourcesStageResponse, TemporalEvidenceSummary, bridge_material_presets, caveat_codes,
-    external_producer_presets,
+    SourcesReadinessListResponse, SourcesRemediationPlanRequest, SourcesRemediationPlanResponse,
+    SourcesShowRequest, SourcesShowResponse, SourcesStageRequest, SourcesStageResponse,
+    TemporalEvidenceSummary, bridge_material_presets, caveat_codes, external_producer_presets,
+};
+use sinex_primitives::rpc::sources::{
+    SourceMaterialRemediationCandidate, SourceMaterialRemediationPage,
+    SourceMaterialRemediationSummary,
 };
 use sinex_primitives::sources::SourceFamily;
 use sinex_primitives::sources::continuity::{
@@ -39,6 +43,7 @@ use sinex_primitives::sources::continuity::{
 use sinex_primitives::temporal::Timestamp;
 use sinex_primitives::{Result, SinexError};
 use sqlx::{FromRow, PgPool};
+use std::collections::BTreeMap;
 use std::error::Error as _;
 use time::OffsetDateTime;
 use uuid::Uuid;
@@ -354,6 +359,253 @@ pub async fn handle_sources_list(
         .collect::<Result<Vec<_>>>()?;
 
     Ok(SourcesListResponse { materials })
+}
+
+// ── sources.remediation_plan ─────────────────────────────────
+
+const REMEDIATION_PLAN_DEFAULT_LIMIT: i64 = 50;
+const REMEDIATION_PLAN_MAX_LIMIT: i64 = 1000;
+const REMEDIATION_PLAN_SORT_EVENT_COUNT: &str = "event-count";
+const REMEDIATION_PLAN_SORT_STAGED_AT: &str = "staged-at";
+
+pub async fn handle_sources_remediation_plan(
+    pool: &PgPool,
+    req: SourcesRemediationPlanRequest,
+) -> Result<SourcesRemediationPlanResponse> {
+    let limit = req
+        .limit
+        .unwrap_or(REMEDIATION_PLAN_DEFAULT_LIMIT)
+        .clamp(0, REMEDIATION_PLAN_MAX_LIMIT);
+    let offset = req.offset.unwrap_or(0).max(0);
+    let sort = normalize_remediation_sort(req.sort.as_deref());
+
+    let rows = sqlx::query_as!(
+        MaterialListRow,
+        r#"
+        SELECT
+            sm.id as "id!",
+            sm.material_kind,
+            sm.source_identifier,
+            sm.status,
+            sm.timing_info_type,
+            sm.metadata,
+            sm.staged_at as "staged_at!",
+            sm.staged_by,
+            sm.total_bytes,
+            sm.parsed_event_count as "parsed_event_count!",
+            b.mime_type
+        FROM raw.source_material_registry sm
+        LEFT JOIN core.blobs b ON b.id = sm.optional_blob_id
+        WHERE sm.status IN ('failed', 'recovered_partial')
+          AND ($1::boolean OR sm.parsed_event_count > 0)
+          AND (
+            $2::text IS NULL
+            OR sm.source_identifier = $2
+            OR sm.source_identifier LIKE ($2 || '#material=%')
+          )
+        "#,
+        req.include_empty,
+        req.source_identifier.as_deref(),
+    )
+    .fetch_all(pool)
+    .await
+    .map_err(|error| {
+        SinexError::database("Failed to build source remediation plan").with_std_error(&error)
+    })?;
+
+    let mut candidates = rows
+        .into_iter()
+        .map(remediation_candidate_from_row)
+        .collect::<Result<Vec<_>>>()?;
+
+    let summary = summarize_remediation_candidates(&candidates);
+    sort_remediation_candidates(&mut candidates, sort);
+
+    let start = usize::try_from(offset).unwrap_or(usize::MAX);
+    let take = usize::try_from(limit).unwrap_or(0);
+    let items = candidates
+        .iter()
+        .skip(start)
+        .take(take)
+        .cloned()
+        .collect::<Vec<_>>();
+    let has_more = start
+        .checked_add(items.len())
+        .is_some_and(|end| end < candidates.len());
+
+    Ok(SourcesRemediationPlanResponse {
+        summary,
+        page: SourceMaterialRemediationPage {
+            limit,
+            offset,
+            returned_count: items.len(),
+            total_candidates: candidates.len(),
+            has_more,
+            sort: sort.to_string(),
+        },
+        items,
+    })
+}
+
+fn normalize_remediation_sort(raw: Option<&str>) -> &'static str {
+    match raw {
+        Some(REMEDIATION_PLAN_SORT_STAGED_AT) => REMEDIATION_PLAN_SORT_STAGED_AT,
+        _ => REMEDIATION_PLAN_SORT_EVENT_COUNT,
+    }
+}
+
+fn remediation_candidate_from_row(
+    row: MaterialListRow,
+) -> Result<SourceMaterialRemediationCandidate> {
+    let status = row.status.parse().unwrap_or(MaterialStatus::Sensing);
+    let event_count = row.parsed_event_count;
+    let failure_reason = material_failure_reason(&row.metadata);
+    let recovery_reason = material_recovery_reason(&row.metadata);
+    let (decision, severity, suggested_action) =
+        remediation_decision(status, event_count, failure_reason.as_deref());
+    let material_kind = parse_material_storage_kind(&row.material_kind)?;
+
+    Ok(SourceMaterialRemediationCandidate {
+        material: SourceMaterialSummary {
+            format: SourceMaterialMetadataContract::from_metadata(&row.metadata)
+                .map(|contract| contract.format),
+            contract_version: SourceMaterialMetadataContract::from_metadata(&row.metadata)
+                .map(|contract| contract.version),
+            id: row.id.to_string(),
+            material_kind,
+            source_identifier: row.source_identifier,
+            status,
+            timing_info_type: row
+                .timing_info_type
+                .parse()
+                .unwrap_or(SourceMaterialTimingInfoType::Unknown),
+            staged_at: Some(row.staged_at.to_string()),
+            staged_by: row.staged_by,
+            size_bytes: row.total_bytes,
+            event_count: Some(event_count),
+            mime_type: row.mime_type,
+        },
+        failure_reason,
+        recovery_reason,
+        decision: decision.to_string(),
+        severity: severity.to_string(),
+        suggested_action: suggested_action.to_string(),
+    })
+}
+
+fn summarize_remediation_candidates(
+    candidates: &[SourceMaterialRemediationCandidate],
+) -> SourceMaterialRemediationSummary {
+    let mut by_status = BTreeMap::new();
+    let mut by_decision = BTreeMap::new();
+    let mut by_severity = BTreeMap::new();
+    let mut by_reason = BTreeMap::new();
+    let mut total_admitted_events = 0_i64;
+
+    for candidate in candidates {
+        let event_count = candidate.material.event_count.unwrap_or_default();
+        total_admitted_events = total_admitted_events.saturating_add(event_count);
+        *by_status
+            .entry(candidate.material.status.to_string())
+            .or_insert(0) += 1;
+        *by_decision.entry(candidate.decision.clone()).or_insert(0) += 1;
+        *by_severity.entry(candidate.severity.clone()).or_insert(0) += 1;
+
+        let reason = candidate
+            .failure_reason
+            .as_deref()
+            .or(candidate.recovery_reason.as_deref())
+            .unwrap_or("unknown");
+        *by_reason.entry(reason.to_string()).or_insert(0) += 1;
+    }
+
+    SourceMaterialRemediationSummary {
+        total_candidates: candidates.len(),
+        total_admitted_events,
+        by_status,
+        by_decision,
+        by_severity,
+        by_reason,
+    }
+}
+
+fn sort_remediation_candidates(candidates: &mut [SourceMaterialRemediationCandidate], sort: &str) {
+    match sort {
+        REMEDIATION_PLAN_SORT_STAGED_AT => candidates.sort_by(|left, right| {
+            right
+                .material
+                .staged_at
+                .cmp(&left.material.staged_at)
+                .then_with(|| {
+                    right
+                        .material
+                        .event_count
+                        .unwrap_or_default()
+                        .cmp(&left.material.event_count.unwrap_or_default())
+                })
+                .then_with(|| left.material.id.cmp(&right.material.id))
+        }),
+        _ => candidates.sort_by(|left, right| {
+            right
+                .material
+                .event_count
+                .unwrap_or_default()
+                .cmp(&left.material.event_count.unwrap_or_default())
+                .then_with(|| right.material.staged_at.cmp(&left.material.staged_at))
+                .then_with(|| left.material.id.cmp(&right.material.id))
+        }),
+    }
+}
+
+fn remediation_decision(
+    status: MaterialStatus,
+    event_count: i64,
+    failure_reason: Option<&str>,
+) -> (&'static str, &'static str, &'static str) {
+    match status {
+        MaterialStatus::RecoveredPartial => (
+            "review_partial_recovery",
+            "medium",
+            "inspect recovered partial material; keep if admitted events are useful, otherwise plan replay or re-ingest",
+        ),
+        MaterialStatus::Failed if event_count > 0 => (
+            "inspect_failed_eventful",
+            "high",
+            "inspect failed material with admitted events; decide whether to recover, replay, or archive intentionally",
+        ),
+        MaterialStatus::Failed if failure_reason == Some("orphaned_sensing_material") => (
+            "purge_or_archive_empty_failure",
+            "low",
+            "inspect empty orphaned failure; usually safe to purge related DLQ residue or archive intentionally",
+        ),
+        MaterialStatus::Failed => (
+            "inspect_failed_empty",
+            "medium",
+            "inspect failed material; no admitted events are recorded, so replay or source fix is likely required",
+        ),
+        _ => (
+            "no_action",
+            "low",
+            "material is not a remediation candidate for this read-only plan",
+        ),
+    }
+}
+
+fn material_failure_reason(metadata: &serde_json::Value) -> Option<String> {
+    metadata_string(metadata, &["failure_reason"])
+        .or_else(|| metadata_string(metadata, &["timeout_partial_recovery", "failure_reason"]))
+}
+
+fn material_recovery_reason(metadata: &serde_json::Value) -> Option<String> {
+    metadata_string(metadata, &["recovery_info", "recovery_reason"])
+}
+
+fn metadata_string(metadata: &serde_json::Value, path: &[&str]) -> Option<String> {
+    let mut current = metadata;
+    for key in path {
+        current = current.get(*key)?;
+    }
+    current.as_str().map(ToOwned::to_owned)
 }
 
 // ── sources.show ───────────────────────────────────────────────

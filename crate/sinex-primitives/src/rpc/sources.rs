@@ -110,6 +110,7 @@ use crate::sources::continuity::{
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::Value as JsonValue;
+use std::collections::BTreeMap;
 
 pub const SOURCE_MATERIAL_CONTRACT_METADATA_KEY: &str = "source_material_contract";
 
@@ -137,6 +138,17 @@ pub const SOURCES_COVERAGE_METHOD: RpcMethod<SourcesCoverageRequest, SourcesCove
         RpcStability::Experimental,
         RpcMutability::ReadOnly,
     );
+
+pub const SOURCES_REMEDIATION_PLAN_METHOD: RpcMethod<
+    SourcesRemediationPlanRequest,
+    SourcesRemediationPlanResponse,
+> = RpcMethod::new(
+    methods::SOURCES_REMEDIATION_PLAN,
+    RpcRole::ReadOnly,
+    RpcDomain::Sources,
+    RpcStability::Experimental,
+    RpcMutability::ReadOnly,
+);
 
 pub const SOURCES_PACKAGE_COMPLETENESS_METHOD: RpcMethod<
     SourcesPackageCompletenessRequest,
@@ -589,6 +601,69 @@ pub struct SourceCoverageEntry {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SourcesCoverageResponse {
     pub sources: Vec<SourceCoverageEntry>,
+}
+
+// ─────────────────────────────────────────────────────────────
+// sources.remediation_plan
+// ─────────────────────────────────────────────────────────────
+
+/// Request: `sources.remediation_plan`
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct SourcesRemediationPlanRequest {
+    /// Optional source identifier filter. Matches the exact identifier and
+    /// material-suffixed rows for the same logical source.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_identifier: Option<String>,
+    /// Maximum number of page rows to return.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub limit: Option<i64>,
+    /// Number of sorted rows to skip before returning the page.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub offset: Option<i64>,
+    /// Sort mode: `event-count` or `staged-at`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sort: Option<String>,
+    /// Include failed materials that have not admitted any events.
+    #[serde(default)]
+    pub include_empty: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SourceMaterialRemediationCandidate {
+    pub material: SourceMaterialSummary,
+    pub failure_reason: Option<String>,
+    pub recovery_reason: Option<String>,
+    pub decision: String,
+    pub severity: String,
+    pub suggested_action: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SourceMaterialRemediationSummary {
+    pub total_candidates: usize,
+    pub total_admitted_events: i64,
+    pub by_status: BTreeMap<String, usize>,
+    pub by_decision: BTreeMap<String, usize>,
+    pub by_severity: BTreeMap<String, usize>,
+    pub by_reason: BTreeMap<String, usize>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SourceMaterialRemediationPage {
+    pub limit: i64,
+    pub offset: i64,
+    pub returned_count: usize,
+    pub total_candidates: usize,
+    pub has_more: bool,
+    pub sort: String,
+}
+
+/// Response: `sources.remediation_plan`
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SourcesRemediationPlanResponse {
+    pub summary: SourceMaterialRemediationSummary,
+    pub page: SourceMaterialRemediationPage,
+    pub items: Vec<SourceMaterialRemediationCandidate>,
 }
 
 // ─────────────────────────────────────────────────────────────

@@ -852,14 +852,17 @@ fn collect_source_files(root: &std::path::Path, paths: &mut Vec<PathBuf>) {
 }
 
 /// Returns true for `#[cfg(test)]`-only source paths that Cargo does not link
-/// into the runtime binary: `src/**/tests/` subdirectories and `tests.rs`
-/// sibling files. Editing either must not mark the binary stale.
+/// into the runtime binary: `src/**/tests/` subdirectories plus `tests.rs`
+/// and `*_test.rs` sibling files. Editing any of those must not mark the
+/// binary stale.
 ///
 /// (Inline `#[cfg(test)] mod tests { … }` inside a production file is
 /// unavoidably included — those edits also recompile the production code.)
 fn is_test_only_source_path(root: &std::path::Path, path: &std::path::Path) -> bool {
     let relative = path.strip_prefix(root).unwrap_or(path);
-    relative.file_name().is_some_and(|name| name == "tests.rs")
+    relative.file_name().is_some_and(|name| {
+        name == "tests.rs" || name.to_string_lossy().ends_with("_test.rs")
+    })
         || relative
             .components()
             .any(|component| component.as_os_str() == "tests")
