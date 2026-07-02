@@ -73,6 +73,7 @@ fn fixture_coverage(source_identifier: &str) -> SourceCoverageEntry {
         material_count: Some(2),
         completed_material_count: Some(2),
         failed_material_count: Some(0),
+        recovered_partial_material_count: Some(1),
         sensing_material_count: Some(0),
         cancelled_material_count: Some(0),
         total_bytes: Some(256),
@@ -172,6 +173,10 @@ async fn source_coverage_envelope_renders_finite_json_document() -> TestResult<(
         SOURCE_COVERAGE_LIST_SCHEMA_VERSION
     );
     assert_eq!(value["payload"]["count"], 1);
+    assert_eq!(
+        value["payload"]["sources"][0]["recovered_partial_material_count"],
+        1
+    );
     assert_eq!(
         value["payload"]["sources"][0]["source_identifier"],
         "fixture.source"
@@ -361,7 +366,9 @@ async fn source_coverage_table_renderer_stays_on_raw_response() -> TestResult<()
 
     assert!(table.contains("fixture.source"));
     assert!(table.contains("session_document"));
+    assert!(table.contains("PARTIAL"));
     assert!(table.contains("7"));
+    assert!(table.contains("1"));
     Ok(())
 }
 
