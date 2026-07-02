@@ -56,17 +56,15 @@ pub(super) fn gateway_service_status_from_readiness(
             }
         }
         "skip" => {
-            if force_probe {
-                (
-                    ServiceRunStatus::Unknown,
-                    Some(format!(
-                        "gateway process is alive but readiness probe skipped unexpectedly: {}",
-                        readiness.description
-                    )),
-                )
+            let message = if force_probe {
+                Some(format!(
+                    "gateway readiness probe skipped while process is alive: {}",
+                    readiness.description
+                ))
             } else {
-                (ServiceRunStatus::Skipped, Some(readiness.description))
-            }
+                Some(readiness.description)
+            };
+            (ServiceRunStatus::Skipped, message)
         }
         other => (
             ServiceRunStatus::Unknown,
