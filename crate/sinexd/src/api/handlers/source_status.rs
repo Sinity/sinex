@@ -4,8 +4,8 @@ use crate::api::service_container::{ConfirmationBufferHealth, ServiceContainer};
 use serde_json::Value;
 use sinex_db::DbPoolExt;
 use sinex_db::repositories::{EmailMailboxProjectionSummary, EmailProviderStateRecord};
-use sinex_primitives::domain::SourceIdentifier;
 use sinex_primitives::SinexError;
+use sinex_primitives::domain::SourceIdentifier;
 use sinex_primitives::rpc::{
     methods,
     source_status::{
@@ -348,14 +348,13 @@ fn material_aggregates_by_logical_source(
             |_| row.source_identifier.clone(),
             |identifier| identifier.logical_id,
         );
-        let aggregate =
-            aggregates
-                .entry(logical_source_id.clone())
-                .or_insert_with(|| SourceMaterialAggregateRow {
-                    source_identifier: logical_source_id,
-                    material_count: 0,
-                    last_material_at: None,
-                });
+        let aggregate = aggregates
+            .entry(logical_source_id.clone())
+            .or_insert_with(|| SourceMaterialAggregateRow {
+                source_identifier: logical_source_id,
+                material_count: 0,
+                last_material_at: None,
+            });
         aggregate.material_count += row.material_count;
         aggregate.last_material_at =
             max_timestamp(aggregate.last_material_at, row.last_material_at);
@@ -428,7 +427,7 @@ fn source_coverage_view(
     if has_live_binding {
         if let Some(observation) = runtime_observation_for_source(contract.id, runtime_observations)
         {
-            if !observation.live {
+            if runtime_observation_is_disconnected(observation) {
                 gaps.push(CoverageGapView {
                     kind: runtime_disconnected_gap_kind(contract).to_string(),
                     message: runtime_status_message(contract, observation),
@@ -630,9 +629,7 @@ async fn latest_source_session_states(
 /// last set, and whether capture is currently suspended. Surfaced in
 /// `sinexctl sources status` so the operator can see pause/disable/private
 /// posture without invoking the `inspect` operation.
-fn session_control_caveat(
-    record: &sinex_db::repositories::SourceSessionStateRecord,
-) -> CaveatView {
+fn session_control_caveat(record: &sinex_db::repositories::SourceSessionStateRecord) -> CaveatView {
     let suspended = record.private_mode_blocked
         || matches!(record.lifecycle_state.as_str(), "disabled" | "paused");
     let posture = if suspended {
@@ -825,7 +822,10 @@ fn provider_debt_ref(state: &EmailProviderOperationState) -> Option<&str> {
 fn runtime_unobserved_caveat(contract: &SourceContract) -> CaveatView {
     CaveatView {
         id: runtime_caveat_id(contract, "unobserved"),
-        message: format!("{} is declared, but no runtime observation, material, or admitted events have been observed for this source", runtime_subject(contract)),
+        message: format!(
+            "{} is declared, but no runtime observation, material, or admitted events have been observed for this source",
+            runtime_subject(contract)
+        ),
         ref_: Some(SinexObjectRef::new(
             SinexObjectKind::SourceDriver,
             contract.id.to_string(),
@@ -991,7 +991,7 @@ fn runtime_observation_caveats(
         });
     }
 
-    if !observation.live {
+    if runtime_observation_is_disconnected(observation) {
         caveats.push(CaveatView {
             id: runtime_caveat_id(contract, "disconnected"),
             message: runtime_status_message(contract, observation),
@@ -1007,6 +1007,10 @@ fn runtime_ref(contract: &SourceContract) -> Option<SinexObjectRef> {
         SinexObjectKind::SourceDriver,
         contract.id.to_string(),
     ))
+}
+
+fn runtime_observation_is_disconnected(observation: &SourceStatus) -> bool {
+    !observation.live && observation.recent_output_count <= 0
 }
 
 fn runtime_bridge_surface(contract: &SourceContract) -> &'static str {
@@ -1052,6 +1056,8 @@ fn runtime_stalled_gap_kind(contract: &SourceContract) -> &'static str {
 fn runtime_status_message(contract: &SourceContract, observation: &SourceStatus) -> String {
     let connection = if observation.live {
         "connected"
+    } else if observation.recent_output_count > 0 {
+        "output-active without a live heartbeat"
     } else {
         "disconnected"
     };
