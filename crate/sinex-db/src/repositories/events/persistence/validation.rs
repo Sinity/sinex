@@ -107,6 +107,12 @@ where
     if source_uuids.is_empty() {
         return Ok(());
     }
+    if let Some(invalid_source_id) = source_uuids.iter().find(|source_id| !is_uuid_v7(source_id)) {
+        return Err(SinexError::validation(format!(
+            "derived event {event_id} references non-UUIDv7 source_event_id {invalid_source_id}; \
+             source_event_ids must reference live core.events IDs"
+        )));
+    }
 
     let live_ids = sqlx::query_scalar::<_, Uuid>(
         r"
@@ -141,6 +147,10 @@ where
     }
 
     Ok(())
+}
+
+fn is_uuid_v7(value: &Uuid) -> bool {
+    value.get_version_num() == 7 && value.get_variant() == uuid::Variant::RFC4122
 }
 
 pub(super) fn ensure_no_intra_batch_synthesis_cycles(
