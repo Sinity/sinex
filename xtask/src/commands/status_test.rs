@@ -207,6 +207,31 @@ async fn test_gateway_service_status_maps_ready_probe_skip_to_skipped()
 }
 
 #[sinex_test]
+async fn test_gateway_service_status_keeps_live_skipped_probe_available()
+-> ::xtask::sandbox::TestResult<()> {
+    let status = gateway_service_status_from_readiness(
+        crate::commands::doctor::DeploymentReadinessItem {
+            name: "gateway-ready".into(),
+            status: "skip".into(),
+            description: "gateway readiness probe is owned by sinexctl/NixOS, not xtask".into(),
+            blocking: false,
+        },
+        Some(123),
+        true,
+    );
+
+    assert_eq!(status.status, ServiceRunStatus::Skipped);
+    assert_eq!(status.pid, Some(123));
+    assert!(
+        status
+            .message
+            .as_deref()
+            .is_some_and(|message| message.contains("process is alive"))
+    );
+    Ok(())
+}
+
+#[sinex_test]
 async fn test_active_job_for_service_matches_command_basename() -> ::xtask::sandbox::TestResult<()>
 {
     use crate::history::JobLifecycleStatus;

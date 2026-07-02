@@ -15,7 +15,9 @@
 
 use crate::runtime::confirmation_handler::ConfirmedEventHandler;
 use crate::runtime::automaton::traits::InputProvenanceFilter;
-use crate::runtime::stream::{PullConsumerSpec, ensure_pull_consumer, pull_batch_bounded};
+use crate::runtime::stream::{
+    PullConsumerSpec, delete_consumer, ensure_pull_consumer, list_consumers, pull_batch_bounded,
+};
 use crate::runtime::{RuntimeResult, SinexError};
 use async_nats::jetstream;
 use sinex_primitives::JsonValue;
@@ -48,9 +50,10 @@ pub struct JetStreamEventConsumerConfig {
     pub deliver_policy: jetstream::consumer::DeliverPolicy,
     /// Provenance class to filter the confirmed stream by.
     pub provenance_filter: InputProvenanceFilter,
-    /// Single concrete event type to filter the confirmed stream by, if any.
-    /// Combined with `provenance_filter` for server-side filtering.
-    pub event_type_filter: Option<String>,
+    /// Concrete event types to filter the confirmed stream by, if any.
+    /// Combined with `provenance_filter` for server-side filtering. Empty
+    /// means wildcard.
+    pub event_type_filters: Vec<String>,
 }
 
 impl Default for JetStreamEventConsumerConfig {
@@ -61,7 +64,7 @@ impl Default for JetStreamEventConsumerConfig {
             consumer_name: "automaton-consumer".to_string(),
             deliver_policy: jetstream::consumer::DeliverPolicy::All,
             provenance_filter: InputProvenanceFilter::Any,
-            event_type_filter: None,
+            event_type_filters: Vec::new(),
         }
     }
 }
@@ -160,6 +163,8 @@ impl JetStreamEventConsumer {
         let consumer = self
             .create_or_get_consumer(&js, &confirmed_stream, &confirmed_subject)
             .await?;
+        self.retire_legacy_filter_consumers(&js, &confirmed_stream)
+            .await?;
 
         Self::consume_confirmed_events(
             consumer,
@@ -171,22 +176,29 @@ impl JetStreamEventConsumer {
     }
 
     fn confirmed_filter_subject(&self) -> String {
-        let subject = confirmed_filter_subject_for(
+        self.confirmed_filter_subjects()
+            .into_iter()
+            .next()
+            .unwrap_or_else(|| self.env.nats_subject("events.confirmed.>"))
+    }
+
+    fn confirmed_filter_subjects(&self) -> Vec<String> {
+        let subjects = confirmed_filter_subjects_for(
             &self.env,
             self.namespace.as_deref(),
             self.config.provenance_filter,
-            self.config.event_type_filter.as_deref(),
+            &self.config.event_type_filters,
         );
 
         info!(
             consumer = %self.config.consumer_name,
-            event_type = ?self.config.event_type_filter,
+            event_types = ?self.config.event_type_filters,
             provenance = ?self.config.provenance_filter,
-            filter_subject = %subject,
+            filter_subjects = ?subjects,
             "Confirmed-event consumer configured"
         );
 
-        subject
+        subjects
     }
 
     /// Stop the consumer.
@@ -202,12 +214,46 @@ impl JetStreamEventConsumer {
     ) -> RuntimeResult<jetstream::consumer::Consumer<jetstream::consumer::pull::Config>> {
         let mut spec =
             PullConsumerSpec::new(stream_name.to_string(), self.config.consumer_name.clone());
-        spec.filter_subject = Some(filter.to_string());
+        let filters = self.confirmed_filter_subjects();
+        if filters.len() <= 1 {
+            spec.filter_subject = Some(filter.to_string());
+        } else {
+            spec.filter_subjects = filters;
+        }
         spec.max_ack_pending = self.config.max_ack_pending;
         spec.max_deliver = 10;
         spec.ack_wait = Duration::from_secs(30);
         spec.deliver_policy = self.config.deliver_policy;
         ensure_pull_consumer(js, &spec).await
+    }
+
+    async fn retire_legacy_filter_consumers(
+        &self,
+        js: &jetstream::Context,
+        stream_name: &str,
+    ) -> RuntimeResult<()> {
+        let legacy_names = legacy_filter_consumer_names(&self.config.consumer_name);
+        if legacy_names.is_empty() {
+            return Ok(());
+        }
+
+        let existing = list_consumers(js, stream_name).await?;
+        for legacy_name in legacy_names {
+            if legacy_name == self.config.consumer_name {
+                continue;
+            }
+            if existing.iter().any(|info| info.name == legacy_name) {
+                delete_consumer(js, stream_name, &legacy_name).await?;
+                info!(
+                    stream = %stream_name,
+                    consumer = %self.config.consumer_name,
+                    retired_consumer = %legacy_name,
+                    "Retired legacy broad confirmed-event consumer after binding filtered durable"
+                );
+            }
+        }
+
+        Ok(())
     }
 
     async fn consume_confirmed_events(
@@ -346,6 +392,59 @@ fn confirmed_filter_subject_for(
             &format!("events.confirmed.{provenance_token}.>"),
         ),
     }
+}
+
+fn confirmed_filter_subjects_for(
+    env: &SinexEnvironment,
+    namespace: Option<&str>,
+    provenance_filter: InputProvenanceFilter,
+    event_type_filters: &[String],
+) -> Vec<String> {
+    if event_type_filters.is_empty() {
+        return vec![confirmed_filter_subject_for(
+            env,
+            namespace,
+            provenance_filter,
+            None,
+        )];
+    }
+
+    event_type_filters
+        .iter()
+        .map(|event_type| {
+            confirmed_filter_subject_for(env, namespace, provenance_filter, Some(event_type))
+        })
+        .collect()
+}
+
+fn legacy_filter_consumer_names(current_name: &str) -> Vec<String> {
+    let (base, has_filter_suffix) = if let Some((base, _filter_suffix)) =
+        current_name.split_once("-filter-")
+    {
+        (base, true)
+    } else if current_name.ends_with("-material") || current_name.ends_with("-synthesized") {
+        (current_name, false)
+    } else {
+        return Vec::new();
+    };
+
+    let mut names = Vec::new();
+    if has_filter_suffix {
+        names.push(base.to_string());
+    }
+
+    if let Some(root) = base.strip_suffix("-material") {
+        names.push(root.to_string());
+    } else if let Some(root) = base.strip_suffix("-synthesized") {
+        names.push(root.to_string());
+    } else {
+        names.push(format!("{base}-material"));
+        names.push(format!("{base}-synthesized"));
+    }
+
+    names.sort();
+    names.dedup();
+    names
 }
 
 #[cfg(test)]

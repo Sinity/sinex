@@ -16,8 +16,11 @@ where
     N: Automaton,
 {
     pub(super) fn input_event_type_matches(&self, event: &Event<JsonValue>) -> bool {
-        let input_type = self.automaton.input_event_type();
-        input_type == "*" || event.event_type.as_ref() == input_type
+        let input_types = self.automaton.input_event_types();
+        input_types.contains(&"*")
+            || input_types
+                .iter()
+                .any(|input_type| event.event_type.as_ref() == *input_type)
     }
 
     pub(super) fn input_provenance_filter(&self) -> InputProvenanceFilter {
@@ -29,11 +32,11 @@ where
     }
 
     pub(super) fn input_query_event_types(&self) -> Result<Vec<EventType>, SinexError> {
-        let input_type = self.automaton.input_event_type();
-        if input_type == "*" {
+        let input_types = self.automaton.input_event_types();
+        if input_types.contains(&"*") {
             Ok(Vec::new())
         } else {
-            Ok(vec![EventType::new(input_type)?])
+            input_types.into_iter().map(EventType::new).collect()
         }
     }
 

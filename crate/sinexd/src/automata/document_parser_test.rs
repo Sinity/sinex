@@ -1,7 +1,25 @@
 use super::*;
 use sinex_primitives::domain::{ProcessingMode, TriggerKind};
+use sinex_primitives::events::EventPayload;
+use sinex_primitives::events::payloads::{CanonicalCommandPayload, DocumentIngestedPayload};
 use sinex_primitives::{Id, Timestamp};
 use xtask::sandbox::sinex_test;
+
+#[sinex_test]
+async fn document_parser_filters_to_document_and_canonical_command_events() -> TestResult<()> {
+    let automaton = DocumentParserAutomaton::default();
+
+    assert_eq!(automaton.input_event_type(), "*");
+    assert_eq!(
+        automaton.input_event_types(),
+        vec![
+            DocumentIngestedPayload::EVENT_TYPE.as_static_str(),
+            CanonicalCommandPayload::EVENT_TYPE.as_static_str(),
+        ]
+    );
+    assert_eq!(automaton.input_provenance_filter(), InputProvenanceFilter::Any);
+    Ok(())
+}
 
 #[sinex_test]
 async fn test_frontmatter_extraction() -> TestResult<()> {

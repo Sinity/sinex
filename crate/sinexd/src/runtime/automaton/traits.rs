@@ -132,6 +132,9 @@ pub trait Transducer: Send + Sync + 'static {
 
     fn name(&self) -> &'static str;
     fn input_event_type(&self) -> &'static str;
+    fn input_event_types(&self) -> Vec<&'static str> {
+        vec![self.input_event_type()]
+    }
     fn output_event_type(&self) -> &'static str;
     fn output_event_source(&self) -> &'static str {
         self.name()
@@ -204,6 +207,9 @@ pub trait Windowed: Send + Sync + 'static {
 
     fn name(&self) -> &'static str;
     fn input_event_type(&self) -> &'static str;
+    fn input_event_types(&self) -> Vec<&'static str> {
+        vec![self.input_event_type()]
+    }
     fn output_event_type(&self) -> &'static str;
     fn output_event_source(&self) -> &'static str {
         self.name()
@@ -317,6 +323,9 @@ pub trait ScopeReconciler: Send + Sync + 'static {
 
     fn name(&self) -> &'static str;
     fn input_event_type(&self) -> &'static str;
+    fn input_event_types(&self) -> Vec<&'static str> {
+        vec![self.input_event_type()]
+    }
     fn output_event_type(&self) -> &'static str;
     fn output_event_source(&self) -> &'static str {
         self.name()
@@ -416,6 +425,9 @@ pub trait MultiOutputTransducer: Send + Sync + 'static {
 
     fn name(&self) -> &'static str;
     fn input_event_type(&self) -> &'static str;
+    fn input_event_types(&self) -> Vec<&'static str> {
+        vec![self.input_event_type()]
+    }
     /// The set of event types this automaton can produce. Callers stamp each output
     /// with the appropriate type from this list via
     /// [`DerivedOutput::with_event_type`].
@@ -468,6 +480,7 @@ pub trait Automaton: Send + Sync + 'static {
 
     fn name(&self) -> &'static str;
     fn input_event_type(&self) -> &'static str;
+    fn input_event_types(&self) -> Vec<&'static str>;
     fn input_provenance_filter(&self) -> InputProvenanceFilter;
     fn output_event_type(&self) -> &'static str;
     fn output_event_source(&self) -> &'static str;
@@ -549,6 +562,9 @@ impl<N: Transducer> Automaton for TransducerWrapper<N> {
     fn input_event_type(&self) -> &'static str {
         self.0.input_event_type()
     }
+    fn input_event_types(&self) -> Vec<&'static str> {
+        self.0.input_event_types()
+    }
     fn input_provenance_filter(&self) -> InputProvenanceFilter {
         self.0.input_provenance_filter()
     }
@@ -621,6 +637,9 @@ impl<N: Windowed> Automaton for WindowedWrapper<N> {
     }
     fn input_event_type(&self) -> &'static str {
         self.0.input_event_type()
+    }
+    fn input_event_types(&self) -> Vec<&'static str> {
+        self.0.input_event_types()
     }
     fn input_provenance_filter(&self) -> InputProvenanceFilter {
         self.0.input_provenance_filter()
@@ -757,6 +776,9 @@ where
     fn input_event_type(&self) -> &'static str {
         self.0.input_event_type()
     }
+    fn input_event_types(&self) -> Vec<&'static str> {
+        self.0.input_event_types()
+    }
     fn input_provenance_filter(&self) -> InputProvenanceFilter {
         self.0.input_provenance_filter()
     }
@@ -871,6 +893,9 @@ impl<N: MultiOutputTransducer> Automaton for MultiOutputTransducerWrapper<N> {
     }
     fn input_event_type(&self) -> &'static str {
         self.0.input_event_type()
+    }
+    fn input_event_types(&self) -> Vec<&'static str> {
+        self.0.input_event_types()
     }
     fn input_provenance_filter(&self) -> InputProvenanceFilter {
         self.0.input_provenance_filter()

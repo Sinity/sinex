@@ -14,7 +14,11 @@ use sinex_primitives::activity::{
 };
 use sinex_primitives::events::{
     EventPayload,
-    payloads::{ActivityWindowCloseReason, ActivityWindowSummaryPayload},
+    payloads::{
+        ActivityWatchBrowserTabActivePayload, ActivityWatchWindowActivePayload,
+        ActivityWindowCloseReason, ActivityWindowSummaryPayload, HyprlandWindowFocusedPayload,
+        KittyCommandExecutedPayload, PageVisitedPayload,
+    },
 };
 use sinex_primitives::temporal::{Duration, Timestamp};
 use sinex_primitives::{JsonValue, Uuid, env as shared_env};
@@ -23,7 +27,7 @@ use tracing::warn;
 
 const DEFAULT_WINDOW_GAP_THRESHOLD_SECS: i64 = 300;
 const DEFAULT_WINDOW_MAX_DURATION_SECS: i64 = 900;
-const DEFAULT_WINDOW_MAX_EVENTS: usize = 250;
+const DEFAULT_WINDOW_MAX_EVENTS: usize = 100;
 
 fn parse_positive_i64_env(var: &str, description: &str, default: i64) -> i64 {
     shared_env::parse_optional::<i64>(var, description)
@@ -174,6 +178,16 @@ impl Windowed for AnalyticsAutomaton {
 
     fn input_event_type(&self) -> &'static str {
         "*"
+    }
+
+    fn input_event_types(&self) -> Vec<&'static str> {
+        vec![
+            HyprlandWindowFocusedPayload::EVENT_TYPE.as_static_str(),
+            ActivityWatchWindowActivePayload::EVENT_TYPE.as_static_str(),
+            ActivityWatchBrowserTabActivePayload::EVENT_TYPE.as_static_str(),
+            PageVisitedPayload::EVENT_TYPE.as_static_str(),
+            KittyCommandExecutedPayload::EVENT_TYPE.as_static_str(),
+        ]
     }
 
     fn output_event_type(&self) -> &'static str {
@@ -364,3 +378,7 @@ register_source_runtime_binding! {
     .build_impact(sinex_primitives::source_contracts::SourceBuildImpact::ZERO)
     .build()
 }
+
+#[cfg(test)]
+#[path = "analytics_test.rs"]
+mod tests;
