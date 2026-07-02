@@ -338,6 +338,7 @@ impl ContentStoreKey {
                 .with_context("reason", err)
         })?;
         let components = content_key.parse_components();
+        let backend = ContentBackend::from_storage_backend(components.backend);
         let size = match content_key.parse_size_bytes() {
             Ok(Some(size)) => size,
             Ok(None) => {
@@ -352,10 +353,13 @@ impl ContentStoreKey {
                 .with_context("reason", err));
             }
         };
+        if backend.is_local_blake3_cas() {
+            validate_local_blake3_digest(components.name)?;
+        }
 
         Ok(ContentStoreKey {
             key: key_str.to_string(),
-            backend: ContentBackend::from_storage_backend(components.backend),
+            backend,
             size,
             digest: components.name.to_string(),
         })
@@ -370,6 +374,24 @@ impl ContentStoreKey {
     pub fn is_local_blake3_cas(&self) -> bool {
         self.backend.is_local_blake3_cas()
     }
+}
+
+fn validate_local_blake3_digest(digest: &str) -> RuntimeResult<()> {
+    if digest.len() != 64 {
+        return Err(SinexError::validation(
+            "SINEXBLAKE3 content-store digest must be exactly 64 lowercase hex characters",
+        )
+        .with_context("digest_len", digest.len().to_string()));
+    }
+    if !digest
+        .bytes()
+        .all(|byte| matches!(byte, b'0'..=b'9' | b'a'..=b'f'))
+    {
+        return Err(SinexError::validation(
+            "SINEXBLAKE3 content-store digest must contain only lowercase hex characters",
+        ));
+    }
+    Ok(())
 }
 
 #[derive(Debug)]
@@ -580,6 +602,10 @@ impl MaterialContentStore {
     }
 
     fn local_blake3_cas_path_for_hash(&self, hash: &str) -> Utf8PathBuf {
+        debug_assert!(
+            validate_local_blake3_digest(hash).is_ok(),
+            "local CAS path construction requires a validated BLAKE3 digest"
+        );
         let prefix_a = hash.get(0..2).unwrap_or("xx");
         let prefix_b = hash.get(2..4).unwrap_or("xx");
         self.config
