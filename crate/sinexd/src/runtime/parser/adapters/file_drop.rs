@@ -16,7 +16,7 @@ use notify::event::ModifyKind;
 use notify::{Event, EventKind, RecursiveMode, Watcher};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::num::NonZeroUsize;
 use std::path::{Path, PathBuf};
 #[cfg(feature = "messaging")]
@@ -116,6 +116,10 @@ pub struct FileDropRecordMetadata {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub content_size_bytes: Option<u64>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub content_hash: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub content_material_reused: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub content_skipped_reason: Option<String>,
 }
 
@@ -147,6 +151,8 @@ impl FileDropRecordMetadata {
             move_role: None,
             content_materialized: None,
             content_size_bytes: None,
+            content_hash: None,
+            content_material_reused: None,
             content_skipped_reason: None,
         }
     }
@@ -163,10 +169,26 @@ impl FileDropRecordMetadata {
         self
     }
 
-    #[cfg(any(feature = "messaging", test))]
+    #[cfg(test)]
     fn with_materialized_content(mut self, content_size_bytes: u64) -> Self {
         self.content_materialized = Some(true);
         self.content_size_bytes = Some(content_size_bytes);
+        self.content_material_reused = Some(false);
+        self.content_skipped_reason = None;
+        self
+    }
+
+    #[cfg(any(feature = "messaging", test))]
+    fn with_materialized_content_hash(
+        mut self,
+        content_size_bytes: u64,
+        content_hash: String,
+        reused: bool,
+    ) -> Self {
+        self.content_materialized = Some(true);
+        self.content_size_bytes = Some(content_size_bytes);
+        self.content_hash = Some(content_hash);
+        self.content_material_reused = Some(reused);
         self.content_skipped_reason = None;
         self
     }
@@ -175,6 +197,8 @@ impl FileDropRecordMetadata {
     fn with_skipped_content(mut self, content_size_bytes: u64, reason: &str) -> Self {
         self.content_materialized = Some(false);
         self.content_size_bytes = Some(content_size_bytes);
+        self.content_hash = None;
+        self.content_material_reused = None;
         self.content_skipped_reason = Some(reason.to_string());
         self
     }
@@ -822,14 +846,16 @@ impl InputShapeAdapterExt for FileContentDropAdapter {
             .open(material_id, &config.file_drop, cursor)
             .await?;
         let max_capture_bytes = config.max_capture_bytes;
+        let mut materialization_cache = FileContentMaterializationCache::default();
         let stream = async_stream::stream! {
             while let Some(record_result) = stream.next().await {
                 match record_result {
                     Ok(record) => {
-                        yield materialize_file_content_record(
+                        yield materialize_file_content_record_with_cache(
                             record,
                             Arc::clone(&acquisition),
                             max_capture_bytes,
+                            &mut materialization_cache,
                         ).await;
                     }
                     Err(error) => yield Err(error),
@@ -981,11 +1007,64 @@ fn records_from_file_drop_event(
         .collect()
 }
 
-#[cfg(feature = "messaging")]
+#[cfg(all(feature = "messaging", test))]
 async fn materialize_file_content_record(
     record: SourceRecord,
     acquisition: Arc<AcquisitionManager>,
     max_capture_bytes: u64,
+) -> ParserResult<SourceRecord> {
+    let mut cache = FileContentMaterializationCache::default();
+    materialize_file_content_record_with_cache(record, acquisition, max_capture_bytes, &mut cache)
+        .await
+}
+
+#[cfg(feature = "messaging")]
+#[derive(Debug, Default)]
+struct FileContentMaterializationCache {
+    entries: HashMap<FileContentMaterializationCacheKey, MaterializedFileContent>,
+}
+
+#[cfg(feature = "messaging")]
+impl FileContentMaterializationCache {
+    const MAX_ENTRIES: usize = 4096;
+
+    fn get(&self, key: &FileContentMaterializationCacheKey) -> Option<&MaterializedFileContent> {
+        self.entries.get(key)
+    }
+
+    fn insert(
+        &mut self,
+        key: FileContentMaterializationCacheKey,
+        content: MaterializedFileContent,
+    ) {
+        if self.entries.len() >= Self::MAX_ENTRIES {
+            self.entries.clear();
+        }
+        self.entries.insert(key, content);
+    }
+}
+
+#[cfg(feature = "messaging")]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+struct FileContentMaterializationCacheKey {
+    path: Utf8PathBuf,
+    len: u64,
+    content_hash: String,
+}
+
+#[cfg(feature = "messaging")]
+#[derive(Debug, Clone)]
+struct MaterializedFileContent {
+    material_id: Id<SourceMaterial>,
+    len: u64,
+}
+
+#[cfg(feature = "messaging")]
+async fn materialize_file_content_record_with_cache(
+    record: SourceRecord,
+    acquisition: Arc<AcquisitionManager>,
+    max_capture_bytes: u64,
+    cache: &mut FileContentMaterializationCache,
 ) -> ParserResult<SourceRecord> {
     let Ok(metadata) = FileDropRecordMetadata::from_value(&record.metadata) else {
         return Ok(record);
@@ -1018,7 +1097,30 @@ async fn materialize_file_content_record(
         });
     }
 
-    let material_metadata = metadata.with_materialized_content(len).into_json();
+    let content_hash = hash_file_content_bounded(&path, max_capture_bytes).await?;
+    let cache_key = FileContentMaterializationCacheKey {
+        path: path.clone(),
+        len,
+        content_hash,
+    };
+    if let Some(cached) = cache.get(&cache_key) {
+        let material_metadata = metadata
+            .with_materialized_content_hash(cached.len, cache_key.content_hash.clone(), true)
+            .into_json();
+        return Ok(SourceRecord {
+            material_id: cached.material_id,
+            anchor: MaterialAnchor::ByteRange {
+                start: 0,
+                len: cached.len,
+            },
+            metadata: material_metadata,
+            ..record
+        });
+    }
+
+    let material_metadata = metadata
+        .with_materialized_content_hash(len, cache_key.content_hash.clone(), false)
+        .into_json();
     let (material_id, total_bytes) = stage_material_from_file_bounded(
         &acquisition,
         &path,
@@ -1029,15 +1131,54 @@ async fn materialize_file_content_record(
     .await
     .map_err(ParserError::Sinex)?;
 
+    let material_id = Id::from_uuid(material_id);
+    let materialized_len = total_bytes.max(0) as u64;
+    cache.insert(
+        cache_key,
+        MaterializedFileContent {
+            material_id,
+            len: materialized_len,
+        },
+    );
+
     Ok(SourceRecord {
-        material_id: Id::from_uuid(material_id),
+        material_id,
         anchor: MaterialAnchor::ByteRange {
             start: 0,
-            len: total_bytes.max(0) as u64,
+            len: materialized_len,
         },
         metadata: material_metadata,
         ..record
     })
+}
+
+#[cfg(feature = "messaging")]
+async fn hash_file_content_bounded(path: &Utf8PathBuf, max_bytes: u64) -> ParserResult<String> {
+    use tokio::io::AsyncReadExt;
+
+    let mut file = tokio::fs::File::open(path.as_std_path())
+        .await
+        .map_err(ParserError::Io)?;
+    let mut hasher = blake3::Hasher::new();
+    let mut total_bytes = 0u64;
+    let mut buffer = vec![0u8; 64 * 1024];
+
+    loop {
+        let read = file.read(&mut buffer).await.map_err(ParserError::Io)?;
+        if read == 0 {
+            break;
+        }
+        total_bytes = total_bytes.saturating_add(read as u64);
+        if total_bytes > max_bytes {
+            return Err(ParserError::Adapter(format!(
+                "file grew while hashing file-drop content material {}; read {total_bytes} bytes, exceeding material capture limit {max_bytes}",
+                path
+            )));
+        }
+        hasher.update(&buffer[..read]);
+    }
+
+    Ok(hasher.finalize().to_hex().to_string())
 }
 
 #[derive(Debug, Clone)]

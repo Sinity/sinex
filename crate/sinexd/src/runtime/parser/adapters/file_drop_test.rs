@@ -69,6 +69,98 @@
 
     #[cfg(feature = "messaging")]
     #[sinex_test]
+    async fn content_drop_reuses_material_for_duplicate_path_content(
+        ctx: xtask::sandbox::prelude::TestContext,
+    ) -> xtask::sandbox::prelude::TestResult<()> {
+        let ctx = ctx.with_nats().dedicated().await?;
+        AcquisitionManager::bootstrap_streams(&ctx.nats_client()).await?;
+        let acquisition = Arc::new(AcquisitionManager::with_defaults(
+            ctx.nats_client(),
+            "file-content-drop-reuse-test",
+        ));
+        let dir = TempDir::new()?;
+        let file_path = dir.path().join("burst.txt");
+        tokio::fs::write(&file_path, b"same-burst-content").await?;
+        let utf8_path = Utf8PathBuf::from_path_buf(file_path.clone()).map_err(|path| {
+            SinexError::validation("test path is not valid UTF-8")
+                .with_context("path", path.display().to_string())
+        })?;
+        let mut cache = FileContentMaterializationCache::default();
+
+        let first = SourceRecord {
+            material_id: dummy_material_id(),
+            anchor: MaterialAnchor::DirectoryEntry {
+                path: utf8_path.clone(),
+                content_hash: None,
+            },
+            bytes: utf8_path.as_str().as_bytes().to_vec(),
+            logical_path: Some(utf8_path.clone()),
+            source_ts_hint: None,
+            metadata: FileDropRecordMetadata::new(FileDropEventKind::Created, &utf8_path)
+                .into_json(),
+        };
+        let second = SourceRecord {
+            material_id: dummy_material_id(),
+            anchor: MaterialAnchor::DirectoryEntry {
+                path: utf8_path.clone(),
+                content_hash: None,
+            },
+            bytes: utf8_path.as_str().as_bytes().to_vec(),
+            logical_path: Some(utf8_path.clone()),
+            source_ts_hint: None,
+            metadata: FileDropRecordMetadata::new(FileDropEventKind::Modified, &utf8_path)
+                .into_json(),
+        };
+
+        let first_materialized = materialize_file_content_record_with_cache(
+            first,
+            Arc::clone(&acquisition),
+            1024 * 1024,
+            &mut cache,
+        )
+        .await?;
+        let second_materialized = materialize_file_content_record_with_cache(
+            second,
+            acquisition,
+            1024 * 1024,
+            &mut cache,
+        )
+        .await?;
+
+        assert_eq!(second_materialized.material_id, first_materialized.material_id);
+        assert_eq!(
+            second_materialized.anchor,
+            MaterialAnchor::ByteRange {
+                start: 0,
+                len: b"same-burst-content".len() as u64,
+            }
+        );
+        assert_eq!(
+            first_materialized
+                .metadata
+                .get("content_material_reused")
+                .and_then(serde_json::Value::as_bool),
+            Some(false)
+        );
+        assert_eq!(
+            second_materialized
+                .metadata
+                .get("content_material_reused")
+                .and_then(serde_json::Value::as_bool),
+            Some(true)
+        );
+        assert_eq!(
+            second_materialized
+                .metadata
+                .get("content_hash")
+                .and_then(serde_json::Value::as_str),
+            Some(blake3::hash(b"same-burst-content").to_hex().as_str())
+        );
+        Ok(())
+    }
+
+    #[cfg(feature = "messaging")]
+    #[sinex_test]
     async fn content_drop_keeps_oversized_file_as_observation_record(
         ctx: xtask::sandbox::prelude::TestContext,
     ) -> xtask::sandbox::prelude::TestResult<()> {
