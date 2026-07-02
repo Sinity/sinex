@@ -1348,6 +1348,7 @@ Current host pressure snapshot, with Sinnix observability join when available
 | Flag | Value | Required | Description |
 |---|---|---|---|
 | `--observe` | no | no | Also run sinnix-observe for a host-level attribution report when available |
+| `--top-swap` | no | no | Show current processes with nonzero swap residency |
 | `--top-io` | no | no | Sample /proc/PID/io and show the processes doing the most physical IO |
 | `--sample-ms` | yes | no | Sampling window for --top-io, in milliseconds |
 | `--since` | yes | no | Time window passed to sinnix-observe --since |

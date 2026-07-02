@@ -302,9 +302,11 @@ pub struct PackageCheckResult {
     pub reused: bool,
     pub proof_invocation_id: Option<i64>,
     pub exit_code: Option<i32>,
-    /// First lines of stderr/stdout on failure (capped at 20 lines for compactness).
+    /// Diagnostic-oriented stderr/stdout excerpt on failure.
     pub output_excerpt: Option<String>,
 }
+
+const FAILURE_EXCERPT_MAX_LINES: usize = 120;
 
 /// Run `xtask check -p <pkg>` for each affected package, aggregate results.
 ///
@@ -383,27 +385,12 @@ pub fn run_changed_strict(
             all_ok = false;
         }
 
-        let output_excerpt = if success {
-            None
-        } else {
-            // Combine stdout + stderr, cap at 20 lines
-            let combined = format!(
-                "{}{}",
-                String::from_utf8_lossy(&output.stdout),
-                String::from_utf8_lossy(&output.stderr),
-            );
-            let lines: Vec<&str> = combined.lines().collect();
-            let excerpt = if lines.len() > 20 {
-                format!(
-                    "{}\n[... {} more lines]",
-                    lines[..20].join("\n"),
-                    lines.len() - 20
-                )
-            } else {
-                lines.join("\n")
-            };
-            Some(excerpt)
-        };
+        let output_excerpt = (!success).then(|| {
+            failure_output_excerpt(
+                &String::from_utf8_lossy(&output.stdout),
+                &String::from_utf8_lossy(&output.stderr),
+            )
+        });
 
         package_results.push(PackageCheckResult {
             package: pkg.clone(),
@@ -424,3 +411,27 @@ pub fn run_changed_strict(
         success: all_ok,
     })
 }
+
+fn failure_output_excerpt(stdout: &str, stderr: &str) -> String {
+    let combined = [stdout, stderr]
+        .into_iter()
+        .filter(|part| !part.is_empty())
+        .collect::<Vec<_>>()
+        .join("\n");
+    let lines: Vec<&str> = combined.lines().collect();
+
+    if lines.len() <= FAILURE_EXCERPT_MAX_LINES {
+        return lines.join("\n");
+    }
+
+    let start = lines.len().saturating_sub(FAILURE_EXCERPT_MAX_LINES);
+    format!(
+        "[... {} earlier lines]\n{}",
+        start,
+        lines[start..].join("\n")
+    )
+}
+
+#[cfg(test)]
+#[path = "strict_changed_test.rs"]
+mod tests;
