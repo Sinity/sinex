@@ -49,6 +49,10 @@ pub enum SourceMaterialRegistry {
     StagedOnHost,
     OptionalBlobId,
     TotalBytes,
+    /// Exact live material-provenance events currently referencing this
+    /// source material. Maintained by `core.events` insert/delete triggers so
+    /// operator coverage surfaces do not need to aggregate the hypertable.
+    ParsedEventCount,
     /// Operator-declared coverage contract (#1174).
     ///
     /// JSONB column carrying a [`DeclaredCoverageContract`][dc] payload with
@@ -217,6 +221,13 @@ impl SourceMaterialRegistry {
                 ColumnDef::new(SourceMaterialRegistry::TotalBytes)
                     .big_integer()
                     .check(Expr::cust("total_bytes IS NULL OR total_bytes >= 0")),
+            )
+            .col(
+                ColumnDef::new(SourceMaterialRegistry::ParsedEventCount)
+                    .big_integer()
+                    .not_null()
+                    .default(0)
+                    .check(Expr::cust("parsed_event_count >= 0")),
             )
             // Coverage contract (#1174): JSONB carrying the operator-declared
             // shape. Default is `{"kind":"Unknown","declared_at":null}` so
