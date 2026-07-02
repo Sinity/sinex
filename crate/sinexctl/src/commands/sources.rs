@@ -1,11 +1,12 @@
 use clap::{Args, ValueEnum};
 use console::style;
 use serde::{Deserialize, Serialize};
-use std::collections::BTreeMap;
 use sinex_primitives::domain::{MaterialStatus, SourceMaterialFormat};
 use sinex_primitives::rpc::sources::{
-    SourceMaterialDetail, SourcesCoverageRequest, SourcesCoverageResponse, SourcesListRequest,
-    SourcesListResponse, SourcesShowRequest, SourcesShowResponse, SourcesStageRequest,
+    SourceMaterialDetail, SourceMaterialRemediationCandidate, SourceMaterialRemediationPage,
+    SourceMaterialRemediationSummary, SourcesCoverageRequest, SourcesCoverageResponse,
+    SourcesListRequest, SourcesListResponse, SourcesRemediationPlanRequest,
+    SourcesRemediationPlanResponse, SourcesShowRequest, SourcesShowResponse, SourcesStageRequest,
     SourcesStageResponse,
 };
 
@@ -291,52 +292,25 @@ impl SourceCoverageListView {
 struct SourceMaterialRemediationPlanView {
     schema_version: String,
     count: usize,
-    summary: SourceMaterialRemediationSummaryView,
+    summary: SourceMaterialRemediationSummary,
+    page: SourceMaterialRemediationPage,
     items: Vec<SourceMaterialRemediationItemView>,
 }
 
 impl SourceMaterialRemediationPlanView {
-    fn new(items: Vec<SourceMaterialRemediationItemView>) -> Self {
-        let count = items.len();
-        let summary = SourceMaterialRemediationSummaryView::from_items(&items);
+    fn from_response(response: SourcesRemediationPlanResponse) -> Self {
+        let count = response.items.len();
+        let items = response
+            .items
+            .into_iter()
+            .map(remediation_item_from_candidate)
+            .collect();
         Self {
             schema_version: SOURCE_MATERIAL_REMEDIATION_PLAN_SCHEMA_VERSION.to_string(),
             count,
-            summary,
+            summary: response.summary,
+            page: response.page,
             items,
-        }
-    }
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-struct SourceMaterialRemediationSummaryView {
-    total_candidates: usize,
-    total_admitted_events: i64,
-    by_status: BTreeMap<String, usize>,
-    by_decision: BTreeMap<String, usize>,
-    by_severity: BTreeMap<String, usize>,
-}
-
-impl SourceMaterialRemediationSummaryView {
-    fn from_items(items: &[SourceMaterialRemediationItemView]) -> Self {
-        let mut by_status = BTreeMap::new();
-        let mut by_decision = BTreeMap::new();
-        let mut by_severity = BTreeMap::new();
-        let mut total_admitted_events = 0_i64;
-
-        for item in items {
-            *by_status.entry(item.status.to_string()).or_insert(0) += 1;
-            *by_decision.entry(item.decision.clone()).or_insert(0) += 1;
-            *by_severity.entry(item.severity.clone()).or_insert(0) += 1;
-            total_admitted_events = total_admitted_events.saturating_add(item.event_count);
-        }
-
-        Self {
-            total_candidates: items.len(),
-            total_admitted_events,
-            by_status,
-            by_decision,
-            by_severity,
         }
     }
 }
@@ -447,6 +421,10 @@ pub struct RemediationPlanCommand {
     #[arg(long, default_value_t = 50)]
     limit: i64,
 
+    /// Number of sorted candidates to skip.
+    #[arg(long, default_value_t = 0)]
+    offset: i64,
+
     /// Sort candidates before applying the final limit.
     #[arg(long, value_enum, default_value_t = RemediationPlanSort::EventCount)]
     sort: RemediationPlanSort,
@@ -473,8 +451,6 @@ impl RemediationPlanSort {
     }
 }
 
-const REMEDIATION_PLAN_EVENT_COUNT_SCAN_LIMIT: i64 = 1000;
-
 impl std::fmt::Display for RemediationPlanSort {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str(self.as_str())
@@ -483,43 +459,22 @@ impl std::fmt::Display for RemediationPlanSort {
 
 impl RemediationPlanCommand {
     async fn execute(&self, client: &GatewayClient, format: OutputFormat) -> Result<()> {
-        let effective_limit = self.limit.max(0);
-        let candidate_limit = self.sort.candidate_fetch_limit(effective_limit);
-        let mut candidates = Vec::new();
-        for status in [MaterialStatus::Failed, MaterialStatus::RecoveredPartial] {
-            let response = client
-                .sources_list(SourcesListRequest {
-                    status: Some(status.as_str().to_string()),
-                    source_identifier: self.source.clone(),
-                    limit: Some(candidate_limit),
-                })
-                .await?;
-            candidates.extend(response.materials);
-        }
-
-        candidates.retain(|material| {
-            self.include_empty || material.event_count.is_some_and(|count| count > 0)
-        });
-        sort_remediation_candidates(&mut candidates, self.sort);
-        candidates.truncate(usize::try_from(effective_limit).unwrap_or(0));
-
-        let mut items = Vec::with_capacity(candidates.len());
-        for material in candidates {
-            let show = client
-                .sources_show(SourcesShowRequest {
-                    material_id: material.id.clone(),
-                })
-                .await?;
-            items.push(remediation_item_from_material(&show.material));
-        }
-
-        let plan = SourceMaterialRemediationPlanView::new(items);
+        let response = client
+            .sources_remediation_plan(SourcesRemediationPlanRequest {
+                source_identifier: self.source.clone(),
+                limit: Some(self.limit),
+                offset: Some(self.offset),
+                sort: Some(self.sort.as_str().to_string()),
+                include_empty: self.include_empty,
+            })
+            .await?;
+        let plan = SourceMaterialRemediationPlanView::from_response(response);
         let envelope = ViewEnvelope::new("sinexctl.sources.remediation_plan", plan.clone())
             .with_query_echo(serde_json::json!({
                 "source": self.source,
                 "limit": self.limit,
+                "offset": self.offset,
                 "sort": self.sort.as_str(),
-                "candidate_limit": candidate_limit,
                 "include_empty": self.include_empty,
             }));
 
@@ -531,119 +486,22 @@ impl RemediationPlanCommand {
     }
 }
 
-impl RemediationPlanSort {
-    fn candidate_fetch_limit(self, effective_limit: i64) -> i64 {
-        match self {
-            Self::EventCount => effective_limit.max(REMEDIATION_PLAN_EVENT_COUNT_SCAN_LIMIT),
-            Self::StagedAt => effective_limit,
-        }
-    }
-}
-
-fn sort_remediation_candidates(
-    candidates: &mut [SourceMaterialSummary],
-    sort: RemediationPlanSort,
-) {
-    match sort {
-        RemediationPlanSort::EventCount => candidates.sort_by(|left, right| {
-            right
-                .event_count
-                .unwrap_or_default()
-                .cmp(&left.event_count.unwrap_or_default())
-                .then_with(|| right.staged_at.cmp(&left.staged_at))
-                .then_with(|| left.id.cmp(&right.id))
-        }),
-        RemediationPlanSort::StagedAt => candidates.sort_by(|left, right| {
-            right
-                .staged_at
-                .cmp(&left.staged_at)
-                .then_with(|| {
-                    right
-                        .event_count
-                        .unwrap_or_default()
-                        .cmp(&left.event_count.unwrap_or_default())
-                })
-                .then_with(|| left.id.cmp(&right.id))
-        }),
-    }
-}
-
-fn remediation_item_from_material(
-    material: &SourceMaterialDetail,
+fn remediation_item_from_candidate(
+    candidate: SourceMaterialRemediationCandidate,
 ) -> SourceMaterialRemediationItemView {
-    let event_count = material.event_count.unwrap_or(0);
-    let failure_reason = material_failure_reason(material);
-    let recovery_reason = material_recovery_reason(material);
-    let (decision, severity, suggested_action) =
-        remediation_decision(material.status, event_count, failure_reason.as_deref());
-
+    let material = candidate.material;
     SourceMaterialRemediationItemView {
         material_id: material.id.clone(),
         source_identifier: material.source_identifier.clone(),
         status: material.status,
-        event_count,
-        failure_reason,
-        recovery_reason,
-        decision: decision.to_string(),
-        severity: severity.to_string(),
+        event_count: material.event_count.unwrap_or_default(),
+        failure_reason: candidate.failure_reason,
+        recovery_reason: candidate.recovery_reason,
+        decision: candidate.decision,
+        severity: candidate.severity,
         inspect_command: format!("sinexctl sources show {}", material.id),
-        suggested_action: suggested_action.to_string(),
+        suggested_action: candidate.suggested_action,
     }
-}
-
-fn remediation_decision(
-    status: MaterialStatus,
-    event_count: i64,
-    failure_reason: Option<&str>,
-) -> (&'static str, &'static str, &'static str) {
-    match status {
-        MaterialStatus::RecoveredPartial => (
-            "review_partial_recovery",
-            "medium",
-            "inspect recovered partial material; keep if admitted events are useful, otherwise plan replay or re-ingest",
-        ),
-        MaterialStatus::Failed if event_count > 0 => (
-            "inspect_failed_eventful",
-            "high",
-            "inspect failed material with admitted events; decide whether to recover, replay, or archive intentionally",
-        ),
-        MaterialStatus::Failed if failure_reason == Some("orphaned_sensing_material") => (
-            "purge_or_archive_empty_failure",
-            "low",
-            "inspect empty orphaned failure; usually safe to purge related DLQ residue or archive intentionally",
-        ),
-        MaterialStatus::Failed => (
-            "inspect_failed_empty",
-            "medium",
-            "inspect failed material; no admitted events are recorded, so replay or source fix is likely required",
-        ),
-        _ => (
-            "no_action",
-            "low",
-            "material is not a remediation candidate for this read-only plan",
-        ),
-    }
-}
-
-fn material_failure_reason(material: &SourceMaterialDetail) -> Option<String> {
-    metadata_string(&material.metadata, &["failure_reason"]).or_else(|| {
-        metadata_string(
-            &material.metadata,
-            &["timeout_partial_recovery", "failure_reason"],
-        )
-    })
-}
-
-fn material_recovery_reason(material: &SourceMaterialDetail) -> Option<String> {
-    metadata_string(&material.metadata, &["recovery_info", "recovery_reason"])
-}
-
-fn metadata_string(metadata: &serde_json::Value, path: &[&str]) -> Option<String> {
-    let mut current = metadata;
-    for key in path {
-        current = current.get(*key)?;
-    }
-    current.as_str().map(ToOwned::to_owned)
 }
 
 fn format_remediation_plan_table(plan: &SourceMaterialRemediationPlanView) -> String {
@@ -804,8 +662,17 @@ fn format_coverage_table(response: &SourcesCoverageResponse) -> String {
 
     let mut builder = Builder::new();
     builder.push_record([
-        "SOURCE", "KIND", "EARLIEST", "LATEST", "EVENTS", "MATERIALS", "DONE", "FAILED",
-        "PARTIAL", "SENSING", "BYTES",
+        "SOURCE",
+        "KIND",
+        "EARLIEST",
+        "LATEST",
+        "EVENTS",
+        "MATERIALS",
+        "DONE",
+        "FAILED",
+        "PARTIAL",
+        "SENSING",
+        "BYTES",
     ]);
 
     for bucket in &response.sources {
@@ -829,11 +696,10 @@ fn format_coverage_table(response: &SourcesCoverageResponse) -> String {
         let sensing = bucket
             .sensing_material_count
             .map_or_else(|| style("-").dim().to_string(), |c| c.to_string());
-        let bytes = bucket
-            .total_bytes
-            .map_or_else(|| style("-").dim().to_string(), |bytes| {
-                format_bytes(u64::try_from(bytes).unwrap_or(0))
-            });
+        let bytes = bucket.total_bytes.map_or_else(
+            || style("-").dim().to_string(),
+            |bytes| format_bytes(u64::try_from(bytes).unwrap_or(0)),
+        );
 
         builder.push_record([
             bucket.source_identifier.clone(),

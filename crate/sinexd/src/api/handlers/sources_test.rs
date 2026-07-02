@@ -44,6 +44,39 @@ fn readiness(source_family: &str, source_identifier: &str) -> SourceReadiness {
     }
 }
 
+fn remediation_candidate(
+    id: &str,
+    status: MaterialStatus,
+    staged_at: &str,
+    event_count: i64,
+    failure_reason: Option<&str>,
+    recovery_reason: Option<&str>,
+    decision: &str,
+    severity: &str,
+) -> SourceMaterialRemediationCandidate {
+    SourceMaterialRemediationCandidate {
+        material: SourceMaterialSummary {
+            id: id.to_string(),
+            material_kind: MaterialStorageKind::LocalCas,
+            source_identifier: "browser.history".to_string(),
+            status,
+            timing_info_type: SourceMaterialTimingInfoType::Intrinsic,
+            format: Some(SourceMaterialFormat::Json),
+            contract_version: Some(1),
+            staged_at: Some(staged_at.to_string()),
+            staged_by: Some("test".to_string()),
+            size_bytes: Some(128),
+            event_count: Some(event_count),
+            mime_type: Some("application/json".to_string()),
+        },
+        failure_reason: failure_reason.map(ToOwned::to_owned),
+        recovery_reason: recovery_reason.map(ToOwned::to_owned),
+        decision: decision.to_string(),
+        severity: severity.to_string(),
+        suggested_action: "inspect fixture material".to_string(),
+    }
+}
+
 #[sinex_test]
 async fn coverage_source_identifier_normalizer_collapses_material_suffixes()
 -> xtask::sandbox::TestResult<()> {
@@ -61,6 +94,100 @@ async fn coverage_source_identifier_normalizer_collapses_material_suffixes()
         normalize_coverage_source_identifier("/realm/project/sinex/.agent/OPERATING-LOG.md"),
         "/realm/project/sinex/.agent/OPERATING-LOG.md"
     );
+    Ok(())
+}
+
+#[sinex_test]
+async fn remediation_candidates_sort_by_event_count_before_page()
+-> xtask::sandbox::TestResult<()> {
+    let mut candidates = vec![
+        remediation_candidate(
+            "low-recent",
+            MaterialStatus::Failed,
+            "2026-06-03T00:00:00Z",
+            10,
+            Some("slice_arrival_timeout"),
+            None,
+            "inspect_failed_eventful",
+            "high",
+        ),
+        remediation_candidate(
+            "high-old",
+            MaterialStatus::Failed,
+            "2026-06-01T00:00:00Z",
+            100,
+            Some("slice_arrival_timeout"),
+            None,
+            "inspect_failed_eventful",
+            "high",
+        ),
+        remediation_candidate(
+            "middle",
+            MaterialStatus::RecoveredPartial,
+            "2026-06-02T00:00:00Z",
+            50,
+            Some("slice_arrival_timeout"),
+            Some("slice_arrival_timeout_with_admitted_events"),
+            "review_partial_recovery",
+            "medium",
+        ),
+    ];
+
+    sort_remediation_candidates(&mut candidates, REMEDIATION_PLAN_SORT_EVENT_COUNT);
+
+    let ids = candidates
+        .into_iter()
+        .map(|candidate| candidate.material.id)
+        .collect::<Vec<_>>();
+    assert_eq!(ids, vec!["high-old", "middle", "low-recent"]);
+    Ok(())
+}
+
+#[sinex_test]
+async fn remediation_summary_counts_global_candidate_set() -> xtask::sandbox::TestResult<()> {
+    let candidates = vec![
+        remediation_candidate(
+            "failed",
+            MaterialStatus::Failed,
+            "2026-06-01T00:00:00Z",
+            12,
+            Some("material_persist_failed"),
+            None,
+            "inspect_failed_eventful",
+            "high",
+        ),
+        remediation_candidate(
+            "partial",
+            MaterialStatus::RecoveredPartial,
+            "2026-06-02T00:00:00Z",
+            5,
+            Some("slice_arrival_timeout"),
+            Some("slice_arrival_timeout_with_admitted_events"),
+            "review_partial_recovery",
+            "medium",
+        ),
+        remediation_candidate(
+            "second-failed",
+            MaterialStatus::Failed,
+            "2026-06-03T00:00:00Z",
+            7,
+            Some("material_persist_failed"),
+            None,
+            "inspect_failed_eventful",
+            "high",
+        ),
+    ];
+
+    let summary = summarize_remediation_candidates(&candidates);
+
+    assert_eq!(summary.total_candidates, 3);
+    assert_eq!(summary.total_admitted_events, 24);
+    assert_eq!(summary.by_status["failed"], 2);
+    assert_eq!(summary.by_status["recovered_partial"], 1);
+    assert_eq!(summary.by_decision["inspect_failed_eventful"], 2);
+    assert_eq!(summary.by_severity["high"], 2);
+    assert_eq!(summary.by_reason["material_persist_failed"], 2);
+    assert_eq!(summary.by_reason["slice_arrival_timeout"], 1);
     Ok(())
 }
 
