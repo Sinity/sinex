@@ -18,13 +18,14 @@ from dataclasses import dataclass
 from pathlib import Path
 
 
-DEFAULT_ROOTS = ("crate", "xtask/src")
+DEFAULT_ROOTS = ("crate", "xtask")
 
 
 @dataclass
 class Candidate:
     source: Path
     target: Path
+    module_name: str
     cfg_start: int
     module_end: int
     body: str
@@ -179,9 +180,12 @@ def dedent_body(body: str) -> str:
 
 
 def find_candidates(path: Path) -> list[Candidate]:
+    import re
+
     text = path.read_text()
     candidates: list[Candidate] = []
     search = 0
+    module_pattern = re.compile(r"^(?P<vis>pub(?:\([^)]*\))?\s+)?mod\s+(?P<name>[A-Za-z_][A-Za-z0-9_]*)\s*\{")
     while True:
         cfg = text.find("#[cfg", search)
         if cfg == -1:
@@ -190,7 +194,7 @@ def find_candidates(path: Path) -> list[Candidate]:
         if cfg_line_end == -1:
             cfg_line_end = len(text)
         cfg_line = text[cfg:cfg_line_end]
-        if "test" not in cfg_line:
+        if cfg_line.strip() != "#[cfg(test)]":
             search = cfg_line_end + 1
             continue
         cfg_start = line_start(text, cfg)
@@ -207,17 +211,24 @@ def find_candidates(path: Path) -> list[Candidate]:
                     break
                 probe += 1
                 continue
-            if stripped.startswith("mod tests {"):
+            module_match = module_pattern.match(stripped)
+            if module_match:
                 open_idx = text.find("{", line_pos)
                 close_idx = find_matching_brace(text, open_idx)
                 after = close_idx + 1
                 if after < len(text) and text[after] == "\n":
                     after += 1
-                target = path.with_name(f"{path.stem}_test.rs")
+                module_name = module_match.group("name")
+                if module_name == "tests":
+                    target_name = f"{path.stem}_test.rs"
+                else:
+                    target_name = f"{path.stem}_{module_name}.rs"
+                target = path.with_name(target_name)
                 candidates.append(
                     Candidate(
                         source=path,
                         target=target,
+                        module_name=module_name,
                         cfg_start=cfg_start,
                         module_end=after,
                         body=dedent_body(text[open_idx + 1 : close_idx]),
@@ -243,7 +254,7 @@ def split_candidate(candidate: Candidate) -> None:
     replacement = (
         f"{indent}#[cfg(test)]\n"
         f"{indent}#[path = \"{candidate.target.name}\"]\n"
-        f"{indent}mod tests;\n"
+        f"{indent}mod {candidate.module_name};\n"
     )
     candidate.source.write_text(
         text[: candidate.cfg_start] + replacement + text[candidate.module_end :]
@@ -335,6 +346,7 @@ def main() -> int:
             {
                 "source": str(item.source),
                 "target": str(item.target),
+                "module_name": item.module_name,
                 "merge_existing": item.merge_existing,
             }
             for item in found
