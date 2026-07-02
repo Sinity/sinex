@@ -96,7 +96,11 @@ async fn dev_bindings_manifest_adds_browser_history_when_material_exists()
         "SELECT rowid, * FROM History"
     );
     assert_eq!(browser.runtime_config["primary"]["table"], "History");
-    assert_eq!(browser.runtime_config["primary"]["read_only"], true);
+    assert_eq!(
+        browser.runtime_config["primary"]["read_only"], false,
+        "qutebrowser history is WAL-backed; dev bindings must allow SQLite \
+         sidecar recovery while still issuing only SELECT queries"
+    );
     assert_eq!(browser.runtime_config["primary"]["immutable"], false);
     assert_eq!(
         browser.runtime_config["secondary"]["path"],
