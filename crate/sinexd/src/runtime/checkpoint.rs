@@ -45,7 +45,7 @@ use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use sinex_macros::SinexConfig;
 use sinex_primitives::env as shared_env;
 use sinex_primitives::temporal::Timestamp;
-use std::convert::TryInto;
+use std::{collections::HashMap, convert::TryInto};
 use tracing::{debug, info, warn};
 
 /// Unified checkpoint state for both sources and automata.
@@ -953,7 +953,7 @@ pub struct CheckpointCleanupConfig {
         duration = "hours"
     )]
     pub interval: std::time::Duration,
-    /// Whether cleanup is enabled (default: true)
+    /// Whether cleanup is enabled (default: false)
     #[sinex_config(env = "SINEX_CHECKPOINT_CLEANUP_ENABLED", default = false)]
     pub enabled: bool,
 }
@@ -975,14 +975,29 @@ pub struct CheckpointCleanupResult {
     pub scanned: usize,
     /// Number of stale checkpoints deleted
     pub deleted: usize,
+    /// Number of migrated peer checkpoints deleted
+    pub migrated_deleted: usize,
     /// Number of errors encountered
     pub errors: usize,
+}
+
+struct CheckpointCleanupCandidate {
+    key: String,
+    stable_key: String,
+    module: String,
+    consumer: String,
+    state: CheckpointState,
+}
+
+fn checkpoint_cleanup_stable_key(module: &str, group: &str) -> String {
+    format!("{module}\0{group}")
 }
 
 /// Cleanup stale checkpoints from the KV bucket.
 ///
 /// Scans all checkpoints in the bucket and deletes those with `last_activity`
-/// older than the configured `max_age`.
+/// older than the configured `max_age`. It also removes migrated peer
+/// checkpoint keys once the stable per-module key is at least as current.
 ///
 /// # Arguments
 /// - `kv`: The NATS KV store containing checkpoints
@@ -1001,8 +1016,11 @@ pub async fn cleanup_stale_checkpoints(
     let mut result = CheckpointCleanupResult {
         scanned: 0,
         deleted: 0,
+        migrated_deleted: 0,
         errors: 0,
     };
+    let mut candidates = Vec::new();
+    let mut stable_by_module_group: HashMap<String, CheckpointState> = HashMap::new();
 
     // List all keys in the bucket
     let mut keys = kv.keys().await.map_err(|e| {
@@ -1034,19 +1052,49 @@ pub async fn cleanup_stale_checkpoints(
             continue;
         };
 
-        // Check if checkpoint is stale
-        if state.last_activity < cutoff {
-            match kv.purge(&key).await {
+        let Some((module, group, consumer)) = parse_checkpoint_key(&key) else {
+            continue;
+        };
+        let stable_key = checkpoint_cleanup_stable_key(&module, &group);
+
+        if consumer == module {
+            stable_by_module_group.insert(stable_key.clone(), state.clone());
+        }
+
+        candidates.push(CheckpointCleanupCandidate {
+            key,
+            stable_key,
+            module,
+            consumer,
+            state,
+        });
+    }
+
+    for candidate in candidates {
+        let migrated_peer = stable_by_module_group
+            .get(&candidate.stable_key)
+            .is_some_and(|stable| {
+                candidate.consumer != candidate.module
+                    && stable.processed_count >= candidate.state.processed_count
+                    && stable.last_activity >= candidate.state.last_activity
+            });
+
+        if candidate.state.last_activity < cutoff || migrated_peer {
+            match kv.purge(&candidate.key).await {
                 Ok(()) => {
                     debug!(
-                        key = %key,
-                        last_activity = %state.last_activity,
-                        "Deleted stale checkpoint"
+                        key = %candidate.key,
+                        last_activity = %candidate.state.last_activity,
+                        migrated_peer,
+                        "Deleted checkpoint during cleanup"
                     );
                     result.deleted += 1;
+                    if migrated_peer {
+                        result.migrated_deleted += 1;
+                    }
                 }
                 Err(e) => {
-                    warn!(key = %key, error = %e, "Failed to delete stale checkpoint");
+                    warn!(key = %candidate.key, error = %e, "Failed to delete checkpoint during cleanup");
                     result.errors += 1;
                 }
             }
@@ -1056,6 +1104,7 @@ pub async fn cleanup_stale_checkpoints(
     info!(
         scanned = result.scanned,
         deleted = result.deleted,
+        migrated_deleted = result.migrated_deleted,
         errors = result.errors,
         max_age_days = max_age.as_secs() / 86400,
         "Checkpoint cleanup completed"

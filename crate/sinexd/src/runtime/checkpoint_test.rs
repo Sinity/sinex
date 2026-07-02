@@ -1,7 +1,7 @@
 // Inline because this covers local checkpoint env/default semantics.
 use super::{
     CheckpointCleanupConfig, CheckpointManager, CheckpointState, checkpoint_cleanup_cutoff,
-    ensure_checkpoint_kv_payload_fits,
+    cleanup_stale_checkpoints, ensure_checkpoint_kv_payload_fits,
 };
 use crate::runtime::stream::Checkpoint;
 use crate::runtime::nats_payload::NATS_PUBLISH_PAYLOAD_HARD_LIMIT_BYTES;
@@ -97,6 +97,88 @@ async fn checkpoint_manager_adopts_latest_peer_for_stable_automaton_consumer(
     assert_eq!(
         adopted.data,
         Some(serde_json::json!({ "state": "peer" }))
+    );
+    Ok(())
+}
+
+#[sinex_test]
+async fn checkpoint_cleanup_purges_migrated_peer_keys_only_when_stable_is_current(
+    ctx: xtask::sandbox::TestContext,
+) -> xtask::sandbox::TestResult<()> {
+    let kv = ctx.with_nats().shared().await?.checkpoint_kv().await?;
+    let module = format!("checkpoint-cleanup-{}", Uuid::now_v7().simple());
+    let group = "default".to_string();
+    let stable_manager = CheckpointManager::new(
+        kv.clone(),
+        module.clone(),
+        group.clone(),
+        module.clone(),
+    );
+    let migrated_peer_manager = CheckpointManager::new(
+        kv.clone(),
+        module.clone(),
+        group.clone(),
+        "host-a-1234".to_string(),
+    );
+    let newer_peer_manager = CheckpointManager::new(
+        kv.clone(),
+        module.clone(),
+        group,
+        "host-b-9999".to_string(),
+    );
+
+    migrated_peer_manager
+        .save_checkpoint(&CheckpointState {
+            checkpoint: Checkpoint::internal(Uuid::now_v7(), 42),
+            processed_count: 42,
+            last_activity: Timestamp::now() - time::Duration::seconds(60),
+            data: Some(serde_json::json!({ "state": "migrated-peer" })),
+            version: 2,
+            revision: 0,
+        })
+        .await?;
+    newer_peer_manager
+        .save_checkpoint(&CheckpointState {
+            checkpoint: Checkpoint::internal(Uuid::now_v7(), 43),
+            processed_count: 43,
+            last_activity: Timestamp::now() - time::Duration::seconds(60),
+            data: Some(serde_json::json!({ "state": "newer-peer" })),
+            version: 2,
+            revision: 0,
+        })
+        .await?;
+    stable_manager
+        .save_checkpoint(&CheckpointState {
+            checkpoint: Checkpoint::internal(Uuid::now_v7(), 42),
+            processed_count: 42,
+            last_activity: Timestamp::now(),
+            data: Some(serde_json::json!({ "state": "stable" })),
+            version: 2,
+            revision: 0,
+        })
+        .await?;
+
+    let result = cleanup_stale_checkpoints(&kv, std::time::Duration::from_secs(365 * 86400))
+        .await?;
+
+    assert_eq!(result.migrated_deleted, 1);
+    assert!(
+        kv.get(&format!("{module}.default.host-a-1234"))
+            .await?
+            .is_none(),
+        "cleanup should purge a peer checkpoint covered by a stable key"
+    );
+    assert!(
+        kv.get(&format!("{module}.default.host-b-9999"))
+            .await?
+            .is_some(),
+        "cleanup must keep a peer checkpoint that is ahead of the stable key"
+    );
+    assert!(
+        kv.get(&format!("{module}.default.{module}"))
+            .await?
+            .is_some(),
+        "cleanup must keep the stable checkpoint key"
     );
     Ok(())
 }
