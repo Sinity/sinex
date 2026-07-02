@@ -5,6 +5,7 @@ use camino::Utf8Path;
 use futures::stream::{self, BoxStream, StreamExt};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
+use std::{fs, path::Path};
 
 use sinex_primitives::events::SourceMaterial;
 use sinex_primitives::ids::Id;
@@ -68,7 +69,7 @@ impl SqliteRowAdapter {
         immutable: bool,
     ) -> rusqlite::Result<rusqlite::Connection> {
         let mut flags = rusqlite::OpenFlags::SQLITE_OPEN_NO_MUTEX;
-        if read_only {
+        let conn = if read_only {
             flags |=
                 rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY | rusqlite::OpenFlags::SQLITE_OPEN_URI;
             let uri = if immutable {
@@ -81,6 +82,149 @@ impl SqliteRowAdapter {
             flags |= rusqlite::OpenFlags::SQLITE_OPEN_READ_WRITE
                 | rusqlite::OpenFlags::SQLITE_OPEN_CREATE;
             rusqlite::Connection::open_with_flags(path, flags)
+        }?;
+        conn.busy_timeout(std::time::Duration::from_secs(5))?;
+        Ok(conn)
+    }
+
+    fn is_lock_error(error: &rusqlite::Error) -> bool {
+        matches!(
+            error,
+            rusqlite::Error::SqliteFailure(inner, _)
+                if matches!(
+                    inner.code,
+                    rusqlite::ffi::ErrorCode::DatabaseBusy
+                        | rusqlite::ffi::ErrorCode::DatabaseLocked
+                )
+        )
+    }
+
+    fn copy_sqlite_snapshot(path: &str) -> std::io::Result<(tempfile::TempDir, String)> {
+        let source = Path::new(path);
+        let dir = tempfile::tempdir()?;
+        let dest = dir.path().join("snapshot.sqlite");
+        fs::copy(source, &dest)?;
+
+        for suffix in ["-wal", "-shm"] {
+            let sidecar = Path::new(&format!("{path}{suffix}")).to_path_buf();
+            if sidecar.exists() {
+                fs::copy(&sidecar, dir.path().join(format!("snapshot.sqlite{suffix}")))?;
+            }
+        }
+
+        let dest = dest
+            .to_str()
+            .ok_or_else(|| std::io::Error::other("temporary SQLite snapshot path is not UTF-8"))?
+            .to_owned();
+        Ok((dir, dest))
+    }
+
+    fn collect_rows(
+        connection: &rusqlite::Connection,
+        sql: &str,
+        bind_rowid: Option<i64>,
+    ) -> rusqlite::Result<Vec<(i64, serde_json::Value)>> {
+        let mut stmt = connection.prepare(sql)?;
+        let column_names: Vec<String> = (0..stmt.column_count())
+            .map(|i| stmt.column_name(i).unwrap_or("?").to_string())
+            .collect();
+
+        let mut rows = Vec::new();
+        if let Some(rowid_val) = bind_rowid {
+            let mapped = stmt.query_map([rowid_val], |row| {
+                let rowid: i64 = row.get(0)?;
+                let json = row_to_json(row, &column_names);
+                Ok((rowid, json))
+            })?;
+            for row in mapped {
+                rows.push(row?);
+            }
+        } else {
+            let mapped = stmt.query_map([], |row| {
+                let rowid: i64 = row.get(0)?;
+                let json = row_to_json(row, &column_names);
+                Ok((rowid, json))
+            })?;
+            for row in mapped {
+                rows.push(row?);
+            }
+        }
+
+        Ok(rows)
+    }
+
+    fn collect_rows_from_path(
+        path: &str,
+        read_only: bool,
+        immutable: bool,
+        sql: &str,
+        bind_rowid: Option<i64>,
+    ) -> rusqlite::Result<Vec<(i64, serde_json::Value)>> {
+        let connection = Self::open_connection(path, read_only, immutable)?;
+        Self::collect_rows(&connection, sql, bind_rowid)
+    }
+
+    fn collect_rows_with_snapshot_fallback(
+        path: &str,
+        config: &SqliteRowConfig,
+        sql: &str,
+        bind_rowid: Option<i64>,
+    ) -> ParserResult<Vec<(i64, serde_json::Value)>> {
+        match Self::collect_rows_from_path(
+            path,
+            config.read_only,
+            config.immutable,
+            sql,
+            bind_rowid,
+        ) {
+            Ok(rows) => Ok(rows),
+            Err(error) if Self::is_lock_error(&error) => {
+                let (_dir, snapshot_path) = Self::copy_sqlite_snapshot(path).map_err(|io_error| {
+                    ParserError::Adapter(format!(
+                        "failed to snapshot locked SQLite database {path}: {io_error}"
+                    ))
+                })?;
+                Self::collect_rows_from_path(&snapshot_path, true, false, sql, bind_rowid)
+                    .map_err(|snapshot_error| {
+                        ParserError::Adapter(format!(
+                            "failed to query SQLite snapshot for {path}: {snapshot_error}"
+                        ))
+                    })
+            }
+            Err(error) => Err(ParserError::Adapter(format!("query error: {error}"))),
+        }
+    }
+
+    fn fingerprint_from_path(
+        path: &str,
+        read_only: bool,
+        immutable: bool,
+    ) -> rusqlite::Result<SourceRecordFingerprint> {
+        let connection = Self::open_connection(path, read_only, immutable)?;
+        SourceRecordFingerprint::from_sqlite_connection(&connection)
+    }
+
+    fn input_fingerprint_with_snapshot_fallback(
+        path: &str,
+        config: &SqliteRowConfig,
+    ) -> ParserResult<SourceRecordFingerprint> {
+        match Self::fingerprint_from_path(path, config.read_only, config.immutable) {
+            Ok(fingerprint) => Ok(fingerprint),
+            Err(error) if Self::is_lock_error(&error) => {
+                let (_dir, snapshot_path) = Self::copy_sqlite_snapshot(path).map_err(|io_error| {
+                    ParserError::Adapter(format!(
+                        "failed to snapshot locked SQLite database {path}: {io_error}"
+                    ))
+                })?;
+                Self::fingerprint_from_path(&snapshot_path, true, false).map_err(|error| {
+                    ParserError::Adapter(format!(
+                        "failed to fingerprint SQLite snapshot for {path}: {error}"
+                    ))
+                })
+            }
+            Err(error) => Err(ParserError::Adapter(format!(
+                "failed to fingerprint SQLite schema: {error}"
+            ))),
         }
     }
 }
@@ -245,24 +389,6 @@ impl InputShapeAdapter for SqliteRowAdapter {
             format!("SELECT rowid, * FROM {}", config.query)
         };
 
-        // Open the database.
-        //
-        // For shared DBs (qutebrowser History, atuin history, etc.) we need
-        // `immutable=1` in the URI so SQLite skips WAL/-shm operations
-        // entirely. Without it, opening a WAL-mode DB from a user that can't
-        // write the -shm file fails with "attempt to write a readonly
-        // database" even with SQLITE_OPEN_READ_ONLY — the read-only flag
-        // permits no DB writes, but SQLite still tries to create the WAL
-        // companion files in the same directory. `immutable=1` tells SQLite
-        // "this file will not change while open" which skips WAL setup.
-        // Trade-off: data added by the writer after we open is not visible
-        // until the next adapter open() — acceptable because we re-open per
-        // scan/poll cycle.
-        let connection =
-            Self::open_connection(&path, config.read_only, config.immutable).map_err(|e| {
-                ParserError::Adapter(format!("failed to open SQLite database {path}: {e}"))
-            })?;
-
         let batch_size = config.batch_size;
         let (sql, bind_rowid) = if last_rowid > 0 {
             (
@@ -280,56 +406,7 @@ impl InputShapeAdapter for SqliteRowAdapter {
             )
         };
 
-        let mut stmt = connection
-            .prepare(&sql)
-            .map_err(|e| ParserError::Adapter(format!("failed to prepare query: {e}")))?;
-
-        let column_names: Vec<String> = (0..stmt.column_count())
-            .map(|i| stmt.column_name(i).unwrap_or("?").to_string())
-            .collect();
-
-        let rows_result: Result<Vec<(i64, serde_json::Value)>, ParserError> =
-            if let Some(rowid_val) = bind_rowid {
-                let mapped = stmt
-                    .query_map([rowid_val], |row| {
-                        let rowid: i64 = row.get(0)?;
-                        let json = row_to_json(row, &column_names);
-                        Ok((rowid, json))
-                    })
-                    .map_err(|e| ParserError::Adapter(format!("query error: {e}")))?;
-
-                let mut rows = Vec::new();
-                for r in mapped {
-                    match r {
-                        Ok((rowid, json)) => rows.push((rowid, json)),
-                        Err(e) => return Err(ParserError::Adapter(format!("row error: {e}"))),
-                    }
-                }
-                Ok(rows)
-            } else {
-                let mapped = stmt
-                    .query_map([], |row| {
-                        let rowid: i64 = row.get(0)?;
-                        let json = row_to_json(row, &column_names);
-                        Ok((rowid, json))
-                    })
-                    .map_err(|e| ParserError::Adapter(format!("query error: {e}")))?;
-
-                let mut rows = Vec::new();
-                for r in mapped {
-                    match r {
-                        Ok((rowid, json)) => rows.push((rowid, json)),
-                        Err(e) => return Err(ParserError::Adapter(format!("row error: {e}"))),
-                    }
-                }
-                Ok(rows)
-            };
-
-        // Drop statement and connection explicitly before we build records.
-        drop(stmt);
-        drop(connection);
-
-        let rows = rows_result?;
+        let rows = Self::collect_rows_with_snapshot_fallback(&path, config, &sql, bind_rowid)?;
         let records: Vec<ParserResult<SourceRecord>> = rows
             .into_iter()
             .map(|(rowid, json)| {
@@ -358,14 +435,7 @@ impl InputShapeAdapter for SqliteRowAdapter {
         config: &Self::Config,
     ) -> ParserResult<Option<SourceRecordFingerprint>> {
         let path = self.effective_path(config);
-        let connection =
-            Self::open_connection(&path, config.read_only, config.immutable).map_err(|e| {
-                ParserError::Adapter(format!("failed to open SQLite database {path}: {e}"))
-            })?;
-        let fingerprint =
-            SourceRecordFingerprint::from_sqlite_connection(&connection).map_err(|e| {
-                ParserError::Adapter(format!("failed to fingerprint SQLite schema: {e}"))
-            })?;
+        let fingerprint = Self::input_fingerprint_with_snapshot_fallback(&path, config)?;
         Ok(Some(fingerprint))
     }
 

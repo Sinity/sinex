@@ -585,6 +585,43 @@ fn dev_source_binding(
     }
 }
 
+struct BrowserSqliteDevSource {
+    path: PathBuf,
+    query: &'static str,
+    table: &'static str,
+}
+
+impl BrowserSqliteDevSource {
+    fn qutebrowser_native(home: &Path) -> Self {
+        Self {
+            path: home.join(".local/share/qutebrowser/history.sqlite"),
+            query: "SELECT rowid, * FROM History",
+            table: "History",
+        }
+    }
+
+    fn qutebrowser_webengine(home: &Path) -> Self {
+        Self::chromium(home.join(".local/share/qutebrowser/webengine/History"))
+    }
+
+    fn chrome_workspace(home: &Path) -> Self {
+        Self::chromium(home.join(".config/chrome-ws/Default/History"))
+    }
+
+    fn chromium(path: PathBuf) -> Self {
+        Self {
+            path,
+            query: "SELECT visits.id AS rowid, urls.url AS url, urls.title AS title, \
+                    visits.visit_time AS visit_time, \
+                    visits.external_referrer_url AS external_referrer_url, \
+                    visits.transition AS transition, \
+                    visits.visit_duration AS visit_duration \
+                    FROM visits JOIN urls ON visits.url = urls.id",
+            table: "visits",
+        }
+    }
+}
+
 fn generate_dev_source_bindings_manifest(watch_root: &Path) -> DevSourceBindingsManifest {
     let home = dirs::home_dir().unwrap_or_else(|| PathBuf::from("/"));
     generate_dev_source_bindings_manifest_for_home_and_exports(
@@ -621,7 +658,11 @@ fn generate_dev_source_bindings_manifest_for_home_and_exports(
 ) -> DevSourceBindingsManifest {
     let zsh_history = home.join(".zsh_history");
     let atuin_history = home.join(".local/share/atuin/history.db");
-    let qutebrowser_history = home.join(".local/share/qutebrowser/history.sqlite");
+    let browser_sqlite_sources = [
+        BrowserSqliteDevSource::qutebrowser_native(home),
+        BrowserSqliteDevSource::qutebrowser_webengine(home),
+        BrowserSqliteDevSource::chrome_workspace(home),
+    ];
     let watch_root = watch_root.to_string_lossy().to_string();
 
     let mut bindings = Vec::new();
@@ -646,19 +687,24 @@ fn generate_dev_source_bindings_manifest_for_home_and_exports(
             "read_only": false,
         }),
     ));
-    if qutebrowser_history.exists() {
+    for (idx, browser_source) in browser_sqlite_sources
+        .into_iter()
+        .filter(|source| source.path.exists())
+        .enumerate()
+    {
         bindings.push(dev_source_binding(
             "browser.history",
-            1,
+            (idx + 1) as u32,
             json!({
                 "primary": {
-                    "path": qutebrowser_history,
-                    "query": "SELECT rowid, * FROM History",
-                    "table": "History",
+                    "path": browser_source.path,
+                    "query": browser_source.query,
+                    "table": browser_source.table,
                     // qutebrowser keeps history.sqlite in WAL mode with a live
-                    // writer. SQLite may need to recover/open WAL sidecars even
-                    // for SELECT-only readers, so mirror the NixOS source
-                    // binding's WAL-safe mode here.
+                    // writer; Chrome/Chromium does the same. SQLite may need
+                    // to recover/open WAL sidecars even for SELECT-only
+                    // readers, so mirror the NixOS source binding's WAL-safe
+                    // mode here.
                     "read_only": false,
                     "immutable": false
                 },

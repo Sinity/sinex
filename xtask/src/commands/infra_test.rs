@@ -9,6 +9,9 @@ async fn dev_bindings_manifest_contains_dogfood_source_families()
     let qutebrowser_dir = home.path().join(".local/share/qutebrowser");
     std::fs::create_dir_all(&qutebrowser_dir)?;
     std::fs::write(qutebrowser_dir.join("history.sqlite"), "")?;
+    let chrome_dir = home.path().join(".config/chrome-ws/Default");
+    std::fs::create_dir_all(&chrome_dir)?;
+    std::fs::write(chrome_dir.join("History"), "")?;
     let manifest = generate_dev_source_bindings_manifest_for_home(
         Path::new("/workspace/sinex"),
         home.path(),
@@ -24,6 +27,7 @@ async fn dev_bindings_manifest_contains_dogfood_source_families()
         vec![
             "terminal.zsh-history",
             "terminal.atuin-history",
+            "browser.history",
             "browser.history",
             "git-commit-history",
             "fs",
@@ -64,7 +68,7 @@ async fn dev_bindings_manifest_skips_absent_zsh_history()
 }
 
 #[sinex_test]
-async fn dev_bindings_manifest_adds_browser_history_when_material_exists()
+async fn dev_bindings_manifest_adds_qutebrowser_history_when_material_exists()
 -> crate::sandbox::prelude::TestResult<()> {
     let home = tempfile::tempdir()?;
     let qutebrowser_dir = home.path().join(".local/share/qutebrowser");
@@ -108,6 +112,43 @@ async fn dev_bindings_manifest_adds_browser_history_when_material_exists()
     );
     assert_eq!(browser.runtime_config["secondary"]["skip_empty"], true);
     assert_eq!(browser.runtime_config["interleaved"], false);
+    Ok(())
+}
+
+#[sinex_test]
+async fn dev_bindings_manifest_adds_chrome_history_when_material_exists()
+-> crate::sandbox::prelude::TestResult<()> {
+    let home = tempfile::tempdir()?;
+    let chrome_dir = home.path().join(".config/chrome-ws/Default");
+    std::fs::create_dir_all(&chrome_dir)?;
+    let chrome_history = chrome_dir.join("History");
+    std::fs::write(&chrome_history, "")?;
+
+    let manifest = generate_dev_source_bindings_manifest_for_home(
+        Path::new("/workspace/sinex"),
+        home.path(),
+    );
+    let browser = manifest
+        .bindings
+        .iter()
+        .find(|binding| binding.source_id == "browser.history")
+        .expect("browser binding exists");
+
+    assert_eq!(browser.instance_idx, 1);
+    assert_eq!(
+        browser.runtime_config["primary"]["path"],
+        chrome_history.to_string_lossy().as_ref()
+    );
+    assert!(
+        browser.runtime_config["primary"]["query"]
+            .as_str()
+            .expect("query string")
+            .contains("visits JOIN urls"),
+        "Chrome/Chromium history must use the visits+urls projection"
+    );
+    assert_eq!(browser.runtime_config["primary"]["table"], "visits");
+    assert_eq!(browser.runtime_config["primary"]["read_only"], false);
+    assert_eq!(browser.runtime_config["primary"]["immutable"], false);
     Ok(())
 }
 
@@ -243,10 +284,9 @@ async fn dev_bindings_manifest_uses_stable_service_names()
     let manifest = generate_dev_source_bindings_manifest(Path::new("/workspace/sinex"));
 
     for binding in &manifest.bindings {
-        assert_eq!(binding.instance_idx, 1);
         assert_eq!(
             binding.service_name,
-            format!("source-driver-{}-1", binding.source_id)
+            format!("source-driver-{}-{}", binding.source_id, binding.instance_idx)
         );
         assert!(binding.extra_args.is_empty());
         assert!(binding.extra_env.is_empty());

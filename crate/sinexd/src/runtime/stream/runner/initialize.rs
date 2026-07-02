@@ -124,9 +124,11 @@ impl<T: RuntimeModule + 'static> RuntimeRunner<T> {
             .to_string();
         let source_id = Self::config_identity_value(&raw_config, "source_id");
         let runner_pack = Self::config_identity_value(&raw_config, "runner_pack");
-        let checkpoint_identity = source_id
-            .clone()
+        let checkpoint_identity = Self::config_identity_value(&raw_config, "checkpoint_identity")
+            .or_else(|| source_id.clone())
             .unwrap_or_else(|| service_name.to_string());
+        let control_identity = Self::config_identity_value(&raw_config, "control_identity")
+            .or_else(|| source_id.clone());
         let consumer_name = Self::checkpoint_consumer_name(
             self.module.module_kind(),
             &raw_config,
@@ -235,7 +237,8 @@ impl<T: RuntimeModule + 'static> RuntimeRunner<T> {
             instance_id,
             version,
             module_run_id,
-        );
+        )
+        .with_runtime_identities(Some(checkpoint_identity.clone()), control_identity);
         let work_dir_utf8 = Utf8PathBuf::from_path_buf(work_dir).unwrap_or_else(|_| {
             Utf8PathBuf::from_path_buf(sinex_primitives::environment::environment().temp_dir())
                 .unwrap_or_else(|_| Utf8PathBuf::from("/tmp/sinex"))

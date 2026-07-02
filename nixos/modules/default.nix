@@ -2984,6 +2984,11 @@ in
         services.sinex.sources.browser.dumpSources = mkDefault [ ];
         services.sinex.sources.browser.sqliteSources = mkDefault [
           {
+            path = "${targetHome}/.config/chrome-ws/Default/History";
+            browser = "chrome";
+            format = "ChromiumHistory";
+          }
+          {
             path = "${targetHome}/.local/share/qutebrowser/history.sqlite";
             browser = "qutebrowser";
             format = "QutebrowserNative";
