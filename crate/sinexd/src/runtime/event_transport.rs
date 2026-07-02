@@ -1,6 +1,10 @@
 //! Event batcher that handles batching and sending events.
 
-use crate::runtime::{RuntimeResult, nats_publisher::NatsPublisher};
+use crate::runtime::{
+    RuntimeResult,
+    nats_payload::{NATS_PUBLISH_PAYLOAD_HARD_LIMIT_BYTES, ensure_nats_payload_fits},
+    nats_publisher::NatsPublisher,
+};
 use futures::future::BoxFuture;
 use serde::{Deserialize, Serialize};
 use sinex_primitives::domain::HostName;
@@ -195,7 +199,7 @@ struct BatchPublishResult {
     failed: usize,
 }
 
-const NATS_INTENT_PAYLOAD_SOFT_LIMIT_BYTES: usize = 900 * 1024;
+const NATS_INTENT_PAYLOAD_SOFT_LIMIT_BYTES: usize = NATS_PUBLISH_PAYLOAD_HARD_LIMIT_BYTES;
 const RECOVERY_SPOOL_REPLAY_AFTER_SUCCESS_INTERVAL: Duration = Duration::from_secs(10);
 
 /// Event batcher that handles batching and sending
@@ -888,6 +892,21 @@ impl EventBatcher {
         events: Vec<Event<JsonValue>>,
     ) -> Result<usize, (Vec<Event<JsonValue>>, SinexError)> {
         let event_count = events.len();
+        let payload_len = match Self::intent_payload_len(
+            source_id,
+            parser_id,
+            parser_version,
+            &events,
+        ) {
+            Ok(payload_len) => payload_len,
+            Err(error) => return Err((events, error)),
+        };
+        if let Err(error) =
+            ensure_nats_payload_fits("event intent envelope", source_id, payload_len)
+        {
+            return Err((events, error));
+        }
+
         let intent = EventIntent::new(
             source_id,
             parser_id,
@@ -937,7 +956,9 @@ pub fn spawn_event_batcher(
 
 #[cfg(test)]
 mod tests {
-    use super::{EventBatcher, EventBatcherConfig, EventTransport};
+    use super::{
+        EventBatcher, EventBatcherConfig, EventTransport, NATS_PUBLISH_PAYLOAD_HARD_LIMIT_BYTES,
+    };
     use crate::runtime::{jetstream_streams, nats_publisher::NatsPublisher};
     use futures::StreamExt;
     use sinex_primitives::{
@@ -1086,6 +1107,56 @@ mod tests {
             assert_eq!(payload["events"].as_array().map(Vec::len), Some(1));
             assert_eq!(payload["events"][0]["event_type"], event_name);
         }
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn nats_transport_spools_single_event_intent_over_hard_limit(
+        ctx: xtask::sandbox::TestContext,
+    ) -> TestResult<()> {
+        let ctx = ctx.with_nats().dedicated().await?;
+        ensure_events_stream(&ctx.nats_client(), ctx.env()).await?;
+
+        let work_dir = tempdir()?;
+        let recovery_spool_path = work_dir.path().join("sinex_event_recovery_spool.jsonl");
+        let event_name = "nats.large.single-spooled";
+        let subject = ctx
+            .env()
+            .nats_raw_event_subject_with_namespace(None, "dlq.test", event_name);
+        let mut subscription = ctx.nats_client().subscribe(subject).await?;
+        let (_sender, receiver) = mpsc::channel(1);
+        let (_shutdown_tx, shutdown_rx) = oneshot::channel();
+        let mut batcher = EventBatcher::new(
+            EventTransport::Nats(Arc::new(NatsPublisher::new(ctx.nats_client()))),
+            EventBatcherConfig::default(),
+            receiver,
+            shutdown_rx,
+            work_dir.path().to_path_buf(),
+        );
+
+        let mut batch = vec![large_test_event(
+            event_name,
+            NATS_PUBLISH_PAYLOAD_HARD_LIMIT_BYTES + 1,
+        )?];
+
+        batcher.send_batch(&mut batch).await?;
+
+        assert!(
+            batch.is_empty(),
+            "oversized single-event intent should be drained into the recovery spool"
+        );
+        let spooled = tokio::fs::read_to_string(&recovery_spool_path).await?;
+        assert_eq!(
+            spooled.lines().count(),
+            1,
+            "exactly the oversized event should be recoverable from the local spool"
+        );
+        assert!(
+            tokio::time::timeout(Duration::from_millis(250), subscription.next())
+                .await
+                .is_err(),
+            "oversized event should not be published to NATS"
+        );
         Ok(())
     }
 
