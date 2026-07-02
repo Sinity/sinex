@@ -303,7 +303,7 @@ async fn checkpoint_consumer_name_is_stable_for_sources() -> TestResult<()> {
 }
 
 #[sinex_test]
-async fn checkpoint_consumer_name_keeps_process_identity_for_automata() -> TestResult<()> {
+async fn checkpoint_consumer_name_is_stable_for_automata() -> TestResult<()> {
     let raw_config = HashMap::new();
 
     let consumer_name = RuntimeRunner::<RuntimeTestModule>::checkpoint_consumer_name(
@@ -313,7 +313,7 @@ async fn checkpoint_consumer_name_keeps_process_identity_for_automata() -> TestR
         "host-a",
     );
 
-    assert_eq!(consumer_name, format!("host-a-{}", std::process::id()));
+    assert_eq!(consumer_name, "sinex.entity-extractor");
     Ok(())
 }
 

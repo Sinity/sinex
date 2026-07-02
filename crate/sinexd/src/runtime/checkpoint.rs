@@ -455,6 +455,12 @@ impl CheckpointManager {
             return Ok(state);
         }
 
+        if self.warn_on_missing_checkpoint
+            && let Some(state) = self.load_latest_peer_checkpoint().await?
+        {
+            return Ok(state);
+        }
+
         if self.warn_on_missing_checkpoint {
             warn!(
                 module = %self.module_name,
@@ -477,9 +483,9 @@ impl CheckpointManager {
     /// Load the most recent checkpoint written by another consumer in this
     /// module/group.
     ///
-    /// This supports migration away from unstable per-process source consumer
-    /// names. It is intentionally opt-in at call sites because automata and
-    /// concurrent consumers must not silently adopt each other's cursors.
+    /// This supports migration away from unstable per-process consumer names.
+    /// It is intentionally opt-in at call sites because concurrent consumers
+    /// must not silently adopt each other's cursors.
     pub async fn load_latest_peer_checkpoint(&self) -> RuntimeResult<Option<CheckpointState>> {
         let module = sanitize_kv_key_component(&self.module_name);
         let consumer_group = sanitize_kv_key_component(&self.consumer_group);
@@ -524,7 +530,7 @@ impl CheckpointManager {
                 adopted_key = %key,
                 adopted_revision = state.revision,
                 adopted_processed_count = state.processed_count,
-                "Adopting latest peer checkpoint for source consumer migration"
+                "Adopting latest peer checkpoint for stable consumer migration"
             );
             Ok(Some(state))
         } else {
