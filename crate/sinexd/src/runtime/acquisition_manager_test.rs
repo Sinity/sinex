@@ -5,7 +5,7 @@ use super::{
     BufferedAppendStreamWriterConfig, RotationPolicy,
 };
 use serde_json::json;
-use sinex_primitives::{Bytes, Seconds};
+use sinex_primitives::{Bytes, Seconds, Uuid, temporal::Timestamp};
 use std::sync::{
     Arc,
     atomic::{AtomicUsize, Ordering},
@@ -115,7 +115,40 @@ async fn failed_stream_bootstrap_remains_retryable(ctx: TestContext) -> TestResu
 }
 
 #[sinex_test]
-async fn oversized_slice_rejection_does_not_mutate_local_stage(
+async fn oversized_material_begin_frame_is_rejected_before_nats(
+    ctx: TestContext,
+) -> TestResult<()> {
+    let ctx = ctx.with_nats().shared().await?;
+    let namespace = format!("oversized-material-begin-{}", Uuid::now_v7());
+    let manager = AcquisitionManager::new_with_namespace(
+        ctx.nats_client(),
+        RotationPolicy::default(),
+        "oversized-material-begin-test".to_string(),
+        Some(namespace),
+    );
+
+    let error = manager
+        .publish_begin(
+            Uuid::now_v7(),
+            "test://oversized-material-begin",
+            json!({
+                "oversized": "x".repeat(
+                    crate::runtime::nats_payload::NATS_PUBLISH_PAYLOAD_HARD_LIMIT_BYTES + 1
+                ),
+            }),
+            Timestamp::now(),
+        )
+        .await
+        .expect_err("oversized begin metadata should fail before NATS publish");
+
+    let error_text = error.to_string();
+    assert!(error_text.contains("source-material frame exceeds NATS hard payload limit"));
+    assert!(error_text.contains("begin"));
+    Ok(())
+}
+
+#[sinex_test]
+async fn oversized_logical_record_is_chunked_without_losing_anchor(
     ctx: TestContext,
 ) -> TestResult<()> {
     let ctx = ctx.with_nats().shared().await?;
@@ -125,26 +158,28 @@ async fn oversized_slice_rejection_does_not_mutate_local_stage(
     let mut handle = manager.begin_material("test://oversized").await?;
     let oversized = vec![0u8; AcquisitionManager::MAX_NATS_PAYLOAD_BYTES + 1];
 
-    let error = manager
-        .append_slice(&mut handle, &oversized)
-        .await
-        .expect_err("oversized slice should be rejected before mutating local state");
+    let anchors = manager
+        .append_record_batch(&mut handle, &[&oversized])
+        .await?;
 
-    assert!(
-        error.to_string().contains("exceeds NATS max payload"),
-        "unexpected error: {error}"
+    assert_eq!(anchors.len(), 1);
+    assert_eq!(anchors[0].offset_start, 0);
+    assert_eq!(anchors[0].offset_end, oversized.len() as i64);
+    assert_eq!(handle.bytes_written(), oversized.len() as i64);
+    assert_eq!(
+        handle.slice_count, 3,
+        "a 512KiB+1 logical record should publish as three 256KiB transport slices"
     );
-    assert_eq!(handle.bytes_written(), 0);
     assert_eq!(
         handle.hasher.clone().finalize().to_hex().to_string(),
-        blake3::Hasher::new().finalize().to_hex().to_string()
+        blake3::hash(&oversized).to_hex().to_string()
     );
 
     let metadata = tokio::fs::metadata(handle.temp_path()).await?;
     assert_eq!(
         metadata.len(),
-        0,
-        "oversized rejection must not stage bytes locally"
+        oversized.len() as u64,
+        "logical record bytes should be mirrored exactly once"
     );
     Ok(())
 }
@@ -445,6 +480,43 @@ async fn buffered_append_writer_flushes_material_without_stopping(
 }
 
 #[sinex_test]
+async fn buffered_append_writer_flushes_after_max_open_duration(
+    ctx: TestContext,
+) -> TestResult<()> {
+    let ctx = ctx.with_nats().shared().await?;
+    let namespace = format!("buffered-append-max-open-{}", Uuid::now_v7());
+    let work_dir = tempfile::tempdir()?;
+    let manager = Arc::new(
+        AcquisitionManager::new_with_namespace(
+            ctx.nats_client(),
+            RotationPolicy::default(),
+            "buffered-writer-max-open-test".to_string(),
+            Some(namespace),
+        )
+        .with_work_dir(work_dir.path()),
+    );
+    let writer = BufferedAppendStreamWriter::from_manager(
+        manager,
+        "test://buffered-writer-max-open",
+        BufferedAppendStreamWriterConfig {
+            batch_coalesce_window: std::time::Duration::from_millis(1),
+            max_open_duration: Some(std::time::Duration::from_millis(50)),
+            ..BufferedAppendStreamWriterConfig::default()
+        },
+    );
+
+    let first = writer.append(b"one".to_vec()).await?;
+    tokio::time::sleep(std::time::Duration::from_millis(120)).await;
+    let second = writer.append(b"two".to_vec()).await?;
+    writer.finalize("test-complete").await?;
+
+    assert_ne!(first.material_id, second.material_id);
+    assert_eq!((first.offset_start, first.offset_end), (0, 3));
+    assert_eq!((second.offset_start, second.offset_end), (0, 3));
+    Ok(())
+}
+
+#[sinex_test]
 async fn prime_begins_material_without_staging_content(ctx: TestContext) -> TestResult<()> {
     let ctx = ctx.with_nats().shared().await?;
     let namespace = format!("buffered-append-prime-{}", Uuid::now_v7());
@@ -476,5 +548,41 @@ async fn prime_begins_material_without_staging_content(ctx: TestContext) -> Test
 
     assert_eq!(first.offset_start, 0);
     assert_eq!(first.offset_end, b"first-record\n".len() as i64);
+    Ok(())
+}
+
+// Preserved from the pre-existing split test file during inline extraction.
+#[sinex_test]
+async fn oversized_slice_rejection_does_not_mutate_local_stage(
+    ctx: TestContext,
+) -> TestResult<()> {
+    let ctx = ctx.with_nats().shared().await?;
+    let work_dir = tempfile::tempdir()?;
+    let manager = AcquisitionManager::with_defaults(ctx.nats_client(), "oversized-test")
+        .with_work_dir(work_dir.path());
+    let mut handle = manager.begin_material("test://oversized").await?;
+    let oversized = vec![0u8; AcquisitionManager::MAX_NATS_PAYLOAD_BYTES + 1];
+
+    let error = manager
+        .append_slice(&mut handle, &oversized)
+        .await
+        .expect_err("oversized slice should be rejected before mutating local state");
+
+    assert!(
+        error.to_string().contains("exceeds NATS max payload"),
+        "unexpected error: {error}"
+    );
+    assert_eq!(handle.bytes_written(), 0);
+    assert_eq!(
+        handle.hasher.clone().finalize().to_hex().to_string(),
+        blake3::Hasher::new().finalize().to_hex().to_string()
+    );
+
+    let metadata = tokio::fs::metadata(handle.temp_path()).await?;
+    assert_eq!(
+        metadata.len(),
+        0,
+        "oversized rejection must not stage bytes locally"
+    );
     Ok(())
 }
