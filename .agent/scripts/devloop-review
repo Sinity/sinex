@@ -511,7 +511,9 @@ fi
 
 root_sprawl="$(
   if [[ -f "$contract" ]] && command -v jq >/dev/null 2>&1; then
-    mapfile -t allowed_root_files < <(jq -r '.active_packet_files[] | select(contains("/") | not)' "$contract")
+    mapfile -t allowed_root_files < <(
+      jq -r '((.active_packet_files // []) + (.optional_active_packet_files // []))[] | select(contains("/") | not)' "$contract"
+    )
   else
     allowed_root_files=(
       README.md INDEX.md ACTIVE-LOOP.md QUEUE.md RUNBOOK.md OPERATING-LOG.md

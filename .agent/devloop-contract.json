@@ -18,6 +18,7 @@
     ".agent/conductor-devloop/PROCESS.md",
     ".agent/conductor-devloop/TACTICS.md",
     ".agent/conductor-devloop/VELOCITY.md",
+    ".agent/conductor-devloop/SIDE-RESEARCH.md",
     ".agent/conductor-devloop/ADVERSARIAL-REVIEW.md",
     ".agent/conductor-devloop/SELF-PROMPTS.md"
   ],
@@ -34,6 +35,7 @@
     "ACTIVE-LOOP.md",
     "AHEAD.md",
     "QUEUE.md",
+    "SIDE-RESEARCH.md",
     "RUNBOOK.md",
     "OPERATING-LOG.md",
     "DEMO-RADAR.md",
@@ -45,6 +47,9 @@
     "TACTICS.md",
     "VELOCITY.md",
     "SELF-PROMPTS.md"
+  ],
+  "optional_active_packet_files": [
+    "RESEARCH-BACKLOG.md"
   ],
   "generated_packet_files": [
     "EVENTS.jsonl",
