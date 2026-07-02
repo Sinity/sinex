@@ -3,7 +3,12 @@
 use sinex_primitives::SinexError;
 use tracing::error;
 
-pub(crate) const NATS_PUBLISH_PAYLOAD_HARD_LIMIT_BYTES: usize = 1024 * 1024;
+/// Conservative publish budget below the server's 1 MiB `max_payload`.
+///
+/// NATS enforces the complete publish frame, so a serialized payload that is
+/// just under 1 MiB can still trip the server once headers and protocol framing
+/// are included. Keep this aligned with the event-intent splitter budget.
+pub(crate) const NATS_PUBLISH_PAYLOAD_HARD_LIMIT_BYTES: usize = 900 * 1024;
 
 pub(crate) fn ensure_nats_payload_fits(
     context: &'static str,
