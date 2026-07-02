@@ -586,6 +586,11 @@ fn command_path(cmd: &Commands) -> String {
             OpsCommands::Debt(debt_cmd) => match debt_cmd {
                 sinexctl::commands::ops::DebtCommands::List { .. } => "ops debt list".to_string(),
             },
+            OpsCommands::Catchup(catchup_cmd) => match catchup_cmd {
+                sinexctl::commands::ops::CatchupCommands::Status { .. } => {
+                    "ops catchup status".to_string()
+                }
+            },
             OpsCommands::Evidence(evidence_cmd) => match evidence_cmd {
                 sinexctl::commands::ops::EvidenceCommands::Compile { .. } => {
                     "ops evidence compile".to_string()
