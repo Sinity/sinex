@@ -14,7 +14,7 @@ use tokio::{
 use tracing::{debug, info, warn};
 
 use sinex_db::DbPoolExt;
-use sinex_primitives::{Timestamp, Uuid};
+use sinex_primitives::{Id, Timestamp, Uuid};
 
 use super::{MaterialAssembler, state};
 use crate::event_engine::{EventEngineResult, SinexError};
@@ -22,6 +22,8 @@ use crate::event_engine::{EventEngineResult, SinexError};
 const STALE_ASSEMBLY_CHECK_INTERVAL: std::time::Duration = std::time::Duration::from_mins(1);
 const STALE_REGISTRY_RECONCILE_LIMIT: i64 = 128;
 const ORPHANED_SENSING_REASON: &str = "orphaned_sensing_material";
+const ORPHANED_SELF_OBSERVATION_RECOVERY_REASON: &str =
+    "orphaned_self_observation_material_recovered_partial";
 
 pub(super) type MaterialTaskOutcome = (
     &'static str,
@@ -366,6 +368,15 @@ impl MaterialAssembler {
                 elapsed_secs,
                 "Reconciling orphaned sensing source material with no active assembly state"
             );
+            if is_self_observation_material(&row.source_identifier) {
+                self.recover_orphaned_self_observation_material(
+                    material_id,
+                    &row.source_identifier,
+                    elapsed_secs,
+                )
+                .await?;
+                continue;
+            }
             self.route_material_error(
                 material_id,
                 ORPHANED_SENSING_REASON,
@@ -383,6 +394,41 @@ impl MaterialAssembler {
         }
 
         Ok(())
+    }
+
+    async fn recover_orphaned_self_observation_material(
+        &self,
+        material_id: Uuid,
+        source_identifier: &str,
+        elapsed_secs: i64,
+    ) -> EventEngineResult<()> {
+        info!(
+            material_id = %material_id,
+            source_identifier,
+            elapsed_secs,
+            "Marking orphaned self-observation material as recovered_partial"
+        );
+        self.pool
+            .source_materials()
+            .mark_as_recovered_partial(
+                Id::from_uuid(material_id),
+                ORPHANED_SELF_OBSERVATION_RECOVERY_REASON,
+                serde_json::json!({
+                    "orphaned_sensing_material": {
+                        "source_identifier": source_identifier,
+                        "elapsed_seconds": elapsed_secs,
+                        "timeout_seconds": self.slice_arrival_timeout.as_secs(),
+                        "dlq_policy": "suppressed_self_observation_restart_orphan"
+                    }
+                }),
+            )
+            .await
+            .map_err(|error| {
+                SinexError::database("Failed to mark orphaned self-observation material recovered_partial")
+                    .with_context("material_id", material_id.to_string())
+                    .with_context("source_identifier", source_identifier.to_string())
+                    .with_source(error)
+            })
     }
 
     /// Scan state root for orphaned temp files from crashed/terminated assemblies.
@@ -490,6 +536,10 @@ impl MaterialAssembler {
 
         Ok(())
     }
+}
+
+fn is_self_observation_material(source_identifier: &str) -> bool {
+    source_identifier.starts_with("sinex.self-observation.")
 }
 
 #[cfg(test)]
