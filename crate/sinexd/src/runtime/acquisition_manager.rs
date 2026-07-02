@@ -31,7 +31,7 @@ use tokio::fs::{File, OpenOptions};
 use tokio::io::AsyncWriteExt;
 use tokio::sync::{Mutex, mpsc, oneshot};
 use tokio::time::sleep;
-use tracing::{debug, info, warn};
+use tracing::{debug, error, info, warn};
 
 // Keep SOURCE_MATERIAL stream caps aligned with the Nix bootstrap path. The current
 // nats CLI rejects --max-bytes values above signed 32-bit range.
@@ -492,6 +492,7 @@ impl AcquisitionManager {
             SOURCE_MATERIAL_BEGIN_SUBJECT.as_str(),
         );
         let payload = serde_json::to_vec(&msg)?;
+        Self::ensure_source_material_frame_payload_fits("begin", &subject, payload.len())?;
         let mut headers = async_nats::HeaderMap::new();
         transport::insert_transport_class_headers(&mut headers, transport::Class::SourceMaterial);
 
@@ -721,6 +722,7 @@ impl AcquisitionManager {
     /// The actual NATS default is 1MB but we use a conservative limit to account for
     /// headers and protocol overhead.
     const MAX_NATS_PAYLOAD_BYTES: usize = 512 * 1024;
+    const MAX_SOURCE_MATERIAL_FRAME_PAYLOAD_BYTES: usize = 1024 * 1024;
 
     /// Physical material-slice payload target. Keep this below
     /// `MAX_NATS_PAYLOAD_BYTES` so headers and server framing cannot push a
@@ -749,6 +751,7 @@ impl AcquisitionManager {
             self.namespace.as_deref(),
             source_material_slice_subject(material_id).as_str(),
         );
+        Self::ensure_source_material_frame_payload_fits("slice", &subject, data.len())?;
 
         // Add headers
         let mut headers = async_nats::HeaderMap::new();
@@ -879,6 +882,7 @@ impl AcquisitionManager {
             SOURCE_MATERIAL_END_SUBJECT.as_str(),
         );
         let payload = serde_json::to_vec(&msg)?;
+        Self::ensure_source_material_frame_payload_fits("end", &subject, payload.len())?;
         let mut headers = async_nats::HeaderMap::new();
         transport::insert_transport_class_headers(&mut headers, transport::Class::SourceMaterial);
 
@@ -898,6 +902,34 @@ impl AcquisitionManager {
             "Published material end"
         );
         Ok(())
+    }
+
+    fn ensure_source_material_frame_payload_fits(
+        frame_kind: &'static str,
+        subject: &str,
+        payload_bytes: usize,
+    ) -> RuntimeResult<()> {
+        if payload_bytes <= Self::MAX_SOURCE_MATERIAL_FRAME_PAYLOAD_BYTES {
+            return Ok(());
+        }
+
+        error!(
+            frame_kind,
+            subject,
+            payload_bytes,
+            max_payload_bytes = Self::MAX_SOURCE_MATERIAL_FRAME_PAYLOAD_BYTES,
+            "Refusing oversized source-material frame before NATS disconnect"
+        );
+        Err(SinexError::validation(
+            "source-material frame exceeds NATS hard payload limit",
+        )
+        .with_context("frame_kind", frame_kind)
+        .with_context("subject", subject.to_string())
+        .with_context("payload_bytes", payload_bytes.to_string())
+        .with_context(
+            "max_payload_bytes",
+            Self::MAX_SOURCE_MATERIAL_FRAME_PAYLOAD_BYTES.to_string(),
+        ))
     }
 
     /// Check if rotation is needed (ported from `MaterialRotationManager`)
@@ -1630,7 +1662,7 @@ mod tests {
         BufferedAppendStreamWriterConfig, RotationPolicy,
     };
     use serde_json::json;
-    use sinex_primitives::{Bytes, Seconds};
+    use sinex_primitives::{Bytes, Seconds, Uuid, temporal::Timestamp};
     use std::sync::{
         Arc,
         atomic::{AtomicUsize, Ordering},
@@ -1736,6 +1768,39 @@ mod tests {
             2,
             "failed bootstrap should not poison future retries"
         );
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn oversized_material_begin_frame_is_rejected_before_nats(
+        ctx: TestContext,
+    ) -> TestResult<()> {
+        let ctx = ctx.with_nats().shared().await?;
+        let namespace = format!("oversized-material-begin-{}", Uuid::now_v7());
+        let manager = AcquisitionManager::new_with_namespace(
+            ctx.nats_client(),
+            RotationPolicy::default(),
+            "oversized-material-begin-test".to_string(),
+            Some(namespace),
+        );
+
+        let error = manager
+            .publish_begin(
+                Uuid::now_v7(),
+                "test://oversized-material-begin",
+                json!({
+                    "oversized": "x".repeat(
+                        AcquisitionManager::MAX_SOURCE_MATERIAL_FRAME_PAYLOAD_BYTES + 1
+                    ),
+                }),
+                Timestamp::now(),
+            )
+            .await
+            .expect_err("oversized begin metadata should fail before NATS publish");
+
+        let error_text = error.to_string();
+        assert!(error_text.contains("source-material frame exceeds NATS hard payload limit"));
+        assert!(error_text.contains("begin"));
         Ok(())
     }
 
