@@ -148,12 +148,18 @@ async fn runtime_binary_inputs_exclude_test_only_source_modules() -> TestResult<
     let workspace = find_workspace_root()?;
     let inputs = collect_runtime_binary_input_paths(&workspace, "sinexd")?;
     let test_module = workspace.join("crate/sinexd/src/runtime/automaton/adapter/tests/mod.rs");
+    let sibling_test_module = workspace.join("crate/sinexd/src/api/handlers/sources_test.rs");
 
     assert!(
         !inputs.iter().any(|path| path == &test_module),
         "runtime binary inputs must not include #[cfg(test)] source modules; \
          editing them does not relink the runtime binary and would falsely \
          leave tests blocked on a stale-binary guard"
+    );
+    assert!(
+        !inputs.iter().any(|path| path == &sibling_test_module),
+        "runtime binary inputs must not include *_test.rs sibling modules; \
+         this is the preferred split-test layout and does not relink sinexd"
     );
     Ok(())
 }

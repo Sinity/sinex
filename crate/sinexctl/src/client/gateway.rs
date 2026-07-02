@@ -135,15 +135,17 @@ use sinex_primitives::rpc::{
         SOURCES_CONTINUITY_LIST_METHOD, SOURCES_CONTINUITY_METHOD, SOURCES_COVERAGE_METHOD,
         SOURCES_DRIFT_LIST_METHOD, SOURCES_LIST_METHOD, SOURCES_PACKAGE_COMPLETENESS_METHOD,
         SOURCES_PRESETS_LIST_METHOD, SOURCES_READINESS_GET_METHOD, SOURCES_READINESS_LIST_METHOD,
-        SOURCES_SHOW_METHOD, SOURCES_STAGE_METHOD, SourcesAnnotateRequest, SourcesAnnotateResponse,
-        SourcesArchiveRequest, SourcesArchiveResponse, SourcesBindingsListRequest,
-        SourcesBindingsListResponse, SourcesContinuityRequest, SourcesContinuityResponse,
-        SourcesCoverageRequest, SourcesCoverageResponse, SourcesDriftListRequest,
-        SourcesDriftListResponse, SourcesListRequest, SourcesListResponse,
-        SourcesPackageCompletenessRequest, SourcesPackageCompletenessResponse,
-        SourcesPresetsListRequest, SourcesPresetsListResponse, SourcesReadinessGetRequest,
-        SourcesReadinessGetResponse, SourcesReadinessListRequest, SourcesReadinessListResponse,
-        SourcesShowRequest, SourcesShowResponse, SourcesStageRequest, SourcesStageResponse,
+        SOURCES_REMEDIATION_PLAN_METHOD, SOURCES_SHOW_METHOD, SOURCES_STAGE_METHOD,
+        SourcesAnnotateRequest, SourcesAnnotateResponse, SourcesArchiveRequest,
+        SourcesArchiveResponse, SourcesBindingsListRequest, SourcesBindingsListResponse,
+        SourcesContinuityRequest, SourcesContinuityResponse, SourcesCoverageRequest,
+        SourcesCoverageResponse, SourcesDriftListRequest, SourcesDriftListResponse,
+        SourcesListRequest, SourcesListResponse, SourcesPackageCompletenessRequest,
+        SourcesPackageCompletenessResponse, SourcesPresetsListRequest, SourcesPresetsListResponse,
+        SourcesReadinessGetRequest, SourcesReadinessGetResponse, SourcesReadinessListRequest,
+        SourcesReadinessListResponse, SourcesRemediationPlanRequest,
+        SourcesRemediationPlanResponse, SourcesShowRequest, SourcesShowResponse,
+        SourcesStageRequest, SourcesStageResponse,
     },
     system::{
         SYSTEM_HEALTH_METHOD, SYSTEM_PING_METHOD, SYSTEM_VERSION_METHOD, SystemHealthRequest,
@@ -1313,6 +1315,14 @@ impl GatewayClient {
         request: SourcesCoverageRequest,
     ) -> Result<SourcesCoverageResponse> {
         self.call_typed(SOURCES_COVERAGE_METHOD, &request).await
+    }
+
+    pub async fn sources_remediation_plan(
+        &self,
+        request: SourcesRemediationPlanRequest,
+    ) -> Result<SourcesRemediationPlanResponse> {
+        self.call_typed(SOURCES_REMEDIATION_PLAN_METHOD, &request)
+            .await
     }
 
     pub async fn sources_package_completeness(&self) -> Result<SourcesPackageCompletenessResponse> {
