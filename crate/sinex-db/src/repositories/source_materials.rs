@@ -1292,11 +1292,12 @@ impl SourceMaterialRepository<'_> {
     /// `material_kind` values for the same identifier so callers cannot get a
     /// healthy storage kind silently masking a stale or failed kind. The kind
     /// list is preserved in
-    /// `evidence.material_kinds` for diagnostics. The derivation runs purely
-    /// from `raw.source_material_registry` and `core.events`; source-binding
-    /// declarations live in Nix/config manifests and parser/source-worker run
-    /// evidence is owned by operation/debt surfaces. Caveats record those
-    /// join boundaries so readiness does not pretend to be a full job monitor.
+    /// `evidence.material_kinds` for diagnostics. The derivation runs from
+    /// `raw.source_material_registry`, including its trigger-maintained parsed
+    /// event count; source-binding declarations live in Nix/config manifests
+    /// and parser/source-worker run evidence is owned by operation/debt
+    /// surfaces. Caveats record those join boundaries so readiness does not
+    /// pretend to be a full job monitor.
     ///
     /// `stale_after_seconds` controls when a recent-success source flips to
     /// `Stale`. Defaults to 7 days when `None`.
@@ -1333,6 +1334,7 @@ impl SourceMaterialRepository<'_> {
                 COUNT(*) FILTER (WHERE sm.status = 'failed')            AS "failed_count!",
                 COUNT(*) FILTER (WHERE sm.status = 'cancelled')         AS "cancelled_count!",
                 COUNT(*) FILTER (WHERE sm.status = 'recovered_partial') AS "partial_count!",
+                COALESCE(SUM(sm.parsed_event_count), 0)::bigint         AS "parsed_event_count!",
                 MAX(sm.staged_at) FILTER (WHERE sm.status = 'completed') AS "last_success_at: time::OffsetDateTime"
             FROM raw.source_material_registry sm
             WHERE $1::text IS NULL OR sm.source_identifier = $1
@@ -1359,24 +1361,6 @@ impl SourceMaterialRepository<'_> {
             {
                 continue;
             }
-
-            // Parsed-event count: count events referencing any material from
-            // this source identifier across ALL material_kinds — matches the
-            // identifier-granular aggregation above.
-            let parsed_event_count = sqlx::query_scalar!(
-                r#"
-                SELECT COUNT(*)::BIGINT AS "count!"
-                FROM core.events e
-                WHERE e.source_material_id IN (
-                    SELECT id FROM raw.source_material_registry
-                    WHERE source_identifier = $1
-                )
-                "#,
-                row.source_identifier,
-            )
-            .fetch_one(self.pool)
-            .await
-            .map_err(|e| db_error(e, "count parsed events for readiness"))?;
 
             let freshness_seconds = row.last_success_at.map(|ts| (now - ts).whole_seconds());
 
@@ -1422,7 +1406,7 @@ impl SourceMaterialRepository<'_> {
                     evidence_ref: None,
                 });
                 SourceReadinessStatus::Partial
-            } else if parsed_event_count == 0 && row.completed_count > 0 {
+            } else if row.parsed_event_count == 0 && row.completed_count > 0 {
                 caveats.push(SourceCaveat {
                     code: caveat_codes::MATERIAL_STAGED_UNPARSED.to_string(),
                     severity: CaveatSeverity::Degraded,
@@ -1475,7 +1459,7 @@ impl SourceMaterialRepository<'_> {
                 #[allow(clippy::cast_sign_loss)]
                 material_count: row.material_count.max(0) as u64,
                 #[allow(clippy::cast_sign_loss)]
-                parsed_event_count: Some(parsed_event_count.max(0) as u64),
+                parsed_event_count: Some(row.parsed_event_count.max(0) as u64),
                 last_success_at: row.last_success_at.map(|ts| ts.to_string()),
                 caveats,
                 evidence,
