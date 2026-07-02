@@ -118,6 +118,40 @@ async fn context_window_measures_duration_since_from_until_bound()
 }
 
 #[sinex_test]
+async fn context_diversity_merge_adds_missing_sources_once() -> xtask::sandbox::TestResult<()> {
+    let mut event_cards = EventCardListView {
+        schema_version: EVENT_CARD_LIST_SCHEMA_VERSION.to_string(),
+        count: 1,
+        cards: vec![context_event("sinexd.event_engine", "batch.persisted")],
+        next_cursor: None,
+        total_estimate: None,
+    };
+
+    merge_context_diversity_cards(
+        &mut event_cards,
+        vec![
+            context_event("shell.atuin", "command.executed"),
+            context_event("shell.atuin", "command.executed"),
+        ],
+    );
+
+    let sources = grouped_context_sources(&event_cards.cards);
+    assert_eq!(event_cards.count, 2);
+    assert_eq!(sources.len(), 2);
+    assert!(sources
+        .iter()
+        .any(|(source, _)| source.as_str() == "shell.atuin"));
+    assert_eq!(
+        sources
+            .iter()
+            .filter(|(source, _)| source.as_str() == "shell.atuin")
+            .count(),
+        1
+    );
+    Ok(())
+}
+
+#[sinex_test]
 async fn context_machine_output_rejects_ndjson() -> xtask::sandbox::TestResult<()> {
     let event_cards = EventCardListView {
         schema_version: EVENT_CARD_LIST_SCHEMA_VERSION.to_string(),
