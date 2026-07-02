@@ -214,6 +214,62 @@ impl MaterialAssembler {
             })
     }
 
+    async fn mark_timeout_material_recovered_partial_if_eventful(
+        &self,
+        material_id: Uuid,
+        reason: &str,
+    ) -> EventEngineResult<bool> {
+        if reason != "slice_arrival_timeout" {
+            return Ok(false);
+        }
+
+        let id: Id<SourceMaterialRecord> = Id::from_uuid(material_id);
+        let parsed_event_count = self
+            .pool
+            .source_materials()
+            .parsed_event_count(id)
+            .await
+            .map_err(|error| {
+                SinexError::database("Failed to read material parsed event count")
+                    .with_context("material_id", material_id.to_string())
+                    .with_context("failure_reason", reason)
+                    .with_source(error)
+            })?;
+
+        if parsed_event_count <= 0 {
+            return Ok(false);
+        }
+
+        self.pool
+            .source_materials()
+            .mark_as_recovered_partial(
+                id,
+                "slice_arrival_timeout_with_admitted_events",
+                serde_json::json!({
+                    "failure_reason": reason,
+                    "timeout_partial_recovery": {
+                        "parsed_event_count": parsed_event_count,
+                        "policy": "material_had_admitted_events_before_timeout"
+                    }
+                }),
+            )
+            .await
+            .map_err(|error| {
+                SinexError::database("Failed to mark timeout material recovered_partial")
+                    .with_context("material_id", material_id.to_string())
+                    .with_context("failure_reason", reason)
+                    .with_context("parsed_event_count", parsed_event_count.to_string())
+                    .with_source(error)
+            })?;
+
+        info!(
+            material_id = %material_id,
+            parsed_event_count,
+            "Marked timed-out source material as recovered_partial because events were already admitted"
+        );
+        Ok(true)
+    }
+
     /// Finalize a failed material: mark as failed, clean up state, and remove from active map
     pub(super) async fn finalize_failed_material(&self, material_id: Uuid, reason: &str) {
         let FailureCleanupClaim::Claimed { resume_phase } =
@@ -254,6 +310,23 @@ impl MaterialAssembler {
             material_id = %material_id,
             failure_reason = reason,
         );
+
+        match self
+            .mark_timeout_material_recovered_partial_if_eventful(material_id, reason)
+            .await
+        {
+            Ok(true) => {
+                self.cleanup_state(material_id).await;
+                let _ = self.assembler_state.remove(&material_id);
+                return Ok(());
+            }
+            Ok(false) => {}
+            Err(error) => {
+                self.revert_failure_cleanup_start(material_id, resume_phase)
+                    .await;
+                return Err(error);
+            }
+        }
 
         if let Err(error) = self.mark_material_failed_checked(material_id, reason).await {
             self.revert_failure_cleanup_start(material_id, resume_phase)
