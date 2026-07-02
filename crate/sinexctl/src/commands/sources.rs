@@ -1,10 +1,11 @@
 use clap::Args;
 use console::style;
 use serde::{Deserialize, Serialize};
-use sinex_primitives::domain::SourceMaterialFormat;
+use sinex_primitives::domain::{MaterialStatus, SourceMaterialFormat};
 use sinex_primitives::rpc::sources::{
-    SourcesCoverageRequest, SourcesCoverageResponse, SourcesListRequest, SourcesListResponse,
-    SourcesShowRequest, SourcesShowResponse, SourcesStageRequest, SourcesStageResponse,
+    SourceMaterialDetail, SourcesCoverageRequest, SourcesCoverageResponse, SourcesListRequest,
+    SourcesListResponse, SourcesShowRequest, SourcesShowResponse, SourcesStageRequest,
+    SourcesStageResponse,
 };
 
 use sinex_primitives::Timestamp;
@@ -79,6 +80,7 @@ impl SourcesCommand {
             SourcesSubcommand::List(cmd) => cmd.execute(client, format).await,
             SourcesSubcommand::Show(cmd) => cmd.execute(client, format).await,
             SourcesSubcommand::Coverage(cmd) => cmd.execute(client, format).await,
+            SourcesSubcommand::RemediationPlan(cmd) => cmd.execute(client, format).await,
             SourcesSubcommand::Annotate(cmd) => cmd.execute(client, format).await,
             SourcesSubcommand::Archive(cmd) => cmd.execute(client, format).await,
             SourcesSubcommand::Continuity(cmd) => cmd.execute(client, format).await,
@@ -101,6 +103,9 @@ pub enum SourcesSubcommand {
     Show(ShowCommand),
     /// Show temporal coverage of source materials
     Coverage(CoverageCommand),
+    /// Plan read-only source-material remediation actions
+    #[command(name = "remediation-plan")]
+    RemediationPlan(RemediationPlanCommand),
     /// Annotate a source material with notes and tags
     Annotate(AnnotateCommand),
     /// Archive a staged source material (dry-run with --dry-run)
@@ -242,6 +247,8 @@ pub struct ListCommand {
 
 const SOURCE_MATERIAL_LIST_SCHEMA_VERSION: &str = "sinex.source-material-list/v1";
 const SOURCE_COVERAGE_LIST_SCHEMA_VERSION: &str = "sinex.source-coverage-list/v1";
+const SOURCE_MATERIAL_REMEDIATION_PLAN_SCHEMA_VERSION: &str =
+    "sinex.source-material-remediation-plan/v1";
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct SourceMaterialListView {
@@ -277,6 +284,38 @@ impl SourceCoverageListView {
             sources,
         }
     }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct SourceMaterialRemediationPlanView {
+    schema_version: String,
+    count: usize,
+    items: Vec<SourceMaterialRemediationItemView>,
+}
+
+impl SourceMaterialRemediationPlanView {
+    fn new(items: Vec<SourceMaterialRemediationItemView>) -> Self {
+        let count = items.len();
+        Self {
+            schema_version: SOURCE_MATERIAL_REMEDIATION_PLAN_SCHEMA_VERSION.to_string(),
+            count,
+            items,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct SourceMaterialRemediationItemView {
+    material_id: String,
+    source_identifier: String,
+    status: MaterialStatus,
+    event_count: i64,
+    failure_reason: Option<String>,
+    recovery_reason: Option<String>,
+    decision: String,
+    severity: String,
+    inspect_command: String,
+    suggested_action: String,
 }
 
 impl ListCommand {
@@ -350,6 +389,185 @@ fn format_source_materials_table(response: &SourcesListResponse) -> String {
             events,
             staged_at.to_string(),
             staged_by.to_string(),
+        ]);
+    }
+
+    let mut table = builder.build();
+    table.with(Style::rounded());
+    table.to_string()
+}
+
+// ── Remediation plan ──────────────────────────────────────────────────────
+
+/// Plan read-only remediation actions for source-material failure residue.
+#[derive(Debug, Args)]
+pub struct RemediationPlanCommand {
+    /// Filter by source identifier, including material-suffixed rows for that source.
+    #[arg(long)]
+    source: Option<String>,
+
+    /// Maximum number of candidate materials to inspect.
+    #[arg(long, default_value_t = 50)]
+    limit: i64,
+
+    /// Include failed materials that have not admitted any events.
+    #[arg(long)]
+    include_empty: bool,
+}
+
+impl RemediationPlanCommand {
+    async fn execute(&self, client: &GatewayClient, format: OutputFormat) -> Result<()> {
+        let effective_limit = self.limit.max(0);
+        let mut candidates = Vec::new();
+        for status in [MaterialStatus::Failed, MaterialStatus::RecoveredPartial] {
+            let response = client
+                .sources_list(SourcesListRequest {
+                    status: Some(status.as_str().to_string()),
+                    source_identifier: self.source.clone(),
+                    limit: Some(effective_limit),
+                })
+                .await?;
+            candidates.extend(response.materials);
+        }
+
+        candidates.retain(|material| {
+            self.include_empty || material.event_count.is_some_and(|count| count > 0)
+        });
+        candidates.sort_by(|left, right| right.staged_at.cmp(&left.staged_at));
+        candidates.truncate(usize::try_from(effective_limit).unwrap_or(0));
+
+        let mut items = Vec::with_capacity(candidates.len());
+        for material in candidates {
+            let show = client
+                .sources_show(SourcesShowRequest {
+                    material_id: material.id.clone(),
+                })
+                .await?;
+            items.push(remediation_item_from_material(&show.material));
+        }
+
+        let plan = SourceMaterialRemediationPlanView::new(items);
+        let envelope = ViewEnvelope::new("sinexctl.sources.remediation_plan", plan.clone())
+            .with_query_echo(serde_json::json!({
+                "source": self.source,
+                "limit": self.limit,
+                "include_empty": self.include_empty,
+            }));
+
+        if print_finite_envelope(&envelope, format)? {
+            return Ok(());
+        }
+        CommandOutput::single(plan, format_remediation_plan_table).display(&format)?;
+        Ok(())
+    }
+}
+
+fn remediation_item_from_material(
+    material: &SourceMaterialDetail,
+) -> SourceMaterialRemediationItemView {
+    let event_count = material.event_count.unwrap_or(0);
+    let failure_reason = material_failure_reason(material);
+    let recovery_reason = material_recovery_reason(material);
+    let (decision, severity, suggested_action) =
+        remediation_decision(material.status, event_count, failure_reason.as_deref());
+
+    SourceMaterialRemediationItemView {
+        material_id: material.id.clone(),
+        source_identifier: material.source_identifier.clone(),
+        status: material.status,
+        event_count,
+        failure_reason,
+        recovery_reason,
+        decision: decision.to_string(),
+        severity: severity.to_string(),
+        inspect_command: format!("sinexctl sources show {}", material.id),
+        suggested_action: suggested_action.to_string(),
+    }
+}
+
+fn remediation_decision(
+    status: MaterialStatus,
+    event_count: i64,
+    failure_reason: Option<&str>,
+) -> (&'static str, &'static str, &'static str) {
+    match status {
+        MaterialStatus::RecoveredPartial => (
+            "review_partial_recovery",
+            "medium",
+            "inspect recovered partial material; keep if admitted events are useful, otherwise plan replay or re-ingest",
+        ),
+        MaterialStatus::Failed if event_count > 0 => (
+            "inspect_failed_eventful",
+            "high",
+            "inspect failed material with admitted events; decide whether to recover, replay, or archive intentionally",
+        ),
+        MaterialStatus::Failed if failure_reason == Some("orphaned_sensing_material") => (
+            "purge_or_archive_empty_failure",
+            "low",
+            "inspect empty orphaned failure; usually safe to purge related DLQ residue or archive intentionally",
+        ),
+        MaterialStatus::Failed => (
+            "inspect_failed_empty",
+            "medium",
+            "inspect failed material; no admitted events are recorded, so replay or source fix is likely required",
+        ),
+        _ => (
+            "no_action",
+            "low",
+            "material is not a remediation candidate for this read-only plan",
+        ),
+    }
+}
+
+fn material_failure_reason(material: &SourceMaterialDetail) -> Option<String> {
+    metadata_string(&material.metadata, &["failure_reason"]).or_else(|| {
+        metadata_string(
+            &material.metadata,
+            &["timeout_partial_recovery", "failure_reason"],
+        )
+    })
+}
+
+fn material_recovery_reason(material: &SourceMaterialDetail) -> Option<String> {
+    metadata_string(&material.metadata, &["recovery_info", "recovery_reason"])
+}
+
+fn metadata_string(metadata: &serde_json::Value, path: &[&str]) -> Option<String> {
+    let mut current = metadata;
+    for key in path {
+        current = current.get(*key)?;
+    }
+    current.as_str().map(ToOwned::to_owned)
+}
+
+fn format_remediation_plan_table(plan: &SourceMaterialRemediationPlanView) -> String {
+    use tabled::{builder::Builder, settings::Style};
+
+    if plan.items.is_empty() {
+        return "No source material remediation candidates found.".to_string();
+    }
+
+    let mut builder = Builder::new();
+    builder.push_record([
+        "ID", "SOURCE", "STATUS", "EVENTS", "SEVERITY", "REASON", "DECISION", "COMMAND",
+    ]);
+
+    for item in &plan.items {
+        let short_id = format!("{}...", &item.material_id[..8.min(item.material_id.len())]);
+        let reason = item
+            .failure_reason
+            .as_deref()
+            .or(item.recovery_reason.as_deref())
+            .unwrap_or("-");
+        builder.push_record([
+            short_id,
+            item.source_identifier.clone(),
+            item.status.to_string(),
+            item.event_count.to_string(),
+            item.severity.clone(),
+            reason.to_string(),
+            item.decision.clone(),
+            item.inspect_command.clone(),
         ]);
     }
 
