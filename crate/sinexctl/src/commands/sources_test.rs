@@ -70,6 +70,11 @@ fn fixture_coverage(source_identifier: &str) -> SourceCoverageEntry {
         latest_ts: Some("2026-06-01T01:00:00Z".to_string()),
         event_count: Some(7),
         material_count: Some(2),
+        completed_material_count: Some(2),
+        failed_material_count: Some(0),
+        sensing_material_count: Some(0),
+        cancelled_material_count: Some(0),
+        total_bytes: Some(256),
     }
 }
 
