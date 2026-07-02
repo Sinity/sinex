@@ -68,6 +68,18 @@ struct CoverageRow {
     earliest_ts: Option<OffsetDateTime>,
     latest_ts: Option<OffsetDateTime>,
     material_count: i64,
+    completed_material_count: i64,
+    failed_material_count: i64,
+    sensing_material_count: i64,
+    cancelled_material_count: i64,
+    total_bytes: i64,
+}
+
+#[cfg(test)]
+fn normalize_coverage_source_identifier(source_identifier: &str) -> &str {
+    source_identifier
+        .split_once("#material=")
+        .map_or(source_identifier, |(source, _)| source)
 }
 
 fn parse_material_storage_kind(raw: &str) -> Result<MaterialStorageKind> {
@@ -432,14 +444,19 @@ pub async fn handle_sources_coverage(
         CoverageRow,
         r#"
         SELECT
-            sm.source_identifier,
+            regexp_replace(sm.source_identifier, '#material=.*$', '') as "source_identifier!",
             sm.material_kind,
             MIN(sm.start_time) as "earliest_ts: _",
             MAX(sm.end_time) as "latest_ts: _",
-            COUNT(*) as "material_count!"
+            COUNT(*) as "material_count!",
+            COUNT(*) FILTER (WHERE sm.status = 'completed') as "completed_material_count!",
+            COUNT(*) FILTER (WHERE sm.status = 'failed') as "failed_material_count!",
+            COUNT(*) FILTER (WHERE sm.status = 'sensing') as "sensing_material_count!",
+            COUNT(*) FILTER (WHERE sm.status = 'cancelled') as "cancelled_material_count!",
+            COALESCE(SUM(sm.total_bytes), 0)::bigint as "total_bytes!"
         FROM raw.source_material_registry sm
-        GROUP BY sm.source_identifier, sm.material_kind
-        ORDER BY sm.source_identifier
+        GROUP BY regexp_replace(sm.source_identifier, '#material=.*$', ''), sm.material_kind
+        ORDER BY regexp_replace(sm.source_identifier, '#material=.*$', '')
         "#,
     )
     .fetch_all(pool)
@@ -459,6 +476,11 @@ pub async fn handle_sources_coverage(
                 latest_ts: row.latest_ts.map(|ts| ts.to_string()),
                 event_count: None,
                 material_count: Some(row.material_count),
+                completed_material_count: Some(row.completed_material_count),
+                failed_material_count: Some(row.failed_material_count),
+                sensing_material_count: Some(row.sensing_material_count),
+                cancelled_material_count: Some(row.cancelled_material_count),
+                total_bytes: Some(row.total_bytes),
             })
         })
         .collect::<Result<Vec<_>>>()?;

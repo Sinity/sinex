@@ -32,7 +32,7 @@ use sinex_primitives::views::{
 
 use crate::Result;
 use crate::client::GatewayClient;
-use crate::fmt::{CommandOutput, print_finite_envelope};
+use crate::fmt::{CommandOutput, format_bytes, print_finite_envelope};
 use crate::model::OutputFormat;
 
 use super::source_status::SourceStatusCommand;
@@ -469,12 +469,8 @@ fn format_coverage_table(response: &SourcesCoverageResponse) -> String {
 
     let mut builder = Builder::new();
     builder.push_record([
-        "SOURCE",
-        "KIND",
-        "EARLIEST",
-        "LATEST",
-        "EVENTS",
-        "MATERIALS",
+        "SOURCE", "KIND", "EARLIEST", "LATEST", "EVENTS", "MATERIALS", "DONE", "FAILED",
+        "SENSING", "BYTES",
     ]);
 
     for bucket in &response.sources {
@@ -486,6 +482,20 @@ fn format_coverage_table(response: &SourcesCoverageResponse) -> String {
         let materials = bucket
             .material_count
             .map_or_else(|| style("-").dim().to_string(), |c| c.to_string());
+        let completed = bucket
+            .completed_material_count
+            .map_or_else(|| style("-").dim().to_string(), |c| c.to_string());
+        let failed = bucket
+            .failed_material_count
+            .map_or_else(|| style("-").dim().to_string(), |c| c.to_string());
+        let sensing = bucket
+            .sensing_material_count
+            .map_or_else(|| style("-").dim().to_string(), |c| c.to_string());
+        let bytes = bucket
+            .total_bytes
+            .map_or_else(|| style("-").dim().to_string(), |bytes| {
+                format_bytes(u64::try_from(bytes).unwrap_or(0))
+            });
 
         builder.push_record([
             bucket.source_identifier.clone(),
@@ -494,6 +504,10 @@ fn format_coverage_table(response: &SourcesCoverageResponse) -> String {
             latest.to_string(),
             events,
             materials,
+            completed,
+            failed,
+            sensing,
+            bytes,
         ]);
     }
 

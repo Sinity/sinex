@@ -45,6 +45,26 @@ fn readiness(source_family: &str, source_identifier: &str) -> SourceReadiness {
 }
 
 #[sinex_test]
+async fn coverage_source_identifier_normalizer_collapses_material_suffixes()
+-> xtask::sandbox::TestResult<()> {
+    assert_eq!(
+        normalize_coverage_source_identifier(
+            "sinex.self-observation.browser.history#material=019f231e-1fb7-7a38-bf78-98854bc450bc"
+        ),
+        "sinex.self-observation.browser.history"
+    );
+    assert_eq!(
+        normalize_coverage_source_identifier("browser.history"),
+        "browser.history"
+    );
+    assert_eq!(
+        normalize_coverage_source_identifier("/realm/project/sinex/.agent/OPERATING-LOG.md"),
+        "/realm/project/sinex/.agent/OPERATING-LOG.md"
+    );
+    Ok(())
+}
+
+#[sinex_test]
 async fn stage_material_contract_records_package_mode_binding() -> xtask::sandbox::TestResult<()>
 {
     let request = SourcesStageRequest {

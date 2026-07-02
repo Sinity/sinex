@@ -764,6 +764,11 @@
             latest_ts: None,
             event_count,
             material_count,
+            completed_material_count: material_count,
+            failed_material_count: Some(0),
+            sensing_material_count: Some(0),
+            cancelled_material_count: Some(0),
+            total_bytes: Some(0),
         }
     }
 
