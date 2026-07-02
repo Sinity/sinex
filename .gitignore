@@ -54,9 +54,41 @@ crate/**/.sinex/
 xtask/.sinex/
 .direnv/
 
-# Claude Code (track includes, ignore ephemeral)
+# Agent operating surface: whitelist tracked scaffold/proof files, ignore live state.
+.agent/*
+!.agent/README.md
+!.agent/DEVLOOP.md
+!.agent/CONVENTIONS.md
+!.agent/devloop-contract.json
+!.agent/includes/
+!.agent/includes/**
+!.agent/scripts/
+!.agent/scripts/**
+!.agent/tools/
+!.agent/tools/**
+!.agent/conductor-devloop/
+.agent/conductor-devloop/*
+!.agent/conductor-devloop/README.md
+!.agent/conductor-devloop/INDEX.md
+!.agent/conductor-devloop/RUNBOOK.md
+!.agent/conductor-devloop/PROCESS.md
+!.agent/conductor-devloop/TACTICS.md
+!.agent/conductor-devloop/VELOCITY.md
+!.agent/conductor-devloop/ADVERSARIAL-REVIEW.md
+!.agent/conductor-devloop/SELF-PROMPTS.md
+!.agent/dev/
+.agent/dev/*
+!.agent/dev/README.md
+!.agent/dev/dev-source-bindings.json
+!.agent/dev/recall-artifacts/
+!.agent/dev/recall-artifacts/**
+!.agent/inbox/
+.agent/inbox/*
+!.agent/inbox/INDEX.md
+!.agent/scratch/
+.agent/scratch/*
+!.agent/scratch/README.md
 .agent/last-session-init.md
-.agent/scratch/
 .claude/worktrees/
 .claude/*.local.md
 .claude/*.local.json

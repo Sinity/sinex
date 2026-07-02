@@ -1,0 +1,220 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+usage() {
+  cat <<'EOF'
+Usage:
+  .agent/scripts/devloop-checkpoint [title]
+  .agent/scripts/devloop-checkpoint --slice <current-slice> <slice-contract> <next-action>
+  .agent/scripts/devloop-checkpoint --queue <title> <directive> <trigger> [status] [next-checkpoint]
+  .agent/scripts/devloop-checkpoint --queue-complete <title> <outcome>
+
+Record a reassessment marker, refresh the active slice projection, or manage
+QUEUE.md for deferred operator sequencing such as "after this, switch to meta".
+Queue operations keep the active directive channel concrete without adding
+another devloop primitive name.
+EOF
+}
+
+repo_root="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
+cd "$repo_root"
+
+queue_path=".agent/conductor-devloop/QUEUE.md"
+active_path=".agent/conductor-devloop/ACTIVE-LOOP.md"
+timestamp="$(date --iso-8601=seconds)"
+
+if [[ "${1:-}" == "-h" || "${1:-}" == "--help" ]]; then
+  usage
+  exit 0
+fi
+
+if [[ "${1:-}" == "--slice" ]]; then
+  if [[ "$#" -lt 4 ]]; then
+    usage >&2
+    exit 2
+  fi
+  current_slice="$2"
+  slice_contract="$3"
+  next_action="$4"
+  if [[ "$current_slice" =~ (^|[[:space:]])TODO(:|$) || "$slice_contract" =~ (^|[[:space:]])TODO(:|$) || "$next_action" =~ (^|[[:space:]])TODO(:|$) ]]; then
+    printf 'error: active slice fields must be concrete; refuse TODO placeholders\n' >&2
+    exit 2
+  fi
+  python3 - "$active_path" "$current_slice" "$slice_contract" "$next_action" <<'PY'
+import sys
+from pathlib import Path
+
+path = Path(sys.argv[1])
+current_slice, slice_contract, next_action = sys.argv[2:5]
+
+def replace_section(text: str, heading: str, replacement: str) -> str:
+    start = text.find(heading)
+    if start == -1:
+        if text and not text.endswith("\n"):
+            text += "\n"
+        return text + "\n" + replacement
+    next_start = text.find("\n## ", start + len(heading))
+    if next_start == -1:
+        return text[:start] + replacement
+    return text[:start] + replacement + text[next_start:]
+
+text = path.read_text(encoding="utf-8") if path.exists() else ""
+text = replace_section(text, "## Current Slice\n", f"## Current Slice\n\n{current_slice.rstrip()}\n")
+text = replace_section(text, "## Slice Contract\n", f"## Slice Contract\n\n{slice_contract.rstrip()}\n")
+text = replace_section(
+    text,
+    "## Current Focus\n",
+    "## Current Focus\n\n"
+    "Focus: Meta\n\n"
+    "Trigger: explicit devloop-checkpoint --slice\n\n"
+    f"Decision: {next_action.rstrip()}\n",
+)
+text = replace_section(text, "## Next Action\n", f"## Next Action\n\n1. {next_action.rstrip()}\n")
+path.parent.mkdir(parents=True, exist_ok=True)
+path.write_text(text, encoding="utf-8")
+PY
+  .agent/scripts/devloop-log "active slice refreshed" "Loop phase: reflect
+Focus: Meta
+Trigger: explicit devloop-checkpoint --slice
+Primary aim: keep ACTIVE-LOOP.md as the compact resume projection rather than a stale history archive
+Evidence touched: ACTIVE-LOOP.md Current Slice, Slice Contract, Next Action
+Action taken: refreshed active slice summary and contract
+Artifact/proof: .agent/conductor-devloop/ACTIVE-LOOP.md
+Velocity note: a context-cleared agent should resume from current state without rereading old proof-point archaeology
+Next decision: $next_action" >/dev/null
+  .agent/scripts/devloop-sync >/dev/null
+  printf 'updated active slice\n'
+  exit 0
+fi
+
+if [[ "${1:-}" == "--queue" ]]; then
+  if [[ "$#" -lt 4 ]]; then
+    usage >&2
+    exit 2
+  fi
+  title="$2"
+  directive="$3"
+  trigger="$4"
+  status="${5:-queued}"
+  next_checkpoint="${6:-promote into ACTIVE-LOOP.md when the trigger fires}"
+  if [[ "$status" =~ (^|[[:space:]])TODO(:|$) || "$directive" =~ (^|[[:space:]])TODO(:|$) || "$trigger" =~ (^|[[:space:]])TODO(:|$) || "$next_checkpoint" =~ (^|[[:space:]])TODO(:|$) ]]; then
+    printf 'error: queued directives must be concrete; refuse TODO placeholders\n' >&2
+    exit 2
+  fi
+  python3 - "$queue_path" "$timestamp" "$title" "$directive" "$trigger" "$status" "$next_checkpoint" <<'PY'
+import sys
+from pathlib import Path
+
+path = Path(sys.argv[1])
+timestamp, title, directive, trigger, status, next_checkpoint = sys.argv[2:8]
+path.parent.mkdir(parents=True, exist_ok=True)
+text = path.read_text(encoding="utf-8") if path.exists() else "# Deferred Directive Queue\n\nNo queued directives.\n"
+completed = ""
+live = text
+marker = "\n## Completed "
+if marker in text:
+    live, completed_tail = text.split(marker, 1)
+    completed = marker + completed_tail
+live = live.replace("\nNo queued directives.\n", "\n").rstrip()
+entry = f"""
+## Queued {timestamp} - {title}
+
+Directive: {directive}
+Trigger: {trigger}
+Status: {status}
+Next checkpoint: {next_checkpoint}
+"""
+if not live.strip():
+    live = "# Deferred Directive Queue\n\nThis ignored active-state file records operator sequencing directives and\nnext-after-current obligations that must survive compaction without replacing\nthe current slice prematurely."
+path.write_text(live.rstrip() + "\n" + entry.rstrip() + "\n" + completed, encoding="utf-8")
+PY
+  .agent/scripts/devloop-log "queued directive: $title" "Loop phase: reflect
+Focus: Direction
+Trigger: $trigger
+Primary aim: preserve deferred operator sequencing outside chat context
+Evidence touched: QUEUE.md
+Action taken: queued directive '$title'
+Artifact/proof: .agent/conductor-devloop/QUEUE.md Status: $status
+Velocity note: queue entry prevents compaction from turning after-current work into repeated immediate requests
+Next decision: $next_checkpoint" >/dev/null
+  .agent/scripts/devloop-sync >/dev/null
+  printf 'queued directive: %s\n' "$title"
+  exit 0
+fi
+
+if [[ "${1:-}" == "--queue-complete" ]]; then
+  if [[ "$#" -lt 3 ]]; then
+    usage >&2
+    exit 2
+  fi
+  title="$2"
+  outcome="$3"
+  if [[ "$title" =~ (^|[[:space:]])TODO(:|$) || "$outcome" =~ (^|[[:space:]])TODO(:|$) ]]; then
+    printf 'error: queue completion fields must be concrete; refuse TODO placeholders\n' >&2
+    exit 2
+  fi
+  python3 - "$queue_path" "$timestamp" "$title" "$outcome" <<'PY'
+import re
+import sys
+from pathlib import Path
+
+path = Path(sys.argv[1])
+timestamp, title, outcome = sys.argv[2:5]
+path.parent.mkdir(parents=True, exist_ok=True)
+text = path.read_text(encoding="utf-8") if path.exists() else "# Deferred Directive Queue\n\nNo queued directives.\n"
+completed = ""
+live = text
+marker = "\n## Completed "
+if marker in text:
+    live, completed_tail = text.split(marker, 1)
+    completed = marker + completed_tail
+pattern = re.compile(rf"\n## Queued [^\n]+ - {re.escape(title)}\n(?:.*?)(?=\n## Queued |\Z)", re.S)
+live, removed = pattern.subn("", live, count=1)
+live = live.replace("\nNo queued directives.\n", "\n").rstrip()
+if "## Queued " not in live:
+    live = live.rstrip() + "\n\nNo queued directives."
+completion = f"""
+## Completed {timestamp} - {title}
+
+Outcome: {outcome}
+"""
+path.write_text(live.rstrip() + "\n" + completion.rstrip() + "\n" + completed, encoding="utf-8")
+if removed == 0:
+    print(f"warning: no live queued directive matched {title!r}; recorded completion anyway", file=sys.stderr)
+PY
+  .agent/scripts/devloop-log "completed queued directive: $title" "Loop phase: reflect
+Focus: Direction
+Trigger: queued directive completed
+Primary aim: keep deferred sequencing state current
+Evidence touched: QUEUE.md
+Action taken: marked queued directive '$title' complete
+Artifact/proof: .agent/conductor-devloop/QUEUE.md
+Velocity note: completed queue entries should not keep steering future compacted sessions
+Next decision: $outcome" >/dev/null
+  .agent/scripts/devloop-sync >/dev/null
+  printf 'completed queued directive: %s\n' "$title"
+  exit 0
+fi
+
+title="${1:-checkpoint}"
+
+".agent/scripts/devloop-log" "$title"
+
+cat <<'EOF'
+The appended checkpoint is a transition marker, not completion proof.
+
+Append a body entry when the reassessment is concrete:
+  .agent/scripts/devloop-log "checkpoint: <slice>" "Loop phase: reflect
+  Focus: Direction
+  Trigger: checkpoint
+  Primary aim: ...
+  Evidence touched: ...
+  Action taken: ...
+  Artifact/proof: ...
+  Velocity note: what got faster; what still drags
+  Next decision: continue, pivot, dispatch, verify, artifact, or handoff"
+
+For deferred sequencing, use:
+  .agent/scripts/devloop-checkpoint --queue "<title>" "<directive>" "<trigger>"
+  .agent/scripts/devloop-checkpoint --queue-complete "<title>" "<outcome>"
+EOF

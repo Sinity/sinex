@@ -1,0 +1,90 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+if [[ "${1:-}" == "-h" || "${1:-}" == "--help" || "$#" -lt 4 ]]; then
+  cat <<'EOF'
+Usage: .agent/scripts/devloop-focus <from> <to> <trigger> <decision>
+
+Record a material conductor focus change in ACTIVE-LOOP.md and
+OPERATING-LOG.md. The decision text also replaces the active Next Action block
+so devloop-status remains a usable resume surface. Run devloop-sync afterward
+when generated packet files need refreshing.
+EOF
+  exit 0
+fi
+
+from="$1"
+to="$2"
+trigger="$3"
+decision="$4"
+
+repo_root="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
+cd "$repo_root"
+
+current=".agent/conductor-devloop"
+active="$current/ACTIVE-LOOP.md"
+timestamp="$(date --iso-8601=seconds)"
+
+mkdir -p "$current"
+
+.agent/scripts/devloop-log "focus ${from} -> ${to}" "Loop phase: reflect
+Focus: $from -> $to
+Trigger: $trigger
+Primary aim: keep the conductor loop trajectory explicit and current
+Evidence touched: ACTIVE-LOOP.md focus state
+Action taken: recorded focus transition
+Artifact/proof: ACTIVE-LOOP.md and synced conductor packet
+Velocity note: focus transitions are complete timestamped log events, not templates to patch afterward
+Next decision: $decision" >/dev/null
+
+python3 - "$active" "$from" "$to" "$trigger" "$decision" <<'PY'
+import sys
+from pathlib import Path
+
+path = Path(sys.argv[1])
+from_focus = sys.argv[2]
+to_focus = sys.argv[3]
+trigger = sys.argv[4]
+decision = sys.argv[5]
+
+replacement = (
+    "## Current Focus\n\n"
+    f"Focus: {from_focus} -> {to_focus}\n\n"
+    f"Trigger: {trigger}\n\n"
+    f"Decision: {decision}\n"
+)
+next_action_replacement = (
+    "## Next Action\n\n"
+    f"1. {decision}\n"
+)
+
+def replace_section(text: str, heading: str, replacement: str) -> str:
+    start = text.find(heading)
+    if start == -1:
+        if text and not text.endswith("\n"):
+            text += "\n"
+        return text + "\n" + replacement
+    next_start = text.find("\n## ", start + len(heading))
+    if next_start == -1:
+        return text[:start] + replacement
+    return text[:start] + replacement + text[next_start:]
+
+text = path.read_text(encoding="utf-8") if path.exists() else ""
+text = replace_section(text, "## Current Focus\n", replacement)
+text = replace_section(text, "## Next Action\n", next_action_replacement)
+
+path.parent.mkdir(parents=True, exist_ok=True)
+path.write_text(text, encoding="utf-8")
+PY
+
+cat >>"$active" <<EOF
+
+## Focus Change $timestamp
+
+Focus: $from -> $to
+Trigger: $trigger
+Decision: $decision
+EOF
+
+.agent/scripts/devloop-sync >/dev/null
+printf 'recorded focus %s -> %s\n' "$from" "$to"
