@@ -63,3 +63,50 @@ async fn orphan_reconcile_does_not_short_timeout_live_self_observation_registry_
     assert_eq!(ordinary.status, MaterialStatus::Sensing);
     Ok(())
 }
+
+#[sinex_test]
+async fn orphan_reconcile_recovers_globally_stale_self_observation_without_dlq(
+    ctx: TestContext,
+) -> TestResult<()> {
+    let ctx = ctx.with_nats().shared().await?;
+    let (assembler, _content_store_dir, _state_dir) =
+        super::super::test_support::TestAssemblerBuilder::new("maintenance-test")
+            .slice_timeout_secs(60)
+            .build(&ctx)
+            .await?;
+
+    let material_id = Uuid::now_v7();
+    let source_identifier = format!("sinex.self-observation.test#material={material_id}");
+    let stale_start = Timestamp::now() - time::Duration::minutes(5);
+
+    ctx.pool
+        .source_materials()
+        .register_external_in_flight(
+            material_id,
+            "self_observation",
+            Some(&source_identifier),
+            json!({}),
+            stale_start,
+        )
+        .await?;
+
+    assembler.reconcile_orphaned_sensing_materials().await?;
+
+    let material = ctx
+        .pool
+        .source_materials()
+        .get_by_id(Id::from_uuid(material_id))
+        .await?
+        .expect("self-observation material should exist");
+
+    assert_eq!(material.status, MaterialStatus::RecoveredPartial);
+    assert_eq!(
+        material.metadata["recovery_info"]["recovery_reason"],
+        json!("orphaned_self_observation_material_recovered_partial")
+    );
+    assert_eq!(
+        material.metadata["orphaned_sensing_material"]["dlq_policy"],
+        json!("suppressed_self_observation_restart_orphan")
+    );
+    Ok(())
+}

@@ -206,7 +206,7 @@ fn group_dlq_messages(messages: &[DlqMessagePeek]) -> Vec<DlqMessageGroup> {
     groups
 }
 
-fn dlq_reason_bucket(preview: &str) -> String {
+pub fn dlq_reason_bucket(preview: &str) -> String {
     if preview.contains("equivalence_key") && preview.contains("already exists") {
         "occurrence_duplicate.equivalence_key_exists".to_string()
     } else if let Some(error_code) = preview_error_code(preview) {
@@ -227,6 +227,30 @@ fn preview_error_code(preview: &str) -> Option<String> {
         && let Some(error) = value.get("error").and_then(|error| error.as_str())
     {
         return Some(sanitize_reason_token(error));
+    }
+
+    preview_leading_error_string(preview).map(|error| sanitize_reason_token(&error))
+}
+
+fn preview_leading_error_string(preview: &str) -> Option<String> {
+    let key = "\"error\"";
+    let start = preview.find(key)? + key.len();
+    let rest = preview[start..].trim_start();
+    let rest = rest.strip_prefix(':')?.trim_start();
+    let rest = rest.strip_prefix('"')?;
+    let mut value = String::new();
+    let mut escaped = false;
+    for ch in rest.chars() {
+        if escaped {
+            value.push(ch);
+            escaped = false;
+        } else if ch == '\\' {
+            escaped = true;
+        } else if ch == '"' {
+            return Some(value);
+        } else {
+            value.push(ch);
+        }
     }
     None
 }
@@ -314,3 +338,7 @@ pub struct DlqPurgeResponse {
     pub purged_count: u64,
     pub operation_id: String,
 }
+
+#[cfg(test)]
+#[path = "dlq_test.rs"]
+mod tests;
