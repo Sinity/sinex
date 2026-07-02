@@ -447,9 +447,20 @@ where
     fn raw_event_type_filter(&self) -> Option<&'static str> {
         // A wildcard automaton needs the whole raw stream; a type-specific one
         // can be filtered server-side to just its input type (#2187).
-        match self.automaton.input_event_type() {
-            "*" => None,
-            event_type => Some(event_type),
+        let input_types = self.automaton.input_event_types();
+        if input_types.len() == 1 && input_types[0] != "*" {
+            Some(input_types[0])
+        } else {
+            None
+        }
+    }
+
+    fn event_type_filters(&self) -> Vec<&'static str> {
+        let input_types = self.automaton.input_event_types();
+        if input_types.contains(&"*") {
+            Vec::new()
+        } else {
+            input_types
         }
     }
 

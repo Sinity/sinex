@@ -5,8 +5,13 @@
 //! xtask status/doctor/run commands.
 
 use serde::Serialize;
+use sinex_primitives::events::{EventEngineBatchStatsPayload, EventPayload};
 use sqlx::postgres::PgPoolOptions;
 use std::fmt;
+
+pub(crate) fn event_engine_batch_stats_source() -> &'static str {
+    EventEngineBatchStatsPayload::SOURCE.as_static_str()
+}
 
 /// Runtime health status for event_engine
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
@@ -310,11 +315,12 @@ async fn query_inner(db_url: &str) -> Result<RuntimeMetrics, sqlx::Error> {
             (payload->>'fetch_to_ack_ms')::float8 AS "value!",
             EXTRACT(EPOCH FROM (NOW() - ts_coided))::bigint AS "age_secs!: i64"
         FROM core.events
-        WHERE source = 'sinex.event_engine'
+        WHERE source = $1
           AND event_type = 'batch.stats'
         ORDER BY id DESC
         LIMIT 1
         "#,
+        event_engine_batch_stats_source(),
     )
     .fetch_optional(&pool)
     .await?;

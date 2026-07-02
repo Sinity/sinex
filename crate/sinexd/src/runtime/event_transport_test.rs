@@ -1,6 +1,7 @@
-use super::{EventBatcher, EventBatcherConfig, EventTransport};
-use crate::runtime::nats_publisher::NatsPublisher;
-use async_nats::jetstream;
+use super::{
+    EventBatcher, EventBatcherConfig, EventTransport, NATS_PUBLISH_PAYLOAD_HARD_LIMIT_BYTES,
+};
+use crate::runtime::{jetstream_streams, nats_publisher::NatsPublisher};
 use futures::StreamExt;
 use sinex_primitives::{
     DynamicPayload, Id, JsonValue, Uuid,
@@ -24,16 +25,9 @@ async fn remove_if_exists(path: &Path) -> TestResult<()> {
 
 async fn ensure_events_stream(
     client: &async_nats::Client,
-    env: &sinex_primitives::environment::SinexEnvironment,
+    _env: &sinex_primitives::environment::SinexEnvironment,
 ) -> TestResult<()> {
-    jetstream::new(client.clone())
-        .get_or_create_stream(jetstream::stream::Config {
-            name: env.nats_stream_name("EVENTS"),
-            subjects: vec![env.nats_subject("events.raw.>")],
-            storage: jetstream::stream::StorageType::Memory,
-            ..Default::default()
-        })
-        .await?;
+    jetstream_streams::bootstrap_raw_events_stream(client, None).await?;
     Ok(())
 }
 
@@ -41,6 +35,21 @@ fn test_event(name: &str, ok: bool) -> sinex_primitives::Result<Event<JsonValue>
     let mut event = DynamicPayload::new("dlq.test", name, serde_json::json!({ "ok": ok }))
         .from_parents([EventId::from_uuid(Uuid::now_v7())])?
         .build()?;
+    event.id = Some(Id::new());
+    Ok(event)
+}
+
+fn large_test_event(
+    name: &str,
+    payload_bytes: usize,
+) -> sinex_primitives::Result<Event<JsonValue>> {
+    let mut event = DynamicPayload::new(
+        "dlq.test",
+        name,
+        serde_json::json!({ "body": "x".repeat(payload_bytes) }),
+    )
+    .from_parents([EventId::from_uuid(Uuid::now_v7())])?
+    .build()?;
     event.id = Some(Id::new());
     Ok(event)
 }
@@ -90,6 +99,105 @@ async fn recovery_spool_write_uses_provided_work_directory() -> TestResult<()> {
     assert!(
         recovery_spool_path.exists(),
         "expected recovery spool at {recovery_spool_path:?}"
+    );
+    Ok(())
+}
+
+#[sinex_test]
+async fn nats_transport_splits_oversized_intent_envelopes(
+    ctx: xtask::sandbox::TestContext,
+) -> TestResult<()> {
+    let ctx = ctx.with_nats().dedicated().await?;
+    ensure_events_stream(&ctx.nats_client(), ctx.env()).await?;
+
+    let work_dir = tempdir()?;
+    let event_name = "nats.large.split";
+    let subject = ctx
+        .env()
+        .nats_raw_event_subject_with_namespace(None, "dlq.test", event_name);
+    let mut subscription = ctx.nats_client().subscribe(subject).await?;
+    let (_sender, receiver) = mpsc::channel(1);
+    let (_shutdown_tx, shutdown_rx) = oneshot::channel();
+    let mut batcher = EventBatcher::new(
+        EventTransport::Nats(Arc::new(NatsPublisher::new(ctx.nats_client()))),
+        EventBatcherConfig::default(),
+        receiver,
+        shutdown_rx,
+        work_dir.path().to_path_buf(),
+    );
+
+    let mut batch = vec![
+        large_test_event(event_name, 600 * 1024)?,
+        large_test_event(event_name, 600 * 1024)?,
+    ];
+
+    batcher.send_batch(&mut batch).await?;
+
+    assert!(
+        batch.is_empty(),
+        "NATS send_batch must drain the input batch on successful split publish"
+    );
+    let first = tokio::time::timeout(Duration::from_secs(5), subscription.next())
+        .await?
+        .expect("first split intent envelope should publish");
+    let second = tokio::time::timeout(Duration::from_secs(5), subscription.next())
+        .await?
+        .expect("second split intent envelope should publish");
+
+    for message in [first, second] {
+        let payload: JsonValue = serde_json::from_slice(&message.payload)?;
+        assert_eq!(payload["events"].as_array().map(Vec::len), Some(1));
+        assert_eq!(payload["events"][0]["event_type"], event_name);
+    }
+    Ok(())
+}
+
+#[sinex_test]
+async fn nats_transport_spools_single_event_intent_over_hard_limit(
+    ctx: xtask::sandbox::TestContext,
+) -> TestResult<()> {
+    let ctx = ctx.with_nats().dedicated().await?;
+    ensure_events_stream(&ctx.nats_client(), ctx.env()).await?;
+
+    let work_dir = tempdir()?;
+    let recovery_spool_path = work_dir.path().join("sinex_event_recovery_spool.jsonl");
+    let event_name = "nats.large.single-spooled";
+    let subject = ctx
+        .env()
+        .nats_raw_event_subject_with_namespace(None, "dlq.test", event_name);
+    let mut subscription = ctx.nats_client().subscribe(subject).await?;
+    let (_sender, receiver) = mpsc::channel(1);
+    let (_shutdown_tx, shutdown_rx) = oneshot::channel();
+    let mut batcher = EventBatcher::new(
+        EventTransport::Nats(Arc::new(NatsPublisher::new(ctx.nats_client()))),
+        EventBatcherConfig::default(),
+        receiver,
+        shutdown_rx,
+        work_dir.path().to_path_buf(),
+    );
+
+    let mut batch = vec![large_test_event(
+        event_name,
+        NATS_PUBLISH_PAYLOAD_HARD_LIMIT_BYTES + 1,
+    )?];
+
+    batcher.send_batch(&mut batch).await?;
+
+    assert!(
+        batch.is_empty(),
+        "oversized single-event intent should be drained into the recovery spool"
+    );
+    let spooled = tokio::fs::read_to_string(&recovery_spool_path).await?;
+    assert_eq!(
+        spooled.lines().count(),
+        1,
+        "exactly the oversized event should be recoverable from the local spool"
+    );
+    assert!(
+        tokio::time::timeout(Duration::from_millis(250), subscription.next())
+            .await
+            .is_err(),
+        "oversized event should not be published to NATS"
     );
     Ok(())
 }

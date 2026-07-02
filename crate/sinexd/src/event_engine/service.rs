@@ -482,7 +482,7 @@ impl IngestService {
             let heartbeat_pool = pool.clone();
             let handle = tokio::spawn(async move {
                 tokio::select! {
-                    () = emitter.start_periodic_heartbeat(None) => {}
+                    () = Self::run_event_engine_heartbeat(emitter, heartbeat_pool.clone(), module_run_id) => {}
                     () = crate::runtime::wait_for_shutdown_signal_bool(&shutdown_flag, &shutdown_notify) => {
                         if let Some(module_run_id) = module_run_id {
                             let module_run_id =
@@ -547,6 +547,37 @@ impl IngestService {
                     "Runtime shutdown surfaced an additional background task failure"
                 );
                 Err(attach_background_shutdown_error(error, &cleanup_error))
+            }
+        }
+    }
+
+    async fn run_event_engine_heartbeat(
+        emitter: HeartbeatEmitter,
+        pool: PgPool,
+        module_run_id: Option<uuid::Uuid>,
+    ) {
+        let mut interval = interval(Duration::from_secs(emitter.interval_seconds.as_secs()));
+
+        info!(
+            service = "sinexd",
+            interval_seconds = emitter.interval_seconds.as_secs(),
+            "Starting periodic heartbeat emission"
+        );
+
+        loop {
+            interval.tick().await;
+            emitter.emit_heartbeat(None).await;
+
+            if let Some(module_run_id) = module_run_id {
+                let module_run_id =
+                    Id::<sinex_db::repositories::state::ModuleRun>::from_uuid(module_run_id);
+                if let Err(error) = pool.state().record_module_run_heartbeat(module_run_id).await {
+                    warn!(
+                        module_run_id = %module_run_id,
+                        error = %error,
+                        "Failed to persist event_engine module run heartbeat"
+                    );
+                }
             }
         }
     }

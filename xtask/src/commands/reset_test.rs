@@ -1,5 +1,5 @@
 use super::*;
-use crate::sandbox::{sinex_serial_test, sinex_test};
+use crate::sandbox::{EnvGuard, sinex_serial_test, sinex_test};
 
 #[sinex_test]
 async fn test_remove_file_if_present_reports_remove_failures() -> TestResult<()> {
@@ -14,6 +14,42 @@ async fn test_remove_file_if_present_returns_false_for_missing_path() -> TestRes
     let temp = tempfile::tempdir()?;
     let removed = remove_file_if_present(&temp.path().join("missing.txt"), false)?;
     assert!(!removed);
+    Ok(())
+}
+
+#[sinex_test]
+async fn test_reset_hot_reload_checkpoints_removes_only_checkpoint_json() -> TestResult<()> {
+    let temp = tempfile::tempdir()?;
+    let cache = temp.path().join(".cache/sinex");
+    std::fs::create_dir_all(&cache)?;
+    std::fs::write(cache.join("raindrop-bookmarks.checkpoint.json"), "{}")?;
+    std::fs::write(cache.join("keep.json"), "{}")?;
+    std::fs::write(cache.join("notes.checkpoint.txt"), "")?;
+
+    let mut env = EnvGuard::new();
+    env.set("HOME", temp.path().to_string_lossy().as_ref());
+
+    reset_hot_reload_checkpoints(false)?;
+
+    assert!(!cache.join("raindrop-bookmarks.checkpoint.json").exists());
+    assert!(cache.join("keep.json").exists());
+    assert!(cache.join("notes.checkpoint.txt").exists());
+    Ok(())
+}
+
+#[sinex_test]
+async fn test_reset_runtime_material_tmpfiles_removes_only_material_fragments() -> TestResult<()>
+{
+    let temp = tempfile::tempdir()?;
+    std::fs::write(temp.path().join("sinex_material_abc.tmp"), "fragment")?;
+    std::fs::write(temp.path().join("sinex_material_abc.txt"), "keep")?;
+    std::fs::write(temp.path().join("other.tmp"), "keep")?;
+
+    reset_runtime_material_tmpfiles_in_dirs(&[temp.path().to_path_buf()], false)?;
+
+    assert!(!temp.path().join("sinex_material_abc.tmp").exists());
+    assert!(temp.path().join("sinex_material_abc.txt").exists());
+    assert!(temp.path().join("other.tmp").exists());
     Ok(())
 }
 

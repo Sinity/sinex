@@ -3,10 +3,12 @@ use xtask::sandbox::prelude::*;
 
 fn test_observer() -> SelfObserver {
     SelfObserver {
-        publisher: None,
-        materializer: None,
+        runtime: Arc::new(parking_lot::Mutex::new(None)),
+        nats_client: None,
+        namespace: None,
         component: "test-component".to_string(),
         enabled: true,
+        emission_enabled: Arc::new(AtomicBool::new(true)),
         metric_emissions: Arc::new(RwLock::new(HashMap::new())),
         min_interval: Duration::from_secs(1),
         module_run_id: Arc::new(OnceLock::new()),

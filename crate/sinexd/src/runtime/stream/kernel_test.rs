@@ -4,6 +4,7 @@ fn matching_consumer_config(spec: &PullConsumerSpec) -> jetstream::consumer::Con
     jetstream::consumer::Config {
         durable_name: Some(spec.durable_name.clone()),
         filter_subject: spec.filter_subject.clone().unwrap_or_default(),
+        filter_subjects: spec.filter_subjects.clone(),
         ack_policy: jetstream::consumer::AckPolicy::Explicit,
         ack_wait: spec.ack_wait,
         deliver_policy: spec.deliver_policy,
@@ -11,6 +12,20 @@ fn matching_consumer_config(spec: &PullConsumerSpec) -> jetstream::consumer::Con
         max_ack_pending: spec.max_ack_pending,
         ..Default::default()
     }
+}
+
+#[test]
+fn multi_filter_subjects_are_part_of_consumer_contract() {
+    let mut spec = PullConsumerSpec::new("stream", "consumer");
+    spec.filter_subjects = vec!["expected.one".to_string(), "expected.two".to_string()];
+
+    let mut config = matching_consumer_config(&spec);
+    config.filter_subjects = vec!["expected.one".to_string()];
+
+    let mismatches = pull_consumer_config_mismatches(&spec, &config);
+
+    assert!(!can_reconcile_pull_consumer_config(&mismatches));
+    assert!(render_pull_consumer_config_mismatches(&mismatches).contains("filter_subjects"));
 }
 
 #[test]
