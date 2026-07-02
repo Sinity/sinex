@@ -63,6 +63,32 @@ fn fixture_material(id: &str) -> SourceMaterialSummary {
     }
 }
 
+fn fixture_material_detail(
+    id: &str,
+    status: MaterialStatus,
+    event_count: i64,
+    metadata: serde_json::Value,
+) -> SourceMaterialDetail {
+    SourceMaterialDetail {
+        id: id.to_string(),
+        material_kind: sinex_primitives::MaterialStorageKind::Annex,
+        source_identifier: "fixture.source".to_string(),
+        status,
+        timing_info_type: SourceMaterialTimingInfoType::Intrinsic,
+        metadata,
+        contract: None,
+        temporal_evidence: None,
+        staged_at: Some("2026-06-01T00:00:00Z".to_string()),
+        start_time: Some("2026-06-01T00:00:00Z".to_string()),
+        end_time: Some("2026-06-01T00:01:00Z".to_string()),
+        staged_by: Some("test".to_string()),
+        staged_on_host: Some("fixture-host".to_string()),
+        optional_blob_id: None,
+        total_bytes: Some(128),
+        event_count: Some(event_count),
+    }
+}
+
 fn fixture_coverage(source_identifier: &str) -> SourceCoverageEntry {
     SourceCoverageEntry {
         source_identifier: source_identifier.to_string(),
@@ -180,6 +206,55 @@ async fn source_coverage_envelope_renders_finite_json_document() -> TestResult<(
     assert_eq!(
         value["payload"]["sources"][0]["source_identifier"],
         "fixture.source"
+    );
+    Ok(())
+}
+
+#[sinex_test]
+async fn source_remediation_plan_envelope_renders_finite_json_document() -> TestResult<()> {
+    let item = remediation_item_from_material(&fixture_material_detail(
+        "material-1",
+        MaterialStatus::RecoveredPartial,
+        7,
+        serde_json::json!({
+            "failure_reason": "slice_arrival_timeout",
+            "recovery_info": {
+                "recovery_reason": "slice_arrival_timeout_with_admitted_events"
+            }
+        }),
+    ));
+    let envelope = ViewEnvelope::new(
+        "sinexctl.sources.remediation_plan",
+        SourceMaterialRemediationPlanView::new(vec![item]),
+    )
+    .with_query_echo(serde_json::json!({
+        "limit": 10,
+        "include_empty": false,
+    }));
+
+    let rendered = render_finite_envelope(&envelope, OutputFormat::Json)?
+        .expect("json renders finite envelope");
+    let value: serde_json::Value = serde_json::from_str(&rendered)?;
+
+    assert_eq!(value["schema_version"], VIEW_ENVELOPE_SCHEMA_VERSION);
+    assert_eq!(value["source_surface"], "sinexctl.sources.remediation_plan");
+    assert_eq!(
+        value["payload"]["schema_version"],
+        SOURCE_MATERIAL_REMEDIATION_PLAN_SCHEMA_VERSION
+    );
+    assert_eq!(value["payload"]["count"], 1);
+    assert_eq!(value["payload"]["items"][0]["status"], "recovered_partial");
+    assert_eq!(
+        value["payload"]["items"][0]["decision"],
+        "review_partial_recovery"
+    );
+    assert_eq!(
+        value["payload"]["items"][0]["failure_reason"],
+        "slice_arrival_timeout"
+    );
+    assert_eq!(
+        value["payload"]["items"][0]["inspect_command"],
+        "sinexctl sources show material-1"
     );
     Ok(())
 }
@@ -369,6 +444,42 @@ async fn source_coverage_table_renderer_stays_on_raw_response() -> TestResult<()
     assert!(table.contains("PARTIAL"));
     assert!(table.contains("7"));
     assert!(table.contains("1"));
+    Ok(())
+}
+
+#[sinex_test]
+async fn source_remediation_plan_table_surfaces_actions_and_reasons() -> TestResult<()> {
+    let failed = remediation_item_from_material(&fixture_material_detail(
+        "failed123456",
+        MaterialStatus::Failed,
+        12,
+        serde_json::json!({"failure_reason": "material_persist_failed"}),
+    ));
+    let recovered = remediation_item_from_material(&fixture_material_detail(
+        "partial123456",
+        MaterialStatus::RecoveredPartial,
+        5,
+        serde_json::json!({
+            "timeout_partial_recovery": {
+                "failure_reason": "slice_arrival_timeout"
+            },
+            "recovery_info": {
+                "recovery_reason": "slice_arrival_timeout_with_admitted_events"
+            }
+        }),
+    ));
+
+    let table = format_remediation_plan_table(&SourceMaterialRemediationPlanView::new(vec![
+        failed, recovered,
+    ]));
+
+    assert!(table.contains("failed12..."));
+    assert!(table.contains("partial1..."));
+    assert!(table.contains("inspect_failed_eventful"));
+    assert!(table.contains("review_partial_recovery"));
+    assert!(table.contains("material_persist_failed"));
+    assert!(table.contains("slice_arrival_timeout"));
+    assert!(table.contains("sinexctl sources show failed123456"));
     Ok(())
 }
 
