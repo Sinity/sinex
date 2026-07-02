@@ -805,6 +805,32 @@
         }
     }
 
+    fn fixture_source_material_detail(
+        id: &str,
+        status: sinex_primitives::domain::MaterialStatus,
+        event_count: i64,
+        metadata: serde_json::Value,
+    ) -> sinex_primitives::rpc::sources::SourceMaterialDetail {
+        sinex_primitives::rpc::sources::SourceMaterialDetail {
+            id: id.to_string(),
+            material_kind: sinex_primitives::MaterialStorageKind::Annex,
+            source_identifier: format!("browser.history#material={id}"),
+            status,
+            timing_info_type: sinex_primitives::domain::SourceMaterialTimingInfoType::Intrinsic,
+            metadata,
+            contract: None,
+            temporal_evidence: None,
+            staged_at: Some("2026-07-02T00:00:00Z".to_string()),
+            start_time: Some("2026-07-02T00:00:00Z".to_string()),
+            end_time: Some("2026-07-02T00:01:00Z".to_string()),
+            staged_by: Some("test".to_string()),
+            staged_on_host: Some("fixture-host".to_string()),
+            optional_blob_id: None,
+            total_bytes: Some(1024),
+            event_count: Some(event_count),
+        }
+    }
+
     #[sinex_test]
     async fn debt_rows_from_dlq_reports_only_pending_admission_debt() -> xtask::TestResult<()> {
         assert!(debt_rows_from_dlq(&fixture_dlq(0)).is_empty());
@@ -865,6 +891,71 @@
         let rows = debt_rows_from_source_coverage(&[fixture_source_coverage(Some(2), Some(2))]);
 
         assert!(rows.is_empty());
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn debt_row_from_failed_eventful_material_points_to_remediation()
+    -> xtask::TestResult<()> {
+        let material = fixture_source_material_detail(
+            "019f2159-cb75-7d53-a9a4-9dce36a9796d",
+            sinex_primitives::domain::MaterialStatus::Failed,
+            113_643,
+            serde_json::json!({"failure_reason": "slice_arrival_timeout"}),
+        );
+
+        let row = debt_row_from_source_material_detail(&material);
+
+        assert_eq!(row.kind, DebtKind::Capture);
+        assert_eq!(row.stage, DebtStage::CandidateDeferred);
+        assert!(row.id.contains("browser.history"));
+        assert!(row.summary.contains("113643 admitted event"));
+        assert!(row.summary.contains("slice_arrival_timeout"));
+        assert_eq!(
+            row.owner
+                .as_ref()
+                .and_then(|owner| owner.package_ref.as_deref()),
+            Some("browser.history")
+        );
+        assert!(row.refs.iter().any(|ref_| {
+            ref_.kind == SinexObjectKind::SourceMaterial
+                && ref_.id == "019f2159-cb75-7d53-a9a4-9dce36a9796d"
+        }));
+        assert!(row.actions.iter().any(|action| {
+            action.id == "source_material.remediation_plan"
+                && action.command_hint.as_deref()
+                    == Some("sinexctl sources remediation-plan --source browser.history")
+        }));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn debt_row_from_recovered_partial_material_carries_recovery_reason()
+    -> xtask::TestResult<()> {
+        let material = fixture_source_material_detail(
+            "019f2373-0f82-7c41-88c0-2da89107add2",
+            sinex_primitives::domain::MaterialStatus::RecoveredPartial,
+            13,
+            serde_json::json!({
+                "recovery_info": {
+                    "recovery_reason": "orphaned_self_observation_material_recovered_partial"
+                }
+            }),
+        );
+
+        let row = debt_row_from_source_material_detail(&material);
+
+        assert_eq!(row.kind, DebtKind::Capture);
+        assert_eq!(row.stage, DebtStage::CandidateDeferred);
+        assert!(
+            row.summary
+                .contains("orphaned_self_observation_material_recovered_partial")
+        );
+        assert!(
+            row.caveats
+                .iter()
+                .any(|caveat| caveat.id == "source_material.recovered_partial")
+        );
         Ok(())
     }
 
