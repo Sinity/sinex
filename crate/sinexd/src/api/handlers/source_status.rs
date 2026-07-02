@@ -1800,6 +1800,7 @@ fn email_operation_label(
 
 fn source_runtime_module(source_id: &str) -> Option<&'static str> {
     match source_id {
+        "browser.history" => Some("browser.history"),
         "terminal.kitty-osc-live" => Some("terminal-source"),
         _ => None,
     }

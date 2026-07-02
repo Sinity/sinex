@@ -73,7 +73,7 @@ Effects:
 - Reinforced side-research leases/status as necessary before the next broad
   side wave.
 
-## Active / Unreconciled
+## Stale / Superseded Leases
 
 ### 2026-07-02 Sidecar Wave 3
 
@@ -85,15 +85,16 @@ Active leases recorded there:
   consumer backlog evidence when `shadow.list` fails with a NATS RPC error.
 - `security/content-key-path-traversal-2195` — compact high-risk issue audit.
 
-Status: active/unreconciled.
+Status: stale as of 2026-07-03T00:32:27+02:00. The wave directory contains only
+the launch index and no delivered reports, so these leases should not block
+new side research.
 
 Next conductor action:
 
-- Inspect whether reports exist beyond the index.
-- If reports are missing, either recover from the spawning agent/session history
-  or mark the leases stale.
-- Reconcile useful findings into `RESEARCH-BACKLOG.md` before launching another
-  broad side wave.
+- Treat both topics as queueable research keys, not active outputs.
+- Relaunch either topic only if it becomes the best support lane for the active
+  object slice.
+- Do not wait on these lease ids before launching a focused side agent.
 
 ## Priority Order
 
@@ -109,15 +110,19 @@ Next conductor action:
 
 ### Side-Research Priorities
 
-1. Reconcile Wave 3 leases.
-2. Cold-reader audit the Recall v2 demo directory: what does it prove, what is
+1. Cold-reader audit the Recall v2 demo directory: what does it prove, what is
    missing, and what exact source/window would make it stronger?
-3. Query algebra implementation map: smallest PR that unifies one real query
+2. Query algebra implementation map: smallest PR that unifies one real query
    slice without adding another flag-shaped silo.
-4. xtask scope/cost audit: why focused sinexctl checks/tests compile sinexd or
+3. xtask scope/cost audit: why focused sinexctl checks/tests compile sinexd or
    xtask, and what instrumentation/fix would reduce proof latency.
+4. Runtime/source backlog audit: browser history live-output gap,
+   `read_only=true` dev-run config mismatch, and source action/control wiring.
 5. Inline-test cleanup automation audit: programmatic extraction plan for the
    remaining true inline `#[cfg(test)] mod tests` blocks.
+6. Relaunch stale Wave 3 topics only when they support the active slice:
+   `runtime/shadow-list-nats-failure` after catch-up status work resumes, and
+   `security/content-key-path-traversal-2195` when a security/debt PR is chosen.
 
 ## Launch Gate For Next Broad Wave
 
