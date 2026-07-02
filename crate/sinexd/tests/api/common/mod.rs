@@ -73,7 +73,7 @@ pub async fn ensure_events_stream(
     env: &SinexEnvironment,
 ) -> TestResult<jetstream::stream::Stream> {
     let js = jetstream::new(client.clone());
-    let stream_name = env.nats_stream_name("EVENTS");
+    let stream_name = env.nats_stream_name("SINEX_RAW_EVENTS");
     let events_subject = env.nats_subject("events.>");
     let mut streams = js.streams();
     while let Some(stream) = streams.next().await {

@@ -14,7 +14,7 @@ use crate::runtime::stream::{
     ShadowConsumerSpec, create_shadow_consumer, delete_consumer, list_consumers,
 };
 use async_nats::jetstream;
-use sinex_primitives::{Result, SinexError};
+use sinex_primitives::{Result, SinexError, environment::SinexEnvironment};
 use tracing::{info, warn};
 
 // Re-export shared types
@@ -22,6 +22,10 @@ pub use sinex_primitives::rpc::shadow::{
     ShadowConsumerInfo, ShadowCreateRequest, ShadowCreateResponse, ShadowDeleteRequest,
     ShadowDeleteResponse, ShadowListRequest, ShadowListResponse,
 };
+
+fn shadow_events_stream_name(env: &SinexEnvironment) -> String {
+    env.nats_stream_name("SINEX_RAW_EVENTS")
+}
 
 /// Create a shadow consumer for development/testing
 ///
@@ -44,7 +48,7 @@ pub async fn handle_shadow_create(
     }
 
     let js = jetstream::new(nats_client.clone());
-    let stream_name = env.nats_stream_name("EVENTS");
+    let stream_name = shadow_events_stream_name(env);
 
     // Require explicit subject filter - no default to prevent unintended access
     let Some(subject_filter) = request.subject_filter else {
@@ -107,7 +111,7 @@ pub async fn handle_shadow_list(
     let env = services.environment();
 
     let js = jetstream::new(nats_client.clone());
-    let stream_name = env.nats_stream_name("EVENTS");
+    let stream_name = shadow_events_stream_name(env);
 
     let consumers = list_consumers(&js, &stream_name).await.map_err(|e| {
         SinexError::nats("Failed to list shadow consumers")
@@ -168,7 +172,7 @@ pub async fn handle_shadow_delete(
     }
 
     let js = jetstream::new(nats_client.clone());
-    let stream_name = env.nats_stream_name("EVENTS");
+    let stream_name = shadow_events_stream_name(env);
     delete_consumer(&js, &stream_name, &request.consumer_name)
         .await
         .map_err(|e| {
