@@ -1518,6 +1518,10 @@ async fn mcp_source_coverage_call_uses_gateway_fixture() -> TestResult<()> {
         response["payload"]["result"]["sources"][0]["material_count"],
         3
     );
+    assert_eq!(
+        response["payload"]["result"]["sources"][0]["recovered_partial_material_count"],
+        1
+    );
     assert_eq!(response["privacy_state"]["state"], "redacted");
     Ok(())
 }
@@ -2678,7 +2682,13 @@ async fn mount_mcp_gateway_fixture() -> MockServer {
                             "earliest_ts": "2026-05-19T12:00:00Z",
                             "latest_ts": "2026-05-19T12:30:00Z",
                             "event_count": 42,
-                            "material_count": 3
+                            "material_count": 3,
+                            "completed_material_count": 2,
+                            "failed_material_count": 0,
+                            "recovered_partial_material_count": 1,
+                            "sensing_material_count": 0,
+                            "cancelled_material_count": 0,
+                            "total_bytes": 1024
                         }
                     ]
                 }),

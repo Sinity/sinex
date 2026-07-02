@@ -481,7 +481,7 @@ fn format_coverage_table(response: &SourcesCoverageResponse) -> String {
     let mut builder = Builder::new();
     builder.push_record([
         "SOURCE", "KIND", "EARLIEST", "LATEST", "EVENTS", "MATERIALS", "DONE", "FAILED",
-        "SENSING", "BYTES",
+        "PARTIAL", "SENSING", "BYTES",
     ]);
 
     for bucket in &response.sources {
@@ -498,6 +498,9 @@ fn format_coverage_table(response: &SourcesCoverageResponse) -> String {
             .map_or_else(|| style("-").dim().to_string(), |c| c.to_string());
         let failed = bucket
             .failed_material_count
+            .map_or_else(|| style("-").dim().to_string(), |c| c.to_string());
+        let recovered_partial = bucket
+            .recovered_partial_material_count
             .map_or_else(|| style("-").dim().to_string(), |c| c.to_string());
         let sensing = bucket
             .sensing_material_count
@@ -517,6 +520,7 @@ fn format_coverage_table(response: &SourcesCoverageResponse) -> String {
             materials,
             completed,
             failed,
+            recovered_partial,
             sensing,
             bytes,
         ]);
