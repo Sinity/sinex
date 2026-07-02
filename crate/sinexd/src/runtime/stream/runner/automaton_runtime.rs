@@ -211,7 +211,7 @@ impl<T: RuntimeModule + 'static> RuntimeRunner<T> {
         let consumer_config = Self::automaton_consumer_config(
             service_name.as_str(),
             self.module.confirmed_event_provenance_filter(),
-            self.module.raw_event_type_filter(),
+            self.module.event_type_filters(),
         );
 
         let consumer = Arc::new(JetStreamEventConsumer::new(
@@ -485,7 +485,7 @@ impl<T: RuntimeModule + 'static> RuntimeRunner<T> {
     pub(super) fn automaton_consumer_config(
         service_name: &str,
         provenance_filter: crate::runtime::automaton::traits::InputProvenanceFilter,
-        event_type_filter: Option<&str>,
+        event_type_filters: Vec<&str>,
     ) -> JetStreamEventConsumerConfig {
         let sanitized_service_name = service_name.replace('.', "_");
         let provenance_suffix = match provenance_filter {
@@ -495,15 +495,25 @@ impl<T: RuntimeModule + 'static> RuntimeRunner<T> {
                 "-synthesized"
             }
         };
-        let filter_suffix = event_type_filter.map(|event_type| {
-            format!(
+        let filter_suffix = if event_type_filters.is_empty() {
+            None
+        } else {
+            Some(format!(
                 "-filter-{}",
-                sinex_primitives::environment::SinexEnvironment::nats_subject_token(event_type)
-            )
-        });
+                event_type_filters
+                    .iter()
+                    .map(|event_type| {
+                        sinex_primitives::environment::SinexEnvironment::nats_subject_token(
+                            event_type,
+                        )
+                    })
+                    .collect::<Vec<_>>()
+                    .join("_or_")
+            ))
+        };
         JetStreamEventConsumerConfig {
             provenance_filter,
-            event_type_filter: event_type_filter.map(str::to_string),
+            event_type_filters: event_type_filters.into_iter().map(str::to_string).collect(),
             batch_size: 128,
             max_ack_pending: Self::automaton_consumer_max_ack_pending(),
             consumer_name: format!(

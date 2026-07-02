@@ -46,6 +46,12 @@ pub trait RuntimeModule: Send + Sync {
         None
     }
 
+    /// Concrete event types this module consumes, if it can express a finite
+    /// set. Empty means wildcard.
+    fn event_type_filters(&self) -> Vec<&'static str> {
+        self.raw_event_type_filter().into_iter().collect()
+    }
+
     /// Provenance class this module consumes from the confirmed-event stream.
     ///
     /// Most runtime modules do not consume confirmed events directly. Automata
