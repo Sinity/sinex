@@ -100,8 +100,10 @@ Next conductor action:
 
 ### Main-Lane Priorities
 
-1. Recall v2 baseline-arm demo: cold-reader-proof, side-by-side raw baseline
-   plus Sinex context reconstruction, with one-command regeneration.
+1. Recall v2 baseline-arm demo: first repair or honestly narrow live
+   browser/git participation, then produce a cold-reader-proof packet with
+   side-by-side raw baseline plus Sinex context reconstruction and one-command
+   regeneration.
 2. Bounded source-material remediation action policy if Recall v2 evidence is
    false or too caveated without it.
 3. Query algebra/event-query lowering to collapse CLI flags, root query strings,
@@ -110,17 +112,22 @@ Next conductor action:
 
 ### Side-Research Priorities
 
-1. Cold-reader audit the Recall v2 demo directory: what does it prove, what is
+1. Browser acquisition implementation map: can existing source/parser/config
+   ingest current Chrome/browser history, what smallest slice makes it true, and
+   what proof demonstrates fresh browser evidence?
+2. Cold-reader audit the Recall v2 demo directory: what does it prove, what is
    missing, and what exact source/window would make it stronger?
-2. Query algebra implementation map: smallest PR that unifies one real query
+3. Git source quietness audit: explain stale `git-commit-history` output and
+   rank the smallest fix for Recall v2.
+4. Query algebra implementation map: smallest PR that unifies one real query
    slice without adding another flag-shaped silo.
-3. xtask scope/cost audit: why focused sinexctl checks/tests compile sinexd or
+5. xtask scope/cost audit: why focused sinexctl checks/tests compile sinexd or
    xtask, and what instrumentation/fix would reduce proof latency.
-4. Runtime/source backlog audit: browser history live-output gap,
+6. Runtime/source backlog audit: browser history live-output gap,
    `read_only=true` dev-run config mismatch, and source action/control wiring.
-5. Inline-test cleanup automation audit: programmatic extraction plan for the
+7. Inline-test cleanup automation audit: programmatic extraction plan for the
    remaining true inline `#[cfg(test)] mod tests` blocks.
-6. Relaunch stale Wave 3 topics only when they support the active slice:
+8. Relaunch stale Wave 3 topics only when they support the active slice:
    `runtime/shadow-list-nats-failure` after catch-up status work resumes, and
    `security/content-key-path-traversal-2195` when a security/debt PR is chosen.
 
