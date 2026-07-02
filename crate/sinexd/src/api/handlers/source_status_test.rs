@@ -1393,6 +1393,58 @@ async fn runtime_binding_coverage_surfaces_disconnected_configured_root_source()
 }
 
 #[sinex_test]
+async fn runtime_binding_coverage_treats_recent_output_as_observed_not_disconnected()
+-> xtask::TestResult<()> {
+    let now = Timestamp::now();
+    let mut status =
+        fs_runtime_status(now).with_recent_output(now - time::Duration::seconds(30), 2);
+    status.live = false;
+    status.current_health = None;
+    status.health_reason = None;
+    status.last_heartbeat_at = None;
+    let mut observations = HashMap::new();
+    observations.insert("fs".to_string(), status);
+
+    let view = source_coverage_view(
+        &fs_contract(),
+        &[&fs_binding()],
+        &HashMap::new(),
+        &HashMap::new(),
+        &healthy_confirmation_buffer(),
+        &observations,
+        &HashMap::new(),
+        &HashMap::new(),
+        &HashMap::new(),
+        now,
+    );
+
+    assert!(
+        view.gaps
+            .iter()
+            .all(|gap| gap.kind != "runtime_binding_disconnected"),
+        "fresh output should not be reported as a disconnected runtime binding"
+    );
+    assert!(
+        view.caveats
+            .iter()
+            .all(|caveat| caveat.id != "source.runtime_binding.disconnected"),
+        "fresh output should not produce a disconnected caveat"
+    );
+    let observed = view
+        .caveats
+        .iter()
+        .find(|caveat| caveat.id == "source.runtime_binding.observed")
+        .expect("observed runtime binding caveat expected");
+    assert!(
+        observed
+            .message
+            .contains("output-active without a live heartbeat")
+    );
+    assert!(observed.message.contains("recent output count 2"));
+    Ok(())
+}
+
+#[sinex_test]
 async fn runtime_bridge_coverage_surfaces_malformed_frame_health_reason() -> xtask::TestResult<()> {
     let now = Timestamp::now();
     let bridge_binding = terminal_bridge_binding();
