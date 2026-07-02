@@ -252,7 +252,7 @@ impl DlqCommands {
 }
 
 use sinex_primitives::rpc::dlq::{
-    DlqListResponse, DlqMessagePeek, DlqPeekRequest, DlqPeekResponse,
+    DlqListResponse, DlqMessagePeek, DlqPeekRequest, DlqPeekResponse, dlq_reason_bucket,
 };
 use sinex_primitives::rpc::sources::{SourceMaterialDetail, SourcesShowRequest};
 
@@ -649,7 +649,7 @@ fn dlq_triage_report(
     inspected_tail: usize,
 ) -> DlqTriageReport {
     let mut groups = Vec::new();
-    for group in &peek.groups {
+    for group in dlq_triage_group_keys(&peek.messages) {
         let mut messages = peek
             .messages
             .iter()
@@ -657,7 +657,7 @@ fn dlq_triage_report(
                 message.sequence >= group.first_sequence
                     && message.sequence <= group.last_sequence
                     && message.original_subject == group.original_subject
-                    && dlq_triage_reason_bucket(&message.payload_preview) == group.reason_bucket
+                    && dlq_reason_bucket(&message.payload_preview) == group.reason_bucket
             })
             .collect::<Vec<_>>();
         messages.sort_by_key(|message| message.sequence);
@@ -726,6 +726,43 @@ fn dlq_triage_report(
     }
 }
 
+#[derive(Debug, Clone)]
+struct DlqTriageGroupKey {
+    reason_bucket: String,
+    original_subject: Option<String>,
+    count: usize,
+    first_sequence: u64,
+    last_sequence: u64,
+}
+
+fn dlq_triage_group_keys(messages: &[DlqMessagePeek]) -> Vec<DlqTriageGroupKey> {
+    let mut groups: Vec<DlqTriageGroupKey> = Vec::new();
+    for message in messages {
+        let reason_bucket = dlq_reason_bucket(&message.payload_preview);
+        if let Some(existing) = groups.iter_mut().find(|group| {
+            group.original_subject == message.original_subject && group.reason_bucket == reason_bucket
+        }) {
+            existing.count += 1;
+            existing.first_sequence = existing.first_sequence.min(message.sequence);
+            existing.last_sequence = existing.last_sequence.max(message.sequence);
+        } else {
+            groups.push(DlqTriageGroupKey {
+                reason_bucket,
+                original_subject: message.original_subject.clone(),
+                count: 1,
+                first_sequence: message.sequence,
+                last_sequence: message.sequence,
+            });
+        }
+    }
+    groups.sort_by(|a, b| {
+        b.count
+            .cmp(&a.count)
+            .then_with(|| a.first_sequence.cmp(&b.first_sequence))
+    });
+    groups
+}
+
 fn contiguous_message_runs<'a>(messages: &[&'a DlqMessagePeek]) -> Vec<Vec<&'a DlqMessagePeek>> {
     let mut runs = Vec::new();
     let mut current = Vec::new();
@@ -782,52 +819,6 @@ fn is_uuid_like(candidate: &str) -> bool {
         && candidate.chars().enumerate().all(|(idx, ch)| {
             matches!(idx, 8 | 13 | 18 | 23) == (ch == '-') && (ch == '-' || ch.is_ascii_hexdigit())
         })
-}
-
-fn dlq_triage_reason_bucket(preview: &str) -> String {
-    if preview.contains("equivalence_key") && preview.contains("already exists") {
-        "occurrence_duplicate.equivalence_key_exists".to_string()
-    } else if let Some(error_code) = preview_error_code(preview) {
-        format!("error_payload.{error_code}")
-    } else if preview.contains("\"error\"") {
-        "error_payload.unparsed".to_string()
-    } else if preview.contains("[payload contains dangerous Unicode characters]") {
-        "unsafe_unicode_preview".to_string()
-    } else if preview.is_empty() {
-        "empty_preview".to_string()
-    } else {
-        "unclassified_preview".to_string()
-    }
-}
-
-fn preview_error_code(preview: &str) -> Option<String> {
-    if let Ok(value) = serde_json::from_str::<serde_json::Value>(preview)
-        && let Some(error) = value.get("error").and_then(|error| error.as_str())
-    {
-        return Some(sanitize_reason_token(error));
-    }
-
-    preview_leading_error_string(preview).map(|error| sanitize_reason_token(&error))
-}
-
-fn preview_leading_error_string(preview: &str) -> Option<String> {
-    let marker = "\"error\":\"";
-    let start = preview.find(marker)? + marker.len();
-    let rest = &preview[start..];
-    let end = rest.find('"')?;
-    Some(rest[..end].to_string())
-}
-
-fn sanitize_reason_token(reason: &str) -> String {
-    let mut token = String::new();
-    for ch in reason.trim().chars() {
-        if ch.is_ascii_alphanumeric() {
-            token.push(ch.to_ascii_lowercase());
-        } else if !token.ends_with('_') {
-            token.push('_');
-        }
-    }
-    token.trim_matches('_').to_string()
 }
 
 fn dlq_triage_caveat(reason_bucket: &str) -> &'static str {

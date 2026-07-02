@@ -316,7 +316,7 @@ async fn dlq_cleanup_plan_marks_only_terminal_contiguous_groups_as_candidates()
 
     let rendered = format_dlq_cleanup_plan_table(&plan);
     assert!(rendered.contains("DLQ Cleanup Plan:"));
-    assert!(rendered.contains("Coalesced purge actions:"));
+    assert!(rendered.contains("Coalesced cleanup actions:"));
     assert!(rendered.contains("purge_candidate: 1 message(s), seq 294..294"));
     assert!(rendered.contains("inspect_only: 1 message(s), seq 296..296"));
     assert!(rendered.contains("Blockers:"));
@@ -400,6 +400,84 @@ async fn dlq_cleanup_plan_allows_duplicate_buckets_without_material_ids()
     assert_eq!(
         plan.items[0].purge_command.as_deref(),
         Some("sinexctl ops dlq purge --start-sequence 1 --end-sequence 2 --confirm")
+    );
+    Ok(())
+}
+
+#[sinex_test]
+async fn dlq_cleanup_plan_regroups_messages_when_server_groups_are_stale()
+-> xtask::sandbox::TestResult<()> {
+    let stats = DlqListResponse {
+        total_messages: 2,
+        total_bytes: 512,
+        first_seq: 2928,
+        last_seq: 2929,
+        pressure_level: sinex_primitives::RuntimePressureLevel::Warning,
+        resource_pressure: DlqPressureSignal {
+            pressure_level: sinex_primitives::RuntimePressureLevel::Warning,
+            runtime_action: sinex_primitives::RuntimePressureAction::Inspect,
+            pending_messages: 2,
+            pending_bytes: 512,
+            retry_batch_size: 10,
+            recommended_action: "ops dlq peek".to_string(),
+            reason: "inspect failures before running paced requeue or purge".to_string(),
+        },
+        pending_sequence_span: 2,
+        recommended_action: "ops dlq peek".to_string(),
+        action_reason: "inspect failures before running paced requeue or purge".to_string(),
+    };
+    let peek = DlqPeekResponse {
+        messages: vec![
+            DlqMessagePeek {
+                subject: "dev.events.dlq.event_engine".to_string(),
+                sequence: 2928,
+                retry_count: 0,
+                original_subject: None,
+                payload_preview:
+                    "{\"error\": \"buffered_slice_limit_exceeded\", \"material_id\":\"019f22f2-23af-7c10-8aa7-87f8ebac75ec\",..."
+                        .to_string(),
+                payload_redacted: false,
+                privacy_caveats: Vec::new(),
+            },
+            DlqMessagePeek {
+                subject: "dev.events.dlq.event_engine".to_string(),
+                sequence: 2929,
+                retry_count: 0,
+                original_subject: None,
+                payload_preview:
+                    "{\"error\": \"orphaned_sensing_material\", \"material_id\":\"019f22d3-f500-7783-9ed6-a05cd8e91cc3\",..."
+                        .to_string(),
+                payload_redacted: false,
+                privacy_caveats: Vec::new(),
+            },
+        ],
+        groups: vec![DlqMessageGroup {
+            original_subject: None,
+            reason_bucket: "error_payload.unparsed".to_string(),
+            count: 2,
+            first_sequence: 2928,
+            last_sequence: 2929,
+            sample_previews: Vec::new(),
+        }],
+    };
+
+    let report = dlq_triage_report(stats, peek, 2);
+    assert_eq!(report.groups.len(), 2);
+    assert_eq!(report.groups.iter().map(|group| group.count).sum::<usize>(), 2);
+
+    let plan = dlq_cleanup_plan(report);
+    assert_eq!(plan.items.len(), 2);
+    assert_eq!(plan.items.iter().map(|item| item.count).sum::<usize>(), 2);
+    assert_eq!(plan.blocked_count, 2);
+    assert!(
+        plan.items
+            .iter()
+            .any(|item| item.reason_bucket == "error_payload.buffered_slice_limit_exceeded")
+    );
+    assert!(
+        plan.items
+            .iter()
+            .any(|item| item.reason_bucket == "error_payload.orphaned_sensing_material")
     );
     Ok(())
 }
