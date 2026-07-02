@@ -891,7 +891,7 @@ fn run_changed_strict_command(
             let reused = if pr.reused { " (fresh)" } else { "" };
             println!("  {mark} {}{reused}", pr.package);
             if let Some(ref excerpt) = pr.output_excerpt {
-                for line in excerpt.lines().take(5) {
+                for line in excerpt.lines() {
                     println!("    {line}");
                 }
             }
@@ -945,6 +945,7 @@ fn changed_strict_command_result(
             .map(|r| r.package.clone())
             .collect();
         let msg = format!("changed-strict: check failed for: {}", failed.join(", "));
+        let detail = changed_strict_failure_detail(&msg, &report);
         let mut result = CommandResult::failure(StructuredError {
             code: "CHANGED_STRICT_FAILED".to_string(),
             message: msg.clone(),
@@ -954,11 +955,33 @@ fn changed_strict_command_result(
                 failed.join(" -p ")
             )),
         })
-        .with_detail(msg)
+        .with_detail(detail)
         .with_data(report_json);
         result.warnings = vec![];
         Ok(result.with_duration(ctx.elapsed()))
     }
+}
+
+fn changed_strict_failure_detail(
+    msg: &str,
+    report: &crate::strict_changed::ChangedStrictReport,
+) -> String {
+    let mut detail = msg.to_string();
+    for result in report.package_results.iter().filter(|result| !result.success) {
+        detail.push_str("\n\n== ");
+        detail.push_str(&result.package);
+        detail.push_str(" ==");
+        if let Some(exit_code) = result.exit_code {
+            detail.push_str(&format!("\nexit code: {exit_code}"));
+        }
+        if let Some(excerpt) = result.output_excerpt.as_deref() {
+            detail.push('\n');
+            detail.push_str(excerpt);
+        } else {
+            detail.push_str("\n(no child output captured)");
+        }
+    }
+    detail
 }
 
 #[cfg(test)]
