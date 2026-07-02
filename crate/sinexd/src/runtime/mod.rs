@@ -47,6 +47,7 @@ pub mod input_shapes;
 pub mod jetstream_consumer;
 pub mod jetstream_streams;
 pub mod material;
+pub mod nats_payload;
 pub mod nats_publisher;
 pub mod parser;
 pub mod preflight;

@@ -133,6 +133,7 @@ impl JetStreamConsumer {
         let mut headers = async_nats::HeaderMap::new();
         headers.insert("Nats-Msg-Id", event_id_str.as_str());
         transport::insert_transport_class_headers(&mut headers, transport::Class::Confirmation);
+        ensure_nats_payload_fits("confirmation watermark", &subject, payload.len())?;
 
         self.js
             .publish_with_headers(subject, headers, payload.into())
@@ -185,6 +186,7 @@ impl JetStreamConsumer {
         let mut headers = async_nats::HeaderMap::new();
         headers.insert("Nats-Msg-Id", event_id_str.as_str());
         transport::insert_transport_class_headers(&mut headers, transport::Class::Confirmation);
+        ensure_nats_payload_fits("confirmed event", &subject, payload.len())?;
 
         self.js
             .publish_with_headers(subject, headers, payload.into())
@@ -306,6 +308,7 @@ impl JetStreamConsumer {
         let retry_msg_id = format!("confirm-retry.{event_id_str}");
         headers.insert("Nats-Msg-Id", retry_msg_id.as_str());
         transport::insert_transport_class_headers(&mut headers, transport::Class::Confirmation);
+        ensure_nats_payload_fits("confirmation retry request", &subject, payload.len())?;
 
         self.js
             .publish_with_headers(subject, headers, payload.into())

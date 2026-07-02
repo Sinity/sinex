@@ -57,7 +57,12 @@ impl InputShapeAdapter for StaticFileAdapter {
 
         let path = config.path.clone();
 
-        let bytes = std::fs::read(&path)?;
+        let metadata = std::fs::metadata(&path)?;
+        let bytes = if metadata.is_dir() {
+            Vec::new()
+        } else {
+            std::fs::read(&path)?
+        };
 
         let len = bytes.len() as u64;
         let record = SourceRecord {
@@ -76,6 +81,10 @@ impl InputShapeAdapter for StaticFileAdapter {
         &self,
         config: &Self::Config,
     ) -> ParserResult<Option<SourceRecordFingerprint>> {
+        if std::fs::metadata(&config.path)?.is_dir() {
+            return Ok(None);
+        }
+
         let bytes = std::fs::read(&config.path)?;
         match Utf8Path::new(&config.path)
             .extension()

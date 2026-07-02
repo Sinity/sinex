@@ -24,6 +24,8 @@ impl JetStreamConsumer {
     ) -> EventEngineResult<Vec<PreparedEvent>> {
         let decisions = self.admission.admit_intent_bytes(&msg.payload).await?;
         let mut prepared = Vec::with_capacity(decisions.len());
+        let mut suppressed_count = 0usize;
+        let mut routed_terminal_failure = false;
 
         for decision in decisions {
             match decision {
@@ -35,14 +37,26 @@ impl JetStreamConsumer {
                         message: msg.clone(),
                     });
                 }
+                AdmissionDecision::Suppressed(rejection) => {
+                    suppressed_count += 1;
+                    self.record_admission_suppression(&rejection).await;
+                }
                 AdmissionDecision::Rejected(rejection)
-                | AdmissionDecision::Suppressed(rejection)
                 | AdmissionDecision::QuarantineNeeded(rejection) => {
+                    routed_terminal_failure = true;
                     self.record_admission_rejection(&rejection).await;
                     self.route_validation_failure(&msg, rejection.reason)
                         .await?;
                 }
             }
+        }
+
+        if prepared.is_empty() && suppressed_count > 0 && !routed_terminal_failure {
+            msg.ack().await.map_err(|error| {
+                SinexError::network("Failed to ack all-suppressed admission message")
+                    .with_context("suppressed_count", suppressed_count.to_string())
+                    .with_source(error.to_string())
+            })?;
         }
 
         Ok(prepared)
@@ -254,6 +268,52 @@ impl JetStreamConsumer {
                 Self::log_observer_error(
                     &self.stats,
                     "event_engine.admission_rejections_total",
+                    &error,
+                );
+            }
+        }
+    }
+
+    pub(super) async fn record_admission_suppression(&self, rejection: &AdmissionRejection) {
+        let kind_label = match rejection.kind {
+            AdmissionRejectionKind::OccurrenceDuplicate => "occurrence_duplicate",
+            AdmissionRejectionKind::PayloadTooLarge => "payload_too_large",
+            AdmissionRejectionKind::InvalidUtf8 => "invalid_utf8",
+            AdmissionRejectionKind::StructuralJson => "structural_json",
+            AdmissionRejectionKind::EventDeserialization => "event_deserialization",
+            AdmissionRejectionKind::EnvelopeDeserialization => "envelope_deserialization",
+            AdmissionRejectionKind::EnvelopeValidation => "envelope_validation",
+            AdmissionRejectionKind::MissingTimestamp => "missing_timestamp",
+            AdmissionRejectionKind::PastTimestamp => "past_timestamp",
+            AdmissionRejectionKind::FutureTimestamp => "future_timestamp",
+            AdmissionRejectionKind::NegativeAnchor => "negative_anchor",
+            AdmissionRejectionKind::SchemaValidation => "schema_validation",
+            AdmissionRejectionKind::CandidateMetadata => "candidate_metadata",
+            AdmissionRejectionKind::PrivacyPolicy => "privacy_policy",
+            AdmissionRejectionKind::QuarantinePolicy => "quarantine_policy",
+            AdmissionRejectionKind::MissingEventId => "missing_event_id",
+            AdmissionRejectionKind::InvalidEventId => "invalid_event_id",
+        };
+
+        tracing::debug!(
+            target: "sinex_metrics",
+            metric = "event_engine.admission_suppressions_total",
+            kind = kind_label,
+            "Event suppressed by admission service"
+        );
+
+        if let Some(ref observer) = self.observer {
+            let labels = Some(std::collections::HashMap::from([(
+                "kind".to_string(),
+                kind_label.to_string(),
+            )]));
+            if let Err(error) = observer
+                .emit_counter("event_engine.admission_suppressions_total", 1, labels)
+                .await
+            {
+                Self::log_observer_error(
+                    &self.stats,
+                    "event_engine.admission_suppressions_total",
                     &error,
                 );
             }

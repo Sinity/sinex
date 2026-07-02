@@ -1,6 +1,7 @@
 //! NATS `JetStream` event publisher
 
 use crate::runtime::RuntimeResult;
+use crate::runtime::nats_payload::ensure_nats_payload_fits;
 use async_nats::jetstream::context::ConsumerInfoErrorKind;
 use serde::Serialize;
 use sinex_primitives::env as shared_env;
@@ -726,6 +727,8 @@ impl NatsPublisher {
         payload: Vec<u8>,
         error_message: &'static str,
     ) -> RuntimeResult<async_nats::jetstream::context::PublishAckFuture> {
+        ensure_nats_payload_fits(error_message, &subject, payload.len())?;
+
         self.js
             .publish_with_headers(subject, headers, payload.into())
             .await
@@ -850,6 +853,7 @@ mod tests {
         RAW_STREAM_BACKPRESSURE_LOW_PENDING, build_publish_payload, destructure_provenance,
         wait_for_publish_ack,
     };
+    use crate::runtime::nats_payload::NATS_PUBLISH_PAYLOAD_HARD_LIMIT_BYTES;
     use sinex_primitives::{
         DynamicPayload, Id, Uuid,
         domain::{AutomatonModel, HostName, SyntheticTemporalPolicy},
@@ -866,6 +870,28 @@ mod tests {
             wait_for_publish_ack::<(), io::Error, _>(future::pending(), Duration::from_millis(10))
                 .await;
         assert!(result.is_err());
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn publish_with_headers_rejects_oversized_payload_before_nats(
+        ctx: xtask::sandbox::TestContext,
+    ) -> TestResult<()> {
+        let ctx = ctx.with_nats().dedicated().await?;
+        let publisher = NatsPublisher::new(ctx.nats_client());
+        let error = publisher
+            .publish_with_headers(
+                "oversized.test".to_string(),
+                async_nats::HeaderMap::new(),
+                vec![0; NATS_PUBLISH_PAYLOAD_HARD_LIMIT_BYTES + 1],
+                "oversized test publish",
+            )
+            .await
+            .expect_err("oversized payload should fail before NATS publish");
+
+        let error_text = error.to_string();
+        assert!(error_text.contains("NATS payload exceeds configured hard limit"));
+        assert!(error_text.contains("oversized test publish"));
         Ok(())
     }
 

@@ -195,6 +195,7 @@ struct BatchPublishResult {
     failed: usize,
 }
 
+const NATS_INTENT_PAYLOAD_SOFT_LIMIT_BYTES: usize = 900 * 1024;
 const RECOVERY_SPOOL_REPLAY_AFTER_SUCCESS_INTERVAL: Duration = Duration::from_secs(10);
 
 /// Event batcher that handles batching and sending
@@ -769,16 +770,129 @@ impl EventBatcher {
         }
 
         let event_count = events.len();
+        let source_id = if source_id.is_empty() {
+            "unknown"
+        } else {
+            source_id
+        };
+        let pending = std::mem::take(events);
+        let mut pending_iter = pending.into_iter();
+        let mut published = 0usize;
+        let mut chunk = Vec::new();
 
+        while let Some(event) = pending_iter.next() {
+            chunk.push(event);
+
+            match Self::intent_payload_len(source_id, parser_id, parser_version, &chunk) {
+                Ok(payload_len)
+                    if payload_len > NATS_INTENT_PAYLOAD_SOFT_LIMIT_BYTES && chunk.len() > 1 =>
+                {
+                    let overflow = chunk
+                        .pop()
+                        .expect("chunk len checked above; overflow event must exist");
+                    match Self::publish_intent_chunk(
+                        publisher,
+                        source_id,
+                        parser_id,
+                        parser_version,
+                        chunk,
+                    )
+                    .await
+                    {
+                        Ok(count) => {
+                            published += count;
+                            chunk = vec![overflow];
+                        }
+                        Err((failed_chunk, error)) => {
+                            *events = failed_chunk
+                                .into_iter()
+                                .chain(std::iter::once(overflow))
+                                .chain(pending_iter)
+                                .collect();
+                            Self::log_nats_publish_failure(event_count, events.len(), &error);
+                            return BatchPublishResult {
+                                published,
+                                failed: events.len(),
+                            };
+                        }
+                    }
+                }
+                Ok(payload_len) => {
+                    if payload_len > NATS_INTENT_PAYLOAD_SOFT_LIMIT_BYTES {
+                        warn!(
+                            payload_len,
+                            soft_limit = NATS_INTENT_PAYLOAD_SOFT_LIMIT_BYTES,
+                            "Single event intent envelope exceeds soft NATS payload split limit; publishing alone"
+                        );
+                    }
+                }
+                Err(error) => {
+                    *events = chunk.into_iter().chain(pending_iter).collect();
+                    Self::log_nats_publish_failure(event_count, events.len(), &error);
+                    return BatchPublishResult {
+                        published,
+                        failed: events.len(),
+                    };
+                }
+            }
+        }
+
+        if !chunk.is_empty() {
+            match Self::publish_intent_chunk(publisher, source_id, parser_id, parser_version, chunk)
+                .await
+            {
+                Ok(count) => {
+                    published += count;
+                }
+                Err((failed_chunk, error)) => {
+                    *events = failed_chunk;
+                    Self::log_nats_publish_failure(event_count, events.len(), &error);
+                    return BatchPublishResult {
+                        published,
+                        failed: events.len(),
+                    };
+                }
+            }
+        }
+
+        debug!(published, original_batch_size = event_count, "Intent batch sent via NATS");
+        BatchPublishResult {
+            published,
+            failed: 0,
+        }
+    }
+
+    fn intent_payload_len(
+        source_id: &str,
+        parser_id: &str,
+        parser_version: &str,
+        events: &[Event<JsonValue>],
+    ) -> RuntimeResult<usize> {
         let intent = EventIntent::new(
-            if source_id.is_empty() {
-                "unknown"
-            } else {
-                source_id
-            },
+            source_id,
             parser_id,
             parser_version,
-            std::mem::take(events),
+            events.to_vec(),
+            HostName::from_static("sinex-batcher"),
+        );
+        serde_json::to_vec(&intent)
+            .map(|payload| payload.len())
+            .map_err(SinexError::from)
+    }
+
+    async fn publish_intent_chunk(
+        publisher: &NatsPublisher,
+        source_id: &str,
+        parser_id: &str,
+        parser_version: &str,
+        events: Vec<Event<JsonValue>>,
+    ) -> Result<usize, (Vec<Event<JsonValue>>, SinexError)> {
+        let event_count = events.len();
+        let intent = EventIntent::new(
+            source_id,
+            parser_id,
+            parser_version,
+            events,
             HostName::from_static("sinex-batcher"),
         );
 
@@ -786,29 +900,20 @@ impl EventBatcher {
             .publish_intent(&intent, sinex_primitives::transport::Class::Critical)
             .await
         {
-            Ok(()) => {
-                debug!(published = event_count, "Intent batch sent via NATS");
-                *events = Vec::new();
-                BatchPublishResult {
-                    published: event_count,
-                    failed: 0,
-                }
-            }
-            Err(e) => {
-                error!(
-                    target: "sinex_metrics",
-                    metric = "runtime.event_publish_failures_total",
-                    event_count = event_count,
-                    error = %e,
-                    "Failed to publish event intent envelope"
-                );
-                *events = intent.events;
-                BatchPublishResult {
-                    published: 0,
-                    failed: event_count,
-                }
-            }
+            Ok(()) => Ok(event_count),
+            Err(error) => Err((intent.events, error)),
         }
+    }
+
+    fn log_nats_publish_failure(original_batch_size: usize, failed: usize, error: &SinexError) {
+        error!(
+            target: "sinex_metrics",
+            metric = "runtime.event_publish_failures_total",
+            event_count = original_batch_size,
+            failed,
+            error = %error,
+            "Failed to publish event intent envelope"
+        );
     }
 }
 
@@ -871,6 +976,21 @@ mod tests {
         Ok(event)
     }
 
+    fn large_test_event(
+        name: &str,
+        payload_bytes: usize,
+    ) -> sinex_primitives::Result<Event<JsonValue>> {
+        let mut event = DynamicPayload::new(
+            "dlq.test",
+            name,
+            serde_json::json!({ "body": "x".repeat(payload_bytes) }),
+        )
+        .from_parents([EventId::from_uuid(Uuid::now_v7())])?
+        .build()?;
+        event.id = Some(Id::new());
+        Ok(event)
+    }
+
     #[sinex_test]
     async fn recovery_spool_write_failure_is_propagated() -> TestResult<()> {
         let temp_dir = tempdir()?;
@@ -917,6 +1037,55 @@ mod tests {
             recovery_spool_path.exists(),
             "expected recovery spool at {recovery_spool_path:?}"
         );
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn nats_transport_splits_oversized_intent_envelopes(
+        ctx: xtask::sandbox::TestContext,
+    ) -> TestResult<()> {
+        let ctx = ctx.with_nats().dedicated().await?;
+        ensure_events_stream(&ctx.nats_client(), ctx.env()).await?;
+
+        let work_dir = tempdir()?;
+        let event_name = "nats.large.split";
+        let subject = ctx
+            .env()
+            .nats_raw_event_subject_with_namespace(None, "dlq.test", event_name);
+        let mut subscription = ctx.nats_client().subscribe(subject).await?;
+        let (_sender, receiver) = mpsc::channel(1);
+        let (_shutdown_tx, shutdown_rx) = oneshot::channel();
+        let mut batcher = EventBatcher::new(
+            EventTransport::Nats(Arc::new(NatsPublisher::new(ctx.nats_client()))),
+            EventBatcherConfig::default(),
+            receiver,
+            shutdown_rx,
+            work_dir.path().to_path_buf(),
+        );
+
+        let mut batch = vec![
+            large_test_event(event_name, 600 * 1024)?,
+            large_test_event(event_name, 600 * 1024)?,
+        ];
+
+        batcher.send_batch(&mut batch).await?;
+
+        assert!(
+            batch.is_empty(),
+            "NATS send_batch must drain the input batch on successful split publish"
+        );
+        let first = tokio::time::timeout(Duration::from_secs(5), subscription.next())
+            .await?
+            .expect("first split intent envelope should publish");
+        let second = tokio::time::timeout(Duration::from_secs(5), subscription.next())
+            .await?
+            .expect("second split intent envelope should publish");
+
+        for message in [first, second] {
+            let payload: JsonValue = serde_json::from_slice(&message.payload)?;
+            assert_eq!(payload["events"].as_array().map(Vec::len), Some(1));
+            assert_eq!(payload["events"][0]["event_type"], event_name);
+        }
         Ok(())
     }
 
