@@ -2,24 +2,32 @@
 
 use super::RUNTIME_MODULE_LIST_SCHEMA_VERSION;
 use super::*;
-use sinex_primitives::domain::{HostName, InstanceId, ModuleKind};
+use sinex_primitives::domain::{ModuleKind, ModuleName};
+use sinex_primitives::rpc::runtime::RuntimeHeartbeatSource;
 use sinex_primitives::temporal::Timestamp;
 use sinex_primitives::views::VIEW_ENVELOPE_SCHEMA_VERSION;
 use xtask::sandbox::sinex_test;
 
-fn make_module(id: &str, kind: ModuleKind, is_leader: bool) -> InstanceInfo {
-    InstanceInfo {
-        instance_id: InstanceId::new(id),
+fn make_module(id: &str, kind: ModuleKind) -> RuntimeInfo {
+    RuntimeInfo {
+        module_name: ModuleName::new(id),
         module_kind: kind,
-        hostname: Some(HostName::from_static("testhost")),
-        last_heartbeat: Some(Timestamp::now()),
-        is_leader,
+        version: "test-version".to_string(),
+        description: None,
+        service_name: Some(id.to_string()),
+        instance_id: Some(format!("{id}-instance")),
+        module_run_id: None,
+        host: Some("testhost".to_string()),
+        status: "running".to_string(),
+        last_heartbeat_at: Some(Timestamp::now()),
+        started_at: Some(Timestamp::now()),
+        heartbeat_source: RuntimeHeartbeatSource::Run,
     }
 }
 
-fn fixture_modules(count: usize) -> Vec<InstanceInfo> {
+fn fixture_modules(count: usize) -> Vec<RuntimeInfo> {
     (0..count)
-        .map(|i| make_module(&format!("instance-{i:04}"), ModuleKind::Source, i == 0))
+        .map(|i| make_module(&format!("instance-{i:04}"), ModuleKind::Source))
         .collect()
 }
 
@@ -100,8 +108,8 @@ async fn ndjson_line_count_equals_module_count() -> xtask::TestResult<()> {
                 color_eyre::eyre::eyre!("ndjson line {i} did not parse (count={count}): {e}")
             })?;
             assert!(
-                parsed.get("instance_id").is_some(),
-                "each ndjson line must be a standalone InstanceInfo object (line={i}, count={count})"
+                parsed.get("module_name").is_some(),
+                "each ndjson line must be a standalone RuntimeInfo object (line={i}, count={count})"
             );
             assert!(
                 !parsed.to_string().contains("\x1b["),
@@ -116,7 +124,7 @@ async fn ndjson_line_count_equals_module_count() -> xtask::TestResult<()> {
 #[sinex_test]
 async fn dot_returns_error_for_runtime_list_view() -> xtask::TestResult<()> {
     let envelope = fixture_envelope(0);
-    let items: Vec<InstanceInfo> = vec![];
+    let items: Vec<RuntimeInfo> = vec![];
 
     let result = render_envelope(&envelope, &items, OutputFormat::Dot);
     assert!(result.is_err(), "dot must return Err for a non-graph view");

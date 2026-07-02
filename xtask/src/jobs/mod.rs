@@ -25,6 +25,24 @@ const CANCEL_SIGTERM_GRACE: Duration = Duration::from_secs(5);
 const CANCEL_SIGTERM_GRACE: Duration = Duration::from_millis(100);
 const CANCEL_POLL_INTERVAL: Duration = Duration::from_millis(25);
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum BackgroundWatchdog {
+    Default,
+    Disabled,
+}
+
+fn default_watchdog_secs(command: &str, args: &[String]) -> u64 {
+    let subcommand = if command == "xtask" {
+        args.first().map_or("", String::as_str)
+    } else {
+        command
+    };
+    match subcommand {
+        "test" => 3600, // 60 minutes
+        _ => 1800,      // 30 minutes
+    }
+}
+
 /// A handle to a background job (backed by `HistoryDb`).
 #[derive(Clone)]
 pub struct Job {
@@ -416,7 +434,14 @@ impl JobManager {
 
     /// Start a new background job.
     pub fn spawn(&self, command: &str, args: &[String]) -> Result<Job> {
-        self.spawn_with_history_env(command, args, command, args, &[])
+        self.spawn_with_history_env(
+            command,
+            args,
+            command,
+            args,
+            &[],
+            BackgroundWatchdog::Default,
+        )
     }
 
     /// Start a new background job with explicit environment overrides.
@@ -426,7 +451,35 @@ impl JobManager {
         args: &[String],
         env_vars: &[(String, String)],
     ) -> Result<Job> {
-        self.spawn_with_history_env(command, args, command, args, env_vars)
+        self.spawn_with_history_env(
+            command,
+            args,
+            command,
+            args,
+            env_vars,
+            BackgroundWatchdog::Default,
+        )
+    }
+
+    /// Start a long-lived runtime job without a detached timeout watchdog.
+    ///
+    /// Use this for explicit runtime lifecycle commands such as `xtask run --bg`.
+    /// Build, check, and test jobs should keep the default watchdog so abandoned
+    /// finite work cannot accumulate forever.
+    pub fn spawn_with_env_without_watchdog(
+        &self,
+        command: &str,
+        args: &[String],
+        env_vars: &[(String, String)],
+    ) -> Result<Job> {
+        self.spawn_with_history_env(
+            command,
+            args,
+            command,
+            args,
+            env_vars,
+            BackgroundWatchdog::Disabled,
+        )
     }
 
     /// Start a new background job with explicit history metadata.
@@ -437,7 +490,14 @@ impl JobManager {
         history_command: &str,
         history_args: &[String],
     ) -> Result<Job> {
-        self.spawn_with_history_env(command, args, history_command, history_args, &[])
+        self.spawn_with_history_env(
+            command,
+            args,
+            history_command,
+            history_args,
+            &[],
+            BackgroundWatchdog::Default,
+        )
     }
 
     fn spawn_with_history_env(
@@ -447,6 +507,7 @@ impl JobManager {
         history_command: &str,
         history_args: &[String],
         env_vars: &[(String, String)],
+        watchdog: BackgroundWatchdog,
     ) -> Result<Job> {
         // Register with HistoryDb first to get both IDs.
         // invocation_id: the durable execution record (claimed by the child process).
@@ -503,34 +564,23 @@ impl JobManager {
             db.update_job_paths(job_id, &stdout_path, &stderr_path)?;
         }
 
-        // Spawn a detached reaper via `xtask __reap` (double-fork orphan).
-        // The reaper survives when the launcher xtask exits — unlike std::thread,
-        // which dies with its parent process.
-        // Max duration: test = 60 min, everything else = 30 min.
-        let max_secs = {
-            let subcommand = if command == "xtask" {
-                args.first().map_or("", String::as_str)
-            } else {
-                command
-            };
-            match subcommand {
-                "test" => 3600u64, // 60 minutes
-                _ => 1800u64,      // 30 minutes
+        if watchdog == BackgroundWatchdog::Default {
+            // Spawn a detached reaper via `xtask __reap` (double-fork orphan).
+            // The reaper survives when the launcher xtask exits — unlike
+            // std::thread, which dies with its parent process.
+            let watchdog_db_path = config().history_db_path();
+            if let Err(error) = crate::commands::reap::spawn_reaper(
+                pid,
+                default_watchdog_secs(command, args),
+                invocation_id,
+                job_id,
+                &watchdog_db_path,
+                &job_dir,
+            ) {
+                eprintln!(
+                    "Warning: failed to spawn detached reaper for background job {job_id} (pid {pid}): {error}"
+                );
             }
-        };
-
-        let watchdog_db_path = config().history_db_path();
-        if let Err(error) = crate::commands::reap::spawn_reaper(
-            pid,
-            max_secs,
-            invocation_id,
-            job_id,
-            &watchdog_db_path,
-            &job_dir,
-        ) {
-            eprintln!(
-                "Warning: failed to spawn detached reaper for background job {job_id} (pid {pid}): {error}"
-            );
         }
 
         Ok(Job {

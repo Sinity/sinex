@@ -21,22 +21,31 @@ use super::{
 use crate::runtime::{
     RuntimeResult, SinexError,
     checkpoint::CheckpointManager,
-    confirmation_handler::{ProcessingModel, ProvisionalEvent},
+    confirmation_handler::ProcessingModel,
     event_transport::{EventBatcherConfig, EventTransport, spawn_event_batcher},
     jetstream_consumer::{JetStreamEventConsumer, JetStreamEventConsumerConfig},
     systemd_notify,
 };
+#[cfg(test)]
+use crate::runtime::confirmation_handler::ProvisionalEvent;
 use camino::Utf8PathBuf;
+#[cfg(test)]
 use serde::Deserialize;
 #[cfg(feature = "db")]
 use sinex_db::DbPool as PgPool;
+#[cfg(test)]
 use sinex_db::models::SourceMaterial;
+#[cfg(test)]
 use sinex_db::repositories::DbPoolExt;
 use sinex_primitives::events::Event;
+#[cfg(test)]
 use sinex_primitives::events::builder::{EventId, Provenance};
 use sinex_primitives::{
-    EventSource, EventType, HostName, Id, JsonValue, OffsetKind, Timestamp, Uuid,
-    domain::ModuleState, non_empty::NonEmptyVec,
+    JsonValue, Timestamp, Uuid, domain::ModuleState,
+};
+#[cfg(test)]
+use sinex_primitives::{
+    EventSource, EventType, HostName, Id, OffsetKind, non_empty::NonEmptyVec,
 };
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -84,7 +93,7 @@ struct LeaderState {
 }
 
 /// Batch of events resolved from provisional confirmations.
-#[cfg(feature = "messaging")]
+#[cfg(test)]
 struct ResolvedBatch {
     events: Vec<Event<JsonValue>>,
     last_event_id: Option<Uuid>,

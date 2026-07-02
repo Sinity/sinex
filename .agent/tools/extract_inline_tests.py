@@ -32,6 +32,7 @@ class Candidate:
     module_name: str
     cfg_start: int
     module_end: int
+    attrs_after_cfg: str
     body: str
     merge_existing: bool = False
 
@@ -45,15 +46,25 @@ class SplitModuleCandidate:
     decl_end: int
 
 
+@dataclass
+class TestModuleStats:
+    true_inline_count: int
+    split_stub_count: int
+    unqualified_inline_count: int
+    true_inline_paths: list[str]
+    unqualified_inline_paths: list[str]
+
+
 def is_skipped(
     path: Path,
     *,
     include_test_directories: bool,
     include_split_test_files: bool,
+    include_tests_rs: bool,
 ) -> bool:
     if path.name.endswith("_test.rs") and not include_split_test_files:
         return True
-    if path.name == "tests.rs":
+    if path.name == "tests.rs" and not include_tests_rs:
         return True
     return (not include_test_directories) and "tests" in path.parts
 
@@ -63,6 +74,7 @@ def iter_rust_files(
     *,
     include_test_directories: bool,
     include_split_test_files: bool,
+    include_tests_rs: bool,
 ) -> list[Path]:
     files: list[Path] = []
     for root in roots:
@@ -71,6 +83,7 @@ def iter_rust_files(
                 root,
                 include_test_directories=include_test_directories,
                 include_split_test_files=include_split_test_files,
+                include_tests_rs=include_tests_rs,
             ):
                 files.append(root)
             continue
@@ -79,6 +92,7 @@ def iter_rust_files(
                 path,
                 include_test_directories=include_test_directories,
                 include_split_test_files=include_split_test_files,
+                include_tests_rs=include_tests_rs,
             ):
                 files.append(path)
     return sorted(files)
@@ -263,6 +277,7 @@ def find_candidates(path: Path) -> list[Candidate]:
                         module_name=module_name,
                         cfg_start=cfg_start,
                         module_end=after,
+                        attrs_after_cfg=text[cfg_line_end + 1 : line_pos],
                         body=dedent_body(text[open_idx + 1 : close_idx]),
                     )
                 )
@@ -309,6 +324,7 @@ def split_candidates_for_source(candidates: list[Candidate]) -> None:
         indent = text[candidate.cfg_start : text.find("#[cfg(test)]", candidate.cfg_start)]
         replacement = (
             f"{indent}#[cfg(test)]\n"
+            f"{candidate.attrs_after_cfg}"
             f"{indent}#[path = \"{rust_path_attr_target(source, candidate.target)}\"]\n"
             f"{indent}mod {candidate.module_name};\n"
         )
@@ -362,6 +378,37 @@ def find_existing_split_candidate(path: Path) -> SplitModuleCandidate | None:
         target=target,
         decl_start=matches[0].start(),
         decl_end=matches[0].end(),
+    )
+
+
+def collect_test_module_stats(files: list[Path]) -> TestModuleStats:
+    import re
+
+    true_inline_paths: list[str] = []
+    split_stub_count = 0
+    unqualified_inline_paths: list[str] = []
+    true_inline_pattern = re.compile(
+        r"(?m)^\s*#\[cfg\(test\)\]\s*(?:\n\s*#\[[^\n]*\])*\s*"
+        r"\n\s*mod\s+tests\s*\{"
+    )
+    split_stub_pattern = re.compile(
+        r"(?m)^\s*#\[cfg\(test\)\]\s*(?:\n\s*#\[[^\n]*\])*\s*"
+        r"\n\s*(?:#\[path\s*=\s*\"[^\"]+\"\]\s*\n\s*)?mod\s+tests\s*;"
+    )
+    unqualified_inline_pattern = re.compile(r"(?m)^\s*mod\s+tests\s*\{")
+    for path in files:
+        text = path.read_text()
+        if true_inline_pattern.search(text):
+            true_inline_paths.append(str(path))
+        split_stub_count += len(split_stub_pattern.findall(text))
+        if unqualified_inline_pattern.search(text):
+            unqualified_inline_paths.append(str(path))
+    return TestModuleStats(
+        true_inline_count=len(true_inline_paths),
+        split_stub_count=split_stub_count,
+        unqualified_inline_count=len(unqualified_inline_paths),
+        true_inline_paths=true_inline_paths,
+        unqualified_inline_paths=unqualified_inline_paths,
     )
 
 
@@ -447,6 +494,11 @@ def main() -> int:
     parser.add_argument("--merge-existing", action="store_true")
     parser.add_argument("--canonicalize-existing-split", action="store_true")
     parser.add_argument(
+        "--stats",
+        action="store_true",
+        help="report true inline modules separately from split mod-test stubs",
+    )
+    parser.add_argument(
         "--include-test-directories",
         action="store_true",
         help="also scan Rust files below tests/ directories",
@@ -455,6 +507,11 @@ def main() -> int:
         "--include-split-test-files",
         action="store_true",
         help="also scan *_test.rs files for nested inline test modules",
+    )
+    parser.add_argument(
+        "--include-tests-rs",
+        action="store_true",
+        help="also scan files named tests.rs for nested inline test modules",
     )
     parser.add_argument("--root", action="append", default=[])
     parser.add_argument("--json", action="store_true")
@@ -465,11 +522,13 @@ def main() -> int:
         roots,
         include_test_directories=args.include_test_directories,
         include_split_test_files=args.include_split_test_files,
+        include_tests_rs=args.include_tests_rs,
     )
     found: list[Candidate] = []
     split_found: list[SplitModuleCandidate] = []
     skipped: list[dict[str, str]] = []
     split_skipped: list[dict[str, str]] = []
+    stats = collect_test_module_stats(files) if args.stats else None
     for path in files:
         try:
             candidates = find_candidates(path)
@@ -542,12 +601,31 @@ def main() -> int:
         "skipped": skipped,
         "existing_split_skipped": split_skipped,
     }
+    if stats is not None:
+        summary["stats"] = {
+            "true_inline_count": stats.true_inline_count,
+            "split_stub_count": stats.split_stub_count,
+            "unqualified_inline_count": stats.unqualified_inline_count,
+            "true_inline_paths": stats.true_inline_paths,
+            "unqualified_inline_paths": stats.unqualified_inline_paths,
+        }
 
     if args.json:
         print(json.dumps(summary, indent=2))
     else:
         action = "split" if args.apply else "would split"
         print(f"{action} {len(found)} inline test module(s); skipped {len(skipped)}")
+        if stats is not None:
+            print(
+                "stats: "
+                f"{stats.true_inline_count} true inline cfg-test module(s); "
+                f"{stats.split_stub_count} split mod-test stub(s); "
+                f"{stats.unqualified_inline_count} unqualified mod-test body match(es)"
+            )
+            for path in stats.true_inline_paths:
+                print(f"INLINE {path}")
+            for path in stats.unqualified_inline_paths:
+                print(f"UNQUALIFIED_INLINE {path}")
         for item in found:
             print(f"{item.source} -> {item.target}")
         if args.canonicalize_existing_split:

@@ -786,7 +786,10 @@ impl XtaskCommand for RunCommand {
     }
 
     fn metadata(&self) -> CommandMetadata {
-        CommandMetadata::build()
+        CommandMetadata {
+            timeout: None,
+            ..CommandMetadata::build()
+        }
     }
 }
 
@@ -1134,7 +1137,8 @@ impl RunCommand {
                 format!("{prefix}-{default_service_name}")
             });
             let args = source_binding_runtime_args(binding, &run_identity);
-            let job = manager.spawn_with_env(&binary_command, &args, &runtime_env)?;
+            let job =
+                manager.spawn_with_env_without_watchdog(&binary_command, &args, &runtime_env)?;
             job_ids.push(job.id);
             sources.push(binding.source_id.clone());
         }
@@ -1192,7 +1196,8 @@ impl RunCommand {
                 .into_owned();
             let args = runtime_cli_args(package, &instance_id, *automaton);
 
-            let job = manager.spawn_with_env(&binary_command, &args, &runtime_env)?;
+            let job =
+                manager.spawn_with_env_without_watchdog(&binary_command, &args, &runtime_env)?;
             job_ids.push(job.id);
         }
 
@@ -1570,7 +1575,7 @@ impl RunCommand {
         let runtime_env = self.local_run_env_vars();
         let runtime = self.local_runtime_coordinates()?;
 
-        let job = manager.spawn_with_env(&binary_command, &args, &runtime_env)?;
+        let job = manager.spawn_with_env_without_watchdog(&binary_command, &args, &runtime_env)?;
 
         Ok(CommandResult::success()
             .with_message(format!("Backgrounded {package} as job {}", job.id))

@@ -137,7 +137,7 @@ impl ScreenCaptureBackend for CommandScreenCaptureBackend {
             })?;
 
         let capture = async move {
-            let mut stdout = child
+            let stdout = child
                 .stdout
                 .take()
                 .ok_or_else(|| SinexError::io("failed to capture screen-capture stdout"))?;

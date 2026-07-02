@@ -1,13 +1,15 @@
 use clap::Subcommand;
 use serde::{Deserialize, Serialize};
-use sinex_primitives::rpc::coordination::{InstanceHealthResponse, InstanceInfo};
+use sinex_primitives::domain::ModuleKind;
+use sinex_primitives::rpc::coordination::InstanceHealthResponse;
+use sinex_primitives::rpc::runtime::{RuntimeHeartbeatSource, RuntimeInfo};
 use sinex_primitives::rpc::system::SystemHealthResponse;
 use sinex_primitives::views::ViewEnvelope;
 
 use crate::Result;
 use crate::client::GatewayClient;
 use crate::commands::{AutomataCommand, GatewayCommands, RuntimePresenceCommand};
-use crate::fmt::{CommandOutput, format_table_runtime, render_envelope, with_spinner_result};
+use crate::fmt::{CommandOutput, format_heartbeat_age, render_envelope, with_spinner_result};
 use crate::model::{OutputFormat, RuntimeModuleRole};
 
 /// Schema version for the runtime module list view payload.
@@ -18,11 +20,11 @@ const RUNTIME_MODULE_LIST_SCHEMA_VERSION: &str = "sinex.runtime-module-list/v1";
 pub struct RuntimeModuleListView {
     pub schema_version: String,
     pub count: usize,
-    pub modules: Vec<InstanceInfo>,
+    pub modules: Vec<RuntimeInfo>,
 }
 
 impl RuntimeModuleListView {
-    fn new(modules: Vec<InstanceInfo>) -> Self {
+    fn new(modules: Vec<RuntimeInfo>) -> Self {
         let count = modules.len();
         Self {
             schema_version: RUNTIME_MODULE_LIST_SCHEMA_VERSION.to_string(),
@@ -124,7 +126,13 @@ impl RuntimeCommands {
     pub async fn execute(&self, client: &GatewayClient, format: OutputFormat) -> Result<()> {
         match self {
             Self::List { role } => {
-                let modules = client.list_runtime(*role).await?;
+                let modules = client
+                    .runtime_list_active(300)
+                    .await?
+                    .modules
+                    .into_iter()
+                    .filter(|module| runtime_role_matches(module.module_kind, *role))
+                    .collect::<Vec<_>>();
                 let envelope =
                     ViewEnvelope::new("sinexctl.runtime.list", RuntimeModuleListView::new(modules))
                         .with_query_echo(serde_json::json!({
@@ -145,7 +153,7 @@ impl RuntimeCommands {
                 if envelope.payload.modules.is_empty() {
                     println!("No modules found.");
                 } else {
-                    println!("{}", format_table_runtime(&envelope.payload.modules));
+                    println!("{}", format_runtime_presence_table(&envelope.payload.modules));
                 }
             }
             Self::Modules(cmd) => {
@@ -194,6 +202,50 @@ impl RuntimeCommands {
             }
         }
         Ok(())
+    }
+}
+
+fn runtime_role_matches(kind: ModuleKind, role: Option<RuntimeModuleRole>) -> bool {
+    match role {
+        None => true,
+        Some(RuntimeModuleRole::Capture) => kind == ModuleKind::Source,
+        Some(RuntimeModuleRole::Derived) => kind == ModuleKind::Automaton,
+        Some(RuntimeModuleRole::Core | RuntimeModuleRole::Gateway) => kind == ModuleKind::Service,
+    }
+}
+
+fn format_runtime_presence_table(modules: &[RuntimeInfo]) -> String {
+    let mut output = String::new();
+    output.push_str("Runtime Modules:\n");
+    for module in modules {
+        let name = module
+            .service_name
+            .as_deref()
+            .or(module.instance_id.as_deref())
+            .unwrap_or_else(|| module.module_name.as_str());
+        let last_seen = module
+            .last_heartbeat_at
+            .as_ref()
+            .map_or_else(|| "never".to_string(), format_heartbeat_age);
+        let host = module.host.as_deref().unwrap_or("-");
+        output.push_str(&format!(
+            "  {} ({}) - {} - last seen {} - host {} - {}\n",
+            name,
+            module.module_kind,
+            module.status,
+            last_seen,
+            host,
+            runtime_heartbeat_source_name(module.heartbeat_source)
+        ));
+    }
+    output
+}
+
+fn runtime_heartbeat_source_name(source: RuntimeHeartbeatSource) -> &'static str {
+    match source {
+        RuntimeHeartbeatSource::Run => "run",
+        RuntimeHeartbeatSource::Manifest => "manifest",
+        RuntimeHeartbeatSource::Output => "output",
     }
 }
 

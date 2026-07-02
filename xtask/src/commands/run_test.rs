@@ -24,6 +24,18 @@ fn base_command(subcommand: RunSubcommand) -> RunCommand {
 }
 
 #[sinex_test]
+async fn test_run_metadata_has_no_outer_timeout() -> ::xtask::sandbox::TestResult<()> {
+    let command = base_command(RunSubcommand::Core { instance_id: None });
+
+    assert_eq!(
+        command.metadata().timeout,
+        None,
+        "xtask run owns long-lived runtime processes and must not be killed by the generic command watchdog"
+    );
+    Ok(())
+}
+
+#[sinex_test]
 async fn test_binary_lookup() -> ::xtask::sandbox::TestResult<()> {
     // All binaries should be findable
     for (name, package, _, _) in BINARIES {
