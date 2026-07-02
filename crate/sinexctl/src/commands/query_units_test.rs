@@ -33,7 +33,39 @@ async fn event_query_rejects_non_executable_descriptor_fields_before_lowering()
         .to_string();
 
     assert!(error.contains("does not support field `event_contract_id`"));
-    assert!(error.contains("source, event_type, host, scope_key, equivalence_key"));
+    assert!(error.contains(
+        "source, event_type, host, scope_key, equivalence_key, text, ts_orig, has_lineage"
+    ));
+    Ok(())
+}
+
+#[sinex_test]
+async fn event_query_unit_lowers_text_time_and_lineage_to_event_query() -> xtask::TestResult<()> {
+    let query = parse_sinex_query(
+        "events where source = shell.atuin and text contains deploy and ts_orig >= 2026-07-01T12:00:00Z and has_lineage = false limit 25",
+    )?;
+    let lowered = event_query_from_sinex_query(&query)?;
+
+    assert_eq!(lowered.sources.len(), 1);
+    assert_eq!(lowered.sources[0].as_str(), "shell.atuin");
+    assert_eq!(lowered.limit, 25);
+    assert_eq!(lowered.has_lineage, Some(false));
+
+    let time_range = lowered
+        .time_range
+        .expect("ts_orig predicate should set time range");
+    assert_eq!(
+        time_range.start().map(|ts| ts.format_rfc3339()),
+        Some("2026-07-01T12:00:00Z".to_string())
+    );
+    assert!(time_range.end().is_none());
+
+    match lowered.payload {
+        Some(sinex_primitives::query::PayloadFilter::TextSearch { text }) => {
+            assert_eq!(text, "deploy");
+        }
+        other => panic!("expected text-search payload filter, got {other:?}"),
+    }
     Ok(())
 }
 

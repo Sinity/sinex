@@ -4,11 +4,10 @@ use std::collections::BTreeMap;
 use clap::Args;
 use color_eyre::eyre::eyre;
 use serde_json::Value;
-use sinex_primitives::domain::{EventSource, EventType, HostName};
-use sinex_primitives::query::{EventQuery, SortDirection};
 use sinex_primitives::query_units::{
     QueryOperator, QueryUnitId, QueryValue, SinexQuery, SinexQueryPredicate,
-    SinexQueryResultListView, SinexQueryResultRow, parse_sinex_query,
+    SinexQueryResultListView, SinexQueryResultRow, event_query_from_sinex_query,
+    parse_sinex_query,
 };
 use sinex_primitives::rpc::dlq::DlqListResponse;
 use sinex_primitives::rpc::sources::{
@@ -79,7 +78,7 @@ async fn query_events(
     client: &GatewayClient,
     query: &SinexQuery,
 ) -> Result<Vec<SinexQueryResultRow>> {
-    let request = event_query_from_query(query)?;
+    let request = event_query_from_sinex_query(query)?;
     let result = client.event_cards(request).await?;
     let rows = result
         .cards
@@ -101,54 +100,6 @@ async fn query_events(
         })
         .collect::<Vec<_>>();
     Ok(finalize_rows(query, rows))
-}
-
-fn event_query_from_query(query: &SinexQuery) -> Result<EventQuery> {
-    let mut request = EventQuery {
-        limit: query.pagination.limit + query.pagination.offset,
-        direction: SortDirection::Desc,
-        ..Default::default()
-    };
-
-    if let Some(predicate) = &query.predicate {
-        apply_event_predicate(predicate, &mut request)?;
-    }
-
-    Ok(request)
-}
-
-fn apply_event_predicate(predicate: &SinexQueryPredicate, request: &mut EventQuery) -> Result<()> {
-    match predicate {
-        SinexQueryPredicate::Compare {
-            field,
-            operator,
-            value,
-        } if *operator == QueryOperator::Eq => {
-            let value = value_as_string(value)?;
-            match field.as_str() {
-                "source" => request.sources.push(EventSource::new(value)?),
-                "event_type" => request.event_types.push(EventType::new(value)?),
-                "host" => request.hosts.push(HostName::new(value)?),
-                "scope_key" => request.scope_key = Some(value.to_string()),
-                "equivalence_key" => request.equivalence_key = Some(value.to_string()),
-                other => {
-                    return Err(eyre!(
-                        "events query field `{other}` is descriptor-valid but cannot yet lower to EventQuery without widening; use source, event_type, host, scope_key, or equivalence_key"
-                    ));
-                }
-            }
-            Ok(())
-        }
-        SinexQueryPredicate::And { predicates } => {
-            for child in predicates {
-                apply_event_predicate(child, request)?;
-            }
-            Ok(())
-        }
-        other => Err(eyre!(
-            "events query predicate `{other:?}` cannot lower to EventQuery without widening"
-        )),
-    }
 }
 
 async fn query_source_drivers(
