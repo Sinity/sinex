@@ -6,7 +6,7 @@
 
 use camino::Utf8PathBuf;
 use sinexd::api::content_service::ContentService;
-use sinexd::runtime::content_store::{ContentStoreConfig, ContentStoreManager};
+use sinexd::runtime::content_store::{ContentStoreConfig, ContentStoreKey, ContentStoreManager};
 use std::sync::Arc;
 use tempfile::TempDir;
 use xtask::sandbox::prelude::*;
@@ -37,22 +37,52 @@ fn content_service_fixture_with_backend(
     ctx: &TestContext,
     legacy_annex_enabled: bool,
 ) -> TestResult<(ContentService, TempDir)> {
+    content_service_fixture_with_backend_and_max_size(ctx, legacy_annex_enabled, None)
+}
+
+fn content_service_fixture_with_backend_and_max_size(
+    ctx: &TestContext,
+    legacy_annex_enabled: bool,
+    max_blob_size: Option<usize>,
+) -> TestResult<(ContentService, TempDir)> {
     let temp_dir = TempDir::new()?;
     let content_store_path = temp_dir.path().join("content-store");
     let repo_utf8 = Utf8PathBuf::from_path_buf(content_store_path)
         .map_err(|_| color_eyre::eyre::eyre!("content-store path must be valid UTF-8"))?;
 
-    let content_store_config = ContentStoreConfig {
+    let mut content_store_config = ContentStoreConfig {
         root_path: repo_utf8,
         num_copies: Some(1),
         large_files: Some("anything".to_string()),
         legacy_annex_enabled,
         ..Default::default()
     };
+    if let Some(max_blob_size) = max_blob_size {
+        content_store_config.max_blob_size = max_blob_size;
+    }
 
     let content_store = ContentStoreManager::new(content_store_config, ctx.pool().clone(), None)?;
     let service = ContentService::new(ctx.pool().clone(), Arc::new(content_store));
     Ok((service, temp_dir))
+}
+
+fn local_cas_path(temp_dir: &TempDir, content_key: &str) -> TestResult<std::path::PathBuf> {
+    let key = ContentStoreKey::parse(content_key)?;
+    let prefix_a = key
+        .digest
+        .get(0..2)
+        .ok_or_else(|| color_eyre::eyre::eyre!("digest missing first prefix"))?;
+    let prefix_b = key
+        .digest
+        .get(2..4)
+        .ok_or_else(|| color_eyre::eyre::eyre!("digest missing second prefix"))?;
+    Ok(temp_dir
+        .path()
+        .join("content-store")
+        .join("sinex-cas")
+        .join(prefix_a)
+        .join(prefix_b)
+        .join(&key.digest))
 }
 
 #[sinex_test]
@@ -80,6 +110,38 @@ async fn content_store_retrieve_roundtrip(ctx: TestContext) -> TestResult<()> {
         retrieved.as_slice(),
         payload,
         "retrieved content must match original"
+    );
+
+    Ok(())
+}
+
+#[sinex_test]
+async fn content_retrieve_rejects_file_that_exceeds_retrieval_limit(
+    ctx: TestContext,
+) -> TestResult<()> {
+    let (service, tmp) = content_service_fixture_with_backend_and_max_size(&ctx, false, Some(64))?;
+
+    let payload = b"small enough";
+    let content_key = service
+        .store_content(
+            payload,
+            "limited.bin",
+            "application/octet-stream",
+            "test-harness",
+            "test-harness",
+        )
+        .await?;
+    let cas_path = local_cas_path(&tmp, &content_key)?;
+    tokio::fs::write(&cas_path, vec![b'x'; 128]).await?;
+
+    let err = service
+        .retrieve_content(&content_key)
+        .await
+        .expect_err("oversized on-disk content must fail before full read");
+    let err_text = err.to_string();
+    assert!(
+        err_text.contains("exceeds retrieval limit"),
+        "unexpected error: {err_text}"
     );
 
     Ok(())
