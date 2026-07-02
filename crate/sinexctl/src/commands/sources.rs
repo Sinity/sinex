@@ -1,6 +1,7 @@
 use clap::Args;
 use console::style;
 use serde::{Deserialize, Serialize};
+use std::collections::BTreeMap;
 use sinex_primitives::domain::{MaterialStatus, SourceMaterialFormat};
 use sinex_primitives::rpc::sources::{
     SourceMaterialDetail, SourcesCoverageRequest, SourcesCoverageResponse, SourcesListRequest,
@@ -290,16 +291,52 @@ impl SourceCoverageListView {
 struct SourceMaterialRemediationPlanView {
     schema_version: String,
     count: usize,
+    summary: SourceMaterialRemediationSummaryView,
     items: Vec<SourceMaterialRemediationItemView>,
 }
 
 impl SourceMaterialRemediationPlanView {
     fn new(items: Vec<SourceMaterialRemediationItemView>) -> Self {
         let count = items.len();
+        let summary = SourceMaterialRemediationSummaryView::from_items(&items);
         Self {
             schema_version: SOURCE_MATERIAL_REMEDIATION_PLAN_SCHEMA_VERSION.to_string(),
             count,
+            summary,
             items,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct SourceMaterialRemediationSummaryView {
+    total_candidates: usize,
+    total_admitted_events: i64,
+    by_status: BTreeMap<String, usize>,
+    by_decision: BTreeMap<String, usize>,
+    by_severity: BTreeMap<String, usize>,
+}
+
+impl SourceMaterialRemediationSummaryView {
+    fn from_items(items: &[SourceMaterialRemediationItemView]) -> Self {
+        let mut by_status = BTreeMap::new();
+        let mut by_decision = BTreeMap::new();
+        let mut by_severity = BTreeMap::new();
+        let mut total_admitted_events = 0_i64;
+
+        for item in items {
+            *by_status.entry(item.status.to_string()).or_insert(0) += 1;
+            *by_decision.entry(item.decision.clone()).or_insert(0) += 1;
+            *by_severity.entry(item.severity.clone()).or_insert(0) += 1;
+            total_admitted_events = total_admitted_events.saturating_add(item.event_count);
+        }
+
+        Self {
+            total_candidates: items.len(),
+            total_admitted_events,
+            by_status,
+            by_decision,
+            by_severity,
         }
     }
 }
