@@ -98,6 +98,58 @@ async fn finalize_failed_material_skips_terminal_material_without_state(
 }
 
 #[sinex_test]
+async fn finalize_failed_material_recovers_timeout_when_events_were_admitted(
+    ctx: TestContext,
+) -> TestResult<()> {
+    let ctx = ctx.with_nats().shared().await?;
+    let (assembler, _content_store_dir, _state_dir) = test_assembler(&ctx).await?;
+    let material_id = Uuid::now_v7();
+    let material_id_typed = Id::from_uuid(material_id);
+
+    ctx.pool
+        .source_materials()
+        .register_external_in_flight(
+            material_id,
+            "browser.history",
+            Some("browser.history#material=test-timeout"),
+            json!({}),
+            Timestamp::now(),
+        )
+        .await?;
+    sqlx::query!(
+        "UPDATE raw.source_material_registry SET parsed_event_count = 42 WHERE id = $1",
+        material_id,
+    )
+    .execute(ctx.pool())
+    .await?;
+
+    assembler
+        .finalize_failed_material(material_id, "slice_arrival_timeout")
+        .await;
+
+    let material = ctx
+        .pool
+        .source_materials()
+        .get_by_id(material_id_typed)
+        .await?
+        .expect("material should exist");
+    assert_eq!(material.status, MaterialStatus::RecoveredPartial);
+    assert_eq!(
+        material.metadata["recovery_info"]["recovery_reason"],
+        json!("slice_arrival_timeout_with_admitted_events")
+    );
+    assert_eq!(
+        material.metadata["timeout_partial_recovery"]["parsed_event_count"],
+        json!(42)
+    );
+    assert_eq!(
+        material.metadata["failure_reason"],
+        json!("slice_arrival_timeout")
+    );
+    Ok(())
+}
+
+#[sinex_test]
 async fn finalize_failed_material_preserves_retry_state_when_failure_mark_is_not_durable(
     ctx: TestContext,
 ) -> TestResult<()> {

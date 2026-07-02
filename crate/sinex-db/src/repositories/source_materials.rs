@@ -411,6 +411,22 @@ impl SourceMaterialRepository<'_> {
         .map_err(|e| db_error(e, "get material by id"))
     }
 
+    /// Return the trigger-maintained parsed event count for one source material.
+    pub async fn parsed_event_count(&self, id: Id<SourceMaterialRecord>) -> DbResult<i64> {
+        sqlx::query_scalar!(
+            r#"
+            SELECT parsed_event_count as "parsed_event_count!: i64"
+            FROM raw.source_material_registry
+            WHERE id = $1
+            "#,
+            id.to_uuid()
+        )
+        .fetch_optional(self.pool)
+        .await
+        .map(|count| count.unwrap_or(0))
+        .map_err(|e| db_error(e, "get material parsed event count"))
+    }
+
     /// List in-flight material rows that are old enough to need owner
     /// reconciliation.
     ///
