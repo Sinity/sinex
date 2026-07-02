@@ -44,8 +44,9 @@ async fn context_machine_output_uses_view_envelope_json() -> xtask::sandbox::Tes
         total_estimate: None,
     };
     let sources = grouped_context_sources(&event_cards.cards);
+    let window = build_context_window("2h", None, Timestamp::now())?;
     let output =
-        render_context_machine_output(&event_cards, &sources, "2h", OutputFormat::Json)?
+        render_context_machine_output(&event_cards, &sources, &window, OutputFormat::Json)?
             .ok_or_else(|| color_eyre::eyre::eyre!("json output expected"))?;
     let value: serde_json::Value = serde_json::from_str(&output)?;
 
@@ -78,6 +79,45 @@ async fn context_machine_output_uses_view_envelope_json() -> xtask::sandbox::Tes
 }
 
 #[sinex_test]
+async fn context_window_accepts_absolute_since_and_until() -> xtask::sandbox::TestResult<()> {
+    let now = Timestamp::parse_rfc3339("2026-07-02T20:00:00Z")?;
+    let window = build_context_window(
+        "2026-07-02T18:00:00Z",
+        Some("2026-07-02T19:00:00Z"),
+        now,
+    )?;
+
+    assert_eq!(
+        window.time_range.start(),
+        Some(Timestamp::parse_rfc3339("2026-07-02T18:00:00Z")?)
+    );
+    assert_eq!(
+        window.time_range.end(),
+        Some(Timestamp::parse_rfc3339("2026-07-02T19:00:00Z")?)
+    );
+    assert_eq!(window.query_echo()["since"], "2026-07-02T18:00:00Z");
+    assert_eq!(window.query_echo()["until"], "2026-07-02T19:00:00Z");
+    Ok(())
+}
+
+#[sinex_test]
+async fn context_window_measures_duration_since_from_until_bound()
+-> xtask::sandbox::TestResult<()> {
+    let now = Timestamp::parse_rfc3339("2026-07-02T20:00:00Z")?;
+    let window = build_context_window("30m", Some("2026-07-02T19:00:00Z"), now)?;
+
+    assert_eq!(
+        window.time_range.start(),
+        Some(Timestamp::parse_rfc3339("2026-07-02T18:30:00Z")?)
+    );
+    assert_eq!(
+        window.time_range.end(),
+        Some(Timestamp::parse_rfc3339("2026-07-02T19:00:00Z")?)
+    );
+    Ok(())
+}
+
+#[sinex_test]
 async fn context_machine_output_rejects_ndjson() -> xtask::sandbox::TestResult<()> {
     let event_cards = EventCardListView {
         schema_version: EVENT_CARD_LIST_SCHEMA_VERSION.to_string(),
@@ -87,8 +127,9 @@ async fn context_machine_output_rejects_ndjson() -> xtask::sandbox::TestResult<(
         total_estimate: None,
     };
     let sources = grouped_context_sources(&event_cards.cards);
+    let window = build_context_window("2h", None, Timestamp::now())?;
     let result =
-        render_context_machine_output(&event_cards, &sources, "2h", OutputFormat::Ndjson);
+        render_context_machine_output(&event_cards, &sources, &window, OutputFormat::Ndjson);
     assert!(result.is_err(), "context must remain a finite view");
     Ok(())
 }
