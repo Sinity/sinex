@@ -568,6 +568,15 @@ fn remediation_decision(
             "medium",
             "inspect recovered partial material; keep if admitted events are useful, otherwise plan replay or re-ingest",
         ),
+        MaterialStatus::Failed
+            if event_count > 0 && failure_reason == Some("slice_arrival_timeout") =>
+        {
+            (
+                "recover_timeout_partial",
+                "high",
+                "mark timed-out material recovered_partial because events were admitted before timeout, then investigate why finalization timed out",
+            )
+        }
         MaterialStatus::Failed if event_count > 0 => (
             "inspect_failed_eventful",
             "high",
