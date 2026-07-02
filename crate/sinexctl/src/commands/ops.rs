@@ -155,7 +155,8 @@ mod jobs;
 pub use debt::{DebtCommands, DebtProjectionTrigger};
 pub(crate) use debt::{
     debt_rows_from_derivation_trigger, debt_rows_from_dlq, debt_rows_from_source_coverage,
-    debt_rows_from_source_status_coverage, projection_trigger_name,
+    debt_rows_from_source_material_remediation, debt_rows_from_source_status_coverage,
+    projection_trigger_name,
 };
 pub use evidence::EvidenceCommands;
 pub use jobs::JobsCommands;
