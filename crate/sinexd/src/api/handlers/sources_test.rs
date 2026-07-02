@@ -192,6 +192,18 @@ async fn remediation_summary_counts_global_candidate_set() -> xtask::sandbox::Te
 }
 
 #[sinex_test]
+async fn remediation_decision_recovers_eventful_slice_timeout()
+-> xtask::sandbox::TestResult<()> {
+    let (decision, severity, suggested_action) =
+        remediation_decision(MaterialStatus::Failed, 206_899, Some("slice_arrival_timeout"));
+
+    assert_eq!(decision, "recover_timeout_partial");
+    assert_eq!(severity, "high");
+    assert!(suggested_action.contains("recovered_partial"));
+    Ok(())
+}
+
+#[sinex_test]
 async fn stage_material_contract_records_package_mode_binding() -> xtask::sandbox::TestResult<()>
 {
     let request = SourcesStageRequest {
