@@ -96,6 +96,16 @@ _sinex_pre_push_checkout_xtask_binary() {
   _sinex_pre_push_xtask_binary_is_current "$candidate" && printf '%s\n' "$candidate"
 }
 
+_sinex_pre_push_checkout_xtask_wrapper() {
+  local candidate
+  for candidate in \
+    "$REPO_ROOT/.direnv/bin/xtask" \
+    "$REPO_ROOT/.direnv/flake-profile/bin/xtask"
+  do
+    [[ -x "$candidate" ]] && printf '%s\n' "$candidate" && return 0
+  done
+}
+
 _sinex_pre_push_xtask_binary_is_current() {
   local candidate
   candidate="$1"
@@ -266,6 +276,14 @@ _sinex_pre_push_run_xtask() {
   xtask_bin="$(_sinex_pre_push_cached_xtask_binary || true)"
   if [[ -n "$xtask_bin" ]]; then
     echo "[pre-push] Using read-only cached xtask fallback: $xtask_bin" >&2
+    xtask_dir="$(dirname "$xtask_bin")"
+    PATH="$xtask_dir:$PATH" _sinex_pre_push_checkout_env "$xtask_bin" "$@"
+    return $?
+  fi
+
+  xtask_bin="$(_sinex_pre_push_checkout_xtask_wrapper || true)"
+  if [[ -n "$xtask_bin" ]]; then
+    echo "[pre-push] Rebuilding through checkout xtask wrapper: $xtask_bin" >&2
     xtask_dir="$(dirname "$xtask_bin")"
     PATH="$xtask_dir:$PATH" _sinex_pre_push_checkout_env "$xtask_bin" "$@"
     return $?
