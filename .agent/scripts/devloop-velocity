@@ -1,0 +1,192 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+repo_root="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
+cd "$repo_root"
+
+mode_days=1
+proof_command=""
+proof_args=()
+if [[ "${1:-}" =~ ^[0-9]+$ ]]; then
+  mode_days="$1"
+  shift
+elif [[ "${1:-}" =~ ^(test|check|build)$ ]]; then
+  proof_command="$1"
+  shift
+  proof_args=("$@")
+fi
+
+if [[ -n "$proof_command" ]]; then
+  wanted_shape="$proof_command"
+  if [[ "${#proof_args[@]}" -gt 0 ]]; then
+    wanted_shape+=" ${proof_args[*]}"
+  fi
+  echo "== proof shape budget =="
+  echo "$wanted_shape"
+  if command -v xtask >/dev/null 2>&1; then
+    matching="$(
+      xtask jobs list --json 2>/dev/null \
+        | jq -r --arg command "$proof_command" --arg args "${proof_args[*]}" '
+          .data.jobs[0:50][]
+          | select(.command == $command)
+          | select(((.args // []) | join(" ")) == $args)
+          | "\(.id)\t\(.status)\t\(.exit_code // "-")\t\(.duration_secs // "-")"
+        ' \
+        || true
+    )"
+    if [[ -n "$matching" ]]; then
+      count="$(printf '%s\n' "$matching" | sed '/^$/d' | wc -l)"
+      printf 'recent exact matches: %s\n' "$count"
+      printf '%s\n' "$matching" \
+        | awk -F '\t' 'BEGIN { printf "%-8s %-10s %-4s %-8s\n", "job", "status", "exit", "seconds" }
+          { printf "%-8s %-10s %-4s %-8s\n", $1, $2, $3, $4 }'
+      if [[ "$count" -ge 2 ]]; then
+        echo "WARN: exact proof shape already ran at least twice recently; batch remaining edits or use source/live/artifact proof unless the claim widened."
+      elif [[ "$count" -ge 1 ]]; then
+        echo "NOTE: exact proof shape already ran recently; name what changed before rerunning."
+      fi
+    else
+      echo "recent exact matches: 0"
+    fi
+  else
+    echo "xtask not on PATH"
+  fi
+  echo
+fi
+
+echo "== recent proof jobs =="
+if command -v xtask >/dev/null 2>&1; then
+  xtask jobs list --json 2>/dev/null \
+    | jq -r '
+      .data.jobs[0:20][]
+      | select(.command == "test" or .command == "check" or .command == "build")
+      | "\(.id)\t\(.command)\t\((.args // []) | join(" "))\t\(.status)\t\(.exit_code // "-")"
+    ' \
+    | awk -F '\t' 'BEGIN { printf "%-8s %-7s %-64s %-10s %-4s\n", "job", "cmd", "args", "status", "exit" }
+      { printf "%-8s %-7s %-64.64s %-10s %-4s\n", $1, $2, $3, $4, $5 }'
+else
+  echo "xtask not on PATH"
+fi
+
+echo
+echo "== duplicate recent proof shapes =="
+duplicates="$(
+  xtask jobs list --json 2>/dev/null \
+    | jq -r '
+      .data.jobs[0:30][]
+      | select(.command == "test" or .command == "check" or .command == "build")
+      | "\(.command) \((.args // []) | join(" "))"
+    ' \
+    | sort \
+    | uniq -c \
+    | sort -nr \
+    | awk '$1 > 1'
+)"
+if [[ -n "$duplicates" ]]; then
+  printf '%s\n' "$duplicates"
+else
+  echo "none in last 30 proof jobs"
+fi
+
+echo
+echo "== phase timing =="
+phase_file=".agent/conductor-devloop/PHASES.jsonl"
+if [[ -f "$phase_file" ]]; then
+  python3 - "$phase_file" <<'PY'
+import json
+import sys
+from datetime import datetime
+from pathlib import Path
+
+path = Path(sys.argv[1])
+
+def parse_ts(value: str):
+    try:
+        return datetime.fromisoformat(value)
+    except ValueError:
+        return None
+
+records = []
+for line in path.read_text(encoding="utf-8").splitlines():
+    if not line.strip():
+        continue
+    try:
+        record = json.loads(line)
+    except json.JSONDecodeError:
+        continue
+    ts = parse_ts(record.get("timestamp", ""))
+    if ts is None:
+        continue
+    record["_ts"] = ts
+    records.append(record)
+
+if len(records) < 2:
+    print("not enough phase records")
+    raise SystemExit
+
+records.sort(key=lambda record: record["_ts"])
+recent = records[-12:]
+print("recent transitions:")
+previous = None
+gaps = []
+for record in recent:
+    label = record.get("focus") or record.get("loop_phase") or record.get("title") or "phase"
+    ts = record["_ts"]
+    if previous is None:
+        delta = "-"
+    else:
+        seconds = int((ts - previous["_ts"]).total_seconds())
+        gaps.append((seconds, previous, record))
+        if seconds < 0:
+            delta = "clock-order?"
+        else:
+            delta = f"{seconds // 60}m{seconds % 60:02d}s"
+    title = record.get("title", "")
+    print(f"  {record['timestamp']}\t+{delta}\t{label}\t{title}")
+    previous = record
+
+if gaps:
+    print("largest recent gaps:")
+    for seconds, before, after in sorted(gaps, key=lambda item: item[0], reverse=True)[:3]:
+        if seconds < 0:
+            continue
+        before_label = before.get("focus") or before.get("loop_phase") or before.get("title") or "phase"
+        after_label = after.get("focus") or after.get("loop_phase") or after.get("title") or "phase"
+        print(
+            f"  {seconds // 60}m{seconds % 60:02d}s\t"
+            f"{before_label} -> {after_label}\t"
+            f"{before.get('title', '')} => {after.get('title', '')}"
+        )
+PY
+else
+  echo "missing $phase_file; run .agent/scripts/devloop-refresh-events"
+fi
+
+echo
+echo "== resource summary (${mode_days}d) =="
+if summary="$(xtask history resources --days "$mode_days" --command test --command check --command build --success-only --format json 2>/dev/null)"; then
+  jq -r '
+    (.data // .) as $root
+    | ($root.rows // [])
+    | map("\(.command): count=\(.invocation_count), avg=\(.avg_duration_secs|floor)s, max=\(.max_duration_secs|floor)s, avg_io_full=\(.avg_io_full), max_io_full=\(.max_io_full)")
+    | .[]
+  ' <<<"$summary"
+  echo
+  echo "-- slowest --"
+  jq -r '
+    (.data // .) as $root
+    | ($root.slowest // [])[0:6][]
+    | "#\(.id) \(.command) \(.duration_secs|floor)s io_full=\(.io_full) args=\(.args_json)"
+  ' <<<"$summary"
+else
+  echo "xtask history resources unavailable"
+fi
+
+echo
+echo "== interpretation prompts =="
+cat <<'EOF'
+- If duplicate proof shapes appear, batch the semantic fixes before rerunning.
+- If tiny tests are compile-dominated, prefer source review plus one focused rerun after the batch.
+- If build/check/test IO full is high, avoid launching another heavy command and rotate to Artifact/Evidence/Direction.
+- If live proof is available through an already-built binary, use it before another package check when the claim is operator-facing.
+EOF

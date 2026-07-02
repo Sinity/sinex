@@ -1,0 +1,86 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+repo_root="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
+cd "$repo_root"
+
+stamp="$(date +%Y-%m-%d-%H%M%S)"
+handoff_dir=".agent/conductor-devloop/context/handoffs"
+handoff="$handoff_dir/handoff-$stamp.md"
+
+mkdir -p "$handoff_dir"
+
+cat >"$handoff" <<EOF
+---
+created: "$(date --iso-8601=seconds)"
+purpose: "Sinex conductor handoff"
+status: "active"
+project: "sinex"
+---
+
+# Sinex Conductor Handoff
+
+## Goal
+
+$(sed -n '/^## Current Goal/,$p' .agent/conductor-devloop/INDEX.md | sed -n '3,20p')
+
+## Current State
+
+- Branch: $(git branch --show-current 2>/dev/null || true)
+- Dirty state: captured below.
+- Active root: .agent/conductor-devloop
+- Canonical next-action source: .agent/conductor-devloop/ACTIVE-LOOP.md
+
+## What Changed This Loop
+
+Use the latest entries in OPERATING-LOG.md and EVENTS.jsonl. This handoff is a
+snapshot shell, not a substitute source of truth.
+
+## Verification / Artifacts
+
+- Fill only after a concrete proof exists; otherwise cite the next proof command
+  from ACTIVE-LOOP.md.
+
+## Velocity
+
+- Speedup: recorded through OPERATING-LOG.md entries and PHASES.jsonl.
+- Drag: inspect devloop-velocity before rerunning expensive proof shapes.
+- Next acceleration: choose one concrete scaffold/tool/runtime improvement.
+- Risk: do not claim completion from this handoff; claim from proof entries.
+
+## Do Not Repeat
+
+- Do not reintroduce scratch/current, handoff mirrors, or root-level packet dumps.
+- Do not start duplicate heavy xtask runs while a proof job is active.
+
+## Next Slice
+
+Read ACTIVE-LOOP.md and the newest OPERATING-LOG.md entry, then either continue
+that slice or record a focus transition with devloop-focus.
+
+## Snapshot
+
+\`\`\`
+$(date --iso-8601=seconds)
+\`\`\`
+
+### Git
+
+\`\`\`
+$(git status --short)
+\`\`\`
+
+### Memory
+
+\`\`\`
+$(free -h)
+\`\`\`
+
+### Active Jobs
+
+\`\`\`
+$(xtask jobs active 2>/dev/null || true)
+\`\`\`
+EOF
+
+printf '%s\n' "$handoff"

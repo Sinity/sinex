@@ -1,0 +1,224 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+usage() {
+  cat <<'EOF'
+Usage: .agent/scripts/devloop-integration [--base <ref>] [--subagent-prompt]
+
+Summarize the long-running Sinex devloop branch as PR-shaped integration input.
+Read-only: does not create branches, cherry-pick, squash, push, delete, or open PRs.
+
+Options:
+  --base <ref>        Default: origin/master if present, else master.
+  --subagent-prompt  Print a prompt for read-heavy PR clustering work.
+  -h, --help         Show this help.
+
+Environment:
+  SINEX_INTEGRATION_WORKTREE_ROOT
+      Optional root for local PR-shaped replay worktrees.
+      Default: /realm/tmp/worktrees/sinex-integration
+EOF
+}
+
+base=""
+subagent_prompt=0
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --base)
+      base="${2:-}"
+      if [[ -z "$base" ]]; then
+        echo "devloop-integration: --base requires a ref" >&2
+        exit 2
+      fi
+      shift 2
+      ;;
+    --subagent-prompt)
+      subagent_prompt=1
+      shift
+      ;;
+    -h|--help)
+      usage
+      exit 0
+      ;;
+    *)
+      echo "devloop-integration: unknown argument: $1" >&2
+      usage >&2
+      exit 2
+      ;;
+  esac
+done
+
+repo="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
+cd "$repo"
+
+if [[ -z "$base" ]]; then
+  if git rev-parse --verify --quiet origin/master >/dev/null; then
+    base="origin/master"
+  else
+    base="master"
+  fi
+fi
+if ! git rev-parse --verify --quiet "$base" >/dev/null; then
+  echo "devloop-integration: base ref not found: $base" >&2
+  exit 2
+fi
+
+branch="$(git branch --show-current || true)"
+head="$(git rev-parse --short HEAD)"
+merge_base="$(git merge-base "$base" HEAD)"
+ahead_count="$(git rev-list --count "$merge_base"..HEAD)"
+dirty_paths="$(git status --short | wc -l | tr -d ' ')"
+integration_root="${SINEX_INTEGRATION_WORKTREE_ROOT:-/realm/tmp/worktrees/sinex-integration}"
+phase_plan=".agent/conductor-devloop/INTEGRATION.md"
+
+echo "== integration state =="
+echo "branch: ${branch:-detached}"
+echo "head: $head"
+echo "base: $base"
+echo "merge_base: $(git rev-parse --short "$merge_base")"
+echo "commits_ahead: $ahead_count"
+echo "dirty_paths: $dirty_paths"
+echo
+
+echo "== phase-level plan =="
+if [[ -f "$phase_plan" ]]; then
+  echo "phase_plan: $phase_plan"
+  phase_count="$(
+    awk '/^[[:space:]]*[0-9]+[.] `/{count++} END {print count + 0}' "$phase_plan"
+  )"
+  echo "phase_count: $phase_count"
+  awk '/^[[:space:]]*[0-9]+[.] `/{print; if (++seen >= 30) exit}' "$phase_plan"
+else
+  echo "phase_plan: missing ($phase_plan)"
+  echo "recommendation: derive broad PR phases with LLM judgment before publishing mechanical git-stack slices"
+fi
+echo
+
+echo "== generated stack evidence =="
+found_stack=0
+for summary in .sinex/git-stack/*/summary.md; do
+  [[ -f "$summary" ]] || continue
+  found_stack=1
+  slices="$(awk '/^### [0-9]+[.] /{count++} END {print count + 0}' "$summary")"
+  printf '%s\tslices=%s\n' "$summary" "${slices:-unknown}"
+done
+if [[ "$found_stack" == "0" ]]; then
+  echo "no generated git-stack summaries found under .sinex/git-stack"
+fi
+echo
+
+echo "== PR-shaped local branches =="
+local_count="$(
+  git branch --list 'pr/sinex-*' 'feature/*' \
+    | sed 's/^[* ]*//' \
+    | sed '/^$/d' \
+    | wc -l \
+    | tr -d ' '
+)"
+echo "matching_local_branches: $local_count"
+git branch --list 'pr/sinex-*' 'feature/*' \
+  | sed 's/^[* ]*//' \
+  | sed '/^$/d' \
+  | sed -n '1,40p'
+echo
+
+echo "== local PR-shaped replay state =="
+echo "worktree_root: $integration_root"
+if [[ ! -d "$integration_root" ]]; then
+  echo "local_replay_worktrees: none"
+else
+  found=0
+  for path in "$integration_root"/*; do
+    [[ -d "$path" ]] || continue
+    if ! git -C "$path" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+      continue
+    fi
+    found=1
+    local_branch="$(git -C "$path" branch --show-current || true)"
+    local_head="$(git -C "$path" rev-parse --short HEAD)"
+    local_dirty="$(git -C "$path" status --short | wc -l | tr -d ' ')"
+    printf '%s\tbranch=%s\thead=%s\tdirty_paths=%s\n' \
+      "$path" "${local_branch:-detached}" "$local_head" "$local_dirty"
+  done
+  if [[ "$found" == "0" ]]; then
+    echo "local_replay_worktrees: none"
+  fi
+fi
+echo
+
+echo "== remote PR branches =="
+if git remote get-url origin >/dev/null 2>&1; then
+  git ls-remote --heads origin 'pr/sinex-*' \
+    | awk '{print $2}' \
+    | sed 's#refs/heads/##' \
+    | sed -n '1,40p'
+else
+  echo "origin remote unavailable"
+fi
+echo
+
+echo "== commits ahead of base =="
+if [[ "$ahead_count" == "0" ]]; then
+  echo "none"
+else
+  git log --reverse --format='%h%x09%s' "$merge_base"..HEAD | sed -n '1,120p'
+  if [[ "$ahead_count" -gt 120 ]]; then
+    echo "... truncated; run git log --reverse --format='%h%x09%s' $merge_base..HEAD for full train"
+  fi
+fi
+echo
+
+cat <<'EOF'
+== integration contract ==
+Treat the long-running branch as an integration workbench, not the final history
+shape.
+
+1. Use generated stack plans only as evidence: commit order, file counts, branch
+   candidates, and PR-body raw material.
+2. Use LLM judgment to cluster work into broad PR phases, currently targeting
+   16-24 total PRs for this branch.
+3. Prefer phase PRs that are cohesive by product/change intent and verification
+   surface; avoid 1-2 commit micro-PR trains unless a phase proves too risky.
+4. Keep subagents read-heavy: clustering, claim audit, PR-body preparation,
+   dependency checks, and dry-run replay scripts.
+5. The main devloop owns branch creation, conflict resolution, verification,
+   pushing, PR creation, and cleanup of superseded remote branches.
+6. Before opening or merging a PR, prove the PR head still matches its remote
+   branch with .agent/tools/gh_pr_safety.sh.
+EOF
+
+if [[ "$subagent_prompt" == "1" ]]; then
+  cat <<EOF
+
+== subagent prompt ==
+You are auditing the Sinex devloop integration workbench.
+
+Base ref: $base
+Workbench branch: ${branch:-detached}
+Workbench head: $head
+Merge base: $(git rev-parse --short "$merge_base")
+Target granularity: 16-24 PRs total for the current branch.
+
+Task:
+Read the commits in \`$merge_base..HEAD\` and evaluate the local phase-level
+plan at \`$phase_plan\`. Improve the PR grouping if needed.
+
+For each proposed PR phase, report:
+
+- commit number range and hashes in replay order;
+- dependency on earlier phases, if any;
+- proposed branch name;
+- conventional PR title under 72 characters;
+- durable PR body outline with Intent, Scope, Why This Shape, Verification,
+  Impact, and Follow-Ups;
+- exact narrow verification commands already run or still owed;
+- whether this phase should be subdivided despite the 16-24 total target;
+- any overbroad temporary commit claims that must be reworded.
+
+Constraints:
+- This is read-heavy planning. Do not modify files, create branches, push,
+  delete branches, rewrite history, or open PRs.
+- Treat generated \`xtask git-stack\` plans as raw evidence, not authority.
+- The main agent will own final replay, verification, pushing, and PR creation.
+EOF
+fi

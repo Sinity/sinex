@@ -1,0 +1,77 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+if [[ "${1:-}" == "-h" || "${1:-}" == "--help" ]]; then
+  cat <<'EOF'
+Usage:
+  .agent/scripts/devloop-log "short title"
+  .agent/scripts/devloop-log "short title" "concrete entry body"
+
+Append a timestamped conductor/devloop entry to:
+  .agent/conductor-devloop/OPERATING-LOG.md
+
+With a body, writes that body directly after the elapsed-time line.
+With only a title, writes a concrete non-proof checkpoint rather than TODO
+fields. Use a body whenever the entry is meant to prove completed work.
+EOF
+  exit 0
+fi
+
+title="${1:-log entry}"
+body="${2:-}"
+repo_root="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
+log_path="$repo_root/.agent/conductor-devloop/OPERATING-LOG.md"
+timestamp="$(date --iso-8601=seconds)"
+elapsed="first entry in this log"
+
+if [[ -f "$log_path" ]]; then
+  last_timestamp="$(
+    awk '
+      /^## [0-9]{4}-[0-9]{2}-[0-9]{2}T/ {
+        line=$2
+        sub(/[[:space:]]*—.*/, "", line)
+        last=line
+      }
+      END { if (last) print last }
+    ' "$log_path"
+  )"
+  if [[ -n "${last_timestamp:-}" ]]; then
+    now_epoch="$(date -d "$timestamp" +%s 2>/dev/null || true)"
+    last_epoch="$(date -d "$last_timestamp" +%s 2>/dev/null || true)"
+    if [[ -n "$now_epoch" && -n "$last_epoch" && "$now_epoch" -ge "$last_epoch" ]]; then
+      delta=$((now_epoch - last_epoch))
+      elapsed="$((delta / 3600))h $(((delta % 3600) / 60))m $((delta % 60))s"
+    else
+      elapsed="unknown"
+    fi
+  fi
+fi
+
+mkdir -p "$(dirname "$log_path")"
+if [[ -n "$body" ]]; then
+  cat >>"$log_path" <<EOF
+
+## $timestamp — $title
+
+Elapsed since previous entry: $elapsed
+$body
+EOF
+else
+  cat >>"$log_path" <<EOF
+
+## $timestamp — $title
+
+Elapsed since previous entry: $elapsed
+Loop phase: choose
+Focus: Direction
+Trigger: title-only devloop-log entry
+Primary aim: $title
+Evidence touched: conductor packet
+Action taken: recorded a loop transition placeholder; this is not completion proof
+Artifact/proof: none yet
+Velocity note: keep moving, but replace this with a body entry before claiming work
+Next decision: inspect evidence, choose the next highest-value slice, or append a detailed proof entry
+EOF
+fi
+
+printf '%s\n' "$log_path"

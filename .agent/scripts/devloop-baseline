@@ -1,0 +1,59 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+if [[ "${1:-}" == "-h" || "${1:-}" == "--help" ]]; then
+  cat <<'EOF'
+Usage: .agent/scripts/devloop-baseline [label]
+
+Capture a timestamped lightweight baseline for the current Sinex devloop:
+git state, xtask infra/runtime status, active xtask jobs, memory, pressure,
+and likely loop-affecting processes. The output is local evidence under
+.agent/artifacts/live-baselines, not startup scratch and not a product demo.
+EOF
+  exit 0
+fi
+
+label="${1:-baseline}"
+safe_label="$(printf '%s' "$label" | tr -cs '[:alnum:]_.-' '-' | sed 's/^-//; s/-$//')"
+repo_root="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
+cd "$repo_root"
+
+timestamp="$(date --iso-8601=seconds)"
+stamp="$(date +%Y%m%dT%H%M%S%z)"
+out_dir=".agent/artifacts/live-baselines"
+out="$out_dir/${stamp}-${safe_label:-baseline}.md"
+mkdir -p "$out_dir"
+
+{
+  printf '# Sinex Devloop Baseline\n\n'
+  printf -- '- captured: `%s`\n' "$timestamp"
+  printf -- '- label: `%s`\n' "$label"
+  printf -- '- repo: `%s`\n' "$repo_root"
+  printf -- '- branch: `%s`\n' "$(git branch --show-current 2>/dev/null || true)"
+  printf '\n## Git\n\n```text\n'
+  git status --short || true
+  printf '```\n\n## Xtask Infra\n\n```text\n'
+  if command -v xtask >/dev/null 2>&1; then
+    xtask infra status 2>&1 || true
+  else
+    printf 'xtask not on PATH\n'
+  fi
+  printf '```\n\n## Active Xtask Jobs\n\n```text\n'
+  if command -v xtask >/dev/null 2>&1; then
+    xtask jobs active 2>&1 || true
+  else
+    printf 'xtask not on PATH\n'
+  fi
+  printf '```\n\n## Memory\n\n```text\n'
+  free -h || true
+  printf '```\n\n## Pressure\n\n```text\n'
+  printf 'memory: '; tr '\n' ' ' </proc/pressure/memory; printf '\n'
+  printf 'io:     '; tr '\n' ' ' </proc/pressure/io; printf '\n'
+  printf '```\n\n## Loop-Affecting Processes\n\n```text\n'
+  ps -eo pid,ppid,stat,etime,rss,comm,args --sort=-rss \
+    | rg 'codex|claude|serena|codebase-memory|polylogued|sinexd|postgres|nats|xtask|cargo|rustc|nextest|chrome|kitty' \
+    | sed -n '1,40p' || true
+  printf '```\n'
+} >"$out"
+
+printf '%s\n' "$out"

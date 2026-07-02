@@ -1,0 +1,434 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+repo_root="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
+root="${1:-$repo_root/.agent/demos/sinex}"
+
+python3 - "$root" <<'PY'
+import hashlib
+import json
+import os
+import sys
+import tempfile
+from datetime import datetime, timezone
+from pathlib import Path
+
+root = Path(sys.argv[1]).resolve()
+root.mkdir(parents=True, exist_ok=True)
+
+manifest_path = root / "MANIFEST.readable.json"
+summary_path = root / "SUMMARY_INDEX.json"
+catalog_path = root / "CURATED_CATALOG.md"
+
+generated_names = {
+    "MANIFEST.readable.json",
+    "CONCATENATED_READABLE.md",
+    "SUMMARY_INDEX.json",
+    "CURATED_CATALOG.md",
+}
+readable_suffixes = {
+    ".md",
+    ".txt",
+    ".json",
+    ".jsonl",
+    ".ndjson",
+    ".yaml",
+    ".yml",
+    ".toml",
+    ".tsv",
+    ".csv",
+    ".log",
+    ".raw",
+}
+
+
+def atomic_write_text(path: Path, text: str) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fd, tmp_name = tempfile.mkstemp(prefix=f".{path.name}.", suffix=".tmp", dir=path.parent)
+    tmp_path = Path(tmp_name)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as fh:
+            fh.write(text)
+        os.replace(tmp_path, path)
+    except Exception:
+        try:
+            tmp_path.unlink()
+        except FileNotFoundError:
+            pass
+        raise
+
+
+def rel(path: Path) -> str:
+    return path.relative_to(root).as_posix()
+
+
+def is_readable(path: Path) -> bool:
+    if path.name in generated_names:
+        return False
+    if path.suffix.lower() not in readable_suffixes:
+        return False
+    try:
+        chunk = path.read_bytes()[:4096]
+    except OSError:
+        return False
+    if b"\0" in chunk:
+        return False
+    try:
+        chunk.decode("utf-8")
+    except UnicodeDecodeError:
+        return False
+    return True
+
+
+files = []
+for path in sorted(p for p in root.rglob("*") if p.is_file()):
+    if path.name in generated_names:
+        continue
+    path_rel = rel(path)
+    stat = path.stat()
+    readable = is_readable(path)
+    digest = hashlib.sha256(path.read_bytes()).hexdigest()
+    files.append(
+        {
+            "path": path_rel,
+            "bytes": stat.st_size,
+            "readable": readable,
+            "sha256": digest,
+            "mtime": datetime.fromtimestamp(stat.st_mtime, timezone.utc).isoformat(),
+        }
+    )
+
+generated_at = datetime.now(timezone.utc).isoformat()
+manifest = {
+    "schema_version": "sinex.demo-readable-manifest/v2",
+    "generated_at": generated_at,
+    "root": str(root),
+    "packaging": "Use chisel demo/agent slices for portable bundles; this script only writes indexes.",
+    "file_count": len(files),
+    "readable_count": sum(1 for item in files if item["readable"]),
+    "files": files,
+}
+atomic_write_text(manifest_path, json.dumps(manifest, indent=2, sort_keys=False) + "\n")
+
+
+def load_json(path: Path):
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except Exception:
+        return None
+
+
+summary_records = []
+for item in files:
+    path_rel = item["path"]
+    name = Path(path_rel).name
+    if not item["readable"]:
+        continue
+    payload = load_json(root / path_rel)
+    if not isinstance(payload, dict):
+        payload = {}
+    if name not in {"summary.json", "xtask-status-summary.json"}:
+        if not name.endswith("-summary.json"):
+            continue
+        if payload.get("claim") is None and payload.get("non_claim") is None:
+            continue
+    demo = path_rel.split("/", 1)[0] if "/" in path_rel else "."
+    proof_fields = []
+    caveat_fields = []
+    for key in ("proof", "proofs", "verification", "checks", "commands", "data"):
+        if key in payload:
+            proof_fields.append(key)
+    for key in ("caveat", "caveats", "warnings", "limits", "residual", "residuals"):
+        if key in payload:
+            caveat_fields.append(key)
+    summary_records.append(
+        {
+            "demo": demo,
+            "summary_path": path_rel,
+            "artifact": demo,
+            "claim": payload.get("claim"),
+            "non_claim": payload.get("non_claim"),
+            "proof_fields": proof_fields,
+            "caveat_fields": caveat_fields,
+            "archive_root": payload.get("archive_root"),
+            "index_schema_version": payload.get("schema_version"),
+            "timestamp": payload.get("timestamp") or payload.get("generated_at"),
+            "coverage": {
+                "claim": payload.get("claim") is not None,
+                "non_claim": payload.get("non_claim") is not None,
+                "proof_fields": bool(proof_fields),
+                "caveat_fields": bool(caveat_fields),
+            },
+        }
+    )
+
+coverage = {
+    "without_claim": [record["summary_path"] for record in summary_records if not record["coverage"]["claim"]],
+    "without_non_claim": [record["summary_path"] for record in summary_records if not record["coverage"]["non_claim"]],
+    "without_proof_fields": [record["summary_path"] for record in summary_records if not record["coverage"]["proof_fields"]],
+    "without_caveat_fields": [record["summary_path"] for record in summary_records if not record["coverage"]["caveat_fields"]],
+}
+coverage_labels = {
+    "without_claim": "missing claim",
+    "without_non_claim": "missing non-claim",
+    "without_proof_fields": "missing proof fields",
+    "without_caveat_fields": "missing caveat fields",
+}
+summary_index = {
+    "schema_version": "sinex.demo-summary-index/v2",
+    "generated_at": generated_at,
+    "root": str(root),
+    "summary_count": len(summary_records),
+    "coverage": coverage,
+    "records": summary_records,
+}
+atomic_write_text(summary_path, json.dumps(summary_index, indent=2, sort_keys=False) + "\n")
+
+
+def first_meaningful_paragraph(text: str) -> str:
+    paragraphs = []
+    current = []
+    in_fence = False
+    for raw_line in text.splitlines():
+        line = raw_line.rstrip()
+        if line.startswith("```"):
+            in_fence = not in_fence
+            continue
+        if in_fence:
+            continue
+        if not line.strip():
+            if current:
+                paragraphs.append(" ".join(current).strip())
+                current = []
+            continue
+        if line.startswith("#"):
+            continue
+        if line.startswith("- "):
+            continue
+        current.append(line.strip())
+    if current:
+        paragraphs.append(" ".join(current).strip())
+    for paragraph in paragraphs:
+        if paragraph:
+            return paragraph
+    return ""
+
+
+def section_lines(text: str, headings: set[str], limit: int = 4) -> list[str]:
+    lines = text.splitlines()
+    collecting = False
+    found = []
+    current = None
+    for raw_line in lines:
+        stripped = raw_line.strip()
+        if stripped.startswith("#"):
+            if collecting and current:
+                found.append(current)
+            heading = stripped.lstrip("#").strip().lower().rstrip(":")
+            if collecting:
+                break
+            collecting = heading in headings
+            current = None
+            continue
+        if not collecting:
+            continue
+        if stripped.startswith("- "):
+            if current:
+                found.append(current)
+                if len(found) >= limit:
+                    break
+            current = stripped[2:].strip()
+        elif current and stripped:
+            current = f"{current} {stripped}"
+    if collecting and current and len(found) < limit:
+        found.append(current)
+    if len(found) > limit:
+        found = found[:limit]
+    return found
+
+
+def demo_kind(name: str, readme_text: str) -> str:
+    name_text = name.lower()
+    text = f"{name}\n{readme_text}".lower()
+    if (
+        "query" in name_text
+        or "algebra" in name_text
+        or "normalization" in name_text
+        or "source-id-query" in name_text
+    ):
+        return "query"
+    if "context" in name_text or "recall" in name_text or "timeline" in name_text:
+        return "recall"
+    if "dlq" in name_text or "runtime" in name_text:
+        return "ops"
+    if "query" in text or "algebra" in text:
+        return "query"
+    if "source" in name_text or "manifest" in name_text:
+        return "acquisition"
+    if "dlq" in text or "runtime" in text or "operator" in text:
+        return "ops"
+    if "context" in text or "recall" in text or "timeline" in text:
+        return "recall"
+    if "source" in text or "manifest" in text:
+        return "acquisition"
+    return "evidence"
+
+
+def quality_tier(name: str, readme_text: str, demo_files: list[dict]) -> str:
+    has_readme = bool(readme_text.strip())
+    has_proof_file = any(
+        token in item["path"].lower()
+        for item in demo_files
+        for token in ("proof", "summary", "context-pack", "runtime-ping", "xtask-status")
+    )
+    has_evidence_words = any(
+        phrase in readme_text.lower()
+        for phrase in ("what it proves", "what it demonstrates", "evidence trail", "verification")
+    )
+    if has_readme and has_proof_file and has_evidence_words:
+        return "showcase"
+    if has_readme and (has_proof_file or has_evidence_words):
+        return "workbench"
+    return "raw"
+
+
+summaries_by_demo: dict[str, list[dict]] = {}
+for record in summary_records:
+    summaries_by_demo.setdefault(record["demo"], []).append(record)
+
+catalog_rows = []
+for demo_dir in sorted(path for path in root.iterdir() if path.is_dir()):
+    demo = demo_dir.name
+    demo_files = [item for item in files if item["path"].split("/", 1)[0] == demo]
+    readme_path = demo_dir / "README.md"
+    readme_text = ""
+    if readme_path.is_file():
+        readme_text = readme_path.read_text(encoding="utf-8", errors="replace")
+    summary_records_for_demo = summaries_by_demo.get(demo, [])
+    catalog_rows.append(
+        {
+            "demo": demo,
+            "kind": demo_kind(demo, readme_text),
+            "tier": quality_tier(demo, readme_text, demo_files),
+            "description": first_meaningful_paragraph(readme_text),
+            "proofs": section_lines(
+                readme_text,
+                {"what it proves", "what it demonstrates", "evidence trail", "verification"},
+            ),
+            "caveats": section_lines(readme_text, {"limits", "caveat", "caveats"}),
+            "file_count": len(demo_files),
+            "readable_count": sum(1 for item in demo_files if item["readable"]),
+            "summary_count": len(summary_records_for_demo),
+            "latest_mtime": max((item["mtime"] for item in demo_files), default=None),
+            "readme": f"{demo}/README.md" if readme_text else None,
+        }
+    )
+
+tier_order = {"showcase": 0, "workbench": 1, "raw": 2}
+kind_order = {"recall": 0, "query": 1, "ops": 2, "acquisition": 3, "evidence": 4}
+def latest_sort_value(row: dict) -> float:
+    latest = row.get("latest_mtime")
+    if not latest:
+        return 0.0
+    try:
+        return datetime.fromisoformat(latest).timestamp()
+    except ValueError:
+        return 0.0
+
+
+catalog_rows.sort(
+    key=lambda row: (
+        tier_order.get(row["tier"], 99),
+        kind_order.get(row["kind"], 99),
+        -latest_sort_value(row),
+        row["demo"],
+    )
+)
+
+catalog_lines = [
+    "# Sinex Demo Curated Catalog",
+    "",
+    f"Generated: `{generated_at}`",
+    "",
+    f"Root: `{root}`",
+    "",
+    "This catalog is generated from the current demo shelf. It is a curation "
+    "surface, not an archive guarantee: weak raw artifacts should be folded "
+    "into stronger demos or deleted when they stop helping.",
+    "",
+]
+if summary_records:
+    catalog_lines.extend(
+        [
+            "## Demo Hygiene",
+            "",
+            f"- Summary records indexed: {len(summary_records)}",
+        ]
+    )
+    for key, label in coverage_labels.items():
+        paths = coverage[key]
+        catalog_lines.append(f"- {label.title()}: {len(paths)}")
+    catalog_lines.append("")
+
+    highest_gap_records = []
+    for record in summary_records:
+        missing = [label for key, label in coverage_labels.items() if not record["coverage"][key.removeprefix("without_")]]
+        if missing:
+            highest_gap_records.append((len(missing), record["summary_path"], missing))
+    highest_gap_records.sort(key=lambda item: (-item[0], item[1]))
+
+    if highest_gap_records:
+        catalog_lines.extend(
+            [
+                "Highest-priority hygiene gaps:",
+                "",
+            ]
+        )
+        for _, path_rel, missing in highest_gap_records[:12]:
+            catalog_lines.append(f"- `{path_rel}` — {', '.join(missing)}")
+        if len(highest_gap_records) > 12:
+            catalog_lines.append(f"- ... {len(highest_gap_records) - 12} more; see `SUMMARY_INDEX.json`.")
+        catalog_lines.append("")
+
+for tier in ("showcase", "workbench", "raw"):
+    rows = [row for row in catalog_rows if row["tier"] == tier]
+    if not rows:
+        continue
+    catalog_lines.extend([f"## {tier.title()} Demos", ""])
+    for row in rows:
+        catalog_lines.extend(
+            [
+                f"### `{row['demo']}`",
+                "",
+                f"- Kind: `{row['kind']}`",
+            ]
+        )
+        files_line = f"- Files: {row['file_count']} total, {row['readable_count']} readable"
+        if row["summary_count"]:
+            files_line += f", {row['summary_count']} summary records"
+        catalog_lines.append(files_line)
+        if row["latest_mtime"]:
+            catalog_lines.append(f"- Latest artifact mtime: `{row['latest_mtime']}`")
+        if row["readme"]:
+            catalog_lines.append(f"- Entry point: `{row['readme']}`")
+        if row["description"]:
+            catalog_lines.append(f"- Summary: {row['description']}")
+        if row["proofs"]:
+            catalog_lines.append("- Proof signals:")
+            catalog_lines.extend(f"  - {proof}" for proof in row["proofs"])
+        if row["caveats"]:
+            catalog_lines.append("- Caveats:")
+            catalog_lines.extend(f"  - {caveat}" for caveat in row["caveats"])
+        catalog_lines.append("")
+atomic_write_text(catalog_path, "\n".join(catalog_lines) + "\n")
+
+print(json.dumps({
+    "root": str(root),
+    "manifest": str(manifest_path),
+    "summary_index": str(summary_path),
+    "catalog": str(catalog_path),
+    "file_count": manifest["file_count"],
+    "readable_count": manifest["readable_count"],
+    "summary_count": summary_index["summary_count"],
+}, indent=2))
+PY
