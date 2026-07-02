@@ -32,6 +32,7 @@ class Candidate:
     module_name: str
     cfg_start: int
     module_end: int
+    attrs_after_cfg: str
     body: str
     merge_existing: bool = False
 
@@ -50,10 +51,11 @@ def is_skipped(
     *,
     include_test_directories: bool,
     include_split_test_files: bool,
+    include_tests_rs: bool,
 ) -> bool:
     if path.name.endswith("_test.rs") and not include_split_test_files:
         return True
-    if path.name == "tests.rs":
+    if path.name == "tests.rs" and not include_tests_rs:
         return True
     return (not include_test_directories) and "tests" in path.parts
 
@@ -63,6 +65,7 @@ def iter_rust_files(
     *,
     include_test_directories: bool,
     include_split_test_files: bool,
+    include_tests_rs: bool,
 ) -> list[Path]:
     files: list[Path] = []
     for root in roots:
@@ -71,6 +74,7 @@ def iter_rust_files(
                 root,
                 include_test_directories=include_test_directories,
                 include_split_test_files=include_split_test_files,
+                include_tests_rs=include_tests_rs,
             ):
                 files.append(root)
             continue
@@ -79,6 +83,7 @@ def iter_rust_files(
                 path,
                 include_test_directories=include_test_directories,
                 include_split_test_files=include_split_test_files,
+                include_tests_rs=include_tests_rs,
             ):
                 files.append(path)
     return sorted(files)
@@ -263,6 +268,7 @@ def find_candidates(path: Path) -> list[Candidate]:
                         module_name=module_name,
                         cfg_start=cfg_start,
                         module_end=after,
+                        attrs_after_cfg=text[cfg_line_end + 1 : line_pos],
                         body=dedent_body(text[open_idx + 1 : close_idx]),
                     )
                 )
@@ -309,6 +315,7 @@ def split_candidates_for_source(candidates: list[Candidate]) -> None:
         indent = text[candidate.cfg_start : text.find("#[cfg(test)]", candidate.cfg_start)]
         replacement = (
             f"{indent}#[cfg(test)]\n"
+            f"{candidate.attrs_after_cfg}"
             f"{indent}#[path = \"{rust_path_attr_target(source, candidate.target)}\"]\n"
             f"{indent}mod {candidate.module_name};\n"
         )
@@ -456,6 +463,11 @@ def main() -> int:
         action="store_true",
         help="also scan *_test.rs files for nested inline test modules",
     )
+    parser.add_argument(
+        "--include-tests-rs",
+        action="store_true",
+        help="also scan files named tests.rs for nested inline test modules",
+    )
     parser.add_argument("--root", action="append", default=[])
     parser.add_argument("--json", action="store_true")
     args = parser.parse_args()
@@ -465,6 +477,7 @@ def main() -> int:
         roots,
         include_test_directories=args.include_test_directories,
         include_split_test_files=args.include_split_test_files,
+        include_tests_rs=args.include_tests_rs,
     )
     found: list[Candidate] = []
     split_found: list[SplitModuleCandidate] = []
