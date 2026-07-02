@@ -418,11 +418,20 @@ fn confirmed_filter_subjects_for(
 }
 
 fn legacy_filter_consumer_names(current_name: &str) -> Vec<String> {
-    let Some((base, _filter_suffix)) = current_name.split_once("-filter-") else {
+    let (base, has_filter_suffix) = if let Some((base, _filter_suffix)) =
+        current_name.split_once("-filter-")
+    {
+        (base, true)
+    } else if current_name.ends_with("-material") || current_name.ends_with("-synthesized") {
+        (current_name, false)
+    } else {
         return Vec::new();
     };
 
-    let mut names = vec![base.to_string()];
+    let mut names = Vec::new();
+    if has_filter_suffix {
+        names.push(base.to_string());
+    }
 
     if let Some(root) = base.strip_suffix("-material") {
         names.push(root.to_string());

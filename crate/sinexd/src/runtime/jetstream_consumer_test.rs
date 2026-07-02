@@ -90,6 +90,10 @@ async fn legacy_filter_consumer_names_cover_broader_siblings()
             "sinex_analytics-confirmed-events-material",
         ]
     );
+    assert_eq!(
+        super::legacy_filter_consumer_names("sinex-tag-applier-confirmed-events-material"),
+        vec!["sinex-tag-applier-confirmed-events"]
+    );
     assert!(super::legacy_filter_consumer_names("sinex-tag-applier-confirmed-events").is_empty());
     Ok(())
 }
