@@ -25,7 +25,7 @@
           "immutable": false,
           "path": "/home/sinity/.local/share/qutebrowser/history.sqlite",
           "query": "SELECT rowid, * FROM History",
-          "read_only": true,
+          "read_only": false,
           "table": "History"
         },
         "secondary": {

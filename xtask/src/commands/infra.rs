@@ -655,7 +655,11 @@ fn generate_dev_source_bindings_manifest_for_home_and_exports(
                     "path": qutebrowser_history,
                     "query": "SELECT rowid, * FROM History",
                     "table": "History",
-                    "read_only": true,
+                    // qutebrowser keeps history.sqlite in WAL mode with a live
+                    // writer. SQLite may need to recover/open WAL sidecars even
+                    // for SELECT-only readers, so mirror the NixOS source
+                    // binding's WAL-safe mode here.
+                    "read_only": false,
                     "immutable": false
                 },
                 "secondary": {
