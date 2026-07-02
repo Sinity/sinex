@@ -753,6 +753,17 @@ async fn source_status_treats_recent_output_as_runtime_liveness(
         "recent source output is runtime liveness evidence even without health telemetry"
     );
 
+    let live_modules = repo
+        .list_live_runtime_presence(Duration::from_mins(2))
+        .await?;
+    let live_row = live_modules
+        .iter()
+        .find(|module| module.module_name == module_name)
+        .expect("output-backed source should appear in runtime presence");
+    assert_eq!(live_row.module_run_id, Some(run.id.to_uuid()));
+    assert_eq!(live_row.heartbeat_source, "output");
+    assert!(live_row.last_heartbeat_at.is_some());
+
     let filtered_rows = repo
         .list_sources_status_for_modules(
             Duration::from_mins(2),
