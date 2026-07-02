@@ -1,0 +1,122 @@
+{
+  "version": 1,
+  "purpose": "Shared Sinex/Polylogue devloop contract for repo-local agent operating surfaces.",
+  "canonical_active_root": ".agent/conductor-devloop",
+  "cold_start": ".agent/DEVLOOP.md",
+  "tracked_scaffold": [
+    ".agent/README.md",
+    ".agent/DEVLOOP.md",
+    ".agent/CONVENTIONS.md",
+    ".agent/devloop-contract.json",
+    ".agent/includes/**",
+    ".agent/scripts/**",
+    ".agent/tools/**",
+    ".agent/scratch/README.md",
+    ".agent/conductor-devloop/README.md",
+    ".agent/conductor-devloop/INDEX.md",
+    ".agent/conductor-devloop/RUNBOOK.md",
+    ".agent/conductor-devloop/PROCESS.md",
+    ".agent/conductor-devloop/TACTICS.md",
+    ".agent/conductor-devloop/VELOCITY.md",
+    ".agent/conductor-devloop/ADVERSARIAL-REVIEW.md",
+    ".agent/conductor-devloop/SELF-PROMPTS.md"
+  ],
+  "tracked_artifacts": [
+    ".agent/dev/README.md",
+    ".agent/dev/dev-source-bindings.json",
+    ".agent/dev/recall-artifacts/**",
+    ".agent/inbox/INDEX.md"
+  ],
+  "active_packet_files": [
+    "README.md",
+    "INDEX.md",
+    "INTEGRATION.md",
+    "ACTIVE-LOOP.md",
+    "AHEAD.md",
+    "QUEUE.md",
+    "RUNBOOK.md",
+    "OPERATING-LOG.md",
+    "DEMO-RADAR.md",
+    "EVENTS.jsonl",
+    "PHASES.jsonl",
+    "MANIFEST.md",
+    "ADVERSARIAL-REVIEW.md",
+    "PROCESS.md",
+    "TACTICS.md",
+    "VELOCITY.md",
+    "SELF-PROMPTS.md"
+  ],
+  "generated_packet_files": [
+    "EVENTS.jsonl",
+    "PHASES.jsonl",
+    "MANIFEST.md",
+    "context/INDEX.md"
+  ],
+  "generated_sidecar_policy": {
+    "EVENTS.jsonl": {
+      "body": "compact_excerpt_and_sha256",
+      "body_excerpt_max_chars": 500,
+      "stale_if_older_than": "OPERATING-LOG.md"
+    },
+    "PHASES.jsonl": {
+      "body": "omitted",
+      "stale_if_older_than": "OPERATING-LOG.md"
+    }
+  },
+  "script_primitives": [
+    "devloop-status",
+    "devloop-review",
+    "devloop-start",
+    "devloop-checkpoint",
+    "devloop-log",
+    "devloop-focus",
+    "devloop-demo",
+    "devloop-baseline",
+    "devloop-wait",
+    "devloop-ahead",
+    "devloop-meta",
+    "devloop-handoff",
+    "devloop-sync",
+    "devloop-integration",
+    "devloop-velocity",
+    "devloop-refresh-demos",
+    "devloop-refresh-events"
+  ],
+  "retired_script_primitives": [
+    "devloop-pulse",
+    "devloop-proof-budget",
+    "devloop-velocity-report"
+  ],
+  "focus_modes": [
+    "Direction",
+    "Evidence",
+    "Construction",
+    "Proof",
+    "Artifact",
+    "Velocity",
+    "Meta"
+  ],
+  "serialized_proof_resources": [
+    "xtask test invocations in one checkout",
+    "xtask build/check invocations sharing the cargo target dir",
+    "checkout-local schema/bootstrap work against the dev database",
+    "dev-local sinexd runtime bringup"
+  ],
+  "scratch_allowed": [
+    "README.md",
+    "research/*.md"
+  ],
+  "demo_required_files": [
+    "README.md",
+    "SUMMARY_INDEX.json",
+    "MANIFEST.readable.json",
+    "CURATED_CATALOG.md"
+  ],
+  "context_note_soft_limit_bytes": 49152,
+  "active_loop_section_soft_limit_lines": 48,
+  "forbidden_steady_state_paths": [
+    ".agent/scratch/current",
+    ".agent/handoff",
+    ".agent/conductor-devloop/scripts"
+  ]
+}

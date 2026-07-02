@@ -1,0 +1,11 @@
+Desktop context (last 24h)
+input family        state      refs  caveats
+────────────────────────────────────────────
+desktop             missing       1        1
+terminal            missing       1        1
+browser             missing       1        1
+notification        missing       1        1
+
+caveats
+- context.derived_view: desktop context is derived from admitted observations and does not create canonical context events
+- context.inputs_missing: one or more desktop-context input families have no events in the last 24h

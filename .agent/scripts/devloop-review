@@ -1,0 +1,959 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+repo_root="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
+cd "$repo_root"
+
+current=".agent/conductor-devloop"
+contract=".agent/devloop-contract.json"
+warnings=0
+
+# shellcheck source=.agent/scripts/lib/proof-processes.sh
+source ".agent/scripts/lib/proof-processes.sh"
+
+warn() {
+  warnings=$((warnings + 1))
+  printf 'WARN: %s\n' "$*"
+}
+
+ok() {
+  printf 'OK: %s\n' "$*"
+}
+
+gitignore_effectively_ignores() {
+  local path="$1"
+  local match
+  match="$(git check-ignore -v "$path" 2>/dev/null || true)"
+  [[ -n "$match" ]] || return 1
+  [[ "$(awk -F'[:\t]' '{print $3}' <<<"$match")" != !* ]]
+}
+
+path_matches_any_pattern() {
+  local path="$1"
+  shift
+  local pattern
+  for pattern in "$@"; do
+    if [[ "$path" == $pattern ]]; then
+      return 0
+    fi
+  done
+  return 1
+}
+
+latest_focus_timestamp() {
+  local path="$1"
+  awk '/^## Focus Change / {print $4}' "$path" | sort | tail -n 1
+}
+
+section_line_count() {
+  local path="$1"
+  local heading="$2"
+  awk -v heading="$heading" '
+    $0 == heading {in_section=1; next}
+    in_section && /^## / {exit}
+    in_section {count++}
+    END {print count + 0}
+  ' "$path"
+}
+
+recent_operating_log_acceptance() {
+  local pattern="$1"
+  [[ -f "$current/OPERATING-LOG.md" ]] \
+    && tail -n 250 "$current/OPERATING-LOG.md" | rg -q -- "$pattern"
+}
+
+psi_value() {
+  local file="$1"
+  local section="$2"
+  local key="$3"
+  awk -v section="$section" -v key="$key" '
+    $1 == section {
+      for (i = 2; i <= NF; i++) {
+        split($i, pair, "=")
+        if (pair[1] == key) {
+          print pair[2]
+          exit
+        }
+      }
+    }
+  ' "$file"
+}
+
+psi_is_high() {
+  local some_avg10="$1"
+  local full_avg10="$2"
+  awk -v some="$some_avg10" -v full="$full_avg10" 'BEGIN {exit !(full >= 20 || some >= 30)}'
+}
+
+psi_is_elevated() {
+  local some_avg10="$1"
+  local full_avg10="$2"
+  awk -v some="$some_avg10" -v full="$full_avg10" 'BEGIN {exit !(full >= 5 || some >= 10)}'
+}
+
+echo "== scaffold files =="
+if [[ -f "$contract" ]] && command -v jq >/dev/null 2>&1; then
+  mapfile -t required_files < <(
+    {
+      jq -r '.tracked_scaffold[] | select(endswith("/**") | not)' "$contract"
+      jq -r '.active_packet_files[]' "$contract" | sed "s#^#$current/#"
+    } | sort -u
+  )
+else
+  required_files=(
+    ".agent/DEVLOOP.md"
+    ".agent/README.md"
+    ".agent/CONVENTIONS.md"
+    "$contract"
+    ".agent/scratch/README.md"
+    "$current/README.md"
+    "$current/INDEX.md"
+    "$current/ACTIVE-LOOP.md"
+    "$current/QUEUE.md"
+    "$current/RUNBOOK.md"
+    "$current/OPERATING-LOG.md"
+    "$current/DEMO-RADAR.md"
+    "$current/EVENTS.jsonl"
+    "$current/PHASES.jsonl"
+    "$current/MANIFEST.md"
+    "$current/ADVERSARIAL-REVIEW.md"
+    "$current/PROCESS.md"
+    "$current/TACTICS.md"
+    "$current/VELOCITY.md"
+    "$current/SELF-PROMPTS.md"
+  )
+fi
+for path in "${required_files[@]}"; do
+  if [[ -f "$path" ]]; then ok "$path"; else warn "missing $path"; fi
+done
+
+echo
+echo "== canonical devloop primitives =="
+if [[ -f "$contract" ]] && command -v jq >/dev/null 2>&1; then
+  mapfile -t required_scripts < <(jq -r '.script_primitives[]' "$contract")
+  mapfile -t retired_script_names < <(jq -r '.retired_script_primitives[]' "$contract")
+else
+  required_scripts=(
+    devloop-status
+    devloop-review
+    devloop-start
+    devloop-checkpoint
+    devloop-log
+    devloop-focus
+    devloop-demo
+    devloop-baseline
+    devloop-wait
+    devloop-ahead
+    devloop-meta
+    devloop-handoff
+    devloop-sync
+    devloop-velocity
+    devloop-refresh-demos
+    devloop-refresh-events
+  )
+  retired_script_names=(
+    devloop-pulse
+    devloop-proof-budget
+    devloop-velocity-report
+  )
+fi
+allowed_scripts=(
+  "${required_scripts[@]}"
+)
+for script in "${required_scripts[@]}"; do
+  path=".agent/scripts/$script"
+  if [[ -x "$path" ]]; then
+    ok "executable primitive: $script"
+  elif [[ -f "$path" ]]; then
+    warn "devloop primitive is not executable: $path"
+  else
+    warn "missing devloop primitive: $path"
+  fi
+done
+
+retired_find_args=()
+for retired in "${retired_script_names[@]}"; do
+  if [[ "${#retired_find_args[@]}" -gt 0 ]]; then
+    retired_find_args+=(-o)
+  fi
+  retired_find_args+=(-name "$retired")
+done
+retired_scripts="$(
+  if [[ "${#retired_find_args[@]}" -gt 0 ]]; then
+    find .agent/scripts -maxdepth 1 -type f \( "${retired_find_args[@]}" \) -printf '%f\n' 2>/dev/null || true
+  fi
+)"
+if [[ -n "$retired_scripts" ]]; then
+  warn "retired devloop primitives still exist; fold them into status/velocity"
+  printf '%s\n' "$retired_scripts" | sed -n '1,20p'
+else
+  ok "no retired devloop primitive files"
+fi
+
+extra_devloop_scripts="$(
+  comm -23 \
+    <(find .agent/scripts -maxdepth 1 -type f -name 'devloop-*' -printf '%f\n' | sort) \
+    <(printf '%s\n' "${allowed_scripts[@]}" | sort) \
+    || true
+)"
+if [[ -n "$extra_devloop_scripts" ]]; then
+  warn "non-canonical devloop primitive names exist; fold repo-specific behavior behind shared primitives when possible"
+  printf '%s\n' "$extra_devloop_scripts" | sed -n '1,30p'
+else
+  ok "no extra devloop primitive names"
+fi
+
+echo
+echo "== focus mode contract =="
+if [[ -f "$contract" ]] && command -v jq >/dev/null 2>&1; then
+  focus_mode_pattern="$(
+    jq -r '.focus_modes[]' "$contract" | paste -sd '|' -
+  )"
+  if [[ -z "$focus_mode_pattern" ]]; then
+    warn "contract focus_modes list is empty"
+  else
+    ok "contract focus modes: $(jq -r '.focus_modes | join(", ")' "$contract")"
+    unknown_focus="$(
+      if [[ -f "$current/PHASES.jsonl" ]]; then
+        jq -r 'select(.focus != null) | select(.title | startswith("focus ")) | .focus' "$current/PHASES.jsonl" 2>/dev/null \
+          | sed -E 's/[[:space:]]*->[[:space:]]*/\n/g' \
+          | sed '/^$/d' \
+          | rg -v "^(${focus_mode_pattern})$" \
+          | sort -u \
+          || true
+      fi
+    )"
+    active_focus_unknown="$(
+      if [[ -f "$current/ACTIVE-LOOP.md" ]]; then
+        awk '
+          /^## Current Focus/ {in_section=1; next}
+          in_section && /^## / {exit}
+          in_section && /^Focus: / {sub(/^Focus: /, ""); print}
+        ' "$current/ACTIVE-LOOP.md" \
+          | sed -E 's/[[:space:]]*->[[:space:]]*/\n/g' \
+          | sed '/^$/d' \
+          | rg -v "^(${focus_mode_pattern})$" \
+          | sort -u \
+          || true
+      fi
+    )"
+    if [[ -n "$active_focus_unknown" ]]; then
+      warn "ACTIVE-LOOP.md current focus contains names outside the shared contract"
+      printf '%s\n' "$active_focus_unknown" | sed -n '1,20p'
+    else
+      ok "ACTIVE-LOOP.md current focus matches the shared contract"
+    fi
+    if [[ -n "$unknown_focus" ]]; then
+      warn "phase sidecar contains transition focus names outside the shared contract"
+      printf '%s\n' "$unknown_focus" | sed -n '1,20p'
+    else
+      ok "phase sidecar transition focus names match the shared contract"
+    fi
+  fi
+else
+  warn "cannot validate focus modes without $contract and jq"
+fi
+
+echo
+echo "== operating log hygiene =="
+if [[ -f "$current/OPERATING-LOG.md" ]]; then
+  last_entry="$(
+    awk '
+      /^```/ {fenced = !fenced}
+      !fenced && /^## [0-9]{4}-[0-9]{2}-[0-9]{2}T/ {start = NR}
+      {lines[NR] = $0}
+      END {if (start) for (i = start; i <= NR; i++) print lines[i]}
+    ' "$current/OPERATING-LOG.md"
+  )"
+  if [[ -z "$last_entry" ]]; then
+    warn "no timestamped operating-log entry"
+  elif rg -q '\bTODO(:|$)' <<<"$last_entry"; then
+    warn "last operating-log entry still has TODO fields"
+  else
+    ok "last operating-log entry has no TODO fields"
+  fi
+else
+  warn "missing operating log"
+fi
+
+echo
+echo "== demo radar =="
+if [[ -f "$current/DEMO-RADAR.md" ]]; then
+  last_demo="$(awk '/^## [0-9]{4}-[0-9]{2}-[0-9]{2}T/ {start=NR} {lines[NR]=$0} END {if (start) for (i=start;i<=NR;i++) print lines[i]}' "$current/DEMO-RADAR.md")"
+  if [[ -z "$last_demo" ]]; then
+    warn "DEMO-RADAR.md exists but has no timestamped entries"
+  elif rg -q '\bTODO(:|$)' <<<"$last_demo"; then
+    warn "last demo-radar entry still has TODO fields"
+  else
+    ok "last demo-radar entry has no TODO fields"
+  fi
+else
+  warn "missing $current/DEMO-RADAR.md; run .agent/scripts/devloop-demo"
+fi
+
+echo
+echo "== active-loop freshness =="
+if [[ -f "$current/ACTIVE-LOOP.md" ]]; then
+  active_loop_section_limit=48
+  if [[ -f "$contract" ]] && command -v jq >/dev/null 2>&1; then
+    active_loop_section_limit="$(
+      jq -r '.active_loop_section_soft_limit_lines // 48' "$contract"
+    )"
+  fi
+  for heading in "## Current Slice" "## Slice Contract" "## Next Action"; do
+    line_count="$(section_line_count "$current/ACTIVE-LOOP.md" "$heading")"
+    if [[ "$line_count" -gt "$active_loop_section_limit" ]]; then
+      warn "ACTIVE-LOOP.md section '$heading' is ${line_count} lines; compact it below ${active_loop_section_limit} lines for cold-start readability"
+    else
+      ok "ACTIVE-LOOP.md section '$heading' is within the ${active_loop_section_limit}-line soft limit"
+    fi
+  done
+
+  active_job_ids="$(
+    awk '/^## Focus Change / {exit} {print}' "$current/ACTIVE-LOOP.md" \
+      | rg -o 'job `?[0-9]+`?' 2>/dev/null \
+      | rg -o '[0-9]+' \
+      | sort -u \
+      || true
+  )"
+  if [[ -z "$active_job_ids" ]]; then
+    ok "ACTIVE-LOOP.md has no explicit xtask job references"
+  elif ! command -v xtask >/dev/null 2>&1; then
+    warn "ACTIVE-LOOP.md references xtask jobs, but xtask is not on PATH"
+  else
+    while IFS= read -r job_id; do
+      [[ -z "$job_id" ]] && continue
+      job_json="$(xtask jobs status "$job_id" --json 2>/dev/null || true)"
+      if [[ -z "$job_json" ]]; then
+        warn "ACTIVE-LOOP.md references unknown xtask job $job_id"
+        continue
+      fi
+      job_status="$(jq -r '.data.status // .status // "unknown"' <<<"$job_json" 2>/dev/null || printf 'unknown')"
+      if [[ "$job_status" == "running" ]]; then
+        ok "ACTIVE-LOOP.md references running xtask job $job_id"
+      else
+        warn "ACTIVE-LOOP.md references non-running xtask job $job_id (status=$job_status); update the active slice or accepted warnings"
+      fi
+    done <<<"$active_job_ids"
+  fi
+
+  if [[ -f "$current/OPERATING-LOG.md" ]]; then
+    last_log_header="$(
+      awk '/^## [0-9]{4}-[0-9]{2}-[0-9]{2}T/ {h=$0} END {print h}' "$current/OPERATING-LOG.md"
+    )"
+    last_log_ts="$(sed -E 's/^## ([^ ]+) .*/\1/' <<<"$last_log_header")"
+    last_log_phase="$(sed -E 's/^## [^ ]+ — (.*)$/\1/' <<<"$last_log_header")"
+    last_focus_ts="$(latest_focus_timestamp "$current/ACTIVE-LOOP.md")"
+    if [[ "$last_log_phase" =~ ^(Proof|Artifact)(:|$) && -n "$last_focus_ts" && "$last_focus_ts" < "$last_log_ts" ]]; then
+      warn "latest $last_log_phase log entry is newer than the last ACTIVE-LOOP focus change; update ACTIVE-LOOP.md or record a checkpoint/focus transition"
+      printf 'last_log=%s last_focus=%s\n' "$last_log_ts" "$last_focus_ts"
+    else
+      ok "ACTIVE-LOOP.md freshness matches latest proof/artifact state"
+    fi
+  fi
+else
+  warn "missing $current/ACTIVE-LOOP.md"
+fi
+
+echo
+echo "== queue hygiene =="
+if [[ -f "$current/QUEUE.md" ]]; then
+  if rg -q '\bTODO(:|$)|TODO\b' "$current/QUEUE.md"; then
+    warn "QUEUE.md contains TODO placeholders; queued directives should be concrete or explicitly empty"
+  else
+    ok "QUEUE.md has no TODO placeholders"
+  fi
+  if rg -q '^Status:[[:space:]]*(queued|pending|active|in-progress)' "$current/QUEUE.md"; then
+    ok "QUEUE.md contains live sequencing entries"
+  elif rg -q '^No queued directives\.' "$current/QUEUE.md"; then
+    ok "QUEUE.md explicitly records an empty queue"
+  else
+    warn "QUEUE.md should either contain live entries with Status lines or say 'No queued directives.'"
+  fi
+else
+  warn "missing $current/QUEUE.md; deferred operator directives need an active-state channel"
+fi
+
+echo
+echo "== active-root convention =="
+if [[ -f "$contract" ]] && command -v jq >/dev/null 2>&1; then
+  mapfile -t forbidden_steady_state_paths < <(jq -r '.forbidden_steady_state_paths[]' "$contract")
+else
+  forbidden_steady_state_paths=(
+    ".agent/scratch/current"
+    ".agent/handoff"
+    ".agent/conductor-devloop/scripts"
+  )
+fi
+for forbidden_path in "${forbidden_steady_state_paths[@]}"; do
+  if [[ -e "$forbidden_path" ]]; then
+    warn "forbidden steady-state path exists: $forbidden_path"
+  else
+    ok "absent forbidden steady-state path: $forbidden_path"
+  fi
+done
+if [[ -d "$current/scripts" ]]; then
+  warn "$current/scripts exists; conductor packets should reference .agent/scripts hashes, not copy scripts"
+fi
+script_snapshots="$(
+  find .agent -path .agent/scripts -prune -o -type f -path '*/scripts/devloop-*' -printf '%P\n' 2>/dev/null || true
+)"
+if [[ -n "$script_snapshots" ]]; then
+  warn "duplicated devloop script snapshots found outside .agent/scripts; keep one executable primitive surface"
+  printf '%s\n' "$script_snapshots" | sed -n '1,30p'
+else
+  ok "no duplicated devloop script snapshots under .agent"
+fi
+if [[ -f "$current/EVENTS.jsonl" ]]; then
+  ok "$current/EVENTS.jsonl"
+  if command -v jq >/dev/null 2>&1; then
+    legacy_body_count="$(
+      jq -sr '[.[] | select(has("body"))] | length' "$current/EVENTS.jsonl" 2>/dev/null \
+        || printf '0'
+    )"
+    if [[ "$legacy_body_count" -gt 0 ]]; then
+      warn "EVENTS.jsonl has $legacy_body_count legacy full-body records; run .agent/scripts/devloop-refresh-events to keep the sidecar compact"
+    else
+      ok "EVENTS.jsonl uses compact body excerpt/hash records"
+    fi
+    incomplete_count="$(
+      jq -sr '[.[] | select(.incomplete == true)] | length' "$current/EVENTS.jsonl" 2>/dev/null \
+        || printf '0'
+    )"
+    recent_incomplete_count="$(
+      jq -sr '.[-10:] | [.[] | select(.incomplete == true)] | length' "$current/EVENTS.jsonl" 2>/dev/null \
+        || printf '0'
+    )"
+    if [[ "$recent_incomplete_count" -gt 0 ]]; then
+      warn "recent EVENTS.jsonl records are incomplete; fix the logging helper or replace placeholder entries with explicit facts"
+      jq -sr '
+        .[-10:][]
+        | select(.incomplete == true)
+        | "\(.timestamp) \(.title): \((.incomplete_fields // []) | join(","))"
+      ' "$current/EVENTS.jsonl" 2>/dev/null | sed -n '1,10p'
+    elif [[ "$incomplete_count" -gt 0 ]]; then
+      ok "EVENTS.jsonl marks $incomplete_count historical incomplete records; recent event records are concrete"
+    else
+      ok "EVENTS.jsonl has no incomplete records"
+    fi
+  fi
+else
+  warn "missing $current/EVENTS.jsonl; run .agent/scripts/devloop-refresh-events"
+fi
+if [[ -f "$current/PHASES.jsonl" ]]; then
+  ok "$current/PHASES.jsonl"
+else
+  warn "missing $current/PHASES.jsonl; run .agent/scripts/devloop-refresh-events"
+fi
+if [[ -f "$current/OPERATING-LOG.md" ]]; then
+  stale_sidecars="$(
+    for sidecar in "$current/EVENTS.jsonl" "$current/PHASES.jsonl"; do
+      if [[ ! -f "$sidecar" || "$current/OPERATING-LOG.md" -nt "$sidecar" ]]; then
+        printf '%s\n' "$sidecar"
+      fi
+    done
+  )"
+  if [[ -n "$stale_sidecars" ]]; then
+    warn "generated event sidecars are older than OPERATING-LOG.md; run .agent/scripts/devloop-refresh-events"
+    printf '%s\n' "$stale_sidecars" | sed -n '1,10p'
+  else
+    ok "event sidecars are fresh against OPERATING-LOG.md"
+  fi
+fi
+if [[ -d "$current/context" ]]; then
+  if [[ -f "$current/context/INDEX.md" ]]; then
+    ok "$current/context/INDEX.md"
+    stale_context_index="$(
+      find "$current/context" -type f ! -name 'INDEX.md' -newer "$current/context/INDEX.md" -printf '%P\n' 2>/dev/null \
+        | sed -n '1,20p' \
+        || true
+    )"
+    if [[ -n "$stale_context_index" ]]; then
+      warn "$current/context/INDEX.md is older than supporting context files; run .agent/scripts/devloop-sync"
+      printf '%s\n' "$stale_context_index"
+    else
+      ok "conductor context index is fresh"
+    fi
+  else
+    warn "missing $current/context/INDEX.md; run .agent/scripts/devloop-sync so context notes stay discoverable"
+  fi
+else
+  ok "no conductor context directory"
+fi
+
+if [[ -f "$current/MANIFEST.md" ]]; then
+  ok "$current/MANIFEST.md"
+  stale_manifest_inputs="$(
+    {
+      [[ -f "$contract" ]] && find "$contract" -newer "$current/MANIFEST.md" -printf '%p\n'
+      find .agent/scripts -maxdepth 1 -type f -name 'devloop-*' -newer "$current/MANIFEST.md" -printf '%p\n'
+    } 2>/dev/null | sed -n '1,20p' || true
+  )"
+  if [[ -n "$stale_manifest_inputs" ]]; then
+    warn "$current/MANIFEST.md is older than primitive contract inputs; run .agent/scripts/devloop-sync"
+    printf '%s\n' "$stale_manifest_inputs"
+  else
+    ok "conductor manifest is fresh against devloop contract inputs"
+  fi
+else
+  warn "missing $current/MANIFEST.md; run .agent/scripts/devloop-sync"
+fi
+
+root_handoffs="$(
+  find "$current" -maxdepth 1 -type f -name 'handoff-*.md' -printf '%f\n' 2>/dev/null || true
+)"
+if [[ -n "$root_handoffs" ]]; then
+  warn "handoff files in conductor root; devloop-handoff should write under $current/context/handoffs"
+  printf '%s\n' "$root_handoffs" | sed -n '1,20p'
+else
+  ok "no root-level handoff files"
+fi
+
+root_sprawl="$(
+  if [[ -f "$contract" ]] && command -v jq >/dev/null 2>&1; then
+    mapfile -t allowed_root_files < <(jq -r '.active_packet_files[] | select(contains("/") | not)' "$contract")
+  else
+    allowed_root_files=(
+      README.md INDEX.md ACTIVE-LOOP.md QUEUE.md RUNBOOK.md OPERATING-LOG.md
+      DEMO-RADAR.md EVENTS.jsonl PHASES.jsonl MANIFEST.md
+      ADVERSARIAL-REVIEW.md PROCESS.md TACTICS.md VELOCITY.md SELF-PROMPTS.md
+    )
+  fi
+  find "$current" -maxdepth 1 -type f -printf '%f\n' \
+    | while IFS= read -r root_file; do
+        allowed=false
+        for allowed_root_file in "${allowed_root_files[@]}"; do
+          if [[ "$root_file" == "$allowed_root_file" ]]; then
+            allowed=true
+            break
+          fi
+        done
+        if [[ "$allowed" != true ]]; then
+          printf '%s\n' "$root_file"
+        fi
+      done \
+    || true
+)"
+if [[ -n "$root_sprawl" ]]; then
+  warn "unexpected loose files in $current root; move supporting notes under $current/context"
+  printf '%s\n' "$root_sprawl" | sed -n '1,20p'
+else
+  ok "conductor root has only protocol/live-state files"
+fi
+
+handoff_todos="$(
+  if [[ -d "$current/context/handoffs" ]]; then
+    rg -n '\bTODO(:|$)|TODO\b' "$current/context/handoffs" 2>/dev/null || true
+  fi
+)"
+if [[ -n "$handoff_todos" ]]; then
+  warn "handoff files still contain TODO placeholders; handoffs should be proof-shaped or explicitly caveated"
+  printf '%s\n' "$handoff_todos" | sed -n '1,20p'
+else
+  ok "no TODO placeholders in handoff context files"
+fi
+
+large_context_files="$(
+  if [[ -d "$current/context" ]]; then
+    if [[ -f "$contract" ]] && command -v jq >/dev/null 2>&1; then
+      context_note_limit="$(jq -r '.context_note_soft_limit_bytes // 49152' "$contract")"
+    else
+      context_note_limit=49152
+    fi
+    find "$current/context" -maxdepth 1 -type f -size +"${context_note_limit}"c -printf '%P\t%s\n' | sort || true
+  fi
+)"
+if [[ -n "$large_context_files" ]]; then
+  warn "large conductor context notes detected; summarize/split or move raw evidence to artifact/demo shelves"
+  printf '%s\n' "$large_context_files" | sed -n '1,20p'
+else
+  ok "no oversized conductor context notes"
+fi
+
+echo
+echo "== demo shelf convention =="
+demo_root=".agent/demos/sinex"
+if [[ -d "$demo_root" ]]; then
+  ok "$demo_root exists"
+else
+  warn "missing canonical Sinex demo shelf: $demo_root"
+fi
+if [[ -f "$contract" ]] && command -v jq >/dev/null 2>&1; then
+  mapfile -t demo_required_files < <(jq -r '.demo_required_files[]' "$contract")
+else
+  demo_required_files=(README.md SUMMARY_INDEX.json MANIFEST.readable.json CURATED_CATALOG.md)
+fi
+for required_demo_file in "${demo_required_files[@]}"; do
+  path="$demo_root/$required_demo_file"
+  if [[ -f "$path" ]]; then
+    ok "$path"
+  else
+    warn "missing demo shelf index: $path; run .agent/scripts/devloop-refresh-demos $demo_root"
+  fi
+done
+concatenated_bundles="$(
+  if [[ -d .agent/demos ]]; then
+    find .agent/demos -type f -iname 'CONCATENATED_READABLE*' -printf '%P\n' 2>/dev/null || true
+  fi
+)"
+if [[ -n "$concatenated_bundles" ]]; then
+  warn "duplicated concatenated-readable demo bundles found; Chisel owns portable bundle generation"
+  printf '%s\n' "$concatenated_bundles" | sed -n '1,20p'
+else
+  ok "no concatenated-readable demo bundles"
+fi
+
+echo
+echo "== scratch convention =="
+scratch_sprawl="$(
+  if [[ -d .agent/scratch ]]; then
+    find .agent/scratch -mindepth 1 -maxdepth 2 -type f -printf '%P\n' \
+      | rg -v '^(README\.md|research/[^/]+\.md)$' \
+      || true
+  fi
+)"
+scratch_dirs="$(
+  if [[ -d .agent/scratch ]]; then
+    find .agent/scratch -mindepth 1 -maxdepth 1 -type d -printf '%P\n' \
+      | rg -v '^research$' \
+      || true
+  fi
+)"
+if [[ -n "$scratch_sprawl" || -n "$scratch_dirs" ]]; then
+  warn ".agent/scratch should contain README.md and research/*.md only; move live/generated state to conductor-devloop, demos, or artifacts"
+  { printf '%s\n' "$scratch_dirs"; printf '%s\n' "$scratch_sprawl"; } | sed '/^$/d' | sed -n '1,30p'
+else
+  ok "scratch contains only README/research material"
+fi
+
+stale_refs="$(
+  rg -n 'devloop-(pulse|proof-budget|velocity-report)' \
+    --glob '!devloop-review' \
+    .agent/README.md "$current/README.md" "$current/INDEX.md" \
+    "$current/RUNBOOK.md" "$current/PROCESS.md" "$current/TACTICS.md" \
+    "$current/VELOCITY.md" "$current/ADVERSARIAL-REVIEW.md" .agent/scripts \
+    | rg -v 'retired primitive names such as|retired-devloop primitive' \
+    || true
+)"
+if [[ -n "$stale_refs" ]]; then
+  warn "stale retired-devloop primitive or mirror reference found"
+  printf '%s\n' "$stale_refs" | sed -n '1,20p'
+else
+  ok "no stale retired-devloop primitive references in scaffold"
+fi
+
+inbox_stale_routes="$(
+  if [[ -f .agent/inbox/INDEX.md ]]; then
+    rg -n '\.agent/(handoff|scratch/current|scratch/inbox-imports)' .agent/inbox/INDEX.md 2>/dev/null || true
+  fi
+)"
+if [[ -n "$inbox_stale_routes" ]]; then
+  warn "inbox integration index still points at retired local routing paths"
+  printf '%s\n' "$inbox_stale_routes" | sed -n '1,20p'
+else
+  ok "inbox integration index avoids retired local routing paths"
+fi
+
+echo
+echo "== git boundary =="
+if [[ -f "$contract" ]] && command -v jq >/dev/null 2>&1; then
+  mapfile -t tracked_allow_patterns < <(
+    jq -r '((.tracked_scaffold // []) + (.tracked_artifacts // []))[]' "$contract"
+  )
+  mapfile -t tracked_exact_paths < <(
+    jq -r '((.tracked_scaffold // []) + (.tracked_artifacts // []))[] | select(contains("*") | not)' "$contract"
+  )
+  mapfile -t tracked_glob_patterns < <(
+    jq -r '((.tracked_scaffold // []) + (.tracked_artifacts // []))[] | select(contains("*"))' "$contract"
+  )
+else
+  tracked_allow_patterns=(
+    ".agent/README.md"
+    ".agent/DEVLOOP.md"
+    ".agent/CONVENTIONS.md"
+    ".agent/devloop-contract.json"
+    ".agent/includes/**"
+    ".agent/scripts/**"
+    "$current/README.md"
+    "$current/INDEX.md"
+    "$current/RUNBOOK.md"
+    "$current/PROCESS.md"
+    "$current/TACTICS.md"
+    "$current/VELOCITY.md"
+    "$current/ADVERSARIAL-REVIEW.md"
+    "$current/SELF-PROMPTS.md"
+    ".agent/dev/README.md"
+    ".agent/dev/dev-source-bindings.json"
+    ".agent/dev/recall-artifacts/**"
+    ".agent/inbox/INDEX.md"
+  )
+  tracked_exact_paths=(
+    ".agent/README.md"
+    ".agent/DEVLOOP.md"
+    ".agent/CONVENTIONS.md"
+    ".agent/devloop-contract.json"
+    ".agent/scratch/README.md"
+    "$current/README.md"
+    "$current/INDEX.md"
+    "$current/RUNBOOK.md"
+    "$current/PROCESS.md"
+    "$current/TACTICS.md"
+    "$current/VELOCITY.md"
+    "$current/ADVERSARIAL-REVIEW.md"
+    "$current/SELF-PROMPTS.md"
+    ".agent/dev/README.md"
+    ".agent/dev/dev-source-bindings.json"
+    ".agent/inbox/INDEX.md"
+  )
+  tracked_glob_patterns=(
+    ".agent/includes/**"
+    ".agent/scripts/**"
+    ".agent/dev/recall-artifacts/**"
+  )
+fi
+
+tracked_agent_sprawl="$(
+  git ls-files .agent \
+    | while IFS= read -r tracked_path; do
+        if ! path_matches_any_pattern "$tracked_path" "${tracked_allow_patterns[@]}"; then
+          printf '%s\n' "$tracked_path"
+        fi
+      done
+)"
+if [[ -n "$tracked_agent_sprawl" ]]; then
+  warn "tracked .agent files outside devloop-contract tracked_scaffold/tracked_artifacts; update the contract or move them to ignored shelves"
+  printf '%s\n' "$tracked_agent_sprawl" | sed -n '1,40p'
+else
+  ok "tracked .agent files match the contract allowlist"
+fi
+
+for path in "${tracked_exact_paths[@]}"; do
+  if git ls-files --error-unmatch "$path" >/dev/null 2>&1; then
+    ok "tracked scaffold: $path"
+  else
+    warn "durable scaffold is not tracked: $path"
+  fi
+done
+
+echo
+echo "== gitignore contract =="
+for path in "${tracked_exact_paths[@]}"; do
+  if gitignore_effectively_ignores "$path"; then
+    warn "tracked scaffold path is ignored by .gitignore: $path"
+  else
+    ok "tracked scaffold path is not ignored: $path"
+  fi
+done
+
+for pattern in "${tracked_glob_patterns[@]}"; do
+  if compgen -G "$pattern" >/dev/null; then
+    ok "tracked scaffold glob has matching files: $pattern"
+  else
+    warn "tracked scaffold glob has no matching files: $pattern"
+  fi
+done
+
+untracked_agent_escapees="$(
+  git ls-files --others --exclude-standard .agent 2>/dev/null \
+    | sed -n '1,40p' \
+    || true
+)"
+if [[ -n "$untracked_agent_escapees" ]]; then
+  warn "untracked .agent files escape ignore policy; either track via devloop-contract or ignore/move them"
+  printf '%s\n' "$untracked_agent_escapees"
+else
+  ok "no untracked .agent files escape ignore policy"
+fi
+
+for path in \
+  "$current/ACTIVE-LOOP.md" \
+  "$current/OPERATING-LOG.md" \
+  "$current/DEMO-RADAR.md" \
+  "$current/EVENTS.jsonl" \
+  "$current/PHASES.jsonl" \
+  "$current/MANIFEST.md" \
+  "$current/context/INDEX.md" \
+  ".agent/demos/sinex/README.md" \
+  ".agent/artifacts/live-baselines/20260701T023812+0200-meta-scaffold-convention.md"; do
+  if gitignore_effectively_ignores "$path"; then
+    ok "local/generated path is ignored: $path"
+  else
+    warn "local/generated path is not ignored by .gitignore: $path"
+  fi
+done
+
+for path in \
+  "$current/ACTIVE-LOOP.md" \
+  "$current/OPERATING-LOG.md" \
+  "$current/DEMO-RADAR.md" \
+  "$current/EVENTS.jsonl" \
+  "$current/PHASES.jsonl" \
+  "$current/MANIFEST.md"; do
+  if git ls-files --error-unmatch "$path" >/dev/null 2>&1; then
+    warn "live conductor state is tracked; keep current run state ignored: $path"
+  elif git check-ignore -q "$path"; then
+    ok "ignored live state: $path"
+  else
+    warn "live conductor state is neither tracked nor ignored by policy: $path"
+  fi
+done
+
+echo
+echo "== process pressure tripwires =="
+mem_some_avg10="$(psi_value /proc/pressure/memory some avg10)"
+mem_full_avg10="$(psi_value /proc/pressure/memory full avg10)"
+io_some_avg10="$(psi_value /proc/pressure/io some avg10)"
+io_full_avg10="$(psi_value /proc/pressure/io full avg10)"
+if psi_is_high "$mem_some_avg10" "$mem_full_avg10"; then
+  warn "high memory PSI before heavy work: some.avg10=${mem_some_avg10}% full.avg10=${mem_full_avg10}%"
+elif psi_is_elevated "$mem_some_avg10" "$mem_full_avg10"; then
+  ok "memory PSI elevated but below high threshold: some.avg10=${mem_some_avg10}% full.avg10=${mem_full_avg10}%"
+else
+  ok "memory PSI nominal: some.avg10=${mem_some_avg10}% full.avg10=${mem_full_avg10}%"
+fi
+if psi_is_high "$io_some_avg10" "$io_full_avg10"; then
+  warn "high IO PSI before heavy work: some.avg10=${io_some_avg10}% full.avg10=${io_full_avg10}%"
+elif psi_is_elevated "$io_some_avg10" "$io_full_avg10"; then
+  ok "IO PSI elevated but below high threshold: some.avg10=${io_some_avg10}% full.avg10=${io_full_avg10}%"
+else
+  ok "IO PSI nominal: some.avg10=${io_some_avg10}% full.avg10=${io_full_avg10}%"
+fi
+blocked_tasks="$(
+  ps -eo stat,pid,ppid,etime,rss,comm,args --no-headers \
+    | awk '$1 ~ /^D/ {print}' \
+    | sed -n '1,12p'
+)"
+if [[ -n "$blocked_tasks" ]]; then
+  warn "D-state blocked tasks present; avoid broad compile/test until pressure clears or is explicitly accepted"
+  printf '%-6s %-8s %-8s %-10s %-9s %-16s %s\n' \
+    "STAT" "PID" "PPID" "ELAPSED" "RSS_KB" "COMMAND" "ARGS"
+  printf '%s\n' "$blocked_tasks" \
+    | awk '{
+        stat=$1; pid=$2; ppid=$3; etime=$4; rss=$5; comm=$6;
+        sub(/^[^ ]+[ ]+[^ ]+[ ]+[^ ]+[ ]+[^ ]+[ ]+[^ ]+[ ]+[^ ]+[ ]+/, "");
+        printf "%-6s %-8s %-8s %-10s %-9s %-16s %s\n", stat, pid, ppid, etime, rss, comm, $0
+      }'
+else
+  ok "no D-state blocked tasks"
+fi
+codex_rows="$(ps -eo pid,ppid,comm,args --no-headers | awk '$3 == "codex" {print}')"
+polylogued_rows="$(ps -eo pid,ppid,comm,args --no-headers | awk '$3 == "polylogued" {print}')"
+codex_count="$(printf '%s\n' "$codex_rows" | sed '/^$/d' | wc -l)"
+polylogued_count="$(printf '%s\n' "$polylogued_rows" | sed '/^$/d' | wc -l)"
+proof_lane_count="$(proof_process_root_count)"
+proof_process_count_value="$(proof_process_count)"
+polylogued_rss_mb="$(
+  ps -eo comm,rss --no-headers \
+    | awk '$1 == "polylogued" {sum += $2} END {printf "%.0f", sum / 1024}'
+)"
+if [[ "$codex_count" -gt 2 ]]; then warn "multiple Codex processes detected ($codex_count)"; else ok "Codex process count: $codex_count"; fi
+if [[ "$polylogued_count" -gt 0 ]]; then
+  if [[ "$proof_process_count_value" -eq 0 ]] && recent_operating_log_acceptance 'Accepted review warning: polylogued live'; then
+    ok "polylogued running ($polylogued_count, rss ${polylogued_rss_mb} MiB), accepted in recent operating log; re-evaluate before broad/heavy work"
+  else
+    warn "polylogued running ($polylogued_count, rss ${polylogued_rss_mb} MiB); confirm this is intentional before heavy Sinex work"
+  fi
+else
+  ok "polylogued not running"
+fi
+proof_summary="$(print_proof_process_summary review)"
+if rg -q '^WARN:' <<<"$proof_summary"; then
+  warnings=$((warnings + 1))
+fi
+printf '%s\n' "$proof_summary"
+if [[ "$proof_lane_count" -gt 1 ]]; then
+  warn "serialize proof lanes before more compile/test work"
+fi
+if [[ "$codex_count" -gt 0 ]]; then
+  echo "-- codex rows --"
+  printf '%s\n' "$codex_rows" | sed -n '1,10p'
+fi
+if [[ "$polylogued_count" -gt 0 ]]; then
+  echo "-- polylogued rows --"
+  printf '%s\n' "$polylogued_rows" | sed -n '1,10p'
+fi
+
+echo
+echo "== recent xtask test overlap =="
+if command -v xtask >/dev/null 2>&1 && command -v jq >/dev/null 2>&1; then
+  overlap_json="$(xtask history overlap latest --command test --limit 5 2>/dev/null || true)"
+  if [[ -z "$overlap_json" ]]; then
+    ok "no recent xtask test overlap data"
+  elif ! jq -e '.data.target.id' >/dev/null 2>&1 <<<"$overlap_json"; then
+    ok "no recent xtask test invocation to inspect"
+  else
+    overlap_count="$(
+      jq '[.data.overlapping_invocations[]?
+        | select((.overlap_secs // 0) >= 5)
+        | select((.command | tostring) | test("^(test|check|build|docs|schema|impact)$|^infra smoke$"))
+      ] | length' \
+        <<<"$overlap_json"
+    )"
+    target_id="$(jq -r '.data.target.id' <<<"$overlap_json")"
+    if [[ "$overlap_count" -gt 0 ]]; then
+      active_overlap_count="$(
+        jq '[.data.overlapping_invocations[]?
+          | select((.overlap_secs // 0) >= 5)
+          | select((.command | tostring) | test("^(test|check|build|docs|schema|impact)$|^infra smoke$"))
+          | select((.status | tostring) == "running")
+        ] | length' \
+          <<<"$overlap_json"
+      )"
+      overlap_lines="$(
+        jq -r '
+        .data.overlapping_invocations[]?
+        | select((.overlap_secs // 0) >= 5)
+        | select((.command | tostring) | test("^(test|check|build|docs|schema|impact)$|^infra smoke$"))
+        | "overlap id=\(.id) command=\(.command) status=\(.status) overlap_secs=\(.overlap_secs | floor) args=\(.args_json)"
+        ' <<<"$overlap_json" | sed -n '1,10p'
+      )"
+      if [[ "$active_overlap_count" -gt 0 || "$proof_lane_count" -gt 0 ]]; then
+        warn "latest xtask test invocation #$target_id overlaps active proof work; serialize focused package tests unless explicitly isolated"
+        printf '%s\n' "$overlap_lines"
+      else
+        ok "latest xtask test invocation #$target_id had historical overlap; no active proof lane remains, treat as velocity evidence"
+        printf '%s\n' "$overlap_lines"
+      fi
+    else
+      ok "latest xtask test invocation #$target_id has no material xtask invocation overlap"
+    fi
+  fi
+else
+  warn "cannot inspect recent xtask test overlap without xtask and jq"
+fi
+
+echo
+echo "== xtask wrapper health =="
+if [[ -s .sinex/state/xtask-build.failed.log ]]; then
+  warn "xtask local rebuild failed; fallback binary may hide tooling changes"
+  sed -n '1,12p' .sinex/state/xtask-build.failed.log
+else
+  ok "no xtask local rebuild failure log"
+fi
+
+echo
+echo "== active xtask jobs =="
+if command -v xtask >/dev/null 2>&1; then
+  xtask jobs active 2>/dev/null || true
+else
+  warn "xtask not on PATH"
+fi
+
+echo
+echo "== dev source bindings =="
+if [[ -x .agent/scripts/lib/dev-source-bindings.sh ]]; then
+  source_binding_report="$(.agent/scripts/lib/dev-source-bindings.sh review || true)"
+  printf '%s\n' "$source_binding_report"
+  source_binding_warnings="$(printf '%s\n' "$source_binding_report" | rg -c '^WARN:' || true)"
+  warnings=$((warnings + source_binding_warnings))
+else
+  warn "missing .agent/scripts/lib/dev-source-bindings.sh"
+fi
+
+echo
+echo "== verdict =="
+if [[ "$warnings" -gt 0 ]]; then
+  printf '%d warning(s); fix or consciously accept before starting broad work.\n' "$warnings"
+else
+  echo "no scaffold warnings"
+fi

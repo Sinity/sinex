@@ -1,0 +1,26 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+title="${1:-start loop}"
+repo_root="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
+cd "$repo_root"
+
+".agent/scripts/devloop-log" "$title"
+
+cat <<'EOF'
+The appended entry is a transition marker, not completion proof.
+
+Before claiming work or switching slices, append a body entry:
+  .agent/scripts/devloop-log "proof title" "Loop phase: verify
+  Focus: Proof
+  Trigger: ...
+  Primary aim: one capability slice, not a broad theme
+  Evidence touched: conductor packet + specific subsystem/docs/logs
+  Action taken: ...
+  Artifact/proof: exact command, artifact path, or runtime observation
+  Velocity note: expected or measured drag
+  Next decision: continue, pivot, artifact, or handoff"
+
+Suggested next command:
+  .agent/scripts/devloop-status
+EOF

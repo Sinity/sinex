@@ -1,0 +1,157 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+repo_root="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
+cd "$repo_root"
+
+root=".agent/conductor-devloop"
+log="$root/OPERATING-LOG.md"
+out="$root/EVENTS.jsonl"
+phases="$root/PHASES.jsonl"
+
+if [[ ! -f "$log" ]]; then
+  printf 'missing %s\n' "$log" >&2
+  exit 1
+fi
+
+python3 - "$log" "$out" "$phases" <<'PY'
+import json
+import hashlib
+import os
+import re
+import sys
+import tempfile
+from pathlib import Path
+
+log_path = Path(sys.argv[1])
+out_path = Path(sys.argv[2])
+phase_path = Path(sys.argv[3])
+heading = re.compile(r"^## (?P<timestamp>\S+) — (?P<title>.*)$")
+field = re.compile(r"^(?P<key>[A-Za-z][A-Za-z /-]{0,40}): (?P<value>.*)$")
+
+known_fields = {
+    "action_taken",
+    "artifact_proof",
+    "elapsed_since_previous_entry",
+    "evidence_touched",
+    "focus",
+    "loop_phase",
+    "next_decision",
+    "primary_aim",
+    "trigger",
+    "velocity_note",
+}
+focus_modes = {
+    "Artifact",
+    "Construction",
+    "Direction",
+    "Evidence",
+    "Meta",
+    "Proof",
+    "Velocity",
+}
+
+events = []
+phases = []
+current = None
+body = []
+body_excerpt_max_chars = 500
+
+def atomic_write_lines(path, lines):
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fd, tmp_name = tempfile.mkstemp(prefix=f".{path.name}.", suffix=".tmp", dir=path.parent)
+    tmp_path = Path(tmp_name)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as fh:
+            for line in lines:
+                fh.write(line)
+        os.replace(tmp_path, path)
+    except Exception:
+        try:
+            tmp_path.unlink()
+        except FileNotFoundError:
+            pass
+        raise
+
+def is_todo_placeholder(value):
+    return value.strip() == "TODO"
+
+def flush():
+    if current is None:
+        return
+    normalized_body = []
+    for line in body:
+        normalized_body.extend(line.split("\\n"))
+    text = "\n".join(normalized_body).strip()
+    fields = {}
+    significant_lines = []
+    for line in normalized_body:
+        stripped = line.strip()
+        if stripped:
+            significant_lines.append(stripped)
+        match = field.match(line)
+        if match:
+            key = match.group("key").strip().lower().replace(" ", "_").replace("/", "_").replace("-", "_")
+            if key in known_fields:
+                fields[key] = match.group("value").strip()
+    if "loop_phase" not in fields:
+        inferred_phase = next(
+            (line for line in significant_lines if line in focus_modes),
+            None,
+        )
+        if inferred_phase is not None:
+            fields["loop_phase"] = inferred_phase
+    incomplete_fields = sorted(
+        key for key, value in fields.items() if is_todo_placeholder(value)
+    )
+    event = {
+        "timestamp": current["timestamp"],
+        "title": current["title"],
+        "fields": fields,
+        "body_excerpt": text[:body_excerpt_max_chars],
+        "body_line_count": len(normalized_body),
+        "body_sha256": hashlib.sha256(text.encode("utf-8")).hexdigest(),
+    }
+    if incomplete_fields:
+        event["incomplete"] = True
+        event["incomplete_fields"] = incomplete_fields
+    events.append(event)
+    phase = fields.get("loop_phase")
+    focus = fields.get("focus")
+    if (phase or focus) and not incomplete_fields:
+        phases.append({
+            "timestamp": current["timestamp"],
+            "title": current["title"],
+            "loop_phase": phase,
+            "focus": focus,
+            "trigger": fields.get("trigger"),
+            "next_decision": fields.get("next_decision"),
+            "velocity_note": fields.get("velocity_note"),
+        })
+
+for line in log_path.read_text(encoding="utf-8").splitlines():
+    match = heading.match(line)
+    if match:
+        flush()
+        current = match.groupdict()
+        body = []
+    elif current is not None:
+        body.append(line)
+flush()
+
+out_path.parent.mkdir(parents=True, exist_ok=True)
+incomplete_events = sum(1 for event in events if event.get("incomplete"))
+atomic_write_lines(
+    out_path,
+    [json.dumps(event, ensure_ascii=False, sort_keys=True) + "\n" for event in events],
+)
+atomic_write_lines(
+    phase_path,
+    [json.dumps(phase, ensure_ascii=False, sort_keys=True) + "\n" for phase in phases],
+)
+
+print(f"wrote {out_path} ({len(events)} events)")
+print(f"wrote {phase_path} ({len(phases)} phase records)")
+if incomplete_events:
+    print(f"marked {incomplete_events} incomplete event records; omitted them from phase records")
+PY

@@ -1,0 +1,52 @@
+{
+  "schema_version": "sinex.view-envelope/v3",
+  "view_id": "019f101f-9db8-7fe0-9ef0-51e5e5072d6d",
+  "generated_at": "2026-06-28T21:25:35.288003114Z",
+  "source_surface": "sinexctl.context",
+  "freshness": {
+    "generated_at": "2026-06-28T21:25:35.288003114Z"
+  },
+  "query_echo": {
+    "mode": "session_resumption",
+    "since": "24h"
+  },
+  "payload": {
+    "since": "24h",
+    "activity": [
+      {
+        "family": "shell",
+        "event_count": 66,
+        "sources": [
+          "shell.atuin"
+        ],
+        "latest": "2026-06-28T18:50:46.585153874Z",
+        "samples": [
+          "command.executed with 11 payload field(s)"
+        ]
+      }
+    ],
+    "self_observation": [
+      {
+        "family": "sinex",
+        "event_count": 40146,
+        "sources": [
+          "sinex"
+        ],
+        "samples": []
+      },
+      {
+        "family": "sinexd",
+        "event_count": 8109,
+        "sources": [
+          "sinexd.automaton",
+          "sinexd.event_engine",
+          "sinexd.source",
+          "sinexd.api"
+        ],
+        "samples": []
+      }
+    ],
+    "total_events": 48321,
+    "self_observation_total": 48255
+  }
+}

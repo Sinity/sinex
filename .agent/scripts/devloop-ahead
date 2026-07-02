@@ -1,0 +1,68 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+if [[ "${1:-}" == "-h" || "${1:-}" == "--help" ]]; then
+  cat <<'EOF'
+Usage: .agent/scripts/devloop-ahead
+
+Print useful foreground lanes while a long Sinex command runs.
+This script is read-only.
+EOF
+  exit 0
+fi
+
+cat <<'EOF'
+Useful foreground work while heavy jobs run:
+
+1. Update .agent/conductor-devloop/OPERATING-LOG.md with job id, proof claim, and expected duration.
+2. Draft or update the demo artifact skeleton under .agent/demos/sinex.
+3. Inspect adjacent call sites for silo/duplication risk.
+4. Prepare the next narrow verification command.
+5. Read one relevant research/current note and extract actionable findings.
+6. Run .agent/scripts/devloop-status to check pressure and stale processes.
+7. Draft a handoff while details are fresh.
+8. If the pending proof may invalidate the edit, avoid broadening code scope; work on docs/artifacts/logs instead.
+9. Capture .agent/scripts/devloop-baseline "label" before/after runtime or resource changes.
+10. Use .agent/scripts/devloop-focus when evidence changes the active focus.
+11. Use .agent/scripts/devloop-wait to turn build/test/runtime waits into explicit poll + mode-rotation states.
+12. During a Proof wait, rotate into one of: Velocity analysis, Artifact/demo polishing, Evidence/source review, or Direction reprioritization.
+13. Run .agent/scripts/devloop-meta when operator feedback, repeated friction, or vague drift suggests the process itself is failing.
+14. Run .agent/scripts/devloop-velocity after repeated proof reruns or when tiny tests spend most time compiling.
+
+Concurrency lanes during waits:
+
+- Keep at most one conflicting compile/test/proof lane per checkout. If proof is running, foreground work should be read-only, docs/scaffold, demo artifact shaping, or tiny non-conflicting edits.
+- Grow the backlog ahead of implementation: identify candidate slices, evidence needed, likely files, demo value, and narrow proof commands.
+- Use subagents for bounded audits that do not run compilation/tests: silo-vs-algebra scans, vacuous abstraction hunts, demo/backlog ranking, stale scaffold review, or source/query affordance surveys.
+- Give each subagent a strict contract: owned paths, avoided paths, no heavy commands, expected output shape, and whether it may edit or only report.
+- When a waiting proof completes, reconcile ahead work against the result before broadening the implementation lane.
+
+Lane framing:
+
+1. Adjacent-source lane
+   Inspect sibling call sites, tests, docs, or query/rendering paths related to
+   the active slice. Output: one concrete patch candidate or "no adjacent drift."
+
+2. Artifact/demo lane
+   Improve or retire a demo packet, rerun command, caveat, or manifest entry.
+   Output: inspectable artifact delta or explicit no-op reason.
+
+3. Backlog/radar lane
+   Add/sharpen entries in AHEAD.md, DEMO-RADAR.md, or ACTIVE-LOOP.md.
+   Output: ranked next slices with evidence, proof command, and demo value.
+
+4. Subagent/audit lane
+   Prepare or dispatch one bounded read-only audit with strict no-heavy-command
+   constraints. Output: actionable report, not vague parallelism.
+
+5. Verification lane
+   Prepare the next proof command and likely failure classifiers without running
+   a conflicting proof lane. Output: command ready when the active job returns.
+
+6. Velocity/meta lane
+   Capture pressure/friction/process failure and convert it into a script,
+   tripwire, or tracked AHEAD.md item. Output: less future waiting or ambiguity.
+
+Pick one lane per wait window. Prefer a completed small lane over starting many
+unreconciled side quests.
+EOF
