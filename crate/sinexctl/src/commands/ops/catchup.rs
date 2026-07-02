@@ -1,13 +1,19 @@
 use super::*;
-use sinex_primitives::rpc::sources::{SourceCoverageEntry, SourcesCoverageRequest};
+use sinex_primitives::rpc::sources::{
+    SourceCoverageEntry, SourcesCoverageRequest, SourcesRemediationPlanRequest,
+    SourcesRemediationPlanResponse,
+};
 use sinex_primitives::runtime_pressure::RuntimePressureLevel;
 use sinex_primitives::views::{
     ActionAvailability, ActionAvailabilityState,
-    OpsCatchupConsumerSignalView, OpsCatchupDlqSignalView, OpsCatchupReadinessView,
-    OpsCatchupRuntimeSignalView, OpsCatchupSourceMaterialSignalView,
+    OpsCatchupConsumerSignalView, OpsCatchupDlqSignalView,
+    OpsCatchupMaterialRemediationCandidateView, OpsCatchupMaterialRemediationView,
+    OpsCatchupReadinessView, OpsCatchupRuntimeSignalView, OpsCatchupSourceMaterialSignalView,
     OpsCatchupStreamSignalView, ViewEnvelope,
 };
 use tabled::{builder::Builder, settings::Style};
+
+const CATCHUP_REMEDIATION_TOP_LIMIT: i64 = 5;
 
 /// Read-only catch-up/readiness view over cheap runtime surfaces.
 #[derive(Debug, Subcommand)]
@@ -80,6 +86,25 @@ async fn build_catchup_readiness(
         action_reason: dlq.action_reason,
     };
     let source_signal = source_material_signal(&coverage.sources);
+    let mut material_remediation_caveat = None;
+    let material_remediation = match client
+        .sources_remediation_plan(SourcesRemediationPlanRequest {
+            source_identifier: None,
+            limit: Some(CATCHUP_REMEDIATION_TOP_LIMIT),
+            offset: Some(0),
+            sort: Some("event-count".to_string()),
+            include_empty: false,
+        })
+        .await
+    {
+        Ok(response) => Some(material_remediation_signal(&response)),
+        Err(error) => {
+            material_remediation_caveat = Some(format!(
+                "source-material remediation details unavailable via sources.remediation_plan: {error}"
+            ));
+            None
+        }
+    };
     let runtime_signal = OpsCatchupRuntimeSignalView {
         active_count: runtime.active_count,
         inactive_count: runtime.inactive_count,
@@ -95,11 +120,20 @@ async fn build_catchup_readiness(
         .strongest(runtime_signal.pressure_level);
     let mut view = OpsCatchupReadinessView::new(
         pressure,
-        catchup_summary(&dlq_signal, &source_signal, &runtime_signal),
+        catchup_summary(
+            &dlq_signal,
+            &source_signal,
+            material_remediation.as_ref(),
+            &runtime_signal,
+        ),
         dlq_signal,
         source_signal,
         runtime_signal,
     );
+    view.material_remediation = material_remediation;
+    if let Some(caveat) = material_remediation_caveat {
+        view.caveats.push(caveat);
+    }
 
     if include_streams {
         match client
@@ -170,6 +204,34 @@ async fn build_catchup_readiness(
     .to_string();
     view.actions = catchup_actions(&view);
     Ok(view)
+}
+
+pub(super) fn material_remediation_signal(
+    response: &SourcesRemediationPlanResponse,
+) -> OpsCatchupMaterialRemediationView {
+    OpsCatchupMaterialRemediationView {
+        total_candidates: response.summary.total_candidates,
+        total_admitted_events: response.summary.total_admitted_events,
+        by_status: response.summary.by_status.clone(),
+        by_decision: response.summary.by_decision.clone(),
+        by_severity: response.summary.by_severity.clone(),
+        by_reason: response.summary.by_reason.clone(),
+        top_candidates: response
+            .items
+            .iter()
+            .map(|candidate| OpsCatchupMaterialRemediationCandidateView {
+                material_id: candidate.material.id.clone(),
+                source_identifier: candidate.material.source_identifier.clone(),
+                status: candidate.material.status.to_string(),
+                event_count: candidate.material.event_count.unwrap_or_default(),
+                failure_reason: candidate.failure_reason.clone(),
+                recovery_reason: candidate.recovery_reason.clone(),
+                decision: candidate.decision.clone(),
+                severity: candidate.severity.clone(),
+                suggested_action: candidate.suggested_action.clone(),
+            })
+            .collect(),
+    }
 }
 
 fn source_material_signal(sources: &[SourceCoverageEntry]) -> OpsCatchupSourceMaterialSignalView {
@@ -251,14 +313,22 @@ fn consumer_pressure(pending_messages: u64) -> RuntimePressureLevel {
 fn catchup_summary(
     dlq: &OpsCatchupDlqSignalView,
     sources: &OpsCatchupSourceMaterialSignalView,
+    remediation: Option<&OpsCatchupMaterialRemediationView>,
     runtime: &OpsCatchupRuntimeSignalView,
 ) -> String {
+    let remediation_fragment = remediation.map_or(String::new(), |remediation| {
+        format!(
+            " remediation_candidates={} remediation_events={}",
+            remediation.total_candidates, remediation.total_admitted_events
+        )
+    });
     format!(
-        "dlq={} materials={} failed={} partial={} runtime_active={} inactive={}",
+        "dlq={} materials={} failed={} partial={}{} runtime_active={} inactive={}",
         dlq.total_messages,
         sources.material_count,
         sources.failed_material_count,
         sources.recovered_partial_material_count,
+        remediation_fragment,
         runtime.active_count,
         runtime.inactive_count
     )
@@ -297,7 +367,7 @@ fn catchup_actions(view: &OpsCatchupReadinessView) -> Vec<ActionAvailability> {
                 ActionAvailabilityState::Enabled,
             )
             .with_command_hint("sinexctl ops debt list --include-capture")
-            .with_rpc_method("sources.coverage"),
+            .with_rpc_method("sources.remediation_plan"),
         );
     }
     if view
@@ -346,6 +416,26 @@ fn format_catchup_table(view: &OpsCatchupReadinessView) -> String {
             view.source_materials.recovered_partial_material_count
         ),
     ]);
+    if let Some(remediation) = &view.material_remediation {
+        let top = remediation
+            .top_candidates
+            .first()
+            .map(|candidate| {
+                format!(
+                    "; top {} events {} {}",
+                    candidate.event_count, candidate.source_identifier, candidate.decision
+                )
+            })
+            .unwrap_or_default();
+        builder.push_record([
+            "Remediation".to_string(),
+            view.source_materials.pressure_level.to_string(),
+            format!(
+                "{} candidates, {} admitted events{}",
+                remediation.total_candidates, remediation.total_admitted_events, top
+            ),
+        ]);
+    }
     builder.push_record([
         "Runtime".to_string(),
         view.runtime.pressure_level.to_string(),
