@@ -111,6 +111,10 @@ pub enum OpsCommands {
     #[command(subcommand)]
     Debt(DebtCommands),
 
+    /// Read-only runtime catch-up and backlog readiness view
+    #[command(subcommand)]
+    Catchup(CatchupCommands),
+
     /// Compile a finite evidence bundle from existing Sinex read surfaces
     #[command(subcommand)]
     Evidence(EvidenceCommands),
@@ -149,9 +153,11 @@ pub enum OpsCommands {
 }
 
 mod debt;
+mod catchup;
 mod evidence;
 mod jobs;
 
+pub use catchup::CatchupCommands;
 pub use debt::{DebtCommands, DebtProjectionTrigger};
 pub(crate) use debt::{
     debt_rows_from_derivation_trigger, debt_rows_from_dlq, debt_rows_from_source_coverage,
@@ -243,6 +249,7 @@ impl OpsCommands {
                 jobs_cmd.execute(client, format).await?;
             }
             Self::Debt(debt_cmd) => debt_cmd.execute(client, format).await?,
+            Self::Catchup(catchup_cmd) => catchup_cmd.execute(client, format).await?,
             Self::Evidence(evidence_cmd) => evidence_cmd.execute(client, format).await?,
             Self::Dlq(cmd) => cmd.execute(client, format).await?,
             Self::Replay(cmd) => cmd.execute(client, format).await?,

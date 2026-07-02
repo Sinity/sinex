@@ -440,6 +440,40 @@
     }
 
     #[sinex_test]
+    async fn catchup_status_command_is_registered_as_finite_readiness_view()
+    -> xtask::TestResult<()> {
+        let registry = crate::model::format_registry::build();
+        let capability = registry
+            .get("ops catchup status")
+            .expect("ops catchup status must have a format registry entry");
+
+        assert!(capability.supports(OutputFormat::Table));
+        assert!(capability.supports(OutputFormat::Json));
+        assert!(capability.supports(OutputFormat::Yaml));
+        assert!(!capability.supports(OutputFormat::Ndjson));
+        assert!(!capability.streaming);
+
+        let catalog = crate::model::format_registry::command_catalog();
+        let entry = catalog
+            .iter()
+            .find(|entry| entry.path == "ops catchup status")
+            .expect("ops catchup status must have a command catalog entry");
+        for method in [
+            "dlq.list",
+            "sources.coverage",
+            "runtime.health",
+            "telemetry.stream_stats",
+            "shadow.list",
+        ] {
+            assert!(
+                entry.backing_rpc_methods.contains(&method),
+                "ops catchup status should advertise backing RPC `{method}`"
+            );
+        }
+        Ok(())
+    }
+
+    #[sinex_test]
     async fn evidence_bundle_package_matching_accepts_package_mode_and_subject()
     -> xtask::TestResult<()> {
         let package = fixture_package("terminal.activity", "terminal.kitty-osc-live");
