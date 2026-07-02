@@ -27,7 +27,7 @@ use tracing::warn;
 
 const DEFAULT_WINDOW_GAP_THRESHOLD_SECS: i64 = 300;
 const DEFAULT_WINDOW_MAX_DURATION_SECS: i64 = 900;
-const DEFAULT_WINDOW_MAX_EVENTS: usize = 250;
+const DEFAULT_WINDOW_MAX_EVENTS: usize = 100;
 
 fn parse_positive_i64_env(var: &str, description: &str, default: i64) -> i64 {
     shared_env::parse_optional::<i64>(var, description)
