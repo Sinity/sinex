@@ -290,6 +290,40 @@ where
         Ok(())
     }
 
+    pub(super) async fn save_state_with_file_fallback(
+        &mut self,
+        context: &'static str,
+    ) -> RuntimeResult<()> {
+        match self.save_state().await {
+            Ok(()) => Ok(()),
+            Err(kv_error) => {
+                warn!(
+                    automaton = %self.automaton.name(),
+                    context,
+                    error = %kv_error,
+                    "NATS KV checkpoint save failed; attempting file-backed checkpoint fallback"
+                );
+                self.save_state_to_file().await.map_err(|file_error| {
+                    SinexError::checkpoint(
+                        "Failed to save checkpoint to NATS KV and fallback file",
+                    )
+                    .with_context("automaton", self.automaton.name())
+                    .with_context("checkpoint_context", context)
+                    .with_context("kv_error", kv_error.to_string())
+                    .with_std_error(&file_error)
+                })?;
+                warn!(
+                    automaton = %self.automaton.name(),
+                    context,
+                    "Saved checkpoint to fallback file after NATS KV failure"
+                );
+                self.events_since_checkpoint = 0;
+                self.last_checkpoint_time = Instant::now();
+                Ok(())
+            }
+        }
+    }
+
     pub(super) fn should_checkpoint(&self) -> bool {
         self.events_since_checkpoint >= self.config.checkpoint_interval
             || self.last_checkpoint_time.elapsed()
