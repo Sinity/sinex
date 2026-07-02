@@ -30,7 +30,7 @@ async fn shadow_create_requires_dev_prefix(ctx: TestContext) -> TestResult<()> {
 #[sinex_test]
 async fn shadow_create_and_list(ctx: TestContext) -> TestResult<()> {
     let harness = NatsHarness::start(ctx).await?;
-    let stream_name = harness.env.nats_stream_name("EVENTS");
+    let stream_name = harness.env.nats_stream_name("SINEX_RAW_EVENTS");
     ensure_events_stream(&harness.client, &harness.env).await?;
 
     let result = handle_shadow_create(

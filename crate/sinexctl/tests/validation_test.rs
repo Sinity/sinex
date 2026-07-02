@@ -2776,7 +2776,7 @@ async fn mount_mcp_gateway_fixture() -> MockServer {
                     "consumers": [
                         {
                             "consumer_name": "dev-fixture",
-                            "stream_name": "EVENTS",
+                            "stream_name": "SINEX_RAW_EVENTS",
                             "subject_filter": "sinex.events.raw.fixture",
                             "num_pending": 2,
                             "first_sequence": 10
