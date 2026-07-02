@@ -1081,6 +1081,7 @@ fn backing_rpc_methods_for_path(path: &str) -> &'static [&'static str] {
         "ops catchup status" => &[
             methods::DLQ_LIST,
             methods::SOURCES_COVERAGE,
+            methods::SOURCES_REMEDIATION_PLAN,
             methods::RUNTIME_HEALTH,
             methods::TELEMETRY_STREAM_STATS,
             methods::SHADOW_LIST,
