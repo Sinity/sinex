@@ -1140,7 +1140,7 @@ where
                 self.link_latest_sqlite_snapshot_backing_material(material_id)
                     .await;
                 if let Some(cursor) = next_cursor {
-                    state.cursor = Some(cursor);
+                    state.cursor = Some(merge_cursor_update(state.cursor.clone(), cursor));
                     self.persist_stream_checkpoint_if_due(state, false).await;
                 }
 
@@ -1777,6 +1777,44 @@ fn merge_json_over(base: JsonValue, over: JsonValue) -> JsonValue {
         }
         (_, over) => over,
     }
+}
+
+fn merge_cursor_json_update(base: JsonValue, over: JsonValue) -> JsonValue {
+    match (base, over) {
+        (base, JsonValue::Null) => base,
+        (JsonValue::Object(mut base_map), JsonValue::Object(over_map)) => {
+            for (key, value) in over_map {
+                if value.is_null() {
+                    continue;
+                }
+                let merged = match base_map.remove(&key) {
+                    Some(existing) => merge_cursor_json_update(existing, value),
+                    None => value,
+                };
+                base_map.insert(key, merged);
+            }
+            JsonValue::Object(base_map)
+        }
+        (_, over) => over,
+    }
+}
+
+fn merge_cursor_update<C>(current: Option<C>, update: C) -> C
+where
+    C: Clone + Serialize + DeserializeOwned,
+{
+    let Some(current) = current else {
+        return update;
+    };
+
+    let Ok(current_json) = serde_json::to_value(&current) else {
+        return update;
+    };
+    let Ok(update_json) = serde_json::to_value(&update) else {
+        return update;
+    };
+    let merged = merge_cursor_json_update(current_json, update_json);
+    serde_json::from_value(merged).unwrap_or(update)
 }
 
 fn anchor_offsets_for_materialized_record(
