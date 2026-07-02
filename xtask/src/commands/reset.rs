@@ -1190,8 +1190,8 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn test_reset_runtime_material_tmpfiles_removes_only_material_fragments()
-    -> TestResult<()> {
+    async fn test_reset_runtime_material_tmpfiles_removes_only_material_fragments() -> TestResult<()>
+    {
         let temp = tempfile::tempdir()?;
         std::fs::write(temp.path().join("sinex_material_abc.tmp"), "fragment")?;
         std::fs::write(temp.path().join("sinex_material_abc.txt"), "keep")?;

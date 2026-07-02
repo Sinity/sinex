@@ -313,8 +313,7 @@ async fn test_get_reaps_stale_running_job_and_finishes_invocation() -> TestResul
 }
 
 #[sinex_test]
-async fn test_query_manager_synthesizes_stale_running_status_without_mutation() -> TestResult<()>
-{
+async fn test_query_manager_synthesizes_stale_running_status_without_mutation() -> TestResult<()> {
     let dir = tempdir()?;
     let db_path = dir.path().join("xtask-history.db");
     let jobs_dir = dir.path().join("jobs");
@@ -372,9 +371,7 @@ async fn test_cancel_finishes_linked_invocation() -> TestResult<()> {
     let mut child = std::process::Command::new("sleep")
         .arg("60")
         .spawn()
-        .map_err(|error| {
-            eyre!("failed to spawn sleep process for cancellation test: {error}")
-        })?;
+        .map_err(|error| eyre!("failed to spawn sleep process for cancellation test: {error}"))?;
     let stdout_path = jobs_dir.join("stdout.log");
     let stderr_path = jobs_dir.join("stderr.log");
     let (invocation_id, job_id) = manager

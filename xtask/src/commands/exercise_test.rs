@@ -5,10 +5,7 @@ use std::fs;
 use std::os::unix::fs::PermissionsExt;
 use tempfile::tempdir;
 
-fn write_executable_script(
-    path: &std::path::Path,
-    body: &str,
-) -> ::xtask::sandbox::TestResult<()> {
+fn write_executable_script(path: &std::path::Path, body: &str) -> ::xtask::sandbox::TestResult<()> {
     fs::write(path, body)?;
     let mut permissions = fs::metadata(path)?.permissions();
     permissions.set_mode(0o755);
@@ -225,8 +222,7 @@ async fn test_validate_step_exit_success_passes() -> ::xtask::sandbox::TestResul
 }
 
 #[sinex_test]
-async fn test_validate_step_exit_success_fails_on_nonzero() -> ::xtask::sandbox::TestResult<()>
-{
+async fn test_validate_step_exit_success_fails_on_nonzero() -> ::xtask::sandbox::TestResult<()> {
     let out = make_output("", "", 1);
     let errs = validate_step(&out, &ExpectedExit::Success, &[]);
     assert_eq!(errs.len(), 1);
@@ -235,8 +231,7 @@ async fn test_validate_step_exit_success_fails_on_nonzero() -> ::xtask::sandbox:
 }
 
 #[sinex_test]
-async fn test_validate_step_exit_failure_passes_on_nonzero() -> ::xtask::sandbox::TestResult<()>
-{
+async fn test_validate_step_exit_failure_passes_on_nonzero() -> ::xtask::sandbox::TestResult<()> {
     let out = make_output("", "", 2);
     let errs = validate_step(&out, &ExpectedExit::Failure, &[]);
     assert!(errs.is_empty());

@@ -3,11 +3,7 @@ use std::fs;
 use std::time::Duration;
 use tokio::process::Command;
 
-fn write_file_at(
-    path: &std::path::Path,
-    content: &str,
-    modified_at: SystemTime,
-) -> TestResult<()> {
+fn write_file_at(path: &std::path::Path, content: &str, modified_at: SystemTime) -> TestResult<()> {
     fs::write(path, content)?;
     let file = fs::OpenOptions::new().write(true).open(path)?;
     file.set_times(std::fs::FileTimes::new().set_modified(modified_at))?;

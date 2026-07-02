@@ -53,9 +53,9 @@ async fn stage_checkout_for_flake_filters_runtime_state_and_keeps_new_sources() 
     let socket_path = source.path().join(".sinex/run/.s.PGSQL.5432");
     let _listener = UnixListener::bind(&socket_path)?;
 
-    let nested_trybuild_manifest = source.path().join(
-        "crate/sinex-macros/.sinex/trybuild-target/tests/trybuild/sinex-macros/Cargo.toml",
-    );
+    let nested_trybuild_manifest = source
+        .path()
+        .join("crate/sinex-macros/.sinex/trybuild-target/tests/trybuild/sinex-macros/Cargo.toml");
     fs::create_dir_all(
         nested_trybuild_manifest
             .parent()
@@ -108,8 +108,7 @@ async fn stage_checkout_for_flake_filters_runtime_state_and_keeps_new_sources() 
     );
     assert!(
         report.excluded_paths.iter().any(|path| {
-            path == "crate/sinex-macros/.sinex"
-                || path.starts_with("crate/sinex-macros/.sinex/")
+            path == "crate/sinex-macros/.sinex" || path.starts_with("crate/sinex-macros/.sinex/")
         }),
         "excluded paths should mention nested crate-local runtime state"
     );

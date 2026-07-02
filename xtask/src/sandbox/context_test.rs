@@ -27,8 +27,7 @@ impl Drop for EnvGuard {
 }
 
 #[sinex_test]
-async fn load_env_filter_defaults_when_rust_log_is_missing() -> ::xtask::sandbox::TestResult<()>
-{
+async fn load_env_filter_defaults_when_rust_log_is_missing() -> ::xtask::sandbox::TestResult<()> {
     let _guard = EnvGuard::set("RUST_LOG", None);
 
     let filter = load_env_filter("info").expect("default filter should load");
@@ -38,8 +37,7 @@ async fn load_env_filter_defaults_when_rust_log_is_missing() -> ::xtask::sandbox
 }
 
 #[sinex_test]
-async fn load_env_filter_rejects_invalid_rust_log_directive() -> ::xtask::sandbox::TestResult<()>
-{
+async fn load_env_filter_rejects_invalid_rust_log_directive() -> ::xtask::sandbox::TestResult<()> {
     let _guard = EnvGuard::set("RUST_LOG", Some(std::ffi::OsString::from("[broken")));
 
     let error = load_env_filter("info").expect_err("invalid directive should fail");
@@ -66,8 +64,8 @@ async fn load_env_filter_rejects_non_utf8_rust_log() -> ::xtask::sandbox::TestRe
 }
 
 #[sinex_test]
-async fn background_invocation_id_defaults_to_none_when_missing()
--> ::xtask::sandbox::TestResult<()> {
+async fn background_invocation_id_defaults_to_none_when_missing() -> ::xtask::sandbox::TestResult<()>
+{
     let _guard = EnvGuard::set("XTASK_BG_INVOCATION_ID", None);
 
     assert_eq!(
@@ -78,8 +76,7 @@ async fn background_invocation_id_defaults_to_none_when_missing()
 }
 
 #[sinex_test]
-async fn background_invocation_id_rejects_invalid_integer() -> ::xtask::sandbox::TestResult<()>
-{
+async fn background_invocation_id_rejects_invalid_integer() -> ::xtask::sandbox::TestResult<()> {
     let _guard = EnvGuard::set(
         "XTASK_BG_INVOCATION_ID",
         Some(std::ffi::OsString::from("not-a-number")),

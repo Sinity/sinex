@@ -96,8 +96,7 @@ async fn test_parse_pool_meta_comment_rejects_invalid_json() -> TestResult<()> {
 }
 
 #[sinex_test]
-async fn test_try_ensure_pool_database_exists_defers_when_lifecycle_lock_held() -> TestResult<()>
-{
+async fn test_try_ensure_pool_database_exists_defers_when_lifecycle_lock_held() -> TestResult<()> {
     let config = PoolConfig::default();
     let db_name = format!("sinex_test_pool_deferred_{}", std::process::id());
     let slot_url = url_with_db_name(&config.base_url, &db_name)?;
@@ -224,13 +223,8 @@ async fn test_reconcile_existing_pool_database_refreshes_stale_metadata() -> Tes
     )
     .await?;
 
-    reconcile_existing_pool_database(
-        &config.admin_url,
-        &db_name,
-        &slot_url,
-        &expected_extensions,
-    )
-    .await?;
+    reconcile_existing_pool_database(&config.admin_url, &db_name, &slot_url, &expected_extensions)
+        .await?;
 
     let reconciled_meta = load_pool_meta(&mut admin_conn, &db_name)
         .await?
@@ -323,8 +317,7 @@ async fn test_mark_pool_database_clean_rejects_residual_schema_drift() -> TestRe
 }
 
 #[sinex_test]
-async fn test_retryable_connection_report_treats_runtime_shutdown_as_transient()
--> TestResult<()> {
+async fn test_retryable_connection_report_treats_runtime_shutdown_as_transient() -> TestResult<()> {
     let report = eyre!(
         "error communicating with database: A Tokio 1.x context was found, but it is being shutdown."
     );

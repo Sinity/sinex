@@ -144,8 +144,7 @@ async fn test_extract_simple_test_name_terms_accepts_boolean_test_names() -> Tes
 }
 
 #[sinex_test]
-async fn test_extract_simple_test_name_terms_rejects_complex_filter_predicates()
--> TestResult<()> {
+async fn test_extract_simple_test_name_terms_rejects_complex_filter_predicates() -> TestResult<()> {
     assert!(extract_simple_test_name_terms("package(xtask) & test(alpha_case)").is_none());
     assert!(extract_simple_test_name_terms("not test(alpha_case)").is_none());
     Ok(())
@@ -237,17 +236,14 @@ path = "tests/sources/registry_dispatch_test.rs"
         "#[sinex_test]\nasync fn weechat_descriptor_registered() {}\n",
     )?;
 
-    let inferred = infer_test_binaries_for_test_filter_in(
-        repo.path(),
-        "test(weechat_descriptor_registered)",
-    )?;
+    let inferred =
+        infer_test_binaries_for_test_filter_in(repo.path(), "test(weechat_descriptor_registered)")?;
     assert_eq!(inferred, vec!["registry_dispatch_test".to_string()]);
     Ok(())
 }
 
 #[sinex_test]
-async fn test_infer_test_binaries_for_test_filter_requires_complete_coverage() -> TestResult<()>
-{
+async fn test_infer_test_binaries_for_test_filter_requires_complete_coverage() -> TestResult<()> {
     let repo = tempfile::tempdir()?;
     let large_payload = repo.path().join("tests/e2e/tests/large_payload_test.rs");
     let inline_test = repo.path().join("xtask/src/inline_tests.rs");
@@ -415,8 +411,7 @@ async fn test_infer_test_binaries_maps_deep_nested_integration_modules() -> Test
 }
 
 #[sinex_test]
-async fn test_infer_test_binaries_maps_aggregated_nested_integration_modules() -> TestResult<()>
-{
+async fn test_infer_test_binaries_maps_aggregated_nested_integration_modules() -> TestResult<()> {
     let repo = tempfile::tempdir()?;
     let root = repo.path().join("crate/sinexd/tests/integration_tests.rs");
     let nested = repo
@@ -574,9 +569,7 @@ async fn test_parse_workspace_metadata_rejects_missing_dependency_name() -> Test
 
     let error = WorkspaceMetadata::parse_metadata(&metadata)
         .expect_err("missing dependency name should surface");
-    assert!(
-        format!("{error:#}").contains("package[xtask] dependency[0] is missing a string name")
-    );
+    assert!(format!("{error:#}").contains("package[xtask] dependency[0] is missing a string name"));
     Ok(())
 }
 

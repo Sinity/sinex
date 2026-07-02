@@ -31,8 +31,7 @@ async fn test_command_metadata() -> ::xtask::sandbox::TestResult<()> {
 }
 
 #[sinex_test]
-async fn test_observational_jobs_metadata_uses_query_history()
--> ::xtask::sandbox::TestResult<()> {
+async fn test_observational_jobs_metadata_uses_query_history() -> ::xtask::sandbox::TestResult<()> {
     let cmd = JobsCommand {
         subcommand: JobsSubcommand::Status {
             id: 42,
@@ -84,8 +83,7 @@ async fn jobs_output_accepts_explicit_stdout_selector() -> ::xtask::sandbox::Tes
 }
 
 #[sinex_test]
-async fn jobs_output_rejects_conflicting_stream_selectors() -> ::xtask::sandbox::TestResult<()>
-{
+async fn jobs_output_rejects_conflicting_stream_selectors() -> ::xtask::sandbox::TestResult<()> {
     let Err(error) =
         crate::Cli::try_parse_from(["xtask", "jobs", "output", "42", "--stdout", "--stderr"])
     else {
@@ -152,8 +150,7 @@ async fn test_follow_log_handoff_preserves_output() -> ::xtask::sandbox::TestRes
 /// Verify the handoff detects when file content grows between delta-read
 /// and the terminal-state DB read.
 #[sinex_test]
-async fn test_follow_handoff_catches_growth_before_archive() -> ::xtask::sandbox::TestResult<()>
-{
+async fn test_follow_handoff_catches_growth_before_archive() -> ::xtask::sandbox::TestResult<()> {
     let dir = tempdir()?;
     let file_path = dir.path().join("stdout.log");
 
@@ -168,8 +165,7 @@ async fn test_follow_handoff_catches_growth_before_archive() -> ::xtask::sandbox
     std::fs::write(&file_path, format!("{initial}line3\nline4\n"))?;
 
     // Read from pos1 (gets "line3\nline4\n")
-    let (buf2, pos2) =
-        read_stdout_delta_from_file(&file_path, pos1)?.expect("file should exist");
+    let (buf2, pos2) = read_stdout_delta_from_file(&file_path, pos1)?.expect("file should exist");
 
     // Combined output should have all 4 lines in order
     let combined = format!("{buf1}{buf2}");
@@ -185,8 +181,8 @@ async fn test_follow_handoff_catches_growth_before_archive() -> ::xtask::sandbox
 }
 
 #[sinex_test]
-async fn test_read_stdout_delta_from_file_reports_io_failures()
--> ::xtask::sandbox::TestResult<()> {
+async fn test_read_stdout_delta_from_file_reports_io_failures() -> ::xtask::sandbox::TestResult<()>
+{
     let dir = tempdir()?;
     let error = read_stdout_delta_from_file(dir.path(), 0).unwrap_err();
     let message = format!("{error:#}");
@@ -200,8 +196,8 @@ async fn test_read_stdout_delta_from_file_reports_io_failures()
 }
 
 #[sinex_test]
-async fn test_read_stdout_delta_from_file_reads_new_bytes_only()
--> ::xtask::sandbox::TestResult<()> {
+async fn test_read_stdout_delta_from_file_reads_new_bytes_only() -> ::xtask::sandbox::TestResult<()>
+{
     let dir = tempdir()?;
     let path = dir.path().join("stdout.log");
     std::fs::write(&path, "first\nsecond\n")?;
@@ -215,8 +211,8 @@ async fn test_read_stdout_delta_from_file_reads_new_bytes_only()
 }
 
 #[sinex_test]
-async fn test_progress_probe_from_result_reports_history_errors()
--> ::xtask::sandbox::TestResult<()> {
+async fn test_progress_probe_from_result_reports_history_errors() -> ::xtask::sandbox::TestResult<()>
+{
     let probe = progress_probe_from_result(42, Some(Err(eyre!("boom"))));
     assert!(probe.progress.is_none());
     assert!(probe.issue.unwrap_or_default().contains("boom"));

@@ -45,8 +45,7 @@ async fn test_find_workspace_root_reports_manifest_read_failures()
 }
 
 #[sinex_test]
-async fn test_find_workspace_root_finds_workspace_manifest() -> ::xtask::sandbox::TestResult<()>
-{
+async fn test_find_workspace_root_finds_workspace_manifest() -> ::xtask::sandbox::TestResult<()> {
     let temp = tempfile::tempdir()?;
     std::fs::write(
         temp.path().join("Cargo.toml"),
@@ -61,8 +60,8 @@ async fn test_find_workspace_root_finds_workspace_manifest() -> ::xtask::sandbox
 }
 
 #[sinex_test]
-async fn test_render_command_reference_renders_nested_sections()
--> ::xtask::sandbox::TestResult<()> {
+async fn test_render_command_reference_renders_nested_sections() -> ::xtask::sandbox::TestResult<()>
+{
     let rendered = render_command_reference(&[CommandInfo {
         name: "check".to_string(),
         about: Some("Compile verification".to_string()),
@@ -86,16 +85,13 @@ async fn test_render_command_reference_renders_nested_sections()
 
     assert!(rendered.contains("# xtask Command Reference"));
     assert!(rendered.contains("## `xtask check`"));
-    assert!(
-        rendered.contains("| `-p, --package` | yes | no | Check specific package(s) only |")
-    );
+    assert!(rendered.contains("| `-p, --package` | yes | no | Check specific package(s) only |"));
     assert!(rendered.contains("### `xtask check deep`"));
     Ok(())
 }
 
 #[sinex_test]
-async fn test_render_command_guide_renders_curated_sections() -> ::xtask::sandbox::TestResult<()>
-{
+async fn test_render_command_guide_renders_curated_sections() -> ::xtask::sandbox::TestResult<()> {
     let rendered = render_command_guide(&crate::command_catalog::collect_command_catalog());
 
     assert!(rendered.contains("# xtask Command Guide"));
@@ -109,20 +105,16 @@ async fn test_render_command_guide_renders_curated_sections() -> ::xtask::sandbo
 #[sinex_test]
 async fn test_schema_bundle_major_version_parses_semver() -> ::xtask::sandbox::TestResult<()> {
     assert_eq!(
-        sinex_primitives::events::schema_registry::schema_bundle_major_version("1.0.0")
-            .unwrap(),
+        sinex_primitives::events::schema_registry::schema_bundle_major_version("1.0.0").unwrap(),
         1
     );
     assert_eq!(
         sinex_primitives::events::schema_registry::schema_bundle_major_version("1").unwrap(),
         1
     );
+    assert!(sinex_primitives::events::schema_registry::schema_bundle_major_version("").is_err());
     assert!(
-        sinex_primitives::events::schema_registry::schema_bundle_major_version("").is_err()
-    );
-    assert!(
-        sinex_primitives::events::schema_registry::schema_bundle_major_version("x.0.0")
-            .is_err()
+        sinex_primitives::events::schema_registry::schema_bundle_major_version("x.0.0").is_err()
     );
     Ok(())
 }
@@ -169,8 +161,7 @@ async fn test_schema_bundle_content_hash_matches_registry_contract()
 }
 
 #[sinex_test]
-async fn test_render_ast_grep_catalog_renders_rule_details() -> ::xtask::sandbox::TestResult<()>
-{
+async fn test_render_ast_grep_catalog_renders_rule_details() -> ::xtask::sandbox::TestResult<()> {
     let rendered = render_ast_grep_catalog(&[
         AstGrepRuleCatalogEntry {
             id: "cargo-command-outside-process".to_string(),

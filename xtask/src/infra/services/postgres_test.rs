@@ -146,16 +146,10 @@ async fn test_install_extensions_skips_unavailable_extensions() -> TestResult<()
 async fn test_ensure_role_creates_nologin_role() -> TestResult<()> {
     let mut statements = Vec::new();
 
-    PostgresManager::ensure_role_with(
-        "sinex_api",
-        false,
-        false,
-        "postgres",
-        |actor, db, sql| {
-            statements.push((actor.to_string(), db.to_string(), sql.to_string()));
-            Ok(String::new())
-        },
-    )?;
+    PostgresManager::ensure_role_with("sinex_api", false, false, "postgres", |actor, db, sql| {
+        statements.push((actor.to_string(), db.to_string(), sql.to_string()));
+        Ok(String::new())
+    })?;
 
     assert_eq!(
         statements,
@@ -222,8 +216,7 @@ async fn test_ensure_role_rejects_invalid_role_identifiers() -> TestResult<()> {
 
 #[sinex_test]
 async fn pg_isready_probe_reports_spawn_failures() -> TestResult<()> {
-    let error =
-        pg_isready_probe(Err(std::io::Error::other("pg_isready exploded"))).unwrap_err();
+    let error = pg_isready_probe(Err(std::io::Error::other("pg_isready exploded"))).unwrap_err();
     let message = format!("{error:#}");
     assert!(message.contains("failed to run pg_isready"));
     assert!(message.contains("pg_isready exploded"));

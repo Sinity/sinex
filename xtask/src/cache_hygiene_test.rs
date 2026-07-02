@@ -131,8 +131,7 @@ async fn global_retention_preserves_configured_recent_inactive_roots()
 }
 
 #[sinex_test]
-async fn target_path_maps_to_user_cache_root_and_active_root() -> xtask::sandbox::TestResult<()>
-{
+async fn target_path_maps_to_user_cache_root_and_active_root() -> xtask::sandbox::TestResult<()> {
     let temp = tempfile::tempdir()?;
     let target = temp
         .path()
