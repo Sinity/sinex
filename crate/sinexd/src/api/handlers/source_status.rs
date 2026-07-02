@@ -425,29 +425,25 @@ fn source_coverage_view(
                 .to_string(),
         });
     }
-    if matches!(contract.access_scope, AccessScope::RuntimeBridge { .. }) && has_live_binding {
+    if has_live_binding {
         if let Some(observation) = runtime_observation_for_source(contract.id, runtime_observations)
         {
             if !observation.live {
                 gaps.push(CoverageGapView {
-                    kind: "runtime_bridge_disconnected".to_string(),
-                    message: runtime_bridge_status_message(contract, observation),
+                    kind: runtime_disconnected_gap_kind(contract).to_string(),
+                    message: runtime_status_message(contract, observation),
                 });
             }
             let verdict = observation.classify_emit_stall(EmitStallThresholds::default(), now);
             if matches!(verdict, EmitStallVerdict::Stalled) {
                 gaps.push(CoverageGapView {
-                    kind: "runtime_bridge_stalled".to_string(),
-                    message: runtime_bridge_stall_message(contract, observation),
+                    kind: runtime_stalled_gap_kind(contract).to_string(),
+                    message: runtime_stall_message(contract, observation),
                 });
             }
-            caveats.extend(runtime_bridge_observation_caveats(
-                contract,
-                observation,
-                verdict,
-            ));
+            caveats.extend(runtime_observation_caveats(contract, observation, verdict));
         } else {
-            caveats.push(runtime_bridge_unobserved_caveat(contract));
+            caveats.push(runtime_unobserved_caveat(contract));
         }
     }
     let pressure = source_confirmation_pressure(contract, confirmation_buffer);
@@ -826,16 +822,10 @@ fn provider_debt_ref(state: &EmailProviderOperationState) -> Option<&str> {
     provider_failure_field(state, "debt_ref").or_else(|| provider_runtime_field(state, "debt_ref"))
 }
 
-fn runtime_bridge_unobserved_caveat(contract: &SourceContract) -> CaveatView {
-    let surface = match contract.access_scope {
-        AccessScope::RuntimeBridge { surface } => surface,
-        _ => "runtime_bridge",
-    };
+fn runtime_unobserved_caveat(contract: &SourceContract) -> CaveatView {
     CaveatView {
-        id: "source.runtime_bridge.unobserved".to_string(),
-        message: format!(
-            "runtime bridge `{surface}` is declared, but no material or admitted events have been observed for this source"
-        ),
+        id: runtime_caveat_id(contract, "unobserved"),
+        message: format!("{} is declared, but no runtime observation, material, or admitted events have been observed for this source", runtime_subject(contract)),
         ref_: Some(SinexObjectRef::new(
             SinexObjectKind::SourceDriver,
             contract.id.to_string(),
@@ -974,45 +964,45 @@ fn runtime_observation_for_source<'a>(
         .or_else(|| observations.get(source_id))
 }
 
-fn runtime_bridge_observation_caveats(
+fn runtime_observation_caveats(
     contract: &SourceContract,
     observation: &SourceStatus,
     verdict: EmitStallVerdict,
 ) -> Vec<CaveatView> {
     let mut caveats = vec![CaveatView {
-        id: "source.runtime_bridge.observed".to_string(),
-        message: runtime_bridge_status_message(contract, observation),
-        ref_: runtime_bridge_ref(contract),
+        id: runtime_caveat_id(contract, "observed"),
+        message: runtime_status_message(contract, observation),
+        ref_: runtime_ref(contract),
     }];
 
     if observation.current_health.is_some() || observation.health_reason.is_some() {
         caveats.push(CaveatView {
-            id: "source.runtime_bridge.health".to_string(),
-            message: runtime_bridge_health_message(contract, observation),
-            ref_: runtime_bridge_ref(contract),
+            id: runtime_caveat_id(contract, "health"),
+            message: runtime_health_message(contract, observation),
+            ref_: runtime_ref(contract),
         });
     }
 
     if matches!(verdict, EmitStallVerdict::Stalled) {
         caveats.push(CaveatView {
-            id: "source.runtime_bridge.stalled".to_string(),
-            message: runtime_bridge_stall_message(contract, observation),
-            ref_: runtime_bridge_ref(contract),
+            id: runtime_caveat_id(contract, "stalled"),
+            message: runtime_stall_message(contract, observation),
+            ref_: runtime_ref(contract),
         });
     }
 
     if !observation.live {
         caveats.push(CaveatView {
-            id: "source.runtime_bridge.disconnected".to_string(),
-            message: runtime_bridge_status_message(contract, observation),
-            ref_: runtime_bridge_ref(contract),
+            id: runtime_caveat_id(contract, "disconnected"),
+            message: runtime_status_message(contract, observation),
+            ref_: runtime_ref(contract),
         });
     }
 
     caveats
 }
 
-fn runtime_bridge_ref(contract: &SourceContract) -> Option<SinexObjectRef> {
+fn runtime_ref(contract: &SourceContract) -> Option<SinexObjectRef> {
     Some(SinexObjectRef::new(
         SinexObjectKind::SourceDriver,
         contract.id.to_string(),
@@ -1026,15 +1016,48 @@ fn runtime_bridge_surface(contract: &SourceContract) -> &'static str {
     }
 }
 
-fn runtime_bridge_status_message(contract: &SourceContract, observation: &SourceStatus) -> String {
-    let surface = runtime_bridge_surface(contract);
+fn runtime_subject(contract: &SourceContract) -> String {
+    match contract.access_scope {
+        AccessScope::RuntimeBridge { .. } => {
+            format!("runtime bridge `{}`", runtime_bridge_surface(contract))
+        }
+        _ => format!("runtime binding for source `{}`", contract.id),
+    }
+}
+
+fn runtime_caveat_id(contract: &SourceContract, suffix: &'static str) -> String {
+    if matches!(contract.access_scope, AccessScope::RuntimeBridge { .. }) {
+        format!("source.runtime_bridge.{suffix}")
+    } else {
+        format!("source.runtime_binding.{suffix}")
+    }
+}
+
+fn runtime_disconnected_gap_kind(contract: &SourceContract) -> &'static str {
+    if matches!(contract.access_scope, AccessScope::RuntimeBridge { .. }) {
+        "runtime_bridge_disconnected"
+    } else {
+        "runtime_binding_disconnected"
+    }
+}
+
+fn runtime_stalled_gap_kind(contract: &SourceContract) -> &'static str {
+    if matches!(contract.access_scope, AccessScope::RuntimeBridge { .. }) {
+        "runtime_bridge_stalled"
+    } else {
+        "runtime_binding_stalled"
+    }
+}
+
+fn runtime_status_message(contract: &SourceContract, observation: &SourceStatus) -> String {
     let connection = if observation.live {
         "connected"
     } else {
         "disconnected"
     };
     format!(
-        "runtime bridge `{surface}` is {connection} through module `{}`; last heartbeat {}; last output {}; recent output count {}",
+        "{} is {connection} through module `{}`; last heartbeat {}; last output {}; recent output count {}",
+        runtime_subject(contract),
         observation.module_name,
         optional_timestamp(observation.last_heartbeat_at),
         optional_timestamp(observation.last_output_at),
@@ -1042,8 +1065,7 @@ fn runtime_bridge_status_message(contract: &SourceContract, observation: &Source
     )
 }
 
-fn runtime_bridge_health_message(contract: &SourceContract, observation: &SourceStatus) -> String {
-    let surface = runtime_bridge_surface(contract);
+fn runtime_health_message(contract: &SourceContract, observation: &SourceStatus) -> String {
     let health = observation
         .current_health
         .map_or_else(|| "unknown".to_string(), |status| status.to_string());
@@ -1052,15 +1074,16 @@ fn runtime_bridge_health_message(contract: &SourceContract, observation: &Source
         .as_deref()
         .unwrap_or("no health reason recorded");
     format!(
-        "runtime bridge `{surface}` health is {health}; {reason}; health changed {}",
+        "{} health is {health}; {reason}; health changed {}",
+        runtime_subject(contract),
         optional_timestamp(observation.health_changed_at)
     )
 }
 
-fn runtime_bridge_stall_message(contract: &SourceContract, observation: &SourceStatus) -> String {
-    let surface = runtime_bridge_surface(contract);
+fn runtime_stall_message(contract: &SourceContract, observation: &SourceStatus) -> String {
     format!(
-        "runtime bridge `{surface}` is heartbeating but has no recent source output; last output {}; recent output count {}",
+        "{} is heartbeating but has no recent source output; last output {}; recent output count {}",
+        runtime_subject(contract),
         optional_timestamp(observation.last_output_at),
         observation.recent_output_count
     )

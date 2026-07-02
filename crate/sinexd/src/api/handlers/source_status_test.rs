@@ -1353,6 +1353,46 @@ async fn runtime_bridge_coverage_surfaces_disconnected_runtime_observation() -> 
 }
 
 #[sinex_test]
+async fn runtime_binding_coverage_surfaces_disconnected_configured_root_source()
+-> xtask::TestResult<()> {
+    let now = Timestamp::now();
+    let mut status = fs_runtime_status(now);
+    status.live = false;
+    status.current_health = Some(HealthStatus::Unhealthy);
+    status.health_reason = Some("runtime heartbeat stale".to_string());
+    let mut observations = HashMap::new();
+    observations.insert("fs".to_string(), status);
+
+    let view = source_coverage_view(
+        &fs_contract(),
+        &[&fs_binding()],
+        &HashMap::new(),
+        &HashMap::new(),
+        &healthy_confirmation_buffer(),
+        &observations,
+        &HashMap::new(),
+        &HashMap::new(),
+        &HashMap::new(),
+        now,
+    );
+
+    assert!(
+        view.gaps
+            .iter()
+            .any(|gap| gap.kind == "runtime_binding_disconnected"),
+        "configured-root runtime sources should surface disconnected runtime binding gaps"
+    );
+    let caveat = view
+        .caveats
+        .iter()
+        .find(|caveat| caveat.id == "source.runtime_binding.disconnected")
+        .expect("generic runtime binding disconnected caveat expected");
+    assert!(caveat.message.contains("runtime binding for source `fs`"));
+    assert!(caveat.message.contains("disconnected"));
+    Ok(())
+}
+
+#[sinex_test]
 async fn runtime_bridge_coverage_surfaces_malformed_frame_health_reason() -> xtask::TestResult<()> {
     let now = Timestamp::now();
     let bridge_binding = terminal_bridge_binding();
@@ -1628,6 +1668,34 @@ fn terminal_bridge_binding() -> SourceRuntimeBinding {
     .build()
 }
 
+fn fs_contract() -> SourceContract {
+    SourceContract {
+        id: "fs",
+        namespace: "filesystem",
+        event_types: &[("fs-watcher", "file.created")],
+        privacy_tier: PrivacyTier::Secret,
+        horizons: &[Horizon::Continuous],
+        retention: RetentionPolicy::Forever,
+        occurrence_identity: OccurrenceIdentity::Anchor,
+        access_scope: AccessScope::ConfiguredRoots,
+    }
+}
+
+fn fs_binding() -> SourceRuntimeBinding {
+    SourceRuntimeBinding::builder(SubjectRef::from_static("source:fs"), "fs", "filesystem")
+        .implementation("sinexd")
+        .adapter("FileContentDropAdapter")
+        .output_event_type("file.created")
+        .privacy_context(ProcessingContext::Metadata)
+        .resource_profile(ResourceProfile::LiveWatcher)
+        .source_id("fs")
+        .runner_pack(RunnerPack::SinexdSource)
+        .checkpoint_family(CheckpointFamily::AppendStream)
+        .runtime_shape(RuntimeShape::Continuous)
+        .build_impact(SourceBuildImpact::ZERO)
+        .build()
+}
+
 trait SourceStatusTestExt {
     fn with_recent_output(self, last_output_at: Timestamp, recent_output_count: i64) -> Self;
 }
@@ -1637,6 +1705,28 @@ impl SourceStatusTestExt for SourceStatus {
         self.last_output_at = Some(last_output_at);
         self.recent_output_count = recent_output_count;
         self
+    }
+}
+
+fn fs_runtime_status(now: Timestamp) -> SourceStatus {
+    SourceStatus {
+        module_name: ModuleName::new("fs"),
+        version: "1.0.0".to_string(),
+        description: Some("Filesystem watcher".to_string()),
+        manifest_status: "running".to_string(),
+        live: true,
+        service_name: Some("source-driver-fs-1".to_string()),
+        instance_id: Some("fixture-instance".to_string()),
+        module_run_id: None,
+        host: Some("fixture-host".to_string()),
+        run_status: Some("running".to_string()),
+        started_at: Some(now - time::Duration::seconds(3600)),
+        last_heartbeat_at: Some(now - time::Duration::seconds(900)),
+        current_health: Some(HealthStatus::Healthy),
+        health_changed_at: Some(now - time::Duration::seconds(900)),
+        health_reason: Some("filesystem watcher active".to_string()),
+        recent_output_count: 0,
+        last_output_at: None,
     }
 }
 
