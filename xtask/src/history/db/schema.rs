@@ -304,6 +304,7 @@ impl HistoryDb {
                 line_start INTEGER,
                 line_end INTEGER,
                 region_hash TEXT,
+                content_hash TEXT,
                 recorded_at TEXT NOT NULL DEFAULT (datetime('now'))
             );
 
@@ -319,6 +320,7 @@ impl HistoryDb {
                 pid INTEGER NOT NULL,
                 attempt_id TEXT NOT NULL,
                 planner_version TEXT NOT NULL,
+                content_hash TEXT,
                 recorded_at TEXT NOT NULL DEFAULT (datetime('now')),
                 UNIQUE(invocation_id, test_name, module_path, source_file, source_line)
             );
@@ -720,6 +722,7 @@ impl HistoryDb {
                 line_start INTEGER,
                 line_end INTEGER,
                 region_hash TEXT,
+                content_hash TEXT,
                 recorded_at TEXT NOT NULL DEFAULT (datetime('now'))
             );
 
@@ -735,6 +738,7 @@ impl HistoryDb {
                 pid INTEGER NOT NULL,
                 attempt_id TEXT NOT NULL,
                 planner_version TEXT NOT NULL,
+                content_hash TEXT,
                 recorded_at TEXT NOT NULL DEFAULT (datetime('now')),
                 UNIQUE(invocation_id, test_name, module_path, source_file, source_line)
             );
@@ -797,6 +801,8 @@ impl HistoryDb {
     pub(super) fn ensure_compat_schema(&self) -> Result<()> {
         self.ensure_proof_schema()?;
         self.ensure_impact_schema()?;
+        self.ensure_column_exists("coverage_regions", "content_hash", "TEXT")?;
+        self.ensure_column_exists("test_execution_manifests", "content_hash", "TEXT")?;
         self.ensure_column_exists("invocations", "process_cpu_usage_avg", "REAL")?;
         self.ensure_column_exists("invocations", "process_memory_usage_max_mb", "REAL")?;
         self.ensure_column_exists("invocations", "root_process_cpu_usage_avg", "REAL")?;

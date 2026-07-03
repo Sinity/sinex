@@ -125,39 +125,45 @@ async fn test_impact_import_manifest_and_hunk_coverage() -> TestResult<()> {
     let invocation_id = db.start_invocation("test", None, None, None)?;
     let artifact_dir = dir.path().join("impact").join("invocation");
     fs::create_dir_all(&artifact_dir)?;
+    let content_hash = crate::impact::hash_file_if_exists("xtask/src/impact.rs")
+        .ok_or_else(|| color_eyre::eyre::eyre!("expected xtask/src/impact.rs to exist"))?;
     fs::write(
         artifact_dir.join("manifest.json"),
-        r#"{
-          "artifact_kind": "test_execution_manifest",
-          "manifest": {
-            "test_name": "impact_manifest_test",
-            "package": "xtask",
-            "module_path": "xtask::impact::tests",
-            "source_file": "xtask/src/impact.rs",
-            "source_line": 42,
-            "binary_id": "xtask-lib",
-            "pid": 123,
-            "attempt_id": "1",
-            "planner_version": "impact-v2"
-          }
-        }"#,
+        serde_json::json!({
+            "artifact_kind": "test_execution_manifest",
+            "manifest": {
+                "test_name": "impact_manifest_test",
+                "package": "xtask",
+                "module_path": "xtask::impact::tests",
+                "source_file": "xtask/src/impact.rs",
+                "source_line": 42,
+                "binary_id": "xtask-lib",
+                "pid": 123,
+                "attempt_id": "1",
+                "planner_version": "impact-v2",
+                "content_hash": content_hash.clone(),
+            }
+        })
+        .to_string(),
     )?;
     fs::write(
         artifact_dir.join("coverage.json"),
-        r#"{
-          "artifact_kind": "coverage_regions",
-          "regions": [
-            {
-              "test_name": "impact_manifest_test",
-              "package": "xtask",
-              "file_path": "xtask/src/impact.rs",
-              "function_name": "plan_from_changed_files",
-              "line_start": 40,
-              "line_end": 50,
-              "region_hash": "abc"
-            }
-          ]
-        }"#,
+        serde_json::json!({
+            "artifact_kind": "coverage_regions",
+            "regions": [
+                {
+                    "test_name": "impact_manifest_test",
+                    "package": "xtask",
+                    "file_path": "xtask/src/impact.rs",
+                    "function_name": "plan_from_changed_files",
+                    "line_start": 40,
+                    "line_end": 50,
+                    "region_hash": "abc",
+                    "content_hash": content_hash,
+                }
+            ]
+        })
+        .to_string(),
     )?;
 
     let imported = db.import_test_dependency_artifacts(invocation_id, &artifact_dir)?;
@@ -186,6 +192,52 @@ async fn test_impact_import_manifest_and_hunk_coverage() -> TestResult<()> {
             .iter()
             .all(|evidence| evidence.subject == "xtask/src/impact.rs")
     );
+    Ok(())
+}
+
+#[sinex_test]
+async fn test_impact_evidence_with_stale_content_hash_is_reported_not_used() -> TestResult<()> {
+    let dir = tempdir()?;
+    let db = HistoryDb::open(&dir.path().join("test-history.db"))?;
+    let invocation_id = db.start_invocation("test", None, None, None)?;
+    let artifact_dir = dir.path().join("impact").join("invocation");
+    fs::create_dir_all(&artifact_dir)?;
+    fs::write(
+        artifact_dir.join("coverage.json"),
+        r#"{
+          "artifact_kind": "coverage_regions",
+          "regions": [
+            {
+              "test_name": "impact_manifest_test",
+              "package": "xtask",
+              "file_path": "xtask/src/impact.rs",
+              "function_name": "plan_from_changed_files",
+              "line_start": 40,
+              "line_end": 50,
+              "region_hash": "abc",
+              "content_hash": "stale"
+            }
+          ]
+        }"#,
+    )?;
+
+    assert_eq!(
+        db.import_test_dependency_artifacts(invocation_id, &artifact_dir)?,
+        1
+    );
+    let evidence = db.impact_evidence_for_changed_files_and_hunks(
+        &[String::from("xtask/src/impact.rs")],
+        &[crate::impact::FileChangedHunks {
+            path: "xtask/src/impact.rs".to_string(),
+            hunks: vec![crate::impact::ChangedHunk {
+                line_start: 45,
+                line_end: 45,
+            }],
+        }],
+    )?;
+
+    assert!(evidence.impacted_tests.is_empty());
+    assert_eq!(evidence.stale_subjects, vec!["xtask/src/impact.rs"]);
     Ok(())
 }
 

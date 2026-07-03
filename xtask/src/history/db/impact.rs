@@ -1,7 +1,7 @@
 use color_eyre::eyre::{Result, WrapErr};
 use rusqlite::params;
 use serde::Deserialize;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::Path;
 
@@ -28,6 +28,7 @@ struct TestExecutionManifestArtifact {
     pid: u32,
     attempt_id: String,
     planner_version: String,
+    content_hash: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -39,6 +40,7 @@ struct TestCoverageRegionArtifact {
     line_start: Option<u32>,
     line_end: Option<u32>,
     region_hash: Option<String>,
+    content_hash: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -162,35 +164,49 @@ impl HistoryDb {
         changed_files: &[String],
         changed_hunks: &[crate::impact::FileChangedHunks],
     ) -> Result<Vec<crate::impact::ImpactedTest>> {
+        Ok(self
+            .impact_evidence_for_changed_files_and_hunks(changed_files, changed_hunks)?
+            .impacted_tests)
+    }
+
+    pub fn impact_evidence_for_changed_files_and_hunks(
+        &self,
+        changed_files: &[String],
+        changed_hunks: &[crate::impact::FileChangedHunks],
+    ) -> Result<crate::impact::ImpactHistoryEvidence> {
         if changed_files.is_empty()
             || !self.table_exists("coverage_regions")?
             || !self.table_exists("test_dependency_edges")?
         {
-            return Ok(Vec::new());
+            return Ok(crate::impact::ImpactHistoryEvidence::default());
         }
 
         let mut tests: BTreeMap<(Option<String>, String), Vec<crate::impact::ImpactEvidence>> =
             BTreeMap::new();
+        let mut stale_subjects = BTreeSet::new();
         for path in changed_files {
             let hunks = changed_hunks
                 .iter()
                 .find(|hunks| hunks.path == *path)
                 .map_or(&[][..], |hunks| hunks.hunks.as_slice());
-            self.collect_coverage_impacts(path, hunks, &mut tests)?;
+            self.collect_coverage_impacts(path, hunks, &mut tests, &mut stale_subjects)?;
             self.collect_dependency_edge_impacts(path, &mut tests)?;
-            self.collect_manifest_impacts(path, hunks, &mut tests)?;
+            self.collect_manifest_impacts(path, hunks, &mut tests, &mut stale_subjects)?;
         }
 
-        Ok(tests
-            .into_iter()
-            .map(
-                |((package, test_name), evidence)| crate::impact::ImpactedTest {
-                    package,
-                    test_name,
-                    evidence,
-                },
-            )
-            .collect())
+        Ok(crate::impact::ImpactHistoryEvidence {
+            impacted_tests: tests
+                .into_iter()
+                .map(
+                    |((package, test_name), evidence)| crate::impact::ImpactedTest {
+                        package,
+                        test_name,
+                        evidence,
+                    },
+                )
+                .collect(),
+            stale_subjects: stale_subjects.into_iter().collect(),
+        })
     }
 
     fn collect_coverage_impacts(
@@ -198,20 +214,28 @@ impl HistoryDb {
         path: &str,
         hunks: &[crate::impact::ChangedHunk],
         tests: &mut BTreeMap<(Option<String>, String), Vec<crate::impact::ImpactEvidence>>,
+        stale_subjects: &mut BTreeSet<String>,
     ) -> Result<()> {
-        let mut stmt = self.conn.prepare(
+        let content_hash_expr = if self.column_exists("coverage_regions", "content_hash")? {
+            "content_hash"
+        } else {
+            "NULL"
+        };
+        let sql = format!(
             r"
             SELECT DISTINCT
                 test_name,
                 package,
                 COALESCE(function_name, ''),
                 COALESCE(line_start, -1),
-                COALESCE(line_end, -1)
+                COALESCE(line_end, -1),
+                {content_hash_expr}
             FROM coverage_regions
             WHERE file_path = ?1 OR file_path = ?2
             ORDER BY package, test_name
-            ",
-        )?;
+            "
+        );
+        let mut stmt = self.conn.prepare(&sql)?;
         let dotted = format!("./{path}");
         let rows = stmt.query_map(params![path, dotted], |row| {
             Ok((
@@ -220,10 +244,15 @@ impl HistoryDb {
                 row.get::<_, String>(2)?,
                 row.get::<_, i64>(3)?,
                 row.get::<_, i64>(4)?,
+                row.get::<_, Option<String>>(5)?,
             ))
         })?;
         for row in rows {
-            let (test_name, package, function_name, line_start, line_end) = row?;
+            let (test_name, package, function_name, line_start, line_end, content_hash) = row?;
+            if evidence_is_stale(path, content_hash.as_deref()) {
+                stale_subjects.insert(path.to_string());
+                continue;
+            }
             let line_start_u32 = u32::try_from(line_start).ok();
             let line_end_u32 = u32::try_from(line_end).ok();
             if !hunks.is_empty() {
@@ -305,18 +334,25 @@ impl HistoryDb {
         path: &str,
         hunks: &[crate::impact::ChangedHunk],
         tests: &mut BTreeMap<(Option<String>, String), Vec<crate::impact::ImpactEvidence>>,
+        stale_subjects: &mut BTreeSet<String>,
     ) -> Result<()> {
         if !self.table_exists("test_execution_manifests")? {
             return Ok(());
         }
-        let mut stmt = self.conn.prepare(
+        let content_hash_expr = if self.column_exists("test_execution_manifests", "content_hash")? {
+            "content_hash"
+        } else {
+            "NULL"
+        };
+        let sql = format!(
             r"
-            SELECT DISTINCT test_name, package, source_line, module_path
+            SELECT DISTINCT test_name, package, source_line, module_path, {content_hash_expr}
             FROM test_execution_manifests
             WHERE source_file = ?1 OR source_file = ?2
             ORDER BY package, test_name
-            ",
-        )?;
+            "
+        );
+        let mut stmt = self.conn.prepare(&sql)?;
         let dotted = format!("./{path}");
         let rows = stmt.query_map(params![path, dotted], |row| {
             Ok((
@@ -324,10 +360,15 @@ impl HistoryDb {
                 row.get::<_, Option<String>>(1)?,
                 row.get::<_, i64>(2)?,
                 row.get::<_, String>(3)?,
+                row.get::<_, Option<String>>(4)?,
             ))
         })?;
         for row in rows {
-            let (test_name, package, source_line, module_path) = row?;
+            let (test_name, package, source_line, module_path, content_hash) = row?;
+            if evidence_is_stale(path, content_hash.as_deref()) {
+                stale_subjects.insert(path.to_string());
+                continue;
+            }
             let Some(source_line) = u32::try_from(source_line).ok() else {
                 continue;
             };
@@ -425,16 +466,18 @@ impl HistoryDb {
                         binary_id,
                         pid,
                         attempt_id,
-                        planner_version
+                        planner_version,
+                        content_hash
                     )
-                    VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)
+                    VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)
                     ON CONFLICT(invocation_id, test_name, module_path, source_file, source_line)
                     DO UPDATE SET
                         package = excluded.package,
                         binary_id = excluded.binary_id,
                         pid = excluded.pid,
                         attempt_id = excluded.attempt_id,
-                        planner_version = excluded.planner_version
+                        planner_version = excluded.planner_version,
+                        content_hash = excluded.content_hash
                     ",
                     params![
                         invocation_id,
@@ -447,6 +490,7 @@ impl HistoryDb {
                         i64::from(manifest.pid),
                         manifest.attempt_id,
                         manifest.planner_version,
+                        manifest.content_hash,
                     ],
                 )?;
                 Ok(1)
@@ -464,9 +508,10 @@ impl HistoryDb {
                             function_name,
                             line_start,
                             line_end,
-                            region_hash
+                            region_hash,
+                            content_hash
                         )
-                        VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
+                        VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)
                         ",
                         params![
                             invocation_id,
@@ -477,6 +522,7 @@ impl HistoryDb {
                             region.line_start.map(i64::from),
                             region.line_end.map(i64::from),
                             region.region_hash,
+                            region.content_hash,
                         ],
                     )?;
                     imported += 1;
@@ -520,4 +566,8 @@ impl HistoryDb {
         )?;
         Ok(changed)
     }
+}
+
+fn evidence_is_stale(path: &str, recorded_hash: Option<&str>) -> bool {
+    crate::impact::hash_file_if_exists(path).as_deref() != recorded_hash
 }
