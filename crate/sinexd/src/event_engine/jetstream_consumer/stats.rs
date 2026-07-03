@@ -14,9 +14,6 @@ pub(super) struct ConsumerStats {
     pub(super) validation_failures: AtomicU64,
     pub(super) tombstoned_events_rejected: AtomicU64,
     pub(super) dlq_routed: AtomicU64,
-    pub(super) confirmation_failures: AtomicU64,
-    pub(super) confirmation_retries_enqueued: AtomicU64,
-    pub(super) confirmation_retry_failures: AtomicU64,
     pub(super) confirmation_durability_gaps: AtomicU64,
     pub(super) dlq_publish_failures: AtomicU64,
     pub(super) nack_failures: AtomicU64,
@@ -37,10 +34,6 @@ impl ConsumerStats {
             tombstoned_events_rejected = self.tombstoned_events_rejected.load(Ordering::Relaxed),
             nats_errors = self.nats_errors.load(Ordering::Relaxed),
             dlq_routed = self.dlq_routed.load(Ordering::Relaxed),
-            confirmation_failures = self.confirmation_failures.load(Ordering::Relaxed),
-            confirmation_retries_enqueued =
-                self.confirmation_retries_enqueued.load(Ordering::Relaxed),
-            confirmation_retry_failures = self.confirmation_retry_failures.load(Ordering::Relaxed),
             confirmation_durability_gaps =
                 self.confirmation_durability_gaps.load(Ordering::Relaxed),
             dlq_publish_failures = self.dlq_publish_failures.load(Ordering::Relaxed),

@@ -175,7 +175,6 @@ impl<T: RuntimeModule + 'static> RuntimeRunner<T> {
             Ok(())
         });
 
-        let confirmation_buffer = base_handles.confirmation_buffer();
         let schema_cache = base_handles.schema_cache();
         #[cfg(feature = "db")]
         let replay_handles = match base_handles.db_pool().cloned() {
@@ -184,14 +183,12 @@ impl<T: RuntimeModule + 'static> RuntimeRunner<T> {
                 checkpoint_manager,
                 replay_emitter,
                 base_handles.transport().clone(),
-                confirmation_buffer,
                 schema_cache,
             ),
             None => RuntimeHandles::new_edge(
                 checkpoint_manager,
                 replay_emitter,
                 base_handles.transport().clone(),
-                confirmation_buffer,
                 schema_cache,
             ),
         };
@@ -200,7 +197,6 @@ impl<T: RuntimeModule + 'static> RuntimeRunner<T> {
             checkpoint_manager,
             replay_emitter,
             base_handles.transport().clone(),
-            confirmation_buffer,
             schema_cache,
         );
 

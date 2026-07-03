@@ -11,7 +11,7 @@ use sinex_primitives::source_contracts::{
     RetentionPolicy, RunnerPack, RuntimeShape, SourceBuildImpact, SubjectRef,
 };
 use sinex_primitives::views::{ActionAvailability, ActionAvailabilityState, ActionSideEffect};
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeSet;
 use xtask::sandbox::sinex_test;
 
 fn session_record(
@@ -138,7 +138,6 @@ async fn source_coverage_view_marks_ready_when_catalog_material_and_events_exist
         &[&BINDING],
         &events,
         &materials,
-        &healthy_confirmation_buffer(),
         &HashMap::new(),
         &HashMap::new(),
         &HashMap::new(),
@@ -262,7 +261,6 @@ async fn source_coverage_view_surfaces_missing_material_caveat() -> xtask::TestR
         &[&BINDING],
         &events,
         &materials,
-        &healthy_confirmation_buffer(),
         &HashMap::new(),
         &HashMap::new(),
         &HashMap::new(),
@@ -328,7 +326,6 @@ async fn runtime_bridge_coverage_surfaces_unobserved_bridge_and_declared_actions
         &[&bridge_binding],
         &HashMap::new(),
         &HashMap::new(),
-        &healthy_confirmation_buffer(),
         &HashMap::new(),
         &HashMap::new(),
         &HashMap::new(),
@@ -437,7 +434,6 @@ async fn browser_history_actions_reflect_runtime_module() -> xtask::TestResult<(
         &bindings,
         &HashMap::new(),
         &HashMap::new(),
-        &healthy_confirmation_buffer(),
         &HashMap::new(),
         &HashMap::new(),
         &HashMap::new(),
@@ -513,7 +509,6 @@ async fn media_package_operations_surface_operator_actions() -> xtask::TestResul
         &bindings,
         &HashMap::new(),
         &HashMap::new(),
-        &healthy_confirmation_buffer(),
         &HashMap::new(),
         &HashMap::new(),
         &HashMap::new(),
@@ -669,7 +664,6 @@ async fn media_package_operations_surface_operator_actions() -> xtask::TestResul
         &screen_bindings,
         &HashMap::new(),
         &HashMap::new(),
-        &healthy_confirmation_buffer(),
         &HashMap::new(),
         &HashMap::new(),
         &HashMap::new(),
@@ -806,7 +800,6 @@ async fn email_package_operations_surface_operator_actions() -> xtask::TestResul
         &bindings,
         &HashMap::new(),
         &HashMap::new(),
-        &healthy_confirmation_buffer(),
         &HashMap::new(),
         &HashMap::new(),
         &HashMap::new(),
@@ -1033,7 +1026,6 @@ async fn email_provider_failure_operation_surfaces_source_coverage_debt_caveat()
         &bindings,
         &HashMap::new(),
         &HashMap::new(),
-        &healthy_confirmation_buffer(),
         &HashMap::new(),
         &provider_states,
         &HashMap::new(),
@@ -1135,7 +1127,6 @@ async fn email_mailbox_projection_surfaces_materialization_debt_and_mode_counts(
         &bindings,
         &HashMap::new(),
         &HashMap::new(),
-        &healthy_confirmation_buffer(),
         &HashMap::new(),
         &HashMap::new(),
         &projection_states,
@@ -1327,7 +1318,6 @@ async fn runtime_bridge_coverage_uses_runtime_observation_for_last_seen() -> xta
         &[&bridge_binding],
         &HashMap::new(),
         &HashMap::new(),
-        &healthy_confirmation_buffer(),
         &observations,
         &HashMap::new(),
         &HashMap::new(),
@@ -1404,7 +1394,6 @@ async fn runtime_bridge_coverage_surfaces_disconnected_runtime_observation() -> 
         &[&bridge_binding],
         &HashMap::new(),
         &HashMap::new(),
-        &healthy_confirmation_buffer(),
         &observations,
         &HashMap::new(),
         &HashMap::new(),
@@ -1444,7 +1433,6 @@ async fn runtime_binding_coverage_surfaces_disconnected_configured_root_source()
         &[&fs_binding()],
         &HashMap::new(),
         &HashMap::new(),
-        &healthy_confirmation_buffer(),
         &observations,
         &HashMap::new(),
         &HashMap::new(),
@@ -1486,7 +1474,6 @@ async fn runtime_binding_coverage_treats_recent_output_as_observed_not_disconnec
         &[&fs_binding()],
         &HashMap::new(),
         &HashMap::new(),
-        &healthy_confirmation_buffer(),
         &observations,
         &HashMap::new(),
         &HashMap::new(),
@@ -1535,7 +1522,6 @@ async fn runtime_bridge_coverage_surfaces_malformed_frame_health_reason() -> xta
         &[&bridge_binding],
         &HashMap::new(),
         &HashMap::new(),
-        &healthy_confirmation_buffer(),
         &observations,
         &HashMap::new(),
         &HashMap::new(),
@@ -1570,7 +1556,6 @@ async fn runtime_bridge_coverage_surfaces_heartbeat_without_output_as_stalled()
         &[&bridge_binding],
         &HashMap::new(),
         &HashMap::new(),
-        &healthy_confirmation_buffer(),
         &observations,
         &HashMap::new(),
         &HashMap::new(),
@@ -1624,7 +1609,6 @@ async fn runtime_bridge_coverage_surfaces_stall_even_with_historical_output()
         &[&bridge_binding],
         &event_aggregates,
         &material_aggregates,
-        &healthy_confirmation_buffer(),
         &observations,
         &HashMap::new(),
         &HashMap::new(),
@@ -1650,106 +1634,6 @@ async fn runtime_bridge_coverage_surfaces_stall_even_with_historical_output()
         "current runtime stalls must produce an operator-visible caveat"
     );
     Ok(())
-}
-
-#[sinex_test]
-async fn source_coverage_view_surfaces_attributed_confirmation_pressure() -> xtask::TestResult<()> {
-    let mut confirmation_buffer = healthy_confirmation_buffer();
-    confirmation_buffer.status = HealthStatus::Degraded;
-    confirmation_buffer.approximate_payload_bytes = 1536;
-    confirmation_buffer.approximate_payload_bytes_by_kind = BTreeMap::from([
-        ("fixture:fixture.event".to_string(), 1024),
-        ("other.source:other.event".to_string(), 512),
-    ]);
-
-    let view = source_coverage_view(
-        &CONTRACT,
-        &[&BINDING],
-        &HashMap::new(),
-        &HashMap::new(),
-        &confirmation_buffer,
-        &HashMap::new(),
-        &HashMap::new(),
-        &HashMap::new(),
-        &HashMap::new(),
-        Timestamp::now(),
-    );
-
-    let caveat = view
-        .caveats
-        .iter()
-        .find(|caveat| caveat.id == "source.pressure.confirmation_buffer.retained_payload")
-        .expect("pressure caveat expected");
-    assert!(
-        caveat.message.contains("1024 byte(s)"),
-        "source-local caveat should report only bytes attributed to the source contract"
-    );
-    assert!(
-        view.actions
-            .iter()
-            .any(|action| action.id == "runtime.health.inspect"),
-        "source-local pressure should expose the runtime health inspection action"
-    );
-    Ok(())
-}
-
-#[sinex_test]
-async fn source_coverage_view_does_not_localize_unattributed_pressure() -> xtask::TestResult<()> {
-    let mut confirmation_buffer = healthy_confirmation_buffer();
-    confirmation_buffer.status = HealthStatus::Degraded;
-    confirmation_buffer.approximate_payload_bytes = 512;
-    confirmation_buffer.approximate_payload_bytes_by_kind =
-        BTreeMap::from([("other.source:other.event".to_string(), 512)]);
-
-    let view = source_coverage_view(
-        &CONTRACT,
-        &[&BINDING],
-        &HashMap::new(),
-        &HashMap::new(),
-        &confirmation_buffer,
-        &HashMap::new(),
-        &HashMap::new(),
-        &HashMap::new(),
-        &HashMap::new(),
-        Timestamp::now(),
-    );
-
-    assert!(
-        !view
-            .caveats
-            .iter()
-            .any(|caveat| caveat.id == "source.pressure.confirmation_buffer.retained_payload"),
-        "unattributed/global pressure must stay in runtime health instead of becoming source-local"
-    );
-    assert!(
-        !view
-            .actions
-            .iter()
-            .any(|action| action.id == "runtime.health.inspect"),
-        "global pressure without source ownership should not create source-local actions"
-    );
-    Ok(())
-}
-
-fn healthy_confirmation_buffer() -> ConfirmationBufferHealth {
-    ConfirmationBufferHealth {
-        status: HealthStatus::Healthy,
-        connected: true,
-        memory_owner: crate::api::service_container::ConfirmationBufferMemoryOwner::None,
-        pressure_level: sinex_primitives::RuntimePressureLevel::Nominal,
-        runtime_action: sinex_primitives::RuntimePressureAction::Admit,
-        observed_buffers: 0,
-        pending_count: 0,
-        timed_out_retained_count: 0,
-        rejected_count: 0,
-        late_confirmation_count: 0,
-        retained_payload_bytes: 0,
-        approximate_payload_bytes: 0,
-        active_payload_bytes: 0,
-        timed_out_retained_payload_bytes: 0,
-        approximate_payload_bytes_by_kind: BTreeMap::new(),
-        detail: "confirmation buffers nominal".to_string(),
-    }
 }
 
 fn terminal_bridge_contract() -> SourceContract {

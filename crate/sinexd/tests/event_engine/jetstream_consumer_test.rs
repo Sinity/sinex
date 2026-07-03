@@ -309,15 +309,15 @@ async fn consumer_publishes_confirmation() -> color_eyre::Result<()> {
     .await?;
 
     let confirmation_subject =
-        confirmation_subject_for(&ready_topology.confirmations_prefix, "test", "test.event");
+        confirmation_subject_for(&ready_topology.confirmed_events_prefix, "test", "test.event");
     let confirmation = wait_for_last_stream_message_by_subject(
         &js,
-        &ready_topology.confirmations_stream,
+        &ready_topology.confirmed_events_stream,
         &confirmation_subject,
     )
     .await?;
     let confirm_payload: serde_json::Value = serde_json::from_slice(&confirmation.payload)?;
-    assert_eq!(confirm_payload["event_id"], event_id.to_string());
+    assert_eq!(confirm_payload["id"], event_id.to_string());
 
     consumer_handle.abort();
     Ok(())
@@ -800,13 +800,13 @@ async fn tombstoned_event_is_acked_without_confirmation(ctx: TestContext) -> Tes
     );
 
     let confirmation_subject = confirmation_subject_for(
-        &setup.topology.confirmations_prefix,
+        &setup.topology.confirmed_events_prefix,
         "tombstone-admission",
         "pipeline.event",
     );
     let stream = setup
         .js
-        .get_stream(&setup.topology.confirmations_stream)
+        .get_stream(&setup.topology.confirmed_events_stream)
         .await?;
     assert!(
         stream

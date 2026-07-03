@@ -413,7 +413,6 @@ async fn make_runtime_state(
         emitter,
         EventTransport::Nats(publisher),
         None,
-        None,
     );
     let work_dir = tempdir()?;
     let work_dir_path = work_dir.keep();
@@ -457,7 +456,6 @@ async fn make_runtime_state_with_db(
         checkpoint_manager,
         emitter,
         EventTransport::Nats(publisher),
-        None,
         None,
     );
     let work_dir = tempdir()?;
@@ -519,7 +517,6 @@ async fn make_runtime_state_with_validator(
         checkpoint_manager,
         emitter,
         EventTransport::Nats(publisher),
-        None,
         None,
     );
     let work_dir = tempdir()?;

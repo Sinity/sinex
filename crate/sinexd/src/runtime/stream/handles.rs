@@ -1,8 +1,5 @@
 use super::runtime_state::RuntimeContext;
-use crate::runtime::{
-    EventTransport, SinexError, checkpoint::CheckpointManager,
-    confirmation_handler::ConfirmationBuffer,
-};
+use crate::runtime::{EventTransport, SinexError, checkpoint::CheckpointManager};
 use camino::Utf8PathBuf;
 #[cfg(feature = "db")]
 use sinex_db::DbPool as PgPool;
@@ -428,7 +425,6 @@ pub struct RuntimeHandles {
     checkpoint_manager: Arc<CheckpointManager>,
     emitter: EventEmitter,
     transport: EventTransport,
-    confirmation_buffer: Option<Arc<ConfirmationBuffer>>,
     schema_cache: Option<Arc<crate::runtime::stream::SchemaBroadcastCache>>,
     runtime_drain: Arc<RuntimeDrainController>,
 }
@@ -442,18 +438,13 @@ impl RuntimeHandles {
         checkpoint_manager: Arc<CheckpointManager>,
         emitter: EventEmitter,
         transport: EventTransport,
-        confirmation_buffer: Option<Arc<ConfirmationBuffer>>,
         schema_cache: Option<Arc<crate::runtime::stream::SchemaBroadcastCache>>,
     ) -> Self {
-        if let Some(buffer) = &confirmation_buffer {
-            crate::runtime::register_confirmation_buffer(buffer);
-        }
         Self {
             db_pool: Some(db_pool),
             checkpoint_manager,
             emitter,
             transport,
-            confirmation_buffer,
             schema_cache,
             runtime_drain: Arc::new(RuntimeDrainController::new()),
         }
@@ -466,19 +457,14 @@ impl RuntimeHandles {
         checkpoint_manager: Arc<CheckpointManager>,
         emitter: EventEmitter,
         transport: EventTransport,
-        confirmation_buffer: Option<Arc<ConfirmationBuffer>>,
         schema_cache: Option<Arc<crate::runtime::stream::SchemaBroadcastCache>>,
     ) -> Self {
-        if let Some(buffer) = &confirmation_buffer {
-            crate::runtime::register_confirmation_buffer(buffer);
-        }
         Self {
             #[cfg(feature = "db")]
             db_pool: None,
             checkpoint_manager,
             emitter,
             transport,
-            confirmation_buffer,
             schema_cache,
             runtime_drain: Arc::new(RuntimeDrainController::new()),
         }
@@ -516,10 +502,6 @@ impl RuntimeHandles {
     #[must_use]
     pub fn transport(&self) -> &EventTransport {
         &self.transport
-    }
-
-    pub fn confirmation_buffer(&self) -> Option<Arc<ConfirmationBuffer>> {
-        self.confirmation_buffer.as_ref().map(Arc::clone)
     }
 
     pub fn schema_cache(&self) -> Option<Arc<crate::runtime::stream::SchemaBroadcastCache>> {

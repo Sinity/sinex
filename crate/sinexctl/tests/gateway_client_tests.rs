@@ -73,17 +73,6 @@ async fn test_mock_client_custom_health_response() -> TestResult<()> {
                 detail: Some("raw-ingest DLQ pressure unknown".to_string()),
                 attributes: Default::default(),
             },
-            confirmation_buffer: ComponentHealthReport {
-                status: HealthStatus::Unknown,
-                connected: false,
-                latency_ms: None,
-                detail: Some("confirmation buffers not registered".to_string()),
-                attributes: std::collections::BTreeMap::from([
-                    ("memory_owner".to_string(), "not_observed".to_string()),
-                    ("pressure_level".to_string(), "unknown".to_string()),
-                    ("runtime_action".to_string(), "none".to_string()),
-                ]),
-            },
             replay_control: ReplayControlHealth {
                 status: HealthStatus::Healthy,
                 enabled: true,
@@ -860,12 +849,6 @@ async fn test_gateway_client_successful_health() -> TestResult<()> {
                         "connected": true,
                         "latency_ms": null,
                         "detail": "raw-ingest DLQ empty"
-                    },
-                    "confirmation_buffer": {
-                        "status": "healthy",
-                        "connected": true,
-                        "latency_ms": null,
-                        "detail": "confirmation buffers: observed=1, pending=0, timed_out_retained=0"
                     },
                     "replay_control": {
                         "status": "healthy",

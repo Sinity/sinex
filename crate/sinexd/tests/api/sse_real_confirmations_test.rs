@@ -110,17 +110,17 @@ fn insecure_https_client() -> TestResult<reqwest::Client> {
 /// but not the full HTTP-fed-by-real-event-engine path.
 ///
 /// Previously `#[ignore]`d (#1626). The delivery path is core-NATS pub/sub
-/// (`SubscriptionBus` subscribes to `events.confirmations.>`), independent of
-/// the JetStream confirmations *stream* — so the fix is a subject-namespace
-/// match, not a stream-naming one:
+/// (`SubscriptionBus` subscribes to `events.confirmed.>`), independent of the
+/// raw-events stream — so the fix is a subject-namespace match, not a
+/// stream-naming one:
 ///   - `#1631` threaded the pipeline namespace into the gateway *process*
 ///     (`SINEX_NAMESPACE`), but the `SubscriptionBus` ignored it and subscribed
-///     to the un-namespaced `{env}.events.confirmations.>`, while a namespaced
-///     event_engine publishes to `{env}.{namespace}.events.confirmations.*`.
+///     to the un-namespaced `{env}.events.confirmed.>`, while a namespaced
+///     event_engine publishes to `{env}.{namespace}.events.confirmed.*`.
 ///   - Fixed here: `GatewayConfig::namespace` is now consumed by the bus, which
 ///     subscribes via `nats_subject_with_namespace`, matching the publisher.
 ///   - Separately, the source preflight stream-existence check was made
-///     namespace-aware so it stops 404-ing on `..._CONFIRMATIONS` under a
+///     namespace-aware so it stops 404-ing on `..._CONFIRMED` under a
 ///     per-test namespace.
 #[sinex_test(timeout = 90)]
 async fn test_sse_delivers_event_after_real_event_engine_confirmation(
@@ -147,7 +147,7 @@ async fn test_sse_delivers_event_after_real_event_engine_confirmation(
     // ── Bus-readiness handshake ──────────────────────────────────────────
     //
     // `start_test_gateway` only waits for TCP accept; it does not signal that
-    // `SubscriptionBus::run` has finished `nats_client.subscribe(confirmations.>)`.
+    // `SubscriptionBus::run` has finished `nats_client.subscribe(events.confirmed.>)`.
     // A heartbeat frame proves the per-connection HTTP task is alive but does
     // NOT prove the bus's NATS subscription is up — heartbeats originate from
     // the SSE handler's local timer.

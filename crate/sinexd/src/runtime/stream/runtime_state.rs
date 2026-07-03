@@ -3,7 +3,6 @@ use crate::runtime::{
     EventTransport, RuntimeResult,
     acquisition_manager::{AcquisitionManager, RotationPolicy},
     checkpoint::CheckpointManager,
-    confirmation_handler::ConfirmationBuffer,
     coordination::RuntimeCoordination,
     heartbeat::HeartbeatEmitter,
 };
@@ -125,11 +124,6 @@ impl RuntimeContext {
             Ok(publisher) => Some(publisher.nats_client().clone()),
             Err(_) => None,
         }
-    }
-
-    #[must_use]
-    pub fn confirmation_buffer(&self) -> Option<Arc<ConfirmationBuffer>> {
-        self.handles.confirmation_buffer()
     }
 
     #[must_use]
