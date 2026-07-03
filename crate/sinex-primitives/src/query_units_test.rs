@@ -149,3 +149,26 @@ async fn parser_lowers_runtime_stale_after_as_numeric_seconds() -> xtask::sandbo
     ));
     Ok(())
 }
+
+#[sinex_test]
+async fn parser_lowers_single_quoted_rfc3339_event_time_bounds()
+-> xtask::sandbox::TestResult<()> {
+    let query = parse_sinex_query(
+        "events where ts_orig >= '2026-07-02T12:00:00Z' and ts_orig < '2026-07-02T13:00:00Z' limit 25",
+    )?;
+    let request = event_query_from_sinex_query(&query)?;
+    let range = request
+        .time_range
+        .expect("quoted RFC3339 bounds should lower to an event time range");
+
+    assert_eq!(
+        range.start(),
+        Some(Timestamp::parse_rfc3339("2026-07-02T12:00:00Z")?)
+    );
+    assert_eq!(
+        range.end(),
+        Some(Timestamp::parse_rfc3339("2026-07-02T13:00:00Z")?)
+    );
+    assert_eq!(request.limit, 25);
+    Ok(())
+}

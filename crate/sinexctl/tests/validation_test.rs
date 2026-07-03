@@ -1118,6 +1118,33 @@ async fn mcp_query_call_uses_descriptor_executor_and_gateway_fixture() -> TestRe
 }
 
 #[sinex_test]
+async fn mcp_query_accepts_single_quoted_rfc3339_event_bounds() -> TestResult<()> {
+    let server = mount_mcp_gateway_fixture().await;
+    let client = fixture_gateway_client(&server)?;
+
+    let response = call_tool(
+        &client,
+        "sinex_query",
+        json!({
+            "query": "events where ts_orig >= '2026-07-02T12:00:00Z' and ts_orig < '2026-07-02T13:00:00Z' limit 2"
+        }),
+    )
+    .await?;
+    let query_echo = response["query_echo"].to_string();
+
+    assert_eq!(response["source_surface"], "sinex_query");
+    assert_eq!(response["query_echo"]["unit"], "events");
+    assert_eq!(response["payload"]["rows"][0]["object_kind"], "event");
+    assert!(query_echo.contains("2026-07-02T12:00:00Z"));
+    assert!(query_echo.contains("2026-07-02T13:00:00Z"));
+    assert!(
+        !query_echo.contains("'2026-07-02"),
+        "single quote delimiters must not survive query parsing"
+    );
+    Ok(())
+}
+
+#[sinex_test]
 async fn mcp_runtime_active_call_uses_gateway_fixture() -> TestResult<()> {
     let server = mount_mcp_gateway_fixture().await;
     let client = fixture_gateway_client(&server)?;
