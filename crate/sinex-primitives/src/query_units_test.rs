@@ -81,8 +81,8 @@ async fn query_validation_clamps_to_unit_limit() -> xtask::sandbox::TestResult<(
 }
 
 #[sinex_test]
-async fn parser_lowers_events_query_to_descriptor_validated_ast()
--> xtask::sandbox::TestResult<()> {
+async fn parser_lowers_events_query_to_descriptor_validated_ast() -> xtask::sandbox::TestResult<()>
+{
     let query = parse_sinex_query(
         "events where source = \"terminal.fish-history\" and event_type = terminal.command limit 10",
     )
@@ -115,8 +115,7 @@ async fn parser_rejects_unknown_field_before_execution() -> xtask::sandbox::Test
 }
 
 #[sinex_test]
-async fn parser_rejects_invalid_enum_value_before_execution() -> xtask::sandbox::TestResult<()>
-{
+async fn parser_rejects_invalid_enum_value_before_execution() -> xtask::sandbox::TestResult<()> {
     let error = parse_sinex_query("operations where status = mystery").unwrap_err();
 
     assert!(error.to_string().contains("does not allow enum value"));
@@ -124,8 +123,7 @@ async fn parser_rejects_invalid_enum_value_before_execution() -> xtask::sandbox:
 }
 
 #[sinex_test]
-async fn parser_rejects_unsupported_sort_key_before_execution() -> xtask::sandbox::TestResult<()>
-{
+async fn parser_rejects_unsupported_sort_key_before_execution() -> xtask::sandbox::TestResult<()> {
     let error = parse_sinex_query("operations sort widget desc").unwrap_err();
 
     assert!(error.to_string().contains("does not support sort key"));
@@ -134,8 +132,7 @@ async fn parser_rejects_unsupported_sort_key_before_execution() -> xtask::sandbo
 }
 
 #[sinex_test]
-async fn parser_lowers_runtime_stale_after_as_numeric_seconds() -> xtask::sandbox::TestResult<()>
-{
+async fn parser_lowers_runtime_stale_after_as_numeric_seconds() -> xtask::sandbox::TestResult<()> {
     let query = parse_sinex_query("runtime-health where stale_after >= 300").unwrap();
 
     assert_eq!(query.unit, QueryUnitId::RuntimeHealth);
@@ -151,8 +148,7 @@ async fn parser_lowers_runtime_stale_after_as_numeric_seconds() -> xtask::sandbo
 }
 
 #[sinex_test]
-async fn parser_lowers_single_quoted_rfc3339_event_time_bounds()
--> xtask::sandbox::TestResult<()> {
+async fn parser_lowers_single_quoted_rfc3339_event_time_bounds() -> xtask::sandbox::TestResult<()> {
     let query = parse_sinex_query(
         "events where ts_orig >= '2026-07-02T12:00:00Z' and ts_orig < '2026-07-02T13:00:00Z' limit 25",
     )?;
@@ -169,6 +165,22 @@ async fn parser_lowers_single_quoted_rfc3339_event_time_bounds()
         range.end(),
         Some(Timestamp::parse_rfc3339("2026-07-02T13:00:00Z")?)
     );
+    assert_eq!(request.limit, 25);
+    Ok(())
+}
+
+#[sinex_test]
+async fn parser_lowers_order_by_ts_orig_for_event_windows() -> xtask::sandbox::TestResult<()> {
+    let query = parse_sinex_query(
+        "events where ts_orig >= '2026-07-02T12:00:00Z' and ts_orig < '2026-07-02T13:00:00Z' order by ts_orig asc limit 25",
+    )?;
+    let request = event_query_from_sinex_query(&query)?;
+
+    assert_eq!(query.sort.len(), 1);
+    assert_eq!(query.sort[0].key, "ts_orig");
+    assert!(!query.sort[0].descending);
+    assert_eq!(request.order, EventOrdering::TsOrig);
+    assert_eq!(request.direction, SortDirection::Asc);
     assert_eq!(request.limit, 25);
     Ok(())
 }

@@ -340,10 +340,7 @@ async fn mcp_stdio_accepts_codex_json_line_transport() -> TestResult<()> {
     line.clear();
     reader.read_line(&mut line)?;
     let tools_response: Value = serde_json::from_str(line.trim_end())?;
-    assert_eq!(
-        tools_response["result"]["tools"][0]["name"],
-        "sinex_orient"
-    );
+    assert_eq!(tools_response["result"]["tools"][0]["name"], "sinex_orient");
     assert_eq!(
         tools_response["result"]["tools"]
             .as_array()
@@ -1142,6 +1139,28 @@ async fn mcp_query_accepts_single_quoted_rfc3339_event_bounds() -> TestResult<()
         !query_echo.contains("'2026-07-02"),
         "single quote delimiters must not survive query parsing"
     );
+    Ok(())
+}
+
+#[sinex_test]
+async fn mcp_query_accepts_order_by_ts_orig_event_windows() -> TestResult<()> {
+    let server = mount_mcp_gateway_fixture().await;
+    let client = fixture_gateway_client(&server)?;
+
+    let response = call_tool(
+        &client,
+        "sinex_query",
+        json!({
+            "query": "events where ts_orig >= '2026-07-02T12:00:00Z' and ts_orig < '2026-07-02T13:00:00Z' order by ts_orig asc limit 2"
+        }),
+    )
+    .await?;
+
+    assert_eq!(response["source_surface"], "sinex_query");
+    assert_eq!(response["query_echo"]["unit"], "events");
+    assert_eq!(response["query_echo"]["sort"][0]["key"], "ts_orig");
+    assert_eq!(response["query_echo"]["sort"][0]["descending"], false);
+    assert_eq!(response["payload"]["rows"][0]["object_kind"], "event");
     Ok(())
 }
 
