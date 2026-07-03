@@ -4,7 +4,7 @@ use sinex_primitives::rpc::{RpcMutability, RpcRole, method_catalog, methods};
 use sinex_primitives::temporal::{Duration, Timestamp};
 use sinexctl::client::{ClientConfig, GatewayClient, RetryConfig};
 use sinexctl::mcp::{
-    MCP_PROTOCOL_VERSION, MCP_SUPPORTED_PROTOCOL_VERSIONS, McpSurfaceKind,
+    MCP_PROTOCOL_VERSION, MCP_SUPPORTED_PROTOCOL_VERSIONS, McpOutputContract, McpSurfaceKind,
     assert_read_only_tool_names, call_tool, tool_catalog, tools,
 };
 use sinexctl::validation::{parse_time_input, parse_time_input_with_now, validate_time_range};
@@ -184,6 +184,12 @@ async fn mcp_catalog_exactly_covers_live_tools() -> TestResult<()> {
     for entry in tool_catalog() {
         assert_eq!(entry.kind, McpSurfaceKind::Tool);
         assert!(entry.read_only, "MCP v1 catalog entry must be read-only");
+        assert_eq!(
+            entry.output_contract,
+            McpOutputContract::ViewEnvelope,
+            "MCP entry `{}` must declare its read output contract",
+            entry.name
+        );
         assert!(
             entry
                 .name
@@ -254,6 +260,7 @@ async fn mcp_catalog_serializes_as_machine_readable_matrix() -> TestResult<()> {
         assert!(entry["name"].as_str().is_some());
         assert_eq!(entry["kind"], "tool");
         assert_eq!(entry["read_only"], true);
+        assert_eq!(entry["output_contract"], "view_envelope");
         assert!(entry["backing_rpc_methods"].as_array().is_some());
     }
     Ok(())
@@ -1728,6 +1735,59 @@ async fn mcp_source_coverage_call_uses_gateway_fixture() -> TestResult<()> {
 }
 
 #[sinex_test]
+async fn mcp_source_remediation_plan_call_uses_gateway_fixture() -> TestResult<()> {
+    let server = mount_mcp_gateway_fixture().await;
+    let client = fixture_gateway_client(&server)?;
+
+    let response = call_tool(
+        &client,
+        "sinex_source_remediation_plan",
+        json!({
+            "source_identifier": "/realm/data/captures/fixture.jsonl",
+            "limit": 10,
+            "offset": 0,
+            "sort": "event-count",
+            "include_empty": true
+        }),
+    )
+    .await?;
+
+    assert_eq!(response["source_surface"], "sinex_source_remediation_plan");
+    assert_eq!(
+        response["query_echo"]["source_identifier"],
+        "/realm/data/captures/fixture.jsonl"
+    );
+    assert_eq!(response["query_echo"]["include_empty"], true);
+    assert_eq!(response["payload"]["result"]["summary"]["total_candidates"], 1);
+    assert_eq!(response["payload"]["result"]["items"][0]["decision"], "inspect");
+    assert_eq!(response["privacy_state"]["state"], "redacted");
+    Ok(())
+}
+
+#[sinex_test]
+async fn mcp_source_package_completeness_call_uses_gateway_fixture() -> TestResult<()> {
+    let server = mount_mcp_gateway_fixture().await;
+    let client = fixture_gateway_client(&server)?;
+
+    let response = call_tool(&client, "sinex_source_package_completeness", json!({})).await?;
+
+    assert_eq!(
+        response["source_surface"],
+        "sinex_source_package_completeness"
+    );
+    assert_eq!(
+        response["payload"]["result"]["summary"]["package_count"],
+        1
+    );
+    assert_eq!(
+        response["payload"]["result"]["packages"][0]["package_id"],
+        "terminal.kitty-osc-live"
+    );
+    assert_eq!(response["privacy_state"]["state"], "redacted");
+    Ok(())
+}
+
+#[sinex_test]
 async fn mcp_sources_status_view_call_uses_gateway_fixture() -> TestResult<()> {
     let server = mount_mcp_gateway_fixture().await;
     let client = fixture_gateway_client(&server)?;
@@ -2821,7 +2881,20 @@ async fn mount_mcp_gateway_fixture() -> MockServer {
                     "total_messages": 2,
                     "total_bytes": 512,
                     "first_seq": 10,
-                    "last_seq": 11
+                    "last_seq": 11,
+                    "pressure_level": "warning",
+                    "resource_pressure": {
+                        "pressure_level": "warning",
+                        "runtime_action": "inspect",
+                        "pending_messages": 2,
+                        "pending_bytes": 512,
+                        "retry_batch_size": 10,
+                        "recommended_action": "inspect_dlq",
+                        "reason": "fixture pending DLQ messages require inspection"
+                    },
+                    "pending_sequence_span": 1,
+                    "recommended_action": "inspect_dlq",
+                    "action_reason": "fixture pending DLQ messages require inspection"
                 }),
                 "dlq.peek" => json!({
                     "messages": [
@@ -2905,6 +2978,82 @@ async fn mount_mcp_gateway_fixture() -> MockServer {
                             "sensing_material_count": 0,
                             "cancelled_material_count": 0,
                             "total_bytes": 1024
+                        }
+                    ]
+                }),
+                "sources.remediation_plan" => json!({
+                    "summary": {
+                        "total_candidates": 1,
+                        "total_admitted_events": 42,
+                        "by_status": { "completed": 1 },
+                        "by_decision": { "inspect": 1 },
+                        "by_severity": { "warning": 1 },
+                        "by_reason": { "fixture": 1 }
+                    },
+                    "page": {
+                        "limit": 10,
+                        "offset": 0,
+                        "returned_count": 1,
+                        "total_candidates": 1,
+                        "has_more": false,
+                        "sort": "event-count"
+                    },
+                    "items": [
+                        {
+                            "material": {
+                                "id": fixture_material_id(),
+                                "material_kind": "local_cas",
+                                "source_identifier": "/realm/data/captures/fixture.jsonl",
+                                "status": "completed",
+                                "timing_info_type": "realtime",
+                                "format": "jsonl",
+                                "contract_version": 1,
+                                "staged_at": "2026-05-19T12:00:00Z",
+                                "staged_by": "fixture",
+                                "size_bytes": 1024,
+                                "mime_type": "application/jsonl"
+                            },
+                            "failure_reason": null,
+                            "recovery_reason": "fixture",
+                            "decision": "inspect",
+                            "severity": "warning",
+                            "suggested_action": "sinexctl sources show"
+                        }
+                    ]
+                }),
+                "sources.package_completeness" => json!({
+                    "schema_version": 1,
+                    "summary": {
+                        "package_count": 1,
+                        "mode_count": 1,
+                        "accepted_mode_count": 1,
+                        "proposed_mode_count": 0,
+                        "manual_mode_count": 0,
+                        "incomplete_mode_count": 0,
+                        "blocking_missing_count": 0
+                    },
+                    "packages": [
+                        {
+                            "package_id": "terminal.kitty-osc-live",
+                            "family": "terminal",
+                            "display_namespace": "terminal",
+                            "modes": [
+                                {
+                                    "mode_id": "terminal.kitty-osc-live",
+                                    "package_id": "terminal.kitty-osc-live",
+                                    "mode_state": "accepted",
+                                    "completeness": "complete",
+                                    "subject": "kitty shell integration",
+                                    "acquisition_kind": "live",
+                                    "operator_enablement": "enabled",
+                                    "missing": [],
+                                    "caveats": [],
+                                    "event_contract_refs": ["command.executed"],
+                                    "admission_policy_refs": [],
+                                    "coverage_debt_refs": [],
+                                    "operation_refs": []
+                                }
+                            ]
                         }
                     ]
                 }),
@@ -3156,6 +3305,17 @@ fn fixture_source_status_view_envelope() -> Value {
         "payload": {
             "schema_version": "sinex.source-coverage-list/v1",
             "count": 1,
+            "summary": {
+                "total_sources": 1,
+                "readiness": { "ready": 1 },
+                "continuity": { "active": 1 },
+                "accepted_bindings": 1,
+                "proposed_bindings": 0,
+                "eventful_sources": 1,
+                "materialized_sources": 1,
+                "total_events": 42,
+                "total_materials": 3
+            },
             "sources": [
                 {
                     "source_id": "terminal.atuin-history",
@@ -3168,7 +3328,7 @@ fn fixture_source_status_view_envelope() -> Value {
                     "material_count": 3,
                     "event_count": 42,
                     "binding_count": 1,
-                    "live_binding_count": 1,
+                    "accepted_binding_count": 1,
                     "proposed_binding_count": 0,
                     "gaps": [],
                     "caveats": [],
