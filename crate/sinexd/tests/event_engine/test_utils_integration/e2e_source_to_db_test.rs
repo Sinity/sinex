@@ -116,7 +116,7 @@ async fn start_event_engine(
     timeout(stream_timeout, async {
         nats.wait_for_stream(&js, &topology.events_stream, stream_timeout)
             .await?;
-        nats.wait_for_stream(&js, &topology.confirmations_stream, stream_timeout)
+        nats.wait_for_stream(&js, &topology.confirmed_events_stream, stream_timeout)
             .await?;
         nats.wait_for_stream(&js, &topology.dlq_stream, stream_timeout)
             .await
@@ -136,7 +136,7 @@ async fn end_to_end_source_runtime_full_flow(ctx: TestContext) -> TestResult<()>
     let (handle, js, topology) = start_event_engine(&ctx, &suffix).await?;
 
     let mut confirmation_sub = nats_client
-        .subscribe(topology.confirmations_subject.clone())
+        .subscribe(topology.confirmed_events_subject.clone())
         .await?;
 
     let publisher = TestSourcePublisher::with_namespace(

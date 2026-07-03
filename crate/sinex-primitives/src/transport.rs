@@ -11,7 +11,7 @@
 //! | [`Class::Critical`] | `{env}.events.raw.>` | retry → raw-ingest DLQ | wait for in-flight ACKs |
 //! | [`Class::Derived`] | `{env}.events.raw.>` (same lane) | retry → processing-failure stream | wait for in-flight ACKs |
 //! | [`Class::SourceMaterial`] | `{env}.source_material.frames.>` | retry caller operation | wait for ACKs before event anchors publish |
-//! | [`Class::Confirmation`] | `{env}.events.confirmations.>` | retry with backoff → durability-gap warn | best-effort flush |
+//! | [`Class::Confirmation`] | `{env}.events.confirmed.>` | retry with backoff → fatal durability gap | wait for ACKs before raw ack |
 //! | [`Class::Invalidation`] | `{env}.sinex.derived.invalidation` | JetStream-backed; best-effort warn | best-effort flush |
 //! | [`Class::Control`] | `{env}.sinex.control.>` / request-reply | timeout error | drop pending |
 //! | [`Class::Telemetry`] | `{env}.events.raw.sinex.>` (telemetry lane) | drop with warn | best-effort flush |
@@ -78,20 +78,18 @@ pub const SINEX_TRANSPORT_CLASS_HEADER: &str = "Sinex-Transport-Class";
 ///   dependent events can be truthfully published.
 /// - **Drain on SIGTERM**: wait for ACKs before considering anchors durable.
 ///
-/// ### [`Class::Confirmation`] — persistence acknowledgement signals
+/// ### [`Class::Confirmation`] — post-persist confirmed event delivery
 ///
-/// Per-event ACK signals from event_engine to automaton adapters. Loss causes
-/// duplicate processing (not data loss); automata re-check against DB state.
+/// Full post-redaction `Event<JsonValue>` payloads from event_engine to
+/// automata and the SSE bus. This is the single post-persist event bus.
 ///
-/// - **Subject pattern**: `{env}.events.confirmations.{event_id}`
-/// - **`QoS`**: `JetStream` with idempotency header; best-effort semantics.
-/// - **Retry budget**: up to 3 attempts with exponential backoff; exhausted
-///   retries → durable retry queue (`events.confirmation_retries.*`) or
-///   durability-gap warning.
-/// - **Failure routing**: confirmation durability-gap → warn log + counter;
-///   no DLQ (confirmations are re-derivable from DB).
-/// - **Drain on SIGTERM**: flush remaining confirmations; if flush fails, log
-///   durability-gap warning. Event data is safe (already persisted).
+/// - **Subject pattern**:
+///   `{env}.events.confirmed.{provenance}.{source}.{event_type}`
+/// - **`QoS`**: `JetStream` with event-id idempotency header.
+/// - **Retry budget**: up to 3 attempts with exponential backoff.
+/// - **Failure routing**: exhausted retries are a fatal durability gap; the
+///   raw message remains unsettled so JetStream redelivers after restart.
+/// - **Drain on SIGTERM**: wait for confirmed-event ACKs before raw-message ACK.
 ///
 /// ### [`Class::Invalidation`] — scope invalidation signals
 ///
@@ -151,8 +149,9 @@ pub enum Class {
     /// Loss breaks material provenance and must fail the acquisition operation.
     SourceMaterial,
 
-    /// Persistence acknowledgement signals from event_engine to automatons.
-    /// Loss causes duplicate processing; best-effort with retry queue.
+    /// Full post-redaction confirmed events from event_engine to consumers.
+    /// Loss is a durability gap because consumers no longer refetch from a
+    /// watermark lane.
     Confirmation,
 
     /// Scope invalidation fan-out to automatons.
@@ -250,9 +249,7 @@ impl Class {
                 "processing-failure stream (events.processing_failures.{module}.{event_id})"
             }
             Self::SourceMaterial => "material acquisition operation fails before event publish",
-            Self::Confirmation => {
-                "durable retry queue (events.confirmation_retries.*) or durability-gap warn"
-            }
+            Self::Confirmation => "fatal durability gap; raw message left unsettled for redelivery",
             Self::Invalidation => {
                 "error propagated to caller (replay/archive operation decides abort/continue)"
             }
@@ -357,19 +354,10 @@ pub const CURRENT_ROUTE_DECISIONS: &[RouteDecision] = &[
         path: "event_engine.confirmation",
         transport: RouteTransport::JetStream,
         class: Some(Class::Confirmation),
-        route: "{env}.events.confirmations.{event_id}",
-        reason: "confirmation is a resyncable signal carried on compacted JetStream to reduce duplicate processing",
-        degraded_behavior: "retry queue, then durability-gap warning; persisted event remains authoritative",
-        verification: "confirmation handler and SSE confirmation tests",
-    },
-    RouteDecision {
-        path: "event_engine.confirmation_retry",
-        transport: RouteTransport::JetStream,
-        class: Some(Class::Confirmation),
-        route: "{env}.events.confirmation_retries.>",
-        reason: "failed confirmation publishes need durable retry separate from the primary confirmation signal",
-        degraded_behavior: "durability-gap warning when retry publication also fails",
-        verification: "confirmation retry handler tests",
+        route: "{env}.events.confirmed.{provenance}.{source}.{event_type}",
+        reason: "automata and SSE need the authoritative post-redaction event without a provisional buffer or DB refetch",
+        degraded_behavior: "fatal durability gap; raw message left unsettled for redelivery",
+        verification: "confirmed-event publisher and SSE confirmed-event tests",
     },
     RouteDecision {
         path: "raw_ingest.dlq",

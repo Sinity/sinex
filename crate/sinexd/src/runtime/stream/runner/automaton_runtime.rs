@@ -448,17 +448,11 @@ impl<T: RuntimeModule + 'static> RuntimeRunner<T> {
         Ok(())
     }
 
-    /// NATS `max_ack_pending` for an automaton's confirmation-buffered raw
-    /// consumer.
+    /// NATS `max_ack_pending` for an automaton's confirmed-events consumer.
     ///
-    /// Every automaton subscribes to the *raw* events stream so its confirmation
-    /// buffer can resolve provisional inputs, so on a backlog drain the in-flight
-    /// unacked messages are multiplied by the automaton count. At the old
-    /// `Default` of 1000 this fan-out (14 automata × 1000 × ~120 KB messages,
-    /// held client-side once the confirmation buffer saturates and starts
-    /// NAK-redelivering) drove the boot OOM that crash-looped prod. Bounding it
-    /// keeps aggregate boot memory flat; the confirmation buffer's own
-    /// capacity/byte caps remain the steady-state holding bound.
+    /// Every automaton has its own durable consumer on the confirmed-events
+    /// stream. Bounding per-consumer in-flight messages keeps aggregate boot
+    /// memory flat when the daemon drains a large backlog.
     ///
     /// Overridable via `SINEX_AUTOMATON_CONSUMER_MAX_ACK_PENDING`.
     #[cfg(feature = "messaging")]

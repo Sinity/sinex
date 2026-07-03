@@ -2,7 +2,6 @@
 
 use std::sync::atomic::Ordering;
 
-use super::confirmation::CONFIRM_RETRY_POLL_INTERVAL;
 use super::*;
 
 impl JetStreamConsumer {
@@ -48,22 +47,6 @@ impl JetStreamConsumer {
             SinexError::network("Failed to reconcile raw stream consumers").with_source(e)
         })?;
         let mut lag_consumer = consumer.clone();
-        let mut confirmation_retry_spec = PullConsumerSpec::new(
-            self.topology.confirmation_retry_stream.to_string(),
-            self.topology.confirmation_retry_consumer.clone(),
-        );
-        confirmation_retry_spec.filter_subject =
-            Some(self.topology.confirmation_retry_subject.to_string());
-        confirmation_retry_spec.deliver_policy = jetstream::consumer::DeliverPolicy::All;
-        confirmation_retry_spec.ack_wait = self.ack_wait;
-        confirmation_retry_spec.max_ack_pending = self.max_ack_pending;
-        confirmation_retry_spec.max_deliver = 10;
-        let confirmation_retry_consumer = ensure_pull_consumer(&self.js, &confirmation_retry_spec)
-            .await
-            .map_err(|e| {
-                SinexError::network("Failed to create confirmation retry consumer").with_source(e)
-            })?;
-
         // Emit startup snapshot before READY so operators can distinguish
         // normal resume from cold-start full replay from catch-up runs.
         if let Some(ref observer) = self.observer {
@@ -153,8 +136,6 @@ impl JetStreamConsumer {
         let mut capacity_check_interval = tokio::time::interval(STREAM_CAPACITY_CHECK_INTERVAL);
         // Consumer lag check interval (30s)
         let mut lag_check_interval = tokio::time::interval(std::time::Duration::from_secs(30));
-        let mut confirmation_retry_interval = tokio::time::interval(CONFIRM_RETRY_POLL_INTERVAL);
-
         // Startup catch-up semaphore: limits I/O pressure while the consumer
         // works through the initial backlog. Once the consumer is caught up
         // (num_pending == 0), the semaphore is no longer used.
@@ -193,9 +174,6 @@ impl JetStreamConsumer {
                         // These are monotonic cumulative totals emitted as gauges (snapshot-at-tick).
                         let operational_gauges: &[(&'static str, u64)] = &[
                             ("event_engine.tombstoned_events_rejected_total", self.stats.tombstoned_events_rejected.load(Ordering::Relaxed)),
-                            ("event_engine.confirmation_failures_total", self.stats.confirmation_failures.load(Ordering::Relaxed)),
-                            ("event_engine.confirmation_retries_enqueued_total", self.stats.confirmation_retries_enqueued.load(Ordering::Relaxed)),
-                            ("event_engine.confirmation_retry_failures_total", self.stats.confirmation_retry_failures.load(Ordering::Relaxed)),
                             ("event_engine.confirmation_durability_gaps_total", self.stats.confirmation_durability_gaps.load(Ordering::Relaxed)),
                             ("event_engine.dlq_publish_failures_total", self.stats.dlq_publish_failures.load(Ordering::Relaxed)),
                             ("event_engine.nack_failures_total", self.stats.nack_failures.load(Ordering::Relaxed)),
@@ -238,16 +216,6 @@ impl JetStreamConsumer {
                                 debug!("Consumer lag check failed: {e}");
                             }
                         }
-                    }
-                }
-                _ = confirmation_retry_interval.tick() => {
-                    if let Err(e) = self.process_confirmation_retry_batch(&confirmation_retry_consumer).await {
-                        error!(
-                            target: "sinex_metrics",
-                            metric = "event_engine.confirmation_retry_failures_total",
-                            error = %e,
-                            "Confirmation retry processing error"
-                        );
                     }
                 }
                 batch_result = &mut batch_future => {

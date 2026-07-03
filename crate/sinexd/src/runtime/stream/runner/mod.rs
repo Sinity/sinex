@@ -26,27 +26,11 @@ use crate::runtime::{
     jetstream_consumer::{JetStreamEventConsumer, JetStreamEventConsumerConfig},
     systemd_notify,
 };
-#[cfg(test)]
-use crate::runtime::confirmation_handler::ProvisionalEvent;
 use camino::Utf8PathBuf;
-#[cfg(test)]
-use serde::Deserialize;
 #[cfg(feature = "db")]
 use sinex_db::DbPool as PgPool;
-#[cfg(test)]
-use sinex_db::models::SourceMaterial;
-#[cfg(test)]
-use sinex_db::repositories::DbPoolExt;
 use sinex_primitives::events::Event;
-#[cfg(test)]
-use sinex_primitives::events::builder::{EventId, Provenance};
-use sinex_primitives::{
-    JsonValue, Timestamp, Uuid, domain::ModuleState,
-};
-#[cfg(test)]
-use sinex_primitives::{
-    EventSource, EventType, HostName, Id, OffsetKind, non_empty::NonEmptyVec,
-};
+use sinex_primitives::{JsonValue, Timestamp, Uuid, domain::ModuleState};
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
@@ -92,13 +76,6 @@ struct LeaderState {
     heartbeat_handle: tokio::task::JoinHandle<()>,
 }
 
-/// Batch of events resolved from provisional confirmations.
-#[cfg(test)]
-struct ResolvedBatch {
-    events: Vec<Event<JsonValue>>,
-    last_event_id: Option<Uuid>,
-}
-
 #[cfg(feature = "messaging")]
 struct DispatchedScanOutcome {
     report: ScanReport,
@@ -142,12 +119,3 @@ impl<T: RuntimeModule + 'static> RuntimeRunner<T> {
 }
 
 mod shutdown;
-
-#[cfg(test)]
-use super::control_protocol::encode_control_message;
-#[cfg(test)]
-use super::{ContinuousStart, ProcessingStats};
-
-#[cfg(test)]
-#[path = "runner_test.rs"]
-mod tests;

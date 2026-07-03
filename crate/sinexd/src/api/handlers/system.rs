@@ -38,7 +38,6 @@ pub(crate) fn system_health_response(report: GatewayHealthReport) -> SystemHealt
         db_detail,
         nats,
         raw_ingest_dlq,
-        confirmation_buffer,
         replay,
         sse_confirmation,
         healthy,
@@ -74,40 +73,6 @@ pub(crate) fn system_health_response(report: GatewayHealthReport) -> SystemHealt
                 latency_ms: None,
                 detail: Some(raw_ingest_dlq.detail),
                 attributes: BTreeMap::new(),
-            },
-            confirmation_buffer: ComponentHealthReport {
-                status: confirmation_buffer.status,
-                connected: confirmation_buffer.connected,
-                latency_ms: None,
-                detail: Some(confirmation_buffer.detail),
-                attributes: BTreeMap::from([
-                    (
-                        "memory_owner".to_string(),
-                        confirmation_buffer.memory_owner.as_str().to_string(),
-                    ),
-                    (
-                        "pressure_level".to_string(),
-                        confirmation_buffer.pressure_level.to_string(),
-                    ),
-                    (
-                        "runtime_action".to_string(),
-                        confirmation_buffer.runtime_action.as_str().to_string(),
-                    ),
-                    (
-                        "retained_payload_bytes".to_string(),
-                        confirmation_buffer.retained_payload_bytes.to_string(),
-                    ),
-                    (
-                        "active_payload_bytes".to_string(),
-                        confirmation_buffer.active_payload_bytes.to_string(),
-                    ),
-                    (
-                        "timed_out_retained_payload_bytes".to_string(),
-                        confirmation_buffer
-                            .timed_out_retained_payload_bytes
-                            .to_string(),
-                    ),
-                ]),
             },
             replay_control: ReplayControlHealth {
                 status: if replay.connected {

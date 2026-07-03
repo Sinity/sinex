@@ -295,11 +295,6 @@ fn jetstream_stream_targets() -> Vec<(&'static str, String)> {
             "confirmed-events",
             topology.confirmed_events_stream.into_string(),
         ),
-        ("confirmations", topology.confirmations_stream.into_string()),
-        (
-            "confirmation-retry",
-            topology.confirmation_retry_stream.into_string(),
-        ),
         ("dlq", topology.dlq_stream.into_string()),
         (
             "processing-failures",

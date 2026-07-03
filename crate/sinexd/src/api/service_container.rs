@@ -13,9 +13,7 @@ use sinex_primitives::{
     coordination::CoordinationKvClient,
     environment as sinex_environment,
     error::SinexError,
-    runtime_pressure::{RuntimePressureAction, RuntimePressureLevel},
 };
-use std::collections::BTreeMap;
 use std::sync::{Arc, OnceLock};
 use std::time::Duration;
 use tracing::{info, warn};
@@ -58,53 +56,9 @@ pub struct RawIngestDlqHealth {
     pub detail: String,
 }
 
-#[derive(Debug, Clone, serde::Serialize)]
-pub struct ConfirmationBufferHealth {
-    pub status: GatewayHealthStatus,
-    pub connected: bool,
-    pub memory_owner: ConfirmationBufferMemoryOwner,
-    pub pressure_level: RuntimePressureLevel,
-    pub runtime_action: RuntimePressureAction,
-    pub observed_buffers: usize,
-    pub pending_count: usize,
-    pub timed_out_retained_count: usize,
-    pub rejected_count: u64,
-    pub late_confirmation_count: u64,
-    pub retained_payload_bytes: usize,
-    pub approximate_payload_bytes: usize,
-    pub active_payload_bytes: usize,
-    pub timed_out_retained_payload_bytes: usize,
-    pub approximate_payload_bytes_by_kind: BTreeMap<String, usize>,
-    pub detail: String,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
-#[serde(rename_all = "snake_case")]
-pub enum ConfirmationBufferMemoryOwner {
-    NotObserved,
-    None,
-    ActivePendingPayloads,
-    TimedOutGracePayloads,
-    CountersOnly,
-}
-
-impl ConfirmationBufferMemoryOwner {
-    pub fn as_str(self) -> &'static str {
-        match self {
-            Self::NotObserved => "not_observed",
-            Self::None => "none",
-            Self::ActivePendingPayloads => "active_pending_payloads",
-            Self::TimedOutGracePayloads => "timed_out_grace_payloads",
-            Self::CountersOnly => "counters_only",
-        }
-    }
-}
-
-
 /// Type alias — gateway uses the canonical `HealthStatus` domain enum.
 pub type GatewayHealthStatus = sinex_primitives::domain::HealthStatus;
 
-const CONFIRMATION_BUFFER_DEGRADED_BYTES: usize = 64 * 1024 * 1024;
 const REPLAY_CONTROL_CONNECT_ATTEMPTS: usize = 3;
 const REPLAY_CONTROL_CONNECT_BACKOFF_BASE: Duration = Duration::from_millis(100);
 const REPLAY_CONTROL_CONNECT_BACKOFF_MAX: Duration = Duration::from_secs(1);
@@ -509,117 +463,6 @@ impl ServiceContainer {
         }
     }
 
-    /// Inspect registered confirmation buffers without extending their lifetime.
-    pub async fn probe_confirmation_buffer_pressure(&self) -> ConfirmationBufferHealth {
-        let snapshots = crate::runtime::registered_confirmation_buffer_snapshots().await;
-        if snapshots.is_empty() {
-            return ConfirmationBufferHealth {
-                status: GatewayHealthStatus::Unknown,
-                connected: false,
-                memory_owner: ConfirmationBufferMemoryOwner::NotObserved,
-                pressure_level: RuntimePressureLevel::Unknown,
-                runtime_action: RuntimePressureAction::None,
-                observed_buffers: 0,
-                pending_count: 0,
-                timed_out_retained_count: 0,
-                rejected_count: 0,
-                late_confirmation_count: 0,
-                retained_payload_bytes: 0,
-                approximate_payload_bytes: 0,
-                active_payload_bytes: 0,
-                timed_out_retained_payload_bytes: 0,
-                approximate_payload_bytes_by_kind: BTreeMap::new(),
-                detail: "confirmation buffers not registered".to_string(),
-            };
-        }
-
-        let mut pending_count = 0usize;
-        let mut timed_out_retained_count = 0usize;
-        let mut rejected_count = 0u64;
-        let mut late_confirmation_count = 0u64;
-        let mut retained_payload_bytes = 0usize;
-        let mut approximate_payload_bytes = 0usize;
-        let mut active_payload_bytes = 0usize;
-        let mut timed_out_retained_payload_bytes = 0usize;
-        let mut approximate_payload_bytes_by_kind = BTreeMap::new();
-        let mut pressure_level = crate::runtime::ConfirmationBufferPressureLevel::Nominal;
-        let mut runtime_action = RuntimePressureAction::Admit;
-
-        for snapshot in &snapshots {
-            pending_count += snapshot.pending_count;
-            timed_out_retained_count += snapshot.timed_out_retained_count;
-            rejected_count += snapshot.rejected_count;
-            late_confirmation_count += snapshot.late_confirmation_count;
-            retained_payload_bytes += snapshot.retained_payload_bytes;
-            approximate_payload_bytes += snapshot.approximate_payload_bytes;
-            active_payload_bytes += snapshot.active_payload_bytes;
-            timed_out_retained_payload_bytes += snapshot.timed_out_retained_payload_bytes;
-            pressure_level =
-                strongest_confirmation_pressure(pressure_level, snapshot.pressure_level);
-            runtime_action = runtime_action.strongest(snapshot.runtime_action);
-            for (kind, bytes) in &snapshot.approximate_payload_bytes_by_kind {
-                *approximate_payload_bytes_by_kind
-                    .entry(kind.clone())
-                    .or_insert(0) += *bytes;
-            }
-        }
-
-        let status = if timed_out_retained_count > 0
-            || rejected_count > 0
-            || approximate_payload_bytes >= CONFIRMATION_BUFFER_DEGRADED_BYTES
-        {
-            GatewayHealthStatus::Degraded
-        } else {
-            GatewayHealthStatus::Healthy
-        };
-        let memory_owner = confirmation_buffer_memory_owner(
-            active_payload_bytes,
-            timed_out_retained_payload_bytes,
-            rejected_count,
-            late_confirmation_count,
-        );
-        let top_kind = approximate_payload_bytes_by_kind
-            .iter()
-            .max_by_key(|(_, bytes)| *bytes)
-            .map(|(kind, bytes)| format!(", top_kind={kind} ({bytes} bytes)"))
-            .unwrap_or_default();
-        let detail = format!(
-            "confirmation buffers: observed={}, pending={}, timed_out_retained={}, rejected={}, late_confirmations={}, pressure_level={}, runtime_action={}, retained_payload_bytes={}, approximate_payload_bytes={}, active_payload_bytes={}, timed_out_retained_payload_bytes={}, memory_owner={}{}",
-            snapshots.len(),
-            pending_count,
-            timed_out_retained_count,
-            rejected_count,
-            late_confirmation_count,
-            pressure_level.as_str(),
-            runtime_action,
-            retained_payload_bytes,
-            approximate_payload_bytes,
-            active_payload_bytes,
-            timed_out_retained_payload_bytes,
-            memory_owner.as_str(),
-            top_kind
-        );
-
-        ConfirmationBufferHealth {
-            status,
-            connected: true,
-            memory_owner,
-            pressure_level: confirmation_pressure_level(pressure_level),
-            runtime_action,
-            observed_buffers: snapshots.len(),
-            pending_count,
-            timed_out_retained_count,
-            rejected_count,
-            late_confirmation_count,
-            retained_payload_bytes,
-            approximate_payload_bytes,
-            active_payload_bytes,
-            timed_out_retained_payload_bytes,
-            approximate_payload_bytes_by_kind,
-            detail,
-        }
-    }
-
     /// Produce a unified health report for the gateway.
     ///
     /// Covers:
@@ -655,7 +498,6 @@ impl ServiceContainer {
 
         let nats = self.probe_nats_active().await;
         let raw_ingest_dlq = self.probe_raw_ingest_dlq_pressure().await;
-        let confirmation_buffer = self.probe_confirmation_buffer_pressure().await;
         let replay = self.replay_control_status();
         let sse_confirmation = self.sse_confirmation_status();
         let mut degradation_reasons = Vec::new();
@@ -676,9 +518,6 @@ impl ServiceContainer {
         if raw_ingest_dlq.status == GatewayHealthStatus::Degraded {
             degradation_reasons.push(raw_ingest_dlq.detail.clone());
         }
-        if confirmation_buffer.status == GatewayHealthStatus::Degraded {
-            degradation_reasons.push(confirmation_buffer.detail.clone());
-        }
         if !sse_confirmation.running {
             degradation_reasons.push("SSE confirmation bus not running".to_string());
         } else if sse_confirmation.degraded {
@@ -688,7 +527,6 @@ impl ServiceContainer {
         let healthy = db_ok
             && nats.connected
             && raw_ingest_dlq.status != GatewayHealthStatus::Degraded
-            && confirmation_buffer.status != GatewayHealthStatus::Degraded
             && replay.connected
             && !sse_confirmation.degraded;
         // Gateway is ready to serve end-to-end RPC traffic only when both
@@ -710,52 +548,12 @@ impl ServiceContainer {
             db_detail,
             nats,
             raw_ingest_dlq,
-            confirmation_buffer,
             replay,
             sse_confirmation,
             healthy,
             serving,
             degradation_reasons,
         }
-    }
-}
-
-fn confirmation_buffer_memory_owner(
-    active_payload_bytes: usize,
-    timed_out_retained_payload_bytes: usize,
-    rejected_count: u64,
-    late_confirmation_count: u64,
-) -> ConfirmationBufferMemoryOwner {
-    if timed_out_retained_payload_bytes > 0 {
-        ConfirmationBufferMemoryOwner::TimedOutGracePayloads
-    } else if active_payload_bytes > 0 {
-        ConfirmationBufferMemoryOwner::ActivePendingPayloads
-    } else if rejected_count > 0 || late_confirmation_count > 0 {
-        ConfirmationBufferMemoryOwner::CountersOnly
-    } else {
-        ConfirmationBufferMemoryOwner::None
-    }
-}
-
-fn strongest_confirmation_pressure(
-    current: crate::runtime::ConfirmationBufferPressureLevel,
-    candidate: crate::runtime::ConfirmationBufferPressureLevel,
-) -> crate::runtime::ConfirmationBufferPressureLevel {
-    use crate::runtime::ConfirmationBufferPressureLevel::{Critical, Nominal, Warning};
-    match (current, candidate) {
-        (Critical, _) | (_, Critical) => Critical,
-        (Warning, _) | (_, Warning) => Warning,
-        (Nominal, Nominal) => Nominal,
-    }
-}
-
-fn confirmation_pressure_level(
-    level: crate::runtime::ConfirmationBufferPressureLevel,
-) -> RuntimePressureLevel {
-    match level {
-        crate::runtime::ConfirmationBufferPressureLevel::Nominal => RuntimePressureLevel::Nominal,
-        crate::runtime::ConfirmationBufferPressureLevel::Warning => RuntimePressureLevel::Warning,
-        crate::runtime::ConfirmationBufferPressureLevel::Critical => RuntimePressureLevel::Critical,
     }
 }
 
@@ -785,8 +583,6 @@ pub struct GatewayHealthReport {
     pub nats: NatsHealthProbe,
     /// Raw-ingest DLQ pressure state.
     pub raw_ingest_dlq: RawIngestDlqHealth,
-    /// Confirmation-buffer pressure and retained-payload attribution.
-    pub confirmation_buffer: ConfirmationBufferHealth,
     /// Replay control bus status
     pub replay: ReplayControlStatus,
     /// SSE confirmation fan-out status
