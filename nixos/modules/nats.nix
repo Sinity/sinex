@@ -72,8 +72,6 @@ let
   sharedClientBaseSubjects = map prefixSubject [
     "events.raw.>"
     "events.confirmed.>"
-    "events.confirmations.>"
-    "events.confirmation_retries.>"
     "events.processing_failures.>"
     "events.dlq.>"
     "source_material.frames.>"
@@ -473,25 +471,11 @@ in
             maxBytes = natsCliMaxBytes;
           }
           {
-            name = "SINEX_RAW_EVENTS_CONFIRMATIONS";
-            subjects = [ "events.confirmations.>" ];
-            maxAge = "72h";
-            maxBytes = natsCliMaxBytes;
-            maxMsgsPerSubject = 1;
-          }
-          {
             name = "SINEX_RAW_EVENTS_DLQ";
             subjects = [ "events.dlq.>" ];
             maxAge = "168h"; # 7d
             maxBytes = natsCliMaxBytes;
             dupeWindow = "1h";
-          }
-          {
-            name = "SINEX_RAW_EVENTS_CONFIRMATION_RETRIES";
-            subjects = [ "events.confirmation_retries.>" ];
-            maxAge = "72h";
-            maxBytes = natsCliMaxBytes;
-            maxMsgsPerSubject = 1;
           }
           {
             name = "SINEX_RAW_EVENTS_PROCESSING_FAILURES";

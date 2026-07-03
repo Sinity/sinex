@@ -305,7 +305,7 @@ async fn jetstream_consumer_survives_transient_db_failure(ctx: TestContext) -> T
 
     let event_id = Uuid::now_v7();
     let confirmation_subject = confirmation_subject_for(
-        &setup.topology.confirmations_prefix,
+        &setup.topology.confirmed_events_prefix,
         &format!("retry.{suffix}"),
         "transient.failure",
     );
@@ -341,7 +341,7 @@ async fn jetstream_consumer_survives_transient_db_failure(ctx: TestContext) -> T
     )
     .await;
 
-    // Confirmations stream should contain the successful confirmation.
+    // Confirmed-events stream should contain the successful confirmed event.
     if timeout(
         Duration::from_secs(Timeouts::SHORT),
         confirmation_sub.next(),
@@ -404,7 +404,7 @@ async fn jetstream_consumer_isolates_poison_row_without_rolling_back_committed_s
     let good_event_id = Uuid::now_v7();
     let bad_event_id = Uuid::now_v7();
     let confirmation_subject = confirmation_subject_for(
-        &setup.topology.confirmations_prefix,
+        &setup.topology.confirmed_events_prefix,
         &format!("split.good.{suffix}"),
         "batch.split.good",
     );
@@ -584,19 +584,18 @@ async fn confirmation_emitted_after_persistence(ctx: TestContext) -> TestResult<
         .await?;
 
     let confirmation_subject = confirmation_subject_for(
-        &setup.topology.confirmations_prefix,
+        &setup.topology.confirmed_events_prefix,
         &format!("confirm.{suffix}"),
         "confirmation.test",
     );
     let msg = wait_for_last_stream_message_by_subject(
         &setup.js,
-        &setup.topology.confirmations_stream,
+        &setup.topology.confirmed_events_stream,
         &confirmation_subject,
     )
     .await?;
     let payload: serde_json::Value = serde_json::from_slice(&msg.payload)?;
-    assert_eq!(payload["event_id"], event_id.to_string());
-    assert_eq!(payload["persisted"], serde_json::Value::Bool(true));
+    assert_eq!(payload["id"], event_id.to_string());
 
     // The event must already be persisted when the confirmation arrives.
     let persisted = ctx.pool.events().get_by_id(event_id.into()).await?;
@@ -610,7 +609,7 @@ async fn confirmation_emitted_after_persistence(ctx: TestContext) -> TestResult<
 }
 
 #[sinex_test]
-async fn jetstream_consumer_queues_durable_confirmation_retries_without_raw_redelivery(
+async fn jetstream_consumer_republishes_confirmed_event_without_raw_redelivery(
     ctx: TestContext,
 ) -> TestResult<()> {
     let ctx = ctx.with_nats().shared().await?;
@@ -661,19 +660,18 @@ async fn jetstream_consumer_queues_durable_confirmation_retries_without_raw_rede
     .await?;
 
     let confirmation_subject = confirmation_subject_for(
-        &setup.topology.confirmations_prefix,
+        &setup.topology.confirmed_events_prefix,
         &format!("confirm-retry.{suffix}"),
         "confirmation.retry",
     );
     let msg = wait_for_last_stream_message_by_subject(
         &setup.js,
-        &setup.topology.confirmations_stream,
+        &setup.topology.confirmed_events_stream,
         &confirmation_subject,
     )
     .await?;
     let payload: serde_json::Value = serde_json::from_slice(&msg.payload)?;
-    assert_eq!(payload["event_id"], event_id.to_string());
-    assert_eq!(payload["persisted"], serde_json::Value::Bool(true));
+    assert_eq!(payload["id"], event_id.to_string());
 
     let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM core.events WHERE id = $1::uuid")
         .bind(event_id)
@@ -1412,10 +1410,10 @@ async fn chaos_injector_produces_clean_snapshot(ctx: TestContext) -> TestResult<
     WaitHelpers::wait_for_condition(
         || {
             let js = setup.js.clone();
-            let confirmations_stream = setup.topology.confirmations_stream.clone();
+            let confirmed_events_stream = setup.topology.confirmed_events_stream.clone();
             async move {
                 let mut stream = js
-                    .get_stream(&confirmations_stream)
+                    .get_stream(&confirmed_events_stream)
                     .await
                     .map_err(|e| SinexError::network(e.to_string()))?;
                 let msgs = stream
@@ -1424,10 +1422,7 @@ async fn chaos_injector_produces_clean_snapshot(ctx: TestContext) -> TestResult<
                     .map_err(|e| SinexError::network(e.to_string()))?
                     .state
                     .messages;
-                // Per #1306, confirmations are per-(source,event_type) watermark
-                // with max_messages_per_subject = 1, so 20 same-kind events
-                // compact to a single confirmation message.
-                Ok::<bool, SinexError>(msgs >= 1)
+                Ok::<bool, SinexError>(msgs >= 20)
             }
         },
         Timeouts::SHORT,
@@ -1435,7 +1430,7 @@ async fn chaos_injector_produces_clean_snapshot(ctx: TestContext) -> TestResult<
     .await?;
     let confirmations = setup
         .js
-        .get_stream(&setup.topology.confirmations_stream)
+        .get_stream(&setup.topology.confirmed_events_stream)
         .await?
         .info()
         .await?
@@ -1458,8 +1453,8 @@ async fn chaos_injector_produces_clean_snapshot(ctx: TestContext) -> TestResult<
     };
 
     snapshot.assert_events_persisted(20)?;
-    // One per-kind confirmation watermark covers all 20 same-kind events (#1306).
-    snapshot.assert_confirmations_received(1)?;
+    // The confirmed-events stream carries one full event per persisted event.
+    snapshot.assert_confirmations_received(20)?;
     snapshot.assert_no_dlq_entries()?;
 
     setup.handle.abort();

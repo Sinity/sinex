@@ -30,12 +30,14 @@ pub fn admission_envelope(source_id: &str, event: serde_json::Value) -> serde_js
     })
 }
 
-/// Per-kind confirmation subject (#1306): confirmations are published per
-/// `(source, event_type)` watermark at `<prefix><source>.<event_type>`, not per
-/// event id.
+/// Confirmed-event subject for material-provenance test events.
 #[allow(dead_code)] // Shared across integration-test crates; each crate compiles its own copy.
 pub fn confirmation_subject_for(prefix: &str, source: &str, event_type: &str) -> String {
-    format!("{prefix}{source}.{event_type}")
+    format!(
+        "{prefix}material.{}.{}",
+        sinex_primitives::environment::SinexEnvironment::nats_subject_token(source),
+        sinex_primitives::environment::SinexEnvironment::nats_subject_token(event_type)
+    )
 }
 
 #[allow(dead_code)] // Shared across integration-test crates; each crate compiles its own copy.
@@ -72,9 +74,7 @@ pub async fn spawn_consumer_and_wait_ready(
     let stream_timeout = Duration::from_secs(Timeouts::SHORT);
     nats.wait_for_stream(js, &topology.events_stream, stream_timeout)
         .await?;
-    nats.wait_for_stream(js, &topology.confirmations_stream, stream_timeout)
-        .await?;
-    nats.wait_for_stream(js, &topology.confirmation_retry_stream, stream_timeout)
+    nats.wait_for_stream(js, &topology.confirmed_events_stream, stream_timeout)
         .await?;
     nats.wait_for_stream(js, &topology.dlq_stream, stream_timeout)
         .await?;

@@ -343,124 +343,49 @@ impl JetStreamConsumer {
             .filter(|prepared| tombstoned_ids.contains(&prepared.parsed_id))
             .collect();
 
-        // Per #1306: per-kind watermark, not per-event.
-        let mut by_kind: HashMap<(String, String), Vec<&PreparedEvent>> = HashMap::new();
-        for prepared in &duplicate_batch {
-            let key = (
-                prepared.event.source.as_str().to_string(),
-                prepared.event.event_type.as_str().to_string(),
-            );
-            by_kind.entry(key).or_default().push(*prepared);
-        }
-
-        let confirmation_futs: Vec<_> = by_kind
-            .into_iter()
-            .filter_map(|(kind, preps)| {
+        let mut ack_messages = Vec::with_capacity(duplicate_batch.len() + tombstoned_batch.len());
+        ack_messages.extend(tombstoned_batch.iter().map(|prepared| &prepared.message));
+        let mut confirmation_durability_gaps = Vec::new();
+        let confirmation_futs: Vec<_> = duplicate_batch
+            .iter()
+            .map(|prepared| {
                 let sem = Arc::clone(&self.confirmation_semaphore);
-                let watermark = Arc::clone(&self.confirmation_watermark);
-                let max_event_id = preps.iter().map(|p| p.parsed_id).max()?;
-                let (source, event_type) = (kind.0.clone(), kind.1.clone());
-                let key = kind;
-                Some(async move {
-                    // Check-only; do not advance the watermark until publish succeeds.
-                    // See the matching comment on the primary batch path above.
-                    let should_publish = {
-                        let wm = watermark.lock().await;
-                        wm.get(&key).copied().is_none_or(|prev| max_event_id > prev)
-                    };
-                    if !should_publish {
-                        return (preps, max_event_id, source, event_type, Ok(()));
-                    }
+                async move {
                     let _permit = match sem.acquire().await {
                         Ok(permit) => permit,
                         Err(error) => {
                             return (
-                                preps,
-                                max_event_id,
-                                source,
-                                event_type,
+                                prepared.parsed_id,
                                 Err(SinexError::processing("confirmation semaphore closed")
                                     .with_std_error(&error)),
                             );
                         }
                     };
                     let result = self
-                        .publish_confirmation_with_retry(&max_event_id, &source, &event_type)
+                        .publish_confirmed_event_with_retry(&prepared.event)
                         .await;
-                    // Advance the watermark only on success, with monotonic guard.
-                    if result.is_ok() {
-                        let mut wm = watermark.lock().await;
-                        let cur = wm.get(&key).copied();
-                        if cur.is_none_or(|prev| max_event_id > prev) {
-                            wm.insert(key, max_event_id);
-                        }
-                    }
-                    (preps, max_event_id, source, event_type, result)
-                })
+                    (prepared.parsed_id, result)
+                }
             })
             .collect();
-        let kind_results = join_all(confirmation_futs).await;
+        let confirmed_publish_failures: HashMap<Uuid, SinexError> = join_all(confirmation_futs)
+            .await
+            .into_iter()
+            .filter_map(|(id, result)| result.err().map(|err| (id, err)))
+            .collect();
 
-        let mut ack_messages = Vec::with_capacity(duplicate_batch.len() + tombstoned_batch.len());
-        ack_messages.extend(tombstoned_batch.iter().map(|prepared| &prepared.message));
-        let mut confirmation_durability_gaps = Vec::new();
-        for (preps, max_event_id, source, event_type, result) in &kind_results {
-            match result {
-                Ok(()) => {
-                    for prepared in preps {
-                        debug!(
-                            event_id = %prepared.parsed_id,
-                            "Re-published confirmation for duplicate already admitted event"
-                        );
-                        ack_messages.push(&prepared.message);
-                    }
-                }
-                Err(err) => {
-                    warn!(
-                        source = %source,
-                        event_type = %event_type,
-                        watermark = %max_event_id,
-                        error = %err,
-                        "Failed to publish duplicate-confirmation watermark after retries"
-                    );
-                    self.stats
-                        .confirmation_failures
-                        .fetch_add(1, Ordering::Relaxed);
-                    match self
-                        .enqueue_confirmation_retry(max_event_id, source, event_type)
-                        .await
-                    {
-                        Ok(()) => {
-                            self.stats
-                                .confirmation_retries_enqueued
-                                .fetch_add(1, Ordering::Relaxed);
-                            for prepared in preps {
-                                ack_messages.push(&prepared.message);
-                            }
-                        }
-                        Err(retry_err) => {
-                            self.stats
-                                .confirmation_retry_failures
-                                .fetch_add(1, Ordering::Relaxed);
-                            for prepared in preps {
-                                confirmation_durability_gaps.push((
-                                    prepared.parsed_id,
-                                    SinexError::network(
-                                        "Duplicate event could not publish a confirmation or durably enqueue its retry",
-                                    )
-                                    .with_context("confirmation_publish_error", err.to_string())
-                                    .with_context(
-                                        "confirmation_retry_enqueue_error",
-                                        retry_err.to_string(),
-                                    )
-                                    .with_context("kind_source", source.clone())
-                                    .with_context("kind_event_type", event_type.clone())
-                                    .with_context("kind_watermark", max_event_id.to_string()),
-                                ));
-                            }
-                        }
-                    }
-                }
+        for prepared in &duplicate_batch {
+            if let Some(err) = confirmed_publish_failures.get(&prepared.parsed_id) {
+                confirmation_durability_gaps.push((
+                    prepared.parsed_id,
+                    Self::confirmed_event_durability_gap_error(prepared.parsed_id, err),
+                ));
+            } else {
+                debug!(
+                    event_id = %prepared.parsed_id,
+                    "Re-published confirmed event for duplicate already admitted event"
+                );
+                ack_messages.push(&prepared.message);
             }
         }
 

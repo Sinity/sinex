@@ -7,7 +7,7 @@ async fn jetstream_test_helper_creates_topology(ctx: Sandbox) -> TestResult<()> 
 
     // Verify topology was created
     assert!(!helper.topology().events_stream.is_empty());
-    assert!(!helper.topology().confirmations_stream.is_empty());
+    assert!(!helper.topology().confirmed_events_stream.is_empty());
     assert!(!helper.topology().dlq_stream.is_empty());
 
     // Verify DLQ is empty initially

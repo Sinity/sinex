@@ -573,8 +573,8 @@ async fn ensure_default_bridge_streams(client: &async_nats::Client) -> TestResul
     })
     .await?;
     js.get_or_create_stream(jetstream::stream::Config {
-        name: topology.confirmations_stream.into(),
-        subjects: vec![topology.confirmations_subject.into()],
+        name: topology.confirmed_events_stream.into(),
+        subjects: vec![topology.confirmed_events_subject.into()],
         storage: jetstream::stream::StorageType::Memory,
         ..Default::default()
     })
@@ -663,27 +663,24 @@ async fn publish_confirmed_raw_event(
         .publish(raw_subject, serde_json::to_vec(event)?.into())
         .await?;
 
-    let event_id = event
-        .id
-        .as_ref()
-        .ok_or_else(|| color_eyre::eyre::eyre!("test event is missing an id"))?;
+    if event.id.is_none() {
+        return Err(color_eyre::eyre::eyre!("test event is missing an id"));
+    }
+    let provenance = if event.is_synthesized_event() {
+        "synthesized"
+    } else {
+        "material"
+    };
     let confirmation_subject = env.nats_subject(&format!(
-        "events.confirmations.{}.{}",
-        event.source.as_str(),
-        event.event_type.as_str()
-    ));
-    let confirmation = serde_json::json!({
-        "event_id": event_id.to_string(),
-        "source": event.source.as_str(),
-        "event_type": event.event_type.as_str(),
-        "persisted": true,
-        "ts_ingest": Timestamp::now().format_rfc3339(),
-    });
-    client
-        .publish(
-            confirmation_subject,
-            serde_json::to_vec(&confirmation)?.into(),
+        "events.confirmed.{}.{}.{}",
+        provenance,
+        sinex_primitives::environment::SinexEnvironment::nats_subject_token(event.source.as_str()),
+        sinex_primitives::environment::SinexEnvironment::nats_subject_token(
+            event.event_type.as_str()
         )
+    ));
+    client
+        .publish(confirmation_subject, serde_json::to_vec(event)?.into())
         .await?;
     client.flush().await?;
     Ok(())

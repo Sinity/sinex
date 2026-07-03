@@ -149,16 +149,11 @@ impl<T: RuntimeModule + 'static> RuntimeRunner<T> {
         let transport_type = "NATS";
 
         // Determine if automaton to enable LeaderStandby
-        let confirmation_buffer_opt = if matches!(self.module.module_kind(), ModuleKind::Automaton)
-        {
+        if matches!(self.module.module_kind(), ModuleKind::Automaton) {
             self.processing_model = ProcessingModel::LeaderStandby;
-            Some(Arc::new(crate::runtime::ConfirmationBuffer::new(
-                std::time::Duration::from_mins(1),
-            )))
         } else {
             self.processing_model = ProcessingModel::StatelessWorker;
-            None
-        };
+        }
 
         #[cfg(feature = "db")]
         let module_run_id = if let Some(pool) = db_pool.as_ref() {
@@ -203,7 +198,6 @@ impl<T: RuntimeModule + 'static> RuntimeRunner<T> {
                     checkpoint_manager.clone(),
                     event_emitter.clone(),
                     transport_for_context,
-                    confirmation_buffer_opt,
                     schema_cache.clone(),
                 )
             } else {
@@ -211,7 +205,6 @@ impl<T: RuntimeModule + 'static> RuntimeRunner<T> {
                     checkpoint_manager.clone(),
                     event_emitter.clone(),
                     transport_for_context,
-                    confirmation_buffer_opt,
                     schema_cache.clone(),
                 )
             }
@@ -221,7 +214,6 @@ impl<T: RuntimeModule + 'static> RuntimeRunner<T> {
                 checkpoint_manager.clone(),
                 event_emitter.clone(),
                 transport_for_context,
-                confirmation_buffer_opt,
                 schema_cache.clone(),
             )
         };

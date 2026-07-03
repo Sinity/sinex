@@ -25,7 +25,7 @@
 use crate::runtime::SelfObserver;
 use crate::runtime::heartbeat::HeartbeatCounterHandle;
 use crate::runtime::stream::{
-    PullConsumerSpec, ensure_pull_consumer, pull_batch, pull_batch_bounded,
+    PullConsumerSpec, ensure_pull_consumer, pull_batch_bounded,
 };
 use async_nats::jetstream::stream::DiscardPolicy;
 use async_nats::{Client as NatsClient, jetstream};
@@ -144,10 +144,6 @@ pub struct JetStreamConsumer {
     /// When true, refuse missing durable + `DeliverPolicy::All` startup if the
     /// raw-event stream is non-empty.
     reject_initial_replay: bool,
-    /// Per-(source, `event_type`) high-watermark of latest confirmed `event_id`.
-    /// Used by the per-kind compaction strategy in `publish_confirmations_for_batch`
-    /// to skip publishes that would not advance the watermark. Per #1306.
-    confirmation_watermark: Arc<tokio::sync::Mutex<HashMap<(String, String), Uuid>>>,
     /// Per-stream pressure warning counters used to keep saturated RAW/DLQ
     /// capacity samples from becoming their own journald feedback stream.
     stream_pressure_warning_state:

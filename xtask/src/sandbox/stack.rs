@@ -124,8 +124,8 @@ impl<'ctx> TestCoreStack<'ctx> {
             rpc_token: Some(rpc_token.clone()),
             rpc_rate_limit_disabled: true,
             // MUST match the event_engine namespace above: the SSE SubscriptionBus
-            // subscribes to `{namespace}.events.confirmations.>`, so without this
-            // the bus never sees the namespaced event_engine's confirmations and the
+            // subscribes to `{namespace}.events.confirmed.>`, so without this
+            // the bus never sees the namespaced event_engine's confirmed events and the
             // real event_engine → bus → SSE delivery path silently never completes.
             namespace: Some(namespace.clone()),
         };

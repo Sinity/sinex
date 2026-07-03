@@ -54,7 +54,6 @@ impl JetStreamConsumer {
             ),
             startup_catch_up_max_concurrent: 4,
             reject_initial_replay: true,
-            confirmation_watermark: Arc::new(tokio::sync::Mutex::new(HashMap::new())),
             stream_pressure_warning_state: Arc::new(tokio::sync::Mutex::new(HashMap::new())),
         }
     }

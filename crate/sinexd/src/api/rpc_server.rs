@@ -755,15 +755,12 @@ pub async fn spawn(
     let (sse_bus, sse_bus_task) = if let Some(nats_client) = services.nats_client().cloned() {
         let bus = Arc::new(crate::api::sse_bus::SubscriptionBus::new());
         services.attach_sse_bus(Arc::clone(&bus));
-        let pool = services.pool().clone();
         let env = services.environment().clone();
         let namespace = config.namespace.clone();
         let bus_shutdown = shutdown_rx.clone();
         let bus_ref = Arc::clone(&bus);
         let task = tokio::spawn(async move {
-            bus_ref
-                .run(nats_client, pool, env, namespace, bus_shutdown)
-                .await;
+            bus_ref.run(nats_client, env, namespace, bus_shutdown).await;
         });
         info!("SSE subscription bus spawned");
         (Some(bus), Some(task))
