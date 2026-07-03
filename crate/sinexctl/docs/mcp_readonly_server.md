@@ -65,8 +65,10 @@ control plane and not an actuator.
 | `sinex_source_identifier_continuity` |
 | `sinex_source_material` |
 | `sinex_source_materials` |
+| `sinex_source_package_completeness` |
 | `sinex_source_presets` |
 | `sinex_source_readiness` |
+| `sinex_source_remediation_plan` |
 | `sinex_source_stats` |
 | `sinex_sources_active` |
 | `sinex_sources_registry` |
