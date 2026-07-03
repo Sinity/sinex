@@ -45,9 +45,15 @@ async fn context_machine_output_uses_view_envelope_json() -> xtask::sandbox::Tes
     };
     let sources = grouped_context_sources(&event_cards.cards);
     let window = build_context_window("2h", None, Timestamp::now())?;
-    let output =
-        render_context_machine_output(&event_cards, &sources, &window, OutputFormat::Json)?
-            .ok_or_else(|| color_eyre::eyre::eyre!("json output expected"))?;
+    let output = render_context_machine_output(
+        &event_cards,
+        &sources,
+        &window,
+        OutputFormat::Json,
+        "sinexctl.context",
+        "events context",
+    )?
+    .ok_or_else(|| color_eyre::eyre::eyre!("json output expected"))?;
     let value: serde_json::Value = serde_json::from_str(&output)?;
 
     assert_eq!(value["schema_version"], VIEW_ENVELOPE_SCHEMA_VERSION);
@@ -79,13 +85,38 @@ async fn context_machine_output_uses_view_envelope_json() -> xtask::sandbox::Tes
 }
 
 #[sinex_test]
+async fn recall_machine_output_uses_recall_surface() -> xtask::sandbox::TestResult<()> {
+    let event_cards = EventCardListView {
+        schema_version: EVENT_CARD_LIST_SCHEMA_VERSION.to_string(),
+        count: 1,
+        cards: vec![context_event("browser.history", "webhistory.page.visited")],
+        next_cursor: None,
+        total_estimate: None,
+    };
+    let sources = grouped_context_sources(&event_cards.cards);
+    let window = build_context_window("30m", Some("2026-07-02T19:00:00Z"), Timestamp::now())?;
+    let output = render_context_machine_output(
+        &event_cards,
+        &sources,
+        &window,
+        OutputFormat::Json,
+        "sinexctl.recall",
+        "recall",
+    )?
+    .ok_or_else(|| color_eyre::eyre::eyre!("json output expected"))?;
+    let value: serde_json::Value = serde_json::from_str(&output)?;
+
+    assert_eq!(value["source_surface"], "sinexctl.recall");
+    assert_eq!(value["query_echo"]["since"], "30m");
+    assert_eq!(value["query_echo"]["until"], "2026-07-02T19:00:00Z");
+    assert_eq!(value["payload"]["source_count"], 1);
+    Ok(())
+}
+
+#[sinex_test]
 async fn context_window_accepts_absolute_since_and_until() -> xtask::sandbox::TestResult<()> {
     let now = Timestamp::parse_rfc3339("2026-07-02T20:00:00Z")?;
-    let window = build_context_window(
-        "2026-07-02T18:00:00Z",
-        Some("2026-07-02T19:00:00Z"),
-        now,
-    )?;
+    let window = build_context_window("2026-07-02T18:00:00Z", Some("2026-07-02T19:00:00Z"), now)?;
 
     assert_eq!(
         window.time_range.start(),
@@ -101,8 +132,8 @@ async fn context_window_accepts_absolute_since_and_until() -> xtask::sandbox::Te
 }
 
 #[sinex_test]
-async fn context_window_measures_duration_since_from_until_bound()
--> xtask::sandbox::TestResult<()> {
+async fn context_window_measures_duration_since_from_until_bound() -> xtask::sandbox::TestResult<()>
+{
     let now = Timestamp::parse_rfc3339("2026-07-02T20:00:00Z")?;
     let window = build_context_window("30m", Some("2026-07-02T19:00:00Z"), now)?;
 
@@ -138,9 +169,11 @@ async fn context_diversity_merge_adds_missing_sources_once() -> xtask::sandbox::
     let sources = grouped_context_sources(&event_cards.cards);
     assert_eq!(event_cards.count, 2);
     assert_eq!(sources.len(), 2);
-    assert!(sources
-        .iter()
-        .any(|(source, _)| source.as_str() == "shell.atuin"));
+    assert!(
+        sources
+            .iter()
+            .any(|(source, _)| source.as_str() == "shell.atuin")
+    );
     assert_eq!(
         sources
             .iter()
@@ -162,15 +195,21 @@ async fn context_machine_output_rejects_ndjson() -> xtask::sandbox::TestResult<(
     };
     let sources = grouped_context_sources(&event_cards.cards);
     let window = build_context_window("2h", None, Timestamp::now())?;
-    let result =
-        render_context_machine_output(&event_cards, &sources, &window, OutputFormat::Ndjson);
+    let result = render_context_machine_output(
+        &event_cards,
+        &sources,
+        &window,
+        OutputFormat::Ndjson,
+        "sinexctl.context",
+        "events context",
+    );
     assert!(result.is_err(), "context must remain a finite view");
     Ok(())
 }
 
 #[sinex_test]
-async fn desktop_context_json_uses_typed_view_with_missing_inputs()
--> xtask::sandbox::TestResult<()> {
+async fn desktop_context_json_uses_typed_view_with_missing_inputs() -> xtask::sandbox::TestResult<()>
+{
     let mut terminal_card = context_event("shell.atuin", "command.executed");
     terminal_card.caveats.push(CaveatView {
         id: "policy.disclosure_applied".to_string(),
@@ -248,8 +287,8 @@ async fn desktop_context_json_uses_typed_view_with_missing_inputs()
 }
 
 #[sinex_test]
-async fn desktop_context_classifies_activitywatch_browser_events()
--> xtask::sandbox::TestResult<()> {
+async fn desktop_context_classifies_activitywatch_browser_events() -> xtask::sandbox::TestResult<()>
+{
     let event_cards = EventCardListView {
         schema_version: EVENT_CARD_LIST_SCHEMA_VERSION.to_string(),
         count: 2,
@@ -347,8 +386,7 @@ async fn desktop_context_candidates_are_evidence_backed_view_output()
 }
 
 #[sinex_test]
-async fn desktop_context_table_shows_candidate_evidence_counts()
--> xtask::sandbox::TestResult<()> {
+async fn desktop_context_table_shows_candidate_evidence_counts() -> xtask::sandbox::TestResult<()> {
     let event_cards = EventCardListView {
         schema_version: EVENT_CARD_LIST_SCHEMA_VERSION.to_string(),
         count: 2,
@@ -438,8 +476,8 @@ async fn desktop_context_explain_returns_evidence_window() -> xtask::sandbox::Te
 }
 
 #[sinex_test]
-async fn desktop_context_explain_surfaces_missing_input_caveats()
--> xtask::sandbox::TestResult<()> {
+async fn desktop_context_explain_surfaces_missing_input_caveats() -> xtask::sandbox::TestResult<()>
+{
     let event_cards = EventCardListView {
         schema_version: EVENT_CARD_LIST_SCHEMA_VERSION.to_string(),
         count: 1,
@@ -463,11 +501,12 @@ async fn desktop_context_explain_surfaces_missing_input_caveats()
     assert!(
         value["payload"]["expansion_trace"]["steps"]
             .as_array()
-            .is_some_and(|steps| steps.iter().any(|step| step["kind"]
-                == "coverage_gap_caveat"
-                && step["detail"]
-                    .as_str()
-                    .is_some_and(|detail| detail.contains("browser input caveat"))))
+            .is_some_and(|steps| steps
+                .iter()
+                .any(|step| step["kind"] == "coverage_gap_caveat"
+                    && step["detail"]
+                        .as_str()
+                        .is_some_and(|detail| detail.contains("browser input caveat"))))
     );
     assert!(value["caveats"].as_array().is_some_and(|caveats| {
         caveats
@@ -542,8 +581,7 @@ async fn desktop_notification_pressure_counts_notification_evidence()
 }
 
 #[sinex_test]
-async fn desktop_notification_pressure_bounds_evidence_refs() -> xtask::sandbox::TestResult<()>
-{
+async fn desktop_notification_pressure_bounds_evidence_refs() -> xtask::sandbox::TestResult<()> {
     let mut cards = Vec::new();
     for index in 0..(MAX_NOTIFICATION_PRESSURE_EVIDENCE_REFS + 3) {
         cards.push(context_event_with_ref(
@@ -598,8 +636,8 @@ async fn desktop_notification_pressure_bounds_evidence_refs() -> xtask::sandbox:
 }
 
 #[sinex_test]
-async fn desktop_focus_sessions_project_recent_activity_evidence()
--> xtask::sandbox::TestResult<()> {
+async fn desktop_focus_sessions_project_recent_activity_evidence() -> xtask::sandbox::TestResult<()>
+{
     let event_cards = EventCardListView {
         schema_version: EVENT_CARD_LIST_SCHEMA_VERSION.to_string(),
         count: 4,
@@ -771,11 +809,11 @@ async fn desktop_project_contexts_project_ranked_activity_evidence()
             .is_some_and(|label| { label.starts_with("terminal activity:") })
     );
     assert!(
-        row["input_families"].as_array().is_some_and(|families| [
-            "browser", "desktop", "terminal"
-        ]
-        .iter()
-        .all(|family| families.iter().any(|value| value == family))),
+        row["input_families"]
+            .as_array()
+            .is_some_and(|families| ["browser", "desktop", "terminal"]
+                .iter()
+                .all(|family| families.iter().any(|value| value == family))),
         "project-context projection should classify desktop, terminal, and browser evidence: {row:?}"
     );
     let refs = row["evidence_refs"]

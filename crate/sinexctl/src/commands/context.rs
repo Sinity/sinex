@@ -106,101 +106,201 @@ pub struct ContextCommand {
     project_contexts: bool,
 }
 
+/// Recall activity around a point in time using the shared context substrate.
+#[derive(Debug, Args)]
+#[command(after_help = "\
+EXAMPLES:
+    # Recall the last 2 hours
+    sinexctl recall
+
+    # Recall the 4 hours leading up to a known point
+    sinexctl recall --at 2026-07-02T19:00:00Z --window 4h
+
+    # Machine-readable recall packet
+    sinexctl recall --window 30m --format json
+")]
+pub struct RecallCommand {
+    /// Time anchor/end bound for the recall window (default: now)
+    #[arg(long)]
+    at: Option<String>,
+
+    /// Lookback window ending at --at (default: 2h)
+    #[arg(long, short = 'w', default_value = "2h")]
+    window: String,
+
+    /// Number of events to fetch (increase for busy systems)
+    #[arg(long, default_value = "200")]
+    limit: i32,
+}
+
 impl ContextCommand {
     pub async fn execute(&self, client: &GatewayClient, format: OutputFormat) -> Result<()> {
         let now = Timestamp::now();
         let window = build_context_window(&self.since, self.until.as_deref(), now)?;
-
-        let query = EventQuery {
-            sources: vec![],
-            event_types: vec![],
-            time_range: Some(window.time_range),
-            payload: None,
-            limit: i64::from(self.limit),
-            direction: SortDirection::Desc,
-            ..Default::default()
+        let request = ContextRequest {
+            window,
+            limit: self.limit,
+            machine_source_surface: "sinexctl.context",
+            finite_error_label: "events context",
+            table_title: "Context",
         };
-
-        let mut event_cards = client.event_cards(query).await?;
-        top_up_context_diversity(client, &mut event_cards, &window).await?;
-
-        let sources = grouped_context_sources(&event_cards.cards);
-        if self.desktop {
-            let output = render_desktop_context_output(
-                &event_cards,
-                &sources,
-                &window.since,
-                format,
-                self.explain,
-                self.notification_pressure,
-                self.focus_sessions,
-                self.project_contexts,
-            )?;
-            println!("{output}");
-            return Ok(());
-        }
-
-        if let Some(output) =
-            render_context_machine_output(&event_cards, &sources, &window, format)?
-        {
-            println!("{output}");
-            return Ok(());
-        }
-
-        if event_cards.cards.is_empty() {
-            println!(
-                "{} No activity found in {}",
-                style("○").dim(),
-                window.label()
-            );
-            return Ok(());
-        }
-
-        println!(
-            "{} {}",
-            style(format!("Context ({}):", window.label()))
-                .bold()
-                .cyan(),
-            style(format!("{} sources", sources.len())).dim()
-        );
-        println!("{}", style("─".repeat(60)).dim());
-
-        // Column widths: source label padded to longest name for alignment
-        let max_source_len = sources
-            .iter()
-            .map(|(source, _)| display_source(source).len())
-            .max()
-            .unwrap_or(10);
-        let label_width = max_source_len.max(8);
-
-        for (source_key, card) in &sources {
-            let label = display_source(source_key);
-            let age = card
-                .timestamp
-                .original
-                .map_or_else(|| "?".to_string(), |ts| format_age(now - ts));
-
-            let detail = truncate(&card.summary, 55);
-
-            println!(
-                "  {:<label_width$}  {}  {}",
-                style(&label).cyan(),
-                style(format!("{age:>6}")).dim(),
-                detail,
-                label_width = label_width,
-            );
-        }
-
-        println!("{}", style("─".repeat(60)).dim());
-        println!(
-            "  {} events across {} sources in {}",
-            style(event_cards.count).bold(),
-            style(sources.len()).bold(),
-            window.label(),
-        );
-
-        Ok(())
+        execute_context_request(
+            client,
+            format,
+            request,
+            ContextDesktopMode {
+                desktop: self.desktop,
+                explain: self.explain,
+                notification_pressure: self.notification_pressure,
+                focus_sessions: self.focus_sessions,
+                project_contexts: self.project_contexts,
+            },
+        )
+        .await
     }
+}
+
+impl RecallCommand {
+    pub async fn execute(&self, client: &GatewayClient, format: OutputFormat) -> Result<()> {
+        let now = Timestamp::now();
+        let window = build_context_window(&self.window, self.at.as_deref(), now)?;
+        let request = ContextRequest {
+            window,
+            limit: self.limit,
+            machine_source_surface: "sinexctl.recall",
+            finite_error_label: "recall",
+            table_title: "Recall",
+        };
+        execute_context_request(client, format, request, ContextDesktopMode::default()).await
+    }
+}
+
+#[derive(Debug)]
+struct ContextRequest {
+    window: ContextWindow,
+    limit: i32,
+    machine_source_surface: &'static str,
+    finite_error_label: &'static str,
+    table_title: &'static str,
+}
+
+#[derive(Debug, Default)]
+struct ContextDesktopMode {
+    desktop: bool,
+    explain: bool,
+    notification_pressure: bool,
+    focus_sessions: bool,
+    project_contexts: bool,
+}
+
+async fn execute_context_request(
+    client: &GatewayClient,
+    format: OutputFormat,
+    request: ContextRequest,
+    desktop_mode: ContextDesktopMode,
+) -> Result<()> {
+    let ContextRequest {
+        window,
+        limit,
+        machine_source_surface,
+        finite_error_label,
+        table_title,
+    } = request;
+
+    let query = EventQuery {
+        sources: vec![],
+        event_types: vec![],
+        time_range: Some(window.time_range),
+        payload: None,
+        limit: i64::from(limit),
+        direction: SortDirection::Desc,
+        ..Default::default()
+    };
+
+    let mut event_cards = client.event_cards(query).await?;
+    top_up_context_diversity(client, &mut event_cards, &window).await?;
+
+    let sources = grouped_context_sources(&event_cards.cards);
+    if desktop_mode.desktop {
+        let output = render_desktop_context_output(
+            &event_cards,
+            &sources,
+            &window.since,
+            format,
+            desktop_mode.explain,
+            desktop_mode.notification_pressure,
+            desktop_mode.focus_sessions,
+            desktop_mode.project_contexts,
+        )?;
+        println!("{output}");
+        return Ok(());
+    }
+
+    if let Some(output) = render_context_machine_output(
+        &event_cards,
+        &sources,
+        &window,
+        format,
+        machine_source_surface,
+        finite_error_label,
+    )? {
+        println!("{output}");
+        return Ok(());
+    }
+
+    if event_cards.cards.is_empty() {
+        println!(
+            "{} No activity found in {}",
+            style("○").dim(),
+            window.label()
+        );
+        return Ok(());
+    }
+
+    println!(
+        "{} {}",
+        style(format!("{table_title} ({}):", window.label()))
+            .bold()
+            .cyan(),
+        style(format!("{} sources", sources.len())).dim()
+    );
+    println!("{}", style("─".repeat(60)).dim());
+
+    let now = Timestamp::now();
+    let max_source_len = sources
+        .iter()
+        .map(|(source, _)| display_source(source).len())
+        .max()
+        .unwrap_or(10);
+    let label_width = max_source_len.max(8);
+
+    for (source_key, card) in &sources {
+        let label = display_source(source_key);
+        let age = card
+            .timestamp
+            .original
+            .map_or_else(|| "?".to_string(), |ts| format_age(now - ts));
+
+        let detail = truncate(&card.summary, 55);
+
+        println!(
+            "  {:<label_width$}  {}  {}",
+            style(&label).cyan(),
+            style(format!("{age:>6}")).dim(),
+            detail,
+            label_width = label_width,
+        );
+    }
+
+    println!("{}", style("─".repeat(60)).dim());
+    println!(
+        "  {} events across {} sources in {}",
+        style(event_cards.count).bold(),
+        style(sources.len()).bold(),
+        window.label(),
+    );
+
+    Ok(())
 }
 
 #[derive(Debug, Clone)]
@@ -313,6 +413,8 @@ fn render_context_machine_output(
     sources: &[(String, &EventCardView)],
     window: &ContextWindow,
     format: OutputFormat,
+    source_surface: &'static str,
+    finite_error_label: &'static str,
 ) -> Result<Option<String>> {
     match format {
         OutputFormat::Table => Ok(None),
@@ -327,7 +429,7 @@ fn render_context_machine_output(
                 })
                 .collect();
             let envelope = ViewEnvelope::new(
-                "sinexctl.context",
+                source_surface,
                 ContextSummaryView::new(&window.since, event_cards.count, source_views),
             )
             .with_query_echo(window.query_echo());
@@ -335,7 +437,7 @@ fn render_context_machine_output(
             render_envelope(&envelope, &envelope.payload.sources, format)
         }
         OutputFormat::Ndjson | OutputFormat::Dot => Err(color_eyre::eyre::eyre!(
-            "events context is a finite view; use json, yaml, or table"
+            "{finite_error_label} is a finite view; use json, yaml, or table"
         )),
     }
 }
