@@ -92,5 +92,6 @@ fn test_plan(impact_filter: Option<String>, decisions: Vec<ImpactDecision>) -> I
         decisions,
         accepted_risks: Vec::new(),
         evidence_gaps: Vec::new(),
+        stale_evidence: Vec::new(),
     }
 }

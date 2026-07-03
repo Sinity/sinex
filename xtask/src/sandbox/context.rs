@@ -114,6 +114,7 @@ struct TestExecutionManifestArtifact<'a> {
     pid: u32,
     attempt_id: String,
     planner_version: &'static str,
+    content_hash: Option<String>,
 }
 
 #[derive(Debug, serde::Serialize)]
@@ -1525,6 +1526,7 @@ pub fn persist_test_execution_manifest(
             .ok()
             .unwrap_or_else(|| "1".to_string()),
         planner_version: crate::impact::IMPACT_PLANNER_VERSION,
+        content_hash: crate::impact::hash_file_if_exists(source_file),
     };
     let envelope = ImpactArtifactEnvelope::TestExecutionManifest { manifest };
     let path = dir.join(format!(
