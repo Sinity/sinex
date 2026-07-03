@@ -466,13 +466,18 @@ async fn execute_store(
     database_url: Option<&str>,
     ctx: &CommandContext,
 ) -> Result<CommandResult> {
+    let stack = crate::infra::stack::StackConfig::for_current_checkout()?;
     let database_url = match database_url {
         Some(url) => url.to_string(),
-        None => crate::infra::stack::StackConfig::for_current_checkout()?.database_url(),
+        None => stack.database_url(),
     };
-    let snapshot =
-        crate::runtime_store::query_runtime_store_snapshot(&database_url, window_minutes, limit)
-            .await?;
+    let snapshot = crate::runtime_store::query_runtime_store_snapshot(
+        &database_url,
+        &stack.nats_url(),
+        window_minutes,
+        limit,
+    )
+    .await?;
 
     if ctx.is_json() {
         return Ok(CommandResult::success()
@@ -510,7 +515,14 @@ fn render_store_snapshot(snapshot: &crate::runtime_store::RuntimeStoreSnapshot) 
         snapshot.assessment.browser_history_materials_total,
         snapshot.assessment.browser_history_parsed_events_total
     );
-    println!("  unresolved DLQ: {}", snapshot.assessment.unresolved_dlq);
+    println!(
+        "  DLQ: SQL unresolved {}, JetStream {}",
+        snapshot.dlq.unresolved,
+        snapshot
+            .jetstream
+            .jetstream_dlq_messages
+            .map_or_else(|| "unavailable".to_string(), |count| count.to_string())
+    );
 
     if !snapshot.assessment.warnings.is_empty() {
         println!();
@@ -521,6 +533,7 @@ fn render_store_snapshot(snapshot: &crate::runtime_store::RuntimeStoreSnapshot) 
     }
 
     render_table_estimates(&snapshot.estimated_tables);
+    render_jetstream_snapshot(&snapshot.jetstream);
     render_event_mix(&snapshot.recent_event_mix);
     render_source_rollups("Recent Source Materials", &snapshot.recent_source_materials);
     render_source_rollups(
@@ -528,6 +541,130 @@ fn render_store_snapshot(snapshot: &crate::runtime_store::RuntimeStoreSnapshot) 
         &snapshot.browser_history_materials,
     );
     println!();
+}
+
+fn render_jetstream_snapshot(snapshot: &crate::runtime_store::JetStreamStoreSnapshot) {
+    println!();
+    println!("{}", style("JetStream State:").bold());
+    println!(
+        "  nats: {} ({})",
+        snapshot.nats_url,
+        if snapshot.available {
+            style("available").green().to_string()
+        } else {
+            style("unavailable").red().to_string()
+        }
+    );
+    println!(
+        "  DLQ pair: SQL unresolved {}, JetStream {}",
+        snapshot.sql_dlq_unresolved,
+        snapshot
+            .jetstream_dlq_messages
+            .map_or_else(|| "unavailable".to_string(), |count| count.to_string())
+    );
+    if let Some(error) = &snapshot.error {
+        println!("  error: {error}");
+        return;
+    }
+    if snapshot.streams.is_empty() {
+        return;
+    }
+
+    let mut builder = Builder::new();
+    builder.push_record([
+        "ROLE",
+        "STREAM",
+        "MESSAGES",
+        "BYTES",
+        "FIRST",
+        "LAST",
+        "CONSUMERS",
+        "PENDING",
+        "ACK",
+        "REDEL",
+        "STATUS",
+    ]);
+    for stream in &snapshot.streams {
+        let pending = stream
+            .consumers
+            .iter()
+            .map(|consumer| consumer.num_pending)
+            .sum::<u64>();
+        let ack_pending = stream
+            .consumers
+            .iter()
+            .map(|consumer| consumer.num_ack_pending)
+            .sum::<usize>();
+        let redelivered = stream
+            .consumers
+            .iter()
+            .map(|consumer| consumer.num_redelivered)
+            .sum::<usize>();
+        let status = if let Some(error) = &stream.error {
+            truncate_str(error, 36)
+        } else if !stream.present {
+            "missing".to_string()
+        } else if stream.role == "dlq" && stream.messages.unwrap_or(0) > 0 {
+            "dlq-not-empty".to_string()
+        } else if pending > 0 {
+            "backlog".to_string()
+        } else {
+            "ok".to_string()
+        };
+        builder.push_record([
+            stream.role.as_str(),
+            stream.stream.as_str(),
+            &optional_u64(stream.messages),
+            &stream.bytes.map_or_else(|| "-".to_string(), format_bytes),
+            &optional_u64(stream.first_sequence),
+            &optional_u64(stream.last_sequence),
+            &stream
+                .consumer_count
+                .map_or_else(|| "-".to_string(), |count| count.to_string()),
+            &pending.to_string(),
+            &ack_pending.to_string(),
+            &redelivered.to_string(),
+            &status,
+        ]);
+    }
+    let mut table = builder.build();
+    table.with(Style::sharp());
+    println!("{table}");
+
+    let consumers = snapshot
+        .streams
+        .iter()
+        .flat_map(|stream| {
+            stream
+                .consumers
+                .iter()
+                .map(move |consumer| (stream, consumer))
+        })
+        .collect::<Vec<_>>();
+    if consumers.is_empty() {
+        return;
+    }
+    println!();
+    println!("{}", style("JetStream Consumers:").bold());
+    let mut builder = Builder::new();
+    builder.push_record([
+        "ROLE", "STREAM", "CONSUMER", "PENDING", "ACK", "REDEL", "WAITING", "FILTER",
+    ]);
+    for (stream, consumer) in consumers {
+        builder.push_record([
+            stream.role.as_str(),
+            stream.stream.as_str(),
+            consumer.name.as_str(),
+            &consumer.num_pending.to_string(),
+            &consumer.num_ack_pending.to_string(),
+            &consumer.num_redelivered.to_string(),
+            &consumer.num_waiting.to_string(),
+            &truncate_str(&consumer.filter_subject, 48),
+        ]);
+    }
+    let mut table = builder.build();
+    table.with(Style::sharp());
+    println!("{table}");
 }
 
 fn render_table_estimates(rows: &[crate::runtime_store::TableEstimate]) {
@@ -1130,6 +1267,10 @@ fn format_bytes(bytes: u64) -> String {
 
 fn format_bytes_i64(bytes: i64) -> String {
     u64::try_from(bytes).map_or_else(|_| bytes.to_string(), format_bytes)
+}
+
+fn optional_u64(value: Option<u64>) -> String {
+    value.map_or_else(|| "-".to_string(), |value| value.to_string())
 }
 
 fn format_kib(kib: u64) -> String {
