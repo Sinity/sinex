@@ -3016,36 +3016,197 @@ struct ContextPackArgs {
     limit: i64,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+enum ContextPackScope {
+    Unscoped,
+    ProjectPathUnavailable { requested_project_path: String },
+    SourceHint {
+        requested_project_path: String,
+        source: String,
+    },
+}
+
 fn default_context_limit() -> i64 {
     50
 }
 
 async fn context_pack(client: &GatewayClient, arguments: Value) -> Result<Value> {
     let args: ContextPackArgs = serde_json::from_value(arguments)?;
-    let mut query = EventQuery::default();
-    query.limit = args.limit;
-    // project_path filtering: full project-scoped query needs the
-    // context-pack DTO from #1095. For now, use it as a source prefix
-    // hint when the path looks like a known project name.
-    if let Some(ref path) = args.project_path
-        && let Ok(source) = sinex_primitives::domain::EventSource::new(path.clone())
-    {
-        query.sources = vec![source];
-    }
-    query.validate()?;
+    let (query, scope, caveats) = context_pack_query_and_scope(&args)?;
 
     let event_cards = client.event_cards(query).await?;
 
     let now = sinex_primitives::Timestamp::now();
     let pack = json!({
         "project_path": args.project_path,
+        "scope": scope,
         "events": event_cards,
         "generated_at": now.to_string(),
     });
 
-    Ok(envelope(
+    Ok(envelope_with_caveats(
         "sinex_context_pack",
         &json!(args),
         &json!({ "pack": pack }),
+        caveats,
     ))
+}
+
+fn context_pack_query_and_scope(
+    args: &ContextPackArgs,
+) -> Result<(EventQuery, ContextPackScope, Vec<CaveatView>)> {
+    let mut query = EventQuery::default();
+    query.limit = args.limit;
+
+    let Some(path) = args.project_path.as_deref() else {
+        query.validate()?;
+        return Ok((query, ContextPackScope::Unscoped, Vec::new()));
+    };
+
+    let mut caveats = Vec::new();
+    let scope = match EventSource::new(path.to_string()) {
+        Ok(source) => {
+            let source_id = source.to_string();
+            query.sources = vec![source];
+            caveats.push(context_pack_project_scope_caveat(
+                path,
+                Some(&source_id),
+                "project_path scoping is not yet a true project scope; returning a source-hint filtered context pack until the #1095 DTO / sinex-a4w.3.3 project attribution work lands.",
+            ));
+            ContextPackScope::SourceHint {
+                requested_project_path: path.to_string(),
+                source: source_id,
+            }
+        }
+        Err(_) => {
+            caveats.push(context_pack_project_scope_caveat(
+                path,
+                None,
+                "project_path scoping is unavailable; returning an unscoped context pack until the #1095 DTO / sinex-a4w.3.3 project attribution work lands.",
+            ));
+            ContextPackScope::ProjectPathUnavailable {
+                requested_project_path: path.to_string(),
+            }
+        }
+    };
+
+    query.validate()?;
+    Ok((query, scope, caveats))
+}
+
+fn context_pack_project_scope_caveat(
+    requested_path: &str,
+    source_hint: Option<&str>,
+    message: &str,
+) -> CaveatView {
+    let hint = source_hint
+        .map(|source| format!(" source_hint={source};"))
+        .unwrap_or_default();
+    CaveatView {
+        id: "context_pack.project_scope_unavailable".to_string(),
+        message: format!("{message} requested_project_path={requested_path};{hint}"),
+        ref_: Some(
+            SinexObjectRef::new(SinexObjectKind::ContextPack, "sinex_context_pack.project_path")
+                .with_label("sinex_context_pack project_path"),
+        ),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use serde_json::json;
+    use xtask::sandbox::prelude::*;
+
+    use super::*;
+
+    #[sinex_test]
+    async fn context_pack_project_path_returns_unscoped_with_scope_caveat() -> TestResult<()> {
+        let args = ContextPackArgs {
+            project_path: Some("/realm/project/sinex".to_string()),
+            limit: 7,
+        };
+
+        let (query, scope, caveats) = context_pack_query_and_scope(&args)?;
+
+        assert_eq!(query.limit, 7);
+        assert!(query.sources.is_empty());
+        assert_eq!(
+            scope,
+            ContextPackScope::ProjectPathUnavailable {
+                requested_project_path: "/realm/project/sinex".to_string()
+            }
+        );
+        let caveat = caveats
+            .iter()
+            .find(|caveat| caveat.id == "context_pack.project_scope_unavailable")
+            .expect("real project path must expose scope limitation caveat");
+        assert!(caveat.message.contains("project_path scoping is unavailable"));
+        assert!(caveat.message.contains("sinex-a4w.3.3"));
+        assert_eq!(
+            caveat.ref_.as_ref().map(|object_ref| object_ref.id.as_str()),
+            Some("sinex_context_pack.project_path")
+        );
+
+        let envelope = envelope_with_caveats(
+            "sinex_context_pack",
+            &json!(args),
+            &json!({ "pack": { "scope": scope, "events": [] } }),
+            caveats,
+        );
+        assert!(
+            envelope["caveats"]
+                .as_array()
+                .expect("envelope caveats are an array")
+                .iter()
+                .any(|caveat| caveat["id"] == "context_pack.project_scope_unavailable"),
+            "context-pack envelope must carry the scope limitation caveat: {envelope:?}"
+        );
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn context_pack_source_like_project_path_returns_source_hint_with_caveat(
+    ) -> TestResult<()> {
+        let args = ContextPackArgs {
+            project_path: Some("terminal.atuin-history".to_string()),
+            limit: 3,
+        };
+
+        let (query, scope, caveats) = context_pack_query_and_scope(&args)?;
+
+        assert_eq!(query.limit, 3);
+        assert_eq!(query.sources.len(), 1);
+        assert_eq!(query.sources[0].to_string(), "terminal.atuin-history");
+        assert_eq!(
+            scope,
+            ContextPackScope::SourceHint {
+                requested_project_path: "terminal.atuin-history".to_string(),
+                source: "terminal.atuin-history".to_string(),
+            }
+        );
+        let caveat = caveats
+            .iter()
+            .find(|caveat| caveat.id == "context_pack.project_scope_unavailable")
+            .expect("source-hint fallback must still expose scope limitation caveat");
+        assert!(caveat.message.contains("source-hint filtered"));
+        assert!(caveat.message.contains("source_hint=terminal.atuin-history"));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn context_pack_without_project_path_has_no_scope_caveat() -> TestResult<()> {
+        let args = ContextPackArgs {
+            project_path: None,
+            limit: 5,
+        };
+
+        let (query, scope, caveats) = context_pack_query_and_scope(&args)?;
+
+        assert_eq!(query.limit, 5);
+        assert!(query.sources.is_empty());
+        assert_eq!(scope, ContextPackScope::Unscoped);
+        assert!(caveats.is_empty());
+        Ok(())
+    }
 }
