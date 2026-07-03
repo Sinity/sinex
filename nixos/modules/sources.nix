@@ -1298,8 +1298,34 @@ let
       # ChainedAdapter<SqliteRowAdapter, AppendOnlyFileAdapter>. The
       # ChainedConfig shape is `{primary, secondary, interleaved}` where
       # primary is SqliteRowConfig and secondary is AppendOnlyFileConfig.
-      primarySqlitePath =
-        if sat.sqliteSources != [ ] then (builtins.head sat.sqliteSources).path else "";
+      primarySqliteSource =
+        if sat.sqliteSources != [ ] then builtins.head sat.sqliteSources else null;
+      browserSqliteAdapterConfig = source:
+        let
+          chromiumQuery = ''
+            SELECT visits.id AS rowid,
+                   urls.url AS url,
+                   urls.title AS title,
+                   visits.visit_time AS visit_time,
+                   visits.external_referrer_url AS external_referrer_url,
+                   visits.transition AS transition,
+                   visits.visit_duration AS visit_duration
+            FROM visits JOIN urls ON visits.url = urls.id
+          '';
+          base = {
+            path = if source == null then "" else source.path;
+            immutable = false;
+            read_only = false;
+          };
+        in
+        if source == null then base else
+        if source.format == "ChromiumHistory" then base // {
+          query = chromiumQuery;
+          table = "visits";
+        } else base // {
+          query = "SELECT rowid, * FROM History";
+          table = "History";
+        };
       secondaryDumpPath =
         if sat.dumpSources != [ ] then (builtins.head sat.dumpSources).path or "" else "";
       sqlitePaths = unique (map (source: source.path) sat.sqliteSources);
@@ -1408,11 +1434,7 @@ let
           # own connection without touching qutebrowser's data. We only ever
           # SELECT — no INSERT/UPDATE/DELETE.
           adapterConfig = {
-            primary = {
-              path = primarySqlitePath;
-              immutable = false;
-              read_only = false;
-            };
+            primary = browserSqliteAdapterConfig primarySqliteSource;
             secondary = { path = secondaryDumpPath; };
           };
           inherit instances resources;

@@ -1,4 +1,5 @@
 use super::*;
+use std::fs;
 use std::io::Write;
 use tempfile::Builder;
 use tempfile::NamedTempFile;
@@ -6,6 +7,14 @@ use xtask::sandbox::prelude::sinex_test;
 
 fn dummy_material_id() -> Id<SourceMaterial> {
     Id::from_uuid(uuid::Uuid::new_v4())
+}
+
+fn write_git_head(repo: &std::path::Path, oid: &str) -> xtask::sandbox::TestResult<()> {
+    let git_dir = repo.join(".git");
+    fs::create_dir_all(git_dir.join("refs/heads"))?;
+    fs::write(git_dir.join("HEAD"), "ref: refs/heads/main\n")?;
+    fs::write(git_dir.join("refs/heads/main"), format!("{oid}\n"))?;
+    Ok(())
 }
 
 #[sinex_test]
@@ -35,7 +44,10 @@ async fn test_static_file_already_processed_returns_empty() -> xtask::sandbox::T
 
     let adapter = StaticFileAdapter;
     let config = StaticFileConfig { path };
-    let cursor = Some(StaticFileCursor { processed: true });
+    let cursor = Some(StaticFileCursor {
+        processed: true,
+        state_token: None,
+    });
     let mut stream = adapter
         .open(dummy_material_id(), &config, cursor)
         .await
@@ -54,7 +66,10 @@ async fn test_static_file_not_processed_cursor_yields_record() -> xtask::sandbox
 
     let adapter = StaticFileAdapter;
     let config = StaticFileConfig { path };
-    let cursor = Some(StaticFileCursor { processed: false });
+    let cursor = Some(StaticFileCursor {
+        processed: false,
+        state_token: None,
+    });
     let mut stream = adapter
         .open(dummy_material_id(), &config, cursor)
         .await
@@ -154,6 +169,62 @@ async fn static_file_directory_yields_path_only_record() -> xtask::sandbox::Test
         MaterialAnchor::ByteRange { start: 0, len: 0 }
     ));
     assert!(stream.next().await.is_none());
+    Ok(())
+}
+
+#[sinex_test]
+async fn static_file_git_directory_reopens_when_head_changes()
+-> xtask::sandbox::TestResult<()> {
+    let dir = tempfile::tempdir().unwrap();
+    write_git_head(dir.path(), "1111111111111111111111111111111111111111")?;
+    let path = dir.path().to_str().unwrap().to_string();
+
+    let adapter = StaticFileAdapter;
+    let config = StaticFileConfig { path };
+    let mut initial_stream = adapter.open(dummy_material_id(), &config, None).await?;
+    let initial_record = initial_stream
+        .next()
+        .await
+        .expect("initial git directory record")?;
+    let initial_cursor = adapter.cursor_after(&initial_record)?;
+
+    let mut unchanged_stream = adapter
+        .open(dummy_material_id(), &config, Some(initial_cursor.clone()))
+        .await?;
+    assert!(unchanged_stream.next().await.is_none());
+
+    write_git_head(dir.path(), "2222222222222222222222222222222222222222")?;
+    let mut changed_stream = adapter
+        .open(dummy_material_id(), &config, Some(initial_cursor))
+        .await?;
+    assert!(
+        changed_stream.next().await.is_some(),
+        "changed git HEAD should re-open the directory-backed static source"
+    );
+    Ok(())
+}
+
+#[sinex_test]
+async fn static_file_legacy_processed_git_cursor_reopens_once()
+-> xtask::sandbox::TestResult<()> {
+    let dir = tempfile::tempdir().unwrap();
+    write_git_head(dir.path(), "3333333333333333333333333333333333333333")?;
+    let path = dir.path().to_str().unwrap().to_string();
+
+    let adapter = StaticFileAdapter;
+    let config = StaticFileConfig { path };
+    let legacy_cursor = StaticFileCursor {
+        processed: true,
+        state_token: None,
+    };
+
+    let mut stream = adapter
+        .open(dummy_material_id(), &config, Some(legacy_cursor))
+        .await?;
+    assert!(
+        stream.next().await.is_some(),
+        "legacy processed cursors without a git HEAD token need one refresh"
+    );
     Ok(())
 }
 

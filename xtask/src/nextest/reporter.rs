@@ -1,7 +1,9 @@
 use color_eyre::eyre::{Result, WrapErr, bail, eyre};
 use console::{Emoji, style};
 use serde::Deserialize;
+use std::collections::VecDeque;
 use std::io::BufRead;
+use std::sync::{Arc, Mutex};
 use std::thread;
 
 use crate::history::HistoryDb;
@@ -174,6 +176,7 @@ impl TerminalProgress {
 
 impl TestReporter {
     const LINE_PROGRESS_EVERY: usize = 100;
+    const STDERR_TAIL_LINES: usize = 80;
 
     #[must_use]
     pub fn new(human: bool) -> Self {
@@ -245,12 +248,16 @@ impl TestReporter {
 
         update_progress_snapshot(None, 0, 0, 0, None);
 
-        // Spawn stderr handler
+        // Spawn stderr handler. Keep a bounded tail so pre-suite failures can
+        // distinguish compile/signal failures from true discovery/filter misses.
         let progress_stderr = self.progress.clone();
         let interactive_stderr = self.interactive;
+        let stderr_tail = Arc::new(Mutex::new(VecDeque::<String>::new()));
+        let stderr_tail_writer = Arc::clone(&stderr_tail);
         let stderr_thread = thread::spawn(move || -> Result<()> {
             for line_res in stderr.lines() {
                 let line = line_res.wrap_err("failed to read nextest stderr output")?;
+                push_stderr_tail(&stderr_tail_writer, &line, Self::STDERR_TAIL_LINES);
                 // Print stderr (build output) above the progress bar
                 if interactive_stderr {
                     progress_stderr.println(style(line).yellow().dim().to_string());
@@ -448,6 +455,10 @@ impl TestReporter {
         // Detect test discovery failures: if no suite-started message was received,
         // something went wrong (invalid profile, compilation error, etc.)
         if !suite_started {
+            let stderr_tail = stderr_tail_text(&stderr_tail);
+            if let Some(message) = classify_pre_suite_failure(&stderr_tail) {
+                bail!("{message}");
+            }
             bail!(
                 "No tests discovered. Possible causes:\n\
                  - Invalid nextest profile (check .config/nextest.toml)\n\
@@ -458,6 +469,51 @@ impl TestReporter {
 
         Ok(stats)
     }
+}
+
+fn push_stderr_tail(tail: &Arc<Mutex<VecDeque<String>>>, line: &str, max_lines: usize) {
+    let Ok(mut lines) = tail.lock() else {
+        return;
+    };
+    while lines.len() >= max_lines {
+        lines.pop_front();
+    }
+    lines.push_back(line.to_string());
+}
+
+fn stderr_tail_text(tail: &Arc<Mutex<VecDeque<String>>>) -> String {
+    let Ok(lines) = tail.lock() else {
+        return String::new();
+    };
+    lines.iter().cloned().collect::<Vec<_>>().join("\n")
+}
+
+fn classify_pre_suite_failure(stderr_tail: &str) -> Option<String> {
+    let lower = stderr_tail.to_ascii_lowercase();
+    let has_compile_failure =
+        lower.contains("could not compile") || lower.contains("cargo test --no-run");
+    let has_signal =
+        lower.contains("sigterm") || lower.contains("signal: 15") || lower.contains("signal");
+
+    if has_compile_failure && has_signal {
+        return Some(
+            "test binary compilation was terminated by signal before nextest discovered tests; \
+             this is a compile/resource/cancellation failure, not a test-filter miss. \
+             Inspect stderr plus earlyoom/journal/resource history before retrying; on a tight \
+             host prefer a narrower proof with CARGO_BUILD_JOBS=1 and enough memory headroom."
+                .to_string(),
+        );
+    }
+
+    if has_compile_failure {
+        return Some(
+            "test binary compilation failed before nextest discovered tests; check the compiler \
+             diagnostics in stderr instead of treating this as a filter/no-tests problem."
+                .to_string(),
+        );
+    }
+
+    None
 }
 
 #[cfg(test)]

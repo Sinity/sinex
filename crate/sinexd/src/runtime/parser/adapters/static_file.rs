@@ -1,10 +1,11 @@
 //! Adapter for static (one-shot) file reads.
 
 use async_trait::async_trait;
-use camino::Utf8Path;
+use camino::{Utf8Path, Utf8PathBuf};
 use futures::stream::{self, BoxStream, StreamExt};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
+use std::path::Path;
 
 use sinex_primitives::events::SourceMaterial;
 use sinex_primitives::ids::Id;
@@ -32,11 +33,40 @@ pub struct StaticFileConfig {
     pub path: String,
 }
 
-/// Cursor for [`StaticFileAdapter`] — a single boolean indicating
-/// whether the file has been processed.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+/// Cursor for [`StaticFileAdapter`].
+///
+/// Ordinary static files remain one-shot via `processed`. Directory inputs
+/// that are git worktrees also carry a resolved HEAD token, so continuous
+/// polling can re-read them when the repository advances.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct StaticFileCursor {
     pub processed: bool,
+
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub state_token: Option<String>,
+}
+
+fn static_state_token(path: &str) -> Option<String> {
+    let path = Path::new(path);
+    if !path.is_dir() {
+        return None;
+    }
+
+    let git_dir = path.join(".git");
+    let head_path = git_dir.join("HEAD");
+    let head = std::fs::read_to_string(&head_path).ok()?;
+    let head = head.trim();
+    if let Some(ref_name) = head.strip_prefix("ref: ") {
+        let ref_path = git_dir.join(ref_name);
+        let oid = std::fs::read_to_string(ref_path).ok()?;
+        return Some(format!("git-head:{ref_name}:{}", oid.trim()));
+    }
+
+    if head.is_empty() {
+        None
+    } else {
+        Some(format!("git-head:detached:{head}"))
+    }
 }
 
 #[async_trait]
@@ -51,7 +81,10 @@ impl InputShapeAdapter for StaticFileAdapter {
         config: &Self::Config,
         cursor: Option<Self::Cursor>,
     ) -> ParserResult<BoxStream<'static, ParserResult<SourceRecord>>> {
-        if cursor.is_some_and(|c| c.processed) {
+        let current_state_token = static_state_token(&config.path);
+        if cursor.as_ref().is_some_and(|c| {
+            c.processed && c.state_token.as_deref() == current_state_token.as_deref()
+        }) {
             return Ok(stream::empty().boxed());
         }
 
@@ -69,7 +102,7 @@ impl InputShapeAdapter for StaticFileAdapter {
             material_id,
             anchor: MaterialAnchor::ByteRange { start: 0, len },
             bytes,
-            logical_path: Some(Utf8Path::new(&path).to_owned()),
+            logical_path: Some(Utf8PathBuf::from(path.clone())),
             source_ts_hint: None,
             metadata: serde_json::Value::Null,
         };
@@ -113,7 +146,14 @@ impl InputShapeAdapter for StaticFileAdapter {
     }
 
     fn cursor_after(&self, _record: &SourceRecord) -> ParserResult<Self::Cursor> {
-        Ok(StaticFileCursor { processed: true })
+        let state_token = _record
+            .logical_path
+            .as_ref()
+            .and_then(|path| static_state_token(path.as_str()));
+        Ok(StaticFileCursor {
+            processed: true,
+            state_token,
+        })
     }
 }
 

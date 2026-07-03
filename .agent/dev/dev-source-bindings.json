@@ -37,6 +37,48 @@
       "extra_env": {}
     },
     {
+      "source_id": "browser.history",
+      "instance_idx": 2,
+      "service_name": "source-driver-browser.history-2",
+      "runtime_config": {
+        "interleaved": false,
+        "primary": {
+          "immutable": false,
+          "path": "/home/sinity/.local/share/qutebrowser/webengine/History",
+          "query": "SELECT visits.id AS rowid, urls.url AS url, urls.title AS title, visits.visit_time AS visit_time, visits.external_referrer_url AS external_referrer_url, visits.transition AS transition, visits.visit_duration AS visit_duration FROM visits JOIN urls ON visits.url = urls.id",
+          "read_only": false,
+          "table": "visits"
+        },
+        "secondary": {
+          "path": "/realm/data/captures/webhistory/gestalt/derived/full_history.ndjson",
+          "skip_empty": true
+        }
+      },
+      "extra_args": [],
+      "extra_env": {}
+    },
+    {
+      "source_id": "browser.history",
+      "instance_idx": 3,
+      "service_name": "source-driver-browser.history-3",
+      "runtime_config": {
+        "interleaved": false,
+        "primary": {
+          "immutable": false,
+          "path": "/home/sinity/.config/chrome-ws/Default/History",
+          "query": "SELECT visits.id AS rowid, urls.url AS url, urls.title AS title, visits.visit_time AS visit_time, visits.external_referrer_url AS external_referrer_url, visits.transition AS transition, visits.visit_duration AS visit_duration FROM visits JOIN urls ON visits.url = urls.id",
+          "read_only": false,
+          "table": "visits"
+        },
+        "secondary": {
+          "path": "/realm/data/captures/webhistory/gestalt/derived/full_history.ndjson",
+          "skip_empty": true
+        }
+      },
+      "extra_args": [],
+      "extra_env": {}
+    },
+    {
       "source_id": "raindrop-bookmarks",
       "instance_idx": 1,
       "service_name": "source-driver-raindrop-bookmarks-1",

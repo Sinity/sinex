@@ -58,11 +58,16 @@
 //!
 //! # Material lifecycle
 //!
-//! A single [`AppendStreamAcquirer`] is held across all drain cycles (snapshot,
-//! historical, and every continuous poll). Record bytes are appended to the
-//! growing material; [`AppendStreamAcquirer`] handles size/time-based rotation
-//! transparently. This ensures `raw.source_material_registry` grows at
-//! `O(rotation_count)`, not `O(poll_count)`.
+//! For row/log stream adapters, a single [`AppendStreamAcquirer`] is held across
+//! drain cycles. Record bytes are appended to the growing material and
+//! [`AppendStreamAcquirer`] handles size/time-based rotation transparently. This
+//! ensures `raw.source_material_registry` grows at `O(rotation_count)`, not
+//! `O(poll_count)`.
+//!
+//! Snapshot-style finite poll adapters (`StaticFile`, `DirectoryWalk`) finalize
+//! their stream material after each non-empty finite drain. Empty polls do not
+//! create a material, so this closes one-shot/static batches promptly without
+//! generating `O(poll_count)` empty registry rows.
 //!
 //! If a streaming adapter goes idle while a material is open, the drain loop
 //! periodically finalizes the material before event-engine's stale-slice
@@ -115,7 +120,7 @@ use crate::runtime::checkpoint::{CheckpointManager, CheckpointState};
 use crate::runtime::parser::adapters::{LatestSqliteSnapshotEvidence, SqliteSnapshotLane};
 use crate::runtime::parser::{
     BindingConfig, DriftEvent, InitialStreamPosition, InputShapeAdapter, InputShapeAdapterExt,
-    MaterialParser, SourceRecord, SourceRecordFingerprint,
+    InputShapeKind, MaterialParser, SourceRecord, SourceRecordFingerprint,
 };
 use crate::runtime::source_driver::{SourceDriver, SourceDriverState};
 use crate::runtime::stream::{
@@ -552,6 +557,13 @@ where
         Duration::from_secs((max_age / 2).max(1))
     }
 
+    fn finalize_after_finite_poll_drain(&self) -> bool {
+        matches!(
+            A::KIND,
+            InputShapeKind::StaticFile | InputShapeKind::DirectoryWalk
+        )
+    }
+
     async fn finalize_idle_stream_material_if_due(&mut self) -> RuntimeResult<bool> {
         let interval = self.idle_stream_finalize_interval();
         let Some(acquirer) = self.stream_acquirer.as_mut() else {
@@ -560,6 +572,20 @@ where
         acquirer
             .finalize_if_age_exceeds(interval, STREAM_IDLE_FINALIZE_REASON)
             .await
+    }
+
+    async fn finalize_finite_drain_material(&mut self, reason: &str) -> RuntimeResult<bool> {
+        if !self.finalize_after_finite_poll_drain() {
+            return Ok(false);
+        }
+        let Some(acquirer) = self.stream_acquirer.as_mut() else {
+            return Ok(false);
+        };
+        if acquirer.current_material_id().is_none() {
+            return Ok(false);
+        }
+        acquirer.finalize(reason).await?;
+        Ok(true)
     }
 
     /// Observe adapter-level input shape before draining records.
@@ -1150,10 +1176,6 @@ where
                 let material_id = materialized.material_id;
                 self.link_latest_sqlite_snapshot_backing_material(material_id)
                     .await;
-                if let Some(cursor) = next_cursor {
-                    state.cursor = Some(merge_cursor_update(state.cursor.clone(), cursor));
-                    self.persist_stream_checkpoint_if_due(state, false).await;
-                }
 
                 let ctx = ParserContext {
                     source_id: source_id.clone(),
@@ -1182,6 +1204,7 @@ where
                 };
 
                 let anchor_payload_hash = materialized.anchor_payload_hash;
+                let mut record_processed = true;
                 for intent in intents {
                     // Use the materialization anchor so events reference their real
                     // material location, whether the record came from the default
@@ -1201,6 +1224,7 @@ where
                                     error = %e,
                                     "emit failed — event dropped"
                                 );
+                                record_processed = false;
                             } else {
                                 emitted += 1;
                                 state.total_events_emitted =
@@ -1213,8 +1237,21 @@ where
                                 error = %e,
                                 "intent_to_event_with_anchor conversion failed — skipping"
                             );
+                            record_processed = false;
                         }
                     }
+                }
+
+                if record_processed {
+                    if let Some(cursor) = next_cursor {
+                        state.cursor = Some(merge_cursor_update(state.cursor.clone(), cursor));
+                        self.persist_stream_checkpoint_if_due(state, false).await;
+                    }
+                } else {
+                    warn!(
+                        source = self.source_id,
+                        "record processing failed — cursor not advanced so the record can be retried"
+                    );
                 }
             }
 
@@ -1508,6 +1545,8 @@ where
         // Snapshot: drain from cursor (resume after last known position).
         let cursor = state.cursor.clone();
         let emitted = self.drain_adapter(cursor, state, None).await?;
+        self.finalize_finite_drain_material("adapter-snapshot-complete")
+            .await?;
         let checkpoint = cursor_to_checkpoint(state);
 
         Ok(ScanReport {
@@ -1535,6 +1574,8 @@ where
         // resume position.
         let cursor = state.cursor.clone();
         let emitted = self.drain_adapter(cursor, state, None).await?;
+        self.finalize_finite_drain_material("adapter-historical-complete")
+            .await?;
         let checkpoint = cursor_to_checkpoint(state);
 
         Ok(ScanReport {
@@ -1597,7 +1638,30 @@ where
             tokio::select! {
                 drained = self.drain_adapter(cursor, state, initial_position) => {
                     match drained {
-                        Ok(n) => total_emitted += n,
+                        Ok(n) => {
+                            total_emitted += n;
+                            match self
+                                .finalize_finite_drain_material("adapter-poll-drain-complete")
+                                .await
+                            {
+                                Ok(true) => {
+                                    info!(
+                                        source = source_id,
+                                        emitted = n,
+                                        "Finalized adapter stream material after finite poll drain"
+                                    );
+                                }
+                                Ok(false) => {}
+                                Err(error) => {
+                                    warn!(
+                                        source = source_id,
+                                        emitted = n,
+                                        error = %error,
+                                        "Failed to finalize adapter stream material after finite poll drain"
+                                    );
+                                }
+                            }
+                        }
                         Err(e) => {
                             warn!(
                                 source = source_id,

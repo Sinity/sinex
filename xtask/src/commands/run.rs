@@ -169,6 +169,8 @@ fn source_binding_runtime_args(binding: &DevSourceBinding, run_identity: &str) -
         binding.source_id.clone(),
         "--service-name".to_string(),
         run_identity.to_string(),
+        "--instance-idx".to_string(),
+        binding.instance_idx.to_string(),
     ];
     append_source_binding_args(&mut args, binding.clone());
     args

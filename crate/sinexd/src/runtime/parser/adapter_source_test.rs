@@ -2,7 +2,9 @@ use super::*;
 use crate::runtime::checkpoint::CheckpointManager;
 use crate::runtime::parser::adapters::{AppendOnlyCursor, ChainedCursor, SqliteRowCursor};
 use crate::runtime::parser::{InputShapeKind, ParserError, ParserResult, SourceRecord};
-use crate::runtime::stream::{EventEmitter, RuntimeHandles, ServiceInfo};
+use crate::runtime::stream::{
+    Checkpoint, ContinuousStart, EventEmitter, RuntimeHandles, ScanArgs, ServiceInfo, TimeHorizon,
+};
 use crate::runtime::{EventTransport, NatsPublisher, SOURCE_MATERIAL_STREAM};
 use async_trait::async_trait;
 use camino::Utf8PathBuf;
@@ -366,6 +368,38 @@ impl MaterialParser for EmittingParser {
                 .privacy_context(ProcessingContext::Metadata)
                 .build(),
         ])
+    }
+}
+
+#[derive(Default)]
+struct FailingParser;
+
+#[async_trait]
+impl MaterialParser for FailingParser {
+    type Config = ();
+
+    fn manifest(&self) -> ParserManifest {
+        ParserManifest {
+            parser_id: ParserId::from_static("failing-parser"),
+            parser_version: "1.0.0".to_string(),
+            accepted_input_shapes: vec![InputShapeKind::AppendOnlyFile],
+            source_id: SourceId::from_static("desktop.clipboard"),
+            declared_event_types: vec![(
+                EventSource::from_static("test"),
+                EventType::from_static("test.event"),
+            )],
+            privacy_contexts: vec![ProcessingContext::Metadata],
+            sensitivity_hints: Vec::new(),
+            description: String::new(),
+        }
+    }
+
+    async fn parse_record(
+        &mut self,
+        _record: SourceRecord,
+        _ctx: &ParserContext,
+    ) -> ParserResult<Vec<ParsedEventIntent>> {
+        Err(ParserError::Parse("intentional parser failure".to_string()))
     }
 }
 
@@ -733,6 +767,55 @@ async fn adapter_logical_path_record_materializes_descriptor_bytes(
 }
 
 #[sinex_test]
+async fn adapter_parse_failure_does_not_advance_cursor(ctx: TestContext) -> TestResult<()> {
+    let ctx = ctx.with_nats().shared().await?;
+    let (runtime, _event_receiver) = make_adapter_runtime(&ctx).await?;
+    let mut source = AdapterBackedSource::<EmptyLogicalPathRecordAdapter, FailingParser>::new(
+        "desktop.clipboard",
+    );
+    let mut state = AdapterModuleState::default();
+
+    source
+        .initialize(AdapterSourceConfig::default(), &runtime, &mut state)
+        .await?;
+    let report = source
+        .scan_snapshot(&mut state, ScanArgs::default())
+        .await?;
+
+    assert_eq!(report.events_processed, 0);
+    assert_eq!(
+        state.cursor, None,
+        "parser failures must leave the cursor behind for retry"
+    );
+    Ok(())
+}
+
+#[sinex_test]
+async fn adapter_emit_failure_does_not_advance_cursor(ctx: TestContext) -> TestResult<()> {
+    let ctx = ctx.with_nats().shared().await?;
+    let (runtime, event_receiver) = make_adapter_runtime(&ctx).await?;
+    drop(event_receiver);
+    let mut source = AdapterBackedSource::<EmptyLogicalPathRecordAdapter, EmittingParser>::new(
+        "desktop.clipboard",
+    );
+    let mut state = AdapterModuleState::default();
+
+    source
+        .initialize(AdapterSourceConfig::default(), &runtime, &mut state)
+        .await?;
+    let report = source
+        .scan_snapshot(&mut state, ScanArgs::default())
+        .await?;
+
+    assert_eq!(report.events_processed, 0);
+    assert_eq!(
+        state.cursor, None,
+        "emit failures must leave the cursor behind for retry"
+    );
+    Ok(())
+}
+
+#[sinex_test]
 async fn adapter_nil_material_records_are_batched_into_few_material_frames(
     ctx: TestContext,
 ) -> TestResult<()> {
@@ -807,6 +890,102 @@ async fn adapter_stream_finalizes_idle_material_before_stale_timeout(
         }
         other => panic!("expected material provenance, got {other:?}"),
     }
+    Ok(())
+}
+
+#[sinex_test]
+async fn adapter_continuous_poll_finalizes_finite_drain_material(
+    ctx: TestContext,
+) -> TestResult<()> {
+    let ctx = ctx.with_nats().shared().await?;
+    let (runtime, _event_receiver) = make_adapter_runtime(&ctx).await?;
+    let mut source = AdapterBackedSource::<EmptyLogicalPathRecordAdapter, TestParser>::new(
+        "desktop.clipboard",
+    );
+    let mut state = AdapterModuleState::default();
+
+    source
+        .initialize(AdapterSourceConfig::default(), &runtime, &mut state)
+        .await?;
+
+    let run_result = tokio::time::timeout(
+        Duration::from_millis(1500),
+        source.run_continuous(
+            &mut state,
+            ContinuousStart::from_checkpoint(Checkpoint::default()),
+            tokio::sync::watch::channel(false).1,
+        ),
+    )
+    .await;
+
+    assert!(
+        run_result.is_err(),
+        "continuous poll loop should remain active after the first finite drain"
+    );
+    assert_eq!(state.cursor, Some(1));
+    assert!(
+        source.current_material_id().is_none(),
+        "finite poll drains should finalize their stream material before sleeping"
+    );
+    Ok(())
+}
+
+#[sinex_test]
+async fn adapter_snapshot_finalizes_finite_drain_material(ctx: TestContext) -> TestResult<()> {
+    let ctx = ctx.with_nats().shared().await?;
+    let (runtime, _event_receiver) = make_adapter_runtime(&ctx).await?;
+    let mut source = AdapterBackedSource::<EmptyLogicalPathRecordAdapter, TestParser>::new(
+        "desktop.clipboard",
+    );
+    let mut state = AdapterModuleState::default();
+
+    source
+        .initialize(AdapterSourceConfig::default(), &runtime, &mut state)
+        .await?;
+
+    let report = source
+        .scan_snapshot(&mut state, ScanArgs::default())
+        .await?;
+
+    assert_eq!(report.events_processed, 0);
+    assert_eq!(state.cursor, Some(1));
+    assert!(
+        source.current_material_id().is_none(),
+        "finite snapshot drains should finalize their stream material"
+    );
+    Ok(())
+}
+
+#[sinex_test]
+async fn adapter_historical_finalizes_finite_drain_material(ctx: TestContext) -> TestResult<()> {
+    let ctx = ctx.with_nats().shared().await?;
+    let (runtime, _event_receiver) = make_adapter_runtime(&ctx).await?;
+    let mut source = AdapterBackedSource::<EmptyLogicalPathRecordAdapter, TestParser>::new(
+        "desktop.clipboard",
+    );
+    let mut state = AdapterModuleState::default();
+
+    source
+        .initialize(AdapterSourceConfig::default(), &runtime, &mut state)
+        .await?;
+
+    let report = source
+        .scan_historical(
+            &mut state,
+            Checkpoint::None,
+            TimeHorizon::Historical {
+                end_time: Timestamp::now(),
+            },
+            ScanArgs::default(),
+        )
+        .await?;
+
+    assert_eq!(report.events_processed, 0);
+    assert_eq!(state.cursor, Some(1));
+    assert!(
+        source.current_material_id().is_none(),
+        "finite historical drains should finalize their stream material"
+    );
     Ok(())
 }
 
