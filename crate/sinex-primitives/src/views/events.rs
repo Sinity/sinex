@@ -203,12 +203,24 @@ pub struct ContextSourceView {
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub struct ContextSessionView {
+    #[serde(rename = "ref")]
+    pub ref_: SinexObjectRef,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub started_at: Option<Timestamp>,
+    pub summary: String,
+    pub latest_event: EventCardView,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct ContextSummaryView {
     pub schema_version: String,
     pub since: String,
     pub total_events: usize,
     pub source_count: usize,
     pub sources: Vec<ContextSourceView>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub sessions: Vec<ContextSessionView>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub source_caveats: Vec<CaveatView>,
 }
@@ -226,8 +238,15 @@ impl ContextSummaryView {
             total_events,
             source_count: sources.len(),
             sources,
+            sessions: Vec::new(),
             source_caveats: Vec::new(),
         }
+    }
+
+    #[must_use]
+    pub fn with_sessions(mut self, sessions: Vec<ContextSessionView>) -> Self {
+        self.sessions = sessions;
+        self
     }
 
     #[must_use]

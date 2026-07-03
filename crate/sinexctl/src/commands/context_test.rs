@@ -139,6 +139,104 @@ async fn recall_machine_output_uses_recall_surface() -> xtask::sandbox::TestResu
 }
 
 #[sinex_test]
+async fn recall_machine_output_projects_session_detector_rows()
+-> xtask::sandbox::TestResult<()> {
+    let event_cards = EventCardListView {
+        schema_version: EVENT_CARD_LIST_SCHEMA_VERSION.to_string(),
+        count: 2,
+        cards: vec![
+            context_event_with_ref(
+                "derived.session-detector",
+                "activity.session.boundary",
+                "event:session-1",
+            ),
+            context_event_with_ref("shell.atuin", "command.executed", "event:cmd-1"),
+        ],
+        next_cursor: None,
+        total_estimate: None,
+    };
+    let sources = grouped_context_sources(&event_cards.cards);
+    let window = build_context_window("30m", None, Timestamp::now())?;
+    let output = render_context_machine_output(
+        &event_cards,
+        &sources,
+        &window,
+        OutputFormat::Json,
+        "sinexctl.recall",
+        "recall",
+        &[],
+        &ContextStageTimings::default(),
+    )?
+    .ok_or_else(|| color_eyre::eyre::eyre!("json output expected"))?;
+    let value: serde_json::Value = serde_json::from_str(&output)?;
+
+    let sessions = value["payload"]["sessions"]
+        .as_array()
+        .ok_or_else(|| color_eyre::eyre::eyre!("recall sessions must be an array"))?;
+    assert_eq!(sessions.len(), 1);
+    assert_eq!(sessions[0]["ref"]["id"], "event:session-1");
+    assert_eq!(
+        sessions[0]["latest_event"]["event_type"],
+        "activity.session.boundary"
+    );
+    assert_eq!(sessions[0]["summary"], "context fixture");
+    assert!(
+        value["payload"]["source_caveats"]
+            .as_array()
+            .map(|caveats| caveats
+                .iter()
+                .all(|caveat| caveat["id"] != "recall.sessions.absent"))
+            .unwrap_or(true),
+        "session rows must suppress the missing-session caveat"
+    );
+    Ok(())
+}
+
+#[sinex_test]
+async fn recall_machine_output_marks_missing_session_detector_rows()
+-> xtask::sandbox::TestResult<()> {
+    let event_cards = EventCardListView {
+        schema_version: EVENT_CARD_LIST_SCHEMA_VERSION.to_string(),
+        count: 1,
+        cards: vec![context_event_with_ref(
+            "shell.atuin",
+            "command.executed",
+            "event:cmd-1",
+        )],
+        next_cursor: None,
+        total_estimate: None,
+    };
+    let sources = grouped_context_sources(&event_cards.cards);
+    let window = build_context_window("30m", None, Timestamp::now())?;
+    let output = render_context_machine_output(
+        &event_cards,
+        &sources,
+        &window,
+        OutputFormat::Json,
+        "sinexctl.recall",
+        "recall",
+        &[],
+        &ContextStageTimings::default(),
+    )?
+    .ok_or_else(|| color_eyre::eyre::eyre!("json output expected"))?;
+    let value: serde_json::Value = serde_json::from_str(&output)?;
+
+    assert!(value["payload"]["sessions"].is_null());
+    let caveats = value["payload"]["source_caveats"]
+        .as_array()
+        .ok_or_else(|| color_eyre::eyre::eyre!("recall caveats must be an array"))?;
+    assert!(
+        caveats.iter().any(|caveat| {
+            caveat["id"] == "recall.sessions.absent"
+                && caveat["ref"]["kind"] == "projection"
+                && caveat["ref"]["id"] == "recall.activity.session.boundary"
+        }),
+        "recall must visibly degrade when session-detector rows are absent: {caveats:?}"
+    );
+    Ok(())
+}
+
+#[sinex_test]
 async fn recall_source_caveats_explain_absent_expected_sources() -> xtask::sandbox::TestResult<()> {
     let event_cards = EventCardListView {
         schema_version: EVENT_CARD_LIST_SCHEMA_VERSION.to_string(),
