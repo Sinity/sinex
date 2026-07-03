@@ -10,8 +10,8 @@ use sinexctl::commands::lifecycle::TombstoneCommands;
 use sinexctl::commands::{
     CompletionEndpointCommand, ConfigCommands, DlqCommands, DocumentsCommand, EventsCommand,
     LifecycleCommands, MetricsCommands, OpsCommands, PrivacyCommand, QueryUnitsCommand,
-    RecordCommand, ReplayCommands, RuntimeCommands, SemanticCommand, ShowCommand, SourcesCommand,
-    StateCommands, TasksCommand, TuiCommand,
+    RecallCommand, RecordCommand, ReplayCommands, RuntimeCommands, SemanticCommand, ShowCommand,
+    SourcesCommand, StateCommands, TasksCommand, TuiCommand,
 };
 use sinexctl::fmt::{format_yaml, render_finite_envelope};
 use sinexctl::mcp::{McpCatalogEntry, tool_catalog as mcp_tool_catalog};
@@ -106,6 +106,9 @@ enum Commands {
 
     /// Shared Sinex query unit selection
     Query(QueryUnitsCommand),
+
+    /// Recall activity context around a point in time
+    Recall(RecallCommand),
 
     /// Operations log commands
     Ops {
@@ -280,6 +283,7 @@ async fn main() -> color_eyre::Result<()> {
                 Commands::Runtime { cmd } => cmd.execute(&client, format).await?,
                 Commands::Events { cmd } => cmd.execute(&client, format).await?,
                 Commands::Query(cmd) => cmd.execute(&client, format).await?,
+                Commands::Recall(cmd) => cmd.execute(&client, format).await?,
                 Commands::Ops { cmd } => cmd.execute(&client, format).await?,
                 Commands::Privacy(cmd) => cmd.execute(&client, format).await?,
                 Commands::Tui(cmd) => cmd.execute(&client).await?,
@@ -387,6 +391,11 @@ fn command_center_view(config: &Config, format: OutputFormat) -> CommandCenterVi
                 effect: "read",
             },
             CommandCenterAction {
+                label: "Recall context",
+                command: "sinexctl recall --window 2h",
+                effect: "read",
+            },
+            CommandCenterAction {
                 label: "Source coverage",
                 command: "sinexctl sources status",
                 effect: "read",
@@ -406,6 +415,10 @@ fn command_center_view(config: &Config, format: OutputFormat) -> CommandCenterVi
             CommandCenterRootGroup {
                 root: "events",
                 purpose: "search, inspection, lineage, relations, streaming, and annotation",
+            },
+            CommandCenterRootGroup {
+                root: "recall",
+                purpose: "session-resumption context around a point in time",
             },
             CommandCenterRootGroup {
                 root: "sources",
@@ -574,6 +587,7 @@ fn command_path(cmd: &Commands) -> String {
         },
         Commands::Events { cmd } => cmd.command_path().to_string(),
         Commands::Query(_) => "query".to_string(),
+        Commands::Recall(_) => "recall".to_string(),
         Commands::Ops { cmd } => match cmd {
             OpsCommands::Start { .. } => "ops start".to_string(),
             OpsCommands::List { .. } => "ops list".to_string(),

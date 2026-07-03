@@ -3,8 +3,7 @@ use sinex_primitives::rpc::{RpcMutability, method_catalog};
 use xtask::sandbox::prelude::sinex_test;
 
 #[sinex_test]
-async fn all_registry_entries_have_at_least_one_format_or_note()
--> xtask::sandbox::TestResult<()> {
+async fn all_registry_entries_have_at_least_one_format_or_note() -> xtask::sandbox::TestResult<()> {
     for (cmd, cap) in build() {
         assert!(
             !cap.supported.is_empty() || cap.note.is_some(),
@@ -66,8 +65,7 @@ async fn command_catalog_covers_registry_entries() -> xtask::sandbox::TestResult
 }
 
 #[sinex_test]
-async fn command_catalog_serializes_machine_readable_matrix() -> xtask::sandbox::TestResult<()>
-{
+async fn command_catalog_serializes_machine_readable_matrix() -> xtask::sandbox::TestResult<()> {
     let value = serde_json::to_value(command_catalog())?;
     let entries = value
         .as_array()
@@ -238,8 +236,8 @@ async fn command_catalog_rpc_mutations_declare_rpc_auth() -> xtask::sandbox::Tes
 }
 
 #[sinex_test]
-async fn command_catalog_local_mutations_declare_operator_guard()
--> xtask::sandbox::TestResult<()> {
+async fn command_catalog_local_mutations_declare_operator_guard() -> xtask::sandbox::TestResult<()>
+{
     for entry in command_catalog() {
         if entry.effect != CommandEffect::Mutating || !entry.backing_rpc_methods.is_empty() {
             continue;
@@ -316,8 +314,7 @@ async fn command_catalog_required_role_matches_backing_rpc_methods()
 }
 
 #[sinex_test]
-async fn command_catalog_effect_matches_backing_rpc_mutability()
--> xtask::sandbox::TestResult<()> {
+async fn command_catalog_effect_matches_backing_rpc_mutability() -> xtask::sandbox::TestResult<()> {
     let rpc_catalog = method_catalog()
         .into_iter()
         .map(|method| (method.name, method))
@@ -395,6 +392,7 @@ async fn registry_covers_canonical_key_commands() -> xtask::sandbox::TestResult<
         "events annotate",
         "events relations within",
         "events context",
+        "recall",
         "runtime automata",
         "runtime gateway ping",
         "runtime gateway version",

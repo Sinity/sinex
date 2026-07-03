@@ -47,7 +47,7 @@ pub use automata::AutomataCommand;
 pub use blob::BlobCommands;
 pub use completion_endpoint::CompletionEndpointCommand;
 pub use config::ConfigCommands;
-pub use context::ContextCommand;
+pub use context::{ContextCommand, RecallCommand};
 pub use curation::CurationCommand;
 pub use demo::DemoCommand;
 pub use dlq::DlqCommands;
