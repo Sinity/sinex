@@ -16,7 +16,7 @@ Closes: #326, #327, #338, #693.
 | `Critical` | Provenance-bearing raw event payloads from source contracts | `{env}.events.raw.{src}.{type}` | JetStream, idempotency header, semaphore 100 | local recovery spool | wait for in-flight ACKs |
 | `Derived` | Derived events from automata | `{env}.events.raw.{src}.{type}` | JetStream, idempotency header, semaphore 100 | processing-failure stream | wait for ACKs + save checkpoint |
 | `SourceMaterial` | Ordered material begin/slice/end frames | `{env}.source_material.frames.*` | JetStream, ordered stream, ACK required | material acquisition fails before event publish | wait for ACKs before anchor use |
-| `Confirmation` | Persistence ACK signals from the event engine | `{env}.events.confirmations.{event_id}` | JetStream, best-effort | retry queue -> durability-gap warn | best-effort flush |
+| `Confirmation` | Full post-redaction events after persistence | `{env}.events.confirmed.{provenance}.{source}.{event_type}` | JetStream, bounded delivery bus | raw message left unacked on publish failure | publish before raw ACK |
 | `Invalidation` | Scope fan-out to automatons | `{env}.sinex.derived.invalidation` | JetStream, durable consumers | error propagated to caller | no special drain (JetStream holds) |
 | `Control` | Lifecycle and coordination traffic | `{env}.sinex.control.>` / request-reply | Core NATS, request-reply + timeout | error returned (`SinexError::network`) | drop pending |
 | `Telemetry` | Self-observation metrics and health | `{env}.events.raw.sinex.*` | JetStream, semaphore 16 | drop with warn log | best-effort flush |
@@ -70,7 +70,7 @@ call in the source.
 | `crate/sinexd/src/runtime/dlq_retry.rs` | raw-ingest DLQ retry re-publish | `Critical` |
 | `crate/sinexd/src/runtime/coordination.rs` | `send_handoff_ready` / `send_handoff_request` / `publish_failure_signal` | `Control` |
 | `crate/sinexd/src/runtime/stream/mod.rs` | scan ack / scan progress / module status | `Control` |
-| `crate/sinexd/src/event_engine/jetstream_consumer.rs` | `publish_confirmation` | `Confirmation` |
+| `crate/sinexd/src/event_engine/jetstream_consumer/confirmation.rs` | `publish_confirmed_event` | `Confirmation` |
 | `crate/sinexd/src/event_engine/jetstream_consumer.rs` | DLQ re-publish (`publish_dlq_entry`) | `Critical` |
 | `crate/sinexd/src/event_engine/material_assembler/finalize.rs` | material DLQ routing | `SourceMaterial` |
 | `crate/sinexd/src/event_engine/service.rs` | active schema broadcast | `Control` |
@@ -130,7 +130,7 @@ confusion; the boundaries below are authoritative.
 | Event engine could not persist a raw event | Raw-ingest DLQ |
 | Automaton could not process a derived event | Processing-failure stream |
 | RuntimeModule could not reach NATS to publish | Local recovery spool |
-| Confirmation could not be published | Retry queue → durability-gap warn |
+| Confirmed-event publish failed after DB commit | Raw message remains unacked; event engine stops so JetStream redelivers |
 
 ---
 
@@ -159,13 +159,16 @@ The protocol per class:
 On crash (no SIGTERM): JetStream NAK timeout causes redelivery; automaton
 deduplicates via equivalence key or scope reconciliation.
 
-### `Confirmation` — event-engine ACK signals
+### `Confirmation` — confirmed-events delivery bus
 
-1. The event engine flushes the confirmation queue concurrently with the batch ACK.
-2. Remaining confirmation failures go to the durable retry consumer
-   (`events.confirmation_retries.*`).
-3. If the retry stream is also unreachable: durability-gap counter and warn log.
-4. Event data is already safe (persisted to DB); confirmations are re-derivable.
+1. The event engine publishes the full post-redaction `Event<JsonValue>` after
+   the database commit.
+2. The raw message is ACKed only after the confirmed-event publish succeeds.
+3. If publish retries are exhausted, the event engine returns a fatal
+   durability-gap error and leaves the raw message unacked for JetStream
+   redelivery.
+4. The confirmed-events stream is a bounded delivery bus, not an archive;
+   PostgreSQL is the historical authority for catch-up.
 
 ### `Invalidation` — scope fan-out
 

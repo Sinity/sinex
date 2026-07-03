@@ -15,7 +15,7 @@ Sources                    Automata                   Clients
   +--------------------------------------------+           |
   |           NATS JetStream                    |           |
   |   Events stream (10M/90d)                   |           |
-  |   Confirmations stream (compacted/7d)       |           |
+  |   Confirmed-events stream (bounded bus)     |           |
   |   DLQ stream (1M/30d)                       |           |
   +---------------------+----------------------+           |
                         |                                   |
@@ -68,13 +68,13 @@ xtask                    Build automation, sandbox test infra, dev-loop tooling
 
 ```
 Subjects:
-  {env}.sinex.events.raw.>              Source event batches
-  sinex.events.confirmed.>              Persistence confirmations
-  sinex.events.dlq.>                    Dead-letter queue
-  sinex.derived.invalidation            Scope invalidation (replay)
-  sinex.telemetry                       Self-observation events
-  sinex.control.sources.{id}.scan         Replay scan commands
-  sinex.control.replay.progress.{op}    Replay progress updates
+  {env}.events.raw.>                    Source event batches
+  {env}.events.confirmed.>              Full persisted confirmed events
+  {env}.events.dlq.>                    Dead-letter queue
+  {env}.sinex.derived.invalidation      Scope invalidation (replay)
+  {env}.events.raw.sinex.>              Self-observation events
+  {env}.sinex.control.sources.{id}.scan Replay scan commands
+  {env}.sinex.control.replay.progress.{op} Replay progress updates
 ```
 
 ### Telemetry Event-Type Prefixes

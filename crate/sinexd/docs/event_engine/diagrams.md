@@ -87,15 +87,14 @@ PHASE 3: INGESTION (`sinexd::event_engine`)
                │                 └─────────────────────────┘
                ↓
   ┌──────────────────────────┐
-  │ Publish CONFIRMATION      │
-  │ events.confirmations.     │
-  │   {event_id}              │
+  │ Publish CONFIRMED EVENT   │
+  │ events.confirmed.         │
+  │   {prov}.{source}.{type}  │
   │                           │
   │ Payload:                  │
-  │ - event_id                │
-  │ - confirmed_at            │
-  │ - ingestor_version        │
-  │ - db_insert_duration_ms   │
+  │ - full Event<JsonValue>   │
+  │ - persisted/redacted body │
+  │ - event_id header         │
   └────────────┬─────────────┘
                │
                ↓
@@ -110,12 +109,12 @@ PHASE 3: INGESTION (`sinexd::event_engine`)
 PHASE 4: CONSUMPTION (Automata)
 ────────────────────────────────
   ┌──────────────────────────────────────┐
-  │ Automata subscribe ONLY to:          │
-  │   events.confirmations.>             │
+  │ Automata subscribe to:               │
+  │   events.confirmed.>                 │
   │                                       │
   │ Why? Ensures atomicity:               │
-  │ - Event in DB → Confirmation sent    │
-  │ - No confirmation → Event not in DB  │
+  │ - Event in DB → confirmed event sent │
+  │ - No confirmed event → raw not ACKed │
   └────────────┬─────────────────────────┘
                │
                ↓
@@ -194,43 +193,41 @@ STREAM 1: events.raw (Raw Events from Sources)
 
 ═══════════════════════════════════════════════════════════════════════════════
 
-STREAM 2: events.confirmations (Event Persistence Confirmations)
+STREAM 2: events.confirmed (Confirmed Event Delivery)
 ═══════════════════════════════════════════════════════════════════════════════
 
-  Subjects: events.confirmations.{event_id}
+  Subjects: events.confirmed.{provenance}.{source}.{event_type}
 
   ┌─────────────────────────────────────────────────────────────────────┐
-  │  Stream: events.confirmations                                        │
+  │  Stream: events.confirmed                                            │
   │  ┌─────────────────────────────────────────────────────────────────┐│
   │  │ Configuration:                                                   ││
-  │  │ - Subjects: events.confirmations.>                               ││
+  │  │ - Subjects: events.confirmed.>                                   ││
   │  │ - Storage: File                                                  ││
-  │  │ - Retention: Limits (not WorkQueue!)                             ││
-  │  │ - Max Age: 7 days                                                 ││
-  │  │ - Max Msgs Per Subject: 1  ← STREAM COMPACTION                  ││
+  │  │ - Retention: Limits                                              ││
+  │  │ - Max Age: 3 days                                                 ││
   │  │ - Replicas: 1                                                    ││
-  │  │ - Discard: New (keep latest per event_id)                        ││
+  │  │ - Discard: Old (bounded delivery bus; DB is archive)             ││
   │  └─────────────────────────────────────────────────────────────────┘│
   │                                                                       │
-  │  Stream Compaction:                                                   │
-  │    Only latest confirmation per event_id retained                     │
-  │    Old confirmations auto-deleted                                     │
-  │    Self-cleaning architecture ✓                                       │
+  │  Payload:                                                             │
+  │    Full post-redaction Event<JsonValue> exactly as persisted          │
+  │    No provisional buffer, watermark subject, or DB refetch            │
   │                                                                       │
   │  Consumers:                                                           │
   │  ┌────────────────────────────────────────────┐                     │
   │  │ Consumer: search-automata                  │                     │
-  │  │ - Filter: events.confirmations.>           │                     │
-  │  │ - Deliver: All (replay from beginning)     │                     │
+  │  │ - Filter: events.confirmed.>               │                     │
+  │  │ - Deliver: New + DB catch-up on startup    │                     │
   │  │ - Ack Wait: 60s                            │                     │
   │  └────────────────────────────────────────────┘                     │
   │  ┌────────────────────────────────────────────┐                     │
   │  │ Consumer: analytics-automata               │                     │
-  │  │ - Filter: events.confirmations.>           │                     │
+  │  │ - Filter: events.confirmed.>               │                     │
   │  └────────────────────────────────────────────┘                     │
   │  ┌────────────────────────────────────────────┐                     │
   │  │ Consumer: health-aggregator                │                     │
-  │  │ - Filter: events.confirmations.>           │                     │
+  │  │ - Filter: events.confirmed.>               │                     │
   │  └────────────────────────────────────────────┘                     │
   └───────────────────────────────────────────────────────────────────────┘
 
@@ -359,8 +356,8 @@ NATS JetStream
     │ AFTER commit
     ↓
 ┌─────────────────────────────┐
-│ publish_confirmations()     │
-│ └── To events.confirmations.{id} │
+│ publish_confirmed_event()   │
+│ └── To events.confirmed.*   │
 └─────────────────────────────┘
     │
     ↓
@@ -368,7 +365,7 @@ NATS JetStream
 │      ack_all()      │
 └─────────────────────┘
 
-Critical Invariant: Confirmations published AFTER commit, ACKs AFTER confirmations.
+Critical Invariant: confirmed events published AFTER commit, raw ACKs AFTER confirmed publish.
 ```
 
 ## See Also

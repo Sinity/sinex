@@ -326,16 +326,16 @@ Sinex uses a unified runtime architecture:
 ```
 External Data → Source contracts → NATS JetStream → sinexd::event_engine → PostgreSQL (`core.events`)
                                     ↓
-                      confirmations/DLQ → Automata → sinexd::api / sinexctl
+                    confirmed events/DLQ → Automata → sinexd::api / sinexctl
 ```
 
 Current implementation:
 - Source contracts publish provisional events and source material slices directly to JetStream (`events.raw.*`, `source_material.*`).
-- `sinexd::event_engine` consumes from JetStream, validates, persists to PostgreSQL (TimescaleDB), then publishes confirmations (`events.confirmations.*`) and DLQ entries back to JetStream.
-- Automata consume confirmations via durable JetStream consumers; `sinexd::api` / `sinexctl` query PostgreSQL via JSON-RPC or direct DB mode.
+- `sinexd::event_engine` consumes from JetStream, validates, persists to PostgreSQL (TimescaleDB), then publishes full post-redaction confirmed events (`events.confirmed.*`) and DLQ entries back to JetStream.
+- Automata consume confirmed events via durable JetStream consumers; `sinexd::api` / `sinexctl` query PostgreSQL via JSON-RPC or direct DB mode.
 
 **Core Components:**
-- **sinexd::event_engine**: JetStream consumer + validator + single-writer persistence + confirmations/DLQ publisher
+- **sinexd::event_engine**: JetStream consumer + validator + single-writer persistence + confirmed-events/DLQ publisher
 - **sinexd::api**: HTTP/JSON-API for CLI and web access
 - **Source contracts / automata**: source capture and derived processing hosted by `sinexd`
 - **PostgreSQL**: Event storage with TimescaleDB for time-series data
