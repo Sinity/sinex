@@ -28,7 +28,7 @@ visible, and tied to the traffic class affected.
 | Class | Examples | Policy | Current mechanism | Gap |
 |---|---|---|---|---|
 | Control and privacy state | private-mode toggles, scan/drain commands, replay invalidations | Must not be starved; fail closed if publish/ack fails. | Control messages use explicit NATS subjects and ack/error paths. | No global priority scheduler; keep command/control traffic out of bulk raw-event lanes. |
-| Confirmations and durability receipts | event-engine confirmations, retry confirmations | Must persist or make the gap fatal/visible. | Confirmation retry path and fatal confirmation durability-gap classification. | Operator UI should surface confirmation retry backlog and fatal gaps. |
+| Confirmed-event delivery | event-engine full-payload confirmed events | Must publish after commit or make the gap fatal/visible. | Raw message ACK is withheld until confirmed publish succeeds; automata catch up from Postgres before consuming the live confirmed-event tail. | Operator UI should surface fatal confirmation publish gaps and automaton catch-up failures. |
 | Durable source material | staged files, SQLite snapshots, material slices | Lossless; may defer/retry; must DLQ terminal corruption. | WAL-backed material assembler, max size/slice limits, DLQ on terminal failures. | Continuity gap records should summarize failed/deferred material windows. |
 | Admitted event intents | source events, external event-intent bridge records | Lossless after admission; may backpressure producers; no silent drop. | Raw-event publisher lane, JetStream ack timeout, event-engine retry/DLQ. | External producers need clear retry/confirmation guidance. |
 | Derived events | automata outputs, summaries, model-derived records | Lossless relative to parent events; may be replayed from parents; failures route to processing DLQ. | Derived processing failure lane and per-event DLQ fallback. | High-fan-in summaries need compact lineage records, not huge parent arrays. |
@@ -50,7 +50,8 @@ visible, and tied to the traffic class affected.
 5. Bulk historical/parser work may defer, throttle, or split batches; it may not
    weaken provenance or replay semantics.
 6. Any operator-facing “healthy” state must account for DLQ backlog, deferred
-   material, confirmation retry backlog, and known lossy gaps.
+   material, fatal confirmation publish gaps, automaton catch-up failures, and
+   known lossy gaps.
 
 ## Operator Accounting
 
@@ -60,7 +61,7 @@ operator signals:
 - `deferred_work`: source, scope, reason, retry horizon;
 - `capture_gap`: source, time window, class, dropped/coalesced/deferred
   count if known, and whether replay can fill it;
-- `confirmation_gap`: batch scope and retry/durability status;
+- `confirmation_gap`: batch scope and fatal publish/durability status;
 - `dlq_backlog`: class, oldest failure, terminal vs retryable count;
 - `bulk_throttle`: source, configured budget, current budget pressure.
 
@@ -69,8 +70,8 @@ only in logs.
 
 ## Follow-Ups
 
-- Add operator-visible confirmation retry and DLQ backlog summaries to the
-  status/readiness surface if they are not already visible.
+- Add operator-visible fatal confirmation publish gap and DLQ backlog summaries
+  to the status/readiness surface if they are not already visible.
 - Define the first `capture_gap` event before adding any high-rate lossy source.
 - Add per-source budget/deferred-work accounting for bulk staged parser
   output.

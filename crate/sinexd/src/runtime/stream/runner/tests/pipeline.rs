@@ -3,6 +3,8 @@
 //! startup, and DLQ fallback paths.
 
 use super::*;
+use crate::runtime::stream::ProcessingStats;
+use crate::runtime::stream::control_protocol::encode_control_message;
 
 #[sinex_test]
 async fn encode_control_message_serializes_scan_ack() -> TestResult<()> {
@@ -353,6 +355,85 @@ async fn source_startup_gap_fill_uses_preexisting_checkpoint(ctx: TestContext) -
             },
         ]
     );
+    Ok(())
+}
+
+#[cfg(feature = "messaging")]
+#[sinex_test]
+async fn automaton_bridge_runs_historical_catchup_from_empty_checkpoint(
+    ctx: TestContext,
+) -> TestResult<()> {
+    let ctx = ctx.with_nats().shared().await?;
+    let module = HistoricalCatchupTestAutomaton::new(true);
+    let scans = module.scans.clone();
+    let mut runner = RuntimeRunner::new(module);
+    let work_dir = tempdir()?;
+    runner
+        .initialize_with_transport(
+            "automaton-bridge-catchup-from-none".to_string(),
+            HashMap::new(),
+            None,
+            EventTransport::Nats(Arc::new(crate::runtime::NatsPublisher::new(
+                ctx.nats_client(),
+            ))),
+            work_dir.path().to_path_buf(),
+            false,
+        )
+        .await?;
+
+    let error = runner
+        .run_automaton_event_bridge(Checkpoint::None)
+        .await
+        .expect_err("bridge must run catch-up before subscribing to live confirmed events");
+
+    assert!(
+        error
+            .to_string()
+            .contains("intentional historical catch-up stop")
+    );
+    let recorded = scans.lock().await.clone();
+    assert_eq!(
+        recorded,
+        vec![RecordedScan {
+            from: Checkpoint::None,
+            until: "historical",
+        }]
+    );
+    Ok(())
+}
+
+#[cfg(feature = "messaging")]
+#[sinex_test]
+async fn automaton_bridge_rejects_stream_only_automata(ctx: TestContext) -> TestResult<()> {
+    let ctx = ctx.with_nats().shared().await?;
+    let module = HistoricalCatchupTestAutomaton::new(false);
+    let scans = module.scans.clone();
+    let mut runner = RuntimeRunner::new(module);
+    let work_dir = tempdir()?;
+    runner
+        .initialize_with_transport(
+            "automaton-bridge-stream-only".to_string(),
+            HashMap::new(),
+            None,
+            EventTransport::Nats(Arc::new(crate::runtime::NatsPublisher::new(
+                ctx.nats_client(),
+            ))),
+            work_dir.path().to_path_buf(),
+            false,
+        )
+        .await?;
+
+    let error = runner
+        .run_automaton_event_bridge(Checkpoint::None)
+        .await
+        .expect_err("bridge-backed automata must support historical repair");
+
+    assert!(
+        error
+            .to_string()
+            .contains("requires historical scan support")
+    );
+    assert!(scans.lock().await.is_empty());
     Ok(())
 }
 

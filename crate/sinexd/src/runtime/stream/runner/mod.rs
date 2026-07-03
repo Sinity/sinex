@@ -101,6 +101,10 @@ mod service;
 mod shutdown_helpers;
 mod source_startup;
 
+#[cfg(test)]
+#[path = "runner_test.rs"]
+mod runner_test;
+
 impl<T: RuntimeModule + 'static> RuntimeRunner<T> {
     /// Get module capabilities
     pub fn get_capabilities(&self) -> RuntimeCapabilities {
