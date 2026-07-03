@@ -58,6 +58,9 @@ pub enum InfraSubcommand {
         /// Stop current-checkout infra before the smoke if it is already running
         #[arg(long)]
         reset_first: bool,
+        /// Preserve already-running current-checkout infra while running smoke probes
+        #[arg(long)]
+        allow_running: bool,
         /// Skip the explicit infra start/stop phase and only verify read-only probes
         #[arg(long)]
         skip_start: bool,
@@ -190,11 +193,20 @@ impl XtaskCommand for InfraCommand {
             InfraSubcommand::Smoke {
                 dry_run,
                 reset_first,
+                allow_running,
                 skip_start,
                 run_core,
             } => {
                 let config = StackConfig::for_current_checkout()?;
-                execute_smoke(&config, *dry_run, *reset_first, *skip_start, *run_core, ctx)
+                execute_smoke(
+                    &config,
+                    *dry_run,
+                    *reset_first,
+                    *allow_running,
+                    *skip_start,
+                    *run_core,
+                    ctx,
+                )
             }
             InfraSubcommand::Status {
                 watch,
@@ -1082,6 +1094,7 @@ struct InfraSmokeReport {
     nats_url: String,
     dry_run: bool,
     reset_first: bool,
+    allow_running: bool,
     skip_start: bool,
     run_core: bool,
     steps: Vec<InfraSmokeStep>,
@@ -1121,6 +1134,7 @@ fn execute_smoke(
     config: &StackConfig,
     dry_run: bool,
     reset_first: bool,
+    allow_running: bool,
     skip_start: bool,
     run_core: bool,
     ctx: &CommandContext,
@@ -1146,14 +1160,16 @@ fn execute_smoke(
         }
     }
 
-    if services_running(&current) {
+    let preserve_existing_runtime = allow_running && services_running(&current);
+    let baseline_sinexd_running = current.sinexd.running;
+
+    if services_running(&current) && !allow_running {
         return Ok(CommandResult::failure(crate::output::StructuredError {
             code: "INFRA_SMOKE_NOT_STOPPED".to_string(),
             message: "current checkout infra is already running".to_string(),
             location: Some("infra::smoke".to_string()),
             suggestion: Some(
-                "rerun with --reset-first, or stop current-checkout infra before the smoke"
-                    .to_string(),
+                "rerun with --reset-first, --allow-running, or stop current-checkout infra before the smoke".to_string(),
             ),
         })
         .with_data(serde_json::to_value(InfraSmokeReport {
@@ -1163,6 +1179,7 @@ fn execute_smoke(
             nats_url: config.nats_url(),
             dry_run,
             reset_first,
+            allow_running,
             skip_start,
             run_core,
             steps,
@@ -1187,14 +1204,14 @@ fn execute_smoke(
             match run_xtask_probe(name, &args) {
                 Ok(step) => step,
                 Err(err) => {
-                    stop_current_checkout_infra(config, ctx.is_human())?;
+                    cleanup_after_smoke_error(config, ctx.is_human(), preserve_existing_runtime)?;
                     return Err(err);
                 }
             }
         });
 
         let after_probe = StackStatus::gather(config);
-        if services_running(&after_probe) {
+        if services_running(&after_probe) && !preserve_existing_runtime {
             if !dry_run {
                 stop_current_checkout_infra(config, ctx.is_human())?;
             }
@@ -1213,6 +1230,7 @@ fn execute_smoke(
                 nats_url: config.nats_url(),
                 dry_run,
                 reset_first,
+                allow_running,
                 skip_start,
                 run_core,
                 steps,
@@ -1225,28 +1243,45 @@ fn execute_smoke(
     }
 
     if !skip_start {
-        steps.push(InfraSmokeStep {
-            name: "explicit infra start".to_string(),
-            command: vec!["xtask".into(), "infra".into(), "start".into()],
-            status: if dry_run { "planned" } else { "ran" }.to_string(),
-            detail: "Postgres/NATS may start only at this explicit phase".to_string(),
-        });
-        if !dry_run {
-            if let Err(err) = execute_start(config, true, &[], ctx) {
-                stop_current_checkout_infra(config, ctx.is_human())?;
-                return Err(err);
-            }
-            let running = StackStatus::gather(config);
-            if !running.postgres.running || !running.nats.running {
-                stop_current_checkout_infra(config, ctx.is_human())?;
-                return Ok(CommandResult::failure(crate::output::StructuredError {
-                    code: "INFRA_SMOKE_START_FAILED".to_string(),
-                    message: "explicit infra start did not bring up Postgres and NATS".to_string(),
-                    location: Some("infra::smoke".to_string()),
-                    suggestion: Some(
-                        "inspect xtask infra status/logs for the current checkout".to_string(),
-                    ),
-                }));
+        if preserve_existing_runtime {
+            steps.push(InfraSmokeStep {
+                name: "preserve existing infra".to_string(),
+                command: vec![
+                    "xtask".into(),
+                    "infra".into(),
+                    "smoke".into(),
+                    "--allow-running".into(),
+                ],
+                status: if dry_run { "planned" } else { "observed" }.to_string(),
+                detail:
+                    "current-checkout infra was already running and will not be stopped by this smoke"
+                        .to_string(),
+            });
+        } else {
+            steps.push(InfraSmokeStep {
+                name: "explicit infra start".to_string(),
+                command: vec!["xtask".into(), "infra".into(), "start".into()],
+                status: if dry_run { "planned" } else { "ran" }.to_string(),
+                detail: "Postgres/NATS may start only at this explicit phase".to_string(),
+            });
+            if !dry_run {
+                if let Err(err) = execute_start(config, true, &[], ctx) {
+                    stop_current_checkout_infra(config, ctx.is_human())?;
+                    return Err(err);
+                }
+                let running = StackStatus::gather(config);
+                if !running.postgres.running || !running.nats.running {
+                    stop_current_checkout_infra(config, ctx.is_human())?;
+                    return Ok(CommandResult::failure(crate::output::StructuredError {
+                        code: "INFRA_SMOKE_START_FAILED".to_string(),
+                        message: "explicit infra start did not bring up Postgres and NATS"
+                            .to_string(),
+                        location: Some("infra::smoke".to_string()),
+                        suggestion: Some(
+                            "inspect xtask infra status/logs for the current checkout".to_string(),
+                        ),
+                    }));
+                }
             }
         }
 
@@ -1267,7 +1302,7 @@ fn execute_smoke(
             match run_xtask_probe("local sinexd dry-run", &["run", "core", "--dry-run"]) {
                 Ok(step) => step,
                 Err(err) => {
-                    stop_current_checkout_infra(config, ctx.is_human())?;
+                    cleanup_after_smoke_error(config, ctx.is_human(), preserve_existing_runtime)?;
                     return Err(err);
                 }
             }
@@ -1275,8 +1310,8 @@ fn execute_smoke(
         steps.push(run_dry_step);
 
         let after_dry_run = StackStatus::gather(config);
-        if after_dry_run.sinexd.running {
-            stop_current_checkout_infra(config, ctx.is_human())?;
+        if after_dry_run.sinexd.running && !baseline_sinexd_running {
+            cleanup_after_smoke_error(config, ctx.is_human(), preserve_existing_runtime)?;
             return Ok(CommandResult::failure(crate::output::StructuredError {
                 code: "INFRA_SMOKE_DRY_RUN_STARTED_SINEXD".to_string(),
                 message: "xtask run core --dry-run started a local sinexd process".to_string(),
@@ -1295,11 +1330,17 @@ fn execute_smoke(
                         "would start a managed background sinexd job, observe it, and cancel it"
                             .to_string(),
                 }
+            } else if preserve_existing_runtime && baseline_sinexd_running {
+                observe_existing_core_smoke(config)?
             } else {
                 match run_managed_core_smoke(config) {
                     Ok(step) => step,
                     Err(err) => {
-                        stop_current_checkout_infra(config, ctx.is_human())?;
+                        cleanup_after_smoke_error(
+                            config,
+                            ctx.is_human(),
+                            preserve_existing_runtime,
+                        )?;
                         return Err(err);
                     }
                 }
@@ -1307,15 +1348,26 @@ fn execute_smoke(
             steps.push(runtime_step);
         }
 
-        steps.push(InfraSmokeStep {
-            name: "explicit infra stop".to_string(),
-            command: vec!["xtask".into(), "infra".into(), "stop".into()],
-            status: if dry_run { "planned" } else { "ran" }.to_string(),
-            detail: "current-checkout Postgres/NATS are stopped at the end of the smoke"
-                .to_string(),
-        });
-        if !dry_run {
-            stop_current_checkout_infra(config, ctx.is_human())?;
+        if preserve_existing_runtime {
+            steps.push(InfraSmokeStep {
+                name: "preserve existing infra at exit".to_string(),
+                command: vec!["xtask".into(), "infra".into(), "status".into()],
+                status: if dry_run { "planned" } else { "passed" }.to_string(),
+                detail:
+                    "smoke completed without stopping the pre-existing current-checkout infra"
+                        .to_string(),
+            });
+        } else {
+            steps.push(InfraSmokeStep {
+                name: "explicit infra stop".to_string(),
+                command: vec!["xtask".into(), "infra".into(), "stop".into()],
+                status: if dry_run { "planned" } else { "ran" }.to_string(),
+                detail: "current-checkout Postgres/NATS are stopped at the end of the smoke"
+                    .to_string(),
+            });
+            if !dry_run {
+                stop_current_checkout_infra(config, ctx.is_human())?;
+            }
         }
     }
 
@@ -1328,6 +1380,7 @@ fn execute_smoke(
         nats_url: config.nats_url(),
         dry_run,
         reset_first,
+        allow_running,
         skip_start,
         run_core,
         steps,
@@ -1387,6 +1440,20 @@ fn read_only_smoke_commands() -> Vec<(&'static str, Vec<&'static str>)> {
         ("run target list", vec!["run", "list"]),
         ("run core dry-run", vec!["run", "core", "--dry-run"]),
     ]
+}
+
+fn observe_existing_core_smoke(config: &StackConfig) -> Result<InfraSmokeStep> {
+    let status = wait_for_sinexd_observed(config, Duration::from_secs(30))?;
+    Ok(InfraSmokeStep {
+        name: "existing local sinexd runtime".to_string(),
+        command: vec!["xtask".into(), "infra".into(), "status".into()],
+        status: "passed".to_string(),
+        detail: format!(
+            "observed existing pids {:?} rss={}; preserved by --allow-running",
+            status.sinexd.pids,
+            format_bytes(status.sinexd.rss_bytes)
+        ),
+    })
 }
 
 fn run_managed_core_smoke(config: &StackConfig) -> Result<InfraSmokeStep> {
@@ -1520,6 +1587,18 @@ fn stop_current_checkout_infra(config: &StackConfig, verbose: bool) -> Result<()
     stack::pg_stop(config, verbose)?;
     CheckoutState::for_current_checkout()?.release_lock()?;
     Ok(())
+}
+
+fn cleanup_after_smoke_error(
+    config: &StackConfig,
+    verbose: bool,
+    preserve_existing_runtime: bool,
+) -> Result<()> {
+    if preserve_existing_runtime {
+        Ok(())
+    } else {
+        stop_current_checkout_infra(config, verbose)
+    }
 }
 
 fn all_checkouts_status() -> Result<AllCheckoutsStatus> {
