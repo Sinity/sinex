@@ -7,7 +7,7 @@
 use crate::GatewayClient;
 use crate::commands::ops::{operation_to_view, operations_to_views};
 use crate::commands::query_units::execute_query_unit;
-use color_eyre::Result;
+use color_eyre::{Report, Result};
 use color_eyre::eyre::{WrapErr, eyre};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
@@ -1810,33 +1810,41 @@ async fn call_tool_runtime_analytics(
     arguments: Value,
 ) -> Result<Option<Value>> {
     let result = match name {
-        "sinex_automata_status" => automata_status(client, arguments).await?,
-        "sinex_sources_status" => sources_status(client, arguments).await?,
-        "sinex_sources_status_view" => sources_status_view(client, arguments).await?,
-        "sinex_source_health" => runtime_health(client, arguments).await?,
-        "sinex_sources_active" => runtime_active(client, arguments).await?,
-        "sinex_sources_registry" => runtime_registry(client, arguments).await?,
-        "sinex_event_engine_validation" => event_engine_validation(client, arguments).await?,
-        "sinex_event_engine_batch_stats" => event_engine_batch_stats(client, arguments).await?,
-        "sinex_system_health" => system_health(client, arguments).await?,
-        "sinex_system_ping" => system_ping(client, arguments).await?,
-        "sinex_system_version" => system_version(client, arguments).await?,
-        "sinex_throughput" => throughput(client, arguments).await?,
-        "sinex_recent_activity" => recent_activity(client, arguments).await?,
-        "sinex_command_frequency" => command_frequency(client, arguments).await?,
-        "sinex_file_activity" => file_activity(client, arguments).await?,
-        "sinex_system_state" => system_state(client, arguments).await?,
-        "sinex_window_focus" => window_focus(client, arguments).await?,
-        "sinex_current_health" => current_health(client, arguments).await?,
-        "sinex_current_device_state" => current_device_state(client, arguments).await?,
-        "sinex_gateway_stats" => gateway_stats(client, arguments).await?,
-        "sinex_stream_stats" => stream_stats(client, arguments).await?,
-        "sinex_assembly_stats" => assembly_stats(client, arguments).await?,
-        "sinex_source_stats" => source_stats(client, arguments).await?,
-        "sinex_metric_counters" => metric_counters(client, arguments).await?,
+        "sinex_automata_status" => automata_status(client, arguments.clone()).await,
+        "sinex_sources_status" => sources_status(client, arguments.clone()).await,
+        "sinex_sources_status_view" => sources_status_view(client, arguments.clone()).await,
+        "sinex_source_health" => runtime_health(client, arguments.clone()).await,
+        "sinex_sources_active" => runtime_active(client, arguments.clone()).await,
+        "sinex_sources_registry" => runtime_registry(client, arguments.clone()).await,
+        "sinex_event_engine_validation" => event_engine_validation(client, arguments.clone()).await,
+        "sinex_event_engine_batch_stats" => {
+            event_engine_batch_stats(client, arguments.clone()).await
+        }
+        "sinex_system_health" => system_health(client, arguments.clone()).await,
+        "sinex_system_ping" => system_ping(client, arguments.clone()).await,
+        "sinex_system_version" => system_version(client, arguments.clone()).await,
+        "sinex_throughput" => throughput(client, arguments.clone()).await,
+        "sinex_recent_activity" => recent_activity(client, arguments.clone()).await,
+        "sinex_command_frequency" => command_frequency(client, arguments.clone()).await,
+        "sinex_file_activity" => file_activity(client, arguments.clone()).await,
+        "sinex_system_state" => system_state(client, arguments.clone()).await,
+        "sinex_window_focus" => window_focus(client, arguments.clone()).await,
+        "sinex_current_health" => current_health(client, arguments.clone()).await,
+        "sinex_current_device_state" => current_device_state(client, arguments.clone()).await,
+        "sinex_gateway_stats" => gateway_stats(client, arguments.clone()).await,
+        "sinex_stream_stats" => stream_stats(client, arguments.clone()).await,
+        "sinex_assembly_stats" => assembly_stats(client, arguments.clone()).await,
+        "sinex_source_stats" => source_stats(client, arguments.clone()).await,
+        "sinex_metric_counters" => metric_counters(client, arguments.clone()).await,
         _ => return Ok(None),
     };
-    Ok(Some(result))
+    match result {
+        Ok(result) => Ok(Some(result)),
+        Err(error) if is_gateway_transport_unavailable(&error) => Ok(Some(
+            gateway_unavailable_envelope(name, &arguments, client.base_url())?,
+        )),
+        Err(error) => Err(error),
+    }
 }
 
 async fn call_tool_ops_infra(
@@ -2829,6 +2837,50 @@ fn envelope(tool: &str, query: &Value, result: &Value) -> Value {
             }
         })
     })
+}
+
+fn gateway_unavailable_envelope(tool: &str, query: &Value, target_url: &str) -> Result<Value> {
+    let payload = json!({
+        "status": "degraded",
+        "reason": "gateway_unreachable",
+        "target_url": target_url,
+        "suggested_next_probe": "Check the runtime target with `sinexctl runtime gateway ping` or `xtask status --summary --json` before relying on runtime-status evidence.",
+        "result": null,
+    });
+    let mut envelope = ViewEnvelope::new(tool, payload).with_query_echo(query.clone());
+    envelope.caveats.push(CaveatView {
+        id: "mcp.gateway_unreachable".to_string(),
+        message: format!(
+            "Sinex gateway at {target_url} was unreachable; this runtime-status view is degraded rather than absent."
+        ),
+        ref_: None,
+    });
+    envelope.caveats.push(CaveatView {
+        id: "mcp.raw_samples_redacted".to_string(),
+        message: "MCP read tools redact raw payload samples and snippets by default".to_string(),
+        ref_: None,
+    });
+    envelope.privacy_state = Some(PrivacyStateView {
+        state: PrivacyStateKind::Redacted,
+        reason: Some("gateway_default raw sample redaction".to_string()),
+    });
+    Ok(serde_json::to_value(envelope)?)
+}
+
+fn is_gateway_transport_unavailable(error: &Report) -> bool {
+    if let Some(reqwest_error) = error.downcast_ref::<reqwest::Error>()
+        && (reqwest_error.is_connect() || reqwest_error.is_timeout())
+    {
+        return true;
+    }
+
+    let rendered = error.to_string().to_ascii_lowercase();
+    rendered.contains("error sending request")
+        || rendered.contains("connection refused")
+        || rendered.contains("connection reset")
+        || rendered.contains("network unreachable")
+        || rendered.contains("host unreachable")
+        || rendered.contains("timed out")
 }
 
 fn mcp_view_envelope(tool: &str, query: &Value, payload: &Value) -> Result<Value> {
