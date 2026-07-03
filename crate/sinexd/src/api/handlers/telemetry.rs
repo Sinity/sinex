@@ -26,6 +26,7 @@ use sinex_primitives::{
         TelemetryWindowFocusResponse, ThroughputComponentEntry, ThroughputSourceEntry,
         WindowFocusBucket,
     },
+    sources::is_self_observation_source,
 };
 use sqlx::PgPool;
 use time::OffsetDateTime;
@@ -1000,14 +1001,14 @@ pub async fn handle_telemetry_throughput(
     // Per-component aggregate. Component buckets here are intentionally
     // coarse: ingestion (everything not on `sinex.*`), gateway
     // (`sinexd.api`), derived (`derived.*`), and self-observation
-    // (`sinex.metric.*` / `sinex.health.*`). Tweaks to the bucket logic are
-    // expected over the lifetime of #1172's operator UX work.
+    // (the shared source classifier in `sinex_primitives::sources`). Tweaks to
+    // the bucket logic are expected over the lifetime of #1172's operator UX work.
     fn classify_component(source: &str) -> &'static str {
         if source.starts_with("sinexd.api") {
             "gateway"
         } else if source.starts_with("derived.") {
             "derived"
-        } else if source.starts_with("sinex.") {
+        } else if is_self_observation_source(source) {
             "self_observation"
         } else {
             "ingestion"
@@ -1033,7 +1034,9 @@ pub async fn handle_telemetry_throughput(
             CASE
                 WHEN source LIKE 'sinexd.api%'  THEN 'gateway'
                 WHEN source LIKE 'derived.%'       THEN 'derived'
-                WHEN source LIKE 'sinex.%'         THEN 'self_observation'
+                WHEN source = 'sinex'
+                  OR source LIKE 'sinex.%'
+                  OR source LIKE 'sinexd.%'        THEN 'self_observation'
                 ELSE 'ingestion'
             END AS component,
             COALESCE(SUM(CASE WHEN ts_orig >= NOW() - INTERVAL '1 hour' THEN 1 ELSE 0 END), 0)::bigint AS events_last_1h,

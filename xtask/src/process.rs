@@ -1141,7 +1141,11 @@ pub fn terminate_registered_process_groups(_reason: &str) -> Result<usize> {
 
 #[cfg(target_os = "linux")]
 pub fn terminate_current_process_descendants(reason: &str) -> Result<usize> {
-    let root_pid = std::process::id();
+    terminate_process_tree_by_root_pid(std::process::id(), reason)
+}
+
+#[cfg(target_os = "linux")]
+pub fn terminate_process_tree_by_root_pid(root_pid: u32, reason: &str) -> Result<usize> {
     let table = read_process_table();
     let descendants = collect_descendant_processes(root_pid, &table);
     if descendants.is_empty() {
@@ -1149,9 +1153,9 @@ pub fn terminate_current_process_descendants(reason: &str) -> Result<usize> {
     }
 
     for descendant in &descendants {
-        send_signal_to_process(descendant.pid, libc::SIGTERM).with_context(|| {
+        send_signal_to_group(descendant.pid, libc::SIGTERM).with_context(|| {
             format!(
-                "failed to send SIGTERM to descendant process {} while {reason}",
+                "failed to send SIGTERM to descendant process group rooted at {} while {reason}",
                 descendant.pid
             )
         })?;
@@ -1170,9 +1174,9 @@ pub fn terminate_current_process_descendants(reason: &str) -> Result<usize> {
 
     for descendant in &descendants {
         if process_matches(descendant) {
-            send_signal_to_process(descendant.pid, libc::SIGKILL).with_context(|| {
+            send_signal_to_group(descendant.pid, libc::SIGKILL).with_context(|| {
                 format!(
-                    "failed to send SIGKILL to descendant process {} while {reason}",
+                    "failed to send SIGKILL to descendant process group rooted at {} while {reason}",
                     descendant.pid
                 )
             })?;
@@ -1184,6 +1188,11 @@ pub fn terminate_current_process_descendants(reason: &str) -> Result<usize> {
 
 #[cfg(not(target_os = "linux"))]
 pub fn terminate_current_process_descendants(_reason: &str) -> Result<usize> {
+    Ok(0)
+}
+
+#[cfg(not(target_os = "linux"))]
+pub fn terminate_process_tree_by_root_pid(_root_pid: u32, _reason: &str) -> Result<usize> {
     Ok(0)
 }
 

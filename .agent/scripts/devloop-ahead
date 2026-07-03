@@ -48,7 +48,7 @@ Lane framing:
    Output: inspectable artifact delta or explicit no-op reason.
 
 3. Backlog/radar lane
-   Add/sharpen entries in AHEAD.md, DEMO-RADAR.md, or ACTIVE-LOOP.md.
+   Add/sharpen entries in AHEAD.md or ACTIVE-LOOP.md, or update demo beads (bd list -l demo).
    Output: ranked next slices with evidence, proof command, and demo value.
 
 4. Subagent/audit lane

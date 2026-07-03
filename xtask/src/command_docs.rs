@@ -306,6 +306,18 @@ const GUIDE_SECTIONS: &[GuideSection] = &[
                 notes: &[],
             },
             GuideEntry {
+                path: "analytics store",
+                fallback_summary: "Capture a cheap checkout Postgres store/backlog snapshot",
+                when: "you need to understand live catch-up or event-volume skew without running full-table counts",
+                examples: &[
+                    "xtask analytics store --json",
+                    "xtask analytics store --window-minutes 60 --limit 20",
+                ],
+                notes: &[
+                    "Uses bounded recent windows and PostgreSQL catalog estimates; it is a triage surface, not an exact full-table audit.",
+                ],
+            },
+            GuideEntry {
                 path: "deps impact",
                 fallback_summary: "Analyze rebuild impact",
                 when: "a dependency change might widen the rebuild/test blast radius",

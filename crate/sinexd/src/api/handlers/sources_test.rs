@@ -204,6 +204,126 @@ async fn remediation_decision_recovers_eventful_slice_timeout()
 }
 
 #[sinex_test]
+async fn remediation_decision_acknowledges_empty_self_observation_timeout()
+-> xtask::sandbox::TestResult<()> {
+    let (decision, severity, suggested_action) = remediation_decision(
+        MaterialStatus::RecoveredPartial,
+        0,
+        Some("slice_arrival_timeout_zero_event_self_observation_recovered_partial"),
+    );
+
+    assert_eq!(decision, "acknowledge_empty_self_observation_timeout");
+    assert_eq!(severity, "low");
+    assert!(suggested_action.contains("DLQ"));
+    assert!(suggested_action.contains("sources annotate"));
+    Ok(())
+}
+
+#[sinex_test]
+async fn remediation_decision_inspects_empty_source_material_timeout()
+-> xtask::sandbox::TestResult<()> {
+    let (decision, severity, suggested_action) = remediation_decision(
+        MaterialStatus::RecoveredPartial,
+        0,
+        Some("slice_arrival_timeout_zero_event_source_material_recovered_partial"),
+    );
+
+    assert_eq!(decision, "inspect_empty_source_material_timeout");
+    assert_eq!(severity, "medium");
+    assert!(suggested_action.contains("source-material timeout"));
+    assert!(suggested_action.contains("sources annotate"));
+    assert!(suggested_action.contains("DLQ"));
+    Ok(())
+}
+
+#[sinex_test]
+async fn remediation_decision_inspects_empty_orphaned_source_material()
+-> xtask::sandbox::TestResult<()> {
+    let (decision, severity, suggested_action) = remediation_decision(
+        MaterialStatus::RecoveredPartial,
+        0,
+        Some("orphaned_zero_event_source_material_recovered_partial"),
+    );
+
+    assert_eq!(decision, "inspect_empty_orphaned_source_material");
+    assert_eq!(severity, "medium");
+    assert!(suggested_action.contains("orphaned source material"));
+    assert!(suggested_action.contains("sources annotate"));
+    assert!(suggested_action.contains("DLQ"));
+    Ok(())
+}
+
+#[sinex_test]
+async fn remediation_candidate_uses_recovery_reason_for_recovered_partial()
+-> xtask::sandbox::TestResult<()> {
+    let row = MaterialListRow {
+        id: Uuid::now_v7(),
+        material_kind: "local_cas".to_string(),
+        source_identifier: "sinex.self-observation.sinexd".to_string(),
+        status: "recovered_partial".to_string(),
+        timing_info_type: "intrinsic".to_string(),
+        metadata: json!({
+            "recovery_info": {
+                "recovery_reason": "slice_arrival_timeout_zero_event_self_observation_recovered_partial"
+            }
+        }),
+        staged_at: time::OffsetDateTime::UNIX_EPOCH,
+        staged_by: Some("test".to_string()),
+        total_bytes: None,
+        parsed_event_count: 0,
+        mime_type: None,
+    };
+
+    let candidate = remediation_candidate_from_row(row)?;
+
+    assert_eq!(
+        candidate.decision,
+        "acknowledge_empty_self_observation_timeout"
+    );
+    assert_eq!(candidate.severity, "low");
+    assert_eq!(
+        candidate.recovery_reason.as_deref(),
+        Some("slice_arrival_timeout_zero_event_self_observation_recovered_partial")
+    );
+    Ok(())
+}
+
+#[sinex_test]
+async fn remediation_candidate_flags_zero_event_source_material_timeout()
+-> xtask::sandbox::TestResult<()> {
+    let row = MaterialListRow {
+        id: Uuid::now_v7(),
+        material_kind: "local_cas".to_string(),
+        source_identifier: "terminal.atuin-history".to_string(),
+        status: "recovered_partial".to_string(),
+        timing_info_type: "intrinsic".to_string(),
+        metadata: json!({
+            "recovery_info": {
+                "recovery_reason": "slice_arrival_timeout_zero_event_source_material_recovered_partial"
+            }
+        }),
+        staged_at: time::OffsetDateTime::UNIX_EPOCH,
+        staged_by: Some("test".to_string()),
+        total_bytes: None,
+        parsed_event_count: 0,
+        mime_type: None,
+    };
+
+    let candidate = remediation_candidate_from_row(row)?;
+
+    assert_eq!(
+        candidate.decision,
+        "inspect_empty_source_material_timeout"
+    );
+    assert_eq!(candidate.severity, "medium");
+    assert_eq!(
+        candidate.recovery_reason.as_deref(),
+        Some("slice_arrival_timeout_zero_event_source_material_recovered_partial")
+    );
+    Ok(())
+}
+
+#[sinex_test]
 async fn stage_material_contract_records_package_mode_binding() -> xtask::sandbox::TestResult<()>
 {
     let request = SourcesStageRequest {

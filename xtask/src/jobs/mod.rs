@@ -17,7 +17,7 @@ use tokio::process;
 
 use crate::config::config;
 use crate::history::{BackgroundJob, HistoryDb, InvocationStatus, JobLifecycleStatus};
-use crate::process::configure_background_job_child_tokio;
+use crate::process::{configure_background_job_child_tokio, terminate_process_tree_by_root_pid};
 
 #[cfg(not(test))]
 const CANCEL_SIGTERM_GRACE: Duration = Duration::from_secs(5);
@@ -760,6 +760,10 @@ impl JobManager {
 
         if matches!(job.job_status, JobLifecycleStatus::Running) {
             if let Some(job_pid) = job.pid {
+                let _ = terminate_process_tree_by_root_pid(
+                    job_pid,
+                    &format!("cancelling background job {id}"),
+                )?;
                 let pid = nix::unistd::Pid::from_raw(job_pid as i32);
                 match terminate_job_process(pid)? {
                     SignalDelivery::Delivered => {}

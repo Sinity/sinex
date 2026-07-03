@@ -66,6 +66,7 @@ pub struct DailySummaryState {
     pub source_event_ids: Vec<Uuid>,
     pub summary_counter: u32,
     pending_hour: Option<PendingHourlySummary>,
+    last_hour_start: Option<Timestamp>,
 }
 
 impl DailySummaryState {
@@ -81,6 +82,7 @@ impl DailySummaryState {
         self.focus_time_secs_by_source.clear();
         self.source_event_ids.clear();
         self.pending_hour = None;
+        self.last_hour_start = None;
     }
 
     fn accumulate_hour(
@@ -89,6 +91,7 @@ impl DailySummaryState {
         payload: ActivityHourlySummaryPayload,
         event_id: Uuid,
     ) {
+        let hour_start = payload.hour_start;
         if self.day_start.is_none() {
             self.day_start = Some(bucket_start);
         }
@@ -107,6 +110,7 @@ impl DailySummaryState {
         for (source, secs) in payload.focus_time_secs_by_source {
             *self.focus_time_secs_by_source.entry(source).or_insert(0) += secs;
         }
+        self.last_hour_start = Some(hour_start);
         self.source_event_ids.push(event_id);
         self.pending_hour = None;
     }
@@ -238,7 +242,8 @@ impl Windowed for DailySummarizer {
             primary_source,
         };
 
-        let output = DerivedOutput::windowed(payload, day_end, source_event_ids)
+        let event_timestamp = state.last_hour_start.unwrap_or(day_start);
+        let output = DerivedOutput::windowed(payload, event_timestamp, source_event_ids)
             .with_temporal_policy(sinex_primitives::domain::SyntheticTemporalPolicy::WindowBoundary)
             .with_semantics_version("1.0.0")
             .with_equivalence_key(day_id)

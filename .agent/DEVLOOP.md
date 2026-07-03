@@ -24,6 +24,8 @@ Run these from the repo root:
 ```bash
 .agent/scripts/devloop-status
 .agent/scripts/devloop-review
+bd prime          # beads workflow context (task substrate)
+bd ready          # unblocked work, highest priority first
 ```
 
 Use `.agent/scripts/devloop-status --focus` for a very fast context refresh
@@ -38,30 +40,35 @@ Then read, in order:
 3. `.agent/conductor-devloop/INDEX.md`
 4. `.agent/conductor-devloop/README.md`
 5. `.agent/conductor-devloop/ACTIVE-LOOP.md`
-6. `.agent/conductor-devloop/OPERATING-LOG.md` newest entries first
-7. `.agent/conductor-devloop/RUNBOOK.md`
-8. `.agent/conductor-devloop/PROCESS.md`
-9. `.agent/conductor-devloop/TACTICS.md`
-10. `.agent/conductor-devloop/VELOCITY.md`
-11. `.agent/conductor-devloop/DEMO-RADAR.md`
-12. `.agent/inbox/INDEX.md`
-13. `.agent/demos/sinex/CURATED_CATALOG.md`
+6. `bd list --status=in_progress` and `bd show` on the claimed bead
+7. `.agent/conductor-devloop/OPERATING-LOG.md` newest entries first
+8. `.agent/conductor-devloop/RUNBOOK.md`
+9. `.agent/conductor-devloop/PROCESS.md`
+10. `.agent/conductor-devloop/TACTICS.md`
+11. `.agent/conductor-devloop/VELOCITY.md`
+12. `bd list -l demo` (the demo portfolio epic and its beads)
+13. `.agent/inbox/INDEX.md`
+14. `.agent/demos/sinex/CURATED_CATALOG.md`
 
 If these disagree, trust live evidence first, then `OPERATING-LOG.md`, then
 `ACTIVE-LOOP.md`; update stale state before widening work.
 
 ## How To Continue
 
-1. Choose one capability slice, not a broad theme.
-2. State the slice contract in `OPERATING-LOG.md`: demo value, reusable
-   substrate, proof ladder, non-goals, and first action.
+1. Choose one capability slice, not a broad theme. Start from `bd ready`
+   plus live evidence; create the bead if it does not exist, then claim it
+   (`bd update <id> --claim`).
+2. State the slice contract in `OPERATING-LOG.md`: bead id, demo value,
+   reusable substrate, proof ladder, non-goals, and first action.
 3. Prefer shared algebra over silos: acquisition, query, evidence projection,
    rendering, runtime observability, and dev tooling should be reusable by CLI,
    API, TUI, demos, and future agents.
 4. Use existing live evidence: dev-local `sinexd`, source bindings,
    `sinexctl`, Polylogue, Lynchpin, GitHub issues, and the demo shelf.
 5. Verify narrowly, create or refresh the inspectable artifact, then commit the
-   logical chunk.
+   logical chunk. Close the bead with the proof in its reason
+   (`bd close <id> --reason "..."`); file discovered follow-ups as beads
+   (`bd create ... --deps discovered-from:<id>`).
 6. Run the closing ritual when a slice materially changes demos or handoff:
 
 ```bash
@@ -76,6 +83,13 @@ If these disagree, trust live evidence first, then `OPERATING-LOG.md`, then
 
 - `.agent/DEVLOOP.md`, `.agent/README.md`, `.agent/scripts/`, and
   `.agent/includes/` are tracked durable scaffold.
+- Beads (`bd`, workspace `.beads/`) is the durable task substrate: backlog,
+  ready work, claims, blockers, deferred directives, side-research leases,
+  and `bd remember` insights. See the Beads section in `.agent/CONVENTIONS.md`.
+  Research/analysis Beads should be handed to sidecar agents when they are
+  genuinely question-shaped; the required output is a comment or field update
+  on the same Bead plus, when useful, a cited packet under
+  `.agent/scratch/research/`.
 - `.agent/CONVENTIONS.md` is the shared Sinex/Polylogue devloop contract:
   active-root semantics, primitive names, focus modes, scratch/demo boundaries,
   and local migration decisions.
@@ -84,7 +98,7 @@ If these disagree, trust live evidence first, then `OPERATING-LOG.md`, then
   state semantics intentionally change.
 - `.agent/conductor-devloop/` is the canonical active conductor state and packet.
 - `.agent/conductor-devloop/ACTIVE-LOOP.md`, `OPERATING-LOG.md`,
-  `DEMO-RADAR.md`, `EVENTS.jsonl`, `PHASES.jsonl`, `MANIFEST.md`, and
+  `EVENTS.jsonl`, `PHASES.jsonl`, `MANIFEST.md`, and
   `context/**` are local active/generated state; protocol docs in the same root
   are tracked scaffold.
 - `.agent/demos/sinex/` is the canonical local demo shelf.
@@ -106,7 +120,7 @@ transfer habits between repos:
 
 ```text
 devloop-status devloop-review devloop-start devloop-checkpoint devloop-log
-devloop-focus devloop-demo devloop-baseline devloop-wait devloop-ahead
+devloop-focus devloop-baseline devloop-wait devloop-ahead
 devloop-meta devloop-handoff devloop-sync devloop-integration devloop-velocity
 devloop-refresh-demos devloop-refresh-events
 ```
@@ -139,7 +153,6 @@ script snapshots reappear, or if retired primitive names such as
 .agent/scripts/devloop-status --quick
 .agent/scripts/devloop-start "short slice name"
 .agent/scripts/devloop-focus Direction Evidence "trigger" "decision"
-.agent/scripts/devloop-demo
 .agent/scripts/devloop-checkpoint --queue "after current" "switch to Meta focus" "current slice closes"
 .agent/scripts/devloop-checkpoint --queue-complete "after current" "promoted into ACTIVE-LOOP.md"
 .agent/scripts/devloop-refresh-demos

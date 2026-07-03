@@ -1,6 +1,8 @@
 // Inline because this exercises private orphan-state cleanup paths.
 use super::test_support::{build_test_assembler, build_test_content_store};
-use super::{MaterialAssembler, maintenance::MaterialTaskOutcome, signal_ready};
+use super::{
+    MaterialAssembler, disk_usage_allows_assembly, maintenance::MaterialTaskOutcome, signal_ready,
+};
 use crate::event_engine::MaterialReadySet;
 use sinex_db::DbPoolExt;
 use sinex_primitives::{Id, domain::MaterialStatus};
@@ -54,6 +56,38 @@ async fn ready_signal_reports_dropped_receiver() -> TestResult<()> {
     drop(rx);
 
     assert!(!signal_ready(Some(tx), "material-assembler"));
+    Ok(())
+}
+
+#[sinex_test]
+async fn disk_backpressure_allows_high_percent_with_large_free_floor() -> TestResult<()> {
+    let one_gib_blocks = 1024 * 1024;
+    let total_blocks = 1000 * one_gib_blocks;
+    let available_blocks = 84 * one_gib_blocks;
+
+    assert!(
+        disk_usage_allows_assembly(total_blocks, available_blocks, 1024, 90, 4 * 1024 * 1024 * 1024),
+        "91% used on a large filesystem with 84 GiB free must not reject tiny assemblies"
+    );
+    Ok(())
+}
+
+#[sinex_test]
+async fn disk_backpressure_rejects_high_percent_with_low_free_floor() -> TestResult<()> {
+    let one_gib_blocks = 1024 * 1024;
+    let total_blocks = 1000 * one_gib_blocks;
+    let available_blocks = one_gib_blocks;
+
+    assert!(
+        !disk_usage_allows_assembly(
+            total_blocks,
+            available_blocks,
+            1024,
+            90,
+            4 * 1024 * 1024 * 1024,
+        ),
+        "high-percent usage should still reject once absolute free space is below the floor"
+    );
     Ok(())
 }
 

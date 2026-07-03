@@ -64,6 +64,7 @@ pub struct HourlySummaryState {
     pub source_event_ids: Vec<Uuid>,
     pub summary_counter: u32,
     pending_window: Option<PendingWindowSummary>,
+    last_window_end: Option<Timestamp>,
 }
 
 impl HourlySummaryState {
@@ -78,6 +79,7 @@ impl HourlySummaryState {
         self.focus_time_secs_by_source.clear();
         self.source_event_ids.clear();
         self.pending_window = None;
+        self.last_window_end = None;
     }
 
     fn accumulate_window(
@@ -86,6 +88,7 @@ impl HourlySummaryState {
         payload: ActivityWindowSummaryPayload,
         event_id: Uuid,
     ) {
+        let window_end = payload.window_end;
         if self.hour_start.is_none() {
             self.hour_start = Some(bucket_start);
         }
@@ -104,6 +107,7 @@ impl HourlySummaryState {
             .focus_time_secs_by_source
             .entry(payload.primary_source)
             .or_insert(0) += payload.duration_secs;
+        self.last_window_end = Some(window_end);
         self.source_event_ids.push(event_id);
         self.pending_window = None;
     }
@@ -234,7 +238,8 @@ impl Windowed for HourlySummarizer {
             primary_source,
         };
 
-        let output = DerivedOutput::windowed(payload, hour_end, source_event_ids)
+        let event_timestamp = state.last_window_end.unwrap_or(hour_start);
+        let output = DerivedOutput::windowed(payload, event_timestamp, source_event_ids)
             .with_temporal_policy(sinex_primitives::domain::SyntheticTemporalPolicy::WindowBoundary)
             .with_semantics_version("1.0.0")
             .with_equivalence_key(hour_id)
