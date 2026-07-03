@@ -1243,16 +1243,20 @@ fn operator_token<'input>(input: &mut &'input str) -> ModalResult<&'input str> {
 }
 
 fn value_token<'input>(input: &mut &'input str) -> ModalResult<&'input str> {
-    alt((quoted_string, bare_value)).parse_next(input)
+    alt((double_quoted_string, single_quoted_string, bare_value)).parse_next(input)
 }
 
-fn quoted_string<'input>(input: &mut &'input str) -> ModalResult<&'input str> {
+fn double_quoted_string<'input>(input: &mut &'input str) -> ModalResult<&'input str> {
     delimited('"', take_until(0.., "\""), '"').parse_next(input)
+}
+
+fn single_quoted_string<'input>(input: &mut &'input str) -> ModalResult<&'input str> {
+    delimited('\'', take_until(0.., "'"), '\'').parse_next(input)
 }
 
 fn bare_value<'input>(input: &mut &'input str) -> ModalResult<&'input str> {
     take_while(1.., |c: char| {
-        !c.is_whitespace() && c != '"' && c != '(' && c != ')'
+        !c.is_whitespace() && c != '"' && c != '\'' && c != '(' && c != ')'
     })
     .parse_next(input)
 }
