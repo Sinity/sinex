@@ -15,6 +15,33 @@ use std::collections::HashMap;
 use xtask::sandbox::sinex_test;
 
 #[sinex_test]
+async fn readiness_caveat_ids_are_stable_wire_vocabulary() -> xtask::TestResult<()> {
+    let cases = [
+        (ReadinessCaveatId::SourceAbsent, "source.absent"),
+        (
+            ReadinessCaveatId::ReadmodelStaleBy,
+            "readmodel.stale_by",
+        ),
+        (ReadinessCaveatId::WindowPartial, "window.partial"),
+        (
+            ReadinessCaveatId::CoverageUnmeasurable,
+            "coverage.unmeasurable",
+        ),
+        (
+            ReadinessCaveatId::DerivationLaneNotPromoted,
+            "derivation.lane_not_promoted",
+        ),
+    ];
+
+    for (id, expected) in cases {
+        assert_eq!(id.as_str(), expected);
+        assert_eq!(serde_json::to_value(id)?, json!(expected));
+        assert_eq!(serde_json::from_value::<ReadinessCaveatId>(json!(expected))?, id);
+    }
+    Ok(())
+}
+
+#[sinex_test]
 async fn event_card_preserves_refs_actions_and_payload_preview() -> xtask::TestResult<()> {
     let event_id = Id::<Event<JsonValue>>::new();
     let material_id = Id::<SourceMaterial>::new();
