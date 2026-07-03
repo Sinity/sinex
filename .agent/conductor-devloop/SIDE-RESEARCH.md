@@ -78,7 +78,12 @@ Current conductor decision:
   and persisted browser visit events. The proof is recorded in
   `OPERATING-LOG.md`.
 - Keep the git quietness fix second unless the Recall v2 artifact can honestly
-  narrow its claim without it.
+  narrow its claim without it. Update 2026-07-03: the cursor-level git fix is
+  implemented in `c19052c6c` and live job `2001254` advanced to
+  `processed_count=1497`; material `019f2545-2eb5-7d23-ad1a-8b393f78520c`
+  has 1,426 persisted/queryable events, but the material row still reports
+  `sensing` instead of finalizing, so source-material closure remains the
+  next runtime debt.
 - Do not present Recall v2 as terminal proof until a cold-reader packet shows
   browser participation, or until the packet explicitly narrows the claim.
 
@@ -152,8 +157,10 @@ Next conductor action:
 ### Main-Lane Priorities
 
 1. Recall v2 baseline-arm demo: refresh the packet with the newly proven live
-   Chrome browser participation, then repair or honestly narrow git
-   participation before presenting terminal proof.
+   Chrome browser participation and the implemented git cursor repair. Use git
+   event-query participation now that rows are persisted, but caveat the
+   source-material finalization bug until the restarted source's material
+   leaves `sensing`.
 2. Bounded source-material remediation action policy if Recall v2 evidence is
    false or too caveated without it.
 3. Query algebra/event-query lowering to collapse CLI flags, root query strings,
