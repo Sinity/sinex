@@ -729,6 +729,7 @@ pub fn build() -> HashMap<&'static str, FormatCapability> {
         "events context",
         FormatCapability::single_shot(TABLE_JSON_YAML),
     );
+    m.insert("recall", FormatCapability::single_shot(TABLE_JSON_YAML));
     m.insert("ops verify", FormatCapability::single_shot(TABLE_JSON_YAML));
     m.insert(
         "ops verify baseline",
@@ -854,7 +855,7 @@ const fn rpc_role_rank(role: RpcRole) -> u8 {
 fn family_for_path(path: &str) -> CommandFamily {
     let root = path.split_once(' ').map_or(path, |(root, _)| root);
     match root {
-        "events" | "show" => CommandFamily::Query,
+        "events" | "query" | "recall" | "show" => CommandFamily::Query,
         "runtime" | "replay" | "dlq" | "ops" | "lifecycle" | "privacy" => CommandFamily::Operate,
         "sources" => CommandFamily::Sources,
         "record" | "tasks" | "semantic" | "docs" => CommandFamily::Domain,
@@ -1062,6 +1063,7 @@ fn backing_rpc_methods_for_path(path: &str) -> &'static [&'static str] {
             methods::RUNTIME_HEALTH,
         ],
         "events context"
+        | "recall"
         | "metrics report today"
         | "metrics report yesterday"
         | "metrics report calendar" => &[methods::EVENTS_QUERY],

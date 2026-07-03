@@ -15,6 +15,9 @@ sinexctl runtime health --token "$SINEX_API_TOKEN"
 # Query recent events
 sinexctl events query -s 1h --token "$SINEX_API_TOKEN"
 
+# Recall activity context for session resumption
+sinexctl recall --window 2h --token "$SINEX_API_TOKEN"
+
 # List runtime modules and replay operations
 sinexctl runtime list --token "$SINEX_API_TOKEN"
 sinexctl ops replay list --token "$SINEX_API_TOKEN"
@@ -38,6 +41,7 @@ The public root command tree is deliberately small. Older shortcut roots such as
 
 - `events`: event search, filtering, relations, tracing, streaming, and annotation
 - `query`: shared query-unit selection via a query expression (e.g. `query 'events where source = "terminal" limit 50'`)
+- `recall`: compact activity context around a point in time, using the shared context/query substrate
 - `show`: resolve and inspect a public Sinex object ref (`<kind>:<id>`)
 - `sources`: source material inventory, staging, readiness, continuity, drift, and coverage
 - `runtime`: gateway reachability, runtime health, module list/status/drain/resume/horizon, and automata health

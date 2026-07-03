@@ -254,6 +254,7 @@ async fn format_matrix_terminal_output_contains_key_commands() -> TestResult<()>
         output.contains("events query"),
         "matrix must list `events query`"
     );
+    assert!(output.contains("recall"), "matrix must list `recall`");
     assert!(output.contains("relations"), "matrix must list `relations`");
     assert!(
         output.contains("events watch"),
@@ -461,6 +462,17 @@ async fn command_path_preserves_format_registry_leaf_commands() -> TestResult<()
                 "events where source = \"terminal.fish-history\" limit 10",
             ],
             "query",
+        ),
+        (
+            vec![
+                "sinexctl",
+                "recall",
+                "--at",
+                "2026-07-02T19:00:00Z",
+                "--window",
+                "30m",
+            ],
+            "recall",
         ),
         (
             vec!["sinexctl", "ops", "dlq", "requeue", "--all"],
