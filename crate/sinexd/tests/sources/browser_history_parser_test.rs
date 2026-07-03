@@ -75,6 +75,34 @@ async fn qutebrowser_sqlite_title_is_not_parser_redacted() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn sqlite_occurrence_key_includes_browser_profile() {
+    let mut parser = BrowserHistoryParser;
+    let record = record_for(
+        br#"{"rowid":101,"url":"https://example.com","title":"Example","atime":1700000000,"redirect":0}"#,
+        "primary/var/tmp/qutebrowser/history.sqlite",
+    );
+
+    let intents = parser.parse_record(record, &test_ctx()).await.unwrap();
+
+    let fields = &intents[0]
+        .occurrence_key
+        .as_ref()
+        .expect("browser visits have occurrence keys")
+        .fields;
+    assert_eq!(
+        fields.as_slice(),
+        [
+            ("browser".to_string(), "qutebrowser".to_string()),
+            (
+                "source_file".to_string(),
+                "primary/var/tmp/qutebrowser/history.sqlite".to_string()
+            ),
+            ("visit_id".to_string(), "101".to_string()),
+        ]
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn jsonl_dump_payload_includes_source_file_without_secondary_prefix() {
     let mut parser = BrowserHistoryParser;
     let record = record_for(

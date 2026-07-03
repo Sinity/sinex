@@ -538,9 +538,13 @@ fn build_intent(
         payload.insert("db_row_id".into(), serde_json::json!(rid));
     }
 
-    let occurrence_key = visit.visit_id.map(|vid| OccurrenceKey {
+    let occurrence_key = visit.visit_id.as_ref().map(|vid| OccurrenceKey {
         source_id: ctx.source_id.clone(),
-        fields: vec![("visit_id".to_string(), vid)],
+        fields: vec![
+            ("browser".to_string(), visit.browser.clone()),
+            ("source_file".to_string(), visit.source_file.clone()),
+            ("visit_id".to_string(), vid.clone()),
+        ],
     });
 
     Ok(vec![

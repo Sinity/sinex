@@ -228,6 +228,8 @@ async fn test_source_binding_runtime_args_uses_manifest_identity()
             "git-commit-history".to_string(),
             "--service-name".to_string(),
             "source-driver-git-commit-history-3".to_string(),
+            "--instance-idx".to_string(),
+            "3".to_string(),
             "--runtime-config".to_string(),
             r#"{"repo":"/realm/project/sinex"}"#.to_string(),
         ]
