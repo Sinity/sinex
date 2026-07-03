@@ -132,6 +132,7 @@ impl EventRepository<'_> {
             .map(PayloadFilter::positive_text_search_terms)
             .unwrap_or_default();
         let has_text_search = !text_search_terms.is_empty();
+        let listing_order = ListingOrder::for_query(&query, has_text_search);
 
         let fetch_limit = query.limit + 1; // +1 to detect "has more"
 
@@ -151,16 +152,10 @@ impl EventRepository<'_> {
         qb.push(") AS listing WHERE TRUE");
 
         if let Some(ref cursor) = query.cursor {
-            push_cursor(&mut qb, cursor, query.direction, has_text_search);
+            push_cursor(&mut qb, cursor, query.direction, listing_order);
         }
 
-        if has_text_search {
-            qb.push(" ORDER BY relevance_score DESC, id ");
-            qb.push(direction_sql(query.direction));
-        } else {
-            qb.push(" ORDER BY id ");
-            qb.push(direction_sql(query.direction));
-        }
+        push_listing_order(&mut qb, query.direction, listing_order);
 
         qb.push(" LIMIT ");
         qb.push_bind(fetch_limit);
@@ -177,7 +172,7 @@ impl EventRepository<'_> {
 
         let next_cursor = if has_more {
             rows.last()
-                .map(|row| event_listing_cursor(row, has_text_search))
+                .map(|row| event_listing_cursor(row, listing_order))
         } else {
             None
         };
@@ -231,9 +226,31 @@ struct EventListingRow {
     snippet: Option<String>,
 }
 
-fn event_listing_cursor(row: &EventListingRow, has_text_search: bool) -> Cursor {
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ListingOrder {
+    Id,
+    Occurrence,
+    Ranked,
+}
+
+impl ListingOrder {
+    fn for_query(query: &EventQuery, has_text_search: bool) -> Self {
+        if has_text_search {
+            Self::Ranked
+        } else if query.time_range.is_some() {
+            Self::Occurrence
+        } else {
+            Self::Id
+        }
+    }
+}
+
+fn event_listing_cursor(row: &EventListingRow, listing_order: ListingOrder) -> Cursor {
     let mut anchor = CursorAnchor::from_id(Id::from_uuid(row.record.id));
-    if has_text_search {
+    if listing_order == ListingOrder::Occurrence {
+        anchor = anchor.with_ts_orig(Some(row.record.ts_orig));
+    }
+    if listing_order == ListingOrder::Ranked {
         // Truncate to 6 decimal places to match the TRUNC(...)::float8 projection in
         // push_text_search_projection. This ensures the cursor value is bit-for-bit
         // identical to the projected score, preventing float8 round-trip precision loss
@@ -551,9 +568,7 @@ fn push_filters(qb: &mut QueryBuilder<'_, Postgres>, query: &EventQuery) {
             .iter()
             .map(|s| s.as_str().to_string())
             .collect();
-        qb.push(" AND source = ANY(");
-        qb.push_bind(values);
-        qb.push(")");
+        push_string_filter(qb, "source", values);
     }
 
     if !query.event_types.is_empty() {
@@ -562,16 +577,12 @@ fn push_filters(qb: &mut QueryBuilder<'_, Postgres>, query: &EventQuery) {
             .iter()
             .map(|t| t.as_str().to_string())
             .collect();
-        qb.push(" AND event_type = ANY(");
-        qb.push_bind(values);
-        qb.push(")");
+        push_string_filter(qb, "event_type", values);
     }
 
     if !query.hosts.is_empty() {
         let values: Vec<String> = query.hosts.iter().map(|h| h.as_str().to_string()).collect();
-        qb.push(" AND host = ANY(");
-        qb.push_bind(values);
-        qb.push(")");
+        push_string_filter(qb, "host", values);
     }
 
     if let Some(ref range) = query.time_range {
@@ -605,6 +616,23 @@ fn push_filters(qb: &mut QueryBuilder<'_, Postgres>, query: &EventQuery) {
     if let Some(ref equivalence_key) = query.equivalence_key {
         qb.push(" AND equivalence_key = ");
         qb.push_bind(equivalence_key.clone());
+    }
+}
+
+fn push_string_filter(
+    qb: &mut QueryBuilder<'_, Postgres>,
+    column: &'static str,
+    values: Vec<String>,
+) {
+    qb.push(" AND ");
+    qb.push(column);
+    if values.len() == 1 {
+        qb.push(" = ");
+        qb.push_bind(values[0].clone());
+    } else {
+        qb.push(" = ANY(");
+        qb.push_bind(values);
+        qb.push(")");
     }
 }
 
@@ -771,9 +799,9 @@ fn push_cursor(
     qb: &mut QueryBuilder<'_, Postgres>,
     cursor: &Cursor,
     direction: SortDirection,
-    has_text_search: bool,
+    listing_order: ListingOrder,
 ) {
-    if has_text_search {
+    if listing_order == ListingOrder::Ranked {
         if let Some(ref after) = cursor.after {
             push_ranked_cursor_clause(qb, after, direction, true);
         }
@@ -781,6 +809,21 @@ fn push_cursor(
             push_ranked_cursor_clause(qb, before, direction, false);
         }
         return;
+    }
+
+    if listing_order == ListingOrder::Occurrence {
+        if let Some(ref after) = cursor.after
+            && let Some(ts_orig) = after.ts_orig
+        {
+            push_occurrence_cursor_clause(qb, after.id.to_uuid(), ts_orig, direction, true);
+            return;
+        }
+        if let Some(ref before) = cursor.before
+            && let Some(ts_orig) = before.ts_orig
+        {
+            push_occurrence_cursor_clause(qb, before.id.to_uuid(), ts_orig, direction, false);
+            return;
+        }
     }
 
     if let Some(ref after) = cursor.after {
@@ -815,11 +858,61 @@ fn push_cursor(
     }
 }
 
+fn push_listing_order(
+    qb: &mut QueryBuilder<'_, Postgres>,
+    direction: SortDirection,
+    listing_order: ListingOrder,
+) {
+    match listing_order {
+        ListingOrder::Ranked => {
+            qb.push(" ORDER BY relevance_score DESC, id ");
+            qb.push(direction_sql(direction));
+        }
+        ListingOrder::Occurrence => {
+            qb.push(" ORDER BY ts_orig ");
+            qb.push(direction_sql(direction));
+            qb.push(", id ");
+            qb.push(direction_sql(direction));
+        }
+        ListingOrder::Id => {
+            qb.push(" ORDER BY id ");
+            qb.push(direction_sql(direction));
+        }
+    }
+}
+
 fn direction_sql(dir: SortDirection) -> &'static str {
     match dir {
         SortDirection::Asc => "ASC",
         SortDirection::Desc => "DESC",
     }
+}
+
+fn push_occurrence_cursor_clause(
+    qb: &mut QueryBuilder<'_, Postgres>,
+    uuid: Uuid,
+    ts_orig: Timestamp,
+    direction: SortDirection,
+    is_after: bool,
+) {
+    let (ts_cmp, id_cmp) = match (is_after, direction) {
+        (true, SortDirection::Desc) => ("<", "<"),
+        (true, SortDirection::Asc) => (">", ">"),
+        (false, SortDirection::Desc) => (">", ">"),
+        (false, SortDirection::Asc) => ("<", "<"),
+    };
+
+    qb.push(" AND (ts_orig ");
+    qb.push(ts_cmp);
+    qb.push(" ");
+    qb.push_bind(ts_orig);
+    qb.push(" OR (ts_orig = ");
+    qb.push_bind(ts_orig);
+    qb.push(" AND id ");
+    qb.push(id_cmp);
+    qb.push(" ");
+    qb.push_bind(uuid);
+    qb.push("::uuid))");
 }
 
 fn push_text_search_projection(qb: &mut QueryBuilder<'_, Postgres>, terms: &[String]) {
