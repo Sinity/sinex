@@ -2,6 +2,29 @@
 set -euo pipefail
 
 repo_root="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
+
+usage() {
+  cat <<'EOF'
+Usage: .agent/scripts/devloop-refresh-demos [demo-root]
+
+Regenerate MANIFEST.readable.json, SUMMARY_INDEX.json, and CURATED_CATALOG.md
+for the Sinex demo shelf.
+
+Arguments:
+  demo-root   Optional demo shelf root. Defaults to .agent/demos/sinex.
+
+This command only refreshes indexes. It does not create portable bundles;
+Chisel owns portable packaging.
+EOF
+}
+
+case "${1:-}" in
+  -h|--help)
+    usage
+    exit 0
+    ;;
+esac
+
 root="${1:-$repo_root/.agent/demos/sinex}"
 
 python3 - "$root" <<'PY'
