@@ -2,7 +2,7 @@ use assert_cmd::cargo;
 use serde_json::{Value, json};
 use sinex_primitives::rpc::{RpcMutability, RpcRole, method_catalog, methods};
 use sinex_primitives::temporal::{Duration, Timestamp};
-use sinexctl::client::{ClientConfig, GatewayClient};
+use sinexctl::client::{ClientConfig, GatewayClient, RetryConfig};
 use sinexctl::mcp::{
     MCP_PROTOCOL_VERSION, MCP_SUPPORTED_PROTOCOL_VERSIONS, McpSurfaceKind,
     assert_read_only_tool_names, call_tool, tool_catalog, tools,
@@ -11,6 +11,7 @@ use sinexctl::validation::{parse_time_input, parse_time_input_with_now, validate
 use std::collections::BTreeSet;
 use std::io::{BufRead, BufReader, Read, Write};
 use std::process::{Command, Stdio};
+use std::time::Duration as StdDuration;
 use wiremock::matchers::{method, path};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 use xtask::sandbox::prelude::*;
@@ -1171,6 +1172,33 @@ async fn mcp_runtime_active_call_uses_gateway_fixture() -> TestResult<()> {
 }
 
 #[sinex_test]
+async fn mcp_runtime_active_degrades_when_gateway_unreachable() -> TestResult<()> {
+    let client = unreachable_gateway_client()?;
+
+    let response = call_tool(
+        &client,
+        "sinex_sources_active",
+        json!({ "stale_after_secs": 120 }),
+    )
+    .await?;
+
+    assert_eq!(response["source_surface"], "sinex_sources_active");
+    assert_eq!(response["query_echo"]["stale_after_secs"], 120);
+    assert_eq!(response["payload"]["status"], "degraded");
+    assert_eq!(response["payload"]["reason"], "gateway_unreachable");
+    assert_eq!(response["payload"]["target_url"], "http://127.0.0.1:9");
+    assert!(response["payload"]["result"].is_null());
+    assert!(
+        response["caveats"]
+            .as_array()
+            .expect("caveats must be an array")
+            .iter()
+            .any(|caveat| caveat["id"] == "mcp.gateway_unreachable")
+    );
+    Ok(())
+}
+
+#[sinex_test]
 async fn mcp_runtime_registry_call_uses_gateway_fixture() -> TestResult<()> {
     let server = mount_mcp_gateway_fixture().await;
     let client = fixture_gateway_client(&server)?;
@@ -1700,6 +1728,27 @@ async fn mcp_sources_status_view_call_uses_gateway_fixture() -> TestResult<()> {
     assert_eq!(response["payload"]["sources"][0]["event_count"], 42);
     assert!(response["payload"]["result"].is_null());
     assert_eq!(response["privacy_state"]["state"], "redacted");
+    Ok(())
+}
+
+#[sinex_test]
+async fn mcp_sources_status_view_degrades_when_gateway_unreachable() -> TestResult<()> {
+    let client = unreachable_gateway_client()?;
+
+    let response = call_tool(&client, "sinex_sources_status_view", json!({})).await?;
+
+    assert_eq!(response["source_surface"], "sinex_sources_status_view");
+    assert_eq!(response["payload"]["status"], "degraded");
+    assert_eq!(response["payload"]["reason"], "gateway_unreachable");
+    assert_eq!(response["payload"]["target_url"], "http://127.0.0.1:9");
+    assert!(response["payload"]["result"].is_null());
+    assert!(
+        response["caveats"]
+            .as_array()
+            .expect("caveats must be an array")
+            .iter()
+            .any(|caveat| caveat["id"] == "mcp.gateway_unreachable")
+    );
     Ok(())
 }
 
@@ -2967,6 +3016,21 @@ fn fixture_gateway_client(server: &MockServer) -> color_eyre::Result<GatewayClie
         url: server.uri(),
         token: Some("test-token".to_string()),
         insecure: true,
+        ..Default::default()
+    })
+}
+
+fn unreachable_gateway_client() -> color_eyre::Result<GatewayClient> {
+    GatewayClient::new(ClientConfig {
+        url: "http://127.0.0.1:9".to_string(),
+        token: Some("test-token".to_string()),
+        insecure: true,
+        timeout: 1,
+        retry_config: RetryConfig::builder()
+            .max_attempts(1)
+            .initial_delay(StdDuration::from_millis(1))
+            .max_delay(StdDuration::from_millis(1))
+            .build(),
         ..Default::default()
     })
 }
