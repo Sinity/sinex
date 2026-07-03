@@ -141,6 +141,8 @@ let
     let shape = runtimeShapeFor sourceId;
     in if shape == "scheduled" || shape == "on_demand" then 600 else 90;
 
+  startupTimeoutFor = _sourceId: 600;
+
   openFilesLimitFor = sourceId:
     let
       entry = boundEntryFor sourceId;
@@ -162,6 +164,7 @@ let
       ioWeight = 10;
       ioSchedulingClass = "idle";
       nice = 10;
+      startupTimeoutSec = startupTimeoutFor sourceId;
       shutdownTimeoutSec = shutdownTimeoutFor sourceId;
       inherit openFilesLimit;
     };

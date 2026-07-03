@@ -50,7 +50,7 @@ The useful metric is not just total elapsed time. Watch:
   part stays invisible and unactionable.
 - If artifact latency is high, promote the artifact shape into a shared
   renderer/view primitive instead of hand-writing reports.
-- If demo ideation is absent, run `devloop-demo` before coding more. The loop
+- If demo ideation is absent, review the demo portfolio (`bd list -l demo`) before coding more. The loop
   optimizes for rapid Sinex improvement through useful/impressive artifacts, so
   demo candidate generation is velocity work, not polish.
 - If two focused proof reruns happen for the same slice, run
@@ -113,7 +113,7 @@ The first acceleration wins are therefore:
 - run `devloop-review` to catch TODO rot, inbox drift, duplicate agents, and
   surprise background work before it silently slows the loop;
 - record time and friction in `OPERATING-LOG.md` so regression is visible.
-- keep `DEMO-RADAR.md` fresh enough that new, improved, stale, and retired demo
+- keep demo beads fresh enough that new, improved, stale, and retired demo
   artifacts are visible without replaying chat history.
 - run `devloop-velocity` as the first response to repeated proof churn;
   do not keep manually polling and re-running tiny checks without a cost view.

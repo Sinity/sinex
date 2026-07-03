@@ -12,6 +12,10 @@ use sea_query::{IndexCreateStatement, PostgresQueryBuilder, TableCreateStatement
 use sinex_primitives::validation::validate_pg_identifier;
 use sqlx::{Executor, PgPool};
 
+#[cfg(test)]
+#[path = "apply_test.rs"]
+mod apply_test;
+
 const REQUIRED_EXTENSIONS: &[&str] = &["pg_jsonschema", "vector", "timescaledb", "pg_trgm"];
 pub const SHARED_ACCESS_ROLES: &[&str] = &["sinex_event_engine", "sinex_api", "sinex_readonly"];
 const EVENTS_REQUIRED_TRIGGERS: &[&str] = &[
@@ -131,7 +135,20 @@ pub async fn apply(pool: &PgPool) -> Result<(), ApplyError> {
     let convergible_tables = crate::converge::convergible_tables()?;
     ensure_schemas(pool).await?;
     ensure_required_extensions(pool).await?;
-    execute_sql(pool, BOOTSTRAP_SQL).await?;
+    ensure_function_set_sql(
+        pool,
+        &["public.set_current_timestamp_updated_at()"],
+        UPDATED_AT_FUNCTION_SQL,
+    )
+    .await?;
+    execute_sql(pool, BOOTSTRAP_TABLE_SQL).await?;
+    ensure_trigger_set_sql(
+        pool,
+        "sinex_schemas.dlq_events",
+        DLQ_EVENTS_REQUIRED_TRIGGERS,
+        DLQ_EVENTS_TRIGGER_SQL,
+    )
+    .await?;
     create_tables(pool).await?;
     crate::converge::converge_tables(pool, &convergible_tables).await?;
     converge_operations_log_constraints(pool).await?;
@@ -837,7 +854,28 @@ async fn create_tables(pool: &PgPool) -> Result<(), ApplyError> {
 
     // Privacy policy tables (#1042). Raw DDL with inline named CHECK constraints,
     // mirroring the dlq_events pattern. CREATE TABLE IF NOT EXISTS is idempotent.
-    execute_sql(pool, PRIVACY_SCHEMA_SQL).await?;
+    execute_sql(pool, PRIVACY_SCHEMA_TABLE_SQL).await?;
+    ensure_trigger_set_sql(
+        pool,
+        "privacy.recognizer_backends",
+        &["trg_privacy_recognizer_backends_updated_at"],
+        PRIVACY_RECOGNIZER_BACKENDS_TRIGGER_SQL,
+    )
+    .await?;
+    ensure_trigger_set_sql(
+        pool,
+        "privacy.dictionaries",
+        &["trg_privacy_dictionaries_updated_at"],
+        PRIVACY_DICTIONARIES_TRIGGER_SQL,
+    )
+    .await?;
+    ensure_trigger_set_sql(
+        pool,
+        "privacy.rules",
+        &["trg_privacy_rules_updated_at"],
+        PRIVACY_RULES_TRIGGER_SQL,
+    )
+    .await?;
 
     Ok(())
 }
@@ -910,35 +948,128 @@ async fn create_indexes(pool: &PgPool) -> Result<(), ApplyError> {
 }
 
 async fn create_triggers_and_functions(pool: &PgPool) -> Result<(), ApplyError> {
-    execute_sql(pool, Events::create_no_update_trigger_sql()).await?;
-    execute_sql(pool, Events::create_payload_validation_trigger_sql()).await?;
-    execute_sql(pool, Events::create_material_bounds_trigger_sql()).await?;
-    execute_sql(pool, Events::create_material_event_count_trigger_sql()).await?;
-    execute_sql(
+    ensure_trigger_set_sql(
         pool,
+        "core.events",
+        &["trg_events_no_update"],
+        Events::create_no_update_trigger_sql(),
+    )
+    .await?;
+    ensure_trigger_set_sql(
+        pool,
+        "core.events",
+        &["trg_events_validate_payload"],
+        Events::create_payload_validation_trigger_sql(),
+    )
+    .await?;
+    ensure_trigger_set_sql(
+        pool,
+        "core.events",
+        &["trg_events_validate_material_bounds"],
+        Events::create_material_bounds_trigger_sql(),
+    )
+    .await?;
+    ensure_trigger_set_sql(
+        pool,
+        "core.events",
+        &[
+            "trg_events_maintain_material_event_count_insert",
+            "trg_events_maintain_material_event_count_delete",
+        ],
+        Events::create_material_event_count_trigger_sql(),
+    )
+    .await?;
+    ensure_trigger_set_sql(
+        pool,
+        "raw.source_material_registry",
+        SOURCE_MATERIAL_REQUIRED_TRIGGERS,
         SourceMaterialRegistry::create_event_bounds_trigger_sql(),
     )
     .await?;
-    execute_sql(pool, ArchivedEvents::create_archive_trigger_sql()).await?;
-    execute_sql(pool, TemporalLedger::create_append_only_trigger_sql()).await?;
-    execute_sql(pool, &Entities::create_updated_at_trigger_sql()).await?;
-    execute_sql(pool, &EntityRelations::create_updated_at_trigger_sql()).await?;
-    execute_sql(pool, &EventAnnotations::create_updated_at_trigger_sql()).await?;
-    execute_sql(pool, &EventPayloadSchemas::create_updated_at_trigger_sql()).await?;
-    execute_sql(pool, &EmailProviderState::create_updated_at_trigger_sql()).await?;
-    execute_sql(
+    ensure_trigger_set_sql(
         pool,
+        "core.events",
+        &["trg_events_archive_before_delete"],
+        ArchivedEvents::create_archive_trigger_sql(),
+    )
+    .await?;
+    ensure_trigger_set_sql(
+        pool,
+        "raw.temporal_ledger",
+        TEMPORAL_LEDGER_REQUIRED_TRIGGERS,
+        TemporalLedger::create_append_only_trigger_sql(),
+    )
+    .await?;
+    ensure_trigger_set_sql(
+        pool,
+        "core.entities",
+        ENTITIES_REQUIRED_TRIGGERS,
+        &Entities::create_updated_at_trigger_sql(),
+    )
+    .await?;
+    ensure_trigger_set_sql(
+        pool,
+        "core.entity_relations",
+        ENTITY_RELATIONS_REQUIRED_TRIGGERS,
+        &EntityRelations::create_updated_at_trigger_sql(),
+    )
+    .await?;
+    ensure_trigger_set_sql(
+        pool,
+        "core.event_annotations",
+        EVENT_ANNOTATIONS_REQUIRED_TRIGGERS,
+        &EventAnnotations::create_updated_at_trigger_sql(),
+    )
+    .await?;
+    ensure_trigger_set_sql(
+        pool,
+        "sinex_schemas.event_payload_schemas",
+        EVENT_PAYLOAD_SCHEMAS_REQUIRED_TRIGGERS,
+        &EventPayloadSchemas::create_updated_at_trigger_sql(),
+    )
+    .await?;
+    ensure_trigger_set_sql(
+        pool,
+        "core.email_provider_state",
+        &["trg_email_provider_state_updated_at"],
+        &EmailProviderState::create_updated_at_trigger_sql(),
+    )
+    .await?;
+    ensure_trigger_set_sql(
+        pool,
+        "core.email_mailbox_projection",
+        &["trg_email_mailbox_projection_updated_at"],
         &EmailMailboxProjection::create_updated_at_trigger_sql(),
     )
     .await?;
-    execute_sql(pool, &SourceSessionState::create_updated_at_trigger_sql()).await?;
-    execute_sql(pool, DocumentChunks::create_projection_trigger_sql()).await?;
+    ensure_trigger_set_sql(
+        pool,
+        "core.source_session_state",
+        &["trg_source_session_state_updated_at"],
+        &SourceSessionState::create_updated_at_trigger_sql(),
+    )
+    .await?;
+    ensure_trigger_set_sql(
+        pool,
+        "core.events",
+        &["trg_document_projection"],
+        DocumentChunks::create_projection_trigger_sql(),
+    )
+    .await?;
 
-    execute_sql(pool, OPERATIONS_AND_CASCADE_SQL).await?;
-    execute_sql(pool, TOMBSTONE_LIFECYCLE_SQL).await?;
-    execute_sql(pool, JSONB_MERGE_SQL).await?;
-    execute_sql(pool, EMBEDDING_INDEX_MANAGEMENT_SQL).await?;
-    execute_sql(pool, HYBRID_SEARCH_SQL).await?;
+    ensure_function_set_sql(pool, OPERATIONS_AND_CASCADE_FUNCTIONS, OPERATIONS_AND_CASCADE_SQL)
+        .await?;
+    ensure_function_set_sql(pool, TOMBSTONE_LIFECYCLE_FUNCTIONS, TOMBSTONE_LIFECYCLE_SQL).await?;
+    ensure_function_set_sql(pool, JSONB_MERGE_FUNCTIONS, JSONB_MERGE_SQL).await?;
+    ensure_function_and_trigger_set_sql(
+        pool,
+        EMBEDDING_INDEX_MANAGEMENT_FUNCTIONS,
+        "core.embedding_models",
+        EMBEDDING_MODELS_REQUIRED_TRIGGERS,
+        EMBEDDING_INDEX_MANAGEMENT_SQL,
+    )
+    .await?;
+    ensure_function_set_sql(pool, HYBRID_SEARCH_FUNCTIONS, HYBRID_SEARCH_SQL).await?;
 
     Ok(())
 }
@@ -1052,10 +1183,13 @@ async fn configure_timescaledb(pool: &PgPool) -> Result<(), ApplyError> {
     )
     .await?;
 
-    recreate_telemetry_read_models(pool).await?;
-    execute_sql(pool, TELEMETRY_CONTINUOUS_AGGREGATES_SQL).await?;
-    execute_sql(pool, TELEMETRY_SQL).await?;
-    execute_sql(pool, RECENT_ACTIVITY_SUMMARY_SQL).await?;
+    let telemetry_drifts = check_telemetry_drifts(pool).await?;
+    if !telemetry_drifts.is_empty() {
+        recreate_telemetry_read_models(pool).await?;
+        execute_sql(pool, TELEMETRY_CONTINUOUS_AGGREGATES_SQL).await?;
+        execute_sql(pool, TELEMETRY_SQL).await?;
+        execute_sql(pool, RECENT_ACTIVITY_SUMMARY_SQL).await?;
+    }
     execute_sql(
         pool,
         "DROP VIEW IF EXISTS core.event_temporal_facts, core.derived_scope_summary",
@@ -1080,6 +1214,13 @@ async fn execute_sql(pool: &PgPool, sql: &str) -> Result<(), ApplyError> {
 async fn recreate_telemetry_read_models(pool: &PgPool) -> Result<(), ApplyError> {
     // Schema apply is hash-gated by xtask. When telemetry SQL changes, rebuild the read
     // models decisively so stale materialized view definitions cannot survive.
+    // On the steady-state path, skip the destructive drop pass: TimescaleDB
+    // background refresh jobs can race those drops and fail SQLx bootstrap with
+    // XX000 "tuple concurrently deleted" even when no schema change is needed.
+    if check_telemetry_drifts(pool).await?.is_empty() {
+        return Ok(());
+    }
+
     execute_sql(
         pool,
         r#"
@@ -1215,6 +1356,69 @@ async fn trigger_exists(
     Ok(exists)
 }
 
+async fn ensure_trigger_set_sql(
+    pool: &PgPool,
+    qualified_table: &str,
+    trigger_names: &[&str],
+    sql: &str,
+) -> Result<(), ApplyError> {
+    for trigger_name in trigger_names {
+        if !trigger_exists(pool, qualified_table, trigger_name).await? {
+            execute_sql(pool, sql).await?;
+            return Ok(());
+        }
+    }
+
+    Ok(())
+}
+
+async fn function_exists(pool: &PgPool, signature: &str) -> Result<bool, ApplyError> {
+    let exists = sqlx::query_scalar::<_, bool>("SELECT to_regprocedure($1) IS NOT NULL")
+        .bind(signature)
+        .fetch_one(pool)
+        .await?;
+
+    Ok(exists)
+}
+
+async fn ensure_function_set_sql(
+    pool: &PgPool,
+    signatures: &[&str],
+    sql: &str,
+) -> Result<(), ApplyError> {
+    for signature in signatures {
+        if !function_exists(pool, signature).await? {
+            execute_sql(pool, sql).await?;
+            return Ok(());
+        }
+    }
+
+    Ok(())
+}
+
+async fn ensure_function_and_trigger_set_sql(
+    pool: &PgPool,
+    signatures: &[&str],
+    qualified_table: &str,
+    trigger_names: &[&str],
+    sql: &str,
+) -> Result<(), ApplyError> {
+    for signature in signatures {
+        if !function_exists(pool, signature).await? {
+            execute_sql(pool, sql).await?;
+            return Ok(());
+        }
+    }
+    for trigger_name in trigger_names {
+        if !trigger_exists(pool, qualified_table, trigger_name).await? {
+            execute_sql(pool, sql).await?;
+            return Ok(());
+        }
+    }
+
+    Ok(())
+}
+
 async fn index_exists(
     pool: &PgPool,
     schema: &str,
@@ -1239,7 +1443,7 @@ async fn index_exists(
     Ok(exists)
 }
 
-const BOOTSTRAP_SQL: &str = r"
+const UPDATED_AT_FUNCTION_SQL: &str = r"
 CREATE OR REPLACE FUNCTION public.set_current_timestamp_updated_at()
 RETURNS TRIGGER AS $$
 BEGIN
@@ -1247,7 +1451,9 @@ BEGIN
     RETURN NEW;
 END;
 $$ LANGUAGE plpgsql;
+";
 
+const BOOTSTRAP_TABLE_SQL: &str = r"
 CREATE TABLE IF NOT EXISTS sinex_schemas.dlq_events (
     dlq_id UUID PRIMARY KEY DEFAULT uuidv7(),
     failed_event_id UUID NOT NULL,
@@ -1272,7 +1478,9 @@ CREATE TABLE IF NOT EXISTS sinex_schemas.dlq_events (
 CREATE INDEX IF NOT EXISTS idx_dlq_events_automaton ON sinex_schemas.dlq_events (automaton_name);
 CREATE INDEX IF NOT EXISTS idx_dlq_events_resolved ON sinex_schemas.dlq_events (resolved_at);
 CREATE INDEX IF NOT EXISTS idx_dlq_events_category ON sinex_schemas.dlq_events (error_category);
+";
 
+const DLQ_EVENTS_TRIGGER_SQL: &str = r"
 DROP TRIGGER IF EXISTS set_timestamp ON sinex_schemas.dlq_events;
 CREATE TRIGGER set_timestamp
     BEFORE UPDATE ON sinex_schemas.dlq_events
@@ -1285,7 +1493,7 @@ CREATE TRIGGER set_timestamp
 // the event_engine persistence chokepoint. Key MATERIAL never lives in the DB — the
 // `encryption_keys` table is a namespace registry only; key bytes resolve from
 // env/files via the existing KeyConfig pattern.
-const PRIVACY_SCHEMA_SQL: &str = r"
+const PRIVACY_SCHEMA_TABLE_SQL: &str = r"
 CREATE TABLE IF NOT EXISTS privacy.encryption_keys (
     id          UUID PRIMARY KEY DEFAULT uuidv7(),
     name        TEXT NOT NULL,
@@ -1445,25 +1653,45 @@ CREATE INDEX IF NOT EXISTS ix_privacy_dictionary_terms_dictionary
 
 CREATE INDEX IF NOT EXISTS ix_privacy_dictionary_terms_term
     ON privacy.dictionary_terms (term);
+";
 
+const PRIVACY_RECOGNIZER_BACKENDS_TRIGGER_SQL: &str = r"
 DROP TRIGGER IF EXISTS trg_privacy_recognizer_backends_updated_at ON privacy.recognizer_backends;
 CREATE TRIGGER trg_privacy_recognizer_backends_updated_at
     BEFORE UPDATE ON privacy.recognizer_backends
     FOR EACH ROW
     EXECUTE FUNCTION public.set_current_timestamp_updated_at();
+";
 
+const PRIVACY_DICTIONARIES_TRIGGER_SQL: &str = r"
 DROP TRIGGER IF EXISTS trg_privacy_dictionaries_updated_at ON privacy.dictionaries;
 CREATE TRIGGER trg_privacy_dictionaries_updated_at
     BEFORE UPDATE ON privacy.dictionaries
     FOR EACH ROW
     EXECUTE FUNCTION public.set_current_timestamp_updated_at();
+";
 
+const PRIVACY_RULES_TRIGGER_SQL: &str = r"
 DROP TRIGGER IF EXISTS trg_privacy_rules_updated_at ON privacy.rules;
 CREATE TRIGGER trg_privacy_rules_updated_at
     BEFORE UPDATE ON privacy.rules
     FOR EACH ROW
     EXECUTE FUNCTION public.set_current_timestamp_updated_at();
 ";
+
+const OPERATIONS_AND_CASCADE_FUNCTIONS: &[&str] = &[
+    "core.start_operation(text,text,jsonb,tstzrange)",
+    "core.complete_operation(uuid,jsonb)",
+    "core.fail_operation(uuid,jsonb)",
+    "core.prepare_cascade_session(text,boolean)",
+    "core.cascade_populate_roots(text,uuid[])",
+    "core.cascade_count_nodes(text)",
+    "core.cascade_depth_histogram(text)",
+    "core.cascade_find_integrity_violations(text,integer)",
+    "core.cascade_find_integrity_violations_paginated(text,integer,integer)",
+    "core.cleanup_cascade_session(text)",
+    "core.expand_cascade(text,integer)",
+];
 
 const OPERATIONS_AND_CASCADE_SQL: &str = r"
 CREATE OR REPLACE FUNCTION core.start_operation(p_operation_type TEXT, p_operator TEXT, p_scope JSONB, p_scope_window tstzrange DEFAULT NULL)
@@ -1952,6 +2180,12 @@ AS $$
 $$;
 ";
 
+const TOMBSTONE_LIFECYCLE_FUNCTIONS: &[&str] = &[
+    "core.execute_cascade_tombstone(uuid[],text,uuid)",
+    "core.execute_cascade_restore(uuid[],text)",
+    "core.lifecycle_tier_status()",
+];
+
 const JSONB_MERGE_SQL: &str = r"
 CREATE OR REPLACE FUNCTION core.jsonb_merge_deep(a jsonb, b jsonb)
 RETURNS jsonb LANGUAGE sql IMMUTABLE PARALLEL SAFE AS $$
@@ -1976,6 +2210,14 @@ RETURNS jsonb LANGUAGE sql IMMUTABLE PARALLEL SAFE AS $$
     END
 $$;
 ";
+
+const JSONB_MERGE_FUNCTIONS: &[&str] = &["core.jsonb_merge_deep(jsonb,jsonb)"];
+
+const EMBEDDING_INDEX_MANAGEMENT_FUNCTIONS: &[&str] = &[
+    "core.create_embedding_model_index(uuid,integer)",
+    "core.drop_embedding_model_index(uuid)",
+    "core.embedding_model_index_trigger()",
+];
 
 const EMBEDDING_INDEX_MANAGEMENT_SQL: &str = r"
 CREATE OR REPLACE FUNCTION core.create_embedding_model_index(
@@ -2046,6 +2288,10 @@ BEGIN
     END LOOP;
 END $$;
 ";
+
+const HYBRID_SEARCH_FUNCTIONS: &[&str] = &[
+    "core.hybrid_search(text,vector,uuid,integer,integer,double precision,double precision,double precision)",
+];
 
 const HYBRID_SEARCH_SQL: &str = r"
 CREATE OR REPLACE FUNCTION core.hybrid_search(
@@ -2209,7 +2455,8 @@ WITH NO DATA;
 SELECT add_continuous_aggregate_policy('sinex_telemetry.gateway_stats_1h',
     start_offset => INTERVAL '3 days',
     end_offset => INTERVAL '1 hour',
-    schedule_interval => INTERVAL '1 hour');
+    schedule_interval => INTERVAL '1 hour',
+    if_not_exists => TRUE);
 
 CREATE MATERIALIZED VIEW IF NOT EXISTS sinex_telemetry.stream_stats_1h
 WITH (timescaledb.continuous) AS
@@ -2246,7 +2493,8 @@ WITH NO DATA;
 SELECT add_continuous_aggregate_policy('sinex_telemetry.stream_stats_1h',
     start_offset => INTERVAL '3 days',
     end_offset => INTERVAL '1 hour',
-    schedule_interval => INTERVAL '1 hour');
+    schedule_interval => INTERVAL '1 hour',
+    if_not_exists => TRUE);
 
 CREATE MATERIALIZED VIEW IF NOT EXISTS sinex_telemetry.assembly_stats_1h
 WITH (timescaledb.continuous) AS
@@ -2268,7 +2516,8 @@ WITH NO DATA;
 SELECT add_continuous_aggregate_policy('sinex_telemetry.assembly_stats_1h',
     start_offset => INTERVAL '3 days',
     end_offset => INTERVAL '1 hour',
-    schedule_interval => INTERVAL '1 hour');
+    schedule_interval => INTERVAL '1 hour',
+    if_not_exists => TRUE);
 
 CREATE MATERIALIZED VIEW IF NOT EXISTS sinex_telemetry.source_stats_1h
 WITH (timescaledb.continuous) AS
@@ -2290,7 +2539,8 @@ WITH NO DATA;
 SELECT add_continuous_aggregate_policy('sinex_telemetry.source_stats_1h',
     start_offset => INTERVAL '3 days',
     end_offset => INTERVAL '1 hour',
-    schedule_interval => INTERVAL '1 hour');
+    schedule_interval => INTERVAL '1 hour',
+    if_not_exists => TRUE);
 
 CREATE MATERIALIZED VIEW IF NOT EXISTS sinex_telemetry.metric_counters_1h
 WITH (timescaledb.continuous) AS
@@ -2310,7 +2560,8 @@ WITH NO DATA;
 SELECT add_continuous_aggregate_policy('sinex_telemetry.metric_counters_1h',
     start_offset => INTERVAL '3 days',
     end_offset => INTERVAL '1 hour',
-    schedule_interval => INTERVAL '1 hour');
+    schedule_interval => INTERVAL '1 hour',
+    if_not_exists => TRUE);
 
 CREATE MATERIALIZED VIEW IF NOT EXISTS sinex_telemetry.event_engine_batch_stats_1h
 WITH (timescaledb.continuous) AS
@@ -2339,7 +2590,8 @@ WITH NO DATA;
 SELECT add_continuous_aggregate_policy('sinex_telemetry.event_engine_batch_stats_1h',
     start_offset => INTERVAL '3 days',
     end_offset => INTERVAL '1 hour',
-    schedule_interval => INTERVAL '1 hour');
+    schedule_interval => INTERVAL '1 hour',
+    if_not_exists => TRUE);
 
 CREATE MATERIALIZED VIEW IF NOT EXISTS sinex_telemetry.current_window_focus
 WITH (timescaledb.continuous) AS
@@ -2360,7 +2612,8 @@ WITH NO DATA;
 SELECT add_continuous_aggregate_policy('sinex_telemetry.current_window_focus',
     start_offset => INTERVAL '1 hour',
     end_offset => INTERVAL '5 minutes',
-    schedule_interval => INTERVAL '5 minutes');
+    schedule_interval => INTERVAL '5 minutes',
+    if_not_exists => TRUE);
 
 CREATE MATERIALIZED VIEW IF NOT EXISTS sinex_telemetry.command_frequency_hourly
 WITH (timescaledb.continuous) AS
@@ -2410,7 +2663,8 @@ WITH NO DATA;
 SELECT add_continuous_aggregate_policy('sinex_telemetry.command_frequency_hourly',
     start_offset => INTERVAL '3 days',
     end_offset => INTERVAL '1 hour',
-    schedule_interval => INTERVAL '1 hour');
+    schedule_interval => INTERVAL '1 hour',
+    if_not_exists => TRUE);
 
 CREATE MATERIALIZED VIEW IF NOT EXISTS sinex_telemetry.file_activity_summary
 WITH (timescaledb.continuous) AS
@@ -2429,7 +2683,8 @@ WITH NO DATA;
 SELECT add_continuous_aggregate_policy('sinex_telemetry.file_activity_summary',
     start_offset => INTERVAL '3 days',
     end_offset => INTERVAL '1 hour',
-    schedule_interval => INTERVAL '1 hour');
+    schedule_interval => INTERVAL '1 hour',
+    if_not_exists => TRUE);
 
 CREATE MATERIALIZED VIEW IF NOT EXISTS sinex_telemetry.current_system_state
 WITH (timescaledb.continuous) AS
@@ -2451,7 +2706,8 @@ WITH NO DATA;
 SELECT add_continuous_aggregate_policy('sinex_telemetry.current_system_state',
     start_offset => INTERVAL '1 hour',
     end_offset => INTERVAL '5 minutes',
-    schedule_interval => INTERVAL '5 minutes');
+    schedule_interval => INTERVAL '5 minutes',
+    if_not_exists => TRUE);
 ";
 
 const RECENT_ACTIVITY_SUMMARY_SQL: &str = r"

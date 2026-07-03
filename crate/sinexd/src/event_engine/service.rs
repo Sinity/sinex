@@ -1033,6 +1033,7 @@ impl IngestService {
         let slice_timeout_secs = self.config.slice_timeout_secs;
         let orphan_threshold_secs = self.config.orphan_threshold_secs;
         let disk_threshold_percent = self.config.disk_threshold_percent;
+        let disk_min_available_bytes = self.config.disk_min_available_bytes.as_u64();
         let durability_thresholds = self.config.material_durability_thresholds();
 
         let (ready_tx, ready_rx) = tokio::sync::oneshot::channel();
@@ -1071,6 +1072,7 @@ impl IngestService {
                 slice_timeout_secs,
                 orphan_threshold_secs,
                 disk_threshold_percent,
+                disk_min_available_bytes,
                 "Starting material assembler with resolved runtime paths"
             );
 
@@ -1088,6 +1090,7 @@ impl IngestService {
                     slice_timeout_secs,
                     orphan_threshold_secs,
                     disk_threshold_percent,
+                    disk_min_available_bytes,
                     durability_thresholds,
                 ) {
                     Ok(assembler) => assembler.with_observer(observer),

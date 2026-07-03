@@ -14,16 +14,19 @@ use tokio::{
 use tracing::{debug, info, warn};
 
 use sinex_db::DbPoolExt;
-use sinex_primitives::{Id, Timestamp, Uuid};
+use sinex_primitives::{Id, Timestamp, Uuid, sources::is_self_observation_material_source};
 
 use super::{MaterialAssembler, state};
 use crate::event_engine::{EventEngineResult, SinexError};
 
 const STALE_ASSEMBLY_CHECK_INTERVAL: std::time::Duration = std::time::Duration::from_mins(1);
 const STALE_REGISTRY_RECONCILE_LIMIT: i64 = 128;
+const END_BEFORE_BEGIN_ORPHAN_TIMEOUT_SECS: i64 = 300;
 const ORPHANED_SENSING_REASON: &str = "orphaned_sensing_material";
 const ORPHANED_SELF_OBSERVATION_RECOVERY_REASON: &str =
     "orphaned_self_observation_material_recovered_partial";
+const ORPHANED_ZERO_EVENT_SOURCE_MATERIAL_RECOVERY_REASON: &str =
+    "orphaned_zero_event_source_material_recovered_partial";
 
 pub(super) type MaterialTaskOutcome = (
     &'static str,
@@ -264,7 +267,17 @@ impl MaterialAssembler {
             }
 
             let elapsed = now - state.last_slice_received;
-            let timed_out = elapsed.whole_seconds() > self.slice_arrival_timeout.as_secs() as i64;
+            let timeout_secs = if state.phase == state::AssemblyPhase::PendingBegin
+                && state.pending_end.is_some()
+                && state.slice_count == 0
+                && state.buffered_slices.is_empty()
+            {
+                (self.slice_arrival_timeout.as_secs() as i64)
+                    .min(END_BEFORE_BEGIN_ORPHAN_TIMEOUT_SECS)
+            } else {
+                self.slice_arrival_timeout.as_secs() as i64
+            };
+            let timed_out = elapsed.whole_seconds() > timeout_secs;
             if timed_out
                 && (state.pending_end.is_none()
                     || !state.buffered_slices.is_empty()
@@ -349,6 +362,25 @@ impl MaterialAssembler {
             }
         }
 
+        match self
+            .mark_timeout_zero_event_material_recovered_partial(material_id, elapsed_secs)
+            .await
+        {
+            Ok(true) => {
+                self.cleanup_state(material_id).await;
+                let _ = self.assembler_state.remove(&material_id);
+                return;
+            }
+            Ok(false) => {}
+            Err(error) => {
+                warn!(
+                    material_id = %material_id,
+                    error = %error,
+                    "Could not classify timed-out zero-event source material; routing timeout to DLQ"
+                );
+            }
+        }
+
         self.route_material_error(
             material_id,
             "slice_arrival_timeout",
@@ -390,8 +422,30 @@ impl MaterialAssembler {
                 elapsed_secs,
                 "Reconciling orphaned sensing source material with no active assembly state"
             );
-            if is_self_observation_material(&row.source_identifier) {
+            if is_self_observation_material_source(&row.source_identifier) {
                 self.recover_orphaned_self_observation_material(
+                    material_id,
+                    &row.source_identifier,
+                    elapsed_secs,
+                )
+                .await?;
+                continue;
+            }
+            let parsed_event_count = self
+                .pool
+                .source_materials()
+                .parsed_event_count(Id::from_uuid(material_id))
+                .await
+                .map_err(|error| {
+                    SinexError::database(
+                        "Failed to classify orphaned sensing source material event count",
+                    )
+                    .with_context("material_id", material_id.to_string())
+                    .with_context("source_identifier", row.source_identifier.clone())
+                    .with_source(error)
+                })?;
+            if parsed_event_count == 0 {
+                self.recover_orphaned_zero_event_source_material(
                     material_id,
                     &row.source_identifier,
                     elapsed_secs,
@@ -446,10 +500,50 @@ impl MaterialAssembler {
             )
             .await
             .map_err(|error| {
-                SinexError::database("Failed to mark orphaned self-observation material recovered_partial")
-                    .with_context("material_id", material_id.to_string())
-                    .with_context("source_identifier", source_identifier.to_string())
-                    .with_source(error)
+                SinexError::database(
+                    "Failed to mark orphaned self-observation material recovered_partial",
+                )
+                .with_context("material_id", material_id.to_string())
+                .with_context("source_identifier", source_identifier.to_string())
+                .with_source(error)
+            })
+    }
+
+    async fn recover_orphaned_zero_event_source_material(
+        &self,
+        material_id: Uuid,
+        source_identifier: &str,
+        elapsed_secs: i64,
+    ) -> EventEngineResult<()> {
+        info!(
+            material_id = %material_id,
+            source_identifier,
+            elapsed_secs,
+            "Marking orphaned zero-event source material as recovered_partial"
+        );
+        self.pool
+            .source_materials()
+            .mark_as_recovered_partial(
+                Id::from_uuid(material_id),
+                ORPHANED_ZERO_EVENT_SOURCE_MATERIAL_RECOVERY_REASON,
+                serde_json::json!({
+                    "orphaned_sensing_material": {
+                        "source_identifier": source_identifier,
+                        "elapsed_seconds": elapsed_secs,
+                        "timeout_seconds": self.slice_arrival_timeout.as_secs(),
+                        "parsed_event_count": 0,
+                        "dlq_policy": "suppressed_zero_event_source_material_restart_orphan"
+                    }
+                }),
+            )
+            .await
+            .map_err(|error| {
+                SinexError::database(
+                    "Failed to mark orphaned zero-event source material recovered_partial",
+                )
+                .with_context("material_id", material_id.to_string())
+                .with_context("source_identifier", source_identifier.to_string())
+                .with_source(error)
             })
     }
 
@@ -558,10 +652,6 @@ impl MaterialAssembler {
 
         Ok(())
     }
-}
-
-fn is_self_observation_material(source_identifier: &str) -> bool {
-    source_identifier.starts_with("sinex.self-observation.")
 }
 
 #[cfg(test)]

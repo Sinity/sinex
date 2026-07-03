@@ -112,6 +112,10 @@ async fn day_boundary_closes_summary_and_seeds_next_day() -> TestResult<()> {
         output.source_event_ids,
         vec![first_ctx.trigger_event_id.as_uuid().to_owned()]
     );
+    assert_eq!(
+        output.ts_orig, first_hour,
+        "daily summaries should timestamp the latest included hour, not the next day boundary"
+    );
     assert_eq!(state.hour_count, 1);
     Ok(())
 }
@@ -213,5 +217,9 @@ async fn daily_summary_aggregates_hourly_rollups() -> TestResult<()> {
         Some("shell.kitty")
     );
     assert_eq!(output.payload.primary_source, ActivitySourceKind::Terminal);
+    assert_eq!(
+        output.ts_orig, second_hour,
+        "daily summaries should not use the following midnight as ts_orig"
+    );
     Ok(())
 }

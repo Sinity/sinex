@@ -76,6 +76,18 @@ pub enum AnalyticsSubcommand {
         #[arg(long, default_value_t = 8)]
         limit: usize,
     },
+    /// Cheap runtime-store backlog and event-mix snapshot from checkout Postgres
+    Store {
+        /// Recent window to inspect, in minutes.
+        #[arg(long, default_value_t = 15)]
+        window_minutes: i64,
+        /// Maximum rows per top-N section.
+        #[arg(long, default_value_t = 20)]
+        limit: i64,
+        /// Override the runtime database URL.
+        #[arg(long)]
+        database_url: Option<String>,
+    },
     /// Stage-level timing breakdowns aggregated across invocations (J7)
     Stages {
         /// Filter by command
@@ -115,6 +127,14 @@ impl XtaskCommand for AnalyticsCommand {
                 *observe, *top_swap, *top_io, *sample_ms, since, duration, *limit, ctx,
             ));
         }
+        if let AnalyticsSubcommand::Store {
+            window_minutes,
+            limit,
+            database_url,
+        } = sub
+        {
+            return execute_store(*window_minutes, *limit, database_url.as_deref(), ctx).await;
+        }
         ctx.try_with_history_db_query(|db| {
             let analysis = HistoryAnalysis::new(db);
             match sub {
@@ -133,6 +153,7 @@ impl XtaskCommand for AnalyticsCommand {
                     include_zombies,
                 } => execute_resources(db, command.as_deref(), *limit, *include_zombies, ctx),
                 AnalyticsSubcommand::Pressure { .. } => unreachable!("handled before DB open"),
+                AnalyticsSubcommand::Store { .. } => unreachable!("handled before DB open"),
                 AnalyticsSubcommand::Stages { command, limit } => {
                     execute_stages(db, command.as_deref(), *limit, ctx)
                 }
@@ -435,6 +456,142 @@ fn execute_recommend(
     Ok(CommandResult::success()
         .with_message(format!("{} recommendations", recs.len()))
         .with_duration(ctx.elapsed()))
+}
+
+// ── Runtime store snapshot ───────────────────────────────────────────────────
+
+async fn execute_store(
+    window_minutes: i64,
+    limit: i64,
+    database_url: Option<&str>,
+    ctx: &CommandContext,
+) -> Result<CommandResult> {
+    let database_url = match database_url {
+        Some(url) => url.to_string(),
+        None => crate::infra::stack::StackConfig::for_current_checkout()?.database_url(),
+    };
+    let snapshot =
+        crate::runtime_store::query_runtime_store_snapshot(&database_url, window_minutes, limit)
+            .await?;
+
+    if ctx.is_json() {
+        return Ok(CommandResult::success()
+            .with_message("runtime store snapshot")
+            .with_data(serde_json::to_value(&snapshot)?)
+            .with_duration(ctx.elapsed()));
+    }
+
+    render_store_snapshot(&snapshot);
+
+    Ok(CommandResult::success()
+        .with_message("runtime store snapshot")
+        .with_duration(ctx.elapsed()))
+}
+
+fn render_store_snapshot(snapshot: &crate::runtime_store::RuntimeStoreSnapshot) {
+    println!("\n{}", style("Runtime Store Snapshot:").bold());
+    println!(
+        "  window: {} minute(s), top limit: {}",
+        snapshot.window_minutes, snapshot.top_limit
+    );
+    println!(
+        "  current ingest: {}",
+        if snapshot.assessment.current_ingest_quiet {
+            style("quiet").yellow().to_string()
+        } else {
+            style("active").green().to_string()
+        }
+    );
+    if let Some(top) = &snapshot.assessment.top_recent_event_type {
+        println!("  top recent event: {top}");
+    }
+    println!(
+        "  browser material inventory: {} material(s), {} parsed event(s)",
+        snapshot.assessment.browser_history_materials_total,
+        snapshot.assessment.browser_history_parsed_events_total
+    );
+    println!("  unresolved DLQ: {}", snapshot.assessment.unresolved_dlq);
+
+    if !snapshot.assessment.warnings.is_empty() {
+        println!();
+        println!("{}", style("Warnings:").bold());
+        for warning in &snapshot.assessment.warnings {
+            println!("  - {warning}");
+        }
+    }
+
+    render_table_estimates(&snapshot.estimated_tables);
+    render_event_mix(&snapshot.recent_event_mix);
+    render_source_rollups("Recent Source Materials", &snapshot.recent_source_materials);
+    render_source_rollups(
+        "Browser History Materials",
+        &snapshot.browser_history_materials,
+    );
+    println!();
+}
+
+fn render_table_estimates(rows: &[crate::runtime_store::TableEstimate]) {
+    if rows.is_empty() {
+        return;
+    }
+    println!();
+    println!("{}", style("Table Estimates:").bold());
+    let mut builder = Builder::new();
+    builder.push_record(["RELATION", "EST ROWS"]);
+    for row in rows {
+        builder.push_record([
+            row.relation.as_str(),
+            &row.estimated_rows.map_or_else(|| "-".to_string(), |v| v.to_string()),
+        ]);
+    }
+    let mut table = builder.build();
+    table.with(Style::sharp());
+    println!("{table}");
+}
+
+fn render_event_mix(rows: &[crate::runtime_store::EventMixRow]) {
+    if rows.is_empty() {
+        println!();
+        println!("{}", style("No recent events in the selected window.").dim());
+        return;
+    }
+    println!();
+    println!("{}", style("Recent Event Mix:").bold());
+    let mut builder = Builder::new();
+    builder.push_record(["EVENT TYPE", "EVENTS"]);
+    for row in rows {
+        builder.push_record([row.event_type.as_str(), &row.events.to_string()]);
+    }
+    let mut table = builder.build();
+    table.with(Style::sharp());
+    println!("{table}");
+}
+
+fn render_source_rollups(
+    title: &str,
+    rows: &[crate::runtime_store::SourceMaterialRollup],
+) {
+    if rows.is_empty() {
+        return;
+    }
+    println!();
+    println!("{}", style(title).bold());
+    let mut builder = Builder::new();
+    builder.push_record(["SOURCE", "STATUS", "MATERIALS", "BYTES", "PARSED EVENTS"]);
+    for row in rows {
+        builder.push_record([
+            row.source_base.as_str(),
+            row.status.as_str(),
+            &row.materials.to_string(),
+            &row
+                .total_bytes
+                .map_or_else(|| "-".to_string(), format_bytes_i64),
+            &row.parsed_events.to_string(),
+        ]);
+    }
+    let mut table = builder.build();
+    table.with(Style::sharp());
+    println!("{table}");
 }
 
 // ── J6: resources ────────────────────────────────────────────────────────────
@@ -969,6 +1126,10 @@ fn format_bytes(bytes: u64) -> String {
     } else {
         format!("{bytes} B")
     }
+}
+
+fn format_bytes_i64(bytes: i64) -> String {
+    u64::try_from(bytes).map_or_else(|_| bytes.to_string(), format_bytes)
 }
 
 fn format_kib(kib: u64) -> String {

@@ -145,6 +145,23 @@ pub fn source_identity_matches_family(
         })
 }
 
+/// True when a logical source/event source belongs to Sinex's own
+/// self-observation/telemetry lane.
+#[must_use]
+pub fn is_self_observation_source(source: &str) -> bool {
+    source == "sinex" || source.starts_with("sinex.") || source.starts_with("sinexd.")
+}
+
+/// True when a source-material identifier names self-observation material.
+///
+/// Source-material identifiers can carry a material suffix
+/// (`#material=<uuid>`), so keep this separate from event-source matching while
+/// sharing the same semantic authority.
+#[must_use]
+pub fn is_self_observation_material_source(source_identifier: &str) -> bool {
+    source_identifier.starts_with("sinex.self-observation.")
+}
+
 #[cfg(test)]
 #[path = "../sources_test.rs"]
 mod tests;

@@ -20,6 +20,8 @@
       "instance_idx": 1,
       "service_name": "source-driver-browser.history-1",
       "runtime_config": {
+        "checkpoint_identity": "browser.history",
+        "control_identity": "browser.history",
         "interleaved": false,
         "primary": {
           "immutable": false,
@@ -50,7 +52,7 @@
           "table": "visits"
         },
         "secondary": {
-          "path": "/realm/data/captures/webhistory/gestalt/derived/full_history.ndjson",
+          "path": "",
           "skip_empty": true
         }
       },
@@ -71,7 +73,7 @@
           "table": "visits"
         },
         "secondary": {
-          "path": "/realm/data/captures/webhistory/gestalt/derived/full_history.ndjson",
+          "path": "",
           "skip_empty": true
         }
       },
@@ -109,6 +111,7 @@
           "target",
           ".git",
           ".sinex",
+          ".beads",
           ".direnv",
           ".claude",
           "node_modules",

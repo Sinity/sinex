@@ -40,7 +40,6 @@ The active packet should contain these names:
 - `ACTIVE-LOOP.md` — current slice, accepted warnings, and next action.
 - `QUEUE.md` — deferred operator directives and next-after-current obligations.
 - `OPERATING-LOG.md` — timestamped decisions, actions, and proofs.
-- `DEMO-RADAR.md` — demo candidates, selected artifact, proof, and caveat.
 - `PROCESS.md` — focus modes and transition rules.
 - `TACTICS.md` — async/heavy-work tactics.
 - `VELOCITY.md` — speed/cadence/friction rules.
@@ -81,7 +80,6 @@ devloop-start
 devloop-checkpoint
 devloop-log
 devloop-focus
-devloop-demo
 devloop-baseline
 devloop-wait
 devloop-ahead
@@ -135,6 +133,57 @@ Material focus changes should be recorded with:
 ```bash
 .agent/scripts/devloop-focus <from> <to> "<trigger>" "<decision>"
 ```
+
+## Beads Task Substrate
+
+Beads (`bd`, workspace at `.beads/`) is the durable task substrate for this
+repo. It replaces markdown backlogs as the source of truth for cross-slice
+work items: ready work, claims, blockers, dependencies, deferred/queued work,
+and discovered follow-ups. Run `bd prime` for the workflow context.
+
+Division of responsibility:
+
+- **Beads** owns work items: what exists, what is ready, what blocks what,
+  who claimed it, and why it was closed. Anything that should survive the
+  current slice becomes a bead (`bd create`), not a bullet in a markdown file.
+- **`ACTIVE-LOOP.md`** remains the current-slice projection. A normal slice
+  maps to one claimed bead: `bd update <id> --claim` when the slice starts,
+  `bd close <id> --reason "..."` when its proof lands. Name the bead id in the
+  slice contract.
+- **`QUEUE.md`** remains the operator-directive intake channel (scripts parse
+  it), but every queued directive is mirrored as a `campaign`/`directive`
+  bead at creation time. The bead is the durable copy: the
+  slice-closure-is-not-campaign-closure failure (cleanup deleting pending
+  operator directives) cannot delete a bead.
+- **Backlog and side-research live in beads.** Prioritization is priority
+  fields plus deps, reviewed through `bd ready`; a side-research lease is a
+  claimed `side-research`-labeled bead whose reconciliation is its close
+  reason. Long-form research evidence goes in `.agent/scratch/research/*.md`,
+  referenced from the bead body.
+- **`bd remember`** holds durable cross-session insights (gotchas, prior-work
+  traps, verified constraints). Search with `bd memories <keyword>` before
+  re-deriving anything expensive.
+
+Conventions for bead content:
+
+- Organization is native to beads: capability-plane epics with `parent-child`
+  children, priorities, labels, and typed deps — never a mirror of an
+  external tracker. When a bead's scope originated in a GitHub issue, cite it
+  with `--external-ref=gh-<N>` as provenance only; the bead body carries the
+  live remaining scope, which is often fresher than the GitHub text. Closing
+  a bead never changes GitHub state — that stays a separate explicit act
+  under the resolver-keyword discipline in the git workflow rules.
+- Discovered work is linked, not orphaned:
+  `bd create ... --deps discovered-from:<current-bead>`.
+- Use real dependencies (`blocks`) only for true ordering; use `related` for
+  soft affinity. Keep `bd dep cycles` clean.
+- Priorities: 0 = operator directive/campaign or in-flight recovery,
+  1 = data-loss correctness and the current consumption unlock, 2 = normal,
+  3 = design/meta/legibility, 4 = far-backlog design notes.
+- `bd dolt push` follows the same policy as `git push` (see repo CLAUDE.md).
+
+Do not use TodoWrite/TaskCreate-style ephemeral task lists for anything that
+should outlive the turn; local plans are execution checklists only.
 
 ## Scratch And Demos
 

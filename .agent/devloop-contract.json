@@ -1,5 +1,5 @@
 {
-  "version": 1,
+  "version": 2,
   "purpose": "Shared Sinex/Polylogue devloop contract for repo-local agent operating surfaces.",
   "canonical_active_root": ".agent/conductor-devloop",
   "cold_start": ".agent/DEVLOOP.md",
@@ -18,7 +18,6 @@
     ".agent/conductor-devloop/PROCESS.md",
     ".agent/conductor-devloop/TACTICS.md",
     ".agent/conductor-devloop/VELOCITY.md",
-    ".agent/conductor-devloop/SIDE-RESEARCH.md",
     ".agent/conductor-devloop/ADVERSARIAL-REVIEW.md",
     ".agent/conductor-devloop/SELF-PROMPTS.md"
   ],
@@ -35,10 +34,8 @@
     "ACTIVE-LOOP.md",
     "AHEAD.md",
     "QUEUE.md",
-    "SIDE-RESEARCH.md",
     "RUNBOOK.md",
     "OPERATING-LOG.md",
-    "DEMO-RADAR.md",
     "EVENTS.jsonl",
     "PHASES.jsonl",
     "MANIFEST.md",
@@ -47,9 +44,6 @@
     "TACTICS.md",
     "VELOCITY.md",
     "SELF-PROMPTS.md"
-  ],
-  "optional_active_packet_files": [
-    "RESEARCH-BACKLOG.md"
   ],
   "generated_packet_files": [
     "EVENTS.jsonl",
@@ -75,7 +69,6 @@
     "devloop-checkpoint",
     "devloop-log",
     "devloop-focus",
-    "devloop-demo",
     "devloop-baseline",
     "devloop-wait",
     "devloop-ahead",
@@ -90,7 +83,8 @@
   "retired_script_primitives": [
     "devloop-pulse",
     "devloop-proof-budget",
-    "devloop-velocity-report"
+    "devloop-velocity-report",
+    "devloop-demo"
   ],
   "focus_modes": [
     "Direction",
@@ -123,5 +117,29 @@
     ".agent/scratch/current",
     ".agent/handoff",
     ".agent/conductor-devloop/scripts"
-  ]
+  ],
+  "task_substrate": {
+    "tool": "bd",
+    "workspace": ".beads",
+    "prime": "bd prime",
+    "ready": "bd ready",
+    "directive_labels": [
+      "campaign",
+      "directive"
+    ],
+    "side_research_label": "side-research",
+    "discovered_dep_type": "discovered-from"
+  },
+  "demo_selection": {
+    "substrate": "beads",
+    "portfolio_epic_label": "demo",
+    "required_design_fields": [
+      "claim",
+      "instrument",
+      "falsifier",
+      "prereq",
+      "capability_landing"
+    ],
+    "artifact_shelf": ".agent/demos/sinex"
+  }
 }

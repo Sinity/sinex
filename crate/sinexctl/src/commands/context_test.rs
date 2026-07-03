@@ -1,8 +1,9 @@
 use super::*;
 use sinex_primitives::testing::event_fixture;
 use sinex_primitives::views::{
-    CONTEXT_SUMMARY_SCHEMA_VERSION, CaveatView, EVENT_CARD_LIST_SCHEMA_VERSION,
-    VIEW_ENVELOPE_SCHEMA_VERSION,
+    CONTEXT_SUMMARY_SCHEMA_VERSION, CaveatView, CoverageGapView, EVENT_CARD_LIST_SCHEMA_VERSION,
+    SourceCoverageContinuity, SourceCoverageListView, SourceCoverageReadiness, SourceCoverageView,
+    SourcePrivacyPosture, VIEW_ENVELOPE_SCHEMA_VERSION,
 };
 use xtask::sandbox::prelude::sinex_test;
 
@@ -52,6 +53,8 @@ async fn context_machine_output_uses_view_envelope_json() -> xtask::sandbox::Tes
         OutputFormat::Json,
         "sinexctl.context",
         "events context",
+        &[],
+        &ContextStageTimings::default(),
     )?
     .ok_or_else(|| color_eyre::eyre::eyre!("json output expected"))?;
     let value: serde_json::Value = serde_json::from_str(&output)?;
@@ -89,7 +92,7 @@ async fn recall_machine_output_uses_recall_surface() -> xtask::sandbox::TestResu
     let event_cards = EventCardListView {
         schema_version: EVENT_CARD_LIST_SCHEMA_VERSION.to_string(),
         count: 1,
-        cards: vec![context_event("browser.history", "webhistory.page.visited")],
+        cards: vec![context_event("webhistory", "page.visited")],
         next_cursor: None,
         total_estimate: None,
     };
@@ -102,6 +105,14 @@ async fn recall_machine_output_uses_recall_surface() -> xtask::sandbox::TestResu
         OutputFormat::Json,
         "sinexctl.recall",
         "recall",
+        &[],
+        &ContextStageTimings {
+            total: std::time::Duration::from_millis(42),
+            base_event_cards: std::time::Duration::from_millis(20),
+            diversity_top_up: std::time::Duration::from_millis(10),
+            self_observation_filter: std::time::Duration::from_millis(1),
+            source_caveats: std::time::Duration::from_millis(11),
+        },
     )?
     .ok_or_else(|| color_eyre::eyre::eyre!("json output expected"))?;
     let value: serde_json::Value = serde_json::from_str(&output)?;
@@ -110,6 +121,185 @@ async fn recall_machine_output_uses_recall_surface() -> xtask::sandbox::TestResu
     assert_eq!(value["query_echo"]["since"], "30m");
     assert_eq!(value["query_echo"]["until"], "2026-07-02T19:00:00Z");
     assert_eq!(value["payload"]["source_count"], 1);
+    assert_eq!(value["query_echo"]["stage_timings_ms"]["total"], 42);
+    assert_eq!(
+        value["query_echo"]["stage_timings_ms"]["base_event_cards"],
+        20
+    );
+    assert_eq!(
+        value["query_echo"]["stage_timings_ms"]["diversity_top_up"],
+        10
+    );
+    assert_eq!(
+        value["query_echo"]["stage_timings_ms"]["self_observation_filter"],
+        1
+    );
+    assert_eq!(value["query_echo"]["stage_timings_ms"]["source_caveats"], 11);
+    Ok(())
+}
+
+#[sinex_test]
+async fn recall_source_caveats_explain_absent_expected_sources() -> xtask::sandbox::TestResult<()> {
+    let event_cards = EventCardListView {
+        schema_version: EVENT_CARD_LIST_SCHEMA_VERSION.to_string(),
+        count: 1,
+        cards: vec![context_event("shell.atuin", "command.executed")],
+        next_cursor: None,
+        total_estimate: None,
+    };
+    let coverage = SourceCoverageListView::new(vec![
+        source_coverage(
+            "terminal.atuin-history",
+            SourceCoverageReadiness::Ready,
+            SourceCoverageContinuity::Active,
+            10,
+            2,
+        ),
+        source_coverage(
+            "browser.history",
+            SourceCoverageReadiness::Ready,
+            SourceCoverageContinuity::Active,
+            8,
+            1,
+        ),
+        source_coverage(
+            "git-commit-history",
+            SourceCoverageReadiness::MissingEvents,
+            SourceCoverageContinuity::MaterialOnly,
+            0,
+            1,
+        ),
+        source_coverage(
+            "fs",
+            SourceCoverageReadiness::Ready,
+            SourceCoverageContinuity::Active,
+            5,
+            3,
+        ),
+    ]);
+
+    let caveats = recall_expected_source_caveats(&event_cards, &coverage);
+
+    assert!(
+        caveats
+            .iter()
+            .any(|caveat| caveat.id == "recall.source.browser.absent"
+                && caveat.message.contains("active but contributed no events")),
+        "active browser source should be reported as window-absent: {caveats:?}"
+    );
+    assert!(
+        caveats
+            .iter()
+            .any(|caveat| caveat.id == "recall.source.browser.gap.fixture"
+                && caveat.message.contains("fixture gap")),
+        "active browser source gaps should be rendered as recall caveats: {caveats:?}"
+    );
+    assert!(
+        caveats
+            .iter()
+            .any(|caveat| caveat.id == "recall.source.git.absent"
+                && caveat.message.contains("readiness=missing_events")),
+        "degraded git source should report source-status posture: {caveats:?}"
+    );
+    assert!(
+        caveats
+            .iter()
+            .any(|caveat| caveat.id == "recall.source.git.gap.fixture"
+                && caveat.message.contains("git source coverage gap")),
+        "degraded git source gaps should be rendered as recall caveats: {caveats:?}"
+    );
+    assert!(
+        caveats
+            .iter()
+            .any(|caveat| caveat.id == "recall.source.filesystem.absent"
+                && caveat.message.contains("active but contributed no events")),
+        "filesystem event source should map to fs source coverage: {caveats:?}"
+    );
+    assert!(
+        caveats
+            .iter()
+            .all(|caveat| caveat.id != "recall.source.terminal.absent"),
+        "observed terminal source must not produce an absent-source caveat"
+    );
+    Ok(())
+}
+
+#[sinex_test]
+async fn recall_source_caveats_include_gaps_even_when_source_contributes()
+-> xtask::sandbox::TestResult<()> {
+    let event_cards = EventCardListView {
+        schema_version: EVENT_CARD_LIST_SCHEMA_VERSION.to_string(),
+        count: 4,
+        cards: vec![
+            context_event("shell.atuin", "command.executed"),
+            context_event("webhistory", "page.visited"),
+            context_event("git", "commit.created"),
+            context_event("fs-watcher", "file.modified"),
+        ],
+        next_cursor: None,
+        total_estimate: None,
+    };
+    let coverage = SourceCoverageListView::new(vec![source_coverage_with_gap(
+        "browser.history",
+        SourceCoverageReadiness::Ready,
+        SourceCoverageContinuity::Active,
+        8,
+        290,
+        "runtime_binding_stalled",
+        "runtime binding is heartbeating but has no recent source output",
+    )]);
+
+    let caveats = recall_expected_source_caveats(&event_cards, &coverage);
+
+    assert!(
+        caveats.iter().any(|caveat| {
+            caveat.id == "recall.source.browser.gap.runtime_binding_stalled"
+                && caveat.message.contains("runtime binding is heartbeating")
+        }),
+        "contributing browser source should still expose coverage gaps: {caveats:?}"
+    );
+    assert!(
+        caveats
+            .iter()
+            .all(|caveat| caveat.id != "recall.source.browser.absent"),
+        "contributing browser source must not be reported absent: {caveats:?}"
+    );
+    Ok(())
+}
+
+#[sinex_test]
+async fn recall_expected_sources_accept_emitted_browser_and_git_sources()
+-> xtask::sandbox::TestResult<()> {
+    let event_cards = EventCardListView {
+        schema_version: EVENT_CARD_LIST_SCHEMA_VERSION.to_string(),
+        count: 4,
+        cards: vec![
+            context_event("shell.atuin", "command.executed"),
+            context_event("webhistory", "page.visited"),
+            context_event("git", "commit.created"),
+            context_event("fs-watcher", "file.modified"),
+        ],
+        next_cursor: None,
+        total_estimate: None,
+    };
+    let coverage = SourceCoverageListView::new(Vec::new());
+
+    let caveats = recall_expected_source_caveats(&event_cards, &coverage);
+
+    assert!(
+        caveats
+            .iter()
+            .all(|caveat| !caveat.id.starts_with("recall.source.")),
+        "emitted terminal/browser/git/filesystem sources should satisfy recall expectations: {caveats:?}"
+    );
+    Ok(())
+}
+
+#[sinex_test]
+async fn recall_diversity_sources_use_emitted_source_ids() -> xtask::sandbox::TestResult<()> {
+    assert!(CONTEXT_DIVERSITY_SOURCES.contains(&"webhistory"));
+    assert!(CONTEXT_DIVERSITY_SOURCES.contains(&"git"));
+    assert!(CONTEXT_DIVERSITY_SOURCES.contains(&"derived.session-detector"));
     Ok(())
 }
 
@@ -242,9 +432,70 @@ async fn context_machine_output_rejects_ndjson() -> xtask::sandbox::TestResult<(
         OutputFormat::Ndjson,
         "sinexctl.context",
         "events context",
+        &[],
+        &ContextStageTimings::default(),
     );
     assert!(result.is_err(), "context must remain a finite view");
     Ok(())
+}
+
+fn source_coverage(
+    source_id: &'static str,
+    readiness: SourceCoverageReadiness,
+    continuity: SourceCoverageContinuity,
+    event_count: i64,
+    material_count: i64,
+) -> SourceCoverageView {
+    source_coverage_with_gap(
+        source_id,
+        readiness,
+        continuity,
+        event_count,
+        material_count,
+        "fixture",
+        "fixture gap",
+    )
+}
+
+fn source_coverage_with_gap(
+    source_id: &'static str,
+    readiness: SourceCoverageReadiness,
+    continuity: SourceCoverageContinuity,
+    event_count: i64,
+    material_count: i64,
+    gap_kind: &'static str,
+    gap_message: &'static str,
+) -> SourceCoverageView {
+    SourceCoverageView {
+        source_id: source_id.to_string(),
+        namespace: source_id
+            .split_once('.')
+            .map_or(source_id, |(namespace, _)| namespace)
+            .to_string(),
+        event_types: Vec::new(),
+        readiness,
+        continuity,
+        last_material_at: None,
+        last_event_at: None,
+        material_count,
+        event_count,
+        binding_count: 1,
+        accepted_binding_count: 1,
+        proposed_binding_count: 0,
+        gaps: vec![CoverageGapView {
+            kind: gap_kind.to_string(),
+            message: gap_message.to_string(),
+        }],
+        caveats: Vec::new(),
+        privacy: SourcePrivacyPosture {
+            tier: "local".to_string(),
+            context: "metadata".to_string(),
+            proposed: false,
+        },
+        resource_budget: None,
+        modes: Vec::new(),
+        actions: Vec::new(),
+    }
 }
 
 #[sinex_test]

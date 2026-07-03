@@ -11,7 +11,7 @@ This directory is the active Sinex conductor/devloop packet.
 5. `PROCESS.md`
 6. `TACTICS.md`
 7. `VELOCITY.md`
-8. `DEMO-RADAR.md`
+8. demo portfolio beads (`bd list -l demo`)
 9. `AHEAD.md`
 10. `ADVERSARIAL-REVIEW.md`
 11. `context/2026-06-30-conductor-sinex-assimilation.md`
@@ -37,8 +37,9 @@ This directory is the active Sinex conductor/devloop packet.
 - `PHASES.jsonl` — generated phase/focus stream for timing and velocity review.
 - `VELOCITY.md` — time model and acceleration rubric for the conductor loop.
 - `AHEAD.md` — non-blocking backlog/audit lanes for productive wait time.
-- `SIDE-RESEARCH.md` — canonical register for side-research/subagent waves,
-  leases, reconciliation status, and priority order.
+- Beads (`bd`, workspace `.beads/`) — task substrate: backlog, ready work,
+  claims, blockers, side-research leases, and deferred directives. Start with
+  `bd prime` / `bd ready`.
 - `INTEGRATION.md`, when present locally, is branch-specific integration state
   and should be treated as the current PR-boundary plan for the long-lived
   devloop branch. It is ignored live state, not durable scaffold.

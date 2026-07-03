@@ -278,6 +278,8 @@ Run all source scan targets
 | Flag | Value | Required | Description |
 |---|---|---|---|
 | `--instance-id` | yes | no | Instance ID prefix |
+| `--reconcile` | no | no | Start only source bindings that are not already running |
+| `--service-name` | yes | no | Limit the all-sources operation to one manifest service name |
 
 
 ### `xtask run all-automatons`
@@ -615,6 +617,7 @@ Show full output of a job
 | `id` | yes | yes |  |
 | `--stdout` | no | no | Show stdout explicitly (default) |
 | `--stderr` | no | no | Show stderr instead of stdout |
+| `--stream` | yes | no | Select output stream by name. Alias for --stdout/--stderr |
 
 
 ### `xtask jobs wait`
@@ -1311,6 +1314,7 @@ Show exercise run history with pass/fail counts and regression detection
 | `recommend` | Actionable heuristic recommendations with exact commands to run (J5) |
 | `resources` | CPU and memory usage trends across invocations (J6) |
 | `pressure` | Current host pressure snapshot, with Sinnix observability join when available |
+| `store` | Cheap runtime-store backlog and event-mix snapshot from checkout Postgres |
 | `stages` | Stage-level timing breakdowns aggregated across invocations (J7) |
 
 ### `xtask analytics workspace-health`
@@ -1384,6 +1388,19 @@ Current host pressure snapshot, with Sinnix observability join when available
 | `--since` | yes | no | Time window passed to sinnix-observe --since |
 | `--duration` | yes | no | Duration passed to sinnix-observe --duration |
 | `--limit` | yes | no | Row limit passed to sinnix-observe --limit |
+
+
+### `xtask analytics store`
+
+Cheap runtime-store backlog and event-mix snapshot from checkout Postgres
+
+**Arguments**
+
+| Flag | Value | Required | Description |
+|---|---|---|---|
+| `--window-minutes` | yes | no | Recent window to inspect, in minutes |
+| `--limit` | yes | no | Maximum rows per top-N section |
+| `--database-url` | yes | no | Override the runtime database URL |
 
 
 ### `xtask analytics stages`

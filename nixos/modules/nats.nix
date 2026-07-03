@@ -71,6 +71,7 @@ let
     cfg.authorization.sharedClient.enable || (cfg.extraSettings ? authorization);
   sharedClientBaseSubjects = map prefixSubject [
     "events.raw.>"
+    "events.confirmed.>"
     "events.confirmations.>"
     "events.confirmation_retries.>"
     "events.processing_failures.>"
@@ -454,6 +455,13 @@ in
             name = "SINEX_RAW_EVENTS";
             subjects = [ "events.raw.>" ];
             maxAge = "168h"; # 7d; replay is served from source material/archive, not JetStream
+            maxMsgs = 2000000;
+            maxBytes = natsCliMaxBytes;
+          }
+          {
+            name = "SINEX_RAW_EVENTS_CONFIRMED";
+            subjects = [ "events.confirmed.>" ];
+            maxAge = "72h";
             maxMsgs = 2000000;
             maxBytes = natsCliMaxBytes;
           }

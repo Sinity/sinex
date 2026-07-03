@@ -94,6 +94,25 @@ print_queue_summary() {
   fi
 }
 
+print_beads_summary() {
+  echo "== beads (task substrate) =="
+  if ! command -v bd >/dev/null 2>&1 || ! bd where >/dev/null 2>&1; then
+    echo "bd unavailable; task substrate not readable from this shell"
+    return
+  fi
+  local in_progress
+  in_progress="$(bd list --status=in_progress 2>/dev/null | grep -v '^No issues found' | sed '/^[[:space:]]*$/d' | sed -n '1,8p')"
+  if [[ -n "$in_progress" ]]; then
+    printf -- '-- in progress (claimed) --\n%s\n' "$in_progress"
+  else
+    echo "no claimed issues; pick from bd ready"
+  fi
+  printf -- '-- ready (top) --\n'
+  bd ready 2>/dev/null | sed '/^[[:space:]]*$/d' | sed -n '1,12p'
+  printf -- '-- blocked --\n'
+  bd blocked 2>/dev/null | sed -n '2,3p' | sed '/^[[:space:]]*$/d'
+}
+
 print_active_loop_summary() {
   echo "== active loop summary =="
   if [[ -f "$active_loop" ]]; then
@@ -110,6 +129,9 @@ print_active_loop_summary() {
   echo
   echo "== queued directives =="
   print_queue_summary "$queue"
+
+  echo
+  print_beads_summary
 }
 
 print_active_state_freshness() {
