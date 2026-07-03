@@ -346,7 +346,7 @@ async fn list_formats_json_outputs_machine_readable_catalog() -> TestResult<()> 
         .expect("operator surface catalog must contain MCP surface rows");
     let source_readiness = mcp_surfaces
         .iter()
-        .find(|entry| entry["name"] == "sinex.source_readiness")
+        .find(|entry| entry["name"] == "sinex_source_readiness")
         .expect("json list-formats output must include MCP source readiness");
     assert_eq!(
         source_readiness["backing_rpc_methods"][0],

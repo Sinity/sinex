@@ -676,7 +676,7 @@ mod output_format_tests {
         assert!(
             mcp_surfaces
                 .iter()
-                .any(|surface| surface["name"] == "sinex.source_readiness"),
+                .any(|surface| surface["name"] == "sinex_source_readiness"),
             "catalog must expose MCP source-readiness backing surface"
         );
         Ok(())
