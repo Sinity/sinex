@@ -281,11 +281,11 @@ Graceful Upgrade (Zero-Downtime)
   │  Standard ingestion path → core.events                               │
   └─────────────────┬───────────────────────────────────────────────────┘
                     │
-                    ↓ events.confirmations.{event_id}
+                    ↓ events.confirmed.{provenance}.{source}.{type}
   ┌─────────────────────────────────────────────────────────────────────┐
   │                   health-aggregator Automaton                        │
   │                                                                       │
-  │  1. Subscribe to: events.confirmations.>                             │
+  │  1. Subscribe to: events.confirmed.>                                  │
   │  2. Aggregate metrics per service                                    │
   │  3. Detect anomalies (status changes, missing heartbeats)            │
   │  4. Store aggregated metrics in core.service_health                  │

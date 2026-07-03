@@ -44,9 +44,10 @@ persist checkpoints to NATS KV (and local files) so they can resume from the
 last processed event after a restart. Checkpoint interval: 1000 events.
 
 ### confirmation
-A published message on the `sinex.events.confirmed.>` NATS subject signaling
-that an event has been durably persisted to PostgreSQL. Automata consume
-confirmations to trigger derived event processing.
+A published full event payload on the `{env}.events.confirmed.>` NATS subject
+after the event has been durably persisted to PostgreSQL and redacted by the
+event engine. Automata consume confirmed events to trigger derived event
+processing.
 
 ### content key
 A string identifying a blob in the content store using the format

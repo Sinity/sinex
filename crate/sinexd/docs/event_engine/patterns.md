@@ -12,25 +12,25 @@
 - Full operational history for replay
 - TimescaleDB hypertable for time-series optimization
 
-### 2. Provisional/Confirmed Model (Saga Pattern)
+### 2. Raw/Confirmed Delivery Model
 ```
 RuntimeModule Capture
-    ↓ (stage material, emit provisional)
+    ↓ (stage material, emit raw event intent)
 NATS JetStream events.raw.{source}.{type}
     ↓ (Nats-Msg-Id for idempotency)
 EventEngine JetStreamConsumer
     ├─→ Validate Event
     ├─→ Persist to Postgres (TimescaleDB)
-    ├─→ Publish Confirmation → events.confirmations.{event_id}
+    ├─→ Publish confirmed event → events.confirmed.{provenance}.{source}.{type}
     └─→ On Error → DLQ events.dlq.event_engine
          ↓ (confirmed events only)
 Automata (search, analytics, health)
 ```
 
-### 3. Stream Compaction for Confirmations
-- Confirmations stream uses `max_messages_per_subject: 1`
-- Only latest confirmation per event retained
-- Self-cleaning confirmation architecture
+### 3. Bounded Confirmed-Events Bus
+- Confirmed-events stream carries the full post-redaction `Event<JsonValue>`
+- The stream uses Limits retention with `discard: Old`
+- PostgreSQL is the archive; consumers that fall past the tail catch up from DB
 
 ## Idempotency Patterns
 
@@ -47,13 +47,11 @@ headers.insert("Nats-Msg-Id", msg_id);
 builder.push(" ON CONFLICT (id) DO NOTHING RETURNING id::uuid");
 ```
 
-### Layer 3: Confirmation Stream Compaction
-```rust
-StreamConfig {
-    max_msgs_per_subject: 1,  // Compacts to latest
-    ...
-}
-```
+### Layer 3: Confirmed-Event Publish Gate
+
+The event engine ACKs the raw JetStream message only after the confirmed-event
+publish succeeds. If confirmed-event publish retries are exhausted after the DB
+commit, the consumer stops and leaves the raw message unacked for redelivery.
 
 ## Backpressure Mechanisms
 
@@ -87,8 +85,8 @@ NATS JetStream
     │ AFTER commit
     ↓
 ┌─────────────────────────────┐
-│ publish_confirmations()     │
-│ └── To sinex.events.{id}    │
+│ publish_confirmed_event()   │
+│ └── To events.confirmed.*   │
 └─────────────────────────────┘
     │
     ↓
@@ -97,7 +95,7 @@ NATS JetStream
 └─────────────────────┘
 ```
 
-**Critical Invariant:** Confirmations published AFTER commit, ACKs AFTER confirmations.
+**Critical Invariant:** confirmed events are published AFTER commit, raw ACKs AFTER confirmed-event publish.
 
 ## Provenance Enforcement
 
