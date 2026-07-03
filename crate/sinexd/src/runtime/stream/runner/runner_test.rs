@@ -3,6 +3,7 @@
 
 // Inline because these cover private control-plane encoding helpers.
 use super::*;
+use crate::runtime::stream::{ContinuousStart, ProcessingStats};
 use crate::runtime::checkpoint::CheckpointManager;
 use crate::runtime::{NatsPublisher, SourceDriver, SourceDriverRuntime};
 use async_nats::jetstream;
@@ -34,6 +35,12 @@ struct StartupSequenceTestModule {
     scans: std::sync::Arc<tokio::sync::Mutex<Vec<RecordedScan>>>,
     snapshot_checkpoint: Checkpoint,
     capabilities: RuntimeCapabilities,
+}
+
+#[cfg(feature = "messaging")]
+struct HistoricalCatchupTestAutomaton {
+    scans: std::sync::Arc<tokio::sync::Mutex<Vec<RecordedScan>>>,
+    supports_historical: bool,
 }
 
 #[cfg(feature = "messaging")]
@@ -76,6 +83,16 @@ impl StartupSequenceTestModule {
                 supports_snapshot: true,
                 ..RuntimeCapabilities::default()
             },
+        }
+    }
+}
+
+#[cfg(feature = "messaging")]
+impl HistoricalCatchupTestAutomaton {
+    fn new(supports_historical: bool) -> Self {
+        Self {
+            scans: std::sync::Arc::new(tokio::sync::Mutex::new(Vec::new())),
+            supports_historical,
         }
     }
 }
@@ -474,6 +491,57 @@ impl RuntimeModule for StartupSequenceTestModule {
 
     async fn current_checkpoint(&self) -> RuntimeResult<Checkpoint> {
         Ok(self.checkpoint.lock().await.clone())
+    }
+}
+
+#[cfg(feature = "messaging")]
+impl RuntimeModule for HistoricalCatchupTestAutomaton {
+    type Config = ();
+
+    async fn initialize(&mut self, _init: RuntimeInitContext<Self::Config>) -> RuntimeResult<()> {
+        Ok(())
+    }
+
+    async fn scan(
+        &mut self,
+        from: Checkpoint,
+        until: TimeHorizon,
+        _args: ScanArgs,
+    ) -> RuntimeResult<ScanReport> {
+        let phase = match until {
+            TimeHorizon::Snapshot => "snapshot",
+            TimeHorizon::Historical { .. } => "historical",
+            TimeHorizon::Continuous => "continuous",
+        };
+        self.scans
+            .lock()
+            .await
+            .push(RecordedScan { from, until: phase });
+
+        Err(SinexError::processing(
+            "intentional historical catch-up stop".to_string(),
+        ))
+    }
+
+    fn module_name(&self) -> &'static str {
+        "historical-catchup-test-automaton"
+    }
+
+    fn module_kind(&self) -> ModuleKind {
+        ModuleKind::Automaton
+    }
+
+    fn capabilities(&self) -> RuntimeCapabilities {
+        RuntimeCapabilities {
+            supports_continuous: true,
+            supports_historical: self.supports_historical,
+            supports_snapshot: false,
+            ..RuntimeCapabilities::default()
+        }
+    }
+
+    async fn current_checkpoint(&self) -> RuntimeResult<Checkpoint> {
+        Ok(Checkpoint::None)
     }
 }
 
