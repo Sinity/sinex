@@ -371,6 +371,38 @@ impl MaterialParser for EmittingParser {
     }
 }
 
+#[derive(Default)]
+struct FailingParser;
+
+#[async_trait]
+impl MaterialParser for FailingParser {
+    type Config = ();
+
+    fn manifest(&self) -> ParserManifest {
+        ParserManifest {
+            parser_id: ParserId::from_static("failing-parser"),
+            parser_version: "1.0.0".to_string(),
+            accepted_input_shapes: vec![InputShapeKind::AppendOnlyFile],
+            source_id: SourceId::from_static("desktop.clipboard"),
+            declared_event_types: vec![(
+                EventSource::from_static("test"),
+                EventType::from_static("test.event"),
+            )],
+            privacy_contexts: vec![ProcessingContext::Metadata],
+            sensitivity_hints: Vec::new(),
+            description: String::new(),
+        }
+    }
+
+    async fn parse_record(
+        &mut self,
+        _record: SourceRecord,
+        _ctx: &ParserContext,
+    ) -> ParserResult<Vec<ParsedEventIntent>> {
+        Err(ParserError::Parse("intentional parser failure".to_string()))
+    }
+}
+
 async fn make_adapter_runtime(
     ctx: &TestContext,
 ) -> TestResult<(RuntimeContext, mpsc::Receiver<Event<JsonValue>>)> {
@@ -730,6 +762,55 @@ async fn adapter_logical_path_record_materializes_descriptor_bytes(
             .as_ref()
             .is_some_and(|hash| !hash.is_empty()),
         "logical-path descriptor bytes should be hashable provenance evidence",
+    );
+    Ok(())
+}
+
+#[sinex_test]
+async fn adapter_parse_failure_does_not_advance_cursor(ctx: TestContext) -> TestResult<()> {
+    let ctx = ctx.with_nats().shared().await?;
+    let (runtime, _event_receiver) = make_adapter_runtime(&ctx).await?;
+    let mut source = AdapterBackedSource::<EmptyLogicalPathRecordAdapter, FailingParser>::new(
+        "desktop.clipboard",
+    );
+    let mut state = AdapterModuleState::default();
+
+    source
+        .initialize(AdapterSourceConfig::default(), &runtime, &mut state)
+        .await?;
+    let report = source
+        .scan_snapshot(&mut state, ScanArgs::default())
+        .await?;
+
+    assert_eq!(report.events_processed, 0);
+    assert_eq!(
+        state.cursor, None,
+        "parser failures must leave the cursor behind for retry"
+    );
+    Ok(())
+}
+
+#[sinex_test]
+async fn adapter_emit_failure_does_not_advance_cursor(ctx: TestContext) -> TestResult<()> {
+    let ctx = ctx.with_nats().shared().await?;
+    let (runtime, event_receiver) = make_adapter_runtime(&ctx).await?;
+    drop(event_receiver);
+    let mut source = AdapterBackedSource::<EmptyLogicalPathRecordAdapter, EmittingParser>::new(
+        "desktop.clipboard",
+    );
+    let mut state = AdapterModuleState::default();
+
+    source
+        .initialize(AdapterSourceConfig::default(), &runtime, &mut state)
+        .await?;
+    let report = source
+        .scan_snapshot(&mut state, ScanArgs::default())
+        .await?;
+
+    assert_eq!(report.events_processed, 0);
+    assert_eq!(
+        state.cursor, None,
+        "emit failures must leave the cursor behind for retry"
     );
     Ok(())
 }

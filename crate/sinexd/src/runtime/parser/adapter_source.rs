@@ -1176,10 +1176,6 @@ where
                 let material_id = materialized.material_id;
                 self.link_latest_sqlite_snapshot_backing_material(material_id)
                     .await;
-                if let Some(cursor) = next_cursor {
-                    state.cursor = Some(merge_cursor_update(state.cursor.clone(), cursor));
-                    self.persist_stream_checkpoint_if_due(state, false).await;
-                }
 
                 let ctx = ParserContext {
                     source_id: source_id.clone(),
@@ -1208,6 +1204,7 @@ where
                 };
 
                 let anchor_payload_hash = materialized.anchor_payload_hash;
+                let mut record_processed = true;
                 for intent in intents {
                     // Use the materialization anchor so events reference their real
                     // material location, whether the record came from the default
@@ -1227,6 +1224,7 @@ where
                                     error = %e,
                                     "emit failed — event dropped"
                                 );
+                                record_processed = false;
                             } else {
                                 emitted += 1;
                                 state.total_events_emitted =
@@ -1239,8 +1237,21 @@ where
                                 error = %e,
                                 "intent_to_event_with_anchor conversion failed — skipping"
                             );
+                            record_processed = false;
                         }
                     }
+                }
+
+                if record_processed {
+                    if let Some(cursor) = next_cursor {
+                        state.cursor = Some(merge_cursor_update(state.cursor.clone(), cursor));
+                        self.persist_stream_checkpoint_if_due(state, false).await;
+                    }
+                } else {
+                    warn!(
+                        source = self.source_id,
+                        "record processing failed — cursor not advanced so the record can be retried"
+                    );
                 }
             }
 
