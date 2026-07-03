@@ -333,6 +333,12 @@ impl From<&crate::config::Config> for ClientConfig {
 }
 
 impl GatewayClient {
+    /// Return the configured gateway base URL.
+    #[must_use]
+    pub fn base_url(&self) -> &str {
+        &self.base_url
+    }
+
     /// Create a new gateway client
     pub fn new(config: ClientConfig) -> Result<Self> {
         // Load authentication token
