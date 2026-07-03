@@ -185,7 +185,8 @@ async fn recall_machine_output_projects_session_detector_rows()
             .as_array()
             .map(|caveats| caveats
                 .iter()
-                .all(|caveat| caveat["id"] != "recall.sessions.absent"))
+                .all(|caveat| caveat["id"]
+                    != ReadinessCaveatId::DerivationLaneNotPromoted.as_str()))
             .unwrap_or(true),
         "session rows must suppress the missing-session caveat"
     );
@@ -193,7 +194,7 @@ async fn recall_machine_output_projects_session_detector_rows()
 }
 
 #[sinex_test]
-async fn recall_machine_output_marks_missing_session_detector_rows()
+async fn recall_readiness_marks_missing_session_detector_rows()
 -> xtask::sandbox::TestResult<()> {
     let event_cards = EventCardListView {
         schema_version: EVENT_CARD_LIST_SCHEMA_VERSION.to_string(),
@@ -227,7 +228,7 @@ async fn recall_machine_output_marks_missing_session_detector_rows()
         .ok_or_else(|| color_eyre::eyre::eyre!("recall caveats must be an array"))?;
     assert!(
         caveats.iter().any(|caveat| {
-            caveat["id"] == "recall.sessions.absent"
+            caveat["id"] == ReadinessCaveatId::DerivationLaneNotPromoted.as_str()
                 && caveat["ref"]["kind"] == "projection"
                 && caveat["ref"]["id"] == "recall.activity.session.boundary"
         }),
@@ -237,7 +238,8 @@ async fn recall_machine_output_marks_missing_session_detector_rows()
 }
 
 #[sinex_test]
-async fn recall_source_caveats_explain_absent_expected_sources() -> xtask::sandbox::TestResult<()> {
+async fn recall_readiness_caveats_explain_absent_expected_sources()
+-> xtask::sandbox::TestResult<()> {
     let event_cards = EventCardListView {
         schema_version: EVENT_CARD_LIST_SCHEMA_VERSION.to_string(),
         count: 1,
@@ -281,49 +283,54 @@ async fn recall_source_caveats_explain_absent_expected_sources() -> xtask::sandb
     assert!(
         caveats
             .iter()
-            .any(|caveat| caveat.id == "recall.source.browser.absent"
+            .any(|caveat| caveat.id == ReadinessCaveatId::WindowPartial.as_str()
                 && caveat.message.contains("active but contributed no events")),
         "active browser source should be reported as window-absent: {caveats:?}"
     );
     assert!(
         caveats
             .iter()
-            .any(|caveat| caveat.id == "recall.source.browser.gap.fixture"
+            .any(|caveat| caveat.id == ReadinessCaveatId::CoverageUnmeasurable.as_str()
+                && caveat.message.contains("browser source coverage gap")
                 && caveat.message.contains("fixture gap")),
         "active browser source gaps should be rendered as recall caveats: {caveats:?}"
     );
     assert!(
         caveats
             .iter()
-            .any(|caveat| caveat.id == "recall.source.git.absent"
+            .any(|caveat| caveat.id == ReadinessCaveatId::SourceAbsent.as_str()
                 && caveat.message.contains("readiness=missing_events")),
         "degraded git source should report source-status posture: {caveats:?}"
     );
     assert!(
         caveats
             .iter()
-            .any(|caveat| caveat.id == "recall.source.git.gap.fixture"
+            .any(|caveat| caveat.id == ReadinessCaveatId::CoverageUnmeasurable.as_str()
                 && caveat.message.contains("git source coverage gap")),
         "degraded git source gaps should be rendered as recall caveats: {caveats:?}"
     );
     assert!(
         caveats
             .iter()
-            .any(|caveat| caveat.id == "recall.source.filesystem.absent"
+            .any(|caveat| caveat.id == ReadinessCaveatId::WindowPartial.as_str()
+                && caveat.message.contains("filesystem")
                 && caveat.message.contains("active but contributed no events")),
         "filesystem event source should map to fs source coverage: {caveats:?}"
     );
     assert!(
         caveats
             .iter()
-            .all(|caveat| caveat.id != "recall.source.terminal.absent"),
+            .all(|caveat| {
+                caveat.id != ReadinessCaveatId::WindowPartial.as_str()
+                    || !caveat.message.contains("terminal")
+            }),
         "observed terminal source must not produce an absent-source caveat"
     );
     Ok(())
 }
 
 #[sinex_test]
-async fn recall_source_caveats_include_gaps_even_when_source_contributes()
+async fn recall_readiness_caveats_include_gaps_even_when_source_contributes()
 -> xtask::sandbox::TestResult<()> {
     let event_cards = EventCardListView {
         schema_version: EVENT_CARD_LIST_SCHEMA_VERSION.to_string(),
@@ -351,7 +358,7 @@ async fn recall_source_caveats_include_gaps_even_when_source_contributes()
 
     assert!(
         caveats.iter().any(|caveat| {
-            caveat.id == "recall.source.browser.gap.runtime_binding_stalled"
+            caveat.id == ReadinessCaveatId::CoverageUnmeasurable.as_str()
                 && caveat.message.contains("runtime binding is heartbeating")
         }),
         "contributing browser source should still expose coverage gaps: {caveats:?}"
@@ -359,7 +366,10 @@ async fn recall_source_caveats_include_gaps_even_when_source_contributes()
     assert!(
         caveats
             .iter()
-            .all(|caveat| caveat.id != "recall.source.browser.absent"),
+            .all(|caveat| {
+                caveat.id != ReadinessCaveatId::WindowPartial.as_str()
+                    || !caveat.message.contains("browser")
+            }),
         "contributing browser source must not be reported absent: {caveats:?}"
     );
     Ok(())
@@ -387,7 +397,10 @@ async fn recall_expected_sources_accept_emitted_browser_and_git_sources()
     assert!(
         caveats
             .iter()
-            .all(|caveat| !caveat.id.starts_with("recall.source.")),
+            .all(|caveat| !matches!(
+                caveat.id.as_str(),
+                "source.absent" | "window.partial" | "coverage.unmeasurable"
+            )),
         "emitted terminal/browser/git/filesystem sources should satisfy recall expectations: {caveats:?}"
     );
     Ok(())
