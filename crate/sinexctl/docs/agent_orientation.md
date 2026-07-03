@@ -40,15 +40,15 @@ equivalence key for object-level deduplication.
 
 Start with these tools:
 
-- `sinex.query` for typed query-unit expressions across events, sources, debt,
+- `sinex_query` for typed query-unit expressions across events, sources, debt,
   operations, and runtime health.
-- `sinex.search_events` for event-card search with redacted previews.
-- `sinex.context_pack` for compact agent context. Treat project scoping caveats
+- `sinex_search_events` for event-card search with redacted previews.
+- `sinex_context_pack` for compact agent context. Treat project scoping caveats
   as meaningful; do not silently assume a path was scoped correctly.
-- `sinex.trace_lineage` when a claim needs ancestry, descendants, or material
+- `sinex_trace_lineage` when a claim needs ancestry, descendants, or material
   links.
-- `sinex.source_readiness`, `sinex.source_continuity`, and
-  `sinex.source_gap_explain` when a missing or stale source might change the
+- `sinex_source_readiness`, `sinex_source_continuity`, and
+  `sinex_source_gap_explain` when a missing or stale source might change the
   answer.
 
 Use returned refs and ids in follow-up calls. Prefer resolvable evidence over a
@@ -67,9 +67,9 @@ missing event as proof that nothing happened until source coverage is checked.
 
 ## First Contact Checklist
 
-1. Call `sinex.orient` if you have not used Sinex in this session.
-2. Call `sinex.context_pack` for the current task or project, then read caveats.
-3. Use `sinex.query` or `sinex.search_events` for the actual evidence slice.
-4. Use `sinex.trace_lineage` before making a strong claim about why something is
+1. Call `sinex_orient` if you have not used Sinex in this session.
+2. Call `sinex_context_pack` for the current task or project, then read caveats.
+3. Use `sinex_query` or `sinex_search_events` for the actual evidence slice.
+4. Use `sinex_trace_lineage` before making a strong claim about why something is
    true.
 5. Include refs, ids, and caveats in the answer or handoff.

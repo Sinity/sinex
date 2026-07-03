@@ -1,13 +1,16 @@
+use assert_cmd::cargo;
 use serde_json::{Value, json};
 use sinex_primitives::rpc::{RpcMutability, RpcRole, method_catalog, methods};
 use sinex_primitives::temporal::{Duration, Timestamp};
 use sinexctl::client::{ClientConfig, GatewayClient};
 use sinexctl::mcp::{
-    MCP_PROTOCOL_VERSION, McpSurfaceKind, assert_read_only_tool_names, call_tool, tool_catalog,
-    tools,
+    MCP_PROTOCOL_VERSION, MCP_SUPPORTED_PROTOCOL_VERSIONS, McpSurfaceKind,
+    assert_read_only_tool_names, call_tool, tool_catalog, tools,
 };
 use sinexctl::validation::{parse_time_input, parse_time_input_with_now, validate_time_range};
 use std::collections::BTreeSet;
+use std::io::{BufRead, BufReader, Read, Write};
+use std::process::{Command, Stdio};
 use wiremock::matchers::{method, path};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 use xtask::sandbox::prelude::*;
@@ -97,9 +100,9 @@ async fn mcp_docs_tool_table_matches_live_tools() -> TestResult<()> {
     let documented = docs
         .lines()
         .filter_map(|line| {
-            line.strip_prefix("| `sinex.")
+            line.strip_prefix("| `sinex_")
                 .and_then(|rest| rest.split_once('`'))
-                .map(|(suffix, _)| format!("sinex.{suffix}"))
+                .map(|(suffix, _)| format!("sinex_{suffix}"))
         })
         .collect::<BTreeSet<_>>();
     let live = tools()
@@ -181,7 +184,15 @@ async fn mcp_catalog_exactly_covers_live_tools() -> TestResult<()> {
         assert_eq!(entry.kind, McpSurfaceKind::Tool);
         assert!(entry.read_only, "MCP v1 catalog entry must be read-only");
         assert!(
-            !entry.backing_rpc_methods.is_empty() || entry.name == "sinex.orient",
+            entry
+                .name
+                .chars()
+                .all(|ch| ch.is_ascii_alphanumeric() || ch == '_' || ch == '-'),
+            "MCP tool `{}` must use identifier-safe characters for Codex/tool registry compatibility",
+            entry.name
+        );
+        assert!(
+            !entry.backing_rpc_methods.is_empty() || entry.name == "sinex_orient",
             "MCP entry `{}` must declare backing RPC descriptors unless it is the local orientation surface",
             entry.name
         );
@@ -249,7 +260,100 @@ async fn mcp_catalog_serializes_as_machine_readable_matrix() -> TestResult<()> {
 
 #[sinex_test]
 async fn mcp_protocol_version_is_pinned() -> TestResult<()> {
-    assert_eq!(MCP_PROTOCOL_VERSION, "2024-11-05");
+    assert_eq!(MCP_PROTOCOL_VERSION, "2025-06-18");
+    assert!(
+        MCP_SUPPORTED_PROTOCOL_VERSIONS.contains(&"2024-11-05"),
+        "MCP server must continue to negotiate with the original stdio protocol version"
+    );
+    Ok(())
+}
+
+#[sinex_test]
+async fn mcp_stdio_accepts_codex_json_line_transport() -> TestResult<()> {
+    let mut child = Command::new(cargo::cargo_bin!("sinex-mcp-server"))
+        .env("SINEX_API_TOKEN", "mcp-stdio-test-token")
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()?;
+
+    let mut stdin = child
+        .stdin
+        .take()
+        .ok_or_else(|| color_eyre::eyre::eyre!("missing child stdin"))?;
+    let stdout = child
+        .stdout
+        .take()
+        .ok_or_else(|| color_eyre::eyre::eyre!("missing child stdout"))?;
+    let mut stderr = child
+        .stderr
+        .take()
+        .ok_or_else(|| color_eyre::eyre::eyre!("missing child stderr"))?;
+    let mut reader = BufReader::new(stdout);
+
+    writeln!(
+        stdin,
+        "{}",
+        json!({
+            "jsonrpc": "2.0",
+            "id": 0,
+            "method": "initialize",
+            "params": {
+                "protocolVersion": "2025-06-18",
+                "capabilities": { "elicitation": {} },
+                "clientInfo": {
+                    "name": "codex-mcp-client",
+                    "title": "Codex",
+                    "version": "test"
+                }
+            }
+        })
+    )?;
+
+    let mut line = String::new();
+    reader.read_line(&mut line)?;
+    if line.trim().is_empty() {
+        let mut stderr_text = String::new();
+        let _ = stderr.read_to_string(&mut stderr_text);
+        return Err(color_eyre::eyre::eyre!(
+            "sinex-mcp-server exited before initialize response: {stderr_text}"
+        ));
+    }
+    let initialize_response: Value = serde_json::from_str(line.trim_end())?;
+    assert_eq!(
+        initialize_response["result"]["protocolVersion"],
+        MCP_PROTOCOL_VERSION
+    );
+
+    writeln!(
+        stdin,
+        "{}",
+        json!({
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "tools/list",
+            "params": {}
+        })
+    )?;
+
+    line.clear();
+    reader.read_line(&mut line)?;
+    let tools_response: Value = serde_json::from_str(line.trim_end())?;
+    assert_eq!(
+        tools_response["result"]["tools"][0]["name"],
+        "sinex_orient"
+    );
+    assert_eq!(
+        tools_response["result"]["tools"]
+            .as_array()
+            .map(Vec::len)
+            .unwrap_or_default(),
+        tools().len()
+    );
+
+    drop(stdin);
+    child.kill()?;
+    let _ = child.wait()?;
     Ok(())
 }
 
@@ -272,9 +376,9 @@ async fn mcp_orient_call_uses_shared_orientation_document() -> TestResult<()> {
     let server = mount_mcp_gateway_fixture().await;
     let client = fixture_gateway_client(&server)?;
 
-    let response = call_tool(&client, "sinex.orient", json!({ "focus": "provenance" })).await?;
+    let response = call_tool(&client, "sinex_orient", json!({ "focus": "provenance" })).await?;
 
-    assert_eq!(response["source_surface"], "sinex.orient");
+    assert_eq!(response["source_surface"], "sinex_orient");
     assert_eq!(response["query_echo"]["focus"], "provenance");
     assert_eq!(
         response["payload"]["source_document"],
@@ -286,7 +390,7 @@ async fn mcp_orient_call_uses_shared_orientation_document() -> TestResult<()> {
     assert!(orientation.contains("Material provenance"));
     assert!(orientation.contains("Derived provenance"));
     assert!(orientation.contains("ts_orig"));
-    assert!(orientation.contains("sinex.trace_lineage"));
+    assert!(orientation.contains("sinex_trace_lineage"));
     Ok(())
 }
 
@@ -297,12 +401,12 @@ async fn mcp_search_events_call_uses_gateway_fixture() -> TestResult<()> {
 
     let response = call_tool(
         &client,
-        "sinex.search_events",
+        "sinex_search_events",
         json!({ "sources": ["fixture"], "limit": 1 }),
     )
     .await?;
 
-    assert_eq!(response["source_surface"], "sinex.search_events");
+    assert_eq!(response["source_surface"], "sinex_search_events");
     assert_eq!(response["query_echo"]["sources"][0], "fixture");
     assert_eq!(
         response["payload"]["result"]["schema_version"],
@@ -332,12 +436,12 @@ async fn mcp_trace_lineage_call_uses_gateway_fixture() -> TestResult<()> {
 
     let response = call_tool(
         &client,
-        "sinex.trace_lineage",
+        "sinex_trace_lineage",
         json!({ "event_id": event_id, "direction": "ancestors" }),
     )
     .await?;
 
-    assert_eq!(response["source_surface"], "sinex.trace_lineage");
+    assert_eq!(response["source_surface"], "sinex_trace_lineage");
     assert_eq!(response["query_echo"]["event_id"], event_id);
     assert_eq!(response["payload"]["result"]["root"]["id"], event_id);
     assert_eq!(
@@ -365,7 +469,7 @@ async fn mcp_relation_evidence_call_uses_gateway_fixture() -> TestResult<()> {
 
     let response = call_tool(
         &client,
-        "sinex.relation_evidence",
+        "sinex_relation_evidence",
         json!({
             "seed_query": {
                 "sources": ["fixture"],
@@ -379,7 +483,7 @@ async fn mcp_relation_evidence_call_uses_gateway_fixture() -> TestResult<()> {
     )
     .await?;
 
-    assert_eq!(response["source_surface"], "sinex.relation_evidence");
+    assert_eq!(response["source_surface"], "sinex_relation_evidence");
     assert_eq!(
         response["query_echo"]["seed_query"]["sources"][0],
         "fixture"
@@ -404,7 +508,7 @@ async fn mcp_source_readiness_call_uses_gateway_fixture() -> TestResult<()> {
 
     let response = call_tool(
         &client,
-        "sinex.source_readiness",
+        "sinex_source_readiness",
         json!({
             "source_family": "terminal",
             "source_id": "terminal.atuin-history",
@@ -413,7 +517,7 @@ async fn mcp_source_readiness_call_uses_gateway_fixture() -> TestResult<()> {
     )
     .await?;
 
-    assert_eq!(response["source_surface"], "sinex.source_readiness");
+    assert_eq!(response["source_surface"], "sinex_source_readiness");
     assert_eq!(response["query_echo"]["source_family"], "terminal");
     let Some(sources) = response["payload"]["result"]["sources"].as_array() else {
         return Err(color_eyre::eyre::eyre!(
@@ -439,12 +543,12 @@ async fn mcp_source_continuity_list_call_uses_gateway_fixture() -> TestResult<()
 
     let response = call_tool(
         &client,
-        "sinex.source_continuity",
+        "sinex_source_continuity",
         json!({ "since": "2026-05-19T00:00:00Z" }),
     )
     .await?;
 
-    assert_eq!(response["source_surface"], "sinex.source_continuity");
+    assert_eq!(response["source_surface"], "sinex_source_continuity");
     assert_eq!(response["query_echo"]["since"], "2026-05-19T00:00:00Z");
     assert_eq!(
         response["payload"]["result"]["reports"][0]["source_family"],
@@ -465,7 +569,7 @@ async fn mcp_source_drift_call_uses_gateway_fixture() -> TestResult<()> {
 
     let response = call_tool(
         &client,
-        "sinex.source_drift",
+        "sinex_source_drift",
         json!({
             "source_id": "browser.history",
             "limit": 5
@@ -473,7 +577,7 @@ async fn mcp_source_drift_call_uses_gateway_fixture() -> TestResult<()> {
     )
     .await?;
 
-    assert_eq!(response["source_surface"], "sinex.source_drift");
+    assert_eq!(response["source_surface"], "sinex_source_drift");
     assert_eq!(
         response["payload"]["result"]["drifts"][0]["source_id"],
         "browser.history"
@@ -492,12 +596,12 @@ async fn mcp_source_continuity_get_call_uses_gateway_fixture() -> TestResult<()>
 
     let response = call_tool(
         &client,
-        "sinex.source_continuity",
+        "sinex_source_continuity",
         json!({ "source_family": "terminal" }),
     )
     .await?;
 
-    assert_eq!(response["source_surface"], "sinex.source_continuity");
+    assert_eq!(response["source_surface"], "sinex_source_continuity");
     assert_eq!(response["query_echo"]["source_family"], "terminal");
     assert_eq!(
         response["payload"]["result"]["report"]["source_family"],
@@ -518,7 +622,7 @@ async fn mcp_source_gap_explain_call_uses_gateway_fixture() -> TestResult<()> {
 
     let response = call_tool(
         &client,
-        "sinex.source_gap_explain",
+        "sinex_source_gap_explain",
         json!({
             "source_family": "terminal",
             "at": "2026-05-19T12:05:00Z"
@@ -526,7 +630,7 @@ async fn mcp_source_gap_explain_call_uses_gateway_fixture() -> TestResult<()> {
     )
     .await?;
 
-    assert_eq!(response["source_surface"], "sinex.source_gap_explain");
+    assert_eq!(response["source_surface"], "sinex_source_gap_explain");
     assert_eq!(response["query_echo"]["source_family"], "terminal");
     assert_eq!(response["query_echo"]["at"], "2026-05-19T12:05:00Z");
     assert_eq!(response["payload"]["result"]["gap"]["kind"], "private_mode");
@@ -548,7 +652,7 @@ async fn mcp_source_identifier_continuity_call_uses_gateway_fixture() -> TestRes
 
     let response = call_tool(
         &client,
-        "sinex.source_identifier_continuity",
+        "sinex_source_identifier_continuity",
         json!({
             "source_identifier": "/realm/data/captures/fixture.jsonl",
             "material_kind": "local_cas"
@@ -558,7 +662,7 @@ async fn mcp_source_identifier_continuity_call_uses_gateway_fixture() -> TestRes
 
     assert_eq!(
         response["source_surface"],
-        "sinex.source_identifier_continuity"
+        "sinex_source_identifier_continuity"
     );
     assert_eq!(
         response["query_echo"]["source_identifier"],
@@ -582,9 +686,9 @@ async fn mcp_privacy_status_call_uses_gateway_fixture() -> TestResult<()> {
     let server = mount_mcp_gateway_fixture().await;
     let client = fixture_gateway_client(&server)?;
 
-    let response = call_tool(&client, "sinex.privacy_status", json!({})).await?;
+    let response = call_tool(&client, "sinex_privacy_status", json!({})).await?;
 
-    assert_eq!(response["source_surface"], "sinex.privacy_status");
+    assert_eq!(response["source_surface"], "sinex_privacy_status");
     assert_eq!(response["payload"]["result"]["state"]["enabled"], true);
     assert_eq!(
         response["payload"]["result"]["state"]["affected_source_classes"],
@@ -603,9 +707,9 @@ async fn mcp_system_health_call_uses_gateway_fixture() -> TestResult<()> {
     let server = mount_mcp_gateway_fixture().await;
     let client = fixture_gateway_client(&server)?;
 
-    let response = call_tool(&client, "sinex.system_health", json!({})).await?;
+    let response = call_tool(&client, "sinex_system_health", json!({})).await?;
 
-    assert_eq!(response["source_surface"], "sinex.system_health");
+    assert_eq!(response["source_surface"], "sinex_system_health");
     assert_eq!(response["payload"]["result"]["status"], "degraded");
     assert_eq!(response["payload"]["result"]["healthy"], false);
     assert_eq!(
@@ -623,7 +727,7 @@ async fn mcp_tasks_list_call_uses_gateway_fixture() -> TestResult<()> {
 
     let response = call_tool(
         &client,
-        "sinex.tasks_list",
+        "sinex_tasks_list",
         json!({
             "query": "mcp",
             "status": "started",
@@ -636,7 +740,7 @@ async fn mcp_tasks_list_call_uses_gateway_fixture() -> TestResult<()> {
     )
     .await?;
 
-    assert_eq!(response["source_surface"], "sinex.tasks_list");
+    assert_eq!(response["source_surface"], "sinex_tasks_list");
     assert_eq!(response["query_echo"]["status"], "started");
     assert_eq!(response["payload"]["result"]["total"], 1);
     assert_eq!(
@@ -661,9 +765,9 @@ async fn mcp_task_state_call_uses_gateway_fixture() -> TestResult<()> {
     let client = fixture_gateway_client(&server)?;
     let task_id = fixture_task_id();
 
-    let response = call_tool(&client, "sinex.task_state", json!({ "task_id": task_id })).await?;
+    let response = call_tool(&client, "sinex_task_state", json!({ "task_id": task_id })).await?;
 
-    assert_eq!(response["source_surface"], "sinex.task_state");
+    assert_eq!(response["source_surface"], "sinex_task_state");
     assert_eq!(response["query_echo"]["task_id"], task_id);
     assert_eq!(response["payload"]["result"]["task_id"], task_id);
     assert_eq!(response["payload"]["result"]["event_count"], 3);
@@ -682,7 +786,7 @@ async fn mcp_replay_operations_call_uses_gateway_fixture() -> TestResult<()> {
 
     let response = call_tool(
         &client,
-        "sinex.replay_operations",
+        "sinex_replay_operations",
         json!({
             "state": "Planning",
             "module": "terminal.atuin-history",
@@ -691,7 +795,7 @@ async fn mcp_replay_operations_call_uses_gateway_fixture() -> TestResult<()> {
     )
     .await?;
 
-    assert_eq!(response["source_surface"], "sinex.replay_operations");
+    assert_eq!(response["source_surface"], "sinex_replay_operations");
     assert_eq!(response["query_echo"]["state"], "Planning");
     assert_eq!(
         response["payload"]["operations"][0]["operation_id"],
@@ -709,12 +813,12 @@ async fn mcp_replay_status_call_uses_gateway_fixture() -> TestResult<()> {
 
     let response = call_tool(
         &client,
-        "sinex.replay_status",
+        "sinex_replay_status",
         json!({ "operation_id": fixture_operation_id() }),
     )
     .await?;
 
-    assert_eq!(response["source_surface"], "sinex.replay_status");
+    assert_eq!(response["source_surface"], "sinex_replay_status");
     assert_eq!(
         response["payload"]["operation"]["operation_id"],
         fixture_operation_id()
@@ -731,7 +835,7 @@ async fn mcp_documents_search_call_uses_gateway_fixture() -> TestResult<()> {
 
     let response = call_tool(
         &client,
-        "sinex.documents_search",
+        "sinex_documents_search",
         json!({
             "query": "secret plan",
             "kind": "markdown",
@@ -741,7 +845,7 @@ async fn mcp_documents_search_call_uses_gateway_fixture() -> TestResult<()> {
     )
     .await?;
 
-    assert_eq!(response["source_surface"], "sinex.documents_search");
+    assert_eq!(response["source_surface"], "sinex_documents_search");
     assert_eq!(response["query_echo"]["query"], "secret plan");
     assert_eq!(response["payload"]["result"]["search_mode"], "fts");
     assert_eq!(
@@ -774,12 +878,12 @@ async fn mcp_documents_get_call_uses_gateway_fixture() -> TestResult<()> {
 
     let response = call_tool(
         &client,
-        "sinex.documents_get",
+        "sinex_documents_get",
         json!({ "document_id": fixture_document_id() }),
     )
     .await?;
 
-    assert_eq!(response["source_surface"], "sinex.documents_get");
+    assert_eq!(response["source_surface"], "sinex_documents_get");
     assert_eq!(response["query_echo"]["document_id"], fixture_document_id());
     assert_eq!(response["payload"]["result"]["id"], fixture_document_id());
     assert_eq!(
@@ -800,12 +904,12 @@ async fn mcp_documents_chunks_call_uses_redacted_gateway_fixture() -> TestResult
 
     let response = call_tool(
         &client,
-        "sinex.documents_chunks",
+        "sinex_documents_chunks",
         json!({ "document_id": fixture_document_id(), "limit": 2 }),
     )
     .await?;
 
-    assert_eq!(response["source_surface"], "sinex.documents_chunks");
+    assert_eq!(response["source_surface"], "sinex_documents_chunks");
     assert_eq!(response["query_echo"]["document_id"], fixture_document_id());
     assert_eq!(
         response["payload"]["result"]["chunks"][0]["document_id"],
@@ -832,9 +936,9 @@ async fn mcp_semantic_epochs_call_uses_gateway_fixture() -> TestResult<()> {
     let server = mount_mcp_gateway_fixture().await;
     let client = fixture_gateway_client(&server)?;
 
-    let response = call_tool(&client, "sinex.semantic_epochs", json!({ "limit": 5 })).await?;
+    let response = call_tool(&client, "sinex_semantic_epochs", json!({ "limit": 5 })).await?;
 
-    assert_eq!(response["source_surface"], "sinex.semantic_epochs");
+    assert_eq!(response["source_surface"], "sinex_semantic_epochs");
     assert_eq!(response["query_echo"]["limit"], 5);
     assert_eq!(
         response["payload"]["result"]["epochs"][0]["id"],
@@ -850,12 +954,12 @@ async fn mcp_semantic_lanes_call_uses_gateway_fixture() -> TestResult<()> {
 
     let response = call_tool(
         &client,
-        "sinex.semantic_lanes",
+        "sinex_semantic_lanes",
         json!({ "status": "planned", "limit": 5 }),
     )
     .await?;
 
-    assert_eq!(response["source_surface"], "sinex.semantic_lanes");
+    assert_eq!(response["source_surface"], "sinex_semantic_lanes");
     assert_eq!(response["query_echo"]["status"], "planned");
     assert_eq!(
         response["payload"]["result"]["lanes"][0]["id"],
@@ -871,12 +975,12 @@ async fn mcp_semantic_lane_outputs_call_uses_gateway_fixture() -> TestResult<()>
 
     let response = call_tool(
         &client,
-        "sinex.semantic_lane_outputs",
+        "sinex_semantic_lane_outputs",
         json!({ "lane_id": fixture_semantic_lane_id(), "limit": 5 }),
     )
     .await?;
 
-    assert_eq!(response["source_surface"], "sinex.semantic_lane_outputs");
+    assert_eq!(response["source_surface"], "sinex_semantic_lane_outputs");
     assert_eq!(
         response["query_echo"]["lane_id"],
         fixture_semantic_lane_id()
@@ -895,12 +999,12 @@ async fn mcp_semantic_lane_diffs_call_uses_gateway_fixture() -> TestResult<()> {
 
     let response = call_tool(
         &client,
-        "sinex.semantic_lane_diffs",
+        "sinex_semantic_lane_diffs",
         json!({ "lane_id": fixture_semantic_lane_id(), "limit": 5 }),
     )
     .await?;
 
-    assert_eq!(response["source_surface"], "sinex.semantic_lane_diffs");
+    assert_eq!(response["source_surface"], "sinex_semantic_lane_diffs");
     assert_eq!(
         response["query_echo"]["lane_id"],
         fixture_semantic_lane_id()
@@ -919,12 +1023,12 @@ async fn mcp_automata_status_call_uses_gateway_fixture() -> TestResult<()> {
 
     let response = call_tool(
         &client,
-        "sinex.automata_status",
+        "sinex_automata_status",
         json!({ "stale_after_secs": 120, "recent_window_secs": 60 }),
     )
     .await?;
 
-    assert_eq!(response["source_surface"], "sinex.automata_status");
+    assert_eq!(response["source_surface"], "sinex_automata_status");
     assert_eq!(response["query_echo"]["stale_after_secs"], 120);
     assert_eq!(response["payload"]["result"]["stale_after_secs"], 120);
     assert_eq!(
@@ -946,12 +1050,12 @@ async fn mcp_sources_status_call_uses_gateway_fixture() -> TestResult<()> {
 
     let response = call_tool(
         &client,
-        "sinex.sources_status",
+        "sinex_sources_status",
         json!({ "stale_after_secs": 120, "recent_window_secs": 60 }),
     )
     .await?;
 
-    assert_eq!(response["source_surface"], "sinex.sources_status");
+    assert_eq!(response["source_surface"], "sinex_sources_status");
     assert_eq!(response["query_echo"]["recent_window_secs"], 60);
     assert_eq!(response["payload"]["result"]["recent_window_secs"], 60);
     assert_eq!(
@@ -973,12 +1077,12 @@ async fn mcp_runtime_health_call_uses_gateway_fixture() -> TestResult<()> {
 
     let response = call_tool(
         &client,
-        "sinex.source_health",
+        "sinex_source_health",
         json!({ "stale_after_secs": 120 }),
     )
     .await?;
 
-    assert_eq!(response["source_surface"], "sinex.source_health");
+    assert_eq!(response["source_surface"], "sinex_source_health");
     assert_eq!(response["query_echo"]["stale_after_secs"], 120);
     assert_eq!(response["payload"]["result"]["active_count"], 2);
     assert_eq!(response["payload"]["result"]["inactive_count"], 1);
@@ -994,12 +1098,12 @@ async fn mcp_query_call_uses_descriptor_executor_and_gateway_fixture() -> TestRe
 
     let response = call_tool(
         &client,
-        "sinex.query",
+        "sinex_query",
         json!({ "query": "runtime-health limit 1" }),
     )
     .await?;
 
-    assert_eq!(response["source_surface"], "sinex.query");
+    assert_eq!(response["source_surface"], "sinex_query");
     assert_eq!(response["query_echo"]["unit"], "runtime-health");
     assert_eq!(
         response["payload"]["rows"][0]["object_kind"],
@@ -1020,12 +1124,12 @@ async fn mcp_runtime_active_call_uses_gateway_fixture() -> TestResult<()> {
 
     let response = call_tool(
         &client,
-        "sinex.sources_active",
+        "sinex_sources_active",
         json!({ "stale_after_secs": 120 }),
     )
     .await?;
 
-    assert_eq!(response["source_surface"], "sinex.sources_active");
+    assert_eq!(response["source_surface"], "sinex_sources_active");
     assert_eq!(response["query_echo"]["stale_after_secs"], 120);
     assert_eq!(
         response["payload"]["result"]["modules"][0]["module_name"],
@@ -1044,9 +1148,9 @@ async fn mcp_runtime_registry_call_uses_gateway_fixture() -> TestResult<()> {
     let server = mount_mcp_gateway_fixture().await;
     let client = fixture_gateway_client(&server)?;
 
-    let response = call_tool(&client, "sinex.sources_registry", json!({})).await?;
+    let response = call_tool(&client, "sinex_sources_registry", json!({})).await?;
 
-    assert_eq!(response["source_surface"], "sinex.sources_registry");
+    assert_eq!(response["source_surface"], "sinex_sources_registry");
     assert_eq!(
         response["payload"]["result"]["modules"][0]["module_name"],
         "terminal.atuin-history"
@@ -1064,9 +1168,9 @@ async fn mcp_event_engine_validation_call_uses_gateway_fixture() -> TestResult<(
     let server = mount_mcp_gateway_fixture().await;
     let client = fixture_gateway_client(&server)?;
 
-    let response = call_tool(&client, "sinex.event_engine_validation", json!({})).await?;
+    let response = call_tool(&client, "sinex_event_engine_validation", json!({})).await?;
 
-    assert_eq!(response["source_surface"], "sinex.event_engine_validation");
+    assert_eq!(response["source_surface"], "sinex_event_engine_validation");
     assert_eq!(response["payload"]["snapshot"]["batch_size"], 12);
     assert_eq!(response["payload"]["snapshot"]["validation_invalid"], 0);
     assert_eq!(
@@ -1084,7 +1188,7 @@ async fn mcp_event_engine_batch_stats_call_uses_gateway_fixture() -> TestResult<
 
     let response = call_tool(
         &client,
-        "sinex.event_engine_batch_stats",
+        "sinex_event_engine_batch_stats",
         json!({
             "from": "2026-05-19T00:00:00Z",
             "to": "2026-05-19T01:00:00Z",
@@ -1093,7 +1197,7 @@ async fn mcp_event_engine_batch_stats_call_uses_gateway_fixture() -> TestResult<
     )
     .await?;
 
-    assert_eq!(response["source_surface"], "sinex.event_engine_batch_stats");
+    assert_eq!(response["source_surface"], "sinex_event_engine_batch_stats");
     assert_eq!(response["query_echo"]["limit"], 5);
     assert_eq!(response["payload"]["buckets"][0]["batch_count"], 3);
     assert_eq!(response["payload"]["buckets"][0]["validation_invalid"], 0);
@@ -1110,9 +1214,9 @@ async fn mcp_throughput_call_uses_gateway_fixture() -> TestResult<()> {
     let server = mount_mcp_gateway_fixture().await;
     let client = fixture_gateway_client(&server)?;
 
-    let response = call_tool(&client, "sinex.throughput", json!({})).await?;
+    let response = call_tool(&client, "sinex_throughput", json!({})).await?;
 
-    assert_eq!(response["source_surface"], "sinex.throughput");
+    assert_eq!(response["source_surface"], "sinex_throughput");
     assert_eq!(
         response["payload"]["result"]["per_source"][0]["source"],
         "terminal"
@@ -1134,9 +1238,9 @@ async fn mcp_recent_activity_call_uses_gateway_fixture() -> TestResult<()> {
     let server = mount_mcp_gateway_fixture().await;
     let client = fixture_gateway_client(&server)?;
 
-    let response = call_tool(&client, "sinex.recent_activity", json!({ "limit": 7 })).await?;
+    let response = call_tool(&client, "sinex_recent_activity", json!({ "limit": 7 })).await?;
 
-    assert_eq!(response["source_surface"], "sinex.recent_activity");
+    assert_eq!(response["source_surface"], "sinex_recent_activity");
     assert_eq!(response["query_echo"]["limit"], 7);
     assert_eq!(
         response["payload"]["entries"][0]["activity_type"],
@@ -1154,7 +1258,7 @@ async fn mcp_command_frequency_call_uses_gateway_fixture() -> TestResult<()> {
 
     let response = call_tool(
         &client,
-        "sinex.command_frequency",
+        "sinex_command_frequency",
         json!({
             "from": "2026-05-19T00:00:00Z",
             "to": "2026-05-19T01:00:00Z",
@@ -1163,7 +1267,7 @@ async fn mcp_command_frequency_call_uses_gateway_fixture() -> TestResult<()> {
     )
     .await?;
 
-    assert_eq!(response["source_surface"], "sinex.command_frequency");
+    assert_eq!(response["source_surface"], "sinex_command_frequency");
     assert_eq!(response["query_echo"]["limit"], 3);
     assert_eq!(response["payload"]["entries"][0]["command"], "xtask");
     assert_eq!(response["payload"]["entries"][0]["total_executions"], 12);
@@ -1178,7 +1282,7 @@ async fn mcp_file_activity_call_uses_gateway_fixture() -> TestResult<()> {
 
     let response = call_tool(
         &client,
-        "sinex.file_activity",
+        "sinex_file_activity",
         json!({
             "from": "2026-05-19T00:00:00Z",
             "to": "2026-05-19T01:00:00Z",
@@ -1187,7 +1291,7 @@ async fn mcp_file_activity_call_uses_gateway_fixture() -> TestResult<()> {
     )
     .await?;
 
-    assert_eq!(response["source_surface"], "sinex.file_activity");
+    assert_eq!(response["source_surface"], "sinex_file_activity");
     assert_eq!(response["query_echo"]["limit"], 3);
     assert_eq!(
         response["payload"]["entries"][0]["directory"],
@@ -1205,7 +1309,7 @@ async fn mcp_system_state_call_uses_gateway_fixture() -> TestResult<()> {
 
     let response = call_tool(
         &client,
-        "sinex.system_state",
+        "sinex_system_state",
         json!({
             "from": "2026-05-19T00:00:00Z",
             "to": "2026-05-19T01:00:00Z",
@@ -1214,7 +1318,7 @@ async fn mcp_system_state_call_uses_gateway_fixture() -> TestResult<()> {
     )
     .await?;
 
-    assert_eq!(response["source_surface"], "sinex.system_state");
+    assert_eq!(response["source_surface"], "sinex_system_state");
     assert_eq!(response["query_echo"]["limit"], 3);
     assert_eq!(response["payload"]["buckets"][0]["sample_count"], 5);
     assert_eq!(
@@ -1232,7 +1336,7 @@ async fn mcp_window_focus_call_uses_gateway_fixture() -> TestResult<()> {
 
     let response = call_tool(
         &client,
-        "sinex.window_focus",
+        "sinex_window_focus",
         json!({
             "from": "2026-05-19T00:00:00Z",
             "to": "2026-05-19T01:00:00Z",
@@ -1241,7 +1345,7 @@ async fn mcp_window_focus_call_uses_gateway_fixture() -> TestResult<()> {
     )
     .await?;
 
-    assert_eq!(response["source_surface"], "sinex.window_focus");
+    assert_eq!(response["source_surface"], "sinex_window_focus");
     assert_eq!(response["query_echo"]["limit"], 3);
     assert_eq!(response["payload"]["buckets"][0]["workspace"], "4");
     assert_eq!(response["payload"]["buckets"][0]["window_class"], "kitty");
@@ -1255,9 +1359,9 @@ async fn mcp_current_health_call_uses_gateway_fixture() -> TestResult<()> {
     let server = mount_mcp_gateway_fixture().await;
     let client = fixture_gateway_client(&server)?;
 
-    let response = call_tool(&client, "sinex.current_health", json!({ "limit": 4 })).await?;
+    let response = call_tool(&client, "sinex_current_health", json!({ "limit": 4 })).await?;
 
-    assert_eq!(response["source_surface"], "sinex.current_health");
+    assert_eq!(response["source_surface"], "sinex_current_health");
     assert_eq!(response["query_echo"]["limit"], 4);
     assert_eq!(response["payload"]["entries"][0]["source"], "sinex");
     assert_eq!(response["payload"]["entries"][0]["event_type"], "health");
@@ -1271,9 +1375,9 @@ async fn mcp_current_device_state_call_uses_gateway_fixture() -> TestResult<()> 
     let server = mount_mcp_gateway_fixture().await;
     let client = fixture_gateway_client(&server)?;
 
-    let response = call_tool(&client, "sinex.current_device_state", json!({ "limit": 4 })).await?;
+    let response = call_tool(&client, "sinex_current_device_state", json!({ "limit": 4 })).await?;
 
-    assert_eq!(response["source_surface"], "sinex.current_device_state");
+    assert_eq!(response["source_surface"], "sinex_current_device_state");
     assert_eq!(response["query_echo"]["limit"], 4);
     assert_eq!(response["payload"]["entries"][0]["unit_name"], "sinexd");
     assert_eq!(response["payload"]["entries"][0]["state"], "active");
@@ -1286,9 +1390,9 @@ async fn mcp_gateway_stats_call_uses_gateway_fixture() -> TestResult<()> {
     let server = mount_mcp_gateway_fixture().await;
     let client = fixture_gateway_client(&server)?;
 
-    let response = call_tool(&client, "sinex.gateway_stats", telemetry_window_args()).await?;
+    let response = call_tool(&client, "sinex_gateway_stats", telemetry_window_args()).await?;
 
-    assert_eq!(response["source_surface"], "sinex.gateway_stats");
+    assert_eq!(response["source_surface"], "sinex_gateway_stats");
     assert_eq!(response["query_echo"]["limit"], 3);
     assert_eq!(response["payload"]["buckets"][0]["source"], "gateway");
     assert_eq!(response["payload"]["buckets"][0]["stat_events"], 4);
@@ -1301,9 +1405,9 @@ async fn mcp_stream_stats_call_uses_gateway_fixture() -> TestResult<()> {
     let server = mount_mcp_gateway_fixture().await;
     let client = fixture_gateway_client(&server)?;
 
-    let response = call_tool(&client, "sinex.stream_stats", telemetry_window_args()).await?;
+    let response = call_tool(&client, "sinex_stream_stats", telemetry_window_args()).await?;
 
-    assert_eq!(response["source_surface"], "sinex.stream_stats");
+    assert_eq!(response["source_surface"], "sinex_stream_stats");
     assert_eq!(response["query_echo"]["limit"], 3);
     assert_eq!(response["payload"]["buckets"][0]["stream_name"], "EVENTS");
     assert_eq!(response["payload"]["buckets"][0]["sample_count"], 2);
@@ -1316,9 +1420,9 @@ async fn mcp_assembly_stats_call_uses_gateway_fixture() -> TestResult<()> {
     let server = mount_mcp_gateway_fixture().await;
     let client = fixture_gateway_client(&server)?;
 
-    let response = call_tool(&client, "sinex.assembly_stats", telemetry_window_args()).await?;
+    let response = call_tool(&client, "sinex_assembly_stats", telemetry_window_args()).await?;
 
-    assert_eq!(response["source_surface"], "sinex.assembly_stats");
+    assert_eq!(response["source_surface"], "sinex_assembly_stats");
     assert_eq!(response["query_echo"]["limit"], 3);
     assert_eq!(response["payload"]["buckets"][0]["total_completed"], 7);
     assert_eq!(response["payload"]["buckets"][0]["sample_count"], 3);
@@ -1331,9 +1435,9 @@ async fn mcp_source_stats_call_uses_gateway_fixture() -> TestResult<()> {
     let server = mount_mcp_gateway_fixture().await;
     let client = fixture_gateway_client(&server)?;
 
-    let response = call_tool(&client, "sinex.source_stats", telemetry_window_args()).await?;
+    let response = call_tool(&client, "sinex_source_stats", telemetry_window_args()).await?;
 
-    assert_eq!(response["source_surface"], "sinex.source_stats");
+    assert_eq!(response["source_surface"], "sinex_source_stats");
     assert_eq!(response["query_echo"]["limit"], 3);
     assert_eq!(response["payload"]["buckets"][0]["module_kind"], "source");
     assert_eq!(
@@ -1349,9 +1453,9 @@ async fn mcp_metric_counters_call_uses_gateway_fixture() -> TestResult<()> {
     let server = mount_mcp_gateway_fixture().await;
     let client = fixture_gateway_client(&server)?;
 
-    let response = call_tool(&client, "sinex.metric_counters", telemetry_window_args()).await?;
+    let response = call_tool(&client, "sinex_metric_counters", telemetry_window_args()).await?;
 
-    assert_eq!(response["source_surface"], "sinex.metric_counters");
+    assert_eq!(response["source_surface"], "sinex_metric_counters");
     assert_eq!(response["query_echo"]["limit"], 3);
     assert_eq!(
         response["payload"]["buckets"][0]["component"],
@@ -1370,12 +1474,12 @@ async fn mcp_llm_prompts_call_uses_gateway_fixture() -> TestResult<()> {
 
     let response = call_tool(
         &client,
-        "sinex.llm_prompts",
+        "sinex_llm_prompts",
         json!({ "status": "active", "limit": 2 }),
     )
     .await?;
 
-    assert_eq!(response["source_surface"], "sinex.llm_prompts");
+    assert_eq!(response["source_surface"], "sinex_llm_prompts");
     assert_eq!(response["query_echo"]["status"], "active");
     assert_eq!(
         response["payload"]["result"]["events"][0]["payload"]["redacted"],
@@ -1390,9 +1494,9 @@ async fn mcp_llm_route_explain_call_uses_gateway_fixture() -> TestResult<()> {
     let server = mount_mcp_gateway_fixture().await;
     let client = fixture_gateway_client(&server)?;
 
-    let response = call_tool(&client, "sinex.llm_route_explain", fixture_llm_route_args()).await?;
+    let response = call_tool(&client, "sinex_llm_route_explain", fixture_llm_route_args()).await?;
 
-    assert_eq!(response["source_surface"], "sinex.llm_route_explain");
+    assert_eq!(response["source_surface"], "sinex_llm_route_explain");
     assert_eq!(
         response["query_echo"]["request"]["task_kind"],
         "entity-extraction"
@@ -1410,9 +1514,9 @@ async fn mcp_llm_budget_report_call_uses_gateway_fixture() -> TestResult<()> {
     let server = mount_mcp_gateway_fixture().await;
     let client = fixture_gateway_client(&server)?;
 
-    let response = call_tool(&client, "sinex.llm_budget_report", json!({ "limit": 5 })).await?;
+    let response = call_tool(&client, "sinex_llm_budget_report", json!({ "limit": 5 })).await?;
 
-    assert_eq!(response["source_surface"], "sinex.llm_budget_report");
+    assert_eq!(response["source_surface"], "sinex_llm_budget_report");
     assert_eq!(response["query_echo"]["limit"], 5);
     assert_eq!(response["payload"]["result"]["total_rows"], 1);
     assert_eq!(response["payload"]["result"]["prompt_tokens"], 12);
@@ -1427,12 +1531,12 @@ async fn mcp_curation_proposals_call_uses_gateway_fixture() -> TestResult<()> {
 
     let response = call_tool(
         &client,
-        "sinex.curation_proposals",
+        "sinex_curation_proposals",
         json!({ "status": "pending", "limit": 4 }),
     )
     .await?;
 
-    assert_eq!(response["source_surface"], "sinex.curation_proposals");
+    assert_eq!(response["source_surface"], "sinex_curation_proposals");
     assert_eq!(response["query_echo"]["status"], "pending");
     assert_eq!(
         response["payload"]["result"]["events"][0]["payload"]["redacted"],
@@ -1447,9 +1551,9 @@ async fn mcp_dlq_stats_call_uses_gateway_fixture() -> TestResult<()> {
     let server = mount_mcp_gateway_fixture().await;
     let client = fixture_gateway_client(&server)?;
 
-    let response = call_tool(&client, "sinex.dlq_stats", json!({})).await?;
+    let response = call_tool(&client, "sinex_dlq_stats", json!({})).await?;
 
-    assert_eq!(response["source_surface"], "sinex.dlq_stats");
+    assert_eq!(response["source_surface"], "sinex_dlq_stats");
     assert_eq!(response["payload"]["result"]["total_messages"], 2);
     assert_eq!(response["payload"]["result"]["total_bytes"], 512);
     assert_eq!(response["privacy_state"]["state"], "redacted");
@@ -1461,9 +1565,9 @@ async fn mcp_dlq_peek_call_uses_gateway_fixture() -> TestResult<()> {
     let server = mount_mcp_gateway_fixture().await;
     let client = fixture_gateway_client(&server)?;
 
-    let response = call_tool(&client, "sinex.dlq_peek", json!({ "limit": 2 })).await?;
+    let response = call_tool(&client, "sinex_dlq_peek", json!({ "limit": 2 })).await?;
 
-    assert_eq!(response["source_surface"], "sinex.dlq_peek");
+    assert_eq!(response["source_surface"], "sinex_dlq_peek");
     assert_eq!(response["query_echo"]["limit"], 2);
     assert_eq!(
         response["payload"]["result"]["messages"][0]["payload_redacted"],
@@ -1488,12 +1592,12 @@ async fn mcp_source_materials_call_uses_gateway_fixture() -> TestResult<()> {
 
     let response = call_tool(
         &client,
-        "sinex.source_materials",
+        "sinex_source_materials",
         json!({ "status": "completed", "limit": 2 }),
     )
     .await?;
 
-    assert_eq!(response["source_surface"], "sinex.source_materials");
+    assert_eq!(response["source_surface"], "sinex_source_materials");
     assert_eq!(response["query_echo"]["status"], "completed");
     assert_eq!(
         response["payload"]["result"]["materials"][0]["id"],
@@ -1510,12 +1614,12 @@ async fn mcp_source_material_call_uses_gateway_fixture() -> TestResult<()> {
 
     let response = call_tool(
         &client,
-        "sinex.source_material",
+        "sinex_source_material",
         json!({ "material_id": fixture_material_id() }),
     )
     .await?;
 
-    assert_eq!(response["source_surface"], "sinex.source_material");
+    assert_eq!(response["source_surface"], "sinex_source_material");
     assert_eq!(response["query_echo"]["material_id"], fixture_material_id());
     assert_eq!(
         response["payload"]["result"]["material"]["metadata"]["redacted"],
@@ -1530,9 +1634,9 @@ async fn mcp_source_coverage_call_uses_gateway_fixture() -> TestResult<()> {
     let server = mount_mcp_gateway_fixture().await;
     let client = fixture_gateway_client(&server)?;
 
-    let response = call_tool(&client, "sinex.source_coverage", json!({})).await?;
+    let response = call_tool(&client, "sinex_source_coverage", json!({})).await?;
 
-    assert_eq!(response["source_surface"], "sinex.source_coverage");
+    assert_eq!(response["source_surface"], "sinex_source_coverage");
     assert_eq!(
         response["payload"]["result"]["sources"][0]["event_count"],
         42
@@ -1554,9 +1658,9 @@ async fn mcp_sources_status_view_call_uses_gateway_fixture() -> TestResult<()> {
     let server = mount_mcp_gateway_fixture().await;
     let client = fixture_gateway_client(&server)?;
 
-    let response = call_tool(&client, "sinex.sources_status_view", json!({})).await?;
+    let response = call_tool(&client, "sinex_sources_status_view", json!({})).await?;
 
-    assert_eq!(response["source_surface"], "sinex.sources_status_view");
+    assert_eq!(response["source_surface"], "sinex_sources_status_view");
     assert_eq!(
         response["payload"]["schema_version"],
         "sinex.source-coverage-list/v1"
@@ -1577,9 +1681,9 @@ async fn mcp_source_presets_call_uses_gateway_fixture() -> TestResult<()> {
     let server = mount_mcp_gateway_fixture().await;
     let client = fixture_gateway_client(&server)?;
 
-    let response = call_tool(&client, "sinex.source_presets", json!({})).await?;
+    let response = call_tool(&client, "sinex_source_presets", json!({})).await?;
 
-    assert_eq!(response["source_surface"], "sinex.source_presets");
+    assert_eq!(response["source_surface"], "sinex_source_presets");
     assert_eq!(
         response["payload"]["result"]["presets"][0]["name"],
         "terminal.atuin.default"
@@ -1595,12 +1699,12 @@ async fn mcp_source_bindings_call_uses_gateway_fixture() -> TestResult<()> {
 
     let response = call_tool(
         &client,
-        "sinex.source_bindings",
+        "sinex_source_bindings",
         json!({ "source_family": "terminal", "include_disabled": true }),
     )
     .await?;
 
-    assert_eq!(response["source_surface"], "sinex.source_bindings");
+    assert_eq!(response["source_surface"], "sinex_source_bindings");
     assert_eq!(response["query_echo"]["source_family"], "terminal");
     assert_eq!(response["query_echo"]["include_disabled"], true);
     assert_eq!(
@@ -1618,12 +1722,12 @@ async fn mcp_ops_list_call_uses_gateway_fixture() -> TestResult<()> {
 
     let response = call_tool(
         &client,
-        "sinex.ops_list",
+        "sinex_ops_list",
         json!({ "operation_type": "replay", "limit": 2 }),
     )
     .await?;
 
-    assert_eq!(response["source_surface"], "sinex.ops_list");
+    assert_eq!(response["source_surface"], "sinex_ops_list");
     assert_eq!(response["query_echo"]["operation_type"], "replay");
     assert_eq!(response["payload"]["count"], 1);
     assert_eq!(response["payload"]["jobs"][0]["kind"], "replay");
@@ -1654,12 +1758,12 @@ async fn mcp_ops_get_call_uses_gateway_fixture() -> TestResult<()> {
 
     let response = call_tool(
         &client,
-        "sinex.ops_get",
+        "sinex_ops_get",
         json!({ "operation_id": fixture_operation_id() }),
     )
     .await?;
 
-    assert_eq!(response["source_surface"], "sinex.ops_get");
+    assert_eq!(response["source_surface"], "sinex_ops_get");
     assert_eq!(
         response["query_echo"]["operation_id"],
         fixture_operation_id()
@@ -1679,9 +1783,9 @@ async fn mcp_lifecycle_status_call_uses_gateway_fixture() -> TestResult<()> {
     let server = mount_mcp_gateway_fixture().await;
     let client = fixture_gateway_client(&server)?;
 
-    let response = call_tool(&client, "sinex.lifecycle_status", json!({})).await?;
+    let response = call_tool(&client, "sinex_lifecycle_status", json!({})).await?;
 
-    assert_eq!(response["source_surface"], "sinex.lifecycle_status");
+    assert_eq!(response["source_surface"], "sinex_lifecycle_status");
     assert_eq!(response["payload"]["result"]["total_events"], 42);
     assert_eq!(response["payload"]["result"]["tiers"][0]["tier"], "live");
     assert_eq!(response["privacy_state"]["state"], "redacted");
@@ -1695,12 +1799,12 @@ async fn mcp_audit_trail_call_uses_gateway_fixture() -> TestResult<()> {
 
     let response = call_tool(
         &client,
-        "sinex.audit_trail",
+        "sinex_audit_trail",
         json!({ "operation_id": fixture_operation_id() }),
     )
     .await?;
 
-    assert_eq!(response["source_surface"], "sinex.audit_trail");
+    assert_eq!(response["source_surface"], "sinex_audit_trail");
     assert_eq!(
         response["query_echo"]["operation_id"],
         fixture_operation_id()
@@ -1721,12 +1825,12 @@ async fn mcp_coordination_instances_call_uses_gateway_fixture() -> TestResult<()
 
     let response = call_tool(
         &client,
-        "sinex.coordination_instances",
+        "sinex_coordination_instances",
         json!({ "module_kind": "service" }),
     )
     .await?;
 
-    assert_eq!(response["source_surface"], "sinex.coordination_instances");
+    assert_eq!(response["source_surface"], "sinex_coordination_instances");
     assert_eq!(response["query_echo"]["module_kind"], "service");
     assert_eq!(
         response["payload"]["result"]["instances"][0]["instance_id"],
@@ -1743,12 +1847,12 @@ async fn mcp_coordination_leader_call_uses_gateway_fixture() -> TestResult<()> {
 
     let response = call_tool(
         &client,
-        "sinex.coordination_leader",
+        "sinex_coordination_leader",
         json!({ "module_kind": "service" }),
     )
     .await?;
 
-    assert_eq!(response["source_surface"], "sinex.coordination_leader");
+    assert_eq!(response["source_surface"], "sinex_coordination_leader");
     assert_eq!(
         response["payload"]["result"]["leader"]["instance_id"],
         fixture_instance_id()
@@ -1764,14 +1868,14 @@ async fn mcp_coordination_instance_health_call_uses_gateway_fixture() -> TestRes
 
     let response = call_tool(
         &client,
-        "sinex.coordination_instance_health",
+        "sinex_coordination_instance_health",
         json!({ "instance_id": fixture_instance_id() }),
     )
     .await?;
 
     assert_eq!(
         response["source_surface"],
-        "sinex.coordination_instance_health"
+        "sinex_coordination_instance_health"
     );
     assert_eq!(response["query_echo"]["instance_id"], fixture_instance_id());
     assert_eq!(response["payload"]["result"]["healthy"], true);
@@ -1786,12 +1890,12 @@ async fn mcp_shadow_consumers_call_uses_gateway_fixture() -> TestResult<()> {
 
     let response = call_tool(
         &client,
-        "sinex.shadow_consumers",
+        "sinex_shadow_consumers",
         json!({ "prefix": "dev-fixture" }),
     )
     .await?;
 
-    assert_eq!(response["source_surface"], "sinex.shadow_consumers");
+    assert_eq!(response["source_surface"], "sinex_shadow_consumers");
     assert_eq!(response["query_echo"]["prefix"], "dev-fixture");
     assert_eq!(
         response["payload"]["result"]["consumers"][0]["consumer_name"],
@@ -1806,9 +1910,9 @@ async fn mcp_system_ping_call_uses_gateway_fixture() -> TestResult<()> {
     let server = mount_mcp_gateway_fixture().await;
     let client = fixture_gateway_client(&server)?;
 
-    let response = call_tool(&client, "sinex.system_ping", json!({})).await?;
+    let response = call_tool(&client, "sinex_system_ping", json!({})).await?;
 
-    assert_eq!(response["source_surface"], "sinex.system_ping");
+    assert_eq!(response["source_surface"], "sinex_system_ping");
     assert_eq!(response["payload"]["result"], "pong");
     assert_eq!(response["privacy_state"]["state"], "redacted");
     Ok(())
@@ -1819,9 +1923,9 @@ async fn mcp_system_version_call_uses_gateway_fixture() -> TestResult<()> {
     let server = mount_mcp_gateway_fixture().await;
     let client = fixture_gateway_client(&server)?;
 
-    let response = call_tool(&client, "sinex.system_version", json!({})).await?;
+    let response = call_tool(&client, "sinex_system_version", json!({})).await?;
 
-    assert_eq!(response["source_surface"], "sinex.system_version");
+    assert_eq!(response["source_surface"], "sinex_system_version");
     assert_eq!(response["payload"]["result"], "0.4.2");
     assert_eq!(response["privacy_state"]["state"], "redacted");
     Ok(())

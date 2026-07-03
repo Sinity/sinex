@@ -1,8 +1,8 @@
 //! Read-only MCP stdio surface for local coding agents.
 //!
-//! Protocol pin: Model Context Protocol `2024-11-05`, JSON-RPC over stdio
+//! Protocol pin: Model Context Protocol `2025-06-18`, JSON-RPC over stdio
 //! using `Content-Length` framed messages. This module intentionally does not
-//! depend on an MCP SDK yet; the supported surface is pinned and tested here.
+//! depend on an MCP SDK yet; the supported surface is narrow and tested here.
 
 use crate::GatewayClient;
 use crate::commands::ops::{operation_to_view, operations_to_views};
@@ -59,8 +59,11 @@ use sinex_primitives::views::{
     PrivacyStateView, ViewEnvelope,
 };
 use std::io::{BufRead, Write};
+use std::time::{SystemTime, UNIX_EPOCH};
 
-pub const MCP_PROTOCOL_VERSION: &str = "2024-11-05";
+pub const MCP_PROTOCOL_VERSION: &str = "2025-06-18";
+pub const MCP_SUPPORTED_PROTOCOL_VERSIONS: &[&str] =
+    &["2025-06-18", "2025-03-26", "2024-11-05"];
 pub const MCP_IMPLEMENTATION: &str = "sinex-mcp-server";
 pub const MCP_IMPLEMENTATION_VERSION: &str = env!("CARGO_PKG_VERSION");
 const AGENT_ORIENTATION: &str = include_str!("../docs/agent_orientation.md");
@@ -90,6 +93,12 @@ pub struct McpCatalogEntry {
     pub description: &'static str,
     pub backing_rpc_methods: &'static [&'static str],
     pub read_only: bool,
+}
+
+#[derive(Debug, Clone, Copy)]
+enum McpWireFormat {
+    ContentLength,
+    JsonLine,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq)]
@@ -451,28 +460,28 @@ const fn default_dlq_limit() -> usize {
 pub fn tool_catalog() -> Vec<McpCatalogEntry> {
     vec![
         McpCatalogEntry {
-            name: "sinex.orient",
+            name: "sinex_orient",
             kind: McpSurfaceKind::Tool,
             description: "Read-only first-contact orientation for agents using Sinex evidence tools.",
             backing_rpc_methods: &[],
             read_only: true,
         },
         McpCatalogEntry {
-            name: "sinex.search_events",
+            name: "sinex_search_events",
             kind: McpSurfaceKind::Tool,
             description: "Read-only search over persisted Sinex events.",
             backing_rpc_methods: &[methods::EVENTS_CARDS],
             read_only: true,
         },
         McpCatalogEntry {
-            name: "sinex.context_pack",
+            name: "sinex_context_pack",
             kind: McpSurfaceKind::Tool,
             description: "Read-only event query projection for AI context packs.",
             backing_rpc_methods: &[methods::EVENTS_QUERY],
             read_only: true,
         },
         McpCatalogEntry {
-            name: "sinex.query",
+            name: "sinex_query",
             kind: McpSurfaceKind::Tool,
             description: "Read-only Sinex query-unit selection over events, sources, debt, operations, and runtime health.",
             backing_rpc_methods: &[
@@ -486,21 +495,21 @@ pub fn tool_catalog() -> Vec<McpCatalogEntry> {
             read_only: true,
         },
         McpCatalogEntry {
-            name: "sinex.trace_lineage",
+            name: "sinex_trace_lineage",
             kind: McpSurfaceKind::Tool,
             description: "Read-only provenance trace for one event.",
             backing_rpc_methods: &[methods::EVENTS_LINEAGE],
             read_only: true,
         },
         McpCatalogEntry {
-            name: "sinex.relation_evidence",
+            name: "sinex_relation_evidence",
             kind: McpSurfaceKind::Tool,
             description: "Read-only relation-evidence window over live events.",
             backing_rpc_methods: &[methods::EVENTS_RELATION_EVIDENCE],
             read_only: true,
         },
         McpCatalogEntry {
-            name: "sinex.source_readiness",
+            name: "sinex_source_readiness",
             kind: McpSurfaceKind::Tool,
             description: "Read-only source readiness, caveat, freshness, and cost report.",
             backing_rpc_methods: &[
@@ -510,7 +519,7 @@ pub fn tool_catalog() -> Vec<McpCatalogEntry> {
             read_only: true,
         },
         McpCatalogEntry {
-            name: "sinex.source_continuity",
+            name: "sinex_source_continuity",
             kind: McpSurfaceKind::Tool,
             description: "Read-only source continuity, seam, gap, and replayability report.",
             backing_rpc_methods: &[
@@ -520,406 +529,406 @@ pub fn tool_catalog() -> Vec<McpCatalogEntry> {
             read_only: true,
         },
         McpCatalogEntry {
-            name: "sinex.source_drift",
+            name: "sinex_source_drift",
             kind: McpSurfaceKind::Tool,
             description: "Read-only checkpointed source-shape drift observations.",
             backing_rpc_methods: &[methods::SOURCES_DRIFT_LIST],
             read_only: true,
         },
         McpCatalogEntry {
-            name: "sinex.source_gap_explain",
+            name: "sinex_source_gap_explain",
             kind: McpSurfaceKind::Tool,
             description: "Read-only attribution for a source-family coverage gap.",
             backing_rpc_methods: &[methods::SOURCES_CONTINUITY_EXPLAIN_GAP],
             read_only: true,
         },
         McpCatalogEntry {
-            name: "sinex.source_identifier_continuity",
+            name: "sinex_source_identifier_continuity",
             kind: McpSurfaceKind::Tool,
             description: "Read-only continuity report for one source identifier.",
             backing_rpc_methods: &[methods::SOURCES_CONTINUITY],
             read_only: true,
         },
         McpCatalogEntry {
-            name: "sinex.privacy_status",
+            name: "sinex_privacy_status",
             kind: McpSurfaceKind::Tool,
             description: "Read-only runtime private-mode state.",
             backing_rpc_methods: &[methods::PRIVACY_PRIVATE_MODE_STATUS],
             read_only: true,
         },
         McpCatalogEntry {
-            name: "sinex.system_health",
+            name: "sinex_system_health",
             kind: McpSurfaceKind::Tool,
             description: "Read-only gateway and confirmation-path health summary.",
             backing_rpc_methods: &[methods::SYSTEM_HEALTH],
             read_only: true,
         },
         McpCatalogEntry {
-            name: "sinex.tasks_list",
+            name: "sinex_tasks_list",
             kind: McpSurfaceKind::Tool,
             description: "Read-only current task-state search and filtering.",
             backing_rpc_methods: &[methods::TASKS_LIST],
             read_only: true,
         },
         McpCatalogEntry {
-            name: "sinex.task_state",
+            name: "sinex_task_state",
             kind: McpSurfaceKind::Tool,
             description: "Read-only current state for one task workflow object.",
             backing_rpc_methods: &[methods::TASKS_STATE_GET],
             read_only: true,
         },
         McpCatalogEntry {
-            name: "sinex.replay_operations",
+            name: "sinex_replay_operations",
             kind: McpSurfaceKind::Tool,
             description: "Read-only replay operation list with state and module filters.",
             backing_rpc_methods: &[methods::REPLAY_LIST_OPERATIONS],
             read_only: true,
         },
         McpCatalogEntry {
-            name: "sinex.replay_status",
+            name: "sinex_replay_status",
             kind: McpSurfaceKind::Tool,
             description: "Read-only current status for one replay operation.",
             backing_rpc_methods: &[methods::REPLAY_OPERATION_STATUS],
             read_only: true,
         },
         McpCatalogEntry {
-            name: "sinex.documents_search",
+            name: "sinex_documents_search",
             kind: McpSurfaceKind::Tool,
             description: "Read-only ranked document chunk search with raw text redacted.",
             backing_rpc_methods: &[methods::DOCUMENTS_SEARCH],
             read_only: true,
         },
         McpCatalogEntry {
-            name: "sinex.documents_get",
+            name: "sinex_documents_get",
             kind: McpSurfaceKind::Tool,
             description: "Read-only document metadata lookup with side data redacted.",
             backing_rpc_methods: &[methods::DOCUMENTS_GET],
             read_only: true,
         },
         McpCatalogEntry {
-            name: "sinex.documents_chunks",
+            name: "sinex_documents_chunks",
             kind: McpSurfaceKind::Tool,
             description: "Read-only document chunk anchors with text redacted.",
             backing_rpc_methods: &[methods::DOCUMENTS_GET_CHUNKS_REDACTED],
             read_only: true,
         },
         McpCatalogEntry {
-            name: "sinex.semantic_epochs",
+            name: "sinex_semantic_epochs",
             kind: McpSurfaceKind::Tool,
             description: "Read-only semantic epoch registry listing.",
             backing_rpc_methods: &[methods::SEMANTIC_EPOCHS_LIST],
             read_only: true,
         },
         McpCatalogEntry {
-            name: "sinex.semantic_lanes",
+            name: "sinex_semantic_lanes",
             kind: McpSurfaceKind::Tool,
             description: "Read-only semantic lane registry listing.",
             backing_rpc_methods: &[methods::SEMANTIC_LANES_LIST],
             read_only: true,
         },
         McpCatalogEntry {
-            name: "sinex.semantic_lane_outputs",
+            name: "sinex_semantic_lane_outputs",
             kind: McpSurfaceKind::Tool,
             description: "Read-only semantic lane output listing.",
             backing_rpc_methods: &[methods::SEMANTIC_LANE_OUTPUTS_LIST],
             read_only: true,
         },
         McpCatalogEntry {
-            name: "sinex.semantic_lane_diffs",
+            name: "sinex_semantic_lane_diffs",
             kind: McpSurfaceKind::Tool,
             description: "Read-only semantic lane diff listing.",
             backing_rpc_methods: &[methods::SEMANTIC_LANE_DIFFS_LIST],
             read_only: true,
         },
         McpCatalogEntry {
-            name: "sinex.automata_status",
+            name: "sinex_automata_status",
             kind: McpSurfaceKind::Tool,
             description: "Read-only automata liveness, checkpoint, and lag status.",
             backing_rpc_methods: &[methods::AUTOMATA_STATUS],
             read_only: true,
         },
         McpCatalogEntry {
-            name: "sinex.sources_status",
+            name: "sinex_sources_status",
             kind: McpSurfaceKind::Tool,
             description: "Read-only source liveness, health, and emission status.",
             backing_rpc_methods: &[methods::SOURCES_STATUS],
             read_only: true,
         },
         McpCatalogEntry {
-            name: "sinex.sources_status_view",
+            name: "sinex_sources_status_view",
             kind: McpSurfaceKind::Tool,
             description: "Read-only operator ViewEnvelope source coverage/status surface.",
             backing_rpc_methods: &[methods::SOURCES_STATUS_VIEW],
             read_only: true,
         },
         McpCatalogEntry {
-            name: "sinex.source_health",
+            name: "sinex_source_health",
             kind: McpSurfaceKind::Tool,
             description: "Read-only aggregate runtime module health.",
             backing_rpc_methods: &[methods::RUNTIME_HEALTH],
             read_only: true,
         },
         McpCatalogEntry {
-            name: "sinex.sources_active",
+            name: "sinex_sources_active",
             kind: McpSurfaceKind::Tool,
             description: "Read-only active runtime module presence.",
             backing_rpc_methods: &[methods::RUNTIME_LIST_ACTIVE],
             read_only: true,
         },
         McpCatalogEntry {
-            name: "sinex.sources_registry",
+            name: "sinex_sources_registry",
             kind: McpSurfaceKind::Tool,
             description: "Read-only persisted runtime module state registry.",
             backing_rpc_methods: &[methods::RUNTIME_LIST],
             read_only: true,
         },
         McpCatalogEntry {
-            name: "sinex.event_engine_validation",
+            name: "sinex_event_engine_validation",
             kind: McpSurfaceKind::Tool,
             description: "Read-only latest event_engine validation and admission snapshot.",
             backing_rpc_methods: &[methods::TELEMETRY_EVENT_ENGINE_VALIDATION],
             read_only: true,
         },
         McpCatalogEntry {
-            name: "sinex.event_engine_batch_stats",
+            name: "sinex_event_engine_batch_stats",
             kind: McpSurfaceKind::Tool,
             description: "Read-only event_engine batch, latency, and validation telemetry buckets.",
             backing_rpc_methods: &[methods::TELEMETRY_EVENT_ENGINE_BATCH_STATS],
             read_only: true,
         },
         McpCatalogEntry {
-            name: "sinex.throughput",
+            name: "sinex_throughput",
             kind: McpSurfaceKind::Tool,
             description: "Read-only per-source and per-component throughput summary.",
             backing_rpc_methods: &[methods::TELEMETRY_THROUGHPUT],
             read_only: true,
         },
         McpCatalogEntry {
-            name: "sinex.recent_activity",
+            name: "sinex_recent_activity",
             kind: McpSurfaceKind::Tool,
             description: "Read-only recent activity summary for agent context.",
             backing_rpc_methods: &[methods::TELEMETRY_RECENT_ACTIVITY],
             read_only: true,
         },
         McpCatalogEntry {
-            name: "sinex.command_frequency",
+            name: "sinex_command_frequency",
             kind: McpSurfaceKind::Tool,
             description: "Read-only command-frequency telemetry for shell context.",
             backing_rpc_methods: &[methods::TELEMETRY_COMMAND_FREQUENCY],
             read_only: true,
         },
         McpCatalogEntry {
-            name: "sinex.file_activity",
+            name: "sinex_file_activity",
             kind: McpSurfaceKind::Tool,
             description: "Read-only file-activity telemetry for project context.",
             backing_rpc_methods: &[methods::TELEMETRY_FILE_ACTIVITY],
             read_only: true,
         },
         McpCatalogEntry {
-            name: "sinex.system_state",
+            name: "sinex_system_state",
             kind: McpSurfaceKind::Tool,
             description: "Read-only CPU, memory, disk, and unit telemetry buckets.",
             backing_rpc_methods: &[methods::TELEMETRY_SYSTEM_STATE],
             read_only: true,
         },
         McpCatalogEntry {
-            name: "sinex.window_focus",
+            name: "sinex_window_focus",
             kind: McpSurfaceKind::Tool,
             description: "Read-only desktop window focus telemetry buckets.",
             backing_rpc_methods: &[methods::TELEMETRY_WINDOW_FOCUS],
             read_only: true,
         },
         McpCatalogEntry {
-            name: "sinex.current_health",
+            name: "sinex_current_health",
             kind: McpSurfaceKind::Tool,
             description: "Read-only current health telemetry rows.",
             backing_rpc_methods: &[methods::TELEMETRY_CURRENT_HEALTH],
             read_only: true,
         },
         McpCatalogEntry {
-            name: "sinex.current_device_state",
+            name: "sinex_current_device_state",
             kind: McpSurfaceKind::Tool,
             description: "Read-only current device-state telemetry rows.",
             backing_rpc_methods: &[methods::TELEMETRY_CURRENT_DEVICE_STATE],
             read_only: true,
         },
         McpCatalogEntry {
-            name: "sinex.gateway_stats",
+            name: "sinex_gateway_stats",
             kind: McpSurfaceKind::Tool,
             description: "Read-only gateway request and latency telemetry buckets.",
             backing_rpc_methods: &[methods::TELEMETRY_GATEWAY_STATS],
             read_only: true,
         },
         McpCatalogEntry {
-            name: "sinex.stream_stats",
+            name: "sinex_stream_stats",
             kind: McpSurfaceKind::Tool,
             description: "Read-only JetStream fill and message telemetry buckets.",
             backing_rpc_methods: &[methods::TELEMETRY_STREAM_STATS],
             read_only: true,
         },
         McpCatalogEntry {
-            name: "sinex.assembly_stats",
+            name: "sinex_assembly_stats",
             kind: McpSurfaceKind::Tool,
             description: "Read-only material assembly telemetry buckets.",
             backing_rpc_methods: &[methods::TELEMETRY_ASSEMBLY_STATS],
             read_only: true,
         },
         McpCatalogEntry {
-            name: "sinex.source_stats",
+            name: "sinex_source_stats",
             kind: McpSurfaceKind::Tool,
             description: "Read-only source processing telemetry buckets.",
             backing_rpc_methods: &[methods::TELEMETRY_SOURCE_STATS],
             read_only: true,
         },
         McpCatalogEntry {
-            name: "sinex.metric_counters",
+            name: "sinex_metric_counters",
             kind: McpSurfaceKind::Tool,
             description: "Read-only named metric counter telemetry buckets.",
             backing_rpc_methods: &[methods::TELEMETRY_METRIC_COUNTERS],
             read_only: true,
         },
         McpCatalogEntry {
-            name: "sinex.llm_prompts",
+            name: "sinex_llm_prompts",
             kind: McpSurfaceKind::Tool,
             description: "Read-only LLM prompt-template registry events.",
             backing_rpc_methods: &[methods::LLM_PROMPTS_LIST],
             read_only: true,
         },
         McpCatalogEntry {
-            name: "sinex.llm_route_explain",
+            name: "sinex_llm_route_explain",
             kind: McpSurfaceKind::Tool,
             description: "Read-only deterministic LLM routing explanation.",
             backing_rpc_methods: &[methods::LLM_ROUTE_EXPLAIN],
             read_only: true,
         },
         McpCatalogEntry {
-            name: "sinex.llm_budget_report",
+            name: "sinex_llm_budget_report",
             kind: McpSurfaceKind::Tool,
             description: "Read-only LLM budget-ledger usage report.",
             backing_rpc_methods: &[methods::LLM_BUDGET_REPORT],
             read_only: true,
         },
         McpCatalogEntry {
-            name: "sinex.curation_proposals",
+            name: "sinex_curation_proposals",
             kind: McpSurfaceKind::Tool,
             description: "Read-only curation proposal event listing.",
             backing_rpc_methods: &[methods::CURATION_PROPOSALS_LIST],
             read_only: true,
         },
         McpCatalogEntry {
-            name: "sinex.dlq_stats",
+            name: "sinex_dlq_stats",
             kind: McpSurfaceKind::Tool,
             description: "Read-only raw-ingest DLQ stream statistics.",
             backing_rpc_methods: &[methods::DLQ_LIST],
             read_only: true,
         },
         McpCatalogEntry {
-            name: "sinex.dlq_peek",
+            name: "sinex_dlq_peek",
             kind: McpSurfaceKind::Tool,
             description: "Read-only sanitized raw-ingest DLQ message previews.",
             backing_rpc_methods: &[methods::DLQ_PEEK],
             read_only: true,
         },
         McpCatalogEntry {
-            name: "sinex.source_materials",
+            name: "sinex_source_materials",
             kind: McpSurfaceKind::Tool,
             description: "Read-only staged source-material catalog listing.",
             backing_rpc_methods: &[methods::SOURCES_LIST],
             read_only: true,
         },
         McpCatalogEntry {
-            name: "sinex.source_material",
+            name: "sinex_source_material",
             kind: McpSurfaceKind::Tool,
             description: "Read-only staged source-material detail.",
             backing_rpc_methods: &[methods::SOURCES_SHOW],
             read_only: true,
         },
         McpCatalogEntry {
-            name: "sinex.source_coverage",
+            name: "sinex_source_coverage",
             kind: McpSurfaceKind::Tool,
             description: "Read-only source-material coverage buckets.",
             backing_rpc_methods: &[methods::SOURCES_COVERAGE],
             read_only: true,
         },
         McpCatalogEntry {
-            name: "sinex.source_presets",
+            name: "sinex_source_presets",
             kind: McpSurfaceKind::Tool,
             description: "Read-only built-in source resolver preset catalog.",
             backing_rpc_methods: &[methods::SOURCES_PRESETS_LIST],
             read_only: true,
         },
         McpCatalogEntry {
-            name: "sinex.source_bindings",
+            name: "sinex_source_bindings",
             kind: McpSurfaceKind::Tool,
             description: "Read-only configured source binding listing.",
             backing_rpc_methods: &[methods::SOURCES_BINDINGS_LIST],
             read_only: true,
         },
         McpCatalogEntry {
-            name: "sinex.ops_list",
+            name: "sinex_ops_list",
             kind: McpSurfaceKind::Tool,
             description: "Read-only operations log listing.",
             backing_rpc_methods: &[methods::OPS_LIST],
             read_only: true,
         },
         McpCatalogEntry {
-            name: "sinex.ops_get",
+            name: "sinex_ops_get",
             kind: McpSurfaceKind::Tool,
             description: "Read-only operation detail lookup.",
             backing_rpc_methods: &[methods::OPS_GET],
             read_only: true,
         },
         McpCatalogEntry {
-            name: "sinex.lifecycle_status",
+            name: "sinex_lifecycle_status",
             kind: McpSurfaceKind::Tool,
             description: "Read-only data lifecycle tier status.",
             backing_rpc_methods: &[methods::LIFECYCLE_STATUS],
             read_only: true,
         },
         McpCatalogEntry {
-            name: "sinex.audit_trail",
+            name: "sinex_audit_trail",
             kind: McpSurfaceKind::Tool,
             description: "Read-only audit trail for one operation.",
             backing_rpc_methods: &[methods::AUDIT_GET],
             read_only: true,
         },
         McpCatalogEntry {
-            name: "sinex.coordination_instances",
+            name: "sinex_coordination_instances",
             kind: McpSurfaceKind::Tool,
             description: "Read-only coordination instance listing.",
             backing_rpc_methods: &[methods::COORDINATION_LIST_INSTANCES],
             read_only: true,
         },
         McpCatalogEntry {
-            name: "sinex.coordination_leader",
+            name: "sinex_coordination_leader",
             kind: McpSurfaceKind::Tool,
             description: "Read-only coordination leader lookup.",
             backing_rpc_methods: &[methods::COORDINATION_GET_LEADER],
             read_only: true,
         },
         McpCatalogEntry {
-            name: "sinex.coordination_instance_health",
+            name: "sinex_coordination_instance_health",
             kind: McpSurfaceKind::Tool,
             description: "Read-only coordination instance health lookup.",
             backing_rpc_methods: &[methods::COORDINATION_INSTANCE_HEALTH],
             read_only: true,
         },
         McpCatalogEntry {
-            name: "sinex.shadow_consumers",
+            name: "sinex_shadow_consumers",
             kind: McpSurfaceKind::Tool,
             description: "Read-only shadow consumer listing.",
             backing_rpc_methods: &[methods::SHADOW_LIST],
             read_only: true,
         },
         McpCatalogEntry {
-            name: "sinex.system_ping",
+            name: "sinex_system_ping",
             kind: McpSurfaceKind::Tool,
             description: "Read-only gateway ping.",
             backing_rpc_methods: &[methods::SYSTEM_PING],
             read_only: true,
         },
         McpCatalogEntry {
-            name: "sinex.system_version",
+            name: "sinex_system_version",
             kind: McpSurfaceKind::Tool,
             description: "Read-only gateway package version.",
             backing_rpc_methods: &[methods::SYSTEM_VERSION],
@@ -932,7 +941,7 @@ pub fn tool_catalog() -> Vec<McpCatalogEntry> {
 pub fn tools() -> Vec<McpTool> {
     vec![
         mcp_tool(
-            "sinex.orient",
+            "sinex_orient",
             json!({
                 "type": "object",
                 "properties": {
@@ -945,7 +954,7 @@ pub fn tools() -> Vec<McpTool> {
             }),
         ),
         mcp_tool(
-            "sinex.search_events",
+            "sinex_search_events",
             json!({
                 "type": "object",
                 "properties": {
@@ -972,7 +981,7 @@ pub fn tools() -> Vec<McpTool> {
             }),
         ),
         mcp_tool(
-            "sinex.context_pack",
+            "sinex_context_pack",
             json!({
                 "type": "object",
                 "properties": {
@@ -983,7 +992,7 @@ pub fn tools() -> Vec<McpTool> {
             }),
         ),
         mcp_tool(
-            "sinex.query",
+            "sinex_query",
             json!({
                 "type": "object",
                 "required": ["query"],
@@ -997,7 +1006,7 @@ pub fn tools() -> Vec<McpTool> {
             }),
         ),
         mcp_tool(
-            "sinex.trace_lineage",
+            "sinex_trace_lineage",
             json!({
                 "type": "object",
                 "required": ["event_id"],
@@ -1019,7 +1028,7 @@ pub fn tools() -> Vec<McpTool> {
             }),
         ),
         mcp_tool(
-            "sinex.relation_evidence",
+            "sinex_relation_evidence",
             json!({
                 "type": "object",
                 "required": ["seed_query", "relation"],
@@ -1041,7 +1050,7 @@ pub fn tools() -> Vec<McpTool> {
             }),
         ),
         mcp_tool(
-            "sinex.source_readiness",
+            "sinex_source_readiness",
             json!({
                 "type": "object",
                 "properties": {
@@ -1055,7 +1064,7 @@ pub fn tools() -> Vec<McpTool> {
             }),
         ),
         mcp_tool(
-            "sinex.source_continuity",
+            "sinex_source_continuity",
             json!({
                 "type": "object",
                 "properties": {
@@ -1066,7 +1075,7 @@ pub fn tools() -> Vec<McpTool> {
             }),
         ),
         mcp_tool(
-            "sinex.source_drift",
+            "sinex_source_drift",
             json!({
                 "type": "object",
                 "properties": {
@@ -1082,7 +1091,7 @@ pub fn tools() -> Vec<McpTool> {
             }),
         ),
         mcp_tool(
-            "sinex.source_gap_explain",
+            "sinex_source_gap_explain",
             json!({
                 "type": "object",
                 "required": ["source_family", "at"],
@@ -1094,7 +1103,7 @@ pub fn tools() -> Vec<McpTool> {
             }),
         ),
         mcp_tool(
-            "sinex.source_identifier_continuity",
+            "sinex_source_identifier_continuity",
             json!({
                 "type": "object",
                 "required": ["source_identifier"],
@@ -1106,7 +1115,7 @@ pub fn tools() -> Vec<McpTool> {
             }),
         ),
         mcp_tool(
-            "sinex.privacy_status",
+            "sinex_privacy_status",
             json!({
                 "type": "object",
                 "properties": {},
@@ -1114,7 +1123,7 @@ pub fn tools() -> Vec<McpTool> {
             }),
         ),
         mcp_tool(
-            "sinex.system_health",
+            "sinex_system_health",
             json!({
                 "type": "object",
                 "properties": {},
@@ -1122,7 +1131,7 @@ pub fn tools() -> Vec<McpTool> {
             }),
         ),
         mcp_tool(
-            "sinex.tasks_list",
+            "sinex_tasks_list",
             json!({
                 "type": "object",
                 "properties": {
@@ -1146,7 +1155,7 @@ pub fn tools() -> Vec<McpTool> {
             }),
         ),
         mcp_tool(
-            "sinex.task_state",
+            "sinex_task_state",
             json!({
                 "type": "object",
                 "required": ["task_id"],
@@ -1157,7 +1166,7 @@ pub fn tools() -> Vec<McpTool> {
             }),
         ),
         mcp_tool(
-            "sinex.replay_operations",
+            "sinex_replay_operations",
             json!({
                 "type": "object",
                 "properties": {
@@ -1187,7 +1196,7 @@ pub fn tools() -> Vec<McpTool> {
             }),
         ),
         mcp_tool(
-            "sinex.replay_status",
+            "sinex_replay_status",
             json!({
                 "type": "object",
                 "required": ["operation_id"],
@@ -1198,7 +1207,7 @@ pub fn tools() -> Vec<McpTool> {
             }),
         ),
         mcp_tool(
-            "sinex.documents_search",
+            "sinex_documents_search",
             json!({
                 "type": "object",
                 "required": ["query"],
@@ -1228,7 +1237,7 @@ pub fn tools() -> Vec<McpTool> {
             }),
         ),
         mcp_tool(
-            "sinex.documents_get",
+            "sinex_documents_get",
             json!({
                 "type": "object",
                 "required": ["document_id"],
@@ -1239,7 +1248,7 @@ pub fn tools() -> Vec<McpTool> {
             }),
         ),
         mcp_tool(
-            "sinex.documents_chunks",
+            "sinex_documents_chunks",
             json!({
                 "type": "object",
                 "required": ["document_id"],
@@ -1260,9 +1269,9 @@ pub fn tools() -> Vec<McpTool> {
                 "additionalProperties": false
             }),
         ),
-        mcp_tool("sinex.semantic_epochs", limit_schema(100)),
+        mcp_tool("sinex_semantic_epochs", limit_schema(100)),
         mcp_tool(
-            "sinex.semantic_lanes",
+            "sinex_semantic_lanes",
             json!({
                 "type": "object",
                 "properties": {
@@ -1288,31 +1297,31 @@ pub fn tools() -> Vec<McpTool> {
                 "additionalProperties": false
             }),
         ),
-        mcp_tool("sinex.semantic_lane_outputs", lane_records_schema()),
-        mcp_tool("sinex.semantic_lane_diffs", lane_records_schema()),
-        mcp_tool("sinex.automata_status", status_window_schema()),
-        mcp_tool("sinex.sources_status", status_window_schema()),
-        mcp_tool("sinex.sources_status_view", empty_object_schema()),
-        mcp_tool("sinex.source_health", stale_after_schema()),
-        mcp_tool("sinex.sources_active", stale_after_schema()),
-        mcp_tool("sinex.sources_registry", empty_object_schema()),
-        mcp_tool("sinex.event_engine_validation", empty_object_schema()),
-        mcp_tool("sinex.event_engine_batch_stats", telemetry_buckets_schema()),
-        mcp_tool("sinex.throughput", empty_object_schema()),
-        mcp_tool("sinex.recent_activity", limit_schema(20)),
-        mcp_tool("sinex.command_frequency", telemetry_buckets_schema()),
-        mcp_tool("sinex.file_activity", telemetry_buckets_schema()),
-        mcp_tool("sinex.system_state", telemetry_buckets_schema()),
-        mcp_tool("sinex.window_focus", telemetry_buckets_schema()),
-        mcp_tool("sinex.current_health", limit_schema(50)),
-        mcp_tool("sinex.current_device_state", limit_schema(50)),
-        mcp_tool("sinex.gateway_stats", telemetry_buckets_schema()),
-        mcp_tool("sinex.stream_stats", telemetry_buckets_schema()),
-        mcp_tool("sinex.assembly_stats", telemetry_buckets_schema()),
-        mcp_tool("sinex.source_stats", telemetry_buckets_schema()),
-        mcp_tool("sinex.metric_counters", telemetry_buckets_schema()),
+        mcp_tool("sinex_semantic_lane_outputs", lane_records_schema()),
+        mcp_tool("sinex_semantic_lane_diffs", lane_records_schema()),
+        mcp_tool("sinex_automata_status", status_window_schema()),
+        mcp_tool("sinex_sources_status", status_window_schema()),
+        mcp_tool("sinex_sources_status_view", empty_object_schema()),
+        mcp_tool("sinex_source_health", stale_after_schema()),
+        mcp_tool("sinex_sources_active", stale_after_schema()),
+        mcp_tool("sinex_sources_registry", empty_object_schema()),
+        mcp_tool("sinex_event_engine_validation", empty_object_schema()),
+        mcp_tool("sinex_event_engine_batch_stats", telemetry_buckets_schema()),
+        mcp_tool("sinex_throughput", empty_object_schema()),
+        mcp_tool("sinex_recent_activity", limit_schema(20)),
+        mcp_tool("sinex_command_frequency", telemetry_buckets_schema()),
+        mcp_tool("sinex_file_activity", telemetry_buckets_schema()),
+        mcp_tool("sinex_system_state", telemetry_buckets_schema()),
+        mcp_tool("sinex_window_focus", telemetry_buckets_schema()),
+        mcp_tool("sinex_current_health", limit_schema(50)),
+        mcp_tool("sinex_current_device_state", limit_schema(50)),
+        mcp_tool("sinex_gateway_stats", telemetry_buckets_schema()),
+        mcp_tool("sinex_stream_stats", telemetry_buckets_schema()),
+        mcp_tool("sinex_assembly_stats", telemetry_buckets_schema()),
+        mcp_tool("sinex_source_stats", telemetry_buckets_schema()),
+        mcp_tool("sinex_metric_counters", telemetry_buckets_schema()),
         mcp_tool(
-            "sinex.llm_prompts",
+            "sinex_llm_prompts",
             json!({
                 "type": "object",
                 "properties": {
@@ -1329,7 +1338,7 @@ pub fn tools() -> Vec<McpTool> {
             }),
         ),
         mcp_tool(
-            "sinex.llm_route_explain",
+            "sinex_llm_route_explain",
             json!({
                 "type": "object",
                 "required": ["request", "policy"],
@@ -1340,9 +1349,9 @@ pub fn tools() -> Vec<McpTool> {
                 "additionalProperties": false
             }),
         ),
-        mcp_tool("sinex.llm_budget_report", limit_schema(100)),
+        mcp_tool("sinex_llm_budget_report", limit_schema(100)),
         mcp_tool(
-            "sinex.curation_proposals",
+            "sinex_curation_proposals",
             json!({
                 "type": "object",
                 "properties": {
@@ -1357,9 +1366,9 @@ pub fn tools() -> Vec<McpTool> {
                 "additionalProperties": false
             }),
         ),
-        mcp_tool("sinex.dlq_stats", empty_object_schema()),
+        mcp_tool("sinex_dlq_stats", empty_object_schema()),
         mcp_tool(
-            "sinex.dlq_peek",
+            "sinex_dlq_peek",
             json!({
                 "type": "object",
                 "properties": {
@@ -1374,7 +1383,7 @@ pub fn tools() -> Vec<McpTool> {
             }),
         ),
         mcp_tool(
-            "sinex.source_materials",
+            "sinex_source_materials",
             json!({
                 "type": "object",
                 "properties": {
@@ -1390,7 +1399,7 @@ pub fn tools() -> Vec<McpTool> {
             }),
         ),
         mcp_tool(
-            "sinex.source_material",
+            "sinex_source_material",
             json!({
                 "type": "object",
                 "required": ["material_id"],
@@ -1400,10 +1409,10 @@ pub fn tools() -> Vec<McpTool> {
                 "additionalProperties": false
             }),
         ),
-        mcp_tool("sinex.source_coverage", empty_object_schema()),
-        mcp_tool("sinex.source_presets", empty_object_schema()),
+        mcp_tool("sinex_source_coverage", empty_object_schema()),
+        mcp_tool("sinex_source_presets", empty_object_schema()),
         mcp_tool(
-            "sinex.source_bindings",
+            "sinex_source_bindings",
             json!({
                 "type": "object",
                 "properties": {
@@ -1414,7 +1423,7 @@ pub fn tools() -> Vec<McpTool> {
             }),
         ),
         mcp_tool(
-            "sinex.ops_list",
+            "sinex_ops_list",
             json!({
                 "type": "object",
                 "properties": {
@@ -1431,7 +1440,7 @@ pub fn tools() -> Vec<McpTool> {
             }),
         ),
         mcp_tool(
-            "sinex.ops_get",
+            "sinex_ops_get",
             json!({
                 "type": "object",
                 "required": ["operation_id"],
@@ -1441,9 +1450,9 @@ pub fn tools() -> Vec<McpTool> {
                 "additionalProperties": false
             }),
         ),
-        mcp_tool("sinex.lifecycle_status", empty_object_schema()),
+        mcp_tool("sinex_lifecycle_status", empty_object_schema()),
         mcp_tool(
-            "sinex.audit_trail",
+            "sinex_audit_trail",
             json!({
                 "type": "object",
                 "required": ["operation_id"],
@@ -1454,7 +1463,7 @@ pub fn tools() -> Vec<McpTool> {
             }),
         ),
         mcp_tool(
-            "sinex.coordination_instances",
+            "sinex_coordination_instances",
             json!({
                 "type": "object",
                 "properties": {
@@ -1467,7 +1476,7 @@ pub fn tools() -> Vec<McpTool> {
             }),
         ),
         mcp_tool(
-            "sinex.coordination_leader",
+            "sinex_coordination_leader",
             json!({
                 "type": "object",
                 "required": ["module_kind"],
@@ -1481,7 +1490,7 @@ pub fn tools() -> Vec<McpTool> {
             }),
         ),
         mcp_tool(
-            "sinex.coordination_instance_health",
+            "sinex_coordination_instance_health",
             json!({
                 "type": "object",
                 "required": ["instance_id"],
@@ -1492,7 +1501,7 @@ pub fn tools() -> Vec<McpTool> {
             }),
         ),
         mcp_tool(
-            "sinex.shadow_consumers",
+            "sinex_shadow_consumers",
             json!({
                 "type": "object",
                 "properties": {
@@ -1501,8 +1510,8 @@ pub fn tools() -> Vec<McpTool> {
                 "additionalProperties": false
             }),
         ),
-        mcp_tool("sinex.system_ping", empty_object_schema()),
-        mcp_tool("sinex.system_version", empty_object_schema()),
+        mcp_tool("sinex_system_ping", empty_object_schema()),
+        mcp_tool("sinex_system_version", empty_object_schema()),
     ]
 }
 
@@ -1609,12 +1618,13 @@ pub fn assert_read_only_tool_names() -> Result<()> {
 
 pub async fn run_stdio(client: GatewayClient) -> Result<()> {
     assert_read_only_tool_names()?;
+    trace_mcp_event("server_start");
     let stdin = std::io::stdin();
     let stdout = std::io::stdout();
     let mut reader = std::io::BufReader::new(stdin.lock());
     let mut writer = stdout.lock();
 
-    while let Some(request) = read_framed_request(&mut reader)? {
+    while let Some((request, wire_format)) = read_stdio_request(&mut reader)? {
         let Some(id) = request.id.clone() else {
             continue;
         };
@@ -1634,25 +1644,41 @@ pub async fn run_stdio(client: GatewayClient) -> Result<()> {
                 }
             }),
         };
-        write_framed_response(&mut writer, &response)?;
+        write_stdio_response(&mut writer, &response, wire_format)?;
     }
 
     Ok(())
 }
 
 async fn handle_request(client: &GatewayClient, request: JsonRpcRequest) -> Result<Value> {
+    trace_mcp_event(&format!(
+        "request method={} id_present={}",
+        request.method,
+        request.id.is_some()
+    ));
     match request.method.as_str() {
-        "initialize" => Ok(json!({
-            "protocolVersion": MCP_PROTOCOL_VERSION,
-            "capabilities": {
-                "tools": { "listChanged": false }
-            },
-            "serverInfo": {
-                "name": MCP_IMPLEMENTATION,
-                "version": MCP_IMPLEMENTATION_VERSION
-            }
-        })),
-        "tools/list" => Ok(json!({ "tools": tools() })),
+        "initialize" => {
+            let protocol_version = request
+                .params
+                .get("protocolVersion")
+                .and_then(Value::as_str)
+                .filter(|requested| MCP_SUPPORTED_PROTOCOL_VERSIONS.contains(requested))
+                .unwrap_or(MCP_PROTOCOL_VERSION);
+            Ok(json!({
+                "protocolVersion": protocol_version,
+                "capabilities": {
+                    "tools": { "listChanged": false }
+                },
+                "serverInfo": {
+                    "name": MCP_IMPLEMENTATION,
+                    "version": MCP_IMPLEMENTATION_VERSION
+                }
+            }))
+        }
+        "tools/list" => {
+            trace_mcp_event(&format!("tools/list result_count={}", tools().len()));
+            Ok(json!({ "tools": tools() }))
+        }
         "tools/call" => {
             let params: ToolCallParams = serde_json::from_value(request.params)
                 .wrap_err("invalid MCP tools/call parameters")?;
@@ -1671,8 +1697,25 @@ async fn handle_request(client: &GatewayClient, request: JsonRpcRequest) -> Resu
     }
 }
 
+fn trace_mcp_event(message: &str) {
+    let Ok(path) = std::env::var("SINEX_MCP_TRACE_LOG") else {
+        return;
+    };
+    let Ok(mut file) = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(path)
+    else {
+        return;
+    };
+    let millis = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_or(0, |duration| duration.as_millis());
+    let _ = writeln!(file, "{millis} {message}");
+}
+
 pub async fn call_tool(client: &GatewayClient, name: &str, arguments: Value) -> Result<Value> {
-    if name == "sinex.orient" {
+    if name == "sinex_orient" {
         return orient(arguments);
     }
     if let Some(result) = call_tool_events_sources(client, name, arguments.clone()).await? {
@@ -1693,34 +1736,34 @@ async fn call_tool_events_sources(
     arguments: Value,
 ) -> Result<Option<Value>> {
     let result = match name {
-        "sinex.search_events" => search_events(client, arguments).await?,
-        "sinex.query" => query(client, arguments).await?,
-        "sinex.trace_lineage" => trace_lineage(client, arguments).await?,
-        "sinex.relation_evidence" => relation_evidence(client, arguments).await?,
-        "sinex.source_readiness" => source_readiness(client, arguments).await?,
-        "sinex.source_continuity" => source_continuity(client, arguments).await?,
-        "sinex.source_drift" => source_drift(client, arguments).await?,
-        "sinex.source_gap_explain" => source_gap_explain(client, arguments).await?,
-        "sinex.source_identifier_continuity" => {
+        "sinex_search_events" => search_events(client, arguments).await?,
+        "sinex_query" => query(client, arguments).await?,
+        "sinex_trace_lineage" => trace_lineage(client, arguments).await?,
+        "sinex_relation_evidence" => relation_evidence(client, arguments).await?,
+        "sinex_source_readiness" => source_readiness(client, arguments).await?,
+        "sinex_source_continuity" => source_continuity(client, arguments).await?,
+        "sinex_source_drift" => source_drift(client, arguments).await?,
+        "sinex_source_gap_explain" => source_gap_explain(client, arguments).await?,
+        "sinex_source_identifier_continuity" => {
             source_identifier_continuity(client, arguments).await?
         }
-        "sinex.source_materials" => source_materials(client, arguments).await?,
-        "sinex.source_material" => source_material(client, arguments).await?,
-        "sinex.source_coverage" => source_coverage(client, arguments).await?,
-        "sinex.source_presets" => source_presets(client, arguments).await?,
-        "sinex.source_bindings" => source_bindings(client, arguments).await?,
-        "sinex.privacy_status" => privacy_status(client, arguments).await?,
-        "sinex.tasks_list" => tasks_list(client, arguments).await?,
-        "sinex.task_state" => task_state(client, arguments).await?,
-        "sinex.replay_operations" => replay_operations(client, arguments).await?,
-        "sinex.replay_status" => replay_status(client, arguments).await?,
-        "sinex.documents_search" => documents_search(client, arguments).await?,
-        "sinex.documents_get" => documents_get(client, arguments).await?,
-        "sinex.documents_chunks" => documents_chunks(client, arguments).await?,
-        "sinex.semantic_epochs" => semantic_epochs(client, arguments).await?,
-        "sinex.semantic_lanes" => semantic_lanes(client, arguments).await?,
-        "sinex.semantic_lane_outputs" => semantic_lane_outputs(client, arguments).await?,
-        "sinex.semantic_lane_diffs" => semantic_lane_diffs(client, arguments).await?,
+        "sinex_source_materials" => source_materials(client, arguments).await?,
+        "sinex_source_material" => source_material(client, arguments).await?,
+        "sinex_source_coverage" => source_coverage(client, arguments).await?,
+        "sinex_source_presets" => source_presets(client, arguments).await?,
+        "sinex_source_bindings" => source_bindings(client, arguments).await?,
+        "sinex_privacy_status" => privacy_status(client, arguments).await?,
+        "sinex_tasks_list" => tasks_list(client, arguments).await?,
+        "sinex_task_state" => task_state(client, arguments).await?,
+        "sinex_replay_operations" => replay_operations(client, arguments).await?,
+        "sinex_replay_status" => replay_status(client, arguments).await?,
+        "sinex_documents_search" => documents_search(client, arguments).await?,
+        "sinex_documents_get" => documents_get(client, arguments).await?,
+        "sinex_documents_chunks" => documents_chunks(client, arguments).await?,
+        "sinex_semantic_epochs" => semantic_epochs(client, arguments).await?,
+        "sinex_semantic_lanes" => semantic_lanes(client, arguments).await?,
+        "sinex_semantic_lane_outputs" => semantic_lane_outputs(client, arguments).await?,
+        "sinex_semantic_lane_diffs" => semantic_lane_diffs(client, arguments).await?,
         _ => return Ok(None),
     };
     Ok(Some(result))
@@ -1736,18 +1779,18 @@ fn orient(arguments: Value) -> Result<Value> {
     let payload = json!({
         "orientation_markdown": AGENT_ORIENTATION,
         "recommended_first_tools": [
-            "sinex.context_pack",
-            "sinex.query",
-            "sinex.search_events",
-            "sinex.trace_lineage",
-            "sinex.source_readiness",
-            "sinex.source_continuity"
+            "sinex_context_pack",
+            "sinex_query",
+            "sinex_search_events",
+            "sinex_trace_lineage",
+            "sinex_source_readiness",
+            "sinex_source_continuity"
         ],
         "focus": args.focus,
         "source_document": "crate/sinexctl/docs/agent_orientation.md"
     });
     let envelope =
-        ViewEnvelope::new("sinex.orient", payload).with_query_echo(serde_json::to_value(&args)?);
+        ViewEnvelope::new("sinex_orient", payload).with_query_echo(serde_json::to_value(&args)?);
     Ok(serde_json::to_value(envelope)?)
 }
 
@@ -1757,7 +1800,7 @@ async fn query(client: &GatewayClient, arguments: Value) -> Result<Value> {
     let rows = execute_query_unit(client, &query).await?;
     let view = SinexQueryResultListView::new(query.clone(), rows);
     let envelope =
-        ViewEnvelope::new("sinex.query", view).with_query_echo(serde_json::to_value(&query)?);
+        ViewEnvelope::new("sinex_query", view).with_query_echo(serde_json::to_value(&query)?);
     Ok(serde_json::to_value(envelope)?)
 }
 
@@ -1767,30 +1810,30 @@ async fn call_tool_runtime_analytics(
     arguments: Value,
 ) -> Result<Option<Value>> {
     let result = match name {
-        "sinex.automata_status" => automata_status(client, arguments).await?,
-        "sinex.sources_status" => sources_status(client, arguments).await?,
-        "sinex.sources_status_view" => sources_status_view(client, arguments).await?,
-        "sinex.source_health" => runtime_health(client, arguments).await?,
-        "sinex.sources_active" => runtime_active(client, arguments).await?,
-        "sinex.sources_registry" => runtime_registry(client, arguments).await?,
-        "sinex.event_engine_validation" => event_engine_validation(client, arguments).await?,
-        "sinex.event_engine_batch_stats" => event_engine_batch_stats(client, arguments).await?,
-        "sinex.system_health" => system_health(client, arguments).await?,
-        "sinex.system_ping" => system_ping(client, arguments).await?,
-        "sinex.system_version" => system_version(client, arguments).await?,
-        "sinex.throughput" => throughput(client, arguments).await?,
-        "sinex.recent_activity" => recent_activity(client, arguments).await?,
-        "sinex.command_frequency" => command_frequency(client, arguments).await?,
-        "sinex.file_activity" => file_activity(client, arguments).await?,
-        "sinex.system_state" => system_state(client, arguments).await?,
-        "sinex.window_focus" => window_focus(client, arguments).await?,
-        "sinex.current_health" => current_health(client, arguments).await?,
-        "sinex.current_device_state" => current_device_state(client, arguments).await?,
-        "sinex.gateway_stats" => gateway_stats(client, arguments).await?,
-        "sinex.stream_stats" => stream_stats(client, arguments).await?,
-        "sinex.assembly_stats" => assembly_stats(client, arguments).await?,
-        "sinex.source_stats" => source_stats(client, arguments).await?,
-        "sinex.metric_counters" => metric_counters(client, arguments).await?,
+        "sinex_automata_status" => automata_status(client, arguments).await?,
+        "sinex_sources_status" => sources_status(client, arguments).await?,
+        "sinex_sources_status_view" => sources_status_view(client, arguments).await?,
+        "sinex_source_health" => runtime_health(client, arguments).await?,
+        "sinex_sources_active" => runtime_active(client, arguments).await?,
+        "sinex_sources_registry" => runtime_registry(client, arguments).await?,
+        "sinex_event_engine_validation" => event_engine_validation(client, arguments).await?,
+        "sinex_event_engine_batch_stats" => event_engine_batch_stats(client, arguments).await?,
+        "sinex_system_health" => system_health(client, arguments).await?,
+        "sinex_system_ping" => system_ping(client, arguments).await?,
+        "sinex_system_version" => system_version(client, arguments).await?,
+        "sinex_throughput" => throughput(client, arguments).await?,
+        "sinex_recent_activity" => recent_activity(client, arguments).await?,
+        "sinex_command_frequency" => command_frequency(client, arguments).await?,
+        "sinex_file_activity" => file_activity(client, arguments).await?,
+        "sinex_system_state" => system_state(client, arguments).await?,
+        "sinex_window_focus" => window_focus(client, arguments).await?,
+        "sinex_current_health" => current_health(client, arguments).await?,
+        "sinex_current_device_state" => current_device_state(client, arguments).await?,
+        "sinex_gateway_stats" => gateway_stats(client, arguments).await?,
+        "sinex_stream_stats" => stream_stats(client, arguments).await?,
+        "sinex_assembly_stats" => assembly_stats(client, arguments).await?,
+        "sinex_source_stats" => source_stats(client, arguments).await?,
+        "sinex_metric_counters" => metric_counters(client, arguments).await?,
         _ => return Ok(None),
     };
     Ok(Some(result))
@@ -1802,23 +1845,23 @@ async fn call_tool_ops_infra(
     arguments: Value,
 ) -> Result<Option<Value>> {
     let result = match name {
-        "sinex.llm_prompts" => llm_prompts(client, arguments).await?,
-        "sinex.llm_route_explain" => llm_route_explain(client, arguments).await?,
-        "sinex.llm_budget_report" => llm_budget_report(client, arguments).await?,
-        "sinex.curation_proposals" => curation_proposals(client, arguments).await?,
-        "sinex.dlq_stats" => dlq_stats(client, arguments).await?,
-        "sinex.dlq_peek" => dlq_peek(client, arguments).await?,
-        "sinex.ops_list" => ops_list(client, arguments).await?,
-        "sinex.ops_get" => ops_get(client, arguments).await?,
-        "sinex.lifecycle_status" => lifecycle_status(client, arguments).await?,
-        "sinex.audit_trail" => audit_trail(client, arguments).await?,
-        "sinex.coordination_instances" => coordination_instances(client, arguments).await?,
-        "sinex.coordination_leader" => coordination_leader(client, arguments).await?,
-        "sinex.coordination_instance_health" => {
+        "sinex_llm_prompts" => llm_prompts(client, arguments).await?,
+        "sinex_llm_route_explain" => llm_route_explain(client, arguments).await?,
+        "sinex_llm_budget_report" => llm_budget_report(client, arguments).await?,
+        "sinex_curation_proposals" => curation_proposals(client, arguments).await?,
+        "sinex_dlq_stats" => dlq_stats(client, arguments).await?,
+        "sinex_dlq_peek" => dlq_peek(client, arguments).await?,
+        "sinex_ops_list" => ops_list(client, arguments).await?,
+        "sinex_ops_get" => ops_get(client, arguments).await?,
+        "sinex_lifecycle_status" => lifecycle_status(client, arguments).await?,
+        "sinex_audit_trail" => audit_trail(client, arguments).await?,
+        "sinex_coordination_instances" => coordination_instances(client, arguments).await?,
+        "sinex_coordination_leader" => coordination_leader(client, arguments).await?,
+        "sinex_coordination_instance_health" => {
             coordination_instance_health(client, arguments).await?
         }
-        "sinex.shadow_consumers" => shadow_consumers(client, arguments).await?,
-        "sinex.context_pack" => context_pack(client, arguments).await?,
+        "sinex_shadow_consumers" => shadow_consumers(client, arguments).await?,
+        "sinex_context_pack" => context_pack(client, arguments).await?,
         _ => return Ok(None),
     };
     Ok(Some(result))
@@ -1844,7 +1887,7 @@ async fn search_events(client: &GatewayClient, arguments: Value) -> Result<Value
 
     let result = serde_json::to_value(client.event_cards(query).await?)?;
     Ok(mcp_view_envelope(
-        "sinex.search_events",
+        "sinex_search_events",
         &json!(args),
         &json!({ "result": result }),
     )?)
@@ -1862,7 +1905,7 @@ async fn trace_lineage(client: &GatewayClient, arguments: Value) -> Result<Value
     let mut result = serde_json::to_value(client.trace_lineage(query).await?)?;
     redact_raw_samples(&mut result);
     Ok(mcp_view_envelope(
-        "sinex.trace_lineage",
+        "sinex_trace_lineage",
         &json!(args),
         &json!({ "result": result }),
     )?)
@@ -1877,7 +1920,7 @@ async fn relation_evidence(client: &GatewayClient, arguments: Value) -> Result<V
 
     let response = client.relation_evidence(request.clone()).await?;
     Ok(mcp_view_envelope(
-        "sinex.relation_evidence",
+        "sinex_relation_evidence",
         &json!(request),
         &json!({ "result": response }),
     )?)
@@ -1912,7 +1955,7 @@ async fn source_readiness(client: &GatewayClient, arguments: Value) -> Result<Va
     }
 
     Ok(mcp_view_envelope(
-        "sinex.source_readiness",
+        "sinex_source_readiness",
         &json!(args),
         &payload,
     )?)
@@ -1924,7 +1967,7 @@ async fn source_continuity(client: &GatewayClient, arguments: Value) -> Result<V
     let result = if let Some(source_family) = args.source_family.clone() {
         if args.since.is_some() {
             return Err(eyre!(
-                "sinex.source_continuity `since` is only supported when listing all families"
+                "sinex_source_continuity `since` is only supported when listing all families"
             ));
         }
         let request = SourcesContinuityGetRequest { source_family };
@@ -1935,7 +1978,7 @@ async fn source_continuity(client: &GatewayClient, arguments: Value) -> Result<V
     };
 
     Ok(mcp_view_envelope(
-        "sinex.source_continuity",
+        "sinex_source_continuity",
         &json!(args),
         &json!({ "result": result }),
     )?)
@@ -1950,7 +1993,7 @@ async fn source_drift(client: &GatewayClient, arguments: Value) -> Result<Value>
     let result = serde_json::to_value(client.sources_drift_list(request).await?)?;
 
     Ok(mcp_view_envelope(
-        "sinex.source_drift",
+        "sinex_source_drift",
         &json!(args),
         &json!({ "result": result }),
     )?)
@@ -1965,7 +2008,7 @@ async fn source_gap_explain(client: &GatewayClient, arguments: Value) -> Result<
         })
         .await?;
     Ok(mcp_view_envelope(
-        "sinex.source_gap_explain",
+        "sinex_source_gap_explain",
         &json!(args),
         &json!({ "result": response }),
     )?)
@@ -1980,27 +2023,27 @@ async fn source_identifier_continuity(client: &GatewayClient, arguments: Value) 
         })
         .await?;
     Ok(mcp_view_envelope(
-        "sinex.source_identifier_continuity",
+        "sinex_source_identifier_continuity",
         &json!(args),
         &json!({ "result": response }),
     )?)
 }
 
 async fn privacy_status(client: &GatewayClient, arguments: Value) -> Result<Value> {
-    reject_non_empty_args("sinex.privacy_status", &arguments)?;
+    reject_non_empty_args("sinex_privacy_status", &arguments)?;
     let response: PrivateModeStateResponse = client.private_mode_status().await?;
     Ok(envelope(
-        "sinex.privacy_status",
+        "sinex_privacy_status",
         &json!({}),
         &json!({ "result": response }),
     ))
 }
 
 async fn system_health(client: &GatewayClient, arguments: Value) -> Result<Value> {
-    reject_non_empty_args("sinex.system_health", &arguments)?;
+    reject_non_empty_args("sinex_system_health", &arguments)?;
     let response: SystemHealthResponse = client.health().await?;
     Ok(envelope(
-        "sinex.system_health",
+        "sinex_system_health",
         &json!({}),
         &json!({ "result": response }),
     ))
@@ -2021,7 +2064,7 @@ async fn tasks_list(client: &GatewayClient, arguments: Value) -> Result<Value> {
     };
     let response: TaskListResponse = client.tasks_list(request).await?;
     Ok(envelope(
-        "sinex.tasks_list",
+        "sinex_tasks_list",
         &json!(args),
         &json!({ "result": response }),
     ))
@@ -2035,7 +2078,7 @@ async fn task_state(client: &GatewayClient, arguments: Value) -> Result<Value> {
         })
         .await?;
     Ok(envelope(
-        "sinex.task_state",
+        "sinex_task_state",
         &json!(args),
         &json!({ "result": response }),
     ))
@@ -2047,7 +2090,7 @@ async fn replay_operations(client: &GatewayClient, arguments: Value) -> Result<V
         .replay_list_filtered(args.state, args.module.as_deref(), args.limit)
         .await?;
     Ok(envelope(
-        "sinex.replay_operations",
+        "sinex_replay_operations",
         &json!(args),
         &json!({ "operations": operations }),
     ))
@@ -2057,7 +2100,7 @@ async fn replay_status(client: &GatewayClient, arguments: Value) -> Result<Value
     let args: ReplayStatusArgs = serde_json::from_value(arguments)?;
     let operation = client.replay_status(&args.operation_id).await?;
     Ok(envelope(
-        "sinex.replay_status",
+        "sinex_replay_status",
         &json!(args),
         &json!({ "operation": operation }),
     ))
@@ -2078,7 +2121,7 @@ async fn documents_search(client: &GatewayClient, arguments: Value) -> Result<Va
     let mut response = serde_json::to_value(client.documents_search(request).await?)?;
     redact_document_text(&mut response);
     Ok(envelope(
-        "sinex.documents_search",
+        "sinex_documents_search",
         &json!(args),
         &json!({ "result": response }),
     ))
@@ -2092,7 +2135,7 @@ async fn documents_get(client: &GatewayClient, arguments: Value) -> Result<Value
     let mut response = serde_json::to_value(client.documents_get(request).await?)?;
     redact_document_side_data(&mut response);
     Ok(envelope(
-        "sinex.documents_get",
+        "sinex_documents_get",
         &json!(args),
         &json!({ "result": response }),
     ))
@@ -2107,7 +2150,7 @@ async fn documents_chunks(client: &GatewayClient, arguments: Value) -> Result<Va
     };
     let response = client.documents_get_chunks_redacted(request).await?;
     Ok(envelope(
-        "sinex.documents_chunks",
+        "sinex_documents_chunks",
         &json!(args),
         &json!({ "result": response }),
     ))
@@ -2121,7 +2164,7 @@ async fn semantic_epochs(client: &GatewayClient, arguments: Value) -> Result<Val
         })
         .await?;
     Ok(envelope(
-        "sinex.semantic_epochs",
+        "sinex_semantic_epochs",
         &json!(args),
         &json!({ "result": response }),
     ))
@@ -2136,7 +2179,7 @@ async fn semantic_lanes(client: &GatewayClient, arguments: Value) -> Result<Valu
         })
         .await?;
     Ok(envelope(
-        "sinex.semantic_lanes",
+        "sinex_semantic_lanes",
         &json!(args),
         &json!({ "result": response }),
     ))
@@ -2151,7 +2194,7 @@ async fn semantic_lane_outputs(client: &GatewayClient, arguments: Value) -> Resu
         })
         .await?;
     Ok(envelope(
-        "sinex.semantic_lane_outputs",
+        "sinex_semantic_lane_outputs",
         &json!(args),
         &json!({ "result": response }),
     ))
@@ -2166,7 +2209,7 @@ async fn semantic_lane_diffs(client: &GatewayClient, arguments: Value) -> Result
         })
         .await?;
     Ok(envelope(
-        "sinex.semantic_lane_diffs",
+        "sinex_semantic_lane_diffs",
         &json!(args),
         &json!({ "result": response }),
     ))
@@ -2178,7 +2221,7 @@ async fn automata_status(client: &GatewayClient, arguments: Value) -> Result<Val
         .automata_status(args.stale_after_secs, args.recent_window_secs)
         .await?;
     Ok(envelope(
-        "sinex.automata_status",
+        "sinex_automata_status",
         &json!(args),
         &json!({ "result": response }),
     ))
@@ -2190,17 +2233,17 @@ async fn sources_status(client: &GatewayClient, arguments: Value) -> Result<Valu
         .sources_status(args.stale_after_secs, args.recent_window_secs)
         .await?;
     Ok(envelope(
-        "sinex.sources_status",
+        "sinex_sources_status",
         &json!(args),
         &json!({ "result": response }),
     ))
 }
 
 async fn sources_status_view(client: &GatewayClient, arguments: Value) -> Result<Value> {
-    reject_non_empty_args("sinex.sources_status_view", &arguments)?;
+    reject_non_empty_args("sinex_sources_status_view", &arguments)?;
     let response = client.sources_status_view().await?;
     Ok(mcp_view_envelope(
-        "sinex.sources_status_view",
+        "sinex_sources_status_view",
         &json!({}),
         &json!(response.payload),
     )?)
@@ -2210,7 +2253,7 @@ async fn runtime_health(client: &GatewayClient, arguments: Value) -> Result<Valu
     let args: StaleAfterArgs = serde_json::from_value(arguments)?;
     let response: RuntimeHealthResponse = client.runtime_health(args.stale_after_secs).await?;
     Ok(envelope(
-        "sinex.source_health",
+        "sinex_source_health",
         &json!(args),
         &json!({ "result": response }),
     ))
@@ -2221,28 +2264,28 @@ async fn runtime_active(client: &GatewayClient, arguments: Value) -> Result<Valu
     let response: RuntimeListActiveResponse =
         client.runtime_list_active(args.stale_after_secs).await?;
     Ok(envelope(
-        "sinex.sources_active",
+        "sinex_sources_active",
         &json!(args),
         &json!({ "result": response }),
     ))
 }
 
 async fn runtime_registry(client: &GatewayClient, arguments: Value) -> Result<Value> {
-    reject_non_empty_args("sinex.sources_registry", &arguments)?;
+    reject_non_empty_args("sinex_sources_registry", &arguments)?;
     let response: RuntimeListResponse = client.runtime_list().await?;
     Ok(envelope(
-        "sinex.sources_registry",
+        "sinex_sources_registry",
         &json!({}),
         &json!({ "result": response }),
     ))
 }
 
 async fn event_engine_validation(client: &GatewayClient, arguments: Value) -> Result<Value> {
-    reject_non_empty_args("sinex.event_engine_validation", &arguments)?;
+    reject_non_empty_args("sinex_event_engine_validation", &arguments)?;
     let snapshot: Option<EventEngineValidationSnapshot> =
         client.telemetry_event_engine_validation().await?;
     Ok(envelope(
-        "sinex.event_engine_validation",
+        "sinex_event_engine_validation",
         &json!({}),
         &json!({ "snapshot": snapshot }),
     ))
@@ -2254,17 +2297,17 @@ async fn event_engine_batch_stats(client: &GatewayClient, arguments: Value) -> R
         .telemetry_event_engine_batch_stats(args.from.clone(), args.to.clone(), args.limit)
         .await?;
     Ok(envelope(
-        "sinex.event_engine_batch_stats",
+        "sinex_event_engine_batch_stats",
         &json!(args),
         &json!({ "buckets": buckets }),
     ))
 }
 
 async fn throughput(client: &GatewayClient, arguments: Value) -> Result<Value> {
-    reject_non_empty_args("sinex.throughput", &arguments)?;
+    reject_non_empty_args("sinex_throughput", &arguments)?;
     let response = client.telemetry_throughput().await?;
     Ok(envelope(
-        "sinex.throughput",
+        "sinex_throughput",
         &json!({}),
         &json!({ "result": response }),
     ))
@@ -2274,7 +2317,7 @@ async fn recent_activity(client: &GatewayClient, arguments: Value) -> Result<Val
     let args: TelemetryLimitArgs = serde_json::from_value(arguments)?;
     let entries = client.telemetry_recent_activity(args.limit).await?;
     Ok(envelope(
-        "sinex.recent_activity",
+        "sinex_recent_activity",
         &json!(args),
         &json!({ "entries": entries }),
     ))
@@ -2298,25 +2341,25 @@ macro_rules! telemetry_bucket_tool {
 
 telemetry_bucket_tool!(
     command_frequency,
-    "sinex.command_frequency",
+    "sinex_command_frequency",
     telemetry_command_frequency,
     "entries"
 );
 telemetry_bucket_tool!(
     file_activity,
-    "sinex.file_activity",
+    "sinex_file_activity",
     telemetry_file_activity,
     "entries"
 );
 telemetry_bucket_tool!(
     system_state,
-    "sinex.system_state",
+    "sinex_system_state",
     telemetry_system_state,
     "buckets"
 );
 telemetry_bucket_tool!(
     window_focus,
-    "sinex.window_focus",
+    "sinex_window_focus",
     telemetry_window_focus,
     "buckets"
 );
@@ -2325,7 +2368,7 @@ async fn current_health(client: &GatewayClient, arguments: Value) -> Result<Valu
     let args: TelemetryLimitArgs = serde_json::from_value(arguments)?;
     let entries = client.telemetry_current_health(args.limit).await?;
     Ok(envelope(
-        "sinex.current_health",
+        "sinex_current_health",
         &json!(args),
         &json!({ "entries": entries }),
     ))
@@ -2335,7 +2378,7 @@ async fn current_device_state(client: &GatewayClient, arguments: Value) -> Resul
     let args: TelemetryLimitArgs = serde_json::from_value(arguments)?;
     let entries = client.telemetry_current_device_state(args.limit).await?;
     Ok(envelope(
-        "sinex.current_device_state",
+        "sinex_current_device_state",
         &json!(args),
         &json!({ "entries": entries }),
     ))
@@ -2343,31 +2386,31 @@ async fn current_device_state(client: &GatewayClient, arguments: Value) -> Resul
 
 telemetry_bucket_tool!(
     gateway_stats,
-    "sinex.gateway_stats",
+    "sinex_gateway_stats",
     telemetry_gateway_stats,
     "buckets"
 );
 telemetry_bucket_tool!(
     stream_stats,
-    "sinex.stream_stats",
+    "sinex_stream_stats",
     telemetry_stream_stats,
     "buckets"
 );
 telemetry_bucket_tool!(
     assembly_stats,
-    "sinex.assembly_stats",
+    "sinex_assembly_stats",
     telemetry_assembly_stats,
     "buckets"
 );
 telemetry_bucket_tool!(
     source_stats,
-    "sinex.source_stats",
+    "sinex_source_stats",
     telemetry_source_stats,
     "buckets"
 );
 telemetry_bucket_tool!(
     metric_counters,
-    "sinex.metric_counters",
+    "sinex_metric_counters",
     telemetry_metric_counters,
     "buckets"
 );
@@ -2384,7 +2427,7 @@ async fn llm_prompts(client: &GatewayClient, arguments: Value) -> Result<Value> 
     )?;
     redact_raw_samples(&mut response);
     Ok(envelope(
-        "sinex.llm_prompts",
+        "sinex_llm_prompts",
         &json!(args),
         &json!({ "result": response }),
     ))
@@ -2394,7 +2437,7 @@ async fn llm_route_explain(client: &GatewayClient, arguments: Value) -> Result<V
     let request: LlmRouteExplainRequest = serde_json::from_value(arguments.clone())?;
     let response = client.llm_route_explain(request).await?;
     Ok(envelope(
-        "sinex.llm_route_explain",
+        "sinex_llm_route_explain",
         &arguments,
         &json!({ "result": response }),
     ))
@@ -2406,7 +2449,7 @@ async fn llm_budget_report(client: &GatewayClient, arguments: Value) -> Result<V
         .llm_budget_report(LlmBudgetReportRequest { limit: args.limit })
         .await?;
     Ok(envelope(
-        "sinex.llm_budget_report",
+        "sinex_llm_budget_report",
         &json!(args),
         &json!({ "result": response }),
     ))
@@ -2424,17 +2467,17 @@ async fn curation_proposals(client: &GatewayClient, arguments: Value) -> Result<
     )?;
     redact_raw_samples(&mut response);
     Ok(envelope(
-        "sinex.curation_proposals",
+        "sinex_curation_proposals",
         &json!(args),
         &json!({ "result": response }),
     ))
 }
 
 async fn dlq_stats(client: &GatewayClient, arguments: Value) -> Result<Value> {
-    reject_non_empty_args("sinex.dlq_stats", &arguments)?;
+    reject_non_empty_args("sinex_dlq_stats", &arguments)?;
     let response = client.dlq_list().await?;
     Ok(envelope(
-        "sinex.dlq_stats",
+        "sinex_dlq_stats",
         &json!({}),
         &json!({ "result": response }),
     ))
@@ -2444,7 +2487,7 @@ async fn dlq_peek(client: &GatewayClient, arguments: Value) -> Result<Value> {
     let args: DlqPeekArgs = serde_json::from_value(arguments)?;
     let response = client.dlq_peek(Some(args.limit)).await?;
     Ok(envelope(
-        "sinex.dlq_peek",
+        "sinex_dlq_peek",
         &json!(args),
         &json!({ "result": response }),
     ))
@@ -2460,7 +2503,7 @@ async fn source_materials(client: &GatewayClient, arguments: Value) -> Result<Va
         })
         .await?;
     Ok(mcp_view_envelope(
-        "sinex.source_materials",
+        "sinex_source_materials",
         &json!(args),
         &json!({ "result": response }),
     )?)
@@ -2477,27 +2520,27 @@ async fn source_material(client: &GatewayClient, arguments: Value) -> Result<Val
     )?;
     redact_raw_samples(&mut response);
     Ok(mcp_view_envelope(
-        "sinex.source_material",
+        "sinex_source_material",
         &json!(args),
         &json!({ "result": response }),
     )?)
 }
 
 async fn source_coverage(client: &GatewayClient, arguments: Value) -> Result<Value> {
-    reject_non_empty_args("sinex.source_coverage", &arguments)?;
+    reject_non_empty_args("sinex_source_coverage", &arguments)?;
     let response = client.sources_coverage(SourcesCoverageRequest {}).await?;
     Ok(mcp_view_envelope(
-        "sinex.source_coverage",
+        "sinex_source_coverage",
         &json!({}),
         &json!({ "result": response }),
     )?)
 }
 
 async fn source_presets(client: &GatewayClient, arguments: Value) -> Result<Value> {
-    reject_non_empty_args("sinex.source_presets", &arguments)?;
+    reject_non_empty_args("sinex_source_presets", &arguments)?;
     let response = client.sources_presets_list().await?;
     Ok(mcp_view_envelope(
-        "sinex.source_presets",
+        "sinex_source_presets",
         &json!({}),
         &json!({ "result": response }),
     )?)
@@ -2509,7 +2552,7 @@ async fn source_bindings(client: &GatewayClient, arguments: Value) -> Result<Val
         .sources_bindings_list(args.source_family.clone(), args.include_disabled)
         .await?;
     Ok(mcp_view_envelope(
-        "sinex.source_bindings",
+        "sinex_source_bindings",
         &json!(args),
         &json!({ "result": response }),
     )?)
@@ -2525,7 +2568,7 @@ async fn ops_list(client: &GatewayClient, arguments: Value) -> Result<Value> {
         .map(mcp_read_only_operation_view)
         .collect();
     Ok(envelope(
-        "sinex.ops_list",
+        "sinex_ops_list",
         &json!(args),
         &json!(OperationJobListView::new(views)),
     ))
@@ -2535,7 +2578,7 @@ async fn ops_get(client: &GatewayClient, arguments: Value) -> Result<Value> {
     let args: OpsGetArgs = serde_json::from_value(arguments)?;
     let response = client.ops_get(&args.operation_id).await?;
     let view = mcp_read_only_operation_view(operation_to_view(&response));
-    Ok(envelope("sinex.ops_get", &json!(args), &json!(view)))
+    Ok(envelope("sinex_ops_get", &json!(args), &json!(view)))
 }
 
 fn mcp_read_only_operation_view(mut view: OperationView) -> OperationView {
@@ -2545,10 +2588,10 @@ fn mcp_read_only_operation_view(mut view: OperationView) -> OperationView {
 }
 
 async fn lifecycle_status(client: &GatewayClient, arguments: Value) -> Result<Value> {
-    reject_non_empty_args("sinex.lifecycle_status", &arguments)?;
+    reject_non_empty_args("sinex_lifecycle_status", &arguments)?;
     let response = client.lifecycle_status().await?;
     Ok(envelope(
-        "sinex.lifecycle_status",
+        "sinex_lifecycle_status",
         &json!({}),
         &json!({ "result": response }),
     ))
@@ -2558,7 +2601,7 @@ async fn audit_trail(client: &GatewayClient, arguments: Value) -> Result<Value> 
     let args: AuditTrailArgs = serde_json::from_value(arguments)?;
     let response = client.audit_get(&args.operation_id).await?;
     Ok(envelope(
-        "sinex.audit_trail",
+        "sinex_audit_trail",
         &json!(args),
         &json!({ "result": response }),
     ))
@@ -2570,7 +2613,7 @@ async fn coordination_instances(client: &GatewayClient, arguments: Value) -> Res
         .coordination_list_instances(args.module_kind.clone())
         .await?;
     Ok(envelope(
-        "sinex.coordination_instances",
+        "sinex_coordination_instances",
         &json!(args),
         &json!({ "result": response }),
     ))
@@ -2582,7 +2625,7 @@ async fn coordination_leader(client: &GatewayClient, arguments: Value) -> Result
         .coordination_get_leader(args.module_kind.clone())
         .await?;
     Ok(envelope(
-        "sinex.coordination_leader",
+        "sinex_coordination_leader",
         &json!(args),
         &json!({ "result": response }),
     ))
@@ -2594,7 +2637,7 @@ async fn coordination_instance_health(client: &GatewayClient, arguments: Value) 
         .coordination_instance_health(args.instance_id.clone())
         .await?;
     Ok(envelope(
-        "sinex.coordination_instance_health",
+        "sinex_coordination_instance_health",
         &json!(args),
         &json!({ "result": response }),
     ))
@@ -2604,27 +2647,27 @@ async fn shadow_consumers(client: &GatewayClient, arguments: Value) -> Result<Va
     let args: ShadowConsumersArgs = serde_json::from_value(arguments)?;
     let response = client.shadow_list(args.prefix.clone()).await?;
     Ok(envelope(
-        "sinex.shadow_consumers",
+        "sinex_shadow_consumers",
         &json!(args),
         &json!({ "result": response }),
     ))
 }
 
 async fn system_ping(client: &GatewayClient, arguments: Value) -> Result<Value> {
-    reject_non_empty_args("sinex.system_ping", &arguments)?;
+    reject_non_empty_args("sinex_system_ping", &arguments)?;
     let response = client.system_ping().await?;
     Ok(envelope(
-        "sinex.system_ping",
+        "sinex_system_ping",
         &json!({}),
         &json!({ "result": response }),
     ))
 }
 
 async fn system_version(client: &GatewayClient, arguments: Value) -> Result<Value> {
-    reject_non_empty_args("sinex.system_version", &arguments)?;
+    reject_non_empty_args("sinex_system_version", &arguments)?;
     let response = client.system_version().await?;
     Ok(envelope(
-        "sinex.system_version",
+        "sinex_system_version",
         &json!({}),
         &json!({ "result": response }),
     ))
@@ -2803,8 +2846,29 @@ fn mcp_view_envelope(tool: &str, query: &Value, payload: &Value) -> Result<Value
     Ok(serde_json::to_value(envelope)?)
 }
 
-fn read_framed_request<R: BufRead>(reader: &mut R) -> Result<Option<JsonRpcRequest>> {
+fn read_stdio_request<R: BufRead>(reader: &mut R) -> Result<Option<(JsonRpcRequest, McpWireFormat)>> {
     let mut content_length = None;
+    let mut first_line = String::new();
+    let bytes = reader.read_line(&mut first_line)?;
+    if bytes == 0 {
+        return Ok(None);
+    }
+    let first_line = first_line.trim_end_matches(['\r', '\n']);
+    if first_line.starts_with('{') {
+        return serde_json::from_str(first_line)
+            .map(|request| Some((request, McpWireFormat::JsonLine)))
+            .wrap_err("invalid line-delimited MCP JSON-RPC request");
+    }
+    if let Some(value) = first_line
+        .split_once(':')
+        .filter(|(name, _)| name.eq_ignore_ascii_case("content-length"))
+        .map(|(_, value)| value)
+    {
+        content_length = Some(value.trim().parse::<usize>()?);
+    } else if !first_line.is_empty() {
+        return Err(eyre!("missing MCP Content-Length header"));
+    }
+
     loop {
         let mut line = String::new();
         let bytes = reader.read_line(&mut line)?;
@@ -2815,7 +2879,11 @@ fn read_framed_request<R: BufRead>(reader: &mut R) -> Result<Option<JsonRpcReque
         if line.is_empty() {
             break;
         }
-        if let Some(value) = line.strip_prefix("Content-Length:") {
+        if let Some(value) = line
+            .split_once(':')
+            .filter(|(name, _)| name.eq_ignore_ascii_case("content-length"))
+            .map(|(_, value)| value)
+        {
             content_length = Some(value.trim().parse::<usize>()?);
         }
     }
@@ -2824,19 +2892,31 @@ fn read_framed_request<R: BufRead>(reader: &mut R) -> Result<Option<JsonRpcReque
     let mut body = vec![0; length];
     reader.read_exact(&mut body)?;
     serde_json::from_slice(&body)
-        .map(Some)
+        .map(|request| Some((request, McpWireFormat::ContentLength)))
         .wrap_err("invalid MCP JSON-RPC request")
 }
 
-fn write_framed_response<W: Write>(writer: &mut W, response: &Value) -> Result<()> {
-    let body = serde_json::to_vec(response)?;
-    write!(writer, "Content-Length: {}\r\n\r\n", body.len())?;
-    writer.write_all(&body)?;
+fn write_stdio_response<W: Write>(
+    writer: &mut W,
+    response: &Value,
+    wire_format: McpWireFormat,
+) -> Result<()> {
+    match wire_format {
+        McpWireFormat::ContentLength => {
+            let body = serde_json::to_vec(response)?;
+            write!(writer, "Content-Length: {}\r\n\r\n", body.len())?;
+            writer.write_all(&body)?;
+        }
+        McpWireFormat::JsonLine => {
+            serde_json::to_writer(&mut *writer, response)?;
+            writer.write_all(b"\n")?;
+        }
+    }
     writer.flush()?;
     Ok(())
 }
 
-// ── sinex.context_pack ─────────────────────────────────────────────────
+// ── sinex_context_pack ─────────────────────────────────────────────────
 
 #[derive(Debug, Deserialize, Serialize)]
 struct ContextPackArgs {
@@ -2873,7 +2953,7 @@ async fn context_pack(client: &GatewayClient, arguments: Value) -> Result<Value>
     });
 
     Ok(envelope(
-        "sinex.context_pack",
+        "sinex_context_pack",
         &json!(args),
         &json!({ "pack": pack }),
     ))
