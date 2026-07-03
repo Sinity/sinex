@@ -407,6 +407,18 @@ const GUIDE_SECTIONS: &[GuideSection] = &[
                 notes: &[],
             },
             GuideEntry {
+                path: "schema backfill",
+                fallback_summary: "Inspect and run explicit schema data backfills",
+                when: "you need to observe or resume one-time schema data repairs without hiding unbounded scans inside schema apply",
+                examples: &[
+                    "xtask schema backfill status --format json",
+                    "xtask schema backfill run parsed-event-count-v1 --assume-quiescent",
+                ],
+                notes: &[
+                    "Backfill run state is persisted in `sinex_schemas.schema_backfill_runs`; successful reruns no-op unless `--restart` is supplied.",
+                ],
+            },
+            GuideEntry {
                 path: "test vm",
                 fallback_summary: "Run NixOS VM checks",
                 when: "a change touches deployment or runtime behavior and you need VM coverage beyond the normal Rust/package loop",

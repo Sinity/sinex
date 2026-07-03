@@ -15,6 +15,9 @@ pub use sinex_primitives::primitives;
 
 pub mod apply;
 
+/// Explicit, resumable schema data repairs.
+pub mod backfill;
+
 /// Auto-convergence engine: diffs declared schema against DB, emits minimal DDL.
 pub mod converge;
 
