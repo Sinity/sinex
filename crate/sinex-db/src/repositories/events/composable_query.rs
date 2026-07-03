@@ -12,10 +12,11 @@ use crate::models::Event;
 use crate::repositories::DbPoolExt;
 use crate::repositories::common::{DbResult, db_error};
 use sinex_primitives::query::{
-    AggregationMode, Cursor, CursorAnchor, EventQuery, EventQueryResult, GroupByField,
-    GroupedCount, GroupedValue, GroupedValueAggregation, LineageDirection, LineageNode,
-    LineageQuery, LineageResult, NumericField, PathOp, PayloadFilter, QueryResultEvent,
-    SortDirection, SourceMaterialLinkInfo, SourceStatsEntry, TimeBucketEntry, TimeSeriesOrder,
+    AggregationMode, Cursor, CursorAnchor, EventOrdering, EventQuery, EventQueryResult,
+    GroupByField, GroupedCount, GroupedValue, GroupedValueAggregation, LineageDirection,
+    LineageNode, LineageQuery, LineageResult, NumericField, PathOp, PayloadFilter,
+    QueryResultEvent, SortDirection, SourceMaterialLinkInfo, SourceStatsEntry, TimeBucketEntry,
+    TimeSeriesOrder,
 };
 use sinex_primitives::{Id, Pagination, Provenance, SinexError, Timestamp, Uuid};
 use sqlx::postgres::types::PgInterval;
@@ -235,12 +236,12 @@ enum ListingOrder {
 
 impl ListingOrder {
     fn for_query(query: &EventQuery, has_text_search: bool) -> Self {
-        if has_text_search {
-            Self::Ranked
-        } else if query.time_range.is_some() {
-            Self::Occurrence
-        } else {
-            Self::Id
+        match query.order {
+            EventOrdering::TsCoided => Self::Id,
+            EventOrdering::TsOrig => Self::Occurrence,
+            EventOrdering::Auto if has_text_search => Self::Ranked,
+            EventOrdering::Auto if query.time_range.is_some() => Self::Occurrence,
+            EventOrdering::Auto => Self::Id,
         }
     }
 }

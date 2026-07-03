@@ -7,8 +7,8 @@
 use crate::GatewayClient;
 use crate::commands::ops::{operation_to_view, operations_to_views};
 use crate::commands::query_units::execute_query_unit;
-use color_eyre::{Report, Result};
 use color_eyre::eyre::{WrapErr, eyre};
+use color_eyre::{Report, Result};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use sinex_primitives::SemanticLaneStatus;
@@ -62,8 +62,7 @@ use std::io::{BufRead, Write};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 pub const MCP_PROTOCOL_VERSION: &str = "2025-06-18";
-pub const MCP_SUPPORTED_PROTOCOL_VERSIONS: &[&str] =
-    &["2025-06-18", "2025-03-26", "2024-11-05"];
+pub const MCP_SUPPORTED_PROTOCOL_VERSIONS: &[&str] = &["2025-06-18", "2025-03-26", "2024-11-05"];
 pub const MCP_IMPLEMENTATION: &str = "sinex-mcp-server";
 pub const MCP_IMPLEMENTATION_VERSION: &str = env!("CARGO_PKG_VERSION");
 const AGENT_ORIENTATION: &str = include_str!("../docs/agent_orientation.md");
@@ -999,7 +998,7 @@ pub fn tools() -> Vec<McpTool> {
                 "properties": {
                     "query": {
                         "type": "string",
-                        "description": "Sinex query-unit expression, for example: runtime-health limit 1"
+                        "description": "Sinex query-unit expression, for example: events where ts_orig >= '2026-07-02T12:00:00Z' and ts_orig < '2026-07-02T13:00:00Z' order by ts_orig asc limit 100"
                     }
                 },
                 "additionalProperties": false
@@ -2898,7 +2897,9 @@ fn mcp_view_envelope(tool: &str, query: &Value, payload: &Value) -> Result<Value
     Ok(serde_json::to_value(envelope)?)
 }
 
-fn read_stdio_request<R: BufRead>(reader: &mut R) -> Result<Option<(JsonRpcRequest, McpWireFormat)>> {
+fn read_stdio_request<R: BufRead>(
+    reader: &mut R,
+) -> Result<Option<(JsonRpcRequest, McpWireFormat)>> {
     let mut content_length = None;
     let mut first_line = String::new();
     let bytes = reader.read_line(&mut first_line)?;
