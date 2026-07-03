@@ -14,9 +14,10 @@ use sinex_primitives::relations::{
 use sinex_primitives::sources::{is_self_observation_source, source_identity_matches_family};
 use sinex_primitives::temporal::Timestamp;
 use sinex_primitives::views::{
-    ActionAvailability, ActionAvailabilityState, CaveatView, ContextSourceView, ContextSummaryView,
-    DesktopContextCandidateView, DesktopContextInputEvidence, DesktopContextInputState,
-    DesktopContextView, DesktopFocusSessionListView, DesktopFocusSessionView,
+    ActionAvailability, ActionAvailabilityState, CaveatView, ContextSessionView,
+    ContextSourceView, ContextSummaryView, DesktopContextCandidateView,
+    DesktopContextInputEvidence, DesktopContextInputState, DesktopContextView,
+    DesktopFocusSessionListView, DesktopFocusSessionView,
     DesktopNotificationPressureView, DesktopProjectContextListView, DesktopProjectContextRowView,
     EVENT_CARD_LIST_SCHEMA_VERSION, EventCardListView, EventCardView, PrivacyStateKind,
     SinexObjectKind, SinexObjectRef, SourceCoverageContinuity, SourceCoverageListView,
@@ -803,10 +804,26 @@ fn render_context_machine_output(
                     latest_event: (*result_event).clone(),
                 })
                 .collect();
+            let session_views = recall_session_views(event_cards);
+            let mut source_caveats = source_caveats.to_vec();
+            if source_surface == "sinexctl.recall"
+                && !event_cards.cards.is_empty()
+                && session_views.is_empty()
+            {
+                source_caveats.push(CaveatView {
+                    id: "recall.sessions.absent".to_string(),
+                    message: "no activity.session.boundary rows were found in this recall window; recall falls back to latest events by source".to_string(),
+                    ref_: Some(SinexObjectRef::new(
+                        SinexObjectKind::Projection,
+                        "recall.activity.session.boundary",
+                    )),
+                });
+            }
             let envelope = ViewEnvelope::new(
                 source_surface,
                 ContextSummaryView::new(&window.since, event_cards.count, source_views)
-                    .with_source_caveats(source_caveats.to_vec()),
+                    .with_sessions(session_views)
+                    .with_source_caveats(source_caveats),
             )
             .with_query_echo({
                 let mut query_echo = window.query_echo();
@@ -822,6 +839,29 @@ fn render_context_machine_output(
             "{finite_error_label} is a finite view; use json, yaml, or table"
         )),
     }
+}
+
+fn recall_session_views(event_cards: &EventCardListView) -> Vec<ContextSessionView> {
+    let mut sessions = event_cards
+        .cards
+        .iter()
+        .filter(|card| {
+            card.source.raw == "derived.session-detector"
+                || card.event_type == "activity.session.boundary"
+        })
+        .map(|card| ContextSessionView {
+            ref_: card.ref_.clone(),
+            started_at: card.timestamp.original,
+            summary: card.summary.clone(),
+            latest_event: card.clone(),
+        })
+        .collect::<Vec<_>>();
+    sessions.sort_by(|left, right| {
+        let left_ts = left.started_at.unwrap_or(Timestamp::UNIX_EPOCH);
+        let right_ts = right.started_at.unwrap_or(Timestamp::UNIX_EPOCH);
+        right_ts.inner().cmp(&left_ts.inner())
+    });
+    sessions
 }
 
 fn render_desktop_context_output(
