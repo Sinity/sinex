@@ -327,6 +327,8 @@ impl Cursor {
 pub struct CursorAnchor {
     pub id: Id<Event<JsonValue>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ts_orig: Option<Timestamp>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub relevance_score: Option<f64>,
 }
 
@@ -335,8 +337,15 @@ impl CursorAnchor {
     pub fn from_id(id: Id<Event<JsonValue>>) -> Self {
         Self {
             id,
+            ts_orig: None,
             relevance_score: None,
         }
+    }
+
+    #[must_use]
+    pub fn with_ts_orig(mut self, ts_orig: Option<Timestamp>) -> Self {
+        self.ts_orig = ts_orig;
+        self
     }
 
     #[must_use]
