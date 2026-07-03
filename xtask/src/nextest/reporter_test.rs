@@ -102,3 +102,60 @@ async fn phase_observer_fires_once_at_first_suite_start() -> ::xtask::sandbox::T
     assert_eq!(stats.total, 2);
     Ok(())
 }
+
+#[sinex_test]
+async fn pre_suite_sigterm_reports_compile_signal_not_no_tests(
+) -> ::xtask::sandbox::TestResult<()> {
+    let stdout = Cursor::new(Vec::<u8>::new());
+    let stderr = Cursor::new(
+        concat!(
+            "error: could not compile `sinexd` (lib test)\n",
+            "process didn't exit successfully: `rustc --crate-name sinexd ...` ",
+            "(signal: 15, SIGTERM: termination signal)\n",
+        )
+        .as_bytes(),
+    );
+
+    let error = TestReporter::new(false)
+        .run(stdout, stderr, None, None)
+        .expect_err("pre-suite rustc SIGTERM must be classified as compile/resource failure");
+    let message = error.to_string();
+
+    assert!(
+        message.contains("terminated by signal before nextest discovered tests"),
+        "signal compile failure was not classified: {message}"
+    );
+    assert!(
+        !message.contains("No tests discovered"),
+        "signal compile failure should not report generic no-tests guidance: {message}"
+    );
+    Ok(())
+}
+
+#[sinex_test]
+async fn pre_suite_compile_error_reports_compile_not_no_tests(
+) -> ::xtask::sandbox::TestResult<()> {
+    let stdout = Cursor::new(Vec::<u8>::new());
+    let stderr = Cursor::new(
+        concat!(
+            "error[E0425]: cannot find value `missing` in this scope\n",
+            "error: could not compile `sinexd` (lib test)\n",
+        )
+        .as_bytes(),
+    );
+
+    let error = TestReporter::new(false)
+        .run(stdout, stderr, None, None)
+        .expect_err("pre-suite compile error must be classified as compile failure");
+    let message = error.to_string();
+
+    assert!(
+        message.contains("test binary compilation failed before nextest discovered tests"),
+        "compile failure was not classified: {message}"
+    );
+    assert!(
+        !message.contains("No tests discovered"),
+        "compile failure should not report generic no-tests guidance: {message}"
+    );
+    Ok(())
+}

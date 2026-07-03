@@ -120,6 +120,8 @@ pub struct ServiceInfo {
     module_name: String,
     source_id: Option<String>,
     runner_pack: Option<String>,
+    checkpoint_identity: Option<String>,
+    control_identity: Option<String>,
     host: HostName,
     work_dir: PathBuf,
     dry_run: bool,
@@ -145,6 +147,8 @@ impl ServiceInfo {
             module_name,
             source_id: None,
             runner_pack: None,
+            checkpoint_identity: None,
+            control_identity: None,
             host,
             work_dir,
             dry_run,
@@ -173,6 +177,8 @@ impl ServiceInfo {
             module_name,
             source_id,
             runner_pack,
+            checkpoint_identity: None,
+            control_identity: None,
             host,
             work_dir,
             dry_run,
@@ -180,6 +186,17 @@ impl ServiceInfo {
             version,
             module_run_id,
         }
+    }
+
+    #[must_use]
+    pub fn with_runtime_identities(
+        mut self,
+        checkpoint_identity: Option<String>,
+        control_identity: Option<String>,
+    ) -> Self {
+        self.checkpoint_identity = checkpoint_identity;
+        self.control_identity = control_identity;
+        self
     }
 
     #[must_use]
@@ -204,15 +221,17 @@ impl ServiceInfo {
 
     #[must_use]
     pub fn checkpoint_identity(&self) -> &str {
-        self.source_id
+        self.checkpoint_identity
             .as_deref()
+            .or(self.source_id.as_deref())
             .unwrap_or(self.service_name.as_str())
     }
 
     #[must_use]
     pub fn control_identity(&self) -> &str {
-        self.source_id
+        self.control_identity
             .as_deref()
+            .or(self.source_id.as_deref())
             .unwrap_or(self.module_name.as_str())
     }
 

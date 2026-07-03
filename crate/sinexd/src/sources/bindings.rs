@@ -186,6 +186,8 @@ pub async fn run_binding(binding: SourceBinding) -> Result<()> {
             binding.source_id, binding.instance_idx
         )
     });
+    let runtime_config =
+        source_binding_runtime_config_with_identity(binding.runtime_config.clone(), &service_name);
 
     let mut argv: Vec<std::ffi::OsString> = vec![
         std::ffi::OsString::from("sinexd-source"),
@@ -194,7 +196,7 @@ pub async fn run_binding(binding: SourceBinding) -> Result<()> {
         std::ffi::OsString::from("--service-name"),
         std::ffi::OsString::from(&service_name),
     ];
-    if let Some(config) = &binding.runtime_config {
+    if let Some(config) = &runtime_config {
         // Skip if explicitly null or an empty object — clap rejects empty
         // values and an empty {} is operationally identical to "use defaults".
         let is_empty_object = config.as_object().is_some_and(serde_json::Map::is_empty);
@@ -258,6 +260,28 @@ pub async fn run_binding(binding: SourceBinding) -> Result<()> {
                 binding.source_id
             ))
         })
+    }
+}
+
+fn source_binding_runtime_config_with_identity(
+    config: Option<serde_json::Value>,
+    service_name: &str,
+) -> Option<serde_json::Value> {
+    match config {
+        Some(serde_json::Value::Object(mut object)) => {
+            object
+                .entry("checkpoint_identity".to_string())
+                .or_insert_with(|| serde_json::json!(service_name));
+            object
+                .entry("control_identity".to_string())
+                .or_insert_with(|| serde_json::json!(service_name));
+            Some(serde_json::Value::Object(object))
+        }
+        Some(value) => Some(value),
+        None => Some(serde_json::json!({
+            "checkpoint_identity": service_name,
+            "control_identity": service_name,
+        })),
     }
 }
 

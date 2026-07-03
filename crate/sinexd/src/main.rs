@@ -98,6 +98,10 @@ enum Command {
         #[arg(long)]
         service_name: Option<String>,
 
+        /// 1-based binding instance index from the source-binding manifest.
+        #[arg(long, default_value_t = 1)]
+        instance_idx: u32,
+
         /// JSON object passed verbatim as `--runtime-config`.
         #[arg(long)]
         runtime_config: Option<String>,
@@ -242,10 +246,21 @@ async fn main() -> color_eyre::Result<()> {
         Command::ScanSourceDriver {
             source,
             service_name,
+            instance_idx,
             runtime_config,
             extra_args,
             extra_env,
-        } => scan_source(source, service_name, runtime_config, extra_args, extra_env).await,
+        } => {
+            scan_source(
+                source,
+                service_name,
+                instance_idx,
+                runtime_config,
+                extra_args,
+                extra_env,
+            )
+            .await
+        }
         Command::ExportSourceCatalog { output, check } => export_source_catalog(output, check),
         Command::ExportPrivacyCoverageMatrix { output, check } => {
             export_privacy_coverage_matrix(output, check)
@@ -451,6 +466,7 @@ async fn rpc_server_serve(
 async fn scan_source(
     source: String,
     service_name: Option<String>,
+    instance_idx: u32,
     runtime_config: Option<String>,
     extra_args: Vec<String>,
     extra_env: Vec<(String, String)>,
@@ -464,7 +480,7 @@ async fn scan_source(
 
     let binding = SourceBinding {
         source_id: source,
-        instance_idx: 1,
+        instance_idx,
         service_name,
         runtime_config: runtime_config_value,
         extra_args,

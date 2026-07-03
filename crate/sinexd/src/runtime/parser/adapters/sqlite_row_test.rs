@@ -96,6 +96,39 @@ async fn test_sqlite_input_fingerprint_reports_schema_shape() -> xtask::sandbox:
 }
 
 #[sinex_test]
+async fn sqlite_locked_database_falls_back_to_snapshot() -> xtask::sandbox::TestResult<()> {
+    let db = make_test_db();
+    let writer = rusqlite::Connection::open(db.path())?;
+    writer.execute_batch(
+        "PRAGMA journal_mode=DELETE;
+         BEGIN EXCLUSIVE;
+         INSERT INTO items (id, name, value) VALUES (4, 'uncommitted', 4.5);",
+    )?;
+
+    let adapter = SqliteRowAdapter::new(db.path().to_str().unwrap());
+    let config = SqliteRowConfig {
+        query: "SELECT rowid, * FROM items".into(),
+        table: "items".into(),
+        rowid_column: "rowid".into(),
+        read_only: true,
+        immutable: false,
+        ..Default::default()
+    };
+
+    let fingerprint = adapter
+        .input_fingerprint(&config)?
+        .expect("SQLite adapter should expose a fingerprint");
+    assert!(fingerprint.keys.contains(&"table:items".to_string()));
+
+    let stream = adapter.open(dummy_material_id(), &config, None).await?;
+    let records: Vec<_> = stream.collect().await;
+
+    assert_eq!(records.len(), 3);
+    writer.execute_batch("ROLLBACK")?;
+    Ok(())
+}
+
+#[sinex_test]
 async fn test_sqlite_anchor_contains_table_name() -> xtask::sandbox::TestResult<()> {
     let db = make_test_db();
     let adapter = SqliteRowAdapter::new(db.path().to_str().unwrap());
