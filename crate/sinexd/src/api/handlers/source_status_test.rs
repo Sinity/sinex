@@ -274,7 +274,47 @@ async fn source_coverage_view_surfaces_missing_material_caveat() -> xtask::TestR
     assert!(
         view.caveats
             .iter()
-            .any(|caveat| caveat.id == "source.material.match.logical_id")
+            .any(|caveat| caveat.id == ReadinessCaveatId::SourceAbsent.as_str()
+                && caveat.message.contains("no source material"))
+    );
+    Ok(())
+}
+
+#[sinex_test]
+async fn source_coverage_view_surfaces_missing_events_with_standard_caveat()
+-> xtask::TestResult<()> {
+    let now = OffsetDateTime::now_utc();
+    let events = HashMap::new();
+    let mut materials = HashMap::new();
+    materials.insert(
+        "fixture.source".to_string(),
+        SourceMaterialAggregateRow {
+            source_identifier: "fixture.source".to_string(),
+            material_count: 1,
+            last_material_at: Some(now),
+        },
+    );
+
+    let view = source_coverage_view(
+        &CONTRACT,
+        &[&BINDING],
+        &events,
+        &materials,
+        &HashMap::new(),
+        &HashMap::new(),
+        &HashMap::new(),
+        &HashMap::new(),
+        Timestamp::now(),
+    );
+
+    assert_eq!(view.readiness, SourceCoverageReadiness::MissingEvents);
+    assert_eq!(view.continuity, SourceCoverageContinuity::MaterialOnly);
+    assert!(view.gaps.iter().any(|gap| gap.kind == "missing_events"));
+    assert!(
+        view.caveats
+            .iter()
+            .any(|caveat| caveat.id == ReadinessCaveatId::SourceAbsent.as_str()
+                && caveat.message.contains("no live events"))
     );
     Ok(())
 }

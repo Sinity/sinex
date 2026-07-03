@@ -205,6 +205,43 @@ pub struct CaveatView {
     pub ref_: Option<SinexObjectRef>,
 }
 
+/// Standard caveat IDs for read surfaces that report incomplete readiness or
+/// coverage.
+///
+/// These IDs are intentionally shared across CLI, API, MCP, and TUI views so an
+/// empty or partial result names the same class of gap everywhere.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub enum ReadinessCaveatId {
+    /// The expected source, producer, or evidence lane is absent.
+    #[serde(rename = "source.absent")]
+    SourceAbsent,
+    /// A read model exists but is stale relative to the requested view.
+    #[serde(rename = "readmodel.stale_by")]
+    ReadmodelStaleBy,
+    /// The requested time/window slice is only partially covered.
+    #[serde(rename = "window.partial")]
+    WindowPartial,
+    /// Coverage cannot be measured exactly with the available evidence.
+    #[serde(rename = "coverage.unmeasurable")]
+    CoverageUnmeasurable,
+    /// A derivation lane exists but has not been promoted to authoritative use.
+    #[serde(rename = "derivation.lane_not_promoted")]
+    DerivationLaneNotPromoted,
+}
+
+impl ReadinessCaveatId {
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::SourceAbsent => "source.absent",
+            Self::ReadmodelStaleBy => "readmodel.stale_by",
+            Self::WindowPartial => "window.partial",
+            Self::CoverageUnmeasurable => "coverage.unmeasurable",
+            Self::DerivationLaneNotPromoted => "derivation.lane_not_promoted",
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct FreshnessView {
     pub generated_at: Timestamp,
