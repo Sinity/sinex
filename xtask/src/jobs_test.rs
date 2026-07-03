@@ -470,6 +470,65 @@ async fn test_cancel_escalates_when_process_ignores_sigterm() -> TestResult<()> 
     Ok(())
 }
 
+#[cfg(target_os = "linux")]
+#[sinex_test(timeout = 30)]
+async fn test_cancel_terminates_nested_process_group() -> TestResult<()> {
+    let dir = tempdir()?;
+    let db_path = dir.path().join("xtask-history.db");
+    let db = HistoryDb::open(&db_path)?;
+    let jobs_dir = dir.path().join("jobs");
+    fs::create_dir_all(&jobs_dir)?;
+    let manager = JobManager {
+        jobs_dir: jobs_dir.clone(),
+        db: std::sync::Mutex::new(db),
+    };
+
+    let nested_pid_path = dir.path().join("nested.pid");
+    let script = format!(
+        "setsid sleep 60 & echo $! > {}; wait",
+        nested_pid_path.display()
+    );
+    let mut child = std::process::Command::new("sh")
+        .arg("-c")
+        .arg(script)
+        .spawn()
+        .map_err(|error| eyre!("failed to spawn nested process-group job: {error}"))?;
+
+    let deadline = std::time::Instant::now() + Duration::from_secs(5);
+    while !nested_pid_path.exists() && std::time::Instant::now() < deadline {
+        tokio::time::sleep(Duration::from_millis(25)).await;
+    }
+    let nested_pid: i32 = std::fs::read_to_string(&nested_pid_path)?.trim().parse()?;
+    assert_eq!(
+        unsafe { libc::kill(nested_pid, 0) },
+        0,
+        "nested process should be alive before cancellation"
+    );
+
+    let stdout_path = jobs_dir.join("stdout.log");
+    let stderr_path = jobs_dir.join("stderr.log");
+    let (_invocation_id, job_id) = manager
+        .db
+        .lock()
+        .map_err(|_| eyre!("db lock poisoned"))?
+        .start_background_job("test", &[], Some(child.id()), &stdout_path, &stderr_path)?;
+
+    assert!(manager.cancel(job_id)?);
+    let _ = child.wait();
+
+    let deadline = std::time::Instant::now() + Duration::from_secs(5);
+    while std::time::Instant::now() < deadline {
+        if unsafe { libc::kill(nested_pid, 0) } != 0 {
+            return Ok(());
+        }
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+
+    Err(eyre!(
+        "cancel left nested process-group child {nested_pid} alive"
+    ))
+}
+
 #[sinex_test]
 async fn test_send_job_signal_reports_missing_process() -> TestResult<()> {
     let missing_pid = nix::unistd::Pid::from_raw(999_999_999);

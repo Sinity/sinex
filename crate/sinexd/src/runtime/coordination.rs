@@ -72,6 +72,7 @@ use tracing::{error, info, instrument, warn};
 
 use futures::{Stream, StreamExt};
 use std::future::Future;
+use std::pin::Pin;
 
 /// Instance mode determines runtime module behavior.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -90,7 +91,6 @@ enum CoordinationLoopDirective {
 }
 
 enum LeaderLoopOutcome {
-    LeadershipLost,
     Exit,
 }
 
@@ -517,9 +517,6 @@ impl RuntimeCoordination {
                 self.current_mode = InstanceMode::Leader;
 
                 match self.run_as_leader_with_maintenance(process_events).await {
-                    Ok(LeaderLoopOutcome::LeadershipLost) => {
-                        self.current_mode = InstanceMode::Standby;
-                    }
                     Ok(LeaderLoopOutcome::Exit) => {
                         self.current_mode = InstanceMode::Standby;
                         return Ok(CoordinationLoopDirective::Exit);
@@ -643,7 +640,11 @@ impl RuntimeCoordination {
                                metric = "runtime.leadership_lost_total",
                                "Lost leadership to another instance"
                            );
-                           return Ok(LeaderLoopOutcome::LeadershipLost);
+                           return self
+                               .drain_active_leader_after_leadership_loss(
+                                   process_events_future.as_mut(),
+                               )
+                               .await;
                        }
                        Err(e) => {
                            error!(
@@ -727,6 +728,54 @@ impl RuntimeCoordination {
                    ));
                }
             }
+        }
+    }
+
+    async fn drain_active_leader_after_leadership_loss<Fut>(
+        &self,
+        process_events_future: Pin<&mut Fut>,
+    ) -> Result<LeaderLoopOutcome>
+    where
+        Fut: Future<Output = Result<()>> + Send,
+    {
+        if let Some(drain) = &self.runtime_drain {
+            let first_request = drain.request_drain();
+            let aborted_runtime_work = drain.abort_runtime_work();
+            warn!(
+                service = %self.instance.service_name,
+                first_request,
+                aborted_runtime_work,
+                "Leadership lost; draining active runtime before exiting process"
+            );
+        } else {
+            warn!(
+                service = %self.instance.service_name,
+                "Leadership lost without a runtime drain controller; waiting for active leader future to finish"
+            );
+        }
+
+        match tokio::time::timeout(self.kv_client.handoff_timeout(), process_events_future).await {
+            Ok(Ok(())) => {
+                info!(
+                    service = %self.instance.service_name,
+                    "Active leader future drained after leadership loss; exiting coordination loop"
+                );
+                Ok(LeaderLoopOutcome::Exit)
+            }
+            Ok(Err(error)) => {
+                error!(
+                    target: "sinex_metrics",
+                    metric = "runtime.leader_loop_failures_total",
+                    service = %self.instance.service_name,
+                    error = %error,
+                    "Active leader future failed while draining after leadership loss"
+                );
+                Err(error)
+            }
+            Err(_) => Err(SinexError::timeout(format!(
+                "Timed out waiting for active leader future to drain after leadership loss for {}",
+                self.instance.service_name
+            ))),
         }
     }
 

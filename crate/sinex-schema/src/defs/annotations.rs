@@ -115,21 +115,32 @@ impl Tags {
     /// defining the FK via raw `ALTER TABLE` SQL after table creation, bypassing sea-query.
     #[must_use]
     pub fn create_fk_fixup_sql() -> Vec<String> {
-        vec![
-            format!(
-                "ALTER TABLE {}.{} DROP CONSTRAINT IF EXISTS tags_parent_tag_id_fkey",
-                Self::schema_name(),
-                Self::table_name()
-            ),
-            format!(
-                "ALTER TABLE {}.{} ADD CONSTRAINT tags_parent_tag_id_fkey \
-                 FOREIGN KEY (parent_tag_id) REFERENCES {}.{}(id) ON DELETE SET NULL",
-                Self::schema_name(),
-                Self::table_name(),
-                Self::schema_name(),
-                Self::table_name()
-            ),
-        ]
+        vec![format!(
+            r#"
+DO $$
+DECLARE
+    existing_definition text;
+BEGIN
+    SELECT pg_get_constraintdef(c.oid)
+      INTO existing_definition
+      FROM pg_constraint c
+      JOIN pg_class t ON t.oid = c.conrelid
+      JOIN pg_namespace n ON n.oid = t.relnamespace
+     WHERE n.nspname = '{schema}'
+       AND t.relname = '{table}'
+       AND c.conname = 'tags_parent_tag_id_fkey';
+
+    IF existing_definition IS NULL
+       OR existing_definition NOT ILIKE '%ON DELETE SET NULL%' THEN
+        ALTER TABLE {schema}.{table} DROP CONSTRAINT IF EXISTS tags_parent_tag_id_fkey;
+        ALTER TABLE {schema}.{table} ADD CONSTRAINT tags_parent_tag_id_fkey
+            FOREIGN KEY (parent_tag_id) REFERENCES {schema}.{table}(id) ON DELETE SET NULL;
+    END IF;
+END $$;
+"#,
+            schema = Self::schema_name(),
+            table = Self::table_name(),
+        )]
     }
 }
 

@@ -367,6 +367,12 @@ const REMEDIATION_PLAN_DEFAULT_LIMIT: i64 = 50;
 const REMEDIATION_PLAN_MAX_LIMIT: i64 = 1000;
 const REMEDIATION_PLAN_SORT_EVENT_COUNT: &str = "event-count";
 const REMEDIATION_PLAN_SORT_STAGED_AT: &str = "staged-at";
+const ZERO_EVENT_SELF_OBSERVATION_TIMEOUT_RECOVERY_REASON: &str =
+    "slice_arrival_timeout_zero_event_self_observation_recovered_partial";
+const ZERO_EVENT_SOURCE_MATERIAL_TIMEOUT_RECOVERY_REASON: &str =
+    "slice_arrival_timeout_zero_event_source_material_recovered_partial";
+const ORPHANED_ZERO_EVENT_SOURCE_MATERIAL_RECOVERY_REASON: &str =
+    "orphaned_zero_event_source_material_recovered_partial";
 
 pub async fn handle_sources_remediation_plan(
     pool: &PgPool,
@@ -461,8 +467,13 @@ fn remediation_candidate_from_row(
     let event_count = row.parsed_event_count;
     let failure_reason = material_failure_reason(&row.metadata);
     let recovery_reason = material_recovery_reason(&row.metadata);
+    let decision_reason = if status == MaterialStatus::RecoveredPartial {
+        recovery_reason.as_deref()
+    } else {
+        failure_reason.as_deref()
+    };
     let (decision, severity, suggested_action) =
-        remediation_decision(status, event_count, failure_reason.as_deref());
+        remediation_decision(status, event_count, decision_reason);
     let material_kind = parse_material_storage_kind(&row.material_kind)?;
 
     Ok(SourceMaterialRemediationCandidate {
@@ -560,16 +571,43 @@ fn sort_remediation_candidates(candidates: &mut [SourceMaterialRemediationCandid
 fn remediation_decision(
     status: MaterialStatus,
     event_count: i64,
-    failure_reason: Option<&str>,
+    reason: Option<&str>,
 ) -> (&'static str, &'static str, &'static str) {
     match status {
+        MaterialStatus::RecoveredPartial
+            if reason == Some(ZERO_EVENT_SELF_OBSERVATION_TIMEOUT_RECOVERY_REASON) =>
+        {
+            (
+                "acknowledge_empty_self_observation_timeout",
+                "low",
+                "acknowledge zero-event self-observation timeout residue with sinexctl sources annotate <material_id> --tag acknowledged-empty-timeout; raw DLQ routing was intentionally suppressed",
+            )
+        }
+        MaterialStatus::RecoveredPartial
+            if reason == Some(ZERO_EVENT_SOURCE_MATERIAL_TIMEOUT_RECOVERY_REASON) =>
+        {
+            (
+                "inspect_empty_source_material_timeout",
+                "medium",
+                "inspect zero-event source-material timeout; acknowledge resolved residue with sinexctl sources annotate <material_id> --tag acknowledged-empty-timeout, or repair/replay the source if it recurs; raw DLQ routing was intentionally suppressed",
+            )
+        }
+        MaterialStatus::RecoveredPartial
+            if reason == Some(ORPHANED_ZERO_EVENT_SOURCE_MATERIAL_RECOVERY_REASON) =>
+        {
+            (
+                "inspect_empty_orphaned_source_material",
+                "medium",
+                "inspect zero-event orphaned source material; acknowledge resolved residue with sinexctl sources annotate <material_id> --tag acknowledged-empty-orphan, or repair/replay the source if it recurs; raw DLQ routing was intentionally suppressed",
+            )
+        }
         MaterialStatus::RecoveredPartial => (
             "review_partial_recovery",
             "medium",
             "inspect recovered partial material; keep if admitted events are useful, otherwise plan replay or re-ingest",
         ),
         MaterialStatus::Failed
-            if event_count > 0 && failure_reason == Some("slice_arrival_timeout") =>
+            if event_count > 0 && reason == Some("slice_arrival_timeout") =>
         {
             (
                 "recover_timeout_partial",
@@ -582,7 +620,7 @@ fn remediation_decision(
             "high",
             "inspect failed material with admitted events; decide whether to recover, replay, or archive intentionally",
         ),
-        MaterialStatus::Failed if failure_reason == Some("orphaned_sensing_material") => (
+        MaterialStatus::Failed if reason == Some("orphaned_sensing_material") => (
             "purge_or_archive_empty_failure",
             "low",
             "inspect empty orphaned failure; usually safe to purge related DLQ residue or archive intentionally",
@@ -1061,66 +1099,94 @@ pub async fn handle_sources_archive(
             SinexError::not_found(format!("Source material not found: {material_id}"))
         })?;
 
-    // Count events referencing this material.
-    let event_count = sqlx::query_scalar!(
-        r#"SELECT COUNT(*) as "count!: i64" FROM core.events WHERE source_material_id = $1"#,
+    // Lifecycle archival operates on root event ids and then expands the
+    // derived-event cascade. Scope the roots to this material before handing
+    // off, so the operator command cannot accidentally archive unrelated live
+    // events.
+    let root_event_ids = sqlx::query_scalar!(
+        r#"SELECT id as "id!: Uuid"
+           FROM core.events
+           WHERE source_material_id = $1
+           ORDER BY id"#,
         material_id
     )
-    .fetch_one(pool)
+    .fetch_all(pool)
     .await
-    .unwrap_or(0);
+    .map_err(|error| {
+        SinexError::database("Failed to collect source material archive roots")
+            .with_std_error(&error)
+    })?;
+    let root_event_count = i64::try_from(root_event_ids.len()).map_err(|error| {
+        SinexError::validation("source material event count exceeds supported response range")
+            .with_std_error(&error)
+    })?;
+
+    if root_event_ids.is_empty() {
+        let preview = serde_json::json!({
+            "material_id": req.material_id,
+            "root_event_count": 0,
+            "cascade_count": 0,
+            "action": "archive",
+            "dry_run": req.dry_run,
+            "reason": req.reason.as_deref().unwrap_or("(no reason provided)"),
+            "scope": "source_material",
+        });
+
+        return Ok(SourcesArchiveResponse {
+            material_id: req.material_id,
+            operation_id: None,
+            cascade_count: 0,
+            dry_run: req.dry_run,
+            preview: Some(preview),
+        });
+    }
+
+    let lifecycle_req = sinex_primitives::rpc::lifecycle::LifecycleArchiveRequest {
+        before: None,
+        source: None,
+        event_ids: Some(root_event_ids.iter().map(Uuid::to_string).collect()),
+        limit: i64::MAX,
+        reason: req.reason.clone(),
+        dry_run: req.dry_run,
+    };
+
+    let system_auth = crate::api::rpc_server::RpcAuthContext::system();
+    let archive_resp = crate::api::handlers::lifecycle::handle_lifecycle_archive(
+        pool,
+        lifecycle_req,
+        &system_auth,
+    )
+    .await?;
 
     if req.dry_run {
         let preview = serde_json::json!({
             "material_id": req.material_id,
-            "event_count": event_count,
+            "root_event_count": root_event_count,
+            "cascade_count": archive_resp.cascade_total,
+            "cascade_depth": archive_resp.cascade_depth,
             "action": "archive",
             "dry_run": true,
             "reason": req.reason.as_deref().unwrap_or("(no reason provided)"),
+            "scope": "source_material",
         });
 
         let response = SourcesArchiveResponse {
             material_id: req.material_id,
             operation_id: None,
-            cascade_count: event_count,
+            cascade_count: archive_resp.cascade_total as i64,
             dry_run: true,
             preview: Some(preview),
         };
         return Ok(response);
     }
 
-    // Execute the archive via the lifecycle handler logic.
-    // We build a synthetic archive request scoped to this material.
-    let lifecycle_req = sinex_primitives::rpc::lifecycle::LifecycleArchiveRequest {
-        before: None,
-        source: None,
-        event_ids: None,
-        limit: 10000,
-        reason: req.reason,
+    Ok(SourcesArchiveResponse {
+        material_id: req.material_id,
+        operation_id: Some(archive_resp.operation_id),
+        cascade_count: archive_resp.cascade_total as i64,
         dry_run: false,
-    };
-
-    let system_auth = crate::api::rpc_server::RpcAuthContext::system();
-    let lifecycle_result = crate::api::handlers::lifecycle::handle_lifecycle_archive(
-        pool,
-        lifecycle_req,
-        &system_auth,
-    )
-    .await;
-
-    match lifecycle_result {
-        Ok(archive_resp) => {
-            let response = SourcesArchiveResponse {
-                material_id: req.material_id,
-                operation_id: Some(archive_resp.operation_id),
-                cascade_count: archive_resp.cascade_total as i64,
-                dry_run: false,
-                preview: None,
-            };
-            Ok(response)
-        }
-        Err(error) => Err(error),
-    }
+        preview: None,
+    })
 }
 
 // ── sources.continuity ───────────────────────────────────────────

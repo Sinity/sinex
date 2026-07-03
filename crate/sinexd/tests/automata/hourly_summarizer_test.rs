@@ -98,6 +98,10 @@ async fn hour_boundary_closes_summary_and_seeds_next_hour() -> TestResult<()> {
         output.source_event_ids,
         vec![first_ctx.trigger_event_id.as_uuid().to_owned()]
     );
+    assert_eq!(
+        output.ts_orig, first_end,
+        "hourly summaries should timestamp the latest included window, not the hour boundary"
+    );
 
     assert_eq!(state.window_count, 1);
     assert_eq!(state.event_count, 1);
@@ -197,6 +201,10 @@ async fn hourly_summary_aggregates_focus_time_and_top_sources() -> TestResult<()
         Some("shell.kitty")
     );
     assert_eq!(output.payload.primary_source, ActivitySourceKind::Terminal);
+    assert_eq!(
+        output.ts_orig, second_end,
+        "hourly summaries should not use the following hour boundary as ts_orig"
+    );
     Ok(())
 }
 
@@ -259,6 +267,10 @@ async fn timer_flush_emits_trailing_bucket_without_next_bucket_event() -> TestRe
     assert_eq!(output.payload.window_count, 1);
     assert_eq!(output.payload.event_count, 5);
     assert_eq!(output.payload.duration_secs, 1800);
+    assert_eq!(
+        output.ts_orig, window_end,
+        "timer-flushed hourly summaries keep the latest input timestamp"
+    );
 
     // After emit, the state is reset — flush_due is false again (no double-emit).
     assert!(

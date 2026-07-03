@@ -663,6 +663,7 @@ SQL
                 build_stage_metrics="$build_state_dir/xtask-build-stages.json"
                 build_rebuild_trigger="$build_state_dir/xtask-build-rebuild-trigger.json"
                 build_postgres_owned_marker="$build_state_dir/xtask-bootstrap-postgres-owned"
+                schema_bootstrap_lock_file="$build_state_dir/xtask-sqlx-bootstrap.lock"
                 wrapper_event_log="$build_state_dir/xtask-wrapper-events.jsonl"
                 force_rebuild="''${SINEX_XTASK_FORCE_REBUILD:-0}"
 
@@ -1159,6 +1160,29 @@ SQL
                   [ "$subcommand" = "vm" ]
                 }
 
+                _sinex_xtask_is_launcher_only_background_request() {
+                  local arg saw_bg saw_fg
+
+                  if [ -n "''${XTASK_BG_JOB_ID:-}" ] || [ -n "''${XTASK_BG_INVOCATION_ID:-}" ]; then
+                    return 1
+                  fi
+
+                  saw_bg=0
+                  saw_fg=0
+                  for arg in "$@"; do
+                    case "$arg" in
+                      --bg)
+                        saw_bg=1
+                        ;;
+                      --fg)
+                        saw_fg=1
+                        ;;
+                    esac
+                  done
+
+                  [ "$saw_bg" = 1 ] && [ "$saw_fg" != 1 ]
+                }
+
                 _sinex_xtask_changed_strict_has_no_rust_delta() {
                   local command_name seen_command base_ref next_arg merge_base changed_files
 
@@ -1259,6 +1283,9 @@ SQL
                 _sinex_xtask_requires_sqlx_database() {
                   local command_name
                   if _sinex_xtask_is_help_request "$@"; then
+                    return 1
+                  fi
+                  if _sinex_xtask_is_launcher_only_background_request "$@"; then
                     return 1
                   fi
                   if _sinex_xtask_is_dependency_bootstrap_subcommand "$@"; then
@@ -1441,7 +1468,7 @@ SQL
                   printf '%s/bin/schema-apply-bootstrap\n' "$bootstrap_out"
                 }
 
-                _sinex_xtask_ensure_sqlx_database() {
+                _sinex_xtask_ensure_sqlx_database_unlocked() {
                   local pgdata pgrun pglog pgport runtime_conf include_line dev_user schema_apply_bootstrap_bin
 
                   pgdata="$SINEX_DEV_STATE_DIR/data/postgres"
@@ -1516,6 +1543,21 @@ SQL
                   export PGHOST="$pgrun"
                   export PGPORT="$pgport"
                   export DATABASE_URL="postgresql:///sinex_dev?host=$pgrun&user=postgres"
+                }
+
+                _sinex_xtask_ensure_sqlx_database() {
+                  local ensure_rc
+
+                  mkdir -p "$build_state_dir"
+                  exec 9>"$schema_bootstrap_lock_file"
+                  ${pkgs.util-linux}/bin/flock 9
+
+                  ensure_rc=0
+                  _sinex_xtask_ensure_sqlx_database_unlocked || ensure_rc=$?
+
+                  ${pkgs.util-linux}/bin/flock -u 9 >/dev/null 2>&1 || true
+                  exec 9>&-
+                  return "$ensure_rc"
                 }
 
                 cd "$root_dir"

@@ -312,9 +312,10 @@ let
     Nice = resources.nice;
     TimeoutStopSec = resources.shutdownTimeoutSec;
     # Single-daemon sinexd hosts every automaton + source binding;
-    # DB pool warm-up + per-binding init can exceed the 30s default before
-    # the supervisor calls sd_notify(READY=1).
-    TimeoutStartSec = 600;
+    # DB pool warm-up, first-run schema convergence, and production backfills
+    # can exceed the systemd default before the supervisor calls
+    # sd_notify(READY=1).
+    TimeoutStartSec = resources.startupTimeoutSec;
   } // optionalAttrs (resources.memoryMax != null) {
     MemoryMax = resources.memoryMax;
   } // optionalAttrs (resources.cpuQuota != null) {
@@ -661,7 +662,7 @@ let
             // optionalAttrs ((runtimeOverlay.serviceConfig or { }) != { } && coreCfg.api.resources.memoryMax == null) runtimeOverlay.serviceConfig
           );
         path = optionals (cfg.storage.blob.enable && cfg.storage.blob.legacyAnnexData) [ pkgs.git pkgs.git-annex ]
-          ++ (runtimeOverlay.path or [ ]);
+        ++ (runtimeOverlay.path or [ ]);
       };
     }
     // optionalAttrs tlsAutoGenEnabled {
@@ -784,7 +785,7 @@ let
       mkSourceDriverAdapterType = group:
         let shell = toLower (builtins.head group.sources).shell;
         in if elem shell [ "atuin" "fish" ] then "SqliteRowAdapter"
-           else "AppendOnlyFileAdapter";
+        else "AppendOnlyFileAdapter";
       sqliteHistoryPaths =
         unique (
           map (source: source.path)
@@ -966,10 +967,11 @@ let
           "user-runtime-dir@${toString targetUid}.service"
         ];
       sessionEnv =
-        optionalAttrs (sat.session.runtimeDir != null) {
-          SINEX_HYPRLAND_RUNTIME_DIR = sat.session.runtimeDir;
-          XDG_RUNTIME_DIR = sat.session.runtimeDir;
-        }
+        optionalAttrs (sat.session.runtimeDir != null)
+          {
+            SINEX_HYPRLAND_RUNTIME_DIR = sat.session.runtimeDir;
+            XDG_RUNTIME_DIR = sat.session.runtimeDir;
+          }
         // optionalAttrs (sat.session.waylandDisplay != null) {
           WAYLAND_DISPLAY = sat.session.waylandDisplay;
         }
@@ -1292,14 +1294,11 @@ let
   mkBrowserGlue =
     let
       sat = sourceCfg.browser;
-      instances = resolveSourceInstances "browser.history" sat.instances;
       resources = resolveSourceResources "browser.history" sat.resources;
       # Post-Wave-B fold (#1081): browser.history uses
       # ChainedAdapter<SqliteRowAdapter, AppendOnlyFileAdapter>. The
       # ChainedConfig shape is `{primary, secondary, interleaved}` where
       # primary is SqliteRowConfig and secondary is AppendOnlyFileConfig.
-      primarySqliteSource =
-        if sat.sqliteSources != [ ] then builtins.head sat.sqliteSources else null;
       browserSqliteAdapterConfig = source:
         let
           chromiumQuery = ''
@@ -1328,6 +1327,56 @@ let
         };
       secondaryDumpPath =
         if sat.dumpSources != [ ] then (builtins.head sat.dumpSources).path or "" else "";
+      ownsSharedDump = idx: secondaryDumpPath != "" && idx == 1;
+      browserBindingForSqlite = idx: source:
+        let
+          sharedDump = ownsSharedDump idx;
+          runtimeConfig = {
+            primary = browserSqliteAdapterConfig source;
+            secondary = { path = if sharedDump then secondaryDumpPath else ""; };
+          } // optionalAttrs sharedDump {
+            checkpoint_identity = "browser.history";
+            control_identity = "browser.history";
+          };
+        in
+        nameValuePair "browser.history.sqlite-${toString idx}" {
+          sourceId = "browser.history";
+          enable = sat.enable;
+          description = "Browser history ${source.browser or "sqlite"} (${source.path})";
+          adapterType = "ChainedAdapter";
+          adapterConfig = runtimeConfig;
+          # Each browser SQLite file is a cursor-owned input. Extra
+          # instances over the same adapter config would duplicate work,
+          # not parallelize distinct profiles.
+          instances = 1;
+          inherit resources;
+          catalogMetadata = catalogMetadataFor "browser.history";
+          extraArgs = sat.extraArgs;
+          extraEnv = { RUST_LOG = runtimeCfg.defaults.logLevel; } // sat.env;
+          serviceConfigOverrides = browserServiceConfigOverrides;
+        };
+      dumpOnlyBinding =
+        optionalAttrs (sat.sqliteSources == [ ] && secondaryDumpPath != "") {
+          "browser.history.dump-1" = {
+            sourceId = "browser.history";
+            enable = sat.enable;
+            description = "Browser history dump (${secondaryDumpPath})";
+            adapterType = "ChainedAdapter";
+            adapterConfig = {
+              primary = browserSqliteAdapterConfig null;
+              secondary = { path = secondaryDumpPath; };
+              checkpoint_identity = "browser.history";
+              control_identity = "browser.history";
+            };
+            # The shared dump has one stable cursor.
+            instances = 1;
+            inherit resources;
+            catalogMetadata = catalogMetadataFor "browser.history";
+            extraArgs = sat.extraArgs;
+            extraEnv = { RUST_LOG = runtimeCfg.defaults.logLevel; } // sat.env;
+            serviceConfigOverrides = browserServiceConfigOverrides;
+          };
+        };
       sqlitePaths = unique (map (source: source.path) sat.sqliteSources);
       sqliteDirs = unique (map builtins.dirOf sqlitePaths);
       accessWritePaths =
@@ -1418,32 +1467,9 @@ let
       };
     in
     {
-      bindings = {
-        "browser.history" = {
-          enable = sat.enable;
-          description = "Browser history (hosted source binding)";
-          adapterType = "ChainedAdapter";
-          # ChainedConfig: primary=SqliteRowConfig, secondary=AppendOnlyFileConfig.
-          # qutebrowser's history.sqlite is in WAL mode with a live writer:
-          #   - immutable=true (default) returns SQLITE_CANTOPEN (live writer
-          #     holds exclusive lock)
-          #   - immutable=false + read_only=true (default) opens the DB but
-          #     query prep fails with "attempt to write a readonly database"
-          #     when SQLite needs to journal/recover for the connection
-          # Setting read_only=false lets SQLite manage WAL recovery for its
-          # own connection without touching qutebrowser's data. We only ever
-          # SELECT — no INSERT/UPDATE/DELETE.
-          adapterConfig = {
-            primary = browserSqliteAdapterConfig primarySqliteSource;
-            secondary = { path = secondaryDumpPath; };
-          };
-          inherit instances resources;
-          catalogMetadata = catalogMetadataFor "browser.history";
-          extraArgs = sat.extraArgs;
-          extraEnv = { RUST_LOG = runtimeCfg.defaults.logLevel; } // sat.env;
-          serviceConfigOverrides = browserServiceConfigOverrides;
-        };
-      };
+      bindings =
+        listToAttrs (imap1 browserBindingForSqlite sat.sqliteSources)
+        // dumpOnlyBinding;
       inherit supportUnits;
       overlay = {
         protectHome = "read-only";
@@ -1534,7 +1560,7 @@ let
       };
     in
     # system.dbus is hosted in-process since #1235 wired `RealDbusBackend`
-    # into `DbusStreamAdapter::open` (zbus 5.x).
+      # into `DbusStreamAdapter::open` (zbus 5.x).
     {
       bindings = {
         "system.journald" = mkSystemBinding "system.journald" "systemd journal (hosted source binding)";
@@ -1761,6 +1787,53 @@ let
     if sourceRuntimeEnabled && (sourceCfg.media.screen.enable || sourceCfg.media.audio.enable)
     then mkMediaGlue
     else { bindings = { }; overlay = { }; };
+  mkStaticImportGlue =
+    let
+      mkBinding = name: sat:
+        let
+          sourceId = if sat.sourceId != null then sat.sourceId else name;
+          adapterConfig =
+            { path = sat.path; }
+            // optionalAttrs (sat.sourceIdentifier != null) {
+              source_identifier = sat.sourceIdentifier;
+            }
+            // optionalAttrs (sat.continuousPollIntervalSec != null) {
+              continuous_poll_interval_secs = sat.continuousPollIntervalSec;
+            };
+        in
+        {
+          name = sourceId;
+          value = {
+            enable = sat.enable;
+            description = "Static import source ${sourceId}";
+            adapterType = null;
+            inherit adapterConfig;
+            instances = resolveSourceInstances sourceId sat.instances;
+            resources = resolveSourceResources sourceId sat.resources;
+            catalogMetadata = catalogMetadataFor sourceId;
+            extraArgs = sat.extraArgs;
+            extraEnv = { RUST_LOG = runtimeCfg.defaults.logLevel; } // sat.env;
+            serviceConfigOverrides = { };
+          };
+        };
+      bindings = listToAttrs (mapAttrsToList mkBinding sourceCfg.staticImports);
+      sourceIds = mapAttrsToList
+        (
+          name: sat: if sat.sourceId != null then sat.sourceId else name
+        )
+        sourceCfg.staticImports;
+    in
+    {
+      inherit bindings;
+      overlay = {
+        path = optionals (any (sourceId: sourceId == "git-commit-history") sourceIds) [
+          pkgs.git
+        ];
+      };
+    };
+  staticImportGlue =
+    if sourceRuntimeEnabled && sourceCfg.staticImports != { } then mkStaticImportGlue
+    else { bindings = { }; overlay = { }; };
   terminalGlue =
     if sourceRuntimeEnabled && sourceCfg.terminal.enable then mkTerminalGlue
     else emptyGlue;
@@ -1784,7 +1857,8 @@ let
     // browserGlue.bindings
     // desktopGlue.bindings
     // systemGlue.bindings
-    // mediaGlue.bindings;
+    // mediaGlue.bindings
+    // staticImportGlue.bindings;
 
   # Support units (ACL/env bridges) that generate their own systemd services.
   runtimeSupportUnits =
@@ -1805,6 +1879,7 @@ let
     desktopGlue.overlay
     systemGlue.overlay
     mediaGlue.overlay
+    staticImportGlue.overlay
   ];
   collectList = field: concatMap (o: o.${field} or [ ]) glueOverlays;
   runtimeOverlay = {
@@ -1831,6 +1906,7 @@ let
         (id:
           let
             binding = allDomainBindings.${id} or { };
+            sourceId = binding.sourceId or id;
             enable = binding.enable or false;
             gated = binding.gated or false;
             instances = binding.instances or 1;
@@ -1842,7 +1918,7 @@ let
           if enable && !gated then
             map
               (idx: {
-                source_id = id;
+                source_id = sourceId;
                 instance_idx = idx;
                 service_name = "source-driver-${id}-${toString idx}";
                 runtime_config = runtimeConfig;
@@ -1861,11 +1937,12 @@ let
         (id:
           let
             binding = allDomainBindings.${id} or { };
+            sourceId = binding.sourceId or id;
             enable = binding.enable or false;
             gated = binding.gated or false;
             instances = binding.instances or 1;
           in
-          if enable && !gated then map (_: id) (range 1 instances) else [ ]
+          if enable && !gated then map (_: sourceId) (range 1 instances) else [ ]
         )
         (attrNames allDomainBindings);
 
@@ -1873,9 +1950,10 @@ let
 
   sourceBindingsManifestFile =
     if activeManifestBindings == [ ] then null
-    else pkgs.writeText "sinex-source-bindings.json" (
-      builtins.toJSON { bindings = activeManifestBindings; }
-    );
+    else
+      pkgs.writeText "sinex-source-bindings.json" (
+        builtins.toJSON { bindings = activeManifestBindings; }
+      );
 
   documentScanService =
     if !(sourceRuntimeEnabled && sourceCfg.document.enable) then { units = { }; supportUnits = { }; } else mkDocumentUnits;
@@ -1906,6 +1984,12 @@ in
     internal = true;
     description = "Systemd units generated by sources.nix (internal, breaks cycle).";
   };
+  options.sinex._sourceBindingsManifest = mkOption {
+    type = with types; listOf attrs;
+    default = [ ];
+    internal = true;
+    description = "Source-binding manifest rows generated by sources.nix.";
+  };
 
   config = mkMerge [
     (mkIf sinexEnabled {
@@ -1930,6 +2014,9 @@ in
         })
       ];
     })
-    { sinex._generatedUnits = generatedUnits; }
+    {
+      sinex._generatedUnits = generatedUnits;
+      sinex._sourceBindingsManifest = activeManifestBindings;
+    }
   ];
 }

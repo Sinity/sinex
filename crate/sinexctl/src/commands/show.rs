@@ -3,8 +3,10 @@ use std::str::FromStr as _;
 use clap::Args;
 use serde_json::{Value, json};
 use sinex_primitives::public_ref::{PublicSinexRef, ResolvedObjectView};
+use sinex_primitives::query::{LineageDirection, LineageQuery, QueryResultEvent};
 use sinex_primitives::rpc::method_catalog;
-use sinex_primitives::views::{SinexObjectKind, ViewEnvelope};
+use sinex_primitives::views::{EventCardView, SinexObjectKind, ViewEnvelope};
+use sinex_primitives::{Event, Id, JsonValue};
 
 use crate::Result;
 use crate::client::GatewayClient;
@@ -118,6 +120,17 @@ pub(crate) async fn resolve_ref(
                 serde_json::to_value(view)?,
             )
         }
+        SinexObjectKind::Event => {
+            let event_id = Id::<Event<JsonValue>>::from_str(&object_ref.id)?;
+            let lineage = client
+                .trace_lineage(LineageQuery {
+                    event_id,
+                    direction: LineageDirection::Ancestors,
+                    max_depth: 1,
+                })
+                .await?;
+            resolved_event_card_view(object_ref, lineage.root)?
+        }
         _ => ResolvedObjectView::unsupported(object_ref),
     };
 
@@ -126,6 +139,22 @@ pub(crate) async fn resolve_ref(
             "ref": public_ref_text
         })),
     )
+}
+
+fn resolved_event_card_view(
+    object_ref: sinex_primitives::views::SinexObjectRef,
+    event: Event<JsonValue>,
+) -> Result<ResolvedObjectView> {
+    let card = EventCardView::from_query_event(&QueryResultEvent {
+        event,
+        relevance_score: None,
+        snippet: None,
+    });
+    Ok(ResolvedObjectView::resolved(
+        object_ref,
+        "sinex.events.lineage",
+        serde_json::to_value(card)?,
+    ))
 }
 
 fn resolve_local_catalog_ref(

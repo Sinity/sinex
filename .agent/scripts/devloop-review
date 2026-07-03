@@ -112,7 +112,6 @@ else
     "$current/QUEUE.md"
     "$current/RUNBOOK.md"
     "$current/OPERATING-LOG.md"
-    "$current/DEMO-RADAR.md"
     "$current/EVENTS.jsonl"
     "$current/PHASES.jsonl"
     "$current/MANIFEST.md"
@@ -140,7 +139,6 @@ else
     devloop-checkpoint
     devloop-log
     devloop-focus
-    devloop-demo
     devloop-baseline
     devloop-wait
     devloop-ahead
@@ -278,18 +276,6 @@ fi
 
 echo
 echo "== demo radar =="
-if [[ -f "$current/DEMO-RADAR.md" ]]; then
-  last_demo="$(awk '/^## [0-9]{4}-[0-9]{2}-[0-9]{2}T/ {start=NR} {lines[NR]=$0} END {if (start) for (i=start;i<=NR;i++) print lines[i]}' "$current/DEMO-RADAR.md")"
-  if [[ -z "$last_demo" ]]; then
-    warn "DEMO-RADAR.md exists but has no timestamped entries"
-  elif rg -q '\bTODO(:|$)' <<<"$last_demo"; then
-    warn "last demo-radar entry still has TODO fields"
-  else
-    ok "last demo-radar entry has no TODO fields"
-  fi
-else
-  warn "missing $current/DEMO-RADAR.md; run .agent/scripts/devloop-demo"
-fi
 
 echo
 echo "== active-loop freshness =="
@@ -517,7 +503,7 @@ root_sprawl="$(
   else
     allowed_root_files=(
       README.md INDEX.md ACTIVE-LOOP.md QUEUE.md RUNBOOK.md OPERATING-LOG.md
-      DEMO-RADAR.md EVENTS.jsonl PHASES.jsonl MANIFEST.md
+      EVENTS.jsonl PHASES.jsonl MANIFEST.md
       ADVERSARIAL-REVIEW.md PROCESS.md TACTICS.md VELOCITY.md SELF-PROMPTS.md
     )
   fi
@@ -770,7 +756,6 @@ fi
 for path in \
   "$current/ACTIVE-LOOP.md" \
   "$current/OPERATING-LOG.md" \
-  "$current/DEMO-RADAR.md" \
   "$current/EVENTS.jsonl" \
   "$current/PHASES.jsonl" \
   "$current/MANIFEST.md" \
@@ -787,7 +772,6 @@ done
 for path in \
   "$current/ACTIVE-LOOP.md" \
   "$current/OPERATING-LOG.md" \
-  "$current/DEMO-RADAR.md" \
   "$current/EVENTS.jsonl" \
   "$current/PHASES.jsonl" \
   "$current/MANIFEST.md"; do

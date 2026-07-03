@@ -90,6 +90,7 @@ in
     resourceModule =
       { defaultMemory
       , defaultCpu
+      , defaultStartupSec ? 7200
       , defaultShutdownSec ? 90
       , defaultOpenFiles ? null
       , defaultCpuWeight ? 10
@@ -140,6 +141,11 @@ in
             type = positive;
             default = defaultShutdownSec;
             description = "systemd TimeoutStopSec in seconds.";
+          };
+          startupTimeoutSec = mkOption {
+            type = positive;
+            default = defaultStartupSec;
+            description = "systemd TimeoutStartSec in seconds.";
           };
           openFilesLimit = mkOption {
             type = nullOr positive;
@@ -198,6 +204,51 @@ in
           type = enum [ "QutebrowserNative" "ChromiumHistory" ];
           description = "Typed browser history SQLite format.";
         };
+      };
+    };
+    staticImportSourceModule = submodule {
+      options = {
+        enable = mkOption {
+          type = bool;
+          default = true;
+          description = "Enable this static-file source binding.";
+        };
+        sourceId = mkOption {
+          type = nullOr str;
+          default = null;
+          description = ''
+            Source contract id. When null, the attribute name under
+            <option>services.sinex.sources.staticImports</option> is used.
+          '';
+        };
+        path = mkOption {
+          type = str;
+          description = "Path handed to the source's StaticFileAdapter.";
+        };
+        sourceIdentifier = mkOption {
+          type = nullOr str;
+          default = null;
+          description = ''
+            Optional source_identifier override included in the adapter config
+            for parsers that need the material source id to be explicit.
+          '';
+        };
+        continuousPollIntervalSec = mkOption {
+          type = nullOr positive;
+          default = null;
+          description = ''
+            Optional poll interval for static imports that can be refreshed by
+            the hosted source driver.
+          '';
+        };
+        instances = mkOption { type = nullOr positive; default = null; description = "Instance override."; };
+        resources = mkOption {
+          type = nullOr (resourceModule { defaultMemory = "512M"; defaultCpu = "25%"; });
+          default = null;
+          description = "Resource override.";
+        };
+        env = mkOption { type = envModule; default = { }; description = "Extra environment variables."; };
+        extraArgs = mkOption { type = strList; default = [ ]; description = "Extra CLI args."; };
       };
     };
   in
@@ -1809,6 +1860,29 @@ in
         default = { };
         description = "Managed document snapshot ingestion.";
       };
+
+      staticImports = mkOption {
+        type = attrsOf staticImportSourceModule;
+        default = { };
+        example = literalExpression ''
+          {
+            git-commit-history = {
+              path = "/realm/project/sinex";
+              continuousPollIntervalSec = 30;
+            };
+            raindrop-bookmarks = {
+              path = "/realm/data/exports/raindrop/processed/bookmarks.csv";
+              sourceIdentifier = "raindrop-bookmarks";
+            };
+          }
+        '';
+        description = ''
+          Static-file/parser source bindings hosted by the collapsed sinexd
+          source-driver runtime. This is the deployment activation surface for
+          finished on-demand parsers such as git-commit-history and
+          raindrop-bookmarks.
+        '';
+      };
     };
 
 
@@ -2999,6 +3073,24 @@ in
             format = "ChromiumHistory";
           }
         ];
+      })
+
+      (mkIf cfg.enable {
+        services.sinex.sources.staticImports = mkDefault {
+          git-commit-history = {
+            path = "/realm/project/sinex";
+            continuousPollIntervalSec = 30;
+            env = {
+              GIT_CONFIG_COUNT = "1";
+              GIT_CONFIG_KEY_0 = "safe.directory";
+              GIT_CONFIG_VALUE_0 = "/realm/project/sinex";
+            };
+          };
+          raindrop-bookmarks = {
+            path = "/realm/data/exports/raindrop/processed/bookmarks.csv";
+            sourceIdentifier = "raindrop-bookmarks";
+          };
+        };
       })
 
       (mkIf (cfg.enable || targetUser != null) {

@@ -203,13 +203,23 @@ pub struct EventEngineConfig {
     pub orphan_threshold_secs: u64,
 
     /// Disk usage threshold percentage at which the assembler starts refusing new
-    /// assemblies to prevent filling the filesystem.
+    /// assemblies when the absolute free-space floor is also crossed. Percentage
+    /// alone is not enough on large filesystems: 91% used with tens of GiB free
+    /// should not reject tiny material frames.
     ///
     /// Set via: `SINEX_EVENT_ENGINE_DISK_THRESHOLD_PERCENT=90`
     #[serde(default = "default_disk_threshold_percent")]
     #[builder(default = default_disk_threshold_percent())]
     #[validate(range(min = 50, max = 99))]
     pub disk_threshold_percent: u8,
+
+    /// Minimum available bytes below which the assembler refuses new assemblies
+    /// once `disk_threshold_percent` has also been reached.
+    ///
+    /// Set via: `SINEX_EVENT_ENGINE_DISK_MIN_AVAILABLE_BYTES=4294967296`
+    #[serde(default = "default_disk_min_available_bytes")]
+    #[builder(default = default_disk_min_available_bytes())]
+    pub disk_min_available_bytes: Bytes,
 
     /// Maximum total bytes a single material assembly may accumulate before it is
     /// rejected and routed to the DLQ.
@@ -761,6 +771,7 @@ impl Default for EventEngineConfig {
             slice_timeout_secs: default_slice_timeout_secs(),
             orphan_threshold_secs: default_orphan_threshold_secs(),
             disk_threshold_percent: default_disk_threshold_percent(),
+            disk_min_available_bytes: default_disk_min_available_bytes(),
             max_material_size_bytes: default_max_material_size_bytes(),
             material_staged_sync_bytes: default_material_staged_sync_bytes(),
             material_staged_sync_interval_ms: default_material_staged_sync_interval_ms(),
@@ -1095,6 +1106,23 @@ fn default_disk_threshold_percent() -> u8 {
                 "Invalid env override for disk threshold percent; using default"
             );
             90
+        }
+    }
+}
+
+fn default_disk_min_available_bytes() -> Bytes {
+    match shared_env::strict_parsed("SINEX_EVENT_ENGINE_DISK_MIN_AVAILABLE_BYTES") {
+        Ok(Some(value)) => Bytes::from_bytes(value),
+        Ok(None) => Bytes::from_gibibytes(4),
+        Err(error) => {
+            error!(
+                target: "sinex_metrics",
+                metric = "event_engine.config_env_parse_errors_total",
+                env = "SINEX_EVENT_ENGINE_DISK_MIN_AVAILABLE_BYTES",
+                %error,
+                "Invalid env override for disk minimum available bytes; using default"
+            );
+            Bytes::from_gibibytes(4)
         }
     }
 }

@@ -8,11 +8,13 @@ Follow it before capability work. If deviating, write the reason in
 
 Before starting or resuming a capability slice:
 
-1. Run `.agent/scripts/devloop-status`.
+1. Run `.agent/scripts/devloop-status` (includes the beads summary).
 2. Run `.agent/scripts/devloop-review`.
 3. Read `.agent/conductor-devloop/ACTIVE-LOOP.md`.
 4. Read `.agent/conductor-devloop/QUEUE.md`.
-5. Confirm the current focus mode, trigger, and any queued sequencing directive.
+5. Run `bd ready` and `bd list --status=in_progress`; if a claimed bead exists,
+   it is the presumptive current slice. Confirm the current focus mode,
+   trigger, and any queued sequencing directive.
 6. If review warns, either fix the warning or record why it is consciously
    accepted for this slice.
 
@@ -71,8 +73,11 @@ This appends a timestamped transition to `ACTIVE-LOOP.md` and
 ## One-Loop Protocol
 
 1. **Direction**
-   - Select one capability slice.
-   - Brainstorm candidate demos or demo improvements before narrowing.
+   - Select one capability slice. Start from `bd ready` (highest-priority
+     unblocked beads) plus live evidence; a slice that has no bead gets one
+     (`bd create`) before construction starts.
+   - Claim the bead: `bd update <id> --claim`. Name the bead id in the slice
+     contract.
    - State out-of-scope items.
    - Write the slice contract before editing:
      - demo value: what visible operator/agent capability improves;
@@ -83,8 +88,8 @@ This appends a timestamped transition to `ACTIVE-LOOP.md` and
      - non-goals: tempting adjacent work excluded from this loop;
      - first action: the next command/file read/edit, not a vague intention.
    - Append or update `OPERATING-LOG.md`.
-   - Run `devloop-demo` when the selected slice should create, refresh, retire,
-     or caveat an artifact.
+   - If the slice creates, refreshes, retires, or caveats a demo artifact,
+     update the matching demo bead (`bd list -l demo`).
    - If the operator gives a sequencing directive that should happen after the
      selected slice, record it in `QUEUE.md` instead of relying on chat memory.
 
@@ -110,8 +115,9 @@ This appends a timestamped transition to `ACTIVE-LOOP.md` and
      `/realm/inbox/project-devloops`; those shelves hold archived/downloaded
      inputs after the 2026-06-30 inbox reorg.
    - Include limits/caveats and rerun/inspection instructions.
-   - Use `.agent/scripts/devloop-demo` to record candidates considered,
-     selected/improved artifact, and next demo question.
+   - Update the demo bead's status/notes with the artifact path and proof
+     state; new demo candidates become demo-labeled beads under the portfolio
+     epic with claim/instrument/falsifier/prereq in the design field.
 
 6. **Velocity**
    - Record speedup, drag, next acceleration, and risk.
@@ -128,7 +134,7 @@ This appends a timestamped transition to `ACTIVE-LOOP.md` and
    - Prefer one concrete scaffold/tooling/observability change over a broad
      apology.
    - Ask whether the process failed to generate or update demo artifacts soon
-     enough; if yes, run `devloop-demo` and improve the tripwire.
+     enough; if yes, update the demo portfolio beads and improve the tripwire.
 
 ## Heavy Job Protocol
 
@@ -255,11 +261,17 @@ Before ending a turn:
 
 1. `OPERATING-LOG.md` has a filled entry for the work just done.
 2. `ACTIVE-LOOP.md` names the next focus and next action.
-3. `QUEUE.md` has no satisfied queued directive left unpromoted or unexplained.
-4. `.agent/scripts/devloop-sync` has refreshed derived conductor files when
+3. Beads state matches reality: the slice's bead is closed
+   (`bd close <id> --reason "..."` citing the proof) or still claimed with the
+   blocker recorded; discovered follow-ups exist as beads
+   (`--deps discovered-from:<id>`), not as prose bullets; durable insights are
+   in `bd remember`.
+4. `QUEUE.md` has no satisfied queued directive left unpromoted or unexplained,
+   and every live queued directive has its mirror bead.
+5. `.agent/scripts/devloop-sync` has refreshed derived conductor files when
    packet state or demo manifests changed.
-5. `devloop-review` warnings are either fixed or explicitly accepted.
-6. `DEMO-RADAR.md` is current for substantial work, or the log says why no demo
-   artifact was implicated.
-7. Any running job needed for the request is stopped, completed, or named with
+6. `devloop-review` warnings are either fixed or explicitly accepted.
+7. Demo beads touched by the work are updated (artifact path, proof state,
+   caveats), or the log says why no demo was implicated.
+8. Any running job needed for the request is stopped, completed, or named with
    job id and next poll command.

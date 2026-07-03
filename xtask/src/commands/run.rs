@@ -11,7 +11,7 @@
 use color_eyre::eyre::{Result, WrapErr, bail, eyre};
 use console::style;
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
 use tokio::io::{AsyncBufReadExt, BufReader};
@@ -174,6 +174,53 @@ fn source_binding_runtime_args(binding: &DevSourceBinding, run_identity: &str) -
     ];
     append_source_binding_args(&mut args, binding.clone());
     args
+}
+
+fn source_binding_service_from_cmdline_args(args: &[String]) -> Option<String> {
+    if !args.iter().any(|arg| arg == "scan-source-driver") {
+        return None;
+    }
+
+    args.windows(2)
+        .find(|window| window[0] == "--service-name")
+        .map(|window| window[1].clone())
+}
+
+fn live_source_binding_services() -> Result<HashSet<String>> {
+    let mut services = HashSet::new();
+    let proc_dir = match std::fs::read_dir("/proc") {
+        Ok(proc_dir) => proc_dir,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(services),
+        Err(error) => return Err(error).wrap_err("failed to read /proc for source bindings"),
+    };
+
+    for entry in proc_dir.flatten() {
+        let file_name = entry.file_name();
+        if !file_name
+            .to_string_lossy()
+            .bytes()
+            .all(|byte| byte.is_ascii_digit())
+        {
+            continue;
+        }
+        let cmdline_path = entry.path().join("cmdline");
+        let Ok(bytes) = std::fs::read(cmdline_path) else {
+            continue;
+        };
+        if bytes.is_empty() {
+            continue;
+        }
+        let args: Vec<String> = bytes
+            .split(|byte| *byte == 0)
+            .filter(|part| !part.is_empty())
+            .map(|part| String::from_utf8_lossy(part).into_owned())
+            .collect();
+        if let Some(service) = source_binding_service_from_cmdline_args(&args) {
+            services.insert(service);
+        }
+    }
+
+    Ok(services)
 }
 
 fn append_source_binding_args(args: &mut Vec<String>, binding: DevSourceBinding) {
@@ -609,6 +656,12 @@ pub enum RunSubcommand {
         /// Instance ID prefix
         #[arg(long)]
         instance_id: Option<String>,
+        /// Start only source bindings that are not already running
+        #[arg(long)]
+        reconcile: bool,
+        /// Limit the all-sources operation to one manifest service name
+        #[arg(long)]
+        service_name: Option<String>,
     },
     /// Run all automatons
     AllAutomatons {
@@ -770,9 +823,18 @@ impl XtaskCommand for RunCommand {
                 self.run_bundle(CORE_TARGETS, instance_id.clone(), ctx)
                     .await
             }
-            RunSubcommand::AllSources { instance_id } => {
-                self.run_source_bindings_bundle(instance_id.clone(), ctx)
-                    .await
+            RunSubcommand::AllSources {
+                instance_id,
+                reconcile,
+                service_name,
+            } => {
+                self.run_source_bindings_bundle(
+                    instance_id.clone(),
+                    *reconcile,
+                    service_name.as_deref(),
+                    ctx,
+                )
+                .await
             }
             RunSubcommand::AllAutomatons { instance_id } => {
                 self.run_bundle(AUTOMATON_TARGETS, instance_id.clone(), ctx)
@@ -1054,6 +1116,8 @@ impl RunCommand {
     async fn run_source_bindings_bundle(
         &self,
         instance_prefix: Option<String>,
+        reconcile: bool,
+        selected_service_name: Option<&str>,
         ctx: &CommandContext,
     ) -> Result<CommandResult> {
         let manifest = load_dev_source_bindings_manifest().ok_or_else(|| {
@@ -1065,10 +1129,39 @@ impl RunCommand {
             .filter(|binding| is_default_excluded_all_source_binding(&binding.source_id))
             .map(|binding| binding.source_id.clone())
             .collect();
-        let bindings = default_all_source_bindings_from_manifest(manifest);
+        let mut bindings = default_all_source_bindings_from_manifest(manifest);
+        if let Some(selected_service_name) = selected_service_name {
+            bindings.retain(|binding| {
+                default_source_binding_service_name(binding) == selected_service_name
+            });
+            if bindings.is_empty() {
+                bail!("no runnable dev source binding named {selected_service_name:?}");
+            }
+        }
         if bindings.is_empty() {
             bail!("dev source bindings manifest has no runnable bindings after default exclusions");
         }
+        let live_services = if reconcile {
+            live_source_binding_services()?
+        } else {
+            HashSet::new()
+        };
+        let already_running: Vec<String> = bindings
+            .iter()
+            .map(default_source_binding_service_name)
+            .filter(|service| live_services.contains(service))
+            .collect();
+        let runnable_bindings: Vec<DevSourceBinding> = if reconcile {
+            bindings
+                .iter()
+                .filter(|binding| {
+                    !live_services.contains(&default_source_binding_service_name(binding))
+                })
+                .cloned()
+                .collect()
+        } else {
+            bindings.clone()
+        };
 
         if !self.dry_run {
             self.ensure_ready_staged(ctx)?;
@@ -1076,14 +1169,21 @@ impl RunCommand {
 
         let runtime = self.local_runtime_coordinates()?;
         if self.dry_run {
-            let sources: Vec<&str> = bindings
+            let sources: Vec<&str> = runnable_bindings
                 .iter()
                 .map(|binding| binding.source_id.as_str())
                 .collect();
+            let service_names: Vec<String> = runnable_bindings
+                .iter()
+                .map(default_source_binding_service_name)
+                .collect();
             if ctx.is_human() {
-                println!("Would run source bindings: {sources:?}");
+                println!("Would run source bindings: {service_names:?}");
                 if !excluded.is_empty() {
                     println!("Default-excluded source bindings: {excluded:?}");
+                }
+                if !already_running.is_empty() {
+                    println!("Already-running source bindings: {already_running:?}");
                 }
                 runtime.print_human();
             }
@@ -1091,18 +1191,37 @@ impl RunCommand {
                 .with_detail("dry-run passed")
                 .with_data(serde_json::json!({
                     "sources": sources,
+                    "service_names": service_names,
+                    "already_running_service_names": already_running,
                     "excluded_sources": excluded,
+                    "reconcile": reconcile,
                     "runtime": runtime,
                 })));
         }
 
         self.print_local_runtime_coordinates(ctx)?;
 
+        if reconcile && runnable_bindings.is_empty() {
+            return Ok(CommandResult::success()
+                .with_message("All selected source bindings are already running")
+                .with_data(serde_json::json!({
+                    "started_sources": [],
+                    "started_service_names": [],
+                    "already_running_service_names": already_running,
+                    "excluded_sources": excluded,
+                    "job_ids": [],
+                    "reconcile": reconcile,
+                    "runtime": runtime,
+                })));
+        }
+
         if ctx.is_background() {
             return self
                 .run_source_bindings_background(
-                    &bindings,
+                    &runnable_bindings,
                     &excluded,
+                    &already_running,
+                    reconcile,
                     instance_prefix.as_deref(),
                     runtime,
                     ctx,
@@ -1119,6 +1238,8 @@ impl RunCommand {
         &self,
         bindings: &[DevSourceBinding],
         excluded: &[String],
+        already_running: &[String],
+        reconcile: bool,
         instance_prefix: Option<&str>,
         runtime: LocalRuntimeCoordinates,
         ctx: &CommandContext,
@@ -1133,6 +1254,7 @@ impl RunCommand {
             .into_owned();
         let mut job_ids = Vec::with_capacity(bindings.len());
         let mut sources = Vec::with_capacity(bindings.len());
+        let mut service_names = Vec::with_capacity(bindings.len());
         for binding in bindings {
             let default_service_name = default_source_binding_service_name(binding);
             let run_identity = instance_prefix.map_or(default_service_name.clone(), |prefix| {
@@ -1143,6 +1265,7 @@ impl RunCommand {
                 manager.spawn_with_env_without_watchdog(&binary_command, &args, &runtime_env)?;
             job_ids.push(job.id);
             sources.push(binding.source_id.clone());
+            service_names.push(run_identity);
         }
 
         Ok(CommandResult::success()
@@ -1152,7 +1275,10 @@ impl RunCommand {
             ))
             .with_data(serde_json::json!({
                 "sources": sources,
+                "service_names": service_names,
                 "excluded_sources": excluded,
+                "already_running_service_names": already_running,
+                "reconcile": reconcile,
                 "job_ids": job_ids,
                 "runtime": runtime,
             })))

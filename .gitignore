@@ -117,3 +117,7 @@ AGENTS.md
 # sqlx offline query cache — intentionally not committed; sqlx macros compile
 # against a live database (DATABASE_URL), never an offline cache.
 .sqlx/
+
+# Beads / Dolt files (added by bd init)
+.dolt/
+.beads-credential-key
