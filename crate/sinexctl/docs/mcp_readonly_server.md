@@ -16,72 +16,72 @@ control plane and not an actuator.
 
 | Tool |
 | --- |
-| `sinex.assembly_stats` |
-| `sinex.audit_trail` |
-| `sinex.automata_status` |
-| `sinex.command_frequency` |
-| `sinex.context_pack` |
-| `sinex.coordination_instance_health` |
-| `sinex.coordination_instances` |
-| `sinex.coordination_leader` |
-| `sinex.curation_proposals` |
-| `sinex.current_device_state` |
-| `sinex.current_health` |
-| `sinex.dlq_peek` |
-| `sinex.dlq_stats` |
-| `sinex.documents_chunks` |
-| `sinex.documents_get` |
-| `sinex.documents_search` |
-| `sinex.event_engine_batch_stats` |
-| `sinex.event_engine_validation` |
-| `sinex.file_activity` |
-| `sinex.gateway_stats` |
-| `sinex.lifecycle_status` |
-| `sinex.llm_budget_report` |
-| `sinex.llm_prompts` |
-| `sinex.llm_route_explain` |
-| `sinex.metric_counters` |
-| `sinex.ops_get` |
-| `sinex.ops_list` |
-| `sinex.orient` |
-| `sinex.privacy_status` |
-| `sinex.query` |
-| `sinex.recent_activity` |
-| `sinex.relation_evidence` |
-| `sinex.replay_operations` |
-| `sinex.replay_status` |
-| `sinex.search_events` |
-| `sinex.semantic_epochs` |
-| `sinex.semantic_lane_diffs` |
-| `sinex.semantic_lane_outputs` |
-| `sinex.semantic_lanes` |
-| `sinex.shadow_consumers` |
-| `sinex.source_bindings` |
-| `sinex.source_continuity` |
-| `sinex.source_coverage` |
-| `sinex.source_drift` |
-| `sinex.source_gap_explain` |
-| `sinex.source_health` |
-| `sinex.source_identifier_continuity` |
-| `sinex.source_material` |
-| `sinex.source_materials` |
-| `sinex.source_presets` |
-| `sinex.source_readiness` |
-| `sinex.source_stats` |
-| `sinex.sources_active` |
-| `sinex.sources_registry` |
-| `sinex.sources_status` |
-| `sinex.sources_status_view` |
-| `sinex.stream_stats` |
-| `sinex.system_health` |
-| `sinex.system_ping` |
-| `sinex.system_state` |
-| `sinex.system_version` |
-| `sinex.task_state` |
-| `sinex.tasks_list` |
-| `sinex.throughput` |
-| `sinex.trace_lineage` |
-| `sinex.window_focus` |
+| `sinex_assembly_stats` |
+| `sinex_audit_trail` |
+| `sinex_automata_status` |
+| `sinex_command_frequency` |
+| `sinex_context_pack` |
+| `sinex_coordination_instance_health` |
+| `sinex_coordination_instances` |
+| `sinex_coordination_leader` |
+| `sinex_curation_proposals` |
+| `sinex_current_device_state` |
+| `sinex_current_health` |
+| `sinex_dlq_peek` |
+| `sinex_dlq_stats` |
+| `sinex_documents_chunks` |
+| `sinex_documents_get` |
+| `sinex_documents_search` |
+| `sinex_event_engine_batch_stats` |
+| `sinex_event_engine_validation` |
+| `sinex_file_activity` |
+| `sinex_gateway_stats` |
+| `sinex_lifecycle_status` |
+| `sinex_llm_budget_report` |
+| `sinex_llm_prompts` |
+| `sinex_llm_route_explain` |
+| `sinex_metric_counters` |
+| `sinex_ops_get` |
+| `sinex_ops_list` |
+| `sinex_orient` |
+| `sinex_privacy_status` |
+| `sinex_query` |
+| `sinex_recent_activity` |
+| `sinex_relation_evidence` |
+| `sinex_replay_operations` |
+| `sinex_replay_status` |
+| `sinex_search_events` |
+| `sinex_semantic_epochs` |
+| `sinex_semantic_lane_diffs` |
+| `sinex_semantic_lane_outputs` |
+| `sinex_semantic_lanes` |
+| `sinex_shadow_consumers` |
+| `sinex_source_bindings` |
+| `sinex_source_continuity` |
+| `sinex_source_coverage` |
+| `sinex_source_drift` |
+| `sinex_source_gap_explain` |
+| `sinex_source_health` |
+| `sinex_source_identifier_continuity` |
+| `sinex_source_material` |
+| `sinex_source_materials` |
+| `sinex_source_presets` |
+| `sinex_source_readiness` |
+| `sinex_source_stats` |
+| `sinex_sources_active` |
+| `sinex_sources_registry` |
+| `sinex_sources_status` |
+| `sinex_sources_status_view` |
+| `sinex_stream_stats` |
+| `sinex_system_health` |
+| `sinex_system_ping` |
+| `sinex_system_state` |
+| `sinex_system_version` |
+| `sinex_task_state` |
+| `sinex_tasks_list` |
+| `sinex_throughput` |
+| `sinex_trace_lineage` |
+| `sinex_window_focus` |
 
 ## Authority Boundary
 
@@ -123,11 +123,12 @@ the read-only MCP binary.
 
 Initial transport: stdio for local agents on the same host.
 
-First implementation pin: MCP protocol `2024-11-05`, implemented as a
+Current implementation pin: MCP protocol `2025-06-18`, implemented as a
 local JSON-RPC stdio subset in `sinex-mcp-server` without an MCP SDK
 dependency. The compatibility test lists tools, validates each tool's
-JSON schema shape, and asserts the protocol-version constant. Do not
-track protocol drafts by assumption.
+JSON schema shape, and asserts the protocol-version constant. The
+initialize handler accepts `2025-03-26` and `2024-11-05` clients as
+older stdio clients. Do not track protocol drafts by assumption.
 
 HTTP/SSE transport is a follow-up only when there is a real consumer.
 
@@ -167,7 +168,7 @@ Tool schemas are part of the public contract. Small and stable:
 
 ```json
 {
-  "name": "sinex.source_readiness",
+  "name": "sinex_source_readiness",
   "inputSchema": {
     "type": "object",
     "properties": {
