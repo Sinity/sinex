@@ -51,6 +51,13 @@ Start with these tools:
   `sinex_source_gap_explain` when a missing or stale source might change the
   answer.
 
+Query expressions support bounded event windows and explicit ordering. A common
+time-window shape is:
+
+```text
+events where ts_orig >= '2026-07-02T12:00:00Z' and ts_orig < '2026-07-02T13:00:00Z' order by ts_orig asc limit 100
+```
+
 Use returned refs and ids in follow-up calls. Prefer resolvable evidence over a
 free-text summary.
 
