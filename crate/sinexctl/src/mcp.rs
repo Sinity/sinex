@@ -63,6 +63,7 @@ use std::io::{BufRead, Write};
 pub const MCP_PROTOCOL_VERSION: &str = "2024-11-05";
 pub const MCP_IMPLEMENTATION: &str = "sinex-mcp-server";
 pub const MCP_IMPLEMENTATION_VERSION: &str = env!("CARGO_PKG_VERSION");
+const AGENT_ORIENTATION: &str = include_str!("../docs/agent_orientation.md");
 
 const FORBIDDEN_TOOL_TERMS: &[&str] = &[
     "stage",
@@ -449,6 +450,13 @@ const fn default_dlq_limit() -> usize {
 #[must_use]
 pub fn tool_catalog() -> Vec<McpCatalogEntry> {
     vec![
+        McpCatalogEntry {
+            name: "sinex.orient",
+            kind: McpSurfaceKind::Tool,
+            description: "Read-only first-contact orientation for agents using Sinex evidence tools.",
+            backing_rpc_methods: &[],
+            read_only: true,
+        },
         McpCatalogEntry {
             name: "sinex.search_events",
             kind: McpSurfaceKind::Tool,
@@ -923,6 +931,19 @@ pub fn tool_catalog() -> Vec<McpCatalogEntry> {
 #[must_use]
 pub fn tools() -> Vec<McpTool> {
     vec![
+        mcp_tool(
+            "sinex.orient",
+            json!({
+                "type": "object",
+                "properties": {
+                    "focus": {
+                        "type": "string",
+                        "description": "Optional orientation focus hint, for example overview, query, provenance, refs, or gaps."
+                    }
+                },
+                "additionalProperties": false
+            }),
+        ),
         mcp_tool(
             "sinex.search_events",
             json!({
@@ -1651,6 +1672,9 @@ async fn handle_request(client: &GatewayClient, request: JsonRpcRequest) -> Resu
 }
 
 pub async fn call_tool(client: &GatewayClient, name: &str, arguments: Value) -> Result<Value> {
+    if name == "sinex.orient" {
+        return orient(arguments);
+    }
     if let Some(result) = call_tool_events_sources(client, name, arguments.clone()).await? {
         return Ok(result);
     }
@@ -1700,6 +1724,31 @@ async fn call_tool_events_sources(
         _ => return Ok(None),
     };
     Ok(Some(result))
+}
+
+#[derive(Debug, Deserialize, Serialize)]
+struct OrientArgs {
+    focus: Option<String>,
+}
+
+fn orient(arguments: Value) -> Result<Value> {
+    let args: OrientArgs = serde_json::from_value(arguments)?;
+    let payload = json!({
+        "orientation_markdown": AGENT_ORIENTATION,
+        "recommended_first_tools": [
+            "sinex.context_pack",
+            "sinex.query",
+            "sinex.search_events",
+            "sinex.trace_lineage",
+            "sinex.source_readiness",
+            "sinex.source_continuity"
+        ],
+        "focus": args.focus,
+        "source_document": "crate/sinexctl/docs/agent_orientation.md"
+    });
+    let envelope =
+        ViewEnvelope::new("sinex.orient", payload).with_query_echo(serde_json::to_value(&args)?);
+    Ok(serde_json::to_value(envelope)?)
 }
 
 async fn query(client: &GatewayClient, arguments: Value) -> Result<Value> {

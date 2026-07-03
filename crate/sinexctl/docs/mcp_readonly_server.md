@@ -43,6 +43,7 @@ control plane and not an actuator.
 | `sinex.metric_counters` |
 | `sinex.ops_get` |
 | `sinex.ops_list` |
+| `sinex.orient` |
 | `sinex.privacy_status` |
 | `sinex.query` |
 | `sinex.recent_activity` |
@@ -91,6 +92,8 @@ instruction loops.
 
 Allowed v1 behavior:
 
+- orient cold agents to the evidence model, refs, provenance, query shape, and
+  caveat semantics from the shared agent-orientation document;
 - search events and source materials;
 - execute descriptor-backed query-unit selections over events, sources,
   debt, operations, and runtime health;
@@ -195,7 +198,8 @@ MCP changes are complete only when:
 - sensitive sample fixtures return redaction/suppression metadata
   rather than raw secret text;
 - the MCP catalog maps every tool to typed read-only RPC descriptors,
-  and tests reject untyped raw-RPC usage in the MCP module.
+  except local static orientation content, and tests reject untyped raw-RPC
+  usage in the MCP module.
 
 ## Follow-Ups
 
