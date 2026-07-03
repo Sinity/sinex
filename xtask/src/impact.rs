@@ -75,6 +75,7 @@ pub struct ImpactPlan {
     pub decisions: Vec<ImpactDecision>,
     pub accepted_risks: Vec<String>,
     pub evidence_gaps: Vec<String>,
+    pub stale_evidence: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -151,21 +152,22 @@ pub fn plan_default_test_impact_with_history_and_mode(
     mode: ImpactMode,
 ) -> Result<ImpactPlan> {
     let changed_files = affected::changed_files()?;
-    let hunks = changed_hunks()?;
+    let hunks = changed_hunks_for_files(&changed_files)?;
     let item_index = RustItemIndex::for_changed_files(&changed_files)?;
     let affected_packages = affected::affected_packages()?;
-    let impacted_tests = match history {
+    let history_evidence = match history {
         Some(history) => {
-            history.impacted_tests_for_changed_files_and_hunks(&changed_files, &hunks)?
+            history.impact_evidence_for_changed_files_and_hunks(&changed_files, &hunks)?
         }
-        None => Vec::new(),
+        None => ImpactHistoryEvidence::default(),
     };
     plan_from_changed_files_with_mode(
         changed_files,
         &hunks,
         &item_index,
         affected_packages,
-        impacted_tests,
+        history_evidence.impacted_tests,
+        history_evidence.stale_subjects,
         mode,
     )
 }
@@ -181,6 +183,7 @@ pub fn plan_from_changed_files(
         &RustItemIndex::default(),
         affected_packages,
         impacted_tests,
+        Vec::new(),
         ImpactMode::Balanced,
     )
 }
@@ -191,6 +194,7 @@ pub fn plan_from_changed_files_with_mode(
     item_index: &RustItemIndex,
     affected_packages: Vec<String>,
     impacted_tests: Vec<ImpactedTest>,
+    stale_evidence: Vec<String>,
     mode: ImpactMode,
 ) -> Result<ImpactPlan> {
     if matches!(mode, ImpactMode::Off) {
@@ -226,6 +230,7 @@ pub fn plan_from_changed_files_with_mode(
             decisions,
             accepted_risks: Vec::new(),
             evidence_gaps: Vec::new(),
+            stale_evidence,
         });
     }
 
@@ -261,6 +266,7 @@ pub fn plan_from_changed_files_with_mode(
     let mut decisions = Vec::new();
     let mut accepted_risks = Vec::new();
     let mut evidence_gaps = Vec::new();
+    let stale_evidence = stale_evidence.into_iter().collect::<BTreeSet<_>>();
     let mut impact_filter = None;
     let scope_args = if changed.is_empty() {
         decisions.push(ImpactDecision {
@@ -357,7 +363,12 @@ pub fn plan_from_changed_files_with_mode(
         for package in &packages {
             decisions.push(ImpactDecision {
                 action: ImpactAction::RunPackage,
-                reason: "package owns a changed file or transitively depends on one".to_string(),
+                reason: if stale_evidence.is_empty() {
+                    "package owns a changed file or transitively depends on one".to_string()
+                } else {
+                    "stale test-impact evidence was ignored; package scope covers changed files"
+                        .to_string()
+                },
                 subject: Some(package.clone()),
             });
         }
@@ -383,7 +394,14 @@ pub fn plan_from_changed_files_with_mode(
         decisions,
         accepted_risks,
         evidence_gaps,
+        stale_evidence: stale_evidence.into_iter().collect(),
     })
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ImpactHistoryEvidence {
+    pub impacted_tests: Vec<ImpactedTest>,
+    pub stale_subjects: Vec<String>,
 }
 
 #[must_use]
@@ -484,7 +502,7 @@ fn changed_item_fully_covered(item: &ChangedItem, impacted_tests: &[ImpactedTest
         return false;
     }
     if item.hunks.is_empty() {
-        return true;
+        return false;
     }
     item.hunks.iter().all(|hunk| {
         file_evidence
@@ -504,15 +522,44 @@ pub fn ranges_overlap(left_start: u32, left_end: u32, right_start: u32, right_en
 }
 
 pub fn changed_hunks() -> Result<Vec<FileChangedHunks>> {
+    let changed_files = affected::changed_files()?;
+    changed_hunks_for_files(&changed_files)
+}
+
+pub fn changed_hunks_for_files(changed_files: &[String]) -> Result<Vec<FileChangedHunks>> {
+    changed_hunks_for_files_in(Path::new("."), changed_files)
+}
+
+fn changed_hunks_for_files_in(
+    cwd: &Path,
+    changed_files: &[String],
+) -> Result<Vec<FileChangedHunks>> {
     let output = Command::new("git")
-        .args(["diff", "--unified=0", "--no-ext-diff", "--", "*.rs"])
+        .current_dir(cwd)
+        .args(["diff", "HEAD", "--unified=0", "--no-ext-diff", "--", "*.rs"])
         .output()
         .context("failed to run git diff for impact hunks")?;
     if !output.status.success() {
         return Ok(Vec::new());
     }
     let text = String::from_utf8_lossy(&output.stdout);
-    Ok(parse_unified_zero_hunks(&text))
+    let mut hunks = parse_unified_zero_hunks(&text);
+    for path in changed_files {
+        if !path.ends_with(".rs") || hunks.iter().any(|item| item.path == *path) {
+            continue;
+        }
+        if git_tracks_path(cwd, path)? {
+            continue;
+        }
+        if let Some(hunk) = whole_file_hunk(cwd.join(path)) {
+            hunks.push(FileChangedHunks {
+                path: path.clone(),
+                hunks: vec![hunk],
+            });
+        }
+    }
+    hunks.sort_by(|left, right| left.path.cmp(&right.path));
+    Ok(hunks)
 }
 
 #[must_use]
@@ -562,9 +609,31 @@ fn parse_new_hunk_range(raw: &str) -> Option<ChangedHunk> {
     })
 }
 
-fn hash_file_if_exists(path: &str) -> Option<String> {
-    let bytes = fs::read(path).ok()?;
+pub(crate) fn hash_file_if_exists(path: &str) -> Option<String> {
+    let path = Path::new(path);
+    let bytes = fs::read(path)
+        .or_else(|_| fs::read(crate::config::workspace_root().join(path)))
+        .ok()?;
     Some(format!("{:x}", Sha256::digest(bytes)))
+}
+
+fn git_tracks_path(cwd: &Path, path: &str) -> Result<bool> {
+    let output = Command::new("git")
+        .current_dir(cwd)
+        .args(["ls-files", "--error-unmatch", "--", path])
+        .output()
+        .context("failed to inspect git tracked path for impact hunks")?;
+    Ok(output.status.success())
+}
+
+fn whole_file_hunk(path: PathBuf) -> Option<ChangedHunk> {
+    let text = fs::read_to_string(path).ok()?;
+    let line_count = text.lines().count().max(1);
+    let line_end = u32::try_from(line_count).unwrap_or(u32::MAX);
+    Some(ChangedHunk {
+        line_start: 1,
+        line_end,
+    })
 }
 
 pub fn rust_items_for_file(path: &Path) -> Result<Vec<RustItemSpan>> {

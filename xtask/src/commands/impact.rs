@@ -406,6 +406,7 @@ fn coverage_regions_from_llvm_json(
                     .map_or(line, |(next_line, _)| next_line.saturating_sub(1));
                 let line_end = next_line.max(line);
                 let region_hash = format!("{file_path}:{line}-{line_end}:{test_name}");
+                let content_hash = crate::impact::hash_file_if_exists(&file_path);
                 regions.push(serde_json::json!({
                     "test_name": test_name,
                     "package": package,
@@ -414,6 +415,7 @@ fn coverage_regions_from_llvm_json(
                     "line_start": line,
                     "line_end": line_end,
                     "region_hash": region_hash,
+                    "content_hash": content_hash,
                 }));
             }
         }
@@ -459,6 +461,9 @@ fn print_plan(plan: &crate::impact::ImpactPlan) {
     }
     for gap in &plan.evidence_gaps {
         println!("  evidence gap: {gap}");
+    }
+    for stale in &plan.stale_evidence {
+        println!("  stale evidence: {stale}");
     }
 }
 
