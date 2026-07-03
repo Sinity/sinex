@@ -20,8 +20,8 @@ use sinex_primitives::views::{
     DesktopFocusSessionListView, DesktopFocusSessionView,
     DesktopNotificationPressureView, DesktopProjectContextListView, DesktopProjectContextRowView,
     EVENT_CARD_LIST_SCHEMA_VERSION, EventCardListView, EventCardView, PrivacyStateKind,
-    SinexObjectKind, SinexObjectRef, SourceCoverageContinuity, SourceCoverageListView,
-    SourceCoverageReadiness, SourceCoverageView, ViewEnvelope,
+    ReadinessCaveatId, SinexObjectKind, SinexObjectRef, SourceCoverageContinuity,
+    SourceCoverageListView, SourceCoverageReadiness, SourceCoverageView, ViewEnvelope,
 };
 use std::collections::HashMap;
 use std::time::{Duration as StdDuration, Instant};
@@ -674,7 +674,6 @@ fn recall_expected_source_caveat(
     expected: &RecallExpectedSource,
     source: Option<&SourceCoverageView>,
 ) -> CaveatView {
-    let id = format!("recall.source.{}.absent", expected.label);
     let ref_ = Some(recall_expected_source_ref(expected));
 
     match source {
@@ -684,7 +683,7 @@ fn recall_expected_source_caveat(
                 && source.event_count > 0 =>
         {
             CaveatView {
-                id,
+                id: ReadinessCaveatId::WindowPartial.as_str().to_string(),
                 message: format!(
                     "{} source is active but contributed no events to this recall window",
                     expected.label
@@ -693,7 +692,7 @@ fn recall_expected_source_caveat(
             }
         }
         Some(source) => CaveatView {
-            id,
+            id: ReadinessCaveatId::SourceAbsent.as_str().to_string(),
             message: format!(
                 "{} source absent from recall; source status is readiness={} continuity={} events={} materials={}",
                 expected.label,
@@ -705,7 +704,7 @@ fn recall_expected_source_caveat(
             ref_,
         },
         None => CaveatView {
-            id,
+            id: ReadinessCaveatId::SourceAbsent.as_str().to_string(),
             message: format!(
                 "{} source absent from recall and not present in source coverage",
                 expected.label
@@ -723,27 +722,12 @@ fn recall_source_gap_caveats(
         .gaps
         .iter()
         .map(|gap| CaveatView {
-            id: format!(
-                "recall.source.{}.gap.{}",
-                expected.label,
-                caveat_id_component(&gap.kind)
-            ),
+            id: ReadinessCaveatId::CoverageUnmeasurable.as_str().to_string(),
             message: format!(
                 "{} source coverage gap: {}: {}",
                 expected.label, gap.kind, gap.message
             ),
             ref_: Some(recall_expected_source_ref(expected)),
-        })
-        .collect()
-}
-
-fn caveat_id_component(value: &str) -> String {
-    value
-        .chars()
-        .map(|ch| match ch {
-            'a'..='z' | '0'..='9' | '_' | '-' => ch,
-            'A'..='Z' => ch.to_ascii_lowercase(),
-            _ => '_',
         })
         .collect()
 }
@@ -811,7 +795,9 @@ fn render_context_machine_output(
                 && session_views.is_empty()
             {
                 source_caveats.push(CaveatView {
-                    id: "recall.sessions.absent".to_string(),
+                    id: ReadinessCaveatId::DerivationLaneNotPromoted
+                        .as_str()
+                        .to_string(),
                     message: "no activity.session.boundary rows were found in this recall window; recall falls back to latest events by source".to_string(),
                     ref_: Some(SinexObjectRef::new(
                         SinexObjectKind::Projection,
