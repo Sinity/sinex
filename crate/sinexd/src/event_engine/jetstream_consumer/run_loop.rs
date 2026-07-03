@@ -38,6 +38,15 @@ impl JetStreamConsumer {
         let mut consumer = ensure_pull_consumer(&self.js, &consumer_spec)
             .await
             .map_err(|e| SinexError::network("Failed to create consumer").with_source(e))?;
+        crate::runtime::stream::reconcile_raw_stream_consumers(
+            &self.js,
+            &stream_name,
+            &self.topology.consumer_durable,
+        )
+        .await
+        .map_err(|e| {
+            SinexError::network("Failed to reconcile raw stream consumers").with_source(e)
+        })?;
         let mut lag_consumer = consumer.clone();
         let mut confirmation_retry_spec = PullConsumerSpec::new(
             self.topology.confirmation_retry_stream.to_string(),
