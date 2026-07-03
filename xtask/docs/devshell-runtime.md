@@ -50,6 +50,13 @@ The smoke verifies this sequence:
 `xtask infra smoke --dry-run` is a no-service plan and inventory check. It is
 safe to run before deciding whether to start local infra.
 
+Use `xtask infra smoke --allow-running --run-core` when the current checkout is
+already running the dogfood stack and the proof must not disrupt it. That path
+runs the same read-only probes, verifies `xtask run core --dry-run`, observes an
+already-running checkout-local `sinexd` when present, and exits without stopping
+Postgres, NATS, or `sinexd`. If infra is not already running, the command falls
+back to the normal explicit start/managed-core/stop lifecycle.
+
 Use `xtask infra smoke --reset-first --run-core` when the change needs the full
 dev-local runtime proof. That opt-in path starts `xtask run core` as a managed
 background job, waits until `xtask infra status` observes checkout-local
@@ -131,11 +138,19 @@ xtask infra smoke --reset-first --run-core
 xtask infra status --all-checkouts
 ```
 
+If the dogfood stack must remain live, replace the reset-first run-core proof
+with:
+
+```bash
+xtask infra smoke --allow-running --run-core
+```
+
 When the wrapper itself is the target, run the smoke through the devshell entry:
 
 ```bash
 nix develop --command xtask infra smoke --reset-first
 nix develop --command xtask infra smoke --reset-first --run-core
+nix develop --command xtask infra smoke --allow-running --run-core
 ```
 
 Do not replace this with a test that only asserts a config literal or flag name.
