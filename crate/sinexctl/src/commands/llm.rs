@@ -8,6 +8,9 @@ use sinex_primitives::rpc::llm::{
     LlmBudgetReportRequest, LlmBudgetReportResponse, LlmPromptsListRequest, LlmRouteExplainRequest,
     LlmRouteExplainResponse,
 };
+use sinex_primitives::views::{
+    CaveatView, ReadinessCaveatId, SinexObjectKind, SinexObjectRef, ViewEnvelope,
+};
 
 use crate::client::GatewayClient;
 use crate::fmt::{format_json, format_yaml};
@@ -57,13 +60,12 @@ pub struct LlmPromptsCommand {
 
 impl LlmPromptsCommand {
     async fn execute(&self, client: &GatewayClient, format: OutputFormat) -> Result<()> {
-        let response = client
-            .llm_prompts_list(LlmPromptsListRequest {
-                status: self.status.clone(),
-                limit: self.limit,
-            })
-            .await?;
-        render_prompts(&response, format)
+        let request = LlmPromptsListRequest {
+            status: self.status.clone(),
+            limit: self.limit,
+        };
+        let response = client.llm_prompts_list(request.clone()).await?;
+        render_prompts(&response, serde_json::to_value(&request)?, format)
     }
 }
 
@@ -100,22 +102,27 @@ pub struct LlmBudgetReportCommand {
 
 impl LlmBudgetReportCommand {
     async fn execute(&self, client: &GatewayClient, format: OutputFormat) -> Result<()> {
-        let response = client
-            .llm_budget_report(LlmBudgetReportRequest { limit: self.limit })
-            .await?;
-        render_budget_report(&response, format)
+        let request = LlmBudgetReportRequest { limit: self.limit };
+        let response = client.llm_budget_report(request.clone()).await?;
+        render_budget_report(&response, serde_json::to_value(&request)?, format)
     }
 }
 
-fn render_prompts(response: &EventQueryResult, format: OutputFormat) -> Result<()> {
+fn render_prompts(
+    response: &EventQueryResult,
+    query_echo: serde_json::Value,
+    format: OutputFormat,
+) -> Result<()> {
+    let envelope = llm_prompts_envelope(response, query_echo);
     match format {
         OutputFormat::Json | OutputFormat::Ndjson | OutputFormat::Dot => {
-            println!("{}", format_json(response)?)
+            println!("{}", format_json(&envelope)?)
         }
-        OutputFormat::Yaml => println!("{}", format_yaml(response)?),
+        OutputFormat::Yaml => println!("{}", format_yaml(&envelope)?),
         OutputFormat::Table => match response {
             EventQueryResult::Events { events, .. } => {
                 println!("LLM prompt templates: {}", events.len());
+                print_caveats(&envelope.caveats);
                 for event in events {
                     let id = event
                         .event
@@ -172,12 +179,17 @@ fn render_route_explain(response: &LlmRouteExplainResponse, format: OutputFormat
     Ok(())
 }
 
-fn render_budget_report(response: &LlmBudgetReportResponse, format: OutputFormat) -> Result<()> {
+fn render_budget_report(
+    response: &LlmBudgetReportResponse,
+    query_echo: serde_json::Value,
+    format: OutputFormat,
+) -> Result<()> {
+    let envelope = llm_budget_report_envelope(response, query_echo);
     match format {
         OutputFormat::Json | OutputFormat::Ndjson | OutputFormat::Dot => {
-            println!("{}", format_json(response)?)
+            println!("{}", format_json(&envelope)?)
         }
-        OutputFormat::Yaml => println!("{}", format_yaml(response)?),
+        OutputFormat::Yaml => println!("{}", format_yaml(&envelope)?),
         OutputFormat::Table => {
             println!("LLM budget report");
             println!("  Rows:              {}", response.total_rows);
@@ -188,7 +200,52 @@ fn render_budget_report(response: &LlmBudgetReportResponse, format: OutputFormat
             println!("  Completion tokens: {}", response.completion_tokens);
             println!("  Cost microUSD:     {}", response.cost_estimate_microusd);
             println!("  Runtime ms:        {}", response.runtime_ms);
+            print_caveats(&envelope.caveats);
         }
     }
     Ok(())
 }
+
+fn llm_prompts_envelope(
+    response: &EventQueryResult,
+    query_echo: serde_json::Value,
+) -> ViewEnvelope<EventQueryResult> {
+    let mut envelope =
+        ViewEnvelope::new("sinexctl.semantic.llm.prompts", response.clone()).with_query_echo(query_echo);
+    if matches!(response, EventQueryResult::Events { events, .. } if events.is_empty()) {
+        envelope.caveats.push(llm_producer_absent_caveat(
+            "llm.prompt_template.registered",
+            "LLM prompts has no prompt-template registry rows; no prompt-registry producer is currently contributing events.",
+        ));
+    }
+    envelope
+}
+
+fn llm_budget_report_envelope(
+    response: &LlmBudgetReportResponse,
+    query_echo: serde_json::Value,
+) -> ViewEnvelope<LlmBudgetReportResponse> {
+    let mut envelope =
+        ViewEnvelope::new("sinexctl.semantic.llm.budget-report", response.clone())
+            .with_query_echo(query_echo);
+    envelope.caveats.extend(response.caveats.clone());
+    envelope
+}
+
+fn llm_producer_absent_caveat(event_type: &'static str, message: &'static str) -> CaveatView {
+    CaveatView {
+        id: ReadinessCaveatId::SourceAbsent.as_str().to_string(),
+        message: message.to_string(),
+        ref_: Some(SinexObjectRef::new(SinexObjectKind::Projection, event_type)),
+    }
+}
+
+fn print_caveats(caveats: &[CaveatView]) {
+    for caveat in caveats {
+        println!("  Caveat:           {} - {}", caveat.id, caveat.message);
+    }
+}
+
+#[cfg(test)]
+#[path = "llm_test.rs"]
+mod tests;

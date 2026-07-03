@@ -5,6 +5,7 @@ use serde::{Deserialize, Serialize};
 use crate::events::payloads::LlmBudgetLedgerPayload;
 use crate::llm::{ModelTaskRequest, RoutingDecision, RoutingPolicyRecord};
 use crate::query::EventQueryResult;
+use crate::views::CaveatView;
 
 use super::{RpcDomain, RpcMethod, RpcMutability, RpcRole, RpcStability, methods};
 
@@ -88,6 +89,8 @@ pub struct LlmBudgetReportResponse {
     pub completion_tokens: i64,
     pub cost_estimate_microusd: i64,
     pub runtime_ms: i64,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub caveats: Vec<CaveatView>,
 }
 
 const fn default_limit() -> i64 {

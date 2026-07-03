@@ -11,6 +11,7 @@ use sinex_primitives::query::EventQueryResult;
 use sinex_primitives::rpc::llm::{
     LlmBudgetReportRequest, LlmPromptsListRequest, LlmRouteExplainRequest,
 };
+use sinex_primitives::views::ReadinessCaveatId;
 use sinex_primitives::{Timestamp, Uuid};
 use sinexd::api::handlers::{
     handle_llm_budget_report, handle_llm_prompts_list, handle_llm_route_explain,
@@ -95,6 +96,27 @@ async fn llm_budget_report_aggregates_ledger_events(ctx: TestContext) -> TestRes
     assert_eq!(report.completion_tokens, 4);
     assert_eq!(report.cost_estimate_microusd, 50);
     assert_eq!(report.runtime_ms, 125);
+    assert!(report.caveats.is_empty());
+    Ok(())
+}
+
+#[sinex_test]
+async fn llm_budget_report_empty_rows_explain_missing_producer(
+    ctx: TestContext,
+) -> TestResult<()> {
+    let report = handle_llm_budget_report(ctx.pool(), LlmBudgetReportRequest { limit: 10 }).await?;
+
+    assert_eq!(report.total_rows, 0);
+    let caveat = report
+        .caveats
+        .iter()
+        .find(|caveat| caveat.id == ReadinessCaveatId::SourceAbsent.as_str())
+        .expect("empty budget report must expose source.absent caveat");
+    assert!(caveat.message.contains("no ledger rows"));
+    assert_eq!(
+        caveat.ref_.as_ref().map(|object_ref| object_ref.id.as_str()),
+        Some("llm.budget.ledger")
+    );
     Ok(())
 }
 

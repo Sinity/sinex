@@ -17,7 +17,7 @@ use sinex_primitives::domain::{EventSource, EventType};
 use sinex_primitives::events::Event;
 use sinex_primitives::ids::Id;
 use sinex_primitives::parser::SourceId;
-use sinex_primitives::query::{EventQuery, LineageDirection, LineageQuery};
+use sinex_primitives::query::{EventQuery, EventQueryResult, LineageDirection, LineageQuery};
 use sinex_primitives::query_units::{SinexQueryResultListView, parse_sinex_query};
 use sinex_primitives::rpc::automata::AutomataStatusResponse;
 use sinex_primitives::rpc::curation::CurationListProposalsRequest;
@@ -56,7 +56,7 @@ use sinex_primitives::task_domain::TaskStatus;
 use sinex_primitives::temporal::Timestamp;
 use sinex_primitives::views::{
     ActionSideEffect, CaveatView, OperationJobListView, OperationView, PrivacyStateKind,
-    PrivacyStateView, ViewEnvelope,
+    PrivacyStateView, ReadinessCaveatId, SinexObjectKind, SinexObjectRef, ViewEnvelope,
 };
 use std::io::{BufRead, Write};
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -2424,19 +2424,28 @@ telemetry_bucket_tool!(
 
 async fn llm_prompts(client: &GatewayClient, arguments: Value) -> Result<Value> {
     let args: LlmPromptsArgs = serde_json::from_value(arguments)?;
-    let mut response = serde_json::to_value(
-        client
-            .llm_prompts_list(LlmPromptsListRequest {
-                status: args.status.clone(),
-                limit: args.limit,
-            })
-            .await?,
-    )?;
+    let result = client
+        .llm_prompts_list(LlmPromptsListRequest {
+            status: args.status.clone(),
+            limit: args.limit,
+        })
+        .await?;
+    let mut response = serde_json::to_value(&result)?;
     redact_raw_samples(&mut response);
-    Ok(envelope(
+    let caveats = if matches!(result, EventQueryResult::Events { events, .. } if events.is_empty())
+    {
+        vec![llm_producer_absent_caveat(
+            "llm.prompt_template.registered",
+            "LLM prompts has no prompt-template registry rows; no prompt-registry producer is currently contributing events.",
+        )]
+    } else {
+        Vec::new()
+    };
+    Ok(envelope_with_caveats(
         "sinex_llm_prompts",
         &json!(args),
         &json!({ "result": response }),
+        caveats,
     ))
 }
 
@@ -2455,10 +2464,12 @@ async fn llm_budget_report(client: &GatewayClient, arguments: Value) -> Result<V
     let response = client
         .llm_budget_report(LlmBudgetReportRequest { limit: args.limit })
         .await?;
-    Ok(envelope(
+    let caveats = response.caveats.clone();
+    Ok(envelope_with_caveats(
         "sinex_llm_budget_report",
         &json!(args),
         &json!({ "result": response }),
+        caveats,
     ))
 }
 
@@ -2826,7 +2837,16 @@ fn document_side_data_redaction() -> Value {
 }
 
 fn envelope(tool: &str, query: &Value, result: &Value) -> Value {
-    mcp_view_envelope(tool, query, result).unwrap_or_else(|error| {
+    envelope_with_caveats(tool, query, result, Vec::new())
+}
+
+fn envelope_with_caveats(
+    tool: &str,
+    query: &Value,
+    result: &Value,
+    caveats: Vec<CaveatView>,
+) -> Value {
+    let mut envelope = mcp_view_envelope(tool, query, result).unwrap_or_else(|error| {
         json!({
             "source_surface": tool,
             "query_echo": query,
@@ -2835,7 +2855,25 @@ fn envelope(tool: &str, query: &Value, result: &Value) -> Value {
                 "detail": error.to_string(),
             }
         })
-    })
+    });
+    if let Value::Object(fields) = &mut envelope
+        && let Some(Value::Array(existing)) = fields.get_mut("caveats")
+    {
+        existing.extend(
+            caveats
+                .into_iter()
+                .filter_map(|caveat| serde_json::to_value(caveat).ok()),
+        );
+    }
+    envelope
+}
+
+fn llm_producer_absent_caveat(event_type: &'static str, message: &'static str) -> CaveatView {
+    CaveatView {
+        id: ReadinessCaveatId::SourceAbsent.as_str().to_string(),
+        message: message.to_string(),
+        ref_: Some(SinexObjectRef::new(SinexObjectKind::Projection, event_type)),
+    }
 }
 
 fn gateway_unavailable_envelope(tool: &str, query: &Value, target_url: &str) -> Result<Value> {
