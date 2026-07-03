@@ -41,7 +41,8 @@ use sinex_primitives::rpc::semantic::{
 use sinex_primitives::rpc::source_status::SourcesStatusResponse;
 use sinex_primitives::rpc::sources::{
     SourcesContinuityRequest, SourcesCoverageRequest, SourcesDriftListRequest, SourcesListRequest,
-    SourcesReadinessGetRequest, SourcesReadinessListRequest, SourcesShowRequest,
+    SourcesReadinessGetRequest, SourcesReadinessListRequest, SourcesRemediationPlanRequest,
+    SourcesShowRequest,
 };
 use sinex_primitives::rpc::system::SystemHealthResponse;
 use sinex_primitives::rpc::tasks::{
@@ -92,6 +93,7 @@ pub struct McpCatalogEntry {
     pub description: &'static str,
     pub backing_rpc_methods: &'static [&'static str],
     pub read_only: bool,
+    pub output_contract: McpOutputContract,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -104,6 +106,12 @@ enum McpWireFormat {
 #[serde(rename_all = "snake_case")]
 pub enum McpSurfaceKind {
     Tool,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum McpOutputContract {
+    ViewEnvelope,
 }
 
 fn catalog_description(tool_name: &str) -> &'static str {
@@ -373,6 +381,20 @@ struct SourceMaterialsArgs {
 }
 
 #[derive(Debug, Deserialize, Serialize)]
+struct SourceRemediationPlanArgs {
+    #[serde(default)]
+    source_identifier: Option<String>,
+    #[serde(default)]
+    limit: Option<i64>,
+    #[serde(default)]
+    offset: Option<i64>,
+    #[serde(default)]
+    sort: Option<String>,
+    #[serde(default)]
+    include_empty: bool,
+}
+
+#[derive(Debug, Deserialize, Serialize)]
 struct SourceMaterialArgs {
     material_id: String,
 }
@@ -464,6 +486,7 @@ pub fn tool_catalog() -> Vec<McpCatalogEntry> {
             description: "Read-only first-contact orientation for agents using Sinex evidence tools.",
             backing_rpc_methods: &[],
             read_only: true,
+            output_contract: McpOutputContract::ViewEnvelope,
         },
         McpCatalogEntry {
             name: "sinex_search_events",
@@ -471,6 +494,7 @@ pub fn tool_catalog() -> Vec<McpCatalogEntry> {
             description: "Read-only search over persisted Sinex events.",
             backing_rpc_methods: &[methods::EVENTS_CARDS],
             read_only: true,
+            output_contract: McpOutputContract::ViewEnvelope,
         },
         McpCatalogEntry {
             name: "sinex_context_pack",
@@ -478,6 +502,7 @@ pub fn tool_catalog() -> Vec<McpCatalogEntry> {
             description: "Read-only event query projection for AI context packs.",
             backing_rpc_methods: &[methods::EVENTS_QUERY],
             read_only: true,
+            output_contract: McpOutputContract::ViewEnvelope,
         },
         McpCatalogEntry {
             name: "sinex_query",
@@ -492,6 +517,7 @@ pub fn tool_catalog() -> Vec<McpCatalogEntry> {
                 methods::RUNTIME_HEALTH,
             ],
             read_only: true,
+            output_contract: McpOutputContract::ViewEnvelope,
         },
         McpCatalogEntry {
             name: "sinex_trace_lineage",
@@ -499,6 +525,7 @@ pub fn tool_catalog() -> Vec<McpCatalogEntry> {
             description: "Read-only provenance trace for one event.",
             backing_rpc_methods: &[methods::EVENTS_LINEAGE],
             read_only: true,
+            output_contract: McpOutputContract::ViewEnvelope,
         },
         McpCatalogEntry {
             name: "sinex_relation_evidence",
@@ -506,6 +533,7 @@ pub fn tool_catalog() -> Vec<McpCatalogEntry> {
             description: "Read-only relation-evidence window over live events.",
             backing_rpc_methods: &[methods::EVENTS_RELATION_EVIDENCE],
             read_only: true,
+            output_contract: McpOutputContract::ViewEnvelope,
         },
         McpCatalogEntry {
             name: "sinex_source_readiness",
@@ -516,6 +544,7 @@ pub fn tool_catalog() -> Vec<McpCatalogEntry> {
                 methods::SOURCES_READINESS_GET,
             ],
             read_only: true,
+            output_contract: McpOutputContract::ViewEnvelope,
         },
         McpCatalogEntry {
             name: "sinex_source_continuity",
@@ -526,6 +555,7 @@ pub fn tool_catalog() -> Vec<McpCatalogEntry> {
                 methods::SOURCES_CONTINUITY_GET,
             ],
             read_only: true,
+            output_contract: McpOutputContract::ViewEnvelope,
         },
         McpCatalogEntry {
             name: "sinex_source_drift",
@@ -533,6 +563,7 @@ pub fn tool_catalog() -> Vec<McpCatalogEntry> {
             description: "Read-only checkpointed source-shape drift observations.",
             backing_rpc_methods: &[methods::SOURCES_DRIFT_LIST],
             read_only: true,
+            output_contract: McpOutputContract::ViewEnvelope,
         },
         McpCatalogEntry {
             name: "sinex_source_gap_explain",
@@ -540,6 +571,7 @@ pub fn tool_catalog() -> Vec<McpCatalogEntry> {
             description: "Read-only attribution for a source-family coverage gap.",
             backing_rpc_methods: &[methods::SOURCES_CONTINUITY_EXPLAIN_GAP],
             read_only: true,
+            output_contract: McpOutputContract::ViewEnvelope,
         },
         McpCatalogEntry {
             name: "sinex_source_identifier_continuity",
@@ -547,6 +579,7 @@ pub fn tool_catalog() -> Vec<McpCatalogEntry> {
             description: "Read-only continuity report for one source identifier.",
             backing_rpc_methods: &[methods::SOURCES_CONTINUITY],
             read_only: true,
+            output_contract: McpOutputContract::ViewEnvelope,
         },
         McpCatalogEntry {
             name: "sinex_privacy_status",
@@ -554,6 +587,7 @@ pub fn tool_catalog() -> Vec<McpCatalogEntry> {
             description: "Read-only runtime private-mode state.",
             backing_rpc_methods: &[methods::PRIVACY_PRIVATE_MODE_STATUS],
             read_only: true,
+            output_contract: McpOutputContract::ViewEnvelope,
         },
         McpCatalogEntry {
             name: "sinex_system_health",
@@ -561,6 +595,7 @@ pub fn tool_catalog() -> Vec<McpCatalogEntry> {
             description: "Read-only gateway and confirmation-path health summary.",
             backing_rpc_methods: &[methods::SYSTEM_HEALTH],
             read_only: true,
+            output_contract: McpOutputContract::ViewEnvelope,
         },
         McpCatalogEntry {
             name: "sinex_tasks_list",
@@ -568,6 +603,7 @@ pub fn tool_catalog() -> Vec<McpCatalogEntry> {
             description: "Read-only current task-state search and filtering.",
             backing_rpc_methods: &[methods::TASKS_LIST],
             read_only: true,
+            output_contract: McpOutputContract::ViewEnvelope,
         },
         McpCatalogEntry {
             name: "sinex_task_state",
@@ -575,6 +611,7 @@ pub fn tool_catalog() -> Vec<McpCatalogEntry> {
             description: "Read-only current state for one task workflow object.",
             backing_rpc_methods: &[methods::TASKS_STATE_GET],
             read_only: true,
+            output_contract: McpOutputContract::ViewEnvelope,
         },
         McpCatalogEntry {
             name: "sinex_replay_operations",
@@ -582,6 +619,7 @@ pub fn tool_catalog() -> Vec<McpCatalogEntry> {
             description: "Read-only replay operation list with state and module filters.",
             backing_rpc_methods: &[methods::REPLAY_LIST_OPERATIONS],
             read_only: true,
+            output_contract: McpOutputContract::ViewEnvelope,
         },
         McpCatalogEntry {
             name: "sinex_replay_status",
@@ -589,6 +627,7 @@ pub fn tool_catalog() -> Vec<McpCatalogEntry> {
             description: "Read-only current status for one replay operation.",
             backing_rpc_methods: &[methods::REPLAY_OPERATION_STATUS],
             read_only: true,
+            output_contract: McpOutputContract::ViewEnvelope,
         },
         McpCatalogEntry {
             name: "sinex_documents_search",
@@ -596,6 +635,7 @@ pub fn tool_catalog() -> Vec<McpCatalogEntry> {
             description: "Read-only ranked document chunk search with raw text redacted.",
             backing_rpc_methods: &[methods::DOCUMENTS_SEARCH],
             read_only: true,
+            output_contract: McpOutputContract::ViewEnvelope,
         },
         McpCatalogEntry {
             name: "sinex_documents_get",
@@ -603,6 +643,7 @@ pub fn tool_catalog() -> Vec<McpCatalogEntry> {
             description: "Read-only document metadata lookup with side data redacted.",
             backing_rpc_methods: &[methods::DOCUMENTS_GET],
             read_only: true,
+            output_contract: McpOutputContract::ViewEnvelope,
         },
         McpCatalogEntry {
             name: "sinex_documents_chunks",
@@ -610,6 +651,7 @@ pub fn tool_catalog() -> Vec<McpCatalogEntry> {
             description: "Read-only document chunk anchors with text redacted.",
             backing_rpc_methods: &[methods::DOCUMENTS_GET_CHUNKS_REDACTED],
             read_only: true,
+            output_contract: McpOutputContract::ViewEnvelope,
         },
         McpCatalogEntry {
             name: "sinex_semantic_epochs",
@@ -617,6 +659,7 @@ pub fn tool_catalog() -> Vec<McpCatalogEntry> {
             description: "Read-only semantic epoch registry listing.",
             backing_rpc_methods: &[methods::SEMANTIC_EPOCHS_LIST],
             read_only: true,
+            output_contract: McpOutputContract::ViewEnvelope,
         },
         McpCatalogEntry {
             name: "sinex_semantic_lanes",
@@ -624,6 +667,7 @@ pub fn tool_catalog() -> Vec<McpCatalogEntry> {
             description: "Read-only semantic lane registry listing.",
             backing_rpc_methods: &[methods::SEMANTIC_LANES_LIST],
             read_only: true,
+            output_contract: McpOutputContract::ViewEnvelope,
         },
         McpCatalogEntry {
             name: "sinex_semantic_lane_outputs",
@@ -631,6 +675,7 @@ pub fn tool_catalog() -> Vec<McpCatalogEntry> {
             description: "Read-only semantic lane output listing.",
             backing_rpc_methods: &[methods::SEMANTIC_LANE_OUTPUTS_LIST],
             read_only: true,
+            output_contract: McpOutputContract::ViewEnvelope,
         },
         McpCatalogEntry {
             name: "sinex_semantic_lane_diffs",
@@ -638,6 +683,7 @@ pub fn tool_catalog() -> Vec<McpCatalogEntry> {
             description: "Read-only semantic lane diff listing.",
             backing_rpc_methods: &[methods::SEMANTIC_LANE_DIFFS_LIST],
             read_only: true,
+            output_contract: McpOutputContract::ViewEnvelope,
         },
         McpCatalogEntry {
             name: "sinex_automata_status",
@@ -645,6 +691,7 @@ pub fn tool_catalog() -> Vec<McpCatalogEntry> {
             description: "Read-only automata liveness, checkpoint, and lag status.",
             backing_rpc_methods: &[methods::AUTOMATA_STATUS],
             read_only: true,
+            output_contract: McpOutputContract::ViewEnvelope,
         },
         McpCatalogEntry {
             name: "sinex_sources_status",
@@ -652,6 +699,7 @@ pub fn tool_catalog() -> Vec<McpCatalogEntry> {
             description: "Read-only source liveness, health, and emission status.",
             backing_rpc_methods: &[methods::SOURCES_STATUS],
             read_only: true,
+            output_contract: McpOutputContract::ViewEnvelope,
         },
         McpCatalogEntry {
             name: "sinex_sources_status_view",
@@ -659,6 +707,7 @@ pub fn tool_catalog() -> Vec<McpCatalogEntry> {
             description: "Read-only operator ViewEnvelope source coverage/status surface.",
             backing_rpc_methods: &[methods::SOURCES_STATUS_VIEW],
             read_only: true,
+            output_contract: McpOutputContract::ViewEnvelope,
         },
         McpCatalogEntry {
             name: "sinex_source_health",
@@ -666,6 +715,7 @@ pub fn tool_catalog() -> Vec<McpCatalogEntry> {
             description: "Read-only aggregate runtime module health.",
             backing_rpc_methods: &[methods::RUNTIME_HEALTH],
             read_only: true,
+            output_contract: McpOutputContract::ViewEnvelope,
         },
         McpCatalogEntry {
             name: "sinex_sources_active",
@@ -673,6 +723,7 @@ pub fn tool_catalog() -> Vec<McpCatalogEntry> {
             description: "Read-only active runtime module presence.",
             backing_rpc_methods: &[methods::RUNTIME_LIST_ACTIVE],
             read_only: true,
+            output_contract: McpOutputContract::ViewEnvelope,
         },
         McpCatalogEntry {
             name: "sinex_sources_registry",
@@ -680,6 +731,7 @@ pub fn tool_catalog() -> Vec<McpCatalogEntry> {
             description: "Read-only persisted runtime module state registry.",
             backing_rpc_methods: &[methods::RUNTIME_LIST],
             read_only: true,
+            output_contract: McpOutputContract::ViewEnvelope,
         },
         McpCatalogEntry {
             name: "sinex_event_engine_validation",
@@ -687,6 +739,7 @@ pub fn tool_catalog() -> Vec<McpCatalogEntry> {
             description: "Read-only latest event_engine validation and admission snapshot.",
             backing_rpc_methods: &[methods::TELEMETRY_EVENT_ENGINE_VALIDATION],
             read_only: true,
+            output_contract: McpOutputContract::ViewEnvelope,
         },
         McpCatalogEntry {
             name: "sinex_event_engine_batch_stats",
@@ -694,6 +747,7 @@ pub fn tool_catalog() -> Vec<McpCatalogEntry> {
             description: "Read-only event_engine batch, latency, and validation telemetry buckets.",
             backing_rpc_methods: &[methods::TELEMETRY_EVENT_ENGINE_BATCH_STATS],
             read_only: true,
+            output_contract: McpOutputContract::ViewEnvelope,
         },
         McpCatalogEntry {
             name: "sinex_throughput",
@@ -701,6 +755,7 @@ pub fn tool_catalog() -> Vec<McpCatalogEntry> {
             description: "Read-only per-source and per-component throughput summary.",
             backing_rpc_methods: &[methods::TELEMETRY_THROUGHPUT],
             read_only: true,
+            output_contract: McpOutputContract::ViewEnvelope,
         },
         McpCatalogEntry {
             name: "sinex_recent_activity",
@@ -708,6 +763,7 @@ pub fn tool_catalog() -> Vec<McpCatalogEntry> {
             description: "Read-only recent activity summary for agent context.",
             backing_rpc_methods: &[methods::TELEMETRY_RECENT_ACTIVITY],
             read_only: true,
+            output_contract: McpOutputContract::ViewEnvelope,
         },
         McpCatalogEntry {
             name: "sinex_command_frequency",
@@ -715,6 +771,7 @@ pub fn tool_catalog() -> Vec<McpCatalogEntry> {
             description: "Read-only command-frequency telemetry for shell context.",
             backing_rpc_methods: &[methods::TELEMETRY_COMMAND_FREQUENCY],
             read_only: true,
+            output_contract: McpOutputContract::ViewEnvelope,
         },
         McpCatalogEntry {
             name: "sinex_file_activity",
@@ -722,6 +779,7 @@ pub fn tool_catalog() -> Vec<McpCatalogEntry> {
             description: "Read-only file-activity telemetry for project context.",
             backing_rpc_methods: &[methods::TELEMETRY_FILE_ACTIVITY],
             read_only: true,
+            output_contract: McpOutputContract::ViewEnvelope,
         },
         McpCatalogEntry {
             name: "sinex_system_state",
@@ -729,6 +787,7 @@ pub fn tool_catalog() -> Vec<McpCatalogEntry> {
             description: "Read-only CPU, memory, disk, and unit telemetry buckets.",
             backing_rpc_methods: &[methods::TELEMETRY_SYSTEM_STATE],
             read_only: true,
+            output_contract: McpOutputContract::ViewEnvelope,
         },
         McpCatalogEntry {
             name: "sinex_window_focus",
@@ -736,6 +795,7 @@ pub fn tool_catalog() -> Vec<McpCatalogEntry> {
             description: "Read-only desktop window focus telemetry buckets.",
             backing_rpc_methods: &[methods::TELEMETRY_WINDOW_FOCUS],
             read_only: true,
+            output_contract: McpOutputContract::ViewEnvelope,
         },
         McpCatalogEntry {
             name: "sinex_current_health",
@@ -743,6 +803,7 @@ pub fn tool_catalog() -> Vec<McpCatalogEntry> {
             description: "Read-only current health telemetry rows.",
             backing_rpc_methods: &[methods::TELEMETRY_CURRENT_HEALTH],
             read_only: true,
+            output_contract: McpOutputContract::ViewEnvelope,
         },
         McpCatalogEntry {
             name: "sinex_current_device_state",
@@ -750,6 +811,7 @@ pub fn tool_catalog() -> Vec<McpCatalogEntry> {
             description: "Read-only current device-state telemetry rows.",
             backing_rpc_methods: &[methods::TELEMETRY_CURRENT_DEVICE_STATE],
             read_only: true,
+            output_contract: McpOutputContract::ViewEnvelope,
         },
         McpCatalogEntry {
             name: "sinex_gateway_stats",
@@ -757,6 +819,7 @@ pub fn tool_catalog() -> Vec<McpCatalogEntry> {
             description: "Read-only gateway request and latency telemetry buckets.",
             backing_rpc_methods: &[methods::TELEMETRY_GATEWAY_STATS],
             read_only: true,
+            output_contract: McpOutputContract::ViewEnvelope,
         },
         McpCatalogEntry {
             name: "sinex_stream_stats",
@@ -764,6 +827,7 @@ pub fn tool_catalog() -> Vec<McpCatalogEntry> {
             description: "Read-only JetStream fill and message telemetry buckets.",
             backing_rpc_methods: &[methods::TELEMETRY_STREAM_STATS],
             read_only: true,
+            output_contract: McpOutputContract::ViewEnvelope,
         },
         McpCatalogEntry {
             name: "sinex_assembly_stats",
@@ -771,6 +835,7 @@ pub fn tool_catalog() -> Vec<McpCatalogEntry> {
             description: "Read-only material assembly telemetry buckets.",
             backing_rpc_methods: &[methods::TELEMETRY_ASSEMBLY_STATS],
             read_only: true,
+            output_contract: McpOutputContract::ViewEnvelope,
         },
         McpCatalogEntry {
             name: "sinex_source_stats",
@@ -778,6 +843,7 @@ pub fn tool_catalog() -> Vec<McpCatalogEntry> {
             description: "Read-only source processing telemetry buckets.",
             backing_rpc_methods: &[methods::TELEMETRY_SOURCE_STATS],
             read_only: true,
+            output_contract: McpOutputContract::ViewEnvelope,
         },
         McpCatalogEntry {
             name: "sinex_metric_counters",
@@ -785,6 +851,7 @@ pub fn tool_catalog() -> Vec<McpCatalogEntry> {
             description: "Read-only named metric counter telemetry buckets.",
             backing_rpc_methods: &[methods::TELEMETRY_METRIC_COUNTERS],
             read_only: true,
+            output_contract: McpOutputContract::ViewEnvelope,
         },
         McpCatalogEntry {
             name: "sinex_llm_prompts",
@@ -792,6 +859,7 @@ pub fn tool_catalog() -> Vec<McpCatalogEntry> {
             description: "Read-only LLM prompt-template registry events.",
             backing_rpc_methods: &[methods::LLM_PROMPTS_LIST],
             read_only: true,
+            output_contract: McpOutputContract::ViewEnvelope,
         },
         McpCatalogEntry {
             name: "sinex_llm_route_explain",
@@ -799,6 +867,7 @@ pub fn tool_catalog() -> Vec<McpCatalogEntry> {
             description: "Read-only deterministic LLM routing explanation.",
             backing_rpc_methods: &[methods::LLM_ROUTE_EXPLAIN],
             read_only: true,
+            output_contract: McpOutputContract::ViewEnvelope,
         },
         McpCatalogEntry {
             name: "sinex_llm_budget_report",
@@ -806,6 +875,7 @@ pub fn tool_catalog() -> Vec<McpCatalogEntry> {
             description: "Read-only LLM budget-ledger usage report.",
             backing_rpc_methods: &[methods::LLM_BUDGET_REPORT],
             read_only: true,
+            output_contract: McpOutputContract::ViewEnvelope,
         },
         McpCatalogEntry {
             name: "sinex_curation_proposals",
@@ -813,6 +883,7 @@ pub fn tool_catalog() -> Vec<McpCatalogEntry> {
             description: "Read-only curation proposal event listing.",
             backing_rpc_methods: &[methods::CURATION_PROPOSALS_LIST],
             read_only: true,
+            output_contract: McpOutputContract::ViewEnvelope,
         },
         McpCatalogEntry {
             name: "sinex_dlq_stats",
@@ -820,6 +891,7 @@ pub fn tool_catalog() -> Vec<McpCatalogEntry> {
             description: "Read-only raw-ingest DLQ stream statistics.",
             backing_rpc_methods: &[methods::DLQ_LIST],
             read_only: true,
+            output_contract: McpOutputContract::ViewEnvelope,
         },
         McpCatalogEntry {
             name: "sinex_dlq_peek",
@@ -827,6 +899,7 @@ pub fn tool_catalog() -> Vec<McpCatalogEntry> {
             description: "Read-only sanitized raw-ingest DLQ message previews.",
             backing_rpc_methods: &[methods::DLQ_PEEK],
             read_only: true,
+            output_contract: McpOutputContract::ViewEnvelope,
         },
         McpCatalogEntry {
             name: "sinex_source_materials",
@@ -834,6 +907,7 @@ pub fn tool_catalog() -> Vec<McpCatalogEntry> {
             description: "Read-only staged source-material catalog listing.",
             backing_rpc_methods: &[methods::SOURCES_LIST],
             read_only: true,
+            output_contract: McpOutputContract::ViewEnvelope,
         },
         McpCatalogEntry {
             name: "sinex_source_material",
@@ -841,6 +915,7 @@ pub fn tool_catalog() -> Vec<McpCatalogEntry> {
             description: "Read-only staged source-material detail.",
             backing_rpc_methods: &[methods::SOURCES_SHOW],
             read_only: true,
+            output_contract: McpOutputContract::ViewEnvelope,
         },
         McpCatalogEntry {
             name: "sinex_source_coverage",
@@ -848,6 +923,23 @@ pub fn tool_catalog() -> Vec<McpCatalogEntry> {
             description: "Read-only source-material coverage buckets.",
             backing_rpc_methods: &[methods::SOURCES_COVERAGE],
             read_only: true,
+            output_contract: McpOutputContract::ViewEnvelope,
+        },
+        McpCatalogEntry {
+            name: "sinex_source_remediation_plan",
+            kind: McpSurfaceKind::Tool,
+            description: "Read-only source-material remediation candidate plan.",
+            backing_rpc_methods: &[methods::SOURCES_REMEDIATION_PLAN],
+            read_only: true,
+            output_contract: McpOutputContract::ViewEnvelope,
+        },
+        McpCatalogEntry {
+            name: "sinex_source_package_completeness",
+            kind: McpSurfaceKind::Tool,
+            description: "Read-only source package and mode completeness report.",
+            backing_rpc_methods: &[methods::SOURCES_PACKAGE_COMPLETENESS],
+            read_only: true,
+            output_contract: McpOutputContract::ViewEnvelope,
         },
         McpCatalogEntry {
             name: "sinex_source_presets",
@@ -855,6 +947,7 @@ pub fn tool_catalog() -> Vec<McpCatalogEntry> {
             description: "Read-only built-in source resolver preset catalog.",
             backing_rpc_methods: &[methods::SOURCES_PRESETS_LIST],
             read_only: true,
+            output_contract: McpOutputContract::ViewEnvelope,
         },
         McpCatalogEntry {
             name: "sinex_source_bindings",
@@ -862,6 +955,7 @@ pub fn tool_catalog() -> Vec<McpCatalogEntry> {
             description: "Read-only configured source binding listing.",
             backing_rpc_methods: &[methods::SOURCES_BINDINGS_LIST],
             read_only: true,
+            output_contract: McpOutputContract::ViewEnvelope,
         },
         McpCatalogEntry {
             name: "sinex_ops_list",
@@ -869,6 +963,7 @@ pub fn tool_catalog() -> Vec<McpCatalogEntry> {
             description: "Read-only operations log listing.",
             backing_rpc_methods: &[methods::OPS_LIST],
             read_only: true,
+            output_contract: McpOutputContract::ViewEnvelope,
         },
         McpCatalogEntry {
             name: "sinex_ops_get",
@@ -876,6 +971,7 @@ pub fn tool_catalog() -> Vec<McpCatalogEntry> {
             description: "Read-only operation detail lookup.",
             backing_rpc_methods: &[methods::OPS_GET],
             read_only: true,
+            output_contract: McpOutputContract::ViewEnvelope,
         },
         McpCatalogEntry {
             name: "sinex_lifecycle_status",
@@ -883,6 +979,7 @@ pub fn tool_catalog() -> Vec<McpCatalogEntry> {
             description: "Read-only data lifecycle tier status.",
             backing_rpc_methods: &[methods::LIFECYCLE_STATUS],
             read_only: true,
+            output_contract: McpOutputContract::ViewEnvelope,
         },
         McpCatalogEntry {
             name: "sinex_audit_trail",
@@ -890,6 +987,7 @@ pub fn tool_catalog() -> Vec<McpCatalogEntry> {
             description: "Read-only audit trail for one operation.",
             backing_rpc_methods: &[methods::AUDIT_GET],
             read_only: true,
+            output_contract: McpOutputContract::ViewEnvelope,
         },
         McpCatalogEntry {
             name: "sinex_coordination_instances",
@@ -897,6 +995,7 @@ pub fn tool_catalog() -> Vec<McpCatalogEntry> {
             description: "Read-only coordination instance listing.",
             backing_rpc_methods: &[methods::COORDINATION_LIST_INSTANCES],
             read_only: true,
+            output_contract: McpOutputContract::ViewEnvelope,
         },
         McpCatalogEntry {
             name: "sinex_coordination_leader",
@@ -904,6 +1003,7 @@ pub fn tool_catalog() -> Vec<McpCatalogEntry> {
             description: "Read-only coordination leader lookup.",
             backing_rpc_methods: &[methods::COORDINATION_GET_LEADER],
             read_only: true,
+            output_contract: McpOutputContract::ViewEnvelope,
         },
         McpCatalogEntry {
             name: "sinex_coordination_instance_health",
@@ -911,6 +1011,7 @@ pub fn tool_catalog() -> Vec<McpCatalogEntry> {
             description: "Read-only coordination instance health lookup.",
             backing_rpc_methods: &[methods::COORDINATION_INSTANCE_HEALTH],
             read_only: true,
+            output_contract: McpOutputContract::ViewEnvelope,
         },
         McpCatalogEntry {
             name: "sinex_shadow_consumers",
@@ -918,6 +1019,7 @@ pub fn tool_catalog() -> Vec<McpCatalogEntry> {
             description: "Read-only shadow consumer listing.",
             backing_rpc_methods: &[methods::SHADOW_LIST],
             read_only: true,
+            output_contract: McpOutputContract::ViewEnvelope,
         },
         McpCatalogEntry {
             name: "sinex_system_ping",
@@ -925,6 +1027,7 @@ pub fn tool_catalog() -> Vec<McpCatalogEntry> {
             description: "Read-only gateway ping.",
             backing_rpc_methods: &[methods::SYSTEM_PING],
             read_only: true,
+            output_contract: McpOutputContract::ViewEnvelope,
         },
         McpCatalogEntry {
             name: "sinex_system_version",
@@ -932,6 +1035,7 @@ pub fn tool_catalog() -> Vec<McpCatalogEntry> {
             description: "Read-only gateway package version.",
             backing_rpc_methods: &[methods::SYSTEM_VERSION],
             read_only: true,
+            output_contract: McpOutputContract::ViewEnvelope,
         },
     ]
 }
@@ -1409,6 +1513,34 @@ pub fn tools() -> Vec<McpTool> {
             }),
         ),
         mcp_tool("sinex_source_coverage", empty_object_schema()),
+        mcp_tool(
+            "sinex_source_remediation_plan",
+            json!({
+                "type": "object",
+                "properties": {
+                    "source_identifier": { "type": "string" },
+                    "limit": {
+                        "type": "integer",
+                        "minimum": 1,
+                        "maximum": 1000,
+                        "default": 100
+                    },
+                    "offset": {
+                        "type": "integer",
+                        "minimum": 0,
+                        "default": 0
+                    },
+                    "sort": {
+                        "type": "string",
+                        "enum": ["event-count", "staged-at"],
+                        "default": "event-count"
+                    },
+                    "include_empty": { "type": "boolean", "default": false }
+                },
+                "additionalProperties": false
+            }),
+        ),
+        mcp_tool("sinex_source_package_completeness", empty_object_schema()),
         mcp_tool("sinex_source_presets", empty_object_schema()),
         mcp_tool(
             "sinex_source_bindings",
@@ -1749,6 +1881,8 @@ async fn call_tool_events_sources(
         "sinex_source_materials" => source_materials(client, arguments).await?,
         "sinex_source_material" => source_material(client, arguments).await?,
         "sinex_source_coverage" => source_coverage(client, arguments).await?,
+        "sinex_source_remediation_plan" => source_remediation_plan(client, arguments).await?,
+        "sinex_source_package_completeness" => source_package_completeness(client, arguments).await?,
         "sinex_source_presets" => source_presets(client, arguments).await?,
         "sinex_source_bindings" => source_bindings(client, arguments).await?,
         "sinex_privacy_status" => privacy_status(client, arguments).await?,
@@ -2554,6 +2688,34 @@ async fn source_coverage(client: &GatewayClient, arguments: Value) -> Result<Val
     )?)
 }
 
+async fn source_remediation_plan(client: &GatewayClient, arguments: Value) -> Result<Value> {
+    let args: SourceRemediationPlanArgs = serde_json::from_value(arguments)?;
+    let response = client
+        .sources_remediation_plan(SourcesRemediationPlanRequest {
+            source_identifier: args.source_identifier.clone(),
+            limit: args.limit,
+            offset: args.offset,
+            sort: args.sort.clone(),
+            include_empty: args.include_empty,
+        })
+        .await?;
+    Ok(mcp_view_envelope(
+        "sinex_source_remediation_plan",
+        &json!(args),
+        &json!({ "result": response }),
+    )?)
+}
+
+async fn source_package_completeness(client: &GatewayClient, arguments: Value) -> Result<Value> {
+    reject_non_empty_args("sinex_source_package_completeness", &arguments)?;
+    let response = client.sources_package_completeness().await?;
+    Ok(mcp_view_envelope(
+        "sinex_source_package_completeness",
+        &json!({}),
+        &json!({ "result": response }),
+    )?)
+}
+
 async fn source_presets(client: &GatewayClient, arguments: Value) -> Result<Value> {
     reject_non_empty_args("sinex_source_presets", &arguments)?;
     let response = client.sources_presets_list().await?;
@@ -3115,10 +3277,104 @@ fn context_pack_project_scope_caveat(
 
 #[cfg(test)]
 mod tests {
+    use std::collections::BTreeSet;
+
     use serde_json::json;
     use xtask::sandbox::prelude::*;
 
     use super::*;
+
+    #[sinex_test]
+    async fn mcp_catalog_and_tool_list_names_stay_in_sync() -> TestResult<()> {
+        let catalog_names = tool_catalog()
+            .into_iter()
+            .map(|entry| entry.name)
+            .collect::<BTreeSet<_>>();
+        let tool_names = tools()
+            .into_iter()
+            .map(|tool| tool.name)
+            .collect::<BTreeSet<_>>();
+
+        assert_eq!(
+            catalog_names, tool_names,
+            "MCP tool catalog and tools/list surface must enumerate the same tools"
+        );
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn mcp_catalog_declares_view_envelope_contract_for_read_tools() -> TestResult<()> {
+        let catalog = tool_catalog();
+        assert!(
+            !catalog.is_empty(),
+            "MCP catalog must not be empty; the envelope contract would be unenforced"
+        );
+
+        for entry in catalog {
+            assert_eq!(entry.kind, McpSurfaceKind::Tool);
+            assert!(entry.read_only, "{} must remain read-only", entry.name);
+            assert_eq!(
+                entry.output_contract,
+                McpOutputContract::ViewEnvelope,
+                "{} must declare the ViewEnvelope output contract",
+                entry.name
+            );
+        }
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn mcp_standard_envelope_shape_carries_caveat_and_privacy_state() -> TestResult<()> {
+        let response = envelope(
+            "sinex_test_tool",
+            &json!({ "limit": 3 }),
+            &json!({ "result": [] }),
+        );
+
+        assert_eq!(response["source_surface"], "sinex_test_tool");
+        assert_eq!(response["query_echo"], json!({ "limit": 3 }));
+        assert_eq!(response["payload"], json!({ "result": [] }));
+        assert_eq!(response["privacy_state"]["state"], "redacted");
+        assert!(
+            response["caveats"]
+                .as_array()
+                .expect("caveats must be an array")
+                .iter()
+                .any(|caveat| caveat["id"] == "mcp.raw_samples_redacted"),
+            "MCP envelopes must carry the raw-sample redaction caveat: {response:?}"
+        );
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn mcp_gateway_unavailable_response_is_still_a_view_envelope() -> TestResult<()> {
+        let response = gateway_unavailable_envelope(
+            "sinex_sources_status",
+            &json!({ "stale_after_secs": 60 }),
+            "https://127.0.0.1:19086",
+        )?;
+
+        assert_eq!(response["source_surface"], "sinex_sources_status");
+        assert_eq!(response["payload"]["status"], "degraded");
+        assert_eq!(response["payload"]["reason"], "gateway_unreachable");
+        assert_eq!(response["privacy_state"]["state"], "redacted");
+        let caveats = response["caveats"]
+            .as_array()
+            .expect("degraded envelope caveats must be an array");
+        assert!(
+            caveats
+                .iter()
+                .any(|caveat| caveat["id"] == "mcp.gateway_unreachable"),
+            "degraded gateway response must explain gateway reachability: {response:?}"
+        );
+        assert!(
+            caveats
+                .iter()
+                .any(|caveat| caveat["id"] == "mcp.raw_samples_redacted"),
+            "degraded gateway response must preserve MCP redaction caveat: {response:?}"
+        );
+        Ok(())
+    }
 
     #[sinex_test]
     async fn context_pack_project_path_returns_unscoped_with_scope_caveat() -> TestResult<()> {
