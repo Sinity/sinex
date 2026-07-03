@@ -81,3 +81,20 @@ async fn current_environment_rejects_non_unicode_override() -> xtask::sandbox::T
     assert!(error.to_string().contains("must be valid UTF-8"));
     Ok(())
 }
+
+#[sinex_test]
+async fn confirmed_event_type_filter_matches_provenance_source_and_type()
+-> xtask::sandbox::TestResult<()> {
+    let env = SinexEnvironment::new("dev")?;
+
+    assert_eq!(
+        env.nats_confirmed_event_type_filter_subject(None, "command.executed"),
+        "dev.events.confirmed.*.*.command_d_executed"
+    );
+    assert_eq!(
+        env.nats_confirmed_event_type_filter_subject(Some("agent"), "command.executed"),
+        "dev.agent.events.confirmed.*.*.command_d_executed"
+    );
+
+    Ok(())
+}
