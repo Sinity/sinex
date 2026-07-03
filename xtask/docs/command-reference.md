@@ -368,6 +368,7 @@ Run the explicit local devshell/runtime lifecycle smoke
 |---|---|---|---|
 | `--dry-run` | no | no | Print the smoke plan and current coordinates without starting or stopping services |
 | `--reset-first` | no | no | Stop current-checkout infra before the smoke if it is already running |
+| `--allow-running` | no | no | Preserve already-running current-checkout infra while running smoke probes |
 | `--skip-start` | no | no | Skip the explicit infra start/stop phase and only verify read-only probes |
 | `--run-core` | no | no | Start a managed local sinexd job, observe it in infra status, and cancel it |
 
