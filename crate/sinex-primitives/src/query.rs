@@ -185,6 +185,8 @@ pub struct EventQuery {
     pub limit: i64,
     #[serde(default)]
     pub direction: SortDirection,
+    #[serde(default)]
+    pub order: EventOrdering,
 
     // ── Mode ──
     #[serde(default)]
@@ -248,6 +250,7 @@ impl Default for EventQuery {
             cursor: None,
             limit: default_limit(),
             direction: SortDirection::default(),
+            order: EventOrdering::default(),
             aggregation: None,
             include_total_estimate: false,
             has_lineage: None,
@@ -362,6 +365,20 @@ pub enum SortDirection {
     Asc,
     #[default]
     Desc,
+}
+
+/// Listing order for event queries.
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum EventOrdering {
+    /// Preserve the established backend choice: relevance for text search,
+    /// occurrence order for bounded `ts_orig` windows, otherwise UUIDv7/id order.
+    #[default]
+    Auto,
+    /// Order by UUIDv7/id timestamp, equivalent to `ts_coided`.
+    TsCoided,
+    /// Order by original source-domain timestamp, with id as a stable tie-breaker.
+    TsOrig,
 }
 
 /// Composable payload predicates. Maps directly to `PostgreSQL` JSONB operations.

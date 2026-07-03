@@ -1,6 +1,8 @@
-use crate::error::SinexError;
 use crate::domain::{EventSource, EventType, HostName};
-use crate::query::{EventQuery, Pagination, PayloadFilter, SortDirection, TimeRange};
+use crate::error::SinexError;
+use crate::query::{
+    EventOrdering, EventQuery, Pagination, PayloadFilter, SortDirection, TimeRange,
+};
 use crate::temporal::Timestamp;
 use crate::views::{CaveatView, SinexObjectKind, SinexObjectRef};
 use schemars::JsonSchema;
@@ -8,8 +10,8 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::BTreeMap;
 use winnow::Parser;
-use winnow::ascii::multispace0;
-use winnow::combinator::{alt, delimited, opt};
+use winnow::ascii::{multispace0, multispace1};
+use winnow::combinator::{alt, delimited, opt, peek};
 use winnow::prelude::ModalResult;
 use winnow::token::{one_of, take_until, take_while};
 
@@ -412,8 +414,37 @@ pub fn event_query_from_sinex_query(query: &SinexQuery) -> Result<EventQuery, Si
     if let Some(predicate) = &query.predicate {
         apply_event_query_predicate(predicate, &mut request)?;
     }
+    apply_event_query_sort(query, &mut request)?;
 
     Ok(request)
+}
+
+fn apply_event_query_sort(query: &SinexQuery, request: &mut EventQuery) -> Result<(), SinexError> {
+    match query.sort.as_slice() {
+        [] => {}
+        [sort] => {
+            request.direction = if sort.descending {
+                SortDirection::Desc
+            } else {
+                SortDirection::Asc
+            };
+            request.order = match sort.key.as_str() {
+                "ts_coided" => EventOrdering::TsCoided,
+                "ts_orig" => EventOrdering::TsOrig,
+                other => {
+                    return Err(SinexError::validation(format!(
+                        "events query does not support backend sort key `{other}`"
+                    )));
+                }
+            };
+        }
+        _ => {
+            return Err(SinexError::validation(
+                "events query supports exactly one sort key",
+            ));
+        }
+    }
+    Ok(())
 }
 
 fn apply_event_query_predicate(
@@ -446,7 +477,9 @@ fn lower_event_compare(
 ) -> Result<(), SinexError> {
     match field {
         "source" if operator == QueryOperator::Eq => {
-            request.sources.push(EventSource::new(query_value_string(value)?)?);
+            request
+                .sources
+                .push(EventSource::new(query_value_string(value)?)?);
             Ok(())
         }
         "event_type" if operator == QueryOperator::Eq => {
@@ -456,7 +489,9 @@ fn lower_event_compare(
             Ok(())
         }
         "host" if operator == QueryOperator::Eq => {
-            request.hosts.push(HostName::new(query_value_string(value)?)?);
+            request
+                .hosts
+                .push(HostName::new(query_value_string(value)?)?);
             Ok(())
         }
         "scope_key" if operator == QueryOperator::Eq => {
@@ -912,6 +947,16 @@ const RUNTIME_SORT: &[QuerySortDescriptor] = &[
         default_descending: true,
     },
 ];
+const EVENT_SORT: &[QuerySortDescriptor] = &[
+    QuerySortDescriptor {
+        key: "ts_coided",
+        default_descending: true,
+    },
+    QuerySortDescriptor {
+        key: "ts_orig",
+        default_descending: true,
+    },
+];
 
 static QUERY_UNITS: &[QueryUnitDescriptor] = &[
     QueryUnitDescriptor {
@@ -921,7 +966,7 @@ static QUERY_UNITS: &[QueryUnitDescriptor] = &[
         max_limit: 1000,
         supports_aggregation: true,
         fields: EVENT_FIELDS,
-        sort_keys: &[],
+        sort_keys: EVENT_SORT,
         backing_rpc_methods: &["events.cards", "events.query"],
         disclosure_context: "view",
     },
@@ -1059,6 +1104,10 @@ fn parse_query_tokens(input: &mut &str) -> ModalResult<ParsedQueryTokens> {
     let mut limit = None;
     let mut offset = None;
     loop {
+        if opt(ws(order_by_clause)).parse_next(input)?.is_some() {
+            sorts.push(sort_token.parse_next(input)?);
+            continue;
+        }
         if opt(ws("sort")).parse_next(input)?.is_some() {
             sorts.push(sort_token.parse_next(input)?);
             continue;
@@ -1218,8 +1267,8 @@ fn predicate_token(input: &mut &str) -> ModalResult<ParsedPredicateToken> {
 
 fn connector_token(input: &mut &str) -> ModalResult<ParsedConnector> {
     alt((
-        "and".value(ParsedConnector::And),
-        "or".value(ParsedConnector::Or),
+        ("and", peek(multispace1)).value(ParsedConnector::And),
+        ("or", peek(multispace1)).value(ParsedConnector::Or),
     ))
     .parse_next(input)
 }
@@ -1228,6 +1277,12 @@ fn sort_token(input: &mut &str) -> ModalResult<ParsedSortToken> {
     let key = ws(identifier).parse_next(input)?.to_string();
     let descending = opt(ws(sort_direction_token)).parse_next(input)?;
     Ok(ParsedSortToken { key, descending })
+}
+
+fn order_by_clause(input: &mut &str) -> ModalResult<()> {
+    ws("order").parse_next(input)?;
+    ws("by").parse_next(input)?;
+    Ok(())
 }
 
 fn sort_direction_token(input: &mut &str) -> ModalResult<bool> {

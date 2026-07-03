@@ -6,8 +6,7 @@ use color_eyre::eyre::eyre;
 use serde_json::Value;
 use sinex_primitives::query_units::{
     QueryOperator, QueryUnitId, QueryValue, SinexQuery, SinexQueryPredicate,
-    SinexQueryResultListView, SinexQueryResultRow, event_query_from_sinex_query,
-    parse_sinex_query,
+    SinexQueryResultListView, SinexQueryResultRow, event_query_from_sinex_query, parse_sinex_query,
 };
 use sinex_primitives::rpc::dlq::DlqListResponse;
 use sinex_primitives::rpc::sources::{
@@ -31,6 +30,7 @@ use crate::model::OutputFormat;
 #[command(after_help = "\
 EXAMPLES:
     sinexctl query 'events where source = \"terminal.fish-history\" and event_type = \"terminal.command\" limit 100'
+    sinexctl query 'events where ts_orig >= \"2026-07-02T12:00:00Z\" and ts_orig < \"2026-07-02T13:00:00Z\" order by ts_orig asc limit 100'
     sinexctl query 'source-drivers where readiness != \"ready\" limit 50'
     sinexctl query 'source-materials where status = \"completed\" limit 25'
     sinexctl query 'debt where kind = \"admission\" or kind = \"projection\" limit 50'
@@ -84,6 +84,14 @@ async fn query_events(
         .cards
         .into_iter()
         .map(|card| {
+            let ts_orig = card
+                .timestamp
+                .original
+                .map(|timestamp| timestamp.to_string());
+            let ts_coided = card
+                .timestamp
+                .ingested
+                .map(|timestamp| timestamp.to_string());
             let payload = serde_json::to_value(&card).unwrap_or(Value::Null);
             SinexQueryResultRow::new(
                 QueryUnitId::Events,
@@ -96,6 +104,8 @@ async fn query_events(
             .with_field("source", card.source.raw)
             .with_field("event_type", card.event_type)
             .with_field("origin_kind", format!("{:?}", card.origin_kind))
+            .with_field("ts_orig", ts_orig)
+            .with_field("ts_coided", ts_coided)
             .with_caveats(card.caveats)
         })
         .collect::<Vec<_>>();
@@ -201,9 +211,8 @@ async fn query_debt(
     let mut debt_rows = debt_rows_from_dlq(&dlq);
     let coverage = client.sources_coverage(SourcesCoverageRequest {}).await?;
     debt_rows.extend(debt_rows_from_source_coverage(&coverage.sources));
-    debt_rows.extend(
-        debt_rows_from_source_material_remediation(client, query.pagination.limit).await?,
-    );
+    debt_rows
+        .extend(debt_rows_from_source_material_remediation(client, query.pagination.limit).await?);
     debt_rows.extend(debt_rows_from_derivation_trigger(
         sinex_primitives::InvalidationTrigger::Replay,
     ));
