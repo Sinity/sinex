@@ -181,8 +181,8 @@ async fn mcp_catalog_exactly_covers_live_tools() -> TestResult<()> {
         assert_eq!(entry.kind, McpSurfaceKind::Tool);
         assert!(entry.read_only, "MCP v1 catalog entry must be read-only");
         assert!(
-            !entry.backing_rpc_methods.is_empty(),
-            "MCP entry `{}` must declare backing RPC descriptors",
+            !entry.backing_rpc_methods.is_empty() || entry.name == "sinex.orient",
+            "MCP entry `{}` must declare backing RPC descriptors unless it is the local orientation surface",
             entry.name
         );
     }
@@ -264,6 +264,29 @@ async fn mcp_surface_uses_typed_gateway_client_methods() -> TestResult<()> {
         !mcp_source.contains("call_raw_rpc"),
         "MCP tools must use typed GatewayClient methods"
     );
+    Ok(())
+}
+
+#[sinex_test]
+async fn mcp_orient_call_uses_shared_orientation_document() -> TestResult<()> {
+    let server = mount_mcp_gateway_fixture().await;
+    let client = fixture_gateway_client(&server)?;
+
+    let response = call_tool(&client, "sinex.orient", json!({ "focus": "provenance" })).await?;
+
+    assert_eq!(response["source_surface"], "sinex.orient");
+    assert_eq!(response["query_echo"]["focus"], "provenance");
+    assert_eq!(
+        response["payload"]["source_document"],
+        "crate/sinexctl/docs/agent_orientation.md"
+    );
+    let orientation = response["payload"]["orientation_markdown"]
+        .as_str()
+        .ok_or_else(|| color_eyre::eyre::eyre!("orientation markdown missing"))?;
+    assert!(orientation.contains("Material provenance"));
+    assert!(orientation.contains("Derived provenance"));
+    assert!(orientation.contains("ts_orig"));
+    assert!(orientation.contains("sinex.trace_lineage"));
     Ok(())
 }
 
