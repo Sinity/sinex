@@ -20,6 +20,7 @@ use sinex_primitives::query::{
     LineageDirection, LineageQuery, NumericField, PathOp, PayloadFilter, SortDirection,
     TimeSeriesOrder,
 };
+use sinex_primitives::Timestamp;
 use xtask::sandbox::prelude::*;
 
 // ============================================================================
@@ -168,6 +169,106 @@ async fn test_cursor_forward_pagination(ctx: TestContext) -> TestResult<()> {
             "Page 2 should not contain events from page 1"
         );
     }
+
+    Ok(())
+}
+
+#[sinex_test]
+async fn time_window_listing_paginates_by_ts_orig_then_id(ctx: TestContext) -> TestResult<()> {
+    let material_id = ctx
+        .create_source_material(Some("time-window-pagination-test"))
+        .await?;
+    let timestamps = [
+        "2026-07-03T10:00:00Z",
+        "2026-07-03T10:05:00Z",
+        "2026-07-03T10:10:00Z",
+        "2026-07-03T10:15:00Z",
+        "2026-07-03T10:20:00Z",
+    ];
+
+    for (index, timestamp) in timestamps.iter().enumerate() {
+        let event = DynamicPayload::new(
+            "time-window-source",
+            "test.type",
+            json!({"index": index}),
+        )
+        .from_material(material_id)
+        .build()?
+        .with_timestamp(Timestamp::parse_rfc3339(timestamp)?);
+        ctx.pool.events().insert(event).await?;
+    }
+
+    let page1 = ctx
+        .pool
+        .events()
+        .query(EventQuery {
+            sources: vec![EventSource::from_static("time-window-source")],
+            time_range: Some(sinex_primitives::query::TimeRange::new(
+                Some(Timestamp::parse_rfc3339("2026-07-03T09:00:00Z")?),
+                Some(Timestamp::parse_rfc3339("2026-07-03T11:00:00Z")?),
+            )?),
+            limit: 2,
+            direction: SortDirection::Desc,
+            ..Default::default()
+        })
+        .await?;
+
+    let EventQueryResult::Events {
+        events: page1_events,
+        next_cursor,
+        ..
+    } = page1
+    else {
+        panic!("Expected Events result")
+    };
+    assert_eq!(page1_events.len(), 2);
+    assert_eq!(
+        page1_events[0].event.ts_orig,
+        Some(Timestamp::parse_rfc3339("2026-07-03T10:20:00Z")?)
+    );
+    assert_eq!(
+        page1_events[1].event.ts_orig,
+        Some(Timestamp::parse_rfc3339("2026-07-03T10:15:00Z")?)
+    );
+    let next_cursor = next_cursor.expect("time-window page should expose a cursor");
+    assert_eq!(
+        next_cursor.after.as_ref().and_then(|anchor| anchor.ts_orig),
+        Some(Timestamp::parse_rfc3339("2026-07-03T10:15:00Z")?)
+    );
+
+    let page2 = ctx
+        .pool
+        .events()
+        .query(EventQuery {
+            sources: vec![EventSource::from_static("time-window-source")],
+            time_range: Some(sinex_primitives::query::TimeRange::new(
+                Some(Timestamp::parse_rfc3339("2026-07-03T09:00:00Z")?),
+                Some(Timestamp::parse_rfc3339("2026-07-03T11:00:00Z")?),
+            )?),
+            limit: 2,
+            cursor: Some(next_cursor),
+            direction: SortDirection::Desc,
+            ..Default::default()
+        })
+        .await?;
+
+    let EventQueryResult::Events {
+        events: page2_events,
+        ..
+    } = page2
+    else {
+        panic!("Expected Events result")
+    };
+
+    assert_eq!(page2_events.len(), 2);
+    assert_eq!(
+        page2_events[0].event.ts_orig,
+        Some(Timestamp::parse_rfc3339("2026-07-03T10:10:00Z")?)
+    );
+    assert_eq!(
+        page2_events[1].event.ts_orig,
+        Some(Timestamp::parse_rfc3339("2026-07-03T10:05:00Z")?)
+    );
 
     Ok(())
 }
