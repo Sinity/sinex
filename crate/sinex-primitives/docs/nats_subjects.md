@@ -49,7 +49,7 @@ Stream names are derived from a configurable base name (typically `SINEX_EVENTS`
 | Stream | Filter | Purpose |
 |--------|--------|---------|
 | `<base>` | `events.raw.>` | Primary event storage |
-| `<base>_CONFIRMED_EVENTS` | `events.confirmed.>` | Full post-redaction confirmed-events delivery bus |
+| `<base>_CONFIRMED` | `events.confirmed.>` | Full post-redaction confirmed-events delivery bus |
 | `<base>_PROCESSING_FAILURES` | `events.processing_failures.>` | Processing failure envelopes |
 | `<base>_DLQ` | `events.dlq.>` | Dead letter queue |
 | `<base>_DERIVED_INVALIDATIONS` | `sinex.derived.invalidation` | Scope invalidation signals |

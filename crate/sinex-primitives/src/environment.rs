@@ -346,13 +346,15 @@ impl SinexEnvironment {
     }
 
     /// Build a confirmed-event consumer *filter* subject that matches every
-    /// source but a single event type: `events.confirmed.*.<type>`.
+    /// provenance class and source but a single event type:
+    /// `events.confirmed.*.*.<type>`.
     ///
-    /// Confirmed events are published to `events.confirmed.<source>.<event_type>`,
-    /// so a type-specific automaton can let the NATS server filter the
-    /// confirmed-events stream instead of receiving and decoding every confirmed
-    /// event. The mirror of `nats_raw_event_type_filter_subject` for the
-    /// confirmed-delivery path (#2187).
+    /// Confirmed events are published to
+    /// `events.confirmed.<provenance>.<source>.<event_type>`, so a
+    /// type-specific automaton can let the NATS server filter the
+    /// confirmed-events stream instead of receiving and decoding every
+    /// confirmed event. The mirror of `nats_raw_event_type_filter_subject` for
+    /// the confirmed-delivery path (#2187).
     #[must_use]
     pub fn nats_confirmed_event_type_filter_subject(
         &self,
@@ -361,7 +363,10 @@ impl SinexEnvironment {
     ) -> String {
         self.nats_subject_with_namespace(
             namespace,
-            &format!("events.confirmed.*.{}", Self::nats_subject_token(event_type)),
+            &format!(
+                "events.confirmed.*.*.{}",
+                Self::nats_subject_token(event_type)
+            ),
         )
     }
 
