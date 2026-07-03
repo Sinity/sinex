@@ -10,6 +10,7 @@ use sinex_primitives::rpc::llm::{
     LlmBudgetReportRequest, LlmBudgetReportResponse, LlmPromptsListRequest, LlmRouteExplainRequest,
     LlmRouteExplainResponse,
 };
+use sinex_primitives::views::{CaveatView, ReadinessCaveatId, SinexObjectKind, SinexObjectRef};
 use sinex_primitives::{Result, SinexError};
 use sqlx::PgPool;
 
@@ -82,7 +83,15 @@ fn summarize_budget_rows(rows: Vec<LlmBudgetLedgerPayload>) -> LlmBudgetReportRe
         completion_tokens: 0,
         cost_estimate_microusd: 0,
         runtime_ms: 0,
+        caveats: Vec::new(),
     };
+
+    if response.rows.is_empty() {
+        response.caveats.push(llm_producer_absent_caveat(
+            "llm.budget.ledger",
+            "LLM budget-report has no ledger rows; no budget-ledger producer is currently contributing events.",
+        ));
+    }
 
     for row in &response.rows {
         match row.status {
@@ -97,4 +106,12 @@ fn summarize_budget_rows(rows: Vec<LlmBudgetLedgerPayload>) -> LlmBudgetReportRe
     }
 
     response
+}
+
+fn llm_producer_absent_caveat(event_type: &'static str, message: &'static str) -> CaveatView {
+    CaveatView {
+        id: ReadinessCaveatId::SourceAbsent.as_str().to_string(),
+        message: message.to_string(),
+        ref_: Some(SinexObjectRef::new(SinexObjectKind::Projection, event_type)),
+    }
 }
