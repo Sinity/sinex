@@ -246,69 +246,34 @@ async fn finish_replay_forwarder_surfaces_join_error() -> TestResult<()> {
 }
 
 #[sinex_test]
-async fn resolve_provisionals_to_events_falls_back_when_confirmed_event_missing(
-    ctx: TestContext,
-) -> TestResult<()> {
-    // A confirmation can arrive before its row is visible in the DB (a
-    // commit/confirmation-visibility race common under high-volume backlog
-    // drain). The resolver must NOT crash — crashing turns a transient race into
-    // a restart→replay→re-accumulate loop that churns memory toward OOM (#2187).
-    // It must reconstruct the event from the provisional payload it already holds.
-    let event_id = EventId::from(Uuid::now_v7());
-    let provisional = ProvisionalEvent {
-        event_id,
-        source: EventSource::new("runtime-test-source")?,
-        event_type: EventType::new("runtime.test")?,
-        payload: serde_json::json!({
-            "source": "runtime-test-source",
-            "event_type": "runtime.test",
-            "host": "runtime-test-host",
-            "payload": {"ok": true},
-            "source_event_ids": [Uuid::now_v7().to_string()]
-        }),
-        ts_orig: Timestamp::now(),
-        received_at: Timestamp::now(),
-    };
+async fn confirmed_event_handler_forwards_full_event_to_bridge() -> TestResult<()> {
+    // Option C: the confirmed-event consumer delivers the full post-redaction
+    // `Event<JsonValue>` straight to the automaton bridge channel — no DB
+    // refetch, no provisional reconstruction (#2187 / #2202). The handler must
+    // forward the event verbatim.
+    use crate::runtime::ConfirmedEventHandler;
 
-    // event_id is not persisted in this fresh test DB, so the DB lookup misses
-    // and the resolver must exercise the provisional-payload fallback (Ok, not Err).
-    let resolved = RuntimeRunner::<RuntimeTestModule>::resolve_provisionals_to_events(
-        &[provisional],
-        &Some(ctx.pool().clone()),
+    let (tx, mut rx) = tokio::sync::mpsc::channel::<Event<JsonValue>>(8);
+    let handler = RunnerConfirmedEventHandler::new(tx);
+
+    let event = sinex_primitives::events::DynamicPayload::new(
+        "runtime-test-source",
+        "runtime.test",
+        serde_json::json!({"ok": true}),
     )
-    .await?;
+    .from_material(Id::from_uuid(Uuid::now_v7()))
+    .build()?;
+    let expected_id = event.id;
 
-    assert_eq!(
-        resolved.events.len(),
-        1,
-        "missing DB row must fall back to the provisional payload, not fail the batch"
-    );
-    assert_eq!(resolved.events[0].event_type.as_str(), "runtime.test");
-    assert_eq!(resolved.last_event_id, Some(*event_id.as_uuid()));
-    Ok(())
-}
+    handler.handle_confirmed(&event).await?;
 
-#[sinex_test]
-async fn build_event_from_provisional_rejects_invalid_module_run_id() -> TestResult<()> {
-    let provisional = ProvisionalEvent {
-        event_id: EventId::from(Uuid::now_v7()),
-        source: EventSource::new("runtime-test-source")?,
-        event_type: EventType::new("runtime.test")?,
-        payload: serde_json::json!({
-            "source": "runtime-test-source",
-            "event_type": "runtime.test",
-            "host": "runtime-test-host",
-            "payload": {"ok": true},
-            "source_event_ids": [Uuid::now_v7().to_string()],
-            "module_run_id": "not-a-uuid"
-        }),
-        ts_orig: Timestamp::now(),
-        received_at: Timestamp::now(),
-    };
-
-    let error = RuntimeRunner::<RuntimeTestModule>::build_event_from_provisional(&provisional)
-        .expect_err("invalid persisted module_run_id must fail honestly");
-    assert!(error.to_string().contains("Invalid UUID for module_run_id"));
+    let received = rx
+        .recv()
+        .await
+        .expect("bridge channel must receive the confirmed event");
+    assert_eq!(received.id, expected_id);
+    assert_eq!(received.event_type.as_str(), "runtime.test");
+    assert_eq!(received.payload, serde_json::json!({"ok": true}));
     Ok(())
 }
 
@@ -388,42 +353,6 @@ async fn source_startup_gap_fill_uses_preexisting_checkpoint(ctx: TestContext) -
             },
         ]
     );
-    Ok(())
-}
-
-#[cfg(feature = "messaging")]
-#[sinex_test]
-async fn resolve_provisionals_to_events_surfaces_invalid_payload_without_db() -> TestResult<()> {
-    let provisional = ProvisionalEvent {
-        event_id: EventId::from(Uuid::now_v7()),
-        source: EventSource::new("runtime-test-source")?,
-        event_type: EventType::new("runtime.test")?,
-        payload: serde_json::json!({
-            "source": "runtime-test-source",
-            "event_type": "runtime.test",
-            "host": "runtime-test-host",
-            "payload": {"ok": true},
-            "source_event_ids": [Uuid::now_v7().to_string()],
-            "module_run_id": "not-a-uuid"
-        }),
-        ts_orig: Timestamp::now(),
-        received_at: Timestamp::now(),
-    };
-
-    let Err(error) =
-        RuntimeRunner::<RuntimeTestModule>::resolve_provisionals_to_events(&[provisional], &None)
-            .await
-    else {
-        return Err(color_eyre::eyre::eyre!(
-            "invalid provisional payloads must fail honestly when no db pool is available"
-        ));
-    };
-
-    let message = format!("{error:#}");
-    assert!(
-        message.contains("Confirmed event could not be reconstructed from provisional payload")
-    );
-    assert!(message.contains("Invalid UUID for module_run_id"));
     Ok(())
 }
 

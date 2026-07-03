@@ -167,7 +167,6 @@ async fn make_monitor_runtime(
         emitter,
         EventTransport::Nats(publisher),
         None,
-        None,
     );
     let work_dir = tempfile::tempdir()?;
     let work_dir_path = work_dir.keep();

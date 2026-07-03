@@ -1,33 +1,32 @@
 //! Subscription bus: fans out confirmed events to SSE clients via in-memory filters.
 //!
-//! Subscribes to NATS `events.confirmations.>`, batches event IDs over a 20ms window,
-//! fetches full events from Postgres (buffer-cache hot), evaluates each client's
-//! source/type/host subscription scope, and pushes candidates into bounded
-//! per-client channels. Payload predicates are evaluated after view disclosure
-//! in the SSE handler so raw payload fields cannot be inferred by filtering.
+//! Subscribes to NATS `events.confirmed.>` and receives the full post-redaction
+//! `Event<JsonValue>` directly from the confirmed-events stream — no Postgres
+//! refetch, no commit/confirmation visibility race (the #2187 / #2202
+//! confirmed-delivery redesign). Tombstone-suppression is preserved upstream:
+//! the event engine never publishes a confirmed event for a tombstoned id, so
+//! tombstoned events never reach this bus. Each confirmed event is evaluated
+//! against every client's source/type/host subscription scope and pushed into
+//! bounded per-client channels. Payload predicates are evaluated after view
+//! disclosure in the SSE handler so raw payload fields cannot be inferred by
+//! filtering.
 
 use dashmap::DashMap;
 use futures::StreamExt;
 use parking_lot::Mutex;
 use serde::Serialize;
-use sinex_db::DbPoolExt;
 use sinex_primitives::events::Event;
 use sinex_primitives::query::SubscriptionFilter;
 use sinex_primitives::views::CaveatView;
 use sinex_primitives::{Id, JsonValue, Timestamp};
-use std::collections::{HashMap, HashSet, VecDeque};
+use std::collections::{HashSet, VecDeque};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use tokio::sync::mpsc;
 use tracing::{debug, info, warn};
 
-/// Batch window: accumulate confirmation IDs for this duration before DB fetch.
-const BATCH_WINDOW: std::time::Duration = std::time::Duration::from_millis(20);
 const SUBSCRIBE_ATTEMPT_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(2);
 const SUBSCRIBE_RETRY_DELAY: std::time::Duration = std::time::Duration::from_secs(1);
-
-/// Maximum IDs to accumulate before forcing a fetch (even within the batch window).
-const BATCH_MAX_IDS: usize = 32;
 
 /// Per-client channel capacity. Slow consumers get gap notifications.
 const CLIENT_CHANNEL_CAPACITY: usize = 256;
@@ -36,10 +35,6 @@ const RECENT_DELIVERED_EVENT_IDS: usize = 1024;
 /// Hard cap on concurrent SSE subscriptions. Each one owns a buffered channel,
 /// so leaving this unbounded makes memory exhaustion trivial.
 pub const MAX_ACTIVE_SUBSCRIPTIONS: usize = 512;
-
-/// Maximum retry attempts for a single confirmed event ID before it is dropped.
-/// Prevents infinite retry loops when the DB persistently misses a confirmed event.
-const CONFIRMATION_RETRY_MAX_ATTEMPTS: u8 = 10;
 
 // ─────────────────────────────────────────────────────────────────────
 // Message types
@@ -115,12 +110,6 @@ struct SubscriptionState {
 enum DeliveryOutcome {
     Delivered,
     Closed,
-}
-
-struct IndexedEvents {
-    events_by_id: HashMap<Id<Event<JsonValue>>, Arc<Event<JsonValue>>>,
-    missing_id_count: usize,
-    duplicate_id_count: usize,
 }
 
 /// Operator-facing health snapshot for the confirmation fan-out path.
@@ -250,11 +239,7 @@ pub struct SubscriptionBus {
     subscriptions: DashMap<u64, Arc<SubscriptionSlot>>,
     next_sub_id: AtomicU64,
     active_subscriptions: AtomicUsize,
-    /// Tracks retry counts for confirmed event IDs that were not found in the DB.
-    /// After `CONFIRMATION_RETRY_MAX_ATTEMPTS`, the ID is dropped with a warning.
-    confirmation_retry_counts: Mutex<HashMap<Id<Event<JsonValue>>, u8>>,
     dropped_confirmations_total: AtomicU64,
-    db_fetch_failures_total: AtomicU64,
     malformed_confirmations_total: AtomicU64,
     subscription_reconnects_total: AtomicU64,
 }
@@ -284,9 +269,7 @@ impl SubscriptionBus {
             subscriptions: DashMap::new(),
             next_sub_id: AtomicU64::new(1),
             active_subscriptions: AtomicUsize::new(0),
-            confirmation_retry_counts: Mutex::new(HashMap::new()),
             dropped_confirmations_total: AtomicU64::new(0),
-            db_fetch_failures_total: AtomicU64::new(0),
             malformed_confirmations_total: AtomicU64::new(0),
             subscription_reconnects_total: AtomicU64::new(0),
         }
@@ -334,9 +317,10 @@ impl SubscriptionBus {
     pub fn health_snapshot(&self) -> SseBusHealthSnapshot {
         SseBusHealthSnapshot {
             active_subscriptions: self.active_count(),
-            pending_retry_confirmations: self.confirmation_retry_counts.lock().len(),
+            // Direct confirmed-event delivery has no DB-refetch fallback path.
+            pending_retry_confirmations: 0,
             dropped_confirmations_total: self.dropped_confirmations_total.load(Ordering::Acquire),
-            db_fetch_failures_total: self.db_fetch_failures_total.load(Ordering::Acquire),
+            db_fetch_failures_total: 0,
             malformed_confirmations_total: self
                 .malformed_confirmations_total
                 .load(Ordering::Acquire),
@@ -348,19 +332,18 @@ impl SubscriptionBus {
 
     /// Run the bus loop. Blocks until the shutdown signal fires.
     ///
-    /// This subscribes to NATS confirmations, batches IDs, fetches events from DB,
-    /// and fans out to all matching client channels.
+    /// This subscribes to NATS `events.confirmed.>`, deserializes each full
+    /// confirmed event, and fans out to all matching client channels.
     ///
     /// If `ready` is provided, it will be notified once the NATS subscription is active.
     pub async fn run(
         self: Arc<Self>,
         nats_client: async_nats::Client,
-        pool: sqlx::PgPool,
         env: sinex_primitives::environment::SinexEnvironment,
         namespace: Option<String>,
         shutdown: tokio::sync::watch::Receiver<bool>,
     ) {
-        self.run_with_ready(nats_client, pool, env, namespace, shutdown, None)
+        self.run_with_ready(nats_client, env, namespace, shutdown, None)
             .await;
     }
 
@@ -368,25 +351,20 @@ impl SubscriptionBus {
     /// Useful in tests to avoid racing between subscribe and publish.
     ///
     /// `namespace` MUST match the namespace the paired event_engine publishes
-    /// confirmations under (`SINEX_NAMESPACE`): NATS subjects are
+    /// confirmed events under (`SINEX_NAMESPACE`): NATS subjects are
     /// namespace-prefixed, so a mismatched (or absent) namespace makes the bus
-    /// subscribe to `{default}.events.confirmations.>` while a namespaced
-    /// event_engine publishes to `{namespace}.events.confirmations.*`, and SSE
-    /// delivery silently never completes.
+    /// subscribe to `{default}.events.confirmed.>` while a namespaced event_engine
+    /// publishes to `{namespace}.events.confirmed.*`, and SSE delivery silently
+    /// never completes.
     pub async fn run_with_ready(
         self: Arc<Self>,
         nats_client: async_nats::Client,
-        pool: sqlx::PgPool,
         env: sinex_primitives::environment::SinexEnvironment,
         namespace: Option<String>,
         mut shutdown: tokio::sync::watch::Receiver<bool>,
         ready: Option<Arc<tokio::sync::Notify>>,
     ) {
-        let subject =
-            env.nats_subject_with_namespace(namespace.as_deref(), "events.confirmations.>");
-        let mut id_buffer: Vec<Id<Event<JsonValue>>> = Vec::with_capacity(BATCH_MAX_IDS);
-        let mut batch_timer = tokio::time::interval(BATCH_WINDOW);
-        batch_timer.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+        let subject = env.nats_subject_with_namespace(namespace.as_deref(), "events.confirmed.>");
         let mut ready = ready;
         let mut ready_notified = false;
 
@@ -415,7 +393,7 @@ impl SubscriptionBus {
                             ?error,
                             subject,
                             retry_delay_ms = SUBSCRIBE_RETRY_DELAY.as_millis(),
-                            "Failed to subscribe to confirmations — retrying"
+                            "Failed to subscribe to confirmed events — retrying"
                         );
                     }
                     Err(_) => {
@@ -423,7 +401,7 @@ impl SubscriptionBus {
                             subject,
                             subscribe_timeout_ms = SUBSCRIBE_ATTEMPT_TIMEOUT.as_millis(),
                             retry_delay_ms = SUBSCRIBE_RETRY_DELAY.as_millis(),
-                            "Timed out subscribing to confirmations — retrying"
+                            "Timed out subscribing to confirmed events — retrying"
                         );
                     }
                 }
@@ -433,9 +411,6 @@ impl SubscriptionBus {
                             warn!("SSE bus shutdown channel dropped before explicit shutdown");
                         }
                         if shutdown_result.is_err() || *shutdown.borrow() {
-                            if !id_buffer.is_empty() {
-                                self.flush_batch(&mut id_buffer, &pool).await;
-                            }
                             info!("SSE bus shutting down");
                             break 'outer;
                         }
@@ -453,9 +428,6 @@ impl SubscriptionBus {
                             warn!("SSE bus shutdown channel dropped before explicit shutdown");
                         }
                         if shutdown_result.is_err() || *shutdown.borrow() {
-                            if !id_buffer.is_empty() {
-                                self.flush_batch(&mut id_buffer, &pool).await;
-                            }
                             info!("SSE bus shutting down");
                             break 'outer;
                         }
@@ -469,23 +441,11 @@ impl SubscriptionBus {
                                 retry_delay_ms = SUBSCRIBE_RETRY_DELAY.as_millis(),
                                 "NATS subscription closed — SSE bus reconnecting"
                             );
-                            if !id_buffer.is_empty() {
-                                self.flush_batch(&mut id_buffer, &pool).await;
-                            }
                             continue 'outer;
                         };
 
-                        // Parse confirmation payload: { "event_id": "...", "persisted": true, "ts_ingest": "..." }
-                        match Self::parse_confirmation(&msg.payload) {
-                            Ok(Some(event_id)) => {
-                                id_buffer.push(event_id);
-
-                                // Flush immediately if buffer full
-                                if id_buffer.len() >= BATCH_MAX_IDS {
-                                    self.flush_batch(&mut id_buffer, &pool).await;
-                                }
-                            }
-                            Ok(None) => {}
+                        match Self::parse_confirmed_event(&msg.payload) {
+                            Ok(event) => self.fan_out_event(Arc::new(event)),
                             Err(error) => {
                                 self.malformed_confirmations_total
                                     .fetch_add(1, Ordering::Relaxed);
@@ -493,15 +453,9 @@ impl SubscriptionBus {
                                     error = %error,
                                     payload_len = msg.payload.len(),
                                     payload_fingerprint = %Self::payload_fingerprint(&msg.payload),
-                                    "Ignoring malformed SSE confirmation payload"
+                                    "Ignoring malformed SSE confirmed-event payload"
                                 );
                             }
-                        }
-                    }
-
-                    _ = batch_timer.tick() => {
-                        if !id_buffer.is_empty() {
-                            self.flush_batch(&mut id_buffer, &pool).await;
                         }
                     }
                 }
@@ -511,50 +465,15 @@ impl SubscriptionBus {
         info!("SSE subscription bus stopped");
     }
 
-    /// Parse an event ID from a NATS confirmation message payload.
-    fn parse_confirmation(payload: &[u8]) -> Result<Option<Id<Event<JsonValue>>>, String> {
-        #[derive(serde::Deserialize)]
-        struct Confirmation {
-            event_id: String,
-            persisted: bool,
-        }
-
-        let conf: Confirmation = serde_json::from_slice(payload)
-            .map_err(|error| format!("failed to parse confirmation JSON: {error}"))?;
-        if !conf.persisted {
-            return Ok(None);
-        }
-        conf.event_id.parse().map(Some).map_err(|error| {
-            let fingerprint = Self::payload_fingerprint(conf.event_id.as_bytes());
-            format!("failed to parse confirmation event_id ({fingerprint}): {error}")
-        })
+    /// Parse a full confirmed `Event<JsonValue>` from a confirmed-events payload.
+    fn parse_confirmed_event(payload: &[u8]) -> Result<Event<JsonValue>, String> {
+        serde_json::from_slice(payload)
+            .map_err(|error| format!("failed to parse confirmed event JSON: {error}"))
     }
 
     fn payload_fingerprint(payload: &[u8]) -> String {
         let hash = blake3::hash(payload).to_hex();
         format!("len={} blake3={}", payload.len(), &hash[..16])
-    }
-
-    fn index_events_by_id(events: Vec<Event<JsonValue>>) -> IndexedEvents {
-        let mut events_by_id = HashMap::with_capacity(events.len());
-        let mut missing_id_count = 0usize;
-        let mut duplicate_id_count = 0usize;
-
-        for event in events {
-            let Some(id) = event.id else {
-                missing_id_count = missing_id_count.saturating_add(1);
-                continue;
-            };
-            if events_by_id.insert(id, Arc::new(event)).is_some() {
-                duplicate_id_count = duplicate_id_count.saturating_add(1);
-            }
-        }
-
-        IndexedEvents {
-            events_by_id,
-            missing_id_count,
-            duplicate_id_count,
-        }
     }
 
     fn snapshot_subscriptions(&self) -> Vec<(u64, Arc<SubscriptionSlot>)> {
@@ -564,111 +483,22 @@ impl SubscriptionBus {
             .collect()
     }
 
-    /// Apply retry counting to IDs that were not found in the DB.
-    /// IDs that exceed the max retry limit are dropped with a warning
-    /// instead of being retried indefinitely.
-    fn filter_retry_ids(
-        &self,
-        ids: Vec<Id<Event<JsonValue>>>,
-        id_buffer: &mut Vec<Id<Event<JsonValue>>>,
-    ) {
-        let mut retry_counts = self.confirmation_retry_counts.lock();
-        for id in ids {
-            let entry = retry_counts.entry(id).or_insert(0);
-            *entry += 1;
-            if *entry >= CONFIRMATION_RETRY_MAX_ATTEMPTS {
-                warn!(
-                    event_id = %id,
-                    retries = *entry,
-                    "Dropping missed confirmation ID after max retries"
-                );
-                self.dropped_confirmations_total
-                    .fetch_add(1, Ordering::Relaxed);
-                retry_counts.remove(&id);
-            } else {
-                id_buffer.push(id);
-            }
-        }
-    }
-
-    /// Fetch events from DB and fan out to all matching subscriptions.
-    async fn flush_batch(&self, id_buffer: &mut Vec<Id<Event<JsonValue>>>, pool: &sqlx::PgPool) {
-        let ids: Vec<_> = std::mem::take(id_buffer);
-        if ids.is_empty() {
-            return;
-        }
-
-        let mut duplicate_confirmation_count = 0usize;
-        let mut seen_ids = HashSet::with_capacity(ids.len());
-        let mut unique_ids = Vec::with_capacity(ids.len());
-        for id in ids {
-            if seen_ids.insert(id) {
-                unique_ids.push(id);
-            } else {
-                duplicate_confirmation_count = duplicate_confirmation_count.saturating_add(1);
-            }
-        }
-
-        // Batch-fetch from DB (buffer-cache hot — events were JUST written)
-        let events = match pool.events().get_by_ids(&unique_ids).await {
-            Ok(events) => events,
-            Err(e) => {
-                self.db_fetch_failures_total.fetch_add(1, Ordering::Relaxed);
-                warn!(
-                    ?e,
-                    count = unique_ids.len(),
-                    "Failed to fetch events for SSE fan-out; preserving batch for retry"
-                );
-                self.filter_retry_ids(unique_ids, id_buffer);
-                return;
-            }
-        };
-
-        let IndexedEvents {
-            mut events_by_id,
-            missing_id_count,
-            duplicate_id_count,
-        } = Self::index_events_by_id(events);
-        if missing_id_count > 0 || duplicate_id_count > 0 || duplicate_confirmation_count > 0 {
-            warn!(
-                events_without_id = missing_id_count,
-                duplicate_event_ids = duplicate_id_count,
-                duplicate_confirmation_ids = duplicate_confirmation_count,
-                "SSE fan-out fetch returned malformed events; preserving unresolved confirmations for retry"
-            );
-        }
-        let mut events = Vec::new();
-        let mut missing_ids = Vec::new();
-        for id in unique_ids {
-            if let Some(event) = events_by_id.remove(&id) {
-                events.push(event);
-            } else {
-                missing_ids.push(id);
-            }
-        }
-
-        if !missing_ids.is_empty() {
-            warn!(
-                missing = missing_ids.len(),
-                "SSE fan-out fetch missed confirmed events; preserving IDs for retry"
-            );
-            self.filter_retry_ids(missing_ids, id_buffer);
-        }
-
+    /// Fan out a single confirmed event to all matching subscriptions.
+    ///
+    /// The event arrives fully materialized from the confirmed-events stream, so
+    /// there is no DB fetch, dedup-by-id, or retry — just scope evaluation and
+    /// per-client delivery.
+    fn fan_out_event(&self, event: Arc<Event<JsonValue>>) {
         // Snapshot handles so DashMap entry locks are not held during filter evaluation or send.
         let subscriptions = self.snapshot_subscriptions();
         let mut to_remove = Vec::new();
 
         for (sub_id, slot) in subscriptions {
-            for event in &events {
-                if !slot.matches_delivery_scope(event) {
-                    continue;
-                }
-
-                if matches!(slot.deliver(event), DeliveryOutcome::Closed) {
-                    to_remove.push(sub_id);
-                    break;
-                }
+            if !slot.matches_delivery_scope(&event) {
+                continue;
+            }
+            if matches!(slot.deliver(&event), DeliveryOutcome::Closed) {
+                to_remove.push(sub_id);
             }
         }
 

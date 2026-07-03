@@ -7,6 +7,7 @@
 //! - HTTP-level auth rejection on the SSE endpoint
 
 use serde_json::json;
+use sinex_db::DbPoolExt;
 use sinex_primitives::query::{PayloadFilter, SubscriptionFilter};
 use sinex_primitives::temporal;
 use sinex_primitives::{EventSource, EventType, Uuid as CoreUuid};
@@ -91,16 +92,23 @@ async fn insert_test_event(
 /// Publish a fake confirmation message to NATS (mimics what event_engine does after persisting).
 async fn publish_confirmation(
     nats: &async_nats::Client,
+    pool: &sqlx::PgPool,
     env_name: &str,
     event_id: &CoreUuid,
 ) -> color_eyre::Result<()> {
-    let id_str = event_id.to_string();
-    let subject = format!("{env_name}.events.confirmations.{id_str}");
-    let payload = serde_json::to_vec(&json!({
-        "event_id": id_str,
-        "persisted": true,
-        "ts_ingest": sinex_primitives::Timestamp::now().format_rfc3339(),
-    }))?;
+    let event = pool
+        .events()
+        .get_by_id((*event_id).into())
+        .await?
+        .ok_or_else(|| color_eyre::eyre::eyre!("test event {event_id} was not persisted"))?;
+    let subject = format!(
+        "{env_name}.events.confirmed.material.{}.{}",
+        sinex_primitives::environment::SinexEnvironment::nats_subject_token(event.source.as_str()),
+        sinex_primitives::environment::SinexEnvironment::nats_subject_token(
+            event.event_type.as_str()
+        )
+    );
+    let payload = serde_json::to_vec(&event)?;
     nats.publish(subject, payload.into()).await?;
     nats.flush().await?;
     Ok(())
@@ -111,7 +119,6 @@ async fn publish_confirmation(
 async fn spawn_bus_ready(
     bus: &Arc<SubscriptionBus>,
     nats: async_nats::Client,
-    pool: sqlx::PgPool,
     env: sinex_primitives::environment::SinexEnvironment,
 ) -> color_eyre::Result<(watch::Sender<bool>, tokio::task::JoinHandle<()>)> {
     let (shutdown_tx, shutdown_rx) = watch::channel(false);
@@ -120,7 +127,7 @@ async fn spawn_bus_ready(
     let bus_clone = Arc::clone(bus);
     let bus_task = tokio::spawn(async move {
         bus_clone
-            .run_with_ready(nats, pool, env, None, shutdown_rx, Some(ready_clone))
+            .run_with_ready(nats, env, None, shutdown_rx, Some(ready_clone))
             .await;
     });
     // Wait until the bus has subscribed to NATS before returning.
@@ -254,7 +261,6 @@ async fn bus_retries_initial_subscribe_failures_until_shutdown(
     ctx: TestContext,
 ) -> color_eyre::Result<()> {
     let ctx = ctx.with_nats().dedicated().await?;
-    let pool = ctx.pool().clone();
     let nats = ctx.nats_client();
     let env = ctx.env().clone();
     ctx.nats_handle()?.shutdown().await?;
@@ -264,7 +270,7 @@ async fn bus_retries_initial_subscribe_failures_until_shutdown(
     let bus_task = tokio::spawn({
         let bus = Arc::clone(&bus);
         async move {
-            bus.run_with_ready(nats, pool, env, None, shutdown_rx, None)
+            bus.run_with_ready(nats, env, None, shutdown_rx, None)
                 .await;
         }
     });
@@ -286,12 +292,11 @@ async fn bus_retries_when_subscription_closes_after_startup(
     ctx: TestContext,
 ) -> color_eyre::Result<()> {
     let ctx = ctx.with_nats().dedicated().await?;
-    let pool = ctx.pool().clone();
     let nats = ctx.nats_client();
     let env = ctx.env().clone();
 
     let bus = Arc::new(SubscriptionBus::new());
-    let (shutdown_tx, bus_task) = spawn_bus_ready(&bus, nats, pool, env).await?;
+    let (shutdown_tx, bus_task) = spawn_bus_ready(&bus, nats, env).await?;
 
     ctx.nats_handle()?.shutdown().await?;
 
@@ -336,12 +341,12 @@ async fn empty_filter_receives_all_events(ctx: TestContext) -> color_eyre::Resul
         .expect("test subscription should register");
 
     // Spawn bus and wait for NATS subscription to be active.
-    let (shutdown_tx, bus_task) = spawn_bus_ready(&bus, nats, pool.clone(), env.clone()).await?;
+    let (shutdown_tx, bus_task) = spawn_bus_ready(&bus, nats, env.clone()).await?;
 
     // Publish confirmations (bus is guaranteed to be subscribed now).
     let nats_for_pub = ctx.nats_client();
-    publish_confirmation(&nats_for_pub, &env_name, &id1).await?;
-    publish_confirmation(&nats_for_pub, &env_name, &id2).await?;
+    publish_confirmation(&nats_for_pub, &pool, &env_name, &id1).await?;
+    publish_confirmation(&nats_for_pub, &pool, &env_name, &id2).await?;
 
     // Receive events (allow time for batch window + DB fetch).
     let mut received_ids = Vec::new();
@@ -408,12 +413,12 @@ async fn source_filter_delivers_matching_only(ctx: TestContext) -> color_eyre::R
         .expect("test subscription should register");
 
     // Spawn bus and wait for NATS subscription.
-    let (shutdown_tx, bus_task) = spawn_bus_ready(&bus, nats, pool.clone(), env.clone()).await?;
+    let (shutdown_tx, bus_task) = spawn_bus_ready(&bus, nats, env.clone()).await?;
 
     // Publish confirmations for both events.
     let nats_pub = ctx.nats_client();
-    publish_confirmation(&nats_pub, &env_name, &id_match).await?;
-    publish_confirmation(&nats_pub, &env_name, &_id_other).await?;
+    publish_confirmation(&nats_pub, &pool, &env_name, &id_match).await?;
+    publish_confirmation(&nats_pub, &pool, &env_name, &_id_other).await?;
 
     // Wait for delivery.
     let mut received = Vec::new();
@@ -487,11 +492,11 @@ async fn event_type_filter_works(ctx: TestContext) -> color_eyre::Result<()> {
         .register(filter, None)
         .expect("test subscription should register");
 
-    let (shutdown_tx, bus_task) = spawn_bus_ready(&bus, nats, pool.clone(), env.clone()).await?;
+    let (shutdown_tx, bus_task) = spawn_bus_ready(&bus, nats, env.clone()).await?;
 
     let nats_pub = ctx.nats_client();
-    publish_confirmation(&nats_pub, &env_name, &_id_file).await?;
-    publish_confirmation(&nats_pub, &env_name, &id_shell).await?;
+    publish_confirmation(&nats_pub, &pool, &env_name, &_id_file).await?;
+    publish_confirmation(&nats_pub, &pool, &env_name, &id_shell).await?;
 
     let mut received_types = Vec::new();
     let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
@@ -562,11 +567,11 @@ async fn payload_text_search_filter(ctx: TestContext) -> color_eyre::Result<()> 
         .register(filter, None)
         .expect("test subscription should register");
 
-    let (shutdown_tx, bus_task) = spawn_bus_ready(&bus, nats, pool.clone(), env.clone()).await?;
+    let (shutdown_tx, bus_task) = spawn_bus_ready(&bus, nats, env.clone()).await?;
 
     let nats_pub = ctx.nats_client();
-    publish_confirmation(&nats_pub, &env_name, &id_needle).await?;
-    publish_confirmation(&nats_pub, &env_name, &id_hay).await?;
+    publish_confirmation(&nats_pub, &pool, &env_name, &id_needle).await?;
+    publish_confirmation(&nats_pub, &pool, &env_name, &id_hay).await?;
 
     let mut received_ids = Vec::new();
     let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
@@ -628,11 +633,11 @@ async fn combined_source_and_type_filter(ctx: TestContext) -> color_eyre::Result
         .register(filter, None)
         .expect("test subscription should register");
 
-    let (shutdown_tx, bus_task) = spawn_bus_ready(&bus, nats, pool.clone(), env.clone()).await?;
+    let (shutdown_tx, bus_task) = spawn_bus_ready(&bus, nats, env.clone()).await?;
 
     let nats_pub = ctx.nats_client();
     for id in [&id1, &id2, &id3] {
-        publish_confirmation(&nats_pub, &env_name, id).await?;
+        publish_confirmation(&nats_pub, &pool, &env_name, id).await?;
     }
 
     let mut received = Vec::new();
@@ -683,7 +688,7 @@ async fn slow_consumer_gap_arrives_before_resumed_event(
     let (_, mut rx) = bus
         .register(SubscriptionFilter::default(), None)
         .expect("test subscription should register");
-    let (shutdown_tx, bus_task) = spawn_bus_ready(&bus, nats, pool.clone(), env.clone()).await?;
+    let (shutdown_tx, bus_task) = spawn_bus_ready(&bus, nats, env.clone()).await?;
 
     let nats_pub = ctx.nats_client();
     // Hit the bus's immediate flush threshold in a single wave so the initial
@@ -697,7 +702,7 @@ async fn slow_consumer_gap_arrives_before_resumed_event(
             json!({ "seq": i }),
         )
         .await?;
-        publish_confirmation(&nats_pub, &env_name, &id).await?;
+        publish_confirmation(&nats_pub, &pool, &env_name, &id).await?;
     }
 
     for _ in 0..2 {
@@ -723,7 +728,7 @@ async fn slow_consumer_gap_arrives_before_resumed_event(
         .await?;
         recovery_seq = recovery_seq.saturating_add(1);
         recovery_ids.insert(recovery_id);
-        publish_confirmation(&nats_pub, &env_name, &recovery_id).await?;
+        publish_confirmation(&nats_pub, &pool, &env_name, &recovery_id).await?;
 
         match recv_timeout(&mut rx, Duration::from_millis(250)).await {
             Some(SseMessage::Gap {
@@ -797,11 +802,11 @@ async fn multiple_subscribers_get_independent_delivery(ctx: TestContext) -> colo
 
     assert_eq!(bus.active_count(), 2);
 
-    let (shutdown_tx, bus_task) = spawn_bus_ready(&bus, nats, pool.clone(), env.clone()).await?;
+    let (shutdown_tx, bus_task) = spawn_bus_ready(&bus, nats, env.clone()).await?;
 
     let nats_pub = ctx.nats_client();
-    publish_confirmation(&nats_pub, &env_name, &id_fs).await?;
-    publish_confirmation(&nats_pub, &env_name, &id_term).await?;
+    publish_confirmation(&nats_pub, &pool, &env_name, &id_fs).await?;
+    publish_confirmation(&nats_pub, &pool, &env_name, &id_term).await?;
 
     // Subscriber A should only get the fs event.
     let mut a_sources = Vec::new();
@@ -862,11 +867,11 @@ async fn multiple_subscribers_keep_independent_sequence_numbers(
     let (_, mut rx_b) = bus
         .register(SubscriptionFilter::default(), None)
         .expect("test subscription should register");
-    let (shutdown_tx, bus_task) = spawn_bus_ready(&bus, nats, pool.clone(), env.clone()).await?;
+    let (shutdown_tx, bus_task) = spawn_bus_ready(&bus, nats, env.clone()).await?;
 
     let nats_pub = ctx.nats_client();
-    publish_confirmation(&nats_pub, &env_name, &first_id).await?;
-    publish_confirmation(&nats_pub, &env_name, &second_id).await?;
+    publish_confirmation(&nats_pub, &pool, &env_name, &first_id).await?;
+    publish_confirmation(&nats_pub, &pool, &env_name, &second_id).await?;
 
     let mut seen_a = Vec::new();
     let mut seen_b = Vec::new();

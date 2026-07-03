@@ -283,8 +283,8 @@ pub struct GatewayConfig {
 
     /// Pipeline namespace (`SINEX_NAMESPACE`), used for NATS subject/stream
     /// isolation in tests. The SSE SubscriptionBus subscribes to
-    /// `{namespace}.events.confirmations.>`; it MUST match the namespace the
-    /// paired event_engine publishes confirmations under, or the bus never sees them
+    /// `{namespace}.events.confirmed.>`; it MUST match the namespace the paired
+    /// event_engine publishes confirmed events under, or the bus never sees them
     /// and SSE delivery silently never completes. Unset in production.
     #[serde(default)]
     #[sinex_config(env = "SINEX_NAMESPACE")]

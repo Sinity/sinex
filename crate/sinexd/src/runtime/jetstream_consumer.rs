@@ -5,7 +5,7 @@
 //! `events.confirmed.<provenance>.<source>.<type>`). The event
 //! engine publishes the full post-redaction `Event<JsonValue>` there, so this
 //! consumer deserializes the authoritative event and dispatches it directly to
-//! the automaton — no raw-events firehose, no `ConfirmationBuffer`, no Postgres
+//! the automaton — no raw-events firehose, no provisional buffer, no Postgres
 //! refetch, no commit/confirmation visibility race (the #2187 / #2202 redesign,
 //! "Option C").
 //!

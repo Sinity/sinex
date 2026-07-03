@@ -68,7 +68,6 @@
             emitter,
             EventTransport::Nats(publisher),
             None,
-            None,
         );
 
         let work_dir = Utf8PathBuf::from_path_buf(sinex_primitives::environment().temp_dir())

@@ -1,6 +1,6 @@
 //! Operator-facing source status handler.
 
-use crate::api::service_container::{ConfirmationBufferHealth, ServiceContainer};
+use crate::api::service_container::ServiceContainer;
 use serde_json::Value;
 use sinex_db::DbPoolExt;
 use sinex_db::repositories::{EmailMailboxProjectionSummary, EmailProviderStateRecord};
@@ -125,7 +125,6 @@ pub async fn handle_sources_status_view(
     request: SourcesStatusViewRequest,
 ) -> Result<ViewEnvelope<SourceCoverageListView>> {
     let pool = services.pool();
-    let confirmation_buffer = services.probe_confirmation_buffer_pressure().await;
     let now = Timestamp::now();
     let status_defaults = SourcesStatusRequest::default();
     let bindings: Vec<&'static SourceRuntimeBinding> = source_runtime_bindings().collect();
@@ -188,7 +187,6 @@ pub async fn handle_sources_status_view(
             &source_bindings,
             &event_aggregates,
             &material_aggregates,
-            &confirmation_buffer,
             &runtime_observations,
             &email_provider_states,
             &email_projection_states,
@@ -367,7 +365,6 @@ fn source_coverage_view(
     bindings: &[&SourceRuntimeBinding],
     event_aggregates: &HashMap<(String, String), SourceEventAggregateRow>,
     material_aggregates: &HashMap<String, SourceMaterialAggregateRow>,
-    confirmation_buffer: &ConfirmationBufferHealth,
     runtime_observations: &HashMap<String, SourceStatus>,
     email_provider_states: &HashMap<String, EmailProviderOperationState>,
     email_projection_states: &HashMap<String, EmailMailboxProjectionState>,
@@ -445,18 +442,6 @@ fn source_coverage_view(
             caveats.push(runtime_unobserved_caveat(contract));
         }
     }
-    let pressure = source_confirmation_pressure(contract, confirmation_buffer);
-    if let Some(pressure) = &pressure {
-        caveats.push(CaveatView {
-            id: "source.pressure.confirmation_buffer.retained_payload".to_string(),
-            message: format!(
-                "confirmation buffer retains approximately {} byte(s) across {} declared event kind(s) for this source",
-                pressure.total_bytes,
-                pressure.event_kind_count
-            ),
-            ref_: None,
-        });
-    }
     if contract.id == "email.mailbox" {
         caveats.extend(email_provider_operation_caveats(
             bindings,
@@ -533,7 +518,7 @@ fn source_coverage_view(
         },
         resource_budget,
         modes,
-        actions: source_actions(contract.id, bindings, pressure.is_some()),
+        actions: source_actions(contract.id, bindings),
     }
 }
 
@@ -1099,40 +1084,6 @@ fn optional_timestamp(timestamp: Option<Timestamp>) -> String {
     timestamp.map_or_else(|| "unknown".to_string(), |timestamp| timestamp.to_string())
 }
 
-#[derive(Debug, Clone, Copy)]
-struct SourceConfirmationPressure {
-    total_bytes: usize,
-    event_kind_count: usize,
-}
-
-fn source_confirmation_pressure(
-    contract: &SourceContract,
-    confirmation_buffer: &ConfirmationBufferHealth,
-) -> Option<SourceConfirmationPressure> {
-    let mut total_bytes = 0usize;
-    let mut event_kind_count = 0usize;
-    for (source, event_type) in contract.event_types {
-        let key = format!("{source}:{event_type}");
-        let Some(bytes) = confirmation_buffer
-            .approximate_payload_bytes_by_kind
-            .get(&key)
-            .copied()
-        else {
-            continue;
-        };
-        if bytes == 0 {
-            continue;
-        }
-        total_bytes = total_bytes.saturating_add(bytes);
-        event_kind_count += 1;
-    }
-
-    (total_bytes > 0).then_some(SourceConfirmationPressure {
-        total_bytes,
-        event_kind_count,
-    })
-}
-
 fn source_resource_budget_view(binding: &SourceRuntimeBinding) -> SourceResourceBudgetView {
     let budget = binding.resource_budget();
     SourceResourceBudgetView {
@@ -1275,7 +1226,6 @@ fn max_timestamp(
 fn source_actions(
     source_id: &str,
     bindings: &[&SourceRuntimeBinding],
-    has_pressure: bool,
 ) -> Vec<ActionAvailability> {
     let mut actions = vec![
         ActionAvailability::read(
@@ -1293,17 +1243,6 @@ fn source_actions(
         .with_command_hint("sinexctl sources coverage")
         .with_rpc_method(methods::SOURCES_COVERAGE),
     ];
-    if has_pressure {
-        actions.push(
-            ActionAvailability::read(
-                "runtime.health.inspect",
-                "Inspect runtime pressure",
-                ActionAvailabilityState::Enabled,
-            )
-            .with_command_hint("sinexctl runtime health")
-            .with_rpc_method(methods::SYSTEM_HEALTH),
-        );
-    }
     let mut seen = actions
         .iter()
         .map(|action| action.id.clone())

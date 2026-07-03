@@ -99,12 +99,12 @@ impl JetStreamTestHelper {
 
         let _ = js
             .get_or_create_stream(async_nats::jetstream::stream::Config {
-                name: topology.confirmations_stream.to_string(),
-                subjects: vec![topology.confirmations_subject.to_string()],
+                name: topology.confirmed_events_stream.to_string(),
+                subjects: vec![topology.confirmed_events_subject.to_string()],
                 ..Default::default()
             })
             .await
-            .wrap_err("Failed to create confirmations stream")?;
+            .wrap_err("Failed to create confirmed-events stream")?;
 
         let _ = js
             .get_or_create_stream(async_nats::jetstream::stream::Config {
@@ -148,7 +148,7 @@ impl JetStreamTestHelper {
         &self.nats
     }
 
-    /// Wait for all required streams (events, confirmations, raw DLQ, processing failures) to be ready.
+    /// Wait for all required streams (events, confirmed-events, raw DLQ, processing failures) to be ready.
     ///
     /// This is called automatically in `new()`, but can be called again
     /// if streams need to be recreated during a test.
@@ -160,11 +160,11 @@ impl JetStreamTestHelper {
         self.nats
             .wait_for_stream(
                 &self.js,
-                &self.topology.confirmations_stream,
+                &self.topology.confirmed_events_stream,
                 self.stream_timeout,
             )
             .await
-            .wrap_err("Failed to wait for confirmations stream")?;
+            .wrap_err("Failed to wait for confirmed-events stream")?;
         self.nats
             .wait_for_stream(&self.js, &self.topology.dlq_stream, self.stream_timeout)
             .await
@@ -210,16 +210,16 @@ impl JetStreamTestHelper {
         Ok(state)
     }
 
-    /// Get the current state of the confirmations stream.
-    pub async fn confirmations_state(&self) -> TestResult<StreamState> {
+    /// Get the current state of the confirmed-events stream.
+    pub async fn confirmed_events_state(&self) -> TestResult<StreamState> {
         let state = self
             .js
-            .get_stream(&self.topology.confirmations_stream)
+            .get_stream(&self.topology.confirmed_events_stream)
             .await
-            .wrap_err("Failed to get confirmations stream")?
+            .wrap_err("Failed to get confirmed-events stream")?
             .info()
             .await
-            .wrap_err("Failed to get confirmations stream info")?
+            .wrap_err("Failed to get confirmed-events stream info")?
             .state
             .clone();
         Ok(state)
@@ -289,9 +289,9 @@ impl JetStreamTestHelper {
         Ok(self.events_state().await?.messages)
     }
 
-    /// Get the number of messages in the confirmations stream.
-    pub async fn confirmations_message_count(&self) -> TestResult<u64> {
-        Ok(self.confirmations_state().await?.messages)
+    /// Get the number of messages in the confirmed-events stream.
+    pub async fn confirmed_events_message_count(&self) -> TestResult<u64> {
+        Ok(self.confirmed_events_state().await?.messages)
     }
 
     /// Get a snapshot of a consumer's delivery/ack state.

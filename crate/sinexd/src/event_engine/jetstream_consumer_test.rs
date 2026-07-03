@@ -132,7 +132,7 @@ async fn ready_signal_reports_dropped_receiver() -> TestResult<()> {
 }
 
 #[sinex_test]
-async fn disclosure_safe_fingerprint_omits_raw_confirmation_retry_id() -> TestResult<()> {
+async fn disclosure_safe_fingerprint_omits_raw_confirmation_identifier() -> TestResult<()> {
     let fingerprint = disclosure_safe_fingerprint("terminal-secret-not-a-uuid");
 
     assert!(fingerprint.contains("len=26"));
@@ -295,8 +295,7 @@ async fn confirmation_durability_gap_errors_are_marked_fatal() -> TestResult<()>
         vec![(
             event_id,
             SinexError::network("confirmation transport exhausted")
-                .with_context("confirmation_publish_error", "publish failed")
-                .with_context("confirmation_retry_enqueue_error", "enqueue failed"),
+                .with_context("confirmed_publish_error", "publish failed"),
         )],
         2,
     );

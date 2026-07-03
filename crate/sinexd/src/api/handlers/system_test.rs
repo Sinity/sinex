@@ -38,29 +38,6 @@ async fn system_health_response_uses_typed_contract() -> TestResult<()> {
             detail: "raw-ingest DLQ pressure: 3 pending message(s), sequence span 5"
                 .to_string(),
         },
-        confirmation_buffer: crate::api::service_container::ConfirmationBufferHealth {
-            status: HealthStatus::Degraded,
-            connected: true,
-            memory_owner:
-                crate::api::service_container::ConfirmationBufferMemoryOwner::TimedOutGracePayloads,
-            pressure_level: sinex_primitives::RuntimePressureLevel::Critical,
-            runtime_action: sinex_primitives::RuntimePressureAction::AdmitWithPressure,
-            observed_buffers: 1,
-            pending_count: 3,
-            timed_out_retained_count: 1,
-            rejected_count: 2,
-            late_confirmation_count: 5,
-            retained_payload_bytes: 4096,
-            approximate_payload_bytes: 4096,
-            active_payload_bytes: 1024,
-            timed_out_retained_payload_bytes: 3072,
-            approximate_payload_bytes_by_kind: std::collections::BTreeMap::from([(
-                "system.journald:journald.entry.written".to_string(),
-                4096,
-            )]),
-            detail: "confirmation buffers: observed=1, pending=3, timed_out_retained=1, rejected=2, late_confirmations=5, pressure_level=critical, runtime_action=admit_with_pressure, retained_payload_bytes=4096, approximate_payload_bytes=4096, active_payload_bytes=1024, timed_out_retained_payload_bytes=3072, memory_owner=timed_out_grace_payloads"
-                .to_string(),
-        },
         replay: ReplayControlStatus {
             enabled: true,
             connected: false,
@@ -93,70 +70,6 @@ async fn system_health_response_uses_typed_contract() -> TestResult<()> {
     assert_eq!(
         response.components.raw_ingest_dlq.detail.as_deref(),
         Some("raw-ingest DLQ pressure: 3 pending message(s), sequence span 5")
-    );
-    assert_eq!(
-        response.components.confirmation_buffer.status,
-        HealthStatus::Degraded
-    );
-    assert_eq!(
-        response.components.confirmation_buffer.detail.as_deref(),
-        Some(
-            "confirmation buffers: observed=1, pending=3, timed_out_retained=1, rejected=2, late_confirmations=5, pressure_level=critical, runtime_action=admit_with_pressure, retained_payload_bytes=4096, approximate_payload_bytes=4096, active_payload_bytes=1024, timed_out_retained_payload_bytes=3072, memory_owner=timed_out_grace_payloads"
-        )
-    );
-    assert_eq!(
-        response
-            .components
-            .confirmation_buffer
-            .attributes
-            .get("memory_owner")
-            .map(String::as_str),
-        Some("timed_out_grace_payloads")
-    );
-    assert_eq!(
-        response
-            .components
-            .confirmation_buffer
-            .attributes
-            .get("pressure_level")
-            .map(String::as_str),
-        Some("critical")
-    );
-    assert_eq!(
-        response
-            .components
-            .confirmation_buffer
-            .attributes
-            .get("runtime_action")
-            .map(String::as_str),
-        Some("admit_with_pressure")
-    );
-    assert_eq!(
-        response
-            .components
-            .confirmation_buffer
-            .attributes
-            .get("retained_payload_bytes")
-            .map(String::as_str),
-        Some("4096")
-    );
-    assert_eq!(
-        response
-            .components
-            .confirmation_buffer
-            .attributes
-            .get("active_payload_bytes")
-            .map(String::as_str),
-        Some("1024")
-    );
-    assert_eq!(
-        response
-            .components
-            .confirmation_buffer
-            .attributes
-            .get("timed_out_retained_payload_bytes")
-            .map(String::as_str),
-        Some("3072")
     );
     assert!(response.components.replay_control.enabled);
     assert_eq!(

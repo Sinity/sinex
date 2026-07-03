@@ -2267,12 +2267,6 @@ async fn mount_mcp_gateway_fixture() -> MockServer {
                             "latency_ms": null,
                             "detail": "raw-ingest DLQ pressure: 3 pending message(s), sequence span 3"
                         },
-                        "confirmation_buffer": {
-                            "status": "degraded",
-                            "connected": true,
-                            "latency_ms": null,
-                            "detail": "confirmation buffers: observed=1, pending=12, timed_out_retained=4"
-                        },
                         "replay_control": {
                             "status": "healthy",
                             "enabled": true,

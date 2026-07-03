@@ -357,18 +357,13 @@ pub struct JetStreamTopology {
     /// Stream carrying the FINAL persisted+redacted events, published by the
     /// event engine after admission. Automata and the SSE bus consume this
     /// directly (one decode, fan out in-process) — no raw-provisional buffer,
-    /// no per-kind watermark, no Postgres refetch. Non-compacted, real retention.
+    /// no legacy compacted acknowledgement lane, no Postgres refetch.
+    /// Non-compacted, real retention.
     pub confirmed_events_stream: crate::domain::StreamName,
     pub confirmed_events_subject: crate::domain::NatsSubject,
-    /// Publish prefix for per-kind confirmed events: `events.confirmed.<source>.<event_type>`.
+    /// Publish prefix for confirmed events:
+    /// `events.confirmed.<provenance>.<source>.<event_type>`.
     pub confirmed_events_prefix: String,
-    pub confirmations_stream: crate::domain::StreamName,
-    pub confirmations_subject: crate::domain::NatsSubject,
-    pub confirmations_prefix: String,
-    pub confirmation_retry_stream: crate::domain::StreamName,
-    pub confirmation_retry_subject: crate::domain::NatsSubject,
-    pub confirmation_retry_prefix: String,
-    pub confirmation_retry_consumer: String,
     pub dlq_stream: crate::domain::StreamName,
     pub dlq_subject: crate::domain::NatsSubject,
     pub dlq_publish_subject: crate::domain::NatsSubject,
@@ -391,17 +386,12 @@ impl JetStreamTopology {
         use crate::domain::{NatsSubject, StreamName};
 
         let confirmed_events_stream = StreamName::new(format!("{base_stream}_CONFIRMED"));
-        let confirmations_stream = StreamName::new(format!("{base_stream}_CONFIRMATIONS"));
-        let confirmation_retry_stream =
-            StreamName::new(format!("{base_stream}_CONFIRMATION_RETRIES"));
         let dlq_stream = StreamName::new(format!("{base_stream}_DLQ"));
         let processing_failures_stream =
             StreamName::new(format!("{base_stream}_PROCESSING_FAILURES"));
         let invalidation_stream = StreamName::new(format!("{base_stream}_DERIVED_INVALIDATIONS"));
         let namespaced = |subject: &str| env.nats_subject_with_namespace(namespace, subject);
         let confirmed_events_prefix = format!("{}.", namespaced("events.confirmed"));
-        let confirmations_prefix = format!("{}.", namespaced("events.confirmations"));
-        let confirmation_retry_prefix = format!("{}.", namespaced("events.confirmation_retries"));
         let processing_failures_prefix = format!("{}.", namespaced("events.processing_failures"));
 
         Self {
@@ -410,15 +400,6 @@ impl JetStreamTopology {
             confirmed_events_stream,
             confirmed_events_subject: NatsSubject::new(namespaced("events.confirmed.>")),
             confirmed_events_prefix,
-            confirmations_stream,
-            confirmations_subject: NatsSubject::new(namespaced("events.confirmations.>")),
-            confirmations_prefix,
-            confirmation_retry_stream,
-            confirmation_retry_subject: NatsSubject::new(namespaced(
-                "events.confirmation_retries.>",
-            )),
-            confirmation_retry_prefix,
-            confirmation_retry_consumer: format!("{consumer_durable}_confirm_retries"),
             dlq_stream,
             dlq_subject: NatsSubject::new(namespaced("events.dlq.>")),
             dlq_publish_subject: NatsSubject::new(namespaced("events.dlq.event_engine")),
