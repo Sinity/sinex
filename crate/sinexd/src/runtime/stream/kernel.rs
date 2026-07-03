@@ -540,6 +540,66 @@ pub async fn delete_consumer(
     Ok(())
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RawStreamConsumerAction {
+    KeepExpected,
+    DeleteLegacyAutomaton,
+    RejectUnexpected,
+}
+
+#[must_use]
+pub fn raw_stream_consumer_action(
+    expected_consumer_name: &str,
+    consumer_name: &str,
+) -> RawStreamConsumerAction {
+    if consumer_name == expected_consumer_name {
+        return RawStreamConsumerAction::KeepExpected;
+    }
+
+    if consumer_name.starts_with("sinex-") && consumer_name.ends_with("-automaton-confirmed-v2") {
+        return RawStreamConsumerAction::DeleteLegacyAutomaton;
+    }
+
+    RawStreamConsumerAction::RejectUnexpected
+}
+
+pub async fn reconcile_raw_stream_consumers(
+    js: &jetstream::Context,
+    stream_name: &str,
+    expected_consumer_name: &str,
+) -> RuntimeResult<()> {
+    let consumers = list_consumers(js, stream_name).await?;
+    let mut unexpected = Vec::new();
+    for consumer in consumers {
+        match raw_stream_consumer_action(expected_consumer_name, &consumer.name) {
+            RawStreamConsumerAction::KeepExpected => {}
+            RawStreamConsumerAction::DeleteLegacyAutomaton => {
+                warn!(
+                    stream = %stream_name,
+                    consumer = %consumer.name,
+                    expected_consumer = %expected_consumer_name,
+                    pending = consumer.num_pending,
+                    ack_pending = consumer.num_ack_pending,
+                    redelivered = consumer.num_redelivered,
+                    "Deleting legacy automaton durable from raw-events stream; automata consume confirmed events now"
+                );
+                delete_consumer(js, stream_name, &consumer.name).await?;
+            }
+            RawStreamConsumerAction::RejectUnexpected => unexpected.push(consumer.name),
+        }
+    }
+
+    if !unexpected.is_empty() {
+        unexpected.sort();
+        return Err(SinexError::processing(format!(
+            "Raw events stream {stream_name} has unexpected durable consumer(s): {}. Only {expected_consumer_name} may consume raw events; automata must consume confirmed events.",
+            unexpected.join(", ")
+        )));
+    }
+
+    Ok(())
+}
+
 #[cfg(test)]
 #[path = "kernel_test.rs"]
 mod tests;

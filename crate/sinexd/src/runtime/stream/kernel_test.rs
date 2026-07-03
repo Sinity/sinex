@@ -55,3 +55,41 @@ fn semantic_drift_is_not_reconcilable() {
 
     assert!(!can_reconcile_pull_consumer_config(&mismatches));
 }
+
+#[test]
+fn raw_stream_reconciliation_keeps_only_expected_consumer() {
+    assert_eq!(
+        raw_stream_consumer_action("event-engine-dev", "event-engine-dev"),
+        RawStreamConsumerAction::KeepExpected
+    );
+}
+
+#[test]
+fn raw_stream_reconciliation_deletes_legacy_automaton_consumers() {
+    assert_eq!(
+        raw_stream_consumer_action(
+            "event-engine-dev",
+            "sinex-analytics-automaton-confirmed-v2"
+        ),
+        RawStreamConsumerAction::DeleteLegacyAutomaton
+    );
+    assert_eq!(
+        raw_stream_consumer_action(
+            "event-engine-dev",
+            "sinex-instruction-reconciler-automaton-confirmed-v2"
+        ),
+        RawStreamConsumerAction::DeleteLegacyAutomaton
+    );
+}
+
+#[test]
+fn raw_stream_reconciliation_rejects_unknown_consumers() {
+    assert_eq!(
+        raw_stream_consumer_action("event-engine-dev", "ad-hoc-debugger"),
+        RawStreamConsumerAction::RejectUnexpected
+    );
+    assert_eq!(
+        raw_stream_consumer_action("event-engine-dev", "sinex-analytics-confirmed-events"),
+        RawStreamConsumerAction::RejectUnexpected
+    );
+}
