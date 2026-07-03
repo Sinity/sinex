@@ -192,6 +192,14 @@ impl<T: RuntimeModule + 'static> RuntimeRunner<T> {
             .as_ref()
             .ok_or_else(|| SinexError::lifecycle("Runner handles not initialized".to_string()))?;
         let drain_controller = handles.runtime_drain();
+        let capabilities = self.module.capabilities();
+
+        if !capabilities.supports_historical {
+            return Err(SinexError::validation(format!(
+                "Automaton bridge for module '{}' requires historical scan support before consuming confirmed events",
+                self.module.module_name()
+            )));
+        }
 
         let transport = handles.transport().clone();
 
@@ -222,21 +230,22 @@ impl<T: RuntimeModule + 'static> RuntimeRunner<T> {
         ));
 
         // Process historical backlog BEFORE starting the JetStream consumer.
-        // This ensures events published after consumer creation but present in
-        // the DB at scan time are not processed twice.
-        if !matches!(from, Checkpoint::None) && self.module.capabilities().supports_historical {
-            info!("Processing historical backlog before entering continuous mode");
-            let _ = self
-                .module
-                .scan(
-                    from,
-                    TimeHorizon::Historical {
-                        end_time: sinex_primitives::temporal::Timestamp::now(),
-                    },
-                    ScanArgs::default(),
-                )
-                .await?;
-        }
+        // The confirmed-event consumer ACKs after enqueueing into this bridge,
+        // before the automaton finishes processing the batch. A restart is safe
+        // only because every bridge-backed automaton can replay from its
+        // durable checkpoint through the DB before it subscribes with
+        // DeliverPolicy::New.
+        info!("Processing historical backlog before entering continuous mode");
+        let _ = self
+            .module
+            .scan(
+                from,
+                TimeHorizon::Historical {
+                    end_time: sinex_primitives::temporal::Timestamp::now(),
+                },
+                ScanArgs::default(),
+            )
+            .await?;
 
         let consumer_failure = Arc::new(tokio::sync::Mutex::new(None));
         let consumer_runner = consumer.clone();
@@ -256,7 +265,7 @@ impl<T: RuntimeModule + 'static> RuntimeRunner<T> {
             info!("Drain requested before automaton bridge entered live processing");
         }
 
-        let bridge_manages_checkpoints = !self.module.capabilities().manages_own_checkpoints;
+        let bridge_manages_checkpoints = !capabilities.manages_own_checkpoints;
         if !bridge_manages_checkpoints {
             debug!(
                 module = %self.module.module_name(),
@@ -517,10 +526,10 @@ impl<T: RuntimeModule + 'static> RuntimeRunner<T> {
                 filter_suffix.as_deref().unwrap_or("")
             ),
             // Anything before the consumer's creation point is covered by the
-            // per-automaton checkpoint + historical scan that runs before the
-            // consumer starts, so live delivery only needs new confirmed events.
-            // This also avoids re-delivering the whole retained confirmed stream
-            // on first start.
+            // mandatory per-automaton historical scan that runs before the
+            // consumer starts, even on first start from Checkpoint::None. Live
+            // delivery therefore only needs new confirmed events and does not
+            // re-deliver the whole retained confirmed stream on startup.
             deliver_policy: async_nats::jetstream::consumer::DeliverPolicy::New,
         }
     }
