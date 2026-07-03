@@ -23,9 +23,9 @@ use sinex_primitives::sources::source_identity_matches_family;
 use sinex_primitives::temporal::Timestamp;
 use sinex_primitives::views::{
     ActionAvailability, ActionAvailabilityState, ActionSideEffect, CaveatView, CoverageGapView,
-    SinexObjectKind, SinexObjectRef, SourceCoverageContinuity, SourceCoverageListView,
-    SourceCoverageReadiness, SourceCoverageView, SourceModeStatusView, SourcePrivacyPosture,
-    SourceResourceBudgetView, ViewEnvelope,
+    ReadinessCaveatId, SinexObjectKind, SinexObjectRef, SourceCoverageContinuity,
+    SourceCoverageListView, SourceCoverageReadiness, SourceCoverageView, SourceModeStatusView,
+    SourcePrivacyPosture, SourceResourceBudgetView, ViewEnvelope,
 };
 use sqlx::FromRow;
 use sqlx::PgPool;
@@ -208,7 +208,7 @@ pub async fn handle_sources_status_view(
     }
     if !request.exact_counts {
         envelope.caveats.push(CaveatView {
-            id: "source.status.event_counts.presence_probe".to_string(),
+            id: ReadinessCaveatId::CoverageUnmeasurable.as_str().to_string(),
             message: "filtered source status uses bounded event-presence probes; event_count is the number of declared event kinds with at least one live event, not the lifetime row count".to_string(),
             ref_: None,
         });
@@ -402,6 +402,14 @@ fn source_coverage_view(
             kind: "missing_binding".to_string(),
             message: "source contract has no runtime binding".to_string(),
         });
+        caveats.push(CaveatView {
+            id: ReadinessCaveatId::SourceAbsent.as_str().to_string(),
+            message: "source contract has no runtime binding, so capture cannot be observed for this source".to_string(),
+            ref_: Some(SinexObjectRef::new(
+                SinexObjectKind::SourceDriver,
+                contract.id.to_string(),
+            )),
+        });
     }
     if !has_material {
         gaps.push(CoverageGapView {
@@ -409,8 +417,8 @@ fn source_coverage_view(
             message: "no source material is directly registered under this source id".to_string(),
         });
         caveats.push(CaveatView {
-            id: "source.material.match.v0_exact_id".to_string(),
-            message: "v0 material coverage only counts source_material_registry rows whose source_identifier exactly equals the source id".to_string(),
+            id: ReadinessCaveatId::SourceAbsent.as_str().to_string(),
+            message: "no source material is registered under this logical source id".to_string(),
             ref_: None,
         });
     }
@@ -419,6 +427,14 @@ fn source_coverage_view(
             kind: "missing_events".to_string(),
             message: "no live events match the contract's declared source/event_type pairs"
                 .to_string(),
+        });
+        caveats.push(CaveatView {
+            id: ReadinessCaveatId::SourceAbsent.as_str().to_string(),
+            message: "no live events match this source contract's declared source/event_type pairs".to_string(),
+            ref_: Some(SinexObjectRef::new(
+                SinexObjectKind::SourceDriver,
+                contract.id.to_string(),
+            )),
         });
     }
     if has_live_binding {
