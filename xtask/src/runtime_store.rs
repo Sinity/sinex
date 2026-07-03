@@ -5,7 +5,10 @@
 //! and catalog estimates are more useful than scans that become part of the
 //! problem.
 
+use futures::StreamExt;
 use serde::Serialize;
+use sinex_primitives::environment::environment;
+use sinex_primitives::nats::JetStreamTopology;
 use sqlx::Row;
 use sqlx::postgres::PgPoolOptions;
 use std::time::Duration;
@@ -19,6 +22,7 @@ pub struct RuntimeStoreSnapshot {
     pub recent_source_materials: Vec<SourceMaterialRollup>,
     pub browser_history_materials: Vec<SourceMaterialRollup>,
     pub dlq: DlqSummary,
+    pub jetstream: JetStreamStoreSnapshot,
     pub assessment: StoreAssessment,
 }
 
@@ -50,6 +54,44 @@ pub struct DlqSummary {
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+pub struct JetStreamStoreSnapshot {
+    pub nats_url: String,
+    pub available: bool,
+    pub error: Option<String>,
+    pub streams: Vec<JetStreamStreamSnapshot>,
+    pub sql_dlq_unresolved: i64,
+    pub jetstream_dlq_messages: Option<u64>,
+    pub warnings: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+pub struct JetStreamStreamSnapshot {
+    pub role: String,
+    pub stream: String,
+    pub present: bool,
+    pub messages: Option<u64>,
+    pub bytes: Option<u64>,
+    pub first_sequence: Option<u64>,
+    pub last_sequence: Option<u64>,
+    pub consumer_count: Option<usize>,
+    pub consumers: Vec<JetStreamConsumerSnapshot>,
+    pub error: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+pub struct JetStreamConsumerSnapshot {
+    pub name: String,
+    pub durable_name: Option<String>,
+    pub filter_subject: String,
+    pub num_pending: u64,
+    pub num_ack_pending: usize,
+    pub num_redelivered: usize,
+    pub num_waiting: usize,
+    pub delivered_stream_sequence: u64,
+    pub ack_floor_stream_sequence: u64,
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
 pub struct StoreAssessment {
     pub current_ingest_quiet: bool,
     pub top_recent_event_type: Option<String>,
@@ -61,6 +103,7 @@ pub struct StoreAssessment {
 
 pub async fn query_runtime_store_snapshot(
     db_url: &str,
+    nats_url: &str,
     window_minutes: i64,
     top_limit: i64,
 ) -> Result<RuntimeStoreSnapshot, sqlx::Error> {
@@ -84,12 +127,14 @@ pub async fn query_runtime_store_snapshot(
     let dlq = query_dlq_summary(&pool).await?;
     pool.close().await;
 
-    let assessment = assess_store(
+    let jetstream = query_jetstream_store_snapshot(nats_url, &dlq).await;
+    let mut assessment = assess_store(
         &recent_event_mix,
         &browser_history_materials,
         &dlq,
         window_minutes,
     );
+    assessment.warnings.extend(jetstream.warnings.clone());
 
     Ok(RuntimeStoreSnapshot {
         window_minutes,
@@ -99,8 +144,227 @@ pub async fn query_runtime_store_snapshot(
         recent_source_materials,
         browser_history_materials,
         dlq,
+        jetstream,
         assessment,
     })
+}
+
+async fn query_jetstream_store_snapshot(
+    nats_url: &str,
+    dlq: &DlqSummary,
+) -> JetStreamStoreSnapshot {
+    match tokio::time::timeout(
+        Duration::from_millis(2_000),
+        query_jetstream_store_snapshot_inner(nats_url, dlq),
+    )
+    .await
+    {
+        Ok(snapshot) => snapshot,
+        Err(_) => JetStreamStoreSnapshot::unavailable(
+            nats_url,
+            dlq.unresolved,
+            "timed out querying JetStream stream state",
+        ),
+    }
+}
+
+async fn query_jetstream_store_snapshot_inner(
+    nats_url: &str,
+    dlq: &DlqSummary,
+) -> JetStreamStoreSnapshot {
+    let client = match async_nats::connect(nats_url).await {
+        Ok(client) => client,
+        Err(err) => {
+            return JetStreamStoreSnapshot::unavailable(
+                nats_url,
+                dlq.unresolved,
+                format!("failed to connect to NATS: {err}"),
+            );
+        }
+    };
+    let js = async_nats::jetstream::new(client);
+    let mut streams = Vec::new();
+    for (role, stream_name) in jetstream_stream_targets() {
+        streams.push(query_jetstream_stream(&js, role, &stream_name).await);
+    }
+    let mut snapshot = JetStreamStoreSnapshot {
+        nats_url: nats_url.to_string(),
+        available: true,
+        error: None,
+        jetstream_dlq_messages: streams
+            .iter()
+            .find(|stream| stream.role == "dlq")
+            .and_then(|stream| stream.messages),
+        streams,
+        sql_dlq_unresolved: dlq.unresolved,
+        warnings: Vec::new(),
+    };
+    snapshot.warnings = assess_jetstream(&snapshot);
+    snapshot
+}
+
+async fn query_jetstream_stream(
+    js: &async_nats::jetstream::Context,
+    role: &str,
+    stream_name: &str,
+) -> JetStreamStreamSnapshot {
+    let mut stream = match js.get_stream(stream_name).await {
+        Ok(stream) => stream,
+        Err(err) => {
+            return JetStreamStreamSnapshot {
+                role: role.to_string(),
+                stream: stream_name.to_string(),
+                present: false,
+                messages: None,
+                bytes: None,
+                first_sequence: None,
+                last_sequence: None,
+                consumer_count: None,
+                consumers: Vec::new(),
+                error: Some(format!("{err}")),
+            };
+        }
+    };
+    let info = match stream.info().await {
+        Ok(info) => info,
+        Err(err) => {
+            return JetStreamStreamSnapshot {
+                role: role.to_string(),
+                stream: stream_name.to_string(),
+                present: true,
+                messages: None,
+                bytes: None,
+                first_sequence: None,
+                last_sequence: None,
+                consumer_count: None,
+                consumers: Vec::new(),
+                error: Some(format!("failed to read stream info: {err}")),
+            };
+        }
+    };
+    let stream_display_name = info.config.name.clone();
+    let messages = info.state.messages;
+    let bytes = info.state.bytes;
+    let first_sequence = info.state.first_sequence;
+    let last_sequence = info.state.last_sequence;
+    let consumer_count = info.state.consumer_count;
+    let mut consumers = Vec::new();
+    let mut consumer_list = stream.consumers();
+    let mut consumer_error = None;
+    while let Some(result) = consumer_list.next().await {
+        match result {
+            Ok(consumer) => consumers.push(JetStreamConsumerSnapshot {
+                name: consumer.name,
+                durable_name: consumer.config.durable_name,
+                filter_subject: consumer.config.filter_subject,
+                num_pending: consumer.num_pending,
+                num_ack_pending: consumer.num_ack_pending,
+                num_redelivered: consumer.num_redelivered,
+                num_waiting: consumer.num_waiting,
+                delivered_stream_sequence: consumer.delivered.stream_sequence,
+                ack_floor_stream_sequence: consumer.ack_floor.stream_sequence,
+            }),
+            Err(err) => {
+                consumer_error = Some(format!("failed to list consumers: {err}"));
+                break;
+            }
+        }
+    }
+    consumers.sort_by(|left, right| left.name.cmp(&right.name));
+    JetStreamStreamSnapshot {
+        role: role.to_string(),
+        stream: stream_display_name,
+        present: true,
+        messages: Some(messages),
+        bytes: Some(bytes),
+        first_sequence: Some(first_sequence),
+        last_sequence: Some(last_sequence),
+        consumer_count: Some(consumer_count),
+        consumers,
+        error: consumer_error,
+    }
+}
+
+fn jetstream_stream_targets() -> Vec<(&'static str, String)> {
+    let env = environment();
+    let base_stream = env.nats_stream_name("SINEX_RAW_EVENTS");
+    let topology = JetStreamTopology::new(&env, base_stream, "event-engine".to_string(), None);
+    vec![
+        ("raw", topology.events_stream.into_string()),
+        (
+            "confirmed-events",
+            topology.confirmed_events_stream.into_string(),
+        ),
+        ("confirmations", topology.confirmations_stream.into_string()),
+        (
+            "confirmation-retry",
+            topology.confirmation_retry_stream.into_string(),
+        ),
+        ("dlq", topology.dlq_stream.into_string()),
+        (
+            "processing-failures",
+            topology.processing_failures_stream.into_string(),
+        ),
+        ("invalidations", topology.invalidation_stream.into_string()),
+        ("source-material", env.nats_stream_name("SOURCE_MATERIAL")),
+    ]
+}
+
+#[must_use]
+pub fn assess_jetstream(snapshot: &JetStreamStoreSnapshot) -> Vec<String> {
+    let mut warnings = Vec::new();
+    if !snapshot.available {
+        warnings.push(format!(
+            "JetStream unavailable at {}: {}",
+            snapshot.nats_url,
+            snapshot.error.as_deref().unwrap_or("unknown error")
+        ));
+        return warnings;
+    }
+    if let Some(messages) = snapshot.jetstream_dlq_messages
+        && messages > 0
+    {
+        warnings.push(format!(
+            "JetStream DLQ has {messages} message(s); SQL unresolved DLQ rows: {}",
+            snapshot.sql_dlq_unresolved
+        ));
+    }
+    for stream in &snapshot.streams {
+        let pending = stream
+            .consumers
+            .iter()
+            .map(|consumer| consumer.num_pending)
+            .sum::<u64>();
+        if stream.role == "raw" && pending > 0 {
+            warnings.push(format!(
+                "raw JetStream consumer backlog: {pending} pending message(s) on {}",
+                stream.stream
+            ));
+        }
+        if stream.role == "source-material" && pending > 0 {
+            warnings.push(format!(
+                "source-material JetStream backlog: {pending} pending frame message(s)"
+            ));
+        }
+    }
+    warnings
+}
+
+impl JetStreamStoreSnapshot {
+    fn unavailable(nats_url: &str, sql_dlq_unresolved: i64, error: impl Into<String>) -> Self {
+        let error = error.into();
+        let mut snapshot = Self {
+            nats_url: nats_url.to_string(),
+            available: false,
+            error: Some(error),
+            streams: Vec::new(),
+            sql_dlq_unresolved,
+            jetstream_dlq_messages: None,
+            warnings: Vec::new(),
+        };
+        snapshot.warnings = assess_jetstream(&snapshot);
+        snapshot
+    }
 }
 
 async fn query_table_estimates(

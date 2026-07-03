@@ -89,3 +89,99 @@ fn assessment_surfaces_unresolved_dlq() {
             .any(|warning| warning.contains("7 unresolved DLQ"))
     );
 }
+
+#[test]
+fn jetstream_assessment_surfaces_sql_vs_stream_dlq_divergence() {
+    let snapshot = JetStreamStoreSnapshot {
+        nats_url: "nats://localhost:4308".to_string(),
+        available: true,
+        error: None,
+        streams: vec![JetStreamStreamSnapshot {
+            role: "dlq".to_string(),
+            stream: "DEV_SINEX_RAW_EVENTS_DLQ".to_string(),
+            present: true,
+            messages: Some(4_381),
+            bytes: Some(413_000_000),
+            first_sequence: Some(1),
+            last_sequence: Some(4_381),
+            consumer_count: Some(0),
+            consumers: Vec::new(),
+            error: None,
+        }],
+        sql_dlq_unresolved: 0,
+        jetstream_dlq_messages: Some(4_381),
+        warnings: Vec::new(),
+    };
+
+    let warnings = assess_jetstream(&snapshot);
+
+    assert!(
+        warnings.iter().any(|warning| {
+            warning.contains("JetStream DLQ has 4381 message")
+                && warning.contains("SQL unresolved DLQ rows: 0")
+        })
+    );
+}
+
+#[test]
+fn jetstream_assessment_surfaces_raw_consumer_backlog() {
+    let snapshot = JetStreamStoreSnapshot {
+        nats_url: "nats://localhost:4308".to_string(),
+        available: true,
+        error: None,
+        streams: vec![JetStreamStreamSnapshot {
+            role: "raw".to_string(),
+            stream: "DEV_SINEX_RAW_EVENTS".to_string(),
+            present: true,
+            messages: Some(100),
+            bytes: Some(1024),
+            first_sequence: Some(1),
+            last_sequence: Some(100),
+            consumer_count: Some(1),
+            consumers: vec![JetStreamConsumerSnapshot {
+                name: "event-engine".to_string(),
+                durable_name: Some("event-engine".to_string()),
+                filter_subject: "dev.sinex.events.raw.>".to_string(),
+                num_pending: 42,
+                num_ack_pending: 0,
+                num_redelivered: 0,
+                num_waiting: 0,
+                delivered_stream_sequence: 58,
+                ack_floor_stream_sequence: 58,
+            }],
+            error: None,
+        }],
+        sql_dlq_unresolved: 0,
+        jetstream_dlq_messages: None,
+        warnings: Vec::new(),
+    };
+
+    let warnings = assess_jetstream(&snapshot);
+
+    assert!(
+        warnings
+            .iter()
+            .any(|warning| warning.contains("raw JetStream consumer backlog: 42 pending"))
+    );
+}
+
+#[test]
+fn jetstream_assessment_degrades_when_nats_is_unavailable() {
+    let snapshot = JetStreamStoreSnapshot {
+        nats_url: "nats://localhost:4308".to_string(),
+        available: false,
+        error: Some("connection refused".to_string()),
+        streams: Vec::new(),
+        sql_dlq_unresolved: 3,
+        jetstream_dlq_messages: None,
+        warnings: Vec::new(),
+    };
+
+    let warnings = assess_jetstream(&snapshot);
+
+    assert!(
+        warnings
+            .iter()
+            .any(|warning| warning.contains("JetStream unavailable"))
+    );
+}
