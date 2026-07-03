@@ -585,6 +585,91 @@
     }
 
     #[sinex_test]
+    async fn leadership_loss_drains_and_exits_without_restarting_process_future(
+        ctx: TestContext,
+    ) -> TestResult<()> {
+        let mut env = EnvGuard::new();
+        env.set("SINEX_COORDINATION_HEARTBEAT", "1");
+        env.set("SINEX_COORDINATION_HANDOFF", "2");
+        let harness = build_runtime(&ctx, "coordination-leader-loss-drain").await?;
+        let runtime_drain = harness.runtime.runtime_drain();
+        let mut coordination =
+            RuntimeCoordination::from_runtime(&harness.runtime, "coord-test".to_string())?;
+        let instance_id = coordination.instance.instance_id.clone();
+        let kv_client = coordination.kv_client.clone();
+        let starts = Arc::new(AtomicUsize::new(0));
+        let starts_for_task = starts.clone();
+        let runtime_drain_for_task = runtime_drain.clone();
+
+        let run_handle = tokio::spawn(async move {
+            coordination
+                .run_coordination_loop(move || {
+                    let starts = starts_for_task.clone();
+                    let runtime_drain = runtime_drain_for_task.clone();
+                    async move {
+                        starts.fetch_add(1, Ordering::SeqCst);
+                        let mut drain_rx = runtime_drain.subscribe();
+                        loop {
+                            drain_rx.changed().await.map_err(|error| {
+                                SinexError::channel_receive(format!(
+                                    "runtime drain channel closed before leadership loss: {error}"
+                                ))
+                            })?;
+                            if *drain_rx.borrow() {
+                                return Ok(());
+                            }
+                        }
+                    }
+                })
+                .await
+        });
+
+        WaitHelpers::wait_for_condition(
+            || {
+                let kv_client = kv_client.clone();
+                let instance_id = instance_id.clone();
+                let starts = starts.clone();
+                async move {
+                    Ok::<bool, SinexError>(
+                        starts.load(Ordering::SeqCst) == 1
+                            && kv_client.get_leader().await?.as_deref()
+                                == Some(instance_id.as_str()),
+                    )
+                }
+            },
+            5,
+        )
+        .await?;
+
+        kv_client.release_leadership(&instance_id).await?;
+        assert!(
+            kv_client.acquire_leadership("replacement-leader").await?,
+            "replacement leader should take over before the old leader's next maintenance tick"
+        );
+
+        WaitHelpers::wait_for_condition(
+            || {
+                let runtime_drain = runtime_drain.clone();
+                async move { Ok::<bool, SinexError>(runtime_drain.is_requested()) }
+            },
+            5,
+        )
+        .await?;
+
+        let result = tokio::time::timeout(Duration::from_secs(5), run_handle).await??;
+        assert!(
+            result.is_ok(),
+            "coordination loop should exit cleanly after draining leadership loss: {result:?}"
+        );
+        assert_eq!(
+            starts.load(Ordering::SeqCst),
+            1,
+            "leadership loss must not re-enter run_service on the same runner"
+        );
+        Ok(())
+    }
+
+    #[sinex_test]
     async fn handoff_waits_for_runtime_drain_before_ready(ctx: TestContext) -> TestResult<()> {
         let mut env = EnvGuard::new();
         env.set("SINEX_COORDINATION_HEARTBEAT", "1");

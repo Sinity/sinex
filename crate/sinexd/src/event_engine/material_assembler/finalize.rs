@@ -7,11 +7,12 @@
 use serde::Serialize;
 use sinex_db::repositories::DbPoolExt;
 use sinex_db::schema::defs::records::SourceMaterialRecord;
-use sinex_primitives::MaterialStatus;
 use sinex_primitives::Timestamp;
 use sinex_primitives::nats::{NatsTrafficClass, insert_traffic_class_header};
 use sinex_primitives::transport;
-use sinex_primitives::{Id, JsonValue, Uuid};
+use sinex_primitives::{
+    Id, JsonValue, MaterialStatus, Uuid, sources::is_self_observation_material_source,
+};
 use tokio::sync::Mutex;
 use tracing::{debug, error, info, warn};
 
@@ -25,6 +26,11 @@ use super::finalization_transaction::{FinalizationRequest, FinalizationTransacti
 use super::state::AssemblyPhase;
 use super::{MaterialAssembler, MaterialEndMessage};
 use std::{str::FromStr, sync::Arc};
+
+pub(super) const ZERO_EVENT_SELF_OBSERVATION_TIMEOUT_RECOVERY_REASON: &str =
+    "slice_arrival_timeout_zero_event_self_observation_recovered_partial";
+pub(super) const ZERO_EVENT_SOURCE_MATERIAL_TIMEOUT_RECOVERY_REASON: &str =
+    "slice_arrival_timeout_zero_event_source_material_recovered_partial";
 
 #[derive(Clone, Copy)]
 pub(super) enum PendingEndBehavior {
@@ -266,6 +272,94 @@ impl MaterialAssembler {
             material_id = %material_id,
             parsed_event_count,
             "Marked timed-out source material as recovered_partial because events were already admitted"
+        );
+        Ok(true)
+    }
+
+    pub(super) async fn mark_timeout_zero_event_material_recovered_partial(
+        &self,
+        material_id: Uuid,
+        elapsed_secs: i64,
+    ) -> EventEngineResult<bool> {
+        let id: Id<SourceMaterialRecord> = Id::from_uuid(material_id);
+        let material = self
+            .pool
+            .source_materials()
+            .get_by_id(id)
+            .await
+            .map_err(|error| {
+                SinexError::database("Failed to read timed-out source material")
+                    .with_context("material_id", material_id.to_string())
+                    .with_source(error)
+            })?;
+
+        let Some(material) = material else {
+            return Ok(false);
+        };
+
+        let parsed_event_count = self
+            .pool
+            .source_materials()
+            .parsed_event_count(id)
+            .await
+            .map_err(|error| {
+                SinexError::database("Failed to read material parsed event count")
+                    .with_context("material_id", material_id.to_string())
+                    .with_context("source_identifier", material.source_identifier.clone())
+                    .with_source(error)
+            })?;
+
+        if parsed_event_count != 0 {
+            return Ok(false);
+        }
+
+        let is_self_observation =
+            is_self_observation_material_source(&material.source_identifier);
+        let (recovery_reason, metadata_key, dlq_policy) = if is_self_observation {
+            (
+                ZERO_EVENT_SELF_OBSERVATION_TIMEOUT_RECOVERY_REASON,
+                "slice_arrival_timeout_zero_event_self_observation",
+                "suppressed_zero_event_self_observation_timeout",
+            )
+        } else {
+            (
+                ZERO_EVENT_SOURCE_MATERIAL_TIMEOUT_RECOVERY_REASON,
+                "slice_arrival_timeout_zero_event_source_material",
+                "suppressed_zero_event_source_material_timeout",
+            )
+        };
+
+        self.pool
+            .source_materials()
+            .mark_as_recovered_partial(
+                id,
+                recovery_reason,
+                serde_json::json!({
+                    metadata_key: {
+                        "material_id": material_id.to_string(),
+                        "source_identifier": material.source_identifier,
+                        "elapsed_seconds": elapsed_secs,
+                        "timeout_seconds": self.slice_arrival_timeout.as_secs(),
+                        "parsed_event_count": parsed_event_count,
+                        "dlq_policy": dlq_policy
+                    }
+                }),
+            )
+            .await
+            .map_err(|error| {
+                SinexError::database(
+                    "Failed to mark zero-event timeout recovered_partial",
+                )
+                .with_context("material_id", material_id.to_string())
+                .with_context("parsed_event_count", parsed_event_count.to_string())
+                .with_source(error)
+            })?;
+
+        info!(
+            material_id = %material_id,
+            parsed_event_count,
+            recovery_reason,
+            "Marked timed-out zero-event source material as recovered_partial"
         );
         Ok(true)
     }

@@ -238,6 +238,50 @@ async fn test_source_binding_runtime_args_uses_manifest_identity()
 }
 
 #[sinex_test]
+async fn test_source_binding_service_from_cmdline_args_requires_scan_driver()
+-> ::xtask::sandbox::TestResult<()> {
+    let args = vec![
+        "/var/cache/sinex/target/debug/sinexd".to_string(),
+        "scan-source-driver".to_string(),
+        "--source".to_string(),
+        "browser.history".to_string(),
+        "--service-name".to_string(),
+        "source-driver-browser.history-3".to_string(),
+    ];
+
+    assert_eq!(
+        source_binding_service_from_cmdline_args(&args).as_deref(),
+        Some("source-driver-browser.history-3")
+    );
+
+    let non_source_args = vec![
+        "sinexd".to_string(),
+        "serve".to_string(),
+        "--service-name".to_string(),
+        "source-driver-browser.history-3".to_string(),
+    ];
+    assert_eq!(
+        source_binding_service_from_cmdline_args(&non_source_args),
+        None
+    );
+    Ok(())
+}
+
+#[sinex_test]
+async fn test_all_sources_subcommand_can_target_reconcile_service()
+-> ::xtask::sandbox::TestResult<()> {
+    let command = base_command(RunSubcommand::AllSources {
+        instance_id: None,
+        reconcile: true,
+        service_name: Some("source-driver-browser.history-3".to_string()),
+    });
+
+    assert!(command.runs_bundle());
+    assert!(!command.runs_single_binary());
+    Ok(())
+}
+
+#[sinex_test]
 async fn test_build_cargo_run_args_target_sinexd() -> ::xtask::sandbox::TestResult<()> {
     let command = base_command(RunSubcommand::RuntimeModule {
         name: "terminal-source".to_string(),

@@ -36,11 +36,13 @@ Ask:
 
 Exit with:
 
-- one selected slice;
+- one selected slice, backed by a claimed bead (`bd update <id> --claim`;
+  create the bead first if the slice came from evidence rather than
+  `bd ready`);
 - first evidence command or file set;
 - operating-log entry if the direction changed.
-- `QUEUE.md` update when the operator has specified sequencing after the
-  current slice.
+- `QUEUE.md` update plus a mirror bead when the operator has specified
+  sequencing after the current slice.
 
 ### Evidence
 
@@ -140,33 +142,6 @@ Exit with:
 - README/manifest update if needed;
 - log entry naming limits and next capability gap.
 
-### Demo Radar
-
-Demo radar is not a separate mode; it is a recurring checkpoint inside
-Direction, Artifact, Proof, and Meta. It forces the conductor to ask what
-inspectable capability should exist next instead of letting demos become an
-afterthought.
-
-Run:
-
-```bash
-.agent/scripts/devloop-demo "<trigger>" "<candidate demos>" "<selected demo>" "<artifact action>" "<proof/caveat>" "<next demo question>"
-```
-
-Use it when:
-
-- starting or reprioritizing a slice;
-- proof shows a capability is real enough to artifact;
-- evidence reveals an existing demo is stale or misleading;
-- the operator asks about demos, impressive examples, or what Sinex can show;
-- before handoff after substantial work.
-
-Exit with:
-
-- a timestamped `DEMO-RADAR.md` entry;
-- a selected artifact action, even if that action is "retire/caveat this demo";
-- one next demo question that can drive the next Direction pass.
-
 ### Velocity
 
 Tracks elapsed time, resource pressure, compile/test cost, stale processes, and
@@ -233,6 +208,28 @@ Reassess the plan when any of these occur:
 - a source family is absent or low quality and would make the demo misleading;
 - a different slice becomes clearly more demonstrable with less uncertainty.
 
+## Research Delegation
+
+Use sidecar research agents for Beads that are still mostly question-shaped:
+`analysis` or `decision` labels, titles beginning with `Analysis:`, or designs
+whose main content is `QUESTION` / `INSTRUMENT` / `ARTIFACT`. Do not delegate
+the immediate critical-path blocker when the next local action depends on its
+answer.
+
+Delegated research is not complete until it is written back to the task system.
+Each research prompt must require:
+
+- a comment or field update on the same Bead, not a private-only summary;
+- exact source paths, data surfaces, or commands supporting the findings;
+- executable implementation slices, acceptance-criteria refinements, and
+  verification commands;
+- a markdown packet under `.agent/scratch/research/` only when the result is
+  large enough to need a stable read artifact, with the Bead citing the path.
+
+Before spawning a new research sidecar, check whether the Bead already has an
+integrated packet in `design` or `notes`. If it does, treat it as executable
+work and prioritize implementation or operator decision instead of re-analysis.
+
 ## Mode Rotation Policy
 
 The loop should rotate modes whenever the current mode is waiting, stale, or no
@@ -252,13 +249,13 @@ Use this table as the default:
 | Evidence contradicts the plan | Direction | Rechoose scope instead of patching around bad assumptions |
 | Construction grows a second concern | Direction | Split or explicitly accept scope expansion |
 | Artifact starts becoming bespoke glue | Construction | Promote the shape into shared query/projection/render substrate |
-| Demo artifact is stale, weak, or newly possible | Artifact -> Direction | Refresh/caveat it, then decide the next capability slice |
+| Demo artifact is stale, weak, or newly possible | Artifact -> Direction | Refresh/caveat/retire it and update its demo bead, then decide the next slice |
 | Repeated friction appears | Velocity | Fix tooling, observability, docs, scripts, or resource setup |
 | Host pressure rises | Velocity | Attribute pressure and avoid duplicate heavy work before proceeding |
 | Same proof shape is about to rerun | Velocity -> Proof | Run `devloop-velocity`, then rerun only if the claim or changed files justify the cost |
 | Operator corrects process/priority | Meta | Identify the missed trigger and improve the loop instead of just apologizing |
 | Same kind of correction repeats | Meta -> Velocity | Convert the correction into executable scaffold or observability |
-| Operator says "after this, next ..." | Direction -> Meta/target mode when condition fires | Record the directive in `QUEUE.md`; do not let compaction turn it into a repeated immediate request |
+| Operator says "after this, next ..." | Direction -> Meta/target mode when condition fires | Record the directive in `QUEUE.md` AND as a p0 `directive` bead; do not let compaction or cleanup lose it |
 
 Cadence rules:
 
@@ -269,13 +266,18 @@ Cadence rules:
   before the next launch.
 - Every focus span over 15 minutes gets a mode check in `OPERATING-LOG.md`,
   even if the decision is to stay in the same mode.
-- Every substantial loop gets a demo-radar entry or an explicit reason that no
-  demo artifact is implicated.
+- Every substantial loop checks the demo portfolio (`bd list -l demo`): if the
+  work unblocked, advanced, or invalidated a demo bead, update it; new demo
+  ideas become demo-labeled beads with claim/instrument/falsifier/prereq.
 - Every operator process correction gets a meta-audit entry or an immediate
   scaffold/tooling change.
 - Every after-current operator directive gets recorded with
-  `.agent/scripts/devloop-checkpoint --queue ...` and completed with
-  `--queue-complete ...` when promoted into `ACTIVE-LOOP.md`.
+  `.agent/scripts/devloop-checkpoint --queue ...` and a mirror bead, and is
+  completed with `--queue-complete ...` (plus `bd close`) when promoted into
+  `ACTIVE-LOOP.md`.
+- Every discovered follow-up worth more than the current turn becomes a bead
+  (`bd create ... --deps discovered-from:<current>`) at the moment of
+  discovery, not at checkpoint time.
 - Do not keep coding through a contradiction. Rotate to Direction first, then
   re-enter Construction only after the slice contract still makes sense.
 - Do not keep polishing an artifact after its proof claim is exhausted. Rotate
@@ -317,6 +319,9 @@ artifact — one a stranger with no repo context can read, believe, and
 reproduce. Campaigns outrank open-ended substrate slices; enabler substrate
 work is in scope only when the specific campaign artifact would be false or
 fragile without it.
+
+Campaigns are tracked as p0 `campaign` beads (see `bd list -l campaign`);
+the bead is the durable copy that survives queue cleanup.
 
 Current campaign sequence (operator direction; supersede only with recorded
 evidence, never delete as duplicate):

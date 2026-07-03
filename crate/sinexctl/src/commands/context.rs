@@ -11,28 +11,65 @@ use sinex_primitives::relations::{
     EventRelationExpr, EvidenceRef, EvidenceRole, EvidenceWindow, ExpansionStep, ExpansionStepKind,
     ExpansionTrace, ObservedRange, TimeBasis,
 };
+use sinex_primitives::sources::{is_self_observation_source, source_identity_matches_family};
 use sinex_primitives::temporal::Timestamp;
 use sinex_primitives::views::{
     ActionAvailability, ActionAvailabilityState, CaveatView, ContextSourceView, ContextSummaryView,
     DesktopContextCandidateView, DesktopContextInputEvidence, DesktopContextInputState,
     DesktopContextView, DesktopFocusSessionListView, DesktopFocusSessionView,
     DesktopNotificationPressureView, DesktopProjectContextListView, DesktopProjectContextRowView,
-    EventCardListView, EventCardView, PrivacyStateKind, SinexObjectKind, SinexObjectRef,
-    ViewEnvelope,
+    EVENT_CARD_LIST_SCHEMA_VERSION, EventCardListView, EventCardView, PrivacyStateKind,
+    SinexObjectKind, SinexObjectRef, SourceCoverageContinuity, SourceCoverageListView,
+    SourceCoverageReadiness, SourceCoverageView, ViewEnvelope,
 };
 use std::collections::HashMap;
+use std::time::{Duration as StdDuration, Instant};
 
 const MAX_FOCUS_SESSION_EVIDENCE_REFS: usize = 12;
 const MAX_NOTIFICATION_PRESSURE_EVIDENCE_REFS: usize = 12;
 const MAX_PROJECT_CONTEXT_EVIDENCE_REFS: usize = 12;
+const CONTEXT_BASE_EVENT_CARDS_TIMEOUT: StdDuration = StdDuration::from_secs(20);
+const CONTEXT_DIVERSITY_TOP_UP_TIMEOUT: StdDuration = StdDuration::from_secs(8);
+const CONTEXT_SOURCE_CAVEATS_TIMEOUT: StdDuration = StdDuration::from_secs(5);
 const CONTEXT_DIVERSITY_SOURCES: &[&str] = &[
     "shell.atuin",
     "shell.kitty",
     "shell.scrollback",
     "wm.hyprland",
     "activitywatch",
-    "browser.history",
+    "webhistory",
+    "git",
     "fs-watcher",
+    "derived.session-detector",
+    "derived.activity-window",
+    "derived.hourly-summarizer",
+    "derived.daily-summarizer",
+];
+const RECALL_EXPECTED_SOURCES: &[RecallExpectedSource] = &[
+    RecallExpectedSource {
+        event_source_id: "shell.atuin",
+        coverage_source_id: "terminal.atuin-history",
+        family: Some("terminal"),
+        label: "terminal",
+    },
+    RecallExpectedSource {
+        event_source_id: "webhistory",
+        coverage_source_id: "browser.history",
+        family: Some("browser"),
+        label: "browser",
+    },
+    RecallExpectedSource {
+        event_source_id: "fs-watcher",
+        coverage_source_id: "fs",
+        family: None,
+        label: "filesystem",
+    },
+    RecallExpectedSource {
+        event_source_id: "git",
+        coverage_source_id: "git-commit-history",
+        family: None,
+        label: "git",
+    },
 ];
 
 use crate::client::GatewayClient;
@@ -148,6 +185,7 @@ impl ContextCommand {
             finite_error_label: "events context",
             table_title: "Context",
             self_observation: SelfObservationMode::Include,
+            source_caveats: SourceCaveatMode::None,
         };
         execute_context_request(
             client,
@@ -180,6 +218,7 @@ impl RecallCommand {
             } else {
                 SelfObservationMode::Exclude
             },
+            source_caveats: SourceCaveatMode::RecallExpectedSources,
         };
         execute_context_request(client, format, request, ContextDesktopMode::default()).await
     }
@@ -193,12 +232,27 @@ struct ContextRequest {
     finite_error_label: &'static str,
     table_title: &'static str,
     self_observation: SelfObservationMode,
+    source_caveats: SourceCaveatMode,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum SelfObservationMode {
     Include,
     Exclude,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum SourceCaveatMode {
+    None,
+    RecallExpectedSources,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct RecallExpectedSource {
+    event_source_id: &'static str,
+    coverage_source_id: &'static str,
+    family: Option<&'static str>,
+    label: &'static str,
 }
 
 #[derive(Debug, Default)]
@@ -208,6 +262,31 @@ struct ContextDesktopMode {
     notification_pressure: bool,
     focus_sessions: bool,
     project_contexts: bool,
+}
+
+#[derive(Debug, Default)]
+struct ContextStageTimings {
+    total: StdDuration,
+    base_event_cards: StdDuration,
+    diversity_top_up: StdDuration,
+    self_observation_filter: StdDuration,
+    source_caveats: StdDuration,
+}
+
+impl ContextStageTimings {
+    fn to_json(&self) -> serde_json::Value {
+        json!({
+            "total": duration_millis(self.total),
+            "base_event_cards": duration_millis(self.base_event_cards),
+            "diversity_top_up": duration_millis(self.diversity_top_up),
+            "self_observation_filter": duration_millis(self.self_observation_filter),
+            "source_caveats": duration_millis(self.source_caveats),
+        })
+    }
+}
+
+fn duration_millis(duration: StdDuration) -> u64 {
+    u64::try_from(duration.as_millis()).unwrap_or(u64::MAX)
 }
 
 async fn execute_context_request(
@@ -223,8 +302,12 @@ async fn execute_context_request(
         finite_error_label,
         table_title,
         self_observation,
+        source_caveats,
     } = request;
 
+    let total_start = Instant::now();
+    let mut timings = ContextStageTimings::default();
+    let mut stage_caveats = Vec::new();
     let query = EventQuery {
         sources: vec![],
         event_types: vec![],
@@ -235,9 +318,48 @@ async fn execute_context_request(
         ..Default::default()
     };
 
-    let mut event_cards = client.event_cards(query).await?;
-    top_up_context_diversity(client, &mut event_cards, &window).await?;
+    let started = Instant::now();
+    let mut event_cards =
+        match tokio::time::timeout(CONTEXT_BASE_EVENT_CARDS_TIMEOUT, client.event_cards(query))
+            .await
+        {
+            Ok(cards) => cards?,
+            Err(_) => {
+                stage_caveats.push(CaveatView {
+                    id: "recall.event_cards_timeout".to_string(),
+                    message: format!(
+                        "base event-card query exceeded {}s; recall returned a finite degraded packet instead of waiting for the gateway timeout",
+                        CONTEXT_BASE_EVENT_CARDS_TIMEOUT.as_secs()
+                    ),
+                    ref_: Some(SinexObjectRef::new(SinexObjectKind::RpcMethod, "events.cards")),
+                });
+                EventCardListView {
+                    schema_version: EVENT_CARD_LIST_SCHEMA_VERSION.to_string(),
+                    count: 0,
+                    cards: Vec::new(),
+                    next_cursor: None,
+                    total_estimate: None,
+                }
+            }
+        };
+    timings.base_event_cards = started.elapsed();
+
+    let started = Instant::now();
+    let diversity_caveat = top_up_context_diversity(client, &mut event_cards, &window).await?;
+    timings.diversity_top_up = started.elapsed();
+
+    let started = Instant::now();
     apply_self_observation_mode(&mut event_cards, self_observation);
+    timings.self_observation_filter = started.elapsed();
+
+    let started = Instant::now();
+    let mut source_caveats = context_source_caveats(client, &event_cards, source_caveats).await;
+    timings.source_caveats = started.elapsed();
+    source_caveats.extend(stage_caveats);
+    if let Some(caveat) = diversity_caveat {
+        source_caveats.push(caveat);
+    }
+    timings.total = total_start.elapsed();
 
     let sources = grouped_context_sources(&event_cards.cards);
     if desktop_mode.desktop {
@@ -262,6 +384,8 @@ async fn execute_context_request(
         format,
         machine_source_surface,
         finite_error_label,
+        &source_caveats,
+        &timings,
     )? {
         println!("{output}");
         return Ok(());
@@ -318,6 +442,9 @@ async fn execute_context_request(
         style(sources.len()).bold(),
         window.label(),
     );
+    for caveat in &source_caveats {
+        println!("  {} {}", style("caveat").yellow(), caveat.message);
+    }
 
     Ok(())
 }
@@ -333,8 +460,7 @@ fn apply_self_observation_mode(event_cards: &mut EventCardListView, mode: SelfOb
 }
 
 fn is_self_observation_card(card: &EventCardView) -> bool {
-    let source = card.source.raw.as_str();
-    source == "sinex" || source.starts_with("sinexd.")
+    is_self_observation_source(card.source.raw.as_str())
 }
 
 #[derive(Debug, Clone)]
@@ -402,6 +528,32 @@ async fn top_up_context_diversity(
     client: &GatewayClient,
     event_cards: &mut EventCardListView,
     window: &ContextWindow,
+) -> Result<Option<CaveatView>> {
+    let outcome = tokio::time::timeout(
+        CONTEXT_DIVERSITY_TOP_UP_TIMEOUT,
+        top_up_context_diversity_unbounded(client, event_cards, window),
+    )
+    .await;
+    match outcome {
+        Ok(result) => result.map(|()| None),
+        Err(_) => Ok(Some(CaveatView {
+            id: "recall.diversity_top_up_timeout".to_string(),
+            message: format!(
+                "source-diversity top-up exceeded {}s; recall output is bounded to the base event-card query plus completed stages",
+                CONTEXT_DIVERSITY_TOP_UP_TIMEOUT.as_secs()
+            ),
+            ref_: Some(SinexObjectRef::new(
+                SinexObjectKind::RpcMethod,
+                "events.cards",
+            )),
+        })),
+    }
+}
+
+async fn top_up_context_diversity_unbounded(
+    client: &GatewayClient,
+    event_cards: &mut EventCardListView,
+    window: &ContextWindow,
 ) -> Result<()> {
     for source in CONTEXT_DIVERSITY_SOURCES {
         if context_cards_include_source(&event_cards.cards, source) {
@@ -442,6 +594,193 @@ fn context_cards_include_source(cards: &[EventCardView], source: &str) -> bool {
     cards.iter().any(|card| card.source.raw == source)
 }
 
+async fn context_source_caveats(
+    client: &GatewayClient,
+    event_cards: &EventCardListView,
+    mode: SourceCaveatMode,
+) -> Vec<CaveatView> {
+    match mode {
+        SourceCaveatMode::None => Vec::new(),
+        SourceCaveatMode::RecallExpectedSources => {
+            let outcome = tokio::time::timeout(
+                CONTEXT_SOURCE_CAVEATS_TIMEOUT,
+                client.sources_status_view_filtered(None, None, false),
+            )
+            .await;
+            match outcome {
+                Ok(Ok(envelope)) => recall_expected_source_caveats(event_cards, &envelope.payload),
+                Ok(Err(error)) => vec![CaveatView {
+                    id: "recall.source_status_unavailable".to_string(),
+                    message: format!(
+                        "source coverage caveats unavailable; recall cannot distinguish missing activity from source-status failure: {error}"
+                    ),
+                    ref_: Some(SinexObjectRef::new(
+                        SinexObjectKind::RpcMethod,
+                        "sources.status.view",
+                    )),
+                }],
+                Err(_) => vec![CaveatView {
+                    id: "recall.source_status_timeout".to_string(),
+                    message: format!(
+                        "source coverage caveats exceeded {}s; recall cannot fully distinguish missing activity from source-status latency",
+                        CONTEXT_SOURCE_CAVEATS_TIMEOUT.as_secs()
+                    ),
+                    ref_: Some(SinexObjectRef::new(
+                        SinexObjectKind::RpcMethod,
+                        "sources.status.view",
+                    )),
+                }],
+            }
+        }
+    }
+}
+
+fn recall_expected_source_caveats(
+    event_cards: &EventCardListView,
+    coverage: &SourceCoverageListView,
+) -> Vec<CaveatView> {
+    let mut caveats = Vec::new();
+    for expected in RECALL_EXPECTED_SOURCES {
+        let source = recall_expected_source_coverage(expected, coverage);
+        if !recall_cards_include_expected_source(event_cards, expected) {
+            caveats.push(recall_expected_source_caveat(expected, source));
+        }
+        if let Some(source) = source {
+            caveats.extend(recall_source_gap_caveats(expected, source));
+        }
+    }
+    caveats
+}
+
+fn recall_cards_include_expected_source(
+    event_cards: &EventCardListView,
+    expected: &RecallExpectedSource,
+) -> bool {
+    event_cards
+        .cards
+        .iter()
+        .any(|card| recall_event_source_matches_expected(&card.source.raw, expected))
+}
+
+fn recall_event_source_matches_expected(source: &str, expected: &RecallExpectedSource) -> bool {
+    source == expected.event_source_id
+        || expected
+            .family
+            .is_some_and(|family| source_identity_matches_family(source, "", family))
+}
+
+fn recall_expected_source_caveat(
+    expected: &RecallExpectedSource,
+    source: Option<&SourceCoverageView>,
+) -> CaveatView {
+    let id = format!("recall.source.{}.absent", expected.label);
+    let ref_ = Some(recall_expected_source_ref(expected));
+
+    match source {
+        Some(source)
+            if source.readiness == SourceCoverageReadiness::Ready
+                && source.continuity == SourceCoverageContinuity::Active
+                && source.event_count > 0 =>
+        {
+            CaveatView {
+                id,
+                message: format!(
+                    "{} source is active but contributed no events to this recall window",
+                    expected.label
+                ),
+                ref_,
+            }
+        }
+        Some(source) => CaveatView {
+            id,
+            message: format!(
+                "{} source absent from recall; source status is readiness={} continuity={} events={} materials={}",
+                expected.label,
+                source.readiness.as_str(),
+                source.continuity.as_str(),
+                source.event_count,
+                source.material_count
+            ),
+            ref_,
+        },
+        None => CaveatView {
+            id,
+            message: format!(
+                "{} source absent from recall and not present in source coverage",
+                expected.label
+            ),
+            ref_,
+        },
+    }
+}
+
+fn recall_source_gap_caveats(
+    expected: &RecallExpectedSource,
+    source: &SourceCoverageView,
+) -> Vec<CaveatView> {
+    source
+        .gaps
+        .iter()
+        .map(|gap| CaveatView {
+            id: format!(
+                "recall.source.{}.gap.{}",
+                expected.label,
+                caveat_id_component(&gap.kind)
+            ),
+            message: format!(
+                "{} source coverage gap: {}: {}",
+                expected.label, gap.kind, gap.message
+            ),
+            ref_: Some(recall_expected_source_ref(expected)),
+        })
+        .collect()
+}
+
+fn caveat_id_component(value: &str) -> String {
+    value
+        .chars()
+        .map(|ch| match ch {
+            'a'..='z' | '0'..='9' | '_' | '-' => ch,
+            'A'..='Z' => ch.to_ascii_lowercase(),
+            _ => '_',
+        })
+        .collect()
+}
+
+fn recall_expected_source_ref(expected: &RecallExpectedSource) -> SinexObjectRef {
+    SinexObjectRef::new(SinexObjectKind::SourceDriver, expected.coverage_source_id)
+        .with_command_hint(format!(
+            "sinexctl sources status {} --format json",
+            expected.coverage_source_id
+        ))
+}
+
+fn recall_expected_source_coverage<'a>(
+    expected: &RecallExpectedSource,
+    coverage: &'a SourceCoverageListView,
+) -> Option<&'a SourceCoverageView> {
+    coverage
+        .sources
+        .iter()
+        .find(|source| source.source_id == expected.coverage_source_id)
+        .or_else(|| {
+            coverage
+                .sources
+                .iter()
+                .find(|source| recall_coverage_source_matches_expected(source, expected))
+        })
+}
+
+fn recall_coverage_source_matches_expected(
+    source: &SourceCoverageView,
+    expected: &RecallExpectedSource,
+) -> bool {
+    source.source_id == expected.coverage_source_id
+        || expected.family.is_some_and(|family| {
+            source_identity_matches_family(&source.source_id, &source.namespace, family)
+        })
+}
+
 fn render_context_machine_output(
     event_cards: &EventCardListView,
     sources: &[(String, &EventCardView)],
@@ -449,6 +788,8 @@ fn render_context_machine_output(
     format: OutputFormat,
     source_surface: &'static str,
     finite_error_label: &'static str,
+    source_caveats: &[CaveatView],
+    stage_timings: &ContextStageTimings,
 ) -> Result<Option<String>> {
     match format {
         OutputFormat::Table => Ok(None),
@@ -464,9 +805,16 @@ fn render_context_machine_output(
                 .collect();
             let envelope = ViewEnvelope::new(
                 source_surface,
-                ContextSummaryView::new(&window.since, event_cards.count, source_views),
+                ContextSummaryView::new(&window.since, event_cards.count, source_views)
+                    .with_source_caveats(source_caveats.to_vec()),
             )
-            .with_query_echo(window.query_echo());
+            .with_query_echo({
+                let mut query_echo = window.query_echo();
+                if let serde_json::Value::Object(ref mut object) = query_echo {
+                    object.insert("stage_timings_ms".to_string(), stage_timings.to_json());
+                }
+                query_echo
+            });
 
             render_envelope(&envelope, &envelope.payload.sources, format)
         }
@@ -640,7 +988,7 @@ fn desktop_context_candidates(
     {
         candidates.push(DesktopContextCandidateView {
             label: format!("active window: {}", truncate(&card.summary, 80)),
-            confidence: 0.72,
+            confidence: evidence_ref_confidence(1, MAX_FOCUS_SESSION_EVIDENCE_REFS),
             evidence_refs: vec![card.ref_.clone()],
             proposal_ref: None,
         });
@@ -663,13 +1011,24 @@ fn desktop_context_candidates(
                 "current activity from {} evidence refs",
                 activity_refs.len()
             ),
-            confidence: (0.55 + (activity_refs.len() as f32 * 0.05)).min(0.85),
+            confidence: evidence_ref_confidence(
+                activity_refs.len(),
+                MAX_FOCUS_SESSION_EVIDENCE_REFS,
+            ),
             evidence_refs: activity_refs,
             proposal_ref: None,
         });
     }
 
     candidates
+}
+
+fn evidence_ref_confidence(evidence_ref_count: usize, max_evidence_refs: usize) -> f32 {
+    if max_evidence_refs == 0 {
+        return 0.0;
+    }
+    let bounded_refs = evidence_ref_count.min(max_evidence_refs) as f32;
+    bounded_refs / max_evidence_refs as f32
 }
 
 fn desktop_context_evidence_window(view: &DesktopContextView) -> EvidenceWindow {
@@ -980,7 +1339,8 @@ fn build_project_context_list_view(
     }
 
     let label = project_context_label(&project_cards);
-    let confidence = (0.45 + (evidence_refs.len() as f32 * 0.04)).min(0.82);
+    let confidence =
+        evidence_ref_confidence(evidence_refs.len(), MAX_PROJECT_CONTEXT_EVIDENCE_REFS);
     view.rows.push(DesktopProjectContextRowView {
         label,
         confidence,
@@ -1262,6 +1622,8 @@ fn display_source(source: &str) -> String {
         "fs-watcher" => "filesystem",
         "journald" | "dbus" | "udev" => "system",
         "clipboard" => "clipboard",
+        "webhistory" => "browser",
+        "git" => "git",
         s if s.starts_with("browser.") => "browser",
         s if s.starts_with("derived.") => "derived",
         s if s.starts_with("device.") => "device",

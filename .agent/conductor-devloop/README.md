@@ -13,7 +13,7 @@ history.
 5. `PROCESS.md` — focus modes and rotation triggers.
 6. `TACTICS.md` — async/heavy-work tactics.
 7. `VELOCITY.md` — speed, cadence, and friction rules.
-8. `DEMO-RADAR.md` — demo candidates, artifact actions, and caveats.
+8. Demo portfolio beads (`bd list -l demo`) — selected demos, claims, proof state.
 9. `AHEAD.md` — wait-time lanes, subagent prompts, and reconciliation backlog.
 10. `ADVERSARIAL-REVIEW.md` — scaffold and process failure modes.
 

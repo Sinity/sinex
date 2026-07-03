@@ -1,5 +1,6 @@
 use crate::{DbPool, PoolConfig};
 use sinex_primitives::error::{Result, SinexError};
+use sinex_primitives::units::Seconds;
 use tracing::info;
 
 const SQLSTATE_UNDEFINED_FILE: &str = "58P01";
@@ -53,7 +54,11 @@ pub async fn apply_schema(pool: &DbPool) -> Result<()> {
 pub async fn apply_schema_for_url(database_url: &str) -> Result<()> {
     use crate::pool::create_pool_with_config;
 
-    let config = PoolConfig::from_env();
+    let mut config = PoolConfig::from_env();
+    // Schema apply performs DDL/index convergence. On production-sized
+    // hypertables, valid idempotent checks can exceed the ordinary OLTP query
+    // guard, so use an unbounded statement timeout for this temporary pool.
+    config.statement_timeout_secs = Seconds::from_secs(0);
     let pool = create_pool_with_config(database_url, &config)
         .await
         .map_err(|e| {

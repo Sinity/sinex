@@ -135,15 +135,17 @@ use state::{
 struct DiskSpaceMonitor {
     state_root: PathBuf,
     threshold_percent: u8,
+    min_available_bytes: u64,
     last_check: parking_lot::Mutex<std::time::Instant>,
     last_result: parking_lot::Mutex<Option<bool>>,
 }
 
 impl DiskSpaceMonitor {
-    fn new(state_root: PathBuf, threshold_percent: u8) -> Self {
+    fn new(state_root: PathBuf, threshold_percent: u8, min_available_bytes: u64) -> Self {
         Self {
             state_root,
             threshold_percent,
+            min_available_bytes,
             last_check: parking_lot::Mutex::new(std::time::Instant::now()),
             last_result: parking_lot::Mutex::new(None),
         }
@@ -185,16 +187,32 @@ impl DiskSpaceMonitor {
             return true; // Fail open
         }
 
-        let total_blocks = stat.f_blocks;
-        let available_blocks = stat.f_bavail;
-
-        if total_blocks == 0 {
-            return true; // Fail open
-        }
-
-        let used_percent = ((total_blocks - available_blocks) * 100) / total_blocks;
-        used_percent < u64::from(self.threshold_percent)
+        disk_usage_allows_assembly(
+            stat.f_blocks,
+            stat.f_bavail,
+            stat.f_frsize,
+            self.threshold_percent,
+            self.min_available_bytes,
+        )
     }
+}
+
+fn disk_usage_allows_assembly(
+    total_blocks: libc::fsblkcnt_t,
+    available_blocks: libc::fsblkcnt_t,
+    fragment_size: libc::c_ulong,
+    threshold_percent: u8,
+    min_available_bytes: u64,
+) -> bool {
+    if total_blocks == 0 || fragment_size == 0 {
+        return true; // Fail open
+    }
+
+    let used_percent = ((total_blocks - available_blocks) * 100) / total_blocks;
+    let available_bytes = u128::from(available_blocks) * u128::from(fragment_size);
+
+    used_percent < u64::from(threshold_percent)
+        || available_bytes >= u128::from(min_available_bytes)
 }
 
 /// Material assembler service.
@@ -284,6 +302,7 @@ impl MaterialAssembler {
             slice_timeout_secs,
             orphan_threshold_secs,
             disk_threshold_percent,
+            4 * 1024 * 1024 * 1024,
             DurabilityThresholds::default_checked()?,
         )
     }
@@ -301,6 +320,7 @@ impl MaterialAssembler {
         slice_timeout_secs: u64,
         orphan_threshold_secs: u64,
         disk_threshold_percent: u8,
+        disk_min_available_bytes: u64,
         durability_thresholds: DurabilityThresholds,
     ) -> EventEngineResult<Self> {
         if let Err(e) = std::fs::create_dir_all(&state_root) {
@@ -322,6 +342,7 @@ impl MaterialAssembler {
         let disk_monitor = Arc::new(DiskSpaceMonitor::new(
             state_root.clone(),
             disk_threshold_percent,
+            disk_min_available_bytes,
         ));
         let max_material_size_bytes = encode_max_material_size_bytes(max_material_size_bytes)?;
 

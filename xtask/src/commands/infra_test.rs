@@ -116,6 +116,55 @@ async fn dev_bindings_manifest_adds_qutebrowser_history_when_material_exists()
 }
 
 #[sinex_test]
+async fn dev_bindings_manifest_attaches_browser_dump_to_one_binding_only()
+-> crate::sandbox::prelude::TestResult<()> {
+    let home = tempfile::tempdir()?;
+    let qutebrowser_dir = home.path().join(".local/share/qutebrowser");
+    std::fs::create_dir_all(&qutebrowser_dir)?;
+    std::fs::write(qutebrowser_dir.join("history.sqlite"), "")?;
+    let chrome_dir = home.path().join(".config/chrome-ws/Default");
+    std::fs::create_dir_all(&chrome_dir)?;
+    std::fs::write(chrome_dir.join("History"), "")?;
+    let dump_dir = tempfile::tempdir()?;
+    let dump_path = dump_dir.path().join("full_history.ndjson");
+    std::fs::write(&dump_path, "{}\n")?;
+
+    let manifest = generate_dev_source_bindings_manifest_for_home_and_exports(
+        Path::new("/workspace/sinex"),
+        home.path(),
+        Some(&dump_path),
+        None,
+    );
+    let browser_bindings = manifest
+        .bindings
+        .iter()
+        .filter(|binding| binding.source_id == "browser.history")
+        .collect::<Vec<_>>();
+
+    assert_eq!(browser_bindings.len(), 2);
+    assert_eq!(
+        browser_bindings[0].runtime_config["secondary"]["path"],
+        dump_path.to_string_lossy().as_ref()
+    );
+    assert_eq!(
+        browser_bindings[0].runtime_config["checkpoint_identity"],
+        "browser.history"
+    );
+    assert_eq!(
+        browser_bindings[0].runtime_config["control_identity"],
+        "browser.history"
+    );
+    assert_eq!(browser_bindings[1].runtime_config["secondary"]["path"], "");
+    assert!(
+        browser_bindings[1]
+            .runtime_config
+            .get("checkpoint_identity")
+            .is_none()
+    );
+    Ok(())
+}
+
+#[sinex_test]
 async fn dev_bindings_manifest_adds_chrome_history_when_material_exists()
 -> crate::sandbox::prelude::TestResult<()> {
     let home = tempfile::tempdir()?;
@@ -274,6 +323,14 @@ async fn dev_bindings_manifest_uses_watch_root_for_git_and_fs()
 
     assert_eq!(git.runtime_config["path"], "/workspace/sinex");
     assert_eq!(fs.runtime_config["watch_paths"][0], "/workspace/sinex");
+    assert!(
+        fs.runtime_config["ignored_directory_names"]
+            .as_array()
+            .expect("ignored_directory_names is an array")
+            .iter()
+            .any(|name| name == ".beads"),
+        "fs dev bindings must not ingest Beads/Dolt task database internals"
+    );
     assert_eq!(git.runtime_config["continuous_poll_interval_secs"], 30);
     Ok(())
 }

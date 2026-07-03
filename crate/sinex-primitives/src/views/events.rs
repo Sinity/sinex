@@ -209,6 +209,8 @@ pub struct ContextSummaryView {
     pub total_events: usize,
     pub source_count: usize,
     pub sources: Vec<ContextSourceView>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub source_caveats: Vec<CaveatView>,
 }
 
 impl ContextSummaryView {
@@ -224,7 +226,14 @@ impl ContextSummaryView {
             total_events,
             source_count: sources.len(),
             sources,
+            source_caveats: Vec::new(),
         }
+    }
+
+    #[must_use]
+    pub fn with_source_caveats(mut self, source_caveats: Vec<CaveatView>) -> Self {
+        self.source_caveats = source_caveats;
+        self
     }
 }
 

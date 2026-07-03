@@ -692,28 +692,39 @@ fn generate_dev_source_bindings_manifest_for_home_and_exports(
         .filter(|source| source.path.exists())
         .enumerate()
     {
+        let owns_shared_dump = idx == 0 && browser_history_dump.is_some();
+        let secondary_path = if owns_shared_dump {
+            browser_history_dump.unwrap_or_else(|| Path::new(""))
+        } else {
+            Path::new("")
+        };
+        let mut runtime_config = json!({
+            "primary": {
+                "path": browser_source.path,
+                "query": browser_source.query,
+                "table": browser_source.table,
+                // qutebrowser keeps history.sqlite in WAL mode with a live
+                // writer; Chrome/Chromium does the same. SQLite may need
+                // to recover/open WAL sidecars even for SELECT-only
+                // readers, so mirror the NixOS source binding's WAL-safe
+                // mode here.
+                "read_only": false,
+                "immutable": false
+            },
+            "secondary": {
+                "path": secondary_path,
+                "skip_empty": true
+            },
+            "interleaved": false
+        });
+        if owns_shared_dump {
+            runtime_config["checkpoint_identity"] = json!("browser.history");
+            runtime_config["control_identity"] = json!("browser.history");
+        }
         bindings.push(dev_source_binding(
             "browser.history",
             (idx + 1) as u32,
-            json!({
-                "primary": {
-                    "path": browser_source.path,
-                    "query": browser_source.query,
-                    "table": browser_source.table,
-                    // qutebrowser keeps history.sqlite in WAL mode with a live
-                    // writer; Chrome/Chromium does the same. SQLite may need
-                    // to recover/open WAL sidecars even for SELECT-only
-                    // readers, so mirror the NixOS source binding's WAL-safe
-                    // mode here.
-                    "read_only": false,
-                    "immutable": false
-                },
-                "secondary": {
-                    "path": browser_history_dump.unwrap_or_else(|| Path::new("")),
-                    "skip_empty": true
-                },
-                "interleaved": false
-            }),
+            runtime_config,
         ));
     }
     if let Some(raindrop_bookmarks_export) = raindrop_bookmarks_export {
@@ -744,6 +755,7 @@ fn generate_dev_source_bindings_manifest_for_home_and_exports(
                 "target",
                 ".git",
                 ".sinex",
+                ".beads",
                 ".direnv",
                 ".claude",
                 "node_modules",

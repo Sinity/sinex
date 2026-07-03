@@ -69,7 +69,7 @@ current run.
   `INDEX.md`, `RUNBOOK.md`, `PROCESS.md`, `TACTICS.md`, `VELOCITY.md`,
   `ADVERSARIAL-REVIEW.md`, and `SELF-PROMPTS.md`.
 - Keep active state ignored but canonical in `.agent/conductor-devloop/`:
-  `ACTIVE-LOOP.md`, `OPERATING-LOG.md`, `DEMO-RADAR.md`, `EVENTS.jsonl`,
+  `ACTIVE-LOOP.md`, `OPERATING-LOG.md`, `EVENTS.jsonl`,
   `PHASES.jsonl`, `MANIFEST.md`, and `context/**`.
 - Keep `.agent/scratch/README.md` as the tracked routing file for supporting
   research. Scratch content beyond that is local ignored research, not startup
@@ -88,7 +88,7 @@ current run.
 - `scripts/` — small agent helper scripts:
   - canonical primitive names: `devloop-status`, `devloop-review`,
     `devloop-start`, `devloop-checkpoint`, `devloop-log`, `devloop-focus`,
-    `devloop-demo`, `devloop-baseline`, `devloop-wait`, `devloop-ahead`,
+    `devloop-baseline`, `devloop-wait`, `devloop-ahead`,
     `devloop-meta`, `devloop-handoff`, `devloop-sync`, `devloop-velocity`,
     `devloop-refresh-demos`, and `devloop-refresh-events`.
   - `devloop-status` prints current goal, last log entry, git/runtime/pressure
@@ -100,8 +100,6 @@ current run.
   - `devloop-checkpoint "title"` appends a reassessment entry.
   - `devloop-focus <from> <to> "trigger" "decision"` records focus transitions
     using the shared modes from `devloop-contract.json`.
-  - `devloop-demo` records demo candidates or refresh prompts in
-    `conductor-devloop/DEMO-RADAR.md`.
   - `devloop-baseline` captures a lightweight local baseline for later
     comparison.
   - `devloop-wait` records a long-running command plus the foreground work that

@@ -435,9 +435,13 @@ async fn test_local_runtime_env_overrides_include_dev_token_and_tls_defaults() -
     _guard.set_optional("SINEX_API_ADMIN_TOKEN_FILE", None);
     _guard.set_optional("SINEX_API_TLS_CERT", None);
     _guard.set_optional("SINEX_API_TLS_KEY", None);
+    _guard.set_optional("SINEX_EVENT_ENGINE_WORK_DIR", None);
 
     let overrides = local_runtime_env_overrides();
 
+    assert!(overrides.iter().any(|(key, value)| {
+        key == "SINEX_EVENT_ENGINE_WORK_DIR" && value.ends_with(".sinex/state/event-engine")
+    }));
     assert!(overrides.iter().any(|(key, value)| {
         key == "SINEX_API_TOKEN" && value.starts_with("dev-token-") && value.ends_with(":admin")
     }));
