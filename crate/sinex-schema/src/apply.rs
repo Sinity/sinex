@@ -157,7 +157,7 @@ pub async fn apply(pool: &PgPool) -> Result<(), ApplyError> {
     converge_db_check_constraints(pool).await?;
     create_indexes(pool).await?;
     create_triggers_and_functions(pool).await?;
-    backfill_source_material_event_counts(pool).await?;
+    crate::backfill::ensure_backfill_schema(pool).await?;
     configure_timescaledb(pool).await?;
     apply_roles_and_grants(pool).await?;
     Ok(())
@@ -1070,54 +1070,6 @@ async fn create_triggers_and_functions(pool: &PgPool) -> Result<(), ApplyError> 
     )
     .await?;
     ensure_function_set_sql(pool, HYBRID_SEARCH_FUNCTIONS, HYBRID_SEARCH_SQL).await?;
-
-    Ok(())
-}
-
-async fn backfill_source_material_event_counts(pool: &PgPool) -> Result<(), ApplyError> {
-    let should_backfill = sqlx::query_scalar::<_, bool>(
-        r#"
-        SELECT EXISTS (
-            SELECT 1
-            FROM core.events e
-            WHERE e.source_material_id IS NOT NULL
-            LIMIT 1
-        ) AND NOT EXISTS (
-            SELECT 1
-            FROM raw.source_material_registry sm
-            WHERE sm.parsed_event_count > 0
-            LIMIT 1
-        ) AS should_backfill
-        "#,
-    )
-    .fetch_one(pool)
-    .await?;
-
-    if !should_backfill {
-        return Ok(());
-    }
-
-    let mut tx = pool.begin().await?;
-    sqlx::query("LOCK TABLE core.events IN SHARE MODE")
-        .execute(&mut *tx)
-        .await?;
-    sqlx::query(
-        r#"
-        WITH counts AS (
-            SELECT e.source_material_id, COUNT(*)::bigint AS event_count
-            FROM core.events e
-            WHERE e.source_material_id IS NOT NULL
-            GROUP BY e.source_material_id
-        )
-        UPDATE raw.source_material_registry sm
-        SET parsed_event_count = counts.event_count
-        FROM counts
-        WHERE sm.id = counts.source_material_id
-        "#,
-    )
-    .execute(&mut *tx)
-    .await?;
-    tx.commit().await?;
 
     Ok(())
 }

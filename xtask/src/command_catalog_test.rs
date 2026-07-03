@@ -20,6 +20,14 @@ async fn command_catalog_exposes_core_public_surface() -> TestResult<()> {
         find_command(&commands, "schema strict-diff").is_some(),
         "strict schema drift check must stay discoverable"
     );
+    assert!(
+        find_command(&commands, "schema backfill status").is_some(),
+        "schema backfill status must stay discoverable"
+    );
+    assert!(
+        find_command(&commands, "schema backfill run").is_some(),
+        "schema backfill runner must stay discoverable"
+    );
     let global_args = collect_global_args();
     for arg in ["json", "list_commands", "bg"] {
         assert!(

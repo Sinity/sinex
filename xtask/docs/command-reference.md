@@ -1728,6 +1728,7 @@ Schema verification command group
 | Command | Purpose |
 |---|---|
 | `strict-diff` | Detect strict schema drift that declarative apply does not reconcile |
+| `backfill` | Inspect or run explicit schema data backfills |
 
 ### `xtask schema strict-diff`
 
@@ -1738,6 +1739,43 @@ Detect strict schema drift that declarative apply does not reconcile
 | Flag | Value | Required | Description |
 |---|---|---|---|
 | `--database-url` | yes | no | Database URL to inspect. Without this, prepares the checkout-local stack first |
+
+
+### `xtask schema backfill`
+
+Inspect or run explicit schema data backfills
+
+**Subcommands**
+
+| Command | Purpose |
+|---|---|
+| `status` | Report registered schema backfills and their persisted run state |
+| `run` | Run or resume a named schema backfill |
+
+#### `xtask schema backfill status`
+
+Report registered schema backfills and their persisted run state
+
+**Arguments**
+
+| Flag | Value | Required | Description |
+|---|---|---|---|
+| `--database-url` | yes | no | Database URL to inspect. Without this, prepares the checkout-local stack first |
+
+
+#### `xtask schema backfill run`
+
+Run or resume a named schema backfill
+
+**Arguments**
+
+| Flag | Value | Required | Description |
+|---|---|---|---|
+| `key` | yes | yes | Backfill key to run |
+| `--database-url` | yes | no | Database URL to inspect. Without this, prepares the checkout-local stack first |
+| `--batch-size` | yes | no | Rows to scan before persisting progress |
+| `--assume-quiescent` | no | no | Acknowledge that writers are quiesced for this first implementation slice |
+| `--restart` | no | no | Clear persisted progress and recompute from the current event horizon |
 
 
 ## `xtask verify`
