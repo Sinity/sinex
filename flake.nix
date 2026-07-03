@@ -369,11 +369,27 @@
                 bootstrap_log="$pglog/cargo-sqlx-bootstrap.log"
 
                 _sinex_schema_apply_bootstrap_bin() {
-                  local bootstrap_out
+                  local bootstrap_bin bootstrap_out cached_path cache_fingerprint cache_fingerprint_file cache_path_file current_fingerprint
 
                   if ! command -v nix >/dev/null 2>&1; then
                     echo "nix is required to build schema-apply-bootstrap lazily" >>"$bootstrap_log"
                     return 127
+                  fi
+
+                  cache_fingerprint_file="$SINEX_DEV_STATE_DIR/schema-apply-bootstrap.fingerprint"
+                  cache_path_file="$SINEX_DEV_STATE_DIR/schema-apply-bootstrap.path"
+                  current_fingerprint="$(_sinex_schema_apply_bootstrap_fingerprint || true)"
+
+                  if [ -n "$current_fingerprint" ] \
+                    && [ -r "$cache_fingerprint_file" ] \
+                    && [ -r "$cache_path_file" ]
+                  then
+                    cache_fingerprint="$(cat "$cache_fingerprint_file" 2>/dev/null || true)"
+                    cached_path="$(cat "$cache_path_file" 2>/dev/null || true)"
+                    if [ "$cache_fingerprint" = "$current_fingerprint" ] && [ -x "$cached_path" ]; then
+                      printf '%s\n' "$cached_path"
+                      return 0
+                    fi
                   fi
 
                   bootstrap_out="$(
@@ -386,7 +402,47 @@
                       2>>"$bootstrap_log"
                   )" || return $?
 
-                  printf '%s/bin/schema-apply-bootstrap\n' "$bootstrap_out"
+                  bootstrap_bin="$bootstrap_out/bin/schema-apply-bootstrap"
+                  if [ ! -x "$bootstrap_bin" ]; then
+                    echo "schema-apply-bootstrap output is missing executable: $bootstrap_bin" >>"$bootstrap_log"
+                    return 1
+                  fi
+                  if [ -n "$current_fingerprint" ]; then
+                    mkdir -p "$SINEX_DEV_STATE_DIR"
+                    printf '%s\n' "$current_fingerprint" >"$cache_fingerprint_file"
+                    printf '%s\n' "$bootstrap_bin" >"$cache_path_file"
+                  fi
+                  printf '%s\n' "$bootstrap_bin"
+                }
+
+                _sinex_schema_apply_bootstrap_fingerprint() {
+                  (
+                    cd "$root_dir"
+                    {
+                      printf '%s\n' schema-apply-bootstrap-cache-v1
+                      git ls-files \
+                        Cargo.toml \
+                        Cargo.lock \
+                        flake.nix \
+                        crate/sinex-schema \
+                        crate/sinex-primitives
+                      git ls-files --others --exclude-standard \
+                        Cargo.toml \
+                        Cargo.lock \
+                        flake.nix \
+                        crate/sinex-schema \
+                        crate/sinex-primitives
+                    } \
+                      | LC_ALL=C sort -u \
+                      | while IFS= read -r rel_path; do
+                        [ -n "$rel_path" ] || continue
+                        [ -f "$rel_path" ] || continue
+                        printf '%s\n' "$rel_path"
+                        sha256sum "$rel_path"
+                      done \
+                      | sha256sum \
+                      | awk '{print $1}'
+                  )
                 }
 
                 _sinex_cargo_command_name() {
@@ -1449,11 +1505,27 @@ SQL
                 }
 
                 _sinex_xtask_schema_apply_bootstrap_bin() {
-                  local bootstrap_out
+                  local bootstrap_bin bootstrap_out cached_path cache_fingerprint cache_fingerprint_file cache_path_file current_fingerprint
 
                   if ! command -v nix >/dev/null 2>&1; then
                     echo "nix is required to build schema-apply-bootstrap lazily" >&2
                     return 127
+                  fi
+
+                  cache_fingerprint_file="$SINEX_DEV_STATE_DIR/schema-apply-bootstrap.fingerprint"
+                  cache_path_file="$SINEX_DEV_STATE_DIR/schema-apply-bootstrap.path"
+                  current_fingerprint="$(_sinex_xtask_schema_apply_bootstrap_fingerprint || true)"
+
+                  if [ -n "$current_fingerprint" ] \
+                    && [ -r "$cache_fingerprint_file" ] \
+                    && [ -r "$cache_path_file" ]
+                  then
+                    cache_fingerprint="$(cat "$cache_fingerprint_file" 2>/dev/null || true)"
+                    cached_path="$(cat "$cache_path_file" 2>/dev/null || true)"
+                    if [ "$cache_fingerprint" = "$current_fingerprint" ] && [ -x "$cached_path" ]; then
+                      printf '%s\n' "$cached_path"
+                      return 0
+                    fi
                   fi
 
                   bootstrap_out="$(
@@ -1465,7 +1537,47 @@ SQL
                       "$root_dir#schema-apply-bootstrap"
                   )" || return $?
 
-                  printf '%s/bin/schema-apply-bootstrap\n' "$bootstrap_out"
+                  bootstrap_bin="$bootstrap_out/bin/schema-apply-bootstrap"
+                  if [ ! -x "$bootstrap_bin" ]; then
+                    echo "schema-apply-bootstrap output is missing executable: $bootstrap_bin" >&2
+                    return 1
+                  fi
+                  if [ -n "$current_fingerprint" ]; then
+                    mkdir -p "$SINEX_DEV_STATE_DIR"
+                    printf '%s\n' "$current_fingerprint" >"$cache_fingerprint_file"
+                    printf '%s\n' "$bootstrap_bin" >"$cache_path_file"
+                  fi
+                  printf '%s\n' "$bootstrap_bin"
+                }
+
+                _sinex_xtask_schema_apply_bootstrap_fingerprint() {
+                  (
+                    cd "$root_dir"
+                    {
+                      printf '%s\n' schema-apply-bootstrap-cache-v1
+                      git ls-files \
+                        Cargo.toml \
+                        Cargo.lock \
+                        flake.nix \
+                        crate/sinex-schema \
+                        crate/sinex-primitives
+                      git ls-files --others --exclude-standard \
+                        Cargo.toml \
+                        Cargo.lock \
+                        flake.nix \
+                        crate/sinex-schema \
+                        crate/sinex-primitives
+                    } \
+                      | LC_ALL=C sort -u \
+                      | while IFS= read -r rel_path; do
+                        [ -n "$rel_path" ] || continue
+                        [ -f "$rel_path" ] || continue
+                        printf '%s\n' "$rel_path"
+                        sha256sum "$rel_path"
+                      done \
+                      | sha256sum \
+                      | awk '{print $1}'
+                  )
                 }
 
                 _sinex_xtask_ensure_sqlx_database_unlocked() {
