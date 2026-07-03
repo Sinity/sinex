@@ -48,9 +48,9 @@ The complete path of a single event through the system:
 15. Batch routing: derived → REPEATABLE READ TX; material ≥50 → COPY; else → `QueryBuilder`.
 16. COPY path: staging table, tab-delimited SIMD-escaped rows, `INSERT ... SELECT`.
 17. XOR provenance CHECK fires at DB level (redundant with step 6, defense-in-depth).
-18. Confirmation events published to NATS Confirmations stream (per-event).
+18. Full post-redaction confirmed events published to the NATS confirmed-events stream.
 19. SSE `SubscriptionBus` delivers to connected browser/CLI clients.
-20. `ConfirmationBuffer` delivers to automata (`AutomatonRuntime`).
+20. Automata consume confirmed events directly through durable JetStream consumers.
 21. Automaton processes event → emits derived event with `.from_parents()`.
 22. Derived event re-enters pipeline at step 10 (back to NATS).
 23. Event queryable via gateway RPC.
@@ -67,13 +67,13 @@ else              → QueryBuilder VALUES (no staging overhead for small batches
 
 ### Ingest Semantics: Confirm-After-Commit
 
-Correctness contract: **persist -> publish confirmations -> ack raw messages.**
-After `insert_stream_batch`, the event engine publishes confirmations
-concurrently. If immediate confirmation publish exhausts retries, it persists a
-durable confirmation-retry request and ACKs the raw message; only if *both*
-immediate confirmation publish *and* durable-retry enqueue fail does it fall
-back to raw-message redelivery. Idempotency is layered: `JetStream` message
-dedup + DB `ON CONFLICT (id) DO NOTHING`.
+Correctness contract: **persist -> publish confirmed event -> ack raw
+messages.** After `insert_stream_batch`, the event engine publishes the full
+post-redaction persisted event to the confirmed-events stream. If confirmed-event
+publish exhausts retries after the DB commit, the event engine returns a fatal
+durability-gap error and leaves the raw message unacked for JetStream
+redelivery. Idempotency is layered: `JetStream` message dedup + DB
+`ON CONFLICT (id) DO NOTHING`.
 
 ## Shutdown & Lifecycle
 

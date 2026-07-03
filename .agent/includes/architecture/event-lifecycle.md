@@ -20,9 +20,9 @@ This is the complete path of an event through the system. Each step is a decisio
 15. Batch routing: derived -> REPEATABLE READ TX, material >=50 -> COPY, else -> QueryBuilder
 16. COPY path: staging table, tab-delimited SIMD-escaped rows, INSERT SELECT
 17. XOR provenance CHECK fires at DB level (redundant with step 6, defense-in-depth)
-18. Confirmation events published to NATS Confirmations stream (per-event)
+18. Full post-redaction confirmed events published to NATS confirmed-events stream
 19. SSE SubscriptionBus delivers to connected browser/CLI clients
-20. ConfirmationBuffer delivers to automata (AutomatonRuntime)
+20. Automata consume confirmed events directly through durable JetStream consumers
 21. Automaton processes event -> emits derived event with .from_parents()
 22. Derived event enters pipeline at step 10 (back to NATS)
 23. Event queryable via `sinexd::api` RPC (events.query, sinexctl, telemetry CAs)
@@ -36,7 +36,7 @@ This is the complete path of an event through the system. Each step is a decisio
 | 16 | COPY batch failure — one bad row kills 1000-row batch | `insert_stream_batch()` error | Bisect-retry: the batch is split in half and each sub-batch retried independently (`jetstream_consumer.rs`); isolated poison rows route to DLQ while healthy siblings commit |
 | 12 | JSON parse failure | Immediate in `prepare_event()` | Route to DLQ |
 | 14 | Material FK not ready | MaterialReadySet pre-check | NAK + retry after delay (safe) |
-| 18 | NATS confirmation publish failure | Per-event result check | Warn log only — event persisted but the producer may not observe confirmation |
+| 18 | NATS confirmed-event publish failure | Per-event result check | Fatal durability-gap error; raw message remains unacked for redelivery |
 | 20 | Checkpoint save failure (NATS KV slow) | Warn log only | RuntimeModule continues with stale checkpoint; crash -> duplicates |
 
 ### Batch Insert Routing Decision

@@ -36,8 +36,7 @@ Reference: `crate/sinexd/src/runtime/nats_publisher.rs`
 | Subject Pattern | Purpose | Publisher |
 |-----------------|---------|-----------|
 | `events.raw.<source>.<event_type>` | Raw events from source contracts | Runtime via `NatsPublisher` |
-| `events.confirmations.<event_id>` | Persistence acknowledgments | event engine |
-| `events.confirmation_retries.<event_id>` | Confirmation retry processing | event engine |
+| `events.confirmed.<provenance>.<source>.<event_type>` | Full post-redaction confirmed events after persistence | event engine |
 | `events.processing_failures.<component>` | Processing failure envelopes | event engine |
 | `events.dlq.<component>` | Dead letter queue messages | event engine, failed consumers |
 | `sinex.derived.invalidation` | Scope invalidation signals for automata | event engine |
@@ -50,8 +49,7 @@ Stream names are derived from a configurable base name (typically `SINEX_EVENTS`
 | Stream | Filter | Purpose |
 |--------|--------|---------|
 | `<base>` | `events.raw.>` | Primary event storage |
-| `<base>_CONFIRMATIONS` | `events.confirmations.>` | Persistence confirmations |
-| `<base>_CONFIRMATION_RETRIES` | `events.confirmation_retries.>` | Confirmation retry queue |
+| `<base>_CONFIRMED_EVENTS` | `events.confirmed.>` | Full post-redaction confirmed-events delivery bus |
 | `<base>_PROCESSING_FAILURES` | `events.processing_failures.>` | Processing failure envelopes |
 | `<base>_DLQ` | `events.dlq.>` | Dead letter queue |
 | `<base>_DERIVED_INVALIDATIONS` | `sinex.derived.invalidation` | Scope invalidation signals |
@@ -74,8 +72,7 @@ Fully-qualified subject names in development environment:
 ```
 dev.events.raw.fs_d_watcher.file_d_created             # File creation event
 dev.events.raw.terminal_u_kitty.shell_d_command        # Shell command event
-dev.events.confirmations.01HXYZ...                     # Confirmation for event ID
-dev.events.confirmation_retries.01HXYZ...               # Confirmation retry for event ID
+dev.events.confirmed.material.fs_d_watcher.file_d_created # Confirmed persisted event payload
 dev.events.processing_failures.event_engine             # Processing failure from event engine
 dev.events.dlq.event_engine                             # DLQ message from event engine
 dev.sinex.derived.invalidation                          # Scope invalidation signal
