@@ -2,7 +2,9 @@ use super::*;
 use crate::runtime::checkpoint::CheckpointManager;
 use crate::runtime::parser::adapters::{AppendOnlyCursor, ChainedCursor, SqliteRowCursor};
 use crate::runtime::parser::{InputShapeKind, ParserError, ParserResult, SourceRecord};
-use crate::runtime::stream::{EventEmitter, RuntimeHandles, ServiceInfo};
+use crate::runtime::stream::{
+    Checkpoint, ContinuousStart, EventEmitter, RuntimeHandles, ScanArgs, ServiceInfo, TimeHorizon,
+};
 use crate::runtime::{EventTransport, NatsPublisher, SOURCE_MATERIAL_STREAM};
 use async_trait::async_trait;
 use camino::Utf8PathBuf;
@@ -807,6 +809,102 @@ async fn adapter_stream_finalizes_idle_material_before_stale_timeout(
         }
         other => panic!("expected material provenance, got {other:?}"),
     }
+    Ok(())
+}
+
+#[sinex_test]
+async fn adapter_continuous_poll_finalizes_finite_drain_material(
+    ctx: TestContext,
+) -> TestResult<()> {
+    let ctx = ctx.with_nats().shared().await?;
+    let (runtime, _event_receiver) = make_adapter_runtime(&ctx).await?;
+    let mut source = AdapterBackedSource::<EmptyLogicalPathRecordAdapter, TestParser>::new(
+        "desktop.clipboard",
+    );
+    let mut state = AdapterModuleState::default();
+
+    source
+        .initialize(AdapterSourceConfig::default(), &runtime, &mut state)
+        .await?;
+
+    let run_result = tokio::time::timeout(
+        Duration::from_millis(1500),
+        source.run_continuous(
+            &mut state,
+            ContinuousStart::from_checkpoint(Checkpoint::default()),
+            tokio::sync::watch::channel(false).1,
+        ),
+    )
+    .await;
+
+    assert!(
+        run_result.is_err(),
+        "continuous poll loop should remain active after the first finite drain"
+    );
+    assert_eq!(state.cursor, Some(1));
+    assert!(
+        source.current_material_id().is_none(),
+        "finite poll drains should finalize their stream material before sleeping"
+    );
+    Ok(())
+}
+
+#[sinex_test]
+async fn adapter_snapshot_finalizes_finite_drain_material(ctx: TestContext) -> TestResult<()> {
+    let ctx = ctx.with_nats().shared().await?;
+    let (runtime, _event_receiver) = make_adapter_runtime(&ctx).await?;
+    let mut source = AdapterBackedSource::<EmptyLogicalPathRecordAdapter, TestParser>::new(
+        "desktop.clipboard",
+    );
+    let mut state = AdapterModuleState::default();
+
+    source
+        .initialize(AdapterSourceConfig::default(), &runtime, &mut state)
+        .await?;
+
+    let report = source
+        .scan_snapshot(&mut state, ScanArgs::default())
+        .await?;
+
+    assert_eq!(report.events_processed, 0);
+    assert_eq!(state.cursor, Some(1));
+    assert!(
+        source.current_material_id().is_none(),
+        "finite snapshot drains should finalize their stream material"
+    );
+    Ok(())
+}
+
+#[sinex_test]
+async fn adapter_historical_finalizes_finite_drain_material(ctx: TestContext) -> TestResult<()> {
+    let ctx = ctx.with_nats().shared().await?;
+    let (runtime, _event_receiver) = make_adapter_runtime(&ctx).await?;
+    let mut source = AdapterBackedSource::<EmptyLogicalPathRecordAdapter, TestParser>::new(
+        "desktop.clipboard",
+    );
+    let mut state = AdapterModuleState::default();
+
+    source
+        .initialize(AdapterSourceConfig::default(), &runtime, &mut state)
+        .await?;
+
+    let report = source
+        .scan_historical(
+            &mut state,
+            Checkpoint::None,
+            TimeHorizon::Historical {
+                end_time: Timestamp::now(),
+            },
+            ScanArgs::default(),
+        )
+        .await?;
+
+    assert_eq!(report.events_processed, 0);
+    assert_eq!(state.cursor, Some(1));
+    assert!(
+        source.current_material_id().is_none(),
+        "finite historical drains should finalize their stream material"
+    );
     Ok(())
 }
 
