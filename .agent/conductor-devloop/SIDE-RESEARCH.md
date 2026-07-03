@@ -31,6 +31,103 @@ can answer three questions without chat context:
 
 ## Reconciled Waves
 
+### 2026-07-03 Fables Sinex Four-Plane Audit
+
+Raw source: `/realm/inbox/fables-sinex.md`.
+
+Durable extract:
+`.agent/scratch/research/2026-07-03-fables-sinex-integration.md`.
+
+Status: reconciled into `RESEARCH-BACKLOG.md` on 2026-07-03T02:34+02:00.
+
+Effects:
+
+- Reinforces the current AdapterBackedSource material-lifecycle patch as a
+  high-leverage shared-source correctness slice.
+- Queues the adjacent cursor-before-emit audit as the next correctness item
+  after the finite-drain closure proof, not as a same-patch expansion.
+- Promotes productized Recall v2 (`sinexctl recall` or equivalent shared query
+  unit) above more artifact-only recall packets once the current proof lands.
+- Adds the claim/instrument/falsifier/prereq shape as the expected framing for
+  high-stakes demos.
+
+Tracked priority extract:
+
+- P1: AdapterBackedSource cursor-before-emit data-loss audit. Treat as the
+  next correctness packet after finite-drain source-material closure verifies.
+- P7: `sinexctl events recall --at/--window` or equivalent product surface.
+  This is the highest-value consumption unlock because it makes the derived
+  plane and recall demos available through normal CLI/MCP paths.
+- P13: ambient SessionStart context injection is cheap and valuable, but
+  belongs after Sinex exposes a compact honest recall/context command; the hook
+  itself lives in Sinnix.
+- P16/U5: do not build a `ts_orig` Timescale continuous aggregate by reflex.
+  Since `core.events` is partitioned by UUIDv7 id/`ts_coided`, recall latency
+  likely needs a `ts_orig` projection/read table or second hypertable if
+  EXPLAIN proves the main-table shape too slow.
+- U2: `--as-of` belief time-travel is a strong post-replay/product-recall demo
+  surface: compare what Sinex believed before and after a replay.
+- U1: early-cutoff replay is a major replay-economics design issue, but it
+  should follow replay trust and product recall rather than interrupting the
+  current material-lifecycle patch.
+
+Session markdown audit:
+
+- `.agent/scratch/016-fable-handoff-2026-07-03/00-INDEX.md` originally named
+  separate final-shape, demo-spec, and legibility files. Those were not written
+  after operator correction; the index was repaired locally to name only actual
+  files plus `/realm/inbox/fables-sinex.md` as the transcript source.
+- The ignored durable extract
+  `.agent/scratch/research/2026-07-03-fables-sinex-integration.md` records the
+  longer local integration details. This tracked register is the portable
+  summary if ignored scratch is absent in another checkout.
+
+### 2026-07-03 Source Closure / Demo Refresh Wave
+
+Raw source: live subagents launched from this conductor session.
+
+Agents:
+
+- Leibniz (`019f2551-58d8-7230-ad74-4655fe92e6b2`) —
+  `runtime/source-material-finalization`.
+- Kant (`019f2551-5a85-7f53-9a58-b21f81340e47`) —
+  `demo/recall-v2-refresh`.
+- McClintock (`019f2551-5b1f-7613-b9bc-b31a8fcb70ad`) —
+  `tooling/earlyoom-verification-strategy`.
+
+Status: reconciled into current conductor decisions on 2026-07-03T02:14+02:00.
+Read-only research only: no builds/tests, no DB/NATS/GitHub mutations, no
+nested agents.
+
+Current conductor intent:
+
+- Keep object work local on the source-material finalization patch.
+- Use Leibniz to validate or challenge the static/directory finite-drain
+  finalization policy and identify the next material lifecycle slice.
+- Use Kant to produce the smallest truthful Recall v2 demo refresh plan using
+  live Chrome and git evidence.
+- Use McClintock to find an xtask-compliant verification path that does not
+  repeatedly feed rustc into earlyoom.
+
+Reconciled findings:
+
+- Leibniz confirmed the static/directory finite-drain finalization policy is
+  coherent but incomplete unless applied to `scan_snapshot` and
+  `scan_historical`, not only `run_continuous`. The local patch now uses a
+  shared finite-drain finalization helper from all three paths.
+- Kant recommended a new curated Recall v2 live-context packet under
+  `.agent/demos/sinex/sinex-recall-v2-live-context-20260703T<time>Z/`, using
+  live Chrome proof, git freshness proof, and explicit caveats for source
+  material finalization/window participation.
+- McClintock identified an xtask-compliant low-memory proof route:
+  `CARGO_BUILD_JOBS=1 xtask test -p sinexd --lib -E 'test(...)' --threads 1
+  --bg --json`, plus an xtask improvement opportunity to surface this
+  recommendation after earlyoom kills rustc. Follow-up evidence: even this
+  constrained route failed as job `2001257` when earlyoom killed rustc at
+  4.88% MemAvailable; xtask surfaced the wrapper-level "No tests discovered"
+  message after the SIGTERM, so test-discovery error reporting needs to classify
+  signal/earlyoom compile failures before suggesting filter mistakes.
+
 ### 2026-07-03 Focused Recall v2 Support Wave
 
 Raw source: current subagent returns plus the active implementation diff.
