@@ -31,6 +31,28 @@ can answer three questions without chat context:
 
 ## Reconciled Waves
 
+### 2026-07-03 Inline Test Attribution Re-Audit
+
+Raw source: current checkout scan after the earlier inline-test cleanup report.
+
+Status: reconciled on 2026-07-03T02:46+02:00.
+
+Finding:
+
+- The older report claiming hundreds of true inline Rust test modules is stale
+  for this checkout. A refined scan for actual `#[cfg(test)] mod tests { ... }`
+  bodies under `crate/` and `xtask/` found no remaining true inline blocks.
+- The visible `#[cfg(test)] mod tests;` sites are sibling test-file wiring
+  (`#[path = "..._test.rs"] mod tests;`) and should not be counted as inline
+  pollution.
+
+Operational consequence:
+
+- Do not keep prioritizing broad inline-test extraction as if 60K+ inline LOC
+  still remain. If more test-attribution work is needed, audit for other
+  patterns explicitly (for example non-`tests` module names or large support
+  modules), not the already-migrated `mod tests` body shape.
+
 ### 2026-07-03 Fables Sinex Four-Plane Audit
 
 Raw source: `/realm/inbox/fables-sinex.md`.
