@@ -131,6 +131,10 @@ pub struct RecallCommand {
     /// Number of events to fetch (increase for busy systems)
     #[arg(long, default_value = "200")]
     limit: i32,
+
+    /// Include Sinex self-observation/runtime telemetry in the recall packet
+    #[arg(long)]
+    include_self_observation: bool,
 }
 
 impl ContextCommand {
@@ -143,6 +147,7 @@ impl ContextCommand {
             machine_source_surface: "sinexctl.context",
             finite_error_label: "events context",
             table_title: "Context",
+            self_observation: SelfObservationMode::Include,
         };
         execute_context_request(
             client,
@@ -170,6 +175,11 @@ impl RecallCommand {
             machine_source_surface: "sinexctl.recall",
             finite_error_label: "recall",
             table_title: "Recall",
+            self_observation: if self.include_self_observation {
+                SelfObservationMode::Include
+            } else {
+                SelfObservationMode::Exclude
+            },
         };
         execute_context_request(client, format, request, ContextDesktopMode::default()).await
     }
@@ -182,6 +192,13 @@ struct ContextRequest {
     machine_source_surface: &'static str,
     finite_error_label: &'static str,
     table_title: &'static str,
+    self_observation: SelfObservationMode,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum SelfObservationMode {
+    Include,
+    Exclude,
 }
 
 #[derive(Debug, Default)]
@@ -205,6 +222,7 @@ async fn execute_context_request(
         machine_source_surface,
         finite_error_label,
         table_title,
+        self_observation,
     } = request;
 
     let query = EventQuery {
@@ -219,6 +237,7 @@ async fn execute_context_request(
 
     let mut event_cards = client.event_cards(query).await?;
     top_up_context_diversity(client, &mut event_cards, &window).await?;
+    apply_self_observation_mode(&mut event_cards, self_observation);
 
     let sources = grouped_context_sources(&event_cards.cards);
     if desktop_mode.desktop {
@@ -301,6 +320,21 @@ async fn execute_context_request(
     );
 
     Ok(())
+}
+
+fn apply_self_observation_mode(event_cards: &mut EventCardListView, mode: SelfObservationMode) {
+    if mode == SelfObservationMode::Include {
+        return;
+    }
+    event_cards
+        .cards
+        .retain(|card| !is_self_observation_card(card));
+    event_cards.count = event_cards.cards.len();
+}
+
+fn is_self_observation_card(card: &EventCardView) -> bool {
+    let source = card.source.raw.as_str();
+    source == "sinex" || source.starts_with("sinexd.")
 }
 
 #[derive(Debug, Clone)]

@@ -114,6 +114,46 @@ async fn recall_machine_output_uses_recall_surface() -> xtask::sandbox::TestResu
 }
 
 #[sinex_test]
+async fn recall_self_observation_filter_keeps_operator_activity() -> xtask::sandbox::TestResult<()>
+{
+    let mut event_cards = EventCardListView {
+        schema_version: EVENT_CARD_LIST_SCHEMA_VERSION.to_string(),
+        count: 4,
+        cards: vec![
+            context_event("sinex", "metric.gauge"),
+            context_event("sinexd.event_engine", "batch.stats"),
+            context_event("shell.atuin", "command.executed"),
+            context_event("fs-watcher", "file.modified"),
+        ],
+        next_cursor: None,
+        total_estimate: None,
+    };
+
+    apply_self_observation_mode(&mut event_cards, SelfObservationMode::Exclude);
+
+    assert_eq!(event_cards.count, 2);
+    assert!(
+        event_cards
+            .cards
+            .iter()
+            .all(|card| !card.source.raw.starts_with("sinex"))
+    );
+    assert!(
+        event_cards
+            .cards
+            .iter()
+            .any(|card| card.source.raw == "shell.atuin")
+    );
+    assert!(
+        event_cards
+            .cards
+            .iter()
+            .any(|card| card.source.raw == "fs-watcher")
+    );
+    Ok(())
+}
+
+#[sinex_test]
 async fn context_window_accepts_absolute_since_and_until() -> xtask::sandbox::TestResult<()> {
     let now = Timestamp::parse_rfc3339("2026-07-02T20:00:00Z")?;
     let window = build_context_window("2026-07-02T18:00:00Z", Some("2026-07-02T19:00:00Z"), now)?;
