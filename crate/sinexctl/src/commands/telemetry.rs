@@ -1,5 +1,6 @@
 use clap::Subcommand;
 use console::style;
+use serde::Serialize;
 use sinex_primitives::otel_projection::{
     OtelMetricsProjectionView, gateway_stats_to_otel_metrics_projection,
 };
@@ -9,12 +10,18 @@ use sinex_primitives::rpc::telemetry::{
     GatewayStatsBucket, MetricCounterBucket, RecentActivityEntry, SourceStatsBucket,
     StreamStatsBucket, SystemStateBucket, WindowFocusBucket,
 };
+use sinex_primitives::views::{
+    CaveatView, ReadinessCaveatId, SinexObjectKind, SinexObjectRef, ViewEnvelope,
+};
 use tabled::{builder::Builder, settings::Style};
 
 use crate::Result;
 use crate::client::GatewayClient;
-use crate::fmt::CommandOutput;
+use crate::fmt::print_finite_envelope;
 use crate::model::OutputFormat;
+
+const TELEMETRY_LIST_SCHEMA_VERSION: &str = "sinex.telemetry-list/v1";
+const TELEMETRY_SNAPSHOT_SCHEMA_VERSION: &str = "sinex.telemetry-snapshot/v1";
 
 /// Telemetry data from activity views and operator read models
 #[derive(Debug, Subcommand)]
@@ -154,27 +161,68 @@ pub enum TelemetryCommands {
     EventEngineValidation,
 }
 
+#[derive(Debug, Clone, Serialize)]
+pub struct TelemetryListView<T> {
+    pub schema_version: String,
+    pub row_kind: String,
+    pub count: usize,
+    pub rows: Vec<T>,
+}
+
+impl<T> TelemetryListView<T> {
+    fn new(row_kind: impl Into<String>, rows: Vec<T>) -> Self {
+        let count = rows.len();
+        Self {
+            schema_version: TELEMETRY_LIST_SCHEMA_VERSION.to_string(),
+            row_kind: row_kind.into(),
+            count,
+            rows,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct TelemetrySnapshotView<T> {
+    pub schema_version: String,
+    pub snapshot_kind: String,
+    pub snapshot: Option<T>,
+}
+
+impl<T> TelemetrySnapshotView<T> {
+    fn new(snapshot_kind: impl Into<String>, snapshot: Option<T>) -> Self {
+        Self {
+            schema_version: TELEMETRY_SNAPSHOT_SCHEMA_VERSION.to_string(),
+            snapshot_kind: snapshot_kind.into(),
+            snapshot,
+        }
+    }
+}
+
 impl TelemetryCommands {
     pub async fn execute(&self, client: &GatewayClient, format: OutputFormat) -> Result<()> {
         match self {
             Self::CurrentHealth { limit } => {
                 let entries = client.telemetry_current_health(Some(*limit)).await?;
-                CommandOutput::list(
+                print_telemetry_list(
+                    "sinexctl.metrics.telemetry.current-health",
+                    "current_health",
                     entries,
                     "No current-health data found.",
                     format_current_health_table,
-                )
-                .display(&format)?;
+                    format,
+                )?;
             }
 
             Self::CurrentDeviceState { limit } => {
                 let entries = client.telemetry_current_device_state(Some(*limit)).await?;
-                CommandOutput::list(
+                print_telemetry_list(
+                    "sinexctl.metrics.telemetry.current-device-state",
+                    "current_device_state",
                     entries,
                     "No current-device-state data found.",
                     format_current_device_state_table,
-                )
-                .display(&format)?;
+                    format,
+                )?;
             }
 
             Self::WindowFocus { from, to, limit } => {
@@ -183,12 +231,14 @@ impl TelemetryCommands {
                 let buckets = client
                     .telemetry_window_focus(from_rfc, to_rfc, Some(*limit))
                     .await?;
-                CommandOutput::list(
+                print_telemetry_list(
+                    "sinexctl.metrics.telemetry.window-focus",
+                    "window_focus_bucket",
                     buckets,
                     "No window-focus data found.",
                     format_window_focus_table,
-                )
-                .display(&format)?;
+                    format,
+                )?;
             }
 
             Self::CommandFrequency { from, to, limit } => {
@@ -197,12 +247,14 @@ impl TelemetryCommands {
                 let entries = client
                     .telemetry_command_frequency(from_rfc, to_rfc, Some(*limit))
                     .await?;
-                CommandOutput::list(
+                print_telemetry_list(
+                    "sinexctl.metrics.telemetry.command-frequency",
+                    "command_frequency_entry",
                     entries,
                     "No command-frequency data found.",
                     format_command_frequency_table,
-                )
-                .display(&format)?;
+                    format,
+                )?;
             }
 
             Self::FileActivity { from, to, limit } => {
@@ -211,22 +263,26 @@ impl TelemetryCommands {
                 let entries = client
                     .telemetry_file_activity(from_rfc, to_rfc, Some(*limit))
                     .await?;
-                CommandOutput::list(
+                print_telemetry_list(
+                    "sinexctl.metrics.telemetry.file-activity",
+                    "file_activity_entry",
                     entries,
                     "No file-activity data found.",
                     format_file_activity_table,
-                )
-                .display(&format)?;
+                    format,
+                )?;
             }
 
             Self::RecentActivity { limit } => {
                 let entries = client.telemetry_recent_activity(Some(*limit)).await?;
-                CommandOutput::list(
+                print_telemetry_list(
+                    "sinexctl.metrics.telemetry.recent-activity",
+                    "recent_activity_entry",
                     entries,
                     "No recent activity found.",
                     format_recent_activity_table,
-                )
-                .display(&format)?;
+                    format,
+                )?;
             }
 
             Self::SystemState { from, to, limit } => {
@@ -235,12 +291,14 @@ impl TelemetryCommands {
                 let buckets = client
                     .telemetry_system_state(from_rfc, to_rfc, Some(*limit))
                     .await?;
-                CommandOutput::list(
+                print_telemetry_list(
+                    "sinexctl.metrics.telemetry.system-state",
+                    "system_state_bucket",
                     buckets,
                     "No system-state data found.",
                     format_system_state_table,
-                )
-                .display(&format)?;
+                    format,
+                )?;
             }
 
             Self::GatewayStats {
@@ -256,15 +314,19 @@ impl TelemetryCommands {
                     .await?;
                 if *otel {
                     let projection = gateway_stats_to_otel_metrics_projection(buckets);
-                    CommandOutput::single(projection, format_otel_metrics_projection_table)
-                        .display(&format)?;
+                    let envelope = telemetry_otel_envelope(projection);
+                    if !print_finite_envelope(&envelope, format)? {
+                        println!("{}", format_otel_metrics_projection_table(&envelope.payload));
+                    }
                 } else {
-                    CommandOutput::list(
+                    print_telemetry_list(
+                        "sinexctl.metrics.telemetry.gateway-stats",
+                        "gateway_stats_bucket",
                         buckets,
                         "No gateway-stats data found.",
                         format_gateway_stats_table,
-                    )
-                    .display(&format)?;
+                        format,
+                    )?;
                 }
             }
 
@@ -274,12 +336,14 @@ impl TelemetryCommands {
                 let buckets = client
                     .telemetry_stream_stats(from_rfc, to_rfc, Some(*limit))
                     .await?;
-                CommandOutput::list(
+                print_telemetry_list(
+                    "sinexctl.metrics.telemetry.stream-stats",
+                    "stream_stats_bucket",
                     buckets,
                     "No stream-stats data found.",
                     format_stream_stats_table,
-                )
-                .display(&format)?;
+                    format,
+                )?;
             }
 
             Self::AssemblyStats { from, to, limit } => {
@@ -288,12 +352,14 @@ impl TelemetryCommands {
                 let buckets = client
                     .telemetry_assembly_stats(from_rfc, to_rfc, Some(*limit))
                     .await?;
-                CommandOutput::list(
+                print_telemetry_list(
+                    "sinexctl.metrics.telemetry.assembly-stats",
+                    "assembly_stats_bucket",
                     buckets,
                     "No assembly-stats data found.",
                     format_assembly_stats_table,
-                )
-                .display(&format)?;
+                    format,
+                )?;
             }
 
             Self::SourceStats { from, to, limit } => {
@@ -302,12 +368,14 @@ impl TelemetryCommands {
                 let buckets = client
                     .telemetry_source_stats(from_rfc, to_rfc, Some(*limit))
                     .await?;
-                CommandOutput::list(
+                print_telemetry_list(
+                    "sinexctl.metrics.telemetry.source-stats",
+                    "source_stats_bucket",
                     buckets,
                     "No source-stats data found.",
                     format_source_stats_table,
-                )
-                .display(&format)?;
+                    format,
+                )?;
             }
 
             Self::MetricCounters { from, to, limit } => {
@@ -316,12 +384,14 @@ impl TelemetryCommands {
                 let buckets = client
                     .telemetry_metric_counters(from_rfc, to_rfc, Some(*limit))
                     .await?;
-                CommandOutput::list(
+                print_telemetry_list(
+                    "sinexctl.metrics.telemetry.metric-counters",
+                    "metric_counter_bucket",
                     buckets,
                     "No metric-counter data found.",
                     format_metric_counters_table,
-                )
-                .display(&format)?;
+                    format,
+                )?;
             }
 
             Self::EventEngineBatchStats { from, to, limit } => {
@@ -330,29 +400,128 @@ impl TelemetryCommands {
                 let buckets = client
                     .telemetry_event_engine_batch_stats(from_rfc, to_rfc, Some(*limit))
                     .await?;
-                CommandOutput::list(
+                print_telemetry_list(
+                    "sinexctl.metrics.telemetry.event-engine-batch-stats",
+                    "event_engine_batch_stats_bucket",
                     buckets,
                     "No event-engine-batch-stats data found.",
                     format_event_engine_batch_stats_table,
-                )
-                .display(&format)?;
+                    format,
+                )?;
             }
 
             Self::EventEngineValidation => {
-                match client.telemetry_event_engine_validation().await? {
-                    Some(snapshot) => {
-                        CommandOutput::single(snapshot, format_event_engine_validation_table)
-                            .display(&format)?;
+                let snapshot = client.telemetry_event_engine_validation().await?;
+                let envelope = telemetry_snapshot_envelope(
+                    "sinexctl.metrics.telemetry.event-engine-validation",
+                    "event_engine_validation",
+                    snapshot,
+                );
+                if !print_finite_envelope(&envelope, format)? {
+                    if let Some(snapshot) = &envelope.payload.snapshot {
+                        println!("{}", format_event_engine_validation_table(snapshot));
+                    } else {
+                        println!("No event-engine-validation data found.");
                     }
-                    None => CommandOutput::<EventEngineValidationSnapshot>::empty(
-                        "No event-engine-validation data found.",
-                    )
-                    .display(&format)?,
                 }
             }
         }
         Ok(())
     }
+}
+
+fn print_telemetry_list<T>(
+    source_surface: &'static str,
+    row_kind: &'static str,
+    rows: Vec<T>,
+    empty_message: &'static str,
+    table: fn(&[T]) -> String,
+    format: OutputFormat,
+) -> Result<()>
+where
+    T: Clone + Serialize,
+{
+    let envelope = telemetry_list_envelope(source_surface, row_kind, rows);
+    if !print_finite_envelope(&envelope, format)? {
+        if envelope.payload.rows.is_empty() {
+            println!("{empty_message}");
+        } else {
+            println!("{}", table(&envelope.payload.rows));
+        }
+    }
+    Ok(())
+}
+
+fn telemetry_list_envelope<T>(
+    source_surface: &'static str,
+    row_kind: &'static str,
+    rows: Vec<T>,
+) -> ViewEnvelope<TelemetryListView<T>>
+where
+    T: Serialize,
+{
+    let mut envelope = ViewEnvelope::new(source_surface, TelemetryListView::new(row_kind, rows));
+    if envelope.payload.rows.is_empty() {
+        envelope.caveats.push(telemetry_unmeasurable_caveat(
+            source_surface,
+            format!(
+                "telemetry read surface `{source_surface}` returned no `{row_kind}` rows; this is an empty read-model window, not proof that the underlying signal never existed"
+            ),
+        ));
+    }
+    envelope
+}
+
+fn telemetry_otel_envelope(
+    projection: OtelMetricsProjectionView,
+) -> ViewEnvelope<OtelMetricsProjectionView> {
+    let mut envelope = ViewEnvelope::new("sinexctl.metrics.telemetry.gateway-stats.otel", projection);
+    if envelope.payload.point_count() == 0 {
+        envelope.caveats.push(telemetry_unmeasurable_caveat(
+            "sinexctl.metrics.telemetry.gateway-stats.otel",
+            "OpenTelemetry projection contains no data points; source gateway-stats rows were empty"
+                .to_string(),
+        ));
+    }
+    envelope
+}
+
+fn telemetry_snapshot_envelope<T>(
+    source_surface: &'static str,
+    snapshot_kind: &'static str,
+    snapshot: Option<T>,
+) -> ViewEnvelope<TelemetrySnapshotView<T>>
+where
+    T: Serialize,
+{
+    let mut envelope = ViewEnvelope::new(
+        source_surface,
+        TelemetrySnapshotView::new(snapshot_kind, snapshot),
+    );
+    if envelope.payload.snapshot.is_none() {
+        envelope.caveats.push(telemetry_unmeasurable_caveat(
+            source_surface,
+            format!(
+                "telemetry read surface `{source_surface}` has no `{snapshot_kind}` snapshot; validation coverage is currently unmeasurable"
+            ),
+        ));
+    }
+    envelope
+}
+
+fn telemetry_unmeasurable_caveat(source_surface: &str, message: String) -> CaveatView {
+    CaveatView {
+        id: ReadinessCaveatId::CoverageUnmeasurable.as_str().to_string(),
+        message,
+        ref_: Some(telemetry_ref(source_surface)),
+    }
+}
+
+fn telemetry_ref(source_surface: &str) -> SinexObjectRef {
+    SinexObjectRef::new(SinexObjectKind::RuntimeModule, source_surface)
+        .with_label(source_surface.to_string())
+        .with_command_hint(source_surface.replace("sinexctl.", "sinexctl ").replace('.', " "))
+        .with_rpc_method(source_surface.strip_prefix("sinexctl.metrics.").unwrap_or(source_surface))
 }
 
 /// Resolve a time argument to an RFC3339 string.
