@@ -102,7 +102,9 @@ use sinex_primitives::events::Event;
 use sinex_primitives::events::SourceMaterial;
 use sinex_primitives::events::builder::{EventBuilder, NoProvenance};
 use sinex_primitives::ids::Id;
-use sinex_primitives::parser::{MaterialAnchor, ParsedEventIntent, ParserContext};
+use sinex_primitives::parser::{
+    MaterialAnchor, ParsedEventIntent, ParserContext, TimingEvidence,
+};
 use sinex_primitives::primitives::Uuid;
 use sinex_primitives::privacy::{
     RuntimePrivateModeState, load_private_mode_state, save_private_mode_state,
@@ -1208,12 +1210,13 @@ where
                     acquisition_time: Timestamp::now(),
                 };
 
+                let record_timing_hint = materialized.record.source_ts_hint.clone();
                 let intents = match self
                     .parser
                     .parse_record_with_binding(materialized.record, &ctx, &self.binding_config)
                     .await
                 {
-                    Ok(v) => v,
+                    Ok(v) => apply_record_timing_hint_to_intents(v, record_timing_hint.as_ref()),
                     Err(e) => {
                         warn!(
                             source = self.source_id,
@@ -1985,6 +1988,32 @@ fn intent_to_event_with_anchor(
         sinex_primitives::parser::maybe_occurrence_key_string(intent.occurrence_key.as_ref());
 
     Ok(built)
+}
+
+fn apply_record_timing_hint_to_intents(
+    intents: Vec<ParsedEventIntent>,
+    hint: Option<&TimingEvidence>,
+) -> Vec<ParsedEventIntent> {
+    let Some(hint) = hint else {
+        return intents;
+    };
+    let Some(ts_orig) = hint.timestamp_value() else {
+        return intents;
+    };
+
+    intents
+        .into_iter()
+        .map(|mut intent| {
+            if matches!(
+                intent.timing,
+                TimingEvidence::StagedAtFallback | TimingEvidence::Atemporal
+            ) {
+                intent.ts_orig = ts_orig;
+                intent.timing = hint.clone();
+            }
+            intent
+        })
+        .collect()
 }
 
 /// Produce a `Checkpoint` from the current module state.
