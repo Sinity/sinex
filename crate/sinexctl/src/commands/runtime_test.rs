@@ -2,6 +2,7 @@
 
 use super::RUNTIME_MODULE_LIST_SCHEMA_VERSION;
 use super::*;
+use crate::commands::runtime_presence::{EnrichedRuntimeInfo, runtime_modules_envelope};
 use std::collections::BTreeMap;
 
 use sinex_primitives::domain::{HealthStatus, InstanceId, ModuleKind, ModuleName};
@@ -44,6 +45,14 @@ fn fixture_envelope(count: usize) -> ViewEnvelope<RuntimeModuleListView> {
         RuntimeModuleListView::new(fixture_modules(count)),
     )
     .with_query_echo(serde_json::json!({ "role": null }))
+}
+
+fn enriched_module(info: RuntimeInfo, healthy: bool, stale: bool) -> EnrichedRuntimeInfo {
+    EnrichedRuntimeInfo {
+        info,
+        healthy,
+        stale,
+    }
 }
 
 fn healthy_component() -> ComponentHealthReport {
@@ -146,6 +155,62 @@ async fn runtime_status_json_renders_finite_view_envelope() -> xtask::TestResult
         parsed.get("caveats").is_none(),
         "healthy runtime status with heartbeat should not emit readiness caveats"
     );
+    Ok(())
+}
+
+#[sinex_test]
+async fn runtime_modules_json_renders_finite_view_envelope() -> xtask::TestResult<()> {
+    let modules = vec![enriched_module(make_module("terminal-source", ModuleKind::Source), true, false)];
+    let envelope = runtime_modules_envelope(&modules, Some(RuntimeModuleRole::Capture));
+    let output = render_finite_envelope(&envelope, OutputFormat::Json)?
+        .expect("json must return Some");
+    let parsed: serde_json::Value = serde_json::from_str(&output)?;
+
+    assert_eq!(parsed["schema_version"], VIEW_ENVELOPE_SCHEMA_VERSION);
+    assert_eq!(parsed["source_surface"], "sinexctl.runtime.modules");
+    assert_eq!(
+        parsed["payload"]["schema_version"],
+        "sinex.runtime-module-presence/v1"
+    );
+    assert_eq!(parsed["payload"]["count"], 1);
+    assert_eq!(parsed["payload"]["modules"][0]["module_name"], "terminal-source");
+    assert_eq!(parsed["query_echo"]["role"], "capture");
+    Ok(())
+}
+
+#[sinex_test]
+async fn runtime_modules_caveats_name_empty_stale_and_unmeasurable()
+-> xtask::TestResult<()> {
+    let empty = runtime_modules_envelope(&[], Some(RuntimeModuleRole::Derived));
+    assert_eq!(empty.caveats.len(), 1);
+    assert_eq!(
+        empty.caveats[0].id,
+        ReadinessCaveatId::SourceAbsent.as_str()
+    );
+
+    let mut stale_info = make_module("stale-source", ModuleKind::Source);
+    stale_info.last_heartbeat_at = Some(Timestamp::now());
+    let mut unknown_info = make_module("unknown-automaton", ModuleKind::Automaton);
+    unknown_info.last_heartbeat_at = None;
+    let modules = vec![
+        enriched_module(stale_info, false, true),
+        enriched_module(unknown_info, false, false),
+    ];
+    let envelope = runtime_modules_envelope(&modules, None);
+    let caveat_ids = envelope
+        .caveats
+        .iter()
+        .map(|caveat| caveat.id.as_str())
+        .collect::<Vec<_>>();
+
+    assert!(caveat_ids.contains(&ReadinessCaveatId::WindowPartial.as_str()));
+    assert!(caveat_ids.contains(&ReadinessCaveatId::CoverageUnmeasurable.as_str()));
+    assert!(envelope.caveats.iter().any(|caveat| caveat
+        .message
+        .contains("stale-source")));
+    assert!(envelope.caveats.iter().any(|caveat| caveat
+        .message
+        .contains("unknown-automaton")));
     Ok(())
 }
 
