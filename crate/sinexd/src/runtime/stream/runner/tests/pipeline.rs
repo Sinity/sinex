@@ -404,6 +404,68 @@ async fn automaton_bridge_runs_historical_catchup_from_empty_checkpoint(
 
 #[cfg(feature = "messaging")]
 #[sinex_test]
+async fn automaton_bridge_runs_historical_catchup_from_saved_bridge_checkpoint(
+    ctx: TestContext,
+) -> TestResult<()> {
+    let ctx = ctx.with_nats().shared().await?;
+    let module = HistoricalCatchupTestAutomaton::new(true);
+    let scans = module.scans.clone();
+    let mut runner = RuntimeRunner::new(module);
+    let work_dir = tempdir()?;
+    runner
+        .initialize_with_transport(
+            "automaton-bridge-catchup-from-saved-checkpoint".to_string(),
+            HashMap::new(),
+            None,
+            EventTransport::Nats(Arc::new(crate::runtime::NatsPublisher::new(
+                ctx.nats_client(),
+            ))),
+            work_dir.path().to_path_buf(),
+            false,
+        )
+        .await?;
+
+    let saved_event_id = Uuid::now_v7();
+    let saved_checkpoint = Checkpoint::internal(saved_event_id, 17);
+    let runtime = runner
+        .runtime_state()
+        .ok_or_else(|| color_eyre::eyre::eyre!("runtime state missing after init"))?;
+    runtime
+        .handles()
+        .checkpoint_manager()
+        .save_checkpoint(&crate::runtime::checkpoint::CheckpointState {
+            checkpoint: saved_checkpoint.clone(),
+            processed_count: 17,
+            last_activity: Timestamp::now(),
+            data: None,
+            version: 2,
+            revision: 0,
+        })
+        .await?;
+
+    let error = runner
+        .run_automaton_event_bridge(Checkpoint::None)
+        .await
+        .expect_err("bridge catch-up test automaton intentionally stops after scan");
+
+    assert!(
+        error
+            .to_string()
+            .contains("intentional historical catch-up stop")
+    );
+    let recorded = scans.lock().await.clone();
+    assert_eq!(
+        recorded,
+        vec![RecordedScan {
+            from: saved_checkpoint,
+            until: "historical",
+        }]
+    );
+    Ok(())
+}
+
+#[cfg(feature = "messaging")]
+#[sinex_test]
 async fn automaton_bridge_rejects_stream_only_automata(ctx: TestContext) -> TestResult<()> {
     let ctx = ctx.with_nats().shared().await?;
     let module = HistoricalCatchupTestAutomaton::new(false);

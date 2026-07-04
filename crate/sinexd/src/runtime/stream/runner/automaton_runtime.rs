@@ -202,6 +202,22 @@ impl<T: RuntimeModule + 'static> RuntimeRunner<T> {
         }
 
         let transport = handles.transport().clone();
+        let bridge_manages_checkpoints = !capabilities.manages_own_checkpoints;
+        if !bridge_manages_checkpoints {
+            debug!(
+                module = %self.module.module_name(),
+                "Skipping generic automaton-bridge checkpoint tracking because the module persists its own state"
+            );
+        }
+        let checkpoint_manager = bridge_manages_checkpoints.then(|| handles.checkpoint_manager());
+        let mut checkpoint_state = if let Some(manager) = checkpoint_manager.as_deref() {
+            Some(Self::load_bridge_checkpoint_state(manager).await?)
+        } else {
+            None
+        };
+        let catchup_from = checkpoint_state
+            .as_ref()
+            .map_or_else(|| from.clone(), |state| state.checkpoint.clone());
 
         let service_name = self.service_info.as_ref().map_or_else(
             || self.module.module_name().to_string(),
@@ -233,13 +249,16 @@ impl<T: RuntimeModule + 'static> RuntimeRunner<T> {
         // The confirmed-event consumer ACKs after enqueueing into this bridge,
         // before the automaton finishes processing the batch. A restart is safe
         // only because every bridge-backed automaton can replay from its
-        // durable checkpoint through the DB before it subscribes with
-        // DeliverPolicy::New.
+        // durable bridge checkpoint through the DB before it subscribes with
+        // DeliverPolicy::New. Load that checkpoint before catch-up: generic
+        // bridge-managed automata may report Checkpoint::None from
+        // module.current_checkpoint(), while the bridge KV holds the last
+        // successfully processed event.
         info!("Processing historical backlog before entering continuous mode");
         let _ = self
             .module
             .scan(
-                from,
+                catchup_from,
                 TimeHorizon::Historical {
                     end_time: sinex_primitives::temporal::Timestamp::now(),
                 },
@@ -265,38 +284,10 @@ impl<T: RuntimeModule + 'static> RuntimeRunner<T> {
             info!("Drain requested before automaton bridge entered live processing");
         }
 
-        let bridge_manages_checkpoints = !capabilities.manages_own_checkpoints;
-        if !bridge_manages_checkpoints {
-            debug!(
-                module = %self.module.module_name(),
-                "Skipping generic automaton-bridge checkpoint tracking because the module persists its own state"
-            );
-        }
-
         // Periodic checkpoint saves: prevent data loss on crash by persisting
         // progress every CHECKPOINT_EVENT_INTERVAL events or CHECKPOINT_TIME_INTERVAL.
         const CHECKPOINT_EVENT_INTERVAL: u64 = 100;
         const CHECKPOINT_TIME_INTERVAL: std::time::Duration = std::time::Duration::from_secs(30);
-
-        let checkpoint_manager = bridge_manages_checkpoints.then(|| handles.checkpoint_manager());
-        let mut checkpoint_state = if let Some(manager) = checkpoint_manager.as_deref() {
-            match Self::load_bridge_checkpoint_state(manager).await {
-                Ok(state) => Some(state),
-                Err(err) => {
-                    // Stop the consumer before returning so its background tasks
-                    // do not run as orphans ACKing confirmation messages that
-                    // should be redelivered to the next automaton run.
-                    consumer.stop().await;
-                    drain_controller.clear_runtime_abort();
-                    if let Some(handle) = self.consumer_handle.take() {
-                        let _ = handle.await;
-                    }
-                    return Err(err);
-                }
-            }
-        } else {
-            None
-        };
 
         let mut processed_events = 0u64;
         let mut events_since_checkpoint = 0u64;
