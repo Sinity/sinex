@@ -1,20 +1,25 @@
 use clap::{Args, Subcommand};
 use color_eyre::Result;
 use console::style;
-use serde_json::json;
+use serde::Serialize;
 use sinex_primitives::events::{EventPayload, payloads::ActivitySessionBoundaryPayload};
 use sinex_primitives::query::{
-    AggregationMode, EventQuery, EventQueryResult, GroupByField, GroupedValue, NumericField,
-    QueryResultEvent, SortDirection, TimeRange, TimeSeriesOrder,
+    AggregationMode, EventQuery, EventQueryResult, GroupByField, GroupedCount, GroupedValue,
+    NumericField, QueryResultEvent, SortDirection, TimeBucketEntry, TimeRange, TimeSeriesOrder,
 };
 use sinex_primitives::temporal::{OffsetDateTime, Timestamp};
+use sinex_primitives::views::{
+    CaveatView, ReadinessCaveatId, SinexObjectKind, SinexObjectRef, ViewEnvelope,
+};
 
 use crate::client::GatewayClient;
-use crate::fmt::{format_duration_compact_secs, format_json, format_yaml};
+use crate::fmt::{format_duration_compact_secs, print_finite_envelope};
 use crate::model::OutputFormat;
 
 const SESSION_QUERY_LIMIT: i64 = 256;
 const SESSION_SOURCE_LIMIT: i64 = 5;
+const REPORT_SCHEMA_VERSION: &str = "sinex.activity-report/v1";
+const CALENDAR_SCHEMA_VERSION: &str = "sinex.activity-calendar/v1";
 
 /// Daily activity summary reports
 #[derive(Debug, Args)]
@@ -138,6 +143,88 @@ struct SessionReportSummary {
     by_primary_source: Vec<GroupedValue>,
 }
 
+#[derive(Debug, Clone, Serialize)]
+struct ActivityReportView {
+    schema_version: String,
+    label: String,
+    window_start: Option<Timestamp>,
+    window_end: Option<Timestamp>,
+    total_events: i64,
+    sessions: Option<SessionReportSummaryView>,
+    top_sources: Vec<GroupedCount>,
+    top_event_types: Vec<GroupedCount>,
+    hourly_activity: Vec<TimeBucketEntry>,
+}
+
+impl ActivityReportView {
+    fn new(
+        label: impl Into<String>,
+        time_range: TimeRange,
+        total_events: i64,
+        sessions: Option<SessionReportSummary>,
+        top_sources: Vec<GroupedCount>,
+        top_event_types: Vec<GroupedCount>,
+        hourly_activity: Vec<TimeBucketEntry>,
+    ) -> Self {
+        Self {
+            schema_version: REPORT_SCHEMA_VERSION.to_string(),
+            label: label.into(),
+            window_start: time_range.start(),
+            window_end: time_range.end(),
+            total_events,
+            sessions: sessions.map(SessionReportSummaryView::from),
+            top_sources,
+            top_event_types,
+            hourly_activity,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct SessionReportSummaryView {
+    session_count: i64,
+    total_duration_secs: u64,
+    avg_duration_secs: Option<u64>,
+    longest_session: Option<ActivitySessionBoundaryPayload>,
+    by_primary_source: Vec<GroupedValue>,
+}
+
+impl From<SessionReportSummary> for SessionReportSummaryView {
+    fn from(summary: SessionReportSummary) -> Self {
+        Self {
+            session_count: summary.session_count,
+            total_duration_secs: summary.total_duration_secs,
+            avg_duration_secs: summary.avg_duration_secs,
+            longest_session: summary.longest_session,
+            by_primary_source: summary.by_primary_source,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct ActivityCalendarView {
+    schema_version: String,
+    start_date: String,
+    end_date: String,
+    days: Vec<ActivityCalendarDayView>,
+}
+
+impl ActivityCalendarView {
+    fn zero_day_count(&self) -> usize {
+        self.days
+            .iter()
+            .filter(|day| day.total_events == 0)
+            .count()
+    }
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct ActivityCalendarDayView {
+    date: String,
+    total_events: i64,
+    top_sources: Vec<GroupedCount>,
+}
+
 fn session_query_base(time_range: TimeRange) -> EventQuery {
     EventQuery {
         sources: vec![ActivitySessionBoundaryPayload::SOURCE.clone()],
@@ -251,7 +338,7 @@ async fn fetch_session_summary(
 async fn collect_report_data(
     client: &GatewayClient,
     time_range: TimeRange,
-) -> Result<serde_json::Value> {
+) -> Result<ActivityReportView> {
     let count_query = EventQuery {
         time_range: Some(time_range),
         aggregation: Some(AggregationMode::Count),
@@ -309,23 +396,15 @@ async fn collect_report_data(
         _ => Vec::new(),
     };
 
-    let session_summary_json = session_summary.as_ref().map(|s| {
-        json!({
-            "session_count": s.session_count,
-            "total_duration_secs": s.total_duration_secs,
-            "avg_duration_secs": s.avg_duration_secs,
-            "longest_session": s.longest_session,
-            "by_primary_source": s.by_primary_source,
-        })
-    });
-
-    Ok(json!({
-        "total_events": total,
-        "sessions": session_summary_json,
-        "top_sources": top_sources,
-        "top_event_types": top_event_types,
-        "hourly_activity": hourly_buckets,
-    }))
+    Ok(ActivityReportView::new(
+        "",
+        time_range,
+        total,
+        session_summary,
+        top_sources,
+        top_event_types,
+        hourly_buckets,
+    ))
 }
 
 async fn run_report(
@@ -335,23 +414,14 @@ async fn run_report(
     format: OutputFormat,
 ) -> Result<()> {
     match format {
-        OutputFormat::Json | OutputFormat::Ndjson | OutputFormat::Dot => {
-            let mut data = collect_report_data(client, time_range).await?;
-            if let Some(obj) = data.as_object_mut() {
-                obj.insert("label".to_string(), json!(label));
-            }
-            println!("{}", format_json(&data)?);
-            Ok(())
-        }
-        OutputFormat::Yaml => {
-            let mut data = collect_report_data(client, time_range).await?;
-            if let Some(obj) = data.as_object_mut() {
-                obj.insert("label".to_string(), json!(label));
-            }
-            println!("{}", format_yaml(&data)?);
-            Ok(())
-        }
         OutputFormat::Table => print_report(client, time_range, label).await,
+        _ => {
+            let mut report = collect_report_data(client, time_range).await?;
+            report.label = label.to_string();
+            let envelope = report_envelope(report);
+            print_finite_envelope(&envelope, format)?;
+            Ok(())
+        }
     }
 }
 
@@ -511,7 +581,7 @@ async fn collect_calendar_data(
     client: &GatewayClient,
     days: u32,
     offset: u32,
-) -> Result<serde_json::Value> {
+) -> Result<ActivityCalendarView> {
     let now = OffsetDateTime::now_utc();
     let end_date = now.date() - time::Duration::days(i64::from(offset));
     let start_date = end_date - time::Duration::days(i64::from(days) - 1);
@@ -548,18 +618,19 @@ async fn collect_calendar_data(
             _ => Vec::new(),
         };
 
-        day_entries.push(json!({
-            "date": format_date(date),
-            "total_events": total,
-            "top_sources": top_sources,
-        }));
+        day_entries.push(ActivityCalendarDayView {
+            date: format_date(date),
+            total_events: total,
+            top_sources,
+        });
     }
 
-    Ok(json!({
-        "start_date": format_date(start_date),
-        "end_date": format_date(end_date),
-        "days": day_entries,
-    }))
+    Ok(ActivityCalendarView {
+        schema_version: CALENDAR_SCHEMA_VERSION.to_string(),
+        start_date: format_date(start_date),
+        end_date: format_date(end_date),
+        days: day_entries,
+    })
 }
 
 async fn run_calendar(
@@ -569,17 +640,56 @@ async fn run_calendar(
     format: OutputFormat,
 ) -> Result<()> {
     match format {
-        OutputFormat::Json | OutputFormat::Ndjson | OutputFormat::Dot => {
-            let data = collect_calendar_data(client, days, offset).await?;
-            println!("{}", format_json(&data)?);
-            Ok(())
-        }
-        OutputFormat::Yaml => {
-            let data = collect_calendar_data(client, days, offset).await?;
-            println!("{}", format_yaml(&data)?);
-            Ok(())
-        }
         OutputFormat::Table => print_calendar(client, days, offset).await,
+        _ => {
+            let calendar = collect_calendar_data(client, days, offset).await?;
+            let envelope = calendar_envelope(calendar);
+            print_finite_envelope(&envelope, format)?;
+            Ok(())
+        }
+    }
+}
+
+fn report_envelope(report: ActivityReportView) -> ViewEnvelope<ActivityReportView> {
+    let mut envelope = ViewEnvelope::new("sinexctl.metrics.report", report);
+    if envelope.payload.total_events == 0 {
+        envelope.caveats.push(report_coverage_caveat(
+            "sinexctl.metrics.report",
+            "activity report contains zero persisted events for the requested window; this report does not inspect source readiness, so capture coverage is unmeasurable here",
+            "sinexctl metrics report today",
+        ));
+    }
+    envelope
+}
+
+fn calendar_envelope(calendar: ActivityCalendarView) -> ViewEnvelope<ActivityCalendarView> {
+    let zero_day_count = calendar.zero_day_count();
+    let mut envelope = ViewEnvelope::new("sinexctl.metrics.report.calendar", calendar);
+    if zero_day_count > 0 {
+        envelope.caveats.push(report_coverage_caveat(
+            "sinexctl.metrics.report.calendar",
+            format!(
+                "activity calendar contains {zero_day_count} zero-event day(s); this report does not inspect source readiness, so capture coverage is unmeasurable for those windows"
+            ),
+            "sinexctl metrics report calendar",
+        ));
+    }
+    envelope
+}
+
+fn report_coverage_caveat(
+    source_surface: &'static str,
+    message: impl Into<String>,
+    command_hint: &'static str,
+) -> CaveatView {
+    CaveatView {
+        id: ReadinessCaveatId::CoverageUnmeasurable.as_str().to_string(),
+        message: message.into(),
+        ref_: Some(
+            SinexObjectRef::new(SinexObjectKind::Command, source_surface)
+                .with_label(source_surface)
+                .with_command_hint(command_hint),
+        ),
     }
 }
 
