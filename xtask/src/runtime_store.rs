@@ -20,6 +20,7 @@ pub struct RuntimeStoreSnapshot {
     pub estimated_tables: Vec<TableEstimate>,
     pub recent_event_mix: Vec<EventMixRow>,
     pub recent_source_materials: Vec<SourceMaterialRollup>,
+    pub active_source_materials: Vec<ActiveSourceMaterialRow>,
     pub browser_history_materials: Vec<SourceMaterialRollup>,
     pub dlq: DlqSummary,
     pub jetstream: JetStreamStoreSnapshot,
@@ -45,6 +46,15 @@ pub struct SourceMaterialRollup {
     pub materials: i64,
     pub total_bytes: Option<i64>,
     pub parsed_events: i64,
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+pub struct ActiveSourceMaterialRow {
+    pub material_id: String,
+    pub source_identifier: String,
+    pub age_seconds: i64,
+    pub parsed_events: i64,
+    pub total_bytes: Option<i64>,
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
@@ -95,6 +105,8 @@ pub struct JetStreamConsumerSnapshot {
 pub struct StoreAssessment {
     pub current_ingest_quiet: bool,
     pub top_recent_event_type: Option<String>,
+    pub active_source_materials: i64,
+    pub active_source_materials_over_60m: i64,
     pub browser_history_materials_total: i64,
     pub browser_history_parsed_events_total: i64,
     pub unresolved_dlq: i64,
@@ -123,6 +135,7 @@ pub async fn query_runtime_store_snapshot(
     let recent_event_mix = query_recent_event_mix(&pool, window_minutes, top_limit).await?;
     let recent_source_materials =
         query_recent_source_materials(&pool, window_minutes, top_limit).await?;
+    let active_source_materials = query_active_source_materials(&pool, top_limit).await?;
     let browser_history_materials = query_browser_history_materials(&pool).await?;
     let dlq = query_dlq_summary(&pool).await?;
     pool.close().await;
@@ -130,6 +143,7 @@ pub async fn query_runtime_store_snapshot(
     let jetstream = query_jetstream_store_snapshot(nats_url, &dlq).await;
     let mut assessment = assess_store(
         &recent_event_mix,
+        &active_source_materials,
         &browser_history_materials,
         &dlq,
         window_minutes,
@@ -142,6 +156,7 @@ pub async fn query_runtime_store_snapshot(
         estimated_tables,
         recent_event_mix,
         recent_source_materials,
+        active_source_materials,
         browser_history_materials,
         dlq,
         jetstream,
@@ -341,6 +356,28 @@ pub fn assess_jetstream(snapshot: &JetStreamStoreSnapshot) -> Vec<String> {
                 "source-material JetStream backlog: {pending} pending frame message(s)"
             ));
         }
+        if stream.role == "source-material" {
+            let ack_pending = stream
+                .consumers
+                .iter()
+                .map(|consumer| consumer.num_ack_pending)
+                .sum::<usize>();
+            let redelivered = stream
+                .consumers
+                .iter()
+                .map(|consumer| consumer.num_redelivered)
+                .sum::<usize>();
+            if ack_pending > 0 {
+                warnings.push(format!(
+                    "source-material JetStream has {ack_pending} ack-pending frame message(s)"
+                ));
+            }
+            if redelivered > 0 {
+                warnings.push(format!(
+                    "source-material JetStream has {redelivered} redelivered frame message(s)"
+                ));
+            }
+        }
     }
     warnings
 }
@@ -470,7 +507,10 @@ async fn query_recent_source_materials(
     .fetch_all(pool)
     .await?;
 
-    Ok(rows.into_iter().map(source_material_rollup_from_row).collect())
+    Ok(rows
+        .into_iter()
+        .map(source_material_rollup_from_row)
+        .collect())
 }
 
 async fn query_browser_history_materials(
@@ -492,7 +532,43 @@ async fn query_browser_history_materials(
     .fetch_all(pool)
     .await?;
 
-    Ok(rows.into_iter().map(source_material_rollup_from_row).collect())
+    Ok(rows
+        .into_iter()
+        .map(source_material_rollup_from_row)
+        .collect())
+}
+
+async fn query_active_source_materials(
+    pool: &sqlx::Pool<sqlx::Postgres>,
+    top_limit: i64,
+) -> Result<Vec<ActiveSourceMaterialRow>, sqlx::Error> {
+    let rows = sqlx::query(
+        r#"
+        SELECT id::text AS material_id,
+               source_identifier,
+               EXTRACT(EPOCH FROM (NOW() - COALESCE(start_time, staged_at)))::bigint AS age_seconds,
+               COALESCE(parsed_event_count, 0)::bigint AS parsed_events,
+               total_bytes
+        FROM raw.source_material_registry
+        WHERE status = 'sensing'
+        ORDER BY COALESCE(start_time, staged_at), id
+        LIMIT $1
+        "#,
+    )
+    .bind(top_limit)
+    .fetch_all(pool)
+    .await?;
+
+    Ok(rows
+        .into_iter()
+        .map(|row| ActiveSourceMaterialRow {
+            material_id: row.get("material_id"),
+            source_identifier: row.get("source_identifier"),
+            age_seconds: row.get("age_seconds"),
+            parsed_events: row.get("parsed_events"),
+            total_bytes: row.get("total_bytes"),
+        })
+        .collect())
 }
 
 fn source_material_rollup_from_row(row: sqlx::postgres::PgRow) -> SourceMaterialRollup {
@@ -526,6 +602,7 @@ async fn query_dlq_summary(pool: &sqlx::Pool<sqlx::Postgres>) -> Result<DlqSumma
 #[must_use]
 pub fn assess_store(
     recent_event_mix: &[EventMixRow],
+    active_source_materials: &[ActiveSourceMaterialRow],
     browser_history_materials: &[SourceMaterialRollup],
     dlq: &DlqSummary,
     window_minutes: i64,
@@ -540,6 +617,11 @@ pub fn assess_store(
         .sum::<i64>();
     let top_recent_event_type = recent_event_mix.first().map(|row| row.event_type.clone());
     let current_ingest_quiet = recent_event_mix.is_empty();
+    let active_source_materials_total = active_source_materials.len() as i64;
+    let active_source_materials_over_60m = active_source_materials
+        .iter()
+        .filter(|row| row.age_seconds >= 3600)
+        .count() as i64;
     let unresolved_dlq = dlq.unresolved;
     let mut warnings = Vec::new();
 
@@ -562,6 +644,11 @@ pub fn assess_store(
             "browser history material inventory is large ({browser_history_materials_total} materials, {browser_history_parsed_events_total} parsed events)"
         ));
     }
+    if active_source_materials_over_60m > 0 {
+        warnings.push(format!(
+            "{active_source_materials_over_60m} active source material(s) are older than 60 minutes"
+        ));
+    }
     if unresolved_dlq > 0 {
         warnings.push(format!("{unresolved_dlq} unresolved DLQ row(s)"));
     }
@@ -569,6 +656,8 @@ pub fn assess_store(
     StoreAssessment {
         current_ingest_quiet,
         top_recent_event_type,
+        active_source_materials: active_source_materials_total,
+        active_source_materials_over_60m,
         browser_history_materials_total,
         browser_history_parsed_events_total,
         unresolved_dlq,

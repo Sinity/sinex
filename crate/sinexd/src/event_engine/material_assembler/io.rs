@@ -5,8 +5,7 @@
 //! focused on state management and orchestration.
 
 use super::{
-    MaterialAssembler,
-    RESTORED_SELF_OBSERVATION_ORPHAN_TIMEOUT_SECS,
+    MaterialAssembler, RESTORED_SELF_OBSERVATION_ORPHAN_TIMEOUT_SECS,
     assembly_state_machine::{
         AssemblyInput, AssemblyLogicalState, AssemblyStateMachine, AssemblyTransition,
     },
@@ -503,10 +502,16 @@ fn restored_state_is_stale(
     }
 
     let elapsed = Timestamp::now() - last_slice_received;
+    let started_elapsed = Timestamp::parse_rfc3339(&state_snapshot.started_at)
+        .ok()
+        .map(|started_at| Timestamp::now() - started_at);
     let pending_end_blocked = state_snapshot.pending_end.is_some()
         && !restored_pending_end_is_complete(state_snapshot, buffered_slices);
     let timeout_secs = restored_state_stale_timeout_secs(state_snapshot, slice_arrival_timeout);
-    elapsed.whole_seconds() > timeout_secs
+    let stale_since_last_slice = elapsed.whole_seconds() > timeout_secs;
+    let stale_since_start_without_end = state_snapshot.pending_end.is_none()
+        && started_elapsed.is_some_and(|elapsed| elapsed.whole_seconds() > timeout_secs);
+    (stale_since_last_slice || stale_since_start_without_end)
         && (state_snapshot.pending_end.is_none()
             || pending_end_blocked
             || !buffered_slices.is_empty()
