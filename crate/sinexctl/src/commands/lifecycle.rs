@@ -13,15 +13,19 @@
 
 use clap::{Args, Subcommand, ValueEnum};
 use sinex_primitives::rpc::lifecycle::{
-    TombstoneApproveResponse, TombstoneCreateResponse, TombstoneListResponse,
-    TombstoneOperationState, TombstonePreviewResponse, TombstoneStatusResponse,
+    LifecycleStatusResponse, TombstoneApproveResponse, TombstoneCreateResponse,
+    TombstoneListResponse, TombstoneOperationState, TombstonePreviewResponse,
+    TombstoneStatusResponse,
 };
 use sinex_primitives::utils::timestamp_helpers::parse_relative_std_duration;
+use sinex_primitives::views::{
+    CaveatView, ReadinessCaveatId, SinexObjectKind, SinexObjectRef, ViewEnvelope,
+};
 use std::time::Duration;
 
 use crate::Result;
 use crate::client::GatewayClient;
-use crate::fmt::{CommandOutput, with_spinner_result};
+use crate::fmt::{CommandOutput, print_finite_envelope, with_spinner_result};
 use crate::model::OutputFormat;
 
 /// Data lifecycle management
@@ -89,6 +93,10 @@ impl LifecycleStatusCommand {
         )
         .await?;
 
+        let envelope = lifecycle_status_envelope(response.clone());
+        if print_finite_envelope(&envelope, format)? {
+            return Ok(());
+        }
         CommandOutput::single(response, format_status_table).display(&format)?;
         Ok(())
     }
@@ -459,6 +467,14 @@ impl TombstoneListCommand {
         )
         .await?;
 
+        let envelope = tombstone_list_envelope(
+            response.clone(),
+            self.state.map(TombstoneStateArg::into_state),
+            self.limit,
+        );
+        if print_finite_envelope(&envelope, format)? {
+            return Ok(());
+        }
         if response.operations.is_empty() {
             CommandOutput::<serde_json::Value>::empty("No tombstone operations found.")
                 .display(&format)?;
@@ -490,6 +506,56 @@ impl TombstoneStatusCommand {
         CommandOutput::single(response, format_tombstone_status_table).display(&format)?;
 
         Ok(())
+    }
+}
+
+fn lifecycle_status_envelope(
+    response: LifecycleStatusResponse,
+) -> ViewEnvelope<LifecycleStatusResponse> {
+    let mut envelope = ViewEnvelope::new("sinexctl.ops.lifecycle.status", response);
+    if envelope.payload.total_events == 0 {
+        envelope.caveats.push(lifecycle_caveat(
+            ReadinessCaveatId::CoverageUnmeasurable,
+            "lifecycle status reports zero events across all tiers; this is an empty lifecycle read model, not proof that upstream capture never existed",
+            "sinexctl ops lifecycle status",
+        ));
+    }
+    envelope
+}
+
+fn tombstone_list_envelope(
+    response: TombstoneListResponse,
+    state: Option<TombstoneOperationState>,
+    limit: i64,
+) -> ViewEnvelope<TombstoneListResponse> {
+    let mut envelope = ViewEnvelope::new("sinexctl.ops.lifecycle.tombstone.list", response)
+        .with_query_echo(serde_json::json!({
+            "state": state.map(|state| format!("{state:?}").to_lowercase()),
+            "limit": limit,
+        }));
+    if envelope.payload.operations.is_empty() {
+        envelope.caveats.push(lifecycle_caveat(
+            ReadinessCaveatId::SourceAbsent,
+            "no tombstone operations matched this query; this only proves the operation log slice is empty",
+            "sinexctl ops lifecycle tombstone list",
+        ));
+    }
+    envelope
+}
+
+fn lifecycle_caveat(
+    id: ReadinessCaveatId,
+    message: impl Into<String>,
+    command_hint: &'static str,
+) -> CaveatView {
+    CaveatView {
+        id: id.as_str().to_string(),
+        message: message.into(),
+        ref_: Some(
+            SinexObjectRef::new(SinexObjectKind::Command, command_hint)
+                .with_label(command_hint)
+                .with_command_hint(command_hint),
+        ),
     }
 }
 
@@ -787,3 +853,7 @@ fn format_count(n: i64) -> String {
     }
     result
 }
+
+#[cfg(test)]
+#[path = "lifecycle_test.rs"]
+mod tests;
