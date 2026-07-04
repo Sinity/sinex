@@ -39,6 +39,29 @@ pub async fn bootstrap_raw_events_stream(
     }
 }
 
+/// Ensure the reflection-events stream exists for self-observation producers.
+pub async fn bootstrap_reflection_events_stream(
+    nats_client: &NatsClient,
+    namespace: Option<&str>,
+) -> RuntimeResult<()> {
+    let env = environment().clone();
+    let js = jetstream::new(nats_client.clone());
+
+    let mut attempt = 0;
+    loop {
+        match ensure_reflection_events_stream_once(&js, &env, namespace).await {
+            Ok(()) => return Ok(()),
+            Err(err) => {
+                attempt += 1;
+                if attempt >= 5 {
+                    return Err(err);
+                }
+                sleep(Duration::from_millis(100 * attempt as u64)).await;
+            }
+        }
+    }
+}
+
 /// Create or converge only the raw-events stream from the canonical topology.
 pub async fn ensure_raw_events_stream_once(
     js: &jetstream::Context,
@@ -54,6 +77,22 @@ pub async fn ensure_raw_events_stream_once(
 
     let base_stream = env.nats_stream_name_with_namespace(namespace, "SINEX_RAW_EVENTS");
     let topology = JetStreamTopology::new(env, base_stream, "event-engine".to_string(), namespace);
+    ensure_raw_events_stream_for_topology(js, &topology).await
+}
+
+/// Create or converge only the reflection-events stream from the canonical topology.
+pub async fn ensure_reflection_events_stream_once(
+    js: &jetstream::Context,
+    env: &SinexEnvironment,
+    namespace: Option<&str>,
+) -> RuntimeResult<()> {
+    if std::env::var(env_vars::NATS_STREAMS_MANAGED_EXTERNALLY).as_deref() == Ok("true") {
+        return Ok(());
+    }
+
+    let base_stream = env.nats_stream_name_with_namespace(namespace, "SINEX_REFLECTION_EVENTS");
+    let consumer_durable = format!("event-engine-{}-reflection", env.name());
+    let topology = JetStreamTopology::reflection(env, base_stream, consumer_durable, namespace);
     ensure_raw_events_stream_for_topology(js, &topology).await
 }
 

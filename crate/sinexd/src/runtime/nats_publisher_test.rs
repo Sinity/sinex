@@ -175,3 +175,40 @@ async fn publish_intent_bootstraps_raw_events_stream(ctx: TestContext) -> TestRe
     assert_eq!(stream.info().await?.state.messages, 1);
     Ok(())
 }
+
+#[sinex_test]
+async fn publish_telemetry_bootstraps_reflection_events_stream(ctx: TestContext) -> TestResult<()> {
+    let ctx = ctx.with_nats().dedicated().await?;
+    let mut event = DynamicPayload::new(
+        "sinexd.event_engine",
+        "metric.gauge",
+        serde_json::json!({"name": "event_engine.consumer.lag.pending", "value": 0}),
+    )
+    .from_parents([Id::from_uuid(Uuid::now_v7())])?
+    .build()
+    .expect("infallible: test provenance set");
+    event.id = Some(Id::from_uuid(Uuid::now_v7()));
+
+    let publisher = NatsPublisher::new(ctx.nats_client());
+    publisher
+        .publish_telemetry(&event, transport::Class::Telemetry)
+        .await?;
+
+    let env = sinex_primitives::environment::environment();
+    let reflection_stream_name =
+        env.nats_stream_name_with_namespace(None, "SINEX_REFLECTION_EVENTS");
+    let mut reflection_stream = async_nats::jetstream::new(ctx.nats_client())
+        .get_stream(&reflection_stream_name)
+        .await?;
+    assert_eq!(reflection_stream.info().await?.state.messages, 1);
+
+    let raw_stream_name = env.nats_stream_name_with_namespace(None, "SINEX_RAW_EVENTS");
+    let raw_stream = async_nats::jetstream::new(ctx.nats_client())
+        .get_stream(&raw_stream_name)
+        .await;
+    assert!(
+        raw_stream.is_err(),
+        "telemetry publish should not create the activity raw stream"
+    );
+    Ok(())
+}

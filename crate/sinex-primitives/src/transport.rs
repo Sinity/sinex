@@ -14,7 +14,7 @@
 //! | [`Class::Confirmation`] | `{env}.events.confirmed.>` | retry with backoff → fatal durability gap | wait for ACKs before raw ack |
 //! | [`Class::Invalidation`] | `{env}.sinex.derived.invalidation` | JetStream-backed; best-effort warn | best-effort flush |
 //! | [`Class::Control`] | `{env}.sinex.control.>` / request-reply | timeout error | drop pending |
-//! | [`Class::Telemetry`] | `{env}.events.raw.sinex.>` (telemetry lane) | drop with warn | best-effort flush |
+//! | [`Class::Telemetry`] | `{env}.events.reflection.raw.sinex.>` | drop with warn | best-effort flush |
 
 use crate::nats::{NATS_TRAFFIC_CLASS_HEADER, NatsTrafficClass, insert_traffic_class_header};
 
@@ -127,8 +127,8 @@ pub const SINEX_TRANSPORT_CLASS_HEADER: &str = "Sinex-Transport-Class";
 /// Internal metrics, health, and operational data emitted by components.
 /// Loss is acceptable; gaps in telemetry do not affect correctness.
 ///
-/// - **Subject pattern**: `{env}.events.raw.sinex.{metric_type}` (same
-///   raw-event plane, separate semaphore lane).
+/// - **Subject pattern**:
+///   `{env}.events.reflection.raw.sinex.{metric_type}`.
 /// - **`QoS`**: `JetStream` with idempotency header; smaller semaphore budget
 ///   (16 permits) so telemetry cannot crowd out critical traffic.
 /// - **Retry budget**: none — `emit_*` methods are fire-and-observe; failures
@@ -462,10 +462,10 @@ pub const CURRENT_ROUTE_DECISIONS: &[RouteDecision] = &[
         path: "self_observation.telemetry_events",
         transport: RouteTransport::JetStream,
         class: Some(Class::Telemetry),
-        route: "{env}.events.raw.sinex.{metric_type}",
-        reason: "current telemetry feeds durable self-observation events and continuous aggregates",
+        route: "{env}.events.reflection.raw.sinex.{metric_type}",
+        reason: "telemetry feeds durable self-observation events on the reflection lane so it cannot crowd out activity ingestion",
         degraded_behavior: "publish failure logs a warning and drops the telemetry sample",
-        verification: "telemetry persistence and telemetry read-model tests",
+        verification: "reflection topology and telemetry publisher tests",
     },
 ];
 

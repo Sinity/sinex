@@ -325,6 +325,28 @@ impl SinexEnvironment {
         )
     }
 
+    /// Build the canonical reflection-event subject for a `(source, event_type)` pair.
+    ///
+    /// Reflection events are Sinex's own self-observation stream. They use the
+    /// same source/type token encoding as activity events, but live under a
+    /// separate subject root so JetStream can place them in a separate stream.
+    #[must_use]
+    pub fn nats_reflection_event_subject_with_namespace(
+        &self,
+        namespace: Option<&str>,
+        source: &str,
+        event_type: &str,
+    ) -> String {
+        self.nats_subject_with_namespace(
+            namespace,
+            &format!(
+                "events.reflection.raw.{}.{}",
+                Self::nats_subject_token(source),
+                Self::nats_subject_token(event_type)
+            ),
+        )
+    }
+
     /// Build a raw-event consumer *filter* subject that matches every source but
     /// a single event type: `events.raw.*.<type>`.
     ///

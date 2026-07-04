@@ -69,10 +69,11 @@ xtask                    Build automation, sandbox test infra, dev-loop tooling
 ```
 Subjects:
   {env}.events.raw.>                    Source event batches
+  {env}.events.reflection.raw.>         Self-observation event batches
   {env}.events.confirmed.>              Full persisted confirmed events
+  {env}.events.reflection.confirmed.>   Full persisted self-observation confirmations
   {env}.events.dlq.>                    Dead-letter queue
   {env}.sinex.derived.invalidation      Scope invalidation (replay)
-  {env}.events.raw.sinex.>              Self-observation events
   {env}.sinex.control.sources.{id}.scan Replay scan commands
   {env}.sinex.control.replay.progress.{op} Replay progress updates
 ```
