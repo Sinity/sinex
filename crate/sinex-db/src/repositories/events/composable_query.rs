@@ -18,7 +18,7 @@ use sinex_primitives::query::{
     PayloadFilter, QueryResultEvent, SortDirection, SourceMaterialLinkInfo, SourceStatsEntry,
     TimeBucketEntry, TimeSeriesOrder,
 };
-use sinex_primitives::sources::source_role_sql_case;
+use sinex_primitives::sources::{SourceRole, source_role_sql_predicate};
 use sinex_primitives::{Id, Pagination, Provenance, SinexError, Timestamp, Uuid};
 use sqlx::postgres::types::PgInterval;
 use sqlx::{FromRow, Postgres, QueryBuilder};
@@ -138,6 +138,12 @@ impl EventRepository<'_> {
 
         let fetch_limit = query.limit + 1; // +1 to detect "has more"
 
+        if listing_order == ListingOrder::Id && !has_text_search {
+            return self
+                .execute_id_ordered_event_listing(query, fetch_limit)
+                .await;
+        }
+
         let mut qb = QueryBuilder::<Postgres>::new(format!(
             "SELECT * FROM (SELECT {}",
             event_select_columns!()
@@ -191,6 +197,57 @@ impl EventRepository<'_> {
         }
 
         // Optional total estimate via EXPLAIN
+        let total_estimate = if query.include_total_estimate {
+            Some(self.estimate_count(&query).await?)
+        } else {
+            None
+        };
+
+        Ok(EventQueryResult::Events {
+            events,
+            next_cursor,
+            total_estimate,
+        })
+    }
+
+    async fn execute_id_ordered_event_listing(
+        &self,
+        query: EventQuery,
+        fetch_limit: i64,
+    ) -> DbResult<EventQueryResult> {
+        let mut qb = QueryBuilder::<Postgres>::new("SELECT * FROM (");
+        push_limited_event_listing_relation(&mut qb, query.lane, &query, fetch_limit);
+        qb.push(") AS listing");
+        push_listing_order(&mut qb, query.direction, ListingOrder::Id);
+        qb.push(" LIMIT ");
+        qb.push_bind(fetch_limit);
+
+        let rows: Vec<EventListingRow> = qb
+            .build_query_as::<EventListingRow>()
+            .fetch_all(self.pool)
+            .await
+            .map_err(|e| db_error(e, "composable query: id-ordered event listing"))?;
+
+        let has_more = rows.len() as i64 > query.limit;
+        let rows: Vec<EventListingRow> = rows.into_iter().take(query.limit as usize).collect();
+
+        let next_cursor = if has_more {
+            rows.last()
+                .map(|row| event_listing_cursor(row, ListingOrder::Id))
+        } else {
+            None
+        };
+
+        let mut events = Vec::with_capacity(rows.len());
+        for row in rows {
+            let event = row.record.try_to_event()?;
+            events.push(QueryResultEvent {
+                event,
+                relevance_score: row.relevance_score,
+                snippet: row.snippet,
+            });
+        }
+
         let total_estimate = if query.include_total_estimate {
             Some(self.estimate_count(&query).await?)
         } else {
@@ -574,26 +631,113 @@ fn push_event_source_relation(qb: &mut QueryBuilder<'_, Postgres>, lane: EventQu
     qb.push(" FROM (");
     match lane {
         EventQueryLane::Activity => {
-            push_event_select(qb, "core.events", Some("activity"));
+            push_event_select(qb, "core.events", Some(SourceRole::Activity));
         }
         EventQueryLane::Reflection => {
-            push_event_select(qb, "core.events", Some("reflection"));
-            qb.push(" UNION ALL ");
             push_event_select(qb, "reflection.events", None);
+            qb.push(" UNION ALL ");
+            push_event_select(qb, "core.events", Some(SourceRole::Reflection));
         }
         EventQueryLane::All => {
-            push_event_select(qb, "core.events", None);
-            qb.push(" UNION ALL ");
             push_event_select(qb, "reflection.events", None);
+            qb.push(" UNION ALL ");
+            push_event_select(qb, "core.events", None);
         }
     }
     qb.push(") AS events");
 }
 
+fn push_limited_event_listing_relation(
+    qb: &mut QueryBuilder<'_, Postgres>,
+    lane: EventQueryLane,
+    query: &EventQuery,
+    fetch_limit: i64,
+) {
+    match lane {
+        EventQueryLane::Activity => {
+            push_limited_event_listing_branch(
+                qb,
+                "core_activity",
+                "core.events",
+                Some(SourceRole::Activity),
+                query,
+                fetch_limit,
+            );
+        }
+        EventQueryLane::Reflection => {
+            push_limited_event_listing_branch(
+                qb,
+                "physical_reflection",
+                "reflection.events",
+                None,
+                query,
+                fetch_limit,
+            );
+            qb.push(" UNION ALL ");
+            push_limited_event_listing_branch(
+                qb,
+                "legacy_core_reflection",
+                "core.events",
+                Some(SourceRole::Reflection),
+                query,
+                fetch_limit,
+            );
+        }
+        EventQueryLane::All => {
+            push_limited_event_listing_branch(
+                qb,
+                "physical_reflection",
+                "reflection.events",
+                None,
+                query,
+                fetch_limit,
+            );
+            qb.push(" UNION ALL ");
+            push_limited_event_listing_branch(
+                qb,
+                "core_all",
+                "core.events",
+                None,
+                query,
+                fetch_limit,
+            );
+        }
+    }
+}
+
+fn push_limited_event_listing_branch(
+    qb: &mut QueryBuilder<'_, Postgres>,
+    alias: &'static str,
+    table_name: &'static str,
+    source_role_filter: Option<SourceRole>,
+    query: &EventQuery,
+    fetch_limit: i64,
+) {
+    qb.push("SELECT * FROM (SELECT ");
+    qb.push(event_select_columns!());
+    qb.push(", NULL::float8 AS relevance_score, NULL::text AS snippet FROM ");
+    qb.push(table_name);
+    qb.push(" WHERE TRUE");
+    if let Some(role) = source_role_filter {
+        qb.push(" AND (");
+        qb.push(source_role_sql_predicate("source", role));
+        qb.push(")");
+    }
+    push_filters(qb, query);
+    if let Some(ref cursor) = query.cursor {
+        push_cursor(qb, cursor, query.direction, ListingOrder::Id);
+    }
+    push_listing_order(qb, query.direction, ListingOrder::Id);
+    qb.push(" LIMIT ");
+    qb.push_bind(fetch_limit);
+    qb.push(") AS ");
+    qb.push(alias);
+}
+
 fn push_event_select(
     qb: &mut QueryBuilder<'_, Postgres>,
     table_name: &'static str,
-    source_role_filter: Option<&'static str>,
+    source_role_filter: Option<SourceRole>,
 ) {
     qb.push("SELECT ");
     qb.push(event_select_columns!());
@@ -601,9 +745,8 @@ fn push_event_select(
     qb.push(table_name);
     if let Some(role) = source_role_filter {
         qb.push(" WHERE (");
-        qb.push(source_role_sql_case("source"));
-        qb.push(") = ");
-        qb.push_bind(role);
+        qb.push(source_role_sql_predicate("source", role));
+        qb.push(")");
     }
 }
 
