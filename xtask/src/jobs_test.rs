@@ -370,6 +370,48 @@ async fn test_query_manager_synthesizes_stale_running_status_without_mutation() 
     Ok(())
 }
 
+#[sinex_test(timeout = 30)]
+async fn test_query_manager_trusts_exit_code_even_when_pid_is_live() -> TestResult<()> {
+    let dir = tempdir()?;
+    let db_path = dir.path().join("xtask-history.db");
+    let jobs_dir = dir.path().join("jobs");
+    fs::create_dir_all(&jobs_dir)?;
+
+    let mut history_db_guard = EnvGuard::new();
+    history_db_guard.set("XTASK_HISTORY_DB", &db_path);
+
+    let mut child = std::process::Command::new("sleep").arg("60").spawn()?;
+    let db = HistoryDb::open(&db_path)?;
+    let stdout_path = jobs_dir.join("live").join("stdout.log");
+    let stderr_path = jobs_dir.join("live").join("stderr.log");
+    if let Some(parent) = stdout_path.parent() {
+        fs::create_dir_all(parent)?;
+    }
+
+    let (_invocation_id, job_id) =
+        db.start_background_job("test", &[], Some(child.id()), &stdout_path, &stderr_path)?;
+    let job_dir = jobs_dir.join(job_id.to_string());
+    fs::create_dir_all(&job_dir)?;
+    fs::write(job_dir.join("exit_code"), "0\n")?;
+
+    let query = JobQueryManager::new(jobs_dir.clone())?;
+    let job = query
+        .get(job_id)?
+        .ok_or_else(|| eyre!("query manager should return the synthesized job"))?;
+    let active_jobs = query.list_active()?;
+
+    child.kill()?;
+    let _ = child.wait();
+
+    assert!(matches!(job.job_status, JobLifecycleStatus::Completed));
+    assert_eq!(job.exit_code, Some(0));
+    assert!(
+        active_jobs.iter().all(|job| job.id != job_id),
+        "a live PID with an exit_code marker is terminal and must not remain active"
+    );
+    Ok(())
+}
+
 #[sinex_test]
 async fn test_cancel_finishes_linked_invocation() -> TestResult<()> {
     let dir = tempdir()?;
