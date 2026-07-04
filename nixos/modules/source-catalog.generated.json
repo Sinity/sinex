@@ -50,6 +50,15 @@
           "derivation_impact": "0",
           "sqlx_validation_impact": "0",
           "dedicated_build_rationale": null
+        },
+        "material_lifecycle": "retain_raw",
+        "transport_semantics": {
+          "transport": "direct",
+          "delivery": "same_process",
+          "ordering": "cursor_order",
+          "replayable": true,
+          "dlq": false,
+          "backpressure": false
         }
       },
       "resource_limits": {
@@ -127,6 +136,15 @@
           "derivation_impact": "0",
           "sqlx_validation_impact": "0",
           "dedicated_build_rationale": null
+        },
+        "material_lifecycle": "retain_raw",
+        "transport_semantics": {
+          "transport": "direct",
+          "delivery": "same_process",
+          "ordering": "cursor_order",
+          "replayable": true,
+          "dlq": false,
+          "backpressure": false
         }
       },
       "resource_limits": {
@@ -204,6 +222,102 @@
           "derivation_impact": "0",
           "sqlx_validation_impact": "0",
           "dedicated_build_rationale": null
+        },
+        "material_lifecycle": "retain_raw",
+        "transport_semantics": {
+          "transport": "direct",
+          "delivery": "same_process",
+          "ordering": "cursor_order",
+          "replayable": true,
+          "dlq": false,
+          "backpressure": false
+        }
+      },
+      "resource_limits": {
+        "memory_max_mib": 512,
+        "cpu_weight": 120
+      },
+      "resource_budget": {
+        "work_class": "projection_hot",
+        "steady_memory_mib": 256,
+        "burst_memory_mib": 512,
+        "cpu_weight": 120,
+        "max_input_bytes_per_sec": 16777216,
+        "max_input_events_per_sec": 20000,
+        "max_pending_material_bytes": 33554432,
+        "max_pending_candidates": 20000,
+        "max_unacked_transport_messages": 2000,
+        "batch_size": 2000,
+        "flush_interval_ms": 500,
+        "checkpoint_interval_ms": 1000,
+        "expected_disk_write_bytes_per_min": 536870912,
+        "expected_wal_write_bytes_per_min": 536870912,
+        "pressure_actions": [
+          "throttle",
+          "defer",
+          "retry",
+          "inspect"
+        ]
+      }
+    },
+    {
+      "contract": {
+        "id": "attention-stream",
+        "namespace": "derived",
+        "event_types": [
+          [
+            "derived.attention-stream",
+            "attention.span"
+          ]
+        ],
+        "privacy_tier": "sensitive",
+        "horizons": [
+          "continuous"
+        ],
+        "retention": {
+          "kind": "forever"
+        },
+        "occurrence_identity": {
+          "kind": "uuid5_from",
+          "key": "(source, parent_event_id)"
+        },
+        "access_scope": {
+          "scope": "internal"
+        }
+      },
+      "binding": {
+        "subject": "source:attention-stream",
+        "id": "attention-stream",
+        "domain": "derived",
+        "implementation": "sinexd",
+        "adapter": "AutomatonRuntime",
+        "output_event_type": "attention.span",
+        "privacy_context": "metadata",
+        "resource_profile": "event_stream_consumer",
+        "capabilities": [],
+        "source_id": "attention-stream",
+        "proposed": false,
+        "runner_pack": "in_process",
+        "checkpoint_family": {
+          "kind": "append_stream"
+        },
+        "runtime_shape": "continuous",
+        "build_impact": {
+          "crate_impact": "0",
+          "binary_impact": "0",
+          "nix_output_impact": "0",
+          "derivation_impact": "0",
+          "sqlx_validation_impact": "0",
+          "dedicated_build_rationale": null
+        },
+        "material_lifecycle": "retain_raw",
+        "transport_semantics": {
+          "transport": "direct",
+          "delivery": "same_process",
+          "ordering": "cursor_order",
+          "replayable": true,
+          "dlq": false,
+          "backpressure": false
         }
       },
       "resource_limits": {
@@ -293,6 +407,15 @@
           "derivation_impact": "0",
           "sqlx_validation_impact": "0",
           "dedicated_build_rationale": null
+        },
+        "material_lifecycle": "retain_raw",
+        "transport_semantics": {
+          "transport": "direct",
+          "delivery": "same_process",
+          "ordering": "cursor_order",
+          "replayable": true,
+          "dlq": false,
+          "backpressure": false
         }
       },
       "resource_limits": {
@@ -384,6 +507,15 @@
           "derivation_impact": "0",
           "sqlx_validation_impact": "0",
           "dedicated_build_rationale": null
+        },
+        "material_lifecycle": "retain_raw",
+        "transport_semantics": {
+          "transport": "local_queue",
+          "delivery": "at_most_once",
+          "ordering": "material_order",
+          "replayable": true,
+          "dlq": true,
+          "backpressure": true
         }
       },
       "resource_limits": {
@@ -462,6 +594,15 @@
           "derivation_impact": "0",
           "sqlx_validation_impact": "0",
           "dedicated_build_rationale": null
+        },
+        "material_lifecycle": "retain_raw",
+        "transport_semantics": {
+          "transport": "direct",
+          "delivery": "same_process",
+          "ordering": "cursor_order",
+          "replayable": true,
+          "dlq": false,
+          "backpressure": false
         }
       },
       "resource_limits": {
@@ -551,6 +692,15 @@
           "derivation_impact": "0",
           "sqlx_validation_impact": "0",
           "dedicated_build_rationale": null
+        },
+        "material_lifecycle": "retain_raw",
+        "transport_semantics": {
+          "transport": "local_queue",
+          "delivery": "at_most_once",
+          "ordering": "material_order",
+          "replayable": true,
+          "dlq": true,
+          "backpressure": true
         }
       },
       "resource_limits": {
@@ -633,6 +783,15 @@
           "derivation_impact": "0",
           "sqlx_validation_impact": "0",
           "dedicated_build_rationale": null
+        },
+        "material_lifecycle": "ephemeral_raw",
+        "transport_semantics": {
+          "transport": "local_queue",
+          "delivery": "at_most_once",
+          "ordering": "best_effort",
+          "replayable": false,
+          "dlq": true,
+          "backpressure": true
         }
       },
       "resource_limits": {
@@ -711,6 +870,15 @@
           "derivation_impact": "0",
           "sqlx_validation_impact": "0",
           "dedicated_build_rationale": null
+        },
+        "material_lifecycle": "ephemeral_raw",
+        "transport_semantics": {
+          "transport": "local_queue",
+          "delivery": "at_most_once",
+          "ordering": "best_effort",
+          "replayable": false,
+          "dlq": true,
+          "backpressure": true
         }
       },
       "resource_limits": {
@@ -789,6 +957,15 @@
           "derivation_impact": "0",
           "sqlx_validation_impact": "0",
           "dedicated_build_rationale": null
+        },
+        "material_lifecycle": "ephemeral_raw",
+        "transport_semantics": {
+          "transport": "local_queue",
+          "delivery": "at_most_once",
+          "ordering": "best_effort",
+          "replayable": false,
+          "dlq": true,
+          "backpressure": true
         }
       },
       "resource_limits": {
@@ -867,6 +1044,15 @@
           "derivation_impact": "0",
           "sqlx_validation_impact": "0",
           "dedicated_build_rationale": null
+        },
+        "material_lifecycle": "ephemeral_raw",
+        "transport_semantics": {
+          "transport": "local_queue",
+          "delivery": "at_most_once",
+          "ordering": "best_effort",
+          "replayable": false,
+          "dlq": true,
+          "backpressure": true
         }
       },
       "resource_limits": {
@@ -977,6 +1163,15 @@
           "derivation_impact": "0",
           "sqlx_validation_impact": "0",
           "dedicated_build_rationale": null
+        },
+        "material_lifecycle": "ephemeral_raw",
+        "transport_semantics": {
+          "transport": "local_queue",
+          "delivery": "at_most_once",
+          "ordering": "best_effort",
+          "replayable": false,
+          "dlq": true,
+          "backpressure": true
         }
       },
       "resource_limits": {
@@ -1055,6 +1250,15 @@
           "derivation_impact": "0",
           "sqlx_validation_impact": "0",
           "dedicated_build_rationale": null
+        },
+        "material_lifecycle": "retain_raw",
+        "transport_semantics": {
+          "transport": "direct",
+          "delivery": "same_process",
+          "ordering": "cursor_order",
+          "replayable": true,
+          "dlq": false,
+          "backpressure": false
         }
       },
       "resource_limits": {
@@ -1136,6 +1340,15 @@
           "derivation_impact": "0",
           "sqlx_validation_impact": "0",
           "dedicated_build_rationale": null
+        },
+        "material_lifecycle": "retain_raw",
+        "transport_semantics": {
+          "transport": "direct",
+          "delivery": "same_process",
+          "ordering": "cursor_order",
+          "replayable": true,
+          "dlq": false,
+          "backpressure": false
         }
       },
       "resource_limits": {
@@ -1214,6 +1427,15 @@
           "derivation_impact": "0",
           "sqlx_validation_impact": "0",
           "dedicated_build_rationale": null
+        },
+        "material_lifecycle": "retain_raw",
+        "transport_semantics": {
+          "transport": "direct",
+          "delivery": "same_process",
+          "ordering": "cursor_order",
+          "replayable": true,
+          "dlq": false,
+          "backpressure": false
         }
       },
       "resource_limits": {
@@ -1262,6 +1484,14 @@
           [
             "email",
             "email.thread.observed"
+          ],
+          [
+            "email",
+            "email.sync_cursor.observed"
+          ],
+          [
+            "email",
+            "email.capture_runtime.observed"
           ]
         ],
         "privacy_tier": "sensitive",
@@ -1292,11 +1522,12 @@
           "coverage:source-coverage",
           "debt:unified-debt-view",
           "operation:email.mailbox.check",
-          "operation:email.mailbox.sync",
-          "operation:email.mailbox.pause",
-          "operation:email.mailbox.resume",
+          "operation:email.mailbox.import-rfc822",
           "operation:email.mailbox.inspect",
-          "operation:email.mailbox.replay"
+          "operation:email.mailbox.replay",
+          "operation:email.mailbox.export",
+          "operation:email.mailbox.fetch-attachments",
+          "operation:email.mailbox.rebuild-projection"
         ],
         "source_id": "email.mailbox",
         "proposed": false,
@@ -1312,6 +1543,15 @@
           "derivation_impact": "0",
           "sqlx_validation_impact": "0",
           "dedicated_build_rationale": null
+        },
+        "material_lifecycle": "retain_raw",
+        "transport_semantics": {
+          "transport": "direct",
+          "delivery": "same_process",
+          "ordering": "cursor_order",
+          "replayable": true,
+          "dlq": false,
+          "backpressure": false
         }
       },
       "runtime_bindings": [
@@ -1328,11 +1568,12 @@
             "coverage:source-coverage",
             "debt:unified-debt-view",
             "operation:email.mailbox.check",
-            "operation:email.mailbox.sync",
-            "operation:email.mailbox.pause",
-            "operation:email.mailbox.resume",
+            "operation:email.mailbox.import-rfc822",
             "operation:email.mailbox.inspect",
-            "operation:email.mailbox.replay"
+            "operation:email.mailbox.replay",
+            "operation:email.mailbox.export",
+            "operation:email.mailbox.fetch-attachments",
+            "operation:email.mailbox.rebuild-projection"
           ],
           "source_id": "email.mailbox",
           "proposed": false,
@@ -1348,6 +1589,157 @@
             "derivation_impact": "0",
             "sqlx_validation_impact": "0",
             "dedicated_build_rationale": null
+          },
+          "material_lifecycle": "retain_raw",
+          "transport_semantics": {
+            "transport": "direct",
+            "delivery": "same_process",
+            "ordering": "cursor_order",
+            "replayable": true,
+            "dlq": false,
+            "backpressure": false
+          }
+        },
+        {
+          "subject": "source:email.mailbox.gmail-api-scheduled-sync",
+          "id": "email.mailbox",
+          "domain": "email",
+          "implementation": "gmail-api-scheduled-sync",
+          "adapter": "GmailApiCursorAdapter",
+          "output_event_type": "email.sync_cursor.observed",
+          "privacy_context": "document",
+          "resource_profile": "bounded_stream",
+          "capabilities": [
+            "coverage:source-coverage",
+            "debt:unified-debt-view",
+            "operation:email.mailbox.authorize",
+            "operation:email.mailbox.check",
+            "operation:email.mailbox.sync",
+            "operation:email.mailbox.pause",
+            "operation:email.mailbox.resume",
+            "operation:email.mailbox.inspect",
+            "operation:email.mailbox.replay",
+            "operation:email.mailbox.export",
+            "operation:email.mailbox.fetch-attachments",
+            "operation:email.mailbox.rebuild-projection"
+          ],
+          "source_id": "email.mailbox",
+          "proposed": false,
+          "runner_pack": "sinexd_source",
+          "checkpoint_family": {
+            "kind": "journal"
+          },
+          "runtime_shape": "scheduled",
+          "build_impact": {
+            "crate_impact": "0",
+            "binary_impact": "0",
+            "nix_output_impact": "0",
+            "derivation_impact": "0",
+            "sqlx_validation_impact": "0",
+            "dedicated_build_rationale": null
+          },
+          "material_lifecycle": "external_reference_only",
+          "transport_semantics": {
+            "transport": "external_api",
+            "delivery": "at_most_once",
+            "ordering": "cursor_order",
+            "replayable": true,
+            "dlq": true,
+            "backpressure": true
+          }
+        },
+        {
+          "subject": "source:email.mailbox.imap-idle-live",
+          "id": "email.mailbox",
+          "domain": "email",
+          "implementation": "imap-idle-live",
+          "adapter": "ImapSyncAdapter",
+          "output_event_type": "email.capture_runtime.observed",
+          "privacy_context": "document",
+          "resource_profile": "live_watcher",
+          "capabilities": [
+            "coverage:source-coverage",
+            "debt:unified-debt-view",
+            "operation:email.mailbox.authorize",
+            "operation:email.mailbox.check",
+            "operation:email.mailbox.pause",
+            "operation:email.mailbox.resume",
+            "operation:email.mailbox.inspect",
+            "operation:email.mailbox.export",
+            "operation:email.mailbox.fetch-attachments",
+            "operation:email.mailbox.rebuild-projection"
+          ],
+          "source_id": "email.mailbox",
+          "proposed": false,
+          "runner_pack": "live",
+          "checkpoint_family": {
+            "kind": "live_observation"
+          },
+          "runtime_shape": "continuous",
+          "build_impact": {
+            "crate_impact": "0",
+            "binary_impact": "0",
+            "nix_output_impact": "0",
+            "derivation_impact": "0",
+            "sqlx_validation_impact": "0",
+            "dedicated_build_rationale": null
+          },
+          "material_lifecycle": "external_reference_only",
+          "transport_semantics": {
+            "transport": "external_api",
+            "delivery": "at_most_once",
+            "ordering": "cursor_order",
+            "replayable": true,
+            "dlq": true,
+            "backpressure": true
+          }
+        },
+        {
+          "subject": "source:email.mailbox.imap-scheduled-sync",
+          "id": "email.mailbox",
+          "domain": "email",
+          "implementation": "imap-scheduled-sync",
+          "adapter": "ImapSyncAdapter",
+          "output_event_type": "email.sync_cursor.observed",
+          "privacy_context": "document",
+          "resource_profile": "bounded_stream",
+          "capabilities": [
+            "coverage:source-coverage",
+            "debt:unified-debt-view",
+            "operation:email.mailbox.authorize",
+            "operation:email.mailbox.check",
+            "operation:email.mailbox.sync",
+            "operation:email.mailbox.pause",
+            "operation:email.mailbox.resume",
+            "operation:email.mailbox.inspect",
+            "operation:email.mailbox.replay",
+            "operation:email.mailbox.export",
+            "operation:email.mailbox.fetch-attachments",
+            "operation:email.mailbox.rebuild-projection"
+          ],
+          "source_id": "email.mailbox",
+          "proposed": false,
+          "runner_pack": "sinexd_source",
+          "checkpoint_family": {
+            "kind": "polling"
+          },
+          "runtime_shape": "scheduled",
+          "build_impact": {
+            "crate_impact": "0",
+            "binary_impact": "0",
+            "nix_output_impact": "0",
+            "derivation_impact": "0",
+            "sqlx_validation_impact": "0",
+            "dedicated_build_rationale": null
+          },
+          "material_lifecycle": "external_reference_only",
+          "transport_semantics": {
+            "transport": "external_api",
+            "delivery": "at_most_once",
+            "ordering": "cursor_order",
+            "replayable": true,
+            "dlq": true,
+            "backpressure": true
           }
         },
         {
@@ -1362,9 +1754,12 @@
           "capabilities": [
             "coverage:source-coverage",
             "debt:unified-debt-view",
-            "operation:email.mailbox.sync",
+            "operation:email.mailbox.import-maildir",
             "operation:email.mailbox.inspect",
-            "operation:email.mailbox.replay"
+            "operation:email.mailbox.replay",
+            "operation:email.mailbox.export",
+            "operation:email.mailbox.fetch-attachments",
+            "operation:email.mailbox.rebuild-projection"
           ],
           "source_id": "email.mailbox",
           "proposed": false,
@@ -1380,6 +1775,15 @@
             "derivation_impact": "0",
             "sqlx_validation_impact": "0",
             "dedicated_build_rationale": null
+          },
+          "material_lifecycle": "retain_raw",
+          "transport_semantics": {
+            "transport": "direct",
+            "delivery": "same_process",
+            "ordering": "cursor_order",
+            "replayable": true,
+            "dlq": false,
+            "backpressure": false
           }
         },
         {
@@ -1387,16 +1791,19 @@
           "id": "email.mailbox",
           "domain": "email",
           "implementation": "staged-mbox-parser",
-          "adapter": "FileContentDropAdapter",
+          "adapter": "EmailMboxFileAdapter",
           "output_event_type": "email.message.received",
           "privacy_context": "document",
           "resource_profile": "bounded_file",
           "capabilities": [
             "coverage:source-coverage",
             "debt:unified-debt-view",
-            "operation:email.mailbox.sync",
+            "operation:email.mailbox.import-mbox",
             "operation:email.mailbox.inspect",
-            "operation:email.mailbox.replay"
+            "operation:email.mailbox.replay",
+            "operation:email.mailbox.export",
+            "operation:email.mailbox.fetch-attachments",
+            "operation:email.mailbox.rebuild-projection"
           ],
           "source_id": "email.mailbox",
           "proposed": false,
@@ -1412,6 +1819,15 @@
             "derivation_impact": "0",
             "sqlx_validation_impact": "0",
             "dedicated_build_rationale": null
+          },
+          "material_lifecycle": "retain_raw",
+          "transport_semantics": {
+            "transport": "direct",
+            "delivery": "same_process",
+            "ordering": "cursor_order",
+            "replayable": true,
+            "dlq": false,
+            "backpressure": false
           }
         },
         {
@@ -1427,11 +1843,12 @@
             "coverage:source-coverage",
             "debt:unified-debt-view",
             "operation:email.mailbox.check",
-            "operation:email.mailbox.sync",
-            "operation:email.mailbox.pause",
-            "operation:email.mailbox.resume",
+            "operation:email.mailbox.import-rfc822",
             "operation:email.mailbox.inspect",
-            "operation:email.mailbox.replay"
+            "operation:email.mailbox.replay",
+            "operation:email.mailbox.export",
+            "operation:email.mailbox.fetch-attachments",
+            "operation:email.mailbox.rebuild-projection"
           ],
           "source_id": "email.mailbox",
           "proposed": true,
@@ -1447,6 +1864,15 @@
             "derivation_impact": "0",
             "sqlx_validation_impact": "0",
             "dedicated_build_rationale": null
+          },
+          "material_lifecycle": "retain_raw",
+          "transport_semantics": {
+            "transport": "direct",
+            "delivery": "same_process",
+            "ordering": "cursor_order",
+            "replayable": true,
+            "dlq": false,
+            "backpressure": false
           }
         }
       ],
@@ -1525,6 +1951,15 @@
           "derivation_impact": "0",
           "sqlx_validation_impact": "0",
           "dedicated_build_rationale": null
+        },
+        "material_lifecycle": "retain_raw",
+        "transport_semantics": {
+          "transport": "direct",
+          "delivery": "same_process",
+          "ordering": "cursor_order",
+          "replayable": true,
+          "dlq": false,
+          "backpressure": false
         }
       },
       "resource_limits": {
@@ -1603,6 +2038,15 @@
           "derivation_impact": "0",
           "sqlx_validation_impact": "0",
           "dedicated_build_rationale": null
+        },
+        "material_lifecycle": "retain_raw",
+        "transport_semantics": {
+          "transport": "direct",
+          "delivery": "same_process",
+          "ordering": "cursor_order",
+          "replayable": true,
+          "dlq": false,
+          "backpressure": false
         }
       },
       "resource_limits": {
@@ -1681,6 +2125,15 @@
           "derivation_impact": "0",
           "sqlx_validation_impact": "0",
           "dedicated_build_rationale": null
+        },
+        "material_lifecycle": "retain_raw",
+        "transport_semantics": {
+          "transport": "direct",
+          "delivery": "same_process",
+          "ordering": "cursor_order",
+          "replayable": true,
+          "dlq": false,
+          "backpressure": false
         }
       },
       "resource_limits": {
@@ -1759,6 +2212,15 @@
           "derivation_impact": "0",
           "sqlx_validation_impact": "0",
           "dedicated_build_rationale": null
+        },
+        "material_lifecycle": "retain_raw",
+        "transport_semantics": {
+          "transport": "direct",
+          "delivery": "same_process",
+          "ordering": "cursor_order",
+          "replayable": true,
+          "dlq": false,
+          "backpressure": false
         }
       },
       "resource_limits": {
@@ -1848,6 +2310,15 @@
           "derivation_impact": "0",
           "sqlx_validation_impact": "0",
           "dedicated_build_rationale": null
+        },
+        "material_lifecycle": "ephemeral_raw",
+        "transport_semantics": {
+          "transport": "local_queue",
+          "delivery": "at_most_once",
+          "ordering": "cursor_order",
+          "replayable": true,
+          "dlq": true,
+          "backpressure": true
         }
       },
       "resource_limits": {
@@ -1926,6 +2397,15 @@
           "derivation_impact": "0",
           "sqlx_validation_impact": "0",
           "dedicated_build_rationale": null
+        },
+        "material_lifecycle": "retain_raw",
+        "transport_semantics": {
+          "transport": "direct",
+          "delivery": "same_process",
+          "ordering": "cursor_order",
+          "replayable": true,
+          "dlq": false,
+          "backpressure": false
         }
       },
       "resource_limits": {
@@ -2003,6 +2483,15 @@
           "derivation_impact": "0",
           "sqlx_validation_impact": "0",
           "dedicated_build_rationale": null
+        },
+        "material_lifecycle": "retain_raw",
+        "transport_semantics": {
+          "transport": "direct",
+          "delivery": "same_process",
+          "ordering": "cursor_order",
+          "replayable": true,
+          "dlq": false,
+          "backpressure": false
         }
       },
       "resource_limits": {
@@ -2081,6 +2570,15 @@
           "derivation_impact": "0",
           "sqlx_validation_impact": "0",
           "dedicated_build_rationale": null
+        },
+        "material_lifecycle": "retain_raw",
+        "transport_semantics": {
+          "transport": "direct",
+          "delivery": "same_process",
+          "ordering": "cursor_order",
+          "replayable": true,
+          "dlq": false,
+          "backpressure": false
         }
       },
       "resource_limits": {
@@ -2158,6 +2656,15 @@
           "derivation_impact": "0",
           "sqlx_validation_impact": "0",
           "dedicated_build_rationale": null
+        },
+        "material_lifecycle": "retain_raw",
+        "transport_semantics": {
+          "transport": "direct",
+          "delivery": "same_process",
+          "ordering": "cursor_order",
+          "replayable": true,
+          "dlq": false,
+          "backpressure": false
         }
       },
       "resource_limits": {
@@ -2236,6 +2743,15 @@
           "derivation_impact": "0",
           "sqlx_validation_impact": "0",
           "dedicated_build_rationale": null
+        },
+        "material_lifecycle": "retain_raw",
+        "transport_semantics": {
+          "transport": "direct",
+          "delivery": "same_process",
+          "ordering": "cursor_order",
+          "replayable": true,
+          "dlq": false,
+          "backpressure": false
         }
       },
       "resource_limits": {
@@ -2315,6 +2831,15 @@
           "derivation_impact": "0",
           "sqlx_validation_impact": "0",
           "dedicated_build_rationale": null
+        },
+        "material_lifecycle": "ephemeral_raw",
+        "transport_semantics": {
+          "transport": "jet_stream",
+          "delivery": "at_least_once",
+          "ordering": "best_effort",
+          "replayable": false,
+          "dlq": true,
+          "backpressure": true
         }
       },
       "resource_limits": {
@@ -2340,6 +2865,93 @@
           "throttle",
           "pause",
           "drain",
+          "inspect"
+        ]
+      }
+    },
+    {
+      "contract": {
+        "id": "interval-lift",
+        "namespace": "derived",
+        "event_types": [
+          [
+            "derived.interval-lift",
+            "state.interval"
+          ]
+        ],
+        "privacy_tier": "sensitive",
+        "horizons": [
+          "continuous"
+        ],
+        "retention": {
+          "kind": "forever"
+        },
+        "occurrence_identity": {
+          "kind": "uuid5_from",
+          "key": "(source, state_kind, subject_id, start_parent_event_id, end_parent_event_id)"
+        },
+        "access_scope": {
+          "scope": "internal"
+        }
+      },
+      "binding": {
+        "subject": "source:interval-lift",
+        "id": "interval-lift",
+        "domain": "derived",
+        "implementation": "sinexd",
+        "adapter": "AutomatonRuntime",
+        "output_event_type": "state.interval",
+        "privacy_context": "metadata",
+        "resource_profile": "event_stream_consumer",
+        "capabilities": [],
+        "source_id": "interval-lift",
+        "proposed": false,
+        "runner_pack": "in_process",
+        "checkpoint_family": {
+          "kind": "append_stream"
+        },
+        "runtime_shape": "continuous",
+        "build_impact": {
+          "crate_impact": "0",
+          "binary_impact": "0",
+          "nix_output_impact": "0",
+          "derivation_impact": "0",
+          "sqlx_validation_impact": "0",
+          "dedicated_build_rationale": null
+        },
+        "material_lifecycle": "retain_raw",
+        "transport_semantics": {
+          "transport": "direct",
+          "delivery": "same_process",
+          "ordering": "cursor_order",
+          "replayable": true,
+          "dlq": false,
+          "backpressure": false
+        }
+      },
+      "resource_limits": {
+        "memory_max_mib": 512,
+        "cpu_weight": 120
+      },
+      "resource_budget": {
+        "work_class": "projection_hot",
+        "steady_memory_mib": 256,
+        "burst_memory_mib": 512,
+        "cpu_weight": 120,
+        "max_input_bytes_per_sec": 16777216,
+        "max_input_events_per_sec": 20000,
+        "max_pending_material_bytes": 33554432,
+        "max_pending_candidates": 20000,
+        "max_unacked_transport_messages": 2000,
+        "batch_size": 2000,
+        "flush_interval_ms": 500,
+        "checkpoint_interval_ms": 1000,
+        "expected_disk_write_bytes_per_min": 536870912,
+        "expected_wal_write_bytes_per_min": 536870912,
+        "pressure_actions": [
+          "throttle",
+          "defer",
+          "retry",
           "inspect"
         ]
       }
@@ -2393,6 +3005,15 @@
           "derivation_impact": "0",
           "sqlx_validation_impact": "0",
           "dedicated_build_rationale": null
+        },
+        "material_lifecycle": "retain_raw",
+        "transport_semantics": {
+          "transport": "direct",
+          "delivery": "same_process",
+          "ordering": "cursor_order",
+          "replayable": true,
+          "dlq": false,
+          "backpressure": false
         }
       },
       "resource_limits": {
@@ -2494,6 +3115,15 @@
           "derivation_impact": "0",
           "sqlx_validation_impact": "0",
           "dedicated_build_rationale": null
+        },
+        "material_lifecycle": "retain_raw",
+        "transport_semantics": {
+          "transport": "direct",
+          "delivery": "same_process",
+          "ordering": "cursor_order",
+          "replayable": true,
+          "dlq": false,
+          "backpressure": false
         }
       },
       "runtime_bindings": [
@@ -2529,6 +3159,15 @@
             "derivation_impact": "0",
             "sqlx_validation_impact": "0",
             "dedicated_build_rationale": null
+          },
+          "material_lifecycle": "retain_raw",
+          "transport_semantics": {
+            "transport": "direct",
+            "delivery": "same_process",
+            "ordering": "cursor_order",
+            "replayable": true,
+            "dlq": false,
+            "backpressure": false
           }
         },
         {
@@ -2562,6 +3201,15 @@
             "derivation_impact": "0",
             "sqlx_validation_impact": "0",
             "dedicated_build_rationale": null
+          },
+          "material_lifecycle": "retain_raw",
+          "transport_semantics": {
+            "transport": "direct",
+            "delivery": "same_process",
+            "ordering": "cursor_order",
+            "replayable": true,
+            "dlq": false,
+            "backpressure": false
           }
         },
         {
@@ -2584,7 +3232,7 @@
             "operation:media.audio-transcript.inspect"
           ],
           "source_id": "media.audio-transcript",
-          "proposed": true,
+          "proposed": false,
           "runner_pack": "live",
           "checkpoint_family": {
             "kind": "live_observation"
@@ -2597,6 +3245,15 @@
             "derivation_impact": "0",
             "sqlx_validation_impact": "0",
             "dedicated_build_rationale": null
+          },
+          "material_lifecycle": "ephemeral_raw",
+          "transport_semantics": {
+            "transport": "local_queue",
+            "delivery": "at_most_once",
+            "ordering": "best_effort",
+            "replayable": false,
+            "dlq": true,
+            "backpressure": true
           }
         },
         {
@@ -2617,7 +3274,7 @@
             "operation:media.audio-transcript.inspect"
           ],
           "source_id": "media.audio-transcript",
-          "proposed": true,
+          "proposed": false,
           "runner_pack": "sinexd_source",
           "checkpoint_family": {
             "kind": "append_stream"
@@ -2630,6 +3287,15 @@
             "derivation_impact": "0",
             "sqlx_validation_impact": "0",
             "dedicated_build_rationale": null
+          },
+          "material_lifecycle": "derived_only",
+          "transport_semantics": {
+            "transport": "direct",
+            "delivery": "same_process",
+            "ordering": "cursor_order",
+            "replayable": true,
+            "dlq": false,
+            "backpressure": false
           }
         },
         {
@@ -2651,7 +3317,7 @@
             "operation:media.audio-transcript.inspect"
           ],
           "source_id": "media.audio-transcript",
-          "proposed": true,
+          "proposed": false,
           "runner_pack": "live",
           "checkpoint_family": {
             "kind": "live_observation"
@@ -2664,6 +3330,15 @@
             "derivation_impact": "0",
             "sqlx_validation_impact": "0",
             "dedicated_build_rationale": null
+          },
+          "material_lifecycle": "ephemeral_raw",
+          "transport_semantics": {
+            "transport": "local_queue",
+            "delivery": "at_most_once",
+            "ordering": "best_effort",
+            "replayable": false,
+            "dlq": true,
+            "backpressure": true
           }
         }
       ],
@@ -2705,6 +3380,18 @@
           [
             "media.screen",
             "media.screen.screenshot_observed"
+          ],
+          [
+            "media.screen",
+            "media.screen.capture_session_started"
+          ],
+          [
+            "media.screen",
+            "media.screen.capture_session_ended"
+          ],
+          [
+            "media.screen",
+            "media.screen.video_segment_observed"
           ],
           [
             "media.screen",
@@ -2758,6 +3445,15 @@
           "derivation_impact": "0",
           "sqlx_validation_impact": "0",
           "dedicated_build_rationale": null
+        },
+        "material_lifecycle": "retain_raw",
+        "transport_semantics": {
+          "transport": "direct",
+          "delivery": "same_process",
+          "ordering": "cursor_order",
+          "replayable": true,
+          "dlq": false,
+          "backpressure": false
         }
       },
       "runtime_bindings": [
@@ -2793,6 +3489,15 @@
             "derivation_impact": "0",
             "sqlx_validation_impact": "0",
             "dedicated_build_rationale": null
+          },
+          "material_lifecycle": "retain_raw",
+          "transport_semantics": {
+            "transport": "direct",
+            "delivery": "same_process",
+            "ordering": "cursor_order",
+            "replayable": true,
+            "dlq": false,
+            "backpressure": false
           }
         },
         {
@@ -2815,7 +3520,7 @@
             "operation:media.screen-ocr.inspect"
           ],
           "source_id": "media.screen-ocr",
-          "proposed": true,
+          "proposed": false,
           "runner_pack": "live",
           "checkpoint_family": {
             "kind": "live_observation"
@@ -2828,6 +3533,15 @@
             "derivation_impact": "0",
             "sqlx_validation_impact": "0",
             "dedicated_build_rationale": null
+          },
+          "material_lifecycle": "ephemeral_raw",
+          "transport_semantics": {
+            "transport": "local_queue",
+            "delivery": "at_most_once",
+            "ordering": "best_effort",
+            "replayable": false,
+            "dlq": true,
+            "backpressure": true
           }
         },
         {
@@ -2848,7 +3562,7 @@
             "operation:media.screen-ocr.inspect"
           ],
           "source_id": "media.screen-ocr",
-          "proposed": true,
+          "proposed": false,
           "runner_pack": "sinexd_source",
           "checkpoint_family": {
             "kind": "append_stream"
@@ -2861,6 +3575,15 @@
             "derivation_impact": "0",
             "sqlx_validation_impact": "0",
             "dedicated_build_rationale": null
+          },
+          "material_lifecycle": "derived_only",
+          "transport_semantics": {
+            "transport": "direct",
+            "delivery": "same_process",
+            "ordering": "cursor_order",
+            "replayable": true,
+            "dlq": false,
+            "backpressure": false
           }
         },
         {
@@ -2881,7 +3604,7 @@
             "operation:media.screen-ocr.inspect"
           ],
           "source_id": "media.screen-ocr",
-          "proposed": true,
+          "proposed": false,
           "runner_pack": "live",
           "checkpoint_family": {
             "kind": "live_observation"
@@ -2894,6 +3617,57 @@
             "derivation_impact": "0",
             "sqlx_validation_impact": "0",
             "dedicated_build_rationale": null
+          },
+          "material_lifecycle": "ephemeral_raw",
+          "transport_semantics": {
+            "transport": "local_queue",
+            "delivery": "at_most_once",
+            "ordering": "best_effort",
+            "replayable": false,
+            "dlq": true,
+            "backpressure": true
+          }
+        },
+        {
+          "subject": "source:media.screen-ocr.on-demand-video",
+          "id": "media.screen-ocr",
+          "domain": "media",
+          "implementation": "live-capture",
+          "adapter": "ScreenVideoCaptureAdapter",
+          "output_event_type": "media.screen.video_segment_observed",
+          "privacy_context": "document",
+          "resource_profile": "live_watcher",
+          "capabilities": [
+            "coverage:source-coverage",
+            "debt:unified-debt-view",
+            "operation:media.screen-ocr.record-video",
+            "operation:media.screen-ocr.pause",
+            "operation:media.screen-ocr.resume",
+            "operation:media.screen-ocr.inspect"
+          ],
+          "source_id": "media.screen-ocr",
+          "proposed": false,
+          "runner_pack": "live",
+          "checkpoint_family": {
+            "kind": "live_observation"
+          },
+          "runtime_shape": "on_demand",
+          "build_impact": {
+            "crate_impact": "0",
+            "binary_impact": "0",
+            "nix_output_impact": "0",
+            "derivation_impact": "0",
+            "sqlx_validation_impact": "0",
+            "dedicated_build_rationale": null
+          },
+          "material_lifecycle": "ephemeral_raw",
+          "transport_semantics": {
+            "transport": "local_queue",
+            "delivery": "at_most_once",
+            "ordering": "best_effort",
+            "replayable": false,
+            "dlq": true,
+            "backpressure": true
           }
         },
         {
@@ -2927,6 +3701,57 @@
             "derivation_impact": "0",
             "sqlx_validation_impact": "0",
             "dedicated_build_rationale": null
+          },
+          "material_lifecycle": "retain_raw",
+          "transport_semantics": {
+            "transport": "direct",
+            "delivery": "same_process",
+            "ordering": "cursor_order",
+            "replayable": true,
+            "dlq": false,
+            "backpressure": false
+          }
+        },
+        {
+          "subject": "source:media.screen-ocr.video-staged",
+          "id": "media.screen-ocr",
+          "domain": "media",
+          "implementation": "staged-screen-video-bundle",
+          "adapter": "FileContentDropAdapter",
+          "output_event_type": "media.screen.video_segment_observed",
+          "privacy_context": "document",
+          "resource_profile": "oneshot",
+          "capabilities": [
+            "coverage:source-coverage",
+            "debt:unified-debt-view",
+            "operation:media.screen-ocr.import-video",
+            "operation:media.screen-ocr.inspect",
+            "operation:media.screen-ocr.delete-material",
+            "operation:media.screen-ocr.export"
+          ],
+          "source_id": "media.screen-ocr",
+          "proposed": false,
+          "runner_pack": "staged",
+          "checkpoint_family": {
+            "kind": "append_stream"
+          },
+          "runtime_shape": "scheduled",
+          "build_impact": {
+            "crate_impact": "0",
+            "binary_impact": "0",
+            "nix_output_impact": "0",
+            "derivation_impact": "0",
+            "sqlx_validation_impact": "0",
+            "dedicated_build_rationale": null
+          },
+          "material_lifecycle": "retain_raw",
+          "transport_semantics": {
+            "transport": "direct",
+            "delivery": "same_process",
+            "ordering": "cursor_order",
+            "replayable": true,
+            "dlq": false,
+            "backpressure": false
           }
         }
       ],
@@ -3000,6 +3825,15 @@
           "derivation_impact": "0",
           "sqlx_validation_impact": "0",
           "dedicated_build_rationale": null
+        },
+        "material_lifecycle": "retain_raw",
+        "transport_semantics": {
+          "transport": "direct",
+          "delivery": "same_process",
+          "ordering": "cursor_order",
+          "replayable": true,
+          "dlq": false,
+          "backpressure": false
         }
       },
       "resource_limits": {
@@ -3078,6 +3912,15 @@
           "derivation_impact": "0",
           "sqlx_validation_impact": "0",
           "dedicated_build_rationale": null
+        },
+        "material_lifecycle": "retain_raw",
+        "transport_semantics": {
+          "transport": "direct",
+          "delivery": "same_process",
+          "ordering": "cursor_order",
+          "replayable": true,
+          "dlq": false,
+          "backpressure": false
         }
       },
       "resource_limits": {
@@ -3155,6 +3998,15 @@
           "derivation_impact": "0",
           "sqlx_validation_impact": "0",
           "dedicated_build_rationale": null
+        },
+        "material_lifecycle": "retain_raw",
+        "transport_semantics": {
+          "transport": "direct",
+          "delivery": "same_process",
+          "ordering": "cursor_order",
+          "replayable": true,
+          "dlq": false,
+          "backpressure": false
         }
       },
       "resource_limits": {
@@ -3232,6 +4084,15 @@
           "derivation_impact": "0",
           "sqlx_validation_impact": "0",
           "dedicated_build_rationale": null
+        },
+        "material_lifecycle": "retain_raw",
+        "transport_semantics": {
+          "transport": "direct",
+          "delivery": "same_process",
+          "ordering": "cursor_order",
+          "replayable": true,
+          "dlq": false,
+          "backpressure": false
         }
       },
       "resource_limits": {
@@ -3309,6 +4170,15 @@
           "derivation_impact": "0",
           "sqlx_validation_impact": "0",
           "dedicated_build_rationale": null
+        },
+        "material_lifecycle": "retain_raw",
+        "transport_semantics": {
+          "transport": "direct",
+          "delivery": "same_process",
+          "ordering": "cursor_order",
+          "replayable": true,
+          "dlq": false,
+          "backpressure": false
         }
       },
       "resource_limits": {
@@ -3386,6 +4256,15 @@
           "derivation_impact": "0",
           "sqlx_validation_impact": "0",
           "dedicated_build_rationale": null
+        },
+        "material_lifecycle": "retain_raw",
+        "transport_semantics": {
+          "transport": "direct",
+          "delivery": "same_process",
+          "ordering": "cursor_order",
+          "replayable": true,
+          "dlq": false,
+          "backpressure": false
         }
       },
       "resource_limits": {
@@ -3464,6 +4343,15 @@
           "derivation_impact": "0",
           "sqlx_validation_impact": "0",
           "dedicated_build_rationale": null
+        },
+        "material_lifecycle": "retain_raw",
+        "transport_semantics": {
+          "transport": "direct",
+          "delivery": "same_process",
+          "ordering": "cursor_order",
+          "replayable": true,
+          "dlq": false,
+          "backpressure": false
         }
       },
       "resource_limits": {
@@ -3541,6 +4429,15 @@
           "derivation_impact": "0",
           "sqlx_validation_impact": "0",
           "dedicated_build_rationale": null
+        },
+        "material_lifecycle": "retain_raw",
+        "transport_semantics": {
+          "transport": "direct",
+          "delivery": "same_process",
+          "ordering": "cursor_order",
+          "replayable": true,
+          "dlq": false,
+          "backpressure": false
         }
       },
       "resource_limits": {
@@ -3630,6 +4527,15 @@
           "derivation_impact": "0",
           "sqlx_validation_impact": "0",
           "dedicated_build_rationale": null
+        },
+        "material_lifecycle": "retain_raw",
+        "transport_semantics": {
+          "transport": "direct",
+          "delivery": "same_process",
+          "ordering": "cursor_order",
+          "replayable": true,
+          "dlq": false,
+          "backpressure": false
         }
       },
       "resource_limits": {
@@ -3707,6 +4613,15 @@
           "derivation_impact": "0",
           "sqlx_validation_impact": "0",
           "dedicated_build_rationale": null
+        },
+        "material_lifecycle": "retain_raw",
+        "transport_semantics": {
+          "transport": "direct",
+          "delivery": "same_process",
+          "ordering": "cursor_order",
+          "replayable": true,
+          "dlq": false,
+          "backpressure": false
         }
       },
       "resource_limits": {
@@ -3800,6 +4715,15 @@
           "derivation_impact": "0",
           "sqlx_validation_impact": "0",
           "dedicated_build_rationale": null
+        },
+        "material_lifecycle": "retain_raw",
+        "transport_semantics": {
+          "transport": "direct",
+          "delivery": "same_process",
+          "ordering": "cursor_order",
+          "replayable": true,
+          "dlq": false,
+          "backpressure": false
         }
       },
       "resource_limits": {
@@ -3893,6 +4817,15 @@
           "derivation_impact": "0",
           "sqlx_validation_impact": "0",
           "dedicated_build_rationale": null
+        },
+        "material_lifecycle": "retain_raw",
+        "transport_semantics": {
+          "transport": "direct",
+          "delivery": "same_process",
+          "ordering": "cursor_order",
+          "replayable": true,
+          "dlq": false,
+          "backpressure": false
         }
       },
       "resource_limits": {
@@ -3982,6 +4915,15 @@
           "derivation_impact": "0",
           "sqlx_validation_impact": "0",
           "dedicated_build_rationale": null
+        },
+        "material_lifecycle": "retain_raw",
+        "transport_semantics": {
+          "transport": "direct",
+          "delivery": "same_process",
+          "ordering": "cursor_order",
+          "replayable": true,
+          "dlq": false,
+          "backpressure": false
         }
       },
       "resource_limits": {
@@ -4060,6 +5002,15 @@
           "derivation_impact": "0",
           "sqlx_validation_impact": "0",
           "dedicated_build_rationale": null
+        },
+        "material_lifecycle": "retain_raw",
+        "transport_semantics": {
+          "transport": "direct",
+          "delivery": "same_process",
+          "ordering": "cursor_order",
+          "replayable": true,
+          "dlq": false,
+          "backpressure": false
         }
       },
       "resource_limits": {
@@ -4137,6 +5088,15 @@
           "derivation_impact": "0",
           "sqlx_validation_impact": "0",
           "dedicated_build_rationale": null
+        },
+        "material_lifecycle": "retain_raw",
+        "transport_semantics": {
+          "transport": "direct",
+          "delivery": "same_process",
+          "ordering": "cursor_order",
+          "replayable": true,
+          "dlq": false,
+          "backpressure": false
         }
       },
       "resource_limits": {
@@ -4245,6 +5205,15 @@
           "derivation_impact": "0",
           "sqlx_validation_impact": "0",
           "dedicated_build_rationale": null
+        },
+        "material_lifecycle": "ephemeral_raw",
+        "transport_semantics": {
+          "transport": "local_queue",
+          "delivery": "at_most_once",
+          "ordering": "best_effort",
+          "replayable": false,
+          "dlq": true,
+          "backpressure": true
         }
       },
       "resource_limits": {
@@ -4328,6 +5297,15 @@
           "derivation_impact": "0",
           "sqlx_validation_impact": "0",
           "dedicated_build_rationale": null
+        },
+        "material_lifecycle": "ephemeral_raw",
+        "transport_semantics": {
+          "transport": "local_queue",
+          "delivery": "at_most_once",
+          "ordering": "cursor_order",
+          "replayable": true,
+          "dlq": true,
+          "backpressure": true
         }
       },
       "resource_limits": {
@@ -4405,6 +5383,15 @@
           "derivation_impact": "0",
           "sqlx_validation_impact": "0",
           "dedicated_build_rationale": null
+        },
+        "material_lifecycle": "retain_raw",
+        "transport_semantics": {
+          "transport": "direct",
+          "delivery": "same_process",
+          "ordering": "best_effort",
+          "replayable": false,
+          "dlq": false,
+          "backpressure": false
         }
       },
       "resource_limits": {
@@ -4497,6 +5484,15 @@
           "derivation_impact": "0",
           "sqlx_validation_impact": "0",
           "dedicated_build_rationale": null
+        },
+        "material_lifecycle": "ephemeral_raw",
+        "transport_semantics": {
+          "transport": "local_queue",
+          "delivery": "at_most_once",
+          "ordering": "cursor_order",
+          "replayable": true,
+          "dlq": true,
+          "backpressure": true
         }
       },
       "resource_limits": {
@@ -4590,6 +5586,15 @@
           "derivation_impact": "0",
           "sqlx_validation_impact": "0",
           "dedicated_build_rationale": null
+        },
+        "material_lifecycle": "ephemeral_raw",
+        "transport_semantics": {
+          "transport": "local_queue",
+          "delivery": "at_most_once",
+          "ordering": "best_effort",
+          "replayable": false,
+          "dlq": true,
+          "backpressure": true
         }
       },
       "resource_limits": {
@@ -4668,6 +5673,15 @@
           "derivation_impact": "0",
           "sqlx_validation_impact": "0",
           "dedicated_build_rationale": null
+        },
+        "material_lifecycle": "retain_raw",
+        "transport_semantics": {
+          "transport": "direct",
+          "delivery": "same_process",
+          "ordering": "cursor_order",
+          "replayable": true,
+          "dlq": false,
+          "backpressure": false
         }
       },
       "resource_limits": {
@@ -4746,6 +5760,15 @@
           "derivation_impact": "0",
           "sqlx_validation_impact": "0",
           "dedicated_build_rationale": null
+        },
+        "material_lifecycle": "retain_raw",
+        "transport_semantics": {
+          "transport": "direct",
+          "delivery": "same_process",
+          "ordering": "cursor_order",
+          "replayable": true,
+          "dlq": false,
+          "backpressure": false
         }
       },
       "resource_limits": {
@@ -4831,6 +5854,15 @@
           "derivation_impact": "0",
           "sqlx_validation_impact": "0",
           "dedicated_build_rationale": null
+        },
+        "material_lifecycle": "retain_raw",
+        "transport_semantics": {
+          "transport": "local_queue",
+          "delivery": "at_most_once",
+          "ordering": "material_order",
+          "replayable": true,
+          "dlq": true,
+          "backpressure": true
         }
       },
       "resource_limits": {
@@ -4911,6 +5943,15 @@
           "derivation_impact": "0",
           "sqlx_validation_impact": "0",
           "dedicated_build_rationale": null
+        },
+        "material_lifecycle": "retain_raw",
+        "transport_semantics": {
+          "transport": "local_queue",
+          "delivery": "at_most_once",
+          "ordering": "material_order",
+          "replayable": true,
+          "dlq": true,
+          "backpressure": true
         }
       },
       "resource_limits": {
@@ -4990,6 +6031,15 @@
           "derivation_impact": "0",
           "sqlx_validation_impact": "0",
           "dedicated_build_rationale": null
+        },
+        "material_lifecycle": "retain_raw",
+        "transport_semantics": {
+          "transport": "local_queue",
+          "delivery": "at_most_once",
+          "ordering": "cursor_order",
+          "replayable": true,
+          "dlq": true,
+          "backpressure": true
         }
       },
       "resource_limits": {
@@ -5071,6 +6121,15 @@
           "derivation_impact": "0",
           "sqlx_validation_impact": "0",
           "dedicated_build_rationale": null
+        },
+        "material_lifecycle": "retain_raw",
+        "transport_semantics": {
+          "transport": "local_queue",
+          "delivery": "at_most_once",
+          "ordering": "material_order",
+          "replayable": true,
+          "dlq": true,
+          "backpressure": true
         }
       },
       "resource_limits": {
@@ -5159,6 +6218,15 @@
           "derivation_impact": "0",
           "sqlx_validation_impact": "0",
           "dedicated_build_rationale": null
+        },
+        "material_lifecycle": "ephemeral_raw",
+        "transport_semantics": {
+          "transport": "local_queue",
+          "delivery": "at_most_once",
+          "ordering": "best_effort",
+          "replayable": false,
+          "dlq": true,
+          "backpressure": true
         }
       },
       "resource_limits": {
@@ -5236,6 +6304,15 @@
           "derivation_impact": "0",
           "sqlx_validation_impact": "0",
           "dedicated_build_rationale": null
+        },
+        "material_lifecycle": "retain_raw",
+        "transport_semantics": {
+          "transport": "direct",
+          "delivery": "same_process",
+          "ordering": "best_effort",
+          "replayable": false,
+          "dlq": false,
+          "backpressure": false
         }
       },
       "resource_limits": {
@@ -5314,6 +6391,15 @@
           "derivation_impact": "0",
           "sqlx_validation_impact": "0",
           "dedicated_build_rationale": null
+        },
+        "material_lifecycle": "retain_raw",
+        "transport_semantics": {
+          "transport": "local_queue",
+          "delivery": "at_most_once",
+          "ordering": "cursor_order",
+          "replayable": true,
+          "dlq": true,
+          "backpressure": true
         }
       },
       "resource_limits": {
@@ -5393,6 +6479,15 @@
           "derivation_impact": "0",
           "sqlx_validation_impact": "0",
           "dedicated_build_rationale": null
+        },
+        "material_lifecycle": "retain_raw",
+        "transport_semantics": {
+          "transport": "local_queue",
+          "delivery": "at_most_once",
+          "ordering": "cursor_order",
+          "replayable": true,
+          "dlq": true,
+          "backpressure": true
         }
       },
       "resource_limits": {
@@ -5482,6 +6577,15 @@
           "derivation_impact": "0",
           "sqlx_validation_impact": "0",
           "dedicated_build_rationale": null
+        },
+        "material_lifecycle": "ephemeral_raw",
+        "transport_semantics": {
+          "transport": "direct",
+          "delivery": "same_process",
+          "ordering": "cursor_order",
+          "replayable": true,
+          "dlq": false,
+          "backpressure": false
         }
       },
       "resource_limits": {
@@ -5559,6 +6663,15 @@
           "derivation_impact": "0",
           "sqlx_validation_impact": "0",
           "dedicated_build_rationale": null
+        },
+        "material_lifecycle": "ephemeral_raw",
+        "transport_semantics": {
+          "transport": "direct",
+          "delivery": "same_process",
+          "ordering": "cursor_order",
+          "replayable": true,
+          "dlq": false,
+          "backpressure": false
         }
       },
       "resource_limits": {
@@ -5637,6 +6750,15 @@
           "derivation_impact": "0",
           "sqlx_validation_impact": "0",
           "dedicated_build_rationale": null
+        },
+        "material_lifecycle": "retain_raw",
+        "transport_semantics": {
+          "transport": "direct",
+          "delivery": "same_process",
+          "ordering": "cursor_order",
+          "replayable": true,
+          "dlq": false,
+          "backpressure": false
         }
       },
       "resource_limits": {
@@ -5714,6 +6836,15 @@
           "derivation_impact": "0",
           "sqlx_validation_impact": "0",
           "dedicated_build_rationale": null
+        },
+        "material_lifecycle": "retain_raw",
+        "transport_semantics": {
+          "transport": "direct",
+          "delivery": "same_process",
+          "ordering": "cursor_order",
+          "replayable": true,
+          "dlq": false,
+          "backpressure": false
         }
       },
       "resource_limits": {
