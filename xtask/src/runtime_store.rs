@@ -431,20 +431,38 @@ async fn query_jetstream_stream(
 
 fn jetstream_stream_targets() -> Vec<(&'static str, String)> {
     let env = environment();
-    let base_stream = env.nats_stream_name("SINEX_RAW_EVENTS");
-    let topology = JetStreamTopology::new(&env, base_stream, "event-engine".to_string(), None);
+    let activity_base_stream = env.nats_stream_name("SINEX_RAW_EVENTS");
+    let activity =
+        JetStreamTopology::new(&env, activity_base_stream, "event-engine".to_string(), None);
+    let reflection_base_stream = env.nats_stream_name("SINEX_REFLECTION_EVENTS");
+    let reflection = JetStreamTopology::reflection(
+        &env,
+        reflection_base_stream,
+        "event-engine-reflection".to_string(),
+        None,
+    );
     vec![
-        ("raw", topology.events_stream.into_string()),
+        ("raw", activity.events_stream.into_string()),
         (
             "confirmed-events",
-            topology.confirmed_events_stream.into_string(),
+            activity.confirmed_events_stream.into_string(),
         ),
-        ("dlq", topology.dlq_stream.into_string()),
+        ("dlq", activity.dlq_stream.into_string()),
         (
             "processing-failures",
-            topology.processing_failures_stream.into_string(),
+            activity.processing_failures_stream.into_string(),
         ),
-        ("invalidations", topology.invalidation_stream.into_string()),
+        ("reflection-raw", reflection.events_stream.into_string()),
+        (
+            "reflection-confirmed-events",
+            reflection.confirmed_events_stream.into_string(),
+        ),
+        ("reflection-dlq", reflection.dlq_stream.into_string()),
+        (
+            "reflection-processing-failures",
+            reflection.processing_failures_stream.into_string(),
+        ),
+        ("invalidations", activity.invalidation_stream.into_string()),
         ("source-material", env.nats_stream_name("SOURCE_MATERIAL")),
     ]
 }
@@ -474,10 +492,10 @@ pub fn assess_jetstream(snapshot: &JetStreamStoreSnapshot) -> Vec<String> {
             .iter()
             .map(|consumer| consumer.num_pending)
             .sum::<u64>();
-        if stream.role == "raw" && pending > 0 {
+        if matches!(stream.role.as_str(), "raw" | "reflection-raw") && pending > 0 {
             warnings.push(format!(
-                "raw JetStream consumer backlog: {pending} pending message(s) on {}",
-                stream.stream
+                "{} JetStream consumer backlog: {pending} pending message(s) on {}",
+                stream.role, stream.stream
             ));
         }
         if stream.role == "source-material" && pending > 0 {
@@ -536,6 +554,7 @@ async fn query_table_estimates(
         WITH RECURSIVE targets(schema_name, table_name) AS (
             VALUES
                 ('core', 'events'),
+                ('reflection', 'events'),
                 ('raw', 'source_material_registry'),
                 ('sinex_schemas', 'dlq_events')
         ),

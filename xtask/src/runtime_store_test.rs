@@ -206,6 +206,66 @@ fn jetstream_assessment_surfaces_raw_consumer_backlog() {
 }
 
 #[test]
+fn jetstream_targets_include_reflection_lane_streams() {
+    let targets = jetstream_stream_targets();
+
+    assert!(targets.iter().any(|(role, stream)| {
+        *role == "reflection-raw" && stream.ends_with("SINEX_REFLECTION_EVENTS")
+    }));
+    assert!(targets.iter().any(|(role, stream)| {
+        *role == "reflection-confirmed-events"
+            && stream.ends_with("SINEX_REFLECTION_EVENTS_CONFIRMED")
+    }));
+    assert!(targets.iter().any(|(role, stream)| {
+        *role == "reflection-dlq" && stream.ends_with("SINEX_REFLECTION_EVENTS_DLQ")
+    }));
+    assert!(targets.iter().any(|(role, stream)| {
+        *role == "reflection-processing-failures"
+            && stream.ends_with("SINEX_REFLECTION_EVENTS_PROCESSING_FAILURES")
+    }));
+}
+
+#[test]
+fn jetstream_assessment_surfaces_reflection_consumer_backlog() {
+    let snapshot = JetStreamStoreSnapshot {
+        nats_url: "nats://localhost:4308".to_string(),
+        available: true,
+        error: None,
+        streams: vec![JetStreamStreamSnapshot {
+            role: "reflection-raw".to_string(),
+            stream: "DEV_SINEX_REFLECTION_EVENTS".to_string(),
+            present: true,
+            messages: Some(100),
+            bytes: Some(1024),
+            first_sequence: Some(1),
+            last_sequence: Some(100),
+            consumer_count: Some(1),
+            consumers: vec![JetStreamConsumerSnapshot {
+                name: "event-engine-reflection".to_string(),
+                durable_name: Some("event-engine-reflection".to_string()),
+                filter_subject: "dev.sinex.reflection.>".to_string(),
+                num_pending: 17,
+                num_ack_pending: 0,
+                num_redelivered: 0,
+                num_waiting: 0,
+                delivered_stream_sequence: 83,
+                ack_floor_stream_sequence: 83,
+            }],
+            error: None,
+        }],
+        sql_dlq_unresolved: 0,
+        jetstream_dlq_messages: None,
+        warnings: Vec::new(),
+    };
+
+    let warnings = assess_jetstream(&snapshot);
+
+    assert!(warnings.iter().any(|warning| {
+        warning.contains("reflection-raw JetStream consumer backlog: 17 pending")
+    }));
+}
+
+#[test]
 fn jetstream_assessment_surfaces_source_material_redelivery_pressure() {
     let snapshot = JetStreamStoreSnapshot {
         nats_url: "nats://localhost:4308".to_string(),
