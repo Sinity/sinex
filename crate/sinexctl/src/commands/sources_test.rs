@@ -3,16 +3,17 @@ use crate::fmt::render_finite_envelope;
 use sinex_primitives::domain::{MaterialStatus, SourceMaterialTimingInfoType};
 use sinex_primitives::parser::ParserId;
 use sinex_primitives::rpc::sources::{
+    ContinuityContractStatus,
     SourceMaterialRemediationCandidate, SourceMaterialRemediationPage,
     SourceMaterialRemediationSummary, SourceReadinessCost, SourceReadinessStatus,
     SourceShapeDriftObservation, SourceShapeTypeChange, SourcesRemediationPlanResponse,
-    caveat_codes,
+    ReplayabilityStatus, caveat_codes,
 };
 use sinex_primitives::views::{
     SOURCE_CONTINUITY_DETAIL_SCHEMA_VERSION, SOURCE_CONTINUITY_GAP_SCHEMA_VERSION,
     SOURCE_CONTINUITY_LIST_SCHEMA_VERSION, SOURCE_DRIFT_LIST_SCHEMA_VERSION,
     SOURCE_READINESS_DETAIL_SCHEMA_VERSION, SOURCE_READINESS_LIST_SCHEMA_VERSION,
-    VIEW_ENVELOPE_SCHEMA_VERSION,
+    ReadinessCaveatId, VIEW_ENVELOPE_SCHEMA_VERSION,
 };
 use xtask::sandbox::prelude::*;
 
@@ -219,15 +220,11 @@ async fn stage_request_preserves_package_mode_binding() -> TestResult<()> {
 
 #[sinex_test]
 async fn source_material_list_envelope_renders_finite_json_document() -> TestResult<()> {
-    let envelope = ViewEnvelope::new(
-        "sinexctl.sources.list",
-        SourceMaterialListView::new(vec![fixture_material("material-1")]),
-    )
-    .with_query_echo(serde_json::json!({
-        "status": "completed",
-        "source": "fixture.source",
-        "limit": 1,
-    }));
+    let response = SourcesListResponse {
+        materials: vec![fixture_material("material-1")],
+    };
+    let envelope =
+        source_material_list_envelope(&response, Some("completed"), Some("fixture.source"), 1);
 
     let rendered = render_finite_envelope(&envelope, OutputFormat::Json)?
         .expect("json renders finite envelope");
@@ -248,14 +245,32 @@ async fn source_material_list_envelope_renders_finite_json_document() -> TestRes
 }
 
 #[sinex_test]
+async fn empty_source_material_list_envelope_carries_coverage_caveat() -> TestResult<()> {
+    let response = SourcesListResponse {
+        materials: Vec::new(),
+    };
+    let envelope = source_material_list_envelope(&response, None, None, 50);
+
+    assert_eq!(envelope.caveats.len(), 1);
+    assert_eq!(
+        envelope.caveats[0].id,
+        ReadinessCaveatId::CoverageUnmeasurable.as_str()
+    );
+    assert!(
+        envelope.caveats[0]
+            .message
+            .contains("selected registry slice is empty")
+    );
+    assert_eq!(envelope.payload.count, 0);
+    Ok(())
+}
+
+#[sinex_test]
 async fn source_coverage_envelope_renders_finite_json_document() -> TestResult<()> {
-    let envelope = ViewEnvelope::new(
-        "sinexctl.sources.coverage",
-        SourceCoverageListView::new(vec![fixture_coverage("fixture.source")]),
-    )
-    .with_query_echo(serde_json::json!({
-        "limit": 100,
-    }));
+    let response = SourcesCoverageResponse {
+        sources: vec![fixture_coverage("fixture.source")],
+    };
+    let envelope = source_coverage_envelope(&response, 100);
 
     let rendered = render_finite_envelope(&envelope, OutputFormat::Json)?
         .expect("json renders finite envelope");
@@ -276,6 +291,56 @@ async fn source_coverage_envelope_renders_finite_json_document() -> TestResult<(
         value["payload"]["sources"][0]["source_identifier"],
         "fixture.source"
     );
+    Ok(())
+}
+
+#[sinex_test]
+async fn empty_source_coverage_envelope_carries_coverage_caveat() -> TestResult<()> {
+    let response = SourcesCoverageResponse {
+        sources: Vec::new(),
+    };
+    let envelope = source_coverage_envelope(&response, 100);
+
+    assert_eq!(envelope.caveats.len(), 1);
+    assert_eq!(
+        envelope.caveats[0].id,
+        ReadinessCaveatId::CoverageUnmeasurable.as_str()
+    );
+    assert!(
+        envelope.caveats[0]
+            .message
+            .contains("coverage is unmeasurable")
+    );
+    assert_eq!(envelope.payload.count, 0);
+    Ok(())
+}
+
+#[sinex_test]
+async fn source_material_detail_envelope_renders_query_echo() -> TestResult<()> {
+    let envelope = ViewEnvelope::new(
+        "sinexctl.sources.show",
+        SourceMaterialDetailView::new(fixture_material_detail(
+            "material-1",
+            MaterialStatus::Completed,
+            7,
+            serde_json::json!({"fixture": true}),
+        )),
+    )
+    .with_query_echo(serde_json::json!({
+        "material_id": "material-1",
+    }));
+
+    let rendered = render_finite_envelope(&envelope, OutputFormat::Json)?
+        .expect("json renders finite envelope");
+    let value: serde_json::Value = serde_json::from_str(&rendered)?;
+
+    assert_eq!(value["source_surface"], "sinexctl.sources.show");
+    assert_eq!(
+        value["payload"]["schema_version"],
+        SOURCE_MATERIAL_DETAIL_SCHEMA_VERSION
+    );
+    assert_eq!(value["payload"]["material"]["id"], "material-1");
+    assert_eq!(value["query_echo"]["material_id"], "material-1");
     Ok(())
 }
 
@@ -507,6 +572,38 @@ async fn source_continuity_gap_envelope_renders_finite_json_document() -> TestRe
 }
 
 #[sinex_test]
+async fn empty_source_continuity_diagnostics_carries_coverage_caveat() -> TestResult<()> {
+    let response = SourcesContinuityResponse {
+        source_identifier: "fixture.source".to_string(),
+        coverage_gaps: Vec::new(),
+        contract_status: ContinuityContractStatus {
+            has_coverage_contract: false,
+            expected_interval_seconds: None,
+            actual_coverage_percent: None,
+            breaches: Vec::new(),
+        },
+        replayability: ReplayabilityStatus {
+            replayable: false,
+            reason: Some("no source materials".to_string()),
+            material_count: 0,
+            events_count: 0,
+        },
+    };
+    let envelope = source_continuity_diagnostics_envelope(response, "fixture.source", None);
+
+    assert_eq!(envelope.payload.coverage_gap_count, 0);
+    assert_eq!(envelope.payload.material_count, 0);
+    assert_eq!(envelope.payload.event_count, 0);
+    assert_eq!(envelope.caveats.len(), 1);
+    assert_eq!(
+        envelope.caveats[0].id,
+        ReadinessCaveatId::CoverageUnmeasurable.as_str()
+    );
+    assert_eq!(envelope.query_echo.as_ref().unwrap()["source"], "fixture.source");
+    Ok(())
+}
+
+#[sinex_test]
 async fn source_material_table_renderer_stays_on_raw_response() -> TestResult<()> {
     let table = format_source_materials_table(&SourcesListResponse {
         materials: vec![fixture_material("abcdef123456")],
@@ -527,7 +624,7 @@ async fn source_coverage_table_renderer_stays_on_raw_response() -> TestResult<()
     });
 
     assert!(table.contains("fixture.source"));
-    assert!(table.contains("session_document"));
+    assert!(table.contains("annex"));
     assert!(table.contains("PARTIAL"));
     assert!(table.contains("7"));
     assert!(table.contains("1"));
