@@ -4,9 +4,15 @@ use clap::Args;
 use color_eyre::Result;
 use console::style;
 use serde_json::json;
+use sinex_primitives::JsonValue;
+use sinex_primitives::events::{Event, Provenance};
+use sinex_primitives::ids::Id;
 #[cfg(test)]
 use sinex_primitives::query::QueryResultEvent;
-use sinex_primitives::query::{EventQuery, SortDirection, TimeRange};
+use sinex_primitives::query::{
+    EventQuery, LineageDirection, LineageNode, LineageQuery, LineageResult, SortDirection,
+    TimeRange,
+};
 use sinex_primitives::relations::{
     EventRelationExpr, EvidenceRef, EvidenceRole, EvidenceWindow, ExpansionStep, ExpansionStepKind,
     ExpansionTrace, ObservedRange, TimeBasis,
@@ -17,11 +23,11 @@ use sinex_primitives::views::{
     ActionAvailability, ActionAvailabilityState, CaveatView, ContextAttentionSpanView,
     ContextSessionView, ContextSourceView, ContextSummaryView, DesktopContextCandidateView,
     DesktopContextInputEvidence, DesktopContextInputState, DesktopContextView,
-    DesktopFocusSessionListView, DesktopFocusSessionView,
-    DesktopNotificationPressureView, DesktopProjectContextListView, DesktopProjectContextRowView,
-    EVENT_CARD_LIST_SCHEMA_VERSION, EventCardListView, EventCardView, PrivacyStateKind,
-    ReadinessCaveatId, SinexObjectKind, SinexObjectRef, SourceCoverageContinuity,
-    SourceCoverageListView, SourceCoverageReadiness, SourceCoverageView, ViewEnvelope,
+    DesktopFocusSessionListView, DesktopFocusSessionView, DesktopNotificationPressureView,
+    DesktopProjectContextListView, DesktopProjectContextRowView, EVENT_CARD_LIST_SCHEMA_VERSION,
+    EventCardListView, EventCardView, PrivacyStateKind, ReadinessCaveatId, SinexObjectKind,
+    SinexObjectRef, SourceCoverageContinuity, SourceCoverageListView, SourceCoverageReadiness,
+    SourceCoverageView, ViewEnvelope,
 };
 use std::collections::HashMap;
 use std::time::{Duration as StdDuration, Instant};
@@ -32,6 +38,8 @@ const MAX_PROJECT_CONTEXT_EVIDENCE_REFS: usize = 12;
 const CONTEXT_BASE_EVENT_CARDS_TIMEOUT: StdDuration = StdDuration::from_secs(20);
 const CONTEXT_DIVERSITY_TOP_UP_TIMEOUT: StdDuration = StdDuration::from_secs(8);
 const CONTEXT_SOURCE_CAVEATS_TIMEOUT: StdDuration = StdDuration::from_secs(5);
+const CONTEXT_ATTENTION_LINEAGE_TIMEOUT: StdDuration = StdDuration::from_secs(5);
+const MAX_ATTENTION_SPAN_LINEAGE_EXPANSIONS: usize = 12;
 const CONTEXT_DIVERSITY_SOURCES: &[&str] = &[
     "shell.atuin",
     "shell.kitty",
@@ -273,6 +281,7 @@ struct ContextStageTimings {
     diversity_top_up: StdDuration,
     self_observation_filter: StdDuration,
     source_caveats: StdDuration,
+    attention_lineage: StdDuration,
 }
 
 impl ContextStageTimings {
@@ -283,8 +292,15 @@ impl ContextStageTimings {
             "diversity_top_up": duration_millis(self.diversity_top_up),
             "self_observation_filter": duration_millis(self.self_observation_filter),
             "source_caveats": duration_millis(self.source_caveats),
+            "attention_lineage": duration_millis(self.attention_lineage),
         })
     }
+}
+
+#[derive(Debug, Clone, Default)]
+struct ContextAttentionLineageEvidence {
+    parent_refs: Vec<SinexObjectRef>,
+    support_refs: Vec<SinexObjectRef>,
 }
 
 fn duration_millis(duration: StdDuration) -> u64 {
@@ -321,13 +337,15 @@ async fn execute_context_request(
     };
 
     let started = Instant::now();
-    let mut event_cards =
-        match tokio::time::timeout(CONTEXT_BASE_EVENT_CARDS_TIMEOUT, client.event_cards(query))
-            .await
-        {
-            Ok(cards) => cards?,
-            Err(_) => {
-                stage_caveats.push(CaveatView {
+    let mut event_cards = match tokio::time::timeout(
+        CONTEXT_BASE_EVENT_CARDS_TIMEOUT,
+        client.event_cards(query),
+    )
+    .await
+    {
+        Ok(cards) => cards?,
+        Err(_) => {
+            stage_caveats.push(CaveatView {
                     id: "recall.event_cards_timeout".to_string(),
                     message: format!(
                         "base event-card query exceeded {}s; recall returned a finite degraded packet instead of waiting for the gateway timeout",
@@ -335,15 +353,15 @@ async fn execute_context_request(
                     ),
                     ref_: Some(SinexObjectRef::new(SinexObjectKind::RpcMethod, "events.cards")),
                 });
-                EventCardListView {
-                    schema_version: EVENT_CARD_LIST_SCHEMA_VERSION.to_string(),
-                    count: 0,
-                    cards: Vec::new(),
-                    next_cursor: None,
-                    total_estimate: None,
-                }
+            EventCardListView {
+                schema_version: EVENT_CARD_LIST_SCHEMA_VERSION.to_string(),
+                count: 0,
+                cards: Vec::new(),
+                next_cursor: None,
+                total_estimate: None,
             }
-        };
+        }
+    };
     timings.base_event_cards = started.elapsed();
 
     let started = Instant::now();
@@ -359,6 +377,15 @@ async fn execute_context_request(
     timings.source_caveats = started.elapsed();
     source_caveats.extend(stage_caveats);
     if let Some(caveat) = diversity_caveat {
+        source_caveats.push(caveat);
+    }
+
+    let started = Instant::now();
+    let (attention_lineage_evidence, attention_lineage_caveat) =
+        context_attention_lineage_evidence(client, &event_cards, machine_source_surface, format)
+            .await?;
+    timings.attention_lineage = started.elapsed();
+    if let Some(caveat) = attention_lineage_caveat {
         source_caveats.push(caveat);
     }
     timings.total = total_start.elapsed();
@@ -388,6 +415,7 @@ async fn execute_context_request(
         finite_error_label,
         &source_caveats,
         &timings,
+        &attention_lineage_evidence,
     )? {
         println!("{output}");
         return Ok(());
@@ -596,6 +624,127 @@ fn context_cards_include_source(cards: &[EventCardView], source: &str) -> bool {
     cards.iter().any(|card| card.source.raw == source)
 }
 
+async fn context_attention_lineage_evidence(
+    client: &GatewayClient,
+    event_cards: &EventCardListView,
+    source_surface: &'static str,
+    format: OutputFormat,
+) -> Result<(
+    HashMap<String, ContextAttentionLineageEvidence>,
+    Option<CaveatView>,
+)> {
+    if source_surface != "sinexctl.recall"
+        || !matches!(format, OutputFormat::Json | OutputFormat::Yaml)
+    {
+        return Ok((HashMap::new(), None));
+    }
+
+    let attention_cards = event_cards
+        .cards
+        .iter()
+        .filter(|card| is_attention_span_card(card))
+        .collect::<Vec<_>>();
+    if attention_cards.is_empty() {
+        return Ok((HashMap::new(), None));
+    }
+
+    let bounded = attention_cards.len() > MAX_ATTENTION_SPAN_LINEAGE_EXPANSIONS;
+    let outcome = tokio::time::timeout(
+        CONTEXT_ATTENTION_LINEAGE_TIMEOUT,
+        context_attention_lineage_evidence_unbounded(client, &attention_cards),
+    )
+    .await;
+
+    let mut caveat = bounded.then(|| CaveatView {
+        id: "recall.attention_lineage_bounded".to_string(),
+        message: format!(
+            "attention-span raw support expansion is bounded to {MAX_ATTENTION_SPAN_LINEAGE_EXPANSIONS} spans in this recall packet"
+        ),
+        ref_: Some(SinexObjectRef::new(
+            SinexObjectKind::Projection,
+            "recall.attention.span.support_refs",
+        )),
+    });
+
+    match outcome {
+        Ok(result) => Ok((result?, caveat)),
+        Err(_) => {
+            caveat = Some(CaveatView {
+                id: "recall.attention_lineage_timeout".to_string(),
+                message: format!(
+                    "attention-span raw support expansion exceeded {}s; direct parent_refs remain available",
+                    CONTEXT_ATTENTION_LINEAGE_TIMEOUT.as_secs()
+                ),
+                ref_: Some(SinexObjectRef::new(
+                    SinexObjectKind::RpcMethod,
+                    "events.lineage",
+                )),
+            });
+            Ok((HashMap::new(), caveat))
+        }
+    }
+}
+
+async fn context_attention_lineage_evidence_unbounded(
+    client: &GatewayClient,
+    attention_cards: &[&EventCardView],
+) -> Result<HashMap<String, ContextAttentionLineageEvidence>> {
+    let mut evidence = HashMap::new();
+    for card in attention_cards
+        .iter()
+        .take(MAX_ATTENTION_SPAN_LINEAGE_EXPANSIONS)
+    {
+        let Some(event_id) = event_ref_id(&card.ref_) else {
+            continue;
+        };
+        let lineage = client
+            .trace_lineage(LineageQuery {
+                event_id,
+                direction: LineageDirection::Ancestors,
+                max_depth: 5,
+            })
+            .await?;
+        evidence.insert(
+            card.ref_.id.clone(),
+            ContextAttentionLineageEvidence {
+                parent_refs: card.trace_refs.clone(),
+                support_refs: material_ancestor_refs(&lineage),
+            },
+        );
+    }
+    Ok(evidence)
+}
+
+fn event_ref_id(ref_: &SinexObjectRef) -> Option<Id<Event<JsonValue>>> {
+    ref_.id.parse().ok()
+}
+
+fn material_ancestor_refs(lineage: &LineageResult) -> Vec<SinexObjectRef> {
+    lineage
+        .ancestors
+        .iter()
+        .filter_map(material_ancestor_ref)
+        .collect()
+}
+
+fn material_ancestor_ref(node: &LineageNode) -> Option<SinexObjectRef> {
+    if !matches!(node.event.provenance, Provenance::Material { .. }) {
+        return None;
+    }
+    let id = node.event.id?;
+    let id = id.to_string();
+    Some(
+        SinexObjectRef::new(SinexObjectKind::Event, id.clone())
+            .with_label(format!("{}/{}", node.event.source, node.event.event_type))
+            .with_command_hint(format!("sinexctl events trace {id}"))
+            .with_rpc_method("events.lineage"),
+    )
+}
+
+fn is_attention_span_card(card: &EventCardView) -> bool {
+    card.source.raw == "derived.attention-stream" || card.event_type == "attention.span"
+}
+
 async fn context_source_caveats(
     client: &GatewayClient,
     event_cards: &EventCardListView,
@@ -776,6 +925,7 @@ fn render_context_machine_output(
     finite_error_label: &'static str,
     source_caveats: &[CaveatView],
     stage_timings: &ContextStageTimings,
+    attention_lineage_evidence: &HashMap<String, ContextAttentionLineageEvidence>,
 ) -> Result<Option<String>> {
     match format {
         OutputFormat::Table => Ok(None),
@@ -790,7 +940,8 @@ fn render_context_machine_output(
                 })
                 .collect();
             let session_views = recall_session_views(event_cards);
-            let attention_span_views = recall_attention_span_views(event_cards);
+            let attention_span_views =
+                recall_attention_span_views(event_cards, attention_lineage_evidence);
             let mut source_caveats = source_caveats.to_vec();
             if source_surface == "sinexctl.recall"
                 && !event_cards.cards.is_empty()
@@ -863,17 +1014,19 @@ fn recall_session_views(event_cards: &EventCardListView) -> Vec<ContextSessionVi
     sessions
 }
 
-fn recall_attention_span_views(event_cards: &EventCardListView) -> Vec<ContextAttentionSpanView> {
+fn recall_attention_span_views(
+    event_cards: &EventCardListView,
+    attention_lineage_evidence: &HashMap<String, ContextAttentionLineageEvidence>,
+) -> Vec<ContextAttentionSpanView> {
     let mut spans = event_cards
         .cards
         .iter()
-        .filter(|card| {
-            card.source.raw == "derived.attention-stream" || card.event_type == "attention.span"
-        })
+        .filter(|card| is_attention_span_card(card))
         .map(|card| {
             let ended_at =
                 timestamp_payload_preview_field(card, "end_time").or(card.timestamp.original);
             let duration_secs = u64_payload_preview_field(card, "duration_secs");
+            let lineage_evidence = attention_lineage_evidence.get(&card.ref_.id);
             ContextAttentionSpanView {
                 ref_: card.ref_.clone(),
                 started_at: timestamp_payload_preview_field(card, "start_time")
@@ -881,13 +1034,25 @@ fn recall_attention_span_views(event_cards: &EventCardListView) -> Vec<ContextAt
                 ended_at,
                 duration_secs,
                 summary: card.summary.clone(),
+                parent_refs: lineage_evidence.map_or_else(
+                    || card.trace_refs.clone(),
+                    |evidence| evidence.parent_refs.clone(),
+                ),
+                support_refs: lineage_evidence
+                    .map_or_else(Vec::new, |evidence| evidence.support_refs.clone()),
                 latest_event: card.clone(),
             }
         })
         .collect::<Vec<_>>();
     spans.sort_by(|left, right| {
-        let left_ts = left.ended_at.or(left.started_at).unwrap_or(Timestamp::UNIX_EPOCH);
-        let right_ts = right.ended_at.or(right.started_at).unwrap_or(Timestamp::UNIX_EPOCH);
+        let left_ts = left
+            .ended_at
+            .or(left.started_at)
+            .unwrap_or(Timestamp::UNIX_EPOCH);
+        let right_ts = right
+            .ended_at
+            .or(right.started_at)
+            .unwrap_or(Timestamp::UNIX_EPOCH);
         right_ts.inner().cmp(&left_ts.inner())
     });
     spans
