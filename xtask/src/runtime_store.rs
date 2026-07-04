@@ -113,6 +113,80 @@ pub struct StoreAssessment {
     pub warnings: Vec<String>,
 }
 
+#[derive(Debug, Clone, Serialize)]
+pub struct StorageGrowthSnapshot {
+    pub projection_days: i64,
+    pub top_limit: i64,
+    pub material_summary: StorageMaterialSummary,
+    pub source_growth: Vec<SourceStorageGrowthRow>,
+    pub relation_sizes: Vec<RelationStorageSize>,
+    pub chunk_size_buckets: Vec<ChunkSizeBucket>,
+    pub compression: StorageCompressionSummary,
+    pub assessment: StorageGrowthAssessment,
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq)]
+pub struct StorageMaterialSummary {
+    pub materials: i64,
+    pub total_bytes: i64,
+    pub parsed_events: i64,
+    pub one_byte_materials: i64,
+    pub observed_days: f64,
+    pub bytes_per_day: f64,
+    pub projected_bytes: i64,
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq)]
+pub struct SourceStorageGrowthRow {
+    pub source_base: String,
+    pub materials: i64,
+    pub total_bytes: i64,
+    pub parsed_events: i64,
+    pub one_byte_materials: i64,
+    pub observed_days: f64,
+    pub bytes_per_day: f64,
+    pub projected_bytes: i64,
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+pub struct RelationStorageSize {
+    pub relation: String,
+    pub total_bytes: i64,
+    pub table_bytes: i64,
+    pub index_bytes: i64,
+    pub estimated_rows: Option<i64>,
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+pub struct ChunkSizeBucket {
+    pub bucket: String,
+    pub chunks: i64,
+    pub total_bytes: i64,
+    pub max_chunk_bytes: i64,
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq)]
+pub struct StorageCompressionSummary {
+    pub compression_settings_rows: i64,
+    pub compressed_chunks: i64,
+    pub uncompressed_chunks: i64,
+    pub compressed_chunk_bytes: i64,
+    pub uncompressed_chunk_bytes: i64,
+    pub compression_ratio: Option<f64>,
+    pub warnings: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq)]
+pub struct StorageGrowthAssessment {
+    pub projected_12_month_bytes: i64,
+    pub top_source_base: Option<String>,
+    pub top_source_share_basis_points: i64,
+    pub one_byte_materials: i64,
+    pub compression_configured: bool,
+    pub compressed_chunks: i64,
+    pub warnings: Vec<String>,
+}
+
 pub async fn query_runtime_store_snapshot(
     db_url: &str,
     nats_url: &str,
@@ -160,6 +234,61 @@ pub async fn query_runtime_store_snapshot(
         browser_history_materials,
         dlq,
         jetstream,
+        assessment,
+    })
+}
+
+pub async fn query_storage_growth_snapshot(
+    db_url: &str,
+    projection_days: i64,
+    top_limit: i64,
+) -> Result<StorageGrowthSnapshot, sqlx::Error> {
+    let projection_days = projection_days.clamp(1, 3650);
+    let top_limit = top_limit.clamp(1, 100);
+    let pool = PgPoolOptions::new()
+        .max_connections(1)
+        .acquire_timeout(Duration::from_millis(500))
+        .connect(db_url)
+        .await?;
+
+    sqlx::query("SET statement_timeout = '3000ms'")
+        .execute(&pool)
+        .await?;
+
+    let material_summary = query_storage_material_summary(&pool, projection_days).await?;
+    let source_growth = query_source_storage_growth(&pool, projection_days, top_limit).await?;
+    let relation_sizes = query_relation_storage_sizes(&pool).await?;
+    let chunk_size_buckets = query_core_event_chunk_buckets(&pool).await?;
+    let mut compression = query_storage_compression_summary(&pool)
+        .await
+        .unwrap_or_else(|error| StorageCompressionSummary {
+            compression_settings_rows: 0,
+            compressed_chunks: 0,
+            uncompressed_chunks: 0,
+            compressed_chunk_bytes: 0,
+            uncompressed_chunk_bytes: 0,
+            compression_ratio: None,
+            warnings: vec![format!(
+                "Timescale compression view unavailable or changed: {error}"
+            )],
+        });
+    pool.close().await;
+
+    let mut assessment =
+        assess_storage_growth(&material_summary, &source_growth, &compression, projection_days);
+    assessment.warnings.extend(compression.warnings.clone());
+    assessment.warnings.sort();
+    assessment.warnings.dedup();
+    compression.warnings.sort();
+
+    Ok(StorageGrowthSnapshot {
+        projection_days,
+        top_limit,
+        material_summary,
+        source_growth,
+        relation_sizes,
+        chunk_size_buckets,
+        compression,
         assessment,
     })
 }
@@ -454,6 +583,276 @@ async fn query_table_estimates(
         .collect())
 }
 
+async fn query_storage_material_summary(
+    pool: &sqlx::Pool<sqlx::Postgres>,
+    projection_days: i64,
+) -> Result<StorageMaterialSummary, sqlx::Error> {
+    let row = sqlx::query(
+        r#"
+        SELECT COUNT(*)::bigint AS materials,
+               COALESCE(SUM(total_bytes), 0)::bigint AS total_bytes,
+               COALESCE(SUM(parsed_event_count), 0)::bigint AS parsed_events,
+               COUNT(*) FILTER (WHERE total_bytes = 1)::bigint AS one_byte_materials,
+               GREATEST(
+                   EXTRACT(EPOCH FROM (MAX(staged_at) - MIN(staged_at))) / 86400.0,
+                   1.0
+               )::float8 AS observed_days
+        FROM raw.source_material_registry
+        "#,
+    )
+    .fetch_one(pool)
+    .await?;
+
+    let total_bytes = row.get("total_bytes");
+    let observed_days = row.get("observed_days");
+    let bytes_per_day = bytes_per_day(total_bytes, observed_days);
+
+    Ok(StorageMaterialSummary {
+        materials: row.get("materials"),
+        total_bytes,
+        parsed_events: row.get("parsed_events"),
+        one_byte_materials: row.get("one_byte_materials"),
+        observed_days,
+        bytes_per_day,
+        projected_bytes: projected_bytes(bytes_per_day, projection_days),
+    })
+}
+
+async fn query_source_storage_growth(
+    pool: &sqlx::Pool<sqlx::Postgres>,
+    projection_days: i64,
+    top_limit: i64,
+) -> Result<Vec<SourceStorageGrowthRow>, sqlx::Error> {
+    let rows = sqlx::query(
+        r#"
+        SELECT split_part(source_identifier, '#', 1) AS source_base,
+               COUNT(*)::bigint AS materials,
+               COALESCE(SUM(total_bytes), 0)::bigint AS total_bytes,
+               COALESCE(SUM(parsed_event_count), 0)::bigint AS parsed_events,
+               COUNT(*) FILTER (WHERE total_bytes = 1)::bigint AS one_byte_materials,
+               GREATEST(
+                   EXTRACT(EPOCH FROM (MAX(staged_at) - MIN(staged_at))) / 86400.0,
+                   1.0
+               )::float8 AS observed_days
+        FROM raw.source_material_registry
+        GROUP BY source_base
+        ORDER BY total_bytes DESC, parsed_events DESC, materials DESC, source_base
+        LIMIT $1
+        "#,
+    )
+    .bind(top_limit)
+    .fetch_all(pool)
+    .await?;
+
+    Ok(rows
+        .into_iter()
+        .map(|row| source_storage_growth_row_from_row(row, projection_days))
+        .collect())
+}
+
+fn source_storage_growth_row_from_row(
+    row: sqlx::postgres::PgRow,
+    projection_days: i64,
+) -> SourceStorageGrowthRow {
+    let total_bytes = row.get("total_bytes");
+    let observed_days = row.get("observed_days");
+    let bytes_per_day = bytes_per_day(total_bytes, observed_days);
+    SourceStorageGrowthRow {
+        source_base: row.get("source_base"),
+        materials: row.get("materials"),
+        total_bytes,
+        parsed_events: row.get("parsed_events"),
+        one_byte_materials: row.get("one_byte_materials"),
+        observed_days,
+        bytes_per_day,
+        projected_bytes: projected_bytes(bytes_per_day, projection_days),
+    }
+}
+
+async fn query_relation_storage_sizes(
+    pool: &sqlx::Pool<sqlx::Postgres>,
+) -> Result<Vec<RelationStorageSize>, sqlx::Error> {
+    let rows = sqlx::query(
+        r#"
+        WITH RECURSIVE targets(schema_name, table_name) AS (
+            VALUES
+                ('core', 'events'),
+                ('raw', 'source_material_registry'),
+                ('sinex_schemas', 'dlq_events')
+        ),
+        target_oids AS (
+            SELECT t.schema_name,
+                   t.table_name,
+                   c.oid AS target_oid
+            FROM targets t
+            JOIN pg_namespace n ON n.nspname = t.schema_name
+            JOIN pg_class c ON c.relnamespace = n.oid AND c.relname = t.table_name
+        ),
+        members AS (
+            SELECT target_oid, target_oid AS member_oid
+            FROM target_oids
+            UNION ALL
+            SELECT m.target_oid, i.inhrelid AS member_oid
+            FROM members m
+            JOIN pg_inherits i ON i.inhparent = m.member_oid
+        )
+        SELECT t.schema_name || '.' || t.table_name AS relation,
+               SUM(pg_total_relation_size(m.member_oid))::bigint AS total_bytes,
+               SUM(pg_relation_size(m.member_oid))::bigint AS table_bytes,
+               SUM(pg_indexes_size(m.member_oid))::bigint AS index_bytes,
+               NULLIF(SUM(GREATEST(c.reltuples, 0))::bigint, 0) AS estimated_rows
+        FROM target_oids t
+        JOIN members m ON m.target_oid = t.target_oid
+        JOIN pg_class c ON c.oid = m.member_oid
+        GROUP BY t.schema_name, t.table_name
+        ORDER BY total_bytes DESC, relation
+        "#,
+    )
+    .fetch_all(pool)
+    .await?;
+
+    Ok(rows
+        .into_iter()
+        .map(|row| RelationStorageSize {
+            relation: row.get("relation"),
+            total_bytes: row.get("total_bytes"),
+            table_bytes: row.get("table_bytes"),
+            index_bytes: row.get("index_bytes"),
+            estimated_rows: row.get("estimated_rows"),
+        })
+        .collect())
+}
+
+async fn query_core_event_chunk_buckets(
+    pool: &sqlx::Pool<sqlx::Postgres>,
+) -> Result<Vec<ChunkSizeBucket>, sqlx::Error> {
+    let rows = sqlx::query(
+        r#"
+        WITH RECURSIVE target AS (
+            SELECT c.oid AS root_oid
+            FROM pg_namespace n
+            JOIN pg_class c ON c.relnamespace = n.oid
+            WHERE n.nspname = 'core'
+              AND c.relname = 'events'
+        ),
+        members AS (
+            SELECT i.inhrelid AS member_oid
+            FROM target t
+            JOIN pg_inherits i ON i.inhparent = t.root_oid
+            UNION ALL
+            SELECT i.inhrelid AS member_oid
+            FROM members m
+            JOIN pg_inherits i ON i.inhparent = m.member_oid
+        ),
+        sized AS (
+            SELECT pg_total_relation_size(member_oid)::bigint AS total_bytes
+            FROM members
+        ),
+        bucketed AS (
+            SELECT CASE
+                    WHEN total_bytes < 128::bigint * 1024 * 1024 THEN '<128MiB'
+                    WHEN total_bytes < 1024::bigint * 1024 * 1024 THEN '128MiB-1GiB'
+                    WHEN total_bytes < 4::bigint * 1024 * 1024 * 1024 THEN '1-4GiB'
+                    ELSE '>=4GiB'
+                   END AS bucket,
+                   total_bytes
+            FROM sized
+        )
+        SELECT bucket,
+               COUNT(*)::bigint AS chunks,
+               COALESCE(SUM(total_bytes), 0)::bigint AS total_bytes,
+               COALESCE(MAX(total_bytes), 0)::bigint AS max_chunk_bytes
+        FROM bucketed
+        GROUP BY bucket
+        ORDER BY MIN(total_bytes), bucket
+        "#,
+    )
+    .fetch_all(pool)
+    .await?;
+
+    Ok(rows
+        .into_iter()
+        .map(|row| ChunkSizeBucket {
+            bucket: row.get("bucket"),
+            chunks: row.get("chunks"),
+            total_bytes: row.get("total_bytes"),
+            max_chunk_bytes: row.get("max_chunk_bytes"),
+        })
+        .collect())
+}
+
+async fn query_storage_compression_summary(
+    pool: &sqlx::Pool<sqlx::Postgres>,
+) -> Result<StorageCompressionSummary, sqlx::Error> {
+    let settings = sqlx::query(
+        r#"
+        SELECT COUNT(*)::bigint AS settings_rows
+        FROM timescaledb_information.compression_settings
+        WHERE hypertable_schema = 'core'
+          AND hypertable_name = 'events'
+        "#,
+    )
+    .fetch_one(pool)
+    .await?;
+
+    let chunk_rows = sqlx::query(
+        r#"
+        SELECT is_compressed,
+               COUNT(*)::bigint AS chunks,
+               COALESCE(SUM(pg_total_relation_size(format('%I.%I', chunk_schema, chunk_name)::regclass)), 0)::bigint AS total_bytes
+        FROM timescaledb_information.chunks
+        WHERE hypertable_schema = 'core'
+          AND hypertable_name = 'events'
+        GROUP BY is_compressed
+        "#,
+    )
+    .fetch_all(pool)
+    .await?;
+
+    let mut compressed_chunks = 0;
+    let mut uncompressed_chunks = 0;
+    let mut compressed_chunk_bytes = 0;
+    let mut uncompressed_chunk_bytes = 0;
+    for row in chunk_rows {
+        let is_compressed: bool = row.get("is_compressed");
+        let chunks: i64 = row.get("chunks");
+        let total_bytes: i64 = row.get("total_bytes");
+        if is_compressed {
+            compressed_chunks += chunks;
+            compressed_chunk_bytes += total_bytes;
+        } else {
+            uncompressed_chunks += chunks;
+            uncompressed_chunk_bytes += total_bytes;
+        }
+    }
+
+    let compression_ratio = if compressed_chunk_bytes > 0 {
+        Some(uncompressed_chunk_bytes as f64 / compressed_chunk_bytes as f64)
+    } else {
+        None
+    };
+    let mut warnings = Vec::new();
+    let compression_settings_rows = settings.get("settings_rows");
+    if compression_settings_rows == 0 {
+        warnings.push("core.events Timescale compression is not configured".to_string());
+    } else if compressed_chunks == 0 {
+        warnings.push(
+            "core.events Timescale compression is configured but no chunks are compressed"
+                .to_string(),
+        );
+    }
+
+    Ok(StorageCompressionSummary {
+        compression_settings_rows,
+        compressed_chunks,
+        uncompressed_chunks,
+        compressed_chunk_bytes,
+        uncompressed_chunk_bytes,
+        compression_ratio,
+        warnings,
+    })
+}
+
 async fn query_recent_event_mix(
     pool: &sqlx::Pool<sqlx::Postgres>,
     window_minutes: i64,
@@ -662,6 +1061,80 @@ pub fn assess_store(
         browser_history_parsed_events_total,
         unresolved_dlq,
         warnings,
+    }
+}
+
+#[must_use]
+pub fn assess_storage_growth(
+    material_summary: &StorageMaterialSummary,
+    source_growth: &[SourceStorageGrowthRow],
+    compression: &StorageCompressionSummary,
+    projection_days: i64,
+) -> StorageGrowthAssessment {
+    let top_source = source_growth.first();
+    let top_source_base = top_source.map(|row| row.source_base.clone());
+    let top_source_share_basis_points = top_source.map_or(0, |row| {
+        basis_points(row.total_bytes, material_summary.total_bytes).min(10_000)
+    });
+    let mut warnings = Vec::new();
+
+    if material_summary.materials == 0 {
+        warnings.push("no source materials found; storage growth model has no input".to_string());
+    }
+    if material_summary.one_byte_materials > 0 {
+        warnings.push(format!(
+            "{} one-byte source material(s) remain; material granularity is still suspect",
+            material_summary.one_byte_materials
+        ));
+    }
+    if top_source_share_basis_points >= 8_000
+        && let Some(top_source_base) = &top_source_base
+    {
+        warnings.push(format!(
+            "{top_source_base} accounts for {:.1}% of registered material bytes",
+            top_source_share_basis_points as f64 / 100.0
+        ));
+    }
+    if projection_days >= 365 && material_summary.projected_bytes > 100 * 1024 * 1024 * 1024 {
+        warnings.push(format!(
+            "{}-day material projection exceeds 100 GiB",
+            projection_days
+        ));
+    }
+    StorageGrowthAssessment {
+        projected_12_month_bytes: projected_bytes(material_summary.bytes_per_day, 365),
+        top_source_base,
+        top_source_share_basis_points,
+        one_byte_materials: material_summary.one_byte_materials,
+        compression_configured: compression.compression_settings_rows > 0,
+        compressed_chunks: compression.compressed_chunks,
+        warnings,
+    }
+}
+
+#[must_use]
+pub fn bytes_per_day(total_bytes: i64, observed_days: f64) -> f64 {
+    if total_bytes <= 0 || !observed_days.is_finite() || observed_days <= 0.0 {
+        0.0
+    } else {
+        total_bytes as f64 / observed_days.max(1.0)
+    }
+}
+
+#[must_use]
+pub fn projected_bytes(bytes_per_day: f64, projection_days: i64) -> i64 {
+    if !bytes_per_day.is_finite() || bytes_per_day <= 0.0 || projection_days <= 0 {
+        0
+    } else {
+        (bytes_per_day * projection_days as f64).round() as i64
+    }
+}
+
+fn basis_points(part: i64, whole: i64) -> i64 {
+    if part <= 0 || whole <= 0 {
+        0
+    } else {
+        (((part as f64 / whole as f64) * 10_000.0).round() as i64).max(0)
     }
 }
 
