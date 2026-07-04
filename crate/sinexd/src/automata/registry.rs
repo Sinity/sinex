@@ -15,7 +15,7 @@ use sinex_primitives::error::{Result, SinexError};
 use tracing::info;
 
 use crate::automata::{
-    AnalyticsAutomatonRuntime, DailySummarizerRuntime, DocumentParserRuntime,
+    AnalyticsAutomatonRuntime, AttentionStreamRuntime, DailySummarizerRuntime, DocumentParserRuntime,
     EmbeddingProducerRuntime, EntityEnricherRuntime, EntityExtractorRuntime, EntityResolverRuntime,
     HealthAggregatorRuntime, HourlySummarizerRuntime, InstructionExpectationReconcilerRuntime,
     RelationExtractorRuntime, SessionDetectorRuntime, TagApplierRuntime,
@@ -68,6 +68,11 @@ pub const AUTOMATA: &[AutomatonSpec] = &[
         name: "analytics",
         run: || Box::pin(run_one::<AnalyticsAutomatonRuntime>("analytics")),
         contract: contract_for::<AnalyticsAutomatonRuntime>,
+    },
+    AutomatonSpec {
+        name: "attention-stream",
+        run: || Box::pin(run_one::<AttentionStreamRuntime>("attention-stream")),
+        contract: contract_for::<AttentionStreamRuntime>,
     },
     AutomatonSpec {
         name: "health",
