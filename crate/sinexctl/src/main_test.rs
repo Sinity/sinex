@@ -422,6 +422,9 @@ async fn validate_format_rejects_ndjson_for_finite_view_envelopes() -> TestResul
         "metrics report yesterday",
         "runtime health",
         "runtime status",
+        "sources coverage",
+        "sources list",
+        "sources show",
         "sources status",
         "show",
     ] {

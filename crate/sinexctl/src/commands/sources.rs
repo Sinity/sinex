@@ -29,8 +29,9 @@ use sinex_primitives::sources::continuity::{
     SourcesExplainGapResponse,
 };
 use sinex_primitives::views::{
-    SourceContinuityDetailView, SourceContinuityGapView, SourceContinuityListView,
-    SourceDriftListView, SourceReadinessDetailView, SourceReadinessListView, ViewEnvelope,
+    CaveatView, ReadinessCaveatId, SinexObjectKind, SinexObjectRef, SourceContinuityDetailView,
+    SourceContinuityGapView, SourceContinuityListView, SourceDriftListView,
+    SourceReadinessDetailView, SourceReadinessListView, ViewEnvelope,
 };
 
 use crate::Result;
@@ -248,7 +249,10 @@ pub struct ListCommand {
 }
 
 const SOURCE_MATERIAL_LIST_SCHEMA_VERSION: &str = "sinex.source-material-list/v1";
+const SOURCE_MATERIAL_DETAIL_SCHEMA_VERSION: &str = "sinex.source-material-detail/v1";
 const SOURCE_COVERAGE_LIST_SCHEMA_VERSION: &str = "sinex.source-coverage-list/v1";
+const SOURCE_CONTINUITY_DIAGNOSTICS_SCHEMA_VERSION: &str =
+    "sinex.source-continuity-diagnostics/v1";
 const SOURCE_MATERIAL_REMEDIATION_PLAN_SCHEMA_VERSION: &str =
     "sinex.source-material-remediation-plan/v1";
 
@@ -271,6 +275,21 @@ impl SourceMaterialListView {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+struct SourceMaterialDetailView {
+    schema_version: String,
+    material: SourceMaterialDetail,
+}
+
+impl SourceMaterialDetailView {
+    fn new(material: SourceMaterialDetail) -> Self {
+        Self {
+            schema_version: SOURCE_MATERIAL_DETAIL_SCHEMA_VERSION.to_string(),
+            material,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 struct SourceCoverageListView {
     schema_version: String,
     count: usize,
@@ -284,6 +303,32 @@ impl SourceCoverageListView {
             schema_version: SOURCE_COVERAGE_LIST_SCHEMA_VERSION.to_string(),
             count,
             sources,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct SourceContinuityDiagnosticsView {
+    schema_version: String,
+    source_identifier: String,
+    coverage_gap_count: usize,
+    material_count: i64,
+    event_count: i64,
+    diagnostics: SourcesContinuityResponse,
+}
+
+impl SourceContinuityDiagnosticsView {
+    fn new(diagnostics: SourcesContinuityResponse) -> Self {
+        let coverage_gap_count = diagnostics.coverage_gaps.len();
+        let material_count = diagnostics.replayability.material_count;
+        let event_count = diagnostics.replayability.events_count;
+        Self {
+            schema_version: SOURCE_CONTINUITY_DIAGNOSTICS_SCHEMA_VERSION.to_string(),
+            source_identifier: diagnostics.source_identifier.clone(),
+            coverage_gap_count,
+            material_count,
+            event_count,
+            diagnostics,
         }
     }
 }
@@ -338,21 +383,59 @@ impl ListCommand {
         };
 
         let list_response: SourcesListResponse = client.sources_list(req).await?;
-        let envelope = ViewEnvelope::new(
-            "sinexctl.sources.list",
-            SourceMaterialListView::new(list_response.materials.clone()),
-        )
-        .with_query_echo(serde_json::json!({
-            "status": self.status,
-            "source": self.source,
-            "limit": self.limit,
-        }));
+        let envelope = source_material_list_envelope(
+            &list_response,
+            self.status.as_deref(),
+            self.source.as_deref(),
+            self.limit,
+        );
 
         if print_finite_envelope(&envelope, format)? {
             return Ok(());
         }
         CommandOutput::single(list_response, format_source_materials_table).display(&format)?;
         Ok(())
+    }
+}
+
+fn source_material_list_envelope(
+    response: &SourcesListResponse,
+    status: Option<&str>,
+    source: Option<&str>,
+    limit: i64,
+) -> ViewEnvelope<SourceMaterialListView> {
+    let mut envelope = ViewEnvelope::new(
+        "sinexctl.sources.list",
+        SourceMaterialListView::new(response.materials.clone()),
+    )
+    .with_query_echo(serde_json::json!({
+        "status": status,
+        "source": source,
+        "limit": limit,
+    }));
+    if response.materials.is_empty() {
+        envelope.caveats.push(source_coverage_caveat(
+            "sinexctl.sources.list",
+            "sources list returned no source materials; this only proves the selected registry slice is empty, not that upstream captures do not exist",
+            "sinexctl sources list",
+        ));
+    }
+    envelope
+}
+
+fn source_coverage_caveat(
+    source_surface: &'static str,
+    message: impl Into<String>,
+    command_hint: &'static str,
+) -> CaveatView {
+    CaveatView {
+        id: ReadinessCaveatId::CoverageUnmeasurable.as_str().to_string(),
+        message: message.into(),
+        ref_: Some(
+            SinexObjectRef::new(SinexObjectKind::Command, source_surface)
+                .with_label(source_surface)
+                .with_command_hint(command_hint),
+        ),
     }
 }
 
@@ -556,7 +639,17 @@ impl ShowCommand {
         };
 
         let show_response: SourcesShowResponse = client.sources_show(req).await?;
+        let envelope = ViewEnvelope::new(
+            "sinexctl.sources.show",
+            SourceMaterialDetailView::new(show_response.material.clone()),
+        )
+        .with_query_echo(serde_json::json!({
+            "material_id": self.material_id,
+        }));
 
+        if print_finite_envelope(&envelope, format)? {
+            return Ok(());
+        }
         CommandOutput::single(show_response, format_source_material_detail).display(&format)?;
         Ok(())
     }
@@ -637,13 +730,7 @@ impl CoverageCommand {
         let req = SourcesCoverageRequest {};
 
         let coverage_response: SourcesCoverageResponse = client.sources_coverage(req).await?;
-        let envelope = ViewEnvelope::new(
-            "sinexctl.sources.coverage",
-            SourceCoverageListView::new(coverage_response.sources.clone()),
-        )
-        .with_query_echo(serde_json::json!({
-            "limit": self.limit,
-        }));
+        let envelope = source_coverage_envelope(&coverage_response, self.limit);
 
         if print_finite_envelope(&envelope, format)? {
             return Ok(());
@@ -651,6 +738,27 @@ impl CoverageCommand {
         CommandOutput::single(coverage_response, format_coverage_table).display(&format)?;
         Ok(())
     }
+}
+
+fn source_coverage_envelope(
+    response: &SourcesCoverageResponse,
+    limit: i64,
+) -> ViewEnvelope<SourceCoverageListView> {
+    let mut envelope = ViewEnvelope::new(
+        "sinexctl.sources.coverage",
+        SourceCoverageListView::new(response.sources.clone()),
+    )
+    .with_query_echo(serde_json::json!({
+        "limit": limit,
+    }));
+    if response.sources.is_empty() {
+        envelope.caveats.push(source_coverage_caveat(
+            "sinexctl.sources.coverage",
+            "sources coverage returned no source buckets; coverage is unmeasurable until source material registry evidence exists",
+            "sinexctl sources coverage",
+        ));
+    }
+    envelope
 }
 
 fn format_coverage_table(response: &SourcesCoverageResponse) -> String {
@@ -879,6 +987,14 @@ impl ContinuityCommand {
                 material_kind: self.kind.clone(),
             };
             let resp: SourcesContinuityResponse = client.sources_continuity(req).await?;
+            let envelope = source_continuity_diagnostics_envelope(
+                resp.clone(),
+                source,
+                self.kind.as_deref(),
+            );
+            if print_finite_envelope(&envelope, format)? {
+                return Ok(());
+            }
             CommandOutput::single(resp, format_continuity_result).display(&format)?;
             return Ok(());
         }
@@ -923,6 +1039,29 @@ impl ContinuityCommand {
         CommandOutput::single(resp, format_continuity_list).display(&format)?;
         Ok(())
     }
+}
+
+fn source_continuity_diagnostics_envelope(
+    response: SourcesContinuityResponse,
+    source: &str,
+    kind: Option<&str>,
+) -> ViewEnvelope<SourceContinuityDiagnosticsView> {
+    let mut envelope = ViewEnvelope::new(
+        "sinexctl.sources.continuity",
+        SourceContinuityDiagnosticsView::new(response),
+    )
+    .with_query_echo(serde_json::json!({
+        "source": source,
+        "kind": kind,
+    }));
+    if envelope.payload.material_count == 0 && envelope.payload.event_count == 0 {
+        envelope.caveats.push(source_coverage_caveat(
+            "sinexctl.sources.continuity",
+            "continuity diagnostics found no source materials or events for this identifier; replayability and coverage are unmeasurable",
+            "sinexctl sources continuity --source <source>",
+        ));
+    }
+    envelope
 }
 
 // ── Explain gap ─────────────────────────────────────────────────────────
