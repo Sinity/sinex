@@ -93,7 +93,7 @@ _sinex_pre_push_checkout_xtask_binary() {
   local cache_root candidate
   cache_root="$(_sinex_pre_push_cache_root)"
   candidate="$cache_root/target/debug/xtask"
-  _sinex_pre_push_xtask_binary_is_current "$candidate" && printf '%s\n' "$candidate"
+  _sinex_pre_push_xtask_binary_is_usable_for_branch "$candidate" && printf '%s\n' "$candidate"
 }
 
 _sinex_pre_push_checkout_xtask_wrapper() {
@@ -113,7 +113,24 @@ _sinex_pre_push_xtask_binary_is_current() {
   ! _sinex_pre_push_xtask_sources_newer_than "$candidate"
 }
 
+_sinex_pre_push_xtask_binary_is_usable_for_branch() {
+  local candidate
+  candidate="$1"
+  [[ -x "$candidate" ]] || return 1
+  if _sinex_pre_push_branch_changes_xtask_build_inputs; then
+    _sinex_pre_push_xtask_binary_is_current "$candidate"
+    return $?
+  fi
+  return 0
+}
+
 _sinex_pre_push_xtask_sources_newer_than() {
+  local candidate
+  candidate="$1"
+  [[ -n "$(_sinex_pre_push_newer_xtask_input "$candidate")" ]]
+}
+
+_sinex_pre_push_newer_xtask_input() {
   local candidate
   candidate="$1"
   find \
@@ -124,14 +141,20 @@ _sinex_pre_push_xtask_sources_newer_than() {
     "$REPO_ROOT/Cargo.lock" \
     "$REPO_ROOT/Cargo.toml" \
     "$REPO_ROOT/xtask/Cargo.toml" \
-    -type f -newer "$candidate" -print -quit 2>/dev/null | grep -q .
+    -type f -newer "$candidate" -print -quit 2>/dev/null
 }
 
 _sinex_pre_push_branch_changes_xtask_build_inputs() {
   local base_ref merge_base
   base_ref="${BASE_REF:-origin/master}"
   merge_base="$(git merge-base "$base_ref" HEAD 2>/dev/null)" || return 0
-  ! git diff --quiet "$merge_base" HEAD -- \
+  [[ -n "$(_sinex_pre_push_changed_xtask_build_inputs "$merge_base")" ]]
+}
+
+_sinex_pre_push_changed_xtask_build_inputs() {
+  local merge_base
+  merge_base="$1"
+  git diff --name-only "$merge_base" HEAD -- \
     Cargo.lock \
     Cargo.toml \
     flake.nix \
@@ -187,9 +210,7 @@ _sinex_pre_push_cached_xtask_binary() {
 
   while IFS= read -r candidate; do
     [[ -n "$candidate" ]] || continue
-    if _sinex_pre_push_branch_changes_xtask_build_inputs; then
-      _sinex_pre_push_xtask_binary_is_current "$candidate" || continue
-    fi
+    _sinex_pre_push_xtask_binary_is_usable_for_branch "$candidate" || continue
     printf '%s\n' "$candidate"
     return 0
   done < <(
@@ -201,6 +222,32 @@ _sinex_pre_push_cached_xtask_binary() {
       | sort -nr \
       | sed 's/^[^ ]* //'
   )
+}
+
+_sinex_pre_push_explain_xtask_rejection() {
+  local label candidate newer_input
+  label="$1"
+  candidate="$2"
+  if [[ -z "$candidate" ]]; then
+    echo "[pre-push] No $label xtask candidate found." >&2
+    return 0
+  fi
+  if [[ ! -e "$candidate" ]]; then
+    echo "[pre-push] Ignoring $label xtask candidate: missing at $candidate." >&2
+    return 0
+  fi
+  if [[ ! -x "$candidate" ]]; then
+    echo "[pre-push] Ignoring $label xtask candidate: not executable at $candidate." >&2
+    return 0
+  fi
+  if _sinex_pre_push_branch_changes_xtask_build_inputs; then
+    newer_input="$(_sinex_pre_push_newer_xtask_input "$candidate")"
+    if [[ -n "$newer_input" ]]; then
+      echo "[pre-push] Ignoring $label xtask candidate: branch changes xtask build inputs and $newer_input is newer than $candidate." >&2
+      return 0
+    fi
+  fi
+  echo "[pre-push] Ignoring $label xtask candidate: unusable for this checkout." >&2
 }
 
 _sinex_pre_push_clean_env() {
@@ -232,64 +279,91 @@ _sinex_pre_push_clean_env() {
     "$@"
 }
 
-_sinex_pre_push_run_xtask() {
-  local xtask_bin
-  local xtask_dir
+_sinex_pre_push_selected_xtask() {
+  local label xtask_bin xtask_dir
+  label="$1"
+  xtask_bin="$2"
+  shift 2
+  xtask_dir="$(dirname "$xtask_bin")"
+  if [[ "${SINEX_PRE_PUSH_DRY_RUN:-}" == "1" ]]; then
+    echo "[pre-push] Dry run: would use $label: $xtask_bin" >&2
+    return 0
+  fi
+  echo "[pre-push] Using $label: $xtask_bin" >&2
+  PATH="$xtask_dir:$PATH" _sinex_pre_push_checkout_env "$xtask_bin" "$@"
+}
 
+_sinex_pre_push_run_xtask() {
+  local xtask_bin merge_base changed_inputs checkout_candidate
+
+  merge_base="$(git merge-base "${BASE_REF:-origin/master}" HEAD 2>/dev/null || true)"
+  changed_inputs=""
+  if [[ -n "$merge_base" ]]; then
+    changed_inputs="$(_sinex_pre_push_changed_xtask_build_inputs "$merge_base")"
+  fi
+  if [[ -n "$changed_inputs" ]]; then
+    echo "[pre-push] Branch changes xtask build inputs; selected binary must be fresh." >&2
+    printf '%s\n' "$changed_inputs" | sed 's/^/[pre-push]   input: /' >&2
+  else
+    echo "[pre-push] Branch does not change xtask build inputs; a built xtask binary can run changed-strict without rebuild." >&2
+  fi
+
+  checkout_candidate="$(_sinex_pre_push_cache_root)/target/debug/xtask"
   xtask_bin="$(_sinex_pre_push_checkout_xtask_binary || true)"
   if [[ -n "$xtask_bin" ]]; then
-    echo "[pre-push] Using checkout-local xtask binary: $xtask_bin" >&2
-    xtask_dir="$(dirname "$xtask_bin")"
-    PATH="$xtask_dir:$PATH" _sinex_pre_push_checkout_env "$xtask_bin" "$@"
+    _sinex_pre_push_selected_xtask "checkout-local xtask binary" "$xtask_bin" "$@"
     return $?
   fi
+  _sinex_pre_push_explain_xtask_rejection "checkout-local" "$checkout_candidate"
 
   if _sinex_pre_push_xtask_env_matches_checkout; then
     xtask_bin="$(command -v xtask)"
     case "$xtask_bin" in
       */.direnv/*)
-        echo "[pre-push] Ignoring checkout .direnv xtask wrapper without a built checkout-local binary." >&2
+        echo "[pre-push] Ignoring active devshell xtask wrapper: .direnv wrapper would rebuild before guard selection." >&2
         ;;
       *)
-        if _sinex_pre_push_xtask_binary_is_current "$xtask_bin"; then
-          echo "[pre-push] Using active devshell xtask: $xtask_bin" >&2
-          xtask_dir="$(dirname "$xtask_bin")"
-          PATH="$xtask_dir:$PATH" _sinex_pre_push_checkout_env "$xtask_bin" "$@"
+        if _sinex_pre_push_xtask_binary_is_usable_for_branch "$xtask_bin"; then
+          _sinex_pre_push_selected_xtask "active devshell xtask" "$xtask_bin" "$@"
           return $?
         fi
-        echo "[pre-push] Ignoring stale active xtask binary: $xtask_bin" >&2
+        _sinex_pre_push_explain_xtask_rejection "active devshell" "$xtask_bin"
         ;;
     esac
   fi
 
   xtask_bin="$(_sinex_pre_push_path_xtask_binary || true)"
   if [[ -n "$xtask_bin" ]]; then
-    if _sinex_pre_push_xtask_binary_is_current "$xtask_bin"; then
-      echo "[pre-push] Using read-only PATH xtask fallback: $xtask_bin" >&2
-      xtask_dir="$(dirname "$xtask_bin")"
-      PATH="$xtask_dir:$PATH" _sinex_pre_push_checkout_env "$xtask_bin" "$@"
+    if _sinex_pre_push_xtask_binary_is_usable_for_branch "$xtask_bin"; then
+      _sinex_pre_push_selected_xtask "read-only PATH xtask fallback" "$xtask_bin" "$@"
       return $?
     fi
-    echo "[pre-push] Ignoring stale PATH xtask fallback: $xtask_bin" >&2
+    _sinex_pre_push_explain_xtask_rejection "PATH fallback" "$xtask_bin"
   fi
 
   xtask_bin="$(_sinex_pre_push_cached_xtask_binary || true)"
   if [[ -n "$xtask_bin" ]]; then
-    echo "[pre-push] Using read-only cached xtask fallback: $xtask_bin" >&2
-    xtask_dir="$(dirname "$xtask_bin")"
-    PATH="$xtask_dir:$PATH" _sinex_pre_push_checkout_env "$xtask_bin" "$@"
+    _sinex_pre_push_selected_xtask "read-only cached xtask fallback" "$xtask_bin" "$@"
     return $?
   fi
 
   xtask_bin="$(_sinex_pre_push_checkout_xtask_wrapper || true)"
   if [[ -n "$xtask_bin" ]]; then
+    if [[ "${SINEX_PRE_PUSH_DRY_RUN:-}" == "1" ]]; then
+      echo "[pre-push] Dry run: would rebuild through checkout xtask wrapper: $xtask_bin" >&2
+      return 0
+    fi
     echo "[pre-push] Rebuilding through checkout xtask wrapper: $xtask_bin" >&2
     xtask_dir="$(dirname "$xtask_bin")"
     PATH="$xtask_dir:$PATH" _sinex_pre_push_checkout_env "$xtask_bin" "$@"
     return $?
   fi
 
-  echo "[pre-push] No usable xtask binary found; using nix develop fallback." >&2
+  if [[ "${SINEX_PRE_PUSH_DRY_RUN:-}" == "1" ]]; then
+    echo "[pre-push] Dry run: would rebuild through nix develop because no usable checkout wrapper or binary was found." >&2
+    return 0
+  fi
+  echo "[pre-push] No usable checkout wrapper or binary found; rebuilding through nix develop." >&2
   _sinex_pre_push_clean_env \
     nix develop "$REPO_ROOT" --command xtask "$@"
 }
@@ -338,9 +412,15 @@ fi
 
 # Determine the upstream / base to diff against. Default to origin/master
 # when the local branch tracks something else (feature branches).
-BASE_REF="origin/master"
+BASE_REF="${BASE_REF:-origin/master}"
 if ! git rev-parse --verify "$BASE_REF" >/dev/null 2>&1; then
   echo "[pre-push] $BASE_REF not found locally; skipping drift guard." >&2
+  exit 0
+fi
+
+if [[ "${SINEX_PRE_PUSH_DRY_RUN:-}" == "1" ]]; then
+  echo "[pre-push] Dry run: probing xtask selection without running changed-strict." >&2
+  _sinex_pre_push_run_xtask check --changed-strict "$BASE_REF" >&2
   exit 0
 fi
 
