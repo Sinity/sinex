@@ -6,6 +6,9 @@ use sinex_db::create_pool;
 use sinex_primitives::Id;
 use sinex_primitives::Uuid;
 use sinex_primitives::events::{Event, SourceMaterial};
+use sinex_primitives::views::{
+    CaveatView, ReadinessCaveatId, SinexObjectKind, SinexObjectRef, ViewEnvelope,
+};
 use sinexd::runtime::content_store::{
     CasFsckReport, ContentStoreConfig, MaterialContentStore, UnusedContentEntry,
     cas_fsck::check_cas,
@@ -13,7 +16,7 @@ use sinexd::runtime::content_store::{
 };
 
 use crate::Result;
-use crate::fmt::{CommandOutput, format_bytes};
+use crate::fmt::{CommandOutput, format_bytes, print_finite_envelope};
 use crate::model::OutputFormat;
 
 #[derive(Debug, Subcommand)]
@@ -118,7 +121,11 @@ impl BlobSweepOrphansCommand {
             orphaned_keys: orphan_entries.into_iter().map(blob_orphan_entry).collect(),
         };
 
-        CommandOutput::single(summary, format_blob_sweep_summary).display(&format)
+        let envelope = blob_sweep_envelope(summary);
+        if print_finite_envelope(&envelope, format)? {
+            return Ok(());
+        }
+        CommandOutput::single(envelope.payload, format_blob_sweep_summary).display(&format)
     }
 }
 
@@ -262,7 +269,11 @@ impl BlobFsckCommand {
             details,
         };
 
-        CommandOutput::single(summary, format_blob_fsck_summary).display(&format)
+        let envelope = blob_fsck_envelope(summary);
+        if print_finite_envelope(&envelope, format)? {
+            return Ok(());
+        }
+        CommandOutput::single(envelope.payload, format_blob_fsck_summary).display(&format)
     }
 }
 
@@ -571,7 +582,11 @@ impl BlobMigrateCommand {
             migrated_keys,
         };
 
-        CommandOutput::single(summary, format_blob_migrate_summary).display(&format)
+        let envelope = blob_migrate_envelope(summary);
+        if print_finite_envelope(&envelope, format)? {
+            return Ok(());
+        }
+        CommandOutput::single(envelope.payload, format_blob_migrate_summary).display(&format)
     }
 }
 
@@ -691,7 +706,212 @@ impl BlobVerifyIntegrityCommand {
                 archive_mismatches(&pool, &report.mismatches).await? as u64;
         }
 
-        CommandOutput::single(report, format_verify_integrity_report).display(&format)
+        let envelope = blob_verify_integrity_envelope(report, self.limit, self.material_id);
+        if print_finite_envelope(&envelope, format)? {
+            return Ok(());
+        }
+        CommandOutput::single(envelope.payload, format_verify_integrity_report).display(&format)
+    }
+}
+
+fn blob_sweep_envelope(summary: BlobSweepSummary) -> ViewEnvelope<BlobSweepSummary> {
+    let mode = summary.mode;
+    let content_store_path = summary.content_store_path.clone();
+    let mut envelope = ViewEnvelope::new("sinexctl.ops.blob.sweep-orphans", summary)
+        .with_query_echo(serde_json::json!({
+            "mode": mode,
+            "content_store_path": content_store_path,
+        }));
+    if envelope.payload.total_unused_entries == 0 {
+        envelope.caveats.push(blob_caveat(
+            ReadinessCaveatId::CoverageUnmeasurable,
+            "blob orphan sweep found no unused content-store entries; this proves only the scanned local content-store root, not global blob completeness",
+            "blob.sweep.empty",
+            "sinexctl ops blob sweep-orphans",
+        ));
+    }
+    if envelope.payload.orphaned_entries > 0 {
+        envelope.caveats.push(blob_caveat(
+            ReadinessCaveatId::SourceAbsent,
+            format!(
+                "blob orphan sweep found {} content-store entrie(s) without DB blob rows",
+                envelope.payload.orphaned_entries
+            ),
+            "blob.sweep.orphaned",
+            "sinexctl ops blob sweep-orphans",
+        ));
+    }
+    envelope
+}
+
+fn blob_fsck_envelope(summary: BlobFsckSummary) -> ViewEnvelope<BlobFsckSummary> {
+    let mode = summary.mode;
+    let content_store_path = summary.content_store_path.clone();
+    let mut envelope = ViewEnvelope::new("sinexctl.ops.blob.fsck", summary).with_query_echo(
+        serde_json::json!({
+            "mode": mode,
+            "content_store_path": content_store_path,
+        }),
+    );
+    if envelope.payload.referenced == 0 && envelope.payload.details.is_empty() {
+        envelope.caveats.push(blob_caveat(
+            ReadinessCaveatId::CoverageUnmeasurable,
+            "blob fsck found no referenced CAS files; this is an empty local scan, not proof that no source material should exist",
+            "blob.fsck.empty",
+            "sinexctl ops blob fsck",
+        ));
+    }
+    if envelope.payload.orphaned > 0 {
+        envelope.caveats.push(blob_caveat(
+            ReadinessCaveatId::SourceAbsent,
+            format!(
+                "blob fsck found {} orphaned CAS file(s) not referenced by DB blob rows",
+                envelope.payload.orphaned
+            ),
+            "blob.fsck.orphaned",
+            "sinexctl ops blob fsck",
+        ));
+    }
+    if envelope.payload.missing > 0 {
+        envelope.caveats.push(blob_caveat(
+            ReadinessCaveatId::SourceAbsent,
+            format!(
+                "blob fsck found {} DB blob row(s) with missing local CAS files",
+                envelope.payload.missing
+            ),
+            "blob.fsck.missing",
+            "sinexctl ops blob fsck",
+        ));
+    }
+    if envelope.payload.corrupt > 0 || envelope.payload.malformed > 0 {
+        envelope.caveats.push(blob_caveat(
+            ReadinessCaveatId::WindowPartial,
+            format!(
+                "blob fsck found {} corrupt and {} malformed CAS entrie(s); source-material replayability may be partial",
+                envelope.payload.corrupt, envelope.payload.malformed
+            ),
+            "blob.fsck.invalid",
+            "sinexctl ops blob fsck",
+        ));
+    }
+    envelope
+}
+
+fn blob_migrate_envelope(summary: BlobMigrateSummary) -> ViewEnvelope<BlobMigrateSummary> {
+    let mode = summary.mode;
+    let content_store_path = summary.content_store_path.clone();
+    let from = summary.from.clone();
+    let to = summary.to.clone();
+    let mut envelope = ViewEnvelope::new("sinexctl.ops.blob.migrate", summary).with_query_echo(
+        serde_json::json!({
+            "mode": mode,
+            "content_store_path": content_store_path,
+            "from": from,
+            "to": to,
+        }),
+    );
+    if envelope.payload.total_annex_blobs == 0 {
+        envelope.caveats.push(blob_caveat(
+            ReadinessCaveatId::CoverageUnmeasurable,
+            "blob migration found no legacy annex blobs; this proves only the queried database slice, not that no legacy material ever existed",
+            "blob.migrate.empty",
+            "sinexctl ops blob migrate",
+        ));
+    }
+    if envelope.payload.failed > 0 {
+        envelope.caveats.push(blob_caveat(
+            ReadinessCaveatId::WindowPartial,
+            format!(
+                "blob migration failed for {} blob(s); legacy content migration is partial",
+                envelope.payload.failed
+            ),
+            "blob.migrate.failed",
+            "sinexctl ops blob migrate",
+        ));
+    }
+    envelope
+}
+
+fn blob_verify_integrity_envelope(
+    report: BlobVerifyIntegrityReport,
+    limit: u64,
+    material_id: Option<Id<SourceMaterial>>,
+) -> ViewEnvelope<BlobVerifyIntegrityReport> {
+    let mut envelope = ViewEnvelope::new("sinexctl.ops.blob.verify-integrity", report)
+        .with_query_echo(serde_json::json!({
+            "limit": limit,
+            "material_id": material_id.map(|id| id.to_string()),
+        }));
+    if envelope.payload.examined == 0 {
+        envelope.caveats.push(blob_caveat(
+            ReadinessCaveatId::CoverageUnmeasurable,
+            "blob integrity verification examined zero events with anchor payload hashes; this is an empty audit slice, not proof that all material events are covered",
+            "blob.integrity.empty",
+            "sinexctl ops blob verify-integrity",
+        ));
+    }
+    if limit > 0 {
+        envelope.caveats.push(blob_caveat(
+            ReadinessCaveatId::WindowPartial,
+            format!(
+                "blob integrity verification was capped at {limit} event(s); results cover only a bounded audit window"
+            ),
+            "blob.integrity.limited",
+            "sinexctl ops blob verify-integrity",
+        ));
+    }
+    if envelope.payload.mismatched > 0 {
+        envelope.caveats.push(blob_caveat(
+            ReadinessCaveatId::WindowPartial,
+            format!(
+                "blob integrity verification found {} anchor-payload hash mismatch(es); affected events need archive/replay repair",
+                envelope.payload.mismatched
+            ),
+            "blob.integrity.mismatched",
+            "sinexctl ops blob verify-integrity",
+        ));
+    }
+    let missing = envelope.payload.missing_offsets
+        + envelope.payload.missing_blob
+        + envelope.payload.missing_cas_file;
+    if missing > 0 {
+        envelope.caveats.push(blob_caveat(
+            ReadinessCaveatId::SourceAbsent,
+            format!(
+                "blob integrity verification found {missing} missing offset/blob/CAS prerequisite(s); source-material evidence is incomplete"
+            ),
+            "blob.integrity.missing",
+            "sinexctl ops blob verify-integrity",
+        ));
+    }
+    if envelope.payload.read_errors > 0 {
+        envelope.caveats.push(blob_caveat(
+            ReadinessCaveatId::CoverageUnmeasurable,
+            format!(
+                "blob integrity verification hit {} read/encoding error(s); audit coverage is unmeasurable for those rows",
+                envelope.payload.read_errors
+            ),
+            "blob.integrity.read_errors",
+            "sinexctl ops blob verify-integrity",
+        ));
+    }
+    envelope
+}
+
+fn blob_caveat(
+    id: ReadinessCaveatId,
+    message: impl Into<String>,
+    ref_id: &str,
+    command_hint: &str,
+) -> CaveatView {
+    CaveatView {
+        id: id.as_str().to_string(),
+        message: message.into(),
+        ref_: Some(
+            SinexObjectRef::new(SinexObjectKind::SourceMaterial, ref_id)
+                .with_label(ref_id)
+                .with_command_hint(command_hint),
+        ),
     }
 }
 
@@ -903,3 +1123,7 @@ fn format_verify_integrity_report(report: &BlobVerifyIntegrityReport) -> String 
     }
     s
 }
+
+#[cfg(test)]
+#[path = "blob_test.rs"]
+mod tests;
