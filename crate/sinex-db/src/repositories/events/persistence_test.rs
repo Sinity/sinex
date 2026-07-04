@@ -214,6 +214,16 @@ async fn stream_batch_insert_strategy_prefers_synthesis_for_parent_batches() -> 
 }
 
 #[sinex_test]
+async fn event_storage_lane_targets_are_explicit() -> Result<()> {
+    assert_eq!(EventStorageLane::Activity.table_name(), "core.events");
+    assert_eq!(
+        EventStorageLane::Reflection.table_name(),
+        "reflection.events"
+    );
+    Ok(())
+}
+
+#[sinex_test]
 async fn derived_insert_rejects_non_live_parent(
     ctx: xtask::sandbox::TestContext,
 ) -> xtask::sandbox::TestResult<()> {
