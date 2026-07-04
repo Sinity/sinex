@@ -352,6 +352,7 @@ mod tests;
 /// valid on their own; the latter are consumer identifiers, not subjects).
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct JetStreamTopology {
+    pub lane: JetStreamEventLane,
     pub events_stream: crate::domain::StreamName,
     pub events_subject: crate::domain::NatsSubject,
     /// Stream carrying the FINAL persisted+redacted events, published by the
@@ -375,7 +376,7 @@ pub struct JetStreamTopology {
     pub consumer_durable: String,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 pub enum JetStreamEventLane {
     Activity,
     Reflection,
@@ -482,6 +483,7 @@ impl JetStreamTopology {
         let processing_failures_subject = format!("{}.>", lane.processing_failures_subject_root());
 
         Self {
+            lane,
             events_stream: StreamName::new(base_stream),
             events_subject: NatsSubject::new(namespaced(&events_subject)),
             confirmed_events_stream,
