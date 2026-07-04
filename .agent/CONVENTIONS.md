@@ -116,6 +116,36 @@ or serial focused invocations. If you intentionally overlap proof lanes, record
 why in `OPERATING-LOG.md` and use `xtask history overlap` afterward to measure
 whether the overlap actually helped.
 
+## Greedy Batch / PR Cadence
+
+Default development unit: one complete bead, or one coherent phase that can
+honestly close a bead acceptance-criteria subset with a clear residual matrix.
+Do not open a PR for every small projection, helper, or proof artifact merely
+because it is mergeable.
+
+Prefer a single branch/PR when the work:
+
+- belongs to one bead and one capability claim;
+- touches the same shared view/query/rendering substrate;
+- can be verified by one focused test family plus one live artifact;
+- would otherwise force reviewers and future agents to reconstruct intent
+  across several tiny PRs.
+
+Split only when there is a real boundary:
+
+- the bead is too large to review safely as one phase;
+- independent parts have different risk, owners, or deployment timing;
+- one part is a prerequisite unblocking other active work;
+- verification cost or failure isolation would become materially worse;
+- a partial PR can close a named bead or named acceptance-criteria phase, not
+  just land a convenient substep.
+
+Before publishing, audit the bead acceptance criteria. If the PR does not close
+the bead, the body and bead notes must say exactly which criteria are satisfied,
+which are deferred, and which follow-up bead owns the remainder. This is part
+of devloop velocity: fewer, more complete integration boundaries beat a long
+chain of locally-correct but strategically thin slices.
+
 ## Focus Modes
 
 Use these exact focus modes:
