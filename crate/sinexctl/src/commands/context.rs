@@ -22,14 +22,15 @@ use sinex_primitives::temporal::Timestamp;
 use sinex_primitives::views::{
     ActionAvailability, ActionAvailabilityState, CaveatView, ContextAttentionSpanView,
     ContextIntervalView, ContextSessionView, ContextSourceView, ContextSummaryView,
-    DesktopContextCandidateView, DesktopContextInputEvidence, DesktopContextInputState,
-    DesktopContextView, DesktopFocusSessionListView, DesktopFocusSessionView,
-    DesktopNotificationPressureView, DesktopProjectContextListView, DesktopProjectContextRowView,
-    EVENT_CARD_LIST_SCHEMA_VERSION, EventCardListView, EventCardView, PrivacyStateKind,
-    ReadinessCaveatId, SinexObjectKind, SinexObjectRef, SourceCoverageContinuity,
-    SourceCoverageListView, SourceCoverageReadiness, SourceCoverageView, ViewEnvelope,
+    ContextTimelineItemView, DesktopContextCandidateView, DesktopContextInputEvidence,
+    DesktopContextInputState, DesktopContextView, DesktopFocusSessionListView,
+    DesktopFocusSessionView, DesktopNotificationPressureView, DesktopProjectContextListView,
+    DesktopProjectContextRowView, EVENT_CARD_LIST_SCHEMA_VERSION, EventCardListView,
+    EventCardView, PrivacyStateKind, ReadinessCaveatId, SinexObjectKind, SinexObjectRef,
+    SourceCoverageContinuity, SourceCoverageListView, SourceCoverageReadiness, SourceCoverageView,
+    ViewEnvelope,
 };
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::time::{Duration as StdDuration, Instant};
 
 const MAX_FOCUS_SESSION_EVIDENCE_REFS: usize = 12;
@@ -948,6 +949,12 @@ fn render_context_machine_output(
             let attention_span_views =
                 recall_attention_span_views(event_cards, attention_lineage_evidence);
             let interval_views = recall_interval_views(event_cards);
+            let timeline_views = recall_timeline_views(
+                &session_views,
+                &attention_span_views,
+                &interval_views,
+                event_cards,
+            );
             let mut source_caveats = source_caveats.to_vec();
             if source_surface == "sinexctl.recall"
                 && !event_cards.cards.is_empty()
@@ -980,6 +987,7 @@ fn render_context_machine_output(
                     .with_sessions(session_views)
                     .with_attention_spans(attention_span_views)
                     .with_intervals(interval_views)
+                    .with_timeline(timeline_views)
                     .with_source_caveats(source_caveats),
             )
             .with_query_echo({
@@ -1070,6 +1078,103 @@ fn interval_id_state_kind(card: &EventCardView) -> Option<String> {
         return None;
     }
     Some(state_kind.to_string())
+}
+
+fn recall_timeline_views(
+    sessions: &[ContextSessionView],
+    attention_spans: &[ContextAttentionSpanView],
+    intervals: &[ContextIntervalView],
+    event_cards: &EventCardListView,
+) -> Vec<ContextTimelineItemView> {
+    let mut represented_event_ids = HashSet::new();
+    let mut timeline = Vec::new();
+
+    for session in sessions {
+        represented_event_ids.insert(session.ref_.id.clone());
+        timeline.push(ContextTimelineItemView {
+            item_kind: "session".to_string(),
+            ref_: session.ref_.clone(),
+            source: Some(session.latest_event.source.raw.clone()),
+            state_kind: None,
+            label: None,
+            started_at: session.started_at,
+            ended_at: session.latest_event.timestamp.original,
+            duration_secs: None,
+            summary: session.summary.clone(),
+            parent_refs: session.latest_event.trace_refs.clone(),
+            support_refs: Vec::new(),
+            latest_event: session.latest_event.clone(),
+        });
+    }
+
+    for span in attention_spans {
+        represented_event_ids.insert(span.ref_.id.clone());
+        timeline.push(ContextTimelineItemView {
+            item_kind: "attention_span".to_string(),
+            ref_: span.ref_.clone(),
+            source: Some(span.latest_event.source.raw.clone()),
+            state_kind: Some("attention.span".to_string()),
+            label: None,
+            started_at: span.started_at,
+            ended_at: span.ended_at,
+            duration_secs: span.duration_secs,
+            summary: span.summary.clone(),
+            parent_refs: span.parent_refs.clone(),
+            support_refs: span.support_refs.clone(),
+            latest_event: span.latest_event.clone(),
+        });
+    }
+
+    for interval in intervals {
+        represented_event_ids.insert(interval.ref_.id.clone());
+        timeline.push(ContextTimelineItemView {
+            item_kind: "interval".to_string(),
+            ref_: interval.ref_.clone(),
+            source: Some(interval.latest_event.source.raw.clone()),
+            state_kind: Some(interval.state_kind.clone()),
+            label: interval.label.clone(),
+            started_at: interval.started_at,
+            ended_at: interval.ended_at,
+            duration_secs: interval.duration_secs,
+            summary: interval.summary.clone(),
+            parent_refs: interval.parent_refs.clone(),
+            support_refs: Vec::new(),
+            latest_event: interval.latest_event.clone(),
+        });
+    }
+
+    for card in &event_cards.cards {
+        if represented_event_ids.contains(&card.ref_.id) {
+            continue;
+        }
+        timeline.push(ContextTimelineItemView {
+            item_kind: "event".to_string(),
+            ref_: card.ref_.clone(),
+            source: Some(card.source.raw.clone()),
+            state_kind: Some(card.event_type.clone()),
+            label: None,
+            started_at: card.timestamp.original,
+            ended_at: card.timestamp.original,
+            duration_secs: None,
+            summary: card.summary.clone(),
+            parent_refs: card.trace_refs.clone(),
+            support_refs: Vec::new(),
+            latest_event: card.clone(),
+        });
+    }
+
+    timeline.sort_by(|left, right| {
+        let left_ts = timeline_item_sort_ts(left);
+        let right_ts = timeline_item_sort_ts(right);
+        right_ts.inner().cmp(&left_ts.inner())
+    });
+    timeline
+}
+
+fn timeline_item_sort_ts(item: &ContextTimelineItemView) -> Timestamp {
+    item.ended_at
+        .or(item.started_at)
+        .unwrap_or(Timestamp::UNIX_EPOCH)
 }
 
 fn recall_attention_span_views(

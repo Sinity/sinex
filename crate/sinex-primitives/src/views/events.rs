@@ -252,6 +252,31 @@ pub struct ContextIntervalView {
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub struct ContextTimelineItemView {
+    pub item_kind: String,
+    #[serde(rename = "ref")]
+    pub ref_: SinexObjectRef,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub state_kind: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub label: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub started_at: Option<Timestamp>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ended_at: Option<Timestamp>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub duration_secs: Option<u64>,
+    pub summary: String,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub parent_refs: Vec<SinexObjectRef>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub support_refs: Vec<SinexObjectRef>,
+    pub latest_event: EventCardView,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct ContextSummaryView {
     pub schema_version: String,
     pub since: String,
@@ -264,6 +289,8 @@ pub struct ContextSummaryView {
     pub attention_spans: Vec<ContextAttentionSpanView>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub intervals: Vec<ContextIntervalView>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub timeline: Vec<ContextTimelineItemView>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub source_caveats: Vec<CaveatView>,
 }
@@ -284,6 +311,7 @@ impl ContextSummaryView {
             sessions: Vec::new(),
             attention_spans: Vec::new(),
             intervals: Vec::new(),
+            timeline: Vec::new(),
             source_caveats: Vec::new(),
         }
     }
@@ -303,6 +331,12 @@ impl ContextSummaryView {
     #[must_use]
     pub fn with_intervals(mut self, intervals: Vec<ContextIntervalView>) -> Self {
         self.intervals = intervals;
+        self
+    }
+
+    #[must_use]
+    pub fn with_timeline(mut self, timeline: Vec<ContextTimelineItemView>) -> Self {
+        self.timeline = timeline;
         self
     }
 
