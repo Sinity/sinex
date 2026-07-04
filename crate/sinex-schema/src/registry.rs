@@ -23,6 +23,11 @@ pub const SINEX_SCHEMAS: &[SchemaInfo] = &[
         requires_grants: true,
     },
     SchemaInfo {
+        name: "reflection",
+        description: "Self-observation event lane and telemetry storage",
+        requires_grants: true,
+    },
+    SchemaInfo {
         name: "raw",
         description: "Raw provenance data (temporal_ledger, source_material_registry)",
         requires_grants: true,

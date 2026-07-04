@@ -68,3 +68,19 @@ fn trigger_sql_isolated_in_guarded_blocks() {
         assert!(sql.contains("CREATE TRIGGER"));
     }
 }
+
+#[test]
+fn reflection_event_trigger_sql_targets_reflection_table() {
+    let sql = reflection_events_trigger_sql();
+
+    assert!(sql.contains("reflection.events"));
+    assert!(sql.contains("reflection.fn_events_no_update"));
+    assert!(sql.contains("reflection.fn_events_validate_payload"));
+    assert!(sql.contains("reflection.fn_events_validate_material_bounds"));
+    assert!(!sql.contains(
+        "DROP TRIGGER IF EXISTS trg_events_no_update ON core.events"
+    ));
+    assert!(
+        !sql.contains("CREATE TRIGGER trg_events_no_update\n        BEFORE UPDATE ON core.events")
+    );
+}
