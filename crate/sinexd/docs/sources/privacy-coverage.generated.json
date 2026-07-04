@@ -134,6 +134,7 @@
         "domain": "ai_session",
         "id": "ai-session-chatgpt",
         "implementation": "sinexd",
+        "material_lifecycle": "retain_raw",
         "output_event_type": "ai.message",
         "privacy_context": "document",
         "proposed": false,
@@ -141,7 +142,15 @@
         "runner_pack": "sinexd_source",
         "runtime_shape": "on_demand",
         "source_id": "ai-session-chatgpt",
-        "subject": "source:ai-session-chatgpt"
+        "subject": "source:ai-session-chatgpt",
+        "transport_semantics": {
+          "backpressure": false,
+          "delivery": "same_process",
+          "dlq": false,
+          "ordering": "cursor_order",
+          "replayable": true,
+          "transport": "direct"
+        }
       },
       "parser_manifest": {
         "parser_id": "chatgpt-ai-session",
@@ -226,6 +235,7 @@
         "domain": "ai_session",
         "id": "ai-session-claude",
         "implementation": "sinexd",
+        "material_lifecycle": "retain_raw",
         "output_event_type": "ai.message",
         "privacy_context": "document",
         "proposed": false,
@@ -233,7 +243,15 @@
         "runner_pack": "sinexd_source",
         "runtime_shape": "on_demand",
         "source_id": "ai-session-claude",
-        "subject": "source:ai-session-claude"
+        "subject": "source:ai-session-claude",
+        "transport_semantics": {
+          "backpressure": false,
+          "delivery": "same_process",
+          "dlq": false,
+          "ordering": "cursor_order",
+          "replayable": true,
+          "transport": "direct"
+        }
       },
       "parser_manifest": {
         "parser_id": "claude-ai-session",
@@ -318,6 +336,7 @@
         "domain": "derived",
         "id": "analytics",
         "implementation": "sinexd",
+        "material_lifecycle": "retain_raw",
         "output_event_type": "activity.window.summary",
         "privacy_context": "metadata",
         "proposed": false,
@@ -325,7 +344,99 @@
         "runner_pack": "in_process",
         "runtime_shape": "continuous",
         "source_id": "analytics",
-        "subject": "source:analytics"
+        "subject": "source:analytics",
+        "transport_semantics": {
+          "backpressure": false,
+          "delivery": "same_process",
+          "dlq": false,
+          "ordering": "cursor_order",
+          "replayable": true,
+          "transport": "direct"
+        }
+      },
+      "parser_manifest": null,
+      "source_material_class": {
+        "access_scope": {
+          "scope": "internal"
+        },
+        "resource_profile": "event_stream_consumer",
+        "capture_class": "static_catalog_material_source",
+        "caveat": "runtime material capture/admission class is path- and policy-dependent; static matrix records catalog access scope and binding resource profile"
+      },
+      "field_metadata_status": "unavailable",
+      "field_metadata_behavior": "unclassified",
+      "field_privacy_metadata": [],
+      "surface_behaviors": {
+        "basis": "source_contract_runtime_binding_only",
+        "privacy_export": "metadata_only_export_source_level_only",
+        "public_rpc_errors": "global_public_error_details_only_for_sensitive_source",
+        "mcp_search_fixture": "global_gateway_fixture_redacted_source_level_only",
+        "query_recent_tui_logs": "operator_authorized_sensitive_raw_read_not_safe_export"
+      },
+      "caveats": [
+        "no parser factory is registered for this source in sinexd"
+      ]
+    },
+    {
+      "source_id": "attention-stream",
+      "source_contract": {
+        "access_scope": {
+          "scope": "internal"
+        },
+        "event_types": [
+          [
+            "derived.attention-stream",
+            "attention.span"
+          ]
+        ],
+        "horizons": [
+          "continuous"
+        ],
+        "id": "attention-stream",
+        "namespace": "derived",
+        "occurrence_identity": {
+          "key": "(source, parent_event_id)",
+          "kind": "uuid5_from"
+        },
+        "privacy_tier": "sensitive",
+        "retention": {
+          "kind": "forever"
+        }
+      },
+      "runtime_binding": {
+        "adapter": "AutomatonRuntime",
+        "build_impact": {
+          "binary_impact": "0",
+          "crate_impact": "0",
+          "dedicated_build_rationale": null,
+          "derivation_impact": "0",
+          "nix_output_impact": "0",
+          "sqlx_validation_impact": "0"
+        },
+        "capabilities": [],
+        "checkpoint_family": {
+          "kind": "append_stream"
+        },
+        "domain": "derived",
+        "id": "attention-stream",
+        "implementation": "sinexd",
+        "material_lifecycle": "retain_raw",
+        "output_event_type": "attention.span",
+        "privacy_context": "metadata",
+        "proposed": false,
+        "resource_profile": "event_stream_consumer",
+        "runner_pack": "in_process",
+        "runtime_shape": "continuous",
+        "source_id": "attention-stream",
+        "subject": "source:attention-stream",
+        "transport_semantics": {
+          "backpressure": false,
+          "delivery": "same_process",
+          "dlq": false,
+          "ordering": "cursor_order",
+          "replayable": true,
+          "transport": "direct"
+        }
       },
       "parser_manifest": null,
       "source_material_class": {
@@ -404,6 +515,7 @@
         "domain": "infra",
         "id": "blob-storage",
         "implementation": "sinex-primitives::blob",
+        "material_lifecycle": "retain_raw",
         "output_event_type": "blob.retrieved",
         "privacy_context": "metadata",
         "proposed": true,
@@ -411,7 +523,15 @@
         "runner_pack": "in_process",
         "runtime_shape": "continuous",
         "source_id": "blob-storage",
-        "subject": "source:blob-storage"
+        "subject": "source:blob-storage",
+        "transport_semantics": {
+          "backpressure": false,
+          "delivery": "same_process",
+          "dlq": false,
+          "ordering": "cursor_order",
+          "replayable": true,
+          "transport": "direct"
+        }
       },
       "parser_manifest": null,
       "source_material_class": {
@@ -474,7 +594,16 @@
           "nix_output_impact": "0",
           "sqlx_validation_impact": "0"
         },
-        "capabilities": [],
+        "capabilities": [
+          "coverage:source-coverage",
+          "debt:unified-debt-view",
+          "operation:browser.web.check",
+          "operation:browser.web.reconnect",
+          "operation:browser.web.pause",
+          "operation:browser.web.resume",
+          "operation:browser.web.drain",
+          "operation:browser.web.inspect"
+        ],
         "checkpoint_family": {
           "backing_store_kind": "sqlite",
           "kind": "mutable_snapshot",
@@ -483,6 +612,7 @@
         "domain": "web",
         "id": "browser.history",
         "implementation": "sinexd",
+        "material_lifecycle": "retain_raw",
         "output_event_type": "page.visited",
         "privacy_context": "metadata",
         "proposed": false,
@@ -490,7 +620,15 @@
         "runner_pack": "sinexd_source",
         "runtime_shape": "continuous",
         "source_id": "browser.history",
-        "subject": "source:browser.history"
+        "subject": "source:browser.history",
+        "transport_semantics": {
+          "backpressure": true,
+          "delivery": "at_most_once",
+          "dlq": true,
+          "ordering": "material_order",
+          "replayable": true,
+          "transport": "local_queue"
+        }
       },
       "parser_manifest": {
         "parser_id": "browser-history",
@@ -579,6 +717,7 @@
         "domain": "derived",
         "id": "daily-summarizer",
         "implementation": "sinexd",
+        "material_lifecycle": "retain_raw",
         "output_event_type": "activity.summary.daily",
         "privacy_context": "metadata",
         "proposed": false,
@@ -586,7 +725,15 @@
         "runner_pack": "in_process",
         "runtime_shape": "continuous",
         "source_id": "daily-summarizer",
-        "subject": "source:daily-summarizer"
+        "subject": "source:daily-summarizer",
+        "transport_semantics": {
+          "backpressure": false,
+          "delivery": "same_process",
+          "dlq": false,
+          "ordering": "cursor_order",
+          "replayable": true,
+          "transport": "direct"
+        }
       },
       "parser_manifest": null,
       "source_material_class": {
@@ -665,6 +812,7 @@
         "domain": "desktop",
         "id": "desktop.activitywatch",
         "implementation": "sinexd",
+        "material_lifecycle": "retain_raw",
         "output_event_type": "window.active",
         "privacy_context": "document",
         "proposed": false,
@@ -672,7 +820,15 @@
         "runner_pack": "sinexd_source",
         "runtime_shape": "continuous",
         "source_id": "desktop.activitywatch",
-        "subject": "source:desktop.activitywatch"
+        "subject": "source:desktop.activitywatch",
+        "transport_semantics": {
+          "backpressure": true,
+          "delivery": "at_most_once",
+          "dlq": true,
+          "ordering": "material_order",
+          "replayable": true,
+          "transport": "local_queue"
+        }
       },
       "parser_manifest": {
         "parser_id": "activitywatch-sqlite",
@@ -774,6 +930,7 @@
         "domain": "desktop",
         "id": "desktop.clipboard",
         "implementation": "sinexd",
+        "material_lifecycle": "ephemeral_raw",
         "output_event_type": "clipboard.copied",
         "privacy_context": "clipboard",
         "proposed": false,
@@ -781,7 +938,15 @@
         "runner_pack": "sinexd_source",
         "runtime_shape": "continuous",
         "source_id": "desktop.clipboard",
-        "subject": "source:desktop.clipboard"
+        "subject": "source:desktop.clipboard",
+        "transport_semantics": {
+          "backpressure": true,
+          "delivery": "at_most_once",
+          "dlq": true,
+          "ordering": "best_effort",
+          "replayable": false,
+          "transport": "local_queue"
+        }
       },
       "parser_manifest": {
         "parser_id": "clipboard-poller",
@@ -871,6 +1036,7 @@
         "domain": "desktop",
         "id": "desktop.notification",
         "implementation": "live-capture",
+        "material_lifecycle": "ephemeral_raw",
         "output_event_type": "notification.sent",
         "privacy_context": "notification",
         "proposed": false,
@@ -878,7 +1044,15 @@
         "runner_pack": "live",
         "runtime_shape": "continuous",
         "source_id": "desktop.notification",
-        "subject": "source:desktop.notification"
+        "subject": "source:desktop.notification",
+        "transport_semantics": {
+          "backpressure": true,
+          "delivery": "at_most_once",
+          "dlq": true,
+          "ordering": "best_effort",
+          "replayable": false,
+          "transport": "local_queue"
+        }
       },
       "parser_manifest": {
         "parser_id": "desktop-notification",
@@ -961,6 +1135,7 @@
         "domain": "desktop",
         "id": "desktop.notification.action",
         "implementation": "live-capture",
+        "material_lifecycle": "ephemeral_raw",
         "output_event_type": "notification.action_invoked",
         "privacy_context": "notification",
         "proposed": false,
@@ -968,7 +1143,15 @@
         "runner_pack": "live",
         "runtime_shape": "continuous",
         "source_id": "desktop.notification.action",
-        "subject": "source:desktop.notification.action"
+        "subject": "source:desktop.notification.action",
+        "transport_semantics": {
+          "backpressure": true,
+          "delivery": "at_most_once",
+          "dlq": true,
+          "ordering": "best_effort",
+          "replayable": false,
+          "transport": "local_queue"
+        }
       },
       "parser_manifest": {
         "parser_id": "desktop-notification-action",
@@ -1051,6 +1234,7 @@
         "domain": "desktop",
         "id": "desktop.notification.closed",
         "implementation": "live-capture",
+        "material_lifecycle": "ephemeral_raw",
         "output_event_type": "notification.closed",
         "privacy_context": "notification",
         "proposed": false,
@@ -1058,7 +1242,15 @@
         "runner_pack": "live",
         "runtime_shape": "continuous",
         "source_id": "desktop.notification.closed",
-        "subject": "source:desktop.notification.closed"
+        "subject": "source:desktop.notification.closed",
+        "transport_semantics": {
+          "backpressure": true,
+          "delivery": "at_most_once",
+          "dlq": true,
+          "ordering": "best_effort",
+          "replayable": false,
+          "transport": "local_queue"
+        }
       },
       "parser_manifest": {
         "parser_id": "desktop-notification-closed",
@@ -1173,6 +1365,7 @@
         "domain": "desktop",
         "id": "desktop.window-manager",
         "implementation": "sinexd",
+        "material_lifecycle": "ephemeral_raw",
         "output_event_type": "window.opened",
         "privacy_context": "document",
         "proposed": false,
@@ -1180,7 +1373,15 @@
         "runner_pack": "sinexd_source",
         "runtime_shape": "continuous",
         "source_id": "desktop.window-manager",
-        "subject": "source:desktop.window-manager"
+        "subject": "source:desktop.window-manager",
+        "transport_semantics": {
+          "backpressure": true,
+          "delivery": "at_most_once",
+          "dlq": true,
+          "ordering": "best_effort",
+          "replayable": false,
+          "transport": "local_queue"
+        }
       },
       "parser_manifest": {
         "parser_id": "hyprland-ipc",
@@ -1302,6 +1503,7 @@
         "domain": "library",
         "id": "docs-library-index",
         "implementation": "sinexd",
+        "material_lifecycle": "retain_raw",
         "output_event_type": "document.indexed",
         "privacy_context": "metadata",
         "proposed": false,
@@ -1309,7 +1511,15 @@
         "runner_pack": "sinexd_source",
         "runtime_shape": "on_demand",
         "source_id": "docs-library-index",
-        "subject": "source:docs-library-index"
+        "subject": "source:docs-library-index",
+        "transport_semantics": {
+          "backpressure": false,
+          "delivery": "same_process",
+          "dlq": false,
+          "ordering": "cursor_order",
+          "replayable": true,
+          "transport": "direct"
+        }
       },
       "parser_manifest": {
         "parser_id": "docs-library-index",
@@ -1398,6 +1608,7 @@
         "domain": "derived",
         "id": "document-parser",
         "implementation": "sinexd",
+        "material_lifecycle": "retain_raw",
         "output_event_type": "document.parsed",
         "privacy_context": "metadata",
         "proposed": false,
@@ -1405,7 +1616,15 @@
         "runner_pack": "in_process",
         "runtime_shape": "continuous",
         "source_id": "document-parser",
-        "subject": "source:document-parser"
+        "subject": "source:document-parser",
+        "transport_semantics": {
+          "backpressure": false,
+          "delivery": "same_process",
+          "dlq": false,
+          "ordering": "cursor_order",
+          "replayable": true,
+          "transport": "direct"
+        }
       },
       "parser_manifest": null,
       "source_material_class": {
@@ -1473,6 +1692,7 @@
         "domain": "document",
         "id": "document.staging",
         "implementation": "sinexd",
+        "material_lifecycle": "retain_raw",
         "output_event_type": "document.ingested",
         "privacy_context": "document",
         "proposed": false,
@@ -1480,7 +1700,15 @@
         "runner_pack": "sinexd_source",
         "runtime_shape": "on_demand",
         "source_id": "document.staging",
-        "subject": "source:document.staging"
+        "subject": "source:document.staging",
+        "transport_semantics": {
+          "backpressure": false,
+          "delivery": "same_process",
+          "dlq": false,
+          "ordering": "cursor_order",
+          "replayable": true,
+          "transport": "direct"
+        }
       },
       "parser_manifest": {
         "parser_id": "document-staging",
@@ -1545,11 +1773,26 @@
           [
             "email",
             "email.message.sent"
+          ],
+          [
+            "email",
+            "email.attachment.observed"
+          ],
+          [
+            "email",
+            "email.thread.observed"
+          ],
+          [
+            "email",
+            "email.sync_cursor.observed"
+          ],
+          [
+            "email",
+            "email.capture_runtime.observed"
           ]
         ],
         "horizons": [
-          "historical",
-          "continuous"
+          "historical"
         ],
         "id": "email.mailbox",
         "namespace": "email",
@@ -1563,7 +1806,7 @@
         }
       },
       "runtime_binding": {
-        "adapter": "AppendOnlyFileAdapter",
+        "adapter": "FileContentDropAdapter",
         "build_impact": {
           "binary_impact": "0",
           "crate_impact": "0",
@@ -1572,23 +1815,85 @@
           "nix_output_impact": "0",
           "sqlx_validation_impact": "0"
         },
-        "capabilities": [],
+        "capabilities": [
+          "coverage:source-coverage",
+          "debt:unified-debt-view",
+          "operation:email.mailbox.check",
+          "operation:email.mailbox.import-rfc822",
+          "operation:email.mailbox.inspect",
+          "operation:email.mailbox.replay",
+          "operation:email.mailbox.export",
+          "operation:email.mailbox.fetch-attachments",
+          "operation:email.mailbox.rebuild-projection"
+        ],
         "checkpoint_family": {
           "kind": "append_stream"
         },
         "domain": "email",
         "id": "email.mailbox",
         "implementation": "staged-parser",
-        "output_event_type": "email.message.sent",
+        "material_lifecycle": "retain_raw",
+        "output_event_type": "email.message.received",
         "privacy_context": "document",
-        "proposed": true,
+        "proposed": false,
         "resource_profile": "bounded_file",
         "runner_pack": "staged",
         "runtime_shape": "scheduled",
         "source_id": "email.mailbox",
-        "subject": "source:email.mailbox.sent"
+        "subject": "source:email.mailbox",
+        "transport_semantics": {
+          "backpressure": false,
+          "delivery": "same_process",
+          "dlq": false,
+          "ordering": "cursor_order",
+          "replayable": true,
+          "transport": "direct"
+        }
       },
-      "parser_manifest": null,
+      "parser_manifest": {
+        "parser_id": "email-mailbox-rfc822",
+        "parser_version": "1.0.0",
+        "accepted_input_shapes": [
+          "file_drop",
+          "archive"
+        ],
+        "source_id": "email.mailbox",
+        "declared_event_types": [
+          [
+            "email",
+            "email.message.received"
+          ],
+          [
+            "email",
+            "email.message.sent"
+          ],
+          [
+            "email",
+            "email.attachment.observed"
+          ],
+          [
+            "email",
+            "email.thread.observed"
+          ],
+          [
+            "email",
+            "email.sync_cursor.observed"
+          ],
+          [
+            "email",
+            "email.capture_runtime.observed"
+          ]
+        ],
+        "privacy_contexts": [
+          "document",
+          "metadata"
+        ],
+        "sensitivity_hints": [
+          "free_text",
+          "potentially_sensitive"
+        ],
+        "description": "Parses staged RFC822/.eml material and MBOX slices into email message observations."
+      },
       "source_material_class": {
         "access_scope": {
           "scope": "staged_export"
@@ -1601,14 +1906,14 @@
       "field_metadata_behavior": "unclassified",
       "field_privacy_metadata": [],
       "surface_behaviors": {
-        "basis": "source_contract_runtime_binding_only",
+        "basis": "source_contract_runtime_binding_and_parser_manifest",
         "privacy_export": "metadata_only_export_source_level_only",
         "public_rpc_errors": "global_public_error_details_only_for_sensitive_source",
         "mcp_search_fixture": "global_gateway_fixture_redacted_source_level_only",
         "query_recent_tui_logs": "operator_authorized_sensitive_raw_read_not_safe_export"
       },
       "caveats": [
-        "no parser factory is registered for this source in sinexd"
+        "field-level metadata unavailable; imperative parsers must declare rows before coverage can be inferred"
       ]
     },
     {
@@ -1654,6 +1959,7 @@
         "domain": "derived",
         "id": "entity-enricher",
         "implementation": "sinexd",
+        "material_lifecycle": "retain_raw",
         "output_event_type": "entity.enriched",
         "privacy_context": "metadata",
         "proposed": false,
@@ -1661,7 +1967,15 @@
         "runner_pack": "in_process",
         "runtime_shape": "continuous",
         "source_id": "entity-enricher",
-        "subject": "source:entity-enricher"
+        "subject": "source:entity-enricher",
+        "transport_semantics": {
+          "backpressure": false,
+          "delivery": "same_process",
+          "dlq": false,
+          "ordering": "cursor_order",
+          "replayable": true,
+          "transport": "direct"
+        }
       },
       "parser_manifest": null,
       "source_material_class": {
@@ -1729,6 +2043,7 @@
         "domain": "derived",
         "id": "entity-extractor",
         "implementation": "sinexd",
+        "material_lifecycle": "retain_raw",
         "output_event_type": "entity.extracted",
         "privacy_context": "metadata",
         "proposed": false,
@@ -1736,7 +2051,15 @@
         "runner_pack": "in_process",
         "runtime_shape": "continuous",
         "source_id": "entity-extractor",
-        "subject": "source:entity-extractor"
+        "subject": "source:entity-extractor",
+        "transport_semantics": {
+          "backpressure": false,
+          "delivery": "same_process",
+          "dlq": false,
+          "ordering": "cursor_order",
+          "replayable": true,
+          "transport": "direct"
+        }
       },
       "parser_manifest": null,
       "source_material_class": {
@@ -1804,6 +2127,7 @@
         "domain": "derived",
         "id": "entity-resolver",
         "implementation": "sinexd",
+        "material_lifecycle": "retain_raw",
         "output_event_type": "entity.resolved",
         "privacy_context": "metadata",
         "proposed": false,
@@ -1811,7 +2135,15 @@
         "runner_pack": "in_process",
         "runtime_shape": "continuous",
         "source_id": "entity-resolver",
-        "subject": "source:entity-resolver"
+        "subject": "source:entity-resolver",
+        "transport_semantics": {
+          "backpressure": false,
+          "delivery": "same_process",
+          "dlq": false,
+          "ordering": "cursor_order",
+          "replayable": true,
+          "transport": "direct"
+        }
       },
       "parser_manifest": null,
       "source_material_class": {
@@ -1879,6 +2211,7 @@
         "domain": "messaging",
         "id": "facebook-messenger-thread",
         "implementation": "sinexd",
+        "material_lifecycle": "retain_raw",
         "output_event_type": "message.sent",
         "privacy_context": "document",
         "proposed": false,
@@ -1886,7 +2219,15 @@
         "runner_pack": "sinexd_source",
         "runtime_shape": "on_demand",
         "source_id": "facebook-messenger-thread",
-        "subject": "source:facebook-messenger-thread"
+        "subject": "source:facebook-messenger-thread",
+        "transport_semantics": {
+          "backpressure": false,
+          "delivery": "same_process",
+          "dlq": false,
+          "ordering": "cursor_order",
+          "replayable": true,
+          "transport": "direct"
+        }
       },
       "parser_manifest": {
         "parser_id": "facebook-messenger-thread",
@@ -1983,6 +2324,7 @@
         "domain": "filesystem",
         "id": "fs",
         "implementation": "sinexd",
+        "material_lifecycle": "ephemeral_raw",
         "output_event_type": "file.created",
         "privacy_context": "metadata",
         "proposed": false,
@@ -1990,7 +2332,15 @@
         "runner_pack": "sinexd_source",
         "runtime_shape": "continuous",
         "source_id": "fs",
-        "subject": "source:fs"
+        "subject": "source:fs",
+        "transport_semantics": {
+          "backpressure": true,
+          "delivery": "at_most_once",
+          "dlq": true,
+          "ordering": "cursor_order",
+          "replayable": true,
+          "transport": "local_queue"
+        }
       },
       "parser_manifest": {
         "parser_id": "fs",
@@ -2087,6 +2437,7 @@
         "domain": "vcs",
         "id": "git-commit-history",
         "implementation": "sinexd",
+        "material_lifecycle": "retain_raw",
         "output_event_type": "commit.created",
         "privacy_context": "document",
         "proposed": false,
@@ -2094,7 +2445,15 @@
         "runner_pack": "sinexd_source",
         "runtime_shape": "on_demand",
         "source_id": "git-commit-history",
-        "subject": "source:git-commit-history"
+        "subject": "source:git-commit-history",
+        "transport_semantics": {
+          "backpressure": false,
+          "delivery": "same_process",
+          "dlq": false,
+          "ordering": "cursor_order",
+          "replayable": true,
+          "transport": "direct"
+        }
       },
       "parser_manifest": {
         "parser_id": "git-commit-history",
@@ -2179,6 +2538,7 @@
         "domain": "derived",
         "id": "health",
         "implementation": "sinexd",
+        "material_lifecycle": "retain_raw",
         "output_event_type": "health.aggregated_report",
         "privacy_context": "metadata",
         "proposed": false,
@@ -2186,7 +2546,15 @@
         "runner_pack": "in_process",
         "runtime_shape": "continuous",
         "source_id": "health",
-        "subject": "source:health"
+        "subject": "source:health",
+        "transport_semantics": {
+          "backpressure": false,
+          "delivery": "same_process",
+          "dlq": false,
+          "ordering": "cursor_order",
+          "replayable": true,
+          "transport": "direct"
+        }
       },
       "parser_manifest": null,
       "source_material_class": {
@@ -2254,6 +2622,7 @@
         "domain": "finance",
         "id": "hledger-journal",
         "implementation": "sinexd",
+        "material_lifecycle": "retain_raw",
         "output_event_type": "transaction.posted",
         "privacy_context": "document",
         "proposed": false,
@@ -2261,7 +2630,15 @@
         "runner_pack": "sinexd_source",
         "runtime_shape": "on_demand",
         "source_id": "hledger-journal",
-        "subject": "source:hledger-journal"
+        "subject": "source:hledger-journal",
+        "transport_semantics": {
+          "backpressure": false,
+          "delivery": "same_process",
+          "dlq": false,
+          "ordering": "cursor_order",
+          "replayable": true,
+          "transport": "direct"
+        }
       },
       "parser_manifest": {
         "parser_id": "hledger-journal",
@@ -2346,6 +2723,7 @@
         "domain": "derived",
         "id": "hourly-summarizer",
         "implementation": "sinexd",
+        "material_lifecycle": "retain_raw",
         "output_event_type": "activity.summary.hourly",
         "privacy_context": "metadata",
         "proposed": false,
@@ -2353,7 +2731,15 @@
         "runner_pack": "in_process",
         "runtime_shape": "continuous",
         "source_id": "hourly-summarizer",
-        "subject": "source:hourly-summarizer"
+        "subject": "source:hourly-summarizer",
+        "transport_semantics": {
+          "backpressure": false,
+          "delivery": "same_process",
+          "dlq": false,
+          "ordering": "cursor_order",
+          "replayable": true,
+          "transport": "direct"
+        }
       },
       "parser_manifest": null,
       "source_material_class": {
@@ -2421,6 +2807,7 @@
         "domain": "derived",
         "id": "instruction-expectation-reconciler",
         "implementation": "sinexd",
+        "material_lifecycle": "retain_raw",
         "output_event_type": "expectation.status",
         "privacy_context": "metadata",
         "proposed": false,
@@ -2428,7 +2815,15 @@
         "runner_pack": "in_process",
         "runtime_shape": "continuous",
         "source_id": "instruction-expectation-reconciler",
-        "subject": "source:instruction-expectation-reconciler"
+        "subject": "source:instruction-expectation-reconciler",
+        "transport_semantics": {
+          "backpressure": false,
+          "delivery": "same_process",
+          "dlq": false,
+          "ordering": "cursor_order",
+          "replayable": true,
+          "transport": "direct"
+        }
       },
       "parser_manifest": null,
       "source_material_class": {
@@ -2497,6 +2892,7 @@
         "domain": "integration",
         "id": "integration.polylogue",
         "implementation": "polylogue-daemon",
+        "material_lifecycle": "ephemeral_raw",
         "output_event_type": "integration.polylogue.session_indexed",
         "privacy_context": "document",
         "proposed": false,
@@ -2504,7 +2900,15 @@
         "runner_pack": "external",
         "runtime_shape": "continuous",
         "source_id": "integration.polylogue",
-        "subject": "source:integration.polylogue"
+        "subject": "source:integration.polylogue",
+        "transport_semantics": {
+          "backpressure": true,
+          "delivery": "at_least_once",
+          "dlq": true,
+          "ordering": "best_effort",
+          "replayable": false,
+          "transport": "jet_stream"
+        }
       },
       "parser_manifest": null,
       "source_material_class": {
@@ -2512,6 +2916,90 @@
           "scope": "staged_export"
         },
         "resource_profile": "live_watcher",
+        "capture_class": "static_catalog_material_source",
+        "caveat": "runtime material capture/admission class is path- and policy-dependent; static matrix records catalog access scope and binding resource profile"
+      },
+      "field_metadata_status": "unavailable",
+      "field_metadata_behavior": "unclassified",
+      "field_privacy_metadata": [],
+      "surface_behaviors": {
+        "basis": "source_contract_runtime_binding_only",
+        "privacy_export": "metadata_only_export_source_level_only",
+        "public_rpc_errors": "global_public_error_details_only_for_sensitive_source",
+        "mcp_search_fixture": "global_gateway_fixture_redacted_source_level_only",
+        "query_recent_tui_logs": "operator_authorized_sensitive_raw_read_not_safe_export"
+      },
+      "caveats": [
+        "no parser factory is registered for this source in sinexd"
+      ]
+    },
+    {
+      "source_id": "interval-lift",
+      "source_contract": {
+        "access_scope": {
+          "scope": "internal"
+        },
+        "event_types": [
+          [
+            "derived.interval-lift",
+            "state.interval"
+          ]
+        ],
+        "horizons": [
+          "continuous"
+        ],
+        "id": "interval-lift",
+        "namespace": "derived",
+        "occurrence_identity": {
+          "key": "(source, state_kind, subject_id, start_parent_event_id, end_parent_event_id)",
+          "kind": "uuid5_from"
+        },
+        "privacy_tier": "sensitive",
+        "retention": {
+          "kind": "forever"
+        }
+      },
+      "runtime_binding": {
+        "adapter": "AutomatonRuntime",
+        "build_impact": {
+          "binary_impact": "0",
+          "crate_impact": "0",
+          "dedicated_build_rationale": null,
+          "derivation_impact": "0",
+          "nix_output_impact": "0",
+          "sqlx_validation_impact": "0"
+        },
+        "capabilities": [],
+        "checkpoint_family": {
+          "kind": "append_stream"
+        },
+        "domain": "derived",
+        "id": "interval-lift",
+        "implementation": "sinexd",
+        "material_lifecycle": "retain_raw",
+        "output_event_type": "state.interval",
+        "privacy_context": "metadata",
+        "proposed": false,
+        "resource_profile": "event_stream_consumer",
+        "runner_pack": "in_process",
+        "runtime_shape": "continuous",
+        "source_id": "interval-lift",
+        "subject": "source:interval-lift",
+        "transport_semantics": {
+          "backpressure": false,
+          "delivery": "same_process",
+          "dlq": false,
+          "ordering": "cursor_order",
+          "replayable": true,
+          "transport": "direct"
+        }
+      },
+      "parser_manifest": null,
+      "source_material_class": {
+        "access_scope": {
+          "scope": "internal"
+        },
+        "resource_profile": "event_stream_consumer",
         "capture_class": "static_catalog_material_source",
         "caveat": "runtime material capture/admission class is path- and policy-dependent; static matrix records catalog access scope and binding resource profile"
       },
@@ -2572,6 +3060,7 @@
         "domain": "knowledge",
         "id": "knowledgebase-vault",
         "implementation": "sinexd",
+        "material_lifecycle": "retain_raw",
         "output_event_type": "note.observed",
         "privacy_context": "document",
         "proposed": false,
@@ -2579,7 +3068,15 @@
         "runner_pack": "sinexd_source",
         "runtime_shape": "on_demand",
         "source_id": "knowledgebase-vault",
-        "subject": "source:knowledgebase-vault"
+        "subject": "source:knowledgebase-vault",
+        "transport_semantics": {
+          "backpressure": false,
+          "delivery": "same_process",
+          "dlq": false,
+          "ordering": "cursor_order",
+          "replayable": true,
+          "transport": "direct"
+        }
       },
       "parser_manifest": {
         "parser_id": "knowledgebase-vault",
@@ -2622,7 +3119,7 @@
       ]
     },
     {
-      "source_id": "media.audio",
+      "source_id": "media.audio-transcript",
       "source_contract": {
         "access_scope": {
           "scope": "staged_export"
@@ -2630,16 +3127,32 @@
         "event_types": [
           [
             "media.audio",
-            "media.audio.transcription"
+            "media.audio.transcript_segment_observed"
+          ],
+          [
+            "media.audio",
+            "media.audio.recording_observed"
+          ],
+          [
+            "media.audio",
+            "media.audio.capture_session_started"
+          ],
+          [
+            "media.audio",
+            "media.audio.capture_session_ended"
+          ],
+          [
+            "media.audio",
+            "media.audio.transcription_run_observed"
           ]
         ],
         "horizons": [
-          "continuous"
+          "historical"
         ],
-        "id": "media.audio",
+        "id": "media.audio-transcript",
         "namespace": "media",
         "occurrence_identity": {
-          "key": "(device_id, audio_chunk_hash)",
+          "key": "(material_id, segment_index, start_ms, end_ms)",
           "kind": "uuid5_from"
         },
         "privacy_tier": "sensitive",
@@ -2648,7 +3161,7 @@
         }
       },
       "runtime_binding": {
-        "adapter": "AppendOnlyFileAdapter",
+        "adapter": "FileContentDropAdapter",
         "build_impact": {
           "binary_impact": "0",
           "crate_impact": "0",
@@ -2657,28 +3170,73 @@
           "nix_output_impact": "0",
           "sqlx_validation_impact": "0"
         },
-        "capabilities": [],
+        "capabilities": [
+          "coverage:source-coverage",
+          "debt:unified-debt-view",
+          "operation:media.audio-transcript.import-bundle",
+          "operation:media.audio-transcript.inspect",
+          "operation:media.audio-transcript.delete-material",
+          "operation:media.audio-transcript.export"
+        ],
         "checkpoint_family": {
           "kind": "append_stream"
         },
         "domain": "media",
-        "id": "media.audio",
-        "implementation": "proposed",
-        "output_event_type": "media.audio.transcription",
+        "id": "media.audio-transcript",
+        "implementation": "staged-audio-bundle",
+        "material_lifecycle": "retain_raw",
+        "output_event_type": "media.audio.recording_observed",
         "privacy_context": "document",
-        "proposed": true,
-        "resource_profile": "live_watcher",
+        "proposed": false,
+        "resource_profile": "oneshot",
         "runner_pack": "staged",
-        "runtime_shape": "continuous",
-        "source_id": "media.audio",
-        "subject": "source:media.audio"
+        "runtime_shape": "scheduled",
+        "source_id": "media.audio-transcript",
+        "subject": "source:media.audio-transcript.audio-bundle-staged",
+        "transport_semantics": {
+          "backpressure": false,
+          "delivery": "same_process",
+          "dlq": false,
+          "ordering": "cursor_order",
+          "replayable": true,
+          "transport": "direct"
+        }
       },
-      "parser_manifest": null,
+      "parser_manifest": {
+        "parser_id": "media-audio-transcript-staged",
+        "parser_version": "1.0.0",
+        "accepted_input_shapes": [
+          "file_drop"
+        ],
+        "source_id": "media.audio-transcript",
+        "declared_event_types": [
+          [
+            "media.audio",
+            "media.audio.recording_observed"
+          ],
+          [
+            "media.audio",
+            "media.audio.transcript_segment_observed"
+          ],
+          [
+            "media.audio",
+            "media.audio.transcription_run_observed"
+          ]
+        ],
+        "privacy_contexts": [
+          "document"
+        ],
+        "sensitivity_hints": [
+          "free_text",
+          "potentially_sensitive"
+        ],
+        "description": "Parses staged transcript text, VTT/SRT, or JSON segment exports into transcript segment observations."
+      },
       "source_material_class": {
         "access_scope": {
           "scope": "staged_export"
         },
-        "resource_profile": "live_watcher",
+        "resource_profile": "oneshot",
         "capture_class": "static_catalog_material_source",
         "caveat": "runtime material capture/admission class is path- and policy-dependent; static matrix records catalog access scope and binding resource profile"
       },
@@ -2686,18 +3244,18 @@
       "field_metadata_behavior": "unclassified",
       "field_privacy_metadata": [],
       "surface_behaviors": {
-        "basis": "source_contract_runtime_binding_only",
+        "basis": "source_contract_runtime_binding_and_parser_manifest",
         "privacy_export": "metadata_only_export_source_level_only",
         "public_rpc_errors": "global_public_error_details_only_for_sensitive_source",
         "mcp_search_fixture": "global_gateway_fixture_redacted_source_level_only",
         "query_recent_tui_logs": "operator_authorized_sensitive_raw_read_not_safe_export"
       },
       "caveats": [
-        "no parser factory is registered for this source in sinexd"
+        "field-level metadata unavailable; imperative parsers must declare rows before coverage can be inferred"
       ]
     },
     {
-      "source_id": "media.screen",
+      "source_id": "media.screen-ocr",
       "source_contract": {
         "access_scope": {
           "scope": "staged_export"
@@ -2705,16 +3263,36 @@
         "event_types": [
           [
             "media.screen",
-            "media.screen.ocr"
+            "media.screen.ocr_segment_observed"
+          ],
+          [
+            "media.screen",
+            "media.screen.screenshot_observed"
+          ],
+          [
+            "media.screen",
+            "media.screen.capture_session_started"
+          ],
+          [
+            "media.screen",
+            "media.screen.capture_session_ended"
+          ],
+          [
+            "media.screen",
+            "media.screen.video_segment_observed"
+          ],
+          [
+            "media.screen",
+            "media.screen.ocr_run_observed"
           ]
         ],
         "horizons": [
-          "continuous"
+          "historical"
         ],
-        "id": "media.screen",
+        "id": "media.screen-ocr",
         "namespace": "media",
         "occurrence_identity": {
-          "key": "(display_id, capture_hash)",
+          "key": "(material_id, segment_index, bbox)",
           "kind": "uuid5_from"
         },
         "privacy_tier": "sensitive",
@@ -2723,7 +3301,7 @@
         }
       },
       "runtime_binding": {
-        "adapter": "AppendOnlyFileAdapter",
+        "adapter": "FileContentDropAdapter",
         "build_impact": {
           "binary_impact": "0",
           "crate_impact": "0",
@@ -2732,28 +3310,86 @@
           "nix_output_impact": "0",
           "sqlx_validation_impact": "0"
         },
-        "capabilities": [],
+        "capabilities": [
+          "coverage:source-coverage",
+          "debt:unified-debt-view",
+          "operation:media.screen-ocr.check",
+          "operation:media.screen-ocr.import-ocr",
+          "operation:media.screen-ocr.inspect",
+          "operation:media.screen-ocr.replay",
+          "operation:media.screen-ocr.export"
+        ],
         "checkpoint_family": {
           "kind": "append_stream"
         },
         "domain": "media",
-        "id": "media.screen",
-        "implementation": "proposed",
-        "output_event_type": "media.screen.ocr",
+        "id": "media.screen-ocr",
+        "implementation": "staged-parser",
+        "material_lifecycle": "retain_raw",
+        "output_event_type": "media.screen.ocr_segment_observed",
         "privacy_context": "document",
-        "proposed": true,
-        "resource_profile": "live_watcher",
+        "proposed": false,
+        "resource_profile": "bounded_file",
         "runner_pack": "staged",
-        "runtime_shape": "continuous",
-        "source_id": "media.screen",
-        "subject": "source:media.screen"
+        "runtime_shape": "scheduled",
+        "source_id": "media.screen-ocr",
+        "subject": "source:media.screen-ocr",
+        "transport_semantics": {
+          "backpressure": false,
+          "delivery": "same_process",
+          "dlq": false,
+          "ordering": "cursor_order",
+          "replayable": true,
+          "transport": "direct"
+        }
       },
-      "parser_manifest": null,
+      "parser_manifest": {
+        "parser_id": "media-screen-ocr-staged",
+        "parser_version": "1.0.0",
+        "accepted_input_shapes": [
+          "file_drop"
+        ],
+        "source_id": "media.screen-ocr",
+        "declared_event_types": [
+          [
+            "media.screen",
+            "media.screen.screenshot_observed"
+          ],
+          [
+            "media.screen",
+            "media.screen.capture_session_started"
+          ],
+          [
+            "media.screen",
+            "media.screen.capture_session_ended"
+          ],
+          [
+            "media.screen",
+            "media.screen.video_segment_observed"
+          ],
+          [
+            "media.screen",
+            "media.screen.ocr_segment_observed"
+          ],
+          [
+            "media.screen",
+            "media.screen.ocr_run_observed"
+          ]
+        ],
+        "privacy_contexts": [
+          "document"
+        ],
+        "sensitivity_hints": [
+          "free_text",
+          "potentially_sensitive"
+        ],
+        "description": "Parses staged OCR text, Tesseract TSV, or JSON segment exports into OCR segment observations."
+      },
       "source_material_class": {
         "access_scope": {
           "scope": "staged_export"
         },
-        "resource_profile": "live_watcher",
+        "resource_profile": "bounded_file",
         "capture_class": "static_catalog_material_source",
         "caveat": "runtime material capture/admission class is path- and policy-dependent; static matrix records catalog access scope and binding resource profile"
       },
@@ -2761,14 +3397,14 @@
       "field_metadata_behavior": "unclassified",
       "field_privacy_metadata": [],
       "surface_behaviors": {
-        "basis": "source_contract_runtime_binding_only",
+        "basis": "source_contract_runtime_binding_and_parser_manifest",
         "privacy_export": "metadata_only_export_source_level_only",
         "public_rpc_errors": "global_public_error_details_only_for_sensitive_source",
         "mcp_search_fixture": "global_gateway_fixture_redacted_source_level_only",
         "query_recent_tui_logs": "operator_authorized_sensitive_raw_read_not_safe_export"
       },
       "caveats": [
-        "no parser factory is registered for this source in sinexd"
+        "field-level metadata unavailable; imperative parsers must declare rows before coverage can be inferred"
       ]
     },
     {
@@ -2809,6 +3445,7 @@
         "domain": "sinex",
         "id": "noop",
         "implementation": "sinexd",
+        "material_lifecycle": "retain_raw",
         "output_event_type": "noop",
         "privacy_context": "metadata",
         "proposed": false,
@@ -2816,7 +3453,15 @@
         "runner_pack": "sinexd_source",
         "runtime_shape": "continuous",
         "source_id": "noop",
-        "subject": "source:noop"
+        "subject": "source:noop",
+        "transport_semantics": {
+          "backpressure": false,
+          "delivery": "same_process",
+          "dlq": false,
+          "ordering": "cursor_order",
+          "replayable": true,
+          "transport": "direct"
+        }
       },
       "parser_manifest": null,
       "source_material_class": {
@@ -2884,6 +3529,7 @@
         "domain": "privacy",
         "id": "privacy.fixture.sensitive-record",
         "implementation": "fixture-metadata",
+        "material_lifecycle": "retain_raw",
         "output_event_type": "privacy.fixture.record",
         "privacy_context": "metadata",
         "proposed": true,
@@ -2891,7 +3537,15 @@
         "runner_pack": "staged",
         "runtime_shape": "on_demand",
         "source_id": "privacy.fixture.sensitive-record",
-        "subject": "source:privacy.fixture.sensitive-record"
+        "subject": "source:privacy.fixture.sensitive-record",
+        "transport_semantics": {
+          "backpressure": false,
+          "delivery": "same_process",
+          "dlq": false,
+          "ordering": "cursor_order",
+          "replayable": true,
+          "transport": "direct"
+        }
       },
       "parser_manifest": {
         "parser_id": "privacy-fixture-sensitive-record",
@@ -3020,6 +3674,7 @@
         "domain": "web",
         "id": "raindrop-bookmarks",
         "implementation": "sinexd",
+        "material_lifecycle": "retain_raw",
         "output_event_type": "bookmark.created",
         "privacy_context": "metadata",
         "proposed": false,
@@ -3027,7 +3682,15 @@
         "runner_pack": "sinexd_source",
         "runtime_shape": "on_demand",
         "source_id": "raindrop-bookmarks",
-        "subject": "source:raindrop-bookmarks"
+        "subject": "source:raindrop-bookmarks",
+        "transport_semantics": {
+          "backpressure": false,
+          "delivery": "same_process",
+          "dlq": false,
+          "ordering": "cursor_order",
+          "replayable": true,
+          "transport": "direct"
+        }
       },
       "parser_manifest": {
         "parser_id": "raindrop-bookmarks",
@@ -3112,6 +3775,7 @@
         "domain": "social",
         "id": "reddit-gdpr-comments",
         "implementation": "sinexd",
+        "material_lifecycle": "retain_raw",
         "output_event_type": "social.comment.posted",
         "privacy_context": "document",
         "proposed": false,
@@ -3119,7 +3783,15 @@
         "runner_pack": "sinexd_source",
         "runtime_shape": "on_demand",
         "source_id": "reddit-gdpr-comments",
-        "subject": "source:reddit-gdpr-comments"
+        "subject": "source:reddit-gdpr-comments",
+        "transport_semantics": {
+          "backpressure": false,
+          "delivery": "same_process",
+          "dlq": false,
+          "ordering": "cursor_order",
+          "replayable": true,
+          "transport": "direct"
+        }
       },
       "parser_manifest": {
         "parser_id": "reddit-gdpr-comments",
@@ -3204,6 +3876,7 @@
         "domain": "social",
         "id": "reddit-gdpr-posts",
         "implementation": "sinexd",
+        "material_lifecycle": "retain_raw",
         "output_event_type": "social.post.created",
         "privacy_context": "document",
         "proposed": false,
@@ -3211,7 +3884,15 @@
         "runner_pack": "sinexd_source",
         "runtime_shape": "on_demand",
         "source_id": "reddit-gdpr-posts",
-        "subject": "source:reddit-gdpr-posts"
+        "subject": "source:reddit-gdpr-posts",
+        "transport_semantics": {
+          "backpressure": false,
+          "delivery": "same_process",
+          "dlq": false,
+          "ordering": "cursor_order",
+          "replayable": true,
+          "transport": "direct"
+        }
       },
       "parser_manifest": {
         "parser_id": "reddit-gdpr-posts",
@@ -3296,6 +3977,7 @@
         "domain": "derived",
         "id": "relation-extractor",
         "implementation": "sinexd",
+        "material_lifecycle": "retain_raw",
         "output_event_type": "entity.related",
         "privacy_context": "metadata",
         "proposed": false,
@@ -3303,7 +3985,15 @@
         "runner_pack": "in_process",
         "runtime_shape": "continuous",
         "source_id": "relation-extractor",
-        "subject": "source:relation-extractor"
+        "subject": "source:relation-extractor",
+        "transport_semantics": {
+          "backpressure": false,
+          "delivery": "same_process",
+          "dlq": false,
+          "ordering": "cursor_order",
+          "replayable": true,
+          "transport": "direct"
+        }
       },
       "parser_manifest": null,
       "source_material_class": {
@@ -3371,6 +4061,7 @@
         "domain": "derived",
         "id": "session-detector",
         "implementation": "sinexd",
+        "material_lifecycle": "retain_raw",
         "output_event_type": "activity.session.boundary",
         "privacy_context": "metadata",
         "proposed": false,
@@ -3378,7 +4069,15 @@
         "runner_pack": "in_process",
         "runtime_shape": "continuous",
         "source_id": "session-detector",
-        "subject": "source:session-detector"
+        "subject": "source:session-detector",
+        "transport_semantics": {
+          "backpressure": false,
+          "delivery": "same_process",
+          "dlq": false,
+          "ordering": "cursor_order",
+          "replayable": true,
+          "transport": "direct"
+        }
       },
       "parser_manifest": null,
       "source_material_class": {
@@ -3445,6 +4144,7 @@
         "domain": "infra",
         "id": "sinex-automaton-error",
         "implementation": "sinexd",
+        "material_lifecycle": "retain_raw",
         "output_event_type": "automaton.error",
         "privacy_context": "metadata",
         "proposed": true,
@@ -3452,7 +4152,15 @@
         "runner_pack": "in_process",
         "runtime_shape": "continuous",
         "source_id": "sinex-automaton-error",
-        "subject": "source:sinex-automaton-error"
+        "subject": "source:sinex-automaton-error",
+        "transport_semantics": {
+          "backpressure": false,
+          "delivery": "same_process",
+          "dlq": false,
+          "ordering": "cursor_order",
+          "replayable": true,
+          "transport": "direct"
+        }
       },
       "parser_manifest": null,
       "source_material_class": {
@@ -3531,6 +4239,7 @@
         "domain": "infra",
         "id": "sinex-metrics",
         "implementation": "sinex-primitives::metrics",
+        "material_lifecycle": "retain_raw",
         "output_event_type": "metric.counter",
         "privacy_context": "metadata",
         "proposed": true,
@@ -3538,7 +4247,15 @@
         "runner_pack": "in_process",
         "runtime_shape": "continuous",
         "source_id": "sinex-metrics",
-        "subject": "source:sinex-metrics"
+        "subject": "source:sinex-metrics",
+        "transport_semantics": {
+          "backpressure": false,
+          "delivery": "same_process",
+          "dlq": false,
+          "ordering": "cursor_order",
+          "replayable": true,
+          "transport": "direct"
+        }
       },
       "parser_manifest": null,
       "source_material_class": {
@@ -3605,6 +4322,7 @@
         "domain": "infra",
         "id": "sinex-runtime-telemetry",
         "implementation": "sinexd",
+        "material_lifecycle": "retain_raw",
         "output_event_type": "processing.stats",
         "privacy_context": "metadata",
         "proposed": true,
@@ -3612,7 +4330,15 @@
         "runner_pack": "in_process",
         "runtime_shape": "continuous",
         "source_id": "sinex-runtime-telemetry",
-        "subject": "source:sinex-runtime-telemetry"
+        "subject": "source:sinex-runtime-telemetry",
+        "transport_semantics": {
+          "backpressure": false,
+          "delivery": "same_process",
+          "dlq": false,
+          "ordering": "cursor_order",
+          "replayable": true,
+          "transport": "direct"
+        }
       },
       "parser_manifest": null,
       "source_material_class": {
@@ -3695,6 +4421,7 @@
         "domain": "infra",
         "id": "sinexd-api-telemetry",
         "implementation": "sinexd",
+        "material_lifecycle": "retain_raw",
         "output_event_type": "request.stats",
         "privacy_context": "metadata",
         "proposed": true,
@@ -3702,7 +4429,15 @@
         "runner_pack": "in_process",
         "runtime_shape": "continuous",
         "source_id": "sinexd-api-telemetry",
-        "subject": "source:sinexd-api-telemetry"
+        "subject": "source:sinexd-api-telemetry",
+        "transport_semantics": {
+          "backpressure": false,
+          "delivery": "same_process",
+          "dlq": false,
+          "ordering": "cursor_order",
+          "replayable": true,
+          "transport": "direct"
+        }
       },
       "parser_manifest": null,
       "source_material_class": {
@@ -3785,6 +4520,7 @@
         "domain": "infra",
         "id": "sinexd-event-engine-telemetry",
         "implementation": "sinexd",
+        "material_lifecycle": "retain_raw",
         "output_event_type": "stream.stats",
         "privacy_context": "metadata",
         "proposed": true,
@@ -3792,7 +4528,15 @@
         "runner_pack": "in_process",
         "runtime_shape": "continuous",
         "source_id": "sinexd-event-engine-telemetry",
-        "subject": "source:sinexd-event-engine-telemetry"
+        "subject": "source:sinexd-event-engine-telemetry",
+        "transport_semantics": {
+          "backpressure": false,
+          "delivery": "same_process",
+          "dlq": false,
+          "ordering": "cursor_order",
+          "replayable": true,
+          "transport": "direct"
+        }
       },
       "parser_manifest": null,
       "source_material_class": {
@@ -3871,6 +4615,7 @@
         "domain": "infra",
         "id": "sinexd-lifecycle",
         "implementation": "sinex-primitives::process",
+        "material_lifecycle": "retain_raw",
         "output_event_type": "process.started",
         "privacy_context": "metadata",
         "proposed": true,
@@ -3878,7 +4623,15 @@
         "runner_pack": "in_process",
         "runtime_shape": "continuous",
         "source_id": "sinexd-lifecycle",
-        "subject": "source:sinexd-lifecycle"
+        "subject": "source:sinexd-lifecycle",
+        "transport_semantics": {
+          "backpressure": false,
+          "delivery": "same_process",
+          "dlq": false,
+          "ordering": "cursor_order",
+          "replayable": true,
+          "transport": "direct"
+        }
       },
       "parser_manifest": null,
       "source_material_class": {
@@ -3946,6 +4699,7 @@
         "domain": "health",
         "id": "sleep-merged-summary",
         "implementation": "sinexd",
+        "material_lifecycle": "retain_raw",
         "output_event_type": "sleep.session",
         "privacy_context": "metadata",
         "proposed": false,
@@ -3953,7 +4707,15 @@
         "runner_pack": "sinexd_source",
         "runtime_shape": "on_demand",
         "source_id": "sleep-merged-summary",
-        "subject": "source:sleep-merged-summary"
+        "subject": "source:sleep-merged-summary",
+        "transport_semantics": {
+          "backpressure": false,
+          "delivery": "same_process",
+          "dlq": false,
+          "ordering": "cursor_order",
+          "replayable": true,
+          "transport": "direct"
+        }
       },
       "parser_manifest": {
         "parser_id": "sleep-merged-summary",
@@ -4038,6 +4800,7 @@
         "domain": "music",
         "id": "spotify-extended-history",
         "implementation": "sinexd",
+        "material_lifecycle": "retain_raw",
         "output_event_type": "track.played",
         "privacy_context": "metadata",
         "proposed": false,
@@ -4045,7 +4808,15 @@
         "runner_pack": "sinexd_source",
         "runtime_shape": "on_demand",
         "source_id": "spotify-extended-history",
-        "subject": "source:spotify-extended-history"
+        "subject": "source:spotify-extended-history",
+        "transport_semantics": {
+          "backpressure": false,
+          "delivery": "same_process",
+          "dlq": false,
+          "ordering": "cursor_order",
+          "replayable": true,
+          "transport": "direct"
+        }
       },
       "parser_manifest": {
         "parser_id": "spotify-extended-history",
@@ -4161,6 +4932,7 @@
         "domain": "system",
         "id": "system.dbus",
         "implementation": "sinexd",
+        "material_lifecycle": "ephemeral_raw",
         "output_event_type": "signal.received",
         "privacy_context": "dbus",
         "proposed": false,
@@ -4168,7 +4940,15 @@
         "runner_pack": "sinexd_source",
         "runtime_shape": "continuous",
         "source_id": "system.dbus",
-        "subject": "source:system.dbus"
+        "subject": "source:system.dbus",
+        "transport_semantics": {
+          "backpressure": true,
+          "delivery": "at_most_once",
+          "dlq": true,
+          "ordering": "best_effort",
+          "replayable": false,
+          "transport": "local_queue"
+        }
       },
       "parser_manifest": {
         "parser_id": "system.dbus",
@@ -4291,6 +5071,7 @@
         "domain": "system",
         "id": "system.journald",
         "implementation": "sinexd",
+        "material_lifecycle": "ephemeral_raw",
         "output_event_type": "entry.written",
         "privacy_context": "journal",
         "proposed": false,
@@ -4298,7 +5079,15 @@
         "runner_pack": "sinexd_source",
         "runtime_shape": "continuous",
         "source_id": "system.journald",
-        "subject": "source:system.journald"
+        "subject": "source:system.journald",
+        "transport_semantics": {
+          "backpressure": true,
+          "delivery": "at_most_once",
+          "dlq": true,
+          "ordering": "cursor_order",
+          "replayable": true,
+          "transport": "local_queue"
+        }
       },
       "parser_manifest": {
         "parser_id": "system.journald",
@@ -4387,6 +5176,7 @@
         "domain": "system",
         "id": "system.monitor",
         "implementation": "sinexd",
+        "material_lifecycle": "retain_raw",
         "output_event_type": "monitoring.started",
         "privacy_context": "metadata",
         "proposed": false,
@@ -4394,7 +5184,15 @@
         "runner_pack": "sinexd_source",
         "runtime_shape": "on_demand",
         "source_id": "system.monitor",
-        "subject": "source:system.monitor"
+        "subject": "source:system.monitor",
+        "transport_semantics": {
+          "backpressure": false,
+          "delivery": "same_process",
+          "dlq": false,
+          "ordering": "best_effort",
+          "replayable": false,
+          "transport": "direct"
+        }
       },
       "parser_manifest": null,
       "source_material_class": {
@@ -4477,6 +5275,7 @@
         "domain": "system",
         "id": "system.systemd",
         "implementation": "sinexd",
+        "material_lifecycle": "ephemeral_raw",
         "output_event_type": "unit.started",
         "privacy_context": "journal",
         "proposed": false,
@@ -4484,7 +5283,15 @@
         "runner_pack": "sinexd_source",
         "runtime_shape": "continuous",
         "source_id": "system.systemd",
-        "subject": "source:system.systemd"
+        "subject": "source:system.systemd",
+        "transport_semantics": {
+          "backpressure": true,
+          "delivery": "at_most_once",
+          "dlq": true,
+          "ordering": "cursor_order",
+          "replayable": true,
+          "transport": "local_queue"
+        }
       },
       "parser_manifest": {
         "parser_id": "system.systemd",
@@ -4600,6 +5407,7 @@
         "domain": "system",
         "id": "system.udev",
         "implementation": "sinexd",
+        "material_lifecycle": "ephemeral_raw",
         "output_event_type": "device.connected",
         "privacy_context": "metadata",
         "proposed": false,
@@ -4607,7 +5415,15 @@
         "runner_pack": "sinexd_source",
         "runtime_shape": "continuous",
         "source_id": "system.udev",
-        "subject": "source:system.udev"
+        "subject": "source:system.udev",
+        "transport_semantics": {
+          "backpressure": true,
+          "delivery": "at_most_once",
+          "dlq": true,
+          "ordering": "best_effort",
+          "replayable": false,
+          "transport": "local_queue"
+        }
       },
       "parser_manifest": {
         "parser_id": "system.udev",
@@ -4708,6 +5524,7 @@
         "domain": "derived",
         "id": "tag-applier",
         "implementation": "sinexd",
+        "material_lifecycle": "retain_raw",
         "output_event_type": "knowledge.tag_applied",
         "privacy_context": "metadata",
         "proposed": false,
@@ -4715,7 +5532,15 @@
         "runner_pack": "in_process",
         "runtime_shape": "continuous",
         "source_id": "tag-applier",
-        "subject": "source:tag-applier"
+        "subject": "source:tag-applier",
+        "transport_semantics": {
+          "backpressure": false,
+          "delivery": "same_process",
+          "dlq": false,
+          "ordering": "cursor_order",
+          "replayable": true,
+          "transport": "direct"
+        }
       },
       "parser_manifest": null,
       "source_material_class": {
@@ -4783,6 +5608,7 @@
         "domain": "derived",
         "id": "terminal-canonicalizer",
         "implementation": "sinexd",
+        "material_lifecycle": "retain_raw",
         "output_event_type": "command.canonical",
         "privacy_context": "metadata",
         "proposed": false,
@@ -4790,7 +5616,15 @@
         "runner_pack": "in_process",
         "runtime_shape": "continuous",
         "source_id": "terminal-canonicalizer",
-        "subject": "source:terminal-canonicalizer"
+        "subject": "source:terminal-canonicalizer",
+        "transport_semantics": {
+          "backpressure": false,
+          "delivery": "same_process",
+          "dlq": false,
+          "ordering": "cursor_order",
+          "replayable": true,
+          "transport": "direct"
+        }
       },
       "parser_manifest": null,
       "source_material_class": {
@@ -4865,6 +5699,7 @@
         "domain": "terminal",
         "id": "terminal.asciinema",
         "implementation": "sinexd",
+        "material_lifecycle": "retain_raw",
         "output_event_type": "session.recorded",
         "privacy_context": "command",
         "proposed": false,
@@ -4872,7 +5707,15 @@
         "runner_pack": "sinexd_source",
         "runtime_shape": "continuous",
         "source_id": "terminal.asciinema",
-        "subject": "source:terminal.asciinema"
+        "subject": "source:terminal.asciinema",
+        "transport_semantics": {
+          "backpressure": true,
+          "delivery": "at_most_once",
+          "dlq": true,
+          "ordering": "material_order",
+          "replayable": true,
+          "transport": "local_queue"
+        }
       },
       "parser_manifest": {
         "parser_id": "asciinema-session",
@@ -4966,6 +5809,7 @@
         "domain": "terminal",
         "id": "terminal.atuin-history",
         "implementation": "sinexd",
+        "material_lifecycle": "retain_raw",
         "output_event_type": "command.executed",
         "privacy_context": "command",
         "proposed": false,
@@ -4973,10 +5817,18 @@
         "runner_pack": "sinexd_source",
         "runtime_shape": "continuous",
         "source_id": "terminal.atuin-history",
-        "subject": "source:terminal.atuin-history"
+        "subject": "source:terminal.atuin-history",
+        "transport_semantics": {
+          "backpressure": true,
+          "delivery": "at_most_once",
+          "dlq": true,
+          "ordering": "material_order",
+          "replayable": true,
+          "transport": "local_queue"
+        }
       },
       "parser_manifest": {
-        "parser_id": "terminal.atuin-history",
+        "parser_id": "atuin-history",
         "parser_version": "1.0.0",
         "accepted_input_shapes": [
           "sqlite_query"
@@ -5152,6 +6004,7 @@
         "domain": "terminal",
         "id": "terminal.bash-history",
         "implementation": "sinexd",
+        "material_lifecycle": "retain_raw",
         "output_event_type": "command.imported",
         "privacy_context": "command",
         "proposed": false,
@@ -5159,7 +6012,15 @@
         "runner_pack": "sinexd_source",
         "runtime_shape": "continuous",
         "source_id": "terminal.bash-history",
-        "subject": "source:terminal.bash-history"
+        "subject": "source:terminal.bash-history",
+        "transport_semantics": {
+          "backpressure": true,
+          "delivery": "at_most_once",
+          "dlq": true,
+          "ordering": "cursor_order",
+          "replayable": true,
+          "transport": "local_queue"
+        }
       },
       "parser_manifest": {
         "parser_id": "bash-history",
@@ -5248,6 +6109,7 @@
         "domain": "terminal",
         "id": "terminal.fish-history",
         "implementation": "sinexd",
+        "material_lifecycle": "retain_raw",
         "output_event_type": "command.imported",
         "privacy_context": "command",
         "proposed": false,
@@ -5255,7 +6117,15 @@
         "runner_pack": "sinexd_source",
         "runtime_shape": "continuous",
         "source_id": "terminal.fish-history",
-        "subject": "source:terminal.fish-history"
+        "subject": "source:terminal.fish-history",
+        "transport_semantics": {
+          "backpressure": true,
+          "delivery": "at_most_once",
+          "dlq": true,
+          "ordering": "material_order",
+          "replayable": true,
+          "transport": "local_queue"
+        }
       },
       "parser_manifest": {
         "parser_id": "terminal.fish-history",
@@ -5385,6 +6255,7 @@
         "domain": "terminal",
         "id": "terminal.kitty-osc-live",
         "implementation": "live-capture",
+        "material_lifecycle": "ephemeral_raw",
         "output_event_type": "command.executed",
         "privacy_context": "command",
         "proposed": false,
@@ -5392,7 +6263,15 @@
         "runner_pack": "live",
         "runtime_shape": "continuous",
         "source_id": "terminal.kitty-osc-live",
-        "subject": "source:terminal.kitty-osc-live"
+        "subject": "source:terminal.kitty-osc-live",
+        "transport_semantics": {
+          "backpressure": true,
+          "delivery": "at_most_once",
+          "dlq": true,
+          "ordering": "best_effort",
+          "replayable": false,
+          "transport": "local_queue"
+        }
       },
       "parser_manifest": {
         "parser_id": "kitty-osc-live",
@@ -5477,6 +6356,7 @@
         "domain": "terminal",
         "id": "terminal.monitor",
         "implementation": "sinexd",
+        "material_lifecycle": "retain_raw",
         "output_event_type": "shell.terminal_monitoring_started",
         "privacy_context": "metadata",
         "proposed": false,
@@ -5484,7 +6364,15 @@
         "runner_pack": "sinexd_source",
         "runtime_shape": "on_demand",
         "source_id": "terminal.monitor",
-        "subject": "source:terminal.monitor"
+        "subject": "source:terminal.monitor",
+        "transport_semantics": {
+          "backpressure": false,
+          "delivery": "same_process",
+          "dlq": false,
+          "ordering": "best_effort",
+          "replayable": false,
+          "transport": "direct"
+        }
       },
       "parser_manifest": null,
       "source_material_class": {
@@ -5553,6 +6441,7 @@
         "domain": "terminal",
         "id": "terminal.text-history",
         "implementation": "sinexd",
+        "material_lifecycle": "retain_raw",
         "output_event_type": "command.imported",
         "privacy_context": "command",
         "proposed": false,
@@ -5560,7 +6449,15 @@
         "runner_pack": "sinexd_source",
         "runtime_shape": "continuous",
         "source_id": "terminal.text-history",
-        "subject": "source:terminal.text-history"
+        "subject": "source:terminal.text-history",
+        "transport_semantics": {
+          "backpressure": true,
+          "delivery": "at_most_once",
+          "dlq": true,
+          "ordering": "cursor_order",
+          "replayable": true,
+          "transport": "local_queue"
+        }
       },
       "parser_manifest": {
         "parser_id": "text-history",
@@ -5647,6 +6544,7 @@
         "domain": "terminal",
         "id": "terminal.zsh-history",
         "implementation": "sinexd",
+        "material_lifecycle": "retain_raw",
         "output_event_type": "command.imported",
         "privacy_context": "command",
         "proposed": false,
@@ -5654,7 +6552,15 @@
         "runner_pack": "sinexd_source",
         "runtime_shape": "continuous",
         "source_id": "terminal.zsh-history",
-        "subject": "source:terminal.zsh-history"
+        "subject": "source:terminal.zsh-history",
+        "transport_semantics": {
+          "backpressure": true,
+          "delivery": "at_most_once",
+          "dlq": true,
+          "ordering": "cursor_order",
+          "replayable": true,
+          "transport": "local_queue"
+        }
       },
       "parser_manifest": {
         "parser_id": "zsh-history",
@@ -5751,6 +6657,7 @@
         "domain": "irc",
         "id": "weechat",
         "implementation": "sinexd",
+        "material_lifecycle": "ephemeral_raw",
         "output_event_type": "irc.message",
         "privacy_context": "command",
         "proposed": false,
@@ -5758,7 +6665,15 @@
         "runner_pack": "sinexd_source",
         "runtime_shape": "on_demand",
         "source_id": "weechat",
-        "subject": "source:weechat"
+        "subject": "source:weechat",
+        "transport_semantics": {
+          "backpressure": false,
+          "delivery": "same_process",
+          "dlq": false,
+          "ordering": "cursor_order",
+          "replayable": true,
+          "transport": "direct"
+        }
       },
       "parser_manifest": {
         "parser_id": "weechat-log",
@@ -5854,6 +6769,7 @@
         "domain": "irc",
         "id": "weechat.message",
         "implementation": "sinexd",
+        "material_lifecycle": "ephemeral_raw",
         "output_event_type": "irc.message",
         "privacy_context": "command",
         "proposed": false,
@@ -5861,7 +6777,15 @@
         "runner_pack": "sinexd_source",
         "runtime_shape": "on_demand",
         "source_id": "weechat.message",
-        "subject": "source:weechat.message"
+        "subject": "source:weechat.message",
+        "transport_semantics": {
+          "backpressure": false,
+          "delivery": "same_process",
+          "dlq": false,
+          "ordering": "cursor_order",
+          "replayable": true,
+          "transport": "direct"
+        }
       },
       "parser_manifest": {
         "parser_id": "weechat-message-declarative",
@@ -5972,6 +6896,7 @@
         "domain": "social",
         "id": "wykop-entries",
         "implementation": "sinexd",
+        "material_lifecycle": "retain_raw",
         "output_event_type": "social.entry.created",
         "privacy_context": "document",
         "proposed": false,
@@ -5979,7 +6904,15 @@
         "runner_pack": "sinexd_source",
         "runtime_shape": "on_demand",
         "source_id": "wykop-entries",
-        "subject": "source:wykop-entries"
+        "subject": "source:wykop-entries",
+        "transport_semantics": {
+          "backpressure": false,
+          "delivery": "same_process",
+          "dlq": false,
+          "ordering": "cursor_order",
+          "replayable": true,
+          "transport": "direct"
+        }
       },
       "parser_manifest": {
         "parser_id": "wykop-entries",
@@ -6064,6 +6997,7 @@
         "domain": "social",
         "id": "wykop-entry-comments",
         "implementation": "sinexd",
+        "material_lifecycle": "retain_raw",
         "output_event_type": "social.entry_comment.posted",
         "privacy_context": "document",
         "proposed": false,
@@ -6071,7 +7005,15 @@
         "runner_pack": "sinexd_source",
         "runtime_shape": "on_demand",
         "source_id": "wykop-entry-comments",
-        "subject": "source:wykop-entry-comments"
+        "subject": "source:wykop-entry-comments",
+        "transport_semantics": {
+          "backpressure": false,
+          "delivery": "same_process",
+          "dlq": false,
+          "ordering": "cursor_order",
+          "replayable": true,
+          "transport": "direct"
+        }
       },
       "parser_manifest": {
         "parser_id": "wykop-entry-comments",

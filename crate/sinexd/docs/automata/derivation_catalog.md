@@ -85,6 +85,23 @@ value undeniable with zero new capture and zero LLM. Then email deployment
 (opens people), browser content (opens topics), GitHub + nix-generations (small
 sources, outsized devwork leverage).
 
+## 3.1. L2 interval-lift status
+
+The shared interval-lift lane emits `derived.interval-lift/state.interval`.
+Its payload is intentionally generic: `state_kind`, optional `subject_id`,
+`start_time`, `end_time`, parent transition event types, duration, and bounded
+string attributes. Source-specific rules belong in the interval-lift automaton,
+not in one-off span emitters.
+
+Live first rule:
+
+| Rule | Input transitions | Output `state_kind` | Consumer |
+|---|---|---|---|
+| Hyprland focus | `wm.hyprland/window.focused` N and N+1 | `desktop.focus` | `attention.stream`, `screen.grounding`, `machine.context` |
+
+This keeps capture as point/transition evidence and makes intervals a derived
+mechanism with parent refs to the exact opening and closing observations.
+
 ## 4. Design rules for extending the taxonomy (review-enforceable)
 
 1. A new kind must name its **consumer derivation**, temporal character,

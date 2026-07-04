@@ -584,6 +584,7 @@ static BINARIES: &[(&str, &str, &str, Option<&str>)] = &[
     // of these brings up the full supervisor.
     ("analytics-automaton", "sinexd", "sinexd", None),
     ("attention-stream", "sinexd", "sinexd", None),
+    ("interval-lift", "sinexd", "sinexd", None),
     ("health-automaton", "sinexd", "sinexd", None),
     ("session-detector", "sinexd", "sinexd", None),
     ("hourly-summarizer", "sinexd", "sinexd", None),
@@ -601,6 +602,7 @@ const SOURCE_TARGETS: &[&str] = &[
 const AUTOMATON_TARGETS: &[&str] = &[
     "analytics-automaton",
     "attention-stream",
+    "interval-lift",
     "health-automaton",
     "session-detector",
     "hourly-summarizer",

@@ -18,7 +18,7 @@ use crate::automata::{
     AnalyticsAutomatonRuntime, AttentionStreamRuntime, DailySummarizerRuntime, DocumentParserRuntime,
     EmbeddingProducerRuntime, EntityEnricherRuntime, EntityExtractorRuntime, EntityResolverRuntime,
     HealthAggregatorRuntime, HourlySummarizerRuntime, InstructionExpectationReconcilerRuntime,
-    RelationExtractorRuntime, SessionDetectorRuntime, TagApplierRuntime,
+    IntervalLiftRuntime, RelationExtractorRuntime, SessionDetectorRuntime, TagApplierRuntime,
     TerminalCommandCanonicalizerRuntime,
 };
 
@@ -73,6 +73,11 @@ pub const AUTOMATA: &[AutomatonSpec] = &[
         name: "attention-stream",
         run: || Box::pin(run_one::<AttentionStreamRuntime>("attention-stream")),
         contract: contract_for::<AttentionStreamRuntime>,
+    },
+    AutomatonSpec {
+        name: "interval-lift",
+        run: || Box::pin(run_one::<IntervalLiftRuntime>("interval-lift")),
+        contract: contract_for::<IntervalLiftRuntime>,
     },
     AutomatonSpec {
         name: "health",
