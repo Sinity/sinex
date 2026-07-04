@@ -101,6 +101,37 @@ impl std::fmt::Display for SourceFamily {
     }
 }
 
+/// Product lane for a source.
+///
+/// `Activity` is operator/user-world evidence. `Reflection` is Sinex observing
+/// its own runtime, throughput, health, and derived machinery. Keeping this as
+/// a typed primitive prevents each query or telemetry surface from carrying a
+/// slightly different string-prefix classifier.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum SourceRole {
+    Activity,
+    Reflection,
+}
+
+impl SourceRole {
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Activity => "activity",
+            Self::Reflection => "reflection",
+        }
+    }
+
+    #[must_use]
+    pub const fn throughput_component(self) -> &'static str {
+        match self {
+            Self::Activity => "ingestion",
+            Self::Reflection => "reflection",
+        }
+    }
+}
+
 /// Return the namespace before the first `.` in a source identifier.
 ///
 /// Grouping by source family lets query, context, and source-status surfaces
@@ -145,14 +176,45 @@ pub fn source_identity_matches_family(
         })
 }
 
-/// True when a logical source/event source belongs to Sinex's own
-/// self-observation/telemetry lane.
+/// Classify a logical source/event source into the product lane it belongs to.
 #[must_use]
-pub fn is_self_observation_source(source: &str) -> bool {
-    source == "sinex" || source.starts_with("sinex.") || source.starts_with("sinexd.")
+pub fn source_role(source: &str) -> SourceRole {
+    if source == "sinex" || source.starts_with("sinex.") || source.starts_with("sinexd.") {
+        SourceRole::Reflection
+    } else {
+        SourceRole::Activity
+    }
 }
 
-/// True when a source-material identifier names self-observation material.
+/// SQL CASE expression equivalent of [`source_role`] for a column/expression
+/// containing the event `source`.
+///
+/// Keep SQL surfaces calling this instead of hand-writing prefix CASE arms.
+#[must_use]
+pub fn source_role_sql_case(source_expr: &str) -> String {
+    format!(
+        "CASE WHEN {source_expr} = 'sinex' OR {source_expr} LIKE 'sinex.%' OR {source_expr} LIKE 'sinexd.%' THEN 'reflection' ELSE 'activity' END"
+    )
+}
+
+/// Throughput component SQL CASE expression equivalent to [`source_role`], with
+/// the derived and gateway buckets layered above the source role.
+#[must_use]
+pub fn throughput_component_sql_case(source_expr: &str) -> String {
+    format!(
+        "CASE WHEN {source_expr} LIKE 'sinexd.api%' THEN 'gateway' WHEN {source_expr} LIKE 'derived.%' THEN 'derived' WHEN ({role_case}) = 'reflection' THEN 'reflection' ELSE 'ingestion' END",
+        role_case = source_role_sql_case(source_expr)
+    )
+}
+
+/// True when a logical source/event source belongs to Sinex's reflection lane.
+#[must_use]
+pub fn is_self_observation_source(source: &str) -> bool {
+    source_role(source) == SourceRole::Reflection
+}
+
+/// True when a source-material identifier names reflection/self-observation
+/// material.
 ///
 /// Source-material identifiers can carry a material suffix
 /// (`#material=<uuid>`), so keep this separate from event-source matching while
