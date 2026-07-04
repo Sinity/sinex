@@ -1264,7 +1264,7 @@ impl AppendStreamAcquirer {
         })
     }
 
-    fn current_material_remaining_open_duration(
+    pub(crate) fn current_material_remaining_open_duration(
         &self,
         duration: std::time::Duration,
     ) -> Option<std::time::Duration> {

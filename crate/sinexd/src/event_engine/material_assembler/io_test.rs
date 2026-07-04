@@ -108,9 +108,7 @@ async fn append_slice_data_batches_staged_and_wal_sync(ctx: TestContext) -> Test
 }
 
 #[sinex_test]
-async fn handle_slice_releases_state_lock_before_staging_io(
-    ctx: TestContext,
-) -> TestResult<()> {
+async fn handle_slice_releases_state_lock_before_staging_io(ctx: TestContext) -> TestResult<()> {
     let ctx = ctx.with_nats().shared().await?;
     let (assembler, _content_store_dir, _state_dir) = test_assembler(&ctx).await?;
     let material_id = Uuid::now_v7();
@@ -296,9 +294,7 @@ async fn handle_slice_ignores_duplicate_buffered_offset_without_growing_state(
 }
 
 #[sinex_test]
-async fn handle_slice_rejects_material_that_exceeds_size_limit(
-    ctx: TestContext,
-) -> TestResult<()> {
+async fn handle_slice_rejects_material_that_exceeds_size_limit(ctx: TestContext) -> TestResult<()> {
     let ctx = ctx.with_nats().shared().await?;
     let (assembler, _content_store_dir, _state_dir) =
         super::super::test_support::TestAssemblerBuilder::new("io-test")
@@ -655,8 +651,7 @@ async fn restore_state_cleans_up_assemblies_already_past_slice_timeout(
     ctx: TestContext,
 ) -> TestResult<()> {
     let ctx = ctx.with_nats().shared().await?;
-    let (assembler, _content_store_dir, state_dir) =
-        test_assembler_with_config(&ctx, 1).await?;
+    let (assembler, _content_store_dir, state_dir) = test_assembler_with_config(&ctx, 1).await?;
     let material_id = Uuid::now_v7();
     let material_dir = state_dir.path().join(material_id.to_string());
     tokio::fs::create_dir_all(&material_dir).await?;
@@ -688,6 +683,60 @@ async fn restore_state_cleans_up_assemblies_already_past_slice_timeout(
 }
 
 #[sinex_test]
+async fn restore_state_cleans_up_materials_open_longer_than_slice_timeout(
+    ctx: TestContext,
+) -> TestResult<()> {
+    let ctx = ctx.with_nats().shared().await?;
+    let (assembler, _content_store_dir, state_dir) = test_assembler_with_config(&ctx, 60).await?;
+    let material_id = Uuid::now_v7();
+    let material_dir = state_dir.path().join(material_id.to_string());
+    tokio::fs::create_dir_all(&material_dir).await?;
+
+    let started_at = Timestamp::now() - time::Duration::seconds(120);
+    let last_slice_received = Timestamp::now();
+    write_wal_entry(
+        &material_dir.join(WAL_FILE_NAME),
+        WalEntry::Begin(super::super::state::MaterialBeginMessage {
+            material_id: material_id.to_string(),
+            material_kind: "test".to_string(),
+            source_identifier: "test://restore".to_string(),
+            metadata: json!({}),
+            started_at: started_at.format_rfc3339(),
+        }),
+    )
+    .await?;
+    write_wal_entry(
+        &material_dir.join(WAL_FILE_NAME),
+        WalEntry::Checkpoint(PersistedState {
+            material_id: material_id.to_string(),
+            expected_offset: 1,
+            slice_count: 1,
+            started_at: started_at.format_rfc3339(),
+            last_slice_received: Some(last_slice_received.format_rfc3339()),
+            material_kind: "test".to_string(),
+            source_identifier: "test://restore".to_string(),
+            metadata: json!({}),
+            pending_write: None,
+            pending_end: None,
+            phase: AssemblyPhase::Accumulating,
+        }),
+    )
+    .await?;
+
+    restore_state(&assembler).await?;
+
+    assert!(
+        !material_dir.exists(),
+        "startup restore should drop assemblies whose material open age exceeded the timeout"
+    );
+    assert!(
+        assembler.assembler_state.is_empty(),
+        "long-open restored assemblies must not occupy the active set"
+    );
+    Ok(())
+}
+
+#[sinex_test]
 async fn restore_state_cleans_up_stale_self_observation_before_global_slice_timeout(
     ctx: TestContext,
 ) -> TestResult<()> {
@@ -698,8 +747,8 @@ async fn restore_state_cleans_up_stale_self_observation_before_global_slice_time
     let material_dir = state_dir.path().join(material_id.to_string());
     tokio::fs::create_dir_all(&material_dir).await?;
 
-    let last_slice_received =
-        Timestamp::now() - time::Duration::seconds(RESTORED_SELF_OBSERVATION_ORPHAN_TIMEOUT_SECS + 1);
+    let last_slice_received = Timestamp::now()
+        - time::Duration::seconds(RESTORED_SELF_OBSERVATION_ORPHAN_TIMEOUT_SECS + 1);
 
     write_wal_entry(
         &material_dir.join(WAL_FILE_NAME),
@@ -744,12 +793,9 @@ async fn restore_state_cleans_up_stale_self_observation_before_global_slice_time
 }
 
 #[sinex_test]
-async fn restore_state_cleans_up_stale_incomplete_pending_end(
-    ctx: TestContext,
-) -> TestResult<()> {
+async fn restore_state_cleans_up_stale_incomplete_pending_end(ctx: TestContext) -> TestResult<()> {
     let ctx = ctx.with_nats().shared().await?;
-    let (assembler, _content_store_dir, state_dir) =
-        test_assembler_with_config(&ctx, 1).await?;
+    let (assembler, _content_store_dir, state_dir) = test_assembler_with_config(&ctx, 1).await?;
     let material_id = Uuid::now_v7();
     let material_dir = state_dir.path().join(material_id.to_string());
     tokio::fs::create_dir_all(&material_dir).await?;
@@ -923,8 +969,8 @@ async fn restore_state_cleans_up_partial_replay_after_corrupt_wal_line(
 #[cfg(unix)]
 #[sinex_test]
 async fn parse_material_state_folder_rejects_non_utf8_name() -> TestResult<()> {
-    let path = std::path::PathBuf::from("/tmp")
-        .join(std::ffi::OsString::from_vec(vec![0x66, 0x6f, 0x80]));
+    let path =
+        std::path::PathBuf::from("/tmp").join(std::ffi::OsString::from_vec(vec![0x66, 0x6f, 0x80]));
 
     let err = parse_material_state_folder(&path)
         .expect_err("non-UTF-8 material state folders must surface explicit errors");

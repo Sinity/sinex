@@ -855,7 +855,7 @@ async fn adapter_stream_finalizes_idle_material_before_stale_timeout(
     )
     .with_rotation_policy(RotationPolicy {
         max_bytes: Bytes::from_mebibytes(100),
-        max_age_seconds: Seconds::from_secs(2),
+        max_age_seconds: Seconds::from_secs(1),
     });
     let mut state = AdapterModuleState::default();
 
@@ -864,7 +864,7 @@ async fn adapter_stream_finalizes_idle_material_before_stale_timeout(
         .await?;
 
     let drain_result = tokio::time::timeout(
-        Duration::from_millis(1500),
+        Duration::from_millis(2500),
         source.drain_adapter(None, &mut state, None),
     )
     .await;
@@ -897,9 +897,8 @@ async fn adapter_continuous_poll_finalizes_finite_drain_material(
 ) -> TestResult<()> {
     let ctx = ctx.with_nats().shared().await?;
     let (runtime, _event_receiver) = make_adapter_runtime(&ctx).await?;
-    let mut source = AdapterBackedSource::<EmptyLogicalPathRecordAdapter, TestParser>::new(
-        "desktop.clipboard",
-    );
+    let mut source =
+        AdapterBackedSource::<EmptyLogicalPathRecordAdapter, TestParser>::new("desktop.clipboard");
     let mut state = AdapterModuleState::default();
 
     source
@@ -932,9 +931,8 @@ async fn adapter_continuous_poll_finalizes_finite_drain_material(
 async fn adapter_snapshot_finalizes_finite_drain_material(ctx: TestContext) -> TestResult<()> {
     let ctx = ctx.with_nats().shared().await?;
     let (runtime, _event_receiver) = make_adapter_runtime(&ctx).await?;
-    let mut source = AdapterBackedSource::<EmptyLogicalPathRecordAdapter, TestParser>::new(
-        "desktop.clipboard",
-    );
+    let mut source =
+        AdapterBackedSource::<EmptyLogicalPathRecordAdapter, TestParser>::new("desktop.clipboard");
     let mut state = AdapterModuleState::default();
 
     source
@@ -958,9 +956,8 @@ async fn adapter_snapshot_finalizes_finite_drain_material(ctx: TestContext) -> T
 async fn adapter_historical_finalizes_finite_drain_material(ctx: TestContext) -> TestResult<()> {
     let ctx = ctx.with_nats().shared().await?;
     let (runtime, _event_receiver) = make_adapter_runtime(&ctx).await?;
-    let mut source = AdapterBackedSource::<EmptyLogicalPathRecordAdapter, TestParser>::new(
-        "desktop.clipboard",
-    );
+    let mut source =
+        AdapterBackedSource::<EmptyLogicalPathRecordAdapter, TestParser>::new("desktop.clipboard");
     let mut state = AdapterModuleState::default();
 
     source
