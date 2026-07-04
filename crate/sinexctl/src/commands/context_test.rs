@@ -46,6 +46,29 @@ fn attention_span_event_with_ref(ref_id: impl Into<String>) -> EventCardView {
     card
 }
 
+fn interval_lift_event_with_ref(ref_id: impl Into<String>) -> EventCardView {
+    let mut card = context_event_with_ref("derived.interval-lift", "state.interval", ref_id);
+    card.payload_preview = Some(json!({
+        "interval_id": "interval:desktop.focus:window:0xabc:parent:start:parent:end",
+        "subject_id": "0xabc",
+        "label": "kitty: codex",
+        "start_time": Timestamp::UNIX_EPOCH,
+        "end_time": Timestamp::UNIX_EPOCH,
+        "duration_secs": 120_u64,
+    }));
+    card.trace_refs = vec![
+        SinexObjectRef::new(SinexObjectKind::Event, "event:focus-start")
+            .with_label("wm.hyprland/window.focused")
+            .with_command_hint("sinexctl events trace event:focus-start")
+            .with_rpc_method("events.lineage"),
+        SinexObjectRef::new(SinexObjectKind::Event, "event:focus-end")
+            .with_label("wm.hyprland/window.focused")
+            .with_command_hint("sinexctl events trace event:focus-end")
+            .with_rpc_method("events.lineage"),
+    ];
+    card
+}
+
 #[sinex_test]
 async fn context_machine_output_uses_view_envelope_json() -> xtask::sandbox::TestResult<()> {
     let mut shell_card = context_event("shell.atuin", "command.executed");
@@ -308,6 +331,56 @@ async fn recall_machine_output_projects_attention_spans() -> xtask::sandbox::Tes
 }
 
 #[sinex_test]
+async fn recall_machine_output_projects_lifted_intervals() -> xtask::sandbox::TestResult<()> {
+    let event_cards = EventCardListView {
+        schema_version: EVENT_CARD_LIST_SCHEMA_VERSION.to_string(),
+        count: 2,
+        cards: vec![
+            interval_lift_event_with_ref("event:interval-1"),
+            context_event_with_ref("shell.atuin", "command.executed", "event:cmd-1"),
+        ],
+        next_cursor: None,
+        total_estimate: None,
+    };
+    let sources = grouped_context_sources(&event_cards.cards);
+    let window = build_context_window("30m", None, Timestamp::now())?;
+    let output = render_context_machine_output(
+        &event_cards,
+        &sources,
+        &window,
+        OutputFormat::Json,
+        "sinexctl.recall",
+        "recall",
+        &[],
+        &ContextStageTimings::default(),
+        &std::collections::HashMap::new(),
+    )?
+    .ok_or_else(|| color_eyre::eyre::eyre!("json output expected"))?;
+    let value: serde_json::Value = serde_json::from_str(&output)?;
+
+    let intervals = value["payload"]["intervals"]
+        .as_array()
+        .ok_or_else(|| color_eyre::eyre::eyre!("recall intervals must be an array"))?;
+    assert_eq!(intervals.len(), 1);
+    assert_eq!(intervals[0]["ref"]["id"], "event:interval-1");
+    assert_eq!(intervals[0]["state_kind"], "desktop.focus");
+    assert_eq!(intervals[0]["subject_id"], "0xabc");
+    assert_eq!(intervals[0]["label"], "kitty: codex");
+    assert_eq!(intervals[0]["duration_secs"], 120);
+    assert_eq!(
+        intervals[0]["latest_event"]["source"]["raw"],
+        "derived.interval-lift"
+    );
+    let parent_refs = intervals[0]["parent_refs"]
+        .as_array()
+        .ok_or_else(|| color_eyre::eyre::eyre!("interval parent refs must be an array"))?;
+    assert_eq!(parent_refs.len(), 2);
+    assert_eq!(parent_refs[0]["id"], "event:focus-start");
+    assert_eq!(parent_refs[1]["id"], "event:focus-end");
+    Ok(())
+}
+
+#[sinex_test]
 async fn recall_readiness_marks_missing_session_detector_rows() -> xtask::sandbox::TestResult<()> {
     let event_cards = EventCardListView {
         schema_version: EVENT_CARD_LIST_SCHEMA_VERSION.to_string(),
@@ -519,6 +592,7 @@ async fn recall_diversity_sources_use_emitted_source_ids() -> xtask::sandbox::Te
     assert!(CONTEXT_DIVERSITY_SOURCES.contains(&"webhistory"));
     assert!(CONTEXT_DIVERSITY_SOURCES.contains(&"git"));
     assert!(CONTEXT_DIVERSITY_SOURCES.contains(&"derived.attention-stream"));
+    assert!(CONTEXT_DIVERSITY_SOURCES.contains(&"derived.interval-lift"));
     assert!(CONTEXT_DIVERSITY_SOURCES.contains(&"derived.session-detector"));
     Ok(())
 }
