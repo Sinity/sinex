@@ -553,8 +553,13 @@ where
     }
 
     fn idle_stream_finalize_interval(&self) -> Duration {
-        let max_age = self.rotation_policy.max_age_seconds.as_secs();
-        Duration::from_secs((max_age / 2).max(1))
+        let max_age = Duration::from_secs(self.rotation_policy.max_age_seconds.as_secs().max(1));
+        if let Some(acquirer) = self.stream_acquirer.as_ref()
+            && let Some(remaining) = acquirer.current_material_remaining_open_duration(max_age)
+        {
+            return remaining;
+        }
+        max_age
     }
 
     fn finalize_after_finite_poll_drain(&self) -> bool {
@@ -1260,9 +1265,9 @@ where
             }
         }
 
-        // The stream material is NOT finalized here — it persists across drain
-        // cycles. Finalization happens when run_continuous exits (shutdown signal)
-        // or when the source is dropped.
+        // The stream material is not finalized merely because one drain cycle
+        // returned. It persists across drain cycles and is finalized by age/size
+        // rotation, idle-stream finalization, or clean shutdown.
 
         self.persist_stream_checkpoint_if_due(state, true).await;
         debug!(
