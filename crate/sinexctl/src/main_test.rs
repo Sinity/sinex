@@ -394,17 +394,6 @@ async fn validate_format_rejects_dot_for_runtime_health() -> TestResult<()> {
 }
 
 #[sinex_test]
-async fn validate_format_rejects_ndjson_for_unsupported_command() -> TestResult<()> {
-    // `runtime health` is not wired through the ViewEnvelope ndjson path; the
-    // registry must reject ndjson so a config `default_format = "ndjson"`
-    // cannot make it emit pretty JSON under an ndjson default (Codex
-    // review, PR #1766). main() validates any non-Table effective format.
-    let result = sinexctl::validate_format("runtime health", sinexctl::OutputFormat::Ndjson);
-    assert!(result.is_err(), "runtime health must reject ndjson format");
-    Ok(())
-}
-
-#[sinex_test]
 async fn validate_format_accepts_ndjson_for_runtime_list() -> TestResult<()> {
     // `runtime list` renders through render_envelope and advertises ndjson,
     // so `runtime list --format ndjson` must be reachable (Codex review,
@@ -418,7 +407,7 @@ async fn validate_format_accepts_ndjson_for_runtime_list() -> TestResult<()> {
 
 #[sinex_test]
 async fn validate_format_rejects_ndjson_for_finite_view_envelopes() -> TestResult<()> {
-    for command in ["events recent", "sources status", "show"] {
+    for command in ["events recent", "runtime health", "sources status", "show"] {
         let result = sinexctl::validate_format(command, sinexctl::OutputFormat::Ndjson);
         assert!(
             result.is_err(),
