@@ -14,8 +14,7 @@ use crate::Result;
 use crate::client::GatewayClient;
 use crate::commands::{AutomataCommand, GatewayCommands, RuntimePresenceCommand};
 use crate::fmt::{
-    CommandOutput, format_heartbeat_age, print_finite_envelope, render_envelope,
-    with_spinner_result,
+    format_heartbeat_age, print_finite_envelope, render_envelope, with_spinner_result,
 };
 use crate::model::{OutputFormat, RuntimeModuleRole};
 
@@ -23,6 +22,8 @@ use crate::model::{OutputFormat, RuntimeModuleRole};
 const RUNTIME_MODULE_LIST_SCHEMA_VERSION: &str = "sinex.runtime-module-list/v1";
 /// Schema version for the runtime health view payload.
 const RUNTIME_HEALTH_SCHEMA_VERSION: &str = "sinex.runtime-health/v1";
+/// Schema version for the runtime status view payload.
+const RUNTIME_STATUS_SCHEMA_VERSION: &str = "sinex.runtime-status/v1";
 
 /// Payload carried inside a [`ViewEnvelope`] for `sinexctl runtime list`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -55,6 +56,22 @@ impl RuntimeHealthView {
         Self {
             schema_version: RUNTIME_HEALTH_SCHEMA_VERSION.to_string(),
             health,
+        }
+    }
+}
+
+/// Payload carried inside a [`ViewEnvelope`] for `sinexctl runtime status`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RuntimeStatusView {
+    pub schema_version: String,
+    pub status: InstanceHealthResponse,
+}
+
+impl RuntimeStatusView {
+    fn new(status: InstanceHealthResponse) -> Self {
+        Self {
+            schema_version: RUNTIME_STATUS_SCHEMA_VERSION.to_string(),
+            status,
         }
     }
 }
@@ -199,7 +216,10 @@ impl RuntimeCommands {
             }
             Self::Status { module } => {
                 let response = client.runtime_status(module).await?;
-                CommandOutput::single(response, format_runtime_status_table).display(&format)?;
+                let envelope = runtime_status_envelope(response);
+                if !print_finite_envelope(&envelope, format)? {
+                    println!("{}", format_runtime_status_table(&envelope.payload.status));
+                }
             }
             Self::Drain { module, reason } => {
                 let response = with_spinner_result(
@@ -377,6 +397,57 @@ fn runtime_health_ref(component: &str) -> SinexObjectRef {
         .with_label(format!("runtime health: {component}"))
         .with_command_hint("sinexctl runtime health")
         .with_rpc_method("system.health")
+}
+
+fn runtime_status_envelope(
+    status: InstanceHealthResponse,
+) -> ViewEnvelope<RuntimeStatusView> {
+    let mut envelope =
+        ViewEnvelope::new("sinexctl.runtime.status", RuntimeStatusView::new(status));
+    envelope.caveats = runtime_status_caveats(&envelope.payload.status);
+    envelope
+}
+
+fn runtime_status_caveats(status: &InstanceHealthResponse) -> Vec<CaveatView> {
+    let mut caveats = Vec::new();
+    if !status.healthy {
+        let detail = status
+            .last_error
+            .as_ref()
+            .map_or_else(String::new, |error| format!(": {error}"));
+        caveats.push(CaveatView {
+            id: ReadinessCaveatId::WindowPartial.as_str().to_string(),
+            message: format!(
+                "runtime module `{}` is unhealthy{}",
+                status.instance.instance_id, detail
+            ),
+            ref_: Some(runtime_status_ref(status)),
+        });
+    }
+    if status.instance.last_heartbeat.is_none() {
+        caveats.push(CaveatView {
+            id: ReadinessCaveatId::CoverageUnmeasurable.as_str().to_string(),
+            message: format!(
+                "runtime module `{}` has no last heartbeat; freshness cannot be measured",
+                status.instance.instance_id
+            ),
+            ref_: Some(runtime_status_ref(status)),
+        });
+    }
+    caveats
+}
+
+fn runtime_status_ref(status: &InstanceHealthResponse) -> SinexObjectRef {
+    SinexObjectRef::new(
+        SinexObjectKind::RuntimeModule,
+        status.instance.instance_id.to_string(),
+    )
+    .with_label(format!("runtime status: {}", status.instance.instance_id))
+    .with_command_hint(format!(
+        "sinexctl runtime status {}",
+        status.instance.instance_id
+    ))
+    .with_rpc_method("coordination.instance_health")
 }
 
 /// Format system health as table

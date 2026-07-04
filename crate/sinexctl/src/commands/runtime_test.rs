@@ -4,7 +4,8 @@ use super::RUNTIME_MODULE_LIST_SCHEMA_VERSION;
 use super::*;
 use std::collections::BTreeMap;
 
-use sinex_primitives::domain::{HealthStatus, ModuleKind, ModuleName};
+use sinex_primitives::domain::{HealthStatus, InstanceId, ModuleKind, ModuleName};
+use sinex_primitives::rpc::coordination::{ErrorInfo, InstanceInfo};
 use sinex_primitives::rpc::runtime::RuntimeHeartbeatSource;
 use sinex_primitives::rpc::system::{
     ComponentHealthReport, ComponentsHealth, ReplayControlHealth, SystemHealthResponse,
@@ -76,6 +77,20 @@ fn fixture_system_health() -> SystemHealthResponse {
     }
 }
 
+fn fixture_instance_health() -> InstanceHealthResponse {
+    InstanceHealthResponse {
+        instance: InstanceInfo {
+            instance_id: InstanceId::from("terminal-source"),
+            module_kind: ModuleKind::Source,
+            hostname: None,
+            last_heartbeat: Some(Timestamp::now()),
+            is_leader: false,
+        },
+        healthy: true,
+        last_error: None,
+    }
+}
+
 /// `json` format: one finite document equal to the full envelope — parametric over count.
 #[sinex_test]
 async fn json_renders_one_finite_envelope_across_counts() -> xtask::TestResult<()> {
@@ -107,6 +122,75 @@ async fn json_renders_one_finite_envelope_across_counts() -> xtask::TestResult<(
             "json must include payload schema_version (count={count})"
         );
     }
+    Ok(())
+}
+
+#[sinex_test]
+async fn runtime_status_json_renders_finite_view_envelope() -> xtask::TestResult<()> {
+    let envelope = runtime_status_envelope(fixture_instance_health());
+    let output = render_finite_envelope(&envelope, OutputFormat::Json)?
+        .expect("json must return Some");
+    let parsed: serde_json::Value = serde_json::from_str(&output)?;
+
+    assert_eq!(parsed["schema_version"], VIEW_ENVELOPE_SCHEMA_VERSION);
+    assert_eq!(parsed["source_surface"], "sinexctl.runtime.status");
+    assert_eq!(
+        parsed["payload"]["schema_version"],
+        RUNTIME_STATUS_SCHEMA_VERSION
+    );
+    assert_eq!(
+        parsed["payload"]["status"]["instance"]["instance_id"],
+        "terminal-source"
+    );
+    assert!(
+        parsed.get("caveats").is_none(),
+        "healthy runtime status with heartbeat should not emit readiness caveats"
+    );
+    Ok(())
+}
+
+#[sinex_test]
+async fn runtime_status_caveats_name_unhealthy_and_unmeasurable_freshness()
+-> xtask::TestResult<()> {
+    let mut status = fixture_instance_health();
+    status.healthy = false;
+    status.instance.last_heartbeat = None;
+    status.last_error = Some(ErrorInfo {
+        message: "heartbeat missed".to_string(),
+        code: Some("stale".to_string()),
+        timestamp: None,
+    });
+
+    let envelope = runtime_status_envelope(status);
+    let caveat_ids = envelope
+        .caveats
+        .iter()
+        .map(|caveat| caveat.id.as_str())
+        .collect::<Vec<_>>();
+
+    assert!(
+        caveat_ids.contains(&ReadinessCaveatId::WindowPartial.as_str()),
+        "unhealthy runtime status must be surfaced as window.partial"
+    );
+    assert!(
+        caveat_ids.contains(&ReadinessCaveatId::CoverageUnmeasurable.as_str()),
+        "missing heartbeat must be surfaced as coverage.unmeasurable"
+    );
+    assert!(
+        envelope
+            .caveats
+            .iter()
+            .any(|caveat| caveat.message.contains("terminal-source")),
+        "runtime status caveats must name the module"
+    );
+    assert!(
+        envelope.caveats.iter().any(|caveat| caveat
+            .ref_
+            .as_ref()
+            .and_then(|ref_| ref_.command_hint.as_deref())
+            == Some("sinexctl runtime status terminal-source")),
+        "runtime status caveats must preserve a command hint"
+    );
     Ok(())
 }
 
