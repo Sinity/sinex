@@ -159,6 +159,52 @@ const fn default_agg_limit() -> i64 {
     100
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum EventQueryLane {
+    /// Operator/activity events; excludes Sinex self-observation rows, including
+    /// legacy reflection rows that still live in `core.events`.
+    #[default]
+    Activity,
+    /// Sinex self-observation rows from `reflection.events` plus legacy
+    /// reflection rows that still live in `core.events`.
+    Reflection,
+    /// Activity and reflection rows as one logical event relation.
+    All,
+}
+
+impl EventQueryLane {
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Activity => "activity",
+            Self::Reflection => "reflection",
+            Self::All => "all",
+        }
+    }
+}
+
+impl std::fmt::Display for EventQueryLane {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
+impl std::str::FromStr for EventQueryLane {
+    type Err = SinexError;
+
+    fn from_str(input: &str) -> Result<Self, Self::Err> {
+        match input {
+            "activity" => Ok(Self::Activity),
+            "reflection" => Ok(Self::Reflection),
+            "all" | "mixed" => Ok(Self::All),
+            other => Err(SinexError::parse(format!(
+                "unknown event query lane `{other}`; supported lanes: activity, reflection, all"
+            ))),
+        }
+    }
+}
+
 /// Composable event query. All filter fields AND-combine. Empty vec = no filter.
 ///
 /// Replaces 22+ hardcoded query methods with a single composable request type.
@@ -177,6 +223,8 @@ pub struct EventQuery {
     pub time_range: Option<TimeRange>,
     #[serde(default)]
     pub payload: Option<PayloadFilter>,
+    #[serde(default)]
+    pub lane: EventQueryLane,
 
     // ── Pagination ──
     #[serde(default)]
@@ -247,6 +295,7 @@ impl Default for EventQuery {
             hosts: Vec::new(),
             time_range: None,
             payload: None,
+            lane: EventQueryLane::Activity,
             cursor: None,
             limit: default_limit(),
             direction: SortDirection::default(),
