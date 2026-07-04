@@ -2,8 +2,9 @@ use super::*;
 use sinex_primitives::testing::event_fixture;
 use sinex_primitives::views::{
     CONTEXT_SUMMARY_SCHEMA_VERSION, CaveatView, CoverageGapView, EVENT_CARD_LIST_SCHEMA_VERSION,
-    SourceCoverageContinuity, SourceCoverageListView, SourceCoverageReadiness, SourceCoverageView,
-    SourcePrivacyPosture, VIEW_ENVELOPE_SCHEMA_VERSION,
+    SinexObjectKind, SinexObjectRef, SourceCoverageContinuity, SourceCoverageListView,
+    SourceCoverageReadiness, SourceCoverageView, SourcePrivacyPosture,
+    VIEW_ENVELOPE_SCHEMA_VERSION,
 };
 use xtask::sandbox::prelude::sinex_test;
 
@@ -30,16 +31,18 @@ fn context_event_with_ref(
 }
 
 fn attention_span_event_with_ref(ref_id: impl Into<String>) -> EventCardView {
-    let mut card = context_event_with_ref(
-        "derived.attention-stream",
-        "attention.span",
-        ref_id,
-    );
+    let mut card = context_event_with_ref("derived.attention-stream", "attention.span", ref_id);
     card.payload_preview = Some(json!({
         "start_time": Timestamp::UNIX_EPOCH,
         "end_time": Timestamp::UNIX_EPOCH,
         "duration_secs": 600_u64,
     }));
+    card.trace_refs = vec![
+        SinexObjectRef::new(SinexObjectKind::Event, "event:activity-window-1")
+            .with_label("activity")
+            .with_command_hint("sinexctl events trace event:activity-window-1")
+            .with_rpc_method("events.lineage"),
+    ];
     card
 }
 
@@ -69,6 +72,7 @@ async fn context_machine_output_uses_view_envelope_json() -> xtask::sandbox::Tes
         "events context",
         &[],
         &ContextStageTimings::default(),
+        &std::collections::HashMap::new(),
     )?
     .ok_or_else(|| color_eyre::eyre::eyre!("json output expected"))?;
     let value: serde_json::Value = serde_json::from_str(&output)?;
@@ -126,7 +130,9 @@ async fn recall_machine_output_uses_recall_surface() -> xtask::sandbox::TestResu
             diversity_top_up: std::time::Duration::from_millis(10),
             self_observation_filter: std::time::Duration::from_millis(1),
             source_caveats: std::time::Duration::from_millis(11),
+            attention_lineage: std::time::Duration::from_millis(12),
         },
+        &std::collections::HashMap::new(),
     )?
     .ok_or_else(|| color_eyre::eyre::eyre!("json output expected"))?;
     let value: serde_json::Value = serde_json::from_str(&output)?;
@@ -148,13 +154,19 @@ async fn recall_machine_output_uses_recall_surface() -> xtask::sandbox::TestResu
         value["query_echo"]["stage_timings_ms"]["self_observation_filter"],
         1
     );
-    assert_eq!(value["query_echo"]["stage_timings_ms"]["source_caveats"], 11);
+    assert_eq!(
+        value["query_echo"]["stage_timings_ms"]["source_caveats"],
+        11
+    );
+    assert_eq!(
+        value["query_echo"]["stage_timings_ms"]["attention_lineage"],
+        12
+    );
     Ok(())
 }
 
 #[sinex_test]
-async fn recall_machine_output_projects_session_detector_rows()
--> xtask::sandbox::TestResult<()> {
+async fn recall_machine_output_projects_session_detector_rows() -> xtask::sandbox::TestResult<()> {
     let event_cards = EventCardListView {
         schema_version: EVENT_CARD_LIST_SCHEMA_VERSION.to_string(),
         count: 2,
@@ -180,6 +192,7 @@ async fn recall_machine_output_projects_session_detector_rows()
         "recall",
         &[],
         &ContextStageTimings::default(),
+        &std::collections::HashMap::new(),
     )?
     .ok_or_else(|| color_eyre::eyre::eyre!("json output expected"))?;
     let value: serde_json::Value = serde_json::from_str(&output)?;
@@ -197,10 +210,11 @@ async fn recall_machine_output_projects_session_detector_rows()
     assert!(
         value["payload"]["source_caveats"]
             .as_array()
-            .map(|caveats| caveats
-                .iter()
-                .all(|caveat| caveat["id"]
-                    != ReadinessCaveatId::DerivationLaneNotPromoted.as_str()))
+            .map(|caveats| {
+                caveats.iter().all(|caveat| {
+                    caveat["id"] != ReadinessCaveatId::DerivationLaneNotPromoted.as_str()
+                })
+            })
             .unwrap_or(true),
         "session rows must suppress the missing-session caveat"
     );
@@ -230,6 +244,19 @@ async fn recall_machine_output_projects_attention_spans() -> xtask::sandbox::Tes
         "recall",
         &[],
         &ContextStageTimings::default(),
+        &std::collections::HashMap::from([(
+            "event:attention-1".to_string(),
+            ContextAttentionLineageEvidence {
+                parent_refs: vec![
+                    SinexObjectRef::new(SinexObjectKind::Event, "event:activity-window-1")
+                        .with_rpc_method("events.lineage"),
+                ],
+                support_refs: vec![
+                    SinexObjectRef::new(SinexObjectKind::Event, "event:raw-window-1")
+                        .with_rpc_method("events.lineage"),
+                ],
+            },
+        )]),
     )?
     .ok_or_else(|| color_eyre::eyre::eyre!("json output expected"))?;
     let value: serde_json::Value = serde_json::from_str(&output)?;
@@ -244,10 +271,21 @@ async fn recall_machine_output_projects_attention_spans() -> xtask::sandbox::Tes
         "attention spans should expose a start even when bounded payload previews omit start_time"
     );
     assert_eq!(spans[0]["duration_secs"], 600);
-    assert_eq!(
-        spans[0]["latest_event"]["event_type"],
-        "attention.span"
-    );
+    let parent_refs = spans[0]["parent_refs"]
+        .as_array()
+        .ok_or_else(|| color_eyre::eyre::eyre!("attention span parent_refs must be an array"))?;
+    assert_eq!(parent_refs.len(), 1);
+    assert_eq!(parent_refs[0]["kind"], "event");
+    assert_eq!(parent_refs[0]["id"], "event:activity-window-1");
+    assert_eq!(parent_refs[0]["rpc_method"], "events.lineage");
+    let support_refs = spans[0]["support_refs"]
+        .as_array()
+        .ok_or_else(|| color_eyre::eyre::eyre!("attention span support_refs must be an array"))?;
+    assert_eq!(support_refs.len(), 1);
+    assert_eq!(support_refs[0]["kind"], "event");
+    assert_eq!(support_refs[0]["id"], "event:raw-window-1");
+    assert_eq!(support_refs[0]["rpc_method"], "events.lineage");
+    assert_eq!(spans[0]["latest_event"]["event_type"], "attention.span");
 
     let caveats = value["payload"]["source_caveats"]
         .as_array()
@@ -270,8 +308,7 @@ async fn recall_machine_output_projects_attention_spans() -> xtask::sandbox::Tes
 }
 
 #[sinex_test]
-async fn recall_readiness_marks_missing_session_detector_rows()
--> xtask::sandbox::TestResult<()> {
+async fn recall_readiness_marks_missing_session_detector_rows() -> xtask::sandbox::TestResult<()> {
     let event_cards = EventCardListView {
         schema_version: EVENT_CARD_LIST_SCHEMA_VERSION.to_string(),
         count: 1,
@@ -294,6 +331,7 @@ async fn recall_readiness_marks_missing_session_detector_rows()
         "recall",
         &[],
         &ContextStageTimings::default(),
+        &std::collections::HashMap::new(),
     )?
     .ok_or_else(|| color_eyre::eyre::eyre!("json output expected"))?;
     let value: serde_json::Value = serde_json::from_str(&output)?;
@@ -314,8 +352,8 @@ async fn recall_readiness_marks_missing_session_detector_rows()
 }
 
 #[sinex_test]
-async fn recall_readiness_caveats_explain_absent_expected_sources()
--> xtask::sandbox::TestResult<()> {
+async fn recall_readiness_caveats_explain_absent_expected_sources() -> xtask::sandbox::TestResult<()>
+{
     let event_cards = EventCardListView {
         schema_version: EVENT_CARD_LIST_SCHEMA_VERSION.to_string(),
         count: 1,
@@ -357,49 +395,47 @@ async fn recall_readiness_caveats_explain_absent_expected_sources()
     let caveats = recall_expected_source_caveats(&event_cards, &coverage);
 
     assert!(
-        caveats
-            .iter()
-            .any(|caveat| caveat.id == ReadinessCaveatId::WindowPartial.as_str()
-                && caveat.message.contains("active but contributed no events")),
+        caveats.iter().any(
+            |caveat| caveat.id == ReadinessCaveatId::WindowPartial.as_str()
+                && caveat.message.contains("active but contributed no events")
+        ),
         "active browser source should be reported as window-absent: {caveats:?}"
     );
     assert!(
-        caveats
-            .iter()
-            .any(|caveat| caveat.id == ReadinessCaveatId::CoverageUnmeasurable.as_str()
+        caveats.iter().any(
+            |caveat| caveat.id == ReadinessCaveatId::CoverageUnmeasurable.as_str()
                 && caveat.message.contains("browser source coverage gap")
-                && caveat.message.contains("fixture gap")),
+                && caveat.message.contains("fixture gap")
+        ),
         "active browser source gaps should be rendered as recall caveats: {caveats:?}"
     );
     assert!(
-        caveats
-            .iter()
-            .any(|caveat| caveat.id == ReadinessCaveatId::SourceAbsent.as_str()
-                && caveat.message.contains("readiness=missing_events")),
+        caveats.iter().any(
+            |caveat| caveat.id == ReadinessCaveatId::SourceAbsent.as_str()
+                && caveat.message.contains("readiness=missing_events")
+        ),
         "degraded git source should report source-status posture: {caveats:?}"
     );
     assert!(
-        caveats
-            .iter()
-            .any(|caveat| caveat.id == ReadinessCaveatId::CoverageUnmeasurable.as_str()
-                && caveat.message.contains("git source coverage gap")),
+        caveats.iter().any(
+            |caveat| caveat.id == ReadinessCaveatId::CoverageUnmeasurable.as_str()
+                && caveat.message.contains("git source coverage gap")
+        ),
         "degraded git source gaps should be rendered as recall caveats: {caveats:?}"
     );
     assert!(
-        caveats
-            .iter()
-            .any(|caveat| caveat.id == ReadinessCaveatId::WindowPartial.as_str()
+        caveats.iter().any(
+            |caveat| caveat.id == ReadinessCaveatId::WindowPartial.as_str()
                 && caveat.message.contains("filesystem")
-                && caveat.message.contains("active but contributed no events")),
+                && caveat.message.contains("active but contributed no events")
+        ),
         "filesystem event source should map to fs source coverage: {caveats:?}"
     );
     assert!(
-        caveats
-            .iter()
-            .all(|caveat| {
-                caveat.id != ReadinessCaveatId::WindowPartial.as_str()
-                    || !caveat.message.contains("terminal")
-            }),
+        caveats.iter().all(|caveat| {
+            caveat.id != ReadinessCaveatId::WindowPartial.as_str()
+                || !caveat.message.contains("terminal")
+        }),
         "observed terminal source must not produce an absent-source caveat"
     );
     Ok(())
@@ -440,12 +476,10 @@ async fn recall_readiness_caveats_include_gaps_even_when_source_contributes()
         "contributing browser source should still expose coverage gaps: {caveats:?}"
     );
     assert!(
-        caveats
-            .iter()
-            .all(|caveat| {
-                caveat.id != ReadinessCaveatId::WindowPartial.as_str()
-                    || !caveat.message.contains("browser")
-            }),
+        caveats.iter().all(|caveat| {
+            caveat.id != ReadinessCaveatId::WindowPartial.as_str()
+                || !caveat.message.contains("browser")
+        }),
         "contributing browser source must not be reported absent: {caveats:?}"
     );
     Ok(())
@@ -471,12 +505,10 @@ async fn recall_expected_sources_accept_emitted_browser_and_git_sources()
     let caveats = recall_expected_source_caveats(&event_cards, &coverage);
 
     assert!(
-        caveats
-            .iter()
-            .all(|caveat| !matches!(
-                caveat.id.as_str(),
-                "source.absent" | "window.partial" | "coverage.unmeasurable"
-            )),
+        caveats.iter().all(|caveat| !matches!(
+            caveat.id.as_str(),
+            "source.absent" | "window.partial" | "coverage.unmeasurable"
+        )),
         "emitted terminal/browser/git/filesystem sources should satisfy recall expectations: {caveats:?}"
     );
     Ok(())
@@ -622,6 +654,7 @@ async fn context_machine_output_rejects_ndjson() -> xtask::sandbox::TestResult<(
         "events context",
         &[],
         &ContextStageTimings::default(),
+        &std::collections::HashMap::new(),
     );
     assert!(result.is_err(), "context must remain a finite view");
     Ok(())
