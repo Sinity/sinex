@@ -455,13 +455,24 @@ fn source_coverage_view(
             }
             caveats.extend(runtime_observation_caveats(contract, observation, verdict));
         } else {
+            if !has_material && !has_events {
+                gaps.push(runtime_unobserved_gap(contract));
+            }
             caveats.push(runtime_unobserved_caveat(contract));
         }
     }
     if contract.id == "email.mailbox" {
+        gaps.extend(email_provider_operation_gaps(
+            bindings,
+            email_provider_states,
+        ));
         caveats.extend(email_provider_operation_caveats(
             bindings,
             email_provider_states,
+        ));
+        gaps.extend(email_mailbox_projection_gaps(
+            bindings,
+            email_projection_states,
         ));
         caveats.extend(email_mailbox_projection_caveats(
             bindings,
@@ -469,6 +480,7 @@ fn source_coverage_view(
         ));
     }
     if let Some(sessions) = session_states.get(contract.id) {
+        gaps.extend(sessions.iter().filter_map(session_control_gap));
         caveats.extend(sessions.iter().map(session_control_caveat));
     }
 
@@ -669,6 +681,50 @@ fn session_control_caveat(record: &sinex_db::repositories::SourceSessionStateRec
     }
 }
 
+fn session_control_gap(
+    record: &sinex_db::repositories::SourceSessionStateRecord,
+) -> Option<CoverageGapView> {
+    let suspended = record.private_mode_blocked
+        || matches!(record.lifecycle_state.as_str(), "disabled" | "paused");
+    suspended.then(|| {
+        let private_fragment = if record.private_mode_blocked {
+            "; private_mode_blocked=true"
+        } else {
+            ""
+        };
+        let reason_fragment = record
+            .reason
+            .as_deref()
+            .map(|reason| format!("; reason={reason}"))
+            .unwrap_or_default();
+        CoverageGapView {
+            kind: "live_session_suspended".to_string(),
+            message: format!(
+                "live-session `{}` (scope `{}`) is {}; capture suspended; coverage_ref={}; debt_ref={}{private_fragment}{reason_fragment}",
+                record.mode_id,
+                record.session_scope,
+                record.lifecycle_state,
+                record.coverage_ref,
+                record.debt_ref,
+            ),
+        }
+    })
+}
+
+fn email_provider_operation_gaps(
+    bindings: &[&SourceRuntimeBinding],
+    states: &HashMap<String, EmailProviderOperationState>,
+) -> Vec<CoverageGapView> {
+    bindings
+        .iter()
+        .filter_map(|binding| {
+            let mode_id = binding.subject.as_str();
+            let state = states.get(mode_id)?;
+            email_provider_operation_gap(mode_id, state)
+        })
+        .collect()
+}
+
 fn email_provider_operation_caveats(
     bindings: &[&SourceRuntimeBinding],
     states: &HashMap<String, EmailProviderOperationState>,
@@ -683,6 +739,27 @@ fn email_provider_operation_caveats(
         .collect()
 }
 
+fn email_mailbox_projection_gaps(
+    bindings: &[&SourceRuntimeBinding],
+    states: &HashMap<String, EmailMailboxProjectionState>,
+) -> Vec<CoverageGapView> {
+    bindings
+        .iter()
+        .filter_map(|binding| {
+            let mode_id = binding.subject.as_str();
+            let state = states.get(mode_id)?;
+            email_mailbox_projection_debt_messages(state).map(|debts| CoverageGapView {
+                kind: "email_mailbox_projection_materialization_debt".to_string(),
+                message: format!(
+                    "{mode_id} has {} projected message(s); {}; debt:email.mailbox.{mode_id}.projection_materialization",
+                    state.message_count,
+                    debts.join("; ")
+                ),
+            })
+        })
+        .collect()
+}
+
 fn email_mailbox_projection_caveats(
     bindings: &[&SourceRuntimeBinding],
     states: &HashMap<String, EmailMailboxProjectionState>,
@@ -692,20 +769,7 @@ fn email_mailbox_projection_caveats(
         .filter_map(|binding| {
             let mode_id = binding.subject.as_str();
             let state = states.get(mode_id)?;
-            let mut debts = Vec::new();
-            if state.body_bytes > 0 {
-                debts.push(format!(
-                    "{} message body byte(s) are represented as metadata only",
-                    state.body_bytes
-                ));
-            }
-            if state.attachment_count > state.attachment_observed_count {
-                debts.push(format!(
-                    "{} attachment(s) declared, {} attachment metadata event(s) observed",
-                    state.attachment_count, state.attachment_observed_count
-                ));
-            }
-            (!debts.is_empty()).then(|| CaveatView {
+            email_mailbox_projection_debt_messages(state).map(|debts| CaveatView {
                 id: format!("email.mailbox_projection.{mode_id}.materialization_debt"),
                 message: format!(
                     "{mode_id} has {} projected message(s); {}; debt:email.mailbox.{mode_id}.projection_materialization",
@@ -716,6 +780,69 @@ fn email_mailbox_projection_caveats(
             })
         })
         .collect()
+}
+
+fn email_mailbox_projection_debt_messages(
+    state: &EmailMailboxProjectionState,
+) -> Option<Vec<String>> {
+    let mut debts = Vec::new();
+    if state.body_bytes > 0 {
+        debts.push(format!(
+            "{} message body byte(s) are represented as metadata only",
+            state.body_bytes
+        ));
+    }
+    if state.attachment_count > state.attachment_observed_count {
+        debts.push(format!(
+            "{} attachment(s) declared, {} attachment metadata event(s) observed",
+            state.attachment_count, state.attachment_observed_count
+        ));
+    }
+    (!debts.is_empty()).then_some(debts)
+}
+
+fn email_provider_operation_gap(
+    mode_id: &str,
+    state: &EmailProviderOperationState,
+) -> Option<CoverageGapView> {
+    (state.result_status == "failure").then(|| {
+        let reason = state
+            .provider_failure
+            .as_ref()
+            .and_then(|failure| failure.get("reason"))
+            .and_then(Value::as_str)
+            .unwrap_or("provider runtime failed");
+        let debt_ref = state
+            .provider_failure
+            .as_ref()
+            .and_then(|failure| failure.get("debt_ref"))
+            .and_then(Value::as_str)
+            .unwrap_or("debt:email.mailbox.provider_runtime");
+        let coverage_ref = state
+            .provider_failure
+            .as_ref()
+            .and_then(|failure| failure.get("coverage_ref"))
+            .and_then(Value::as_str)
+            .or_else(|| provider_runtime_field(state, "coverage_ref"))
+            .unwrap_or("coverage:email.mailbox.provider_runtime");
+        let failure_fragment = state
+            .failure_class
+            .as_deref()
+            .map(|class| format!("; failure_class={class}"))
+            .unwrap_or_default();
+        let action_fragment = state
+            .required_action
+            .as_deref()
+            .map(|action| format!("; required_action={action}"))
+            .unwrap_or_default();
+
+        CoverageGapView {
+            kind: "email_provider_runtime_failed".to_string(),
+            message: format!(
+                "latest provider sync for `{mode_id}` failed; coverage_ref={coverage_ref}; debt_ref={debt_ref}{failure_fragment}{action_fragment}; detail={reason}"
+            ),
+        }
+    })
 }
 
 fn email_provider_operation_caveat(
@@ -818,6 +945,16 @@ fn provider_coverage_ref(state: &EmailProviderOperationState) -> Option<&str> {
 
 fn provider_debt_ref(state: &EmailProviderOperationState) -> Option<&str> {
     provider_failure_field(state, "debt_ref").or_else(|| provider_runtime_field(state, "debt_ref"))
+}
+
+fn runtime_unobserved_gap(contract: &SourceContract) -> CoverageGapView {
+    CoverageGapView {
+        kind: runtime_unobserved_gap_kind(contract).to_string(),
+        message: format!(
+            "{} is declared, but no runtime observation, material, or admitted events have been observed for this source",
+            runtime_subject(contract)
+        ),
+    }
 }
 
 fn runtime_unobserved_caveat(contract: &SourceContract) -> CaveatView {
@@ -1051,6 +1188,14 @@ fn runtime_stalled_gap_kind(contract: &SourceContract) -> &'static str {
         "runtime_bridge_stalled"
     } else {
         "runtime_binding_stalled"
+    }
+}
+
+fn runtime_unobserved_gap_kind(contract: &SourceContract) -> &'static str {
+    if matches!(contract.access_scope, AccessScope::RuntimeBridge { .. }) {
+        "runtime_bridge_unobserved"
+    } else {
+        "runtime_binding_unobserved"
     }
 }
 
