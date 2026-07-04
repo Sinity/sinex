@@ -1,5 +1,6 @@
 use super::*;
 use sinex_primitives::rpc::dlq::{DlqMessageGroup, DlqPressureSignal};
+use sinex_primitives::views::VIEW_ENVELOPE_SCHEMA_VERSION;
 use xtask::sandbox::prelude::sinex_test;
 
 #[sinex_test]
@@ -738,5 +739,149 @@ async fn dlq_purge_table_formatter_renders_operation() -> xtask::sandbox::TestRe
     });
 
     assert_eq!(rendered, "success: 3 messages purged (operation op-1)");
+    Ok(())
+}
+
+fn fixture_dlq_list(
+    total_messages: u64,
+    pressure_level: sinex_primitives::RuntimePressureLevel,
+) -> DlqListResponse {
+    let runtime_action = match pressure_level {
+        sinex_primitives::RuntimePressureLevel::Unknown => {
+            sinex_primitives::RuntimePressureAction::None
+        }
+        sinex_primitives::RuntimePressureLevel::Nominal => {
+            sinex_primitives::RuntimePressureAction::Admit
+        }
+        sinex_primitives::RuntimePressureLevel::Warning => {
+            sinex_primitives::RuntimePressureAction::Inspect
+        }
+        sinex_primitives::RuntimePressureLevel::Critical => {
+            sinex_primitives::RuntimePressureAction::Throttle
+        }
+    };
+    let recommended_action = if total_messages == 0 {
+        "none"
+    } else {
+        "ops dlq peek"
+    };
+    let action_reason = match pressure_level {
+        sinex_primitives::RuntimePressureLevel::Unknown => "DLQ owner could not be observed",
+        sinex_primitives::RuntimePressureLevel::Nominal => "raw-ingest DLQ is empty",
+        sinex_primitives::RuntimePressureLevel::Warning => {
+            "inspect raw-ingest DLQ before retry"
+        }
+        sinex_primitives::RuntimePressureLevel::Critical => {
+            "throttle ingestion and inspect raw-ingest DLQ"
+        }
+    };
+
+    DlqListResponse {
+        total_messages,
+        total_bytes: total_messages * 1024,
+        first_seq: if total_messages == 0 { 0 } else { 10 },
+        last_seq: if total_messages == 0 {
+            0
+        } else {
+            9 + total_messages
+        },
+        pressure_level,
+        resource_pressure: DlqPressureSignal {
+            pressure_level,
+            runtime_action,
+            pending_messages: total_messages,
+            pending_bytes: total_messages * 1024,
+            retry_batch_size: 10,
+            recommended_action: recommended_action.to_string(),
+            reason: action_reason.to_string(),
+        },
+        pending_sequence_span: total_messages,
+        recommended_action: recommended_action.to_string(),
+        action_reason: action_reason.to_string(),
+    }
+}
+
+#[sinex_test]
+async fn dlq_list_json_renders_finite_view_envelope() -> xtask::sandbox::TestResult<()> {
+    let envelope = dlq_list_envelope(fixture_dlq_list(
+        3,
+        sinex_primitives::RuntimePressureLevel::Warning,
+    ));
+    let output = crate::fmt::render_finite_envelope(&envelope, OutputFormat::Json)?
+        .expect("json must return Some");
+    let parsed: serde_json::Value = serde_json::from_str(&output)?;
+
+    assert_eq!(parsed["schema_version"], VIEW_ENVELOPE_SCHEMA_VERSION);
+    assert_eq!(parsed["source_surface"], "sinexctl.ops.dlq.list");
+    assert_eq!(parsed["payload"]["total_messages"], 3);
+    assert_eq!(parsed["payload"]["pressure_level"], "warning");
+    assert_eq!(parsed["caveats"][0]["id"], "source.absent");
+    Ok(())
+}
+
+#[sinex_test]
+async fn dlq_list_empty_queue_names_observation_limit() -> xtask::sandbox::TestResult<()> {
+    let envelope = dlq_list_envelope(fixture_dlq_list(
+        0,
+        sinex_primitives::RuntimePressureLevel::Nominal,
+    ));
+
+    assert_eq!(envelope.caveats.len(), 1);
+    assert_eq!(envelope.caveats[0].id, "coverage.unmeasurable");
+    assert!(
+        envelope.caveats[0].message.contains("current queue observation"),
+        "empty DLQ must not be presented as proof of complete historical ingestion"
+    );
+    assert_eq!(
+        envelope.caveats[0]
+            .ref_
+            .as_ref()
+            .and_then(|ref_| ref_.command_hint.as_deref()),
+        Some("sinexctl ops dlq list")
+    );
+    Ok(())
+}
+
+#[sinex_test]
+async fn dlq_list_critical_pressure_marks_partial_runtime_window()
+-> xtask::sandbox::TestResult<()> {
+    let envelope = dlq_list_envelope(fixture_dlq_list(
+        42,
+        sinex_primitives::RuntimePressureLevel::Critical,
+    ));
+
+    assert_eq!(envelope.caveats.len(), 1);
+    assert_eq!(envelope.caveats[0].id, "window.partial");
+    assert!(
+        envelope.caveats[0].message.contains("42 pending messages"),
+        "critical DLQ caveat should report the pending message count"
+    );
+    assert!(
+        envelope.caveats[0].message.contains("pressure=critical"),
+        "critical DLQ caveat should report the pressure level"
+    );
+    assert_eq!(
+        envelope.caveats[0]
+            .ref_
+            .as_ref()
+            .and_then(|ref_| ref_.rpc_method.as_deref()),
+        Some("dlq.list")
+    );
+    Ok(())
+}
+
+#[sinex_test]
+async fn dlq_list_unknown_pressure_is_unmeasurable() -> xtask::sandbox::TestResult<()> {
+    let envelope = dlq_list_envelope(fixture_dlq_list(
+        0,
+        sinex_primitives::RuntimePressureLevel::Unknown,
+    ));
+
+    assert_eq!(envelope.caveats.len(), 1);
+    assert_eq!(envelope.caveats[0].id, "coverage.unmeasurable");
+    assert!(
+        envelope.caveats[0].message.contains("pressure is unknown"),
+        "unknown pressure should be explicit in the caveat message"
+    );
     Ok(())
 }
