@@ -1,6 +1,7 @@
 //! Confirmed-event publishing and durability-gap handling for `JetStreamConsumer`.
 
 use sinex_primitives::events::Event;
+#[cfg(any(test, feature = "testing"))]
 use std::sync::atomic::Ordering;
 
 use super::*;
