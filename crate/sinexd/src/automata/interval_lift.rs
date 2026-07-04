@@ -10,7 +10,7 @@ use serde::{Deserialize, Deserializer, Serialize};
 use sinex_primitives::domain::SyntheticTemporalPolicy;
 use sinex_primitives::events::payloads::{
     ActivityWatchAfkChangedPayload, ActivityWatchWindowActivePayload, HyprlandWindowFocusedPayload,
-    StateIntervalPayload,
+    StateIntervalPayload, SystemdUnitStartedPayload, SystemdUnitStoppedPayload,
 };
 use sinex_primitives::events::EventPayload;
 use sinex_primitives::temporal::Duration;
@@ -21,6 +21,7 @@ const SEMANTICS_VERSION: &str = "1.0.0";
 const FOCUS_STATE_KIND: &str = "desktop.focus";
 const ACTIVITYWATCH_WINDOW_STATE_KIND: &str = "desktop.activitywatch.window";
 const ACTIVITYWATCH_AFK_STATE_KIND: &str = "desktop.activitywatch.afk";
+const SYSTEMD_UNIT_STATE_KIND: &str = "system.systemd.unit";
 
 #[derive(Debug, Clone, Default)]
 pub struct IntervalLift;
@@ -29,6 +30,10 @@ pub struct IntervalLift;
 pub struct IntervalLiftState {
     #[serde(default, deserialize_with = "deserialize_active_focus")]
     active_focus: Option<StateObservation>,
+    /// Open intervals keyed by rule-specific state identity. Use this for
+    /// transition pairs that can have multiple independent subjects open at once.
+    #[serde(default)]
+    active_subject_states: BTreeMap<String, StateObservation>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -155,6 +160,58 @@ impl StateObservation {
             subject_id,
             label,
             event_type: ActivityWatchAfkChangedPayload::EVENT_TYPE
+                .as_static_str()
+                .to_string(),
+            attributes,
+        })
+    }
+
+    fn from_systemd_started_payload(
+        input: SystemdUnitStartedPayload,
+        context: &AutomatonContext,
+    ) -> Result<Self, AutomatonLogicError> {
+        let mut attributes = BTreeMap::new();
+        attributes.insert("unit_name".to_string(), input.unit_name.clone());
+        attributes.insert("unit_type".to_string(), input.unit_type.to_string());
+        attributes.insert("active_state".to_string(), input.active_state.to_string());
+        attributes.insert("sub_state".to_string(), input.sub_state);
+        if let Some(main_pid) = input.main_pid {
+            attributes.insert("main_pid".to_string(), main_pid.to_string());
+        }
+
+        Ok(Self {
+            state_kind: SYSTEMD_UNIT_STATE_KIND.to_string(),
+            event_id: context.trigger_uuid(),
+            ts_orig: context.require_ts_orig()?,
+            subject_id: Some(input.unit_name.clone()),
+            label: Some(input.unit_name),
+            event_type: SystemdUnitStartedPayload::EVENT_TYPE
+                .as_static_str()
+                .to_string(),
+            attributes,
+        })
+    }
+
+    fn from_systemd_stopped_payload(
+        input: SystemdUnitStoppedPayload,
+        context: &AutomatonContext,
+    ) -> Result<Self, AutomatonLogicError> {
+        let mut attributes = BTreeMap::new();
+        attributes.insert("unit_name".to_string(), input.unit_name.clone());
+        attributes.insert("unit_type".to_string(), input.unit_type.to_string());
+        attributes.insert("active_state".to_string(), input.active_state.to_string());
+        attributes.insert("sub_state".to_string(), input.sub_state);
+        if let Some(exit_code) = input.exit_code {
+            attributes.insert("exit_code".to_string(), exit_code.to_string());
+        }
+
+        Ok(Self {
+            state_kind: SYSTEMD_UNIT_STATE_KIND.to_string(),
+            event_id: context.trigger_uuid(),
+            ts_orig: context.require_ts_orig()?,
+            subject_id: Some(input.unit_name.clone()),
+            label: Some(input.unit_name),
+            event_type: SystemdUnitStoppedPayload::EVENT_TYPE
                 .as_static_str()
                 .to_string(),
             attributes,
@@ -334,6 +391,8 @@ impl Transducer for IntervalLift {
             HyprlandWindowFocusedPayload::EVENT_TYPE.as_static_str(),
             ActivityWatchWindowActivePayload::EVENT_TYPE.as_static_str(),
             ActivityWatchAfkChangedPayload::EVENT_TYPE.as_static_str(),
+            SystemdUnitStartedPayload::EVENT_TYPE.as_static_str(),
+            SystemdUnitStoppedPayload::EVENT_TYPE.as_static_str(),
         ]
     }
 
@@ -403,6 +462,44 @@ impl Transducer for IntervalLift {
                     return Ok(Some(
                         observation.observed_duration_interval(duration_ms, Timestamp::now()),
                     ));
+                }
+                ("systemd", event_type)
+                    if event_type == SystemdUnitStartedPayload::EVENT_TYPE.as_static_str() =>
+                {
+                    let payload: SystemdUnitStartedPayload =
+                        serde_json::from_value(input).map_err(|e| {
+                            AutomatonLogicError::InputParsing(format!(
+                                "failed to parse systemd unit-start payload: {e}"
+                            ))
+                        })?;
+                    let observation =
+                        StateObservation::from_systemd_started_payload(payload, context)?;
+                    if let Some(subject_id) = observation.subject_id.clone() {
+                        state.active_subject_states.insert(subject_id, observation);
+                    }
+                    return Ok(None);
+                }
+                ("systemd", event_type)
+                    if event_type == SystemdUnitStoppedPayload::EVENT_TYPE.as_static_str() =>
+                {
+                    let payload: SystemdUnitStoppedPayload =
+                        serde_json::from_value(input).map_err(|e| {
+                            AutomatonLogicError::InputParsing(format!(
+                                "failed to parse systemd unit-stop payload: {e}"
+                            ))
+                        })?;
+                    let current =
+                        StateObservation::from_systemd_stopped_payload(payload, context)?;
+                    let Some(subject_id) = current.subject_id.clone() else {
+                        return Ok(None);
+                    };
+                    let Some(previous) = state.active_subject_states.remove(&subject_id) else {
+                        return Ok(None);
+                    };
+                    if current.ts_orig <= previous.ts_orig {
+                        return Ok(None);
+                    }
+                    return Ok(Some(previous.close_with(&current)));
                 }
                 _ => return Ok(None),
             };
