@@ -408,6 +408,9 @@ async fn validate_format_accepts_ndjson_for_runtime_list() -> TestResult<()> {
 #[sinex_test]
 async fn validate_format_rejects_ndjson_for_finite_view_envelopes() -> TestResult<()> {
     for command in [
+        "docs chunks",
+        "docs get",
+        "docs search",
         "events recent",
         "ops dlq cleanup-plan",
         "ops dlq peek",
