@@ -88,6 +88,18 @@ pub enum AnalyticsSubcommand {
         #[arg(long)]
         database_url: Option<String>,
     },
+    /// Bounded storage growth model from source-material and Timescale catalog data
+    StorageGrowth {
+        /// Number of days to project material growth.
+        #[arg(long, default_value_t = 365)]
+        projection_days: i64,
+        /// Maximum source rows to render.
+        #[arg(long, default_value_t = 20)]
+        limit: i64,
+        /// Override the runtime database URL.
+        #[arg(long)]
+        database_url: Option<String>,
+    },
     /// Stage-level timing breakdowns aggregated across invocations (J7)
     Stages {
         /// Filter by command
@@ -135,6 +147,15 @@ impl XtaskCommand for AnalyticsCommand {
         {
             return execute_store(*window_minutes, *limit, database_url.as_deref(), ctx).await;
         }
+        if let AnalyticsSubcommand::StorageGrowth {
+            projection_days,
+            limit,
+            database_url,
+        } = sub
+        {
+            return execute_storage_growth(*projection_days, *limit, database_url.as_deref(), ctx)
+                .await;
+        }
         ctx.try_with_history_db_query(|db| {
             let analysis = HistoryAnalysis::new(db);
             match sub {
@@ -154,6 +175,7 @@ impl XtaskCommand for AnalyticsCommand {
                 } => execute_resources(db, command.as_deref(), *limit, *include_zombies, ctx),
                 AnalyticsSubcommand::Pressure { .. } => unreachable!("handled before DB open"),
                 AnalyticsSubcommand::Store { .. } => unreachable!("handled before DB open"),
+                AnalyticsSubcommand::StorageGrowth { .. } => unreachable!("handled before DB open"),
                 AnalyticsSubcommand::Stages { command, limit } => {
                     execute_stages(db, command.as_deref(), *limit, ctx)
                 }
@@ -493,6 +515,35 @@ async fn execute_store(
         .with_duration(ctx.elapsed()))
 }
 
+async fn execute_storage_growth(
+    projection_days: i64,
+    limit: i64,
+    database_url: Option<&str>,
+    ctx: &CommandContext,
+) -> Result<CommandResult> {
+    let stack = crate::infra::stack::StackConfig::for_current_checkout()?;
+    let database_url = match database_url {
+        Some(url) => url.to_string(),
+        None => stack.database_url(),
+    };
+    let snapshot =
+        crate::runtime_store::query_storage_growth_snapshot(&database_url, projection_days, limit)
+            .await?;
+
+    if ctx.is_json() {
+        return Ok(CommandResult::success()
+            .with_message("storage growth model")
+            .with_data(serde_json::to_value(&snapshot)?)
+            .with_duration(ctx.elapsed()));
+    }
+
+    render_storage_growth_snapshot(&snapshot);
+
+    Ok(CommandResult::success()
+        .with_message("storage growth model")
+        .with_duration(ctx.elapsed()))
+}
+
 fn render_store_snapshot(snapshot: &crate::runtime_store::RuntimeStoreSnapshot) {
     println!("\n{}", style("Runtime Store Snapshot:").bold());
     println!(
@@ -541,6 +592,57 @@ fn render_store_snapshot(snapshot: &crate::runtime_store::RuntimeStoreSnapshot) 
         "Browser History Materials",
         &snapshot.browser_history_materials,
     );
+    println!();
+}
+
+fn render_storage_growth_snapshot(snapshot: &crate::runtime_store::StorageGrowthSnapshot) {
+    println!("\n{}", style("Storage Growth Model:").bold());
+    println!(
+        "  materials: {} material(s), {}, {} parsed event(s)",
+        snapshot.material_summary.materials,
+        format_bytes_i64(snapshot.material_summary.total_bytes),
+        snapshot.material_summary.parsed_events
+    );
+    println!(
+        "  observed span: {:.1} day(s), rate: {}/day",
+        snapshot.material_summary.observed_days,
+        format_bytes(snapshot.material_summary.bytes_per_day.max(0.0).round() as u64)
+    );
+    println!(
+        "  projection: {} over {} day(s); 12-month rate: {}",
+        format_bytes_i64(snapshot.material_summary.projected_bytes),
+        snapshot.projection_days,
+        format_bytes_i64(snapshot.assessment.projected_12_month_bytes)
+    );
+    if let Some(top) = &snapshot.assessment.top_source_base {
+        println!(
+            "  top source: {} ({:.1}% of material bytes)",
+            top,
+            snapshot.assessment.top_source_share_basis_points as f64 / 100.0
+        );
+    }
+    println!(
+        "  compression: settings {}, compressed chunks {}, uncompressed chunks {}, ratio {}",
+        snapshot.compression.compression_settings_rows,
+        snapshot.compression.compressed_chunks,
+        snapshot.compression.uncompressed_chunks,
+        snapshot
+            .compression
+            .compression_ratio
+            .map_or_else(|| "-".to_string(), |ratio| format!("{ratio:.2}x"))
+    );
+
+    if !snapshot.assessment.warnings.is_empty() {
+        println!();
+        println!("{}", style("Warnings:").bold());
+        for warning in &snapshot.assessment.warnings {
+            println!("  - {warning}");
+        }
+    }
+
+    render_storage_source_growth(&snapshot.source_growth);
+    render_relation_storage_sizes(&snapshot.relation_sizes);
+    render_chunk_size_buckets(&snapshot.chunk_size_buckets);
     println!();
 }
 
@@ -681,6 +783,84 @@ fn render_table_estimates(rows: &[crate::runtime_store::TableEstimate]) {
             row.relation.as_str(),
             &row.estimated_rows
                 .map_or_else(|| "-".to_string(), |v| v.to_string()),
+        ]);
+    }
+    let mut table = builder.build();
+    table.with(Style::sharp());
+    println!("{table}");
+}
+
+fn render_storage_source_growth(rows: &[crate::runtime_store::SourceStorageGrowthRow]) {
+    if rows.is_empty() {
+        return;
+    }
+    println!();
+    println!("{}", style("Source Material Growth:").bold());
+    let mut builder = Builder::new();
+    builder.push_record([
+        "SOURCE",
+        "MATERIALS",
+        "BYTES",
+        "PARSED EVENTS",
+        "1B",
+        "DAYS",
+        "BYTES/DAY",
+        "PROJECTED",
+    ]);
+    for row in rows {
+        builder.push_record([
+            row.source_base.as_str(),
+            &row.materials.to_string(),
+            &format_bytes_i64(row.total_bytes),
+            &row.parsed_events.to_string(),
+            &row.one_byte_materials.to_string(),
+            &format!("{:.1}", row.observed_days),
+            &format_bytes(row.bytes_per_day.max(0.0).round() as u64),
+            &format_bytes_i64(row.projected_bytes),
+        ]);
+    }
+    let mut table = builder.build();
+    table.with(Style::sharp());
+    println!("{table}");
+}
+
+fn render_relation_storage_sizes(rows: &[crate::runtime_store::RelationStorageSize]) {
+    if rows.is_empty() {
+        return;
+    }
+    println!();
+    println!("{}", style("Relation Storage:").bold());
+    let mut builder = Builder::new();
+    builder.push_record(["RELATION", "TOTAL", "TABLE", "INDEX", "EST ROWS"]);
+    for row in rows {
+        builder.push_record([
+            row.relation.as_str(),
+            &format_bytes_i64(row.total_bytes),
+            &format_bytes_i64(row.table_bytes),
+            &format_bytes_i64(row.index_bytes),
+            &row.estimated_rows
+                .map_or_else(|| "-".to_string(), |rows| rows.to_string()),
+        ]);
+    }
+    let mut table = builder.build();
+    table.with(Style::sharp());
+    println!("{table}");
+}
+
+fn render_chunk_size_buckets(rows: &[crate::runtime_store::ChunkSizeBucket]) {
+    if rows.is_empty() {
+        return;
+    }
+    println!();
+    println!("{}", style("core.events Chunk Sizes:").bold());
+    let mut builder = Builder::new();
+    builder.push_record(["BUCKET", "CHUNKS", "TOTAL", "MAX CHUNK"]);
+    for row in rows {
+        builder.push_record([
+            row.bucket.as_str(),
+            &row.chunks.to_string(),
+            &format_bytes_i64(row.total_bytes),
+            &format_bytes_i64(row.max_chunk_bytes),
         ]);
     }
     let mut table = builder.build();

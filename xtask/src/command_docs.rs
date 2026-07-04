@@ -320,6 +320,18 @@ const GUIDE_SECTIONS: &[GuideSection] = &[
                 ],
             },
             GuideEntry {
+                path: "analytics storage-growth",
+                fallback_summary: "Model source-material storage growth from registry and Timescale catalog data",
+                when: "you need per-source bytes/day, chunk distribution, compression posture, and a bounded projection before choosing import pacing or material granularity",
+                examples: &[
+                    "xtask analytics storage-growth",
+                    "xtask analytics storage-growth --projection-days 365 --limit 20 --json",
+                ],
+                notes: &[
+                    "Uses raw.source_material_registry and PostgreSQL/Timescale catalog views only; it avoids full core.events scans.",
+                ],
+            },
+            GuideEntry {
                 path: "deps impact",
                 fallback_summary: "Analyze rebuild impact",
                 when: "a dependency change might widen the rebuild/test blast radius",
