@@ -3,7 +3,7 @@
 use super::*;
 use crate::fmt::render_finite_envelope;
 use sinex_primitives::views::{
-    ActionAvailability, CaveatView, SourceCoverageListView, SourcePrivacyPosture,
+    ActionAvailability, CaveatView, CoverageGapView, SourceCoverageListView, SourcePrivacyPosture,
     SourceResourceBudgetView, VIEW_ENVELOPE_SCHEMA_VERSION,
 };
 use xtask::sandbox::sinex_test;
@@ -112,6 +112,20 @@ fn fixture_source_with_id_and_namespace(source_id: &str, namespace: &str) -> Sou
     }
 }
 
+fn fixture_gapped_source() -> SourceCoverageView {
+    SourceCoverageView {
+        source_id: "fixture.gapped".to_string(),
+        readiness: SourceCoverageReadiness::MissingEvents,
+        continuity: SourceCoverageContinuity::MaterialOnly,
+        event_count: 0,
+        gaps: vec![CoverageGapView {
+            kind: "missing_events".to_string(),
+            message: "fixture source has material but no events".to_string(),
+        }],
+        ..fixture_source()
+    }
+}
+
 #[sinex_test]
 async fn table_renderer_shows_source_coverage_view_fields() -> xtask::TestResult<()> {
     let mut source = fixture_source();
@@ -134,6 +148,8 @@ async fn table_renderer_shows_source_coverage_view_fields() -> xtask::TestResult
 
     assert!(table.contains("fixture.source"));
     assert!(table.contains("Sources: total=1 ready=1"));
+    assert!(table.contains("coverage_error_sources=0"));
+    assert!(table.contains("coverage_error_rate=0.00%"));
     assert!(table.contains("ready"));
     assert!(table.contains("active"));
     assert!(table.contains("accepted:1"));
@@ -141,6 +157,22 @@ async fn table_renderer_shows_source_coverage_view_fields() -> xtask::TestResult
     assert!(table.contains("fixture/fixture.event"));
     assert!(table.contains("source.runtime_bridge.unobserved"));
     assert!(table.contains("terminal.activity.check:enabled"));
+    Ok(())
+}
+
+#[sinex_test]
+async fn table_renderer_shows_coverage_error_rate() -> xtask::TestResult<()> {
+    let envelope = ViewEnvelope::new(
+        "sinexctl.sources.status",
+        SourceCoverageListView::new(vec![fixture_source(), fixture_gapped_source()]),
+    );
+
+    let table = format_sources_status_table(&envelope);
+
+    assert!(table.contains("coverage_error_sources=1"));
+    assert!(table.contains("coverage_error_rate=50.00%"));
+    assert!(table.contains("missing-events"));
+    assert!(table.contains("material-only"));
     Ok(())
 }
 
@@ -160,6 +192,11 @@ async fn machine_render_preserves_envelope_schema() -> xtask::TestResult<()> {
     assert_eq!(value["payload"]["summary"]["total_sources"], 1);
     assert_eq!(value["payload"]["summary"]["readiness"]["ready"], 1);
     assert_eq!(value["payload"]["summary"]["continuity"]["active"], 1);
+    assert_eq!(value["payload"]["summary"]["coverage_error_sources"], 0);
+    assert_eq!(
+        value["payload"]["summary"]["coverage_error_basis_points"],
+        0
+    );
     assert_eq!(
         value["payload"]["sources"][0]["source_id"],
         "fixture.source"

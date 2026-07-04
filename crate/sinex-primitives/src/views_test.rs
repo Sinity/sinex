@@ -396,6 +396,15 @@ async fn source_coverage_list_view_serializes_status_shape() -> xtask::TestResul
     );
     assert_eq!(value["payload"]["sources"][0]["readiness"], "ready");
     assert_eq!(value["payload"]["sources"][0]["continuity"], "active");
+    assert_eq!(value["payload"]["summary"]["coverage_error_sources"], 0);
+    assert_eq!(
+        value["payload"]["summary"]["coverage_error_basis_points"],
+        0
+    );
+    assert_eq!(
+        value["payload"]["summary"]["coverage_error_kinds"],
+        json!({})
+    );
     assert_eq!(
         value["payload"]["sources"][0]["resource_budget"]["work_class"],
         "admission_hot"
@@ -403,6 +412,81 @@ async fn source_coverage_list_view_serializes_status_shape() -> xtask::TestResul
     assert_eq!(
         value["payload"]["sources"][0]["resource_budget"]["pressure_actions"][2],
         "retry"
+    );
+    Ok(())
+}
+
+#[sinex_test]
+async fn source_coverage_summary_counts_coverage_error_evidence() -> xtask::TestResult<()> {
+    let covered = SourceCoverageView {
+        source_id: "fixture.covered".to_string(),
+        namespace: "fixture".to_string(),
+        event_types: vec!["fixture/covered".to_string()],
+        readiness: SourceCoverageReadiness::Ready,
+        continuity: SourceCoverageContinuity::Active,
+        last_material_at: None,
+        last_event_at: None,
+        material_count: 1,
+        event_count: 1,
+        binding_count: 1,
+        accepted_binding_count: 1,
+        proposed_binding_count: 0,
+        gaps: Vec::new(),
+        caveats: Vec::new(),
+        privacy: SourcePrivacyPosture {
+            tier: "metadata".to_string(),
+            context: "metadata".to_string(),
+            proposed: false,
+        },
+        resource_budget: None,
+        modes: Vec::new(),
+        actions: Vec::new(),
+    };
+    let gapped = SourceCoverageView {
+        source_id: "fixture.gapped".to_string(),
+        namespace: "fixture".to_string(),
+        event_types: vec!["fixture/gapped".to_string()],
+        readiness: SourceCoverageReadiness::MissingEvents,
+        continuity: SourceCoverageContinuity::MaterialOnly,
+        last_material_at: None,
+        last_event_at: None,
+        material_count: 1,
+        event_count: 0,
+        binding_count: 1,
+        accepted_binding_count: 1,
+        proposed_binding_count: 0,
+        gaps: vec![CoverageGapView {
+            kind: "missing_events".to_string(),
+            message: "fixture event stream has no rows".to_string(),
+        }],
+        caveats: Vec::new(),
+        privacy: SourcePrivacyPosture {
+            tier: "metadata".to_string(),
+            context: "metadata".to_string(),
+            proposed: false,
+        },
+        resource_budget: None,
+        modes: Vec::new(),
+        actions: Vec::new(),
+    };
+
+    let list = SourceCoverageListView::new(vec![covered, gapped]);
+
+    assert_eq!(list.summary.coverage_error_sources, 1);
+    assert_eq!(list.summary.coverage_error_basis_points, 5_000);
+    assert_eq!(
+        list.summary.coverage_error_kinds.get("readiness.missing_events"),
+        Some(&1)
+    );
+    assert_eq!(
+        list.summary
+            .coverage_error_kinds
+            .get("continuity.material_only"),
+        Some(&1)
+    );
+    assert_eq!(
+        list.summary.coverage_error_kinds.get("gap.missing_events"),
+        Some(&1)
     );
     Ok(())
 }

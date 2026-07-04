@@ -256,10 +256,14 @@ fn format_sources_status_table(envelope: &ViewEnvelope<SourceCoverageListView>) 
     )
 }
 
+fn format_basis_points_percent(basis_points: u32) -> String {
+    format!("{}.{:02}%", basis_points / 100, basis_points % 100)
+}
+
 fn source_status_summary_line(view: &SourceCoverageListView) -> String {
     let summary = &view.summary;
     format!(
-        "Sources: total={} ready={} proposed={} missing_material={} active={} gapped={} eventful={} materialized={} accepted_bindings={} proposed_bindings={} events={} materials={}",
+        "Sources: total={} ready={} proposed={} missing_material={} active={} gapped={} coverage_error_sources={} coverage_error_rate={} eventful={} materialized={} accepted_bindings={} proposed_bindings={} events={} materials={}",
         summary.total_sources,
         summary.readiness.get("ready").copied().unwrap_or_default(),
         summary
@@ -282,6 +286,8 @@ fn source_status_summary_line(view: &SourceCoverageListView) -> String {
             .get("gapped")
             .copied()
             .unwrap_or_default(),
+        summary.coverage_error_sources,
+        format_basis_points_percent(summary.coverage_error_basis_points),
         summary.eventful_sources,
         summary.materialized_sources,
         summary.accepted_bindings,
