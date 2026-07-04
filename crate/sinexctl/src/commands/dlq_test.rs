@@ -156,7 +156,7 @@ async fn dlq_triage_extracts_material_ids_and_group_commands() -> xtask::sandbox
     };
 
     let mut report = dlq_triage_report(stats, peek, 12);
-    assert_eq!(report.groups.len(), 1);
+    assert_eq!(report.groups.len(), 2);
     report.groups[0]
         .material_statuses
         .push(DlqTriageMaterialStatus {
@@ -882,6 +882,194 @@ async fn dlq_list_unknown_pressure_is_unmeasurable() -> xtask::sandbox::TestResu
     assert!(
         envelope.caveats[0].message.contains("pressure is unknown"),
         "unknown pressure should be explicit in the caveat message"
+    );
+    Ok(())
+}
+
+fn fixture_dlq_message(sequence: u64) -> DlqMessagePeek {
+    DlqMessagePeek {
+        subject: "dev.events.dlq.event_engine".to_string(),
+        sequence,
+        retry_count: 0,
+        original_subject: Some("dev.events.raw.git.commit_d_created".to_string()),
+        payload_preview: "{\"error\":\"live event with equivalence_key git|a already exists\"}"
+            .to_string(),
+        payload_redacted: false,
+        privacy_caveats: Vec::new(),
+    }
+}
+
+fn fixture_dlq_triage_report() -> DlqTriageReport {
+    DlqTriageReport {
+        total_messages: 2,
+        pressure_level: sinex_primitives::RuntimePressureLevel::Critical,
+        first_seq: 10,
+        last_seq: 11,
+        inspected_tail: 2,
+        groups: vec![DlqTriageGroup {
+            reason_bucket: "occurrence_duplicate.equivalence_key_exists".to_string(),
+            original_subject: Some("dev.events.raw.git.commit_d_created".to_string()),
+            count: 2,
+            first_sequence: 10,
+            last_sequence: 11,
+            sample_previews: vec![
+                "{\"error\":\"live event with equivalence_key git|a already exists\"}"
+                    .to_string(),
+            ],
+            material_ids: Vec::new(),
+            material_statuses: Vec::new(),
+            inspect_command: "sinexctl ops dlq peek --start-sequence 10 -n 2".to_string(),
+            purge_command:
+                "sinexctl ops dlq purge --start-sequence 10 --end-sequence 11 --confirm"
+                    .to_string(),
+            caveat: "duplicate occurrence; verify historical residue before purge".to_string(),
+        }],
+        recommended_next: "Inspect group commands before requeue or purge".to_string(),
+    }
+}
+
+#[sinex_test]
+async fn dlq_peek_json_renders_finite_view_envelope() -> xtask::sandbox::TestResult<()> {
+    let response = DlqPeekResponse::from_messages(vec![fixture_dlq_message(10)]);
+    let envelope = dlq_peek_envelope(response);
+    let output = crate::fmt::render_finite_envelope(&envelope, OutputFormat::Json)?
+        .expect("json must return Some");
+    let parsed: serde_json::Value = serde_json::from_str(&output)?;
+
+    assert_eq!(parsed["schema_version"], VIEW_ENVELOPE_SCHEMA_VERSION);
+    assert_eq!(parsed["source_surface"], "sinexctl.ops.dlq.peek");
+    assert_eq!(parsed["payload"]["messages"][0]["sequence"], 10);
+    assert!(
+        parsed.get("caveats").is_none(),
+        "non-empty peek should not emit readiness caveats"
+    );
+    Ok(())
+}
+
+#[sinex_test]
+async fn dlq_peek_empty_sample_names_bounded_observation()
+-> xtask::sandbox::TestResult<()> {
+    let envelope = dlq_peek_envelope(DlqPeekResponse::from_messages(Vec::new()));
+
+    assert_eq!(envelope.caveats.len(), 1);
+    assert_eq!(envelope.caveats[0].id, "coverage.unmeasurable");
+    assert!(
+        envelope.caveats[0].message.contains("bounded sample"),
+        "empty peek caveat must not imply historical completeness"
+    );
+    assert_eq!(
+        envelope.caveats[0]
+            .ref_
+            .as_ref()
+            .and_then(|ref_| ref_.command_hint.as_deref()),
+        Some("sinexctl ops dlq peek")
+    );
+    Ok(())
+}
+
+#[sinex_test]
+async fn dlq_triage_json_renders_finite_view_envelope() -> xtask::sandbox::TestResult<()> {
+    let envelope = dlq_triage_envelope(fixture_dlq_triage_report());
+    let output = crate::fmt::render_finite_envelope(&envelope, OutputFormat::Json)?
+        .expect("json must return Some");
+    let parsed: serde_json::Value = serde_json::from_str(&output)?;
+
+    assert_eq!(parsed["schema_version"], VIEW_ENVELOPE_SCHEMA_VERSION);
+    assert_eq!(parsed["source_surface"], "sinexctl.ops.dlq.triage");
+    assert_eq!(parsed["payload"]["total_messages"], 2);
+    assert_eq!(parsed["payload"]["groups"][0]["first_sequence"], 10);
+    assert_eq!(parsed["caveats"][0]["id"], "window.partial");
+    Ok(())
+}
+
+#[sinex_test]
+async fn dlq_triage_empty_queue_names_observation_limit()
+-> xtask::sandbox::TestResult<()> {
+    let mut report = fixture_dlq_triage_report();
+    report.total_messages = 0;
+    report.pressure_level = sinex_primitives::RuntimePressureLevel::Nominal;
+    report.groups.clear();
+
+    let envelope = dlq_triage_envelope(report);
+
+    assert_eq!(envelope.caveats.len(), 1);
+    assert_eq!(envelope.caveats[0].id, "coverage.unmeasurable");
+    assert!(
+        envelope.caveats[0].message.contains("current queue observation"),
+        "empty triage caveat must not imply historical completeness"
+    );
+    Ok(())
+}
+
+#[sinex_test]
+async fn dlq_cleanup_plan_json_renders_finite_view_envelope()
+-> xtask::sandbox::TestResult<()> {
+    let plan = dlq_cleanup_plan(fixture_dlq_triage_report());
+    let envelope = dlq_cleanup_plan_envelope(plan);
+    let output = crate::fmt::render_finite_envelope(&envelope, OutputFormat::Json)?
+        .expect("json must return Some");
+    let parsed: serde_json::Value = serde_json::from_str(&output)?;
+
+    assert_eq!(parsed["schema_version"], VIEW_ENVELOPE_SCHEMA_VERSION);
+    assert_eq!(parsed["source_surface"], "sinexctl.ops.dlq.cleanup-plan");
+    assert_eq!(
+        parsed["payload"]["schema_version"],
+        DLQ_CLEANUP_PLAN_SCHEMA_VERSION
+    );
+    assert!(
+        parsed["caveats"]
+            .as_array()
+            .is_some_and(|caveats| !caveats.is_empty()),
+        "cleanup plans with candidates or blockers must emit caveats"
+    );
+    Ok(())
+}
+
+#[sinex_test]
+async fn dlq_cleanup_plan_caveats_name_candidates_and_blockers()
+-> xtask::sandbox::TestResult<()> {
+    let plan = DlqCleanupPlanView {
+        schema_version: DLQ_CLEANUP_PLAN_SCHEMA_VERSION.to_string(),
+        total_messages: 3,
+        pressure_level: sinex_primitives::RuntimePressureLevel::Warning,
+        retained_sequence_span: "10..12".to_string(),
+        inspected_tail: 3,
+        candidate_count: 1,
+        blocked_count: 1,
+        purge_candidate_messages: 1,
+        requeue_candidate_messages: 0,
+        coalesced_actions: Vec::new(),
+        items: Vec::new(),
+        recommended_next: "Run only candidate cleanup actions".to_string(),
+    };
+    let envelope = dlq_cleanup_plan_envelope(plan);
+    let caveat_ids = envelope
+        .caveats
+        .iter()
+        .map(|caveat| caveat.id.as_str())
+        .collect::<Vec<_>>();
+
+    assert!(
+        caveat_ids.contains(&"window.partial"),
+        "blocked cleanup groups must mark the sampled window partial"
+    );
+    assert!(
+        caveat_ids.contains(&"source.absent"),
+        "cleanup candidates mean failed source material remains unresolved"
+    );
+    assert!(
+        envelope
+            .caveats
+            .iter()
+            .any(|caveat| caveat.message.contains("blocked group")),
+        "blocked caveat must name blocked groups"
+    );
+    assert_eq!(
+        envelope.caveats[0]
+            .ref_
+            .as_ref()
+            .and_then(|ref_| ref_.command_hint.as_deref()),
+        Some("sinexctl ops dlq cleanup-plan")
     );
     Ok(())
 }
