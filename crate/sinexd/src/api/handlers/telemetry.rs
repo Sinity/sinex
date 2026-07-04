@@ -914,7 +914,11 @@ pub async fn handle_telemetry_event_engine_validation(
             (payload->>'validation_invalid')::bigint AS "validation_invalid!",
             (payload->>'validation_coverage_pct')::float8 AS "validation_coverage_pct!",
             COALESCE((payload->>'suspicious_future_ts_orig')::bigint, 0) AS "suspicious_future_ts_orig!"
-        FROM core.events
+        FROM (
+            SELECT id, ts_coided, payload, source, event_type FROM core.events
+            UNION ALL
+            SELECT id, ts_coided, payload, source, event_type FROM reflection.events
+        ) AS event_rows
         WHERE source = 'sinexd.event_engine'
           AND event_type = 'batch.stats'
         ORDER BY id DESC
@@ -949,9 +953,9 @@ pub async fn handle_telemetry_event_engine_validation(
 // telemetry.throughput  (#1172 AC-8)
 //
 // Returns per-source EPS over fixed 1h and 24h windows plus a per-component
-// aggregate. The data comes from `core.events` directly (recent_activity is
-// a context-rollup not an event-source rollup) so the figures are honest
-// even on freshly seeded databases.
+// aggregate. The data comes from the logical event relation directly
+// (recent_activity is a context-rollup not an event-source rollup) so the
+// figures are honest even on freshly seeded databases.
 // ─────────────────────────────────────────────────────────────
 
 const THROUGHPUT_SOURCE_LIMIT: i64 = 64;
@@ -970,8 +974,8 @@ pub async fn handle_telemetry_throughput(
     pool: &PgPool,
     _req: TelemetryThroughputRequest,
 ) -> Result<TelemetryThroughputResponse> {
-    // Per-source counts via grouped SELECTs against core.events. We use
-    // ts_orig because it's the operator-meaningful clock.
+    // Per-source counts via grouped SELECTs against the logical all-event
+    // relation. We use ts_orig because it's the operator-meaningful clock.
     #[derive(sqlx::FromRow)]
     struct PerSourceRow {
         source: String,
@@ -985,7 +989,11 @@ pub async fn handle_telemetry_throughput(
             source::text AS source,
             COALESCE(SUM(CASE WHEN ts_orig >= NOW() - INTERVAL '1 hour' THEN 1 ELSE 0 END), 0)::bigint AS events_last_1h,
             COALESCE(SUM(CASE WHEN ts_orig >= NOW() - INTERVAL '24 hours' THEN 1 ELSE 0 END), 0)::bigint AS events_last_24h
-        FROM core.events
+        FROM (
+            SELECT source, ts_orig FROM core.events
+            UNION ALL
+            SELECT source, ts_orig FROM reflection.events
+        ) AS event_rows
         WHERE ts_orig >= NOW() - INTERVAL '24 hours'
         GROUP BY source
         ORDER BY events_last_1h DESC
@@ -995,7 +1003,7 @@ pub async fn handle_telemetry_throughput(
     .bind(THROUGHPUT_SOURCE_LIMIT)
     .fetch_all(pool)
     .await
-    .map_err(|error| telemetry_query_error("core.events throughput", error))?;
+    .map_err(|error| telemetry_query_error("event throughput", error))?;
 
     let per_source: Vec<ThroughputSourceEntry> = rows
         .into_iter()
@@ -1031,7 +1039,11 @@ pub async fn handle_telemetry_throughput(
             {component_case} AS component,
             COALESCE(SUM(CASE WHEN ts_orig >= NOW() - INTERVAL '1 hour' THEN 1 ELSE 0 END), 0)::bigint AS events_last_1h,
             COALESCE(SUM(CASE WHEN ts_orig >= NOW() - INTERVAL '24 hours' THEN 1 ELSE 0 END), 0)::bigint AS events_last_24h
-        FROM core.events
+        FROM (
+            SELECT source, ts_orig FROM core.events
+            UNION ALL
+            SELECT source, ts_orig FROM reflection.events
+        ) AS event_rows
         WHERE ts_orig >= NOW() - INTERVAL '24 hours'
         GROUP BY component
         ",
@@ -1040,7 +1052,7 @@ pub async fn handle_telemetry_throughput(
     let component_rows = sqlx::query_as::<_, ComponentRow>(&component_sql)
         .fetch_all(pool)
         .await
-        .map_err(|error| telemetry_query_error("core.events throughput components", error))?;
+        .map_err(|error| telemetry_query_error("event throughput components", error))?;
 
     let mut comp_1h: std::collections::HashMap<&'static str, i64> =
         std::collections::HashMap::new();
