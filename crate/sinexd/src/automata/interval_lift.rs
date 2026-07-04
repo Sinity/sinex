@@ -22,7 +22,6 @@ pub struct IntervalLift;
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct IntervalLiftState {
     active_focus: Option<FocusTransition>,
-    sequence: u64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -152,12 +151,14 @@ impl Transducer for IntervalLift {
         let previous = previous.clone();
         state.active_focus = Some(current.clone());
 
-        state.sequence += 1;
         let duration_secs = (current.ts_orig - previous.ts_orig).whole_seconds().max(0) as u64;
         let subject_part = previous
             .subject_id()
             .unwrap_or_else(|| "unknown-window".to_string());
-        let interval_id = format!("interval:{FOCUS_STATE_KIND}:{subject_part}:{}", state.sequence);
+        let interval_id = format!(
+            "interval:{FOCUS_STATE_KIND}:{subject_part}:{}:{}",
+            previous.event_id, current.event_id
+        );
 
         let payload = StateIntervalPayload {
             interval_id: interval_id.clone(),
