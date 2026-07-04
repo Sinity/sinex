@@ -2,6 +2,7 @@
 
 use super::dlq::DLQ_DUPLICATE_WINDOW;
 use super::*;
+use sinex_primitives::nats::JetStreamEventLane;
 
 impl JetStreamConsumer {
     /// Bootstrap all required `JetStream` streams
@@ -60,8 +61,8 @@ impl JetStreamConsumer {
                 subjects: vec![self.topology.confirmed_events_subject.to_string()],
                 retention: jetstream::stream::RetentionPolicy::Limits,
                 max_messages: 2_000_000,
-                max_bytes: JETSTREAM_BOOTSTRAP_MAX_BYTES,
-                max_age: Duration::from_hours(72), // 3 days
+                max_bytes: confirmed_events_max_bytes(self.topology.lane),
+                max_age: confirmed_events_max_age(self.topology.lane),
                 storage: jetstream::stream::StorageType::File,
                 discard: DiscardPolicy::Old,
                 ..Default::default()
@@ -77,8 +78,8 @@ impl JetStreamConsumer {
                 name: self.topology.dlq_stream.to_string(),
                 subjects: vec![self.topology.dlq_subject.to_string()],
                 retention: jetstream::stream::RetentionPolicy::Limits,
-                max_bytes: JETSTREAM_BOOTSTRAP_MAX_BYTES,
-                max_age: Duration::from_hours(72), // 3 days
+                max_bytes: diagnostic_stream_max_bytes(self.topology.lane),
+                max_age: diagnostic_stream_max_age(self.topology.lane),
                 storage: jetstream::stream::StorageType::File,
                 duplicate_window: DLQ_DUPLICATE_WINDOW,
                 allow_direct: true,
@@ -93,8 +94,8 @@ impl JetStreamConsumer {
                 name: self.topology.processing_failures_stream.to_string(),
                 subjects: vec![self.topology.processing_failures_subject.to_string()],
                 retention: jetstream::stream::RetentionPolicy::Limits,
-                max_bytes: JETSTREAM_BOOTSTRAP_MAX_BYTES,
-                max_age: Duration::from_hours(72), // 3 days
+                max_bytes: diagnostic_stream_max_bytes(self.topology.lane),
+                max_age: diagnostic_stream_max_age(self.topology.lane),
                 storage: jetstream::stream::StorageType::File,
                 duplicate_window: DLQ_DUPLICATE_WINDOW,
                 allow_direct: true,
@@ -126,3 +127,35 @@ impl JetStreamConsumer {
         Ok(())
     }
 }
+
+fn confirmed_events_max_bytes(lane: JetStreamEventLane) -> i64 {
+    match lane {
+        JetStreamEventLane::Activity => JETSTREAM_BOOTSTRAP_MAX_BYTES,
+        JetStreamEventLane::Reflection => REFLECTION_CONFIRMED_MAX_BYTES,
+    }
+}
+
+fn confirmed_events_max_age(lane: JetStreamEventLane) -> Duration {
+    match lane {
+        JetStreamEventLane::Activity => Duration::from_hours(72),
+        JetStreamEventLane::Reflection => Duration::from_hours(24),
+    }
+}
+
+fn diagnostic_stream_max_bytes(lane: JetStreamEventLane) -> i64 {
+    match lane {
+        JetStreamEventLane::Activity => JETSTREAM_BOOTSTRAP_MAX_BYTES,
+        JetStreamEventLane::Reflection => REFLECTION_DIAGNOSTIC_MAX_BYTES,
+    }
+}
+
+fn diagnostic_stream_max_age(lane: JetStreamEventLane) -> Duration {
+    match lane {
+        JetStreamEventLane::Activity => Duration::from_hours(72),
+        JetStreamEventLane::Reflection => Duration::from_hours(24),
+    }
+}
+
+#[cfg(test)]
+#[path = "bootstrap_test.rs"]
+mod tests;
