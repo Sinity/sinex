@@ -11,10 +11,13 @@ use sinex_primitives::rpc::curation::{
     CurationRecordDuplicateJudgmentRequest, CurationRecordDuplicateJudgmentResponse,
     CurationRecordJudgmentRequest, CurationRecordJudgmentResponse,
 };
+use sinex_primitives::views::{
+    CaveatView, ReadinessCaveatId, SinexObjectKind, SinexObjectRef, ViewEnvelope,
+};
 
 use crate::client::GatewayClient;
 use crate::commands::common::parse_serde_enum;
-use crate::fmt::{format_json, format_yaml};
+use crate::fmt::{format_json, format_yaml, print_finite_envelope};
 use crate::model::OutputFormat;
 
 #[derive(Debug, Args)]
@@ -73,7 +76,7 @@ impl CurationProposalsCommand {
                 limit: self.limit,
             })
             .await?;
-        render_proposals(&response, format)
+        render_proposals(&response, &self.status, self.limit, format)
     }
 }
 
@@ -106,7 +109,16 @@ impl CurationDuplicatesCommand {
                 events_per_cluster: self.events_per_cluster,
             })
             .await?;
-        render_duplicate_candidates(&response, format)
+        render_duplicate_candidates(
+            &response,
+            CurationDuplicateQueryEcho {
+                source: self.source.as_deref(),
+                event_type: self.event_type.as_deref(),
+                limit: self.limit,
+                events_per_cluster: self.events_per_cluster,
+            },
+            format,
+        )
     }
 }
 
@@ -236,13 +248,15 @@ impl CurationFinalizeCommand {
 
 fn render_duplicate_candidates(
     response: &CurationListDuplicateCandidatesResponse,
+    query: CurationDuplicateQueryEcho<'_>,
     format: OutputFormat,
 ) -> Result<()> {
+    let envelope = curation_duplicates_envelope(response.clone(), query);
+    if print_finite_envelope(&envelope, format)? {
+        return Ok(());
+    }
+
     match format {
-        OutputFormat::Json | OutputFormat::Ndjson | OutputFormat::Dot => {
-            println!("{}", format_json(response)?)
-        }
-        OutputFormat::Yaml => println!("{}", format_yaml(response)?),
         OutputFormat::Table => {
             println!("Duplicate candidate clusters: {}", response.clusters.len());
             for cluster in &response.clusters {
@@ -258,6 +272,7 @@ fn render_duplicate_candidates(
                 }
             }
         }
+        OutputFormat::Json | OutputFormat::Ndjson | OutputFormat::Yaml | OutputFormat::Dot => {}
     }
     Ok(())
 }
@@ -328,12 +343,18 @@ fn render_duplicate_judgment(
     Ok(())
 }
 
-fn render_proposals(response: &EventQueryResult, format: OutputFormat) -> Result<()> {
+fn render_proposals(
+    response: &EventQueryResult,
+    status: &str,
+    limit: i64,
+    format: OutputFormat,
+) -> Result<()> {
+    let envelope = curation_proposals_envelope(response.clone(), status, limit);
+    if print_finite_envelope(&envelope, format)? {
+        return Ok(());
+    }
+
     match format {
-        OutputFormat::Json | OutputFormat::Ndjson | OutputFormat::Dot => {
-            println!("{}", format_json(response)?)
-        }
-        OutputFormat::Yaml => println!("{}", format_yaml(response)?),
         OutputFormat::Table => match response {
             EventQueryResult::Events { events, .. } => {
                 println!("Curation proposals: {}", events.len());
@@ -360,6 +381,7 @@ fn render_proposals(response: &EventQueryResult, format: OutputFormat) -> Result
             }
             _ => println!("{}", format_json(response)?),
         },
+        OutputFormat::Json | OutputFormat::Ndjson | OutputFormat::Yaml | OutputFormat::Dot => {}
     }
     Ok(())
 }
@@ -388,3 +410,151 @@ fn render_judgment(response: &CurationRecordJudgmentResponse, format: OutputForm
     }
     Ok(())
 }
+
+#[derive(Clone, Copy)]
+struct CurationDuplicateQueryEcho<'a> {
+    source: Option<&'a str>,
+    event_type: Option<&'a str>,
+    limit: i64,
+    events_per_cluster: i64,
+}
+
+fn curation_proposals_envelope(
+    response: EventQueryResult,
+    status: &str,
+    limit: i64,
+) -> ViewEnvelope<EventQueryResult> {
+    let mut envelope = ViewEnvelope::new("sinexctl.semantic.curation.proposals", response)
+        .with_query_echo(serde_json::json!({
+            "status": status,
+            "limit": limit,
+        }));
+    envelope.caveats = curation_proposal_caveats(&envelope.payload, status);
+    envelope
+}
+
+fn curation_proposal_caveats(response: &EventQueryResult, status: &str) -> Vec<CaveatView> {
+    let mut caveats = Vec::new();
+    match response {
+        EventQueryResult::Events {
+            events,
+            next_cursor,
+            ..
+        } => {
+            if events.is_empty() {
+                caveats.push(curation_caveat(
+                    ReadinessCaveatId::SourceAbsent,
+                    format!(
+                        "curation proposal query returned no {status} proposals; this does not prove there are no curatable observations"
+                    ),
+                    SinexObjectKind::Proposal,
+                    format!("curation.proposals.{status}"),
+                    "sinexctl semantic curation proposals",
+                    "curation.proposals.list",
+                ));
+            }
+            if next_cursor.is_some() {
+                caveats.push(curation_caveat(
+                    ReadinessCaveatId::WindowPartial,
+                    "curation proposal query returned a pagination cursor; this is a partial proposal window",
+                    SinexObjectKind::Proposal,
+                    format!("curation.proposals.{status}"),
+                    "sinexctl semantic curation proposals",
+                    "curation.proposals.list",
+                ));
+            }
+        }
+        _ => caveats.push(curation_caveat(
+            ReadinessCaveatId::CoverageUnmeasurable,
+            "curation proposals returned a non-event projection; proposal coverage cannot be interpreted as a proposal list",
+            SinexObjectKind::Proposal,
+            format!("curation.proposals.{status}"),
+            "sinexctl semantic curation proposals",
+            "curation.proposals.list",
+        )),
+    }
+    caveats
+}
+
+fn curation_duplicates_envelope(
+    response: CurationListDuplicateCandidatesResponse,
+    query: CurationDuplicateQueryEcho<'_>,
+) -> ViewEnvelope<CurationListDuplicateCandidatesResponse> {
+    let mut envelope =
+        ViewEnvelope::new("sinexctl.semantic.curation.duplicates", response).with_query_echo(
+            serde_json::json!({
+                "source": query.source,
+                "event_type": query.event_type,
+                "limit": query.limit,
+                "events_per_cluster": query.events_per_cluster,
+            }),
+        );
+    envelope.caveats = curation_duplicate_caveats(&envelope.payload, query);
+    envelope
+}
+
+fn curation_duplicate_caveats(
+    response: &CurationListDuplicateCandidatesResponse,
+    query: CurationDuplicateQueryEcho<'_>,
+) -> Vec<CaveatView> {
+    let mut caveats = Vec::new();
+    if response.clusters.is_empty() {
+        caveats.push(curation_caveat(
+            ReadinessCaveatId::SourceAbsent,
+            "duplicate-candidate query returned no clusters; this only proves the bounded candidate projection is empty",
+            SinexObjectKind::Projection,
+            "curation.duplicate_candidates",
+            "sinexctl semantic curation duplicates",
+            "curation.duplicate_candidates.list",
+        ));
+    }
+    if query.limit > 0 && response.clusters.len() as i64 >= query.limit {
+        caveats.push(curation_caveat(
+            ReadinessCaveatId::WindowPartial,
+            "duplicate-candidate query reached its cluster limit; additional candidate clusters may exist",
+            SinexObjectKind::Projection,
+            "curation.duplicate_candidates",
+            "sinexctl semantic curation duplicates",
+            "curation.duplicate_candidates.list",
+        ));
+    }
+    if response.clusters.iter().any(|cluster| {
+        cluster.event_count > cluster.events.len() as i64
+            || (query.events_per_cluster > 0 && cluster.events.len() as i64 >= query.events_per_cluster)
+    }) {
+        caveats.push(curation_caveat(
+            ReadinessCaveatId::WindowPartial,
+            "at least one duplicate cluster has more events than this bounded response includes",
+            SinexObjectKind::Projection,
+            "curation.duplicate_candidates.events",
+            "sinexctl semantic curation duplicates",
+            "curation.duplicate_candidates.list",
+        ));
+    }
+    caveats
+}
+
+fn curation_caveat(
+    id: ReadinessCaveatId,
+    message: impl Into<String>,
+    kind: SinexObjectKind,
+    ref_id: impl Into<String>,
+    command_hint: &'static str,
+    rpc_method: &'static str,
+) -> CaveatView {
+    let ref_id = ref_id.into();
+    CaveatView {
+        id: id.as_str().to_string(),
+        message: message.into(),
+        ref_: Some(
+            SinexObjectRef::new(kind, ref_id.clone())
+                .with_label(ref_id)
+                .with_command_hint(command_hint)
+                .with_rpc_method(rpc_method),
+        ),
+    }
+}
+
+#[cfg(test)]
+#[path = "curation_test.rs"]
+mod tests;
