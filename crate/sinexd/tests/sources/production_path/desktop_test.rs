@@ -113,6 +113,68 @@ async fn desktop_activitywatch_titles_are_not_parser_redacted() -> TestResult<()
     Ok(())
 }
 
+#[sinex_test]
+async fn desktop_activitywatch_decodes_sqlite_text_data() -> TestResult<()> {
+    use sinex_primitives::events::SourceMaterial;
+    use sinex_primitives::ids::Id;
+    use sinex_primitives::parser::{MaterialAnchor, ParserContext, SourceId, SourceRecord};
+    use sinex_primitives::temporal::Timestamp;
+    use sinexd::runtime::parser::MaterialParser;
+    use sinexd::sources::source_contracts::desktop::activitywatch::ActivityWatchParser;
+
+    let material_id = Id::<SourceMaterial>::from_uuid(sinex_primitives::Uuid::now_v7());
+    let source_id = SourceId::from_static("desktop.activitywatch");
+    let ctx = ParserContext {
+        source_id,
+        source_material_id: material_id,
+        record_anchor: MaterialAnchor::SqliteRow {
+            table: "events".to_string(),
+            rowid: 1,
+        },
+        operation_id: sinex_primitives::Uuid::now_v7(),
+        job_id: sinex_primitives::Uuid::now_v7(),
+        host: "fixture-host".to_string(),
+        acquisition_time: Timestamp::now(),
+    };
+
+    let mut parser = ActivityWatchParser;
+    let window = SourceRecord {
+        material_id,
+        anchor: ctx.record_anchor.clone(),
+        bytes: br#"{"bucket_id":"aw-watcher-window_sinnix-prime","started_at":"2024-01-15T14:23:45.000000+00:00","duration":12.5,"data":"{\"app\":\"kitty\",\"title\":\"~/project/sinex\"}"}"#.to_vec(),
+        logical_path: None,
+        source_ts_hint: None,
+        metadata: serde_json::Value::Null,
+    };
+    let web = SourceRecord {
+        material_id,
+        anchor: MaterialAnchor::SqliteRow {
+            table: "events".to_string(),
+            rowid: 2,
+        },
+        bytes: br#"{"bucket_id":"aw-watcher-web-firefox","started_at":"2024-01-15T14:24:00.000000+00:00","duration":30.0,"data":"{\"url\":\"https://example.com\",\"title\":\"Example Domain\"}"}"#.to_vec(),
+        logical_path: None,
+        source_ts_hint: None,
+        metadata: serde_json::Value::Null,
+    };
+
+    let window_events = parser.parse_record(window, &ctx).await?;
+    let web_events = parser.parse_record(web, &ctx).await?;
+
+    assert_eq!(window_events.len(), 1);
+    assert_eq!(window_events[0].event_type.as_str(), "window.active");
+    assert_eq!(window_events[0].payload["app"], "kitty");
+    assert_eq!(window_events[0].payload["title"], "~/project/sinex");
+
+    assert_eq!(web_events.len(), 1);
+    assert_eq!(web_events[0].event_type.as_str(), "browser.tab.active");
+    assert_eq!(web_events[0].payload["browser"], "firefox");
+    assert_eq!(web_events[0].payload["url"], "https://example.com");
+    assert_eq!(web_events[0].payload["title"], "Example Domain");
+
+    Ok(())
+}
+
 crate::production_path_case_test!(desktop_clipboard_obligations, CLIPBOARD_CASE);
 
 // -------------------------------------------------------------------------
