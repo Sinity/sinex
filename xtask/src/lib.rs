@@ -433,6 +433,9 @@ pub async fn run_cli() -> Result<()> {
     } else if let Err(error) = process::arm_current_process_parent_death_signal() {
         eprintln!("⚠️  Failed to arm xtask parent-death signal: {error}");
     }
+    if let Err(error) = process::install_registered_process_group_signal_cleanup() {
+        eprintln!("⚠️  Failed to install xtask signal cleanup: {error}");
+    }
     let claimed_bg_job = parse_one_shot_i64_env("XTASK_BG_JOB_ID", "background job claim");
 
     // Handle --list-commands before normal dispatch
