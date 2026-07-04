@@ -1,10 +1,14 @@
 use clap::Args;
+use sinex_primitives::domain::OperationStatus;
 use sinex_primitives::rpc::audit::AuditGetResponse;
+use sinex_primitives::views::{
+    CaveatView, ReadinessCaveatId, SinexObjectKind, SinexObjectRef, ViewEnvelope,
+};
 
 use crate::Result;
 use crate::client::GatewayClient;
 use crate::error::is_not_found_error;
-use crate::fmt::{format_json, format_yaml};
+use crate::fmt::print_finite_envelope;
 use crate::model::OutputFormat;
 
 /// Get audit trail for an operation
@@ -38,6 +42,11 @@ impl AuditCommand {
             }
             Err(e) => return Err(e),
         };
+
+        let envelope = audit_envelope(response.clone(), &self.operation_id);
+        if print_finite_envelope(&envelope, format)? {
+            return Ok(());
+        }
 
         match format {
             OutputFormat::Table => {
@@ -79,14 +88,75 @@ impl AuditCommand {
                     }
                 }
             }
-            OutputFormat::Json | OutputFormat::Ndjson | OutputFormat::Dot => {
-                println!("{}", format_json(&response)?);
-            }
-            OutputFormat::Yaml => {
-                println!("{}", format_yaml(&response)?);
-            }
+            OutputFormat::Json | OutputFormat::Yaml | OutputFormat::Ndjson | OutputFormat::Dot => {}
         }
 
         Ok(())
     }
 }
+
+fn audit_envelope(
+    response: AuditGetResponse,
+    operation_id: &str,
+) -> ViewEnvelope<AuditGetResponse> {
+    let mut envelope = ViewEnvelope::new("sinexctl.ops.audit", response).with_query_echo(
+        serde_json::json!({
+            "operation_id": operation_id,
+        }),
+    );
+    envelope.caveats = audit_caveats(&envelope.payload, operation_id);
+    envelope
+}
+
+fn audit_caveats(response: &AuditGetResponse, operation_id: &str) -> Vec<CaveatView> {
+    let mut caveats = Vec::new();
+    if response.audit_trail.affected_events.is_empty() {
+        caveats.push(audit_caveat(
+            ReadinessCaveatId::SourceAbsent,
+            "audit trail has no affected events recorded; this only proves the operation audit slice is empty",
+            operation_id,
+        ));
+    }
+    if response.has_more {
+        caveats.push(audit_caveat(
+            ReadinessCaveatId::WindowPartial,
+            "audit trail is paginated; this response is a partial affected-event window",
+            operation_id,
+        ));
+    }
+    match response.audit_trail.operation.result_status {
+        OperationStatus::Failed | OperationStatus::Cancelled => caveats.push(audit_caveat(
+            ReadinessCaveatId::WindowPartial,
+            "audited operation did not complete successfully; downstream state may reflect a partial or aborted change",
+            operation_id,
+        )),
+        OperationStatus::Running | OperationStatus::Pending => caveats.push(audit_caveat(
+            ReadinessCaveatId::WindowPartial,
+            "audited operation is not terminal yet; audit trail may still be incomplete",
+            operation_id,
+        )),
+        OperationStatus::Success => {}
+    }
+    caveats
+}
+
+fn audit_caveat(
+    id: ReadinessCaveatId,
+    message: impl Into<String>,
+    operation_id: &str,
+) -> CaveatView {
+    CaveatView {
+        id: id.as_str().to_string(),
+        message: message.into(),
+        ref_: Some(
+            SinexObjectRef::new(SinexObjectKind::Operation, operation_id)
+                .with_label(operation_id)
+                .with_command_hint(format!("sinexctl ops audit {operation_id}"))
+                .with_rpc_method("audit.get"),
+        ),
+    }
+}
+
+#[cfg(test)]
+#[path = "audit_test.rs"]
+mod tests;
