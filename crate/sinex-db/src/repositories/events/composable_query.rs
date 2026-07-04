@@ -12,12 +12,13 @@ use crate::models::Event;
 use crate::repositories::DbPoolExt;
 use crate::repositories::common::{DbResult, db_error};
 use sinex_primitives::query::{
-    AggregationMode, Cursor, CursorAnchor, EventOrdering, EventQuery, EventQueryResult,
-    GroupByField, GroupedCount, GroupedValue, GroupedValueAggregation, LineageDirection,
-    LineageNode, LineageQuery, LineageResult, NumericField, PathOp, PayloadFilter,
-    QueryResultEvent, SortDirection, SourceMaterialLinkInfo, SourceStatsEntry, TimeBucketEntry,
-    TimeSeriesOrder,
+    AggregationMode, Cursor, CursorAnchor, EventOrdering, EventQuery, EventQueryLane,
+    EventQueryResult, GroupByField, GroupedCount, GroupedValue, GroupedValueAggregation,
+    LineageDirection, LineageNode, LineageQuery, LineageResult, NumericField, PathOp,
+    PayloadFilter, QueryResultEvent, SortDirection, SourceMaterialLinkInfo, SourceStatsEntry,
+    TimeBucketEntry, TimeSeriesOrder,
 };
+use sinex_primitives::sources::source_role_sql_case;
 use sinex_primitives::{Id, Pagination, Provenance, SinexError, Timestamp, Uuid};
 use sqlx::postgres::types::PgInterval;
 use sqlx::{FromRow, Postgres, QueryBuilder};
@@ -148,7 +149,8 @@ impl EventRepository<'_> {
             qb.push(", NULL::float8 AS relevance_score, NULL::text AS snippet");
         }
 
-        qb.push(" FROM core.events WHERE TRUE");
+        push_event_source_relation(&mut qb, query.lane);
+        qb.push(" WHERE TRUE");
         push_filters(&mut qb, &query);
         qb.push(") AS listing WHERE TRUE");
 
@@ -203,9 +205,9 @@ impl EventRepository<'_> {
     }
 
     async fn estimate_count(&self, query: &EventQuery) -> DbResult<i64> {
-        let mut qb = QueryBuilder::<Postgres>::new(
-            "EXPLAIN (FORMAT JSON) SELECT 1 FROM core.events WHERE TRUE",
-        );
+        let mut qb = QueryBuilder::<Postgres>::new("EXPLAIN (FORMAT JSON) SELECT 1");
+        push_event_source_relation(&mut qb, query.lane);
+        qb.push(" WHERE TRUE");
         push_filters(&mut qb, query);
 
         let row: (JsonValue,) = qb
@@ -268,8 +270,9 @@ fn event_listing_cursor(row: &EventListingRow, listing_order: ListingOrder) -> C
 
 impl EventRepository<'_> {
     async fn execute_count(&self, query: EventQuery) -> DbResult<EventQueryResult> {
-        let mut qb =
-            QueryBuilder::<Postgres>::new("SELECT COUNT(*) AS count FROM core.events WHERE TRUE");
+        let mut qb = QueryBuilder::<Postgres>::new("SELECT COUNT(*) AS count");
+        push_event_source_relation(&mut qb, query.lane);
+        qb.push(" WHERE TRUE");
         push_filters(&mut qb, &query);
 
         let row: CountRow = qb
@@ -291,7 +294,9 @@ impl EventRepository<'_> {
 
         let mut qb = QueryBuilder::<Postgres>::new("SELECT ");
         push_group_by_expr(&mut qb, &field);
-        qb.push(" AS key, COUNT(*) AS count FROM core.events WHERE TRUE");
+        qb.push(" AS key, COUNT(*) AS count");
+        push_event_source_relation(&mut qb, query.lane);
+        qb.push(" WHERE TRUE");
         push_filters(&mut qb, &query);
 
         // For PayloadPath, exclude NULL keys
@@ -344,7 +349,9 @@ impl EventRepository<'_> {
         // COALESCE to ts_coided (extracted from the UUIDv7 id) so events with a
         // NULL ts_orig (which the schema allows) do not cause a NULL bucket and
         // silently disappear from the time-series result.
-        qb.push("::interval, COALESCE(ts_orig, ts_coided)) AS bucket, COUNT(*) AS count FROM core.events WHERE TRUE");
+        qb.push("::interval, COALESCE(ts_orig, ts_coided)) AS bucket, COUNT(*) AS count");
+        push_event_source_relation(&mut qb, query.lane);
+        qb.push(" WHERE TRUE");
         push_filters(&mut qb, &query);
         qb.push(" GROUP BY bucket");
 
@@ -406,9 +413,9 @@ impl EventRepository<'_> {
             GroupedValueAggregation::Avg => "AVG(",
         });
         push_numeric_field_expr(&mut qb, &value_field);
-        qb.push(
-            ") AS DOUBLE PRECISION) AS value, COUNT(*) AS sample_count FROM core.events WHERE TRUE",
-        );
+        qb.push(") AS DOUBLE PRECISION) AS value, COUNT(*) AS sample_count");
+        push_event_source_relation(&mut qb, query.lane);
+        qb.push(" WHERE TRUE");
         push_filters(&mut qb, &query);
         qb.push(" AND ");
         push_numeric_field_expr(&mut qb, &value_field);
@@ -460,9 +467,10 @@ impl EventRepository<'_> {
                 COUNT(DISTINCT host) AS host_count, \
                 MIN(ts_coided) AS first_event, \
                 MAX(ts_coided) AS last_event, \
-                CAST(AVG(CASE WHEN ts_orig IS NOT NULL THEN EXTRACT(EPOCH FROM (ts_coided - ts_orig)) ELSE NULL END) AS DOUBLE PRECISION) AS avg_ingest_delay_secs \
-            FROM core.events WHERE TRUE",
+                CAST(AVG(CASE WHEN ts_orig IS NOT NULL THEN EXTRACT(EPOCH FROM (ts_coided - ts_orig)) ELSE NULL END) AS DOUBLE PRECISION) AS avg_ingest_delay_secs",
         );
+        push_event_source_relation(&mut qb, query.lane);
+        qb.push(" WHERE TRUE");
         push_filters(&mut qb, &query);
         qb.push(" GROUP BY source ORDER BY event_count DESC, source ASC LIMIT ");
         qb.push_bind(limit);
@@ -561,6 +569,43 @@ impl EventRepository<'_> {
 // ─────────────────────────────────────────────────────────────────────
 // Filter clause builder (shared by all query paths)
 // ─────────────────────────────────────────────────────────────────────
+
+fn push_event_source_relation(qb: &mut QueryBuilder<'_, Postgres>, lane: EventQueryLane) {
+    qb.push(" FROM (");
+    match lane {
+        EventQueryLane::Activity => {
+            push_event_select(qb, "core.events", Some("activity"));
+        }
+        EventQueryLane::Reflection => {
+            push_event_select(qb, "core.events", Some("reflection"));
+            qb.push(" UNION ALL ");
+            push_event_select(qb, "reflection.events", None);
+        }
+        EventQueryLane::All => {
+            push_event_select(qb, "core.events", None);
+            qb.push(" UNION ALL ");
+            push_event_select(qb, "reflection.events", None);
+        }
+    }
+    qb.push(") AS events");
+}
+
+fn push_event_select(
+    qb: &mut QueryBuilder<'_, Postgres>,
+    table_name: &'static str,
+    source_role_filter: Option<&'static str>,
+) {
+    qb.push("SELECT ");
+    qb.push(event_select_columns!());
+    qb.push(" FROM ");
+    qb.push(table_name);
+    if let Some(role) = source_role_filter {
+        qb.push(" WHERE (");
+        qb.push(source_role_sql_case("source"));
+        qb.push(") = ");
+        qb.push_bind(role);
+    }
+}
 
 fn push_filters(qb: &mut QueryBuilder<'_, Postgres>, query: &EventQuery) {
     if !query.sources.is_empty() {
