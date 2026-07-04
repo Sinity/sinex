@@ -18,6 +18,7 @@ async fn interval_lift_consumes_focus_transitions() -> xtask::sandbox::TestResul
         automaton.input_event_types(),
         vec![
             "window.focused",
+            "workspace.switched",
             "window.active",
             "afk.changed",
             "unit.started",
@@ -254,6 +255,146 @@ async fn interval_lift_ignores_non_monotonic_transition() -> xtask::sandbox::Tes
         .await?;
 
     assert!(output.is_none());
+    Ok(())
+}
+
+#[sinex_test]
+async fn interval_lift_closes_previous_workspace_on_next_switch(
+) -> xtask::sandbox::TestResult<()> {
+    let start = Timestamp::from_unix_timestamp(1_700_000_000)
+        .ok_or_else(|| color_eyre::eyre::eyre!("valid timestamp"))?;
+    let end = Timestamp::from_unix_timestamp(1_700_000_090)
+        .ok_or_else(|| color_eyre::eyre::eyre!("valid timestamp"))?;
+
+    let mut automaton = IntervalLift;
+    let mut state = IntervalLiftState::default();
+    let first_context = workspace_context(start);
+    let first_id = first_context.trigger_uuid();
+    let second_context = workspace_context(end);
+    let second_id = second_context.trigger_uuid();
+
+    let first_output = automaton
+        .process(
+            &mut state,
+            serde_json::to_value(HyprlandWorkspaceSwitchedPayload {
+                to_workspace_id: 2,
+                workspace_name: Some("dev".to_string()),
+                from_workspace_id: None,
+                monitor_id: Some(1),
+                active_window_id: Some("0xabc".to_string()),
+            })?,
+            &first_context,
+        )
+        .await?;
+    assert!(
+        first_output.is_none(),
+        "first workspace switch seeds the open workspace interval"
+    );
+
+    let output = automaton
+        .process(
+            &mut state,
+            serde_json::to_value(HyprlandWorkspaceSwitchedPayload {
+                to_workspace_id: 3,
+                workspace_name: Some("browser".to_string()),
+                from_workspace_id: Some(2),
+                monitor_id: Some(1),
+                active_window_id: Some("0xdef".to_string()),
+            })?,
+            &second_context,
+        )
+        .await?
+        .expect("second workspace switch closes the previous workspace interval");
+
+    assert_eq!(output.ts_orig, end);
+    assert_eq!(output.source_event_ids, vec![first_id, second_id]);
+    assert_eq!(output.payload.state_kind, "desktop.workspace");
+    assert_eq!(output.payload.subject_id.as_deref(), Some("workspace:2"));
+    assert_eq!(output.payload.label.as_deref(), Some("dev"));
+    assert_eq!(output.payload.start_time, start);
+    assert_eq!(output.payload.end_time, end);
+    assert_eq!(output.payload.duration_secs, 90);
+    assert_eq!(output.payload.start_event_type, "workspace.switched");
+    assert_eq!(output.payload.end_event_type, "workspace.switched");
+    assert_eq!(
+        output
+            .payload
+            .attributes
+            .get("to_workspace_id")
+            .map(String::as_str),
+        Some("2")
+    );
+    assert_eq!(
+        output
+            .payload
+            .attributes
+            .get("workspace_name")
+            .map(String::as_str),
+        Some("dev")
+    );
+    assert_eq!(
+        output
+            .payload
+            .attributes
+            .get("active_window_id")
+            .map(String::as_str),
+        Some("0xabc")
+    );
+    let expected_key = format!("interval:desktop.workspace:workspace:2:{first_id}:{second_id}");
+    assert_eq!(output.equivalence_key.as_deref(), Some(expected_key.as_str()));
+    Ok(())
+}
+
+#[sinex_test]
+async fn interval_lift_updates_same_workspace_without_closing_interval(
+) -> xtask::sandbox::TestResult<()> {
+    let start = Timestamp::from_unix_timestamp(1_700_000_000)
+        .ok_or_else(|| color_eyre::eyre::eyre!("valid timestamp"))?;
+    let refresh = Timestamp::from_unix_timestamp(1_700_000_005)
+        .ok_or_else(|| color_eyre::eyre::eyre!("valid timestamp"))?;
+
+    let mut automaton = IntervalLift;
+    let mut state = IntervalLiftState::default();
+    automaton
+        .process(
+            &mut state,
+            serde_json::to_value(HyprlandWorkspaceSwitchedPayload {
+                to_workspace_id: 2,
+                workspace_name: Some("dev".to_string()),
+                from_workspace_id: None,
+                monitor_id: Some(1),
+                active_window_id: Some("0xabc".to_string()),
+            })?,
+            &workspace_context(start),
+        )
+        .await?;
+
+    let output = automaton
+        .process(
+            &mut state,
+            serde_json::to_value(HyprlandWorkspaceSwitchedPayload {
+                to_workspace_id: 2,
+                workspace_name: Some("dev".to_string()),
+                from_workspace_id: Some(2),
+                monitor_id: Some(1),
+                active_window_id: Some("0xdef".to_string()),
+            })?,
+            &workspace_context(refresh),
+        )
+        .await?;
+
+    assert!(
+        output.is_none(),
+        "same-workspace refreshes must not close zero-duration intervals"
+    );
+    assert_eq!(
+        state
+            .active_workspace
+            .as_ref()
+            .and_then(|workspace| workspace.attributes.get("active_window_id"))
+            .map(String::as_str),
+        Some("0xdef")
+    );
     Ok(())
 }
 
@@ -626,6 +767,20 @@ fn activitywatch_context(ts_orig: Timestamp) -> AutomatonContext {
         trigger_event_id,
         source: EventSource::from_static("activitywatch"),
         event_type: EventType::from_static("window.active"),
+        ts_orig: Some(ts_orig),
+        ts_coided: trigger_event_id.timestamp(),
+        processing_mode: ProcessingMode::Live,
+        trigger_kind: TriggerKind::NewEvent,
+        created_by_operation_id: None,
+    }
+}
+
+fn workspace_context(ts_orig: Timestamp) -> AutomatonContext {
+    let trigger_event_id: Id<Event<JsonValue>> = Id::new();
+    AutomatonContext {
+        trigger_event_id,
+        source: EventSource::from_static("wm.hyprland"),
+        event_type: EventType::from_static("workspace.switched"),
         ts_orig: Some(ts_orig),
         ts_coided: trigger_event_id.timestamp(),
         processing_mode: ProcessingMode::Live,

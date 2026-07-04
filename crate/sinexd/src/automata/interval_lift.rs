@@ -10,7 +10,8 @@ use serde::{Deserialize, Deserializer, Serialize};
 use sinex_primitives::domain::SyntheticTemporalPolicy;
 use sinex_primitives::events::payloads::{
     ActivityWatchAfkChangedPayload, ActivityWatchWindowActivePayload, HyprlandWindowFocusedPayload,
-    StateIntervalPayload, SystemdUnitStartedPayload, SystemdUnitStoppedPayload,
+    HyprlandWorkspaceSwitchedPayload, StateIntervalPayload, SystemdUnitStartedPayload,
+    SystemdUnitStoppedPayload,
 };
 use sinex_primitives::events::EventPayload;
 use sinex_primitives::temporal::Duration;
@@ -19,6 +20,7 @@ use std::collections::BTreeMap;
 
 const SEMANTICS_VERSION: &str = "1.0.0";
 const FOCUS_STATE_KIND: &str = "desktop.focus";
+const WORKSPACE_STATE_KIND: &str = "desktop.workspace";
 const ACTIVITYWATCH_WINDOW_STATE_KIND: &str = "desktop.activitywatch.window";
 const ACTIVITYWATCH_AFK_STATE_KIND: &str = "desktop.activitywatch.afk";
 const SYSTEMD_UNIT_STATE_KIND: &str = "system.systemd.unit";
@@ -30,6 +32,8 @@ pub struct IntervalLift;
 pub struct IntervalLiftState {
     #[serde(default, deserialize_with = "deserialize_active_focus")]
     active_focus: Option<StateObservation>,
+    #[serde(default)]
+    active_workspace: Option<StateObservation>,
     /// Open intervals keyed by rule-specific state identity. Use this for
     /// transition pairs that can have multiple independent subjects open at once.
     #[serde(default)]
@@ -134,6 +138,50 @@ impl StateObservation {
             subject_id,
             label,
             event_type: ActivityWatchWindowActivePayload::EVENT_TYPE
+                .as_static_str()
+                .to_string(),
+            attributes,
+        })
+    }
+
+    fn from_workspace_payload(
+        input: HyprlandWorkspaceSwitchedPayload,
+        context: &AutomatonContext,
+    ) -> Result<Self, AutomatonLogicError> {
+        let subject_id = format!("workspace:{}", input.to_workspace_id);
+        let label = input
+            .workspace_name
+            .clone()
+            .filter(|name| !name.is_empty())
+            .unwrap_or_else(|| input.to_workspace_id.to_string());
+        let mut attributes = BTreeMap::new();
+        attributes.insert(
+            "to_workspace_id".to_string(),
+            input.to_workspace_id.to_string(),
+        );
+        if let Some(workspace_name) = &input.workspace_name {
+            attributes.insert("workspace_name".to_string(), workspace_name.clone());
+        }
+        if let Some(from_workspace_id) = input.from_workspace_id {
+            attributes.insert(
+                "from_workspace_id".to_string(),
+                from_workspace_id.to_string(),
+            );
+        }
+        if let Some(monitor_id) = input.monitor_id {
+            attributes.insert("monitor_id".to_string(), monitor_id.to_string());
+        }
+        if let Some(active_window_id) = &input.active_window_id {
+            attributes.insert("active_window_id".to_string(), active_window_id.clone());
+        }
+
+        Ok(Self {
+            state_kind: WORKSPACE_STATE_KIND.to_string(),
+            event_id: context.trigger_uuid(),
+            ts_orig: context.require_ts_orig()?,
+            subject_id: Some(subject_id),
+            label: Some(label),
+            event_type: HyprlandWorkspaceSwitchedPayload::EVENT_TYPE
                 .as_static_str()
                 .to_string(),
             attributes,
@@ -389,6 +437,7 @@ impl Transducer for IntervalLift {
     fn input_event_types(&self) -> Vec<&'static str> {
         vec![
             HyprlandWindowFocusedPayload::EVENT_TYPE.as_static_str(),
+            HyprlandWorkspaceSwitchedPayload::EVENT_TYPE.as_static_str(),
             ActivityWatchWindowActivePayload::EVENT_TYPE.as_static_str(),
             ActivityWatchAfkChangedPayload::EVENT_TYPE.as_static_str(),
             SystemdUnitStartedPayload::EVENT_TYPE.as_static_str(),
@@ -428,6 +477,21 @@ impl Transducer for IntervalLift {
                     (
                         &mut state.active_focus,
                         StateObservation::from_focus_payload(payload, context)?,
+                    )
+                }
+                ("wm.hyprland", event_type)
+                    if event_type
+                        == HyprlandWorkspaceSwitchedPayload::EVENT_TYPE.as_static_str() =>
+                {
+                    let payload: HyprlandWorkspaceSwitchedPayload =
+                        serde_json::from_value(input).map_err(|e| {
+                            AutomatonLogicError::InputParsing(format!(
+                                "failed to parse Hyprland workspace payload: {e}"
+                            ))
+                        })?;
+                    (
+                        &mut state.active_workspace,
+                        StateObservation::from_workspace_payload(payload, context)?,
                     )
                 }
                 ("activitywatch", event_type)
