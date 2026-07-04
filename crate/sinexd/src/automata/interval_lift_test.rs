@@ -2,6 +2,7 @@ use super::*;
 use crate::runtime::Transducer;
 use crate::runtime::automaton::AutomatonContext;
 use sinex_primitives::domain::{ProcessingMode, TriggerKind};
+use sinex_primitives::events::enums::{SystemdActiveState, SystemdUnitType};
 use sinex_primitives::events::Event;
 use sinex_primitives::{EventSource, EventType, Id, JsonValue, Timestamp, Uuid};
 use std::collections::BTreeMap;
@@ -15,7 +16,13 @@ async fn interval_lift_consumes_focus_transitions() -> xtask::sandbox::TestResul
     assert_eq!(automaton.input_event_type(), "*");
     assert_eq!(
         automaton.input_event_types(),
-        vec!["window.focused", "window.active", "afk.changed"]
+        vec![
+            "window.focused",
+            "window.active",
+            "afk.changed",
+            "unit.started",
+            "unit.stopped"
+        ]
     );
     assert_eq!(automaton.output_event_type(), "state.interval");
     assert_eq!(automaton.output_event_source(), "derived.interval-lift");
@@ -470,6 +477,102 @@ async fn interval_lift_clamps_open_activitywatch_afk_duration_at_creation_time(
 }
 
 #[sinex_test]
+async fn interval_lift_closes_systemd_unit_on_stop() -> xtask::sandbox::TestResult<()> {
+    let start = Timestamp::from_unix_timestamp(1_700_000_000)
+        .ok_or_else(|| color_eyre::eyre::eyre!("valid timestamp"))?;
+    let end = Timestamp::from_unix_timestamp(1_700_000_125)
+        .ok_or_else(|| color_eyre::eyre::eyre!("valid timestamp"))?;
+
+    let mut automaton = IntervalLift;
+    let mut state = IntervalLiftState::default();
+    let start_context = systemd_context("unit.started", start);
+    let start_id = start_context.trigger_uuid();
+    let stop_context = systemd_context("unit.stopped", end);
+    let stop_id = stop_context.trigger_uuid();
+
+    let start_output = automaton
+        .process(
+            &mut state,
+            serde_json::to_value(SystemdUnitStartedPayload {
+                unit_name: "sinexd.service".to_string(),
+                unit_type: SystemdUnitType::Service,
+                main_pid: None,
+                active_state: SystemdActiveState::Active,
+                sub_state: "running".to_string(),
+            })?,
+            &start_context,
+        )
+        .await?;
+    assert!(start_output.is_none(), "start opens the unit interval");
+
+    let output = automaton
+        .process(
+            &mut state,
+            serde_json::to_value(SystemdUnitStoppedPayload {
+                unit_name: "sinexd.service".to_string(),
+                unit_type: SystemdUnitType::Service,
+                exit_code: None,
+                active_state: SystemdActiveState::Inactive,
+                sub_state: "dead".to_string(),
+            })?,
+            &stop_context,
+        )
+        .await?
+        .expect("stop closes the matching unit interval");
+
+    assert_eq!(output.ts_orig, end);
+    assert_eq!(output.source_event_ids, vec![start_id, stop_id]);
+    assert_eq!(output.payload.state_kind, "system.systemd.unit");
+    assert_eq!(output.payload.subject_id.as_deref(), Some("sinexd.service"));
+    assert_eq!(output.payload.label.as_deref(), Some("sinexd.service"));
+    assert_eq!(output.payload.start_time, start);
+    assert_eq!(output.payload.end_time, end);
+    assert_eq!(output.payload.duration_secs, 125);
+    assert_eq!(output.payload.start_event_type, "unit.started");
+    assert_eq!(output.payload.end_event_type, "unit.stopped");
+    assert_eq!(
+        output.payload.attributes.get("unit_type").map(String::as_str),
+        Some("service")
+    );
+    assert_eq!(
+        output.payload.attributes.get("active_state").map(String::as_str),
+        Some("active")
+    );
+    assert_eq!(
+        output.payload.attributes.get("sub_state").map(String::as_str),
+        Some("running")
+    );
+    let expected_key =
+        format!("interval:system.systemd.unit:sinexd.service:{start_id}:{stop_id}");
+    assert_eq!(output.equivalence_key.as_deref(), Some(expected_key.as_str()));
+    Ok(())
+}
+
+#[sinex_test]
+async fn interval_lift_ignores_systemd_stop_without_matching_start(
+) -> xtask::sandbox::TestResult<()> {
+    let end = Timestamp::from_unix_timestamp(1_700_000_125)
+        .ok_or_else(|| color_eyre::eyre::eyre!("valid timestamp"))?;
+
+    let output = IntervalLift
+        .process(
+            &mut IntervalLiftState::default(),
+            serde_json::to_value(SystemdUnitStoppedPayload {
+                unit_name: "sinexd.service".to_string(),
+                unit_type: SystemdUnitType::Service,
+                exit_code: None,
+                active_state: SystemdActiveState::Inactive,
+                sub_state: "dead".to_string(),
+            })?,
+            &systemd_context("unit.stopped", end),
+        )
+        .await?;
+
+    assert!(output.is_none());
+    Ok(())
+}
+
+#[sinex_test]
 async fn interval_lift_decodes_legacy_focus_checkpoint_state(
 ) -> xtask::sandbox::TestResult<()> {
     let event_id = Uuid::now_v7();
@@ -537,6 +640,20 @@ fn activitywatch_afk_context(ts_orig: Timestamp) -> AutomatonContext {
         trigger_event_id,
         source: EventSource::from_static("activitywatch"),
         event_type: EventType::from_static("afk.changed"),
+        ts_orig: Some(ts_orig),
+        ts_coided: trigger_event_id.timestamp(),
+        processing_mode: ProcessingMode::Live,
+        trigger_kind: TriggerKind::NewEvent,
+        created_by_operation_id: None,
+    }
+}
+
+fn systemd_context(event_type: &'static str, ts_orig: Timestamp) -> AutomatonContext {
+    let trigger_event_id: Id<Event<JsonValue>> = Id::new();
+    AutomatonContext {
+        trigger_event_id,
+        source: EventSource::from_static("systemd"),
+        event_type: EventType::from_static(event_type),
         ts_orig: Some(ts_orig),
         ts_coided: trigger_event_id.timestamp(),
         processing_mode: ProcessingMode::Live,
