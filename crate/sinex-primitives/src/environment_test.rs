@@ -98,3 +98,20 @@ async fn confirmed_event_type_filter_matches_provenance_source_and_type()
 
     Ok(())
 }
+
+#[sinex_test]
+async fn reflection_event_subject_uses_separate_root_and_same_token_encoding()
+-> xtask::sandbox::TestResult<()> {
+    let env = SinexEnvironment::new("dev")?;
+
+    assert_eq!(
+        env.nats_reflection_event_subject_with_namespace(
+            Some("agent"),
+            "sinexd.api",
+            "latency.snapshot"
+        ),
+        "dev.agent.events.reflection.raw.sinexd_d_api.latency_d_snapshot"
+    );
+
+    Ok(())
+}

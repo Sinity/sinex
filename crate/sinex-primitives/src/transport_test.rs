@@ -43,6 +43,15 @@ async fn route_decisions_cover_admission_and_durable_boundaries() -> TestResult<
     assert_eq!(control.transport, RouteTransport::CoreNats);
     assert_eq!(control.class, Some(Class::Control));
 
+    let telemetry = route_decision("self_observation.telemetry_events")
+        .expect("telemetry events must be classified");
+    assert_eq!(telemetry.transport, RouteTransport::JetStream);
+    assert_eq!(telemetry.class, Some(Class::Telemetry));
+    assert_eq!(
+        telemetry.route,
+        "{env}.events.reflection.raw.sinex.{metric_type}"
+    );
+
     let checkpoint =
         route_decision("runtime.checkpoints").expect("runtime checkpoints must be classified");
     assert_eq!(checkpoint.transport, RouteTransport::JetStreamKv);

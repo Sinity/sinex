@@ -29,7 +29,7 @@ pub const NATS_TRAFFIC_CLASS_HEADER: &str = "Sinex-Traffic-Class";
 ///
 /// These classes are intentionally narrow:
 /// - `RawEvent`: persisted raw/synthesized event traffic on `events.raw.*`
-/// - `Telemetry`: self-observation events that still use the normal raw-event plane
+/// - `Telemetry`: self-observation event traffic on `events.reflection.raw.*`
 /// - `SourceMaterial`: ordered source-material lifecycle frames
 /// - `RawIngestDlq`: operator-facing ingest/material DLQ traffic
 /// - `ProcessingFailure`: derived/runtime processing-failure envelopes
@@ -375,6 +375,54 @@ pub struct JetStreamTopology {
     pub consumer_durable: String,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum JetStreamEventLane {
+    Activity,
+    Reflection,
+}
+
+impl JetStreamEventLane {
+    #[must_use]
+    pub const fn raw_subject_root(self) -> &'static str {
+        match self {
+            Self::Activity => "events.raw",
+            Self::Reflection => "events.reflection.raw",
+        }
+    }
+
+    #[must_use]
+    pub const fn confirmed_subject_root(self) -> &'static str {
+        match self {
+            Self::Activity => "events.confirmed",
+            Self::Reflection => "events.reflection.confirmed",
+        }
+    }
+
+    #[must_use]
+    pub const fn dlq_subject_root(self) -> &'static str {
+        match self {
+            Self::Activity => "events.dlq",
+            Self::Reflection => "events.reflection.dlq",
+        }
+    }
+
+    #[must_use]
+    pub const fn processing_failures_subject_root(self) -> &'static str {
+        match self {
+            Self::Activity => "events.processing_failures",
+            Self::Reflection => "events.reflection.processing_failures",
+        }
+    }
+
+    #[must_use]
+    pub const fn invalidation_subject(self) -> &'static str {
+        match self {
+            Self::Activity => "sinex.derived.invalidation",
+            Self::Reflection => "sinex.reflection.derived.invalidation",
+        }
+    }
+}
+
 impl JetStreamTopology {
     #[must_use]
     pub fn new(
@@ -382,6 +430,39 @@ impl JetStreamTopology {
         base_stream: String,
         consumer_durable: String,
         namespace: Option<&str>,
+    ) -> Self {
+        Self::for_lane(
+            env,
+            base_stream,
+            consumer_durable,
+            namespace,
+            JetStreamEventLane::Activity,
+        )
+    }
+
+    #[must_use]
+    pub fn reflection(
+        env: &crate::environment::SinexEnvironment,
+        base_stream: String,
+        consumer_durable: String,
+        namespace: Option<&str>,
+    ) -> Self {
+        Self::for_lane(
+            env,
+            base_stream,
+            consumer_durable,
+            namespace,
+            JetStreamEventLane::Reflection,
+        )
+    }
+
+    #[must_use]
+    pub fn for_lane(
+        env: &crate::environment::SinexEnvironment,
+        base_stream: String,
+        consumer_durable: String,
+        namespace: Option<&str>,
+        lane: JetStreamEventLane,
     ) -> Self {
         use crate::domain::{NatsSubject, StreamName};
 
@@ -391,25 +472,29 @@ impl JetStreamTopology {
             StreamName::new(format!("{base_stream}_PROCESSING_FAILURES"));
         let invalidation_stream = StreamName::new(format!("{base_stream}_DERIVED_INVALIDATIONS"));
         let namespaced = |subject: &str| env.nats_subject_with_namespace(namespace, subject);
-        let confirmed_events_prefix = format!("{}.", namespaced("events.confirmed"));
-        let processing_failures_prefix = format!("{}.", namespaced("events.processing_failures"));
+        let confirmed_events_prefix = format!("{}.", namespaced(lane.confirmed_subject_root()));
+        let processing_failures_prefix =
+            format!("{}.", namespaced(lane.processing_failures_subject_root()));
+        let events_subject = format!("{}.>", lane.raw_subject_root());
+        let confirmed_events_subject = format!("{}.>", lane.confirmed_subject_root());
+        let dlq_subject = format!("{}.>", lane.dlq_subject_root());
+        let dlq_publish_subject = format!("{}.event_engine", lane.dlq_subject_root());
+        let processing_failures_subject = format!("{}.>", lane.processing_failures_subject_root());
 
         Self {
             events_stream: StreamName::new(base_stream),
-            events_subject: NatsSubject::new(namespaced("events.raw.>")),
+            events_subject: NatsSubject::new(namespaced(&events_subject)),
             confirmed_events_stream,
-            confirmed_events_subject: NatsSubject::new(namespaced("events.confirmed.>")),
+            confirmed_events_subject: NatsSubject::new(namespaced(&confirmed_events_subject)),
             confirmed_events_prefix,
             dlq_stream,
-            dlq_subject: NatsSubject::new(namespaced("events.dlq.>")),
-            dlq_publish_subject: NatsSubject::new(namespaced("events.dlq.event_engine")),
+            dlq_subject: NatsSubject::new(namespaced(&dlq_subject)),
+            dlq_publish_subject: NatsSubject::new(namespaced(&dlq_publish_subject)),
             processing_failures_stream,
-            processing_failures_subject: NatsSubject::new(namespaced(
-                "events.processing_failures.>",
-            )),
+            processing_failures_subject: NatsSubject::new(namespaced(&processing_failures_subject)),
             processing_failures_prefix,
             invalidation_stream,
-            invalidation_subject: NatsSubject::new(namespaced("sinex.derived.invalidation")),
+            invalidation_subject: NatsSubject::new(namespaced(lane.invalidation_subject())),
             consumer_durable,
         }
     }

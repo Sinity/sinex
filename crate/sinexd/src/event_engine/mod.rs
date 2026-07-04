@@ -29,5 +29,5 @@ pub use service::IngestService;
 pub use sinex_db::repositories::schema_management::SchemaSyncResult;
 pub use sinex_db::validation::SchemaInfo;
 pub use sinex_primitives::error::{Result, Result as EventEngineResult, SinexError};
-pub use sinex_primitives::nats::JetStreamTopology;
+pub use sinex_primitives::nats::{JetStreamEventLane, JetStreamTopology};
 pub use validator::{IngestEventValidator, ValidationResult};
