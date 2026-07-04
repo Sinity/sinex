@@ -13,19 +13,223 @@
 
 use serde_json::json;
 use sinex_db::DynamicPayload;
-use sinex_db::repositories::{DbPoolExt, source_material_relation_types};
-use sinex_primitives::domain::{EventSource, EventType};
-use sinex_primitives::query::{
-    AggregationMode, Cursor, EventQuery, EventQueryResult, GroupByField, GroupedValueAggregation,
-    LineageDirection, LineageQuery, NumericField, PathOp, PayloadFilter, SortDirection,
-    TimeSeriesOrder,
+use sinex_db::repositories::{
+    DbPoolExt, EventStorageLane, StreamBatchRow, source_material_relation_types,
 };
-use sinex_primitives::Timestamp;
+use sinex_primitives::domain::{EventSource, EventType, HostName};
+use sinex_primitives::events::SourceMaterial;
+use sinex_primitives::query::{
+    AggregationMode, Cursor, EventQuery, EventQueryLane, EventQueryResult, GroupByField,
+    GroupedValueAggregation, LineageDirection, LineageQuery, NumericField, PathOp, PayloadFilter,
+    SortDirection, TimeSeriesOrder,
+};
+use sinex_primitives::{Id, Timestamp, Uuid};
 use xtask::sandbox::prelude::*;
 
 // ============================================================================
 // FILTER COMPOSITION TESTS
 // ============================================================================
+
+fn reflection_stream_row(
+    material_id: Id<SourceMaterial>,
+    source: &str,
+    event_type: &str,
+    anchor_byte: i64,
+) -> color_eyre::Result<StreamBatchRow> {
+    Ok(StreamBatchRow {
+        id: Uuid::now_v7(),
+        source: EventSource::new(source)?,
+        event_type: EventType::new(event_type)?,
+        ts_orig: Timestamp::now(),
+        host: HostName::from_static("localhost"),
+        payload: json!({ "anchor": anchor_byte }),
+        source_material_id: Some(material_id),
+        anchor_byte: Some(anchor_byte),
+        offset_start: None,
+        offset_end: None,
+        offset_kind: None,
+        source_event_ids: None,
+        payload_schema_id: None,
+        module_run_id: None,
+        anchor_payload_hash: None,
+        associated_blob_ids: None,
+        temporal_policy: None,
+        semantics_version: None,
+        scope_key: None,
+        equivalence_key: None,
+        created_by_operation_id: None,
+        automaton_model: None,
+        ts_quality: None,
+    })
+}
+
+fn result_sources(result: EventQueryResult) -> Vec<String> {
+    match result {
+        EventQueryResult::Events { events, .. } => events
+            .into_iter()
+            .map(|event| event.event.source.as_str().to_string())
+            .collect(),
+        other => panic!("Expected Events result, got {other:?}"),
+    }
+}
+
+#[sinex_test]
+async fn event_query_defaults_to_activity_lane(ctx: TestContext) -> TestResult<()> {
+    let material_id = ctx
+        .create_source_material(Some("event-query-lane-default"))
+        .await?;
+    let reflection_material_id = ctx
+        .create_source_material(Some("event-query-lane-reflection"))
+        .await?;
+
+    ctx.pool
+        .events()
+        .insert(
+            DynamicPayload::new("activity.source", "lane.test", json!({"kind": "activity"}))
+                .from_material(material_id)
+                .build()?,
+        )
+        .await?;
+    ctx.pool
+        .events()
+        .insert(
+            DynamicPayload::new("sinex.legacy", "lane.test", json!({"kind": "legacy"}))
+                .from_material(material_id)
+                .build()?,
+        )
+        .await?;
+    ctx.pool
+        .events()
+        .insert_stream_batch_into(
+            EventStorageLane::Reflection,
+            &[reflection_stream_row(
+                reflection_material_id,
+                "sinex.reflection",
+                "lane.test",
+                0,
+            )?],
+        )
+        .await?;
+
+    let sources = result_sources(
+        ctx.pool
+            .events()
+            .query(EventQuery {
+                event_types: vec![EventType::from_static("lane.test")],
+                ..Default::default()
+            })
+            .await?,
+    );
+
+    assert_eq!(sources, vec!["activity.source"]);
+    Ok(())
+}
+
+#[sinex_test]
+async fn event_query_reflection_lane_includes_physical_and_legacy_reflection(
+    ctx: TestContext,
+) -> TestResult<()> {
+    let material_id = ctx
+        .create_source_material(Some("event-query-lane-legacy"))
+        .await?;
+    let reflection_material_id = ctx
+        .create_source_material(Some("event-query-lane-physical"))
+        .await?;
+
+    ctx.pool
+        .events()
+        .insert(
+            DynamicPayload::new(
+                "activity.source",
+                "lane.reflection",
+                json!({"kind": "activity"}),
+            )
+            .from_material(material_id)
+            .build()?,
+        )
+        .await?;
+    ctx.pool
+        .events()
+        .insert(
+            DynamicPayload::new("sinex.legacy", "lane.reflection", json!({"kind": "legacy"}))
+                .from_material(material_id)
+                .build()?,
+        )
+        .await?;
+    ctx.pool
+        .events()
+        .insert_stream_batch_into(
+            EventStorageLane::Reflection,
+            &[reflection_stream_row(
+                reflection_material_id,
+                "sinex.reflection",
+                "lane.reflection",
+                0,
+            )?],
+        )
+        .await?;
+
+    let mut sources = result_sources(
+        ctx.pool
+            .events()
+            .query(EventQuery {
+                event_types: vec![EventType::from_static("lane.reflection")],
+                lane: EventQueryLane::Reflection,
+                ..Default::default()
+            })
+            .await?,
+    );
+    sources.sort();
+
+    assert_eq!(sources, vec!["sinex.legacy", "sinex.reflection"]);
+    Ok(())
+}
+
+#[sinex_test]
+async fn event_query_all_lane_unions_activity_and_reflection(ctx: TestContext) -> TestResult<()> {
+    let material_id = ctx
+        .create_source_material(Some("event-query-lane-all"))
+        .await?;
+    let reflection_material_id = ctx
+        .create_source_material(Some("event-query-lane-all-reflection"))
+        .await?;
+
+    ctx.pool
+        .events()
+        .insert(
+            DynamicPayload::new("activity.source", "lane.all", json!({"kind": "activity"}))
+                .from_material(material_id)
+                .build()?,
+        )
+        .await?;
+    ctx.pool
+        .events()
+        .insert_stream_batch_into(
+            EventStorageLane::Reflection,
+            &[reflection_stream_row(
+                reflection_material_id,
+                "sinex.reflection",
+                "lane.all",
+                0,
+            )?],
+        )
+        .await?;
+
+    let mut sources = result_sources(
+        ctx.pool
+            .events()
+            .query(EventQuery {
+                event_types: vec![EventType::from_static("lane.all")],
+                lane: EventQueryLane::All,
+                ..Default::default()
+            })
+            .await?,
+    );
+    sources.sort();
+
+    assert_eq!(sources, vec!["activity.source", "sinex.reflection"]);
+    Ok(())
+}
 
 /// Test: Source + Type filter combination
 #[sinex_test]
