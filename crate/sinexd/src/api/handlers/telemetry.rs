@@ -26,7 +26,7 @@ use sinex_primitives::{
         TelemetryWindowFocusResponse, ThroughputComponentEntry, ThroughputSourceEntry,
         WindowFocusBucket,
     },
-    sources::is_self_observation_source,
+    sources::{source_role, throughput_component_sql_case},
 };
 use sqlx::PgPool;
 use time::OffsetDateTime;
@@ -956,6 +956,16 @@ pub async fn handle_telemetry_event_engine_validation(
 
 const THROUGHPUT_SOURCE_LIMIT: i64 = 64;
 
+fn throughput_component(source: &str) -> &'static str {
+    if source.starts_with("sinexd.api") {
+        "gateway"
+    } else if source.starts_with("derived.") {
+        "derived"
+    } else {
+        source_role(source).throughput_component()
+    }
+}
+
 pub async fn handle_telemetry_throughput(
     pool: &PgPool,
     _req: TelemetryThroughputRequest,
@@ -999,22 +1009,9 @@ pub async fn handle_telemetry_throughput(
         .collect();
 
     // Per-component aggregate. Component buckets here are intentionally
-    // coarse: ingestion (everything not on `sinex.*`), gateway
-    // (`sinexd.api`), derived (`derived.*`), and self-observation
-    // (the shared source classifier in `sinex_primitives::sources`). Tweaks to
-    // the bucket logic are expected over the lifetime of #1172's operator UX work.
-    fn classify_component(source: &str) -> &'static str {
-        if source.starts_with("sinexd.api") {
-            "gateway"
-        } else if source.starts_with("derived.") {
-            "derived"
-        } else if is_self_observation_source(source) {
-            "self_observation"
-        } else {
-            "ingestion"
-        }
-    }
-
+    // coarse: ingestion/activity, gateway, derived, and reflection (Sinex's own
+    // telemetry/self-observation lane). The role decision lives in
+    // `sinex_primitives::sources` so SQL and Rust callers do not drift.
     // Per-component aggregation runs across the FULL source set, not the
     // top-N per_source slice. With more than THROUGHPUT_SOURCE_LIMIT active
     // sources, restricting to the top-N rows would systematically undercount
@@ -1028,27 +1025,22 @@ pub async fn handle_telemetry_throughput(
         events_last_24h: i64,
     }
 
-    let component_rows = sqlx::query_as::<_, ComponentRow>(
+    let component_sql = format!(
         r"
         SELECT
-            CASE
-                WHEN source LIKE 'sinexd.api%'  THEN 'gateway'
-                WHEN source LIKE 'derived.%'       THEN 'derived'
-                WHEN source = 'sinex'
-                  OR source LIKE 'sinex.%'
-                  OR source LIKE 'sinexd.%'        THEN 'self_observation'
-                ELSE 'ingestion'
-            END AS component,
+            {component_case} AS component,
             COALESCE(SUM(CASE WHEN ts_orig >= NOW() - INTERVAL '1 hour' THEN 1 ELSE 0 END), 0)::bigint AS events_last_1h,
             COALESCE(SUM(CASE WHEN ts_orig >= NOW() - INTERVAL '24 hours' THEN 1 ELSE 0 END), 0)::bigint AS events_last_24h
         FROM core.events
         WHERE ts_orig >= NOW() - INTERVAL '24 hours'
         GROUP BY component
         ",
-    )
-    .fetch_all(pool)
-    .await
-    .map_err(|error| telemetry_query_error("core.events throughput components", error))?;
+        component_case = throughput_component_sql_case("source")
+    );
+    let component_rows = sqlx::query_as::<_, ComponentRow>(&component_sql)
+        .fetch_all(pool)
+        .await
+        .map_err(|error| telemetry_query_error("core.events throughput components", error))?;
 
     let mut comp_1h: std::collections::HashMap<&'static str, i64> =
         std::collections::HashMap::new();
@@ -1061,7 +1053,7 @@ pub async fn handle_telemetry_throughput(
             "gateway" => Some("gateway"),
             "ingestion" => Some("ingestion"),
             "derived" => Some("derived"),
-            "self_observation" => Some("self_observation"),
+            "reflection" => Some("reflection"),
             _ => None,
         };
         if let Some(c) = key {
@@ -1069,13 +1061,13 @@ pub async fn handle_telemetry_throughput(
             *comp_24h.entry(c).or_insert(0) += row.events_last_24h;
         }
     }
-    // `classify_component` is retained as the canonical Rust-side bucket
+    // `throughput_component` is retained as the canonical Rust-side bucket
     // mapping so future per_source consumers (and tests) can reuse it
     // without re-typing the rule. The component query mirrors it exactly.
-    let _ = classify_component;
+    let _ = throughput_component;
 
     let mut per_component: Vec<ThroughputComponentEntry> =
-        ["gateway", "ingestion", "derived", "self_observation"]
+        ["gateway", "ingestion", "derived", "reflection"]
             .iter()
             .map(|component| ThroughputComponentEntry {
                 component: (*component).to_string(),
@@ -1094,3 +1086,7 @@ pub async fn handle_telemetry_throughput(
         per_component,
     })
 }
+
+#[cfg(test)]
+#[path = "telemetry_test.rs"]
+mod tests;

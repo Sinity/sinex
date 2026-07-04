@@ -57,8 +57,15 @@ async fn source_identity_family_aliases_match_operator_families() -> xtask::sand
 }
 
 #[sinex_test]
-async fn self_observation_source_classifier_matches_event_and_material_lanes()
--> xtask::sandbox::TestResult<()> {
+async fn source_role_classifier_matches_event_and_material_lanes() -> xtask::sandbox::TestResult<()>
+{
+    assert_eq!(source_role("sinex"), SourceRole::Reflection);
+    assert_eq!(source_role("sinex.metric"), SourceRole::Reflection);
+    assert_eq!(source_role("sinexd.api"), SourceRole::Reflection);
+    assert_eq!(source_role("derived.sinex.health"), SourceRole::Activity);
+    assert_eq!(source_role("shell.atuin"), SourceRole::Activity);
+    assert_eq!(source_role("browser.history"), SourceRole::Activity);
+
     assert!(is_self_observation_source("sinex"));
     assert!(is_self_observation_source("sinex.metric"));
     assert!(is_self_observation_source("sinexd.api"));
@@ -72,5 +79,18 @@ async fn self_observation_source_classifier_matches_event_and_material_lanes()
     assert!(!is_self_observation_material_source(
         "browser.history#material=019f231e-1fb7-7a38-bf78-98854bc450bc"
     ));
+    Ok(())
+}
+
+#[sinex_test]
+async fn source_role_sql_fragments_use_reflection_vocabulary() -> xtask::sandbox::TestResult<()> {
+    assert_eq!(
+        source_role_sql_case("source"),
+        "CASE WHEN source = 'sinex' OR source LIKE 'sinex.%' OR source LIKE 'sinexd.%' THEN 'reflection' ELSE 'activity' END"
+    );
+    assert_eq!(
+        throughput_component_sql_case("source"),
+        "CASE WHEN source LIKE 'sinexd.api%' THEN 'gateway' WHEN source LIKE 'derived.%' THEN 'derived' WHEN (CASE WHEN source = 'sinex' OR source LIKE 'sinex.%' OR source LIKE 'sinexd.%' THEN 'reflection' ELSE 'activity' END) = 'reflection' THEN 'reflection' ELSE 'ingestion' END"
+    );
     Ok(())
 }
