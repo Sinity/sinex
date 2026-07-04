@@ -438,6 +438,8 @@ async fn validate_format_rejects_ndjson_for_finite_view_envelopes() -> TestResul
         "runtime health",
         "runtime modules",
         "runtime status",
+        "semantic curation duplicates",
+        "semantic curation proposals",
         "sources coverage",
         "sources list",
         "sources show",
