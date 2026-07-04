@@ -1,4 +1,7 @@
-use super::{JetStreamEventConsumerConfig, confirmed_filter_subject_for};
+use super::{
+    ConfirmedConsumerRetirementAction, JetStreamEventConsumerConfig,
+    confirmed_filter_subject_for,
+};
 use crate::runtime::automaton::traits::InputProvenanceFilter;
 use async_nats::jetstream::consumer::DeliverPolicy;
 use sinex_primitives::environment::SinexEnvironment;
@@ -69,31 +72,75 @@ async fn confirmed_filter_subjects_compose_multiple_event_types()
 }
 
 #[sinex_test]
-async fn legacy_filter_consumer_names_cover_broader_siblings()
+async fn confirmed_consumer_retirement_deletes_same_service_stale_filters()
 -> xtask::sandbox::TestResult<()> {
     assert_eq!(
-        super::legacy_filter_consumer_names(
-            "sinex_entity-extractor-confirmed-events-filter-document_d_chunked"
+        super::confirmed_consumer_retirement_action(
+            "sinex_interval-lift-confirmed-events-filter-window_d_focused_or_window_d_active_or_afk_d_changed_or_unit_d_started_or_unit_d_stopped",
+            "sinex_interval-lift-confirmed-events-filter-window_d_focused"
         ),
-        vec![
-            "sinex_entity-extractor-confirmed-events",
-            "sinex_entity-extractor-confirmed-events-material",
-            "sinex_entity-extractor-confirmed-events-synthesized",
-        ]
+        ConfirmedConsumerRetirementAction::DeleteStaleSameService
     );
     assert_eq!(
-        super::legacy_filter_consumer_names(
+        super::confirmed_consumer_retirement_action(
+            "sinex_interval-lift-confirmed-events-filter-window_d_focused_or_window_d_active_or_afk_d_changed_or_unit_d_started_or_unit_d_stopped",
+            "sinex_interval-lift-confirmed-events-filter-window_d_focused_or_window_d_active"
+        ),
+        ConfirmedConsumerRetirementAction::DeleteStaleSameService
+    );
+    assert_eq!(
+        super::confirmed_consumer_retirement_action(
+            "sinex_interval-lift-confirmed-events-filter-window_d_focused_or_window_d_active_or_afk_d_changed_or_unit_d_started_or_unit_d_stopped",
+            "sinex_interval-lift-confirmed-events"
+        ),
+        ConfirmedConsumerRetirementAction::DeleteStaleSameService
+    );
+    Ok(())
+}
+
+#[sinex_test]
+async fn confirmed_consumer_retirement_keeps_current_and_unrelated()
+-> xtask::sandbox::TestResult<()> {
+    assert_eq!(
+        super::confirmed_consumer_retirement_action(
+            "sinex_analytics-confirmed-events-material-filter-command_d_executed",
             "sinex_analytics-confirmed-events-material-filter-command_d_executed"
         ),
-        vec![
-            "sinex_analytics-confirmed-events",
-            "sinex_analytics-confirmed-events-material",
-        ]
+        ConfirmedConsumerRetirementAction::KeepCurrent
     );
     assert_eq!(
-        super::legacy_filter_consumer_names("sinex-tag-applier-confirmed-events-material"),
-        vec!["sinex-tag-applier-confirmed-events"]
+        super::confirmed_consumer_retirement_action(
+            "sinex_analytics-confirmed-events-material-filter-command_d_executed",
+            "sinex-tag-applier-confirmed-events-material"
+        ),
+        ConfirmedConsumerRetirementAction::IgnoreUnrelated
     );
-    assert!(super::legacy_filter_consumer_names("sinex-tag-applier-confirmed-events").is_empty());
+    assert_eq!(
+        super::confirmed_consumer_retirement_action(
+            "sinex_analytics-confirmed-events-material-filter-command_d_executed",
+            "event-engine-dev"
+        ),
+        ConfirmedConsumerRetirementAction::IgnoreUnrelated
+    );
+    Ok(())
+}
+
+#[sinex_test]
+async fn confirmed_consumer_retirement_deletes_old_provenance_shape()
+-> xtask::sandbox::TestResult<()> {
+    assert_eq!(
+        super::confirmed_consumer_retirement_action(
+            "sinex-tag-applier-confirmed-events-material",
+            "sinex-tag-applier-confirmed-events"
+        ),
+        ConfirmedConsumerRetirementAction::DeleteStaleSameService
+    );
+    assert_eq!(
+        super::confirmed_consumer_retirement_action(
+            "sinex-tag-applier-confirmed-events",
+            "sinex-tag-applier-confirmed-events-synthesized"
+        ),
+        ConfirmedConsumerRetirementAction::DeleteStaleSameService
+    );
     Ok(())
 }
