@@ -1,6 +1,7 @@
 use serde_json::json;
 use sinex_db::repositories::{
-    COPY_BATCH_THRESHOLD, DbPoolExt, ReplacementKind, ReplacementRecord, StreamBatchRow,
+    COPY_BATCH_THRESHOLD, DbPoolExt, EventStorageLane, ReplacementKind, ReplacementRecord,
+    StreamBatchRow,
 };
 use sinex_db::{Event, Provenance};
 use sinex_primitives::Id;
@@ -237,6 +238,51 @@ async fn stream_batch_insert_accepts_large_material_batches(ctx: TestContext) ->
             .count(),
         COPY_BATCH_THRESHOLD
     );
+    Ok(())
+}
+
+#[sinex_test]
+async fn stream_batch_insert_into_reflection_lane_writes_reflection_events_only(
+    ctx: TestContext,
+) -> TestResult<()> {
+    let material_record = ctx
+        .pool
+        .source_materials()
+        .register_in_flight(
+            sinex_db::repositories::source_materials::material_types::STREAM,
+            Some("reflection-stream-batch-material"),
+            json!({ "test": true }),
+        )
+        .await?;
+    let material_id = Id::<SourceMaterial>::from_uuid(material_record.id);
+    let row = stream_batch_material_row(material_id, 0)?;
+    let event_id = row.id;
+
+    let result = ctx
+        .pool
+        .events()
+        .insert_stream_batch_into(EventStorageLane::Reflection, &[row])
+        .await?;
+    assert_eq!(result.inserted_count, 1);
+    assert_eq!(result.inserted_ids.as_deref(), Some(&[event_id][..]));
+
+    let core_count: i64 =
+        sqlx::query_scalar("SELECT COUNT(*)::bigint FROM core.events WHERE id = $1::uuid")
+            .bind(event_id)
+            .fetch_one(&ctx.pool)
+            .await?;
+    let reflection_count: i64 =
+        sqlx::query_scalar("SELECT COUNT(*)::bigint FROM reflection.events WHERE id = $1::uuid")
+            .bind(event_id)
+            .fetch_one(&ctx.pool)
+            .await?;
+
+    assert_eq!(
+        core_count, 0,
+        "reflection rows must not land in core.events"
+    );
+    assert_eq!(reflection_count, 1);
+
     Ok(())
 }
 

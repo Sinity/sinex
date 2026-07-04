@@ -33,6 +33,7 @@ use futures::future::{BoxFuture, join_all};
 use sinex_db::DbPool;
 use sinex_db::DbPoolExt;
 use sinex_db::repositories::COPY_BATCH_THRESHOLD;
+use sinex_db::repositories::EventStorageLane;
 use sinex_db::schema::defs::records::SourceMaterialRecord;
 use sinex_primitives::Timestamp;
 use sinex_primitives::constants::env_vars;
@@ -41,7 +42,7 @@ use sinex_primitives::events::payloads::{
 };
 use sinex_primitives::{
     JsonValue, Uuid,
-    nats::{JetStreamTopology, NatsTrafficClass, insert_traffic_class_header},
+    nats::{JetStreamEventLane, JetStreamTopology, NatsTrafficClass, insert_traffic_class_header},
     transport,
 };
 use std::collections::{HashMap, HashSet};

@@ -54,8 +54,8 @@ pub mod queries;
 pub use conversions::{EventRecordExt, records_to_events};
 pub use persistence::{
     BatchViolation, COPY_BATCH_THRESHOLD, CascadeSource, EventAnnotation, EventPayloadSchema,
-    EventRepository, EventRepositoryTx, InvalidPayloadEvent, InvalidTimestamp, ReplacementKind,
-    ReplacementRecord, StreamBatchInsertResult, StreamBatchRow, SuspiciousEvent,
+    EventRepository, EventRepositoryTx, EventStorageLane, InvalidPayloadEvent, InvalidTimestamp,
+    ReplacementKind, ReplacementRecord, StreamBatchInsertResult, StreamBatchRow, SuspiciousEvent,
 };
 
 // ─── Schema-consistency self-test ─────────────────────────────────────────

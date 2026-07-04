@@ -86,6 +86,16 @@ impl JetStreamConsumer {
         self
     }
 
+    /// Set the physical stream/storage lane for this consumer.
+    #[must_use]
+    pub fn with_event_lane(mut self, lane: JetStreamEventLane) -> Self {
+        self.admission.set_storage_lane(match lane {
+            JetStreamEventLane::Activity => EventStorageLane::Activity,
+            JetStreamEventLane::Reflection => EventStorageLane::Reflection,
+        });
+        self
+    }
+
     /// Set max concurrent batch-processing tasks during startup catch-up.
     /// 0 disables the semaphore entirely (full speed).
     #[must_use]
