@@ -15,7 +15,7 @@ use sinex_primitives::views::{
 
 use crate::client::GatewayClient;
 use crate::commands::record::{parse_task_external_ref, render_task_response};
-use crate::fmt::{format_json, format_yaml, print_finite_envelope};
+use crate::fmt::print_finite_envelope;
 use crate::model::OutputFormat;
 use crate::validation::parse_time_input;
 
