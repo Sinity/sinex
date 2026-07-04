@@ -87,7 +87,14 @@ pub struct HyprlandParserConfig {
 pub struct HyprlandParser {
     /// Buffered (window_class, window_title) from the most recent `activewindow`
     /// v1 event waiting to be merged with the following `activewindowv2`.
-    pending_activewindow: Option<(String, String)>,
+    pending_activewindow: Option<PendingActiveWindow>,
+}
+
+#[derive(Debug, Clone)]
+struct PendingActiveWindow {
+    window_class: String,
+    window_title: String,
+    timing_hint: Option<TimingEvidence>,
 }
 
 #[async_trait]
@@ -182,24 +189,37 @@ impl MaterialParser for HyprlandParser {
             let (class, title) = data.split_once(',').unwrap_or((data, ""));
             // Flush any stale pending (shouldn't happen, but be safe).
             let intents = self.flush_pending_activewindow(&record, ctx);
-            self.pending_activewindow = Some((class.to_string(), title.to_string()));
+            self.pending_activewindow = Some(PendingActiveWindow {
+                window_class: class.to_string(),
+                window_title: title.to_string(),
+                timing_hint: record.source_ts_hint.clone(),
+            });
             return Ok(intents);
         }
 
         // activewindowv2 — merge with buffered v1 class+title and emit one complete event.
         if typ == "activewindowv2" {
             let window_id = data.trim();
-            let (window_class, window_title) = self.pending_activewindow.take().unzip();
+            let pending = self.pending_activewindow.take();
+            let (window_class, window_title, timing_hint) = match pending {
+                Some(pending) => (
+                    Some(pending.window_class),
+                    Some(pending.window_title),
+                    pending.timing_hint,
+                ),
+                None => (None, None, None),
+            };
             let payload = serde_json::json!({
                 "window_id": window_id,
                 "window_class": window_class,
                 "window_title": window_title,
             });
-            return Ok(vec![self.build_intent(
+            return Ok(vec![self.build_intent_with_timing_hint(
                 "window.focused",
                 payload,
                 &record,
                 ctx,
+                timing_hint.as_ref(),
             )?]);
         }
 
@@ -374,6 +394,22 @@ impl HyprlandParser {
         record: &sinex_primitives::parser::SourceRecord,
         ctx: &ParserContext,
     ) -> ParserResult<ParsedEventIntent> {
+        self.build_intent_with_timing_hint(event_type_str, payload, record, ctx, None)
+    }
+
+    fn build_intent_with_timing_hint(
+        &self,
+        event_type_str: &'static str,
+        payload: serde_json::Value,
+        record: &sinex_primitives::parser::SourceRecord,
+        ctx: &ParserContext,
+        timing_hint: Option<&TimingEvidence>,
+    ) -> ParserResult<ParsedEventIntent> {
+        let timing_hint = timing_hint.or(record.source_ts_hint.as_ref());
+        let (ts_orig, timing) = timing_hint
+            .and_then(|hint| hint.timestamp_value().map(|ts| (ts, hint.clone())))
+            .unwrap_or_else(|| (Timestamp::now(), TimingEvidence::Atemporal));
+
         Ok(ParsedEventIntent::builder()
             .source_id(ctx.source_id.clone())
             .parser_id(ParserId::from_static("hyprland-ipc"))
@@ -381,8 +417,8 @@ impl HyprlandParser {
             .event_type(EventType::from_static(event_type_str))
             .event_source(EventSource::from_static("wm.hyprland"))
             .payload(payload)
-            .ts_orig(Timestamp::now())
-            .timing(TimingEvidence::Atemporal)
+            .ts_orig(ts_orig)
+            .timing(timing)
             .anchor(record.anchor.clone())
             .privacy_context(ProcessingContext::Document)
             .build())
@@ -398,14 +434,20 @@ impl HyprlandParser {
         record: &sinex_primitives::parser::SourceRecord,
         ctx: &ParserContext,
     ) -> Vec<ParsedEventIntent> {
-        let Some((window_class, window_title)) = self.pending_activewindow.take() else {
+        let Some(pending) = self.pending_activewindow.take() else {
             return vec![];
         };
         let payload = serde_json::json!({
-            "window_class": window_class,
-            "window_title": window_title,
+            "window_class": pending.window_class,
+            "window_title": pending.window_title,
         });
-        match self.build_intent("window.focused", payload, record, ctx) {
+        match self.build_intent_with_timing_hint(
+            "window.focused",
+            payload,
+            record,
+            ctx,
+            pending.timing_hint.as_ref(),
+        ) {
             Ok(intent) => vec![intent],
             Err(_) => vec![],
         }

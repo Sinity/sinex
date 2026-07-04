@@ -37,6 +37,56 @@ async fn test_unix_socket_yields_one_record_per_line() -> xtask::sandbox::TestRe
 }
 
 #[sinex_test]
+async fn test_unix_socket_records_carry_realtime_capture_hint()
+-> xtask::sandbox::TestResult<()> {
+    let (mut server, client) = make_socket_pair();
+    server.write_all(b"line1\nline2\n").await.unwrap();
+    drop(server);
+
+    let stream = build_unix_stream(
+        dummy_material_id(),
+        client,
+        Utf8PathBuf::from("/fake/socket"),
+        false,
+    );
+    let records: Vec<_> = stream.collect().await;
+
+    let first = records[0].as_ref().unwrap();
+    let second = records[1].as_ref().unwrap();
+    let first_ts = match first.source_ts_hint.as_ref() {
+        Some(TimingEvidence::RealtimeCapture {
+            value,
+            capture_source,
+        }) => {
+            assert_eq!(capture_source, "unix_socket.connect");
+            *value
+        }
+        other => {
+            return Err(color_eyre::eyre::eyre!(
+                "expected realtime capture timing hint, got {other:?}"
+            ));
+        }
+    };
+    let second_ts = match second.source_ts_hint.as_ref() {
+        Some(TimingEvidence::RealtimeCapture {
+            value,
+            capture_source,
+        }) => {
+            assert_eq!(capture_source, "unix_socket.connect");
+            *value
+        }
+        other => {
+            return Err(color_eyre::eyre::eyre!(
+                "expected realtime capture timing hint, got {other:?}"
+            ));
+        }
+    };
+
+    assert!(second_ts >= first_ts);
+    Ok(())
+}
+
+#[sinex_test]
 async fn test_unix_socket_anchor_contains_byte_offset() -> xtask::sandbox::TestResult<()> {
     let (mut server, client) = make_socket_pair();
     server.write_all(b"hello\nworld\n").await.unwrap();
