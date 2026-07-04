@@ -280,6 +280,59 @@ pub fn arm_current_process_parent_death_signal() -> Result<()> {
     Ok(())
 }
 
+#[cfg(unix)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CleanupSignal {
+    Interrupt,
+    Terminate,
+}
+
+#[cfg(unix)]
+impl CleanupSignal {
+    #[must_use]
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::Interrupt => "SIGINT",
+            Self::Terminate => "SIGTERM",
+        }
+    }
+
+    #[must_use]
+    pub fn exit_code(self) -> i32 {
+        match self {
+            Self::Interrupt => 130,
+            Self::Terminate => 143,
+        }
+    }
+}
+
+#[cfg(unix)]
+pub fn install_registered_process_group_signal_cleanup() -> Result<()> {
+    let mut interrupt = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::interrupt())
+        .wrap_err("failed to register SIGINT cleanup handler")?;
+    let mut terminate = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
+        .wrap_err("failed to register SIGTERM cleanup handler")?;
+
+    tokio::spawn(async move {
+        let signal = tokio::select! {
+            _ = interrupt.recv() => CleanupSignal::Interrupt,
+            _ = terminate.recv() => CleanupSignal::Terminate,
+        };
+        let _ = tokio::task::spawn_blocking(move || {
+            terminate_registered_process_groups_for_signal(signal)
+        })
+        .await;
+        std::process::exit(signal.exit_code());
+    });
+
+    Ok(())
+}
+
+#[cfg(not(unix))]
+pub fn install_registered_process_group_signal_cleanup() -> Result<()> {
+    Ok(())
+}
+
 /// Returns true if the process at `pid` still looks like a cargo/xtask job.
 ///
 /// Reads `/proc/{pid}/cmdline` and checks for "cargo" or "xtask" substrings.
@@ -925,20 +978,6 @@ fn send_signal_to_group(pid: u32, signal: libc::c_int) -> std::io::Result<()> {
 }
 
 #[cfg(target_os = "linux")]
-fn send_signal_to_process(pid: u32, signal: libc::c_int) -> std::io::Result<()> {
-    let rc = unsafe { libc::kill(pid as i32, signal) };
-    if rc == 0 {
-        return Ok(());
-    }
-
-    let error = std::io::Error::last_os_error();
-    if matches!(error.raw_os_error(), Some(libc::ESRCH)) {
-        return Ok(());
-    }
-    Err(error)
-}
-
-#[cfg(target_os = "linux")]
 fn terminate_process_group_impl(group: &TrackedProcessGroup, reason: &str) -> Result<bool> {
     if !process_group_matches(group) {
         return Ok(false);
@@ -1137,6 +1176,29 @@ pub fn terminate_registered_process_groups(reason: &str) -> Result<usize> {
 #[cfg(not(target_os = "linux"))]
 pub fn terminate_registered_process_groups(_reason: &str) -> Result<usize> {
     Ok(0)
+}
+
+#[cfg(unix)]
+pub fn terminate_registered_process_groups_for_signal(signal: CleanupSignal) -> usize {
+    let reason = format!("xtask received {}", signal.name());
+    match terminate_registered_process_groups(&reason) {
+        Ok(terminated) => {
+            if terminated > 0 {
+                eprintln!(
+                    "⚠️  Terminated {terminated} managed child process group(s) after {}",
+                    signal.name()
+                );
+            }
+            terminated
+        }
+        Err(error) => {
+            eprintln!(
+                "⚠️  Failed to terminate managed child process groups after {}: {error:#}",
+                signal.name()
+            );
+            0
+        }
+    }
 }
 
 #[cfg(target_os = "linux")]
