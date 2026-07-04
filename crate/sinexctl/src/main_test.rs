@@ -419,6 +419,8 @@ async fn validate_format_rejects_ndjson_for_finite_view_envelopes() -> TestResul
         "ops lifecycle tombstone list",
         "metrics telemetry event-engine-validation",
         "metrics telemetry gateway-stats",
+        "metrics throughput",
+        "ops audit",
         "metrics report calendar",
         "metrics report today",
         "metrics report yesterday",
