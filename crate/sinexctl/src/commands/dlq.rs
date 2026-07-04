@@ -8,9 +8,7 @@ use sinex_primitives::views::{
 
 use crate::Result;
 use crate::client::GatewayClient;
-use crate::fmt::{
-    CommandOutput, Spinner, format_bytes, print_finite_envelope, with_spinner_result,
-};
+use crate::fmt::{CommandOutput, Spinner, format_bytes, print_finite_envelope, with_spinner_result};
 use crate::model::OutputFormat;
 
 /// Dead letter queue operations
@@ -157,16 +155,25 @@ impl DlqCommands {
                 )
                 .await?;
                 let response = client.dlq_peek_request(request).await?;
-                CommandOutput::single(response, format_dlq_peek_table).display(&format)?;
+                let envelope = dlq_peek_envelope(response);
+                if !print_finite_envelope(&envelope, format)? {
+                    println!("{}", format_dlq_peek_table(&envelope.payload));
+                }
             }
             Self::Triage { tail, all_retained } => {
                 let report = build_dlq_triage_report(client, *tail, *all_retained).await?;
-                CommandOutput::single(report, format_dlq_triage_table).display(&format)?;
+                let envelope = dlq_triage_envelope(report);
+                if !print_finite_envelope(&envelope, format)? {
+                    println!("{}", format_dlq_triage_table(&envelope.payload));
+                }
             }
             Self::CleanupPlan { tail, all_retained } => {
                 let report = build_dlq_triage_report(client, *tail, *all_retained).await?;
                 let plan = dlq_cleanup_plan(report);
-                CommandOutput::single(plan, format_dlq_cleanup_plan_table).display(&format)?;
+                let envelope = dlq_cleanup_plan_envelope(plan);
+                if !print_finite_envelope(&envelope, format)? {
+                    println!("{}", format_dlq_cleanup_plan_table(&envelope.payload));
+                }
             }
             Self::Requeue {
                 event_id,
@@ -271,6 +278,24 @@ fn dlq_list_envelope(stats: DlqListResponse) -> ViewEnvelope<DlqListResponse> {
     envelope
 }
 
+fn dlq_peek_envelope(response: DlqPeekResponse) -> ViewEnvelope<DlqPeekResponse> {
+    let mut envelope = ViewEnvelope::new("sinexctl.ops.dlq.peek", response);
+    envelope.caveats = dlq_peek_caveats(&envelope.payload);
+    envelope
+}
+
+fn dlq_triage_envelope(report: DlqTriageReport) -> ViewEnvelope<DlqTriageReport> {
+    let mut envelope = ViewEnvelope::new("sinexctl.ops.dlq.triage", report);
+    envelope.caveats = dlq_triage_caveats(&envelope.payload);
+    envelope
+}
+
+fn dlq_cleanup_plan_envelope(plan: DlqCleanupPlanView) -> ViewEnvelope<DlqCleanupPlanView> {
+    let mut envelope = ViewEnvelope::new("sinexctl.ops.dlq.cleanup-plan", plan);
+    envelope.caveats = dlq_cleanup_plan_caveats(&envelope.payload);
+    envelope
+}
+
 fn dlq_list_caveats(stats: &DlqListResponse) -> Vec<CaveatView> {
     let mut caveats = Vec::new();
 
@@ -316,11 +341,89 @@ fn dlq_list_caveats(stats: &DlqListResponse) -> Vec<CaveatView> {
     caveats
 }
 
+fn dlq_peek_caveats(response: &DlqPeekResponse) -> Vec<CaveatView> {
+    if response.messages.is_empty() {
+        return vec![CaveatView {
+            id: ReadinessCaveatId::CoverageUnmeasurable.as_str().to_string(),
+            message: "DLQ peek returned no retained messages for the requested window; this is a bounded sample, not proof that ingestion never failed".to_string(),
+            ref_: Some(dlq_ref_with_command("raw_ingest_dlq.peek.empty", "sinexctl ops dlq peek", "dlq.peek")),
+        }];
+    }
+    Vec::new()
+}
+
+fn dlq_triage_caveats(report: &DlqTriageReport) -> Vec<CaveatView> {
+    let mut caveats = Vec::new();
+    if report.total_messages == 0 {
+        caveats.push(CaveatView {
+            id: ReadinessCaveatId::CoverageUnmeasurable.as_str().to_string(),
+            message: "DLQ triage saw an empty retained queue; this is a current queue observation, not historical completeness proof".to_string(),
+            ref_: Some(dlq_ref_with_command("raw_ingest_dlq.triage.empty", "sinexctl ops dlq triage", "dlq.peek")),
+        });
+    } else if report.groups.is_empty() {
+        caveats.push(CaveatView {
+            id: ReadinessCaveatId::CoverageUnmeasurable.as_str().to_string(),
+            message: format!(
+                "DLQ triage inspected {} message(s) from a queue with {} total message(s), but produced no groups",
+                report.inspected_tail, report.total_messages
+            ),
+            ref_: Some(dlq_ref_with_command("raw_ingest_dlq.triage.ungrouped", "sinexctl ops dlq triage", "dlq.peek")),
+        });
+    }
+    if report.pressure_level == RuntimePressureLevel::Critical {
+        caveats.push(CaveatView {
+            id: ReadinessCaveatId::WindowPartial.as_str().to_string(),
+            message: format!(
+                "DLQ triage is running under critical pressure with {} retained message(s); downstream source evidence may be partial until cleanup/replay completes",
+                report.total_messages
+            ),
+            ref_: Some(dlq_ref_with_command("raw_ingest_dlq.triage.critical", "sinexctl ops dlq triage", "dlq.list")),
+        });
+    }
+    caveats
+}
+
+fn dlq_cleanup_plan_caveats(plan: &DlqCleanupPlanView) -> Vec<CaveatView> {
+    let mut caveats = Vec::new();
+    if plan.total_messages == 0 {
+        caveats.push(CaveatView {
+            id: ReadinessCaveatId::CoverageUnmeasurable.as_str().to_string(),
+            message: "DLQ cleanup plan saw an empty retained queue; no cleanup is needed for this bounded observation".to_string(),
+            ref_: Some(dlq_ref_with_command("raw_ingest_dlq.cleanup.empty", "sinexctl ops dlq cleanup-plan", "dlq.peek")),
+        });
+    }
+    if plan.blocked_count > 0 {
+        caveats.push(CaveatView {
+            id: ReadinessCaveatId::WindowPartial.as_str().to_string(),
+            message: format!(
+                "DLQ cleanup plan has {} blocked group(s); cleanup candidates cover only part of the sampled failure window",
+                plan.blocked_count
+            ),
+            ref_: Some(dlq_ref_with_command("raw_ingest_dlq.cleanup.blocked", "sinexctl ops dlq cleanup-plan", "dlq.peek")),
+        });
+    }
+    if plan.candidate_count > 0 {
+        caveats.push(CaveatView {
+            id: ReadinessCaveatId::SourceAbsent.as_str().to_string(),
+            message: format!(
+                "DLQ cleanup plan identified {} mutation candidate group(s); failed source material remains unresolved until the listed commands are reviewed and applied",
+                plan.candidate_count
+            ),
+            ref_: Some(dlq_ref_with_command("raw_ingest_dlq.cleanup.candidates", "sinexctl ops dlq cleanup-plan", "dlq.peek")),
+        });
+    }
+    caveats
+}
+
 fn dlq_ref(id: &str) -> SinexObjectRef {
+    dlq_ref_with_command(id, "sinexctl ops dlq list", "dlq.list")
+}
+
+fn dlq_ref_with_command(id: &str, command_hint: &str, rpc_method: &str) -> SinexObjectRef {
     SinexObjectRef::new(SinexObjectKind::DlqMessage, id)
         .with_label(id)
-        .with_command_hint("sinexctl ops dlq list")
-        .with_rpc_method("dlq.list")
+        .with_command_hint(command_hint)
+        .with_rpc_method(rpc_method)
 }
 
 #[derive(Debug, Clone, Serialize)]
