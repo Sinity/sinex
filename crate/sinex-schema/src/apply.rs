@@ -61,6 +61,11 @@ const EVENTS_REQUIRED_INDEXES: &[&str] = &[
     // `configure_timescaledb`). Listed here so drift detection covers it.
     "ix_events_sinex_telemetry",
 ];
+const REFLECTION_EVENTS_REQUIRED_TRIGGERS: &[&str] = &[
+    "trg_events_no_update",
+    "trg_events_validate_material_bounds",
+    "trg_events_validate_payload",
+];
 const ARCHIVED_EVENTS_REQUIRED_INDEXES: &[&str] = &[
     "ix_archived_events_ts_orig",
     "ix_archived_events_source_ts_orig",
@@ -207,6 +212,14 @@ async fn check_table_object_drifts(pool: &PgPool) -> Result<Vec<String>, ApplyEr
         for index in EVENTS_REQUIRED_INDEXES {
             if !index_exists(pool, "core", "events", index).await? {
                 drifts.push(format!("missing core.events index {index}"));
+            }
+        }
+    }
+
+    if relation_exists(pool, "reflection.events").await? {
+        for trigger in REFLECTION_EVENTS_REQUIRED_TRIGGERS {
+            if !trigger_exists(pool, "reflection.events", trigger).await? {
+                drifts.push(format!("missing reflection.events trigger {trigger}"));
             }
         }
     }
@@ -835,6 +848,7 @@ async fn create_tables(pool: &PgPool) -> Result<(), ApplyError> {
     for sql in table_sql {
         execute_sql(pool, &sql).await?;
     }
+    execute_sql(pool, REFLECTION_EVENTS_TABLE_SQL).await?;
 
     // Apply FK fixups for self-referencing foreign keys affected by a sea-query bug.
     // sea-query emits ON DELETE CASCADE instead of ON DELETE SET NULL for
@@ -971,6 +985,13 @@ async fn create_triggers_and_functions(pool: &PgPool) -> Result<(), ApplyError> 
     .await?;
     ensure_trigger_set_sql(
         pool,
+        "reflection.events",
+        REFLECTION_EVENTS_REQUIRED_TRIGGERS,
+        &reflection_events_trigger_sql(),
+    )
+    .await?;
+    ensure_trigger_set_sql(
+        pool,
         "core.events",
         &[
             "trg_events_maintain_material_event_count_insert",
@@ -1102,6 +1123,7 @@ async fn configure_timescaledb(pool: &PgPool) -> Result<(), ApplyError> {
         "CREATE INDEX IF NOT EXISTS ix_events_sinex_telemetry ON core.events (source, event_type, id DESC) WHERE source LIKE 'sinex.%'",
     )
     .await?;
+    configure_reflection_timescaledb(pool).await?;
     execute_sql(
         pool,
         r"
@@ -1150,6 +1172,41 @@ async fn configure_timescaledb(pool: &PgPool) -> Result<(), ApplyError> {
     execute_sql(pool, EVENT_TEMPORAL_FACTS_SQL).await?;
     execute_sql(pool, DERIVED_SCOPE_SUMMARY_SQL).await?;
 
+    Ok(())
+}
+
+async fn configure_reflection_timescaledb(pool: &PgPool) -> Result<(), ApplyError> {
+    execute_sql(
+        pool,
+        "SELECT create_hypertable('reflection.events', by_range('id'), if_not_exists => TRUE);",
+    )
+    .await?;
+    execute_sql(
+        pool,
+        "SELECT set_chunk_time_interval('reflection.events', INTERVAL '1 day')",
+    )
+    .await?;
+    execute_sql(
+        pool,
+        "SELECT remove_retention_policy('reflection.events', if_exists => true)",
+    )
+    .await?;
+    execute_sql(
+        pool,
+        "SELECT add_retention_policy('reflection.events', INTERVAL '30 days')",
+    )
+    .await?;
+    execute_sql(pool, REFLECTION_EVENTS_COMPRESSION_SQL).await?;
+    execute_sql(
+        pool,
+        "SELECT remove_compression_policy('reflection.events', if_exists => true)",
+    )
+    .await?;
+    execute_sql(
+        pool,
+        "SELECT add_compression_policy('reflection.events', INTERVAL '7 days')",
+    )
+    .await?;
     Ok(())
 }
 
@@ -1236,6 +1293,17 @@ fn render_index(mut stmt: IndexCreateStatement) -> String {
 
 fn render_indexes(stmts: Vec<IndexCreateStatement>) -> Vec<String> {
     stmts.into_iter().map(render_index).collect()
+}
+
+fn reflection_events_trigger_sql() -> String {
+    [
+        Events::create_no_update_trigger_sql(),
+        Events::create_payload_validation_trigger_sql(),
+        Events::create_material_bounds_trigger_sql(),
+    ]
+    .join("\n")
+    .replace("core.fn_events", "reflection.fn_events")
+    .replace("core.events", "reflection.events")
 }
 
 pub(crate) async fn relation_exists(
@@ -2353,6 +2421,69 @@ END;
 $$;
 ";
 
+const REFLECTION_EVENTS_TABLE_SQL: &str = r"
+CREATE TABLE IF NOT EXISTS reflection.events (LIKE core.events INCLUDING ALL);
+
+DO $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1
+        FROM pg_constraint
+        WHERE conrelid = 'reflection.events'::regclass
+          AND conname = 'reflection_events_source_material_id_fkey'
+    ) THEN
+        ALTER TABLE reflection.events
+            ADD CONSTRAINT reflection_events_source_material_id_fkey
+            FOREIGN KEY (source_material_id)
+            REFERENCES raw.source_material_registry(id);
+    END IF;
+
+    IF NOT EXISTS (
+        SELECT 1
+        FROM pg_constraint
+        WHERE conrelid = 'reflection.events'::regclass
+          AND conname = 'reflection_events_payload_schema_id_fkey'
+    ) THEN
+        ALTER TABLE reflection.events
+            ADD CONSTRAINT reflection_events_payload_schema_id_fkey
+            FOREIGN KEY (payload_schema_id)
+            REFERENCES sinex_schemas.event_payload_schemas(id)
+            ON DELETE SET NULL;
+    END IF;
+
+    IF NOT EXISTS (
+        SELECT 1
+        FROM pg_constraint
+        WHERE conrelid = 'reflection.events'::regclass
+          AND conname = 'reflection_events_module_run_id_fkey'
+    ) THEN
+        ALTER TABLE reflection.events
+            ADD CONSTRAINT reflection_events_module_run_id_fkey
+            FOREIGN KEY (module_run_id)
+            REFERENCES core.runs(id);
+    END IF;
+END $$;
+";
+
+const REFLECTION_EVENTS_COMPRESSION_SQL: &str = r"
+DO $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1
+        FROM timescaledb_information.compression_settings
+        WHERE hypertable_name = 'events'
+          AND hypertable_schema = 'reflection'
+    ) THEN
+        ALTER TABLE reflection.events SET (
+            timescaledb.compress,
+            timescaledb.compress_segmentby = 'source, event_type',
+            timescaledb.compress_orderby = 'id DESC'
+        );
+    END IF;
+END
+$$;
+";
+
 const TELEMETRY_SQL: &str = r"
 CREATE OR REPLACE VIEW sinex_telemetry.current_health AS
 SELECT DISTINCT ON (e.source, e.payload->>'component')
@@ -2362,7 +2493,7 @@ SELECT DISTINCT ON (e.source, e.payload->>'component')
     e.payload->>'current_status' AS status,
     e.payload->>'reason' AS reason,
     e.ts_coided AS last_update
-FROM core.events e
+FROM reflection.events e
 WHERE e.source = 'sinex'
   AND e.event_type = 'health.status'
   AND e.ts_coided > NOW() - INTERVAL '1 hour'
@@ -2398,7 +2529,7 @@ SELECT
     SUM((payload->>'rate_limited_requests')::bigint) AS total_rate_limited,
     AVG((payload->>'avg_latency_ms')::float) AS avg_latency_ms,
     MAX((payload->>'p99_latency_ms')::float) AS max_p99_latency_ms
-FROM core.events
+FROM reflection.events
 WHERE source LIKE 'sinexd.api%'
   AND event_type IN ('request.stats', 'rate_limit.exceeded', 'replay.stats')
 GROUP BY time_bucket('1 hour', id), source
@@ -2436,7 +2567,7 @@ SELECT
     AVG((payload->>'messages')::bigint) AS avg_messages,
     MAX((payload->>'max_messages')::bigint) AS max_messages,
     COUNT(*) AS sample_count
-FROM core.events
+FROM reflection.events
 WHERE source = 'sinexd.event_engine'
   AND event_type = 'stream.stats'
 GROUP BY time_bucket('1 hour', id), payload->>'stream'
@@ -2459,7 +2590,7 @@ SELECT
     SUM((payload->>'total_timed_out')::bigint) AS total_timed_out,
     AVG((payload->>'avg_duration_ms')::float) AS avg_duration_ms,
     COUNT(*) AS sample_count
-FROM core.events
+FROM reflection.events
 WHERE source = 'sinexd.event_engine'
   AND event_type = 'assembly.stats'
 GROUP BY time_bucket('1 hour', id)
@@ -2482,7 +2613,7 @@ SELECT
     MAX((payload->>'queue_depth')::int) AS max_queue_depth,
     SUM((payload->>'error_count')::bigint) AS total_errors,
     COUNT(*) AS sample_count
-FROM core.events
+FROM reflection.events
 WHERE source = 'sinexd.source'
   AND event_type = 'processing.stats'
 GROUP BY time_bucket('1 hour', id), payload->>'module_kind'
@@ -2503,7 +2634,7 @@ SELECT
     SUM((payload->>'value')::bigint) AS total_value,
     MAX((payload->>'value')::bigint) AS max_value,
     COUNT(*) AS sample_count
-FROM core.events
+FROM reflection.events
 WHERE source = 'sinex'
   AND event_type = 'metric.counter'
 GROUP BY time_bucket('1 hour', id), payload->>'component', payload->>'name'
@@ -2533,7 +2664,7 @@ SELECT
     MAX((payload->>'validation_schema_not_found')::bigint) AS validation_schema_not_found,
     MAX((payload->>'validation_invalid')::bigint) AS validation_invalid,
     AVG((payload->>'validation_coverage_pct')::float) AS avg_validation_coverage_pct
-FROM core.events
+FROM reflection.events
 WHERE source = 'sinexd.event_engine'
   AND event_type = 'batch.stats'
 GROUP BY time_bucket('1 hour', id)
@@ -2799,7 +2930,7 @@ ORDER BY last_updated DESC;
 // schema-apply bootstrap binary), so declarative schema apply remains safe to run as
 // the database owner role.
 const ROLE_GRANTS_SQL: &str = r"
-GRANT USAGE ON SCHEMA core, raw, sinex_schemas, audit TO sinex_event_engine, sinex_api, sinex_readonly;
+GRANT USAGE ON SCHEMA core, reflection, raw, sinex_schemas, audit TO sinex_event_engine, sinex_api, sinex_readonly;
 
 -- Privacy policy (#1042): event_engine loads rules at the chokepoint; gateway manages
 -- them via sinexctl; readonly may inspect.

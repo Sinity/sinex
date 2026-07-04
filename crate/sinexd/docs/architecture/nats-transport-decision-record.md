@@ -171,9 +171,10 @@ relative to admission; **Test transport**.
 self-observation as durable events that feed telemetry read models, but it no
 longer consumes the activity raw stream's retention or byte budget.
 
-The remaining migration boundary is storage/query policy, not ingress routing:
-reflection events still persist through the same event-engine path until the
-`reflection.events` hypertable, retention policy, and query-lane defaults land.
+The remaining migration boundary is event-engine persistence and general query
+policy, not ingress routing or physical storage: `reflection.events` is the
+managed telemetry hypertable, but the event engine still needs the lane-aware
+write path and the general query stack still needs explicit lane defaults.
 
 ### 4.2 No direct in-process admission path — add it (#1732)
 
