@@ -47,11 +47,13 @@ impl JetStreamConsumer {
         // re-publishes — an unbounded redelivery storm that wedges the whole
         // pipeline (observed: tens of thousands of "maximum messages exceeded"
         // and a stalled engine). discard: Old makes the publish always succeed by
-        // dropping the oldest already-persisted confirmed event; a consumer that
-        // falls >max_messages behind loses that tail (recoverable from Postgres),
-        // which is a far better failure mode than jamming production. The ideal
-        // shape is RetentionPolicy::Interest (drain once every durable automaton
-        // has acked, retain only for a lagging consumer) — tracked as follow-up.
+        // dropping the oldest already-persisted confirmed event. A consumer that
+        // falls >max_messages behind recovers from Postgres through its mandatory
+        // startup catch-up, which is a far better failure mode than jamming
+        // production. RetentionPolicy::Interest is deliberately NOT the current
+        // target: it becomes safe only after stale durable-consumer GC and an
+        // ephemeral-consumer non-pinning proof, because one orphaned durable would
+        // otherwise re-create the retention jam this stream shape prevents.
         self.js
             .create_or_update_stream(jetstream::stream::Config {
                 name: self.topology.confirmed_events_stream.to_string(),

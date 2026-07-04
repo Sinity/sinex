@@ -16,7 +16,7 @@
 use crate::runtime::confirmation_handler::ConfirmedEventHandler;
 use crate::runtime::automaton::traits::InputProvenanceFilter;
 use crate::runtime::stream::{
-    PullConsumerSpec, ensure_pull_consumer, list_consumers, pull_batch_bounded,
+    PullConsumerSpec, delete_consumer, ensure_pull_consumer, list_consumers, pull_batch_bounded,
 };
 use crate::runtime::{RuntimeResult, SinexError};
 use async_nats::jetstream;
@@ -27,7 +27,7 @@ use sinex_primitives::events::Event;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::RwLock;
-use tracing::{debug, error, info};
+use tracing::{debug, error, info, warn};
 
 /// Cumulative payload-byte cap per confirmed-event fetch.
 ///
@@ -232,23 +232,23 @@ impl JetStreamEventConsumer {
         js: &jetstream::Context,
         stream_name: &str,
     ) -> RuntimeResult<()> {
-        let legacy_names = legacy_filter_consumer_names(&self.config.consumer_name);
-        if legacy_names.is_empty() {
-            return Ok(());
-        }
-
         let existing = list_consumers(js, stream_name).await?;
-        for legacy_name in legacy_names {
-            if legacy_name == self.config.consumer_name {
-                continue;
-            }
-            if existing.iter().any(|info| info.name == legacy_name) {
-                info!(
+        for info in existing {
+            match confirmed_consumer_retirement_action(&self.config.consumer_name, &info.name) {
+                ConfirmedConsumerRetirementAction::KeepCurrent
+                | ConfirmedConsumerRetirementAction::IgnoreUnrelated => {}
+                ConfirmedConsumerRetirementAction::DeleteStaleSameService => {
+                    warn!(
                     stream = %stream_name,
                     consumer = %self.config.consumer_name,
-                    retained_consumer = %legacy_name,
-                    "Retaining legacy broad confirmed-event consumer; safe drain/adoption is required before deletion"
+                    stale_consumer = %info.name,
+                    pending = info.num_pending,
+                    ack_pending = info.num_ack_pending,
+                    redelivered = info.num_redelivered,
+                    "Deleting stale confirmed-event durable for this automaton; DB catch-up covers retained history"
                 );
+                    delete_consumer(js, stream_name, &info.name).await?;
+                }
             }
         }
 
@@ -416,34 +416,49 @@ fn confirmed_filter_subjects_for(
         .collect()
 }
 
-fn legacy_filter_consumer_names(current_name: &str) -> Vec<String> {
-    let (base, has_filter_suffix) = if let Some((base, _filter_suffix)) =
-        current_name.split_once("-filter-")
-    {
-        (base, true)
-    } else if current_name.ends_with("-material") || current_name.ends_with("-synthesized") {
-        (current_name, false)
-    } else {
-        return Vec::new();
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ConfirmedConsumerRetirementAction {
+    KeepCurrent,
+    DeleteStaleSameService,
+    IgnoreUnrelated,
+}
+
+fn confirmed_consumer_retirement_action(
+    current_name: &str,
+    candidate_name: &str,
+) -> ConfirmedConsumerRetirementAction {
+    if candidate_name == current_name {
+        return ConfirmedConsumerRetirementAction::KeepCurrent;
+    }
+
+    let Some(current_root) = confirmed_consumer_service_root(current_name) else {
+        return ConfirmedConsumerRetirementAction::IgnoreUnrelated;
+    };
+    let Some(candidate_root) = confirmed_consumer_service_root(candidate_name) else {
+        return ConfirmedConsumerRetirementAction::IgnoreUnrelated;
     };
 
-    let mut names = Vec::new();
-    if has_filter_suffix {
-        names.push(base.to_string());
-    }
-
-    if let Some(root) = base.strip_suffix("-material") {
-        names.push(root.to_string());
-    } else if let Some(root) = base.strip_suffix("-synthesized") {
-        names.push(root.to_string());
+    if candidate_root == current_root {
+        ConfirmedConsumerRetirementAction::DeleteStaleSameService
     } else {
-        names.push(format!("{base}-material"));
-        names.push(format!("{base}-synthesized"));
+        ConfirmedConsumerRetirementAction::IgnoreUnrelated
     }
+}
 
-    names.sort();
-    names.dedup();
-    names
+fn confirmed_consumer_service_root(name: &str) -> Option<&str> {
+    let marker_start = name.find("-confirmed-events")?;
+    let marker_end = marker_start + "-confirmed-events".len();
+    let suffix = &name[marker_end..];
+
+    if suffix.is_empty()
+        || suffix.starts_with("-filter-")
+        || suffix.starts_with("-material")
+        || suffix.starts_with("-synthesized")
+    {
+        Some(&name[..marker_end])
+    } else {
+        None
+    }
 }
 
 #[cfg(test)]
