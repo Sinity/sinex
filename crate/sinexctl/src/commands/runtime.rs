@@ -1,19 +1,28 @@
 use clap::Subcommand;
 use serde::{Deserialize, Serialize};
-use sinex_primitives::domain::ModuleKind;
+use sinex_primitives::domain::{HealthStatus, ModuleKind};
 use sinex_primitives::rpc::coordination::InstanceHealthResponse;
 use sinex_primitives::rpc::runtime::{RuntimeHeartbeatSource, RuntimeInfo};
-use sinex_primitives::rpc::system::SystemHealthResponse;
-use sinex_primitives::views::ViewEnvelope;
+use sinex_primitives::rpc::system::{
+    ComponentHealthReport, ReplayControlHealth, SystemHealthResponse,
+};
+use sinex_primitives::views::{
+    CaveatView, ReadinessCaveatId, SinexObjectKind, SinexObjectRef, ViewEnvelope,
+};
 
 use crate::Result;
 use crate::client::GatewayClient;
 use crate::commands::{AutomataCommand, GatewayCommands, RuntimePresenceCommand};
-use crate::fmt::{CommandOutput, format_heartbeat_age, render_envelope, with_spinner_result};
+use crate::fmt::{
+    CommandOutput, format_heartbeat_age, print_finite_envelope, render_envelope,
+    with_spinner_result,
+};
 use crate::model::{OutputFormat, RuntimeModuleRole};
 
 /// Schema version for the runtime module list view payload.
 const RUNTIME_MODULE_LIST_SCHEMA_VERSION: &str = "sinex.runtime-module-list/v1";
+/// Schema version for the runtime health view payload.
+const RUNTIME_HEALTH_SCHEMA_VERSION: &str = "sinex.runtime-health/v1";
 
 /// Payload carried inside a [`ViewEnvelope`] for `sinexctl runtime list`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -30,6 +39,22 @@ impl RuntimeModuleListView {
             schema_version: RUNTIME_MODULE_LIST_SCHEMA_VERSION.to_string(),
             count,
             modules,
+        }
+    }
+}
+
+/// Payload carried inside a [`ViewEnvelope`] for `sinexctl runtime health`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RuntimeHealthView {
+    pub schema_version: String,
+    pub health: SystemHealthResponse,
+}
+
+impl RuntimeHealthView {
+    fn new(health: SystemHealthResponse) -> Self {
+        Self {
+            schema_version: RUNTIME_HEALTH_SCHEMA_VERSION.to_string(),
+            health,
         }
     }
 }
@@ -167,7 +192,10 @@ impl RuntimeCommands {
             }
             Self::Health => {
                 let health = client.health().await?;
-                CommandOutput::single(health, format_health_table).display(&format)?;
+                let envelope = runtime_health_envelope(health);
+                if !print_finite_envelope(&envelope, format)? {
+                    println!("{}", format_health_table(&envelope.payload.health));
+                }
             }
             Self::Status { module } => {
                 let response = client.runtime_status(module).await?;
@@ -247,6 +275,108 @@ fn runtime_heartbeat_source_name(source: RuntimeHeartbeatSource) -> &'static str
         RuntimeHeartbeatSource::Manifest => "manifest",
         RuntimeHeartbeatSource::Output => "output",
     }
+}
+
+fn runtime_health_envelope(health: SystemHealthResponse) -> ViewEnvelope<RuntimeHealthView> {
+    let mut envelope =
+        ViewEnvelope::new("sinexctl.runtime.health", RuntimeHealthView::new(health));
+    envelope.caveats = runtime_health_caveats(&envelope.payload.health);
+    envelope
+}
+
+fn runtime_health_caveats(health: &SystemHealthResponse) -> Vec<CaveatView> {
+    let mut caveats = Vec::new();
+
+    if !health.healthy {
+        caveats.push(CaveatView {
+            id: ReadinessCaveatId::WindowPartial.as_str().to_string(),
+            message: if health.degradation_reasons.is_empty() {
+                "system health is degraded; component evidence should be treated as partial"
+                    .to_string()
+            } else {
+                format!(
+                    "system health is degraded: {}",
+                    health.degradation_reasons.join("; ")
+                )
+            },
+            ref_: Some(runtime_health_ref("system")),
+        });
+    }
+
+    push_component_caveat(&mut caveats, "database", &health.components.database);
+    push_component_caveat(&mut caveats, "nats", &health.components.nats);
+    push_component_caveat(
+        &mut caveats,
+        "raw_ingest_dlq",
+        &health.components.raw_ingest_dlq,
+    );
+    push_replay_control_caveat(&mut caveats, &health.components.replay_control);
+    push_component_caveat(
+        &mut caveats,
+        "sse_confirmation",
+        &health.components.sse_confirmation,
+    );
+
+    caveats
+}
+
+fn push_component_caveat(
+    caveats: &mut Vec<CaveatView>,
+    component: &'static str,
+    report: &ComponentHealthReport,
+) {
+    if report.connected && report.status == HealthStatus::Healthy {
+        return;
+    }
+
+    let id = if report.connected {
+        ReadinessCaveatId::WindowPartial
+    } else {
+        ReadinessCaveatId::SourceAbsent
+    };
+    let detail = report
+        .detail
+        .as_deref()
+        .map_or_else(String::new, |value| format!(": {value}"));
+    caveats.push(CaveatView {
+        id: id.as_str().to_string(),
+        message: format!(
+            "runtime health component `{component}` reports status `{}` and connected={}{}",
+            report.status, report.connected, detail
+        ),
+        ref_: Some(runtime_health_ref(component)),
+    });
+}
+
+fn push_replay_control_caveat(caveats: &mut Vec<CaveatView>, report: &ReplayControlHealth) {
+    if report.enabled && report.connected && report.status == HealthStatus::Healthy {
+        return;
+    }
+
+    let id = if report.connected {
+        ReadinessCaveatId::WindowPartial
+    } else {
+        ReadinessCaveatId::SourceAbsent
+    };
+    let detail = report
+        .last_error
+        .as_deref()
+        .map_or_else(String::new, |value| format!(": {value}"));
+    caveats.push(CaveatView {
+        id: id.as_str().to_string(),
+        message: format!(
+            "runtime health component `replay_control` reports status `{}` enabled={} connected={}{}",
+            report.status, report.enabled, report.connected, detail
+        ),
+        ref_: Some(runtime_health_ref("replay_control")),
+    });
+}
+
+fn runtime_health_ref(component: &str) -> SinexObjectRef {
+    SinexObjectRef::new(SinexObjectKind::RuntimeModule, component)
+        .with_label(format!("runtime health: {component}"))
+        .with_command_hint("sinexctl runtime health")
+        .with_rpc_method("system.health")
 }
 
 /// Format system health as table
