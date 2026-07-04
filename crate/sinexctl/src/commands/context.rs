@@ -14,8 +14,8 @@ use sinex_primitives::relations::{
 use sinex_primitives::sources::{is_self_observation_source, source_identity_matches_family};
 use sinex_primitives::temporal::Timestamp;
 use sinex_primitives::views::{
-    ActionAvailability, ActionAvailabilityState, CaveatView, ContextSessionView,
-    ContextSourceView, ContextSummaryView, DesktopContextCandidateView,
+    ActionAvailability, ActionAvailabilityState, CaveatView, ContextAttentionSpanView,
+    ContextSessionView, ContextSourceView, ContextSummaryView, DesktopContextCandidateView,
     DesktopContextInputEvidence, DesktopContextInputState, DesktopContextView,
     DesktopFocusSessionListView, DesktopFocusSessionView,
     DesktopNotificationPressureView, DesktopProjectContextListView, DesktopProjectContextRowView,
@@ -41,6 +41,7 @@ const CONTEXT_DIVERSITY_SOURCES: &[&str] = &[
     "webhistory",
     "git",
     "fs-watcher",
+    "derived.attention-stream",
     "derived.session-detector",
     "derived.activity-window",
     "derived.hourly-summarizer",
@@ -789,26 +790,38 @@ fn render_context_machine_output(
                 })
                 .collect();
             let session_views = recall_session_views(event_cards);
+            let attention_span_views = recall_attention_span_views(event_cards);
             let mut source_caveats = source_caveats.to_vec();
             if source_surface == "sinexctl.recall"
                 && !event_cards.cards.is_empty()
                 && session_views.is_empty()
             {
-                source_caveats.push(CaveatView {
-                    id: ReadinessCaveatId::DerivationLaneNotPromoted
-                        .as_str()
-                        .to_string(),
-                    message: "no activity.session.boundary rows were found in this recall window; recall falls back to latest events by source".to_string(),
-                    ref_: Some(SinexObjectRef::new(
-                        SinexObjectKind::Projection,
+                let (id, message, projection) = if attention_span_views.is_empty() {
+                    (
+                        ReadinessCaveatId::DerivationLaneNotPromoted
+                            .as_str()
+                            .to_string(),
+                        "no activity.session.boundary or attention.span rows were found in this recall window; recall falls back to latest events by source".to_string(),
                         "recall.activity.session.boundary",
-                    )),
+                    )
+                } else {
+                    (
+                        "recall.session_rows_absent".to_string(),
+                        "no activity.session.boundary rows were found in this recall window; recall is using attention.span rows as the derived timeline".to_string(),
+                        "recall.attention.span",
+                    )
+                };
+                source_caveats.push(CaveatView {
+                    id,
+                    message,
+                    ref_: Some(SinexObjectRef::new(SinexObjectKind::Projection, projection)),
                 });
             }
             let envelope = ViewEnvelope::new(
                 source_surface,
                 ContextSummaryView::new(&window.since, event_cards.count, source_views)
                     .with_sessions(session_views)
+                    .with_attention_spans(attention_span_views)
                     .with_source_caveats(source_caveats),
             )
             .with_query_echo({
@@ -848,6 +861,59 @@ fn recall_session_views(event_cards: &EventCardListView) -> Vec<ContextSessionVi
         right_ts.inner().cmp(&left_ts.inner())
     });
     sessions
+}
+
+fn recall_attention_span_views(event_cards: &EventCardListView) -> Vec<ContextAttentionSpanView> {
+    let mut spans = event_cards
+        .cards
+        .iter()
+        .filter(|card| {
+            card.source.raw == "derived.attention-stream" || card.event_type == "attention.span"
+        })
+        .map(|card| {
+            let ended_at =
+                timestamp_payload_preview_field(card, "end_time").or(card.timestamp.original);
+            let duration_secs = u64_payload_preview_field(card, "duration_secs");
+            ContextAttentionSpanView {
+                ref_: card.ref_.clone(),
+                started_at: timestamp_payload_preview_field(card, "start_time")
+                    .or_else(|| attention_span_started_at(ended_at, duration_secs)),
+                ended_at,
+                duration_secs,
+                summary: card.summary.clone(),
+                latest_event: card.clone(),
+            }
+        })
+        .collect::<Vec<_>>();
+    spans.sort_by(|left, right| {
+        let left_ts = left.ended_at.or(left.started_at).unwrap_or(Timestamp::UNIX_EPOCH);
+        let right_ts = right.ended_at.or(right.started_at).unwrap_or(Timestamp::UNIX_EPOCH);
+        right_ts.inner().cmp(&left_ts.inner())
+    });
+    spans
+}
+
+fn attention_span_started_at(
+    ended_at: Option<Timestamp>,
+    duration_secs: Option<u64>,
+) -> Option<Timestamp> {
+    let ended_at = ended_at?;
+    let duration_secs = i64::try_from(duration_secs?).ok()?;
+    Some(ended_at - time::Duration::seconds(duration_secs))
+}
+
+fn timestamp_payload_preview_field(card: &EventCardView, field: &str) -> Option<Timestamp> {
+    card.payload_preview
+        .as_ref()
+        .and_then(|preview| preview.get(field))
+        .and_then(|value| serde_json::from_value(value.clone()).ok())
+}
+
+fn u64_payload_preview_field(card: &EventCardView, field: &str) -> Option<u64> {
+    card.payload_preview
+        .as_ref()
+        .and_then(|preview| preview.get(field))
+        .and_then(serde_json::Value::as_u64)
 }
 
 fn render_desktop_context_output(

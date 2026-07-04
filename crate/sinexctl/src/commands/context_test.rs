@@ -29,6 +29,20 @@ fn context_event_with_ref(
     card
 }
 
+fn attention_span_event_with_ref(ref_id: impl Into<String>) -> EventCardView {
+    let mut card = context_event_with_ref(
+        "derived.attention-stream",
+        "attention.span",
+        ref_id,
+    );
+    card.payload_preview = Some(json!({
+        "start_time": Timestamp::UNIX_EPOCH,
+        "end_time": Timestamp::UNIX_EPOCH,
+        "duration_secs": 600_u64,
+    }));
+    card
+}
+
 #[sinex_test]
 async fn context_machine_output_uses_view_envelope_json() -> xtask::sandbox::TestResult<()> {
     let mut shell_card = context_event("shell.atuin", "command.executed");
@@ -189,6 +203,68 @@ async fn recall_machine_output_projects_session_detector_rows()
                     != ReadinessCaveatId::DerivationLaneNotPromoted.as_str()))
             .unwrap_or(true),
         "session rows must suppress the missing-session caveat"
+    );
+    Ok(())
+}
+
+#[sinex_test]
+async fn recall_machine_output_projects_attention_spans() -> xtask::sandbox::TestResult<()> {
+    let event_cards = EventCardListView {
+        schema_version: EVENT_CARD_LIST_SCHEMA_VERSION.to_string(),
+        count: 2,
+        cards: vec![
+            attention_span_event_with_ref("event:attention-1"),
+            context_event_with_ref("shell.atuin", "command.executed", "event:cmd-1"),
+        ],
+        next_cursor: None,
+        total_estimate: None,
+    };
+    let sources = grouped_context_sources(&event_cards.cards);
+    let window = build_context_window("30m", None, Timestamp::now())?;
+    let output = render_context_machine_output(
+        &event_cards,
+        &sources,
+        &window,
+        OutputFormat::Json,
+        "sinexctl.recall",
+        "recall",
+        &[],
+        &ContextStageTimings::default(),
+    )?
+    .ok_or_else(|| color_eyre::eyre::eyre!("json output expected"))?;
+    let value: serde_json::Value = serde_json::from_str(&output)?;
+
+    let spans = value["payload"]["attention_spans"]
+        .as_array()
+        .ok_or_else(|| color_eyre::eyre::eyre!("recall attention spans must be an array"))?;
+    assert_eq!(spans.len(), 1);
+    assert_eq!(spans[0]["ref"]["id"], "event:attention-1");
+    assert!(
+        spans[0]["started_at"].is_string(),
+        "attention spans should expose a start even when bounded payload previews omit start_time"
+    );
+    assert_eq!(spans[0]["duration_secs"], 600);
+    assert_eq!(
+        spans[0]["latest_event"]["event_type"],
+        "attention.span"
+    );
+
+    let caveats = value["payload"]["source_caveats"]
+        .as_array()
+        .ok_or_else(|| color_eyre::eyre::eyre!("recall caveats must be an array"))?;
+    assert!(
+        caveats.iter().any(|caveat| {
+            caveat["id"] == "recall.session_rows_absent"
+                && caveat["ref"]["kind"] == "projection"
+                && caveat["ref"]["id"] == "recall.attention.span"
+        }),
+        "recall should report attention-span fallback accurately: {caveats:?}"
+    );
+    assert!(
+        caveats.iter().all(|caveat| {
+            caveat["id"] != ReadinessCaveatId::DerivationLaneNotPromoted.as_str()
+        }),
+        "attention spans mean recall no longer falls back only to latest events by source"
     );
     Ok(())
 }
@@ -410,6 +486,7 @@ async fn recall_expected_sources_accept_emitted_browser_and_git_sources()
 async fn recall_diversity_sources_use_emitted_source_ids() -> xtask::sandbox::TestResult<()> {
     assert!(CONTEXT_DIVERSITY_SOURCES.contains(&"webhistory"));
     assert!(CONTEXT_DIVERSITY_SOURCES.contains(&"git"));
+    assert!(CONTEXT_DIVERSITY_SOURCES.contains(&"derived.attention-stream"));
     assert!(CONTEXT_DIVERSITY_SOURCES.contains(&"derived.session-detector"));
     Ok(())
 }
