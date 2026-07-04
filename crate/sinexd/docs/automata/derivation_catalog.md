@@ -93,11 +93,12 @@ Its payload is intentionally generic: `state_kind`, optional `subject_id`,
 string attributes. Source-specific rules belong in the interval-lift automaton,
 not in one-off span emitters.
 
-Live first rule:
+Live rules:
 
 | Rule | Input transitions | Output `state_kind` | Consumer |
 |---|---|---|---|
 | Hyprland focus | `wm.hyprland/window.focused` N and N+1 | `desktop.focus` | `attention.stream`, `screen.grounding`, `machine.context` |
+| ActivityWatch active window | `activitywatch/window.active` observed `duration_ms` | `desktop.activitywatch.window` | `attention.stream`, `work.episode`, `project.attribution` |
 
 This keeps capture as point/transition evidence and makes intervals a derived
 mechanism with parent refs to the exact opening and closing observations.

@@ -6,26 +6,42 @@
 
 use crate::runtime::automaton::{DerivedOutput, TransducerAdapter};
 use crate::runtime::{AutomatonContext, AutomatonLogicError, InputProvenanceFilter, Transducer};
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize};
 use sinex_primitives::domain::SyntheticTemporalPolicy;
-use sinex_primitives::events::payloads::{HyprlandWindowFocusedPayload, StateIntervalPayload};
+use sinex_primitives::events::payloads::{
+    ActivityWatchWindowActivePayload, HyprlandWindowFocusedPayload, StateIntervalPayload,
+};
 use sinex_primitives::events::EventPayload;
-use sinex_primitives::{Timestamp, Uuid};
+use sinex_primitives::temporal::Duration;
+use sinex_primitives::{JsonValue, Timestamp, Uuid};
 use std::collections::BTreeMap;
 
 const SEMANTICS_VERSION: &str = "1.0.0";
 const FOCUS_STATE_KIND: &str = "desktop.focus";
+const ACTIVITYWATCH_WINDOW_STATE_KIND: &str = "desktop.activitywatch.window";
 
 #[derive(Debug, Clone, Default)]
 pub struct IntervalLift;
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct IntervalLiftState {
-    active_focus: Option<FocusTransition>,
+    #[serde(default, deserialize_with = "deserialize_active_focus")]
+    active_focus: Option<StateObservation>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-struct FocusTransition {
+struct StateObservation {
+    state_kind: String,
+    event_id: Uuid,
+    ts_orig: Timestamp,
+    subject_id: Option<String>,
+    label: Option<String>,
+    event_type: String,
+    attributes: BTreeMap<String, String>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+struct LegacyFocusTransition {
     event_id: Uuid,
     ts_orig: Timestamp,
     window_id: Option<String>,
@@ -34,76 +50,242 @@ struct FocusTransition {
     workspace_id: Option<i32>,
 }
 
-impl FocusTransition {
-    fn from_payload(
+impl StateObservation {
+    fn from_focus_payload(
         input: HyprlandWindowFocusedPayload,
         context: &AutomatonContext,
     ) -> Result<Self, AutomatonLogicError> {
-        Ok(Self {
-            event_id: context.trigger_uuid(),
-            ts_orig: context.require_ts_orig()?,
-            window_id: input.window_id,
-            window_class: input.window_class,
-            window_title: input.window_title,
-            workspace_id: input.workspace_id,
-        })
-    }
-
-    fn subject_id(&self) -> Option<String> {
-        self.window_id
-            .clone()
-            .or_else(|| self.window_class.as_ref().map(|class| format!("class:{class}")))
-    }
-
-    fn same_subject_as(&self, other: &Self) -> bool {
-        let Some(subject_id) = self.subject_id() else {
-            return false;
-        };
-        other.subject_id().as_deref() == Some(subject_id.as_str())
-    }
-
-    fn refresh_metadata_from(&mut self, other: &Self) {
-        if other.window_class.is_some() {
-            self.window_class.clone_from(&other.window_class);
-        }
-        if other.window_title.is_some() {
-            self.window_title.clone_from(&other.window_title);
-        }
-        if other.workspace_id.is_some() {
-            self.workspace_id = other.workspace_id;
-        }
-    }
-
-    fn label(&self) -> Option<String> {
-        match (&self.window_class, &self.window_title) {
+        let subject_id = input.window_id.clone().or_else(|| {
+            input
+                .window_class
+                .as_ref()
+                .map(|class| format!("class:{class}"))
+        });
+        let label = match (&input.window_class, &input.window_title) {
             (Some(class), Some(title)) if !title.is_empty() => Some(format!("{class}: {title}")),
             (Some(class), _) => Some(class.clone()),
             (_, Some(title)) if !title.is_empty() => Some(title.clone()),
             _ => None,
-        }
-    }
-
-    fn attributes(&self) -> BTreeMap<String, String> {
+        };
         let mut attributes = BTreeMap::new();
-        if let Some(window_id) = &self.window_id {
+        if let Some(window_id) = &input.window_id {
             attributes.insert("window_id".to_string(), window_id.clone());
         }
-        if let Some(window_class) = &self.window_class {
+        if let Some(window_class) = &input.window_class {
             attributes.insert("window_class".to_string(), window_class.clone());
         }
-        if let Some(window_title) = &self.window_title {
+        if let Some(window_title) = &input.window_title {
             attributes.insert("window_title".to_string(), window_title.clone());
         }
-        if let Some(workspace_id) = self.workspace_id {
+        if let Some(workspace_id) = input.workspace_id {
             attributes.insert("workspace_id".to_string(), workspace_id.to_string());
         }
-        attributes
+
+        Ok(Self {
+            state_kind: FOCUS_STATE_KIND.to_string(),
+            event_id: context.trigger_uuid(),
+            ts_orig: context.require_ts_orig()?,
+            subject_id,
+            label,
+            event_type: HyprlandWindowFocusedPayload::EVENT_TYPE
+                .as_static_str()
+                .to_string(),
+            attributes,
+        })
+    }
+
+    fn from_activitywatch_window_payload(
+        input: ActivityWatchWindowActivePayload,
+        context: &AutomatonContext,
+    ) -> Result<Self, AutomatonLogicError> {
+        let subject_id = match (input.app.is_empty(), input.title.is_empty()) {
+            (false, false) => Some(format!("app:{}|title:{}", input.app, input.title)),
+            (false, true) => Some(format!("app:{}", input.app)),
+            (true, false) => Some(format!("title:{}", input.title)),
+            (true, true) => None,
+        };
+        let label = match (input.app.is_empty(), input.title.is_empty()) {
+            (false, false) => Some(format!("{}: {}", input.app, input.title)),
+            (false, true) => Some(input.app.clone()),
+            (true, false) => Some(input.title.clone()),
+            (true, true) => None,
+        };
+        let mut attributes = BTreeMap::new();
+        attributes.insert("bucket_id".to_string(), input.bucket_id);
+        attributes.insert("duration_ms".to_string(), input.duration_ms.to_string());
+        if !input.app.is_empty() {
+            attributes.insert("app".to_string(), input.app);
+        }
+        if !input.title.is_empty() {
+            attributes.insert("title".to_string(), input.title);
+        }
+
+        Ok(Self {
+            state_kind: ACTIVITYWATCH_WINDOW_STATE_KIND.to_string(),
+            event_id: context.trigger_uuid(),
+            ts_orig: context.require_ts_orig()?,
+            subject_id,
+            label,
+            event_type: ActivityWatchWindowActivePayload::EVENT_TYPE
+                .as_static_str()
+                .to_string(),
+            attributes,
+        })
+    }
+
+    fn same_subject_as(&self, other: &Self) -> bool {
+        if self.state_kind != other.state_kind {
+            return false;
+        }
+        let Some(subject_id) = &self.subject_id else {
+            return false;
+        };
+        other.subject_id.as_deref() == Some(subject_id.as_str())
+    }
+
+    fn refresh_metadata_from(&mut self, other: &Self) {
+        if other.label.is_some() {
+            self.label.clone_from(&other.label);
+        }
+        self.attributes.extend(other.attributes.clone());
+    }
+
+    fn close_with(&self, current: &Self) -> DerivedOutput<StateIntervalPayload> {
+        let duration_secs = (current.ts_orig - self.ts_orig).whole_seconds().max(0) as u64;
+        let subject_part = self
+            .subject_id
+            .as_deref()
+            .unwrap_or("unknown-subject")
+            .to_string();
+        let interval_id = format!(
+            "interval:{}:{subject_part}:{}:{}",
+            self.state_kind, self.event_id, current.event_id
+        );
+
+        let payload = StateIntervalPayload {
+            interval_id: interval_id.clone(),
+            state_kind: self.state_kind.clone(),
+            subject_id: self.subject_id.clone(),
+            label: self.label.clone(),
+            start_time: self.ts_orig,
+            end_time: current.ts_orig,
+            duration_secs,
+            start_event_type: self.event_type.clone(),
+            end_event_type: current.event_type.clone(),
+            attributes: self.attributes.clone(),
+        };
+
+        DerivedOutput::windowed(
+            payload,
+            current.ts_orig,
+            vec![self.event_id, current.event_id],
+        )
+        .with_temporal_policy(SyntheticTemporalPolicy::WindowBoundary)
+        .with_semantics_version(SEMANTICS_VERSION)
+        .with_equivalence_key(interval_id)
+    }
+
+    fn observed_duration_interval(&self, duration_ms: u64) -> DerivedOutput<StateIntervalPayload> {
+        let duration = Duration::milliseconds(i64::try_from(duration_ms).unwrap_or(i64::MAX));
+        let end_time = self.ts_orig + duration;
+        let subject_part = self
+            .subject_id
+            .as_deref()
+            .unwrap_or("unknown-subject")
+            .to_string();
+        let interval_id = format!(
+            "interval:{}:{subject_part}:{}:{}",
+            self.state_kind, self.event_id, self.event_id
+        );
+
+        let payload = StateIntervalPayload {
+            interval_id: interval_id.clone(),
+            state_kind: self.state_kind.clone(),
+            subject_id: self.subject_id.clone(),
+            label: self.label.clone(),
+            start_time: self.ts_orig,
+            end_time,
+            duration_secs: duration.whole_seconds().max(0) as u64,
+            start_event_type: self.event_type.clone(),
+            end_event_type: self.event_type.clone(),
+            attributes: self.attributes.clone(),
+        };
+
+        DerivedOutput::windowed(payload, end_time, vec![self.event_id])
+            .with_temporal_policy(SyntheticTemporalPolicy::WindowBoundary)
+            .with_semantics_version(SEMANTICS_VERSION)
+            .with_equivalence_key(interval_id)
+    }
+}
+
+impl From<LegacyFocusTransition> for StateObservation {
+    fn from(input: LegacyFocusTransition) -> Self {
+        let subject_id = input.window_id.clone().or_else(|| {
+            input
+                .window_class
+                .as_ref()
+                .map(|class| format!("class:{class}"))
+        });
+        let label = match (&input.window_class, &input.window_title) {
+            (Some(class), Some(title)) if !title.is_empty() => Some(format!("{class}: {title}")),
+            (Some(class), _) => Some(class.clone()),
+            (_, Some(title)) if !title.is_empty() => Some(title.clone()),
+            _ => None,
+        };
+        let mut attributes = BTreeMap::new();
+        if let Some(window_id) = input.window_id {
+            attributes.insert("window_id".to_string(), window_id);
+        }
+        if let Some(window_class) = input.window_class {
+            attributes.insert("window_class".to_string(), window_class);
+        }
+        if let Some(window_title) = input.window_title {
+            attributes.insert("window_title".to_string(), window_title);
+        }
+        if let Some(workspace_id) = input.workspace_id {
+            attributes.insert("workspace_id".to_string(), workspace_id.to_string());
+        }
+
+        Self {
+            state_kind: FOCUS_STATE_KIND.to_string(),
+            event_id: input.event_id,
+            ts_orig: input.ts_orig,
+            subject_id,
+            label,
+            event_type: HyprlandWindowFocusedPayload::EVENT_TYPE
+                .as_static_str()
+                .to_string(),
+            attributes,
+        }
+    }
+}
+
+fn deserialize_active_focus<'de, D>(
+    deserializer: D,
+) -> Result<Option<StateObservation>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let Some(value) = Option::<JsonValue>::deserialize(deserializer)? else {
+        return Ok(None);
+    };
+
+    match serde_json::from_value::<StateObservation>(value.clone()) {
+        Ok(observation) => Ok(Some(observation)),
+        Err(current_error) => serde_json::from_value::<LegacyFocusTransition>(value)
+            .map(StateObservation::from)
+            .map(Some)
+            .map_err(|legacy_error| {
+                serde::de::Error::custom(format!(
+                    "failed to decode interval-lift active_focus as current ({current_error}) or legacy focus state ({legacy_error})"
+                ))
+            }),
     }
 }
 
 impl Transducer for IntervalLift {
     type State = IntervalLiftState;
-    type Input = HyprlandWindowFocusedPayload;
+    type Input = JsonValue;
     type Output = StateIntervalPayload;
 
     fn name(&self) -> &'static str {
@@ -111,7 +293,14 @@ impl Transducer for IntervalLift {
     }
 
     fn input_event_type(&self) -> &'static str {
-        HyprlandWindowFocusedPayload::EVENT_TYPE.as_static_str()
+        "*"
+    }
+
+    fn input_event_types(&self) -> Vec<&'static str> {
+        vec![
+            HyprlandWindowFocusedPayload::EVENT_TYPE.as_static_str(),
+            ActivityWatchWindowActivePayload::EVENT_TYPE.as_static_str(),
+        ]
     }
 
     fn output_event_type(&self) -> &'static str {
@@ -132,10 +321,42 @@ impl Transducer for IntervalLift {
         input: Self::Input,
         context: &AutomatonContext,
     ) -> Result<Option<DerivedOutput<Self::Output>>, AutomatonLogicError> {
-        let current = FocusTransition::from_payload(input, context)?;
+        let (slot, current) =
+            match (context.source.as_str(), context.event_type.as_str()) {
+                ("wm.hyprland", event_type)
+                    if event_type == HyprlandWindowFocusedPayload::EVENT_TYPE.as_static_str() =>
+                {
+                    let payload: HyprlandWindowFocusedPayload = serde_json::from_value(input)
+                        .map_err(|e| {
+                            AutomatonLogicError::InputParsing(format!(
+                                "failed to parse Hyprland focus payload: {e}"
+                            ))
+                        })?;
+                    (
+                        &mut state.active_focus,
+                        StateObservation::from_focus_payload(payload, context)?,
+                    )
+                }
+                ("activitywatch", event_type)
+                    if event_type
+                        == ActivityWatchWindowActivePayload::EVENT_TYPE.as_static_str() =>
+                {
+                    let payload: ActivityWatchWindowActivePayload =
+                        serde_json::from_value(input).map_err(|e| {
+                            AutomatonLogicError::InputParsing(format!(
+                                "failed to parse ActivityWatch window payload: {e}"
+                            ))
+                        })?;
+                    let duration_ms = payload.duration_ms;
+                    let observation =
+                        StateObservation::from_activitywatch_window_payload(payload, context)?;
+                    return Ok(Some(observation.observed_duration_interval(duration_ms)));
+                }
+                _ => return Ok(None),
+            };
 
-        let Some(previous) = state.active_focus.as_mut() else {
-            state.active_focus = Some(current);
+        let Some(previous) = slot.as_mut() else {
+            *slot = Some(current);
             return Ok(None);
         };
 
@@ -149,40 +370,9 @@ impl Transducer for IntervalLift {
         }
 
         let previous = previous.clone();
-        state.active_focus = Some(current.clone());
+        *slot = Some(current.clone());
 
-        let duration_secs = (current.ts_orig - previous.ts_orig).whole_seconds().max(0) as u64;
-        let subject_part = previous
-            .subject_id()
-            .unwrap_or_else(|| "unknown-window".to_string());
-        let interval_id = format!(
-            "interval:{FOCUS_STATE_KIND}:{subject_part}:{}:{}",
-            previous.event_id, current.event_id
-        );
-
-        let payload = StateIntervalPayload {
-            interval_id: interval_id.clone(),
-            state_kind: FOCUS_STATE_KIND.to_string(),
-            subject_id: previous.subject_id(),
-            label: previous.label(),
-            start_time: previous.ts_orig,
-            end_time: current.ts_orig,
-            duration_secs,
-            start_event_type: HyprlandWindowFocusedPayload::EVENT_TYPE.as_static_str().to_string(),
-            end_event_type: HyprlandWindowFocusedPayload::EVENT_TYPE.as_static_str().to_string(),
-            attributes: previous.attributes(),
-        };
-
-        Ok(Some(
-            DerivedOutput::windowed(
-                payload,
-                current.ts_orig,
-                vec![previous.event_id, current.event_id],
-            )
-            .with_temporal_policy(SyntheticTemporalPolicy::WindowBoundary)
-            .with_semantics_version(SEMANTICS_VERSION)
-            .with_equivalence_key(interval_id),
-        ))
+        Ok(Some(previous.close_with(&current)))
     }
 }
 
