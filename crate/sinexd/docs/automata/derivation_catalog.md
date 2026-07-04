@@ -98,6 +98,7 @@ Live rules:
 | Rule | Input transitions | Output `state_kind` | Consumer |
 |---|---|---|---|
 | Hyprland focus | `wm.hyprland/window.focused` N and N+1 | `desktop.focus` | `attention.stream`, `screen.grounding`, `machine.context` |
+| Hyprland workspace | `wm.hyprland/workspace.switched` N and N+1 | `desktop.workspace` | `attention.stream`, `work.episode`, `machine.context` |
 | ActivityWatch active window | `activitywatch/window.active` observed `duration_ms` | `desktop.activitywatch.window` | `attention.stream`, `work.episode`, `project.attribution` |
 | ActivityWatch AFK status | `activitywatch/afk.changed` observed `duration_ms` | `desktop.activitywatch.afk` | `attention.stream`, `work.episode`, `machine.context` |
 | Systemd unit lifetime | `systemd/unit.started` then matching `systemd/unit.stopped` | `system.systemd.unit` | `machine.context`, `change.episode`, `ops.forensics` |
@@ -108,6 +109,12 @@ mechanism with parent refs to the exact opening and closing observations.
 subject, start parent id, and end parent id; they must not depend on local
 runtime sequence counters, because replay/restored state can otherwise collide
 with already-live intervals and trigger false occurrence suppression.
+
+The Rust source of truth is `IntervalLift::rule_catalog()` in
+`crate/sinexd/src/automata/interval_lift.rs`. The automaton's advertised
+`input_event_types()` is derived from that catalog, and the focused
+`interval_lift_rule_catalog_is_the_input_contract` test fails if the source
+list, state kinds, rule shapes, or consumer hints drift apart.
 
 ## 4. Design rules for extending the taxonomy (review-enforceable)
 
