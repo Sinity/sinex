@@ -231,6 +231,27 @@ pub struct ContextAttentionSpanView {
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub struct ContextIntervalView {
+    #[serde(rename = "ref")]
+    pub ref_: SinexObjectRef,
+    pub state_kind: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub subject_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub label: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub started_at: Option<Timestamp>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ended_at: Option<Timestamp>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub duration_secs: Option<u64>,
+    pub summary: String,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub parent_refs: Vec<SinexObjectRef>,
+    pub latest_event: EventCardView,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct ContextSummaryView {
     pub schema_version: String,
     pub since: String,
@@ -241,6 +262,8 @@ pub struct ContextSummaryView {
     pub sessions: Vec<ContextSessionView>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub attention_spans: Vec<ContextAttentionSpanView>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub intervals: Vec<ContextIntervalView>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub source_caveats: Vec<CaveatView>,
 }
@@ -260,6 +283,7 @@ impl ContextSummaryView {
             sources,
             sessions: Vec::new(),
             attention_spans: Vec::new(),
+            intervals: Vec::new(),
             source_caveats: Vec::new(),
         }
     }
@@ -273,6 +297,12 @@ impl ContextSummaryView {
     #[must_use]
     pub fn with_attention_spans(mut self, attention_spans: Vec<ContextAttentionSpanView>) -> Self {
         self.attention_spans = attention_spans;
+        self
+    }
+
+    #[must_use]
+    pub fn with_intervals(mut self, intervals: Vec<ContextIntervalView>) -> Self {
+        self.intervals = intervals;
         self
     }
 
