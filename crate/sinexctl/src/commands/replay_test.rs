@@ -1,13 +1,52 @@
 use super::{
     MaterialReplayabilityScorecard, Replayability, format_per_material_scorecard_table,
-    format_replay_preview_table, preview_total_events, truncate_head_chars,
-    truncate_tail_chars, weakness_dimensions,
+    format_replay_preview_table, preview_total_events, replay_list_envelope,
+    replay_preview_envelope, replay_status_envelope, truncate_head_chars, truncate_tail_chars,
+    weakness_dimensions,
 };
+use crate::fmt::render_finite_envelope;
+use crate::model::OutputFormat;
 use serde_json::json;
 use sinex_primitives::rpc::replay::{
     ReplayCheckpoint, ReplayOperation, ReplayScope, ReplayState,
 };
+use sinex_primitives::views::{ReadinessCaveatId, VIEW_ENVELOPE_SCHEMA_VERSION};
 use xtask::sandbox::prelude::*;
+
+fn fixture_replay_operation(id: &str, state: ReplayState, total_events: u64) -> ReplayOperation {
+    ReplayOperation {
+        operation_id: id.to_string(),
+        state,
+        scope: ReplayScope {
+            source_name: "terminal.zsh-history".to_string(),
+            time_window: None,
+            material_filter: None,
+            filters: std::collections::HashMap::new(),
+            source_id: None,
+            source_material_id: None,
+            parser_id: None,
+            parser_version: None,
+        },
+        preview_summary: None,
+        checkpoint: ReplayCheckpoint {
+            processed_events: 0,
+            total_events,
+            last_event_id: None,
+            batch_number: 0,
+            savepoint_id: None,
+            updated_at: "2026-04-04T00:00:00Z".to_string(),
+        },
+        actor: "tester".to_string(),
+        created_at: "2026-04-04T00:00:00Z".to_string(),
+        approved_by: None,
+        approved_at: None,
+        executor_module: None,
+        started_at: None,
+        finished_at: None,
+        outcome: None,
+        error_details: None,
+    }
+}
 
 #[sinex_test]
 async fn preview_total_events_accepts_valid_counts() -> TestResult<()> {
@@ -58,38 +97,7 @@ async fn preview_total_events_rejects_non_numeric_field() -> TestResult<()> {
 
 #[sinex_test]
 async fn replay_preview_table_surfaces_failed_safety_analysis() -> TestResult<()> {
-    let operation = ReplayOperation {
-        operation_id: "op-1".to_string(),
-        state: ReplayState::Previewed,
-        scope: ReplayScope {
-            source_name: "terminal.zsh-history".to_string(),
-            time_window: None,
-            material_filter: None,
-            filters: std::collections::HashMap::new(),
-            source_id: None,
-            source_material_id: None,
-            parser_id: None,
-            parser_version: None,
-        },
-        preview_summary: None,
-        checkpoint: ReplayCheckpoint {
-            processed_events: 0,
-            total_events: 0,
-            last_event_id: None,
-            batch_number: 0,
-            savepoint_id: None,
-            updated_at: "2026-04-04T00:00:00Z".to_string(),
-        },
-        actor: "tester".to_string(),
-        created_at: "2026-04-04T00:00:00Z".to_string(),
-        approved_by: None,
-        approved_at: None,
-        executor_module: None,
-        started_at: None,
-        finished_at: None,
-        outcome: None,
-        error_details: None,
-    };
+    let operation = fixture_replay_operation("op-1", ReplayState::Previewed, 0);
     let preview = json!({
         "total_events": 3,
         "anchor_churn_pct": null,
@@ -135,6 +143,107 @@ async fn replay_preview_table_surfaces_failed_safety_analysis() -> TestResult<()
     assert!(rendered.contains(
         "Safety Detail:  Cascade impact could not be determined. Approve with caution."
     ));
+    Ok(())
+}
+
+#[sinex_test]
+async fn replay_preview_envelope_caveats_empty_and_unmeasured_preview() -> TestResult<()> {
+    let operation = fixture_replay_operation("op-empty", ReplayState::Previewed, 0);
+    let preview = json!({
+        "total_events": 0,
+        "replay_gates": {
+            "gates": [
+                {
+                    "name": "require_force_on_schema_mismatch",
+                    "tripped": true,
+                    "override_flag": "--force-schema-mismatch"
+                }
+            ]
+        },
+        "safety_analysis": {
+            "status": "failed"
+        }
+    });
+
+    let envelope = replay_preview_envelope(operation, preview, Vec::new(), "op-empty");
+    let caveat_ids: Vec<&str> = envelope
+        .caveats
+        .iter()
+        .map(|caveat| caveat.id.as_str())
+        .collect();
+
+    assert_eq!(envelope.source_surface, "sinexctl.ops.replay.preview");
+    assert!(caveat_ids.contains(&ReadinessCaveatId::SourceAbsent.as_str()));
+    assert!(caveat_ids.contains(&ReadinessCaveatId::CoverageUnmeasurable.as_str()));
+    assert!(caveat_ids.contains(&ReadinessCaveatId::WindowPartial.as_str()));
+    assert_eq!(envelope.query_echo.as_ref().unwrap()["operation_id"], "op-empty");
+    Ok(())
+}
+
+#[sinex_test]
+async fn replay_status_envelope_caveats_failed_zero_progress() -> TestResult<()> {
+    let mut operation = fixture_replay_operation("op-failed", ReplayState::Failed, 0);
+    operation.error_details = Some("source adapter failed".to_string());
+
+    let envelope = replay_status_envelope(operation, "op-failed");
+    let caveat_ids: Vec<&str> = envelope
+        .caveats
+        .iter()
+        .map(|caveat| caveat.id.as_str())
+        .collect();
+
+    assert_eq!(envelope.source_surface, "sinexctl.ops.replay.status");
+    assert!(caveat_ids.contains(&ReadinessCaveatId::WindowPartial.as_str()));
+    assert!(caveat_ids.contains(&ReadinessCaveatId::CoverageUnmeasurable.as_str()));
+    assert_eq!(envelope.query_echo.as_ref().unwrap()["operation_id"], "op-failed");
+    Ok(())
+}
+
+#[sinex_test]
+async fn replay_list_envelope_caveats_empty_operation_log() -> TestResult<()> {
+    let envelope = replay_list_envelope(
+        Vec::new(),
+        Some(super::ReplayStateFilter::Completed),
+        Some("terminal.zsh-history"),
+        25,
+    );
+
+    assert_eq!(envelope.source_surface, "sinexctl.ops.replay.list");
+    assert_eq!(envelope.caveats.len(), 1);
+    assert_eq!(
+        envelope.caveats[0].id,
+        ReadinessCaveatId::SourceAbsent.as_str()
+    );
+    assert_eq!(envelope.query_echo.as_ref().unwrap()["state"], "completed");
+    assert_eq!(
+        envelope.query_echo.as_ref().unwrap()["source"],
+        "terminal.zsh-history"
+    );
+    assert_eq!(envelope.query_echo.as_ref().unwrap()["limit"], 25);
+    Ok(())
+}
+
+#[sinex_test]
+async fn replay_list_envelope_renders_finite_json() -> TestResult<()> {
+    let envelope = replay_list_envelope(
+        vec![fixture_replay_operation(
+            "op-1",
+            ReplayState::Completed,
+            7,
+        )],
+        None,
+        None,
+        50,
+    );
+
+    let rendered = render_finite_envelope(&envelope, OutputFormat::Json)?
+        .expect("json renders finite envelope");
+    let parsed: serde_json::Value = serde_json::from_str(&rendered)?;
+
+    assert_eq!(parsed["schema_version"], VIEW_ENVELOPE_SCHEMA_VERSION);
+    assert_eq!(parsed["source_surface"], "sinexctl.ops.replay.list");
+    assert_eq!(parsed["payload"][0]["operation_id"], "op-1");
+    assert_eq!(parsed["query_echo"]["limit"], 50);
     Ok(())
 }
 
