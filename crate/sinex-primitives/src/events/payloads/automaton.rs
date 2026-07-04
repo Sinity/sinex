@@ -131,6 +131,28 @@ pub struct ActivityWindowSummaryPayload {
     pub close_reason: ActivityWindowCloseReason,
 }
 
+/// Unified attention span derived from bounded multi-source activity windows.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, EventPayload)]
+#[event_payload(
+    source = "derived.attention-stream",
+    event_type = "attention.span",
+    version = "1.0.0"
+)]
+pub struct AttentionSpanPayload {
+    pub span_id: String,
+    pub start_time: Timestamp,
+    pub end_time: Timestamp,
+    pub duration_secs: u64,
+    pub event_count: u64,
+    pub source_count: u64,
+    pub sources: Vec<String>,
+    pub activity_sources: Vec<ActivitySourceKind>,
+    pub activity_source_counts: BTreeMap<ActivitySourceKind, u64>,
+    pub primary_source: ActivitySourceKind,
+    pub source_window_id: String,
+    pub source_window_close_reason: ActivityWindowCloseReason,
+}
+
 /// Completed activity session derived from trusted activity signals.
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, EventPayload)]
 #[event_payload(
