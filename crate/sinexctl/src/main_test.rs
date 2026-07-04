@@ -428,6 +428,8 @@ async fn validate_format_rejects_ndjson_for_finite_view_envelopes() -> TestResul
         "privacy export",
         "privacy policy list",
         "privacy private-mode status",
+        "runtime gateway ping",
+        "runtime gateway version",
         "ops replay list",
         "ops replay preview",
         "ops replay status",
