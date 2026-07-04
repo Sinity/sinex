@@ -1,13 +1,16 @@
 use clap::Subcommand;
 use serde::Serialize;
+use sinex_primitives::RuntimePressureLevel;
 use sinex_primitives::views::{
-    DLQ_CLEANUP_PLAN_SCHEMA_VERSION, DlqCleanupActionView, DlqCleanupPlanItemView,
-    DlqCleanupPlanView,
+    CaveatView, DLQ_CLEANUP_PLAN_SCHEMA_VERSION, DlqCleanupActionView, DlqCleanupPlanItemView,
+    DlqCleanupPlanView, ReadinessCaveatId, SinexObjectKind, SinexObjectRef, ViewEnvelope,
 };
 
 use crate::Result;
 use crate::client::GatewayClient;
-use crate::fmt::{CommandOutput, Spinner, format_bytes, with_spinner_result};
+use crate::fmt::{
+    CommandOutput, Spinner, format_bytes, print_finite_envelope, with_spinner_result,
+};
 use crate::model::OutputFormat;
 
 /// Dead letter queue operations
@@ -134,7 +137,10 @@ impl DlqCommands {
         match self {
             Self::List => {
                 let stats = client.dlq_list().await?;
-                CommandOutput::single(stats, format_dlq_stats_table).display(&format)?;
+                let envelope = dlq_list_envelope(stats);
+                if !print_finite_envelope(&envelope, format)? {
+                    println!("{}", format_dlq_stats_table(&envelope.payload));
+                }
             }
             Self::Peek {
                 limit,
@@ -258,6 +264,64 @@ use sinex_primitives::rpc::sources::{SourceMaterialDetail, SourcesShowRequest};
 
 const DEFAULT_DLQ_PREVIEW_CHARS: usize = 200;
 const TRIAGE_DLQ_PREVIEW_CHARS: usize = 1200;
+
+fn dlq_list_envelope(stats: DlqListResponse) -> ViewEnvelope<DlqListResponse> {
+    let mut envelope = ViewEnvelope::new("sinexctl.ops.dlq.list", stats);
+    envelope.caveats = dlq_list_caveats(&envelope.payload);
+    envelope
+}
+
+fn dlq_list_caveats(stats: &DlqListResponse) -> Vec<CaveatView> {
+    let mut caveats = Vec::new();
+
+    match stats.pressure_level {
+        RuntimePressureLevel::Unknown => caveats.push(CaveatView {
+            id: ReadinessCaveatId::CoverageUnmeasurable.as_str().to_string(),
+            message: format!(
+                "raw-ingest DLQ pressure is unknown: {}",
+                stats.action_reason
+            ),
+            ref_: Some(dlq_ref("raw_ingest_dlq.pressure")),
+        }),
+        RuntimePressureLevel::Nominal => {
+            if stats.total_messages == 0 {
+                caveats.push(CaveatView {
+                    id: ReadinessCaveatId::CoverageUnmeasurable.as_str().to_string(),
+                    message: "raw-ingest DLQ is empty; absence of failed messages is a current queue observation, not proof that all historical ingestion succeeded".to_string(),
+                    ref_: Some(dlq_ref("raw_ingest_dlq.empty")),
+                });
+            }
+        }
+        RuntimePressureLevel::Warning | RuntimePressureLevel::Critical => {
+            let caveat_id = if stats.pressure_level == RuntimePressureLevel::Critical {
+                ReadinessCaveatId::WindowPartial
+            } else {
+                ReadinessCaveatId::SourceAbsent
+            };
+            caveats.push(CaveatView {
+                id: caveat_id.as_str().to_string(),
+                message: format!(
+                    "raw-ingest DLQ has {} pending messages across sequence span {}; pressure={} action={}: {}",
+                    stats.total_messages,
+                    stats.pending_sequence_span,
+                    stats.pressure_level,
+                    stats.resource_pressure.runtime_action,
+                    stats.action_reason
+                ),
+                ref_: Some(dlq_ref("raw_ingest_dlq.pending")),
+            });
+        }
+    }
+
+    caveats
+}
+
+fn dlq_ref(id: &str) -> SinexObjectRef {
+    SinexObjectRef::new(SinexObjectKind::DlqMessage, id)
+        .with_label(id)
+        .with_command_hint("sinexctl ops dlq list")
+        .with_rpc_method("dlq.list")
+}
 
 #[derive(Debug, Clone, Serialize)]
 pub(crate) struct DlqTriageReport {
