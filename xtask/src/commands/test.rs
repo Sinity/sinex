@@ -540,14 +540,17 @@ impl TestCommand {
                 );
             }
             None => {
-                args = self.nextest_invocation_args(false);
-
                 let execution_plan =
                     self.resolve_execution_plan(None, self.filter.as_deref(), None)?;
                 let effective_test_binaries =
                     self.effective_test_binaries(self.filter.as_deref())?;
                 let effective_lib_target =
                     self.effective_lib_target(self.filter.as_deref(), &effective_test_binaries)?;
+                args = self.nextest_background_invocation_args(
+                    false,
+                    &effective_test_binaries,
+                    effective_lib_target,
+                );
                 let coordination_args = self.semantic_invocation_args(
                     &execution_plan.workload_scope,
                     self.filter.as_deref(),
@@ -776,6 +779,10 @@ impl TestCommand {
         let Some(filter) = filter else {
             return Ok(false);
         };
+
+        if !self.packages.is_empty() {
+            return affected::infer_lib_target_for_test_filter_packages(filter, &self.packages);
+        }
 
         affected::infer_lib_target_for_test_filter(filter)
     }
@@ -1131,6 +1138,27 @@ impl TestCommand {
             args.push("--".to_string());
             args.extend(self.args.clone());
         }
+        args
+    }
+
+    fn nextest_background_invocation_args(
+        &self,
+        force_skip_preflight: bool,
+        effective_test_binaries: &[String],
+        effective_lib_target: bool,
+    ) -> Vec<String> {
+        let mut args = self.nextest_invocation_args(force_skip_preflight);
+
+        if self.test_binaries.is_empty() {
+            for test_binary in effective_test_binaries {
+                args.push("--test".to_string());
+                args.push(test_binary.clone());
+            }
+        }
+        if effective_lib_target && !self.lib {
+            args.push("--lib".to_string());
+        }
+
         args
     }
 

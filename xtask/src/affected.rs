@@ -222,6 +222,15 @@ pub fn infer_lib_target_for_test_filter(filter: &str) -> Result<bool> {
     infer_lib_target_for_test_filter_in(&repo_root, filter)
 }
 
+pub fn infer_lib_target_for_test_filter_packages(
+    filter: &str,
+    packages: &[String],
+) -> Result<bool> {
+    let repo_root = crate::config::workspace_root();
+    let selected_packages: HashSet<&str> = packages.iter().map(String::as_str).collect();
+    infer_lib_target_for_test_filter_in_packages(&repo_root, filter, Some(&selected_packages))
+}
+
 /// Count simple `test(name)` terms in a nextest filter.
 ///
 /// Returns `None` for complex filters where xtask deliberately should not infer
@@ -243,7 +252,9 @@ fn infer_packages_for_test_filter_in(repo_root: &Path, filter: &str) -> Result<V
 
         if test_names
             .iter()
-            .any(|test_name| content_mentions_test_name(&content, test_name))
+            .any(|test_name| {
+                path_or_content_mentions_test_name(&relative_path, &content, test_name)
+            })
             && let Some(package) = package_for_path(&relative_path)
         {
             packages.insert(package);
@@ -284,7 +295,9 @@ fn infer_test_binary_packages_for_test_filter_in(
 
         let matched_test_names: Vec<&String> = test_names
             .iter()
-            .filter(|test_name| content_mentions_test_name(&content, test_name))
+            .filter(|test_name| {
+                path_or_content_mentions_test_name(&relative_path, &content, test_name)
+            })
             .collect();
 
         if !matched_test_names.is_empty() {
@@ -316,6 +329,14 @@ fn infer_test_binary_packages_for_test_filter_in(
 }
 
 fn infer_lib_target_for_test_filter_in(repo_root: &Path, filter: &str) -> Result<bool> {
+    infer_lib_target_for_test_filter_in_packages(repo_root, filter, None)
+}
+
+fn infer_lib_target_for_test_filter_in_packages(
+    repo_root: &Path,
+    filter: &str,
+    selected_packages: Option<&HashSet<&str>>,
+) -> Result<bool> {
     let Some(test_names) = extract_simple_test_name_terms(filter) else {
         return Ok(false);
     };
@@ -324,13 +345,24 @@ fn infer_lib_target_for_test_filter_in(repo_root: &Path, filter: &str) -> Result
     let mut non_lib_match = false;
 
     for relative_path in candidate_rust_paths(repo_root)? {
+        if let Some(selected_packages) = selected_packages {
+            let Some(package) = package_for_path(&relative_path) else {
+                continue;
+            };
+            if !selected_packages.contains(package.as_str()) {
+                continue;
+            }
+        }
+
         let full_path = repo_root.join(&relative_path);
         let content = fs::read_to_string(&full_path)
             .wrap_err_with(|| format!("failed to read {}", full_path.display()))?;
 
         let matched_test_names: Vec<&String> = test_names
             .iter()
-            .filter(|test_name| content_mentions_test_name(&content, test_name))
+            .filter(|test_name| {
+                path_or_content_mentions_test_name(&relative_path, &content, test_name)
+            })
             .collect();
 
         if matched_test_names.is_empty() {
@@ -760,6 +792,22 @@ fn candidate_rust_paths(repo_root: &Path) -> Result<Vec<String>> {
 
 fn content_mentions_test_name(content: &str, test_name: &str) -> bool {
     test_function_names(content).any(|name| name.contains(test_name))
+}
+
+fn path_or_content_mentions_test_name(path: &str, content: &str, test_name: &str) -> bool {
+    content_mentions_test_name(content, test_name) || test_path_mentions_test_name(path, test_name)
+}
+
+fn test_path_mentions_test_name(path: &str, test_name: &str) -> bool {
+    let Some(file_name) = path.rsplit('/').next() else {
+        return false;
+    };
+    let Some(stem) = file_name.strip_suffix(".rs") else {
+        return false;
+    };
+
+    (stem.ends_with("_test") || stem.ends_with("_tests") || path.contains("/tests/"))
+        && stem.contains(test_name)
 }
 
 fn test_function_names(content: &str) -> impl Iterator<Item = &str> {
