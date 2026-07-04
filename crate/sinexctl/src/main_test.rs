@@ -407,53 +407,23 @@ async fn validate_format_accepts_ndjson_for_runtime_list() -> TestResult<()> {
 
 #[sinex_test]
 async fn validate_format_rejects_ndjson_for_finite_view_envelopes() -> TestResult<()> {
-    for command in [
-        "docs chunks",
-        "docs get",
-        "docs search",
-        "events recent",
-        "ops dlq cleanup-plan",
-        "ops dlq peek",
-        "ops dlq triage",
-        "ops lifecycle status",
-        "ops lifecycle tombstone list",
-        "metrics telemetry event-engine-validation",
-        "metrics telemetry gateway-stats",
-        "metrics throughput",
-        "ops audit",
-        "metrics report calendar",
-        "metrics report today",
-        "metrics report yesterday",
-        "privacy audit",
-        "privacy export",
-        "privacy policy list",
-        "privacy private-mode status",
-        "runtime gateway ping",
-        "runtime gateway version",
-        "ops replay list",
-        "ops replay preview",
-        "ops replay status",
-        "ops blob fsck",
-        "ops blob migrate",
-        "ops blob sweep-orphans",
-        "ops blob verify-integrity",
-        "runtime health",
-        "runtime modules",
-        "runtime status",
-        "semantic curation duplicates",
-        "semantic curation proposals",
-        "semantic epoch list",
-        "semantic lane diffs",
-        "semantic lane list",
-        "semantic lane outputs",
-        "sources coverage",
-        "sources list",
-        "sources show",
-        "sources status",
-        "tasks list",
-        "tasks state",
-        "show",
-    ] {
+    let finite_view_commands: Vec<_> = sinexctl::command_catalog()
+        .into_iter()
+        .filter(|entry| {
+            entry.output_contract == sinexctl::CommandOutputContract::FiniteViewEnvelope
+        })
+        .map(|entry| entry.path)
+        .collect();
+    assert!(
+        finite_view_commands.contains(&"recall"),
+        "recall must be classified as a finite ViewEnvelope read surface"
+    );
+    assert!(
+        finite_view_commands.contains(&"sources coverage"),
+        "source coverage must be classified as a finite ViewEnvelope read surface"
+    );
+
+    for command in finite_view_commands {
         let result = sinexctl::validate_format(command, sinexctl::OutputFormat::Ndjson);
         assert!(
             result.is_err(),

@@ -29,6 +29,22 @@ pub enum CommandEffect {
     Local,
 }
 
+/// Machine-output contract for a command path.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CommandOutputContract {
+    /// Single finite object rendered as a `ViewEnvelope<T>` for JSON/YAML.
+    FiniteViewEnvelope,
+    /// Single finite object rendered without the ViewEnvelope contract.
+    PlainObject,
+    /// Single command that may emit one record per line in NDJSON.
+    RecordStream,
+    /// Long-running stream.
+    Streaming,
+    /// Command has no structured output contract.
+    None,
+}
+
 /// Safety mechanism declared for commands that can mutate state.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -48,6 +64,7 @@ pub struct CommandCatalogEntry {
     pub backing_rpc_methods: &'static [&'static str],
     pub required_rpc_role: Option<RpcRole>,
     pub mutation_guards: &'static [CommandMutationGuard],
+    pub output_contract: CommandOutputContract,
     pub capability: FormatCapability,
 }
 
@@ -821,6 +838,7 @@ pub fn command_catalog() -> Vec<CommandCatalogEntry> {
                 backing_rpc_methods,
                 required_rpc_role: required_rpc_role(backing_rpc_methods, &rpc_catalog),
                 mutation_guards: mutation_guards_for_path(path),
+                output_contract: output_contract_for_path(path, capability),
                 capability: capability.clone(),
             }
         })
@@ -947,6 +965,97 @@ fn effect_for_path(path: &str, capability: &FormatCapability) -> CommandEffect {
     } else {
         CommandEffect::ReadOnly
     }
+}
+
+fn output_contract_for_path(
+    path: &str,
+    capability: &FormatCapability,
+) -> CommandOutputContract {
+    if capability.streaming {
+        return CommandOutputContract::Streaming;
+    }
+
+    if capability.supported.is_empty() {
+        return CommandOutputContract::None;
+    }
+
+    if capability.supports(OutputFormat::Ndjson) {
+        return CommandOutputContract::RecordStream;
+    }
+
+    if finite_view_paths().contains(&path) {
+        CommandOutputContract::FiniteViewEnvelope
+    } else {
+        CommandOutputContract::PlainObject
+    }
+}
+
+fn finite_view_paths() -> &'static [&'static str] {
+    &[
+        "docs chunks",
+        "docs get",
+        "docs search",
+        "events context",
+        "events errors",
+        "events explain",
+        "events recent",
+        "events timeline",
+        "events trace",
+        "metrics report calendar",
+        "metrics report today",
+        "metrics report yesterday",
+        "metrics telemetry event-engine-validation",
+        "metrics telemetry gateway-stats",
+        "metrics throughput",
+        "ops audit",
+        "ops blob fsck",
+        "ops blob migrate",
+        "ops blob sweep-orphans",
+        "ops blob verify-integrity",
+        "ops catchup status",
+        "ops debt list",
+        "ops dlq cleanup-plan",
+        "ops dlq list",
+        "ops dlq peek",
+        "ops dlq triage",
+        "ops evidence compile",
+        "ops get",
+        "ops jobs show",
+        "ops lifecycle status",
+        "ops lifecycle tombstone list",
+        "ops replay list",
+        "ops replay preview",
+        "ops replay status",
+        "privacy audit",
+        "privacy export",
+        "privacy policy list",
+        "privacy private-mode status",
+        "recall",
+        "runtime gateway ping",
+        "runtime gateway version",
+        "runtime health",
+        "runtime modules",
+        "runtime status",
+        "semantic curation duplicates",
+        "semantic curation proposals",
+        "semantic epoch list",
+        "semantic lane diffs",
+        "semantic lane list",
+        "semantic lane outputs",
+        "semantic llm budget-report",
+        "semantic llm prompts",
+        "show",
+        "sources coverage",
+        "sources drift",
+        "sources explain-gap",
+        "sources list",
+        "sources readiness",
+        "sources remediation-plan",
+        "sources show",
+        "sources status",
+        "tasks list",
+        "tasks state",
+    ]
 }
 
 fn mutation_guards_for_path(path: &str) -> &'static [CommandMutationGuard] {
@@ -1266,17 +1375,18 @@ pub fn render_format_matrix() -> String {
     let rows = command_catalog();
 
     let mut out = String::from(
-        "| Command | effect | RPC role | mutation guards | RPC methods | table | json | ndjson | yaml | dot | streaming | Note |\n",
+        "| Command | effect | output contract | RPC role | mutation guards | RPC methods | table | json | ndjson | yaml | dot | streaming | Note |\n",
     );
-    out.push_str("|---------|--------|----------|-----------------|-------------|-------|------|--------|------|-----|-----------|------|\n");
+    out.push_str("|---------|--------|-----------------|----------|-----------------|-------------|-------|------|--------|------|-----|-----------|------|\n");
 
     for entry in &rows {
         let cap = &entry.capability;
         let has = |f: OutputFormat| if cap.supports(f) { "✓" } else { "" };
         out.push_str(&format!(
-            "| `{}` | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} |\n",
+            "| `{}` | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} |\n",
             entry.path,
             effect_label(entry.effect),
+            output_contract_label(entry.output_contract),
             entry.required_rpc_role.map_or("", rpc_role_label),
             mutation_guards_label(entry),
             entry.backing_rpc_methods.join(", "),
@@ -1305,6 +1415,7 @@ pub fn render_format_matrix_terminal() -> String {
         .unwrap_or(10)
         .max(7);
     let effect_width = "read_only".len();
+    let contract_width = "finite_view_envelope".len();
     let role_width = "read_only".len();
     let guard_width = rows
         .iter()
@@ -1319,14 +1430,16 @@ pub fn render_format_matrix_terminal() -> String {
         .unwrap_or("rpc_methods".len())
         .max("rpc_methods".len());
     let header = format!(
-        "{:<width$}  {:<effect_width$}  {:<role_width$}  {:<guard_width$}  {:<rpc_width$}  table  json  ndjson   yaml   dot  stream  note",
+        "{:<width$}  {:<effect_width$}  {:<contract_width$}  {:<role_width$}  {:<guard_width$}  {:<rpc_width$}  table  json  ndjson   yaml   dot  stream  note",
         "COMMAND",
         "EFFECT",
+        "CONTRACT",
         "RPC_ROLE",
         "GUARDS",
         "RPC_METHODS",
         width = cmd_width,
         effect_width = effect_width,
+        contract_width = contract_width,
         role_width = role_width,
         guard_width = guard_width,
         rpc_width = rpc_width,
@@ -1339,9 +1452,10 @@ pub fn render_format_matrix_terminal() -> String {
         let cap = &entry.capability;
         let has = |f: OutputFormat| if cap.supports(f) { "  ✓  " } else { "     " };
         out.push_str(&format!(
-            "{:<width$}  {:<effect_width$}  {:<role_width$}  {:<guard_width$}  {:<rpc_width$}{}{}{}{}{}  {:<6}  {}\n",
+            "{:<width$}  {:<effect_width$}  {:<contract_width$}  {:<role_width$}  {:<guard_width$}  {:<rpc_width$}{}{}{}{}{}  {:<6}  {}\n",
             entry.path,
             effect_label(entry.effect),
+            output_contract_label(entry.output_contract),
             entry.required_rpc_role.map_or("", rpc_role_label),
             mutation_guards_label(entry),
             rpc_methods_label(entry),
@@ -1354,6 +1468,7 @@ pub fn render_format_matrix_terminal() -> String {
             cap.note.unwrap_or(""),
             width = cmd_width,
             effect_width = effect_width,
+            contract_width = contract_width,
             role_width = role_width,
             guard_width = guard_width,
             rpc_width = rpc_width,
@@ -1390,6 +1505,16 @@ fn rpc_role_label(role: RpcRole) -> &'static str {
         RpcRole::ReadOnly => "read_only",
         RpcRole::Write => "write",
         RpcRole::Admin => "admin",
+    }
+}
+
+fn output_contract_label(contract: CommandOutputContract) -> &'static str {
+    match contract {
+        CommandOutputContract::FiniteViewEnvelope => "finite_view_envelope",
+        CommandOutputContract::PlainObject => "plain_object",
+        CommandOutputContract::RecordStream => "record_stream",
+        CommandOutputContract::Streaming => "streaming",
+        CommandOutputContract::None => "none",
     }
 }
 
