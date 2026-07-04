@@ -6,6 +6,7 @@
 //! catalog discovers them through `inventory`.
 
 pub mod analytics;
+pub mod attention;
 pub mod canonicalizer;
 pub mod daily;
 pub mod document_parser;
@@ -22,6 +23,7 @@ pub mod session;
 pub mod tag_applier;
 
 pub use analytics::AnalyticsAutomatonRuntime;
+pub use attention::AttentionStreamRuntime;
 pub use canonicalizer::TerminalCommandCanonicalizerRuntime;
 pub use daily::DailySummarizerRuntime;
 pub use document_parser::{DocumentParserAutomaton, DocumentParserRuntime};
