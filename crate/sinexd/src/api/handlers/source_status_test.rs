@@ -10,7 +10,9 @@ use sinex_primitives::source_contracts::{
     AccessScope, CheckpointFamily, Horizon, OccurrenceIdentity, PrivacyTier, ResourceProfile,
     RetentionPolicy, RunnerPack, RuntimeShape, SourceBuildImpact, SubjectRef,
 };
-use sinex_primitives::views::{ActionAvailability, ActionAvailabilityState, ActionSideEffect};
+use sinex_primitives::views::{
+    ActionAvailability, ActionAvailabilityState, ActionSideEffect, SourceCoverageListView,
+};
 use std::collections::BTreeSet;
 use xtask::sandbox::sinex_test;
 
@@ -41,15 +43,28 @@ fn session_record(
 
 #[sinex_test]
 async fn session_control_caveat_reports_operator_posture() -> xtask::sandbox::TestResult<()> {
+    let gap = session_control_gap(&session_record("paused", false))
+        .expect("paused live session should produce a coverage gap");
+    assert_eq!(gap.kind, "live_session_suspended");
+    assert!(gap.message.contains("capture suspended"));
+    assert!(gap.message.contains("debt:media.screen-ocr.live_session"));
+
     let paused = session_control_caveat(&session_record("paused", false));
     assert!(paused.message.contains("capture suspended"));
     assert!(paused.message.contains("paused"));
     assert!(paused.message.contains("reason=operator stepped away"));
 
+    assert!(
+        session_control_gap(&session_record("enabled", false)).is_none(),
+        "active live session should remain posture metadata, not coverage debt"
+    );
     let enabled = session_control_caveat(&session_record("enabled", false));
     assert!(enabled.message.contains("capture active"));
 
     // The per-session private flag suspends even when lifecycle is enabled.
+    let private_gap = session_control_gap(&session_record("enabled", true))
+        .expect("private-mode block should produce a coverage gap");
+    assert!(private_gap.message.contains("private_mode_blocked=true"));
     let private = session_control_caveat(&session_record("enabled", true));
     assert!(private.message.contains("capture suspended"));
     assert!(private.message.contains("private_mode_blocked=true"));
@@ -1100,6 +1115,32 @@ async fn email_provider_failure_operation_surfaces_source_coverage_debt_caveat()
             .contains("debt:email.mailbox.gmail.provider_runtime")
     );
     assert!(caveat.message.contains("Gmail token file is unavailable"));
+    let gap = view
+        .gaps
+        .iter()
+        .find(|gap| gap.kind == "email_provider_runtime_failed")
+        .expect("provider runtime failure should be a coverage gap");
+    assert!(
+        gap.message
+            .contains("coverage:email.mailbox.gmail.provider_runtime")
+    );
+    assert!(
+        gap.message
+            .contains("debt:email.mailbox.gmail.provider_runtime")
+    );
+    assert!(gap.message.contains("failure_class=authorization-missing"));
+    assert!(
+        gap.message
+            .contains("required_action=email.mailbox.authorize")
+    );
+    let summary = SourceCoverageListView::new(vec![view.clone()]).summary;
+    assert_eq!(summary.coverage_error_sources, 1);
+    assert_eq!(
+        summary
+            .coverage_error_kinds
+            .get("gap.email_provider_runtime_failed"),
+        Some(&1)
+    );
     let ref_ = caveat
         .ref_
         .as_ref()
@@ -1185,6 +1226,21 @@ async fn email_mailbox_projection_surfaces_materialization_debt_and_mode_counts(
     assert!(caveat.message.contains("3 projected message"));
     assert!(caveat.message.contains("128 message body byte"));
     assert!(caveat.message.contains("4 attachment(s) declared"));
+    let gap = view
+        .gaps
+        .iter()
+        .find(|gap| gap.kind == "email_mailbox_projection_materialization_debt")
+        .expect("projection materialization debt should be a coverage gap");
+    assert!(gap.message.contains("128 message body byte"));
+    assert!(gap.message.contains("4 attachment(s) declared"));
+    let summary = SourceCoverageListView::new(vec![view.clone()]).summary;
+    assert_eq!(summary.coverage_error_sources, 1);
+    assert_eq!(
+        summary
+            .coverage_error_kinds
+            .get("gap.email_mailbox_projection_materialization_debt"),
+        Some(&1)
+    );
 
     let mode = view
         .modes
