@@ -1,7 +1,7 @@
 use crate::domain::{EventSource, EventType, HostName};
 use crate::error::SinexError;
 use crate::query::{
-    EventOrdering, EventQuery, Pagination, PayloadFilter, SortDirection, TimeRange,
+    EventOrdering, EventQuery, EventQueryLane, Pagination, PayloadFilter, SortDirection, TimeRange,
 };
 use crate::temporal::Timestamp;
 use crate::views::{CaveatView, SinexObjectKind, SinexObjectRef};
@@ -527,6 +527,10 @@ fn lower_event_compare(
             request.has_lineage = Some(query_value_bool(value)?);
             Ok(())
         }
+        "lane" if operator == QueryOperator::Eq => {
+            request.lane = query_value_string(value)?.parse::<EventQueryLane>()?;
+            Ok(())
+        }
         other => Err(SinexError::validation(format!(
             "events query field `{other}` with operator `{}` is descriptor-valid but cannot lower to EventQuery",
             operator.as_str()
@@ -720,6 +724,12 @@ const EVENT_FIELDS: &[QueryFieldDescriptor] = &[
         field_type: QueryFieldType::Boolean,
         operators: EXACT,
         enum_values: &[],
+    },
+    QueryFieldDescriptor {
+        name: "lane",
+        field_type: QueryFieldType::Enum,
+        operators: EXACT,
+        enum_values: &["activity", "reflection", "all"],
     },
 ];
 const SOURCE_DRIVER_FIELDS: &[QueryFieldDescriptor] = &[

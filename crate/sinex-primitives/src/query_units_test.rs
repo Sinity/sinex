@@ -1,4 +1,5 @@
 use super::*;
+use crate::query::EventQueryLane;
 use xtask::sandbox::prelude::sinex_test;
 
 #[sinex_test]
@@ -26,6 +27,7 @@ async fn descriptor_rejects_unknown_field_with_supported_field_names()
     let rendered = error.to_string();
     assert!(rendered.contains("source_id"));
     assert!(rendered.contains("source, event_type, host, scope_key, equivalence_key"));
+    assert!(rendered.contains("text, ts_orig, has_lineage, lane"));
     assert!(!rendered.contains("event_contract_id"));
     Ok(())
 }
@@ -47,12 +49,16 @@ async fn event_descriptor_exposes_only_currently_lowerable_fields_and_operators(
             "event_type",
             "host",
             "scope_key",
-            "equivalence_key"
+            "equivalence_key",
+            "text",
+            "ts_orig",
+            "has_lineage",
+            "lane",
         ]
     );
-    for field in descriptor.fields {
-        assert_eq!(field.operators, &[QueryOperator::Eq]);
-    }
+    let lane = descriptor.field("lane")?;
+    assert_eq!(lane.operators, &[QueryOperator::Eq]);
+    assert_eq!(lane.enum_values, &["activity", "reflection", "all"]);
     Ok(())
 }
 
@@ -166,6 +172,16 @@ async fn parser_lowers_single_quoted_rfc3339_event_time_bounds() -> xtask::sandb
         Some(Timestamp::parse_rfc3339("2026-07-02T13:00:00Z")?)
     );
     assert_eq!(request.limit, 25);
+    Ok(())
+}
+
+#[sinex_test]
+async fn parser_lowers_event_lane_into_event_query() -> xtask::sandbox::TestResult<()> {
+    let query = parse_sinex_query("events where lane = reflection limit 12")?;
+    let request = event_query_from_sinex_query(&query)?;
+
+    assert_eq!(request.lane, EventQueryLane::Reflection);
+    assert_eq!(request.limit, 12);
     Ok(())
 }
 

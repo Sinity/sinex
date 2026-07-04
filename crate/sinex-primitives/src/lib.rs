@@ -165,10 +165,10 @@ pub use public_ref::{
     ResolvedObjectStatus, ResolvedObjectView, parse_public_kind, public_kind_name,
 };
 pub use query::{
-    AggregationMode, Cursor, EventQuery, EventQueryResult, GroupByField, GroupedCount,
-    LineageDirection, LineageNode, LineageQuery, LineageResult, Pagination, PathOp, PayloadFilter,
-    QueryResultEvent, SortDirection, SourceMaterialLinkInfo, SourceStatsEntry, SubscriptionFilter,
-    TimeBucketEntry, TimeRange, TimeSeriesOrder,
+    AggregationMode, Cursor, EventQuery, EventQueryLane, EventQueryResult, GroupByField,
+    GroupedCount, LineageDirection, LineageNode, LineageQuery, LineageResult, Pagination, PathOp,
+    PayloadFilter, QueryResultEvent, SortDirection, SourceMaterialLinkInfo, SourceStatsEntry,
+    SubscriptionFilter, TimeBucketEntry, TimeRange, TimeSeriesOrder,
 };
 pub use query_units::{
     QueryFieldDescriptor, QueryFieldType, QueryOperator, QueryPagination, QuerySortDescriptor,
