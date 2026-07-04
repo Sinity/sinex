@@ -128,40 +128,6 @@ fn default_all_source_bindings_from_manifest(
         .collect()
 }
 
-fn default_dev_source_bindings_path() -> PathBuf {
-    crate::config::workspace_root().join(DEV_SOURCE_BINDINGS_PATH)
-}
-
-fn source_bindings_env_override() -> Option<(String, String)> {
-    if std::env::var("SINEX_SOURCE_BINDINGS_PATH")
-        .ok()
-        .is_some_and(|value| !value.trim().is_empty())
-    {
-        return None;
-    }
-
-    let path = default_dev_source_bindings_path();
-    path.exists().then(|| {
-        (
-            "SINEX_SOURCE_BINDINGS_PATH".to_string(),
-            path.display().to_string(),
-        )
-    })
-}
-
-fn append_core_source_bindings_env(env: &mut Vec<(String, String)>) {
-    if env
-        .iter()
-        .any(|(key, value)| key == "SINEX_SOURCE_BINDINGS_PATH" && !value.trim().is_empty())
-    {
-        return;
-    }
-
-    if let Some(binding_env) = source_bindings_env_override() {
-        env.push(binding_env);
-    }
-}
-
 fn source_binding_runtime_args(binding: &DevSourceBinding, run_identity: &str) -> Vec<String> {
     let mut args = vec![
         "scan-source-driver".to_string(),
@@ -585,15 +551,16 @@ async fn stop_bundle_child(name: &str, child: &mut Child) -> Result<()> {
 /// `sinexd` daemon. Dev targets use current source/automaton labels and all
 /// build/run sinexd.
 ///
-/// - `sinexd`: launch sinexd's supervisor (default `serve` subcommand). The
-///   supervisor brings up the event engine, the API, and every enabled
-///   source/automaton in one process.
+/// - `sinexd`: launch sinexd's core supervisor (default `serve` subcommand).
+///   xtask narrows the local env so this target brings up the event engine and
+///   API only; sources and automata are explicit sibling targets/bundles.
 /// - Source short names (e.g. `fs-source`): dispatch through
 ///   `sinexd scan-source-driver --source <id>` for one-off scan-mode
 ///   runs against a single source.
 /// - Automaton short names: resolve to one supervisor process with
-///   `SINEX_AUTOMATA_ENABLED` narrowed to that automaton. They are not
-///   separate binaries, but they must not start every automaton either.
+///   `SINEX_AUTOMATA_ENABLED` narrowed to that automaton and the event engine,
+///   API, and source bindings disabled. They are not separate binaries, but
+///   they must not start every component either.
 static BINARIES: &[(&str, &str, &str, RuntimeTarget)] = &[
     // Core supervisor entry points (serve the whole daemon)
     ("sinexd", "sinexd", "sinexd", RuntimeTarget::Supervisor),
@@ -1033,13 +1000,15 @@ impl RunCommand {
 
     fn core_bundle_env_vars(&self) -> Vec<(String, String)> {
         let mut env = self.local_run_env_vars();
-        append_core_source_bindings_env(&mut env);
+        env.push(("SINEX_AUTOMATA_ENABLED".to_string(), String::new()));
+        env.push(("SINEX_SOURCE_BINDINGS_PATH".to_string(), String::new()));
         env
     }
 
     fn automaton_env_vars(&self, automaton: &str) -> Vec<(String, String)> {
         let mut env = self.local_run_env_vars();
         env.push(("SINEX_AUTOMATA_ENABLED".to_string(), automaton.to_string()));
+        env.push(("SINEX_EVENT_ENGINE_ENABLED".to_string(), "false".to_string()));
         env.push(("SINEX_API_ENABLED".to_string(), "false".to_string()));
         env.push(("SINEX_SOURCE_BINDINGS_PATH".to_string(), String::new()));
         env
@@ -1048,6 +1017,7 @@ impl RunCommand {
     fn all_automata_env_vars(&self) -> Vec<(String, String)> {
         let mut env = self.local_run_env_vars();
         env.push(("SINEX_AUTOMATA_ENABLED".to_string(), "all".to_string()));
+        env.push(("SINEX_EVENT_ENGINE_ENABLED".to_string(), "false".to_string()));
         env.push(("SINEX_API_ENABLED".to_string(), "false".to_string()));
         env.push(("SINEX_SOURCE_BINDINGS_PATH".to_string(), String::new()));
         env
@@ -1055,7 +1025,8 @@ impl RunCommand {
 
     fn runtime_env_vars(&self, target: RuntimeTarget) -> Vec<(String, String)> {
         match target {
-            RuntimeTarget::Supervisor | RuntimeTarget::Source(_) => self.local_run_env_vars(),
+            RuntimeTarget::Supervisor => self.core_bundle_env_vars(),
+            RuntimeTarget::Source(_) => self.local_run_env_vars(),
             RuntimeTarget::Automaton(automaton) => self.automaton_env_vars(automaton),
             RuntimeTarget::AllAutomata => self.all_automata_env_vars(),
         }

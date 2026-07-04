@@ -388,51 +388,71 @@ fn export_source_skeleton(
 }
 
 async fn serve(cli: &Cli) -> color_eyre::Result<()> {
-    let event_engine_config = EventEngineConfig::from_args(
-        cli.database_url.clone(),
-        cli.nats_url.clone(),
-        cli.nats_require_tls,
-        cli.pool_size,
-        None,
-        None,
-        None,
-        None,
-        false,
-        None,
-        None,
-        cli.namespace.clone(),
-    )?;
+    // The event engine and API are enabled by default. Focused module-local
+    // development runs opt out via environment flags so a selected automaton
+    // does not also start a duplicate admission/persistence pipeline.
+    let event_engine_enabled = event_engine_enabled_from_env();
+    let api_enabled = api_enabled_from_env();
 
-    if schema_apply_on_startup_from_env() {
-        tracing::info!("applying database schema before starting sinexd modules");
-        sinex_db::apply_schema_for_url(&event_engine_config.database_url).await?;
-    }
+    let event_engine_config = if event_engine_enabled {
+        let config = EventEngineConfig::from_args(
+            cli.database_url.clone(),
+            cli.nats_url.clone(),
+            cli.nats_require_tls,
+            cli.pool_size,
+            None,
+            None,
+            None,
+            None,
+            false,
+            None,
+            None,
+            cli.namespace.clone(),
+        )?;
 
-    event_engine_config.validate().await?;
+        if schema_apply_on_startup_from_env() {
+            tracing::info!("applying database schema before starting sinexd modules");
+            sinex_db::apply_schema_for_url(&config.database_url).await?;
+        }
 
-    let api_config = match cli.database_url.as_ref() {
-        Some(url) => GatewayConfig::load_with_database_url(url.clone()),
-        None => GatewayConfig::load(),
-    }?;
+        config.validate().await?;
+        Some(config)
+    } else {
+        None
+    };
 
-    // The API is enabled by default. Engine-only deployments (e.g. the sandbox
-    // event_engine fixture, which runs the gateway as a separate TLS subprocess)
-    // opt out via `SINEX_API_ENABLED=false` so the supervisor does not try to
-    // bind the TLS-required gateway and tear the daemon down.
+    let api_config = if api_enabled {
+        Some(match cli.database_url.as_ref() {
+            Some(url) => GatewayConfig::load_with_database_url(url.clone()),
+            None => GatewayConfig::load(),
+        }?)
+    } else {
+        None
+    };
+
     let supervisor = Supervisor {
-        event_engine_enabled: true,
-        api_enabled: api_enabled_from_env(),
+        event_engine_enabled,
+        api_enabled,
     };
     supervisor.run(event_engine_config, api_config).await?;
 
     Ok(())
 }
 
+/// Read the `SINEX_EVENT_ENGINE_ENABLED` toggle (default `true`).
+fn event_engine_enabled_from_env() -> bool {
+    enabled_env_flag("SINEX_EVENT_ENGINE_ENABLED", true)
+}
+
 /// Read the `SINEX_API_ENABLED` toggle (default `true`).
 fn api_enabled_from_env() -> bool {
-    match std::env::var("SINEX_API_ENABLED") {
+    enabled_env_flag("SINEX_API_ENABLED", true)
+}
+
+fn enabled_env_flag(name: &str, default: bool) -> bool {
+    match std::env::var(name) {
         Ok(value) => !matches!(value.trim(), "0" | "false" | "no" | "off"),
-        Err(_) => true,
+        Err(_) => default,
     }
 }
 
