@@ -1,9 +1,26 @@
 use super::*;
+use std::os::unix::net::UnixListener;
 use xtask_macros::sinex_test;
+
+fn clear_hyprland_env() -> xtask::sandbox::EnvGuard {
+    let keys = [
+        "SINEX_HYPRLAND_EVENT_SOCKET",
+        "SINEX_HYPRLAND_RUNTIME_DIR",
+        "XDG_RUNTIME_DIR",
+        "SINEX_HYPRLAND_INSTANCE_SIGNATURE",
+        "HYPRLAND_INSTANCE_SIGNATURE",
+    ];
+    let mut env = xtask::sandbox::EnvGuard::with_keys(&keys);
+    for key in keys {
+        env.clear(key);
+    }
+    env
+}
 
 #[sinex_test]
 async fn dev_bindings_manifest_contains_dogfood_source_families()
 -> crate::sandbox::prelude::TestResult<()> {
+    let _env = clear_hyprland_env();
     let home = tempfile::tempdir()?;
     std::fs::write(home.path().join(".zsh_history"), ": 1:0;echo test\n")?;
     let qutebrowser_dir = home.path().join(".local/share/qutebrowser");
@@ -44,6 +61,7 @@ async fn dev_bindings_manifest_contains_dogfood_source_families()
 #[sinex_test]
 async fn dev_bindings_manifest_skips_absent_zsh_history()
 -> crate::sandbox::prelude::TestResult<()> {
+    let _env = clear_hyprland_env();
     let home = tempfile::tempdir()?;
     let manifest = generate_dev_source_bindings_manifest_for_home(
         Path::new("/workspace/sinex"),
@@ -68,8 +86,69 @@ async fn dev_bindings_manifest_skips_absent_zsh_history()
 }
 
 #[sinex_test]
+async fn dev_bindings_manifest_adds_activitywatch_when_db_exists()
+-> crate::sandbox::prelude::TestResult<()> {
+    let _env = clear_hyprland_env();
+    let home = tempfile::tempdir()?;
+    let aw_dir = home
+        .path()
+        .join(".local/share/activitywatch/aw-server-rust");
+    std::fs::create_dir_all(&aw_dir)?;
+    let aw_db = aw_dir.join("sqlite.db");
+    std::fs::write(&aw_db, "")?;
+
+    let manifest = generate_dev_source_bindings_manifest_for_home(
+        Path::new("/workspace/sinex"),
+        home.path(),
+    );
+    let activitywatch = manifest
+        .bindings
+        .iter()
+        .find(|binding| binding.source_id == "desktop.activitywatch")
+        .expect("activitywatch binding exists");
+
+    assert_eq!(activitywatch.runtime_config["path"], aw_db.to_string_lossy().as_ref());
+    assert_eq!(activitywatch.runtime_config["read_only"], false);
+    assert_eq!(activitywatch.runtime_config["immutable"], false);
+    Ok(())
+}
+
+#[sinex_test]
+async fn dev_bindings_manifest_adds_hyprland_when_socket_exists()
+-> crate::sandbox::prelude::TestResult<()> {
+    let mut env = clear_hyprland_env();
+    let home = tempfile::tempdir()?;
+    let runtime = tempfile::Builder::new().prefix("sx").tempdir_in("/tmp")?;
+    let signature = "hypr-test-instance";
+    let socket_dir = runtime.path().join("hypr").join(signature);
+    std::fs::create_dir_all(&socket_dir)?;
+    let socket_path = socket_dir.join(".socket2.sock");
+    let _listener = UnixListener::bind(&socket_path)?;
+    env.set("SINEX_HYPRLAND_RUNTIME_DIR", runtime.path());
+    env.set("SINEX_HYPRLAND_INSTANCE_SIGNATURE", signature);
+
+    let manifest = generate_dev_source_bindings_manifest_for_home(
+        Path::new("/workspace/sinex"),
+        home.path(),
+    );
+    let hyprland = manifest
+        .bindings
+        .iter()
+        .find(|binding| binding.source_id == "desktop.window-manager")
+        .expect("hyprland binding exists");
+
+    assert_eq!(
+        hyprland.runtime_config["socket_path"],
+        socket_path.to_string_lossy().as_ref()
+    );
+    assert_eq!(hyprland.runtime_config["reconnect_on_eof"], true);
+    Ok(())
+}
+
+#[sinex_test]
 async fn dev_bindings_manifest_adds_qutebrowser_history_when_material_exists()
 -> crate::sandbox::prelude::TestResult<()> {
+    let _env = clear_hyprland_env();
     let home = tempfile::tempdir()?;
     let qutebrowser_dir = home.path().join(".local/share/qutebrowser");
     std::fs::create_dir_all(&qutebrowser_dir)?;
@@ -118,6 +197,7 @@ async fn dev_bindings_manifest_adds_qutebrowser_history_when_material_exists()
 #[sinex_test]
 async fn dev_bindings_manifest_attaches_browser_dump_to_one_binding_only()
 -> crate::sandbox::prelude::TestResult<()> {
+    let _env = clear_hyprland_env();
     let home = tempfile::tempdir()?;
     let qutebrowser_dir = home.path().join(".local/share/qutebrowser");
     std::fs::create_dir_all(&qutebrowser_dir)?;
@@ -167,6 +247,7 @@ async fn dev_bindings_manifest_attaches_browser_dump_to_one_binding_only()
 #[sinex_test]
 async fn dev_bindings_manifest_adds_chrome_history_when_material_exists()
 -> crate::sandbox::prelude::TestResult<()> {
+    let _env = clear_hyprland_env();
     let home = tempfile::tempdir()?;
     let chrome_dir = home.path().join(".config/chrome-ws/Default");
     std::fs::create_dir_all(&chrome_dir)?;
@@ -204,6 +285,7 @@ async fn dev_bindings_manifest_adds_chrome_history_when_material_exists()
 #[sinex_test]
 async fn dev_bindings_manifest_adds_raindrop_bookmarks_when_export_exists()
 -> crate::sandbox::prelude::TestResult<()> {
+    let _env = clear_hyprland_env();
     let home = tempfile::tempdir()?;
     let export_dir = tempfile::tempdir()?;
     let export_path = export_dir.path().join("bookmarks.csv");
@@ -234,6 +316,7 @@ async fn dev_bindings_manifest_adds_raindrop_bookmarks_when_export_exists()
 #[sinex_test]
 async fn dev_bindings_manifest_can_focus_selected_sources()
 -> crate::sandbox::prelude::TestResult<()> {
+    let _env = clear_hyprland_env();
     let home = tempfile::tempdir()?;
     let export_dir = tempfile::tempdir()?;
     let export_path = export_dir.path().join("bookmarks.csv");
@@ -263,6 +346,7 @@ async fn dev_bindings_manifest_can_focus_selected_sources()
 #[sinex_test]
 async fn dev_bindings_manifest_can_exclude_heavy_sources()
 -> crate::sandbox::prelude::TestResult<()> {
+    let _env = clear_hyprland_env();
     let home = tempfile::tempdir()?;
     let qutebrowser_dir = home.path().join(".local/share/qutebrowser");
     std::fs::create_dir_all(&qutebrowser_dir)?;
@@ -287,6 +371,7 @@ async fn dev_bindings_manifest_can_exclude_heavy_sources()
 #[sinex_test]
 async fn dev_bindings_manifest_rejects_unknown_source_filter()
 -> crate::sandbox::prelude::TestResult<()> {
+    let _env = clear_hyprland_env();
     let home = tempfile::tempdir()?;
     let manifest = generate_dev_source_bindings_manifest_for_home(
         Path::new("/workspace/sinex"),
@@ -305,6 +390,7 @@ async fn dev_bindings_manifest_rejects_unknown_source_filter()
 #[sinex_test]
 async fn dev_bindings_manifest_uses_watch_root_for_git_and_fs()
 -> crate::sandbox::prelude::TestResult<()> {
+    let _env = clear_hyprland_env();
     let home = tempfile::tempdir()?;
     let manifest = generate_dev_source_bindings_manifest_for_home(
         Path::new("/workspace/sinex"),
@@ -338,6 +424,7 @@ async fn dev_bindings_manifest_uses_watch_root_for_git_and_fs()
 #[sinex_test]
 async fn dev_bindings_manifest_uses_stable_service_names()
 -> crate::sandbox::prelude::TestResult<()> {
+    let _env = clear_hyprland_env();
     let manifest = generate_dev_source_bindings_manifest(Path::new("/workspace/sinex"));
 
     for binding in &manifest.bindings {

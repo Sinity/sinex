@@ -73,6 +73,17 @@ fn parse_aw_timestamp(s: &str) -> Option<Timestamp> {
         .map(Timestamp::new)
 }
 
+fn activitywatch_data_object(row: &serde_json::Value) -> serde_json::Value {
+    match row.get("data") {
+        Some(serde_json::Value::Object(_)) => row["data"].clone(),
+        Some(serde_json::Value::String(raw)) => {
+            serde_json::from_str(raw).unwrap_or(serde_json::Value::Null)
+        }
+        Some(value) => value.clone(),
+        None => serde_json::Value::Null,
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Parser
 // ---------------------------------------------------------------------------
@@ -169,7 +180,7 @@ impl MaterialParser for ActivityWatchParser {
             .and_then(parse_aw_timestamp)
             .unwrap_or_else(Timestamp::now);
 
-        let data = row.get("data").cloned().unwrap_or(serde_json::Value::Null);
+        let data = activitywatch_data_object(&row);
 
         // Schema payloads (ActivityWatchWindowActivePayload, AfkChangedPayload,
         // BrowserTabActivePayload) require `duration_ms: u64` (not the
