@@ -1,8 +1,40 @@
 use super::{
-    RawStreamConsumerState, RawStreamWorkQueueRecreationDecision,
+    JETSTREAM_BOOTSTRAP_MAX_BYTES, REFLECTION_STREAM_MAX_BYTES, RawStreamConsumerState,
+    RawStreamWorkQueueRecreationDecision, raw_events_stream_config,
     raw_stream_workqueue_recreation_decision,
 };
+use sinex_primitives::environment::SinexEnvironment;
+use sinex_primitives::nats::{JetStreamEventLane, JetStreamTopology};
+use std::time::Duration;
 use xtask::sandbox::sinex_test;
+
+#[sinex_test]
+async fn raw_stream_caps_follow_topology_lane() -> xtask::sandbox::TestResult<()> {
+    let env = SinexEnvironment::new("dev")?;
+    let activity = JetStreamTopology::new(
+        &env,
+        env.nats_stream_name_with_namespace(None, "SINEX_RAW_EVENTS"),
+        "event-engine-dev".to_string(),
+        None,
+    );
+    let reflection = JetStreamTopology::reflection(
+        &env,
+        env.nats_stream_name_with_namespace(None, "SINEX_REFLECTION_EVENTS"),
+        "event-engine-dev-reflection".to_string(),
+        None,
+    );
+
+    let activity_config = raw_events_stream_config(&activity);
+    let reflection_config = raw_events_stream_config(&reflection);
+
+    assert_eq!(activity.lane, JetStreamEventLane::Activity);
+    assert_eq!(activity_config.max_bytes, JETSTREAM_BOOTSTRAP_MAX_BYTES);
+    assert_eq!(activity_config.max_age, Duration::from_secs(72 * 60 * 60));
+    assert_eq!(reflection.lane, JetStreamEventLane::Reflection);
+    assert_eq!(reflection_config.max_bytes, REFLECTION_STREAM_MAX_BYTES);
+    assert_eq!(reflection_config.max_age, Duration::from_secs(24 * 60 * 60));
+    Ok(())
+}
 
 #[sinex_test]
 async fn raw_workqueue_recreation_allows_empty_stream() -> xtask::sandbox::TestResult<()> {
