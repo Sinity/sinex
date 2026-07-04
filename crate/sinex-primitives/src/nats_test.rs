@@ -89,6 +89,7 @@ async fn reflection_topology_uses_separate_event_subject_roots() -> xtask::sandb
         None,
     );
 
+    assert_eq!(topology.lane, JetStreamEventLane::Reflection);
     assert_eq!(topology.events_stream.as_ref(), "DEV_SINEX_REFLECTION_EVENTS");
     assert_eq!(topology.events_subject.as_ref(), "dev.events.reflection.raw.>");
     assert_eq!(

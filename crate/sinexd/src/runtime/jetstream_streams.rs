@@ -6,7 +6,7 @@ use futures::StreamExt;
 use sinex_primitives::{
     constants::env_vars,
     environment::{SinexEnvironment, environment},
-    nats::JetStreamTopology,
+    nats::{JetStreamEventLane, JetStreamTopology},
 };
 use std::time::Duration;
 use tokio::time::sleep;
@@ -15,6 +15,7 @@ use tracing::warn;
 // Keep runtime-created stream caps aligned with the Nix bootstrap path. The current
 // nats CLI rejects --max-bytes values above signed 32-bit range.
 pub const JETSTREAM_BOOTSTRAP_MAX_BYTES: i64 = 2_147_483_647;
+pub const REFLECTION_STREAM_MAX_BYTES: i64 = 256 * 1024 * 1024;
 
 /// Ensure the raw-events stream exists for source and automaton producers.
 pub async fn bootstrap_raw_events_stream(
@@ -111,13 +112,24 @@ pub async fn ensure_raw_events_stream_for_topology(
 }
 
 fn raw_events_stream_config(topology: &JetStreamTopology) -> jetstream::stream::Config {
+    let (max_bytes, max_age) = match topology.lane {
+        JetStreamEventLane::Activity => (
+            JETSTREAM_BOOTSTRAP_MAX_BYTES,
+            Duration::from_secs(72 * 60 * 60),
+        ),
+        JetStreamEventLane::Reflection => (
+            REFLECTION_STREAM_MAX_BYTES,
+            Duration::from_secs(24 * 60 * 60),
+        ),
+    };
+
     jetstream::stream::Config {
         name: topology.events_stream.to_string(),
         subjects: vec![topology.events_subject.to_string()],
         retention: jetstream::stream::RetentionPolicy::WorkQueue,
         max_messages: 2_000_000,
-        max_bytes: JETSTREAM_BOOTSTRAP_MAX_BYTES,
-        max_age: Duration::from_secs(72 * 60 * 60),
+        max_bytes,
+        max_age,
         storage: jetstream::stream::StorageType::File,
         discard: jetstream::stream::DiscardPolicy::Old,
         ..Default::default()

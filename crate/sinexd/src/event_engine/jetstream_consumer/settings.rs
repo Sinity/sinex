@@ -50,3 +50,5 @@ pub(super) const STREAM_CAPACITY_CHECK_INTERVAL: Duration = Duration::from_mins(
 // Keep runtime-created stream caps aligned with the Nix bootstrap path. The current
 // nats CLI rejects --max-bytes values above signed 32-bit range.
 pub(super) const JETSTREAM_BOOTSTRAP_MAX_BYTES: i64 = 2_147_483_647;
+pub(super) const REFLECTION_CONFIRMED_MAX_BYTES: i64 = 256 * 1024 * 1024;
+pub(super) const REFLECTION_DIAGNOSTIC_MAX_BYTES: i64 = 64 * 1024 * 1024;
