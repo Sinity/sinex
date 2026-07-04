@@ -101,6 +101,10 @@ Live first rule:
 
 This keeps capture as point/transition evidence and makes intervals a derived
 mechanism with parent refs to the exact opening and closing observations.
+`interval_id` / `equivalence_key` are likewise derived from the state kind,
+subject, start parent id, and end parent id; they must not depend on local
+runtime sequence counters, because replay/restored state can otherwise collide
+with already-live intervals and trigger false occurrence suppression.
 
 ## 4. Design rules for extending the taxonomy (review-enforceable)
 
