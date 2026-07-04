@@ -38,16 +38,13 @@ pub use email_mailbox_projection::{
 pub use email_provider_state::{
     EmailProviderStateRecord, EmailProviderStateRepository, EmailProviderStateUpsert,
 };
-pub use source_session_state::{
-    SourceSessionStateRecord, SourceSessionStateRepository, SourceSessionStateUpsert,
-};
 pub use embeddings::{
     CacheEntry, CachedEmbeddingHit, EmbeddingModelRecord, EmbeddingRepository, EmbeddingTarget,
     EventEmbeddingRow, HybridSearchResult, KnnSearchResult, SimilarityResult,
 };
 pub use events::{
     COPY_BATCH_THRESHOLD, EventAnnotation, EventPayloadSchema, EventRepository, EventRepositoryTx,
-    ReplacementKind, ReplacementRecord, StreamBatchInsertResult, StreamBatchRow,
+    EventStorageLane, ReplacementKind, ReplacementRecord, StreamBatchInsertResult, StreamBatchRow,
 };
 pub use integrity::IntegrityRepository;
 pub use knowledge_graph::{
@@ -69,6 +66,9 @@ pub use source_materials::{
     SourceMaterial, SourceMaterialExt, SourceMaterialLink, SourceMaterialLinkRecord,
     SourceMaterialRepository, TemporalLedgerEntry, material_kinds, material_types,
     relation_types as source_material_relation_types, timing_info_types,
+};
+pub use source_session_state::{
+    SourceSessionStateRecord, SourceSessionStateRepository, SourceSessionStateUpsert,
 };
 pub use state::{
     ManifestRow, ModuleRun, Operation, OperationRecord, OperationStatistics, StateRepository,

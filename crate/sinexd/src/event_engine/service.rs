@@ -1026,6 +1026,7 @@ impl IngestService {
                 validator.clone(),
                 topology,
             )
+            .with_event_lane(lane)
             .with_batch_fetch_config(fetch_max, fetch_timeout)
             .with_max_ack_pending(max_ack_pending)
             .with_stats_log_interval(telemetry_interval)
