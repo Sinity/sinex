@@ -3,11 +3,16 @@ use color_eyre::eyre::eyre;
 use sinex_primitives::rpc::replay::{ReplayGateOverrides, ReplayState};
 use sinex_primitives::rpc::sources::{SourcesShowRequest, SourcesShowResponse};
 use sinex_primitives::sources::continuity::{MaterialReplayabilityScorecard, Replayability};
+use sinex_primitives::views::{
+    CaveatView, ReadinessCaveatId, SinexObjectKind, SinexObjectRef, ViewEnvelope,
+};
 use tokio::time::{Duration, sleep};
 
 use crate::Result;
 use crate::client::GatewayClient;
-use crate::fmt::{CommandOutput, ProgressReporter, format_json, format_yaml};
+use crate::fmt::{
+    CommandOutput, ProgressReporter, format_json, format_yaml, print_finite_envelope,
+};
 use crate::model::OutputFormat;
 
 /// Replay operations — re-ingest source materials through the full pipeline
@@ -272,23 +277,16 @@ impl ReplayCommands {
             Self::Preview { operation_id } => {
                 let (operation, preview) = client.replay_preview(operation_id).await?;
                 let scorecards = collect_material_scorecards(client, &operation).await?;
+                let envelope = replay_preview_envelope(
+                    operation.clone(),
+                    preview.clone(),
+                    scorecards.clone(),
+                    operation_id,
+                );
+                if print_finite_envelope(&envelope, format)? {
+                    return Ok(());
+                }
                 match format {
-                    OutputFormat::Json => println!(
-                        "{}",
-                        format_json(&serde_json::json!({
-                            "operation": operation,
-                            "preview": preview,
-                            "per_material_replayability": scorecards,
-                        }))?
-                    ),
-                    OutputFormat::Yaml => println!(
-                        "{}",
-                        format_yaml(&serde_json::json!({
-                            "operation": operation,
-                            "preview": preview,
-                            "per_material_replayability": scorecards,
-                        }))?
-                    ),
                     _ => {
                         println!("{}", format_replay_preview_table(&operation, &preview));
                         if !scorecards.is_empty() {
@@ -373,6 +371,10 @@ impl ReplayCommands {
 
             Self::Status { operation_id } => {
                 let operation = client.replay_status(operation_id).await?;
+                let envelope = replay_status_envelope(operation.clone(), operation_id);
+                if print_finite_envelope(&envelope, format)? {
+                    return Ok(());
+                }
                 CommandOutput::single(operation, format_replay_status_table).display(&format)?;
             }
 
@@ -391,6 +393,10 @@ impl ReplayCommands {
                 let operations = client
                     .replay_list_filtered(state.map(Into::into), source.as_deref(), Some(*limit))
                     .await?;
+                let envelope = replay_list_envelope(operations.clone(), *state, source.as_deref(), *limit);
+                if print_finite_envelope(&envelope, format)? {
+                    return Ok(());
+                }
                 CommandOutput::list(
                     operations,
                     "No replay operations found.",
@@ -586,6 +592,188 @@ fn preview_total_events(preview: &serde_json::Value) -> Result<u64> {
         .get("total_events")
         .and_then(serde_json::Value::as_u64)
         .ok_or_else(|| eyre!("Replay preview is missing numeric `total_events`"))
+}
+
+fn replay_preview_envelope(
+    operation: ReplayOperation,
+    preview: serde_json::Value,
+    scorecards: Vec<MaterialReplayabilityScorecard>,
+    operation_id: &str,
+) -> ViewEnvelope<serde_json::Value> {
+    let mut envelope = ViewEnvelope::new(
+        "sinexctl.ops.replay.preview",
+        serde_json::json!({
+            "operation": operation,
+            "preview": preview,
+            "per_material_replayability": scorecards,
+        }),
+    )
+    .with_query_echo(serde_json::json!({
+        "operation_id": operation_id,
+    }));
+    envelope.caveats = replay_preview_caveats(&envelope.payload, operation_id);
+    envelope
+}
+
+fn replay_status_envelope(
+    operation: ReplayOperation,
+    operation_id: &str,
+) -> ViewEnvelope<ReplayOperation> {
+    let mut envelope = ViewEnvelope::new("sinexctl.ops.replay.status", operation)
+        .with_query_echo(serde_json::json!({
+            "operation_id": operation_id,
+        }));
+    envelope.caveats = replay_operation_caveats(&envelope.payload);
+    envelope
+}
+
+fn replay_list_envelope(
+    operations: Vec<ReplayOperation>,
+    state: Option<ReplayStateFilter>,
+    source: Option<&str>,
+    limit: i64,
+) -> ViewEnvelope<Vec<ReplayOperation>> {
+    let mut envelope = ViewEnvelope::new("sinexctl.ops.replay.list", operations)
+        .with_query_echo(serde_json::json!({
+            "state": state.map(|s| format!("{s:?}").to_ascii_lowercase()),
+            "source": source,
+            "limit": limit,
+        }));
+    if envelope.payload.is_empty() {
+        envelope.caveats.push(replay_caveat(
+            ReadinessCaveatId::SourceAbsent,
+            "no replay operations matched this query; this only proves the bounded operation-log slice is empty",
+            "replay.operations.empty",
+            "sinexctl ops replay list",
+            "replay.list_operations",
+        ));
+    }
+    envelope
+}
+
+fn replay_preview_caveats(payload: &serde_json::Value, operation_id: &str) -> Vec<CaveatView> {
+    let mut caveats = Vec::new();
+    let preview = payload
+        .get("preview")
+        .unwrap_or(&serde_json::Value::Null);
+    if preview
+        .get("total_events")
+        .and_then(serde_json::Value::as_u64)
+        == Some(0)
+    {
+        caveats.push(replay_caveat_for_operation(
+            ReadinessCaveatId::SourceAbsent,
+            "replay preview matched zero direct events; this is an empty replay scope, not evidence that the source has no historical material",
+            operation_id,
+            "sinexctl ops replay preview",
+            "replay.preview_operation",
+        ));
+    }
+
+    if preview
+        .get("safety_analysis")
+        .and_then(|v| v.get("status"))
+        .and_then(serde_json::Value::as_str)
+        == Some("failed")
+    {
+        caveats.push(replay_caveat_for_operation(
+            ReadinessCaveatId::CoverageUnmeasurable,
+            "replay preview safety analysis failed; cascade, replayability, or schema-risk coverage may be incomplete",
+            operation_id,
+            "sinexctl ops replay preview",
+            "replay.preview_operation",
+        ));
+    }
+
+    if let Some(gates) = preview
+        .get("replay_gates")
+        .and_then(|v| v.get("gates"))
+        .and_then(serde_json::Value::as_array)
+        && gates.iter().any(|gate| {
+            gate.get("tripped")
+                .and_then(serde_json::Value::as_bool)
+                .unwrap_or(false)
+        })
+    {
+        caveats.push(replay_caveat_for_operation(
+            ReadinessCaveatId::WindowPartial,
+            "replay preview tripped one or more safety gates; the proposed replay is not an unconditional repair path",
+            operation_id,
+            "sinexctl ops replay preview",
+            "replay.preview_operation",
+        ));
+    }
+
+    caveats
+}
+
+fn replay_operation_caveats(operation: &ReplayOperation) -> Vec<CaveatView> {
+    let mut caveats = Vec::new();
+    match operation.state {
+        ReplayState::Failed => caveats.push(replay_caveat_for_operation(
+            ReadinessCaveatId::WindowPartial,
+            "replay operation failed; source interpretations may remain stale or partially repaired until the failure is resolved",
+            &operation.operation_id,
+            "sinexctl ops replay status",
+            "replay.operation_status",
+        )),
+        ReplayState::Executing | ReplayState::Committing => caveats.push(replay_caveat_for_operation(
+            ReadinessCaveatId::WindowPartial,
+            "replay operation is still in progress; downstream read models may reflect a partial repair window",
+            &operation.operation_id,
+            "sinexctl ops replay status",
+            "replay.operation_status",
+        )),
+        _ => {}
+    }
+    if operation.checkpoint.total_events == 0 {
+        caveats.push(replay_caveat_for_operation(
+            ReadinessCaveatId::CoverageUnmeasurable,
+            "replay operation reports zero checkpoint events; progress counters do not prove source replay coverage",
+            &operation.operation_id,
+            "sinexctl ops replay status",
+            "replay.operation_status",
+        ));
+    }
+    caveats
+}
+
+fn replay_caveat_for_operation(
+    id: ReadinessCaveatId,
+    message: impl Into<String>,
+    operation_id: &str,
+    command_hint: &str,
+    rpc_method: &str,
+) -> CaveatView {
+    CaveatView {
+        id: id.as_str().to_string(),
+        message: message.into(),
+        ref_: Some(
+            SinexObjectRef::new(SinexObjectKind::ReplayRun, operation_id)
+                .with_label(operation_id)
+                .with_command_hint(format!("{command_hint} {operation_id}"))
+                .with_rpc_method(rpc_method),
+        ),
+    }
+}
+
+fn replay_caveat(
+    id: ReadinessCaveatId,
+    message: impl Into<String>,
+    ref_id: &str,
+    command_hint: &str,
+    rpc_method: &str,
+) -> CaveatView {
+    CaveatView {
+        id: id.as_str().to_string(),
+        message: message.into(),
+        ref_: Some(
+            SinexObjectRef::new(SinexObjectKind::ReplayRun, ref_id)
+                .with_label(ref_id)
+                .with_command_hint(command_hint)
+                .with_rpc_method(rpc_method),
+        ),
+    }
 }
 
 fn format_replay_plan_table(operation: &ReplayOperation) -> String {
