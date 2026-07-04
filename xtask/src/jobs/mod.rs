@@ -218,8 +218,9 @@ pub(crate) fn snapshot_recent_and_active_from_history_db(
         .get_active_background_jobs()?
         .into_iter()
         .filter(background_job_is_live)
-        .map(|bg| Job::from_background_job(bg, jobs_dir))
-        .collect();
+        .map(|bg| synthesize_job_for_query(bg, jobs_dir))
+        .filter(|job| job.as_ref().is_ok_and(|job| !job.is_terminal()))
+        .collect::<Result<Vec<_>>>()?;
     if std::env::var("SINEX_STATUS_PROFILE").is_ok() {
         eprintln!(
             "[status-profile] jobs.get_active_background_jobs: {:.3}s",
@@ -231,8 +232,8 @@ pub(crate) fn snapshot_recent_and_active_from_history_db(
     let recent = db
         .get_recent_background_jobs(limit)?
         .into_iter()
-        .map(|bg| Job::from_background_job(bg, jobs_dir))
-        .collect();
+        .map(|bg| synthesize_job_for_query(bg, jobs_dir))
+        .collect::<Result<Vec<_>>>()?;
     if std::env::var("SINEX_STATUS_PROFILE").is_ok() {
         eprintln!(
             "[status-profile] jobs.get_recent_background_jobs: {:.3}s",
@@ -274,13 +275,15 @@ fn terminal_status_from_exit_code_file(job_dir: &Path) -> Result<(InvocationStat
 
 fn synthesize_job_for_query(bg: BackgroundJob, jobs_dir: &Path) -> Result<Job> {
     let mut job = Job::from_background_job(bg, jobs_dir);
-    if matches!(job.job_status, JobLifecycleStatus::Running) && !job.is_alive() {
+    if matches!(job.job_status, JobLifecycleStatus::Running) {
         let job_dir = jobs_dir.join(job.id.to_string());
         let (invocation_status, exit_code) = terminal_status_from_exit_code_file(&job_dir)?;
         job.job_status = if exit_code.is_some() {
             JobLifecycleStatus::from_invocation_status(invocation_status)
-        } else {
+        } else if !job.is_alive() {
             JobLifecycleStatus::Orphaned
+        } else {
+            return Ok(job);
         };
         job.exit_code = exit_code;
     }
@@ -326,6 +329,7 @@ impl JobQueryManager {
             .into_iter()
             .filter(background_job_is_live)
             .map(|bg| synthesize_job_for_query(bg, &self.jobs_dir))
+            .filter(|job| job.as_ref().is_ok_and(|job| !job.is_terminal()))
             .collect()
     }
 
