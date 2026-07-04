@@ -223,6 +223,10 @@ pub struct ContextAttentionSpanView {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub duration_secs: Option<u64>,
     pub summary: String,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub parent_refs: Vec<SinexObjectRef>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub support_refs: Vec<SinexObjectRef>,
     pub latest_event: EventCardView,
 }
 
