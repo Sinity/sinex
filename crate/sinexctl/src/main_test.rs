@@ -430,6 +430,7 @@ async fn validate_format_rejects_ndjson_for_finite_view_envelopes() -> TestResul
         "ops replay preview",
         "ops replay status",
         "runtime health",
+        "runtime modules",
         "runtime status",
         "sources coverage",
         "sources list",
