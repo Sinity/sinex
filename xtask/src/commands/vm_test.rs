@@ -158,6 +158,29 @@ async fn test_validate_rejects_run_only_flags() -> ::xtask::sandbox::TestResult<
 }
 
 #[sinex_test]
+async fn test_resolve_vm_tests_rejects_empty_requested_category()
+-> ::xtask::sandbox::TestResult<()> {
+    let available_tests = Vec::new();
+    let error = resolve_vm_tests_to_run(&available_tests, Some("smoke"), &[], "x86_64-linux")
+        .expect_err("empty smoke category must not pass as a gate");
+
+    let message = format!("{error:#}");
+    assert!(message.contains("selected no exported checks"));
+    assert!(message.contains("xtask test vm --list"));
+    Ok(())
+}
+
+#[sinex_test]
+async fn test_resolve_vm_tests_keeps_exported_category_members()
+-> ::xtask::sandbox::TestResult<()> {
+    let available_tests = vec!["basic".to_string(), "runtime-matrix".to_string()];
+    let tests = resolve_vm_tests_to_run(&available_tests, Some("smoke"), &[], "x86_64-linux")?;
+
+    assert_eq!(tests, vec!["basic"]);
+    Ok(())
+}
+
+#[sinex_test]
 async fn test_discover_vm_test_files_reports_scenarios_dir_failures()
 -> ::xtask::sandbox::TestResult<()> {
     let temp = tempfile::tempdir()?;

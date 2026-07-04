@@ -86,6 +86,56 @@ fn all_tests() -> Vec<&'static str> {
     tests
 }
 
+fn requested_vm_test_catalogue(category: Option<&str>) -> Result<Vec<&'static str>> {
+    let catalogue = match category {
+        Some("smoke") => SMOKE_TESTS.to_vec(),
+        Some("integration") => INTEGRATION_TESTS.to_vec(),
+        Some("performance") => PERFORMANCE_TESTS.to_vec(),
+        Some("chaos") => CHAOS_TESTS.to_vec(),
+        Some("production-shape") => PRODUCTION_SHAPE_TESTS.to_vec(),
+        Some("all") => all_tests(),
+        Some(unknown) => bail!(
+            "Unknown category: '{unknown}'\nValid: smoke, integration, performance, chaos, production-shape, all"
+        ),
+        None => SMOKE_TESTS.to_vec(),
+    };
+    Ok(catalogue)
+}
+
+fn resolve_vm_tests_to_run<'a>(
+    available_tests: &'a [String],
+    category: Option<&str>,
+    explicit_tests: &'a [String],
+    system: &str,
+) -> Result<Vec<&'a str>> {
+    if explicit_tests.is_empty() {
+        let catalogue = requested_vm_test_catalogue(category)?;
+        let tests_to_run: Vec<&str> = catalogue
+            .into_iter()
+            .filter(|name| available_tests.iter().any(|available| available == name))
+            .collect();
+
+        if tests_to_run.is_empty() {
+            let selected = category.unwrap_or("smoke");
+            bail!(
+                "VM test category '{selected}' selected no exported checks for system {system}. \
+                 This is not a passing gate: restore the flake exports or choose an exported VM check. \
+                 Inspect with `xtask test vm --list`."
+            );
+        }
+
+        return Ok(tests_to_run);
+    }
+
+    let available: Vec<&str> = available_tests.iter().map(String::as_str).collect();
+    for test in explicit_tests {
+        if !available.contains(&test.as_str()) {
+            bail!("VM test '{test}' is not exported by this flake's checks for system {system}.");
+        }
+    }
+    Ok(explicit_tests.iter().map(String::as_str).collect())
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Command Definitions
 // ─────────────────────────────────────────────────────────────────────────────
@@ -886,38 +936,7 @@ async fn execute_test(
         return Ok(CommandResult::success().with_message("listed exported VM checks"));
     }
 
-    // Resolve tests to run
-    let tests_to_run: Vec<&str> = if explicit_tests.is_empty() {
-        let catalogue = match category {
-            Some("smoke") => SMOKE_TESTS.to_vec(),
-            Some("integration") => INTEGRATION_TESTS.to_vec(),
-            Some("performance") => PERFORMANCE_TESTS.to_vec(),
-            Some("chaos") => CHAOS_TESTS.to_vec(),
-            Some("production-shape") => PRODUCTION_SHAPE_TESTS.to_vec(),
-            Some("all") => all_tests(),
-            Some(unknown) => bail!(
-                "Unknown category: '{unknown}'\nValid: smoke, integration, performance, chaos, production-shape, all"
-            ),
-            None => SMOKE_TESTS.to_vec(), // default: smoke
-        };
-        catalogue
-            .into_iter()
-            .filter(|name| available_tests.iter().any(|available| available == name))
-            .collect()
-    } else {
-        let available: Vec<&str> = available_tests.iter().map(String::as_str).collect();
-        for t in explicit_tests {
-            if !available.contains(&t.as_str()) {
-                bail!("VM test '{t}' is not exported by this flake's checks for system {system}.");
-            }
-        }
-        explicit_tests.iter().map(String::as_str).collect()
-    };
-
-    if tests_to_run.is_empty() {
-        println!("No tests to run (category may be empty, e.g. chaos).");
-        return Ok(CommandResult::success().with_message("no tests to run"));
-    }
+    let tests_to_run = resolve_vm_tests_to_run(&available_tests, category, explicit_tests, &system)?;
 
     if ctx.is_human() {
         println!("\n{}", style("NixOS VM Tests").bold());
