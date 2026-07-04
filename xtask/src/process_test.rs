@@ -315,6 +315,40 @@ async fn test_terminate_registered_process_groups_handles_exited_group_leader() 
 
 #[cfg(target_os = "linux")]
 #[sinex_test(timeout = 30)]
+async fn test_signal_cleanup_terminates_registered_process_groups() -> TestResult<()> {
+    let _ = terminate_registered_process_groups("test setup cleanup")?;
+    let dir = tempdir()?;
+    let pid_file = dir.path().join("sleep.pid");
+    let script = format!("sleep 30 & echo $! > {} ; exit 0", pid_file.display());
+
+    let success = ProcessBuilder::new("sh")
+        .args(["-c", &script])
+        .run_success()?;
+    assert!(success);
+
+    let sleep_pid: i32 = std::fs::read_to_string(&pid_file)?.trim().parse()?;
+    assert_eq!(unsafe { libc::kill(sleep_pid, 0) }, 0);
+    assert_eq!(CleanupSignal::Interrupt.exit_code(), 130);
+    assert_eq!(CleanupSignal::Terminate.exit_code(), 143);
+
+    let terminated = terminate_registered_process_groups_for_signal(CleanupSignal::Interrupt);
+    assert!(terminated >= 1);
+
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+    while std::time::Instant::now() < deadline {
+        if unsafe { libc::kill(sleep_pid, 0) } != 0 {
+            return Ok(());
+        }
+        std::thread::sleep(std::time::Duration::from_millis(100));
+    }
+
+    Err(color_eyre::eyre::eyre!(
+        "background sleep process {sleep_pid} survived signal cleanup"
+    ))
+}
+
+#[cfg(target_os = "linux")]
+#[sinex_test(timeout = 30)]
 async fn test_process_builder_timeout_kills_descendants() -> TestResult<()> {
     let dir = tempdir()?;
     let pid_file = dir.path().join("sleep.pid");
