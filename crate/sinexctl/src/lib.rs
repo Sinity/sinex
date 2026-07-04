@@ -25,5 +25,6 @@ pub use model::format_registry::{
     render_format_matrix_terminal, validate_format,
 };
 pub use model::{
-    CommandCatalogEntry, CommandFamily, FormatCapability, OutputFormat, RuntimeModuleRole,
+    CommandCatalogEntry, CommandFamily, CommandOutputContract, FormatCapability, OutputFormat,
+    RuntimeModuleRole,
 };
