@@ -66,7 +66,7 @@ async fn test_runtime_cli_args_serve_supervisor_without_source() -> ::xtask::san
 {
     // Post-collapse: no source → empty args (sinexd defaults to `serve`).
     assert_eq!(
-        runtime_cli_args("sinexd", "gateway-123", None),
+        runtime_cli_args("sinexd", "gateway-123", RuntimeTarget::Supervisor),
         Vec::<String>::new()
     );
     Ok(())
@@ -78,7 +78,7 @@ async fn test_runtime_cli_args_dispatch_scan_source() -> ::xtask::sandbox::TestR
         runtime_cli_args(
             "sinexd",
             "terminal-source-123",
-            Some("terminal.zsh-history")
+            RuntimeTarget::Source("terminal.zsh-history")
         ),
         vec![
             "scan-source-driver".to_string(),
@@ -87,6 +87,65 @@ async fn test_runtime_cli_args_dispatch_scan_source() -> ::xtask::sandbox::TestR
             "--service-name".to_string(),
             "terminal-source-123".to_string(),
         ]
+    );
+    Ok(())
+}
+
+#[sinex_test]
+async fn test_runtime_cli_args_automaton_uses_supervisor_selector_env()
+-> ::xtask::sandbox::TestResult<()> {
+    let command = base_command(RunSubcommand::RuntimeModule {
+        name: "interval-lift".to_string(),
+        instance_id: None,
+    });
+
+    assert_eq!(
+        runtime_cli_args(
+            "sinexd",
+            "interval-lift-123",
+            RuntimeTarget::Automaton("interval-lift")
+        ),
+        Vec::<String>::new(),
+        "automata are selected through SINEX_AUTOMATA_ENABLED, not a source-driver argv"
+    );
+
+    let env = command.runtime_env_vars(RuntimeTarget::Automaton("interval-lift"));
+    assert!(
+        env.iter()
+            .any(|(key, value)| key == "SINEX_AUTOMATA_ENABLED" && value == "interval-lift"),
+        "single automaton runs must select exactly the requested automaton: {env:?}"
+    );
+    assert!(
+        env.iter()
+            .any(|(key, value)| key == "SINEX_API_ENABLED" && value == "false"),
+        "single automaton runs should not spend a gateway pool"
+    );
+    assert!(
+        env.iter()
+            .any(|(key, value)| key == "SINEX_SOURCE_BINDINGS_PATH" && value.is_empty()),
+        "single automaton runs must not inherit hosted source bindings"
+    );
+    Ok(())
+}
+
+#[sinex_test]
+async fn test_all_automata_env_runs_one_selected_supervisor() -> ::xtask::sandbox::TestResult<()> {
+    let command = base_command(RunSubcommand::AllAutomatons { instance_id: None });
+    let env = command.runtime_env_vars(RuntimeTarget::AllAutomata);
+
+    assert!(command.runs_bundle());
+    assert!(
+        env.iter()
+            .any(|(key, value)| key == "SINEX_AUTOMATA_ENABLED" && value == "all"),
+        "all-automatons should be one supervisor with the all selector, not N full supervisors"
+    );
+    assert!(
+        env.iter()
+            .any(|(key, value)| key == "SINEX_API_ENABLED" && value == "false")
+    );
+    assert!(
+        env.iter()
+            .any(|(key, value)| key == "SINEX_SOURCE_BINDINGS_PATH" && value.is_empty())
     );
     Ok(())
 }
@@ -291,7 +350,7 @@ async fn test_build_cargo_run_args_target_sinexd() -> ::xtask::sandbox::TestResu
         command.build_cargo_run_args(
             "sinexd",
             "terminal-source-123",
-            Some("terminal.zsh-history")
+            RuntimeTarget::Source("terminal.zsh-history")
         ),
         vec![
             "run".to_string(),

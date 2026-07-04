@@ -251,24 +251,55 @@ fn append_dev_source_binding_args(args: &mut Vec<String>, source_id: &str) {
     append_source_binding_args(args, binding);
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum RuntimeTarget {
+    Supervisor,
+    Source(&'static str),
+    Automaton(&'static str),
+    AllAutomata,
+}
+
+impl RuntimeTarget {
+    fn list_kind(self) -> &'static str {
+        match self {
+            RuntimeTarget::Supervisor => "supervisor",
+            RuntimeTarget::Source(_) => "source",
+            RuntimeTarget::Automaton(_) => "automaton",
+            RuntimeTarget::AllAutomata => "automata",
+        }
+    }
+
+    fn selector(self) -> Option<&'static str> {
+        match self {
+            RuntimeTarget::Source(id) | RuntimeTarget::Automaton(id) => Some(id),
+            RuntimeTarget::Supervisor | RuntimeTarget::AllAutomata => None,
+        }
+    }
+}
+
 /// Build the runtime CLI arguments for the unified `sinexd` binary.
 ///
 /// Post-collapse, every short name (`sinexd`, automatons, source contracts)
 /// resolves to the same `sinexd` binary. Source short names dispatch through
-/// `sinexd scan-source-driver --source <id>`; everything else falls through to
-/// the default `serve` subcommand which runs the full supervisor.
-fn runtime_cli_args(_package: &str, run_identity: &str, source: Option<&str>) -> Vec<String> {
-    source.map_or_else(Vec::new, |id| {
-        let mut args = vec![
-            "scan-source-driver".to_string(),
-            "--source".to_string(),
-            id.to_string(),
-            "--service-name".to_string(),
-            run_identity.to_string(),
-        ];
-        append_dev_source_binding_args(&mut args, id);
-        args
-    })
+/// `sinexd scan-source-driver --source <id>`; supervisor and automaton targets
+/// use the default `serve` subcommand and are selected by environment.
+fn runtime_cli_args(_package: &str, run_identity: &str, target: RuntimeTarget) -> Vec<String> {
+    match target {
+        RuntimeTarget::Source(id) => {
+            let mut args = vec![
+                "scan-source-driver".to_string(),
+                "--source".to_string(),
+                id.to_string(),
+                "--service-name".to_string(),
+                run_identity.to_string(),
+            ];
+            append_dev_source_binding_args(&mut args, id);
+            args
+        }
+        RuntimeTarget::Supervisor | RuntimeTarget::Automaton(_) | RuntimeTarget::AllAutomata => {
+            Vec::new()
+        }
+    }
 }
 
 /// Append source runtime args after the cargo `--` separator when needed.
@@ -276,9 +307,9 @@ fn append_binary_extra_args(
     args: &mut Vec<String>,
     package: &str,
     run_identity: &str,
-    automaton: Option<&str>,
+    target: RuntimeTarget,
 ) {
-    let extra_args = runtime_cli_args(package, run_identity, automaton);
+    let extra_args = runtime_cli_args(package, run_identity, target);
     if !extra_args.is_empty() {
         args.push("--".to_string());
         args.extend(extra_args);
@@ -548,7 +579,7 @@ async fn stop_bundle_child(name: &str, child: &mut Child) -> Result<()> {
 
 /// Known binary targets and their package names.
 ///
-/// Tuple layout: `(short_name, package, binary_name, source_id)`.
+/// Tuple layout: `(short_name, package, binary_name, runtime_target)`.
 ///
 /// Post-sinexd-collapse: previously separate binaries folded into the unified
 /// `sinexd` daemon. Dev targets use current source/automaton labels and all
@@ -560,36 +591,80 @@ async fn stop_bundle_child(name: &str, child: &mut Child) -> Result<()> {
 /// - Source short names (e.g. `fs-source`): dispatch through
 ///   `sinexd scan-source-driver --source <id>` for one-off scan-mode
 ///   runs against a single source.
-/// - Automaton short names: also resolve to the supervisor (`serve`) since
-///   individual automatons are no longer separately runnable.
-static BINARIES: &[(&str, &str, &str, Option<&str>)] = &[
+/// - Automaton short names: resolve to one supervisor process with
+///   `SINEX_AUTOMATA_ENABLED` narrowed to that automaton. They are not
+///   separate binaries, but they must not start every automaton either.
+static BINARIES: &[(&str, &str, &str, RuntimeTarget)] = &[
     // Core supervisor entry points (serve the whole daemon)
-    ("sinexd", "sinexd", "sinexd", None),
+    ("sinexd", "sinexd", "sinexd", RuntimeTarget::Supervisor),
     // Source one-off scans (sinexd scan-source-driver --source <id>)
-    ("fs-source", "sinexd", "sinexd", Some("fs")),
+    ("fs-source", "sinexd", "sinexd", RuntimeTarget::Source("fs")),
     (
         "terminal-source",
         "sinexd",
         "sinexd",
-        Some("terminal.zsh-history"),
+        RuntimeTarget::Source("terminal.zsh-history"),
     ),
     (
         "desktop-source",
         "sinexd",
         "sinexd",
-        Some("desktop.activitywatch"),
+        RuntimeTarget::Source("desktop.activitywatch"),
     ),
-    ("system-source", "sinexd", "sinexd", Some("system.journald")),
-    // Automatons — no per-automaton dispatch in the new layout; running any
-    // of these brings up the full supervisor.
-    ("analytics-automaton", "sinexd", "sinexd", None),
-    ("attention-stream", "sinexd", "sinexd", None),
-    ("interval-lift", "sinexd", "sinexd", None),
-    ("health-automaton", "sinexd", "sinexd", None),
-    ("session-detector", "sinexd", "sinexd", None),
-    ("hourly-summarizer", "sinexd", "sinexd", None),
-    ("daily-summarizer", "sinexd", "sinexd", None),
-    ("terminal-canonicalizer", "sinexd", "sinexd", None),
+    (
+        "system-source",
+        "sinexd",
+        "sinexd",
+        RuntimeTarget::Source("system.journald"),
+    ),
+    (
+        "analytics-automaton",
+        "sinexd",
+        "sinexd",
+        RuntimeTarget::Automaton("analytics"),
+    ),
+    (
+        "attention-stream",
+        "sinexd",
+        "sinexd",
+        RuntimeTarget::Automaton("attention-stream"),
+    ),
+    (
+        "interval-lift",
+        "sinexd",
+        "sinexd",
+        RuntimeTarget::Automaton("interval-lift"),
+    ),
+    (
+        "health-automaton",
+        "sinexd",
+        "sinexd",
+        RuntimeTarget::Automaton("health"),
+    ),
+    (
+        "session-detector",
+        "sinexd",
+        "sinexd",
+        RuntimeTarget::Automaton("session"),
+    ),
+    (
+        "hourly-summarizer",
+        "sinexd",
+        "sinexd",
+        RuntimeTarget::Automaton("hourly"),
+    ),
+    (
+        "daily-summarizer",
+        "sinexd",
+        "sinexd",
+        RuntimeTarget::Automaton("daily"),
+    ),
+    (
+        "terminal-canonicalizer",
+        "sinexd",
+        "sinexd",
+        RuntimeTarget::Automaton("canonicalizer"),
+    ),
 ];
 
 const CORE_TARGETS: &[&str] = &["sinexd"];
@@ -616,7 +691,7 @@ fn lookup_binary(
     &'static str,
     &'static str,
     &'static str,
-    Option<&'static str>,
+    RuntimeTarget,
 )> {
     BINARIES
         .iter()
@@ -841,7 +916,7 @@ impl XtaskCommand for RunCommand {
                 .await
             }
             RunSubcommand::AllAutomatons { instance_id } => {
-                self.run_bundle(AUTOMATON_TARGETS, instance_id.clone(), ctx)
+                self.run_all_automata(instance_id.clone(), ctx)
                     .await
             }
             RunSubcommand::Tether {
@@ -962,6 +1037,30 @@ impl RunCommand {
         env
     }
 
+    fn automaton_env_vars(&self, automaton: &str) -> Vec<(String, String)> {
+        let mut env = self.local_run_env_vars();
+        env.push(("SINEX_AUTOMATA_ENABLED".to_string(), automaton.to_string()));
+        env.push(("SINEX_API_ENABLED".to_string(), "false".to_string()));
+        env.push(("SINEX_SOURCE_BINDINGS_PATH".to_string(), String::new()));
+        env
+    }
+
+    fn all_automata_env_vars(&self) -> Vec<(String, String)> {
+        let mut env = self.local_run_env_vars();
+        env.push(("SINEX_AUTOMATA_ENABLED".to_string(), "all".to_string()));
+        env.push(("SINEX_API_ENABLED".to_string(), "false".to_string()));
+        env.push(("SINEX_SOURCE_BINDINGS_PATH".to_string(), String::new()));
+        env
+    }
+
+    fn runtime_env_vars(&self, target: RuntimeTarget) -> Vec<(String, String)> {
+        match target {
+            RuntimeTarget::Supervisor | RuntimeTarget::Source(_) => self.local_run_env_vars(),
+            RuntimeTarget::Automaton(automaton) => self.automaton_env_vars(automaton),
+            RuntimeTarget::AllAutomata => self.all_automata_env_vars(),
+        }
+    }
+
     fn local_runtime_coordinates(&self) -> Result<LocalRuntimeCoordinates> {
         LocalRuntimeCoordinates::gather()
     }
@@ -977,13 +1076,13 @@ impl RunCommand {
         &self,
         package: &str,
         instance_id: &str,
-        automaton: Option<&str>,
+        target: RuntimeTarget,
     ) -> Vec<String> {
         let mut args = vec!["run".to_string(), "-p".to_string(), package.to_string()];
         if self.release {
             args.push("--release".to_string());
         }
-        append_binary_extra_args(&mut args, package, instance_id, automaton);
+        append_binary_extra_args(&mut args, package, instance_id, target);
         args
     }
 
@@ -1027,7 +1126,7 @@ impl RunCommand {
         ctx: &CommandContext,
     ) -> Result<CommandResult> {
         // Find binary info
-        let (_, package, binary, automaton) = BINARIES
+        let (_, package, binary, target) = BINARIES
             .iter()
             .find(|(n, _, _, _)| *n == name)
             .ok_or_else(|| {
@@ -1041,9 +1140,16 @@ impl RunCommand {
 
         if self.dry_run {
             let runtime = self.local_runtime_coordinates()?;
+            let env = self.runtime_env_vars(*target);
             println!("Would run: {name} (package: {package}, instance: {instance_id})");
             if self.watch {
                 println!("  (with --watch)");
+            }
+            if ctx.is_human()
+                && let RuntimeTarget::Automaton(automaton) = *target
+            {
+                println!("  automaton selector: SINEX_AUTOMATA_ENABLED={automaton}");
+                println!("  API disabled for module run: SINEX_API_ENABLED=false");
             }
             if ctx.is_human() {
                 runtime.print_human();
@@ -1054,6 +1160,7 @@ impl RunCommand {
                     "target": name,
                     "package": package,
                     "instance_id": instance_id,
+                    "env": env,
                     "runtime": runtime,
                 })));
         }
@@ -1062,18 +1169,18 @@ impl RunCommand {
 
         if ctx.is_background() {
             return self
-                .run_background(package, binary, &instance_id, *automaton, ctx)
+                .run_background(package, binary, &instance_id, *target, ctx)
                 .await;
         }
 
         if self.watch {
             return self
-                .run_watch(package, binary, &instance_id, *automaton, ctx)
+                .run_watch(package, binary, &instance_id, *target, ctx)
                 .await;
         }
 
         // Direct run
-        self.run_direct(package, binary, &instance_id, *automaton, ctx)
+        self.run_direct(package, binary, &instance_id, *target, ctx)
             .await
     }
 
@@ -1288,6 +1395,57 @@ impl RunCommand {
             })))
     }
 
+    async fn run_all_automata(
+        &self,
+        instance_prefix: Option<String>,
+        ctx: &CommandContext,
+    ) -> Result<CommandResult> {
+        if !self.dry_run {
+            self.ensure_ready_staged(ctx)?;
+        }
+
+        let runtime = self.local_runtime_coordinates()?;
+        let instance_id = make_instance_id("all-automatons", instance_prefix.as_deref());
+        if self.dry_run {
+            if ctx.is_human() {
+                println!("Would run all automata in one supervisor: {AUTOMATON_TARGETS:?}");
+                runtime.print_human();
+            }
+            return Ok(CommandResult::success()
+                .with_detail("dry-run passed")
+                .with_data(serde_json::json!({
+                    "binaries": ["sinexd"],
+                    "automata": AUTOMATON_TARGETS,
+                    "instance_id": instance_id,
+                    "env": self.all_automata_env_vars(),
+                    "runtime": runtime,
+                })));
+        }
+
+        self.print_local_runtime_coordinates(ctx)?;
+
+        if ctx.is_background() {
+            return self
+                .run_background(
+                    "sinexd",
+                    "sinexd",
+                    &instance_id,
+                    RuntimeTarget::AllAutomata,
+                    ctx,
+                )
+                .await;
+        }
+
+        self.run_direct(
+            "sinexd",
+            "sinexd",
+            &instance_id,
+            RuntimeTarget::AllAutomata,
+            ctx,
+        )
+        .await
+    }
+
     async fn run_bundle_background(
         &self,
         binaries: &[&str],
@@ -1297,11 +1455,6 @@ impl RunCommand {
         let cfg = config();
         let manager = JobManager::new(cfg.jobs_dir())?;
         let mut job_ids = Vec::new();
-        let runtime_env = if binaries == CORE_TARGETS {
-            self.core_bundle_env_vars()
-        } else {
-            self.local_run_env_vars()
-        };
         let packages: Vec<&str> = binaries
             .iter()
             .map(|name| {
@@ -1317,7 +1470,7 @@ impl RunCommand {
 
         let runtime = self.local_runtime_coordinates()?;
         for name in binaries {
-            let (_, package, binary, automaton) = BINARIES
+            let (_, package, binary, target) = BINARIES
                 .iter()
                 .find(|(n, _, _, _)| n == name)
                 .ok_or_else(|| eyre!("Unknown binary: {name}"))?;
@@ -1326,7 +1479,8 @@ impl RunCommand {
             let binary_command = target_binary_path(self.release, binary)
                 .to_string_lossy()
                 .into_owned();
-            let args = runtime_cli_args(package, &instance_id, *automaton);
+            let args = runtime_cli_args(package, &instance_id, *target);
+            let runtime_env = self.runtime_env_vars(*target);
 
             let job =
                 manager.spawn_with_env_without_watchdog(&binary_command, &args, &runtime_env)?;
@@ -1371,14 +1525,8 @@ impl RunCommand {
             Vec::new();
         // Pipe stdout/stderr when --logs (prefix display) or --dev-journal (journal write)
         let pipe_output = self.logs || self.dev_journal;
-        let runtime_env = if binaries == CORE_TARGETS {
-            self.core_bundle_env_vars()
-        } else {
-            self.local_run_env_vars()
-        };
-
         for name in binaries {
-            let (_, package, binary, automaton) = BINARIES
+            let (_, package, binary, target) = BINARIES
                 .iter()
                 .find(|(n, _, _, _)| n == name)
                 .ok_or_else(|| eyre!("Unknown binary: {name}"))?;
@@ -1392,7 +1540,7 @@ impl RunCommand {
 
             let mut cmd = Command::new(&binary_path);
             configure_managed_child_tokio(&mut cmd);
-            cmd.args(runtime_cli_args(package, &instance_id, *automaton));
+            cmd.args(runtime_cli_args(package, &instance_id, *target));
 
             let (stdout_io, stderr_io) = if pipe_output {
                 (Stdio::piped(), Stdio::piped())
@@ -1401,7 +1549,7 @@ impl RunCommand {
             };
 
             let mut child = cmd
-                .envs(runtime_env.iter().cloned())
+                .envs(self.runtime_env_vars(*target))
                 .stdout(stdout_io)
                 .stderr(stderr_io)
                 .kill_on_drop(true)
@@ -1488,7 +1636,7 @@ impl RunCommand {
         package: &str,
         binary: &str,
         instance_id: &str,
-        automaton: Option<&str>,
+        target: RuntimeTarget,
         ctx: &CommandContext,
     ) -> Result<CommandResult> {
         if ctx.is_human() {
@@ -1499,14 +1647,14 @@ impl RunCommand {
         // so we can pipe stdout/stderr through the journal shim.
         if self.dev_journal || self.logs {
             return self
-                .run_direct_piped(package, binary, instance_id, automaton, ctx)
+                .run_direct_piped(package, binary, instance_id, target, ctx)
                 .await;
         }
 
-        let args = self.build_cargo_run_args(package, instance_id, automaton);
+        let args = self.build_cargo_run_args(package, instance_id, target);
 
         self.maybe_spawn_metrics_overlay(ctx);
-        let runtime_env = self.local_run_env_vars();
+        let runtime_env = self.runtime_env_vars(target);
 
         let run_stage = ctx.start_stage("run");
         let status = ProcessBuilder::cargo()
@@ -1559,7 +1707,7 @@ impl RunCommand {
         package: &str,
         binary: &str,
         instance_id: &str,
-        automaton: Option<&str>,
+        target: RuntimeTarget,
         ctx: &CommandContext,
     ) -> Result<CommandResult> {
         // Step 1: build
@@ -1599,8 +1747,8 @@ impl RunCommand {
 
         let mut cmd = Command::new(&binary_path);
         configure_managed_child_tokio(&mut cmd);
-        cmd.args(runtime_cli_args(package, instance_id, automaton));
-        cmd.envs(self.local_run_env_vars());
+        cmd.args(runtime_cli_args(package, instance_id, target));
+        cmd.envs(self.runtime_env_vars(target));
 
         let mut child = cmd
             .stdout(Stdio::piped())
@@ -1693,7 +1841,7 @@ impl RunCommand {
         package: &str,
         binary: &str,
         instance_id: &str,
-        automaton: Option<&str>,
+        target: RuntimeTarget,
         ctx: &CommandContext,
     ) -> Result<CommandResult> {
         let cfg = config();
@@ -1703,8 +1851,8 @@ impl RunCommand {
         let binary_command = target_binary_path(self.release, binary)
             .to_string_lossy()
             .into_owned();
-        let args = runtime_cli_args(package, instance_id, automaton);
-        let runtime_env = self.local_run_env_vars();
+        let args = runtime_cli_args(package, instance_id, target);
+        let runtime_env = self.runtime_env_vars(target);
         let runtime = self.local_runtime_coordinates()?;
 
         let job = manager.spawn_with_env_without_watchdog(&binary_command, &args, &runtime_env)?;
@@ -1725,7 +1873,7 @@ impl RunCommand {
         package: &str,
         _binary: &str,
         instance_id: &str,
-        automaton: Option<&str>,
+        target: RuntimeTarget,
         ctx: &CommandContext,
     ) -> Result<CommandResult> {
         if ctx.is_human() {
@@ -1739,7 +1887,7 @@ impl RunCommand {
 
         // Build extra args for this binary type
         let mut extra_args = Vec::new();
-        append_binary_extra_args(&mut extra_args, package, instance_id, automaton);
+        append_binary_extra_args(&mut extra_args, package, instance_id, target);
 
         let args = RunArgs {
             binary: package.to_string(),
@@ -1748,7 +1896,7 @@ impl RunCommand {
             tether: None,
             checkpoint: None,
             args: extra_args,
-            env_vars: self.local_run_env_vars(),
+            env_vars: self.runtime_env_vars(target),
         };
 
         let mut orchestrator = DevOrchestrator::new(args, workspace_utf8);
@@ -1811,12 +1959,13 @@ fn execute_list(ctx: &CommandContext) -> CommandResult {
         );
     }
 
-    for (name, package, binary, automaton) in BINARIES {
+    for (name, package, binary, target) in BINARIES {
         binaries.push(serde_json::json!({
             "name": name,
             "package": package,
             "binary": binary,
-            "automaton": automaton,
+            "kind": target.list_kind(),
+            "selector": target.selector(),
         }));
     }
 
