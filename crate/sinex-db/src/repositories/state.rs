@@ -1424,9 +1424,8 @@ impl StateRepository<'_> {
     /// List operator-facing status for registered automata.
     ///
     /// The durable base is the runtime registry (`core.manifests` + latest
-    /// `core.runs`). Automaton-specific runtime details come from runtime
-    /// self-observation events in `core.events`, keyed by persisted telemetry
-    /// label names.
+    /// `core.runs`). Automaton-specific runtime details come from reflection
+    /// self-observation events, keyed by persisted telemetry label names.
     pub async fn list_automata_status(
         &self,
         stale_after: Duration,
@@ -1502,7 +1501,7 @@ impl StateRepository<'_> {
                 SELECT
                     FLOOR((e.payload->>'value')::float8)::bigint
                         AS events_processed_current_run
-                FROM core.events e
+                FROM reflection.events e
                 WHERE e.source = 'sinex'
                   AND e.event_type = 'metric.gauge'
                   AND e.payload->>'name' = 'derived.events_processed.run'
@@ -1517,7 +1516,7 @@ impl StateRepository<'_> {
                     e.payload->'labels'->>'checkpoint_position' AS checkpoint_position,
                     FLOOR((e.payload->>'value')::float8)::bigint AS checkpoint_revision,
                     e.ts_coided AS checkpoint_recorded_at
-                FROM core.events e
+                FROM reflection.events e
                 WHERE e.source = 'sinex'
                   AND e.event_type = 'metric.gauge'
                   AND e.payload->>'name' = 'derived.checkpoint.revision'
@@ -1530,7 +1529,7 @@ impl StateRepository<'_> {
                 SELECT
                     FLOOR((e.payload->>'value')::float8)::bigint
                         AS pending_invalidation_count
-                FROM core.events e
+                FROM reflection.events e
                 WHERE e.source = 'sinex'
                   AND e.event_type = 'metric.gauge'
                   AND e.payload->>'name' = 'derived.invalidations.pending'
@@ -1542,7 +1541,7 @@ impl StateRepository<'_> {
             LEFT JOIN LATERAL (
                 SELECT
                     (e.payload->>'value')::float8 AS error_rate_5m
-                FROM core.events e
+                FROM reflection.events e
                 WHERE e.source = 'sinex'
                   AND e.event_type = 'metric.gauge'
                   AND e.payload->>'name' = 'derived.error_rate_5m'
@@ -1560,7 +1559,7 @@ impl StateRepository<'_> {
                     (e.payload->>'event_lag_p99_ms')::float8 AS event_lag_p99_ms,
                     (e.payload->>'tick_runtime_p99_ms')::float8 AS tick_runtime_p99_ms,
                     (e.payload->>'throughput_eps')::float8 AS throughput_eps
-                FROM core.events e
+                FROM reflection.events e
                 WHERE e.source = 'sinexd.automaton'
                   AND e.event_type = 'latency_snapshot'
                   AND e.payload->>'module_name' = nm.name::text
