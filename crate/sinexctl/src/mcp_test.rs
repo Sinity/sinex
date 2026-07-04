@@ -64,6 +64,72 @@ async fn mcp_standard_envelope_shape_carries_caveat_and_privacy_state() -> TestR
             .any(|caveat| caveat["id"] == "mcp.raw_samples_redacted"),
         "MCP envelopes must carry the raw-sample redaction caveat: {response:?}"
     );
+    assert!(
+        response["caveats"]
+            .as_array()
+            .expect("caveats must be an array")
+            .iter()
+            .any(|caveat| caveat["id"] == ReadinessCaveatId::CoverageUnmeasurable.as_str()
+                && caveat["message"].as_str().is_some_and(|message| message.contains("$.result"))),
+        "MCP envelopes must explain empty result collections: {response:?}"
+    );
+    Ok(())
+}
+
+#[sinex_test]
+async fn mcp_standard_envelope_shape_explains_null_result_slots() -> TestResult<()> {
+    let response = envelope(
+        "sinex_event_engine_validation",
+        &json!({}),
+        &json!({ "snapshot": null }),
+    );
+
+    assert!(
+        response["caveats"]
+            .as_array()
+            .expect("caveats must be an array")
+            .iter()
+            .any(|caveat| caveat["id"] == ReadinessCaveatId::SourceAbsent.as_str()
+                && caveat["message"].as_str().is_some_and(|message| message.contains("$.snapshot"))),
+        "MCP envelopes must explain null result slots: {response:?}"
+    );
+    Ok(())
+}
+
+#[sinex_test]
+async fn mcp_view_envelope_with_caveats_preserves_server_caveats() -> TestResult<()> {
+    let response = mcp_view_envelope_with_caveats(
+        "sinex_sources_status_view",
+        &json!({}),
+        &json!({ "sources": [] }),
+        vec![CaveatView {
+            id: ReadinessCaveatId::SourceAbsent.as_str().to_string(),
+            message: "source status server caveat".to_string(),
+            ref_: None,
+        }],
+    )?;
+
+    let caveats = response["caveats"]
+        .as_array()
+        .expect("caveats must be an array");
+    assert!(
+        caveats
+            .iter()
+            .any(|caveat| caveat["id"] == "mcp.raw_samples_redacted"),
+        "MCP redaction caveat must still be present: {response:?}"
+    );
+    assert!(
+        caveats.iter().any(|caveat| caveat["id"]
+            == ReadinessCaveatId::CoverageUnmeasurable.as_str()
+            && caveat["message"].as_str().is_some_and(|message| message.contains("$.sources"))),
+        "automatic empty-source caveat must be present: {response:?}"
+    );
+    assert!(
+        caveats.iter().any(|caveat| caveat["id"]
+            == ReadinessCaveatId::SourceAbsent.as_str()
+            && caveat["message"] == "source status server caveat"),
+        "server caveat must survive MCP re-enveloping: {response:?}"
+    );
     Ok(())
 }
 
