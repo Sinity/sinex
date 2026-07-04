@@ -213,6 +213,20 @@ pub struct ContextSessionView {
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub struct ContextAttentionSpanView {
+    #[serde(rename = "ref")]
+    pub ref_: SinexObjectRef,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub started_at: Option<Timestamp>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ended_at: Option<Timestamp>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub duration_secs: Option<u64>,
+    pub summary: String,
+    pub latest_event: EventCardView,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct ContextSummaryView {
     pub schema_version: String,
     pub since: String,
@@ -221,6 +235,8 @@ pub struct ContextSummaryView {
     pub sources: Vec<ContextSourceView>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub sessions: Vec<ContextSessionView>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub attention_spans: Vec<ContextAttentionSpanView>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub source_caveats: Vec<CaveatView>,
 }
@@ -239,6 +255,7 @@ impl ContextSummaryView {
             source_count: sources.len(),
             sources,
             sessions: Vec::new(),
+            attention_spans: Vec::new(),
             source_caveats: Vec::new(),
         }
     }
@@ -246,6 +263,12 @@ impl ContextSummaryView {
     #[must_use]
     pub fn with_sessions(mut self, sessions: Vec<ContextSessionView>) -> Self {
         self.sessions = sessions;
+        self
+    }
+
+    #[must_use]
+    pub fn with_attention_spans(mut self, attention_spans: Vec<ContextAttentionSpanView>) -> Self {
+        self.attention_spans = attention_spans;
         self
     }
 
