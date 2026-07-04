@@ -1,11 +1,14 @@
 use clap::Args;
 use console::style;
 use sinex_primitives::rpc::automata::{AutomataStatusResponse, AutomatonStatus};
+use sinex_primitives::views::{
+    CaveatView, ReadinessCaveatId, SinexObjectKind, SinexObjectRef, ViewEnvelope,
+};
 use tabled::{builder::Builder, settings::Style};
 
 use crate::Result;
 use crate::client::GatewayClient;
-use crate::fmt::{CommandOutput, format_heartbeat_age};
+use crate::fmt::{format_heartbeat_age, print_finite_envelope};
 use crate::model::OutputFormat;
 
 /// Show automata runtime status
@@ -33,9 +36,92 @@ impl AutomataCommand {
         let response = client
             .automata_status(self.stale_after_secs, self.recent_window_secs)
             .await?;
-        CommandOutput::single(response, format_automata_status_table).display(&format)?;
+        let envelope = automata_status_envelope(response);
+        if !print_finite_envelope(&envelope, format)? {
+            println!("{}", format_automata_status_table(&envelope.payload));
+        }
         Ok(())
     }
+}
+
+fn automata_status_envelope(
+    response: AutomataStatusResponse,
+) -> ViewEnvelope<AutomataStatusResponse> {
+    let mut envelope = ViewEnvelope::new("sinexctl.runtime.automata", response);
+    envelope.caveats = automata_status_caveats(&envelope.payload);
+    envelope
+}
+
+fn automata_status_caveats(response: &AutomataStatusResponse) -> Vec<CaveatView> {
+    let mut caveats = Vec::new();
+
+    if response.automata.is_empty() {
+        caveats.push(CaveatView {
+            id: ReadinessCaveatId::SourceAbsent.as_str().to_string(),
+            message: "no automata are registered in the runtime status response".to_string(),
+            ref_: Some(automata_ref("automata.registry")),
+        });
+        return caveats;
+    }
+
+    let inactive = response
+        .automata
+        .iter()
+        .filter(|automaton| !automaton.live)
+        .take(5)
+        .collect::<Vec<_>>();
+    if !inactive.is_empty() {
+        let names = inactive
+            .iter()
+            .map(|automaton| automaton.module_name.as_str())
+            .collect::<Vec<_>>()
+            .join(", ");
+        caveats.push(CaveatView {
+            id: ReadinessCaveatId::WindowPartial.as_str().to_string(),
+            message: format!(
+                "{} automata are not live under stale_after_secs={}: {names}",
+                response.automata.iter().filter(|automaton| !automaton.live).count(),
+                response.stale_after_secs
+            ),
+            ref_: Some(automata_ref("automata.live")),
+        });
+    }
+
+    let missing_recent_output = response
+        .automata
+        .iter()
+        .filter(|automaton| automaton.recent_output_count == 0)
+        .take(5)
+        .collect::<Vec<_>>();
+    if !missing_recent_output.is_empty() {
+        let names = missing_recent_output
+            .iter()
+            .map(|automaton| automaton.module_name.as_str())
+            .collect::<Vec<_>>()
+            .join(", ");
+        caveats.push(CaveatView {
+            id: ReadinessCaveatId::CoverageUnmeasurable.as_str().to_string(),
+            message: format!(
+                "{} automata have no outputs in recent_window_secs={}: {names}",
+                response
+                    .automata
+                    .iter()
+                    .filter(|automaton| automaton.recent_output_count == 0)
+                    .count(),
+                response.recent_window_secs
+            ),
+            ref_: Some(automata_ref("automata.recent_output")),
+        });
+    }
+
+    caveats
+}
+
+fn automata_ref(id: &str) -> SinexObjectRef {
+    SinexObjectRef::new(SinexObjectKind::RuntimeModule, id)
+        .with_label(id)
+        .with_command_hint("sinexctl runtime automata")
+        .with_rpc_method("automata.status")
 }
 
 fn format_optional_count(value: Option<i64>) -> String {
@@ -134,3 +220,7 @@ fn format_automata_status_table(response: &AutomataStatusResponse) -> String {
     table.with(Style::rounded());
     table.to_string()
 }
+
+#[cfg(test)]
+#[path = "automata_test.rs"]
+mod tests;
