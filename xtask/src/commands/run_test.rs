@@ -369,6 +369,7 @@ async fn test_automaton_bundle_includes_non_suffix_automatons() -> ::xtask::sand
         AUTOMATON_TARGETS,
         &[
             "analytics-automaton",
+            "attention-stream",
             "health-automaton",
             "session-detector",
             "hourly-summarizer",
@@ -383,6 +384,7 @@ async fn test_automaton_bundle_includes_non_suffix_automatons() -> ::xtask::sand
 async fn test_list_run_targets_drops_ghosts_and_oneshot_scan_surface()
 -> ::xtask::sandbox::TestResult<()> {
     let targets = list_run_targets();
+    assert!(targets.contains(&"attention-stream".to_string()));
     assert!(targets.contains(&"session-detector".to_string()));
     assert!(targets.contains(&"terminal-canonicalizer".to_string()));
     assert!(!targets.contains(&"document-ingestor".to_string()));
