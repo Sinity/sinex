@@ -309,6 +309,57 @@ async fn test_workspace_state_dir_honors_explicit_temp_override() {}\n\
 }
 
 #[sinex_test]
+async fn test_infer_lib_target_accepts_sibling_test_file_stems() -> TestResult<()> {
+    let repo = tempfile::tempdir()?;
+    let sibling_test = repo
+        .path()
+        .join("crate/sinexd/src/api/handlers/source_status_test.rs");
+    fs::create_dir_all(sibling_test.parent().expect("sibling test parent"))?;
+    fs::write(
+        &sibling_test,
+        "#[sinex_test]\nasync fn module_names_include_runtime_aliases() {}\n",
+    )?;
+
+    assert!(infer_lib_target_for_test_filter_in(
+        repo.path(),
+        "test(source_status)",
+    )?);
+    Ok(())
+}
+
+#[sinex_test]
+async fn test_infer_lib_target_honors_selected_package_boundary() -> TestResult<()> {
+    let repo = tempfile::tempdir()?;
+    let sibling_test = repo
+        .path()
+        .join("crate/sinexd/src/api/handlers/source_status_test.rs");
+    let other_package_test = repo.path().join("crate/sinex-db/tests/repositories_state.rs");
+    fs::create_dir_all(sibling_test.parent().expect("sibling test parent"))?;
+    fs::create_dir_all(other_package_test.parent().expect("other test parent"))?;
+    fs::write(
+        &sibling_test,
+        "#[sinex_test]\nasync fn module_names_include_runtime_aliases() {}\n",
+    )?;
+    fs::write(
+        &other_package_test,
+        "#[sinex_test]\nasync fn source_status_treats_recent_output_as_runtime_liveness() {}\n",
+    )?;
+    let selected = HashSet::from(["sinexd"]);
+
+    assert!(infer_lib_target_for_test_filter_in_packages(
+        repo.path(),
+        "test(source_status)",
+        Some(&selected),
+    )?);
+    assert!(!infer_lib_target_for_test_filter_in_packages(
+        repo.path(),
+        "test(source_status)",
+        None,
+    )?);
+    Ok(())
+}
+
+#[sinex_test]
 async fn test_infer_lib_target_ignores_non_test_function_fragments() -> TestResult<()> {
     let repo = tempfile::tempdir()?;
     let source = repo.path().join("xtask/src/config.rs");
