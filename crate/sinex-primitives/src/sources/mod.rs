@@ -132,6 +132,22 @@ impl SourceRole {
     }
 }
 
+/// SQL predicate equivalent of [`source_role`] for a column/expression
+/// containing the event `source`.
+///
+/// Use this when a query needs an indexable lane filter. Use
+/// [`source_role_sql_case`] when a projection needs the role label as a value.
+#[must_use]
+pub fn source_role_sql_predicate(source_expr: &str, role: SourceRole) -> String {
+    let reflection = format!(
+        "{source_expr} = 'sinex' OR {source_expr} LIKE 'sinex.%' OR {source_expr} LIKE 'sinexd.%'"
+    );
+    match role {
+        SourceRole::Reflection => format!("({reflection})"),
+        SourceRole::Activity => format!("NOT ({reflection})"),
+    }
+}
+
 /// Return the namespace before the first `.` in a source identifier.
 ///
 /// Grouping by source family lets query, context, and source-status surfaces
@@ -193,7 +209,8 @@ pub fn source_role(source: &str) -> SourceRole {
 #[must_use]
 pub fn source_role_sql_case(source_expr: &str) -> String {
     format!(
-        "CASE WHEN {source_expr} = 'sinex' OR {source_expr} LIKE 'sinex.%' OR {source_expr} LIKE 'sinexd.%' THEN 'reflection' ELSE 'activity' END"
+        "CASE WHEN {predicate} THEN 'reflection' ELSE 'activity' END",
+        predicate = source_role_sql_predicate(source_expr, SourceRole::Reflection)
     )
 }
 
