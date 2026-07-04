@@ -1,6 +1,6 @@
 use crate::client::GatewayClient;
 use crate::fmt::CommandOutput;
-use crate::fmt::{format_json, format_yaml};
+use crate::fmt::{format_json, format_yaml, print_finite_envelope};
 use crate::model::OutputFormat;
 use clap::{Args, Subcommand};
 use color_eyre::Result;
@@ -28,6 +28,9 @@ use sinex_primitives::rpc::sources::{
     SourcesReadinessListRequest, SourcesReadinessListResponse,
 };
 use sinex_primitives::temporal::Timestamp;
+use sinex_primitives::views::{
+    CaveatView, ReadinessCaveatId, SinexObjectKind, SinexObjectRef, ViewEnvelope,
+};
 use std::path::PathBuf;
 
 use crate::validation::parse_time_input;
@@ -440,10 +443,17 @@ impl PrivacyCommand {
 
 impl PrivateModeCommand {
     async fn execute(&self, client: &GatewayClient, format: OutputFormat) -> Result<()> {
-        let state = match self {
-            Self::Status => client.private_mode_status().await?.state,
+        match self {
+            Self::Status => {
+                let state = client.private_mode_status().await?.state;
+                let envelope = private_mode_status_envelope(state.clone());
+                if print_finite_envelope(&envelope, format)? {
+                    return Ok(());
+                }
+                CommandOutput::single(state, format_private_mode_state).display(&format)?;
+            }
             Self::Enable(args) => {
-                client
+                let state = client
                     .private_mode_enable(
                         args.actor.clone(),
                         args.reason_class.clone(),
@@ -454,12 +464,14 @@ impl PrivateModeCommand {
                             .transpose()?,
                     )
                     .await?
-                    .state
+                    .state;
+                CommandOutput::single(state, format_private_mode_state).display(&format)?;
             }
-            Self::Disable => client.private_mode_disable().await?.state,
-        };
-
-        CommandOutput::single(state, format_private_mode_state).display(&format)?;
+            Self::Disable => {
+                let state = client.private_mode_disable().await?.state;
+                CommandOutput::single(state, format_private_mode_state).display(&format)?;
+            }
+        }
         Ok(())
     }
 }
@@ -524,6 +536,10 @@ impl PolicyScopeCommand {
 impl PolicyListArgs {
     async fn execute(&self, client: &GatewayClient, format: OutputFormat) -> Result<()> {
         let response = client.privacy_policy_list(self.include_disabled).await?;
+        let envelope = privacy_policy_list_envelope(&response, self.include_disabled);
+        if print_finite_envelope(&envelope, format)? {
+            return Ok(());
+        }
         CommandOutput::single(response, format_privacy_policy_list).display(&format)?;
         Ok(())
     }
@@ -682,6 +698,10 @@ impl PrivacyAuditArgs {
             })
             .await?;
         let report = build_privacy_audit_report(private_mode, &dlq, &readiness);
+        let envelope = privacy_audit_envelope(report.clone(), self);
+        if print_finite_envelope(&envelope, format)? {
+            return Ok(());
+        }
         CommandOutput::single(report, format_privacy_audit_report).display(&format)?;
         Ok(())
     }
@@ -703,8 +723,16 @@ impl PrivacyExportArgs {
                 disclosure_context: report.disclosure_context,
                 payload_policy: report.payload_policy,
             };
+            let envelope = privacy_export_receipt_envelope(receipt.clone(), &report, self);
+            if print_finite_envelope(&envelope, format)? {
+                return Ok(());
+            }
             CommandOutput::single(receipt, format_privacy_export_receipt).display(&format)?;
         } else {
+            let envelope = privacy_export_envelope(report.clone(), self);
+            if print_finite_envelope(&envelope, format)? {
+                return Ok(());
+            }
             CommandOutput::single(report, format_privacy_export_report).display(&format)?;
         }
 
@@ -871,6 +899,226 @@ struct PrivacyExportReceipt {
     next_cursor: Option<Cursor>,
     disclosure_context: &'static str,
     payload_policy: &'static str,
+}
+
+const PRIVACY_POLICY_LIST_SCHEMA_VERSION: &str = "sinex.privacy-policy-list/v1";
+
+#[derive(Debug, Clone, Serialize)]
+struct PrivacyPolicyListView {
+    schema_version: String,
+    rule_count: usize,
+    enabled_rule_count: usize,
+    field_scope_count: usize,
+    key_namespace_count: usize,
+    recognizer_backend_count: usize,
+    enabled_recognizer_backend_count: usize,
+    dictionary_count: usize,
+    enabled_dictionary_count: usize,
+    rules: Vec<PrivacyPolicyRuleSummaryView>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct PrivacyPolicyRuleSummaryView {
+    id: Uuid,
+    name: String,
+    description: String,
+    matcher_type: String,
+    recognizer_kind: String,
+    action: String,
+    action_label: Option<String>,
+    key_namespace: String,
+    enabled: bool,
+    scope_count: usize,
+}
+
+impl PrivacyPolicyListView {
+    fn from_response(response: &PrivacyPolicyListResponse) -> Self {
+        let rules = response
+            .rules
+            .iter()
+            .map(|rule| {
+                let scope_count = response
+                    .field_scopes
+                    .iter()
+                    .filter(|scope| scope.rule_id == rule.id)
+                    .count();
+                PrivacyPolicyRuleSummaryView {
+                    id: rule.id,
+                    name: rule.name.clone(),
+                    description: rule.description.clone(),
+                    matcher_type: rule.matcher_type.clone(),
+                    recognizer_kind: rule.recognizer_kind.clone(),
+                    action: rule.action.clone(),
+                    action_label: rule.action_label.clone(),
+                    key_namespace: rule.key_namespace.clone(),
+                    enabled: rule.enabled,
+                    scope_count,
+                }
+            })
+            .collect();
+        Self {
+            schema_version: PRIVACY_POLICY_LIST_SCHEMA_VERSION.to_string(),
+            rule_count: response.rules.len(),
+            enabled_rule_count: response.rules.iter().filter(|rule| rule.enabled).count(),
+            field_scope_count: response.field_scopes.len(),
+            key_namespace_count: response.key_namespaces.len(),
+            recognizer_backend_count: response.recognizer_backends.len(),
+            enabled_recognizer_backend_count: response
+                .recognizer_backends
+                .iter()
+                .filter(|backend| backend.enabled)
+                .count(),
+            dictionary_count: response.dictionaries.len(),
+            enabled_dictionary_count: response
+                .dictionaries
+                .iter()
+                .filter(|dictionary| dictionary.enabled)
+                .count(),
+            rules,
+        }
+    }
+}
+
+fn private_mode_status_envelope(
+    state: RuntimePrivateModeState,
+) -> ViewEnvelope<RuntimePrivateModeState> {
+    let mut envelope = ViewEnvelope::new("sinexctl.privacy.private_mode.status", state);
+    if envelope.payload.enabled {
+        envelope.caveats.push(privacy_caveat(
+            ReadinessCaveatId::WindowPartial,
+            "runtime private mode is enabled; capture and recall windows may be intentionally partial for affected source classes",
+            "sinexctl privacy private-mode status",
+        ));
+    }
+    envelope
+}
+
+fn privacy_policy_list_envelope(
+    response: &PrivacyPolicyListResponse,
+    include_disabled: bool,
+) -> ViewEnvelope<PrivacyPolicyListView> {
+    let mut envelope = ViewEnvelope::new(
+        "sinexctl.privacy.policy.list",
+        PrivacyPolicyListView::from_response(response),
+    )
+    .with_query_echo(serde_json::json!({
+        "include_disabled": include_disabled,
+    }));
+    if response.rules.is_empty() {
+        envelope.caveats.push(privacy_caveat(
+            ReadinessCaveatId::SourceAbsent,
+            "no DB-backed privacy policy rules are configured; redaction/encryption remains a pass-through unless another policy layer applies",
+            "sinexctl privacy policy list",
+        ));
+    }
+    envelope
+}
+
+fn privacy_audit_envelope(
+    report: PrivacyAuditReport,
+    args: &PrivacyAuditArgs,
+) -> ViewEnvelope<PrivacyAuditReport> {
+    let mut envelope = ViewEnvelope::new("sinexctl.privacy.audit", report)
+        .with_query_echo(serde_json::json!({
+            "source_family": &args.source_family,
+            "stale_after_seconds": args.stale_after_seconds,
+        }));
+    if envelope.payload.private_mode.enabled {
+        envelope.caveats.push(privacy_caveat(
+            ReadinessCaveatId::WindowPartial,
+            "private mode is enabled; privacy audit posture includes intentional capture suppression",
+            "sinexctl privacy audit",
+        ));
+    }
+    if envelope.payload.dlq.has_backlog {
+        envelope.caveats.push(privacy_caveat(
+            ReadinessCaveatId::SourceAbsent,
+            "DLQ backlog exists; privacy posture is incomplete until failed ingest messages are inspected or resolved",
+            "sinexctl ops dlq triage",
+        ));
+    }
+    if envelope.payload.sources.total == 0 {
+        envelope.caveats.push(privacy_caveat(
+            ReadinessCaveatId::CoverageUnmeasurable,
+            "source readiness returned no rows; privacy audit cannot measure source coverage posture",
+            "sinexctl sources readiness",
+        ));
+    }
+    envelope
+}
+
+fn privacy_export_envelope(
+    report: PrivacyExportReport,
+    args: &PrivacyExportArgs,
+) -> ViewEnvelope<PrivacyExportReport> {
+    let mut envelope = ViewEnvelope::new("sinexctl.privacy.export", report)
+        .with_query_echo(privacy_export_query_echo(args));
+    add_privacy_export_caveats(&mut envelope.caveats, &envelope.payload);
+    envelope
+}
+
+fn privacy_export_receipt_envelope(
+    receipt: PrivacyExportReceipt,
+    report: &PrivacyExportReport,
+    args: &PrivacyExportArgs,
+) -> ViewEnvelope<PrivacyExportReceipt> {
+    let mut envelope = ViewEnvelope::new("sinexctl.privacy.export", receipt)
+        .with_query_echo(privacy_export_query_echo(args));
+    add_privacy_export_caveats(&mut envelope.caveats, report);
+    envelope
+}
+
+fn privacy_export_query_echo(args: &PrivacyExportArgs) -> serde_json::Value {
+    serde_json::json!({
+        "source": &args.source,
+        "event_type": &args.event_type,
+        "since": &args.since,
+        "until": &args.until,
+        "query": &args.query,
+        "limit": args.limit,
+        "output": args.output.as_ref().map(|path| path.display().to_string()),
+    })
+}
+
+fn add_privacy_export_caveats(caveats: &mut Vec<CaveatView>, report: &PrivacyExportReport) {
+    if report.events.is_empty() {
+        caveats.push(privacy_caveat(
+            ReadinessCaveatId::CoverageUnmeasurable,
+            "privacy export matched no event metadata in the requested scope; this is an empty query result, not proof that no source material exists",
+            "sinexctl privacy export",
+        ));
+    }
+    if report.next_cursor.is_some() {
+        caveats.push(privacy_caveat(
+            ReadinessCaveatId::WindowPartial,
+            "privacy export is paginated; additional matching metadata remains after this result",
+            "sinexctl privacy export",
+        ));
+    } else if let Some(total) = report.total_estimate
+        && total > i64::try_from(report.events.len()).unwrap_or(i64::MAX)
+    {
+        caveats.push(privacy_caveat(
+            ReadinessCaveatId::WindowPartial,
+            "privacy export returned fewer events than the estimated match count; treat this result as a bounded window",
+            "sinexctl privacy export",
+        ));
+    }
+}
+
+fn privacy_caveat(
+    id: ReadinessCaveatId,
+    message: impl Into<String>,
+    command_hint: &'static str,
+) -> CaveatView {
+    CaveatView {
+        id: id.as_str().to_string(),
+        message: message.into(),
+        ref_: Some(
+            SinexObjectRef::new(SinexObjectKind::Command, command_hint)
+                .with_label(command_hint)
+                .with_command_hint(command_hint),
+        ),
+    }
 }
 
 fn build_privacy_audit_report(
