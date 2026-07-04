@@ -273,7 +273,10 @@ pub struct ContextTimelineItemView {
     pub parent_refs: Vec<SinexObjectRef>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub support_refs: Vec<SinexObjectRef>,
-    pub latest_event: EventCardView,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub caveats: Vec<CaveatView>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub latest_event: Option<EventCardView>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]

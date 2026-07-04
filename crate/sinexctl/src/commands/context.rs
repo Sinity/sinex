@@ -40,7 +40,6 @@ const CONTEXT_BASE_EVENT_CARDS_TIMEOUT: StdDuration = StdDuration::from_secs(20)
 const CONTEXT_DIVERSITY_TOP_UP_TIMEOUT: StdDuration = StdDuration::from_secs(8);
 const CONTEXT_SOURCE_CAVEATS_TIMEOUT: StdDuration = StdDuration::from_secs(5);
 const CONTEXT_ATTENTION_LINEAGE_TIMEOUT: StdDuration = StdDuration::from_secs(5);
-const MAX_ATTENTION_SPAN_LINEAGE_EXPANSIONS: usize = 12;
 const CONTEXT_DIVERSITY_SOURCES: &[&str] = &[
     "shell.atuin",
     "shell.kitty",
@@ -650,28 +649,16 @@ async fn context_attention_lineage_evidence(
         return Ok((HashMap::new(), None));
     }
 
-    let bounded = attention_cards.len() > MAX_ATTENTION_SPAN_LINEAGE_EXPANSIONS;
     let outcome = tokio::time::timeout(
         CONTEXT_ATTENTION_LINEAGE_TIMEOUT,
         context_attention_lineage_evidence_unbounded(client, &attention_cards),
     )
     .await;
 
-    let mut caveat = bounded.then(|| CaveatView {
-        id: "recall.attention_lineage_bounded".to_string(),
-        message: format!(
-            "attention-span raw support expansion is bounded to {MAX_ATTENTION_SPAN_LINEAGE_EXPANSIONS} spans in this recall packet"
-        ),
-        ref_: Some(SinexObjectRef::new(
-            SinexObjectKind::Projection,
-            "recall.attention.span.support_refs",
-        )),
-    });
-
     match outcome {
-        Ok(result) => Ok((result?, caveat)),
+        Ok(result) => Ok((result?, None)),
         Err(_) => {
-            caveat = Some(CaveatView {
+            let caveat = Some(CaveatView {
                 id: "recall.attention_lineage_timeout".to_string(),
                 message: format!(
                     "attention-span raw support expansion exceeded {}s; direct parent_refs remain available",
@@ -692,10 +679,7 @@ async fn context_attention_lineage_evidence_unbounded(
     attention_cards: &[&EventCardView],
 ) -> Result<HashMap<String, ContextAttentionLineageEvidence>> {
     let mut evidence = HashMap::new();
-    for card in attention_cards
-        .iter()
-        .take(MAX_ATTENTION_SPAN_LINEAGE_EXPANSIONS)
-    {
+    for card in attention_cards {
         let Some(event_id) = event_ref_id(&card.ref_) else {
             continue;
         };
@@ -949,12 +933,6 @@ fn render_context_machine_output(
             let attention_span_views =
                 recall_attention_span_views(event_cards, attention_lineage_evidence);
             let interval_views = recall_interval_views(event_cards);
-            let timeline_views = recall_timeline_views(
-                &session_views,
-                &attention_span_views,
-                &interval_views,
-                event_cards,
-            );
             let mut source_caveats = source_caveats.to_vec();
             if source_surface == "sinexctl.recall"
                 && !event_cards.cards.is_empty()
@@ -981,6 +959,13 @@ fn render_context_machine_output(
                     ref_: Some(SinexObjectRef::new(SinexObjectKind::Projection, projection)),
                 });
             }
+            let timeline_views = recall_timeline_views(
+                &session_views,
+                &attention_span_views,
+                &interval_views,
+                event_cards,
+                &source_caveats,
+            );
             let envelope = ViewEnvelope::new(
                 source_surface,
                 ContextSummaryView::new(&window.since, event_cards.count, source_views)
@@ -1085,6 +1070,7 @@ fn recall_timeline_views(
     attention_spans: &[ContextAttentionSpanView],
     intervals: &[ContextIntervalView],
     event_cards: &EventCardListView,
+    source_caveats: &[CaveatView],
 ) -> Vec<ContextTimelineItemView> {
     let mut represented_event_ids = HashSet::new();
     let mut timeline = Vec::new();
@@ -1103,7 +1089,8 @@ fn recall_timeline_views(
             summary: session.summary.clone(),
             parent_refs: session.latest_event.trace_refs.clone(),
             support_refs: Vec::new(),
-            latest_event: session.latest_event.clone(),
+            caveats: session.latest_event.caveats.clone(),
+            latest_event: Some(session.latest_event.clone()),
         });
     }
 
@@ -1121,7 +1108,8 @@ fn recall_timeline_views(
             summary: span.summary.clone(),
             parent_refs: span.parent_refs.clone(),
             support_refs: span.support_refs.clone(),
-            latest_event: span.latest_event.clone(),
+            caveats: span.latest_event.caveats.clone(),
+            latest_event: Some(span.latest_event.clone()),
         });
     }
 
@@ -1139,7 +1127,8 @@ fn recall_timeline_views(
             summary: interval.summary.clone(),
             parent_refs: interval.parent_refs.clone(),
             support_refs: Vec::new(),
-            latest_event: interval.latest_event.clone(),
+            caveats: interval.latest_event.caveats.clone(),
+            latest_event: Some(interval.latest_event.clone()),
         });
     }
 
@@ -1159,9 +1148,17 @@ fn recall_timeline_views(
             summary: card.summary.clone(),
             parent_refs: card.trace_refs.clone(),
             support_refs: Vec::new(),
-            latest_event: card.clone(),
+            caveats: card.caveats.clone(),
+            latest_event: Some(card.clone()),
         });
     }
+
+    timeline.extend(
+        source_caveats
+            .iter()
+            .filter(|caveat| recall_caveat_is_timeline_gap(caveat))
+            .map(recall_gap_timeline_item),
+    );
 
     timeline.sort_by(|left, right| {
         let left_ts = timeline_item_sort_ts(left);
@@ -1169,6 +1166,41 @@ fn recall_timeline_views(
         right_ts.inner().cmp(&left_ts.inner())
     });
     timeline
+}
+
+fn recall_caveat_is_timeline_gap(caveat: &CaveatView) -> bool {
+    matches!(
+        caveat.id.as_str(),
+        "source.absent"
+            | "window.partial"
+            | "coverage.unmeasurable"
+            | "derivation.lane_not_promoted"
+            | "recall.session_rows_absent"
+            | "recall.attention_lineage_timeout"
+    )
+}
+
+fn recall_gap_timeline_item(caveat: &CaveatView) -> ContextTimelineItemView {
+    ContextTimelineItemView {
+        item_kind: "gap".to_string(),
+        ref_: caveat.ref_.clone().unwrap_or_else(|| {
+            SinexObjectRef::new(
+                SinexObjectKind::Projection,
+                format!("recall.gap.{}", caveat.id),
+            )
+        }),
+        source: None,
+        state_kind: Some(caveat.id.clone()),
+        label: None,
+        started_at: None,
+        ended_at: None,
+        duration_secs: None,
+        summary: caveat.message.clone(),
+        parent_refs: Vec::new(),
+        support_refs: Vec::new(),
+        caveats: vec![caveat.clone()],
+        latest_event: None,
+    }
 }
 
 fn timeline_item_sort_ts(item: &ContextTimelineItemView) -> Timestamp {

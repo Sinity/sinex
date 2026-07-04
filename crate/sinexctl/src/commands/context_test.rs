@@ -408,6 +408,68 @@ async fn recall_machine_output_projects_lifted_intervals() -> xtask::sandbox::Te
 }
 
 #[sinex_test]
+async fn recall_machine_output_projects_caveats_as_timeline_gaps()
+-> xtask::sandbox::TestResult<()> {
+    let event_cards = EventCardListView {
+        schema_version: EVENT_CARD_LIST_SCHEMA_VERSION.to_string(),
+        count: 1,
+        cards: vec![context_event_with_ref(
+            "shell.atuin",
+            "command.executed",
+            "event:cmd-1",
+        )],
+        next_cursor: None,
+        total_estimate: None,
+    };
+    let sources = grouped_context_sources(&event_cards.cards);
+    let window = build_context_window("30m", None, Timestamp::now())?;
+    let caveats = vec![CaveatView {
+        id: ReadinessCaveatId::CoverageUnmeasurable.as_str().to_string(),
+        message: "browser source coverage gap: runtime_binding_stalled: fixture gap".to_string(),
+        ref_: Some(SinexObjectRef::new(
+            SinexObjectKind::SourceDriver,
+            "browser.history",
+        )),
+    }];
+    let output = render_context_machine_output(
+        &event_cards,
+        &sources,
+        &window,
+        OutputFormat::Json,
+        "sinexctl.recall",
+        "recall",
+        &caveats,
+        &ContextStageTimings::default(),
+        &std::collections::HashMap::new(),
+    )?
+    .ok_or_else(|| color_eyre::eyre::eyre!("json output expected"))?;
+    let value: serde_json::Value = serde_json::from_str(&output)?;
+
+    let timeline = value["payload"]["timeline"]
+        .as_array()
+        .ok_or_else(|| color_eyre::eyre::eyre!("recall timeline must be an array"))?;
+    let gap_item = timeline
+        .iter()
+        .find(|item| item["item_kind"] == "gap")
+        .ok_or_else(|| color_eyre::eyre::eyre!("coverage caveat missing from timeline"))?;
+    assert_eq!(gap_item["state_kind"], "coverage.unmeasurable");
+    assert_eq!(gap_item["ref"]["kind"], "source_driver");
+    assert_eq!(gap_item["ref"]["id"], "browser.history");
+    assert!(
+        gap_item["summary"]
+            .as_str()
+            .is_some_and(|summary| summary.contains("fixture gap")),
+        "gap item should carry caveat message: {gap_item:?}"
+    );
+    assert!(
+        gap_item["latest_event"].is_null(),
+        "gap item must not fabricate an event-backed latest_event: {gap_item:?}"
+    );
+    assert_eq!(gap_item["caveats"][0]["id"], "coverage.unmeasurable");
+    Ok(())
+}
+
+#[sinex_test]
 async fn recall_readiness_marks_missing_session_detector_rows() -> xtask::sandbox::TestResult<()> {
     let event_cards = EventCardListView {
         schema_version: EVENT_CARD_LIST_SCHEMA_VERSION.to_string(),
