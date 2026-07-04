@@ -2383,10 +2383,11 @@ async fn sources_status(client: &GatewayClient, arguments: Value) -> Result<Valu
 async fn sources_status_view(client: &GatewayClient, arguments: Value) -> Result<Value> {
     reject_non_empty_args("sinex_sources_status_view", &arguments)?;
     let response = client.sources_status_view().await?;
-    Ok(mcp_view_envelope(
+    Ok(mcp_view_envelope_with_caveats(
         "sinex_sources_status_view",
         &json!({}),
         &json!(response.payload),
+        response.caveats,
     )?)
 }
 
@@ -3008,7 +3009,7 @@ fn envelope_with_caveats(
     result: &Value,
     caveats: Vec<CaveatView>,
 ) -> Value {
-    let mut envelope = mcp_view_envelope(tool, query, result).unwrap_or_else(|error| {
+    mcp_view_envelope_with_caveats(tool, query, result, caveats).unwrap_or_else(|error| {
         json!({
             "source_surface": tool,
             "query_echo": query,
@@ -3017,17 +3018,7 @@ fn envelope_with_caveats(
                 "detail": error.to_string(),
             }
         })
-    });
-    if let Value::Object(fields) = &mut envelope
-        && let Some(Value::Array(existing)) = fields.get_mut("caveats")
-    {
-        existing.extend(
-            caveats
-                .into_iter()
-                .filter_map(|caveat| serde_json::to_value(caveat).ok()),
-        );
-    }
-    envelope
+    })
 }
 
 fn llm_producer_absent_caveat(event_type: &'static str, message: &'static str) -> CaveatView {
@@ -3083,18 +3074,148 @@ fn is_gateway_transport_unavailable(error: &Report) -> bool {
 }
 
 fn mcp_view_envelope(tool: &str, query: &Value, payload: &Value) -> Result<Value> {
+    mcp_view_envelope_with_caveats(tool, query, payload, Vec::new())
+}
+
+fn mcp_view_envelope_with_caveats(
+    tool: &str,
+    query: &Value,
+    payload: &Value,
+    extra_caveats: Vec<CaveatView>,
+) -> Result<Value> {
     let mut envelope = ViewEnvelope::new(tool, payload.clone()).with_query_echo(query.clone());
     envelope.caveats.push(CaveatView {
         id: "mcp.raw_samples_redacted".to_string(),
         message: "MCP read tools redact raw payload samples and snippets by default".to_string(),
         ref_: None,
     });
+    envelope
+        .caveats
+        .extend(automatic_mcp_readiness_caveats(tool, payload));
+    envelope.caveats.extend(extra_caveats);
     envelope.privacy_state = Some(PrivacyStateView {
         state: PrivacyStateKind::Redacted,
         reason: Some("gateway_default raw sample redaction".to_string()),
     });
 
     Ok(serde_json::to_value(envelope)?)
+}
+
+fn automatic_mcp_readiness_caveats(tool: &str, payload: &Value) -> Vec<CaveatView> {
+    let mut caveats = Vec::new();
+    let mut empty_paths = Vec::new();
+    collect_empty_result_paths(payload, "$", &mut empty_paths);
+
+    for path in empty_paths.into_iter().take(3) {
+        caveats.push(CaveatView {
+            id: ReadinessCaveatId::CoverageUnmeasurable.as_str().to_string(),
+            message: format!(
+                "{tool} returned an empty collection at {path}; this MCP envelope cannot prove whether that means true absence, filters excluding rows, or unavailable producer coverage without adjacent readiness evidence."
+            ),
+            ref_: Some(SinexObjectRef::new(SinexObjectKind::RpcMethod, tool)),
+        });
+    }
+
+    let mut null_paths = Vec::new();
+    collect_null_result_paths(payload, "$", &mut null_paths);
+    for path in null_paths.into_iter().take(3) {
+        caveats.push(CaveatView {
+            id: ReadinessCaveatId::SourceAbsent.as_str().to_string(),
+            message: format!(
+                "{tool} returned null at {path}; the producer or lookup target is absent from this read surface."
+            ),
+            ref_: Some(SinexObjectRef::new(SinexObjectKind::RpcMethod, tool)),
+        });
+    }
+
+    caveats
+}
+
+fn collect_empty_result_paths(value: &Value, path: &str, paths: &mut Vec<String>) {
+    if paths.len() >= 3 {
+        return;
+    }
+
+    match value {
+        Value::Array(items) if items.is_empty() && is_result_path(path) => {
+            paths.push(path.to_string());
+        }
+        Value::Array(items) => {
+            for item in items {
+                collect_empty_result_paths(item, path, paths);
+                if paths.len() >= 3 {
+                    return;
+                }
+            }
+        }
+        Value::Object(fields) => {
+            for (key, field) in fields {
+                if is_envelope_metadata_key(key) {
+                    continue;
+                }
+                let child_path = format!("{path}.{key}");
+                collect_empty_result_paths(field, &child_path, paths);
+                if paths.len() >= 3 {
+                    return;
+                }
+            }
+        }
+        _ => {}
+    }
+}
+
+fn collect_null_result_paths(value: &Value, path: &str, paths: &mut Vec<String>) {
+    if paths.len() >= 3 {
+        return;
+    }
+
+    match value {
+        Value::Null if is_result_path(path) => {
+            paths.push(path.to_string());
+        }
+        Value::Array(items) => {
+            for item in items {
+                collect_null_result_paths(item, path, paths);
+                if paths.len() >= 3 {
+                    return;
+                }
+            }
+        }
+        Value::Object(fields) => {
+            for (key, field) in fields {
+                if is_envelope_metadata_key(key) {
+                    continue;
+                }
+                let child_path = format!("{path}.{key}");
+                collect_null_result_paths(field, &child_path, paths);
+                if paths.len() >= 3 {
+                    return;
+                }
+            }
+        }
+        _ => {}
+    }
+}
+
+fn is_envelope_metadata_key(key: &str) -> bool {
+    matches!(
+        key,
+        "actions" | "caveats" | "filters" | "freshness" | "privacy_state" | "query_echo"
+    )
+}
+
+fn is_result_path(path: &str) -> bool {
+    path == "$"
+        || path.ends_with(".result")
+        || path.ends_with(".entries")
+        || path.ends_with(".buckets")
+        || path.ends_with(".operations")
+        || path.ends_with(".sources")
+        || path.ends_with(".events")
+        || path.ends_with(".rows")
+        || path.ends_with(".tasks")
+        || path.ends_with(".materials")
+        || path.ends_with(".snapshot")
 }
 
 fn read_stdio_request<R: BufRead>(
