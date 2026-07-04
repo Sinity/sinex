@@ -93,6 +93,7 @@ use std::marker::PhantomData;
 use std::time::{Duration, Instant};
 
 use futures::StreamExt;
+use futures::stream::BoxStream;
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use serde_json::{Value as JsonValue, json};
 use tracing::{debug, info, warn};
@@ -120,7 +121,7 @@ use crate::runtime::checkpoint::{CheckpointManager, CheckpointState};
 use crate::runtime::parser::adapters::{LatestSqliteSnapshotEvidence, SqliteSnapshotLane};
 use crate::runtime::parser::{
     BindingConfig, DriftEvent, InitialStreamPosition, InputShapeAdapter, InputShapeAdapterExt,
-    InputShapeKind, MaterialParser, SourceRecord, SourceRecordFingerprint,
+    InputShapeKind, MaterialParser, ParserResult, SourceRecord, SourceRecordFingerprint,
 };
 use crate::runtime::source_driver::{SourceDriver, SourceDriverState};
 use crate::runtime::stream::{
@@ -553,8 +554,13 @@ where
     }
 
     fn idle_stream_finalize_interval(&self) -> Duration {
-        let max_age = self.rotation_policy.max_age_seconds.as_secs();
-        Duration::from_secs((max_age / 2).max(1))
+        let max_age = Duration::from_secs(self.rotation_policy.max_age_seconds.as_secs().max(1));
+        if let Some(acquirer) = self.stream_acquirer.as_ref()
+            && let Some(remaining) = acquirer.current_material_remaining_open_duration(max_age)
+        {
+            return remaining;
+        }
+        max_age
     }
 
     fn finalize_after_finite_poll_drain(&self) -> bool {
@@ -572,6 +578,46 @@ where
         acquirer
             .finalize_if_age_exceeds(interval, STREAM_IDLE_FINALIZE_REASON)
             .await
+    }
+
+    async fn next_record_preserving_pending_yield(
+        &mut self,
+        stream: &mut BoxStream<'static, ParserResult<SourceRecord>>,
+    ) -> RuntimeResult<Option<ParserResult<SourceRecord>>> {
+        let next_record = stream.next();
+        tokio::pin!(next_record);
+
+        loop {
+            let idle_tick = tokio::time::sleep(self.idle_stream_finalize_interval());
+            tokio::pin!(idle_tick);
+
+            tokio::select! {
+                record = &mut next_record => return Ok(record),
+                () = &mut idle_tick => {
+                    match self.finalize_idle_stream_material_if_due().await {
+                        Ok(true) => {
+                            info!(
+                                source = self.source_id,
+                                "Finalized idle adapter stream material before stale-slice timeout"
+                            );
+                        }
+                        Ok(false) => {
+                            debug!(
+                                source = self.source_id,
+                                "Adapter stream idle tick found no material old enough to finalize"
+                            );
+                        }
+                        Err(error) => {
+                            warn!(
+                                source = self.source_id,
+                                error = %error,
+                                "Failed to finalize idle adapter stream material"
+                            );
+                        }
+                    }
+                }
+            }
+        }
     }
 
     async fn finalize_finite_drain_material(&mut self, reason: &str) -> RuntimeResult<bool> {
@@ -1016,38 +1062,12 @@ where
             let first_pending = if let Some(pending) = deferred_pending_record.take() {
                 pending
             } else {
-                let record_result = match tokio::time::timeout(
-                    self.idle_stream_finalize_interval(),
-                    stream.next(),
-                )
-                .await
+                let record_result = match self
+                    .next_record_preserving_pending_yield(&mut stream)
+                    .await?
                 {
-                    Ok(Some(record_result)) => record_result,
-                    Ok(None) => break,
-                    Err(_) => {
-                        match self.finalize_idle_stream_material_if_due().await {
-                            Ok(true) => {
-                                info!(
-                                    source = self.source_id,
-                                    "Finalized idle adapter stream material before stale-slice timeout"
-                                );
-                            }
-                            Ok(false) => {
-                                debug!(
-                                    source = self.source_id,
-                                    "Adapter stream idle tick found no material old enough to finalize"
-                                );
-                            }
-                            Err(error) => {
-                                warn!(
-                                    source = self.source_id,
-                                    error = %error,
-                                    "Failed to finalize idle adapter stream material"
-                                );
-                            }
-                        }
-                        continue;
-                    }
+                    Some(record_result) => record_result,
+                    None => break,
                 };
                 self.refresh_binding_config()?;
                 if self.binding_config.is_truthy("private_mode_active") {
@@ -1093,6 +1113,7 @@ where
             let mut stream_exhausted = false;
 
             while batch_unmaterialized
+                && A::KIND != InputShapeKind::FileDrop
                 && pending_batch.len() < ADAPTER_MATERIAL_BATCH_MAX_RECORDS
                 && batch_bytes < ADAPTER_MATERIAL_BATCH_MAX_BYTES
             {
@@ -1260,9 +1281,9 @@ where
             }
         }
 
-        // The stream material is NOT finalized here — it persists across drain
-        // cycles. Finalization happens when run_continuous exits (shutdown signal)
-        // or when the source is dropped.
+        // The stream material is not finalized merely because one drain cycle
+        // returned. It persists across drain cycles and is finalized by age/size
+        // rotation, idle-stream finalization, or clean shutdown.
 
         self.persist_stream_checkpoint_if_due(state, true).await;
         debug!(

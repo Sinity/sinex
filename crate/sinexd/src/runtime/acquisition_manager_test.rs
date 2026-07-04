@@ -553,9 +553,7 @@ async fn prime_begins_material_without_staging_content(ctx: TestContext) -> Test
 
 // Preserved from the pre-existing split test file during inline extraction.
 #[sinex_test]
-async fn oversized_slice_rejection_does_not_mutate_local_stage(
-    ctx: TestContext,
-) -> TestResult<()> {
+async fn oversized_slice_rejection_does_not_mutate_local_stage(ctx: TestContext) -> TestResult<()> {
     let ctx = ctx.with_nats().shared().await?;
     let work_dir = tempfile::tempdir()?;
     let manager = AcquisitionManager::with_defaults(ctx.nats_client(), "oversized-test")

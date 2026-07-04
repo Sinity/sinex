@@ -536,6 +536,7 @@ fn render_store_snapshot(snapshot: &crate::runtime_store::RuntimeStoreSnapshot) 
     render_jetstream_snapshot(&snapshot.jetstream);
     render_event_mix(&snapshot.recent_event_mix);
     render_source_rollups("Recent Source Materials", &snapshot.recent_source_materials);
+    render_active_source_materials(&snapshot.active_source_materials);
     render_source_rollups(
         "Browser History Materials",
         &snapshot.browser_history_materials,
@@ -678,7 +679,8 @@ fn render_table_estimates(rows: &[crate::runtime_store::TableEstimate]) {
     for row in rows {
         builder.push_record([
             row.relation.as_str(),
-            &row.estimated_rows.map_or_else(|| "-".to_string(), |v| v.to_string()),
+            &row.estimated_rows
+                .map_or_else(|| "-".to_string(), |v| v.to_string()),
         ]);
     }
     let mut table = builder.build();
@@ -689,7 +691,10 @@ fn render_table_estimates(rows: &[crate::runtime_store::TableEstimate]) {
 fn render_event_mix(rows: &[crate::runtime_store::EventMixRow]) {
     if rows.is_empty() {
         println!();
-        println!("{}", style("No recent events in the selected window.").dim());
+        println!(
+            "{}",
+            style("No recent events in the selected window.").dim()
+        );
         return;
     }
     println!();
@@ -704,10 +709,7 @@ fn render_event_mix(rows: &[crate::runtime_store::EventMixRow]) {
     println!("{table}");
 }
 
-fn render_source_rollups(
-    title: &str,
-    rows: &[crate::runtime_store::SourceMaterialRollup],
-) {
+fn render_source_rollups(title: &str, rows: &[crate::runtime_store::SourceMaterialRollup]) {
     if rows.is_empty() {
         return;
     }
@@ -720,8 +722,7 @@ fn render_source_rollups(
             row.source_base.as_str(),
             row.status.as_str(),
             &row.materials.to_string(),
-            &row
-                .total_bytes
+            &row.total_bytes
                 .map_or_else(|| "-".to_string(), format_bytes_i64),
             &row.parsed_events.to_string(),
         ]);
@@ -729,6 +730,43 @@ fn render_source_rollups(
     let mut table = builder.build();
     table.with(Style::sharp());
     println!("{table}");
+}
+
+fn render_active_source_materials(rows: &[crate::runtime_store::ActiveSourceMaterialRow]) {
+    if rows.is_empty() {
+        return;
+    }
+    println!();
+    println!("{}", style("Active Source Materials:").bold());
+    let mut builder = Builder::new();
+    builder.push_record(["MATERIAL", "SOURCE", "AGE", "BYTES", "PARSED EVENTS"]);
+    for row in rows {
+        builder.push_record([
+            &truncate_str(&row.material_id, 18),
+            &truncate_str(&row.source_identifier, 44),
+            &format_duration_secs(row.age_seconds),
+            &row.total_bytes
+                .map_or_else(|| "-".to_string(), format_bytes_i64),
+            &row.parsed_events.to_string(),
+        ]);
+    }
+    let mut table = builder.build();
+    table.with(Style::sharp());
+    println!("{table}");
+}
+
+fn format_duration_secs(seconds: i64) -> String {
+    let seconds = seconds.max(0);
+    let hours = seconds / 3600;
+    let minutes = (seconds % 3600) / 60;
+    let secs = seconds % 60;
+    if hours > 0 {
+        format!("{hours}h{minutes:02}m")
+    } else if minutes > 0 {
+        format!("{minutes}m{secs:02}s")
+    } else {
+        format!("{secs}s")
+    }
 }
 
 // ── J6: resources ────────────────────────────────────────────────────────────
