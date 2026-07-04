@@ -60,6 +60,10 @@ const EVENTS_REQUIRED_INDEXES: &[&str] = &[
     // Partial index backing self-telemetry queries (created by
     // `configure_timescaledb`). Listed here so drift detection covers it.
     "ix_events_sinex_telemetry",
+    // Partial latest-row index for pre-migration reflection rows still stored
+    // in core.events. Reflection queries primarily read reflection.events, but
+    // mixed migration support must not scan the whole activity hypertable.
+    "ix_events_legacy_reflection_latest",
 ];
 const REFLECTION_EVENTS_REQUIRED_TRIGGERS: &[&str] = &[
     "trg_events_no_update",
@@ -1121,6 +1125,11 @@ async fn configure_timescaledb(pool: &PgPool) -> Result<(), ApplyError> {
     execute_sql(
         pool,
         "CREATE INDEX IF NOT EXISTS ix_events_sinex_telemetry ON core.events (source, event_type, id DESC) WHERE source LIKE 'sinex.%'",
+    )
+    .await?;
+    execute_sql(
+        pool,
+        "CREATE INDEX IF NOT EXISTS ix_events_legacy_reflection_latest ON core.events (id DESC) WHERE source = 'sinex' OR source LIKE 'sinex.%' OR source LIKE 'sinexd.%'",
     )
     .await?;
     configure_reflection_timescaledb(pool).await?;

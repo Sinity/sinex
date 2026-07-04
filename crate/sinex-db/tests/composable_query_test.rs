@@ -100,6 +100,22 @@ async fn event_query_defaults_to_activity_lane(ctx: TestContext) -> TestResult<(
         .await?;
     ctx.pool
         .events()
+        .insert(
+            DynamicPayload::new("sinex", "lane.test", json!({"kind": "bare-sinex"}))
+                .from_material(material_id)
+                .build()?,
+        )
+        .await?;
+    ctx.pool
+        .events()
+        .insert(
+            DynamicPayload::new("sinexd.api", "lane.test", json!({"kind": "sinexd"}))
+                .from_material(material_id)
+                .build()?,
+        )
+        .await?;
+    ctx.pool
+        .events()
         .insert_stream_batch_into(
             EventStorageLane::Reflection,
             &[reflection_stream_row(
@@ -158,6 +174,22 @@ async fn event_query_reflection_lane_includes_physical_and_legacy_reflection(
         .await?;
     ctx.pool
         .events()
+        .insert(
+            DynamicPayload::new("sinex", "lane.reflection", json!({"kind": "bare-sinex"}))
+                .from_material(material_id)
+                .build()?,
+        )
+        .await?;
+    ctx.pool
+        .events()
+        .insert(
+            DynamicPayload::new("sinexd.api", "lane.reflection", json!({"kind": "sinexd"}))
+                .from_material(material_id)
+                .build()?,
+        )
+        .await?;
+    ctx.pool
+        .events()
         .insert_stream_batch_into(
             EventStorageLane::Reflection,
             &[reflection_stream_row(
@@ -181,7 +213,10 @@ async fn event_query_reflection_lane_includes_physical_and_legacy_reflection(
     );
     sources.sort();
 
-    assert_eq!(sources, vec!["sinex.legacy", "sinex.reflection"]);
+    assert_eq!(
+        sources,
+        vec!["sinex", "sinex.legacy", "sinex.reflection", "sinexd.api"]
+    );
     Ok(())
 }
 

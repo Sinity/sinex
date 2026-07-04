@@ -86,11 +86,19 @@ async fn source_role_classifier_matches_event_and_material_lanes() -> xtask::san
 async fn source_role_sql_fragments_use_reflection_vocabulary() -> xtask::sandbox::TestResult<()> {
     assert_eq!(
         source_role_sql_case("source"),
-        "CASE WHEN source = 'sinex' OR source LIKE 'sinex.%' OR source LIKE 'sinexd.%' THEN 'reflection' ELSE 'activity' END"
+        "CASE WHEN (source = 'sinex' OR source LIKE 'sinex.%' OR source LIKE 'sinexd.%') THEN 'reflection' ELSE 'activity' END"
+    );
+    assert_eq!(
+        source_role_sql_predicate("source", SourceRole::Reflection),
+        "(source = 'sinex' OR source LIKE 'sinex.%' OR source LIKE 'sinexd.%')"
+    );
+    assert_eq!(
+        source_role_sql_predicate("source", SourceRole::Activity),
+        "NOT (source = 'sinex' OR source LIKE 'sinex.%' OR source LIKE 'sinexd.%')"
     );
     assert_eq!(
         throughput_component_sql_case("source"),
-        "CASE WHEN source LIKE 'sinexd.api%' THEN 'gateway' WHEN source LIKE 'derived.%' THEN 'derived' WHEN (CASE WHEN source = 'sinex' OR source LIKE 'sinex.%' OR source LIKE 'sinexd.%' THEN 'reflection' ELSE 'activity' END) = 'reflection' THEN 'reflection' ELSE 'ingestion' END"
+        "CASE WHEN source LIKE 'sinexd.api%' THEN 'gateway' WHEN source LIKE 'derived.%' THEN 'derived' WHEN (CASE WHEN (source = 'sinex' OR source LIKE 'sinex.%' OR source LIKE 'sinexd.%') THEN 'reflection' ELSE 'activity' END) = 'reflection' THEN 'reflection' ELSE 'ingestion' END"
     );
     Ok(())
 }
