@@ -118,10 +118,17 @@ whether the overlap actually helped.
 
 ## Greedy Batch / PR Cadence
 
-Default development unit: one complete bead, or one coherent phase that can
-honestly close a bead acceptance-criteria subset with a clear residual matrix.
+Default development unit: one complete bead. If the bead is genuinely too large
+for one reviewable branch, widen to the largest coherent phase that can
+honestly close a named acceptance-criteria subset with a clear residual matrix.
 Do not open a PR for every small projection, helper, or proof artifact merely
 because it is mergeable.
+
+Treat widening as the normal devloop policy, not an occasional optimization.
+When a chosen bead has several nearby criteria in the same subsystem, gather
+all of them into the same manifest before editing. A green narrow proof is a
+checkpoint, not a publishing trigger, unless it proves the full bead or the
+largest coherent phase available right now.
 
 Prefer a single branch/PR when the work:
 
@@ -139,6 +146,13 @@ Split only when there is a real boundary:
 - verification cost or failure isolation would become materially worse;
 - a partial PR can close a named bead or named acceptance-criteria phase, not
   just land a convenient substep.
+
+Splitting because the current substep is already implemented, already tested,
+or easy to describe is not a valid boundary. Before deciding to split, look for
+the adjacent acceptance criteria, demo artifact, live proof, cleanup, and
+documentation work that would otherwise become the next PR about the same
+claim. If those can be completed with the same mental context and proof family,
+keep batching.
 
 Before publishing, audit the bead acceptance criteria. If the PR does not close
 the bead, the body and bead notes must say exactly which criteria are satisfied,
