@@ -6,20 +6,25 @@ use color_eyre::eyre::eyre;
 use serde::de::DeserializeOwned;
 use serde_json::Value;
 use sinex_primitives::rpc::semantic::{
-    SemanticEpochCreateRequest, SemanticEpochListRequest, SemanticLaneCreateRequest,
-    SemanticLaneDiffRecordEntityRelationRequest, SemanticLaneDiffsListRequest,
-    SemanticLaneDiscardRequest, SemanticLaneListRequest, SemanticLaneOutputsListRequest,
-    SemanticLaneOutputsSeedCanonicalGraphRequest, SemanticLaneOutputsSeedEntityEventsRequest,
-    SemanticLaneOutputsWriteRequest, SemanticLaneSetStatusRequest,
+    SemanticEpochCreateRequest, SemanticEpochListRequest, SemanticEpochListResponse,
+    SemanticLaneCreateRequest, SemanticLaneDiffRecordEntityRelationRequest,
+    SemanticLaneDiffsListRequest, SemanticLaneDiffsListResponse, SemanticLaneDiscardRequest,
+    SemanticLaneListRequest, SemanticLaneListResponse, SemanticLaneOutputsListRequest,
+    SemanticLaneOutputsListResponse, SemanticLaneOutputsSeedCanonicalGraphRequest,
+    SemanticLaneOutputsSeedEntityEventsRequest, SemanticLaneOutputsWriteRequest,
+    SemanticLaneSetStatusRequest,
 };
 use sinex_primitives::{EntityRelationLaneOutputs, SemanticComponentVersion, SemanticScope, Uuid};
+use sinex_primitives::views::{
+    CaveatView, ReadinessCaveatId, SinexObjectKind, SinexObjectRef, ViewEnvelope,
+};
 use std::path::{Path, PathBuf};
 
 use crate::client::GatewayClient;
 use crate::commands::common::parse_serde_enum;
 use crate::commands::curation::CurationCommand;
 use crate::commands::llm::LlmCommand;
-use crate::fmt::{format_json, format_yaml};
+use crate::fmt::{format_json, format_yaml, print_finite_envelope};
 use crate::model::OutputFormat;
 use crate::validation::parse_time_input;
 
@@ -162,7 +167,11 @@ impl SemanticEpochListCommand {
         let response = client
             .semantic_epochs_list(SemanticEpochListRequest { limit: self.limit })
             .await?;
-        render_values("Semantic epochs", &response.epochs, format)
+        let envelope = semantic_epoch_list_envelope(response, self.limit);
+        if print_finite_envelope(&envelope, format)? {
+            return Ok(());
+        }
+        render_values("Semantic epochs", &envelope.payload.epochs, format)
     }
 }
 
@@ -304,7 +313,11 @@ impl SemanticLaneListCommand {
                 limit: self.limit,
             })
             .await?;
-        render_values("Semantic lanes", &response.lanes, format)
+        let envelope = semantic_lane_list_envelope(response, self.status.as_deref(), self.limit);
+        if print_finite_envelope(&envelope, format)? {
+            return Ok(());
+        }
+        render_values("Semantic lanes", &envelope.payload.lanes, format)
     }
 }
 
@@ -370,7 +383,11 @@ impl SemanticLaneOutputsCommand {
                 limit: self.limit,
             })
             .await?;
-        render_values("Semantic lane outputs", &response.outputs, format)
+        let envelope = semantic_lane_outputs_envelope(response, self.limit);
+        if print_finite_envelope(&envelope, format)? {
+            return Ok(());
+        }
+        render_values("Semantic lane outputs", &envelope.payload.outputs, format)
     }
 }
 
@@ -467,7 +484,11 @@ impl SemanticLaneDiffsCommand {
                 limit: self.limit,
             })
             .await?;
-        render_values("Semantic lane diffs", &response.diffs, format)
+        let envelope = semantic_lane_diffs_envelope(response, self.limit);
+        if print_finite_envelope(&envelope, format)? {
+            return Ok(());
+        }
+        render_values("Semantic lane diffs", &envelope.payload.diffs, format)
     }
 }
 
@@ -595,3 +616,179 @@ fn print_value_row(value: &Value) {
         .unwrap_or("");
     println!("  {id}  {status:12}  {name}");
 }
+
+fn semantic_epoch_list_envelope(
+    response: SemanticEpochListResponse,
+    limit: i64,
+) -> ViewEnvelope<SemanticEpochListResponse> {
+    let mut envelope =
+        ViewEnvelope::new("sinexctl.semantic.epoch.list", response).with_query_echo(
+            serde_json::json!({
+                "limit": limit,
+            }),
+        );
+    envelope.caveats = semantic_list_caveats(
+        envelope.payload.epochs.len(),
+        limit,
+        SemanticListCaveatSpec {
+            empty_message:
+                "semantic epoch registry returned no epochs; derivation regime coverage is absent",
+            partial_message:
+                "semantic epoch registry reached its limit; additional epochs may exist",
+            ref_kind: SinexObjectKind::Projection,
+            ref_id: "semantic.epochs",
+            command_hint: "sinexctl semantic epoch list",
+            rpc_method: "semantic.epochs.list",
+        },
+    );
+    envelope
+}
+
+fn semantic_lane_list_envelope(
+    response: SemanticLaneListResponse,
+    status: Option<&str>,
+    limit: i64,
+) -> ViewEnvelope<SemanticLaneListResponse> {
+    let mut envelope =
+        ViewEnvelope::new("sinexctl.semantic.lane.list", response).with_query_echo(
+            serde_json::json!({
+                "status": status,
+                "limit": limit,
+            }),
+        );
+    envelope.caveats = semantic_list_caveats(
+        envelope.payload.lanes.len(),
+        limit,
+        SemanticListCaveatSpec {
+            empty_message: "semantic lane registry returned no lanes for this bounded query",
+            partial_message:
+                "semantic lane registry reached its limit; additional lanes may exist",
+            ref_kind: SinexObjectKind::SemanticLane,
+            ref_id: status.unwrap_or("semantic.lanes"),
+            command_hint: "sinexctl semantic lane list",
+            rpc_method: "semantic.lanes.list",
+        },
+    );
+    envelope
+}
+
+fn semantic_lane_outputs_envelope(
+    response: SemanticLaneOutputsListResponse,
+    limit: i64,
+) -> ViewEnvelope<SemanticLaneOutputsListResponse> {
+    let lane_id = response.lane_id.to_string();
+    let mut envelope =
+        ViewEnvelope::new("sinexctl.semantic.lane.outputs", response).with_query_echo(
+            serde_json::json!({
+                "lane_id": lane_id,
+                "limit": limit,
+            }),
+        );
+    envelope.caveats = semantic_list_caveats(
+        envelope.payload.outputs.len(),
+        limit,
+        SemanticListCaveatSpec {
+            empty_message:
+                "semantic lane output query returned no outputs; this lane has no inspectable derived records in the bounded view",
+            partial_message:
+                "semantic lane output query reached its limit; additional lane outputs may exist",
+            ref_kind: SinexObjectKind::SemanticLane,
+            ref_id: &lane_id,
+            command_hint: "sinexctl semantic lane outputs",
+            rpc_method: "semantic.lane.outputs.list",
+        },
+    );
+    envelope
+}
+
+fn semantic_lane_diffs_envelope(
+    response: SemanticLaneDiffsListResponse,
+    limit: i64,
+) -> ViewEnvelope<SemanticLaneDiffsListResponse> {
+    let lane_id = response.lane_id.to_string();
+    let mut envelope =
+        ViewEnvelope::new("sinexctl.semantic.lane.diffs", response).with_query_echo(
+            serde_json::json!({
+                "lane_id": lane_id,
+                "limit": limit,
+            }),
+        );
+    envelope.caveats = semantic_list_caveats(
+        envelope.payload.diffs.len(),
+        limit,
+        SemanticListCaveatSpec {
+            empty_message:
+                "semantic lane diff query returned no recorded diffs; lane comparison evidence is absent",
+            partial_message:
+                "semantic lane diff query reached its limit; additional lane diffs may exist",
+            ref_kind: SinexObjectKind::SemanticLane,
+            ref_id: &lane_id,
+            command_hint: "sinexctl semantic lane diffs",
+            rpc_method: "semantic.lane.diffs.list",
+        },
+    );
+    envelope
+}
+
+struct SemanticListCaveatSpec<'a> {
+    empty_message: &'static str,
+    partial_message: &'static str,
+    ref_kind: SinexObjectKind,
+    ref_id: &'a str,
+    command_hint: &'static str,
+    rpc_method: &'static str,
+}
+
+fn semantic_list_caveats(
+    observed_len: usize,
+    limit: i64,
+    spec: SemanticListCaveatSpec<'_>,
+) -> Vec<CaveatView> {
+    let mut caveats = Vec::new();
+    if observed_len == 0 {
+        caveats.push(semantic_caveat(
+            ReadinessCaveatId::SourceAbsent,
+            spec.empty_message,
+            spec.ref_kind.clone(),
+            spec.ref_id,
+            spec.command_hint,
+            spec.rpc_method,
+        ));
+    }
+    if limit > 0 && observed_len as i64 >= limit {
+        caveats.push(semantic_caveat(
+            ReadinessCaveatId::WindowPartial,
+            spec.partial_message,
+            spec.ref_kind,
+            spec.ref_id,
+            spec.command_hint,
+            spec.rpc_method,
+        ));
+    }
+    caveats
+}
+
+fn semantic_caveat(
+    id: ReadinessCaveatId,
+    message: impl Into<String>,
+    kind: SinexObjectKind,
+    ref_id: impl Into<String>,
+    command_hint: &'static str,
+    rpc_method: &'static str,
+) -> CaveatView {
+    let ref_id = ref_id.into();
+    CaveatView {
+        id: id.as_str().to_string(),
+        message: message.into(),
+        ref_: Some(
+            SinexObjectRef::new(kind, ref_id.clone())
+                .with_label(ref_id)
+                .with_command_hint(command_hint)
+                .with_rpc_method(rpc_method),
+        ),
+    }
+}
+
+#[cfg(test)]
+#[path = "semantic_test.rs"]
+mod tests;
