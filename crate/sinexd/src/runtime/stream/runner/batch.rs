@@ -132,8 +132,11 @@ impl<T: RuntimeModule + 'static> RuntimeRunner<T> {
     /// on success, or `None` if there was nothing to save or the save failed.
     ///
     /// Tracks consecutive failures in `consecutive_failures`. Resets to 0 on success.
-    /// Returns a hard error after 3 consecutive failures to prevent silent progress loss
-    /// on crash+restart (which would cause duplicate event processing).
+    /// Returns a hard error after 3 consecutive failures to prevent silent
+    /// progress loss on crash+restart. Depending on the failure point, restart
+    /// repair can replay already-processed events or recover acked queue
+    /// contents from the DB-backed historical catch-up path; continuing after a
+    /// broken checkpoint would make that boundary unknowable.
     #[cfg(feature = "messaging")]
     pub(super) async fn try_save_checkpoint(
         checkpoint_manager: &CheckpointManager,
