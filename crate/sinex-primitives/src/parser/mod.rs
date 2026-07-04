@@ -424,6 +424,17 @@ pub enum TimingConfidence {
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]
 #[serde(tag = "source", rename_all = "snake_case")]
 pub enum TimingEvidence {
+    /// Timestamp observed at a live capture boundary.
+    ///
+    /// Used by streaming adapters that receive one live record at a time
+    /// from a socket, bus, or similar runtime wrapper. The timestamp is not
+    /// intrinsic content, but it is the best real-world observation time for
+    /// the occurrence.
+    RealtimeCapture {
+        value: Timestamp,
+        capture_source: String,
+    },
+
     /// Timestamp comes from a named field within the record itself.
     Intrinsic {
         field: String,
@@ -465,10 +476,25 @@ impl TimingEvidence {
     pub fn resolved_quality(&self) -> Option<crate::domain::TemporalSourceType> {
         use crate::domain::TemporalSourceType;
         match self {
+            Self::RealtimeCapture { .. } => Some(TemporalSourceType::RealtimeCapture),
             Self::Intrinsic { .. } => Some(TemporalSourceType::IntrinsicContent),
             Self::InferredMtime { .. } => Some(TemporalSourceType::InferredMtime),
             Self::UserDeclared { .. } => Some(TemporalSourceType::InferredUser),
             Self::Wrapper { .. } | Self::StagedAtFallback | Self::Atemporal => None,
+        }
+    }
+
+    /// Return the concrete timestamp carried by this timing evidence, when it
+    /// contains one directly.
+    #[must_use]
+    pub fn timestamp_value(&self) -> Option<Timestamp> {
+        match self {
+            Self::RealtimeCapture { value, .. } | Self::UserDeclared { value, .. } => Some(*value),
+            Self::InferredMtime { mtime, .. } => Some(*mtime),
+            Self::Intrinsic { .. }
+            | Self::Wrapper { .. }
+            | Self::StagedAtFallback
+            | Self::Atemporal => None,
         }
     }
 }
