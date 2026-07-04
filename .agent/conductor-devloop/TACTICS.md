@@ -139,6 +139,13 @@ Batch toward bead closure by default. The normal loop is:
 5. generate one live/demo artifact that exercises the whole claim;
 6. publish one PR for the complete bead or coherent phase.
 
+The target branch should be as wide as the bead's natural implementation shape.
+If a bead is large, first try to identify the biggest coherent phase that shares
+code paths, proof commands, and demo value. Only then decide whether a split is
+actually warranted. Do not publish at the first green helper test when the next
+acceptance criterion is still in the same subsystem and can be handled with the
+same setup.
+
 Avoid turning each small helper, renderer field, or artifact refresh into its
 own PR. A small PR is appropriate only when it closes a named bead/phase,
 unblocks other active work, isolates genuine risk, or keeps a truly large bead
@@ -155,6 +162,11 @@ When tempted to publish a partial slice, ask:
   already green?
 
 If the answer is "already green," keep batching.
+
+If proof churn exceeds the manifest shape, widen the manifest before rerunning:
+collect adjacent fixes, docs, artifact refreshes, and Beads updates, then run
+one focused proof family. Broad gates remain commit-boundary checks, not
+per-substep reflexes.
 
 ## Reassessment Triggers
 

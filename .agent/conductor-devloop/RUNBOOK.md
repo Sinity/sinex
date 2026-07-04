@@ -99,14 +99,19 @@ This appends a timestamped transition to `ACTIVE-LOOP.md` and
    - Identify coverage gaps that would make a demo misleading.
 
 3. **Construction**
-   - Make the smallest coherent change that advances the slice.
+   - Make the widest coherent change that can honestly close the bead or the
+     largest reviewable acceptance-criteria phase.
    - Prefer shared acquisition/query/evidence/render substrate.
    - Avoid one-off CLI/report/demo silos.
+   - Before editing a helper-sized substep, check whether adjacent AC, docs,
+     demo artifact, cleanup, or Beads closure work belongs in the same batch.
 
 4. **Proof**
    - Use the proof ladder: source review -> unit/parser -> package -> CLI/dev
      store -> real-data artifact -> broad gate.
    - State what the proof supports and what it does not.
+   - Treat a green focused proof as permission to continue widening when the
+     bead remains open and the next criterion shares the same proof family.
 
 5. **Artifact**
    - Update `/realm/inbox/demos_sinex` or the conductor packet with something
