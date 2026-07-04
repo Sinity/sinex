@@ -1317,6 +1317,89 @@ async fn absent_occurrence_key_leaves_equivalence_key_none() -> xtask::sandbox::
 }
 
 #[sinex_test]
+async fn record_realtime_hint_promotes_atemporal_intent_timing()
+-> xtask::sandbox::TestResult<()> {
+    let original_ts = Timestamp::from_unix_timestamp(1_700_000_000)
+        .ok_or_else(|| color_eyre::eyre::eyre!("valid original timestamp"))?;
+    let hinted_ts = Timestamp::from_unix_timestamp(1_700_000_123)
+        .ok_or_else(|| color_eyre::eyre::eyre!("valid hinted timestamp"))?;
+    let hint = sinex_primitives::parser::TimingEvidence::RealtimeCapture {
+        value: hinted_ts,
+        capture_source: "unix_socket.connect".to_string(),
+    };
+    let intent = ParsedEventIntent::builder()
+        .source_id(SourceId::from_static("test.unit"))
+        .parser_id(ParserId::from_static("test-parser"))
+        .parser_version("1.0.0")
+        .event_type(EventType::from_static("test.event"))
+        .event_source(EventSource::from_static("test"))
+        .payload(serde_json::json!({"k": "v"}))
+        .ts_orig(original_ts)
+        .timing(sinex_primitives::parser::TimingEvidence::Atemporal)
+        .anchor(MaterialAnchor::ByteRange { start: 0, len: 0 })
+        .privacy_context(ProcessingContext::Metadata)
+        .build();
+
+    let mut promoted = apply_record_timing_hint_to_intents(vec![intent], Some(&hint));
+    assert_eq!(promoted.len(), 1);
+    let promoted = promoted.remove(0);
+    assert_eq!(promoted.ts_orig, hinted_ts);
+    assert_eq!(promoted.timing, hint);
+
+    let event = intent_to_event_with_anchor(
+        promoted,
+        Id::<SourceMaterial>::from_uuid(Uuid::now_v7()),
+        0,
+        None,
+        None,
+        None,
+    )
+    .expect("intent conversion");
+    assert_eq!(event.ts_orig, Some(hinted_ts));
+    assert_eq!(
+        event.ts_quality,
+        Some(sinex_primitives::domain::TemporalSourceType::RealtimeCapture)
+    );
+    Ok(())
+}
+
+#[sinex_test]
+async fn record_realtime_hint_does_not_override_intrinsic_intent_timing()
+-> xtask::sandbox::TestResult<()> {
+    let intrinsic_ts = Timestamp::from_unix_timestamp(1_700_000_000)
+        .ok_or_else(|| color_eyre::eyre::eyre!("valid intrinsic timestamp"))?;
+    let hinted_ts = Timestamp::from_unix_timestamp(1_700_000_123)
+        .ok_or_else(|| color_eyre::eyre::eyre!("valid hinted timestamp"))?;
+    let hint = sinex_primitives::parser::TimingEvidence::RealtimeCapture {
+        value: hinted_ts,
+        capture_source: "unix_socket.connect".to_string(),
+    };
+    let intrinsic = sinex_primitives::parser::TimingEvidence::Intrinsic {
+        field: "started_at".to_string(),
+        confidence: sinex_primitives::parser::TimingConfidence::Intrinsic,
+    };
+    let intent = ParsedEventIntent::builder()
+        .source_id(SourceId::from_static("test.unit"))
+        .parser_id(ParserId::from_static("test-parser"))
+        .parser_version("1.0.0")
+        .event_type(EventType::from_static("test.event"))
+        .event_source(EventSource::from_static("test"))
+        .payload(serde_json::json!({"k": "v"}))
+        .ts_orig(intrinsic_ts)
+        .timing(intrinsic.clone())
+        .anchor(MaterialAnchor::ByteRange { start: 0, len: 0 })
+        .privacy_context(ProcessingContext::Metadata)
+        .build();
+
+    let mut unchanged = apply_record_timing_hint_to_intents(vec![intent], Some(&hint));
+    assert_eq!(unchanged.len(), 1);
+    let unchanged = unchanged.remove(0);
+    assert_eq!(unchanged.ts_orig, intrinsic_ts);
+    assert_eq!(unchanged.timing, intrinsic);
+    Ok(())
+}
+
+#[sinex_test]
 async fn sqlite_snapshot_evidence_link_is_idempotent(ctx: TestContext) -> TestResult<()> {
     let ctx = ctx.with_nats().shared().await?;
     let (runtime, _events) = make_adapter_runtime_with_db(&ctx).await?;

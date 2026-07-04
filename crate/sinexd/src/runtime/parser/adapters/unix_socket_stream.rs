@@ -24,7 +24,8 @@ use tokio::net::{UnixListener, UnixStream};
 
 use sinex_primitives::events::SourceMaterial;
 use sinex_primitives::ids::Id;
-use sinex_primitives::parser::{InputShapeKind, MaterialAnchor, SourceRecord};
+use sinex_primitives::parser::{InputShapeKind, MaterialAnchor, SourceRecord, TimingEvidence};
+use sinex_primitives::temporal::Timestamp;
 
 use crate::runtime::parser::{InputShapeAdapter, ParserError, ParserResult};
 
@@ -190,6 +191,7 @@ fn build_unix_listener_stream(
                             continue;
                         }
                         let line_bytes = line.as_bytes().to_vec();
+                        let received_at = Timestamp::now();
                         let len = line_bytes.len() as u64;
 
                         let anchor = MaterialAnchor::StreamFrame {
@@ -205,7 +207,10 @@ fn build_unix_listener_stream(
                             anchor,
                             bytes: line_bytes,
                             logical_path: None,
-                            source_ts_hint: None,
+                            source_ts_hint: Some(TimingEvidence::RealtimeCapture {
+                                value: received_at,
+                                capture_source: "unix_socket.listen".to_string(),
+                            }),
                             metadata: serde_json::json!({
                                 "unix_socket_mode": "listen",
                             }),
@@ -249,6 +254,7 @@ fn build_unix_stream(
                             continue;
                         }
                         let line_bytes = line.as_bytes().to_vec();
+                        let received_at = Timestamp::now();
                         let len = line_bytes.len() as u64;
 
                         let anchor = MaterialAnchor::StreamFrame {
@@ -264,7 +270,10 @@ fn build_unix_stream(
                             anchor,
                             bytes: line_bytes,
                             logical_path: None,
-                            source_ts_hint: None,
+                            source_ts_hint: Some(TimingEvidence::RealtimeCapture {
+                                value: received_at,
+                                capture_source: "unix_socket.connect".to_string(),
+                            }),
                             metadata: serde_json::Value::Null,
                         });
                     }
