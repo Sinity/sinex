@@ -13,11 +13,14 @@ use sinex_primitives::rpc::documents::{
     DocumentsGetResponse, DocumentsSearchRequest, DocumentsSearchResponse,
 };
 use sinex_primitives::temporal::Timestamp;
+use sinex_primitives::views::{
+    CaveatView, ReadinessCaveatId, SinexObjectKind, SinexObjectRef, ViewEnvelope,
+};
 use tabled::{builder::Builder, settings::Style};
 
 use crate::Result;
 use crate::client::GatewayClient;
-use crate::fmt::{format_json, format_yaml};
+use crate::fmt::print_finite_envelope;
 use crate::model::OutputFormat;
 
 // ---------------------------------------------------------------------------
@@ -152,21 +155,37 @@ impl SearchArgs {
             },
         };
 
-        let response: DocumentsSearchResponse = client.documents_search(request).await?;
+        let response: DocumentsSearchResponse = client.documents_search(request.clone()).await?;
 
-        match format {
-            OutputFormat::Json | OutputFormat::Ndjson | OutputFormat::Dot => {
-                println!("{}", format_json(&response)?);
-            }
-            OutputFormat::Yaml => {
-                println!("{}", format_yaml(&response)?);
-            }
-            OutputFormat::Table => {
-                println!("{}", render_search_table(&response));
-            }
+        let envelope = documents_search_envelope(response, &request)?;
+        if !print_finite_envelope(&envelope, format)? {
+            println!("{}", render_search_table(&envelope.payload));
         }
         Ok(())
     }
+}
+
+fn documents_search_envelope(
+    response: DocumentsSearchResponse,
+    request: &DocumentsSearchRequest,
+) -> Result<ViewEnvelope<DocumentsSearchResponse>> {
+    let mut envelope = ViewEnvelope::new("sinexctl.docs.search", response)
+        .with_query_echo(serde_json::to_value(request)?);
+    if envelope.payload.results.is_empty() {
+        let reason = envelope
+            .payload
+            .empty_reason
+            .as_deref()
+            .unwrap_or("unknown");
+        envelope.caveats.push(documents_caveat(
+            "sinexctl.docs.search",
+            format!(
+                "document search returned no chunks (empty_reason={reason}); this is an empty document read-model window, not proof that relevant source material never existed"
+            ),
+            "sinexctl docs search <query>",
+        ));
+    }
+    Ok(envelope)
 }
 
 fn render_search_table(response: &DocumentsSearchResponse) -> String {
@@ -220,21 +239,22 @@ pub struct GetArgs {
 impl GetArgs {
     pub async fn execute(&self, client: &GatewayClient, format: OutputFormat) -> Result<()> {
         let request = DocumentsGetRequest { id: self.id };
-        let response = client.documents_get(request).await?;
+        let response = client.documents_get(request.clone()).await?;
 
-        match format {
-            OutputFormat::Json | OutputFormat::Ndjson | OutputFormat::Dot => {
-                println!("{}", format_json(&response)?);
-            }
-            OutputFormat::Yaml => {
-                println!("{}", format_yaml(&response)?);
-            }
-            OutputFormat::Table => {
-                println!("{}", render_document_table(&response));
-            }
+        let envelope = documents_get_envelope(response, &request)?;
+        if !print_finite_envelope(&envelope, format)? {
+            println!("{}", render_document_table(&envelope.payload));
         }
         Ok(())
     }
+}
+
+fn documents_get_envelope(
+    response: DocumentsGetResponse,
+    request: &DocumentsGetRequest,
+) -> Result<ViewEnvelope<DocumentsGetResponse>> {
+    Ok(ViewEnvelope::new("sinexctl.docs.get", response)
+        .with_query_echo(serde_json::to_value(request)?))
 }
 
 fn render_document_table(doc: &DocumentsGetResponse) -> String {
@@ -291,21 +311,30 @@ impl ChunksArgs {
                 Some(self.offset)
             },
         };
-        let response = client.documents_get_chunks(request).await?;
+        let response = client.documents_get_chunks(request.clone()).await?;
 
-        match format {
-            OutputFormat::Json | OutputFormat::Ndjson | OutputFormat::Dot => {
-                println!("{}", format_json(&response)?);
-            }
-            OutputFormat::Yaml => {
-                println!("{}", format_yaml(&response)?);
-            }
-            OutputFormat::Table => {
-                println!("{}", render_chunks_table(&response));
-            }
+        let envelope = documents_chunks_envelope(response, &request)?;
+        if !print_finite_envelope(&envelope, format)? {
+            println!("{}", render_chunks_table(&envelope.payload));
         }
         Ok(())
     }
+}
+
+fn documents_chunks_envelope(
+    response: DocumentsGetChunksResponse,
+    request: &DocumentsGetChunksRequest,
+) -> Result<ViewEnvelope<DocumentsGetChunksResponse>> {
+    let mut envelope = ViewEnvelope::new("sinexctl.docs.chunks", response)
+        .with_query_echo(serde_json::to_value(request)?);
+    if envelope.payload.chunks.is_empty() {
+        envelope.caveats.push(documents_caveat(
+            "sinexctl.docs.chunks",
+            "document chunk listing returned no chunks; document text coverage is unmeasurable from this response",
+            "sinexctl docs chunks <document-id>",
+        ));
+    }
+    Ok(envelope)
 }
 
 fn render_chunks_table(response: &DocumentsGetChunksResponse) -> String {
@@ -346,3 +375,23 @@ fn truncate_str(s: &str, max_len: usize) -> String {
         },
     }
 }
+
+fn documents_caveat(
+    source_surface: &'static str,
+    message: impl Into<String>,
+    command_hint: &'static str,
+) -> CaveatView {
+    CaveatView {
+        id: ReadinessCaveatId::CoverageUnmeasurable.as_str().to_string(),
+        message: message.into(),
+        ref_: Some(
+            SinexObjectRef::new(SinexObjectKind::Command, source_surface)
+                .with_label(source_surface)
+                .with_command_hint(command_hint),
+        ),
+    }
+}
+
+#[cfg(test)]
+#[path = "documents_test.rs"]
+mod tests;
