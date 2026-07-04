@@ -99,6 +99,7 @@ Live rules:
 |---|---|---|---|
 | Hyprland focus | `wm.hyprland/window.focused` N and N+1 | `desktop.focus` | `attention.stream`, `screen.grounding`, `machine.context` |
 | ActivityWatch active window | `activitywatch/window.active` observed `duration_ms` | `desktop.activitywatch.window` | `attention.stream`, `work.episode`, `project.attribution` |
+| ActivityWatch AFK status | `activitywatch/afk.changed` observed `duration_ms` | `desktop.activitywatch.afk` | `attention.stream`, `work.episode`, `machine.context` |
 
 This keeps capture as point/transition evidence and makes intervals a derived
 mechanism with parent refs to the exact opening and closing observations.
