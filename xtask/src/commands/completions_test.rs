@@ -44,7 +44,8 @@ async fn test_all_subcommand_variants() -> ::xtask::sandbox::TestResult<()> {
 async fn test_list_run_targets_non_empty() -> ::xtask::sandbox::TestResult<()> {
     let targets = crate::commands::run::list_run_targets();
     assert!(!targets.is_empty(), "run targets should not be empty");
-    assert!(targets.contains(&"event_engine".to_string()));
+    assert!(targets.contains(&"sinexd".to_string()));
+    assert!(targets.contains(&"attention-stream".to_string()));
     assert!(targets.contains(&"core".to_string()));
     Ok(())
 }
