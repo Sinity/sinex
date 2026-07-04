@@ -409,6 +409,9 @@ async fn validate_format_accepts_ndjson_for_runtime_list() -> TestResult<()> {
 async fn validate_format_rejects_ndjson_for_finite_view_envelopes() -> TestResult<()> {
     for command in [
         "events recent",
+        "ops dlq cleanup-plan",
+        "ops dlq peek",
+        "ops dlq triage",
         "runtime health",
         "runtime status",
         "sources status",
@@ -468,6 +471,25 @@ async fn command_path_preserves_format_registry_leaf_commands() -> TestResult<()
                 "30m",
             ],
             "recall",
+        ),
+        (
+            vec!["sinexctl", "ops", "dlq", "peek", "-n", "5"],
+            "ops dlq peek",
+        ),
+        (
+            vec!["sinexctl", "ops", "dlq", "triage", "--tail", "5"],
+            "ops dlq triage",
+        ),
+        (
+            vec![
+                "sinexctl",
+                "ops",
+                "dlq",
+                "cleanup-plan",
+                "--tail",
+                "5",
+            ],
+            "ops dlq cleanup-plan",
         ),
         (
             vec!["sinexctl", "ops", "dlq", "requeue", "--all"],
