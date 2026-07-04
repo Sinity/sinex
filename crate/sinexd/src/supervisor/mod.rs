@@ -62,8 +62,8 @@ impl Supervisor {
 
     pub async fn run(
         self,
-        event_engine_config: EventEngineConfig,
-        api_config: GatewayConfig,
+        event_engine_config: Option<EventEngineConfig>,
+        api_config: Option<GatewayConfig>,
     ) -> Result<()> {
         info!("sinexd starting");
 
@@ -90,16 +90,20 @@ impl Supervisor {
         let (escalate_tx, escalate_rx) = watch::channel(false);
         let shutdown_rx = os_shutdown_rx.clone();
 
-        let (mut event_engine_handle, event_engine_ready_rx) = if self.event_engine_enabled {
-            let (handle, ready_rx) = start_event_engine(
-                event_engine_config,
-                shutdown_rx.clone(),
-                escalate_tx.clone(),
-            );
-            (Some(handle), Some(ready_rx))
-        } else {
-            (None, None)
-        };
+        let (mut event_engine_handle, event_engine_ready_rx) =
+            match (self.event_engine_enabled, event_engine_config) {
+                (true, Some(config)) => {
+                    let (handle, ready_rx) =
+                        start_event_engine(config, shutdown_rx.clone(), escalate_tx.clone());
+                    (Some(handle), Some(ready_rx))
+                }
+                (true, None) => {
+                    return Err(SinexError::configuration(
+                        "event engine enabled without event engine config",
+                    ));
+                }
+                (false, _) => (None, None),
+            };
 
         if let Some(ready_rx) = event_engine_ready_rx
             && let Err(error) = await_event_engine_ready(ready_rx, EVENT_ENGINE_READY_TIMEOUT).await
@@ -122,6 +126,9 @@ impl Supervisor {
         // engine would keep holding its DB pool + NATS consumer until the
         // process was SIGKILL'd. Signal escalation to drain it, then return.
         let api_handle = if self.api_enabled {
+            let Some(api_config) = api_config else {
+                return Err(SinexError::configuration("API enabled without API config"));
+            };
             match start_api(api_config, shutdown_rx.clone(), escalate_tx.clone()).await {
                 Ok(handle) => Some(handle),
                 Err(error) => {
@@ -388,16 +395,7 @@ fn start_automata(
     // Default to all automata when unset — the entity/relation/document
     // automata are implemented and should activate by default (#1087).
     // Set SINEX_AUTOMATA_ENABLED= (empty) to explicitly disable.
-    let effective = if raw
-        .as_deref()
-        .map(str::trim)
-        .filter(|s| !s.is_empty())
-        .is_none()
-    {
-        Some("all")
-    } else {
-        raw.as_deref()
-    };
+    let effective = automata_enabled_arg(raw.as_deref());
     let selected = automata_registry::parse_enabled(effective)?;
 
     if selected.is_empty() {
@@ -417,6 +415,14 @@ fn start_automata(
         handles.push((spec.name, handle));
     }
     Ok(handles)
+}
+
+fn automata_enabled_arg(raw: Option<&str>) -> Option<&str> {
+    match raw {
+        None => Some("all"),
+        Some(value) if value.trim().is_empty() => None,
+        Some(value) => Some(value),
+    }
 }
 
 fn spawn_automaton(
@@ -557,3 +563,7 @@ fn spawn_source_binding(
         }
     })
 }
+
+#[cfg(test)]
+#[path = "../supervisor_test.rs"]
+mod tests;

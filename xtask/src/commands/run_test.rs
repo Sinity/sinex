@@ -92,6 +92,30 @@ async fn test_runtime_cli_args_dispatch_scan_source() -> ::xtask::sandbox::TestR
 }
 
 #[sinex_test]
+async fn test_core_runtime_env_disables_hosted_sources_and_automata()
+-> ::xtask::sandbox::TestResult<()> {
+    let command = base_command(RunSubcommand::Core { instance_id: None });
+    let env = command.runtime_env_vars(RuntimeTarget::Supervisor);
+
+    assert!(
+        env.iter()
+            .any(|(key, value)| key == "SINEX_AUTOMATA_ENABLED" && value.is_empty()),
+        "core runs should not start every automaton; use all-automatons or module targets: {env:?}"
+    );
+    assert!(
+        env.iter()
+            .any(|(key, value)| key == "SINEX_SOURCE_BINDINGS_PATH" && value.is_empty()),
+        "core runs should not host source bindings; use all-sources or source module targets: {env:?}"
+    );
+    assert!(
+        !env.iter()
+            .any(|(key, value)| key == "SINEX_EVENT_ENGINE_ENABLED" && value == "false"),
+        "core is the event-engine/API leg and must keep the event engine enabled"
+    );
+    Ok(())
+}
+
+#[sinex_test]
 async fn test_runtime_cli_args_automaton_uses_supervisor_selector_env()
 -> ::xtask::sandbox::TestResult<()> {
     let command = base_command(RunSubcommand::RuntimeModule {
@@ -122,6 +146,11 @@ async fn test_runtime_cli_args_automaton_uses_supervisor_selector_env()
     );
     assert!(
         env.iter()
+            .any(|(key, value)| key == "SINEX_EVENT_ENGINE_ENABLED" && value == "false"),
+        "single automaton runs must not start a duplicate event-engine pool"
+    );
+    assert!(
+        env.iter()
             .any(|(key, value)| key == "SINEX_SOURCE_BINDINGS_PATH" && value.is_empty()),
         "single automaton runs must not inherit hosted source bindings"
     );
@@ -142,6 +171,10 @@ async fn test_all_automata_env_runs_one_selected_supervisor() -> ::xtask::sandbo
     assert!(
         env.iter()
             .any(|(key, value)| key == "SINEX_API_ENABLED" && value == "false")
+    );
+    assert!(
+        env.iter()
+            .any(|(key, value)| key == "SINEX_EVENT_ENGINE_ENABLED" && value == "false")
     );
     assert!(
         env.iter()
@@ -225,43 +258,6 @@ async fn test_default_all_source_bindings_excludes_journald() -> ::xtask::sandbo
 
     assert_eq!(bindings.len(), 1);
     assert_eq!(bindings[0].source_id, "terminal.atuin-history");
-    Ok(())
-}
-
-#[sinex_test]
-async fn test_core_source_bindings_env_preserves_explicit_override()
--> ::xtask::sandbox::TestResult<()> {
-    let mut env = vec![(
-        "SINEX_SOURCE_BINDINGS_PATH".to_string(),
-        "/tmp/custom-bindings.json".to_string(),
-    )];
-
-    append_core_source_bindings_env(&mut env);
-
-    assert_eq!(
-        env.iter()
-            .filter(|(key, _)| key == "SINEX_SOURCE_BINDINGS_PATH")
-            .count(),
-        1
-    );
-    assert_eq!(env[0].1, "/tmp/custom-bindings.json");
-    Ok(())
-}
-
-#[sinex_test]
-async fn test_core_source_bindings_env_defaults_to_checkout_manifest()
--> ::xtask::sandbox::TestResult<()> {
-    let mut env = Vec::new();
-
-    append_core_source_bindings_env(&mut env);
-
-    assert!(
-        env.iter().any(|(key, value)| {
-            key == "SINEX_SOURCE_BINDINGS_PATH"
-                && value.ends_with(".agent/dev/dev-source-bindings.json")
-        }),
-        "core run should default to the checkout dev source binding manifest when it exists: {env:?}"
-    );
     Ok(())
 }
 
