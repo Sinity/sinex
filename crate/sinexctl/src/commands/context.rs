@@ -21,13 +21,13 @@ use sinex_primitives::sources::{is_self_observation_source, source_identity_matc
 use sinex_primitives::temporal::Timestamp;
 use sinex_primitives::views::{
     ActionAvailability, ActionAvailabilityState, CaveatView, ContextAttentionSpanView,
-    ContextSessionView, ContextSourceView, ContextSummaryView, DesktopContextCandidateView,
-    DesktopContextInputEvidence, DesktopContextInputState, DesktopContextView,
-    DesktopFocusSessionListView, DesktopFocusSessionView, DesktopNotificationPressureView,
-    DesktopProjectContextListView, DesktopProjectContextRowView, EVENT_CARD_LIST_SCHEMA_VERSION,
-    EventCardListView, EventCardView, PrivacyStateKind, ReadinessCaveatId, SinexObjectKind,
-    SinexObjectRef, SourceCoverageContinuity, SourceCoverageListView, SourceCoverageReadiness,
-    SourceCoverageView, ViewEnvelope,
+    ContextIntervalView, ContextSessionView, ContextSourceView, ContextSummaryView,
+    DesktopContextCandidateView, DesktopContextInputEvidence, DesktopContextInputState,
+    DesktopContextView, DesktopFocusSessionListView, DesktopFocusSessionView,
+    DesktopNotificationPressureView, DesktopProjectContextListView, DesktopProjectContextRowView,
+    EVENT_CARD_LIST_SCHEMA_VERSION, EventCardListView, EventCardView, PrivacyStateKind,
+    ReadinessCaveatId, SinexObjectKind, SinexObjectRef, SourceCoverageContinuity,
+    SourceCoverageListView, SourceCoverageReadiness, SourceCoverageView, ViewEnvelope,
 };
 use std::collections::HashMap;
 use std::time::{Duration as StdDuration, Instant};
@@ -50,6 +50,7 @@ const CONTEXT_DIVERSITY_SOURCES: &[&str] = &[
     "git",
     "fs-watcher",
     "derived.attention-stream",
+    "derived.interval-lift",
     "derived.session-detector",
     "derived.activity-window",
     "derived.hourly-summarizer",
@@ -745,6 +746,10 @@ fn is_attention_span_card(card: &EventCardView) -> bool {
     card.source.raw == "derived.attention-stream" || card.event_type == "attention.span"
 }
 
+fn is_interval_lift_card(card: &EventCardView) -> bool {
+    card.source.raw == "derived.interval-lift" || card.event_type == "state.interval"
+}
+
 async fn context_source_caveats(
     client: &GatewayClient,
     event_cards: &EventCardListView,
@@ -942,6 +947,7 @@ fn render_context_machine_output(
             let session_views = recall_session_views(event_cards);
             let attention_span_views =
                 recall_attention_span_views(event_cards, attention_lineage_evidence);
+            let interval_views = recall_interval_views(event_cards);
             let mut source_caveats = source_caveats.to_vec();
             if source_surface == "sinexctl.recall"
                 && !event_cards.cards.is_empty()
@@ -973,6 +979,7 @@ fn render_context_machine_output(
                 ContextSummaryView::new(&window.since, event_cards.count, source_views)
                     .with_sessions(session_views)
                     .with_attention_spans(attention_span_views)
+                    .with_intervals(interval_views)
                     .with_source_caveats(source_caveats),
             )
             .with_query_echo({
@@ -1012,6 +1019,57 @@ fn recall_session_views(event_cards: &EventCardListView) -> Vec<ContextSessionVi
         right_ts.inner().cmp(&left_ts.inner())
     });
     sessions
+}
+
+fn recall_interval_views(event_cards: &EventCardListView) -> Vec<ContextIntervalView> {
+    let mut intervals = event_cards
+        .cards
+        .iter()
+        .filter(|card| is_interval_lift_card(card))
+        .map(|card| {
+            ContextIntervalView {
+                ref_: card.ref_.clone(),
+                state_kind: interval_state_kind(card),
+                subject_id: string_payload_preview_field(card, "subject_id"),
+                label: string_payload_preview_field(card, "label"),
+                started_at: timestamp_payload_preview_field(card, "start_time"),
+                ended_at: timestamp_payload_preview_field(card, "end_time")
+                    .or(card.timestamp.original),
+                duration_secs: u64_payload_preview_field(card, "duration_secs"),
+                summary: card.summary.clone(),
+                parent_refs: card.trace_refs.clone(),
+                latest_event: card.clone(),
+            }
+        })
+        .collect::<Vec<_>>();
+    intervals.sort_by(|left, right| {
+        let left_ts = left
+            .ended_at
+            .or(left.started_at)
+            .unwrap_or(Timestamp::UNIX_EPOCH);
+        let right_ts = right
+            .ended_at
+            .or(right.started_at)
+            .unwrap_or(Timestamp::UNIX_EPOCH);
+        right_ts.inner().cmp(&left_ts.inner())
+    });
+    intervals
+}
+
+fn interval_state_kind(card: &EventCardView) -> String {
+    string_payload_preview_field(card, "state_kind")
+        .or_else(|| interval_id_state_kind(card))
+        .unwrap_or_else(|| format!("{}/{}", card.source.raw, card.event_type))
+}
+
+fn interval_id_state_kind(card: &EventCardView) -> Option<String> {
+    let interval_id = string_payload_preview_field(card, "interval_id")?;
+    let rest = interval_id.strip_prefix("interval:")?;
+    let (state_kind, _) = rest.split_once(':')?;
+    if state_kind.is_empty() {
+        return None;
+    }
+    Some(state_kind.to_string())
 }
 
 fn recall_attention_span_views(
@@ -1079,6 +1137,14 @@ fn u64_payload_preview_field(card: &EventCardView, field: &str) -> Option<u64> {
         .as_ref()
         .and_then(|preview| preview.get(field))
         .and_then(serde_json::Value::as_u64)
+}
+
+fn string_payload_preview_field(card: &EventCardView, field: &str) -> Option<String> {
+    card.payload_preview
+        .as_ref()
+        .and_then(|preview| preview.get(field))
+        .and_then(serde_json::Value::as_str)
+        .map(str::to_string)
 }
 
 fn render_desktop_context_output(
