@@ -309,7 +309,7 @@ async fn monitor_runtime_waits_for_remaining_critical_tasks_after_failure()
     });
 
     let error = service
-        .monitor_runtime(Some(failing), Some(sibling))
+        .monitor_runtime(Some(failing), None, Some(sibling))
         .await
         .expect_err("unexpected failure should bubble up");
 
@@ -341,6 +341,7 @@ async fn finish_startup_failure_preserves_cleanup_error_context()
         .finish_startup_failure(
             SinexError::service("startup failed"),
             Some(failing),
+            None,
             Some(sibling),
         )
         .await
@@ -369,7 +370,7 @@ async fn finish_startup_failure_preserves_background_task_error_context()
     }));
 
     let error = service
-        .finish_startup_failure(SinexError::service("startup failed"), None, None)
+        .finish_startup_failure(SinexError::service("startup failed"), None, None, None)
         .await
         .expect_err("startup failure should remain an error");
 

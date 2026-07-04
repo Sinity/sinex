@@ -18,8 +18,8 @@ impl JetStreamConsumer {
 
         // Events stream - bounded delivery buffer for the event engine.
         // Source material/archive are the replay authority, not JetStream. A
-        // full raw stream must not reject fresh source or self-observation
-        // publishes: with discard: New, a saturated dev stream wedges ingestion
+        // full raw/reflection stream must not reject fresh source or
+        // self-observation publishes: with discard: New, a saturated dev stream wedges ingestion
         // with "maximum bytes exceeded" while the database already holds older
         // admitted interpretations. Discard oldest when the bounded buffer is
         // full so current work continues flowing.

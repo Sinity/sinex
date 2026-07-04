@@ -68,7 +68,9 @@ pub struct NatsPublisher {
     namespace: Option<String>,
     semaphores: PublishSemaphores,
     raw_events_stream_ready: Arc<AtomicBool>,
+    reflection_events_stream_ready: Arc<AtomicBool>,
     raw_events_stream_bootstrap_lock: Arc<Mutex<()>>,
+    reflection_events_stream_bootstrap_lock: Arc<Mutex<()>>,
     raw_stream_pressure: Arc<Mutex<RawStreamPressureState>>,
     processing_failure_log_count: Arc<AtomicU64>,
     publish_ack_timeout: Duration,
@@ -196,7 +198,9 @@ impl NatsPublisher {
                 processing_failure_concurrency,
             ),
             raw_events_stream_ready: Arc::new(AtomicBool::new(false)),
+            reflection_events_stream_ready: Arc::new(AtomicBool::new(false)),
             raw_events_stream_bootstrap_lock: Arc::new(Mutex::new(())),
+            reflection_events_stream_bootstrap_lock: Arc::new(Mutex::new(())),
             raw_stream_pressure: Arc::new(Mutex::new(RawStreamPressureState::default())),
             processing_failure_log_count: Arc::new(AtomicU64::new(0)),
             publish_ack_timeout: Duration::from_millis(publish_ack_timeout),
@@ -482,10 +486,10 @@ impl NatsPublisher {
             "publish_telemetry is exclusively for Class::Telemetry; got {class:?}"
         );
         let _permit = acquire_lane_permit(&self.semaphores.telemetry, "telemetry event").await?;
-        self.ensure_raw_events_stream_ready().await?;
+        self.ensure_reflection_events_stream_ready().await?;
         // Telemetry is lossy and may be emitted by the event-engine consumer.
-        // Waiting for raw backlog capacity here can deadlock the consumer that
-        // must drain that same backlog.
+        // Do not wait for backlog capacity here; the consumer that emits this
+        // signal may be the same component that must drain the stream.
 
         let event_id_str = event
             .id
@@ -507,7 +511,7 @@ impl NatsPublisher {
         );
         let payload = serde_json::to_vec(&intent).map_err(sinex_primitives::SinexError::from)?;
 
-        let subject = self.env.nats_raw_event_subject_with_namespace(
+        let subject = self.env.nats_reflection_event_subject_with_namespace(
             self.namespace.as_deref(),
             event.source.as_str(),
             event.event_type.as_str(),
@@ -753,6 +757,26 @@ impl NatsPublisher {
         )
         .await?;
         self.raw_events_stream_ready.store(true, Ordering::Release);
+        Ok(())
+    }
+
+    async fn ensure_reflection_events_stream_ready(&self) -> RuntimeResult<()> {
+        if self.reflection_events_stream_ready.load(Ordering::Acquire) {
+            return Ok(());
+        }
+
+        let _bootstrap_guard = self.reflection_events_stream_bootstrap_lock.lock().await;
+        if self.reflection_events_stream_ready.load(Ordering::Acquire) {
+            return Ok(());
+        }
+
+        crate::runtime::jetstream_streams::bootstrap_reflection_events_stream(
+            &self.nats_client,
+            self.namespace.as_deref(),
+        )
+        .await?;
+        self.reflection_events_stream_ready
+            .store(true, Ordering::Release);
         Ok(())
     }
 }
