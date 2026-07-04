@@ -9,7 +9,8 @@ use crate::runtime::{AutomatonContext, AutomatonLogicError, InputProvenanceFilte
 use serde::{Deserialize, Deserializer, Serialize};
 use sinex_primitives::domain::SyntheticTemporalPolicy;
 use sinex_primitives::events::payloads::{
-    ActivityWatchWindowActivePayload, HyprlandWindowFocusedPayload, StateIntervalPayload,
+    ActivityWatchAfkChangedPayload, ActivityWatchWindowActivePayload, HyprlandWindowFocusedPayload,
+    StateIntervalPayload,
 };
 use sinex_primitives::events::EventPayload;
 use sinex_primitives::temporal::Duration;
@@ -19,6 +20,7 @@ use std::collections::BTreeMap;
 const SEMANTICS_VERSION: &str = "1.0.0";
 const FOCUS_STATE_KIND: &str = "desktop.focus";
 const ACTIVITYWATCH_WINDOW_STATE_KIND: &str = "desktop.activitywatch.window";
+const ACTIVITYWATCH_AFK_STATE_KIND: &str = "desktop.activitywatch.afk";
 
 #[derive(Debug, Clone, Default)]
 pub struct IntervalLift;
@@ -133,6 +135,32 @@ impl StateObservation {
         })
     }
 
+    fn from_activitywatch_afk_payload(
+        input: ActivityWatchAfkChangedPayload,
+        context: &AutomatonContext,
+    ) -> Result<Self, AutomatonLogicError> {
+        let subject_id = (!input.status.is_empty()).then(|| format!("status:{}", input.status));
+        let label = (!input.status.is_empty()).then(|| input.status.clone());
+        let mut attributes = BTreeMap::new();
+        attributes.insert("bucket_id".to_string(), input.bucket_id);
+        attributes.insert("duration_ms".to_string(), input.duration_ms.to_string());
+        if !input.status.is_empty() {
+            attributes.insert("status".to_string(), input.status);
+        }
+
+        Ok(Self {
+            state_kind: ACTIVITYWATCH_AFK_STATE_KIND.to_string(),
+            event_id: context.trigger_uuid(),
+            ts_orig: context.require_ts_orig()?,
+            subject_id,
+            label,
+            event_type: ActivityWatchAfkChangedPayload::EVENT_TYPE
+                .as_static_str()
+                .to_string(),
+            attributes,
+        })
+    }
+
     fn same_subject_as(&self, other: &Self) -> bool {
         if self.state_kind != other.state_kind {
             return false;
@@ -185,9 +213,14 @@ impl StateObservation {
         .with_equivalence_key(interval_id)
     }
 
-    fn observed_duration_interval(&self, duration_ms: u64) -> DerivedOutput<StateIntervalPayload> {
+    fn observed_duration_interval(
+        &self,
+        duration_ms: u64,
+        max_end_time: Timestamp,
+    ) -> DerivedOutput<StateIntervalPayload> {
         let duration = Duration::milliseconds(i64::try_from(duration_ms).unwrap_or(i64::MAX));
-        let end_time = self.ts_orig + duration;
+        let observed_end_time = self.ts_orig + duration;
+        let end_time = observed_end_time.min(max_end_time).max(self.ts_orig);
         let subject_part = self
             .subject_id
             .as_deref()
@@ -205,7 +238,7 @@ impl StateObservation {
             label: self.label.clone(),
             start_time: self.ts_orig,
             end_time,
-            duration_secs: duration.whole_seconds().max(0) as u64,
+            duration_secs: (end_time - self.ts_orig).whole_seconds().max(0) as u64,
             start_event_type: self.event_type.clone(),
             end_event_type: self.event_type.clone(),
             attributes: self.attributes.clone(),
@@ -300,6 +333,7 @@ impl Transducer for IntervalLift {
         vec![
             HyprlandWindowFocusedPayload::EVENT_TYPE.as_static_str(),
             ActivityWatchWindowActivePayload::EVENT_TYPE.as_static_str(),
+            ActivityWatchAfkChangedPayload::EVENT_TYPE.as_static_str(),
         ]
     }
 
@@ -350,7 +384,25 @@ impl Transducer for IntervalLift {
                     let duration_ms = payload.duration_ms;
                     let observation =
                         StateObservation::from_activitywatch_window_payload(payload, context)?;
-                    return Ok(Some(observation.observed_duration_interval(duration_ms)));
+                    return Ok(Some(
+                        observation.observed_duration_interval(duration_ms, Timestamp::now()),
+                    ));
+                }
+                ("activitywatch", event_type)
+                    if event_type == ActivityWatchAfkChangedPayload::EVENT_TYPE.as_static_str() =>
+                {
+                    let payload: ActivityWatchAfkChangedPayload =
+                        serde_json::from_value(input).map_err(|e| {
+                            AutomatonLogicError::InputParsing(format!(
+                                "failed to parse ActivityWatch AFK payload: {e}"
+                            ))
+                        })?;
+                    let duration_ms = payload.duration_ms;
+                    let observation =
+                        StateObservation::from_activitywatch_afk_payload(payload, context)?;
+                    return Ok(Some(
+                        observation.observed_duration_interval(duration_ms, Timestamp::now()),
+                    ));
                 }
                 _ => return Ok(None),
             };
