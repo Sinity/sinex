@@ -132,7 +132,7 @@ relative to admission; **Test transport**.
 |---|---|---|---|---|---|---|---|---|---|
 | `{ENV}_SINEX_RAW_EVENTS` / `{env}.events.raw.{src}.{type}` — **Critical** raw event intents | Critical → **Critical** | must survive process loss | at-least-once | server ack; redeliver on NAK/timeout; spool on hard fail | `Nats-Msg-Id` = event id (`nats_publisher.rs:337-360`) | raw-ingest DLQ after retry budget | source material/archive re-read (not the stream; 7d cap) | via JetStream | JetStream (sandbox NATS) |
 | same stream — **Derived** automaton outputs | Derived → **Derived** | recoverable via replay | at-least-once | server ack; redeliver | `Nats-Msg-Id` = event id | processing-failure stream | re-run automaton on parents | via JetStream | JetStream |
-| same stream — **Telemetry** `{env}.events.raw.sinex.{metric}` | **Telemetry (JetStream) → contested: Core NATS / dedicated short-retention stream** | loss acceptable | at-least-once today | server ack; **no caller retry**, drop+warn (`transport.rs:136-138`) | `Nats-Msg-Id` | none (drop) | n/a | via JetStream (persists as self-observation events, feeds CAs) | JetStream |
+| `{ENV}_SINEX_REFLECTION_EVENTS` / `{env}.events.reflection.raw.{src}.{type}` — **Telemetry/reflection** | **Telemetry (JetStream reflection lane)** | loss acceptable | at-least-once today | server ack; **no caller retry**, drop+warn (`transport.rs`) | `Nats-Msg-Id` | reflection DLQ/processing-failure streams | n/a | via JetStream (persists as self-observation events, feeds CAs) | JetStream |
 | `{ENV}_SOURCE_MATERIAL` / `{env}.source_material.frames.>` (`begin`/`slices.*`/`end`) | SourceMaterial → **SourceMaterial** | must survive (anchors depend on it) | at-least-once, ordered, `work` retention | server ack required before anchors publish | slice idempotency headers | none — acquisition op fails first | re-acquire material | material assembler → admission | JetStream |
 | `{ENV}_SINEX_RAW_EVENTS_CONFIRMED` / `{env}.events.confirmed.{provenance}.{source}.{event_type}` | **Confirmation (JetStream full-payload bus) → Confirmation** | delivery bus only; DB is archive | at-least-once to durable consumers, bounded Limits+discard:Old | publish after commit; raw ACK only after confirmed publish succeeds | `Nats-Msg-Id` = event id | fatal durability-gap leaves raw message unacked for redelivery | consumers catch up from DB when stream tail is gone | n/a (signal *from* admission to automata/SSE) | JetStream |
 | `{ENV}_SINEX_RAW_EVENTS_DLQ` / `{env}.events.dlq.>` (publish: `events.dlq.event_engine`) | Critical (DLQ) → **Critical (DLQ)** | operator-durable, 7d, `dupe_window=1h` | at-least-once | operator-reviewed; `sinexctl dlq retry` re-submits | original event id + dupe window | terminal surface (this *is* the DLQ) | `sinexctl dlq retry` → normal pipeline | re-enters admission on requeue | JetStream |
@@ -163,31 +163,17 @@ relative to admission; **Test transport**.
 
 ## 4. Per-path recommendations (current ≠ recommended)
 
-### 4.1 Telemetry rides the durable raw-events stream — reclassify
+### 4.1 Telemetry uses the reflection stream
 
-**Current:** `publish_telemetry` (`nats_publisher.rs:453-484`) publishes
-`{env}.events.raw.sinex.{metric}` onto `{ENV}_SINEX_RAW_EVENTS` — the same
-durable, 7-day, 2M-message, provenance-bearing stream as Critical events — under
-a 16-permit semaphore so it cannot crowd out critical traffic. On publish
-failure it drops with a warn (`transport.rs:136-138`).
+**Current:** `publish_telemetry` publishes to
+`{env}.events.reflection.raw.{source}.{event_type}` on
+`{ENV}_SINEX_REFLECTION_EVENTS`. It remains JetStream because Sinex models
+self-observation as durable events that feed telemetry read models, but it no
+longer consumes the activity raw stream's retention or byte budget.
 
-**Tension:** the framework says telemetry ("loss acceptable; gaps do not affect
-correctness") is textbook Core NATS. But in Sinex, telemetry is *modelled as
-self-observation events that persist to `core.events`* and feed the
-`sinex_telemetry` continuous aggregates — i.e. it is a durable read-model
-input, not a throwaway gauge. So the right class is genuinely contestable.
-
-**Recommendation:** split the question by consumer.
-- If a metric only drives live operator dashboards and is reconstructable, it is
-  Core NATS — move it off the durable stream.
-- If it must survive process loss to keep a CA correct, keep it on JetStream but
-  on a **dedicated short-retention telemetry stream**, not the raw-events
-  stream, so operational chatter cannot consume provenance-event retention/byte
-  budget.
-
-**Deciding criterion:** *does any durable read model (a continuous aggregate)
-depend on this metric surviving a process restart?* Yes → dedicated JetStream
-stream. No → Core NATS. Either way it should leave `{ENV}_SINEX_RAW_EVENTS`.
+The remaining migration boundary is storage/query policy, not ingress routing:
+reflection events still persist through the same event-engine path until the
+`reflection.events` hypertable, retention policy, and query-lane defaults land.
 
 ### 4.2 No direct in-process admission path — add it (#1732)
 
@@ -232,14 +218,14 @@ because their base strings include it. The executable route catalog and
 ## 5. Inventory summary
 
 - **1** direct in-process admission path.
-- **7** JetStream streams carrying **9** distinct traffic-class roles
-  (raw-events stream multiplexes Critical + Derived + Telemetry).
+- JetStream event-ingress is split into activity (`Critical` + `Derived`) and
+  reflection (`Telemetry`) stream families.
 - **4** Core NATS control/coordination route families in the executable catalog
   (source commands, replay control/progress, private-mode control, coordination).
 - **4** NATS-KV buckets.
 
-`CURRENT_ROUTE_DECISIONS` currently classifies **18** runtime route decisions.
-The remaining contested placement is telemetry stream placement (§4.1), plus
+`CURRENT_ROUTE_DECISIONS` currently classifies runtime route decisions.
+The remaining major placement question is the local admission adapter (§4.2), plus
 the conceptual note that confirmations are a Core-NATS-class signal carried on
 JetStream as an optimization (§4.3).
 

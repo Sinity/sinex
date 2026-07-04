@@ -1,6 +1,7 @@
 // Small inline tests are justified here because they exercise private TLS
 // provider installation behavior and private KV error classification directly.
 use super::*;
+use crate::environment::SinexEnvironment;
 use serde_json::json;
 use xtask::sandbox::{EnvGuard, sinex_serial_test, sinex_test};
 
@@ -74,5 +75,65 @@ async fn kv_bucket_already_exists_rejects_other_bucket_create_errors()
     );
 
     assert!(!kv_bucket_already_exists(&kv_error));
+    Ok(())
+}
+
+#[sinex_test]
+async fn reflection_topology_uses_separate_event_subject_roots() -> xtask::sandbox::TestResult<()>
+{
+    let env = SinexEnvironment::new("dev")?;
+    let topology = JetStreamTopology::reflection(
+        &env,
+        env.nats_stream_name_with_namespace(None, "SINEX_REFLECTION_EVENTS"),
+        "event-engine-dev-reflection".to_string(),
+        None,
+    );
+
+    assert_eq!(topology.events_stream.as_ref(), "DEV_SINEX_REFLECTION_EVENTS");
+    assert_eq!(topology.events_subject.as_ref(), "dev.events.reflection.raw.>");
+    assert_eq!(
+        topology.confirmed_events_stream.as_ref(),
+        "DEV_SINEX_REFLECTION_EVENTS_CONFIRMED"
+    );
+    assert_eq!(
+        topology.confirmed_events_subject.as_ref(),
+        "dev.events.reflection.confirmed.>"
+    );
+    assert_eq!(
+        topology.confirmed_events_prefix,
+        "dev.events.reflection.confirmed."
+    );
+    assert_eq!(
+        topology.dlq_stream.as_ref(),
+        "DEV_SINEX_REFLECTION_EVENTS_DLQ"
+    );
+    assert_eq!(
+        topology.dlq_subject.as_ref(),
+        "dev.events.reflection.dlq.>"
+    );
+    assert_eq!(
+        topology.dlq_publish_subject.as_ref(),
+        "dev.events.reflection.dlq.event_engine"
+    );
+    assert_eq!(
+        topology.processing_failures_stream.as_ref(),
+        "DEV_SINEX_REFLECTION_EVENTS_PROCESSING_FAILURES"
+    );
+    assert_eq!(
+        topology.processing_failures_subject.as_ref(),
+        "dev.events.reflection.processing_failures.>"
+    );
+    assert_eq!(
+        topology.processing_failures_prefix,
+        "dev.events.reflection.processing_failures."
+    );
+    assert_eq!(
+        topology.invalidation_stream.as_ref(),
+        "DEV_SINEX_REFLECTION_EVENTS_DERIVED_INVALIDATIONS"
+    );
+    assert_eq!(
+        topology.invalidation_subject.as_ref(),
+        "dev.sinex.reflection.derived.invalidation"
+    );
     Ok(())
 }

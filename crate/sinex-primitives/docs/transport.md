@@ -19,7 +19,7 @@ Closes: #326, #327, #338, #693.
 | `Confirmation` | Full post-redaction events after persistence | `{env}.events.confirmed.{provenance}.{source}.{event_type}` | JetStream, bounded delivery bus | raw message left unacked on publish failure | publish before raw ACK |
 | `Invalidation` | Scope fan-out to automatons | `{env}.sinex.derived.invalidation` | JetStream, durable consumers | error propagated to caller | no special drain (JetStream holds) |
 | `Control` | Lifecycle and coordination traffic | `{env}.sinex.control.>` / request-reply | Core NATS, request-reply + timeout | error returned (`SinexError::network`) | drop pending |
-| `Telemetry` | Self-observation metrics and health | `{env}.events.raw.sinex.*` | JetStream, semaphore 16 | drop with warn log | best-effort flush |
+| `Telemetry` | Self-observation metrics and health | `{env}.events.reflection.raw.sinex.*` | JetStream, semaphore 16 | drop with warn log | best-effort flush |
 
 ## Route matrix
 

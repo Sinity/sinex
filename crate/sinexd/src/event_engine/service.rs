@@ -4,7 +4,7 @@
 
 // Local crate imports
 use crate::event_engine::{
-    EventEngineResult, JetStreamTopology, SinexError, config::EventEngineConfig,
+    EventEngineResult, JetStreamEventLane, JetStreamTopology, SinexError, config::EventEngineConfig,
     material_ready_set::MaterialReadySet, validator::IngestEventValidator,
 };
 // External crates
@@ -378,11 +378,26 @@ impl IngestService {
                     nats.clone(),
                     pool.clone(),
                     ready_set.clone(),
+                    JetStreamEventLane::Activity,
                 );
                 (Some(h), Some(rx))
             }
             _ => (None, None),
         };
+
+        let (mut reflection_js_handle, mut reflection_js_ready_rx) =
+            match (&self.nats_client, &self.db_pool) {
+                (Some(nats), Some(pool)) => {
+                    let (h, rx) = self.start_jetstream_consumer_task(
+                        nats.clone(),
+                        pool.clone(),
+                        ready_set.clone(),
+                        JetStreamEventLane::Reflection,
+                    );
+                    (Some(h), Some(rx))
+                }
+                _ => (None, None),
+            };
 
         let (mut ma_handle, mut ma_ready_rx) = match (&self.nats_client, &self.db_pool) {
             (Some(nats), Some(pool)) => {
@@ -420,14 +435,37 @@ impl IngestService {
             && let Err(error) = await_ready_signal("JetStream consumer", ready_timeout, rx).await
         {
             return self
-                .finish_startup_failure(error, js_handle.take(), ma_handle.take())
+                .finish_startup_failure(
+                    error,
+                    js_handle.take(),
+                    reflection_js_handle.take(),
+                    ma_handle.take(),
+                )
+                .await;
+        }
+        if let Some(rx) = reflection_js_ready_rx.take()
+            && let Err(error) =
+                await_ready_signal("Reflection JetStream consumer", ready_timeout, rx).await
+        {
+            return self
+                .finish_startup_failure(
+                    error,
+                    js_handle.take(),
+                    reflection_js_handle.take(),
+                    ma_handle.take(),
+                )
                 .await;
         }
         if let Some(rx) = ma_ready_rx.take()
             && let Err(error) = await_ready_signal("MaterialAssembler", ready_timeout, rx).await
         {
             return self
-                .finish_startup_failure(error, js_handle.take(), ma_handle.take())
+                .finish_startup_failure(
+                    error,
+                    js_handle.take(),
+                    reflection_js_handle.take(),
+                    ma_handle.take(),
+                )
                 .await;
         }
 
@@ -523,7 +561,11 @@ impl IngestService {
 
         // Monitor critical tasks - exit on first failure or shutdown signal
         let monitor_result = self
-            .monitor_runtime(js_handle.take(), ma_handle.take())
+            .monitor_runtime(
+                js_handle.take(),
+                reflection_js_handle.take(),
+                ma_handle.take(),
+            )
             .await;
         systemd_notify::stop_watchdog(watchdog_handle, "sinexd").await;
         systemd_notify::notify_stopping("sinexd");
@@ -586,6 +628,7 @@ impl IngestService {
         &self,
         startup_error: SinexError,
         js_handle: Option<JoinHandle<EventEngineResult<()>>>,
+        reflection_js_handle: Option<JoinHandle<EventEngineResult<()>>>,
         ma_handle: Option<JoinHandle<EventEngineResult<()>>>,
     ) -> EventEngineResult<()> {
         error!(
@@ -600,7 +643,10 @@ impl IngestService {
             &self.runtime_failure_flag,
         );
 
-        let mut startup_error = match self.monitor_runtime(js_handle, ma_handle).await {
+        let mut startup_error = match self
+            .monitor_runtime(js_handle, reflection_js_handle, ma_handle)
+            .await
+        {
             Ok(()) => startup_error,
             Err(cleanup_error) => {
                 error!(
@@ -631,6 +677,7 @@ impl IngestService {
     async fn monitor_runtime(
         &self,
         js_handle: Option<JoinHandle<EventEngineResult<()>>>,
+        reflection_js_handle: Option<JoinHandle<EventEngineResult<()>>>,
         ma_handle: Option<JoinHandle<EventEngineResult<()>>>,
     ) -> EventEngineResult<()> {
         let shutdown_flag = self.shutdown_flag.clone();
@@ -648,6 +695,12 @@ impl IngestService {
             &mut abort_handles,
             "JetStream consumer",
             js_handle,
+        );
+        Self::track_critical_task(
+            &mut critical_tasks,
+            &mut abort_handles,
+            "Reflection JetStream consumer",
+            reflection_js_handle,
         );
         Self::track_critical_task(
             &mut critical_tasks,
@@ -917,6 +970,7 @@ impl IngestService {
         nats_client: NatsClient,
         pool: PgPool,
         ready_set: Option<MaterialReadySet>,
+        lane: JetStreamEventLane,
     ) -> (
         JoinHandle<EventEngineResult<()>>,
         tokio::sync::oneshot::Receiver<()>,
@@ -926,12 +980,23 @@ impl IngestService {
         let validator = self.validator.clone();
         let observer = self.observer.clone();
         let env = sinex_environment();
-        let topology = JetStreamTopology::new(
-            &env,
-            self.config.nats_stream_name.clone(),
-            self.config.nats_consumer_name.clone(),
-            self.config.nats_namespace.as_deref(),
-        );
+        let topology = match lane {
+            JetStreamEventLane::Activity => JetStreamTopology::new(
+                &env,
+                self.config.nats_stream_name.clone(),
+                self.config.nats_consumer_name.clone(),
+                self.config.nats_namespace.as_deref(),
+            ),
+            JetStreamEventLane::Reflection => JetStreamTopology::reflection(
+                &env,
+                env.nats_stream_name_with_namespace(
+                    self.config.nats_namespace.as_deref(),
+                    "SINEX_REFLECTION_EVENTS",
+                ),
+                format!("{}-reflection", self.config.nats_consumer_name),
+                self.config.nats_namespace.as_deref(),
+            ),
+        };
 
         let fetch_timeout = self.config.consumer_fetch_timeout_ms.as_duration();
         let fetch_max = self.config.consumer_fetch_max_messages.max(1);
