@@ -5,7 +5,7 @@ use sinex_primitives::domain::{ProcessingMode, TriggerKind};
 use sinex_primitives::events::enums::{SystemdActiveState, SystemdUnitType};
 use sinex_primitives::events::Event;
 use sinex_primitives::{EventSource, EventType, Id, JsonValue, Timestamp, Uuid};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use xtask::sandbox::sinex_test;
 
 #[sinex_test]
@@ -30,6 +30,96 @@ async fn interval_lift_consumes_focus_transitions() -> xtask::sandbox::TestResul
     assert_eq!(
         automaton.input_provenance_filter(),
         InputProvenanceFilter::MaterialOnly
+    );
+    Ok(())
+}
+
+#[sinex_test]
+async fn interval_lift_rule_catalog_is_the_input_contract() -> xtask::sandbox::TestResult<()> {
+    let automaton = IntervalLift;
+    let catalog = IntervalLift::rule_catalog();
+    let advertised_inputs: BTreeSet<_> = automaton.input_event_types().into_iter().collect();
+    let catalog_inputs: BTreeSet<_> = catalog
+        .iter()
+        .flat_map(|rule| rule.event_types.iter().copied())
+        .collect();
+    let state_kinds: BTreeSet<_> = catalog.iter().map(|rule| rule.state_kind).collect();
+    let sources: BTreeSet<_> = catalog.iter().map(|rule| rule.source).collect();
+
+    assert_eq!(
+        advertised_inputs, catalog_inputs,
+        "input_event_types must be derived from the interval-lift rule catalog"
+    );
+    assert_eq!(
+        catalog_inputs,
+        BTreeSet::from([
+            "afk.changed",
+            "unit.started",
+            "unit.stopped",
+            "window.active",
+            "window.focused",
+            "workspace.switched",
+        ])
+    );
+    assert_eq!(
+        state_kinds,
+        BTreeSet::from([
+            "desktop.activitywatch.afk",
+            "desktop.activitywatch.window",
+            "desktop.focus",
+            "desktop.workspace",
+            "system.systemd.unit",
+        ])
+    );
+    assert_eq!(
+        sources,
+        BTreeSet::from(["activitywatch", "systemd", "wm.hyprland"])
+    );
+    assert_eq!(
+        WINDOW_FOCUSED_EVENT_TYPE,
+        HyprlandWindowFocusedPayload::EVENT_TYPE.as_static_str()
+    );
+    assert_eq!(
+        WORKSPACE_SWITCHED_EVENT_TYPE,
+        HyprlandWorkspaceSwitchedPayload::EVENT_TYPE.as_static_str()
+    );
+    assert_eq!(
+        WINDOW_ACTIVE_EVENT_TYPE,
+        ActivityWatchWindowActivePayload::EVENT_TYPE.as_static_str()
+    );
+    assert_eq!(
+        AFK_CHANGED_EVENT_TYPE,
+        ActivityWatchAfkChangedPayload::EVENT_TYPE.as_static_str()
+    );
+    assert_eq!(
+        UNIT_STARTED_EVENT_TYPE,
+        SystemdUnitStartedPayload::EVENT_TYPE.as_static_str()
+    );
+    assert_eq!(
+        UNIT_STOPPED_EVENT_TYPE,
+        SystemdUnitStoppedPayload::EVENT_TYPE.as_static_str()
+    );
+    assert!(
+        catalog
+            .iter()
+            .any(|rule| rule.shape == IntervalLiftRuleShape::AdjacentTransitions),
+        "catalog should include adjacent transition lifters"
+    );
+    assert!(
+        catalog
+            .iter()
+            .any(|rule| rule.shape == IntervalLiftRuleShape::ObservedDuration),
+        "catalog should include observed-duration lifters"
+    );
+    assert!(
+        catalog
+            .iter()
+            .any(|rule| rule.shape == IntervalLiftRuleShape::StartStopPair),
+        "catalog should include start/stop pair lifters"
+    );
+    assert!(
+        catalog.iter().all(|rule| !rule.consumer_hint.is_empty()),
+        "every rule should name the composite/read surfaces it exists to feed"
     );
     Ok(())
 }

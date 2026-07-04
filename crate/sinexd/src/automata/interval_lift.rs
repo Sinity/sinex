@@ -24,9 +24,75 @@ const WORKSPACE_STATE_KIND: &str = "desktop.workspace";
 const ACTIVITYWATCH_WINDOW_STATE_KIND: &str = "desktop.activitywatch.window";
 const ACTIVITYWATCH_AFK_STATE_KIND: &str = "desktop.activitywatch.afk";
 const SYSTEMD_UNIT_STATE_KIND: &str = "system.systemd.unit";
+const WINDOW_FOCUSED_EVENT_TYPE: &str = "window.focused";
+const WORKSPACE_SWITCHED_EVENT_TYPE: &str = "workspace.switched";
+const WINDOW_ACTIVE_EVENT_TYPE: &str = "window.active";
+const AFK_CHANGED_EVENT_TYPE: &str = "afk.changed";
+const UNIT_STARTED_EVENT_TYPE: &str = "unit.started";
+const UNIT_STOPPED_EVENT_TYPE: &str = "unit.stopped";
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum IntervalLiftRuleShape {
+    AdjacentTransitions,
+    ObservedDuration,
+    StartStopPair,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct IntervalLiftRule {
+    pub(crate) source: &'static str,
+    pub(crate) event_types: &'static [&'static str],
+    pub(crate) state_kind: &'static str,
+    pub(crate) shape: IntervalLiftRuleShape,
+    pub(crate) consumer_hint: &'static str,
+}
+
+const INTERVAL_LIFT_RULES: &[IntervalLiftRule] = &[
+    IntervalLiftRule {
+        source: "wm.hyprland",
+        event_types: &[WINDOW_FOCUSED_EVENT_TYPE],
+        state_kind: FOCUS_STATE_KIND,
+        shape: IntervalLiftRuleShape::AdjacentTransitions,
+        consumer_hint: "attention.stream/screen.grounding/machine.context",
+    },
+    IntervalLiftRule {
+        source: "wm.hyprland",
+        event_types: &[WORKSPACE_SWITCHED_EVENT_TYPE],
+        state_kind: WORKSPACE_STATE_KIND,
+        shape: IntervalLiftRuleShape::AdjacentTransitions,
+        consumer_hint: "attention.stream/work.episode/machine.context",
+    },
+    IntervalLiftRule {
+        source: "activitywatch",
+        event_types: &[WINDOW_ACTIVE_EVENT_TYPE],
+        state_kind: ACTIVITYWATCH_WINDOW_STATE_KIND,
+        shape: IntervalLiftRuleShape::ObservedDuration,
+        consumer_hint: "attention.stream/work.episode/project.attribution",
+    },
+    IntervalLiftRule {
+        source: "activitywatch",
+        event_types: &[AFK_CHANGED_EVENT_TYPE],
+        state_kind: ACTIVITYWATCH_AFK_STATE_KIND,
+        shape: IntervalLiftRuleShape::ObservedDuration,
+        consumer_hint: "attention.stream/work.episode/machine.context",
+    },
+    IntervalLiftRule {
+        source: "systemd",
+        event_types: &[UNIT_STARTED_EVENT_TYPE, UNIT_STOPPED_EVENT_TYPE],
+        state_kind: SYSTEMD_UNIT_STATE_KIND,
+        shape: IntervalLiftRuleShape::StartStopPair,
+        consumer_hint: "machine.context/change.episode/ops.forensics",
+    },
+];
 
 #[derive(Debug, Clone, Default)]
 pub struct IntervalLift;
+
+impl IntervalLift {
+    pub(crate) fn rule_catalog() -> &'static [IntervalLiftRule] {
+        INTERVAL_LIFT_RULES
+    }
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct IntervalLiftState {
@@ -435,14 +501,10 @@ impl Transducer for IntervalLift {
     }
 
     fn input_event_types(&self) -> Vec<&'static str> {
-        vec![
-            HyprlandWindowFocusedPayload::EVENT_TYPE.as_static_str(),
-            HyprlandWorkspaceSwitchedPayload::EVENT_TYPE.as_static_str(),
-            ActivityWatchWindowActivePayload::EVENT_TYPE.as_static_str(),
-            ActivityWatchAfkChangedPayload::EVENT_TYPE.as_static_str(),
-            SystemdUnitStartedPayload::EVENT_TYPE.as_static_str(),
-            SystemdUnitStoppedPayload::EVENT_TYPE.as_static_str(),
-        ]
+        Self::rule_catalog()
+            .iter()
+            .flat_map(|rule| rule.event_types.iter().copied())
+            .collect()
     }
 
     fn output_event_type(&self) -> &'static str {
