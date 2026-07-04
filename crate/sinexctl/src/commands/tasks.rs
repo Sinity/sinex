@@ -9,10 +9,13 @@ use sinex_primitives::rpc::tasks::{
     TaskStateResponse, TaskStatusSetRequest, TaskUpdateRequest,
 };
 use sinex_primitives::task_domain::{TaskFieldUpdate, TaskStatus};
+use sinex_primitives::views::{
+    CaveatView, ReadinessCaveatId, SinexObjectKind, SinexObjectRef, ViewEnvelope,
+};
 
 use crate::client::GatewayClient;
 use crate::commands::record::{parse_task_external_ref, render_task_response};
-use crate::fmt::{format_json, format_yaml};
+use crate::fmt::{format_json, format_yaml, print_finite_envelope};
 use crate::model::OutputFormat;
 use crate::validation::parse_time_input;
 
@@ -382,28 +385,23 @@ impl TaskListCommand {
             .as_deref()
             .map(parse_time_input)
             .transpose()?;
-        let response = client
-            .tasks_list(TaskListRequest {
-                query: self.query.clone(),
-                external_system: self.external_system.clone(),
-                external_id: self.external_id.clone(),
-                status: self.status.as_deref().map(parse_task_status).transpose()?,
-                project_id: self.project_id.clone(),
-                tag: self.tag.clone(),
-                due_from,
-                due_until,
-                limit: self.limit,
-            })
-            .await?;
-        match format {
-            OutputFormat::Json | OutputFormat::Ndjson | OutputFormat::Dot => {
-                println!("{}", format_json(&response)?);
-            }
-            OutputFormat::Yaml => {
-                println!("{}", format_yaml(&response)?);
-            }
-            OutputFormat::Table => render_task_list_table(&response),
+        let request = TaskListRequest {
+            query: self.query.clone(),
+            external_system: self.external_system.clone(),
+            external_id: self.external_id.clone(),
+            status: self.status.as_deref().map(parse_task_status).transpose()?,
+            project_id: self.project_id.clone(),
+            tag: self.tag.clone(),
+            due_from,
+            due_until,
+            limit: self.limit,
+        };
+        let response = client.tasks_list(request.clone()).await?;
+        let envelope = task_list_envelope(response.clone(), &request);
+        if print_finite_envelope(&envelope, format)? {
+            return Ok(());
         }
+        render_task_list_table(&response);
         Ok(())
     }
 }
@@ -420,20 +418,14 @@ impl TaskStateCommand {
         let response = client
             .tasks_state_get(TaskStateGetRequest { task_id })
             .await?;
-        match format {
-            OutputFormat::Json | OutputFormat::Ndjson | OutputFormat::Dot => {
-                println!("{}", format_json(&response)?);
-            }
-            OutputFormat::Yaml => {
-                println!("{}", format_yaml(&response)?);
-            }
-            OutputFormat::Table => {
-                if response.state.is_none() {
-                    println!("No task state for {}.", self.task_id);
-                } else if let Some(state) = response.state.as_ref() {
-                    render_task_state_table(&response, state);
-                }
-            }
+        let envelope = task_state_envelope(response.clone());
+        if print_finite_envelope(&envelope, format)? {
+            return Ok(());
+        }
+        if response.state.is_none() {
+            println!("No task state for {}.", self.task_id);
+        } else if let Some(state) = response.state.as_ref() {
+            render_task_state_table(&response, state);
         }
         Ok(())
     }
@@ -504,3 +496,113 @@ fn render_task_list_table(response: &TaskListResponse) {
         );
     }
 }
+
+fn task_list_envelope(
+    response: TaskListResponse,
+    request: &TaskListRequest,
+) -> ViewEnvelope<TaskListResponse> {
+    let mut envelope = ViewEnvelope::new("sinexctl.tasks.list", response).with_query_echo(
+        serde_json::json!({
+            "query": request.query,
+            "external_system": request.external_system,
+            "external_id": request.external_id,
+            "status": request.status.map(|status| status.as_str()),
+            "project_id": request.project_id,
+            "tag": request.tag,
+            "due_from": request.due_from,
+            "due_until": request.due_until,
+            "limit": request.limit,
+        }),
+    );
+    envelope.caveats = task_list_caveats(&envelope.payload);
+    envelope
+}
+
+fn task_list_caveats(response: &TaskListResponse) -> Vec<CaveatView> {
+    let mut caveats = Vec::new();
+    if response.tasks.is_empty() {
+        caveats.push(task_caveat(
+            ReadinessCaveatId::SourceAbsent,
+            "task list returned no current task states; this only proves the bounded task projection is empty",
+            "tasks.current.list",
+            "sinexctl tasks list",
+            "tasks.list",
+        ));
+    }
+    if response.event_count == 0 {
+        caveats.push(task_caveat(
+            ReadinessCaveatId::CoverageUnmeasurable,
+            "task list response observed zero task-domain events; task projection coverage is unmeasurable",
+            "tasks.current.events",
+            "sinexctl tasks list",
+            "tasks.list",
+        ));
+    }
+    if response.total > response.tasks.len() {
+        caveats.push(task_caveat(
+            ReadinessCaveatId::WindowPartial,
+            "task list response is bounded by limit and does not include every matching task state",
+            "tasks.current.list",
+            "sinexctl tasks list",
+            "tasks.list",
+        ));
+    }
+    caveats
+}
+
+fn task_state_envelope(response: TaskStateResponse) -> ViewEnvelope<TaskStateResponse> {
+    let mut envelope = ViewEnvelope::new("sinexctl.tasks.state", response.clone()).with_query_echo(
+        serde_json::json!({
+            "task_id": response.task_id,
+        }),
+    );
+    envelope.caveats = task_state_caveats(&response);
+    envelope
+}
+
+fn task_state_caveats(response: &TaskStateResponse) -> Vec<CaveatView> {
+    let mut caveats = Vec::new();
+    if response.state.is_none() {
+        caveats.push(task_caveat(
+            ReadinessCaveatId::SourceAbsent,
+            "task state lookup found no current state for this task id",
+            response.task_id.to_string(),
+            "sinexctl tasks state",
+            "tasks.state.get",
+        ));
+    }
+    if response.event_count == 0 {
+        caveats.push(task_caveat(
+            ReadinessCaveatId::CoverageUnmeasurable,
+            "task state lookup observed zero task-domain events for this task id",
+            response.task_id.to_string(),
+            "sinexctl tasks state",
+            "tasks.state.get",
+        ));
+    }
+    caveats
+}
+
+fn task_caveat(
+    id: ReadinessCaveatId,
+    message: impl Into<String>,
+    ref_id: impl Into<String>,
+    command_hint: &'static str,
+    rpc_method: &'static str,
+) -> CaveatView {
+    let ref_id = ref_id.into();
+    CaveatView {
+        id: id.as_str().to_string(),
+        message: message.into(),
+        ref_: Some(
+            SinexObjectRef::new(SinexObjectKind::Task, ref_id.clone())
+                .with_label(ref_id)
+                .with_command_hint(command_hint)
+                .with_rpc_method(rpc_method),
+        ),
+    }
+}
+
+#[cfg(test)]
+#[path = "tasks_test.rs"]
+mod tests;
