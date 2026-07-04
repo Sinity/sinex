@@ -4,6 +4,7 @@ use crate::sources::continuity::{SourceContinuityReport, SourcesExplainGapRespon
 use crate::temporal::Timestamp;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
+use std::collections::BTreeMap;
 
 pub const SOURCE_CONTINUITY_DETAIL_SCHEMA_VERSION: &str = "sinex.source-continuity-detail/v1";
 pub const SOURCE_CONTINUITY_GAP_SCHEMA_VERSION: &str = "sinex.source-continuity-gap/v1";
@@ -227,8 +228,14 @@ impl SourceCoverageListView {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct SourceCoverageSummaryView {
     pub total_sources: usize,
-    pub readiness: std::collections::BTreeMap<String, usize>,
-    pub continuity: std::collections::BTreeMap<String, usize>,
+    pub readiness: BTreeMap<String, usize>,
+    pub continuity: BTreeMap<String, usize>,
+    #[serde(default)]
+    pub coverage_error_sources: usize,
+    #[serde(default)]
+    pub coverage_error_basis_points: u32,
+    #[serde(default)]
+    pub coverage_error_kinds: BTreeMap<String, usize>,
     pub accepted_bindings: usize,
     pub proposed_bindings: usize,
     pub eventful_sources: usize,
@@ -240,8 +247,10 @@ pub struct SourceCoverageSummaryView {
 impl SourceCoverageSummaryView {
     #[must_use]
     pub fn from_sources(sources: &[SourceCoverageView]) -> Self {
-        let mut readiness = std::collections::BTreeMap::new();
-        let mut continuity = std::collections::BTreeMap::new();
+        let mut readiness = BTreeMap::new();
+        let mut continuity = BTreeMap::new();
+        let mut coverage_error_sources = 0_usize;
+        let mut coverage_error_kinds = BTreeMap::new();
         let mut accepted_bindings = 0_usize;
         let mut proposed_bindings = 0_usize;
         let mut eventful_sources = 0_usize;
@@ -256,6 +265,28 @@ impl SourceCoverageSummaryView {
             *continuity
                 .entry(source.continuity.as_str().to_string())
                 .or_insert(0) += 1;
+            let mut has_coverage_error = false;
+            if source.readiness != SourceCoverageReadiness::Ready {
+                has_coverage_error = true;
+                *coverage_error_kinds
+                    .entry(format!("readiness.{}", source.readiness.as_str()))
+                    .or_insert(0) += 1;
+            }
+            if source.continuity != SourceCoverageContinuity::Active {
+                has_coverage_error = true;
+                *coverage_error_kinds
+                    .entry(format!("continuity.{}", source.continuity.as_str()))
+                    .or_insert(0) += 1;
+            }
+            for gap in &source.gaps {
+                has_coverage_error = true;
+                *coverage_error_kinds
+                    .entry(format!("gap.{}", gap.kind))
+                    .or_insert(0) += 1;
+            }
+            if has_coverage_error {
+                coverage_error_sources += 1;
+            }
             accepted_bindings += source.accepted_binding_count;
             proposed_bindings += source.proposed_binding_count;
             if source.event_count > 0 {
@@ -268,10 +299,19 @@ impl SourceCoverageSummaryView {
             total_materials += source.material_count;
         }
 
+        let coverage_error_basis_points = if sources.is_empty() {
+            0
+        } else {
+            ((coverage_error_sources as u128) * 10_000 / (sources.len() as u128)) as u32
+        };
+
         Self {
             total_sources: sources.len(),
             readiness,
             continuity,
+            coverage_error_sources,
+            coverage_error_basis_points,
+            coverage_error_kinds,
             accepted_bindings,
             proposed_bindings,
             eventful_sources,
