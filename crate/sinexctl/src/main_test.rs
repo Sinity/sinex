@@ -407,7 +407,13 @@ async fn validate_format_accepts_ndjson_for_runtime_list() -> TestResult<()> {
 
 #[sinex_test]
 async fn validate_format_rejects_ndjson_for_finite_view_envelopes() -> TestResult<()> {
-    for command in ["events recent", "runtime health", "sources status", "show"] {
+    for command in [
+        "events recent",
+        "runtime health",
+        "runtime status",
+        "sources status",
+        "show",
+    ] {
         let result = sinexctl::validate_format(command, sinexctl::OutputFormat::Ndjson);
         assert!(
             result.is_err(),
