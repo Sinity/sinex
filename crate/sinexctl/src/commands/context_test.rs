@@ -309,6 +309,22 @@ async fn recall_machine_output_projects_attention_spans() -> xtask::sandbox::Tes
     assert_eq!(support_refs[0]["id"], "event:raw-window-1");
     assert_eq!(support_refs[0]["rpc_method"], "events.lineage");
     assert_eq!(spans[0]["latest_event"]["event_type"], "attention.span");
+    let timeline = value["payload"]["timeline"]
+        .as_array()
+        .ok_or_else(|| color_eyre::eyre::eyre!("recall timeline must be an array"))?;
+    let attention_item = timeline
+        .iter()
+        .find(|item| item["ref"]["id"] == "event:attention-1")
+        .ok_or_else(|| color_eyre::eyre::eyre!("attention span missing from timeline"))?;
+    assert_eq!(attention_item["item_kind"], "attention_span");
+    assert_eq!(attention_item["state_kind"], "attention.span");
+    assert_eq!(attention_item["support_refs"][0]["id"], "event:raw-window-1");
+    let event_item = timeline
+        .iter()
+        .find(|item| item["ref"]["id"] == "event:cmd-1")
+        .ok_or_else(|| color_eyre::eyre::eyre!("ordinary event missing from timeline"))?;
+    assert_eq!(event_item["item_kind"], "event");
+    assert_eq!(event_item["source"], "shell.atuin");
 
     let caveats = value["payload"]["source_caveats"]
         .as_array()
@@ -377,6 +393,17 @@ async fn recall_machine_output_projects_lifted_intervals() -> xtask::sandbox::Te
     assert_eq!(parent_refs.len(), 2);
     assert_eq!(parent_refs[0]["id"], "event:focus-start");
     assert_eq!(parent_refs[1]["id"], "event:focus-end");
+    let timeline = value["payload"]["timeline"]
+        .as_array()
+        .ok_or_else(|| color_eyre::eyre::eyre!("recall timeline must be an array"))?;
+    let interval_item = timeline
+        .iter()
+        .find(|item| item["ref"]["id"] == "event:interval-1")
+        .ok_or_else(|| color_eyre::eyre::eyre!("interval missing from timeline"))?;
+    assert_eq!(interval_item["item_kind"], "interval");
+    assert_eq!(interval_item["state_kind"], "desktop.focus");
+    assert_eq!(interval_item["label"], "kitty: codex");
+    assert_eq!(interval_item["parent_refs"][0]["id"], "event:focus-start");
     Ok(())
 }
 
