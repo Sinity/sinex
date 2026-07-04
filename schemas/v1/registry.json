@@ -205,6 +205,13 @@
       "content_hash": "b34122627dd01e8d7207f073d3cca19cb2bb6f2d6af927adfd6a0c45ed8e4bfe"
     },
     {
+      "source": "derived.attention-stream",
+      "event_type": "attention.span",
+      "version": "1.0.0",
+      "path": "derived.attention-stream/attention.span.json",
+      "content_hash": "46ee1cade4ad0dae80eb2bf9a3be3237db885898772d73d4182336bbcb9e3c45"
+    },
+    {
       "source": "derived.daily-summarizer",
       "event_type": "activity.summary.daily",
       "version": "1.0.0",
@@ -217,6 +224,13 @@
       "version": "1.0.0",
       "path": "derived.hourly-summarizer/activity.summary.hourly.json",
       "content_hash": "1f2b121336d8752784c376b7f6d755ce0278b0f7be23ef811306f5bdfca579f3"
+    },
+    {
+      "source": "derived.interval-lift",
+      "event_type": "state.interval",
+      "version": "1.0.0",
+      "path": "derived.interval-lift/state.interval.json",
+      "content_hash": "511cb01709905fe80fd6b264c91c994ca4a385bfb3b597f12925e7b667c3bf9f"
     },
     {
       "source": "derived.session-detector",

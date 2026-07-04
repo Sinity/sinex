@@ -153,6 +153,26 @@ pub struct AttentionSpanPayload {
     pub source_window_close_reason: ActivityWindowCloseReason,
 }
 
+/// Generic interval lifted from point or transition events.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, EventPayload)]
+#[event_payload(
+    source = "derived.interval-lift",
+    event_type = "state.interval",
+    version = "1.0.0"
+)]
+pub struct StateIntervalPayload {
+    pub interval_id: String,
+    pub state_kind: String,
+    pub subject_id: Option<String>,
+    pub label: Option<String>,
+    pub start_time: Timestamp,
+    pub end_time: Timestamp,
+    pub duration_secs: u64,
+    pub start_event_type: String,
+    pub end_event_type: String,
+    pub attributes: BTreeMap<String, String>,
+}
+
 /// Completed activity session derived from trusted activity signals.
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, EventPayload)]
 #[event_payload(
