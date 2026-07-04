@@ -1316,6 +1316,7 @@ Show exercise run history with pass/fail counts and regression detection
 | `resources` | CPU and memory usage trends across invocations (J6) |
 | `pressure` | Current host pressure snapshot, with Sinnix observability join when available |
 | `store` | Cheap runtime-store backlog and event-mix snapshot from checkout Postgres |
+| `storage-growth` | Bounded storage growth model from source-material and Timescale catalog data |
 | `stages` | Stage-level timing breakdowns aggregated across invocations (J7) |
 
 ### `xtask analytics workspace-health`
@@ -1401,6 +1402,19 @@ Cheap runtime-store backlog and event-mix snapshot from checkout Postgres
 |---|---|---|---|
 | `--window-minutes` | yes | no | Recent window to inspect, in minutes |
 | `--limit` | yes | no | Maximum rows per top-N section |
+| `--database-url` | yes | no | Override the runtime database URL |
+
+
+### `xtask analytics storage-growth`
+
+Bounded storage growth model from source-material and Timescale catalog data
+
+**Arguments**
+
+| Flag | Value | Required | Description |
+|---|---|---|---|
+| `--projection-days` | yes | no | Number of days to project material growth |
+| `--limit` | yes | no | Maximum source rows to render |
 | `--database-url` | yes | no | Override the runtime database URL |
 
 

@@ -272,3 +272,115 @@ fn jetstream_assessment_degrades_when_nats_is_unavailable() {
             .any(|warning| warning.contains("JetStream unavailable"))
     );
 }
+
+#[test]
+fn storage_projection_uses_observed_days_floor() {
+    assert_eq!(bytes_per_day(2048, 0.2), 2048.0);
+    assert_eq!(projected_bytes(bytes_per_day(2048, 0.2), 30), 61_440);
+    assert_eq!(bytes_per_day(0, 10.0), 0.0);
+    assert_eq!(projected_bytes(f64::NAN, 365), 0);
+}
+
+#[test]
+fn storage_growth_assessment_flags_dominant_source_and_one_byte_materials() {
+    let material_summary = StorageMaterialSummary {
+        materials: 20,
+        total_bytes: 100_000,
+        parsed_events: 2_000,
+        one_byte_materials: 3,
+        observed_days: 10.0,
+        bytes_per_day: 10_000.0,
+        projected_bytes: 3_650_000,
+    };
+    let sources = vec![
+        SourceStorageGrowthRow {
+            source_base: "browser.history".to_string(),
+            materials: 10,
+            total_bytes: 85_000,
+            parsed_events: 1_800,
+            one_byte_materials: 0,
+            observed_days: 10.0,
+            bytes_per_day: 8_500.0,
+            projected_bytes: 3_102_500,
+        },
+        SourceStorageGrowthRow {
+            source_base: "terminal.atuin".to_string(),
+            materials: 10,
+            total_bytes: 15_000,
+            parsed_events: 200,
+            one_byte_materials: 3,
+            observed_days: 10.0,
+            bytes_per_day: 1_500.0,
+            projected_bytes: 547_500,
+        },
+    ];
+    let compression = StorageCompressionSummary {
+        compression_settings_rows: 1,
+        compressed_chunks: 0,
+        uncompressed_chunks: 2,
+        compressed_chunk_bytes: 0,
+        uncompressed_chunk_bytes: 100_000,
+        compression_ratio: None,
+        warnings: Vec::new(),
+    };
+
+    let assessment = assess_storage_growth(&material_summary, &sources, &compression, 365);
+
+    assert_eq!(assessment.top_source_base.as_deref(), Some("browser.history"));
+    assert_eq!(assessment.top_source_share_basis_points, 8_500);
+    assert_eq!(assessment.projected_12_month_bytes, 3_650_000);
+    assert!(assessment.compression_configured);
+    assert_eq!(assessment.compressed_chunks, 0);
+    assert!(
+        assessment
+            .warnings
+            .iter()
+            .any(|warning| warning.contains("one-byte source material"))
+    );
+    assert!(
+        assessment
+            .warnings
+            .iter()
+            .any(|warning| warning.contains("browser.history accounts for 85.0%"))
+    );
+    assert!(
+        !assessment
+            .warnings
+            .iter()
+            .any(|warning| warning.contains("all observed core.events chunks"))
+    );
+}
+
+#[test]
+fn storage_growth_assessment_handles_empty_store() {
+    let material_summary = StorageMaterialSummary {
+        materials: 0,
+        total_bytes: 0,
+        parsed_events: 0,
+        one_byte_materials: 0,
+        observed_days: 1.0,
+        bytes_per_day: 0.0,
+        projected_bytes: 0,
+    };
+    let compression = StorageCompressionSummary {
+        compression_settings_rows: 0,
+        compressed_chunks: 0,
+        uncompressed_chunks: 0,
+        compressed_chunk_bytes: 0,
+        uncompressed_chunk_bytes: 0,
+        compression_ratio: None,
+        warnings: Vec::new(),
+    };
+
+    let assessment = assess_storage_growth(&material_summary, &[], &compression, 365);
+
+    assert_eq!(assessment.top_source_base, None);
+    assert_eq!(assessment.top_source_share_basis_points, 0);
+    assert_eq!(assessment.projected_12_month_bytes, 0);
+    assert!(
+        assessment
+            .warnings
+            .iter()
+            .any(|warning| warning.contains("no source materials"))
+    );
+}
