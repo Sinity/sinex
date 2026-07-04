@@ -86,6 +86,24 @@ pub struct StreamBatchInsertResult {
     pub inserted_ids: Option<Vec<Uuid>>,
 }
 
+/// Physical event table used by the stream persistence path.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum EventStorageLane {
+    /// Operator/activity events stored in `core.events`.
+    Activity,
+    /// Sinex self-observation events stored in `reflection.events`.
+    Reflection,
+}
+
+impl EventStorageLane {
+    pub(super) const fn table_name(self) -> &'static str {
+        match self {
+            Self::Activity => "core.events",
+            Self::Reflection => "reflection.events",
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum StreamBatchInsertStrategy {
     QueryBuilder,

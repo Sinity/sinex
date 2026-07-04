@@ -8,7 +8,7 @@
 use crate::event_engine::validator::{IngestEventValidator, ValidationResult};
 use crate::event_engine::{EventEngineResult, SinexError};
 use sinex_db::DbPool;
-use sinex_db::repositories::{DbPoolExt, StreamBatchRow};
+use sinex_db::repositories::{DbPoolExt, EventStorageLane, StreamBatchRow};
 use sinex_primitives::admission_policy::{
     AdmissionOutcome, AdmissionOutcomeReason, AdmissionOutcomeRef,
     STANDARD_EVENT_ADMISSION_POLICY_ID,
@@ -368,6 +368,7 @@ pub struct AdmissionService {
     db_failures_remaining: Option<Arc<AtomicUsize>>,
     future_ts_skew: time::Duration,
     ts_orig_lower_bound: Timestamp,
+    storage_lane: EventStorageLane,
 }
 
 impl AdmissionService {
@@ -382,6 +383,7 @@ impl AdmissionService {
             ts_orig_lower_bound: Timestamp::from_const(time::macros::datetime!(
                 2000-01-01 00:00:00 UTC
             )),
+            storage_lane: EventStorageLane::Activity,
         }
     }
 
@@ -415,6 +417,10 @@ impl AdmissionService {
 
     pub fn set_ts_orig_lower_bound(&mut self, lower_bound: Timestamp) {
         self.ts_orig_lower_bound = lower_bound;
+    }
+
+    pub fn set_storage_lane(&mut self, storage_lane: EventStorageLane) {
+        self.storage_lane = storage_lane;
     }
 
     /// Admit a candidate event already decoded into the canonical event model.
@@ -939,9 +945,14 @@ impl AdmissionService {
         let to_persist: Vec<&AdmittedEvent> = plan.events.iter().collect();
         let rows = admitted_to_stream_rows(&to_persist)?;
         let write_timeout = db_write_timeout(to_persist.len());
-        let insert_result = timeout(write_timeout, self.pool.events().insert_stream_batch(&rows))
-            .await
-            .map_err(|_| {
+        let insert_result = timeout(
+            write_timeout,
+            self.pool
+                .events()
+                .insert_stream_batch_into(self.storage_lane, &rows),
+        )
+        .await
+        .map_err(|_| {
                 error!(
                     target: "sinex_metrics",
                     metric = "event_engine.batch_insert_timeouts_total",
@@ -952,7 +963,7 @@ impl AdmissionService {
                 SinexError::database(format!(
                     "Persisting batch timed out after {write_timeout:?}"
                 ))
-            })?;
+        })?;
 
         let insert_result = match insert_result {
             Err(ref error) if is_payload_schema_fk_violation(error) => {
@@ -974,7 +985,9 @@ impl AdmissionService {
                 let retry_timeout = db_write_timeout(rows_without_schema.len());
                 timeout(
                     retry_timeout,
-                    self.pool.events().insert_stream_batch(&rows_without_schema),
+                    self.pool
+                        .events()
+                        .insert_stream_batch_into(self.storage_lane, &rows_without_schema),
                 )
                 .await
                 .map_err(|_| {

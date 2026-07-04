@@ -23,8 +23,8 @@ pub use replacements::{ReplacementKind, ReplacementRecord};
 use types::StreamBatchInsertStrategy;
 pub use types::{
     BatchViolation, COPY_BATCH_THRESHOLD, CascadeSource, EventAnnotation, EventPayloadSchema,
-    InvalidPayloadEvent, InvalidTimestamp, StreamBatchInsertResult, StreamBatchRow,
-    SuspiciousEvent,
+    EventStorageLane, InvalidPayloadEvent, InvalidTimestamp, StreamBatchInsertResult,
+    StreamBatchRow, SuspiciousEvent,
 };
 use validation::{
     collect_synthesis_checks, ensure_batch_event_ids, ensure_no_intra_batch_synthesis_cycles,
@@ -859,6 +859,20 @@ impl<'a> EventRepository<'a> {
         &self,
         batch: &[StreamBatchRow],
     ) -> DbResult<StreamBatchInsertResult> {
+        self.insert_stream_batch_into(EventStorageLane::Activity, batch)
+            .await
+    }
+
+    /// Insert a batch of pre-validated stream events into the selected physical lane.
+    ///
+    /// Activity events land in `core.events`; reflection/self-observation events land in
+    /// `reflection.events`. The two tables share the same event column contract.
+    #[instrument(skip(self, batch), fields(batch_size = batch.len(), lane = ?lane))]
+    pub async fn insert_stream_batch_into(
+        &self,
+        lane: EventStorageLane,
+        batch: &[StreamBatchRow],
+    ) -> DbResult<StreamBatchInsertResult> {
         use crate::query_helpers::set_repeatable_read;
 
         match Self::stream_batch_insert_strategy(batch) {
@@ -925,7 +939,7 @@ impl<'a> EventRepository<'a> {
                         .await?;
                     }
 
-                    let result = Self::execute_batch_insert(&mut *tx, chunk).await?;
+                    let result = Self::execute_batch_insert(&mut *tx, lane, chunk).await?;
                     tx.commit()
                         .await
                         .map_err(|e| db_error(e, "commit stream batch"))?;
@@ -941,12 +955,12 @@ impl<'a> EventRepository<'a> {
             // Avoids the 65 535-parameter limit of parameterised VALUES queries
             // and has significantly lower per-row protocol overhead.
             Some(StreamBatchInsertStrategy::Copy) => {
-                Self::execute_batch_insert_copy(self.pool, batch).await
+                Self::execute_batch_insert_copy(self.pool, lane, batch).await
             }
             // Small material-only batch: QueryBuilder is faster (no staging
             // table overhead).
             Some(StreamBatchInsertStrategy::QueryBuilder) => {
-                Self::execute_batch_insert(self.pool, batch).await
+                Self::execute_batch_insert(self.pool, lane, batch).await
             }
         }
     }
@@ -958,6 +972,7 @@ impl<'a> EventRepository<'a> {
     #[instrument(skip(executor, batch), fields(batch_size = batch.len(), path = "query_builder"))]
     async fn execute_batch_insert<'e, E>(
         executor: E,
+        lane: EventStorageLane,
         batch: &[StreamBatchRow],
     ) -> DbResult<StreamBatchInsertResult>
     where
@@ -1026,7 +1041,8 @@ impl<'a> EventRepository<'a> {
         // a new core.events column only requires updating postgres_copy.rs — not this
         // site. Bind order MUST match EVENT_COPY_COLUMNS order exactly. (#1575)
         let mut builder = QueryBuilder::new(format!(
-            "INSERT INTO core.events ({}) ",
+            "INSERT INTO {} ({}) ",
+            lane.table_name(),
             event_copy_column_list_sql()
         ));
 
@@ -1100,7 +1116,7 @@ impl<'a> EventRepository<'a> {
     ///    `sinex_batch_staging` only when absent, then `TRUNCATE` it so
     ///    repeated calls on the same pooled connection start clean.
     /// 3. `COPY FROM STDIN` the serialised rows (text format, tab-delimited).
-    /// 4. `INSERT INTO core.events … SELECT … FROM sinex_batch_staging ON CONFLICT DO NOTHING`
+    /// 4. `INSERT INTO <lane table> … SELECT … FROM sinex_batch_staging ON CONFLICT DO NOTHING`
     ///    with `RETURNING id::uuid` to learn which IDs were actually inserted.
     /// 5. `COMMIT` — the temp table survives (for step 2 reuse) but the data is gone.
     ///
@@ -1117,6 +1133,7 @@ impl<'a> EventRepository<'a> {
     #[instrument(skip(pool, batch), fields(batch_size = batch.len(), path = "copy"))]
     async fn execute_batch_insert_copy(
         pool: &PgPool,
+        lane: EventStorageLane,
         batch: &[StreamBatchRow],
     ) -> DbResult<StreamBatchInsertResult> {
         use sqlx::postgres::PgConnection;
@@ -1188,14 +1205,15 @@ impl<'a> EventRepository<'a> {
                 .map_err(|e| db_error(e, "finish COPY for batch insert"))?;
         } // `conn` dropped here → `tx` exclusively accessible again
 
-        // Move rows from staging into core.events, applying UUIDv7 casts.
+        // Move rows from staging into the selected event table, applying UUIDv7 casts.
         let insert_sql = format!(
-            "INSERT INTO core.events ({copy_columns_sql})
+            "INSERT INTO {} ({copy_columns_sql})
             SELECT
                 {insert_select_sql}
             FROM sinex_batch_staging
             ON CONFLICT (id) DO NOTHING
-            RETURNING id::uuid"
+            RETURNING id::uuid",
+            lane.table_name()
         );
         let rows: Vec<(uuid::Uuid,)> = sqlx::query_as(&insert_sql)
             .fetch_all(&mut *tx)
