@@ -4,6 +4,7 @@ use crate::runtime::automaton::AutomatonContext;
 use sinex_primitives::domain::{ProcessingMode, TriggerKind};
 use sinex_primitives::events::Event;
 use sinex_primitives::{EventSource, EventType, Id, JsonValue, Timestamp, Uuid};
+use std::collections::BTreeMap;
 use xtask::sandbox::sinex_test;
 
 #[sinex_test]
@@ -14,7 +15,7 @@ async fn interval_lift_consumes_focus_transitions() -> xtask::sandbox::TestResul
     assert_eq!(automaton.input_event_type(), "*");
     assert_eq!(
         automaton.input_event_types(),
-        vec!["window.focused", "window.active"]
+        vec!["window.focused", "window.active", "afk.changed"]
     );
     assert_eq!(automaton.output_event_type(), "state.interval");
     assert_eq!(automaton.output_event_source(), "derived.interval-lift");
@@ -352,6 +353,123 @@ async fn interval_lift_emits_each_activitywatch_window_row_independently(
 }
 
 #[sinex_test]
+async fn interval_lift_lifts_activitywatch_afk_observed_duration(
+) -> xtask::sandbox::TestResult<()> {
+    let start = Timestamp::from_unix_timestamp(1_700_000_000)
+        .ok_or_else(|| color_eyre::eyre::eyre!("valid timestamp"))?;
+    let end = start + sinex_primitives::temporal::Duration::milliseconds(45_714);
+
+    let mut automaton = IntervalLift;
+    let mut state = IntervalLiftState::default();
+    let context = activitywatch_afk_context(start);
+    let parent_id = context.trigger_uuid();
+
+    let output = automaton
+        .process(
+            &mut state,
+            serde_json::to_value(ActivityWatchAfkChangedPayload {
+                status: "afk".to_string(),
+                duration_ms: 45_714,
+                bucket_id: "aw-watcher-afk_sinnix-prime".to_string(),
+            })?,
+            &context,
+        )
+        .await?
+        .expect("AW AFK rows carry observed duration and emit immediately");
+
+    assert_eq!(output.ts_orig, end);
+    assert_eq!(output.source_event_ids, vec![parent_id]);
+    assert_eq!(output.payload.state_kind, "desktop.activitywatch.afk");
+    assert_eq!(output.payload.subject_id.as_deref(), Some("status:afk"));
+    assert_eq!(output.payload.label.as_deref(), Some("afk"));
+    assert_eq!(output.payload.start_time, start);
+    assert_eq!(output.payload.end_time, end);
+    assert_eq!(output.payload.duration_secs, 45);
+    assert_eq!(output.payload.start_event_type, "afk.changed");
+    assert_eq!(output.payload.end_event_type, "afk.changed");
+    assert_eq!(
+        output.payload.attributes.get("bucket_id").map(String::as_str),
+        Some("aw-watcher-afk_sinnix-prime")
+    );
+    assert_eq!(
+        output.payload.attributes.get("duration_ms").map(String::as_str),
+        Some("45714")
+    );
+    assert_eq!(
+        output.payload.attributes.get("status").map(String::as_str),
+        Some("afk")
+    );
+    let expected_key =
+        format!("interval:desktop.activitywatch.afk:status:afk:{parent_id}:{parent_id}");
+    assert_eq!(output.equivalence_key.as_deref(), Some(expected_key.as_str()));
+    Ok(())
+}
+
+#[sinex_test]
+async fn interval_lift_emits_not_afk_as_distinct_status_interval(
+) -> xtask::sandbox::TestResult<()> {
+    let start = Timestamp::from_unix_timestamp(1_700_000_100)
+        .ok_or_else(|| color_eyre::eyre::eyre!("valid timestamp"))?;
+
+    let output = IntervalLift
+        .process(
+            &mut IntervalLiftState::default(),
+            serde_json::to_value(ActivityWatchAfkChangedPayload {
+                status: "not-afk".to_string(),
+                duration_ms: 1_000,
+                bucket_id: "aw-watcher-afk_sinnix-prime".to_string(),
+            })?,
+            &activitywatch_afk_context(start),
+        )
+        .await?
+        .expect("not-afk rows are state intervals too");
+
+    assert_eq!(output.payload.state_kind, "desktop.activitywatch.afk");
+    assert_eq!(output.payload.subject_id.as_deref(), Some("status:not-afk"));
+    assert_eq!(output.payload.label.as_deref(), Some("not-afk"));
+    assert_eq!(output.payload.duration_secs, 1);
+    Ok(())
+}
+
+#[sinex_test]
+async fn interval_lift_clamps_open_activitywatch_afk_duration_at_creation_time(
+) -> xtask::sandbox::TestResult<()> {
+    let start = Timestamp::from_unix_timestamp(1_700_000_200)
+        .ok_or_else(|| color_eyre::eyre::eyre!("valid timestamp"))?;
+    let bound = start + sinex_primitives::temporal::Duration::seconds(61);
+    let event_id = Uuid::now_v7();
+    let observation = StateObservation {
+        state_kind: "desktop.activitywatch.afk".to_string(),
+        event_id,
+        ts_orig: start,
+        subject_id: Some("status:afk".to_string()),
+        label: Some("afk".to_string()),
+        event_type: "afk.changed".to_string(),
+        attributes: BTreeMap::from([
+            (
+                "bucket_id".to_string(),
+                "aw-watcher-afk_sinnix-prime".to_string(),
+            ),
+            ("duration_ms".to_string(), "919451".to_string()),
+            ("status".to_string(), "afk".to_string()),
+        ]),
+    };
+
+    let output = observation.observed_duration_interval(919_451, bound);
+
+    assert_eq!(output.ts_orig, bound);
+    assert_eq!(output.payload.start_time, start);
+    assert_eq!(output.payload.end_time, bound);
+    assert_eq!(output.payload.duration_secs, 61);
+    assert_eq!(output.source_event_ids, vec![event_id]);
+    assert_eq!(
+        output.payload.attributes.get("duration_ms").map(String::as_str),
+        Some("919451")
+    );
+    Ok(())
+}
+
+#[sinex_test]
 async fn interval_lift_decodes_legacy_focus_checkpoint_state(
 ) -> xtask::sandbox::TestResult<()> {
     let event_id = Uuid::now_v7();
@@ -405,6 +523,20 @@ fn activitywatch_context(ts_orig: Timestamp) -> AutomatonContext {
         trigger_event_id,
         source: EventSource::from_static("activitywatch"),
         event_type: EventType::from_static("window.active"),
+        ts_orig: Some(ts_orig),
+        ts_coided: trigger_event_id.timestamp(),
+        processing_mode: ProcessingMode::Live,
+        trigger_kind: TriggerKind::NewEvent,
+        created_by_operation_id: None,
+    }
+}
+
+fn activitywatch_afk_context(ts_orig: Timestamp) -> AutomatonContext {
+    let trigger_event_id: Id<Event<JsonValue>> = Id::new();
+    AutomatonContext {
+        trigger_event_id,
+        source: EventSource::from_static("activitywatch"),
+        event_type: EventType::from_static("afk.changed"),
         ts_orig: Some(ts_orig),
         ts_coided: trigger_event_id.timestamp(),
         processing_mode: ProcessingMode::Live,
