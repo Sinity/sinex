@@ -2,10 +2,16 @@
 
 use super::RUNTIME_MODULE_LIST_SCHEMA_VERSION;
 use super::*;
-use sinex_primitives::domain::{ModuleKind, ModuleName};
+use std::collections::BTreeMap;
+
+use sinex_primitives::domain::{HealthStatus, ModuleKind, ModuleName};
 use sinex_primitives::rpc::runtime::RuntimeHeartbeatSource;
+use sinex_primitives::rpc::system::{
+    ComponentHealthReport, ComponentsHealth, ReplayControlHealth, SystemHealthResponse,
+};
 use sinex_primitives::temporal::Timestamp;
 use sinex_primitives::views::VIEW_ENVELOPE_SCHEMA_VERSION;
+use crate::fmt::render_finite_envelope;
 use xtask::sandbox::sinex_test;
 
 fn make_module(id: &str, kind: ModuleKind) -> RuntimeInfo {
@@ -39,6 +45,37 @@ fn fixture_envelope(count: usize) -> ViewEnvelope<RuntimeModuleListView> {
     .with_query_echo(serde_json::json!({ "role": null }))
 }
 
+fn healthy_component() -> ComponentHealthReport {
+    ComponentHealthReport {
+        status: HealthStatus::Healthy,
+        connected: true,
+        latency_ms: None,
+        detail: None,
+        attributes: BTreeMap::new(),
+    }
+}
+
+fn fixture_system_health() -> SystemHealthResponse {
+    SystemHealthResponse {
+        status: HealthStatus::Healthy,
+        healthy: true,
+        serving: true,
+        degradation_reasons: Vec::new(),
+        components: ComponentsHealth {
+            database: healthy_component(),
+            nats: healthy_component(),
+            raw_ingest_dlq: healthy_component(),
+            replay_control: ReplayControlHealth {
+                status: HealthStatus::Healthy,
+                enabled: true,
+                connected: true,
+                last_error: None,
+            },
+            sse_confirmation: healthy_component(),
+        },
+    }
+}
+
 /// `json` format: one finite document equal to the full envelope — parametric over count.
 #[sinex_test]
 async fn json_renders_one_finite_envelope_across_counts() -> xtask::TestResult<()> {
@@ -70,6 +107,82 @@ async fn json_renders_one_finite_envelope_across_counts() -> xtask::TestResult<(
             "json must include payload schema_version (count={count})"
         );
     }
+    Ok(())
+}
+
+#[sinex_test]
+async fn runtime_health_json_renders_finite_view_envelope() -> xtask::TestResult<()> {
+    let envelope = runtime_health_envelope(fixture_system_health());
+    let output = render_finite_envelope(&envelope, OutputFormat::Json)?
+        .expect("json must return Some");
+    let parsed: serde_json::Value = serde_json::from_str(&output)?;
+
+    assert_eq!(parsed["schema_version"], VIEW_ENVELOPE_SCHEMA_VERSION);
+    assert_eq!(parsed["source_surface"], "sinexctl.runtime.health");
+    assert_eq!(
+        parsed["payload"]["schema_version"],
+        RUNTIME_HEALTH_SCHEMA_VERSION
+    );
+    assert_eq!(parsed["payload"]["health"]["healthy"], true);
+    assert!(
+        parsed.get("caveats").is_none(),
+        "healthy runtime view should not emit readiness caveats"
+    );
+    Ok(())
+}
+
+#[sinex_test]
+async fn runtime_health_caveats_name_absent_and_partial_components() -> xtask::TestResult<()> {
+    let mut health = fixture_system_health();
+    health.status = HealthStatus::Degraded;
+    health.healthy = false;
+    health
+        .degradation_reasons
+        .push("NATS unavailable".to_string());
+    health.components.nats = ComponentHealthReport {
+        status: HealthStatus::Unhealthy,
+        connected: false,
+        latency_ms: None,
+        detail: Some("connection refused".to_string()),
+        attributes: BTreeMap::new(),
+    };
+    health.components.raw_ingest_dlq = ComponentHealthReport {
+        status: HealthStatus::Degraded,
+        connected: true,
+        latency_ms: None,
+        detail: Some("pressure high".to_string()),
+        attributes: BTreeMap::new(),
+    };
+
+    let envelope = runtime_health_envelope(health);
+    let caveat_ids = envelope
+        .caveats
+        .iter()
+        .map(|caveat| caveat.id.as_str())
+        .collect::<Vec<_>>();
+
+    assert!(
+        caveat_ids.contains(&"source.absent"),
+        "disconnected NATS component must be surfaced as source.absent"
+    );
+    assert!(
+        caveat_ids.contains(&"window.partial"),
+        "overall degraded health and connected degraded components must be surfaced as window.partial"
+    );
+    assert!(
+        envelope.caveats.iter().any(|caveat| caveat
+            .message
+            .contains("runtime health component `nats`")),
+        "component caveat must name the disconnected component"
+    );
+    assert!(
+        envelope.caveats.iter().any(|caveat| caveat
+            .ref_
+            .as_ref()
+            .and_then(|ref_| ref_.command_hint.as_deref())
+            == Some("sinexctl runtime health")),
+        "component caveats must preserve a command hint"
+    );
     Ok(())
 }
 
