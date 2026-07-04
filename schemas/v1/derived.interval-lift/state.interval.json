@@ -1,0 +1,69 @@
+{
+  "$defs": {
+    "DateTime": {
+      "description": "RFC 3339 formatted date-time string",
+      "format": "date-time",
+      "type": "string"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "Generic interval lifted from point or transition events.",
+  "properties": {
+    "attributes": {
+      "additionalProperties": {
+        "type": "string"
+      },
+      "type": "object"
+    },
+    "duration_secs": {
+      "format": "uint64",
+      "minimum": 0,
+      "type": "integer"
+    },
+    "end_event_type": {
+      "type": "string"
+    },
+    "end_time": {
+      "$ref": "#/$defs/DateTime"
+    },
+    "interval_id": {
+      "type": "string"
+    },
+    "label": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "start_event_type": {
+      "type": "string"
+    },
+    "start_time": {
+      "$ref": "#/$defs/DateTime"
+    },
+    "state_kind": {
+      "type": "string"
+    },
+    "subject_id": {
+      "type": [
+        "string",
+        "null"
+      ]
+    }
+  },
+  "required": [
+    "interval_id",
+    "state_kind",
+    "start_time",
+    "end_time",
+    "duration_secs",
+    "start_event_type",
+    "end_event_type",
+    "attributes"
+  ],
+  "title": "StateIntervalPayload",
+  "type": "object",
+  "x-sinex-event-type": "state.interval",
+  "x-sinex-source": "derived.interval-lift",
+  "x-sinex-version": "1.0.0"
+}

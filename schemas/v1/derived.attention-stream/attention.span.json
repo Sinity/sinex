@@ -1,0 +1,120 @@
+{
+  "$defs": {
+    "ActivitySourceKind": {
+      "enum": [
+        "unknown",
+        "window",
+        "browser",
+        "terminal"
+      ],
+      "type": "string"
+    },
+    "ActivityWindowCloseReason": {
+      "enum": [
+        "gap",
+        "max_duration",
+        "max_event_count"
+      ],
+      "type": "string"
+    },
+    "DateTime": {
+      "description": "RFC 3339 formatted date-time string",
+      "format": "date-time",
+      "type": "string"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "Unified attention span derived from bounded multi-source activity windows.",
+  "properties": {
+    "activity_source_counts": {
+      "additionalProperties": false,
+      "properties": {
+        "browser": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "terminal": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "unknown": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "window": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "type": "object"
+    },
+    "activity_sources": {
+      "items": {
+        "$ref": "#/$defs/ActivitySourceKind"
+      },
+      "type": "array"
+    },
+    "duration_secs": {
+      "format": "uint64",
+      "minimum": 0,
+      "type": "integer"
+    },
+    "end_time": {
+      "$ref": "#/$defs/DateTime"
+    },
+    "event_count": {
+      "format": "uint64",
+      "minimum": 0,
+      "type": "integer"
+    },
+    "primary_source": {
+      "$ref": "#/$defs/ActivitySourceKind"
+    },
+    "source_count": {
+      "format": "uint64",
+      "minimum": 0,
+      "type": "integer"
+    },
+    "source_window_close_reason": {
+      "$ref": "#/$defs/ActivityWindowCloseReason"
+    },
+    "source_window_id": {
+      "type": "string"
+    },
+    "sources": {
+      "items": {
+        "type": "string"
+      },
+      "type": "array"
+    },
+    "span_id": {
+      "type": "string"
+    },
+    "start_time": {
+      "$ref": "#/$defs/DateTime"
+    }
+  },
+  "required": [
+    "span_id",
+    "start_time",
+    "end_time",
+    "duration_secs",
+    "event_count",
+    "source_count",
+    "sources",
+    "activity_sources",
+    "activity_source_counts",
+    "primary_source",
+    "source_window_id",
+    "source_window_close_reason"
+  ],
+  "title": "AttentionSpanPayload",
+  "type": "object",
+  "x-sinex-event-type": "attention.span",
+  "x-sinex-source": "derived.attention-stream",
+  "x-sinex-version": "1.0.0"
+}
