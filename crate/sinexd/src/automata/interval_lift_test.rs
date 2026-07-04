@@ -78,11 +78,61 @@ async fn interval_lift_closes_previous_focus_on_next_transition(
         output.payload.attributes.get("workspace_id").map(String::as_str),
         Some("2")
     );
-    assert!(
-        output
-            .equivalence_key
-            .as_deref()
-            .is_some_and(|key| key.starts_with("interval:desktop.focus:0xabc:"))
+    let expected_key = format!("interval:desktop.focus:0xabc:{first_id}:{second_id}");
+    assert_eq!(output.equivalence_key.as_deref(), Some(expected_key.as_str()));
+    Ok(())
+}
+
+#[sinex_test]
+async fn interval_lift_equivalence_key_uses_parent_ids_not_local_sequence(
+) -> xtask::sandbox::TestResult<()> {
+    let start = Timestamp::from_unix_timestamp(1_700_000_000)
+        .ok_or_else(|| color_eyre::eyre::eyre!("valid timestamp"))?;
+    let end = Timestamp::from_unix_timestamp(1_700_000_010)
+        .ok_or_else(|| color_eyre::eyre::eyre!("valid timestamp"))?;
+
+    let mut automaton = IntervalLift;
+    let mut state = IntervalLiftState::default();
+    let first_context = focus_context(start);
+    let first_id = first_context.trigger_uuid();
+    let second_context = focus_context(end);
+    let second_id = second_context.trigger_uuid();
+
+    automaton
+        .process(
+            &mut state,
+            HyprlandWindowFocusedPayload {
+                window_id: Some("0xabc".to_string()),
+                window_class: Some("kitty".to_string()),
+                window_title: Some("codex".to_string()),
+                workspace_id: Some(1),
+                previous_window_id: None,
+            },
+            &first_context,
+        )
+        .await?;
+    let output = automaton
+        .process(
+            &mut state,
+            HyprlandWindowFocusedPayload {
+                window_id: Some("0xdef".to_string()),
+                window_class: Some("qutebrowser".to_string()),
+                window_title: Some("Sinex".to_string()),
+                workspace_id: Some(1),
+                previous_window_id: Some("0xabc".to_string()),
+            },
+            &second_context,
+        )
+        .await?
+        .expect("subject transition closes one interval");
+
+    assert_eq!(
+        output.payload.interval_id,
+        format!("interval:desktop.focus:0xabc:{first_id}:{second_id}")
+    );
+    assert_eq!(
+        output.equivalence_key.as_deref(),
+        Some(output.payload.interval_id.as_str())
     );
     Ok(())
 }
