@@ -275,6 +275,52 @@ impl InputShapeAdapter for ManyNilMaterialRecordsAdapter {
 impl InputShapeAdapterExt for ManyNilMaterialRecordsAdapter {}
 
 #[derive(Default)]
+struct TwoRecordAdapter;
+
+#[async_trait]
+impl InputShapeAdapter for TwoRecordAdapter {
+    type Config = ();
+    type Cursor = u64;
+
+    const KIND: InputShapeKind = InputShapeKind::AppendOnlyFile;
+
+    async fn open(
+        &self,
+        material_id: Id<SourceMaterial>,
+        _config: &Self::Config,
+        _cursor: Option<Self::Cursor>,
+    ) -> ParserResult<BoxStream<'static, ParserResult<SourceRecord>>> {
+        let records = ["alpha", "beta"]
+            .into_iter()
+            .enumerate()
+            .map(move |(idx, text)| {
+                Ok(SourceRecord {
+                    material_id,
+                    anchor: MaterialAnchor::Line {
+                        line: idx as u64,
+                        byte_start: idx as u64 * 10,
+                    },
+                    bytes: text.as_bytes().to_vec(),
+                    logical_path: None,
+                    source_ts_hint: None,
+                    metadata: json!({ "cursor": idx as u64 + 1 }),
+                })
+            });
+        Ok(Box::pin(stream::iter(records)))
+    }
+
+    fn cursor_after(&self, record: &SourceRecord) -> ParserResult<Self::Cursor> {
+        record
+            .metadata
+            .get("cursor")
+            .and_then(JsonValue::as_u64)
+            .ok_or_else(|| ParserError::Parse("missing cursor metadata".to_string()))
+    }
+}
+
+impl InputShapeAdapterExt for TwoRecordAdapter {}
+
+#[derive(Default)]
 struct AlreadyMaterializedRecordAdapter;
 
 #[async_trait]
@@ -362,6 +408,79 @@ impl MaterialParser for EmittingParser {
                 .event_type(EventType::from_static("test.event"))
                 .event_source(EventSource::from_static("test"))
                 .payload(serde_json::json!({"parsed": true}))
+                .ts_orig(ctx.acquisition_time)
+                .timing(sinex_primitives::parser::TimingEvidence::StagedAtFallback)
+                .anchor(record.anchor)
+                .privacy_context(ProcessingContext::Metadata)
+                .build(),
+        ])
+    }
+}
+
+#[derive(Debug, Default)]
+struct StatefulCheckpointParser {
+    seen: Vec<String>,
+}
+
+#[async_trait]
+impl MaterialParser for StatefulCheckpointParser {
+    type Config = ();
+
+    fn manifest(&self) -> ParserManifest {
+        ParserManifest {
+            parser_id: ParserId::from_static("stateful-checkpoint-parser"),
+            parser_version: "1.0.0".to_string(),
+            accepted_input_shapes: vec![InputShapeKind::AppendOnlyFile],
+            source_id: SourceId::from_static("desktop.clipboard"),
+            declared_event_types: vec![(
+                EventSource::from_static("test"),
+                EventType::from_static("test.event"),
+            )],
+            privacy_contexts: vec![ProcessingContext::Metadata],
+            sensitivity_hints: Vec::new(),
+            description: String::new(),
+        }
+    }
+
+    fn restore_checkpoint_state(&mut self, state: Option<&JsonValue>) -> ParserResult<()> {
+        let Some(state) = state else {
+            return Ok(());
+        };
+        self.seen = state
+            .get("seen")
+            .and_then(JsonValue::as_array)
+            .ok_or_else(|| ParserError::Parse("missing seen array".to_string()))?
+            .iter()
+            .map(|value| {
+                value
+                    .as_str()
+                    .map(str::to_owned)
+                    .ok_or_else(|| ParserError::Parse("seen entry must be string".to_string()))
+            })
+            .collect::<ParserResult<Vec<_>>>()?;
+        Ok(())
+    }
+
+    fn checkpoint_state(&self) -> ParserResult<Option<JsonValue>> {
+        Ok(Some(json!({ "seen": self.seen })))
+    }
+
+    async fn parse_record(
+        &mut self,
+        record: SourceRecord,
+        ctx: &ParserContext,
+    ) -> ParserResult<Vec<ParsedEventIntent>> {
+        let text = std::str::from_utf8(&record.bytes)
+            .map_err(|error| ParserError::Parse(format!("invalid test bytes: {error}")))?;
+        self.seen.push(text.to_string());
+        Ok(vec![
+            ParsedEventIntent::builder()
+                .source_id(ctx.source_id.clone())
+                .parser_id(ParserId::from_static("stateful-checkpoint-parser"))
+                .parser_version("1.0.0")
+                .event_type(EventType::from_static("test.event"))
+                .event_source(EventSource::from_static("test"))
+                .payload(json!({ "parsed": text }))
                 .ts_orig(ctx.acquisition_time)
                 .timing(sinex_primitives::parser::TimingEvidence::StagedAtFallback)
                 .anchor(record.anchor)
@@ -814,6 +933,40 @@ async fn adapter_emit_failure_does_not_advance_cursor(ctx: TestContext) -> TestR
 }
 
 #[sinex_test]
+async fn adapter_emit_failure_rolls_back_parser_checkpoint(ctx: TestContext) -> TestResult<()> {
+    let ctx = ctx.with_nats().shared().await?;
+    let (runtime, event_receiver) = make_adapter_runtime(&ctx).await?;
+    drop(event_receiver);
+    let mut source =
+        AdapterBackedSource::<TwoRecordAdapter, StatefulCheckpointParser>::new(
+            "desktop.clipboard",
+        );
+    let mut state = AdapterModuleState::default();
+
+    source
+        .initialize(AdapterSourceConfig::default(), &runtime, &mut state)
+        .await?;
+    let report = source
+        .scan_snapshot(&mut state, ScanArgs::default())
+        .await?;
+
+    assert_eq!(report.events_processed, 0);
+    assert_eq!(
+        state.cursor, None,
+        "emit failures must leave the cursor behind for retry"
+    );
+    assert!(
+        state.parser_checkpoint.is_none(),
+        "parser-local progress must not persist when the record was not emitted"
+    );
+    assert!(
+        source.parser.seen.is_empty(),
+        "in-memory parser state must roll back with the cursor"
+    );
+    Ok(())
+}
+
+#[sinex_test]
 async fn adapter_nil_material_records_are_batched_into_few_material_frames(
     ctx: TestContext,
 ) -> TestResult<()> {
@@ -1097,6 +1250,62 @@ async fn adapter_source_state_defaults_missing_input_fingerprint() -> xtask::san
     assert_eq!(state.total_events_emitted, 12);
     assert!(state.last_input_fingerprint.is_none());
     assert!(state.recent_input_drifts.is_empty());
+    assert!(state.parser_checkpoint.is_none());
+    Ok(())
+}
+
+#[sinex_test]
+async fn adapter_source_restores_parser_checkpoint_on_initialize(
+    ctx: TestContext,
+) -> TestResult<()> {
+    let ctx = ctx.with_nats().shared().await?;
+    let (runtime, _event_receiver) = make_adapter_runtime(&ctx).await?;
+    let mut source =
+        AdapterBackedSource::<TestAdapter, StatefulCheckpointParser>::new("desktop.clipboard");
+    let mut state = AdapterModuleState::<u64> {
+        parser_checkpoint: Some(json!({ "seen": ["prior"] })),
+        ..Default::default()
+    };
+
+    source
+        .initialize(AdapterSourceConfig::default(), &runtime, &mut state)
+        .await?;
+
+    assert_eq!(source.parser.seen, vec!["prior".to_string()]);
+    Ok(())
+}
+
+#[sinex_test]
+async fn adapter_source_updates_parser_checkpoint_after_successful_parse(
+    ctx: TestContext,
+) -> TestResult<()> {
+    let ctx = ctx.with_nats().shared().await?;
+    let (runtime, mut event_receiver) = make_adapter_runtime(&ctx).await?;
+    let mut source =
+        AdapterBackedSource::<TwoRecordAdapter, StatefulCheckpointParser>::new(
+            "desktop.clipboard",
+        );
+    let mut state = AdapterModuleState::<u64>::default();
+
+    source
+        .initialize(AdapterSourceConfig::default(), &runtime, &mut state)
+        .await?;
+    let emitted = source.drain_adapter(None, &mut state, None).await?;
+
+    assert_eq!(emitted, 2);
+    assert_eq!(state.cursor, Some(2));
+    assert_eq!(
+        state.parser_checkpoint,
+        Some(json!({ "seen": ["alpha", "beta"] }))
+    );
+    assert!(
+        event_receiver.try_recv().is_ok(),
+        "first parsed record should emit"
+    );
+    assert!(
+        event_receiver.try_recv().is_ok(),
+        "second parsed record should emit"
+    );
     Ok(())
 }
 

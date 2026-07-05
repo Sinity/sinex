@@ -328,6 +328,13 @@ where
     /// available for later readiness and CLI/RPC surfaces.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub recent_input_drifts: Vec<DriftEvent>,
+
+    /// Opaque parser-local checkpoint state.
+    ///
+    /// The adapter cursor owns source-position progress; this field owns
+    /// parser-local replay-relevant memory such as bounded dedup windows.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub parser_checkpoint: Option<JsonValue>,
 }
 
 impl<C> Default for AdapterModuleState<C>
@@ -340,6 +347,7 @@ where
             total_events_emitted: 0,
             last_input_fingerprint: None,
             recent_input_drifts: Vec::new(),
+            parser_checkpoint: None,
         }
     }
 }
@@ -867,6 +875,45 @@ where
         Ok(())
     }
 
+    fn refresh_parser_checkpoint_state(&mut self, state: &mut AdapterModuleState<A::Cursor>) {
+        match self.parser.checkpoint_state() {
+            Ok(checkpoint) => {
+                state.parser_checkpoint = checkpoint;
+            }
+            Err(error) => {
+                warn!(
+                    source = self.source_id,
+                    error = %error,
+                    "parser checkpoint serialization failed; continuing without updating parser-local checkpoint"
+                );
+            }
+        }
+    }
+
+    fn snapshot_parser_checkpoint_state(&self) -> Option<JsonValue> {
+        match self.parser.checkpoint_state() {
+            Ok(checkpoint) => checkpoint,
+            Err(error) => {
+                warn!(
+                    source = self.source_id,
+                    error = %error,
+                    "parser checkpoint snapshot failed; parser-local rollback disabled for this record"
+                );
+                None
+            }
+        }
+    }
+
+    fn restore_parser_checkpoint_after_failed_record(&mut self, checkpoint: Option<JsonValue>) {
+        if let Err(error) = self.parser.restore_checkpoint_state(checkpoint.as_ref()) {
+            warn!(
+                source = self.source_id,
+                error = %error,
+                "parser checkpoint rollback failed after record processing failure"
+            );
+        }
+    }
+
     fn stop_private_mode_control_listener(&mut self) {
         if let Some(task) = self.private_mode_control_task.take() {
             task.abort();
@@ -1383,6 +1430,7 @@ where
                     acquisition_time: Timestamp::now(),
                 };
 
+                let parser_checkpoint_before = self.snapshot_parser_checkpoint_state();
                 let record_timing_hint = materialized.record.source_ts_hint.clone();
                 let intents = match self
                     .parser
@@ -1391,6 +1439,9 @@ where
                 {
                     Ok(v) => apply_record_timing_hint_to_intents(v, record_timing_hint.as_ref()),
                     Err(e) => {
+                        self.restore_parser_checkpoint_after_failed_record(
+                            parser_checkpoint_before,
+                        );
                         warn!(
                             source = self.source_id,
                             error = %e,
@@ -1440,11 +1491,13 @@ where
                 }
 
                 if record_processed {
+                    self.refresh_parser_checkpoint_state(state);
                     if let Some(cursor) = next_cursor {
                         state.cursor = Some(merge_cursor_update(state.cursor.clone(), cursor));
                         self.persist_stream_checkpoint_if_due(state, false).await;
                     }
                 } else {
+                    self.restore_parser_checkpoint_after_failed_record(parser_checkpoint_before);
                     warn!(
                         source = self.source_id,
                         "record processing failed — cursor not advanced so the record can be retried"
@@ -1649,7 +1702,7 @@ where
         &mut self,
         config: Self::Config,
         runtime: &RuntimeContext,
-        _state: &mut Self::State,
+        state: &mut Self::State,
     ) -> RuntimeResult<()> {
         // Build the AcquisitionManager from the runtime's NATS handles.
         let acq = runtime
@@ -1723,6 +1776,16 @@ where
 
         self.config = Some(adapter_config);
         self.runtime = Some(runtime.clone());
+        self.parser
+            .restore_checkpoint_state(state.parser_checkpoint.as_ref())
+            .map_err(|error| {
+                crate::runtime::SinexError::processing(
+                    "AdapterBackedSource: failed to restore parser checkpoint state",
+                )
+                .with_context("source_id", self.source_id)
+                .with_context("parser_id", self.parser.manifest().parser_id.to_string())
+                .with_context("error", error.to_string())
+            })?;
 
         info!(
             source = self.source_id,
@@ -2059,6 +2122,7 @@ fn merge_json_over(base: JsonValue, over: JsonValue) -> JsonValue {
 
 fn merge_cursor_json_update(base: JsonValue, over: JsonValue) -> JsonValue {
     match (base, over) {
+        (base, JsonValue::Null) => base,
         (JsonValue::Object(mut base_map), JsonValue::Object(over_map)) => {
             for (key, value) in over_map {
                 let merged = match base_map.remove(&key) {

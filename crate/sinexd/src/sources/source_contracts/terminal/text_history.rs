@@ -11,7 +11,7 @@ use sinex_primitives::source_contracts::{
     RetentionPolicy, RuntimeShape,
 };
 
-use crate::runtime::parser::dedup::ContentHashWindow;
+use crate::runtime::parser::dedup::{ContentHashWindow, ContentHashWindowSnapshot};
 use crate::runtime::parser::{MaterialParser, ParserError, ParserResult};
 use sinex_primitives::domain::{EventSource, EventType};
 use sinex_primitives::events::payloads::shell::HistoryCommandImportedPayload;
@@ -74,6 +74,31 @@ impl MaterialParser for TextHistoryParser {
             description: "Parses generic plain-text history files into command.imported events."
                 .into(),
         }
+    }
+
+    fn restore_checkpoint_state(
+        &mut self,
+        state: Option<&sinex_primitives::JsonValue>,
+    ) -> ParserResult<()> {
+        let Some(state) = state else {
+            return Ok(());
+        };
+        let snapshot: ContentHashWindowSnapshot =
+            serde_json::from_value(state.clone()).map_err(|error| {
+                ParserError::Parse(format!("invalid text history dedup checkpoint: {error}"))
+            })?;
+        self.dedup = ContentHashWindow::from_snapshot(snapshot).map_err(|error| {
+            ParserError::Parse(format!("invalid text history dedup hash: {error}"))
+        })?;
+        Ok(())
+    }
+
+    fn checkpoint_state(&self) -> ParserResult<Option<sinex_primitives::JsonValue>> {
+        serde_json::to_value(self.dedup.snapshot())
+            .map(Some)
+            .map_err(|error| {
+                ParserError::Parse(format!("text history dedup checkpoint failed: {error}"))
+            })
     }
 
     async fn parse_record(
