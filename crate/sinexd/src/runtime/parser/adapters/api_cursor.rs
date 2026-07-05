@@ -237,6 +237,18 @@ pub struct ApiCursorPosition {
     pub last_cursor: Option<String>,
     /// ETag from the last completed page response.
     pub last_etag: Option<String>,
+    /// Whether the checkpoint was taken before the page boundary advanced.
+    ///
+    /// This is load-bearing for page 0: its page-start cursor is `None`, which
+    /// is also the terminal cursor after the final page. A mid-page checkpoint
+    /// with `page_incomplete = true` must re-fetch the current page; a terminal
+    /// checkpoint with `page_incomplete = false` must not re-import.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub page_incomplete: bool,
+}
+
+fn is_false(value: &bool) -> bool {
+    !*value
 }
 
 // =============================================================================
@@ -246,11 +258,13 @@ pub struct ApiCursorPosition {
 const META_CURSOR_AFTER: &str = "api_cursor_next";
 const META_ETAG_AFTER: &str = "api_etag_after";
 const META_PAGE_INDEX: &str = "api_page_index";
+const META_PAGE_INCOMPLETE: &str = "api_page_incomplete";
 
 fn build_record_metadata(
     cursor_after: Option<&str>,
     etag_after: Option<&str>,
     page_index: u64,
+    page_incomplete: bool,
 ) -> JsonValue {
     let mut map = Map::new();
     map.insert(
@@ -268,6 +282,10 @@ fn build_record_metadata(
     map.insert(
         META_PAGE_INDEX.to_owned(),
         JsonValue::Number(page_index.into()),
+    );
+    map.insert(
+        META_PAGE_INCOMPLETE.to_owned(),
+        JsonValue::Bool(page_incomplete),
     );
     JsonValue::Object(map)
 }
@@ -411,6 +429,7 @@ where
         //   - checkpoint, last_cursor = None → prior run consumed the final page;
         //                                      resuming would re-import, so stop.
         let start_cursor: Option<String> = match cursor.as_ref() {
+            Some(pos) if pos.page_incomplete => pos.last_cursor.clone(),
             Some(pos) => match pos.last_cursor.as_deref() {
                 Some(saved) => Some(saved.to_owned()),
                 None => return Ok(stream::empty().boxed()),
@@ -456,17 +475,22 @@ where
                             // Mid-page records carry the pre-page cursor → retry
                             // re-fetches the same page. Only the last record of
                             // each page carries the next-page cursor.
-                            let (cursor_after, etag_after) = if idx + 1 == total {
-                                (next_page_cursor.as_deref(), etag.as_deref())
-                            } else {
+                            let page_incomplete = idx + 1 != total;
+                            let (cursor_after, etag_after) = if page_incomplete {
                                 (current_cursor.as_deref(), None)
+                            } else {
+                                (next_page_cursor.as_deref(), etag.as_deref())
                             };
 
                             let bytes = serde_json::to_vec(&record).map_err(|e| {
                                 ParserError::Adapter(format!("failed to serialize api record: {e}"))
                             })?;
-                            let metadata =
-                                build_record_metadata(cursor_after, etag_after, page_index);
+                            let metadata = build_record_metadata(
+                                cursor_after,
+                                etag_after,
+                                page_index,
+                                page_incomplete,
+                            );
 
                             Ok(SourceRecord {
                                 material_id,
@@ -506,9 +530,15 @@ where
             .get(META_ETAG_AFTER)
             .and_then(|v| v.as_str())
             .map(str::to_owned);
+        let page_incomplete = record
+            .metadata
+            .get(META_PAGE_INCOMPLETE)
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false);
         Ok(ApiCursorPosition {
             last_cursor,
             last_etag,
+            page_incomplete,
         })
     }
 }
