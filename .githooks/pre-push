@@ -1,11 +1,14 @@
 #!/usr/bin/env bash
 # Pre-push drift guard for sinex.
 #
-# Runs `xtask check --changed-strict` before allowing a push. Catches
-# regressions in changed-file surfaces that compile-clean in isolation
-# but reference APIs that have since changed on the target branch — the
-# class of bug PR #1268 (and several others) shipped under because the
-# author's local check ran against a stale dependency graph.
+# Runs scoped drift guards before allowing a push:
+#   - `xtask docs schema-bundle --check` when payload/schema surfaces changed.
+#   - `xtask check --changed-strict` when Rust sources changed.
+#
+# The changed-strict guard catches regressions in changed-file surfaces that
+# compile-clean in isolation but reference APIs that have since changed on the
+# target branch — the class of bug PR #1268 (and several others) shipped under
+# because the author's local check ran against a stale dependency graph.
 #
 # The hook computes the pushed checkout's devshell paths itself before running
 # `xtask`. This prevents a worktree push from inheriting the main checkout's
@@ -166,6 +169,16 @@ _sinex_pre_push_changed_xtask_build_inputs() {
     xtask/macros/src
 }
 
+_sinex_pre_push_changed_schema_bundle_inputs() {
+  local base_ref
+  base_ref="$1"
+  git diff --name-only "$base_ref" HEAD -- \
+    'crate/sinex-primitives/src/events/**' \
+    'crate/sinex-macros/**' \
+    'crate/sinex-schema/**' \
+    'schemas/v1/**'
+}
+
 _sinex_pre_push_checkout_postgres_running() {
   local cache_root pid_file pid
   cache_root="$(_sinex_pre_push_cache_root)"
@@ -305,7 +318,7 @@ _sinex_pre_push_run_xtask() {
     echo "[pre-push] Branch changes xtask build inputs; selected binary must be fresh." >&2
     printf '%s\n' "$changed_inputs" | sed 's/^/[pre-push]   input: /' >&2
   else
-    echo "[pre-push] Branch does not change xtask build inputs; a built xtask binary can run changed-strict without rebuild." >&2
+    echo "[pre-push] Branch does not change xtask build inputs; a built xtask binary can run this guard without rebuild." >&2
   fi
 
   checkout_candidate="$(_sinex_pre_push_cache_root)/target/debug/xtask"
@@ -419,8 +432,8 @@ if ! git rev-parse --verify "$BASE_REF" >/dev/null 2>&1; then
 fi
 
 if [[ "${SINEX_PRE_PUSH_DRY_RUN:-}" == "1" ]]; then
-  echo "[pre-push] Dry run: probing xtask selection without running changed-strict." >&2
-  _sinex_pre_push_run_xtask check --changed-strict "$BASE_REF" >&2
+  echo "[pre-push] Dry run: probing xtask selection without running drift guards." >&2
+  _sinex_pre_push_run_xtask docs schema-bundle --check >&2
   exit 0
 fi
 
@@ -430,32 +443,51 @@ if [[ "$(git rev-parse HEAD)" == "$(git rev-parse "$BASE_REF")" ]]; then
   exit 0
 fi
 
-# If no Rust changes between BASE and HEAD, skip — the drift guard only
-# matters for Rust source changes.
-if [[ -z "$(git diff --name-only "$BASE_REF" HEAD -- '*.rs' 2>/dev/null)" ]]; then
-  echo "[pre-push] No .rs changes vs $BASE_REF; skipping drift guard." >&2
+changed_schema_bundle_inputs="$(_sinex_pre_push_changed_schema_bundle_inputs "$BASE_REF" 2>/dev/null || true)"
+changed_rust_inputs="$(git diff --name-only "$BASE_REF" HEAD -- '*.rs' 2>/dev/null || true)"
+
+if [[ -z "$changed_schema_bundle_inputs" && -z "$changed_rust_inputs" ]]; then
+  echo "[pre-push] No schema-bundle or .rs changes vs $BASE_REF; skipping drift guard." >&2
   exit 0
 fi
 
-echo "[pre-push] Running xtask check --changed-strict $BASE_REF ..." >&2
-pre_push_owned_postgres=0
-if ! _sinex_pre_push_checkout_postgres_running; then
-  pre_push_owned_postgres=1
+if [[ -n "$changed_schema_bundle_inputs" ]]; then
+  echo "[pre-push] Running xtask docs schema-bundle --check ..." >&2
+  printf '%s\n' "$changed_schema_bundle_inputs" | sed 's/^/[pre-push]   schema input: /' >&2
+  schema_bundle_status=0
+  _sinex_pre_push_run_xtask docs schema-bundle --check >&2 || schema_bundle_status=$?
+  if [[ "$schema_bundle_status" != "0" ]]; then
+    echo "" >&2
+    echo "[pre-push] SCHEMA BUNDLE DRIFT GUARD FAILED." >&2
+    echo "Your payload/schema changes left schemas/v1 stale." >&2
+    echo "Run \`xtask docs schema-bundle\`, commit the generated bundle, and push again." >&2
+    exit 1
+  fi
+  echo "[pre-push] Schema bundle drift guard passed." >&2
 fi
 
-pre_push_status=0
-_sinex_pre_push_run_xtask check --changed-strict "$BASE_REF" >&2 || pre_push_status=$?
+if [[ -n "$changed_rust_inputs" ]]; then
+  echo "[pre-push] Running xtask check --changed-strict $BASE_REF ..." >&2
+  pre_push_owned_postgres=0
+  if ! _sinex_pre_push_checkout_postgres_running; then
+    pre_push_owned_postgres=1
+  fi
 
-if [[ "$pre_push_owned_postgres" == "1" ]]; then
-  _sinex_pre_push_stop_checkout_postgres
+  pre_push_status=0
+  _sinex_pre_push_run_xtask check --changed-strict "$BASE_REF" >&2 || pre_push_status=$?
+
+  if [[ "$pre_push_owned_postgres" == "1" ]]; then
+    _sinex_pre_push_stop_checkout_postgres
+  fi
+
+  if [[ "$pre_push_status" != "0" ]]; then
+    echo "" >&2
+    echo "[pre-push] DRIFT GUARD FAILED." >&2
+    echo "Your changes introduce diagnostics on affected packages that didn't exist on $BASE_REF." >&2
+    echo "Fix them, or bypass with SINEX_SKIP_DRIFT_GUARD=1 and explain in the PR body why." >&2
+    exit 1
+  fi
+  echo "[pre-push] Drift guard passed." >&2
 fi
 
-if [[ "$pre_push_status" != "0" ]]; then
-  echo "" >&2
-  echo "[pre-push] DRIFT GUARD FAILED." >&2
-  echo "Your changes introduce diagnostics on affected packages that didn't exist on $BASE_REF." >&2
-  echo "Fix them, or bypass with SINEX_SKIP_DRIFT_GUARD=1 and explain in the PR body why." >&2
-  exit 1
-fi
-
-echo "[pre-push] Drift guard passed." >&2
+echo "[pre-push] Pre-push drift guards passed." >&2
