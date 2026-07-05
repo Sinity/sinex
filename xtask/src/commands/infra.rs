@@ -814,6 +814,7 @@ fn generate_dev_source_bindings_manifest_for_home_and_exports(
         "fs",
         1,
         json!({
+            "control_identity": "fs-watcher",
             "watch_paths": [watch_root],
             "recursive": true,
             "ignored_directory_names": [

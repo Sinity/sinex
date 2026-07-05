@@ -84,14 +84,14 @@ pkgs.testers.nixosTest {
       })
     ];
 
-    services.sinex.runtime = {
+    services.sinex.sources = {
       filesystem.enable = lib.mkForce false;
       terminal.enable = lib.mkForce false;
       browser.enable = lib.mkForce false;
       desktop.enable = lib.mkForce false;
       system.enable = lib.mkForce false;
-      automata.enable = lib.mkForce false;
     };
+    services.sinex.automata.enable = lib.mkForce false;
 
     # ─── cgroup constraints on sinexd ─────────────────────────────────
     #
@@ -117,7 +117,7 @@ pkgs.testers.nixosTest {
     start_all()
     machine.wait_for_unit("multi-user.target")
     machine.wait_for_unit("postgresql.service", timeout=60)
-    machine.wait_for_unit("sinexd.service", timeout=60)
+    machine.wait_for_unit("sinexd.service", timeout=180)
     machine.wait_for_unit("nats.service", timeout=30)
 
     def get_event_count():

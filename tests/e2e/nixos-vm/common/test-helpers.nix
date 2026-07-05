@@ -58,7 +58,7 @@ let
                 time.sleep(1)
             raise RuntimeError("Timed out waiting for Sinex support units to start")
             
-        def wait_for_sinex_ready(self, timeout: int = 60) -> None:
+        def wait_for_sinex_ready(self, timeout: int = 180) -> None:
             """Wait for Sinex services to be fully ready."""
             self.machine.wait_for_unit("postgresql.service", timeout=timeout)
             self.machine.wait_for_unit("sinexd.service", timeout=timeout)

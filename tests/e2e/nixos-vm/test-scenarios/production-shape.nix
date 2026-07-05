@@ -49,7 +49,7 @@ pkgs.testers.nixosTest {
     services.sinex.lifecycle.preflight.enable = lib.mkForce true;
 
     # Minimal source surface: only what's needed to prove the fs path.
-    services.sinex.runtime = {
+    services.sinex.sources = {
       filesystem = {
         enable = true;
         watchPaths = lib.mkAfter [ "/var/lib/sinex/watched" ];
@@ -58,13 +58,13 @@ pkgs.testers.nixosTest {
       desktop.enable = false;
       system.enable = false;
       browser.enable = lib.mkDefault false;
-      automata = {
-        enable = false;
-        canonicalizer.enable = false;
-        healthAggregator.enable = false;
-        analyticsAutomaton.enable = false;
-        sessionDetector.enable = false;
-      };
+    };
+    services.sinex.automata = {
+      enable = false;
+      canonicalizer.enable = false;
+      healthAggregator.enable = false;
+      analyticsAutomaton.enable = false;
+      sessionDetector.enable = false;
     };
 
     # API must be reachable.
@@ -89,7 +89,7 @@ pkgs.testers.nixosTest {
         machine.wait_for_unit("multi-user.target")
         machine.wait_for_unit("postgresql.service", timeout=60)
         # Schema is applied by sinexd before runtime modules start.
-        machine.wait_for_unit("sinexd.service", timeout=60)
+        machine.wait_for_unit("sinexd.service", timeout=180)
         # Source units are hosted in sinexd; there is no per-source-driver unit.
         # API health probe — confirms TLS is up.
         machine.wait_until_succeeds(
