@@ -21,6 +21,8 @@ use tracing::{info, warn};
 
 type Result<T> = std::result::Result<T, SinexError>;
 
+const EVENT_ID_AUDIT_SAMPLE_LIMIT: usize = 50;
+
 fn require_positive_limit(method: &str, limit: i64) -> Result<i64> {
     if limit <= 0 {
         return Err(SinexError::validation(format!(
@@ -60,6 +62,14 @@ fn stringify_event_ids(event_ids: &[Uuid]) -> Vec<String> {
         .collect()
 }
 
+fn stringify_event_id_sample(event_ids: &[Uuid]) -> Vec<String> {
+    event_ids
+        .iter()
+        .take(EVENT_ID_AUDIT_SAMPLE_LIMIT)
+        .map(std::string::ToString::to_string)
+        .collect()
+}
+
 fn parse_unique_event_ids(raw_ids: &[String]) -> Result<Vec<Uuid>> {
     let mut event_ids = raw_ids
         .iter()
@@ -82,7 +92,10 @@ fn lifecycle_audit_summary(
     dry_run: bool,
 ) -> Value {
     json!({
-        "affected_event_ids": stringify_event_ids(affected_event_ids),
+        "affected_event_ids": stringify_event_id_sample(affected_event_ids),
+        "affected_event_ids_count": affected_event_ids.len(),
+        "affected_event_ids_sample_limit": EVENT_ID_AUDIT_SAMPLE_LIMIT,
+        "affected_event_ids_truncated": affected_event_ids.len() > EVENT_ID_AUDIT_SAMPLE_LIMIT,
         "cascade_depth": cascade_depth,
         "cascade_total": cascade_total,
         "root_event_count": root_event_count,
@@ -244,7 +257,11 @@ pub async fn handle_lifecycle_archive(
         "dry_run": request.dry_run,
     });
     if explicit_event_ids {
-        scope["requested_event_ids"] = json!(stringify_event_ids(&event_ids));
+        scope["requested_event_ids"] = json!(stringify_event_id_sample(&event_ids));
+        scope["requested_event_ids_count"] = json!(event_ids.len());
+        scope["requested_event_ids_sample_limit"] = json!(EVENT_ID_AUDIT_SAMPLE_LIMIT);
+        scope["requested_event_ids_truncated"] =
+            json!(event_ids.len() > EVENT_ID_AUDIT_SAMPLE_LIMIT);
     }
     let operation = pool
         .state()
@@ -391,7 +408,10 @@ pub async fn handle_lifecycle_restore(
         request.dry_run,
     );
     let scope = json!({
-        "requested_event_ids": stringify_event_ids(&event_ids),
+        "requested_event_ids": stringify_event_id_sample(&event_ids),
+        "requested_event_ids_count": event_ids.len(),
+        "requested_event_ids_sample_limit": EVENT_ID_AUDIT_SAMPLE_LIMIT,
+        "requested_event_ids_truncated": event_ids.len() > EVENT_ID_AUDIT_SAMPLE_LIMIT,
         "dry_run": request.dry_run,
     });
     let operation = pool
