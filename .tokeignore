@@ -1,0 +1,13 @@
+# Files kept out of LOC stats — tokei reads this with .gitignore semantics.
+# tokei does NOT honor .gitattributes linguist-generated, so generated/vendored
+# surfaces must be listed here explicitly. Keep in sync with .gitattributes.
+# (tokei already skips dot-dirs like .sqlx/ and .agent/ by default.)
+
+# Generated JSON schemas (from Rust types).
+schemas/
+
+# Generated JSON catalogs.
+*.generated.json
+
+# Exported Grafana dashboards (not first-party source).
+nixos/monitoring/grafana-dashboards/
