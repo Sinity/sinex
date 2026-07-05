@@ -7,6 +7,7 @@
 use camino::Utf8PathBuf;
 use sinexd::api::content_service::ContentService;
 use sinexd::runtime::content_store::{ContentStoreConfig, ContentStoreKey, ContentStoreManager};
+use std::os::unix::fs::symlink;
 use std::sync::Arc;
 use tempfile::TempDir;
 use xtask::sandbox::prelude::*;
@@ -141,6 +142,39 @@ async fn content_retrieve_rejects_file_that_exceeds_retrieval_limit(
     let err_text = err.to_string();
     assert!(
         err_text.contains("exceeds retrieval limit"),
+        "unexpected error: {err_text}"
+    );
+
+    Ok(())
+}
+
+#[sinex_test]
+async fn content_retrieve_rejects_local_cas_symlink_escape(ctx: TestContext) -> TestResult<()> {
+    let (service, tmp) = content_service_fixture(&ctx)?;
+
+    let payload = b"inside cas";
+    let content_key = service
+        .store_content(
+            payload,
+            "escape.bin",
+            "application/octet-stream",
+            "test-harness",
+            "test-harness",
+        )
+        .await?;
+    let cas_path = local_cas_path(&tmp, &content_key)?;
+    let outside_path = tmp.path().join("outside-secret.bin");
+    tokio::fs::write(&outside_path, b"outside").await?;
+    tokio::fs::remove_file(&cas_path).await?;
+    symlink(&outside_path, &cas_path)?;
+
+    let err = service
+        .retrieve_content(&content_key)
+        .await
+        .expect_err("local CAS symlink escape must fail before read");
+    let err_text = err.to_string();
+    assert!(
+        err_text.contains("escapes content-store root"),
         "unexpected error: {err_text}"
     );
 

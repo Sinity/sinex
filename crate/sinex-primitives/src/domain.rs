@@ -1991,6 +1991,36 @@ mod sqlx_impls {
 }
 
 impl ContentKey {
+    /// Storage backend token used by Sinex's local BLAKE3 CAS.
+    pub const LOCAL_BLAKE3_CAS_BACKEND: &'static str = "SINEXBLAKE3";
+
+    /// Hex length of a BLAKE3 digest.
+    pub const LOCAL_BLAKE3_DIGEST_HEX_LEN: usize = 64;
+
+    /// Validate a local BLAKE3 CAS digest.
+    ///
+    /// Local CAS keys use the digest as a path segment, so this is deliberately
+    /// stricter than legacy git-annex-style key names.
+    pub fn validate_local_blake3_digest(digest: &str) -> Result<(), String> {
+        if digest.len() != Self::LOCAL_BLAKE3_DIGEST_HEX_LEN {
+            return Err(format!(
+                "{} content key digest must be exactly {} lowercase hex characters",
+                Self::LOCAL_BLAKE3_CAS_BACKEND,
+                Self::LOCAL_BLAKE3_DIGEST_HEX_LEN
+            ));
+        }
+        if !digest
+            .bytes()
+            .all(|byte| matches!(byte, b'0'..=b'9' | b'a'..=b'f'))
+        {
+            return Err(format!(
+                "{} content key digest must contain only lowercase hex characters",
+                Self::LOCAL_BLAKE3_CAS_BACKEND
+            ));
+        }
+        Ok(())
+    }
+
     /// Validate content-store key format.
     ///
     /// Content-store keys have the form `BACKEND[-sNNN][-mNNN]--FILENAME`, where
@@ -2014,6 +2044,28 @@ impl ContentKey {
         // Reject multiple `--` separators
         if parts.len() > 2 {
             return Err("Content key must contain exactly one '--' separator".into());
+        }
+
+        let backend = parts[0].split('-').next().unwrap_or(parts[0]);
+        if backend == Self::LOCAL_BLAKE3_CAS_BACKEND {
+            let size = parts[0]
+                .strip_prefix(backend)
+                .unwrap_or_default()
+                .split('-')
+                .find_map(|part| part.strip_prefix('s'));
+            let Some(size) = size.filter(|size| !size.is_empty()) else {
+                return Err(format!(
+                    "{} content key must include '-sNNN' size metadata",
+                    Self::LOCAL_BLAKE3_CAS_BACKEND
+                ));
+            };
+            if !size.bytes().all(|byte| byte.is_ascii_digit()) {
+                return Err(format!(
+                    "{} content key size metadata must be decimal digits",
+                    Self::LOCAL_BLAKE3_CAS_BACKEND
+                ));
+            }
+            Self::validate_local_blake3_digest(parts[1])?;
         }
 
         Ok(())

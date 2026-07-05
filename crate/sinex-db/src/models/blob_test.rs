@@ -32,10 +32,18 @@ async fn content_key_parser_rejects_invalid_size() -> ::xtask::sandbox::TestResu
 }
 
 #[sinex_test]
-async fn content_key_parser_rejects_missing_hash_fragment() -> ::xtask::sandbox::TestResult<()>
-{
+async fn content_key_parser_rejects_missing_hash_fragment() -> ::xtask::sandbox::TestResult<()> {
     let err = Blob::parse_content_store_key("SHA256E-s42")
         .expect_err("missing backend digest fragment must fail honestly");
-    assert!(err.contains("missing hash fragment"));
+    assert!(err.contains("must contain '--' separator"));
+    Ok(())
+}
+
+#[sinex_test]
+async fn content_key_parser_rejects_malformed_local_cas_digest() -> ::xtask::sandbox::TestResult<()>
+{
+    let err = Blob::parse_content_store_key("SINEXBLAKE3-s42--../etc/passwd")
+        .expect_err("local CAS path traversal digest must fail honestly");
+    assert!(err.contains("lowercase hex") || err.contains("exactly 64"));
     Ok(())
 }
