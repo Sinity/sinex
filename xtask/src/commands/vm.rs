@@ -512,6 +512,84 @@ fn scenario_terminal_summary(result: &VmTestResult) -> String {
     }
 }
 
+fn normalize_vm_output_candidate(line: &str) -> Option<String> {
+    let stripped = strip_ansi_escape_sequences(line);
+    let trimmed = stripped.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+    let candidate = trimmed.rsplit("> ").next().unwrap_or(trimmed).trim();
+    if candidate.is_empty() {
+        None
+    } else {
+        Some(candidate.to_string())
+    }
+}
+
+fn extract_signal_summary(line: &str) -> Option<String> {
+    let start = line.find("(signal:")?;
+    let after_start = &line[start + 1..];
+    let end = after_start.find(')')?;
+    Some(after_start[..end].to_string())
+}
+
+fn summarize_vm_failure_output(output: &str) -> Option<String> {
+    let mut compile_error = None;
+    let mut signal = None;
+    let mut primary_error = None;
+    let mut cannot_build = None;
+    let mut log_hint = None;
+    let mut expect_log_command = false;
+
+    for line in output.lines() {
+        let Some(candidate) = normalize_vm_output_candidate(line) else {
+            continue;
+        };
+
+        if expect_log_command {
+            if candidate.starts_with("nix log ") {
+                log_hint = Some(candidate.clone());
+            }
+            expect_log_command = false;
+        }
+
+        if candidate.starts_with("For full logs, run:") {
+            expect_log_command = true;
+            continue;
+        }
+
+        if compile_error.is_none() && candidate.starts_with("error: could not compile ") {
+            compile_error = Some(candidate.clone());
+        }
+        if signal.is_none() {
+            signal = extract_signal_summary(&candidate);
+        }
+        if cannot_build.is_none() && candidate.starts_with("error: Cannot build ") {
+            cannot_build = Some(candidate.clone());
+        }
+        if primary_error.is_none() && candidate.starts_with("error: ") {
+            primary_error = Some(candidate);
+        }
+    }
+
+    let mut parts = Vec::new();
+    if let Some(error) = compile_error.or(primary_error).or(cannot_build) {
+        parts.push(error);
+    }
+    if let Some(signal) = signal {
+        parts.push(signal);
+    }
+    if let Some(log_hint) = log_hint {
+        parts.push(log_hint);
+    }
+
+    if parts.is_empty() {
+        None
+    } else {
+        Some(parts.join("; "))
+    }
+}
+
 fn suite_terminal_summary(results: &[VmTestResult]) -> String {
     let total = results.len();
     let passed = results.iter().filter(|result| result.passed).count();
@@ -842,6 +920,9 @@ async fn run_single_vm_test(
     while let Ok(summary) = summary_rx.try_recv() {
         last_summary = Some(summary);
     }
+    if !passed && !timed_out && last_summary.is_none() {
+        last_summary = summarize_vm_failure_output(&combined_output);
+    }
 
     VmTestResult {
         name: name.to_string(),
@@ -1042,12 +1123,15 @@ async fn execute_test(
                 println!("  Preserved staged checkout: {}", report.staged_root);
             }
         }
-        let names: Vec<&str> = failed.iter().map(|r| r.name.as_str()).collect();
+        let summaries: Vec<String> = failed
+            .iter()
+            .map(|r| scenario_terminal_summary(r))
+            .collect();
         bail!(
             "{}/{} VM tests failed: {}",
             failed.len(),
             results.len(),
-            names.join(", ")
+            summaries.join("; ")
         )
     }
 }
@@ -1110,6 +1194,11 @@ async fn run_sequential(
             println!("{} ({:.1}s)", style("TIMEOUT").yellow(), r.duration_secs);
         } else {
             println!("{} ({:.1}s)", style("FAIL").red(), r.duration_secs);
+        }
+        if !r.passed
+            && let Some(summary) = r.last_summary.as_deref()
+        {
+            println!("    {summary}");
         }
         results.push(r);
         let completed = results.len() as i64;
