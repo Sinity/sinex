@@ -55,6 +55,14 @@ async fn dev_bindings_manifest_contains_dogfood_source_families()
         manifest.comment.contains("SINEX_SOURCE_BINDINGS_PATH"),
         "manifest comment should include the env var needed to start the dogfood loop"
     );
+    assert!(
+        manifest.comment.contains("xtask run all-sources --bg"),
+        "manifest comment should name the source-binding runner, not core"
+    );
+    assert!(
+        !manifest.comment.contains("xtask run core"),
+        "core disables source bindings and cannot start the dogfood source loop"
+    );
     Ok(())
 }
 
