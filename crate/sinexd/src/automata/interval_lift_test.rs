@@ -591,6 +591,130 @@ async fn interval_lift_emits_each_activitywatch_window_row_independently(
 }
 
 #[sinex_test]
+async fn interval_lift_merges_activitywatch_zero_duration_heartbeats(
+) -> xtask::sandbox::TestResult<()> {
+    let first_ts = Timestamp::from_unix_timestamp(1_700_000_000)
+        .ok_or_else(|| color_eyre::eyre::eyre!("valid timestamp"))?;
+    let refresh_ts = first_ts + sinex_primitives::temporal::Duration::seconds(2);
+    let switch_ts = first_ts + sinex_primitives::temporal::Duration::seconds(4);
+
+    let mut automaton = IntervalLift;
+    let mut state = IntervalLiftState::default();
+    let first_context = activitywatch_context(first_ts);
+    let first_id = first_context.trigger_uuid();
+    let refresh_context = activitywatch_context(refresh_ts);
+    let switch_context = activitywatch_context(switch_ts);
+    let switch_id = switch_context.trigger_uuid();
+
+    let first = automaton
+        .process(
+            &mut state,
+            serde_json::to_value(ActivityWatchWindowActivePayload {
+                app: "kitty".to_string(),
+                title: "codex".to_string(),
+                duration_ms: 0,
+                bucket_id: "aw-watcher-window_sinnix-prime".to_string(),
+            })?,
+            &first_context,
+        )
+        .await?;
+    assert!(
+        first.is_none(),
+        "first zero-duration heartbeat opens the derived interval"
+    );
+
+    let refresh = automaton
+        .process(
+            &mut state,
+            serde_json::to_value(ActivityWatchWindowActivePayload {
+                app: "kitty".to_string(),
+                title: "codex".to_string(),
+                duration_ms: 0,
+                bucket_id: "aw-watcher-window_sinnix-prime".to_string(),
+            })?,
+            &refresh_context,
+        )
+        .await?;
+    assert!(
+        refresh.is_none(),
+        "same-subject heartbeat inside the merge window extends the open interval"
+    );
+
+    let output = automaton
+        .process(
+            &mut state,
+            serde_json::to_value(ActivityWatchWindowActivePayload {
+                app: "qutebrowser".to_string(),
+                title: "Sinex".to_string(),
+                duration_ms: 0,
+                bucket_id: "aw-watcher-window_sinnix-prime".to_string(),
+            })?,
+            &switch_context,
+        )
+        .await?
+        .expect("changed subject closes the previous heartbeat interval");
+
+    assert_eq!(output.source_event_ids, vec![first_id, switch_id]);
+    assert_eq!(output.payload.state_kind, "desktop.activitywatch.window");
+    assert_eq!(
+        output.payload.subject_id.as_deref(),
+        Some("app:kitty|title:codex")
+    );
+    assert_eq!(output.payload.start_time, first_ts);
+    assert_eq!(output.payload.end_time, switch_ts);
+    assert_eq!(output.payload.duration_secs, 4);
+    assert_eq!(output.payload.start_event_type, "window.active");
+    assert_eq!(output.payload.end_event_type, "window.active");
+    Ok(())
+}
+
+#[sinex_test]
+async fn interval_lift_splits_activitywatch_heartbeat_after_large_gap(
+) -> xtask::sandbox::TestResult<()> {
+    let first_ts = Timestamp::from_unix_timestamp(1_700_000_000)
+        .ok_or_else(|| color_eyre::eyre::eyre!("valid timestamp"))?;
+    let late_ts = first_ts + sinex_primitives::temporal::Duration::seconds(45);
+
+    let mut automaton = IntervalLift;
+    let mut state = IntervalLiftState::default();
+    let first_context = activitywatch_context(first_ts);
+    let late_context = activitywatch_context(late_ts);
+
+    let first = automaton
+        .process(
+            &mut state,
+            serde_json::to_value(ActivityWatchWindowActivePayload {
+                app: "kitty".to_string(),
+                title: "codex".to_string(),
+                duration_ms: 0,
+                bucket_id: "aw-watcher-window_sinnix-prime".to_string(),
+            })?,
+            &first_context,
+        )
+        .await?;
+    assert!(first.is_none());
+
+    let output = automaton
+        .process(
+            &mut state,
+            serde_json::to_value(ActivityWatchWindowActivePayload {
+                app: "kitty".to_string(),
+                title: "codex".to_string(),
+                duration_ms: 0,
+                bucket_id: "aw-watcher-window_sinnix-prime".to_string(),
+            })?,
+            &late_context,
+        )
+        .await?
+        .expect("large same-subject gap closes the previous heartbeat interval");
+
+    assert_eq!(output.payload.start_time, first_ts);
+    assert_eq!(output.payload.end_time, late_ts);
+    assert_eq!(output.payload.duration_secs, 45);
+    Ok(())
+}
+
+#[sinex_test]
 async fn interval_lift_lifts_activitywatch_afk_observed_duration(
 ) -> xtask::sandbox::TestResult<()> {
     let start = Timestamp::from_unix_timestamp(1_700_000_000)

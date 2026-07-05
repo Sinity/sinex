@@ -30,6 +30,7 @@ const WINDOW_ACTIVE_EVENT_TYPE: &str = "window.active";
 const AFK_CHANGED_EVENT_TYPE: &str = "afk.changed";
 const UNIT_STARTED_EVENT_TYPE: &str = "unit.started";
 const UNIT_STOPPED_EVENT_TYPE: &str = "unit.stopped";
+const ACTIVITYWATCH_HEARTBEAT_MERGE_WINDOW_SECS: i64 = 30;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum IntervalLiftRuleShape {
@@ -104,6 +105,11 @@ pub struct IntervalLiftState {
     /// transition pairs that can have multiple independent subjects open at once.
     #[serde(default)]
     active_subject_states: BTreeMap<String, StateObservation>,
+    /// Open zero-duration ActivityWatch heartbeat intervals keyed by
+    /// state-kind/bucket. ActivityWatch raw rows can be heartbeat markers rather
+    /// than complete intervals; keep the repair in the derived interval layer.
+    #[serde(default)]
+    active_activitywatch_heartbeats: BTreeMap<String, StateObservation>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -349,6 +355,19 @@ impl StateObservation {
         self.attributes.extend(other.attributes.clone());
     }
 
+    fn activitywatch_stream_key(&self) -> String {
+        let bucket = self
+            .attributes
+            .get("bucket_id")
+            .map(String::as_str)
+            .unwrap_or("unknown-bucket");
+        format!("{}:{bucket}", self.state_kind)
+    }
+
+    fn activitywatch_gap_to(&self, current: &Self) -> i64 {
+        (current.ts_orig - self.ts_orig).whole_seconds()
+    }
+
     fn close_with(&self, current: &Self) -> DerivedOutput<StateIntervalPayload> {
         let duration_secs = (current.ts_orig - self.ts_orig).whole_seconds().max(0) as u64;
         let subject_part = self
@@ -569,6 +588,12 @@ impl Transducer for IntervalLift {
                     let duration_ms = payload.duration_ms;
                     let observation =
                         StateObservation::from_activitywatch_window_payload(payload, context)?;
+                    if duration_ms == 0 {
+                        return Ok(Self::process_activitywatch_heartbeat(
+                            &mut state.active_activitywatch_heartbeats,
+                            observation,
+                        ));
+                    }
                     return Ok(Some(
                         observation.observed_duration_interval(duration_ms, Timestamp::now()),
                     ));
@@ -585,6 +610,12 @@ impl Transducer for IntervalLift {
                     let duration_ms = payload.duration_ms;
                     let observation =
                         StateObservation::from_activitywatch_afk_payload(payload, context)?;
+                    if duration_ms == 0 {
+                        return Ok(Self::process_activitywatch_heartbeat(
+                            &mut state.active_activitywatch_heartbeats,
+                            observation,
+                        ));
+                    }
                     return Ok(Some(
                         observation.observed_duration_interval(duration_ms, Timestamp::now()),
                     ));
@@ -648,6 +679,38 @@ impl Transducer for IntervalLift {
         *slot = Some(current.clone());
 
         Ok(Some(previous.close_with(&current)))
+    }
+}
+
+impl IntervalLift {
+    fn process_activitywatch_heartbeat(
+        active: &mut BTreeMap<String, StateObservation>,
+        current: StateObservation,
+    ) -> Option<DerivedOutput<StateIntervalPayload>> {
+        let key = current.activitywatch_stream_key();
+        let Some(previous) = active.get_mut(&key) else {
+            active.insert(key, current);
+            return None;
+        };
+
+        if current.ts_orig <= previous.ts_orig {
+            if previous.same_subject_as(&current) {
+                previous.refresh_metadata_from(&current);
+            }
+            return None;
+        }
+
+        let gap_secs = previous.activitywatch_gap_to(&current);
+        if previous.same_subject_as(&current)
+            && gap_secs <= ACTIVITYWATCH_HEARTBEAT_MERGE_WINDOW_SECS
+        {
+            previous.refresh_metadata_from(&current);
+            return None;
+        }
+
+        let closed = previous.clone().close_with(&current);
+        active.insert(key, current);
+        Some(closed)
     }
 }
 
