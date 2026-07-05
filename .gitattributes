@@ -1,7 +1,8 @@
 # ── Generated / non-code ─────────────────────────────────────────────
 # GitHub language stats (linguist-generated): excluded from stats
 # -diff: suppressed in git diff output (shows "Binary files differ")
-# tokei: respects linguist-generated since v12.1
+# NOTE: tokei does NOT read .gitattributes — it needs a separate .tokeignore
+# (kept in sync with the generated/vendored patterns below).
 
 # Lock files
 Cargo.lock linguist-generated -diff
@@ -12,6 +13,12 @@ flake.lock linguist-generated -diff
 
 # JSON schemas (generated from Rust types)
 schemas/**/*.json linguist-generated
+
+# Generated JSON catalogs not under schemas/ (privacy-coverage, source-catalog, …)
+**/*.generated.json linguist-generated -diff
+
+# Exported Grafana dashboards (JSON exports, not first-party source)
+nixos/monitoring/grafana-dashboards/*.json linguist-vendored
 
 # ── Better diffs ─────────────────────────────────────────────────────
 *.json diff=json
