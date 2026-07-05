@@ -63,3 +63,21 @@ async fn clear_drops_all_entries() -> TestResult<()> {
     assert!(!window.contains(b"a"));
     Ok(())
 }
+
+#[sinex_test]
+async fn snapshot_round_trips_recent_hashes() -> TestResult<()> {
+    let mut window = ContentHashWindow::with_capacity(3);
+    window.observe(b"a");
+    window.observe(b"b");
+    window.observe(b"c");
+    window.observe(b"d");
+
+    let restored = ContentHashWindow::from_snapshot(window.snapshot())?;
+
+    assert!(!restored.contains(b"a"));
+    assert!(restored.contains(b"b"));
+    assert!(restored.contains(b"c"));
+    assert!(restored.contains(b"d"));
+    assert_eq!(restored.len(), 3);
+    Ok(())
+}
