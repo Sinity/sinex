@@ -1854,6 +1854,118 @@ async fn execute_cascade_archive_in_tx(
     Ok(archived_count)
 }
 
+async fn execute_cascade_archive_table_in_tx(
+    tx: &mut Transaction<'_, Postgres>,
+    table_name: &str,
+    reason: &str,
+    operation_id: &str,
+    archived_by: &str,
+    requested_count: u64,
+) -> DbResult<u64> {
+    validate_cascade_table_name(table_name)?;
+
+    sqlx::query("SELECT pg_catalog.set_config('sinex.operation_id', $1, true)")
+        .bind(operation_id)
+        .execute(&mut **tx)
+        .await
+        .map_err(|e| db_error(e, "set operation_id"))?;
+
+    sqlx::query("SELECT pg_catalog.set_config('sinex.archived_by', $1, true)")
+        .bind(archived_by)
+        .execute(&mut **tx)
+        .await
+        .map_err(|e| db_error(e, "set archived_by"))?;
+
+    sqlx::query("SELECT pg_catalog.set_config('sinex.archive_reason', $1, true)")
+        .bind(reason)
+        .execute(&mut **tx)
+        .await
+        .map_err(|e| db_error(e, "set archive_reason"))?;
+
+    let annotation_count = sqlx::query(&format!(
+        r"INSERT INTO audit.archived_annotations
+              SELECT a.*, now(), $1, $2
+              FROM core.event_annotations a
+              JOIN {table_name} c ON c.id = a.event_id"
+    ))
+    .bind(archived_by)
+    .bind(reason)
+    .execute(&mut **tx)
+    .await
+    .map_err(|e| db_error(e, "archive annotations"))?
+    .rows_affected();
+
+    let embedding_count = sqlx::query(&format!(
+        r"INSERT INTO audit.archived_embeddings
+              SELECT e.*, now(), $1, $2
+              FROM core.event_embeddings e
+              JOIN {table_name} c ON c.id = e.event_id"
+    ))
+    .bind(archived_by)
+    .bind(reason)
+    .execute(&mut **tx)
+    .await
+    .map_err(|e| db_error(e, "archive embeddings"))?
+    .rows_affected();
+
+    let tagged_count = sqlx::query(&format!(
+        r"INSERT INTO audit.archived_tagged_items
+              SELECT t.*, now(), $1, $2
+              FROM core.tagged_items t
+              JOIN {table_name} c ON c.id = t.item_id
+              WHERE t.item_type = 'event'"
+    ))
+    .bind(archived_by)
+    .bind(reason)
+    .execute(&mut **tx)
+    .await
+    .map_err(|e| db_error(e, "archive tagged items"))?
+    .rows_affected();
+
+    if tagged_count > 0 {
+        sqlx::query(&format!(
+            r"DELETE FROM core.tagged_items t
+                  USING {table_name} c
+                  WHERE t.item_type = 'event' AND t.item_id = c.id"
+        ))
+        .execute(&mut **tx)
+        .await
+        .map_err(|e| db_error(e, "cleanup archived tagged items"))?;
+    }
+
+    let archived_count = sqlx::query(&format!(
+        r"DELETE FROM core.events e
+              USING {table_name} c
+              WHERE e.id = c.id"
+    ))
+    .execute(&mut **tx)
+    .await
+    .map_err(|e| db_error(e, "execute cascade archive"))?
+    .rows_affected();
+
+    if archived_count != requested_count {
+        return Err(db_error(
+            sqlx::Error::RowNotFound,
+            &format!(
+                "archive_cascade: archived {archived_count} of {requested_count} requested live IDs"
+            ),
+        ));
+    }
+
+    tracing::debug!(
+        operation_id = %operation_id,
+        archived_by = %archived_by,
+        reason = %reason,
+        archived_count,
+        annotations_archived = annotation_count,
+        embeddings_archived = embedding_count,
+        tagged_items_archived = tagged_count,
+        "Archived cascade rows from working table"
+    );
+
+    Ok(archived_count)
+}
+
 /// Lifecycle tier status record.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize, sqlx::FromRow)]
 pub struct LifecycleTierStatus {
@@ -1949,6 +2061,39 @@ impl<'a, 't> EventRepositoryTx<'a, 't> {
         .map_err(|e| db_error(e, "populate cascade roots"))?;
 
         Ok(())
+    }
+
+    /// Populate cascade roots directly from all events tied to one source
+    /// material.
+    ///
+    /// This avoids building a large root-event UUID array in Rust for
+    /// material-scoped lifecycle operations.
+    pub async fn populate_cascade_roots_for_source_material_from(
+        &mut self,
+        table_name: &str,
+        source_material_id: Uuid,
+        source: CascadeSource,
+    ) -> DbResult<i64> {
+        validate_cascade_table_name(table_name)?;
+
+        let src = source.table_name();
+        sqlx::query_scalar::<_, i64>(&format!(
+            r"
+            WITH inserted AS (
+                INSERT INTO {table_name} (id, depth, parent_ids, processed)
+                SELECT s.id, 0, COALESCE(s.source_event_ids, '{{}}'::UUID[]), FALSE
+                FROM {src} s
+                WHERE s.source_material_id = $1
+                ON CONFLICT (id) DO NOTHING
+                RETURNING 1
+            )
+            SELECT COUNT(*)::BIGINT FROM inserted
+            "
+        ))
+        .bind(source_material_id)
+        .fetch_one(&mut **self.tx)
+        .await
+        .map_err(|e| db_error(e, "populate cascade roots for source material"))
     }
 
     /// Expand cascade graph to find all descendants (transaction version)
@@ -2168,6 +2313,47 @@ impl<'a, 't> EventRepositoryTx<'a, 't> {
         .fetch_all(&mut **self.tx)
         .await
         .map_err(|e| db_error(e, "get cascade ids"))
+    }
+
+    pub async fn get_cascade_id_sample(
+        &mut self,
+        table_name: &str,
+        limit: i64,
+    ) -> DbResult<Vec<Uuid>> {
+        validate_cascade_table_name(table_name)?;
+
+        sqlx::query_scalar::<_, Uuid>(&format!(
+            "SELECT id::uuid FROM {table_name} ORDER BY depth DESC LIMIT $1"
+        ))
+        .bind(limit)
+        .fetch_all(&mut **self.tx)
+        .await
+        .map_err(|e| db_error(e, "get cascade id sample"))
+    }
+
+    pub async fn execute_cascade_archive_from_table(
+        &mut self,
+        table_name: &str,
+        reason: &str,
+        operation_id: &str,
+        archived_by: &str,
+    ) -> DbResult<u64> {
+        validate_cascade_table_name(table_name)?;
+
+        let requested_count = self.cascade_node_count(table_name).await? as u64;
+        if requested_count == 0 {
+            return Ok(0);
+        }
+
+        execute_cascade_archive_table_in_tx(
+            &mut *self.tx,
+            table_name,
+            reason,
+            operation_id,
+            archived_by,
+            requested_count,
+        )
+        .await
     }
 
     pub async fn cleanup_cascade_session(&mut self, table_name: &str) -> DbResult<()> {
