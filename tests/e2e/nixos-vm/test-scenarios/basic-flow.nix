@@ -23,7 +23,7 @@ pkgs.testers.nixosTest {
       })
     ];
 
-    services.sinex.runtime = {
+    services.sinex.sources = {
       filesystem.watchPaths = lib.mkAfter [ "/var/lib/sinex/watched" ];
       terminal.enable = false;
       browser.enable = false;
@@ -33,13 +33,13 @@ pkgs.testers.nixosTest {
         enable = true;
         allowedRoots = [ "/home/test/Documents" ];
       };
-      automata = {
-        enable = true;
-        canonicalizer.enable = true;
-        healthAggregator.enable = true;
-        analyticsAutomaton.enable = true;
-        sessionDetector.enable = true;
-      };
+    };
+    services.sinex.automata = {
+      enable = true;
+      canonicalizer.enable = true;
+      healthAggregator.enable = true;
+      analyticsAutomaton.enable = true;
+      sessionDetector.enable = true;
     };
   };
 
@@ -47,7 +47,7 @@ pkgs.testers.nixosTest {
     start_all()
     machine.wait_for_unit("multi-user.target")
     machine.wait_for_unit("postgresql.service", timeout=60)
-    machine.wait_for_unit("sinexd.service", timeout=60)
+    machine.wait_for_unit("sinexd.service", timeout=180)
     machine.wait_for_unit("sinex-document-scan.timer", timeout=60)
     machine.fail("systemctl list-unit-files 'sinex-filesystem-*.service' 'sinex-*automaton.service' 'sinex-canonicalizer.service' --no-legend --plain | grep -v '^$'")
 

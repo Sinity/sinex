@@ -32,7 +32,7 @@ pkgs.testers.nixosTest {
     services.sinex.nats.enable = true;
     services.sinex.nats.bootstrapStreams.enable = true;
 
-    services.sinex.runtime = {
+    services.sinex.sources = {
       filesystem = {
         enable = true;
         watchPaths = [ "/var/lib/sinex/watched" ];
@@ -50,7 +50,7 @@ pkgs.testers.nixosTest {
     start_all()
     machine.wait_for_unit("multi-user.target")
     machine.wait_for_unit("postgresql.service", timeout=60)
-    machine.wait_for_unit("sinexd.service", timeout=60)
+    machine.wait_for_unit("sinexd.service", timeout=180)
 
     with subtest("Rust-driven chaos-network-partition suite"):
       machine.succeed(

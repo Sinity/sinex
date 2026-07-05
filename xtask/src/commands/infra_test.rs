@@ -409,6 +409,10 @@ async fn dev_bindings_manifest_uses_watch_root_for_git_and_fs()
 
     assert_eq!(git.runtime_config["path"], "/workspace/sinex");
     assert_eq!(fs.runtime_config["watch_paths"][0], "/workspace/sinex");
+    assert_eq!(
+        fs.runtime_config["control_identity"], "fs-watcher",
+        "filesystem replay/control must address the emitted event source, not the factory id"
+    );
     assert!(
         fs.runtime_config["ignored_directory_names"]
             .as_array()

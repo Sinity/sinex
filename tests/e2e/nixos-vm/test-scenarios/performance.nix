@@ -503,7 +503,9 @@ pkgs.testers.nixosTest {
         enable = true;
         coordination.enable = false;
         defaults.instances = 1;
+      };
 
+      sources = {
         filesystem = {
           enable = true;
           instances = 2;
@@ -533,14 +535,14 @@ pkgs.testers.nixosTest {
             timeoutSec = 3;
           };
         };
+      };
 
-        automata = {
-          enable = true;
-          canonicalizer.enable = true;
-          healthAggregator.enable = true;
-          analyticsAutomaton.enable = true;
-          sessionDetector.enable = true;
-        };
+      automata = {
+        enable = true;
+        canonicalizer.enable = true;
+        healthAggregator.enable = true;
+        analyticsAutomaton.enable = true;
+        sessionDetector.enable = true;
       };
 
       observability.enable = false;

@@ -17,6 +17,7 @@ let
     enable = true;
     package = sinexPackage;
     users.target = "test";
+    secrets.apiAdminTokenFile = "/etc/sinex/api-admin-token";
 
     database = {
       autoSetup = lib.mkDefault true;
@@ -38,6 +39,10 @@ let
       coordination.enable = lib.mkDefault false;
       defaults.instances = lib.mkDefault 1;
       defaults.env.SINEX_COORDINATION_DISABLED = lib.mkDefault "1";
+    };
+
+    sources = {
+      staticImports = lib.mkForce { };
 
       filesystem = {
         enable = lib.mkDefault true;
@@ -47,14 +52,14 @@ let
       terminal.enable = lib.mkDefault false;
       desktop.enable = lib.mkDefault false;
       system.enable = lib.mkDefault false;
+    };
 
-      automata = {
-        enable = lib.mkDefault false;
-        canonicalizer.enable = lib.mkDefault false;
-        healthAggregator.enable = lib.mkDefault false;
-        analyticsAutomaton.enable = lib.mkDefault false;
-        sessionDetector.enable = lib.mkDefault false;
-      };
+    automata = {
+      enable = lib.mkDefault false;
+      canonicalizer.enable = lib.mkDefault false;
+      healthAggregator.enable = lib.mkDefault false;
+      analyticsAutomaton.enable = lib.mkDefault false;
+      sessionDetector.enable = lib.mkDefault false;
     };
 
     nats.bootstrapStreams.enable = lib.mkForce false;
@@ -82,10 +87,8 @@ in
   };
 
   # sinexd applies schema at startup in the NixOS deployment shape.
-  systemd.services.sinexd.after = [ "sinex-blob-init.service" ];
-  systemd.services.sinexd.requires = [ "sinex-blob-init.service" ];
+  # Ordering dependencies are merged near the annex setup service below.
   systemd.services.sinexd.path = [ pkgs.git pkgs.git-annex ];
-  systemd.services.sinex-blob-init.path = [ pkgs.git pkgs.git-annex ];
   # Relax Postgres authentication for disposable VM tests.
   services.postgresql.authentication = lib.mkForce ''
 local   all             all                                     trust
@@ -197,11 +200,12 @@ host    all             all             ::1/128                 trust
       Group = "sinex";
       ExecStart = pkgs.writeShellScript "prepare-event-engine-annex" ''
         set -euo pipefail
+        export PATH=${lib.makeBinPath [ pkgs.git pkgs.git-annex ]}:$PATH
         install -d -m0755 -o sinex -g sinex ${workDir}/annex
         install -d -m0755 -o sinex -g sinex ${workDir}/assembler_state
         cd ${workDir}/annex
-        if [ ! -d .git ]; then ${pkgs.git}/bin/git init; fi
-        ${pkgs.git-annex}/bin/git-annex init event-engine || true
+        if [ ! -d .git ]; then git init; fi
+        git-annex init event-engine || true
       '';
     };
   };
@@ -212,11 +216,11 @@ host    all             all             ::1/128                 trust
   # config.services.sinex.core.  The module system auto-merges definitions.
   systemd.services.sinexd.serviceConfig = {
     PermissionsStartOnly = true;
-    ExecStartPre = lib.mkForce [
+    ExecStartPre = lib.mkAfter [
       "${pkgs.coreutils}/bin/install -d -o sinex -g sinex ${workDir}/annex"
       "${pkgs.coreutils}/bin/install -d -o sinex -g sinex ${workDir}/assembler_state"
       "-${pkgs.git}/bin/git -C ${workDir}/annex init"
-      "-${pkgs.git-annex}/bin/git-annex -C ${workDir}/annex init event-engine"
+      "-${pkgs.bash}/bin/bash -c 'export PATH=${lib.makeBinPath [ pkgs.git pkgs.git-annex ]}:$PATH; cd ${workDir}/annex && git-annex init event-engine'"
     ];
     Environment = [
       "XDG_CACHE_HOME=${stateDir}/.cache"
@@ -225,11 +229,9 @@ host    all             all             ::1/128                 trust
   };
 
   systemd.services.sinexd.after = lib.mkAfter [
-    "sinex-blob-init.service"
     "sinexd-annex-setup.service"
   ];
   systemd.services.sinexd.requires = lib.mkAfter [
-    "sinex-blob-init.service"
     "sinexd-annex-setup.service"
   ];
 

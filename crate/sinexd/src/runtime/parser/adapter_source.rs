@@ -127,9 +127,10 @@ use crate::runtime::parser::{
 };
 use crate::runtime::source_driver::{SourceDriver, SourceDriverState};
 use crate::runtime::stream::{
-    Checkpoint, ContinuousStart, RuntimeCapabilities, RuntimeContext, ScanArgs, ScanReport,
-    TimeHorizon,
+    Checkpoint, ContinuousStart, MaterialReplayContext, RuntimeCapabilities, RuntimeContext,
+    ScanArgs, ScanReport, TimeHorizon,
 };
+use camino::Utf8PathBuf;
 use std::path::PathBuf;
 use std::sync::Arc;
 
@@ -634,6 +635,178 @@ where
         }
         acquirer.finalize(reason).await?;
         Ok(true)
+    }
+
+    async fn replay_file_drop_materials(
+        &mut self,
+        replay: MaterialReplayContext,
+    ) -> RuntimeResult<ScanReport> {
+        let start = Instant::now();
+        let mut emitted: u64 = 0;
+        let mut skipped: u64 = 0;
+
+        for material in &replay.materials {
+            let metadata = material.material_metadata.clone();
+            if !self.replay_material_matches_event_type_filter(&metadata, &replay) {
+                skipped = skipped.saturating_add(1);
+                continue;
+            }
+
+            let logical_path = metadata
+                .get("path")
+                .and_then(JsonValue::as_str)
+                .map(Utf8PathBuf::from);
+            let bytes = logical_path
+                .as_ref()
+                .map_or_else(Vec::new, |path| path.as_str().as_bytes().to_vec());
+            let content_len = metadata
+                .get("content_size_bytes")
+                .and_then(JsonValue::as_u64)
+                .unwrap_or(bytes.len() as u64);
+            let record = SourceRecord {
+                material_id: Id::from_uuid(material.source_material_id),
+                anchor: MaterialAnchor::ByteRange {
+                    start: 0,
+                    len: content_len,
+                },
+                bytes,
+                logical_path,
+                source_ts_hint: None,
+                metadata,
+            };
+
+            emitted = emitted.saturating_add(
+                self.process_materialized_record(record, replay.operation_id)
+                    .await?,
+            );
+        }
+
+        Ok(ScanReport {
+            events_processed: emitted,
+            duration: start.elapsed(),
+            final_checkpoint: Checkpoint::None,
+            time_range: None,
+            runtime_stats: HashMap::from([
+                ("emitted".to_string(), emitted),
+                ("replay_materials_skipped".to_string(), skipped),
+            ]),
+            successful_targets: vec![self.source_id.to_string()],
+            failed_targets: Vec::new(),
+            warnings: Vec::new(),
+        })
+    }
+
+    fn replay_material_matches_event_type_filter(
+        &self,
+        metadata: &JsonValue,
+        replay: &MaterialReplayContext,
+    ) -> bool {
+        let Some(event_types) = replay.replay_scope.event_types.as_ref() else {
+            return true;
+        };
+        let Some(event_kind) = metadata.get("event_kind").and_then(JsonValue::as_str) else {
+            return true;
+        };
+        let event_type = match event_kind {
+            "Created" | "created" | "create" => "file.created",
+            "Modified" | "modified" | "modify" => "file.modified",
+            "Deleted" | "deleted" | "delete" => "file.deleted",
+            "Moved" | "moved" | "move" => "file.moved",
+            _ => return true,
+        };
+        event_types.iter().any(|expected| expected == event_type)
+    }
+
+    async fn process_materialized_record(
+        &mut self,
+        record: SourceRecord,
+        operation_id: Uuid,
+    ) -> RuntimeResult<u64> {
+        let event_emitter = self
+            .runtime
+            .as_ref()
+            .ok_or_else(|| {
+                crate::runtime::SinexError::lifecycle(
+                    "AdapterBackedSource: runtime not available (initialize not called)",
+                )
+            })?
+            .event_emitter()
+            .clone();
+
+        let source_id = sinex_primitives::parser::SourceId::new(self.source_id).map_err(|e| {
+            crate::runtime::SinexError::validation("invalid source_id in AdapterBackedSource")
+                .with_std_error(&e)
+        })?;
+
+        let material_id = record.material_id;
+        let (anchor_byte, offset_start, offset_end) =
+            anchor_offsets_for_materialized_record(&record.anchor);
+        let anchor_payload_hash = blake3::hash(record.bytes.as_slice()).as_bytes().to_owned();
+        self.link_latest_sqlite_snapshot_backing_material(material_id)
+            .await;
+
+        let job_id = Uuid::now_v7();
+        let host = std::env::var("HOSTNAME")
+            .or_else(|_| std::env::var("HOST"))
+            .unwrap_or_else(|_| "unknown".to_string());
+        let ctx = ParserContext {
+            source_id,
+            source_material_id: material_id,
+            record_anchor: record.anchor.clone(),
+            operation_id,
+            job_id,
+            host,
+            acquisition_time: Timestamp::now(),
+        };
+
+        let record_timing_hint = record.source_ts_hint.clone();
+        let intents = match self
+            .parser
+            .parse_record_with_binding(record, &ctx, &self.binding_config)
+            .await
+        {
+            Ok(v) => apply_record_timing_hint_to_intents(v, record_timing_hint.as_ref()),
+            Err(e) => {
+                warn!(
+                    source = self.source_id,
+                    error = %e,
+                    "parse_record error during replay material processing — skipping"
+                );
+                return Ok(0);
+            }
+        };
+
+        let mut emitted = 0u64;
+        for intent in intents {
+            match intent_to_event_with_anchor(
+                intent,
+                material_id,
+                anchor_byte,
+                offset_start,
+                offset_end,
+                Some(anchor_payload_hash),
+            ) {
+                Ok(event) => {
+                    if let Err(e) = event_emitter.emit(event).await {
+                        warn!(
+                            source = self.source_id,
+                            error = %e,
+                            "emit failed during replay material processing — event dropped"
+                        );
+                    } else {
+                        emitted = emitted.saturating_add(1);
+                    }
+                }
+                Err(e) => {
+                    warn!(
+                        source = self.source_id,
+                        error = %e,
+                        "intent_to_event_with_anchor conversion failed during replay material processing — skipping"
+                    );
+                }
+            }
+        }
+        Ok(emitted)
     }
 
     /// Observe adapter-level input shape before draining records.
@@ -1590,9 +1763,15 @@ where
         state: &mut Self::State,
         _from: Checkpoint,
         _until: TimeHorizon,
-        _args: ScanArgs,
+        args: ScanArgs,
     ) -> RuntimeResult<ScanReport> {
         let start = Instant::now();
+        if A::KIND == InputShapeKind::FileDrop
+            && let Some(replay) = args.replay
+        {
+            return self.replay_file_drop_materials(replay).await;
+        }
+
         // Historical: re-open from persisted cursor (may be behind `from` if
         // the source was offline). The adapter's cursor is the authoritative
         // resume position.

@@ -241,6 +241,10 @@ pkgs.testers.nixosTest {
 
       services.sinex = {
         runtime = {
+          enable = true;
+        };
+
+        sources = {
           filesystem = {
             instances = 2;
             watchPaths = [ "/var/lib/sinex/watched" ];
@@ -252,14 +256,14 @@ pkgs.testers.nixosTest {
             enable = true;
             allowedRoots = [ "/home/test/Documents" ];
           };
+        };
 
-          automata = {
-            enable = true;
-            canonicalizer.enable = true;
-            healthAggregator.enable = true;
-            analyticsAutomaton.enable = true;
-            sessionDetector.enable = true;
-          };
+        automata = {
+          enable = true;
+          canonicalizer.enable = true;
+          healthAggregator.enable = true;
+          analyticsAutomaton.enable = true;
+          sessionDetector.enable = true;
         };
       };
 

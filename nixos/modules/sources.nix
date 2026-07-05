@@ -697,6 +697,7 @@ let
       instances = resolveSourceInstances "fs" sat.instances;
       resources = resolveSourceResources "fs" sat.resources;
       runtimeConfig = {
+        control_identity = "fs-watcher";
         watch_paths = sat.watchPaths;
         max_depth = 10;
         follow_symlinks = false;
@@ -1684,7 +1685,7 @@ let
         '';
       documentService = {
         description = "Sinex document snapshot scan";
-        after = requiredUnits;
+        after = requiredUnits ++ optionals coreEnabled [ "sinexd.service" ];
         requires = requiredUnits;
         wants = optionals coreEnabled [ "sinexd.service" ];
         unitConfig = existingPathAssertions (databaseSecretAssertPaths ++ natsSecretAssertPaths);

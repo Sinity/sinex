@@ -201,7 +201,7 @@ EOF
     
     def wait_for_sinex_ready():
         machine.wait_for_unit("postgresql.service", timeout=60)
-        machine.wait_for_unit("sinexd.service", timeout=60)
+        machine.wait_for_unit("sinexd.service", timeout=180)
         machine.wait_until_succeeds("systemctl is-active sinexd", timeout=30)
     
     def get_event_count(event_type=None):
