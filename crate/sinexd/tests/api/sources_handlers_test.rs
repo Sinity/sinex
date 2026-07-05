@@ -271,9 +271,27 @@ async fn sources_archive_scopes_to_requested_material_and_derived_cascade(
     .await?;
 
     assert_eq!(archive.cascade_count, 2);
-    assert!(
-        archive.operation_id.is_some(),
-        "execution should surface lifecycle operation id"
+    let operation_id = archive
+        .operation_id
+        .as_deref()
+        .expect("execution should surface lifecycle operation id");
+    let archive_operation = sqlx::query!(
+        r#"SELECT result_status, preview_summary
+           FROM core.operations_log
+           WHERE id = $1::uuid"#,
+        operation_id.parse::<uuid::Uuid>()?
+    )
+    .fetch_one(ctx.pool())
+    .await?;
+    assert_eq!(archive_operation.result_status, "success");
+    let preview_summary = archive_operation
+        .preview_summary
+        .expect("archive operation should record bounded summary");
+    assert_eq!(preview_summary["root_event_count"].as_i64(), Some(1));
+    assert_eq!(preview_summary["cascade_total"].as_i64(), Some(2));
+    assert_eq!(
+        preview_summary["affected_event_ids"].as_array().map(Vec::len),
+        Some(2)
     );
     assert_eq!(live_event_count(&ctx, &target_event_id_string).await?, 0);
     assert_eq!(archived_event_count(&ctx, &target_event_id_string).await?, 1);
