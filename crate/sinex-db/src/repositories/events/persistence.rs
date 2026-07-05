@@ -1441,8 +1441,12 @@ impl<'a> EventRepository<'a> {
                     INSERT INTO {table_name} (id, depth, parent_ids, processed)
                     SELECT DISTINCT s.id, $1 + 1, COALESCE(s.source_event_ids, '{{}}'::UUID[]), FALSE
                     FROM {src} s
-                    JOIN {table_name} ct ON s.source_event_ids && ARRAY[ct.id]
-                    WHERE ct.depth = $1 AND ct.processed = FALSE
+                    JOIN (
+                        SELECT ARRAY_AGG(ct.id) AS ids
+                        FROM {table_name} ct
+                        WHERE ct.depth = $1 AND ct.processed = FALSE
+                    ) frontier ON frontier.ids IS NOT NULL
+                    WHERE s.source_event_ids && frontier.ids
                     AND NOT EXISTS (SELECT 1 FROM {table_name} ex WHERE ex.id = s.id)
                     ON CONFLICT (id) DO NOTHING
                     RETURNING 1
@@ -1478,8 +1482,12 @@ impl<'a> EventRepository<'a> {
                 r"
                 SELECT COUNT(*)::BIGINT
                 FROM {src} s
-                JOIN {table_name} ct ON s.source_event_ids && ARRAY[ct.id]
-                WHERE ct.depth = $1
+                JOIN (
+                    SELECT ARRAY_AGG(ct.id) AS ids
+                    FROM {table_name} ct
+                    WHERE ct.depth = $1 AND ct.processed = FALSE
+                ) frontier ON frontier.ids IS NOT NULL
+                WHERE s.source_event_ids && frontier.ids
                 AND NOT EXISTS (SELECT 1 FROM {table_name} ex WHERE ex.id = s.id)
                 "
             ))
@@ -2133,8 +2141,12 @@ impl<'a, 't> EventRepositoryTx<'a, 't> {
                     INSERT INTO {table_name} (id, depth, parent_ids, processed)
                     SELECT DISTINCT s.id, $1 + 1, COALESCE(s.source_event_ids, '{{}}'::UUID[]), FALSE
                     FROM {src} s
-                    JOIN {table_name} ct ON s.source_event_ids && ARRAY[ct.id]
-                    WHERE ct.depth = $1 AND ct.processed = FALSE
+                    JOIN (
+                        SELECT ARRAY_AGG(ct.id) AS ids
+                        FROM {table_name} ct
+                        WHERE ct.depth = $1 AND ct.processed = FALSE
+                    ) frontier ON frontier.ids IS NOT NULL
+                    WHERE s.source_event_ids && frontier.ids
                     AND NOT EXISTS (SELECT 1 FROM {table_name} ex WHERE ex.id = s.id)
                     ON CONFLICT (id) DO NOTHING
                     RETURNING 1
@@ -2170,9 +2182,12 @@ impl<'a, 't> EventRepositoryTx<'a, 't> {
                 r"
                 SELECT COUNT(*)::BIGINT
                 FROM {src} s
-                JOIN {table_name} ct ON s.source_event_ids && ARRAY[ct.id]
-                WHERE ct.depth = $1
-                AND ct.processed = FALSE
+                JOIN (
+                    SELECT ARRAY_AGG(ct.id) AS ids
+                    FROM {table_name} ct
+                    WHERE ct.depth = $1 AND ct.processed = FALSE
+                ) frontier ON frontier.ids IS NOT NULL
+                WHERE s.source_event_ids && frontier.ids
                 AND NOT EXISTS (SELECT 1 FROM {table_name} ex WHERE ex.id = s.id)
                 "
             ))
