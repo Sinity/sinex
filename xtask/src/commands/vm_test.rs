@@ -337,6 +337,26 @@ async fn test_classify_vm_progress_line_ignores_nix_build_noise() -> ::xtask::sa
 }
 
 #[sinex_test]
+async fn test_summarize_vm_failure_output_extracts_compile_signal_and_log_hint()
+-> ::xtask::sandbox::TestResult<()> {
+    let output = "\
+sinex-vm-runtime> error: could not compile `sinexd` (lib); 1 warning emitted
+sinex-vm-runtime> Caused by:
+sinex-vm-runtime>   process didn't exit successfully: `rustc --crate-name sinexd ...` (signal: 15, SIGTERM: termination signal)
+       For full logs, run:
+         nix log /nix/store/a1ya883515vqnfs96g9pwphbv6kq588f-sinex-vm-runtime-0.4.2.drv
+error: Cannot build '/nix/store/a1ya883515vqnfs96g9pwphbv6kq588f-sinex-vm-runtime-0.4.2.drv'.
+";
+
+    let summary = summarize_vm_failure_output(output).expect("summary should be extracted");
+
+    assert!(summary.contains("error: could not compile `sinexd`"));
+    assert!(summary.contains("signal: 15, SIGTERM: termination signal"));
+    assert!(summary.contains("nix log /nix/store/a1ya883515vqnfs96g9pwphbv6kq588f"));
+    Ok(())
+}
+
+#[sinex_test]
 async fn test_update_vm_progress_summary_records_terminal_summary()
 -> ::xtask::sandbox::TestResult<()> {
     let dir = tempdir()?;
