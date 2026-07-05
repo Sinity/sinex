@@ -178,6 +178,34 @@ impl ReplayExecutionEngine {
         Ok(expected)
     }
 
+    pub(crate) fn scan_control_source_name(
+        scope: &ReplayScope,
+        replay_materials: &[ResolvedReplayMaterial],
+    ) -> Result<String> {
+        let mut control_sources = replay_materials
+            .iter()
+            .filter_map(|material| {
+                material
+                    .material_metadata
+                    .get("logical_source_identifier")
+                    .and_then(serde_json::Value::as_str)
+                    .filter(|source| !source.trim().is_empty())
+                    .map(str::to_string)
+            })
+            .collect::<Vec<_>>();
+        control_sources.sort_unstable();
+        control_sources.dedup();
+
+        match control_sources.as_slice() {
+            [] => Ok(scope.source_name.clone()),
+            [source] => Ok(source.clone()),
+            sources => Err(SinexError::invalid_state(format!(
+                "Replay scope spans multiple source runtime identities ({}) but scan dispatch requires one control subject",
+                sources.join(", ")
+            ))),
+        }
+    }
+
     pub(crate) async fn count_visible_replay_outputs(
         &self,
         pool: &sqlx::PgPool,
