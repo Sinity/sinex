@@ -741,6 +741,26 @@ pub trait MaterialParser: Send + Sync {
         Vec::new()
     }
 
+    /// Restore parser-local checkpoint state persisted by the source runtime.
+    ///
+    /// Most parsers are stateless and can rely on the default no-op. Stateful
+    /// parsers that keep replay-relevant local memory, such as bounded dedup
+    /// windows or multi-line continuation buffers, should deserialize their
+    /// state here so restart does not silently change parse results.
+    fn restore_checkpoint_state(&mut self, _state: Option<&serde_json::Value>) -> ParserResult<()> {
+        Ok(())
+    }
+
+    /// Return parser-local checkpoint state for persistence by the source
+    /// runtime.
+    ///
+    /// The value should be compact, bounded, and fully derivable from records
+    /// the parser has successfully processed. Stateless parsers should return
+    /// `None`.
+    fn checkpoint_state(&self) -> ParserResult<Option<serde_json::Value>> {
+        Ok(None)
+    }
+
     /// Parse a single source record into zero or more event intents.
     async fn parse_record(
         &mut self,
