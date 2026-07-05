@@ -508,6 +508,47 @@ async fn replay_output_expectations_deduplicate_logical_sources() -> Result<()> 
 }
 
 #[sinex_test]
+async fn replay_scan_control_source_prefers_material_runtime_identity() -> Result<()> {
+    let scope = ReplayScope {
+        source_name: "activitywatch".to_string(),
+        ..ReplayScope::default()
+    };
+    let material_id = Uuid::now_v7();
+    let replay_materials = vec![ResolvedReplayMaterial {
+        source_material_id: material_id,
+        material_kind: "sqlite".to_string(),
+        source_identifier: format!("desktop.activitywatch#material={material_id}"),
+        material_metadata: json!({ "logical_source_identifier": "desktop.activitywatch" }),
+        material_start_time: None,
+        material_end_time: None,
+    }];
+
+    let source = ReplayExecutionEngine::scan_control_source_name(&scope, &replay_materials)?;
+
+    assert_eq!(source, "desktop.activitywatch");
+    Ok(())
+}
+
+#[sinex_test]
+async fn replay_scan_control_source_keeps_scope_without_runtime_identity() -> Result<()> {
+    let scope = sample_scope();
+    let material_id = Uuid::now_v7();
+    let replay_materials = vec![ResolvedReplayMaterial {
+        source_material_id: material_id,
+        material_kind: "annex".to_string(),
+        source_identifier: format!("synthetic-material#material={material_id}"),
+        material_metadata: json!({}),
+        material_start_time: None,
+        material_end_time: None,
+    }];
+
+    let source = ReplayExecutionEngine::scan_control_source_name(&scope, &replay_materials)?;
+
+    assert_eq!(source, "fs-test");
+    Ok(())
+}
+
+#[sinex_test]
 async fn telemetry_reports_state_counts(ctx: TestContext) -> Result<()> {
     let replay = Arc::new(ReplayStateMachine::new(ctx.pool.clone()));
     let telemetry = ReplayTelemetry::with_interval(replay.clone(), Duration::from_millis(5));
