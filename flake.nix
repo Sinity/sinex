@@ -599,6 +599,75 @@
                   fi
                 }
 
+                _sinex_cargo_postgres_log_tail() {
+                  local log_path="$1"
+                  if [ -r "$log_path" ]; then
+                    echo "--- postgres log tail: $log_path ---" >&2
+                    tail -n 40 "$log_path" >&2 || true
+                    echo "--- end postgres log tail ---" >&2
+                  else
+                    echo "(postgres log is not readable: $log_path)" >&2
+                  fi
+                }
+
+                _sinex_cargo_cleanup_stale_postgres_pid() {
+                  local pid_file pid cmdline socket lock
+                  pid_file="$pgdata/postmaster.pid"
+                  [ -e "$pid_file" ] || return 0
+
+                  pid="$(head -n 1 "$pid_file" 2>/dev/null | tr -d '[:space:]' || true)"
+                  socket="$pgrun/.s.PGSQL.$pgport"
+                  lock="$pgrun/.s.PGSQL.$pgport.lock"
+
+                  case "$pid" in
+                    ""|*[!0-9]*)
+                      echo "⚠️  Removing malformed checkout-local PostgreSQL pid file: $pid_file" >&2
+                      rm -f "$pid_file" "$socket" "$lock"
+                      return 0
+                      ;;
+                  esac
+
+                  if ! kill -0 "$pid" 2>/dev/null; then
+                    echo "⚠️  Removing stale checkout-local PostgreSQL pid file for dead PID $pid" >&2
+                    rm -f "$pid_file" "$socket" "$lock"
+                    return 0
+                  fi
+
+                  cmdline="$(tr '\0' ' ' <"/proc/$pid/cmdline" 2>/dev/null || true)"
+                  case "$cmdline" in
+                    *"$pgdata"*)
+                      return 0
+                      ;;
+                    *)
+                      echo "⚠️  Removing checkout-local PostgreSQL pid file for unrelated live PID $pid" >&2
+                      rm -f "$pid_file" "$socket" "$lock"
+                      return 0
+                      ;;
+                  esac
+                }
+
+                _sinex_cargo_start_postgres() {
+                  local start_log start_rc
+                  start_log="$pglog/postgres-start.log"
+
+                  _sinex_cargo_cleanup_stale_postgres_pid
+
+                  echo "ℹ  Starting checkout-local Postgres for SQLx validation..." >&2
+                  start_rc=0
+                  ${postgresForSqlx}/bin/pg_ctl \
+                    -D "$pgdata" \
+                    start \
+                    -w \
+                    -l "$start_log" \
+                    -o "-k $pgrun -p $pgport" >>"$bootstrap_log" 2>&1 || start_rc=$?
+
+                  if [ "$start_rc" -ne 0 ]; then
+                    echo "✗ checkout-local Postgres failed to start (status $start_rc)" >&2
+                    _sinex_cargo_postgres_log_tail "$start_log"
+                    return "$start_rc"
+                  fi
+                }
+
                 _sinex_cargo_bootstrap_sqlx_database_unlocked() {
                   mkdir -p "$pgdata" "$pgrun" "$pglog"
 
@@ -615,13 +684,7 @@
                   _sinex_cargo_write_runtime_config
 
                   if ! ${postgresForSqlx}/bin/pg_isready -q -h "$pgrun" -p "$pgport" >/dev/null 2>&1; then
-                    echo "ℹ  Starting checkout-local Postgres for SQLx validation..." >&2
-                    ${postgresForSqlx}/bin/pg_ctl \
-                      -D "$pgdata" \
-                      start \
-                      -w \
-                      -l "$pglog/postgres-start.log" \
-                      -o "-k $pgrun -p $pgport" >>"$bootstrap_log" 2>&1
+                    _sinex_cargo_start_postgres
                   fi
 
                   ${postgresForSqlx}/bin/psql \
@@ -1631,6 +1694,82 @@ SQL
                   )
                 }
 
+                _sinex_xtask_postgres_log_tail() {
+                  local log_path="$1"
+                  if [ -r "$log_path" ]; then
+                    echo "--- postgres log tail: $log_path ---" >&2
+                    tail -n 40 "$log_path" >&2 || true
+                    echo "--- end postgres log tail ---" >&2
+                  else
+                    echo "(postgres log is not readable: $log_path)" >&2
+                  fi
+                }
+
+                _sinex_xtask_cleanup_stale_postgres_pid() {
+                  local pgdata pgrun pgport pid_file pid cmdline socket lock
+                  pgdata="$1"
+                  pgrun="$2"
+                  pgport="$3"
+                  pid_file="$pgdata/postmaster.pid"
+                  [ -e "$pid_file" ] || return 0
+
+                  pid="$(head -n 1 "$pid_file" 2>/dev/null | tr -d '[:space:]' || true)"
+                  socket="$pgrun/.s.PGSQL.$pgport"
+                  lock="$pgrun/.s.PGSQL.$pgport.lock"
+
+                  case "$pid" in
+                    ""|*[!0-9]*)
+                      echo "⚠️  Removing malformed checkout-local PostgreSQL pid file: $pid_file" >&2
+                      rm -f "$pid_file" "$socket" "$lock"
+                      return 0
+                      ;;
+                  esac
+
+                  if ! kill -0 "$pid" 2>/dev/null; then
+                    echo "⚠️  Removing stale checkout-local PostgreSQL pid file for dead PID $pid" >&2
+                    rm -f "$pid_file" "$socket" "$lock"
+                    return 0
+                  fi
+
+                  cmdline="$(tr '\0' ' ' <"/proc/$pid/cmdline" 2>/dev/null || true)"
+                  case "$cmdline" in
+                    *"$pgdata"*)
+                      return 0
+                      ;;
+                    *)
+                      echo "⚠️  Removing checkout-local PostgreSQL pid file for unrelated live PID $pid" >&2
+                      rm -f "$pid_file" "$socket" "$lock"
+                      return 0
+                      ;;
+                  esac
+                }
+
+                _sinex_xtask_start_postgres() {
+                  local pgdata pgrun pglog pgport start_log start_rc
+                  pgdata="$1"
+                  pgrun="$2"
+                  pglog="$3"
+                  pgport="$4"
+                  start_log="$pglog/postgres-start.log"
+
+                  _sinex_xtask_cleanup_stale_postgres_pid "$pgdata" "$pgrun" "$pgport"
+
+                  echo "ℹ  Starting checkout-local Postgres for SQLx validation..." >&2
+                  start_rc=0
+                  ${postgresForSqlx}/bin/pg_ctl \
+                    -D "$pgdata" \
+                    start \
+                    -w \
+                    -l "$start_log" \
+                    -o "-k $pgrun -p $pgport" || start_rc=$?
+
+                  if [ "$start_rc" -ne 0 ]; then
+                    echo "✗ checkout-local Postgres failed to start (status $start_rc)" >&2
+                    _sinex_xtask_postgres_log_tail "$start_log"
+                    return "$start_rc"
+                  fi
+                }
+
                 _sinex_xtask_ensure_sqlx_database_unlocked() {
                   local pgdata pgrun pglog pgport runtime_conf include_line dev_user schema_apply_bootstrap_bin
 
@@ -1674,13 +1813,7 @@ SQL
                   fi
 
                   if ! ${postgresForSqlx}/bin/pg_isready -q -h "$pgrun" -p "$pgport" >/dev/null 2>&1; then
-                    echo "ℹ  Starting checkout-local Postgres for SQLx validation..." >&2
-                    ${postgresForSqlx}/bin/pg_ctl \
-                      -D "$pgdata" \
-                      start \
-                      -w \
-                      -l "$pglog/postgres-start.log" \
-                      -o "-k $pgrun -p $pgport"
+                    _sinex_xtask_start_postgres "$pgdata" "$pgrun" "$pglog" "$pgport"
                   fi
 
                   ${postgresForSqlx}/bin/psql \
