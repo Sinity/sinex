@@ -683,7 +683,7 @@ impl ContentStoreManager {
     /// Find content path in repository for content-store key
     async fn find_symlink_path(&self, content_key: &str) -> RuntimeResult<Utf8PathBuf> {
         if let Some(path) = self.content_store.path_if_local(content_key)? {
-            return Ok(path);
+            return self.content_store.canonicalize_local_cas_path(&path).await;
         }
 
         if !self.content_store.config.legacy_annex_enabled {

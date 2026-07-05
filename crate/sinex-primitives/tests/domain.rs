@@ -207,12 +207,44 @@ async fn content_key_validation_and_parsing() -> TestResult<()> {
     assert!(ContentKey::from_str("SHA256E-s12345--filename.txt").is_ok());
     assert!(ContentKey::from_str("BLAKE2B--somefile").is_ok());
     assert!(ContentKey::from_str("SHA1-s1024-m1234567890--document.pdf").is_ok());
+    assert!(
+        ContentKey::from_str(
+            "SINEXBLAKE3-s12345--0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+        )
+        .is_ok()
+    );
 
     assert!(ContentKey::from_str("").is_err());
     assert!(ContentKey::from_str("no-double-dash").is_err());
     assert!(ContentKey::from_str("--no-prefix").is_err());
     assert!(ContentKey::from_str("prefix--").is_err());
     assert!(ContentKey::from_str("multiple--double--dashes").is_err());
+    assert!(
+        ContentKey::from_str(
+            "SINEXBLAKE3--0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+        )
+        .is_err()
+    );
+    assert!(ContentKey::from_str("SINEXBLAKE3-s123--../etc/passwd").is_err());
+    assert!(ContentKey::from_str("SINEXBLAKE3-s123--/etc/passwd").is_err());
+    assert!(
+        ContentKey::from_str(
+            "SINEXBLAKE3-s123--0123456789ABCDEF0123456789abcdef0123456789abcdef0123456789abcdef"
+        )
+        .is_err()
+    );
+    assert!(
+        ContentKey::from_str(
+            "SINEXBLAKE3-s123--0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcde"
+        )
+        .is_err()
+    );
+    assert!(
+        ContentKey::from_str(
+            "SINEXBLAKE3-s123--0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef00"
+        )
+        .is_err()
+    );
 
     let key = ContentKey::from_str("SHA256E-s12345-m1234567890--filename.txt")
         .map_err(|err| eyre!("invalid content key: {err}"))?;
