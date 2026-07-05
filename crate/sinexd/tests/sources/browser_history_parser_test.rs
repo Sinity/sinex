@@ -8,6 +8,7 @@ use sinex_primitives::{
     Uuid,
     ids::Id,
     parser::{MaterialAnchor, ParserContext, SourceId, SourceRecord},
+    privacy::ProcessingContext,
     rpc::sources::{CaveatSeverity, caveat_codes},
     temporal::Timestamp,
 };
@@ -72,6 +73,20 @@ async fn qutebrowser_sqlite_title_is_not_parser_redacted() {
         intents[0].payload["title"], "KeePass - Database.kdbx",
         "browser title policy belongs to DB admission rules, not parser-local redaction"
     );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn browser_history_intent_uses_metadata_privacy_context() {
+    let mut parser = BrowserHistoryParser;
+    let record = record_for(
+        br#"{"rowid":101,"url":"https://example.com","title":"Example","atime":1700000000,"redirect":0}"#,
+        "primary/var/tmp/qutebrowser/history.sqlite",
+    );
+
+    let intents = parser.parse_record(record, &test_ctx()).await.unwrap();
+
+    assert_eq!(intents.len(), 1);
+    assert_eq!(intents[0].privacy_context, ProcessingContext::Metadata);
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

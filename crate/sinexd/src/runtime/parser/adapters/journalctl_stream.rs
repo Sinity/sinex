@@ -182,15 +182,9 @@ impl InputShapeAdapter for JournalctlStreamAdapter {
         if let Some(cursor) = json.get("__CURSOR").and_then(|v| v.as_str()) {
             Ok(JournalctlCursor::new(cursor))
         } else {
-            // No cursor field: use the frame_index as a fallback string.
-            match &record.anchor {
-                MaterialAnchor::StreamFrame { frame_index, .. } => {
-                    Ok(JournalctlCursor::new(format!("frame:{frame_index}")))
-                }
-                other => Err(ParserError::Cursor(format!(
-                    "journalctl record has no __CURSOR and unexpected anchor: {other:?}"
-                ))),
-            }
+            Err(ParserError::Cursor(
+                "journalctl record has no __CURSOR; refusing to synthesize a cursor".into(),
+            ))
         }
     }
 }

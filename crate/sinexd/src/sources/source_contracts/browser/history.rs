@@ -198,7 +198,7 @@ impl MaterialParser for BrowserHistoryParser {
                 EventSource::from_static("webhistory"),
                 EventType::from_static("page.visited"),
             )],
-            privacy_contexts: vec![ProcessingContext::Clipboard, ProcessingContext::Metadata],
+            privacy_contexts: vec![ProcessingContext::Metadata],
             sensitivity_hints: Vec::new(),
             description: "Parses browser history from SQLite DBs and JSONL dump files.".into(),
         }
@@ -562,7 +562,7 @@ fn build_intent(
             })
             .anchor(record.anchor.clone())
             .maybe_occurrence_key(occurrence_key)
-            .privacy_context(ProcessingContext::Clipboard)
+            .privacy_context(ProcessingContext::Metadata)
             .build(),
     ])
 }
