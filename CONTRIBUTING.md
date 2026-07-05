@@ -17,10 +17,15 @@ nix develop
 
 ### Pre-push drift guard
 
-The repo carries a pre-push hook at `.githooks/pre-push` that runs
-`xtask check --changed-strict` against `origin/master` before allowing a
-push. It catches the class of regression where a PR's diff compiles in
-isolation but references APIs that changed on master (the failure mode
+The repo carries a pre-push hook at `.githooks/pre-push` that runs scoped
+drift guards against `origin/master` before allowing a push:
+
+- `xtask docs schema-bundle --check` when payload/schema/bundle paths changed
+- `xtask check --changed-strict` when Rust source paths changed
+
+The schema-bundle guard catches stale checked-in payload schemas. The
+changed-strict guard catches the class of regression where a PR's diff compiles
+in isolation but references APIs that changed on master (the failure mode
 behind PR #1268 and several others).
 
 The devshell auto-installs this hook on first entry. To install manually:
