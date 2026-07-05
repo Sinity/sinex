@@ -306,7 +306,9 @@ pkgs.testers.nixosTest {
             logLevel = "info";
             env.SINEX_COORDINATION_DISABLED = "0";
           };
+        };
 
+        sources = {
           filesystem = {
             enable = true;
             watchPaths = [ "/var/lib/sinex/watched" ];
@@ -335,14 +337,14 @@ pkgs.testers.nixosTest {
           desktop.enable = lib.mkForce false;
           system.enable = lib.mkForce false;
           document.enable = lib.mkForce false;
+        };
 
-          automata = {
-            enable = lib.mkForce false;
-            canonicalizer.enable = lib.mkForce false;
-            healthAggregator.enable = lib.mkForce false;
-            analyticsAutomaton.enable = lib.mkForce false;
-            sessionDetector.enable = lib.mkForce false;
-          };
+        automata = {
+          enable = lib.mkForce false;
+          canonicalizer.enable = lib.mkForce false;
+          healthAggregator.enable = lib.mkForce false;
+          analyticsAutomaton.enable = lib.mkForce false;
+          sessionDetector.enable = lib.mkForce false;
         };
 
         shell.kitty.enable = true;

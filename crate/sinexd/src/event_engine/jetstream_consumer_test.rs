@@ -217,6 +217,28 @@ async fn source_material_fk_constraint_name_rejects_other_constraints() -> TestR
 }
 
 #[sinex_test]
+async fn non_live_derived_parent_validation_is_isolatable() -> TestResult<()> {
+    let error = SinexError::validation(format!(
+        "derived event {} references 1 non-live source_event_ids: {}",
+        Uuid::now_v7(),
+        Uuid::now_v7()
+    ));
+
+    assert!(is_non_live_derived_parent_validation(&error));
+    assert!(is_isolatable_batch_persistence_failure(&error));
+    Ok(())
+}
+
+#[sinex_test]
+async fn generic_validation_error_is_not_isolatable() -> TestResult<()> {
+    let error = SinexError::validation("payload field missing");
+
+    assert!(!is_non_live_derived_parent_validation(&error));
+    assert!(!is_isolatable_batch_persistence_failure(&error));
+    Ok(())
+}
+
+#[sinex_test]
 async fn uuid_v7_guard_rejects_other_uuid_versions() -> TestResult<()> {
     // Random UUIDv7 minted by Id::new() must pass the admission guard.
     assert!(is_uuid_v7(&Uuid::now_v7()));

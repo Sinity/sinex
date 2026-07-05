@@ -209,6 +209,11 @@
             );
 
           runtimeCargoExtraArgs = pkgs.lib.concatMapStringsSep " " (pname: "-p ${pname}") runtimePackageNames;
+          vmRuntimePackageNames = [
+            "sinexd"
+            "sinexctl"
+          ];
+          vmRuntimeCargoExtraArgs = pkgs.lib.concatMapStringsSep " " (pname: "-p ${pname}") vmRuntimePackageNames;
 
           sinexRuntime = craneLib.buildPackage (
             commonArgs
@@ -223,6 +228,36 @@
             }
           );
 
+          sinexVmRuntime = craneLib.buildPackage (
+            commonArgs
+            // {
+              inherit cargoArtifacts;
+              pname = "sinex-vm-runtime";
+              cargoExtraArgs = vmRuntimeCargoExtraArgs;
+              doCheck = false;
+              # VM checks need deployment-shaped binaries, not optimized
+              # production codegen. Keep this local to the VM runtime
+              # derivation so restoring exported checks does not make
+              # workstation proof runs lose to earlyoom during sinexd lib
+              # optimization.
+              CARGO_PROFILE_RELEASE_OPT_LEVEL = "0";
+              CARGO_PROFILE_RELEASE_CODEGEN_UNITS = "16";
+              CARGO_PROFILE_RELEASE_PANIC = "abort";
+              CARGO_BUILD_JOBS = "1";
+
+              preBuild = postgresPreBuild;
+              postBuild = postgresPostBuild;
+            }
+          );
+
+          sinexVmPackage = pkgs.symlinkJoin {
+            name = "sinex-vm-package";
+            paths = [
+              sinexVmRuntime
+              sinexPackages.xtask
+            ];
+          };
+
           # All packages built from Cargo.toml names. Keep the inventory in
           # packageOutputNames/runtimePackageNames so Nix outputs, the aggregate
           # runtime closure, and the overlay cannot drift independently.
@@ -236,7 +271,23 @@
             default = sinexPackages.sinex;
           };
 
-          vmCheckOutputs = { };
+          vmCheckOutputs =
+            let
+              vmScenarios = import ./tests/e2e/nixos-vm/default.nix {
+                inherit pkgs;
+                pg_jsonschema = pkgs.postgresql18Packages.pg_jsonschema;
+                sinex = sinexVmPackage;
+                sinexCli = sinexVmRuntime;
+                xtask = sinexPackages.xtask;
+                sinexVmTestSuite = sinexPackages.sinex-vm-test-suite;
+              };
+            in
+            pkgs.lib.mapAttrs'
+              (name: value: {
+                name = "sinex-vm-${name}";
+                inherit value;
+              })
+              vmScenarios;
 
           nixFormatCheck = pkgs.runCommand "sinex-nix-format-check"
             {

@@ -33,6 +33,48 @@ async fn prune_keeps_newest_n_per_crate() -> xtask::sandbox::TestResult<()> {
 }
 
 #[sinex_test]
+async fn prune_deps_variants_keeps_newest_hashed_artifacts()
+-> xtask::sandbox::TestResult<()> {
+    let temp = tempfile::tempdir()?;
+    let deps = temp.path().join("deps");
+    std::fs::create_dir(&deps)?;
+
+    for hash in [
+        "1111111111111111",
+        "2222222222222222",
+        "3333333333333333",
+        "4444444444444444",
+    ] {
+        std::fs::write(deps.join(format!("libsinexd-{hash}.rlib")), vec![0u8; 100])?;
+        std::thread::sleep(std::time::Duration::from_millis(20));
+    }
+    std::fs::write(deps.join("libsinexd-current.rlib"), vec![0u8; 100])?;
+
+    let (deleted, bytes) = prune_deps_variants(&deps, 2)?;
+
+    assert_eq!(deleted, 2, "expected to delete two oldest hash variants");
+    assert!(bytes >= 200);
+
+    let remaining: Vec<_> = std::fs::read_dir(&deps)?
+        .flatten()
+        .map(|entry| entry.file_name().to_string_lossy().to_string())
+        .collect();
+    assert_eq!(remaining.len(), 3);
+    assert!(remaining.iter().any(|name| name == "libsinexd-current.rlib"));
+    assert!(
+        remaining
+            .iter()
+            .any(|name| name == "libsinexd-3333333333333333.rlib")
+    );
+    assert!(
+        remaining
+            .iter()
+            .any(|name| name == "libsinexd-4444444444444444.rlib")
+    );
+    Ok(())
+}
+
+#[sinex_test]
 async fn disk_usage_reads_valid_filesystem() -> xtask::sandbox::TestResult<()> {
     // /tmp should always exist
     let u = disk_usage(Path::new("/tmp"))?;

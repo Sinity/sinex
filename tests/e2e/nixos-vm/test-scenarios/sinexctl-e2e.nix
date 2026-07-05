@@ -27,7 +27,7 @@ pkgs.testers.nixosTest {
     services.sinex.core.api.enable = true;
 
     # Enable filesystem source runtime to generate events
-    services.sinex.runtime = {
+    services.sinex.sources = {
       filesystem.enable = true;
       filesystem.watchPaths = lib.mkAfter [ "/var/lib/sinex/watched" ];
       terminal.enable = false;
@@ -43,13 +43,14 @@ pkgs.testers.nixosTest {
 
   testScript = ''
     import json
+    import re
 
     start_all()
 
     def wait_for_API():
         """Wait for API to be ready and accepting connections"""
         machine.wait_for_unit("postgresql.service", timeout=60)
-        machine.wait_for_unit("sinexd.service", timeout=60)
+        machine.wait_for_unit("sinexd.service", timeout=180)
         # Wait until API health endpoint responds
         machine.wait_until_succeeds(
             "curl -k -s https://127.0.0.1:9999/health",
@@ -66,12 +67,13 @@ pkgs.testers.nixosTest {
 
     def sinexctl_json(args):
         """Run sinexctl command with JSON output and parse result"""
-        output = sinexctl(f"{args} -f json")
+        output = sinexctl(f"{args} --format json")
         values = parse_json_output(output)
         return values[0] if len(values) == 1 else values
 
     def parse_json_output(output):
         """Parse sinexctl JSON output, including JSON-lines list output."""
+        output = re.sub(r"\x1b\[[0-9;]*m", "", output)
         values = []
         for line in output.strip().split('\n'):
             line = line.strip()
@@ -138,7 +140,7 @@ pkgs.testers.nixosTest {
     # Test 3: Runtime module listing with JSON output
     with subtest("sinexctl runtime list with JSON"):
         # List runtime modules - may be empty initially
-        modules_output = sinexctl("runtime list -f json", check=False)
+        modules_output = sinexctl("runtime list --format json", check=False)
         exit_code = modules_output[0]
         output = modules_output[1]
 
@@ -163,12 +165,12 @@ pkgs.testers.nixosTest {
         # Poll until at least one event is visible (up to 30 s) instead of a
         # fixed sleep that races against pipeline latency.
         machine.wait_until_succeeds(
-            "sinexctl --insecure events recent -n 1 -f json 2>/dev/null | grep -q '{'",
+            "sinexctl --insecure events recent -n 1 --format json 2>/dev/null | grep -q '{'",
             timeout=30
         )
 
         # Query events
-        query_result = sinexctl("events query -s 1h -n 10 -f json", check=False)
+        query_result = sinexctl("events query -s 1h -n 10 --format json", check=False)
         exit_code = query_result[0]
         output = query_result[1]
 
@@ -182,7 +184,7 @@ pkgs.testers.nixosTest {
     # Test 5: DLQ commands
     with subtest("sinexctl ops dlq commands"):
         # List DLQ queues
-        dlq_result = sinexctl("ops dlq list -f json", check=False)
+        dlq_result = sinexctl("ops dlq list --format json", check=False)
         exit_code = dlq_result[0]
         output = dlq_result[1]
 
@@ -198,7 +200,7 @@ pkgs.testers.nixosTest {
     # Test 6: Operations log
     with subtest("sinexctl ops commands"):
         # List operations
-        ops_result = sinexctl("ops list -f json", check=False)
+        ops_result = sinexctl("ops list --format json", check=False)
         exit_code = ops_result[0]
         output = ops_result[1]
 
@@ -235,7 +237,7 @@ pkgs.testers.nixosTest {
         assert len(table_out) > 0, "Table output should not be empty"
 
         # Test JSON format
-        json_out = sinexctl("config show -f json")
+        json_out = sinexctl("config show --format json")
         # Extract just the JSON part (before any extra info)
         json_end = json_out.rfind('}')
         if json_end > 0:
@@ -244,7 +246,7 @@ pkgs.testers.nixosTest {
             assert isinstance(parsed, dict), "JSON output should be a dict"
 
         # Test YAML format
-        yaml_out = sinexctl("config show -f yaml")
+        yaml_out = sinexctl("config show --format yaml")
         assert "rpc_url:" in yaml_out, "YAML should contain rpc_url"
 
         print("All output formats work correctly")
@@ -256,11 +258,11 @@ pkgs.testers.nixosTest {
         machine.sleep(2)
 
         # Query with time filter
-        result = sinexctl("events query -s 1h -f json", check=False)
+        result = sinexctl("events query -s 1h --format json", check=False)
         print(f"Time-filtered query: exit={result[0]}")
 
         # Query with limit
-        result = sinexctl("events query -s 1h -n 5 -f json", check=False)
+        result = sinexctl("events query -s 1h -n 5 --format json", check=False)
         print(f"Limited query: exit={result[0]}")
 
     print("sinexctl E2E tests completed successfully")

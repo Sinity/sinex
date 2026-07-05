@@ -1,6 +1,7 @@
 //! Persistence classification types and source-material failure helpers.
 
 use async_nats::jetstream;
+use sinex_primitives::error::SinexErrorKind;
 use sinex_primitives::events::Event;
 use sinex_primitives::events::builder::Provenance;
 use sinex_primitives::{JsonValue, Uuid};
@@ -18,6 +19,7 @@ pub(super) const SQLSTATE_PROGRAM_LIMIT_EXCEEDED_CLASS: &str = "54";
 /// Error-class marker for deferred source-material FK violations.
 pub(super) const ERROR_CLASS_SOURCE_MATERIAL_FK: &str = "source_material_fk_violation";
 pub(super) const EVENTS_SOURCE_MATERIAL_ID_FKEY: &str = "events_source_material_id_fkey";
+const NON_LIVE_DERIVED_PARENT_ERROR_FRAGMENT: &str = "non-live source_event_ids";
 
 pub(super) fn is_source_material_fk_constraint_name(value: &str) -> bool {
     value == EVENTS_SOURCE_MATERIAL_ID_FKEY
@@ -70,11 +72,22 @@ pub(super) fn is_source_material_fk_violation_for_prepared_batch(
         || (is_foreign_key_violation(err) && batch_depends_only_on_source_material_fk(batch))
 }
 
+pub(super) fn is_non_live_derived_parent_validation(err: &SinexError) -> bool {
+    err.kind() == SinexErrorKind::Validation
+        && err
+            .to_string()
+            .contains(NON_LIVE_DERIVED_PARENT_ERROR_FRAGMENT)
+}
+
 pub(super) fn is_isolatable_batch_persistence_failure(err: &SinexError) -> bool {
     if has_explicit_source_material_fk_marker(err)
         || sinex_db::query_helpers::is_retryable_db_error(err)
     {
         return false;
+    }
+
+    if is_non_live_derived_parent_validation(err) {
+        return true;
     }
 
     if is_foreign_key_violation(err) {
