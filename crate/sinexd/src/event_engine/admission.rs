@@ -14,6 +14,7 @@ use sinex_primitives::admission_policy::{
     STANDARD_EVENT_ADMISSION_POLICY_ID,
 };
 use sinex_primitives::constants::limits::MAX_EVENT_PAYLOAD_BYTES;
+use sinex_primitives::error::SinexErrorKind;
 use sinex_primitives::event_contracts::find_event_contract_for_pair;
 use sinex_primitives::events::admission::{ACCEPTED_ENVELOPE_VERSIONS, EventIntent};
 use sinex_primitives::events::builder::{EventId, Provenance};
@@ -49,6 +50,7 @@ const SQLSTATE_INTEGRITY_CONSTRAINT_VIOLATION_CLASS: &str = "23";
 const ERROR_CLASS_SOURCE_MATERIAL_FK: &str = "source_material_fk_violation";
 const EVENTS_SOURCE_MATERIAL_ID_FKEY: &str = "events_source_material_id_fkey";
 const EVENTS_PAYLOAD_SCHEMA_ID_FKEY: &str = "events_payload_schema_id_fkey";
+const NON_LIVE_DERIVED_PARENT_ERROR_FRAGMENT: &str = "non-live source_event_ids";
 
 /// Event accepted by the admission boundary and ready for persistence.
 #[derive(Debug, Clone)]
@@ -1319,6 +1321,10 @@ fn is_isolatable_batch_persistence_failure(error: &SinexError) -> bool {
         return false;
     }
 
+    if is_non_live_derived_parent_validation(error) {
+        return true;
+    }
+
     if is_foreign_key_violation(error) {
         return true;
     }
@@ -1327,4 +1333,11 @@ fn is_isolatable_batch_persistence_failure(error: &SinexError) -> bool {
         value.starts_with(SQLSTATE_DATA_EXCEPTION_CLASS)
             || value.starts_with(SQLSTATE_INTEGRITY_CONSTRAINT_VIOLATION_CLASS)
     })
+}
+
+fn is_non_live_derived_parent_validation(error: &SinexError) -> bool {
+    error.kind() == SinexErrorKind::Validation
+        && error
+            .to_string()
+            .contains(NON_LIVE_DERIVED_PARENT_ERROR_FRAGMENT)
 }

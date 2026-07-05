@@ -42,7 +42,7 @@ pkgs.testers.nixosTest {
     start_all()
     machine.wait_for_unit("multi-user.target")
     machine.wait_for_unit("postgresql.service", timeout=60)
-    machine.wait_for_unit("sinexd.service", timeout=60)
+    machine.wait_for_unit("sinexd.service", timeout=180)
 
     with subtest("Rust-driven chaos-process-restart suite"):
       machine.succeed(

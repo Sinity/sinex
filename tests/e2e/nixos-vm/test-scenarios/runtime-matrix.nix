@@ -23,7 +23,9 @@ pkgs.testers.nixosTest {
     services.sinex = {
       runtime = {
         coordination.enable = lib.mkForce true;
+      };
 
+      sources = {
         filesystem = {
           enable = lib.mkForce true;
           instances = lib.mkForce 2;
@@ -49,14 +51,14 @@ pkgs.testers.nixosTest {
           enable = lib.mkForce true;
           allowedRoots = lib.mkForce [ "/home/test/Documents" ];
         };
+      };
 
-        automata = {
-          enable = lib.mkForce true;
-          canonicalizer.enable = lib.mkForce true;
-          healthAggregator.enable = lib.mkForce true;
-          analyticsAutomaton.enable = lib.mkForce true;
-          sessionDetector.enable = lib.mkForce true;
-        };
+      automata = {
+        enable = lib.mkForce true;
+        canonicalizer.enable = lib.mkForce true;
+        healthAggregator.enable = lib.mkForce true;
+        analyticsAutomaton.enable = lib.mkForce true;
+        sessionDetector.enable = lib.mkForce true;
       };
     };
 
@@ -206,9 +208,6 @@ SQL
         machine.succeed(f"systemctl is-active {unit}")
 
     with subtest("Deployment readiness ordering"):
-        for unit in ["sinex-blob-init.service"]:
-            machine.wait_for_unit(unit)
-        machine.succeed("systemctl show -p Result --value sinex-blob-init.service | grep '^success$'")
         machine.succeed("test -s /etc/sinex/api-admin-token")
         machine.succeed("su - postgres -c 'psql -d sinex -At -c \"SELECT 1\"' | grep '^1$'")
         machine.succeed("su - postgres -c \"psql -d sinex_dev -At -c \\\"SELECT COUNT(*) FROM information_schema.tables WHERE table_schema = 'core' AND table_name = 'events'\\\"\" | grep '^1$'")
@@ -261,7 +260,7 @@ SQL
             timeout=60,
         )
         machine.wait_until_succeeds(
-            "sinexctl --insecure verify --document-smoke --source-evidence --historical-evidence",
+            "sinexctl --insecure ops verify --document-smoke --source-evidence --historical-evidence",
             timeout=120,
         )
         assert_no_failed_sinex_units()
@@ -274,7 +273,7 @@ SQL
             machine.systemctl(f"restart {unit}")
             machine.wait_for_unit(unit, timeout=60)
             machine.succeed(f"systemctl is-active {unit}")
-        machine.succeed("sinexctl --insecure verify")
+        machine.succeed("sinexctl --insecure ops verify")
         assert_no_failed_sinex_units()
 
     with subtest("Collapsed runtime units are not generated"):

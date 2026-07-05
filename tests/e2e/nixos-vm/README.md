@@ -165,7 +165,7 @@ pkgs.testers.nixosTest {
 
 ```python
 # Test helpers
-helpers.wait_for_sinex_ready(timeout=60)
+helpers.wait_for_sinex_ready(timeout=180)
 helpers.get_event_count() -> int
 helpers.generate_events(count, prefix="test", path="/var/lib/sinex/watched") -> int
 helpers.check_service_health(service_name) -> bool

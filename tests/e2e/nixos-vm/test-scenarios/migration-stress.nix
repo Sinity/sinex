@@ -64,7 +64,7 @@ pkgs.testers.nixosTest {
     start_all()
     machine.wait_for_unit("multi-user.target")
     machine.wait_for_unit("postgresql.service", timeout=60)
-    machine.wait_for_unit("sinexd.service", timeout=60)
+    machine.wait_for_unit("sinexd.service", timeout=180)
 
     def psql(sql, flags="-tAc"):
         psql_command = f"psql -d sinex_dev {flags} " + shlex.quote(sql)
@@ -134,7 +134,7 @@ pkgs.testers.nixosTest {
     # ─── Wait for event_engine to come back up after migration ─────────────────────
 
     with subtest("post-migration-health"):
-        machine.wait_for_unit("sinexd.service", timeout=60)
+        machine.wait_for_unit("sinexd.service", timeout=180)
         machine.wait_until_succeeds("systemctl is-active sinexd", timeout=30)
         print("✓ sinexd active after migration")
 

@@ -186,8 +186,11 @@ pub async fn run_binding(binding: SourceBinding) -> Result<()> {
             binding.source_id, binding.instance_idx
         )
     });
-    let runtime_config =
-        source_binding_runtime_config_with_identity(binding.runtime_config.clone(), &service_name);
+    let runtime_config = source_binding_runtime_config_with_identity(
+        binding.runtime_config.clone(),
+        &service_name,
+        &binding.source_id,
+    );
 
     let mut argv: Vec<std::ffi::OsString> = vec![
         std::ffi::OsString::from("sinexd-source"),
@@ -266,6 +269,7 @@ pub async fn run_binding(binding: SourceBinding) -> Result<()> {
 fn source_binding_runtime_config_with_identity(
     config: Option<serde_json::Value>,
     service_name: &str,
+    source_id: &str,
 ) -> Option<serde_json::Value> {
     match config {
         Some(serde_json::Value::Object(mut object)) => {
@@ -274,13 +278,13 @@ fn source_binding_runtime_config_with_identity(
                 .or_insert_with(|| serde_json::json!(service_name));
             object
                 .entry("control_identity".to_string())
-                .or_insert_with(|| serde_json::json!(service_name));
+                .or_insert_with(|| serde_json::json!(source_id));
             Some(serde_json::Value::Object(object))
         }
         Some(value) => Some(value),
         None => Some(serde_json::json!({
             "checkpoint_identity": service_name,
-            "control_identity": service_name,
+            "control_identity": source_id,
         })),
     }
 }

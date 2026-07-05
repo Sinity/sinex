@@ -33,6 +33,9 @@ use std::time::SystemTime;
 /// default was tested and rejected because it reclaimed space by forcing the
 /// next edit-loop run to rebuild the active incremental state.
 const DEFAULT_KEEP_PER_CRATE: usize = 3;
+/// Default number of hashed `target/debug/deps` file variants to keep for each
+/// artifact key.
+const DEFAULT_KEEP_DEPS_PER_ARTIFACT: usize = 3;
 
 /// Threshold above which doctor warns the user.
 pub const WARN_PERCENT: f64 = 70.0;
@@ -131,6 +134,8 @@ pub struct ReclaimReport {
     pub cargo_sweep_reclaimed_bytes: u64,
     pub incremental_dirs_deleted: usize,
     pub incremental_bytes_reclaimed: u64,
+    pub deps_files_deleted: usize,
+    pub deps_bytes_reclaimed: u64,
     pub before: Option<DiskUsage>,
     pub after: Option<DiskUsage>,
 }
@@ -211,6 +216,15 @@ pub fn reclaim(target_dir: &Path) -> Result<ReclaimReport> {
         let (deleted, bytes) = prune_incremental(&incremental_dir, keep_per_crate)?;
         report.incremental_dirs_deleted = deleted;
         report.incremental_bytes_reclaimed = bytes;
+    }
+
+    // Step 3: deps/ keep-N-newest-per-artifact
+    let deps_dir = target_dir.join("debug").join("deps");
+    if deps_dir.exists() {
+        let keep_per_artifact = deps_keep_per_artifact();
+        let (deleted, bytes) = prune_deps_variants(&deps_dir, keep_per_artifact)?;
+        report.deps_files_deleted = deleted;
+        report.deps_bytes_reclaimed = bytes;
     }
 
     report.after = disk_usage(target_dir).ok();
@@ -418,6 +432,14 @@ fn incremental_keep_per_crate() -> usize {
         .unwrap_or(DEFAULT_KEEP_PER_CRATE)
 }
 
+fn deps_keep_per_artifact() -> usize {
+    std::env::var("SINEX_DEPS_KEEP_PER_ARTIFACT")
+        .ok()
+        .and_then(|value| value.parse::<usize>().ok())
+        .filter(|value| *value > 0)
+        .unwrap_or(DEFAULT_KEEP_DEPS_PER_ARTIFACT)
+}
+
 #[must_use]
 pub fn configured_incremental_keep_per_crate() -> usize {
     incremental_keep_per_crate()
@@ -475,6 +497,68 @@ fn prune_incremental(incremental_dir: &Path, keep_n: usize) -> Result<(usize, u6
     }
 
     Ok((deleted, bytes_freed))
+}
+
+/// For each hashed artifact family in `target/debug/deps`, keep the `keep_n`
+/// most recently modified files, delete the rest. Cargo recreates these files
+/// when needed; pruning old hash variants is equivalent to what cargo-sweep
+/// would do when available.
+fn prune_deps_variants(deps_dir: &Path, keep_n: usize) -> Result<(usize, u64)> {
+    let entries =
+        std::fs::read_dir(deps_dir).with_context(|| format!("read_dir {}", deps_dir.display()))?;
+
+    let mut by_artifact: BTreeMap<String, Vec<(SystemTime, PathBuf, u64)>> = BTreeMap::new();
+    for entry in entries.flatten() {
+        let path = entry.path();
+        let Ok(metadata) = entry.metadata() else {
+            continue;
+        };
+        if !metadata.is_file() {
+            continue;
+        }
+        let Some(name) = path.file_name().and_then(|n| n.to_str()) else {
+            continue;
+        };
+        let Some(key) = deps_artifact_key(name) else {
+            continue;
+        };
+        let mtime = metadata.modified().unwrap_or(SystemTime::UNIX_EPOCH);
+        by_artifact
+            .entry(key)
+            .or_default()
+            .push((mtime, path, metadata.len()));
+    }
+
+    let mut deleted = 0usize;
+    let mut bytes_freed = 0u64;
+    for (_artifact, mut variants) in by_artifact {
+        if variants.len() <= keep_n {
+            continue;
+        }
+        variants.sort_by_key(|entry| std::cmp::Reverse(entry.0));
+        for (_mtime, path, bytes) in variants.into_iter().skip(keep_n) {
+            if std::fs::remove_file(&path).is_ok() {
+                deleted += 1;
+                bytes_freed += bytes;
+            }
+        }
+    }
+
+    Ok((deleted, bytes_freed))
+}
+
+fn deps_artifact_key(name: &str) -> Option<String> {
+    let (stem, extension) = name.rsplit_once('.').unwrap_or((name, ""));
+    let idx = stem.rfind('-')?;
+    let hash = &stem[idx + 1..];
+    if hash.len() < 8 || !hash.chars().all(|ch| ch.is_ascii_hexdigit()) {
+        return None;
+    }
+    let prefix = &stem[..idx];
+    if prefix.is_empty() {
+        return None;
+    }
+    Some(format!("{prefix}.{extension}"))
 }
 
 fn dir_size_bytes(dir: &Path) -> Result<u64> {

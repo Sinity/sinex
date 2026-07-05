@@ -7,6 +7,43 @@ use xtask::sandbox::prelude::sinex_test;
 /// to be specific enough that no other code in the process sets it.
 const TEST_KEY: &str = "SINEX_BINDINGS_TEST_DISPLAY_RACE";
 
+#[sinex_test]
+async fn binding_defaults_control_identity_to_source_id() -> xtask::sandbox::TestResult<()> {
+    let config = source_binding_runtime_config_with_identity(
+        None,
+        "source-driver-fs-watcher-1",
+        "fs-watcher",
+    )
+    .expect("default runtime config must be present");
+
+    assert_eq!(
+        config["checkpoint_identity"], "source-driver-fs-watcher-1",
+        "checkpoint state remains per binding instance"
+    );
+    assert_eq!(
+        config["control_identity"], "fs-watcher",
+        "replay/control subjects must address the logical source id"
+    );
+    Ok(())
+}
+
+#[sinex_test]
+async fn binding_preserves_explicit_control_identity() -> xtask::sandbox::TestResult<()> {
+    let config = source_binding_runtime_config_with_identity(
+        Some(serde_json::json!({
+            "control_identity": "custom-control",
+            "checkpoint_identity": "custom-checkpoint"
+        })),
+        "source-driver-fs-watcher-1",
+        "fs-watcher",
+    )
+    .expect("object runtime config must be present");
+
+    assert_eq!(config["checkpoint_identity"], "custom-checkpoint");
+    assert_eq!(config["control_identity"], "custom-control");
+    Ok(())
+}
+
 /// Two concurrent bindings with conflicting `extra_env` values for the
 /// same key must each observe their own value while the lock is held.
 /// Pre-fix, the second binding's `set_var` would clobber the first's

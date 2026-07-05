@@ -130,6 +130,7 @@
       "instance_idx": 1,
       "service_name": "source-driver-fs-1",
       "runtime_config": {
+        "control_identity": "fs-watcher",
         "ignored_directory_names": [
           "target",
           ".git",
