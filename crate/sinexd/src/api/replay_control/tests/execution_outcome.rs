@@ -351,6 +351,109 @@ async fn replay_execution_records_outcome(ctx: TestContext) -> Result<()> {
 }
 
 #[sinex_test]
+async fn replay_dispatch_uses_material_runtime_identity(ctx: TestContext) -> Result<()> {
+    let ctx = ctx.with_nats().dedicated().await?;
+
+    let material_id = ctx
+        .create_source_material(Some("desktop.activitywatch"))
+        .await?;
+    let material_uuid = *material_id.as_uuid();
+    sqlx::query!(
+        r#"
+        UPDATE raw.source_material_registry
+        SET
+            source_identifier = $2,
+            metadata = jsonb_build_object('logical_source_identifier', 'desktop.activitywatch')
+        WHERE id = $1::uuid
+        "#,
+        material_uuid,
+        format!("desktop.activitywatch#material={material_uuid}"),
+    )
+    .execute(&ctx.pool)
+    .await?;
+
+    let event = DynamicPayload::new(
+        "activitywatch",
+        FileCreatedPayload::EVENT_TYPE.as_static_str(),
+        json!({ "path": "/tmp/activitywatch-runtime-identity.txt" }),
+    )
+    .from_material(material_id)
+    .build()?;
+    let inserted = ctx.pool.events().insert(event).await?;
+    let event_id = inserted
+        .id
+        .expect("inserted replay target must have an id");
+    let execution_window = (
+        event_id.timestamp() - time::Duration::milliseconds(1),
+        event_id.timestamp() + time::Duration::milliseconds(1),
+    );
+
+    let replay = Arc::new(ReplayStateMachine::new(ctx.pool.clone()));
+    let env = sinex_primitives::environment::environment();
+    let (command_rx, scan_handle) = spawn_fake_scan_source_runtime(
+        ctx.nats_client(),
+        env,
+        "desktop.activitywatch",
+        1,
+    )
+    .await?;
+    let replay_output_handle = spawn_replay_output_inserter(
+        ctx.pool.clone(),
+        command_rx,
+        "activitywatch",
+        FileCreatedPayload::EVENT_TYPE.as_static_str(),
+        "/tmp/activitywatch-runtime-identity.txt",
+    );
+    let client = spawn_replay_control(replay, ctx.nats_client(), Duration::from_secs(30)).await?;
+
+    let scope = ReplayScope {
+        source_name: "activitywatch".to_string(),
+        time_window: Some(execution_window),
+        material_filter: Some(vec![material_uuid]),
+        filters: HashMap::from([(
+            "event_types".to_string(),
+            json!([FileCreatedPayload::EVENT_TYPE.as_static_str()]),
+        )]),
+        ..ReplayScope::default()
+    };
+    let planned = client.plan("test:replay-user".into(), scope).await?;
+    client
+        .preview(planned.operation_id)
+        .await
+        .expect("preview should succeed");
+    client
+        .approve(planned.operation_id, "admin:approver".into())
+        .await?;
+
+    let executed = client
+        .execute(
+            planned.operation_id,
+            "service:executor-runtime".into(),
+            false,
+        )
+        .await?;
+
+    assert_eq!(executed.state, ReplayState::Completed);
+    let command = replay_output_handle
+        .await
+        .map_err(|e| test_error(format!("fake replay output task failed: {e}")))??;
+    assert_eq!(
+        command.args.targets,
+        vec!["desktop.activitywatch".to_string()],
+        "replay dispatch must target the source runtime identity, not the event source"
+    );
+    let replay_context = command
+        .args
+        .replay
+        .expect("dispatch command must carry replay context");
+    assert_eq!(replay_context.materials.len(), 1);
+    assert_eq!(replay_context.materials[0].source_material_id, material_uuid);
+    await_fake_scan_source_runtime(scan_handle, "desktop.activitywatch").await?;
+
+    Ok(())
+}
+
+#[sinex_test]
 async fn replay_replacement_recording_follows_material_occurrence(ctx: TestContext) -> Result<()> {
     let ctx = ctx.with_nats().shared().await?;
     let replay = Arc::new(ReplayStateMachine::new(ctx.pool.clone()));

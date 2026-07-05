@@ -403,10 +403,18 @@ impl ReplayExecutionEngine {
                 .await;
         }
 
-        // Step 2: Build and send the scan command to the source runtime
+        // Step 2: Build and send the scan command to the source runtime.
+        //
+        // Event source and runtime control identity are not always the same:
+        // ActivityWatch events use source `activitywatch`, but the hosted source
+        // runtime listens as `desktop.activitywatch`.  Source materials produced
+        // by the acquisition layer carry the runtime identity in
+        // `logical_source_identifier`; use that for control-plane dispatch while
+        // keeping event-source filters for output validation.
+        let control_source_name = Self::scan_control_source_name(scope, &replay_materials)?;
         let scan_subject = self
             .env
-            .nats_subject(&ControlSubject::source_scan(&scope.source_name));
+            .nats_subject(&ControlSubject::source_scan(&control_source_name));
         let progress_subject = self
             .env
             .nats_subject(&ControlSubject::replay_progress(operation_id));
@@ -444,7 +452,7 @@ impl ReplayExecutionEngine {
                 end_time: execution_window.1,
             },
             args: ScanArgs {
-                targets: vec![scope.source_name.clone()],
+                targets: vec![control_source_name.clone()],
                 dry_run: false,
                 interactive: false,
                 max_events: 0,
@@ -488,7 +496,7 @@ impl ReplayExecutionEngine {
                         operation_id,
                         SinexError::timeout(format!(
                             "Timed out waiting for scan ack from source '{}' after {:?}. Is the source running?",
-                            scope.source_name,
+                            control_source_name,
                             self.scan_ack_timeout
                         )),
                     )
