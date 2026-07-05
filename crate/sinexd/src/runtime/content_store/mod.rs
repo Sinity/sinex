@@ -27,7 +27,7 @@ pub use cas_fsck::{CasFileStatus, CasFsckReport, CasStatus, check_cas, sweep_orp
 pub use manager::{BlobMetadata, ContentStoreManager};
 pub use path_validator::{VerifiedPath, create_secure_temp_path, validate_and_convert_path};
 
-pub const LOCAL_BLAKE3_CAS_BACKEND: &str = "SINEXBLAKE3";
+pub const LOCAL_BLAKE3_CAS_BACKEND: &str = ContentKey::LOCAL_BLAKE3_CAS_BACKEND;
 const LOCAL_BLAKE3_CAS_DIR: &str = "sinex-cas";
 const CONTENT_STORE_PROCESS_COUNTERS_PATH_ENV: &str = "SINEX_CONTENT_STORE_PROCESS_COUNTERS_PATH";
 
@@ -377,21 +377,8 @@ impl ContentStoreKey {
 }
 
 fn validate_local_blake3_digest(digest: &str) -> RuntimeResult<()> {
-    if digest.len() != 64 {
-        return Err(SinexError::validation(
-            "SINEXBLAKE3 content-store digest must be exactly 64 lowercase hex characters",
-        )
-        .with_context("digest_len", digest.len().to_string()));
-    }
-    if !digest
-        .bytes()
-        .all(|byte| matches!(byte, b'0'..=b'9' | b'a'..=b'f'))
-    {
-        return Err(SinexError::validation(
-            "SINEXBLAKE3 content-store digest must contain only lowercase hex characters",
-        ));
-    }
-    Ok(())
+    ContentKey::validate_local_blake3_digest(digest)
+        .map_err(|err| SinexError::validation(err).with_context("digest_len", digest.len()))
 }
 
 #[derive(Debug)]
@@ -569,7 +556,7 @@ impl MaterialContentStore {
         file_size: u64,
     ) -> RuntimeResult<ContentStoreKey> {
         let hash = Self::compute_blake3_hash(resolved_path).await?;
-        let target = self.local_blake3_cas_path_for_hash(&hash);
+        let target = self.local_blake3_cas_path_for_hash(&hash)?;
         if !target.exists() {
             let parent = target.parent().ok_or_else(|| {
                 SinexError::processing(format!("Local CAS target has no parent: {target}"))
@@ -601,19 +588,59 @@ impl MaterialContentStore {
         })
     }
 
-    fn local_blake3_cas_path_for_hash(&self, hash: &str) -> Utf8PathBuf {
-        debug_assert!(
-            validate_local_blake3_digest(hash).is_ok(),
-            "local CAS path construction requires a validated BLAKE3 digest"
-        );
+    fn local_blake3_cas_root(&self) -> Utf8PathBuf {
+        self.config.root_path.join(LOCAL_BLAKE3_CAS_DIR)
+    }
+
+    fn local_blake3_cas_path_for_hash(&self, hash: &str) -> RuntimeResult<Utf8PathBuf> {
+        validate_local_blake3_digest(hash)?;
         let prefix_a = hash.get(0..2).unwrap_or("xx");
         let prefix_b = hash.get(2..4).unwrap_or("xx");
-        self.config
-            .root_path
-            .join(LOCAL_BLAKE3_CAS_DIR)
+        let path = self
+            .local_blake3_cas_root()
             .join(prefix_a)
             .join(prefix_b)
-            .join(hash)
+            .join(hash);
+        self.ensure_local_cas_path_within_root(&path)?;
+        Ok(path)
+    }
+
+    fn ensure_local_cas_path_within_root(&self, path: &Utf8Path) -> RuntimeResult<()> {
+        let root = self.local_blake3_cas_root();
+        if path.starts_with(&root) {
+            return Ok(());
+        }
+        Err(
+            SinexError::validation("local CAS path escapes content-store root")
+                .with_context("path", path.to_string())
+                .with_context("root", root.to_string()),
+        )
+    }
+
+    pub async fn canonicalize_local_cas_path(&self, path: &Utf8Path) -> RuntimeResult<Utf8PathBuf> {
+        self.ensure_local_cas_path_within_root(path)?;
+        let canonical_root = tokio::fs::canonicalize(self.local_blake3_cas_root())
+            .await
+            .map_err(SinexError::io)?;
+        let canonical_path = tokio::fs::canonicalize(path)
+            .await
+            .map_err(SinexError::io)?;
+        let canonical_root = Utf8PathBuf::from_path_buf(canonical_root).map_err(|path| {
+            SinexError::validation("canonical local CAS root path is not valid UTF-8")
+                .with_context("path", path.display().to_string())
+        })?;
+        let canonical_path = Utf8PathBuf::from_path_buf(canonical_path).map_err(|path| {
+            SinexError::validation("canonical local CAS content path is not valid UTF-8")
+                .with_context("path", path.display().to_string())
+        })?;
+        if !canonical_path.starts_with(&canonical_root) {
+            return Err(SinexError::validation(
+                "canonical local CAS path escapes content-store root",
+            )
+            .with_context("path", canonical_path.to_string())
+            .with_context("root", canonical_root.to_string()));
+        }
+        Ok(canonical_path)
     }
 
     pub fn path_if_local(&self, key: &str) -> RuntimeResult<Option<Utf8PathBuf>> {
@@ -623,7 +650,7 @@ impl MaterialContentStore {
         if !parsed.is_local_blake3_cas() {
             return Ok(None);
         }
-        Ok(Some(self.local_blake3_cas_path_for_hash(&parsed.digest)))
+        Ok(Some(self.local_blake3_cas_path_for_hash(&parsed.digest)?))
     }
 
     /// Resolve a git-annex content key to a local file path.
@@ -691,6 +718,7 @@ impl MaterialContentStore {
                 .map_err(SinexError::io)?
                 .len();
             let hash = Self::compute_blake3_hash(&resolved_path).await?;
+            let _path = self.local_blake3_cas_path_for_hash(&hash)?;
             return Ok(ContentStoreKey {
                 key: format!("{LOCAL_BLAKE3_CAS_BACKEND}-s{file_size}--{hash}"),
                 backend: ContentBackend::LocalBlake3Cas,

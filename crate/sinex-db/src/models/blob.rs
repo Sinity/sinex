@@ -5,7 +5,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value as JsonValue;
 use sinex_primitives::Id;
 use sinex_primitives::Timestamp;
-use sinex_primitives::domain::BlobVerificationStatus;
+use sinex_primitives::domain::{BlobVerificationStatus, ContentKey};
 use std::str::FromStr;
 
 /// Blob represents a binary large object stored by the SDK content store.
@@ -46,6 +46,8 @@ impl Blob {
 
     /// Parse a content-store key into its components.
     pub fn parse_content_store_key(key: &str) -> Result<(String, i64, String), String> {
+        ContentKey::from_str(key)
+            .map_err(|err| format!("invalid content-store key `{key}`: {err}"))?;
         let mut segments = key.splitn(2, "--");
         let prefix = segments.next().ok_or_else(|| {
             format!("invalid content-store key `{key}`: missing backend/size prefix")
