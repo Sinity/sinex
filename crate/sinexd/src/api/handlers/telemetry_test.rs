@@ -9,7 +9,7 @@ use sinex_primitives::rpc::telemetry::{
     TelemetryEventEngineValidationRequest, TelemetryThroughputRequest,
 };
 use sinex_primitives::{Id, Timestamp, Uuid};
-use xtask::sandbox::{TestContext, TestResult, sinex_test};
+use xtask::sandbox::sinex_test;
 
 fn reflection_row(
     material_id: Id<SourceMaterial>,
