@@ -4,7 +4,7 @@
 //! `sources.coverage` — the CLI-driven source material inventory surface.
 
 use serde::{Deserialize, Serialize};
-use sinex_db::DbPoolExt;
+use sinex_db::{CascadeSource, DbPoolExt};
 use sinex_db::repositories::SourceMaterial;
 use sinex_primitives::domain::{
     MaterialStatus, MaterialStorageKind, SourceMaterialFormat, SourceMaterialTimingInfoType,
@@ -49,6 +49,8 @@ use time::OffsetDateTime;
 use uuid::Uuid;
 
 use crate::sources::package_completeness::build_package_completeness_report;
+
+const SOURCE_ARCHIVE_EVENT_ID_SAMPLE_LIMIT: i64 = 50;
 
 // ── Query row structs (sqlx FromRow) ──────────────────────────
 
@@ -1099,29 +1101,144 @@ pub async fn handle_sources_archive(
             SinexError::not_found(format!("Source material not found: {material_id}"))
         })?;
 
-    // Lifecycle archival operates on root event ids and then expands the
-    // derived-event cascade. Scope the roots to this material before handing
-    // off, so the operator command cannot accidentally archive unrelated live
-    // events.
-    let root_event_ids = sqlx::query_scalar!(
-        r#"SELECT id as "id!: Uuid"
-           FROM core.events
-           WHERE source_material_id = $1
-           ORDER BY id"#,
-        material_id
-    )
-    .fetch_all(pool)
-    .await
-    .map_err(|error| {
-        SinexError::database("Failed to collect source material archive roots")
-            .with_std_error(&error)
-    })?;
-    let root_event_count = i64::try_from(root_event_ids.len()).map_err(|error| {
-        SinexError::validation("source material event count exceeds supported response range")
-            .with_std_error(&error)
-    })?;
+    let reason = req
+        .reason
+        .as_deref()
+        .unwrap_or("Source material archive operation");
+    let actor = crate::api::rpc_server::RpcAuthContext::system();
 
-    if root_event_ids.is_empty() {
+    let operation = if req.dry_run {
+        None
+    } else {
+        let scope = serde_json::json!({
+            "source_material_id": req.material_id,
+            "reason": req.reason.clone(),
+            "dry_run": false,
+            "scope": "source_material",
+        });
+        Some(
+            pool.state()
+                .start_operation("archive", actor.actor_id(), scope)
+                .await
+                .map_err(|error| {
+                    SinexError::database("Failed to persist source material archive operation")
+                        .with_std_error(&error)
+                })?,
+        )
+    };
+    let operation_id = operation
+        .as_ref()
+        .map(|operation| operation.id.to_uuid().to_string());
+
+    let archive_result = pool
+        .with_transaction(async |tx| {
+            let repo = pool.events();
+            let mut repo_tx = repo.as_tx(tx);
+            let session_id = format!("source_archive_{}", Uuid::now_v7().simple());
+            let table_name = repo_tx
+                .prepare_cascade_session(&session_id, true)
+                .await
+                .map_err(|error| {
+                    SinexError::database("Failed to prepare source material archive cascade")
+                        .with_std_error(&error)
+                })?;
+            let root_event_count = repo_tx
+                .populate_cascade_roots_for_source_material_from(
+                    &table_name,
+                    material_id,
+                    CascadeSource::Live,
+                )
+                .await
+                .map_err(|error| {
+                    SinexError::database("Failed to populate source material archive roots")
+                        .with_std_error(&error)
+                })?;
+            let cascade_depth = if root_event_count == 0 {
+                0
+            } else {
+                repo_tx
+                    .expand_cascade_from(&table_name, 100, CascadeSource::Live)
+                    .await
+                    .map_err(|error| {
+                        SinexError::database("Failed to expand source material archive cascade")
+                            .with_std_error(&error)
+                    })?
+            };
+            let cascade_count = repo_tx.cascade_node_count(&table_name).await.map_err(|error| {
+                SinexError::database("Failed to count source material archive cascade")
+                    .with_std_error(&error)
+            })?;
+            let event_id_sample = repo_tx
+                .get_cascade_id_sample(&table_name, SOURCE_ARCHIVE_EVENT_ID_SAMPLE_LIMIT)
+                .await
+                .map_err(|error| {
+                    SinexError::database("Failed to sample source material archive cascade")
+                        .with_std_error(&error)
+                })?;
+
+            if let Some(operation_id) = operation_id.as_deref() {
+                repo_tx
+                    .execute_cascade_archive_from_table(
+                        &table_name,
+                        reason,
+                        operation_id,
+                        actor.actor_id(),
+                    )
+                    .await
+                    .map_err(|error| {
+                        SinexError::database("Failed to execute source material archive cascade")
+                            .with_std_error(&error)
+                    })?;
+            }
+
+            Ok((
+                root_event_count,
+                cascade_depth,
+                cascade_count,
+                event_id_sample,
+            ))
+        })
+        .await;
+
+    let (root_event_count, cascade_depth, cascade_count, event_id_sample) = match archive_result {
+        Ok(result) => result,
+        Err(error) => {
+            if let Some(operation) = &operation {
+                let _ = pool
+                    .state()
+                    .fail_operation(
+                        &operation.id,
+                        serde_json::json!({
+                            "error": error.to_string(),
+                            "source_material_id": req.material_id,
+                        }),
+                    )
+                    .await;
+            }
+            return Err(error);
+        }
+    };
+
+    if root_event_count == 0 {
+        if let Some(operation) = &operation {
+            pool.state()
+                .complete_operation(
+                    &operation.id,
+                    serde_json::json!({
+                        "message": "Source material archive completed with no live events",
+                        "source_material_id": req.material_id,
+                        "archived_count": 0,
+                        "root_event_count": 0,
+                        "cascade_total": 0,
+                        "cascade_depth": 0,
+                    }),
+                )
+                .await
+                .map_err(|error| {
+                    SinexError::database("Failed to finalize empty source material archive operation")
+                        .with_std_error(&error)
+                })?;
+        }
         let preview = serde_json::json!({
             "material_id": req.material_id,
             "root_event_count": 0,
@@ -1134,56 +1251,67 @@ pub async fn handle_sources_archive(
 
         return Ok(SourcesArchiveResponse {
             material_id: req.material_id,
-            operation_id: None,
+            operation_id,
             cascade_count: 0,
             dry_run: req.dry_run,
             preview: Some(preview),
         });
     }
 
-    let lifecycle_req = sinex_primitives::rpc::lifecycle::LifecycleArchiveRequest {
-        before: None,
-        source: None,
-        event_ids: Some(root_event_ids.iter().map(Uuid::to_string).collect()),
-        limit: i64::MAX,
-        reason: req.reason.clone(),
-        dry_run: req.dry_run,
-    };
-
-    let system_auth = crate::api::rpc_server::RpcAuthContext::system();
-    let archive_resp = crate::api::handlers::lifecycle::handle_lifecycle_archive(
-        pool,
-        lifecycle_req,
-        &system_auth,
-    )
-    .await?;
-
     if req.dry_run {
         let preview = serde_json::json!({
             "material_id": req.material_id,
             "root_event_count": root_event_count,
-            "cascade_count": archive_resp.cascade_total,
-            "cascade_depth": archive_resp.cascade_depth,
+            "cascade_count": cascade_count,
+            "cascade_depth": cascade_depth,
             "action": "archive",
             "dry_run": true,
             "reason": req.reason.as_deref().unwrap_or("(no reason provided)"),
             "scope": "source_material",
+            "affected_event_ids": event_id_sample.iter().map(Uuid::to_string).collect::<Vec<_>>(),
+            "affected_event_ids_count": cascade_count,
+            "affected_event_ids_sample_limit": SOURCE_ARCHIVE_EVENT_ID_SAMPLE_LIMIT,
+            "affected_event_ids_truncated": cascade_count > SOURCE_ARCHIVE_EVENT_ID_SAMPLE_LIMIT,
         });
 
         let response = SourcesArchiveResponse {
             material_id: req.material_id,
             operation_id: None,
-            cascade_count: archive_resp.cascade_total as i64,
+            cascade_count,
             dry_run: true,
             preview: Some(preview),
         };
         return Ok(response);
     }
 
+    if let Some(operation) = &operation {
+        pool.state()
+            .complete_operation(
+                &operation.id,
+                serde_json::json!({
+                    "message": "Source material archive completed",
+                    "source_material_id": req.material_id,
+                    "archived_count": cascade_count,
+                    "root_event_count": root_event_count,
+                    "cascade_depth": cascade_depth,
+                    "cascade_total": cascade_count,
+                    "affected_event_ids": event_id_sample.iter().map(Uuid::to_string).collect::<Vec<_>>(),
+                    "affected_event_ids_count": cascade_count,
+                    "affected_event_ids_sample_limit": SOURCE_ARCHIVE_EVENT_ID_SAMPLE_LIMIT,
+                    "affected_event_ids_truncated": cascade_count > SOURCE_ARCHIVE_EVENT_ID_SAMPLE_LIMIT,
+                }),
+            )
+            .await
+            .map_err(|error| {
+                SinexError::database("Failed to finalize source material archive operation")
+                    .with_std_error(&error)
+            })?;
+    }
+
     Ok(SourcesArchiveResponse {
         material_id: req.material_id,
-        operation_id: Some(archive_resp.operation_id),
-        cascade_count: archive_resp.cascade_total as i64,
+        operation_id,
+        cascade_count,
         dry_run: false,
         preview: None,
     })
