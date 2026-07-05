@@ -15,6 +15,7 @@
 //! covers the largest plausible rotation overlap.
 
 use blake3::{Hash, Hasher};
+use serde::{Deserialize, Serialize};
 use std::collections::VecDeque;
 
 /// Default window size: `10_000` records is enough for the longest plausible
@@ -35,6 +36,13 @@ pub struct ContentHashWindow {
     capacity: usize,
     order: VecDeque<Hash>,
     seen: std::collections::HashSet<Hash>,
+}
+
+/// Serializable checkpoint image for [`ContentHashWindow`].
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ContentHashWindowSnapshot {
+    capacity: usize,
+    hashes: Vec<String>,
 }
 
 impl Default for ContentHashWindow {
@@ -102,6 +110,39 @@ impl ContentHashWindow {
     #[must_use]
     pub fn is_empty(&self) -> bool {
         self.order.is_empty()
+    }
+
+    /// Return a compact serializable snapshot of this window.
+    #[must_use]
+    pub fn snapshot(&self) -> ContentHashWindowSnapshot {
+        ContentHashWindowSnapshot {
+            capacity: self.capacity,
+            hashes: self.order.iter().map(Hash::to_hex).map(|h| h.to_string()).collect(),
+        }
+    }
+
+    /// Restore a window from a snapshot.
+    pub fn from_snapshot(
+        snapshot: ContentHashWindowSnapshot,
+    ) -> Result<Self, blake3::HexError> {
+        let mut order = VecDeque::with_capacity(snapshot.capacity);
+        let mut seen = std::collections::HashSet::with_capacity(snapshot.capacity);
+        for hash in snapshot.hashes {
+            let parsed = Hash::from_hex(hash)?;
+            if seen.insert(parsed) {
+                order.push_back(parsed);
+            }
+        }
+        while order.len() > snapshot.capacity {
+            if let Some(evicted) = order.pop_front() {
+                seen.remove(&evicted);
+            }
+        }
+        Ok(Self {
+            capacity: snapshot.capacity,
+            order,
+            seen,
+        })
     }
 }
 
