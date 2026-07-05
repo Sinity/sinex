@@ -243,6 +243,41 @@ async fn audit_get_rejects_malformed_lifecycle_preview_summary(ctx: TestContext)
 }
 
 #[sinex_test]
+async fn audit_get_ignores_truncated_lifecycle_preview_summary(ctx: TestContext) -> TestResult<()> {
+    let operation = ctx
+        .pool()
+        .state()
+        .start_operation("archive", "tester", json!({ "source": "audit-test" }))
+        .await?;
+
+    ctx.pool()
+        .state()
+        .update_operation_meta(
+            &operation.id,
+            OperationStatus::Running,
+            Some("truncated lifecycle summary"),
+            json!({
+                "affected_event_ids": ["not-a-complete-list"],
+                "affected_event_ids_count": 1000,
+                "affected_event_ids_sample_limit": 1,
+                "affected_event_ids_truncated": true,
+                "cascade_depth": 1,
+                "cascade_total": 1000,
+                "root_event_count": 999,
+                "dry_run": false,
+            }),
+        )
+        .await?;
+
+    let response = handle_audit_get(ctx.pool(), json!({ "operation_id": operation.id })).await?;
+    let response: AuditGetResponse = serde_json::from_value(response)?;
+
+    assert_eq!(response.event_count, 0);
+    assert!(!response.has_more);
+    Ok(())
+}
+
+#[sinex_test]
 async fn audit_get_ignores_non_lifecycle_preview_summary_shapes(
     ctx: TestContext,
 ) -> TestResult<()> {
