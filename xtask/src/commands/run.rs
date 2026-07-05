@@ -120,11 +120,14 @@ fn load_dev_source_bindings_manifest() -> Option<DevSourceBindingsManifest> {
 
 fn default_all_source_bindings_from_manifest(
     manifest: DevSourceBindingsManifest,
+    include_default_excluded: bool,
 ) -> Vec<DevSourceBinding> {
     manifest
         .bindings
         .into_iter()
-        .filter(|binding| !is_default_excluded_all_source_binding(&binding.source_id))
+        .filter(|binding| {
+            include_default_excluded || !is_default_excluded_all_source_binding(&binding.source_id)
+        })
         .collect()
 }
 
@@ -708,6 +711,12 @@ pub enum RunSubcommand {
         /// Limit the all-sources operation to one manifest service name
         #[arg(long)]
         service_name: Option<String>,
+        /// Include bindings excluded from default all-sources runs.
+        ///
+        /// Sources such as journald are intentionally opt-in for broad dev
+        /// loops, but proof runs need a first-class way to run them.
+        #[arg(long)]
+        include_default_excluded: bool,
     },
     /// Run all automatons
     AllAutomatons {
@@ -873,11 +882,13 @@ impl XtaskCommand for RunCommand {
                 instance_id,
                 reconcile,
                 service_name,
+                include_default_excluded,
             } => {
                 self.run_source_bindings_bundle(
                     instance_id.clone(),
                     *reconcile,
                     service_name.as_deref(),
+                    *include_default_excluded,
                     ctx,
                 )
                 .await
@@ -1200,6 +1211,7 @@ impl RunCommand {
         instance_prefix: Option<String>,
         reconcile: bool,
         selected_service_name: Option<&str>,
+        include_default_excluded: bool,
         ctx: &CommandContext,
     ) -> Result<CommandResult> {
         let manifest = load_dev_source_bindings_manifest().ok_or_else(|| {
@@ -1211,7 +1223,13 @@ impl RunCommand {
             .filter(|binding| is_default_excluded_all_source_binding(&binding.source_id))
             .map(|binding| binding.source_id.clone())
             .collect();
-        let mut bindings = default_all_source_bindings_from_manifest(manifest);
+        let included_default_excluded: Vec<String> = if include_default_excluded {
+            excluded.clone()
+        } else {
+            Vec::new()
+        };
+        let mut bindings =
+            default_all_source_bindings_from_manifest(manifest, include_default_excluded);
         if let Some(selected_service_name) = selected_service_name {
             bindings.retain(|binding| {
                 default_source_binding_service_name(binding) == selected_service_name
@@ -1275,7 +1293,8 @@ impl RunCommand {
                     "sources": sources,
                     "service_names": service_names,
                     "already_running_service_names": already_running,
-                    "excluded_sources": excluded,
+                    "default_excluded_sources": excluded,
+                    "included_default_excluded_sources": included_default_excluded,
                     "reconcile": reconcile,
                     "runtime": runtime,
                 })));
@@ -1290,7 +1309,8 @@ impl RunCommand {
                     "started_sources": [],
                     "started_service_names": [],
                     "already_running_service_names": already_running,
-                    "excluded_sources": excluded,
+                    "default_excluded_sources": excluded,
+                    "included_default_excluded_sources": included_default_excluded,
                     "job_ids": [],
                     "reconcile": reconcile,
                     "runtime": runtime,
@@ -1302,6 +1322,7 @@ impl RunCommand {
                 .run_source_bindings_background(
                     &runnable_bindings,
                     &excluded,
+                    &included_default_excluded,
                     &already_running,
                     reconcile,
                     instance_prefix.as_deref(),
@@ -1320,6 +1341,7 @@ impl RunCommand {
         &self,
         bindings: &[DevSourceBinding],
         excluded: &[String],
+        included_default_excluded: &[String],
         already_running: &[String],
         reconcile: bool,
         instance_prefix: Option<&str>,
@@ -1358,7 +1380,8 @@ impl RunCommand {
             .with_data(serde_json::json!({
                 "sources": sources,
                 "service_names": service_names,
-                "excluded_sources": excluded,
+                "default_excluded_sources": excluded,
+                "included_default_excluded_sources": included_default_excluded,
                 "already_running_service_names": already_running,
                 "reconcile": reconcile,
                 "job_ids": job_ids,

@@ -254,10 +254,42 @@ async fn test_default_all_source_bindings_excludes_journald() -> ::xtask::sandbo
         ],
     };
 
-    let bindings = default_all_source_bindings_from_manifest(manifest);
+    let bindings = default_all_source_bindings_from_manifest(manifest, false);
 
     assert_eq!(bindings.len(), 1);
     assert_eq!(bindings[0].source_id, "terminal.atuin-history");
+    Ok(())
+}
+
+#[sinex_test]
+async fn test_all_source_bindings_can_include_default_excluded_sources(
+) -> ::xtask::sandbox::TestResult<()> {
+    let manifest = DevSourceBindingsManifest {
+        bindings: vec![
+            DevSourceBinding {
+                source_id: "terminal.atuin-history".to_string(),
+                instance_idx: 1,
+                service_name: None,
+                runtime_config: None,
+                extra_args: Vec::new(),
+                extra_env: HashMap::new(),
+            },
+            DevSourceBinding {
+                source_id: "system.journald".to_string(),
+                instance_idx: 1,
+                service_name: None,
+                runtime_config: None,
+                extra_args: Vec::new(),
+                extra_env: HashMap::new(),
+            },
+        ],
+    };
+
+    let bindings = default_all_source_bindings_from_manifest(manifest, true);
+
+    assert_eq!(bindings.len(), 2);
+    assert_eq!(bindings[0].source_id, "terminal.atuin-history");
+    assert_eq!(bindings[1].source_id, "system.journald");
     Ok(())
 }
 
@@ -329,6 +361,7 @@ async fn test_all_sources_subcommand_can_target_reconcile_service()
         instance_id: None,
         reconcile: true,
         service_name: Some("source-driver-browser.history-3".to_string()),
+        include_default_excluded: false,
     });
 
     assert!(command.runs_bundle());
