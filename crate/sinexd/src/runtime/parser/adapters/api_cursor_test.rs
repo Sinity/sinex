@@ -47,10 +47,7 @@ impl ApiClient for MockClient {
     type Record = serde_json::Value;
     type Error = MockError;
 
-    async fn fetch(
-        &self,
-        cursor: Option<&str>,
-    ) -> Result<ApiFetchPage<Self::Record>, Self::Error> {
+    async fn fetch(&self, cursor: Option<&str>) -> Result<ApiFetchPage<Self::Record>, Self::Error> {
         let attempt = self.attempt_counter.fetch_add(1, Ordering::SeqCst);
         if attempt < self.fail_attempts {
             return Err(MockError(format!("transient failure #{attempt}")));
@@ -164,13 +161,18 @@ async fn mid_page_cursor_restarts_same_page() -> xtask::sandbox::TestResult<()> 
         .unwrap();
     let records: Vec<_> = stream.collect().await;
 
-    // records[0] is the first record of page 0; its cursor should be None
-    // (the start of page 0, which starts from None).
+    // records[0] is the first record of page 0; its page-start cursor is None,
+    // but it must be explicitly marked as an incomplete page so a restart
+    // re-fetches page 0 instead of treating the checkpoint as exhausted.
     let first = records[0].as_ref().unwrap();
     let cursor_after_first = adapter.cursor_after(first).unwrap();
     assert!(
         cursor_after_first.last_cursor.is_none(),
-        "first record should carry page-start cursor (None)"
+        "first record should carry page-start cursor (None)",
+    );
+    assert!(
+        cursor_after_first.page_incomplete,
+        "first record must distinguish page-0 mid-page checkpoint from terminal exhaustion"
     );
 
     // records[1] is the last record of page 0; cursor should advance to page 1.
@@ -181,6 +183,41 @@ async fn mid_page_cursor_restarts_same_page() -> xtask::sandbox::TestResult<()> 
         Some("1"),
         "last record of page 0 should carry next-page cursor '1'"
     );
+    assert!(
+        !cursor_after_second.page_incomplete,
+        "last record of a page must mark the page complete"
+    );
+    Ok(())
+}
+
+#[sinex_test]
+async fn page_zero_mid_page_checkpoint_refetches_page_zero() -> xtask::sandbox::TestResult<()> {
+    let pages = vec![
+        vec![serde_json::json!({"i": 1}), serde_json::json!({"i": 2})],
+        vec![serde_json::json!({"i": 3})],
+    ];
+    let client = MockClient::new(pages);
+    let adapter = ApiCursorAdapter::new(client).with_retry(RetryPolicy::never());
+
+    let checkpoint = Some(ApiCursorPosition {
+        last_cursor: None,
+        last_etag: None,
+        page_incomplete: true,
+    });
+    let stream = adapter
+        .open(dummy_material_id(), &ApiCursorConfig::default(), checkpoint)
+        .await
+        .unwrap();
+    let records: Vec<_> = stream.collect().await;
+
+    assert_eq!(
+        records.len(),
+        3,
+        "page-0 mid-page checkpoint should re-fetch page 0, not stop as exhausted"
+    );
+    let first: serde_json::Value =
+        serde_json::from_slice(&records[0].as_ref().unwrap().bytes).unwrap();
+    assert_eq!(first["i"], 1);
     Ok(())
 }
 
@@ -258,10 +295,7 @@ impl ApiClient for TrackedMockClient {
     type Record = serde_json::Value;
     type Error = MockError;
 
-    async fn fetch(
-        &self,
-        cursor: Option<&str>,
-    ) -> Result<ApiFetchPage<Self::Record>, Self::Error> {
+    async fn fetch(&self, cursor: Option<&str>) -> Result<ApiFetchPage<Self::Record>, Self::Error> {
         self.fetch_count.fetch_add(1, Ordering::SeqCst);
 
         let page_idx: usize = cursor.and_then(|c| c.parse().ok()).unwrap_or(0);
@@ -442,8 +476,7 @@ async fn initial_cursor_from_config() -> xtask::sandbox::TestResult<()> {
 }
 
 #[sinex_test]
-async fn runtime_checkpoint_overrides_config_initial_cursor() -> xtask::sandbox::TestResult<()>
-{
+async fn runtime_checkpoint_overrides_config_initial_cursor() -> xtask::sandbox::TestResult<()> {
     let pages = vec![
         vec![serde_json::json!({"p": 0})],
         vec![serde_json::json!({"p": 1})],
@@ -459,6 +492,7 @@ async fn runtime_checkpoint_overrides_config_initial_cursor() -> xtask::sandbox:
     let checkpoint = Some(ApiCursorPosition {
         last_cursor: Some("2".to_owned()),
         last_etag: None,
+        page_incomplete: false,
     });
     let stream = adapter
         .open(dummy_material_id(), &config, checkpoint)
@@ -492,6 +526,7 @@ async fn terminal_checkpoint_does_not_reimport() -> xtask::sandbox::TestResult<(
     let terminal = Some(ApiCursorPosition {
         last_cursor: None,
         last_etag: Some("etag-final".to_owned()),
+        page_incomplete: false,
     });
     let stream = adapter
         .open(dummy_material_id(), &config, terminal)
@@ -503,6 +538,20 @@ async fn terminal_checkpoint_does_not_reimport() -> xtask::sandbox::TestResult<(
         records.is_empty(),
         "terminal checkpoint must not re-import; got {} records",
         records.len()
+    );
+    Ok(())
+}
+
+#[sinex_test]
+async fn legacy_terminal_checkpoint_defaults_to_page_complete() -> xtask::sandbox::TestResult<()> {
+    let checkpoint: ApiCursorPosition =
+        serde_json::from_str(r#"{"last_cursor":null,"last_etag":"etag-final"}"#)?;
+
+    assert!(checkpoint.last_cursor.is_none());
+    assert_eq!(checkpoint.last_etag.as_deref(), Some("etag-final"));
+    assert!(
+        !checkpoint.page_incomplete,
+        "legacy checkpoints without the new flag must remain terminal"
     );
     Ok(())
 }

@@ -263,7 +263,21 @@ impl SharedJournalctlStream {
         material_id: sinex_primitives::ids::Id<sinex_primitives::events::SourceMaterial>,
         config: &JournalctlStreamConfig,
     ) -> crate::runtime::parser::ParserResult<Self> {
-        Self::with_capacity(material_id, config, BROADCAST_CAPACITY).await
+        Self::with_capacity_from_cursor(material_id, config, None, BROADCAST_CAPACITY).await
+    }
+
+    /// Spawn from a persisted journal cursor and start broadcasting records.
+    ///
+    /// Use this constructor when the shared stream is owned by a runtime that
+    /// recovered a [`JournalctlCursor`] checkpoint. Without the cursor, the
+    /// fan-out subprocess starts from the config default and can silently skip
+    /// or duplicate retained journal records after restart.
+    pub async fn from_cursor(
+        material_id: sinex_primitives::ids::Id<sinex_primitives::events::SourceMaterial>,
+        config: &JournalctlStreamConfig,
+        cursor: Option<JournalctlCursor>,
+    ) -> crate::runtime::parser::ParserResult<Self> {
+        Self::with_capacity_from_cursor(material_id, config, cursor, BROADCAST_CAPACITY).await
     }
 
     /// Like [`new`](Self::new) but with a configurable broadcast channel capacity.
@@ -272,11 +286,22 @@ impl SharedJournalctlStream {
         config: &JournalctlStreamConfig,
         capacity: usize,
     ) -> crate::runtime::parser::ParserResult<Self> {
+        Self::with_capacity_from_cursor(material_id, config, None, capacity).await
+    }
+
+    /// Like [`from_cursor`](Self::from_cursor) but with a configurable
+    /// broadcast channel capacity.
+    pub async fn with_capacity_from_cursor(
+        material_id: sinex_primitives::ids::Id<sinex_primitives::events::SourceMaterial>,
+        config: &JournalctlStreamConfig,
+        cursor: Option<JournalctlCursor>,
+        capacity: usize,
+    ) -> crate::runtime::parser::ParserResult<Self> {
         let (tx, _rx) = broadcast::channel(capacity);
 
         // Open the underlying adapter to get the record stream.
         let adapter = JournalctlStreamAdapter;
-        let stream = adapter.open(material_id, config, None).await?;
+        let stream = adapter.open(material_id, config, cursor).await?;
 
         let driver_tx = tx.clone();
         tokio::spawn(async move {
