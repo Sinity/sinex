@@ -16,6 +16,7 @@ use futures::future::BoxFuture;
 use sinex_primitives::parser::SourceId;
 use std::collections::HashMap;
 use std::sync::LazyLock;
+use std::sync::Arc;
 
 /// Type-erased factory function for running a source driver.
 ///
@@ -172,16 +173,36 @@ where
     A::Config: Clone + serde::Serialize + serde::de::DeserializeOwned + Send + Sync,
     A::Cursor: Clone + serde::Serialize + serde::de::DeserializeOwned + Send + Sync,
 {
-    use crate::runtime::SourceDriverRuntime;
-    use crate::runtime::parser::AdapterBackedSource;
     use crate::runtime::runtime_cli::{RuntimeCli, RuntimeCliRunner};
     use clap::Parser;
 
     let parsed = RuntimeCli::parse_from(args);
-    let source = AdapterBackedSource::<A, P>::new(source_id);
-    let adapter = SourceDriverRuntime::new(source);
-    let mut runner = RuntimeCliRunner::new(adapter);
+    let adapter = adapter_source_runtime::<A, P>(source_id);
+    let replay_source_id = source_id;
+    let mut runner = RuntimeCliRunner::new_with_factory(
+        adapter,
+        Arc::new(move || adapter_source_runtime::<A, P>(replay_source_id)),
+    );
     runner.run(parsed).await.map_err(std::convert::Into::into)
+}
+
+fn adapter_source_runtime<A, P>(
+    source_id: &'static str,
+) -> crate::runtime::SourceDriverRuntime<crate::runtime::parser::AdapterBackedSource<A, P>>
+where
+    A: crate::runtime::parser::InputShapeAdapter
+        + Default
+        + Send
+        + Sync
+        + 'static
+        + crate::runtime::parser::InputShapeAdapterExt,
+    P: sinex_primitives::parser::MaterialParser + Default + Send + Sync + 'static,
+    A::Config: Clone + serde::Serialize + serde::de::DeserializeOwned + Send + Sync,
+    A::Cursor: Clone + serde::Serialize + serde::de::DeserializeOwned + Send + Sync,
+{
+    crate::runtime::SourceDriverRuntime::new(
+        crate::runtime::parser::AdapterBackedSource::<A, P>::new(source_id),
+    )
 }
 
 /// Run a source driver through the standard runtime lifecycle.
@@ -205,4 +226,22 @@ where
     let source_runtime = SourceDriverRuntime::new(I::default());
     let mut runner = RuntimeCliRunner::new(source_runtime);
     runner.run(parsed).await.map_err(std::convert::Into::into)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::runtime::RuntimeModule;
+    use crate::runtime::parser::SqliteRowAdapter;
+    use crate::sources::source_contracts::desktop::activitywatch::ActivityWatchParser;
+    use xtask::sandbox::prelude::*;
+
+    #[sinex_test]
+    async fn adapter_source_runtime_preserves_registered_source_id() -> TestResult<()> {
+        let runtime =
+            adapter_source_runtime::<SqliteRowAdapter, ActivityWatchParser>("desktop.activitywatch");
+
+        assert_eq!(runtime.module_name(), "desktop.activitywatch");
+        Ok(())
+    }
 }
