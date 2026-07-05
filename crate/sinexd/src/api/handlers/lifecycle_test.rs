@@ -2,6 +2,30 @@ use super::*;
 use xtask::sandbox::sinex_test;
 
 #[sinex_test]
+async fn lifecycle_audit_summary_samples_large_event_id_sets() -> TestResult<()> {
+    let event_ids = (0..(EVENT_ID_AUDIT_SAMPLE_LIMIT + 2))
+        .map(|_| Uuid::now_v7())
+        .collect::<Vec<_>>();
+
+    let summary = lifecycle_audit_summary(&event_ids, 2, event_ids.len(), event_ids.len(), true);
+
+    assert_eq!(
+        summary["affected_event_ids"].as_array().map(Vec::len),
+        Some(EVENT_ID_AUDIT_SAMPLE_LIMIT)
+    );
+    assert_eq!(
+        summary["affected_event_ids_count"].as_u64(),
+        Some(event_ids.len() as u64)
+    );
+    assert_eq!(
+        summary["affected_event_ids_sample_limit"].as_u64(),
+        Some(EVENT_ID_AUDIT_SAMPLE_LIMIT as u64)
+    );
+    assert_eq!(summary["affected_event_ids_truncated"], true);
+    Ok(())
+}
+
+#[sinex_test]
 async fn parse_duration_to_timestamp_preserves_subsecond_precision() -> TestResult<()> {
     let before = Timestamp::now();
     let parsed = parse_duration_to_timestamp("500ms")

@@ -58,6 +58,14 @@ fn explicit_lifecycle_summary(
         return Ok(None);
     };
 
+    if summary
+        .get("affected_event_ids_truncated")
+        .and_then(Value::as_bool)
+        .unwrap_or(false)
+    {
+        return Ok(None);
+    }
+
     let summary =
         serde_json::from_value::<LifecycleOperationSummary>(summary.clone()).map_err(|error| {
             SinexError::invalid_state(format!(
