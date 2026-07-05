@@ -64,13 +64,28 @@ fn classify_bucket(bucket_id: &str) -> BucketKind {
 // Timestamp parsing helpers
 // ---------------------------------------------------------------------------
 
-/// Parse an ISO8601 datetime string from `ActivityWatch` into a `Timestamp`.
+/// Parse an ActivityWatch timestamp into a `Timestamp`.
 ///
-/// `ActivityWatch` stores timestamps as `"2024-01-15T14:23:45.123456+00:00"`.
-fn parse_aw_timestamp(s: &str) -> Option<Timestamp> {
-    time::OffsetDateTime::parse(s, &time::format_description::well_known::Rfc3339)
-        .ok()
-        .map(Timestamp::new)
+/// Older fixtures and exports may expose RFC3339 strings, but the live
+/// `aw-server-rust` SQLite schema stores `events.starttime` as Unix
+/// nanoseconds.
+fn parse_aw_timestamp(value: &serde_json::Value) -> Option<Timestamp> {
+    match value {
+        serde_json::Value::Number(number) => number
+            .as_i64()
+            .and_then(|nanos| Timestamp::from_unix_timestamp_nanos(i128::from(nanos))),
+        serde_json::Value::String(raw) => {
+            time::OffsetDateTime::parse(raw, &time::format_description::well_known::Rfc3339)
+                .ok()
+                .map(Timestamp::new)
+                .or_else(|| {
+                    raw.parse::<i64>()
+                        .ok()
+                        .and_then(|nanos| Timestamp::from_unix_timestamp_nanos(i128::from(nanos)))
+                })
+        }
+        _ => None,
+    }
 }
 
 fn activitywatch_data_object(row: &serde_json::Value) -> serde_json::Value {
@@ -175,8 +190,8 @@ impl MaterialParser for ActivityWatchParser {
         }
 
         // Extract common fields.
-        let started_at = row.get("started_at").and_then(|v| v.as_str());
-        let ts_orig = started_at
+        let ts_orig = row
+            .get("started_at")
             .and_then(parse_aw_timestamp)
             .unwrap_or_else(Timestamp::now);
 
@@ -282,8 +297,9 @@ impl MaterialParser for ActivityWatchParser {
         //   buckets: id INTEGER PRIMARY KEY, name TEXT UNIQUE NOT NULL,
         //            type, client, hostname, created, data, metadata
         // The parser reads `bucket_id` (the *human name* like
-        // `aw-watcher-window_<host>`), `started_at`, `duration` (computed),
-        // and `data`. JOIN buckets and expose `buckets.name AS bucket_id` —
+        // `aw-watcher-window_<host>`), `started_at` (Unix nanoseconds from
+        // `events.starttime`), `duration` (computed), and `data`. JOIN
+        // buckets and expose `buckets.name AS bucket_id` —
         // not `buckets.id` (the integer primary key). The earlier shape
         // selected `buckets.id` so every row classified as
         // `BucketKind::Unknown` (the prefix `aw-watcher-*` never matched
