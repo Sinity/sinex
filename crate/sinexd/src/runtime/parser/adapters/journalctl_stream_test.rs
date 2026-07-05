@@ -31,14 +31,15 @@ async fn test_cursor_after_extracts_cursor_field() -> xtask::sandbox::TestResult
 }
 
 #[sinex_test]
-async fn test_cursor_after_fallback_to_frame_index() -> xtask::sandbox::TestResult<()> {
+async fn test_cursor_after_missing_cursor_is_not_checkpointable() -> xtask::sandbox::TestResult<()> {
     let mid = dummy_material_id();
     let records = records_from_journal_lines(mid, &[JOURNAL_LINE_NO_CURSOR]);
     let record = records[0].as_ref().unwrap();
 
     let adapter = JournalctlStreamAdapter;
-    let cursor = adapter.cursor_after(record).unwrap();
-    assert!(cursor.cursor.starts_with("frame:"));
+    let error = adapter.cursor_after(record).unwrap_err();
+    assert!(format!("{error}").contains("has no __CURSOR"));
+    assert!(!format!("{error}").contains("frame:"));
     Ok(())
 }
 
