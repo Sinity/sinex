@@ -64,7 +64,8 @@ pub enum JobsSubcommand {
         #[arg(short, long, default_value = "0")]
         timeout: u64,
     },
-    /// Cancel a running job
+    /// Cancel a running job (SIGTERM to the process group, SIGKILL escalation)
+    #[command(visible_aliases = ["stop", "kill"])]
     Cancel {
         #[arg(value_name = "JOB_ID")]
         id: i64,
