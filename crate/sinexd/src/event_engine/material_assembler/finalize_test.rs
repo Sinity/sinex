@@ -440,6 +440,28 @@ async fn slice_completed_pending_end_claims_finalization_before_extra_slice(
     let state_handle = assembler
         .get_state_handle(&material_id)
         .ok_or_else(|| SinexError::invalid_state("missing claimed assembler state"))?;
+
+    // Finalization is decoupled from the frame path onto a bounded worker set
+    // (#2187): phase only flips to Finalizing once the spawned worker
+    // actually acquires a semaphore permit and runs try_finalize_pending_end.
+    // On this test's single-threaded runtime that worker cannot be polled
+    // until this task yields at a real await point, so checking phase
+    // immediately here is deterministically wrong, not flaky — wait for the
+    // transition first, matching the pattern used elsewhere in this file.
+    {
+        let state_handle = state_handle.clone();
+        WaitHelpers::wait_for_condition(
+            || {
+                let state_handle = state_handle.clone();
+                async move {
+                    let state = state_handle.lock().await;
+                    Ok::<bool, SinexError>(state.phase == AssemblyPhase::Finalizing)
+                }
+            },
+            Timeouts::STANDARD,
+        )
+        .await?;
+    }
     {
         let state = state_handle.lock().await;
         assert_eq!(state.phase, AssemblyPhase::Finalizing);
@@ -548,6 +570,30 @@ async fn pending_end_ignores_late_slice_beyond_contract_before_completion(
     }
 
     io::handle_slice(&assembler, material_id, 0, payload.clone()).await?;
+
+    // Finalization is decoupled from the frame path onto a bounded worker set
+    // (#2187): the slice that completes the material schedules the finalize
+    // via dispatch_finalize rather than running it inline, and phase only
+    // flips to Finalizing once that worker actually acquires a semaphore
+    // permit and starts (see try_finalize_pending_end). On this test's
+    // single-threaded runtime the spawned worker cannot be polled until this
+    // task yields at a real await point, so checking phase immediately here
+    // is deterministically wrong, not flaky — wait for the transition first,
+    // matching the pattern used above for the out-of-order-completion case.
+    {
+        let state_handle = state_handle.clone();
+        WaitHelpers::wait_for_condition(
+            || {
+                let state_handle = state_handle.clone();
+                async move {
+                    let state = state_handle.lock().await;
+                    Ok::<bool, SinexError>(state.phase == AssemblyPhase::Finalizing)
+                }
+            },
+            Timeouts::STANDARD,
+        )
+        .await?;
+    }
     {
         let state = state_handle.lock().await;
         assert_eq!(state.phase, AssemblyPhase::Finalizing);
