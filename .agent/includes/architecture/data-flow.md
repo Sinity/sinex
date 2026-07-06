@@ -99,18 +99,22 @@ All share `AutomatonRuntime<N>` for: NATS consumer, checkpoint persistence, heal
 
 Each derived event carries `automaton_model`, `temporal_policy`, and `semantics_version` — self-documenting provenance metadata.
 
-**Current automata** (in `sinexd::automata`, hosted by `sinexd` and enabled
-through the NixOS `services.sinex.automata` configuration):
-- Command canonicalizer — Transducer, `command.canonical`
-- Analytics — Windowed (250-event window), `analytics.insight`
-- Health aggregator — ScopeReconciler, `health.aggregated_report`
-- Session detector — Windowed, `activity.session.boundary` (enabled by NixOS module default)
-- Hourly summarizer — Windowed, hourly rollups
-- Daily summarizer — Windowed, daily rollups
-
-Entity/relation shadow-lane automata are present in `sinexd::automata`; activation
-as the main consumer substrate is tracked by #1087/#1346. Richer derivations
-remain the open frontier.
+**Current automata**: the source of truth is the `AutomatonSpec` registry in
+`crate/sinexd/src/automata/registry.rs` (16 registered as of 2026-07-06, all
+hosted by `sinexd` and selected via `SINEX_AUTOMATA_ENABLED` / the NixOS
+`services.sinex.automata` configuration). Rather than a census that drifts,
+know the families:
+- Rollup/session family — session detector (`activity.session.boundary`),
+  hourly/daily summarizers, analytics (Windowed)
+- Attention family — interval-lift (declarative transition→`state.interval`
+  rules over Hyprland/ActivityWatch/systemd) and attention-stream (the recall
+  timeline substrate)
+- Entity/relation family — extractor, resolver, enricher, relation-extractor,
+  tag-applier (default-registered; consumption is an open decision, bead
+  sinex-pq5)
+- Mechanical — command canonicalizer (Transducer), health aggregator
+  (ScopeReconciler), document-parser, embedding-producer (receipts-only until
+  a model client exists), instruction-reconciler
 
 ### Windowed Example: Session Detector
 

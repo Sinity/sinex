@@ -69,7 +69,7 @@ Implication: automaton-heavy workloads never hit the COPY fast path. COPY only b
 | Event batch | 100 events or 1s | Latency vs throughput balance |
 | COPY threshold | 50 rows | Below: QueryBuilder faster. Above: COPY faster |
 | NATS semaphores | Raw events: 100, telemetry: 16, DLQ: 16, processing failures: 16 | Per-traffic-class flood protection (`nats_publisher.rs:21-24`) |
-| Confirmation buffer | 10K events | Memory cap for provisional events |
+| Automaton consumer ack-pending | 128 | Per-automaton confirmed-stream in-flight bound (`SINEX_AUTOMATON_CONSUMER_MAX_ACK_PENDING`) |
 | Payload filter depth | 8 levels | Prevents pathological recursive JSONB queries |
 | Pagination max | 1000 rows | Prevents unbounded result sets |
 | SSE batch | 20ms / 32 IDs | Reduces DB fetches during burst |

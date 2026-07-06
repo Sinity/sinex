@@ -280,6 +280,7 @@ Run all source scan targets
 | `--instance-id` | yes | no | Instance ID prefix |
 | `--reconcile` | no | no | Start only source bindings that are not already running |
 | `--service-name` | yes | no | Limit the all-sources operation to one manifest service name |
+| `--include-default-excluded` | no | no | Include bindings excluded from default all-sources runs |
 
 
 ### `xtask run all-automatons`
