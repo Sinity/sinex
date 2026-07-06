@@ -226,6 +226,27 @@ Conventions for bead content:
   3 = design/meta/legibility, 4 = far-backlog design notes.
 - `bd dolt push` follows the same policy as `git push` (see repo CLAUDE.md).
 
+Execution-grade bar (what makes a bead startable in one read — the target
+state for every `ready` bead at priority ≤ 2):
+
+- **Description** states the problem plus the CURRENT verified state; when a
+  claim cites `file:line`, date it (line numbers rot — a dated cite tells the
+  next agent whether to re-verify). When scope originated in a handoff packet
+  or research doc, link it instead of restating.
+- **Design** carries the settled DECISION (marked as settled — agents must not
+  re-litigate), exact TARGETS (`file:line` or symbol names), known pitfalls,
+  and interacting beads by id.
+- **Acceptance** is observable and machine-checkable where possible, and names
+  the VERIFY commands in repo-native form (`xtask test -p … -E 'test(…)'`,
+  `xtask schema strict-diff`, an MCP/sinexctl probe) — not "tests pass".
+- **Decision beads** (`type=decision` or Decision-titled) carry an options
+  frame (A/B/C with costs and interactions) in design even before the
+  decision; the AC is "recorded decision + follow-up beads dep-linked +
+  operator sign-off where authority requires it".
+- **Reconcile on claim**: the first agent action on claiming a bead is to
+  re-verify its claims against master and update the description if the world
+  moved (fixes land fast here; a 3-day-old bead can be half-done already).
+
 Do not use TodoWrite/TaskCreate-style ephemeral task lists for anything that
 should outlive the turn; local plans are execution checklists only.
 
