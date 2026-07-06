@@ -1062,6 +1062,78 @@ pub(super) async fn handle_slice(
         "Assembly state machine accepted slice for existing material state"
     );
 
+    if let Some(end) = state.pending_end.as_ref()
+        && end.total_size_bytes >= 0
+    {
+        let expected_total_bytes = end.total_size_bytes;
+        let expected_slices = end.total_slices;
+        let Some(incoming_end) = offset.checked_add(data.len() as i64) else {
+            let resume_phase = state.phase;
+            state.phase = AssemblyPhase::Finalizing;
+            drop(state);
+
+            assembler
+                .route_material_error(
+                    material_id,
+                    "slice_offset_overflow",
+                    serde_json::json!({
+                        "offset": offset,
+                        "incoming_bytes": data.len(),
+                        "expected_total_bytes": expected_total_bytes,
+                    }),
+                )
+                .await;
+            assembler
+                .finalize_failed_material_claimed_checked(
+                    material_id,
+                    "slice_offset_overflow",
+                    resume_phase,
+                )
+                .await?;
+            return Ok(());
+        };
+
+        if offset >= expected_total_bytes {
+            debug!(
+                material_id = %material_id,
+                offset,
+                incoming_bytes = data.len(),
+                expected_total_bytes,
+                expected_slices,
+                "Ignoring slice beyond recorded material END contract"
+            );
+            return Ok(());
+        }
+
+        if incoming_end > expected_total_bytes {
+            let resume_phase = state.phase;
+            state.phase = AssemblyPhase::Finalizing;
+            drop(state);
+
+            assembler
+                .route_material_error(
+                    material_id,
+                    "slice_exceeds_end_contract",
+                    serde_json::json!({
+                        "offset": offset,
+                        "incoming_bytes": data.len(),
+                        "incoming_end": incoming_end,
+                        "expected_total_bytes": expected_total_bytes,
+                        "expected_slices": expected_slices,
+                    }),
+                )
+                .await;
+            assembler
+                .finalize_failed_material_claimed_checked(
+                    material_id,
+                    "slice_exceeds_end_contract",
+                    resume_phase,
+                )
+                .await?;
+            return Ok(());
+        }
+    }
+
     // Update last slice received timestamp
     state.last_slice_received = Timestamp::now();
 

@@ -75,7 +75,17 @@ impl Transducer for EntityExtractor {
         "entity.extracted"
     }
     fn input_provenance_filter(&self) -> InputProvenanceFilter {
-        InputProvenanceFilter::Any
+        // MaterialOnly, NOT Any. Entities are observed in real source data (a URL
+        // in a command, an email in a journal line, a path in a file event) —
+        // material-provenance events. Consuming derived events (`Any`) made the
+        // extractor consume its OWN `entity.extracted` output (also derived) and
+        // re-extract an entity from the entity's text, emitting another
+        // entity.extracted — a runaway feedback loop that dominated the pipeline
+        // (observed: tens of thousands of entity-extractor events per minute,
+        // ~99% parented by other entity-extractor events). Derived events are
+        // interpretations whose entities already trace to their material parents,
+        // so MaterialOnly loses no real entities while breaking the loop.
+        InputProvenanceFilter::MaterialOnly
     }
 
     async fn process(
