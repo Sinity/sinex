@@ -19,7 +19,7 @@ use sinex_primitives::event_contracts::find_event_contract_for_pair;
 use sinex_primitives::events::admission::{ACCEPTED_ENVELOPE_VERSIONS, EventIntent};
 use sinex_primitives::events::builder::{EventId, Provenance};
 use sinex_primitives::events::{EquivalenceKey, Event, ScopeKey};
-use sinex_primitives::{Id, JsonValue, Timestamp, Uuid};
+use sinex_primitives::{Id, JsonValue, Timestamp, Uuid, strip_postgres_jsonb_nul_chars};
 use std::collections::{HashSet, VecDeque};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
@@ -1162,6 +1162,18 @@ fn admitted_to_stream_rows(batch: &[&AdmittedEvent]) -> EventEngineResult<Vec<St
                 anchor_byte,
             ) = sinex_db::repositories::events::conversions::extract_provenance(event)?;
 
+            let mut payload = event.payload.clone();
+            let stripped_nul_bytes = strip_postgres_jsonb_nul_chars(&mut payload);
+            if stripped_nul_bytes > 0 {
+                warn!(
+                    event_id = %admitted.event_id,
+                    source = %event.source,
+                    event_type = %event.event_type,
+                    stripped_nul_bytes,
+                    "stripped NUL characters from event payload before PostgreSQL JSONB persistence"
+                );
+            }
+
             Ok(StreamBatchRow {
                 id: admitted.event_id,
                 source: event.source.clone(),
@@ -1173,7 +1185,7 @@ fn admitted_to_stream_rows(batch: &[&AdmittedEvent]) -> EventEngineResult<Vec<St
                         .with_context("event_type", event.event_type.as_str().to_string())
                 })?,
                 host: event.host.clone(),
-                payload: event.payload.clone(),
+                payload,
                 source_material_id,
                 anchor_byte,
                 offset_start,
