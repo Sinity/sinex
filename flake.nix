@@ -890,10 +890,13 @@ SQL
 
                   first=1
                   printf '['
+                  # Only include files whose changes can affect the checkout-local
+                  # Cargo-built xtask binary. flake.nix changes are picked up by
+                  # re-entering nix develop; rebuilding target/debug/xtask from an
+                  # already-loaded shell cannot apply wrapper/devshell changes.
                   for extra_dep in \
                     "$root_dir/Cargo.toml" \
                     "$root_dir/Cargo.lock" \
-                    "$root_dir/flake.nix" \
                     "$root_dir/xtask/Cargo.toml" \
                     "$root_dir/.cargo/config.toml"
                   do
@@ -1082,10 +1085,11 @@ SQL
                   [ ! -e "$ref_path" ] && return 0
                   [ ! -r "$depfile_path" ] && return 0
 
+                  # Keep this list in sync with _sinex_xtask_collect_source_triggers:
+                  # these are Cargo-built xtask binary inputs, not devshell inputs.
                   for extra_dep in \
                     "$root_dir/Cargo.toml" \
                     "$root_dir/Cargo.lock" \
-                    "$root_dir/flake.nix" \
                     "$root_dir/xtask/Cargo.toml" \
                     "$root_dir/.cargo/config.toml"
                   do
@@ -1499,20 +1503,50 @@ SQL
                   exec "$bin_path" "$@"
                 }
 
+                _sinex_xtask_exec_observability_with_existing_binary() {
+                  local observed_at
+                  observed_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+                  _sinex_xtask_write_current_rebuild_trigger
+                  _sinex_xtask_record_wrapper_event \
+                    "checkout-local-rebuild" \
+                    "deferred-observability" \
+                    "$observed_at" \
+                    "$observed_at" \
+                    0 \
+                    "" \
+                    "$@"
+                  _sinex_xtask_exec_checkout_binary "$@"
+                }
+
                 _sinex_xtask_exec_nix_readonly_fallback() {
+                  if [ "''${SINEX_XTASK_ALLOW_NIX_READONLY_FALLBACK:-0}" != "1" ]; then
+                    echo "✗ no checkout-local xtask binary is available for this read-only command" >&2
+                    echo "  refusing to run 'nix run $root_dir#xtask' because that can trigger an unexpected build" >&2
+                    echo "  run a normal xtask build/check command to rebuild the checkout-local binary, or set SINEX_XTASK_ALLOW_NIX_READONLY_FALLBACK=1 for an intentional Nix fallback" >&2
+                    return 127
+                  fi
                   if ! command -v nix >/dev/null 2>&1; then
                     echo "✗ no checkout-local xtask binary exists and nix is unavailable for the read-only fallback" >&2
                     return 127
                   fi
-                  echo "ℹ  Using Nix-built xtask fallback for read-only command; checkout-local Postgres/NATS will not be started" >&2
+                  echo "ℹ  Using explicitly allowed Nix-built xtask fallback for read-only command; checkout-local Postgres/NATS will not be started" >&2
                   exec nix run "$root_dir#xtask" -- "$@"
                 }
 
                 _sinex_xtask_wait_for_existing_build() {
+                  local _lock_pid _lock_age
                   while [ -d "$build_lock_dir" ]; do
                     if [ -r "$build_lock_dir/pid" ]; then
                       _lock_pid="$(cat "$build_lock_dir/pid" 2>/dev/null || true)"
                       if [ -n "$_lock_pid" ] && ! kill -0 "$_lock_pid" 2>/dev/null; then
+                        echo "⚠  Removing stale xtask build lock from dead pid $_lock_pid: $build_lock_dir" >&2
+                        rm -rf "$build_lock_dir"
+                        continue
+                      fi
+                    else
+                      _lock_age="$(($(date +%s) - $(stat -c %Y "$build_lock_dir" 2>/dev/null || date +%s)))"
+                      if [ "$_lock_age" -ge 5 ]; then
+                        echo "⚠  Removing stale xtask build lock with no pid file: $build_lock_dir" >&2
                         rm -rf "$build_lock_dir"
                         continue
                       fi
@@ -1545,11 +1579,13 @@ SQL
                   fi
 
                   if [ "$force_rebuild" = "1" ] || _sinex_xtask_needs_build; then
-                    local rebuild_started_at rebuild_started_ns rebuild_finished_at rebuild_finished_ns rebuild_duration_ms
+                    local rebuild_started_at rebuild_started_ns rebuild_finished_at rebuild_finished_ns rebuild_duration_ms stage_started_ns
                     rebuild_started_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
                     rebuild_started_ns="$(date +%s%N)"
                     rm -f "$build_stage_metrics" "$build_stage_metrics.tmp" "$build_rebuild_trigger"
+                    stage_started_ns="$(_sinex_xtask_stage_start)"
                     _sinex_xtask_write_current_rebuild_trigger
+                    _sinex_xtask_stage_record "rebuild_trigger_capture" "$stage_started_ns"
                     echo "ℹ  Rebuilding checkout-local xtask (bootstraps SQLx Postgres/schema first)..." >&2
                     if _sinex_xtask_build_checkout_binary >"$build_failure_log" 2>&1; then
                       rebuild_finished_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
@@ -1580,11 +1616,13 @@ SQL
 
                     _sinex_xtask_postgres_preexisting=0
                     rm -f "$build_postgres_owned_marker"
+                    stage_started_ns="$(_sinex_xtask_stage_start)"
                     if _sinex_xtask_postgres_ready; then
                       _sinex_xtask_postgres_preexisting=1
                     else
                       touch "$build_postgres_owned_marker"
                     fi
+                    _sinex_xtask_stage_record "sqlx_postgres_probe" "$stage_started_ns"
                     trap '_sinex_xtask_stop_bootstrap_postgres' EXIT
 
                     build_rc=0
@@ -1595,7 +1633,9 @@ SQL
                     if [ "$build_rc" -eq 0 ]; then
                       touch "$bin_path" "$cargo_target_dir/debug/xtask.d" 2>/dev/null || true
                     fi
+                    stage_started_ns="$(_sinex_xtask_stage_start)"
                     _sinex_xtask_stop_bootstrap_postgres
+                    _sinex_xtask_stage_record "sqlx_postgres_stop" "$stage_started_ns"
                     trap - EXIT
                     return "$build_rc"
                   )
@@ -1868,13 +1908,14 @@ SQL
                   && _sinex_xtask_can_use_existing_binary "$@"
                 then
                   if _sinex_xtask_needs_build; then
+                    if _sinex_xtask_is_observability_command "$@"; then
+                      _sinex_xtask_exec_observability_with_existing_binary "$@"
+                    fi
                     if _sinex_xtask_failed_build_is_current; then
                       echo "ℹ  Using existing xtask binary; local rebuild is currently broken for these sources" >&2
                       if [ -r "$build_failure_log" ]; then
                         echo "  log: $build_failure_log" >&2
                       fi
-                    elif _sinex_xtask_is_observability_command "$@"; then
-                      echo "ℹ  Using existing xtask binary for read-only command while sources are newer" >&2
                     else
                       if ! _sinex_xtask_build_with_lock "$@"; then
                         if _sinex_xtask_failed_build_is_current; then

@@ -126,13 +126,30 @@ fn push_escaped(out: &mut String, input: &str) {
     }
 }
 
-/// Derive a canonical string key from an optional reference.
+const MAX_EQUIVALENCE_KEY_BYTES: usize = 512;
+
+fn bounded_occurrence_key_string(key: &OccurrenceKey) -> String {
+    let exact = occurrence_key_string(key);
+    if exact.len() <= MAX_EQUIVALENCE_KEY_BYTES {
+        return exact;
+    }
+
+    format!(
+        "{}|occurrence_hash={}",
+        key.source_id.as_str(),
+        blake3::hash(exact.as_bytes()).to_hex()
+    )
+}
+
+/// Derive a canonical DB-safe string key from an optional reference.
 ///
 /// Returns `None` if the occurrence key is absent, otherwise
-/// `Some(occurrence_key_string(key))`.
+/// `Some(key)`. Short keys retain the exact escaped occurrence string.
+/// Longer keys are represented by a stable BLAKE3 digest so the projected
+/// `equivalence_key` always satisfies the database's 512-byte bound.
 #[must_use]
 pub fn maybe_occurrence_key_string(key: Option<&OccurrenceKey>) -> Option<String> {
-    key.map(occurrence_key_string)
+    key.map(bounded_occurrence_key_string)
 }
 
 #[cfg(test)]

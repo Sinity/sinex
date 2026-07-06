@@ -20,6 +20,7 @@ use crate::infra::probe::{NatsProbe, PostgresProbe, probe_nats, probe_postgres};
 use crate::runtime_metrics::{EventEngineStatus, RuntimeMetrics};
 use crate::runtime_target::{RuntimeTargetSummary, checkout_runtime_target};
 use color_eyre::eyre::Result;
+use std::path::Path;
 use std::time::{Duration, Instant};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -42,6 +43,14 @@ pub(super) fn classify_runtime_summary_impact(metrics: &RuntimeMetrics) -> Summa
     } else {
         SummaryRuntimeImpact::Healthy
     }
+}
+
+fn is_status_managed_service_job(job: &crate::jobs::Job) -> bool {
+    job.is_alive()
+        && Path::new(&job.command)
+            .file_name()
+            .and_then(|value| value.to_str())
+            .is_some_and(|binary| binary == "sinexd")
 }
 
 #[allow(
@@ -249,9 +258,13 @@ async fn collect_summary_data(ctx: &CommandContext) -> SummaryData {
                 )
             });
         let active_jobs_list = jobs.active;
-        let active_job_count = active_jobs_list.len();
+        let active_work_jobs: Vec<&crate::jobs::Job> = active_jobs_list
+            .iter()
+            .filter(|job| !is_status_managed_service_job(job))
+            .collect();
+        let active_job_count = active_work_jobs.len();
         let now_instant = time::OffsetDateTime::now_utc();
-        let active_job_details: Vec<ActiveJobDetail> = active_jobs_list
+        let active_job_details: Vec<ActiveJobDetail> = active_work_jobs
             .iter()
             .map(|j| {
                 let elapsed = (now_instant - j.started_at).as_seconds_f64();
@@ -598,5 +611,36 @@ pub(super) async fn execute(ctx: &CommandContext) -> Result<CommandResult> {
         Ok(CommandResult::success()
             .with_data(serde_json::to_value(&output)?)
             .with_duration(ctx.elapsed()))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::history::JobLifecycleStatus;
+    use std::path::PathBuf;
+
+    fn running_job(command: &str) -> crate::jobs::Job {
+        crate::jobs::Job {
+            id: 1,
+            invocation_id: Some(1),
+            command: command.to_string(),
+            args: Vec::new(),
+            started_at: time::OffsetDateTime::now_utc(),
+            pid: Some(std::process::id()),
+            job_status: JobLifecycleStatus::Running,
+            stdout_path: PathBuf::from("/dev/null"),
+            stderr_path: PathBuf::from("/dev/null"),
+            exit_code: None,
+        }
+    }
+
+    #[test]
+    fn status_managed_service_jobs_are_not_active_work() {
+        let sinexd = running_job("/var/cache/sinex/current/target/debug/sinexd");
+        let check = running_job("xtask");
+
+        assert!(is_status_managed_service_job(&sinexd));
+        assert!(!is_status_managed_service_job(&check));
     }
 }

@@ -15,8 +15,8 @@ pub use validation_chains::{format_validation_errors, format_validation_errors_w
 // Re-export main validation utilities
 pub use core::{
     normalize_unicode, reject_non_finite_f64, reject_non_finite_optional_f64,
-    sanitize_filename_component, validate_json, validate_json_value, validate_path,
-    validate_path_within_root,
+    sanitize_filename_component, strip_postgres_jsonb_nul_chars, validate_json,
+    validate_json_value, validate_path, validate_path_within_root,
 };
 
 // Re-export PostgreSQL identifier validation

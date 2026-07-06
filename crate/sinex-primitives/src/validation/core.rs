@@ -302,6 +302,44 @@ pub fn validate_json_value(value: &Value) -> Result<()> {
     Ok(())
 }
 
+/// Remove NUL characters from JSON strings before PostgreSQL JSONB storage.
+///
+/// PostgreSQL cannot store the Unicode NUL character in `jsonb`; inserting a
+/// JSON string or object key that serializes to `\u0000` fails with SQLSTATE
+/// 22P05. External captures can contain NULs in titles, URLs, command output,
+/// or arbitrary metadata, so persistence-facing callers should normalize those
+/// values at the JSON boundary instead of adding source-specific filters.
+#[must_use]
+pub fn strip_postgres_jsonb_nul_chars(value: &mut Value) -> usize {
+    match value {
+        Value::String(text) => strip_nul_chars_from_string(text),
+        Value::Array(values) => values
+            .iter_mut()
+            .map(strip_postgres_jsonb_nul_chars)
+            .sum(),
+        Value::Object(map) => {
+            let mut stripped = 0;
+            let entries = std::mem::take(map);
+            for (mut key, mut nested) in entries {
+                stripped += strip_nul_chars_from_string(&mut key);
+                stripped += strip_postgres_jsonb_nul_chars(&mut nested);
+                map.insert(key, nested);
+            }
+            stripped
+        }
+        Value::Null | Value::Bool(_) | Value::Number(_) => 0,
+    }
+}
+
+fn strip_nul_chars_from_string(text: &mut String) -> usize {
+    if !text.contains('\0') {
+        return 0;
+    }
+    let original_len = text.len();
+    text.retain(|ch| ch != '\0');
+    original_len - text.len()
+}
+
 fn validate_json_structure(value: &Value, depth: usize) -> Result<()> {
     if depth > MAX_JSON_DEPTH {
         return Err(

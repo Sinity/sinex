@@ -498,7 +498,6 @@ mod test_runtime {
                 emitter.clone(),
                 EventTransport::Nats(publisher),
                 None,
-                None,
             );
 
             let temp_dir = sinex_primitives::environment().temp_dir();

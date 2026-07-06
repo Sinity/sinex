@@ -65,6 +65,25 @@ async fn maybe_occurrence_key_string_some_and_none() -> xtask::sandbox::TestResu
 }
 
 #[sinex_test]
+async fn maybe_occurrence_key_string_hashes_oversized_projection(
+) -> xtask::sandbox::TestResult<()> {
+    let key = OccurrenceKey {
+        source_id: SourceId::from_static("raindrop-bookmarks"),
+        fields: vec![
+            ("raindrop_id".into(), "684930393".into()),
+            ("url".into(), format!("https://example.test/{}", "x".repeat(900))),
+            ("created".into(), "2023-11-27T01:08:53.133000+01:00".into()),
+        ],
+    };
+    let projected = maybe_occurrence_key_string(Some(&key)).expect("key should project");
+
+    assert!(projected.len() <= 512);
+    assert!(projected.starts_with("raindrop-bookmarks|occurrence_hash="));
+    assert_ne!(projected, occurrence_key_string(&key));
+    Ok(())
+}
+
+#[sinex_test]
 async fn escaping_prevents_delimiter_injection_collision() -> xtask::sandbox::TestResult<()> {
     // Without escaping, `(foo, "bar|baz")` and `(foo|bar, "baz")`
     // would both encode as `test.unit|foo=bar|baz` and silently
