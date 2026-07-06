@@ -225,6 +225,12 @@ Conventions for bead content:
   1 = data-loss correctness and the current consumption unlock, 2 = normal,
   3 = design/meta/legibility, 4 = far-backlog design notes.
 - `bd dolt push` follows the same policy as `git push` (see repo CLAUDE.md).
+  NB: no Dolt remote is configured in this repo — `.beads/issues.jsonl` in
+  git IS the sync surface; ship bead-state deltas in PRs (`chore(beads):`).
+- `bd preflight` prints the beads tool's own upstream Go checklist
+  (golangci-lint, gofmt, vendorHash) — it does not know this repo. Ignore it;
+  the real gates here are the pre-push hook and xtask. `bd doctor` is
+  likewise unsupported in embedded-dolt mode.
 
 Execution-grade bar (what makes a bead startable in one read — the target
 state for every `ready` bead at priority ≤ 2):
