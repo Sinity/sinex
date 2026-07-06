@@ -208,8 +208,8 @@ differ significantly from `ts_coided` for historical imports. Query by `ts_orig`
 "what happened when?", by `ts_coided` for "what did sinex interpret it?".
 
 ### ts_persisted
-Timestamp set by a DB trigger when the row was written to disk. Used for
-auditing write latency but not for business-logic queries.
+Timestamp set by a column `DEFAULT current_timestamp` when the row was written
+to disk. Used for auditing write latency but not for business-logic queries.
 
 ## U
 

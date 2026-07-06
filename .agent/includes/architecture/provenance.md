@@ -18,10 +18,12 @@ Derived provenance (source_material_id NULL, source_event_ids set):
   - Created by: automata (canonicalizer, analytics, health)
 ```
 
-An event MUST have exactly one provenance type. This is enforced at three levels:
+An event MUST have exactly one provenance type. This is enforced at four levels:
 1. **DB CHECK constraint** on `core.events` (XOR on nullable columns)
 2. **EventBuilder typestate** (`NoProvenance` has no `.build()` method)
-3. **NonEmptyVec** in `Provenance::Derived` (empty parent arrays impossible in Rust)
+3. **Wire-format rejection** — `Provenance`'s serde impl deserializes a flat
+   wire shape and rejects both-set and neither-set (`builder.rs` ProvenanceWire)
+4. **NonEmptyVec** in `Provenance::Derived` (empty parent arrays impossible in Rust)
 
 ### Why This Matters For Every Decision
 
@@ -40,7 +42,7 @@ An event MUST have exactly one provenance type. This is enforced at three levels
 |-------|--------|---------------|---------------|
 | `ts_orig` | `timestamptz` | When the datapoint happened in the real world | **stable** — re-derived from the same material |
 | `ts_coided` | `GENERATED ALWAYS AS (uuid_extract_timestamp(id))` | When sinex created *this interpretation* | **differs** — each replay is a new interpretation at a new "now" |
-| `ts_persisted` | DB trigger | When the row was written to disk | differs (batch delay) |
+| `ts_persisted` | column `DEFAULT current_timestamp` | When the row was written to disk | differs (batch delay) |
 
 `ts_coided` is **not an independent column** — it is a pure function of the event `id`'s UUIDv7 timestamp prefix. The `id` is a random UUIDv7 minted at creation, so `ts_coided` is the moment sinex produced this interpretation. This is *why* replayed events differ from their predecessors: a replay re-creates the interpretation now, so its `id` — and therefore its `ts_coided` — is new, even though `ts_orig` is unchanged.
 

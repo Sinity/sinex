@@ -7,6 +7,7 @@
 | Schema | Key Tables | Purpose |
 |--------|------------|---------|
 | `core` | `events`, `blobs`, `node_manifests`, `entities`, `entity_relations`, `event_annotations`, `tags`, `tagged_items`, `event_embeddings`, `event_tombstones`, `operations_log` | Primary storage + knowledge graph + embeddings |
+| `reflection` | `events` | Self-observation lane: same event model as `core.events` (LIKE shape, own hypertable) but its own stream, retention (30d + 7d compression), and read models — operator life-events never share retention policy with rebuildable telemetry. Events route here by `SourceRole::Reflection` via `EventStorageLane` |
 | `raw` | `source_material_registry`, `temporal_ledger` | Provenance roots + observation timestamps |
 | `audit` | `archived_events` | Immutable archive of deleted/superseded events (replay target) |
 | `sinex_schemas` | `event_payload_schemas`, `validation_cache`, `dlq_events` | JSON schema registry + DLQ |
