@@ -1,0 +1,43 @@
+#!/usr/bin/env bash
+# Bead-graph invariant lint. Run before exporting/shipping bead-state deltas.
+# Invariants: exactly one wave:N and one area:* label per open bead; every open
+# bead has acceptance criteria; no wave inversions (open bead hard-blocked by a
+# higher-wave open bead); no dependency cycles.
+# NB: `bd list --json` dep objects use type/depends_on_id (NOT the
+# dependency_type/id shape `bd show --json` uses) — lint against the list shape.
+set -euo pipefail
+cd "$(git rev-parse --show-toplevel)"
+bd dep cycles
+bd list --all -n 0 --json | python3 -c "
+import json, sys
+issues = json.load(sys.stdin)
+by_id = {i['id']: i for i in issues}
+def wave(i):
+    for l in (i.get('labels') or []):
+        if l.startswith('wave:'):
+            return int(l[5:])
+    return None
+w = a = inv = noac = 0
+for i in issues:
+    if i['status'] == 'closed':
+        continue
+    labels = i.get('labels') or []
+    if len([l for l in labels if l.startswith('wave:')]) != 1:
+        w += 1; print('wave-violation:', i['id'], labels)
+    if len([l for l in labels if l.startswith('area:')]) != 1:
+        a += 1; print('area-violation:', i['id'], labels)
+    if not (i.get('acceptance_criteria') or '').strip():
+        noac += 1; print('missing-AC:', i['id'], i['title'][:60])
+    wv = wave(i)
+    for d in (i.get('dependencies') or []):
+        if d.get('type') != 'blocks':
+            continue
+        dep = by_id.get(d['depends_on_id'])
+        if dep and dep['status'] != 'closed':
+            dw = wave(dep)
+            if wv is not None and dw is not None and dw > wv:
+                inv += 1
+                print(f'wave-inversion: {i[\"id\"]} (wave:{wv}) <- {dep[\"id\"]} (wave:{dw})')
+print(f'violations: wave={w} area={a} inversions={inv} missing_ac={noac}')
+sys.exit(1 if (w or a or inv or noac) else 0)
+"
