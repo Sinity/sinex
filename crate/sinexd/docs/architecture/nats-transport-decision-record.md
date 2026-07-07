@@ -83,7 +83,7 @@ server-side retention.
 ## 2. Subject / stream namespace facts (read from code)
 
 The issue requires enumeration *from code, not docs*. Two facts that the prose
-docs (`transport.md`, `.agent/includes/architecture/data-flow.md`) currently
+docs (`transport.md`, `docs/architecture.md`) currently
 state incorrectly:
 
 1. **The event plane has no `sinex.` infix.** `JetStreamTopology::new`

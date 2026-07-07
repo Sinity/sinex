@@ -396,7 +396,7 @@ state and source criticality.
 
 ## Sinex-Specific Decisions
 
-- Keep `.agent/includes/`; durable system knowledge is a Sinex strength.
+- Durable system knowledge lives in `CLAUDE.md` (single flat file; `AGENTS.md` is a symlink) and `docs/architecture.md` + `docs/glossary.md`; the old `.agent/includes/` transclusion tree is retired.
 - Keep `.agent/conductor-devloop/` as the active root.
 - Keep `.agent/handoff/` retired. Handoffs, when useful, live under
   `.agent/conductor-devloop/context/handoffs/`.
