@@ -81,8 +81,7 @@ If these disagree, trust live evidence first, then `OPERATING-LOG.md`, then
 
 ## Current Working Surfaces
 
-- `.agent/DEVLOOP.md`, `.agent/README.md`, `.agent/scripts/`, and
-  `.agent/includes/` are tracked durable scaffold.
+- `.agent/DEVLOOP.md`, `.agent/README.md`, and `.agent/scripts/` are tracked durable scaffold.
 - Beads (`bd`, workspace `.beads/`) is the durable task substrate: backlog,
   ready work, claims, blockers, deferred directives, side-research leases,
   and `bd remember` insights. See the Beads section in `.agent/CONVENTIONS.md`.
