@@ -49,27 +49,6 @@ pub enum DocsSubcommand {
         build: bool,
     },
 
-    /// Generate AGENTS.md by resolving the CLAUDE.md transclusion tree.
-    ///
-    /// Reads CLAUDE.md from the workspace root and recursively expands all
-    /// `@path` import lines into their file contents, writing the result to
-    /// AGENTS.md at the workspace root.  This gives agent frameworks that read
-    /// AGENTS.md (e.g. Codex) the same context that Claude Code agents receive
-    /// via native `@path` transclusion.
-    Agents {
-        /// Output file (default: AGENTS.md in workspace root)
-        #[arg(long)]
-        output: Option<std::path::PathBuf>,
-
-        /// Print to stdout instead of writing a file
-        #[arg(long)]
-        stdout: bool,
-
-        /// Exit non-zero if the generated output would change
-        #[arg(long, conflicts_with = "stdout")]
-        check: bool,
-    },
-
     /// Generate the concise xtask command guide used for agent memory and humans.
     CommandGuide {
         /// Output file (default: xtask/docs/command-guide.md)
@@ -157,11 +136,6 @@ impl XtaskCommand for DocsCommand {
                 all_features,
             } => execute_build(package, *open, *private, *all_features, ctx),
             DocsSubcommand::Serve { port, build } => execute_serve(*port, *build, ctx),
-            DocsSubcommand::Agents {
-                output,
-                stdout,
-                check,
-            } => execute_agents(output.as_deref(), *stdout, *check, ctx),
             DocsSubcommand::CommandGuide {
                 output,
                 stdout,
@@ -370,117 +344,6 @@ fn run_foreground_docs_server(
     crate::process::run_managed_foreground_std_command(command, label)
 }
 
-/// Recursively resolve `@path` transclusion lines in `content`, reading relative paths
-/// from `base_dir`.  Returns the fully expanded text.
-///
-/// Rules (matching CLAUDE.md transclusion behavior):
-/// - Lines that are exactly `@<path>` (with optional trailing whitespace) are replaced by
-///   the content of the referenced file, itself recursively expanded.
-/// - Relative paths are resolved relative to `base_dir` (the directory of the including file).
-/// - Absolute paths starting with `~` expand `$HOME`.
-/// - Lines inside code blocks (``` fences) are NOT expanded (the spec says `@` inside
-///   code blocks is not evaluated).
-/// - Files that cannot be read are replaced by a `<!-- could not read: <path> -->` comment.
-/// - Circular references (same file visited twice in a call stack) are skipped.
-fn resolve_transclusions(
-    content: &str,
-    base_dir: &std::path::Path,
-    visited: &mut std::collections::HashSet<std::path::PathBuf>,
-    depth: usize,
-) -> String {
-    const MAX_DEPTH: usize = 10;
-    if depth > MAX_DEPTH {
-        return content.to_string();
-    }
-
-    let mut out = String::with_capacity(content.len());
-    let mut in_code_block = false;
-
-    for line in content.lines() {
-        let trimmed = line.trim();
-
-        // Toggle code-block state on ``` fences
-        if trimmed.starts_with("```") {
-            in_code_block = !in_code_block;
-            out.push_str(line);
-            out.push('\n');
-            continue;
-        }
-
-        // Only expand @-lines outside code blocks
-        if !in_code_block && trimmed.starts_with('@') && !trimmed.contains(' ') {
-            let raw_path = &trimmed[1..]; // strip leading @
-
-            // Expand ~ to $HOME
-            let expanded = if let Some(stripped) = raw_path.strip_prefix('~') {
-                let home = std::env::var("HOME").unwrap_or_else(|_| "~".to_string());
-                format!("{home}{stripped}")
-            } else {
-                raw_path.to_string()
-            };
-
-            let path = if std::path::Path::new(&expanded).is_absolute() {
-                std::path::PathBuf::from(&expanded)
-            } else {
-                base_dir.join(&expanded)
-            };
-
-            let canonical = path.canonicalize().unwrap_or_else(|_| path.clone());
-
-            if visited.contains(&canonical) {
-                out.push_str(&format!(
-                    "<!-- circular transclusion skipped: {expanded} -->\n"
-                ));
-                continue;
-            }
-
-            match std::fs::read_to_string(&path) {
-                Ok(child_content) => {
-                    visited.insert(canonical.clone());
-                    let child_base = canonical.parent().unwrap_or(&canonical).to_path_buf();
-                    let expanded_child =
-                        resolve_transclusions(&child_content, &child_base, visited, depth + 1);
-                    visited.remove(&canonical);
-                    // Append child content (ensure it ends with a newline)
-                    out.push_str(&expanded_child);
-                    if !expanded_child.ends_with('\n') {
-                        out.push('\n');
-                    }
-                }
-                Err(_) => {
-                    out.push_str(&format!("<!-- could not read: {expanded} -->\n"));
-                }
-            }
-            continue;
-        }
-
-        out.push_str(line);
-        out.push('\n');
-    }
-
-    out
-}
-
-fn execute_agents(
-    output: Option<&std::path::Path>,
-    to_stdout: bool,
-    check_only: bool,
-    ctx: &CommandContext,
-) -> Result<CommandResult> {
-    let workspace = find_workspace_root(std::env::current_dir()?)?;
-    let surface = generated_agents_surface(&workspace)?;
-    let dest = output.map_or(surface.path, std::path::Path::to_path_buf);
-    write_generated_output(
-        &dest,
-        &surface.content,
-        to_stdout,
-        check_only,
-        surface.label,
-        surface.regenerate_command,
-        ctx,
-    )
-}
-
 fn execute_command_guide(
     output: Option<&std::path::Path>,
     to_stdout: bool,
@@ -620,7 +483,6 @@ fn generated_surfaces(workspace: &std::path::Path) -> Result<Vec<GeneratedSurfac
         generated_ast_grep_catalog_surface(workspace)?,
         generated_command_guide_surface(workspace),
         generated_command_reference_surface(workspace),
-        generated_agents_surface(workspace)?,
         generated_demo_surface(workspace),
     ])
 }
@@ -692,32 +554,6 @@ fn generated_ast_grep_catalog_surface(_workspace: &std::path::Path) -> Result<Ge
         path: ast_grep_catalog_path(),
         content: render_ast_grep_catalog(&rules),
         regenerate_command: "xtask docs ast-grep-catalog",
-    })
-}
-
-fn generated_agents_surface(workspace: &std::path::Path) -> Result<GeneratedSurface> {
-    let claude_md = workspace.join("CLAUDE.md");
-    if !claude_md.exists() {
-        color_eyre::eyre::bail!("CLAUDE.md not found at {}", claude_md.display());
-    }
-
-    let source = std::fs::read_to_string(&claude_md).wrap_err("Failed to read CLAUDE.md")?;
-
-    let mut visited = std::collections::HashSet::new();
-    visited.insert(
-        claude_md
-            .canonicalize()
-            .unwrap_or_else(|_| claude_md.clone()),
-    );
-
-    let resolved = resolve_transclusions(&source, workspace, &mut visited, 0);
-    let header = "<!-- This file is auto-generated by `xtask docs agents`.\nGenerated from CLAUDE.md transclusion tree.\nDo not edit manually — run `xtask docs agents` to regenerate. -->\n\n";
-
-    Ok(GeneratedSurface {
-        label: "AGENTS.md",
-        path: workspace.join("AGENTS.md"),
-        content: generated_text(format!("{header}{resolved}")),
-        regenerate_command: "xtask docs agents",
     })
 }
 

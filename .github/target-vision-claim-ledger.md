@@ -207,12 +207,12 @@ as issues without a real design decision first:
 
 ## Target-Vision Audit (2026-05-30)
 
-Dissolution batch 1 (`report/` + `reference/`, first pass). Nine fictions/stale claims corrected in target-vision prose (each verified against code), three Phase-1 files drained, two claims promoted to issues. Target-vision prose edits are committed to its own repo; this section records the sinex-side status. Root cause: target-vision was a source of the event-identity idempotency fiction — see #1570 and `.agent/includes/architecture/provenance.md`.
+Dissolution batch 1 (`report/` + `reference/`, first pass). Nine fictions/stale claims corrected in target-vision prose (each verified against code), three Phase-1 files drained, two claims promoted to issues. Target-vision prose edits are committed to its own repo; this section records the sinex-side status. Root cause: target-vision was a source of the event-identity idempotency fiction — see #1570 and `docs/architecture.md`.
 
 ### Fictions corrected (prose fixed in target-vision)
 | Claim ID | Claim | Status | Evidence |
 |----------|-------|--------|----------|
-| TV-058 | Three Clocks: `ts_coided` diverges only on historical imports / "when first observed" | superseded | `ts_coided = uuid_extract_timestamp(id)`; replay mints a new UUIDv7 → new `ts_coided`. Canon: `provenance.md`, `.agent/includes/reference/glossary.md`, #1570. |
+| TV-058 | Three Clocks: `ts_coided` diverges only on historical imports / "when first observed" | superseded | `ts_coided = uuid_extract_timestamp(id)`; replay mints a new UUIDv7 → new `ts_coided`. Canon: `provenance.md`, `docs/glossary.md`, #1570. |
 | TV-059 | `(material_id, anchor_byte)` UUIDv5 "accidental idempotency via ON CONFLICT"; replay/occurrence idempotency | rejected | Non-goal. Event ids = interpretation identity (random, new on replay); `ON CONFLICT (id)` is NATS at-least-once redelivery only. #1570. |
 | TV-060 | `_1h` telemetry surfaces are ordinary views, "no continuous aggregates" | superseded | `apply.rs:66-76` `TELEMETRY_CONTINUOUS_AGGREGATES` = 9 CAs + `current_system_state` (5m CA). #952. |
 | TV-061 | 9 automata in `sinex-process`; analytics window 1000-event | superseded | sinex-process dissolved into sinexd (Wave-B #1054/#1223/#1225); 13 specs in `nixos/modules/lib/automata.nix`; `analytics.rs:27` = 250. |
@@ -316,7 +316,7 @@ Closes the dissolution: `reference/` is now ~100% drained. Prose corrected in ta
 | Claim ID | Claim | Status | Evidence |
 |----------|-------|--------|----------|
 | TV-108 | `report/work-ahead.md` is the authoritative work backlog | superseded | Authority = the GitHub issue-set (`gh issue list`); target-vision's own charter says "active work is in GitHub issues." Dissolving-header added (`6e814f9`). |
-| TV-109 | `report/architecture.md` is the authoritative current-state architecture | superseded | Authority = `.agent/includes/architecture/*`, owning crate docs, and code. Derived narrative; dissolving-header added (`6e814f9`). |
+| TV-109 | `report/architecture.md` is the authoritative current-state architecture | superseded | Authority = `docs/architecture.md`, owning crate docs, and code. Derived narrative; dissolving-header added (`6e814f9`). |
 | TV-110 | `report/deployment.md` is the authoritative deployment state | superseded | Authority = `nixos/modules/deployment-topology.md` + `nixos/modules/README.md`. Dissolving-header added (`6e814f9`). |
 | TV-111 | `report/intelligence.md` is the authoritative automata/intelligence state | superseded | Authority = `nixos/modules/lib/automata.nix` + `crate/sinexd/src/automata/*`; frontier #1087/#1346. Dissolving-header added (`6e814f9`). |
 | TV-112 | `report/vision.md` + `report/data-landscape.md` | design_candidate | **Retained, not dissolved** — north-star "why" and cross-project (lynchpin/captures) estate have no in-repo authority surface. Marked retained in `6e814f9`. |

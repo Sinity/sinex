@@ -268,19 +268,13 @@ Two antipatterns to avoid:
   tree. If you're describing what *will* land, say so. If you're
   describing what *did* land, the verification commands prove it.
 
-## Generated Agent Docs
+## Agent Docs
 
-`AGENTS.md` is generated output. Do not edit it directly.
-
-When you change `CLAUDE.md` or any transcluded include, regenerate the local
-agent surface:
-
-```bash
-xtask docs agents
-```
-
-The devShell also regenerates `AGENTS.md` on entry. The file is gitignored and
-should be treated as a checkout-local artifact.
+`CLAUDE.md` is a single self-contained file (no transclusion) and `AGENTS.md`
+is a committed symlink to it — every agent framework reads the same bytes with
+no render step. Edit `CLAUDE.md` directly; keep it dense and move long-form
+material to `docs/architecture.md`, `docs/glossary.md`, or the owning
+`crate/**/docs/` file.
 
 The generated xtask docs surfaces can be refreshed and verified with:
 

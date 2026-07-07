@@ -61,7 +61,6 @@ Reach for these after failures or when you need to understand impact and trends.
 
 These keep generated repo surfaces current and produce scoped AI context when needed.
 
-- `xtask docs sync`: Refresh all generated repo surfaces tracked in the repo. Use when you changed CLAUDE transclusions, xtask docs plumbing, or the Rust EventPayload schema registry and want the generated surfaces refreshed together. Common forms: `xtask docs sync`.
+- `xtask docs sync`: Refresh all generated repo surfaces tracked in the repo. Use when you changed xtask docs plumbing, the ast-grep rule catalog, or the Rust EventPayload schema registry and want the generated surfaces refreshed together. Common forms: `xtask docs sync`.
 - `xtask docs check`: Verify that all generated repo surfaces are up to date. Use when you want generated docs and the checked-in schema bundle checked for drift without rewriting files. Common forms: `xtask docs check`.
-- `xtask docs agents`: Generate AGENTS.md by resolving the CLAUDE.md transclusion tree. Use when you only changed CLAUDE.md or its transcluded includes and need the local agent surface refreshed. Common forms: `xtask docs agents`.
 - `xtask docs snapshot`: Generate a codebase snapshot for AI context (via repomix). Use when you need a scoped workspace snapshot for another agent or context-heavy debugging task. Common forms: `xtask docs snapshot --changed --context`; `xtask docs snapshot --scope sinex-db`.

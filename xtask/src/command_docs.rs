@@ -451,7 +451,7 @@ const GUIDE_SECTIONS: &[GuideSection] = &[
             GuideEntry {
                 path: "docs sync",
                 fallback_summary: "Refresh generated repo surfaces",
-                when: "you changed CLAUDE transclusions, xtask docs plumbing, or the Rust EventPayload schema registry and want the generated surfaces refreshed together",
+                when: "you changed xtask docs plumbing, the ast-grep rule catalog, or the Rust EventPayload schema registry and want the generated surfaces refreshed together",
                 examples: &["xtask docs sync"],
                 notes: &[],
             },
@@ -460,13 +460,6 @@ const GUIDE_SECTIONS: &[GuideSection] = &[
                 fallback_summary: "Verify generated repo-surface drift",
                 when: "you want generated docs and the checked-in schema bundle checked for drift without rewriting files",
                 examples: &["xtask docs check"],
-                notes: &[],
-            },
-            GuideEntry {
-                path: "docs agents",
-                fallback_summary: "Regenerate AGENTS.md",
-                when: "you only changed CLAUDE.md or its transcluded includes and need the local agent surface refreshed",
-                examples: &["xtask docs agents"],
                 notes: &[],
             },
             GuideEntry {

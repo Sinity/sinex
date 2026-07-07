@@ -28,7 +28,7 @@ development.
 - **Core loop**: `xtask check`, `xtask fix`, `xtask test`, and `xtask build`.
 - **Runtime/infra**: `xtask infra`, `xtask run`, `xtask status`, `xtask doctor`, `xtask jobs`, and `xtask reset`.
 - **Investigation**: `xtask history`, `xtask analytics`, `xtask impact`, and `xtask deps`.
-- **Docs/context**: `xtask docs sync`, `xtask docs check`, `xtask docs agents`, `xtask docs ast-grep-catalog`, `xtask docs schema-bundle`, and `xtask docs snapshot`.
+- **Docs/context**: `xtask docs sync`, `xtask docs check`, `xtask docs ast-grep-catalog`, `xtask docs schema-bundle`, and `xtask docs snapshot`.
 
 `xtask exercise` remains a command-contract and xtask-surface regression runner.
 Product/runtime semantics should live in Rust tests, benchmarks, or VM tests
@@ -42,7 +42,6 @@ pointer docs and keep the command surface aligned with the clap definitions.
 
 `xtask` owns these generated docs artifacts:
 
-- `AGENTS.md`
 - `xtask/docs/command-guide.md`
 - `xtask/docs/command-reference.md`
 - `.config/ast-grep/README.md`
@@ -60,9 +59,9 @@ Check for drift without rewriting files with:
 xtask docs check
 ```
 
-Use the narrower `xtask docs agents` path only when you changed `CLAUDE.md` or
-its transcluded includes and only need the local agent surface refreshed. Use
-`xtask docs ast-grep-catalog` when you only changed `.config/ast-grep/rules/`
+`CLAUDE.md` is not a generated surface: it is a single self-contained file and
+`AGENTS.md` is a committed symlink to it — edit it directly, no regeneration
+step. Use `xtask docs ast-grep-catalog` when you only changed `.config/ast-grep/rules/`
 and want the rendered rule catalog refreshed. Use
 `xtask docs schema-bundle` when you only need to refresh the tracked JSON schema
 contract bundle.

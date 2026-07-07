@@ -64,7 +64,7 @@ current run.
 
 - Track durable instructions and reusable primitives: `.agent/DEVLOOP.md`,
   `.agent/README.md`, `.agent/CONVENTIONS.md`,
-  `.agent/devloop-contract.json`, `.agent/includes/**`, `.agent/scripts/**`,
+  `.agent/devloop-contract.json`, `.agent/scripts/**`,
   `.agent/scratch/README.md`, and the conductor protocol files `README.md`,
   `INDEX.md`, `RUNBOOK.md`, `PROCESS.md`, `TACTICS.md`, `VELOCITY.md`,
   `ADVERSARIAL-REVIEW.md`, and `SELF-PROMPTS.md`.

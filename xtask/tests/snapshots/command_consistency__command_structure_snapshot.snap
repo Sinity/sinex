@@ -1,6 +1,5 @@
 ---
 source: xtask/tests/command_consistency.rs
-assertion_line: 29
 expression: json
 ---
 {
@@ -1183,6 +1182,42 @@ expression: json
               "required": false,
               "short": null,
               "takes_value": true
+            },
+            {
+              "global": false,
+              "help": "Start only source bindings that are not already running",
+              "long": "reconcile",
+              "name": "reconcile",
+              "possible_values": [
+                "true",
+                "false"
+              ],
+              "required": false,
+              "short": null,
+              "takes_value": false
+            },
+            {
+              "global": false,
+              "help": "Limit the all-sources operation to one manifest service name",
+              "long": "service-name",
+              "name": "service_name",
+              "possible_values": [],
+              "required": false,
+              "short": null,
+              "takes_value": true
+            },
+            {
+              "global": false,
+              "help": "Include bindings excluded from default all-sources runs",
+              "long": "include-default-excluded",
+              "name": "include_default_excluded",
+              "possible_values": [
+                "true",
+                "false"
+              ],
+              "required": false,
+              "short": null,
+              "takes_value": false
             }
           ],
           "name": "all-sources",
@@ -1375,6 +1410,19 @@ expression: json
               "help": "Stop current-checkout infra before the smoke if it is already running",
               "long": "reset-first",
               "name": "reset_first",
+              "possible_values": [
+                "true",
+                "false"
+              ],
+              "required": false,
+              "short": null,
+              "takes_value": false
+            },
+            {
+              "global": false,
+              "help": "Preserve already-running current-checkout infra while running smoke probes",
+              "long": "allow-running",
+              "name": "allow_running",
               "possible_values": [
                 "true",
                 "false"
@@ -1774,6 +1822,109 @@ expression: json
           ],
           "name": "flake-stage",
           "subcommands": []
+        },
+        {
+          "about": "Generate the dogfood dev-loop source-bindings manifest",
+          "args": [
+            {
+              "global": false,
+              "help": "Output manifest path. Defaults to .agent/dev/dev-source-bindings.json",
+              "long": "output",
+              "name": "output",
+              "possible_values": [],
+              "required": false,
+              "short": null,
+              "takes_value": true
+            },
+            {
+              "global": false,
+              "help": "Print the manifest JSON to stdout instead of writing a file",
+              "long": "stdout",
+              "name": "stdout",
+              "possible_values": [
+                "true",
+                "false"
+              ],
+              "required": false,
+              "short": null,
+              "takes_value": false
+            },
+            {
+              "global": false,
+              "help": "Exit non-zero if the output file differs from the generated manifest",
+              "long": "check",
+              "name": "check",
+              "possible_values": [
+                "true",
+                "false"
+              ],
+              "required": false,
+              "short": null,
+              "takes_value": false
+            },
+            {
+              "global": false,
+              "help": "Root to watch and scan for git/fs sources. Defaults to the workspace root",
+              "long": "watch-root",
+              "name": "watch_root",
+              "possible_values": [],
+              "required": false,
+              "short": null,
+              "takes_value": true
+            },
+            {
+              "global": false,
+              "help": "Include only the named source id. Repeat for multiple sources",
+              "long": "source",
+              "name": "source",
+              "possible_values": [],
+              "required": false,
+              "short": null,
+              "takes_value": true
+            },
+            {
+              "global": false,
+              "help": "Exclude the named source id from the generated manifest. Repeat for multiple sources",
+              "long": "exclude-source",
+              "name": "exclude_source",
+              "possible_values": [],
+              "required": false,
+              "short": null,
+              "takes_value": true
+            }
+          ],
+          "name": "dev-bindings",
+          "subcommands": []
+        },
+        {
+          "about": "Write the checkout-local runtime target descriptor for sinexctl/MCP clients",
+          "args": [
+            {
+              "global": false,
+              "help": "Output descriptor path. Defaults to .sinex/state/runtime-target.json",
+              "long": "output",
+              "name": "output",
+              "possible_values": [],
+              "required": false,
+              "short": null,
+              "takes_value": true
+            },
+            {
+              "global": false,
+              "help": "Print the descriptor JSON to stdout instead of writing a file",
+              "long": "stdout",
+              "name": "stdout",
+              "possible_values": [
+                "true",
+                "false"
+              ],
+              "required": false,
+              "short": null,
+              "takes_value": false
+            }
+          ],
+          "name": "runtime-target",
+          "subcommands": []
         }
       ]
     },
@@ -1897,6 +2048,19 @@ expression: json
               "required": false,
               "short": null,
               "takes_value": false
+            },
+            {
+              "global": false,
+              "help": "Select output stream by name. Alias for --stdout/--stderr",
+              "long": "stream",
+              "name": "stream",
+              "possible_values": [
+                "stdout",
+                "stderr"
+              ],
+              "required": false,
+              "short": null,
+              "takes_value": true
             }
           ],
           "name": "output",
@@ -1930,7 +2094,7 @@ expression: json
           "subcommands": []
         },
         {
-          "about": "Cancel a running job",
+          "about": "Cancel a running job (SIGTERM to the process group, SIGKILL escalation)",
           "args": [
             {
               "global": false,
@@ -3967,6 +4131,19 @@ expression: json
             },
             {
               "global": false,
+              "help": "Show current processes with nonzero swap residency",
+              "long": "top-swap",
+              "name": "top_swap",
+              "possible_values": [
+                "true",
+                "false"
+              ],
+              "required": false,
+              "short": null,
+              "takes_value": false
+            },
+            {
+              "global": false,
               "help": "Sample /proc/PID/io and show the processes doing the most physical IO",
               "long": "top-io",
               "name": "top_io",
@@ -4020,6 +4197,80 @@ expression: json
             }
           ],
           "name": "pressure",
+          "subcommands": []
+        },
+        {
+          "about": "Cheap runtime-store backlog and event-mix snapshot from checkout Postgres",
+          "args": [
+            {
+              "global": false,
+              "help": "Recent window to inspect, in minutes",
+              "long": "window-minutes",
+              "name": "window_minutes",
+              "possible_values": [],
+              "required": false,
+              "short": null,
+              "takes_value": true
+            },
+            {
+              "global": false,
+              "help": "Maximum rows per top-N section",
+              "long": "limit",
+              "name": "limit",
+              "possible_values": [],
+              "required": false,
+              "short": null,
+              "takes_value": true
+            },
+            {
+              "global": false,
+              "help": "Override the runtime database URL",
+              "long": "database-url",
+              "name": "database_url",
+              "possible_values": [],
+              "required": false,
+              "short": null,
+              "takes_value": true
+            }
+          ],
+          "name": "store",
+          "subcommands": []
+        },
+        {
+          "about": "Bounded storage growth model from source-material and Timescale catalog data",
+          "args": [
+            {
+              "global": false,
+              "help": "Number of days to project material growth",
+              "long": "projection-days",
+              "name": "projection_days",
+              "possible_values": [],
+              "required": false,
+              "short": null,
+              "takes_value": true
+            },
+            {
+              "global": false,
+              "help": "Maximum source rows to render",
+              "long": "limit",
+              "name": "limit",
+              "possible_values": [],
+              "required": false,
+              "short": null,
+              "takes_value": true
+            },
+            {
+              "global": false,
+              "help": "Override the runtime database URL",
+              "long": "database-url",
+              "name": "database_url",
+              "possible_values": [],
+              "required": false,
+              "short": null,
+              "takes_value": true
+            }
+          ],
+          "name": "storage-growth",
           "subcommands": []
         },
         {
@@ -4854,6 +5105,93 @@ expression: json
           ],
           "name": "strict-diff",
           "subcommands": []
+        },
+        {
+          "about": "Inspect or run explicit schema data backfills",
+          "args": [],
+          "name": "backfill",
+          "subcommands": [
+            {
+              "about": "Report registered schema backfills and their persisted run state",
+              "args": [
+                {
+                  "global": false,
+                  "help": "Database URL to inspect. Without this, prepares the checkout-local stack first",
+                  "long": "database-url",
+                  "name": "database_url",
+                  "possible_values": [],
+                  "required": false,
+                  "short": null,
+                  "takes_value": true
+                }
+              ],
+              "name": "status",
+              "subcommands": []
+            },
+            {
+              "about": "Run or resume a named schema backfill",
+              "args": [
+                {
+                  "global": false,
+                  "help": "Backfill key to run",
+                  "long": null,
+                  "name": "key",
+                  "possible_values": [],
+                  "required": true,
+                  "short": null,
+                  "takes_value": true
+                },
+                {
+                  "global": false,
+                  "help": "Database URL to inspect. Without this, prepares the checkout-local stack first",
+                  "long": "database-url",
+                  "name": "database_url",
+                  "possible_values": [],
+                  "required": false,
+                  "short": null,
+                  "takes_value": true
+                },
+                {
+                  "global": false,
+                  "help": "Rows to scan before persisting progress",
+                  "long": "batch-size",
+                  "name": "batch_size",
+                  "possible_values": [],
+                  "required": false,
+                  "short": null,
+                  "takes_value": true
+                },
+                {
+                  "global": false,
+                  "help": "Acknowledge that writers are quiesced for this first implementation slice",
+                  "long": "assume-quiescent",
+                  "name": "assume_quiescent",
+                  "possible_values": [
+                    "true",
+                    "false"
+                  ],
+                  "required": false,
+                  "short": null,
+                  "takes_value": false
+                },
+                {
+                  "global": false,
+                  "help": "Clear persisted progress and recompute from the current event horizon",
+                  "long": "restart",
+                  "name": "restart",
+                  "possible_values": [
+                    "true",
+                    "false"
+                  ],
+                  "required": false,
+                  "short": null,
+                  "takes_value": false
+                }
+              ],
+              "name": "run",
+              "subcommands": []
+            }
+          ]
         }
       ]
     },
@@ -5290,49 +5628,6 @@ expression: json
           "subcommands": []
         },
         {
-          "about": "Generate AGENTS.md by resolving the CLAUDE.md transclusion tree",
-          "args": [
-            {
-              "global": false,
-              "help": "Output file (default: AGENTS.md in workspace root)",
-              "long": "output",
-              "name": "output",
-              "possible_values": [],
-              "required": false,
-              "short": null,
-              "takes_value": true
-            },
-            {
-              "global": false,
-              "help": "Print to stdout instead of writing a file",
-              "long": "stdout",
-              "name": "stdout",
-              "possible_values": [
-                "true",
-                "false"
-              ],
-              "required": false,
-              "short": null,
-              "takes_value": false
-            },
-            {
-              "global": false,
-              "help": "Exit non-zero if the generated output would change",
-              "long": "check",
-              "name": "check",
-              "possible_values": [
-                "true",
-                "false"
-              ],
-              "required": false,
-              "short": null,
-              "takes_value": false
-            }
-          ],
-          "name": "agents",
-          "subcommands": []
-        },
-        {
           "about": "Generate the concise xtask command guide used for agent memory and humans",
           "args": [
             {
@@ -5603,7 +5898,7 @@ expression: json
             },
             {
               "global": false,
-              "help": "U4: Include CLAUDE.md and .agent/includes/ (project memory) in the snapshot",
+              "help": "U4: Include CLAUDE.md and docs/ + .agent/ (project memory) in the snapshot",
               "long": "project-memory",
               "name": "project_memory",
               "possible_values": [
