@@ -1,8 +1,12 @@
+> NOTE (2026-07-08): the conductor-devloop packet referenced below is retired and
+> archived at `.agent/archive/devloop-2026-07/`; `devloop-*` scripts no longer exist.
+> Beads is the task/devloop substrate. Paths below were rewritten to the archive.
+
 # Inbox Integration Index
 
 This index records Sinex-relevant material moved from `/realm/inbox` into the
 active `.agent` scaffold. Large/raw imports live under ignored
-`.agent/{demos,artifacts,devloops}` or focused research notes under
+`.agent/{demos,artifacts}` or focused research notes under
 `.agent/scratch/research/`; this tracked file is the durable routing and
 interpretation layer.
 
@@ -36,22 +40,22 @@ generation; do not regenerate full `CONCATENATED_READABLE.md` copies here.
 Moved content was consolidated into the active packet instead of preserving a
 handoff mirror:
 
-- `.agent/conductor-devloop/context/conductor-sinex.md`
-- `.agent/conductor-devloop/context/2026-06-30-conductor-sinex-assimilation.md`
-- `.agent/conductor-devloop/OPERATING-LOG.md`
-- `.agent/conductor-devloop/PROCESS.md`
-- `.agent/conductor-devloop/TACTICS.md`
-- `.agent/conductor-devloop/VELOCITY.md`
-- `.agent/conductor-devloop/RUNBOOK.md`
-- `.agent/conductor-devloop/ACTIVE-LOOP.md`
+- `.agent/archive/devloop-2026-07/context/conductor-sinex.md`
+- `.agent/archive/devloop-2026-07/context/2026-06-30-conductor-sinex-assimilation.md`
+- `.agent/archive/devloop-2026-07/OPERATING-LOG.md`
+- `.agent/archive/devloop-2026-07/PROCESS.md`
+- `.agent/archive/devloop-2026-07/TACTICS.md`
+- `.agent/archive/devloop-2026-07/VELOCITY.md`
+- `.agent/archive/devloop-2026-07/RUNBOOK.md`
+- `.agent/archive/devloop-2026-07/ACTIVE-LOOP.md`
 
 The durable interpretation lives in the conductor packet and tracked scaffold,
 not in the retired scratch-current active-state pattern:
 
-- `.agent/conductor-devloop/context/2026-06-30-conductor-sinex-assimilation.md`
-- `.agent/conductor-devloop/context/001-standing-goal.md`
-- `.agent/conductor-devloop/PROCESS.md`
-- `.agent/conductor-devloop/TACTICS.md`
+- `.agent/archive/devloop-2026-07/context/2026-06-30-conductor-sinex-assimilation.md`
+- `.agent/archive/devloop-2026-07/context/001-standing-goal.md`
+- `.agent/archive/devloop-2026-07/PROCESS.md`
+- `.agent/archive/devloop-2026-07/TACTICS.md`
 
 Key doctrine to preserve:
 
@@ -101,7 +105,7 @@ Moved content:
 
 Use these as evidence/research archives. Do not load large tarballs, bundles,
 or JSONL exports wholesale; mine by filename/grep and promote only the
-actionable conclusions into `.agent/conductor-devloop/`, `.agent/scratch/research/`,
+actionable conclusions into `.agent/archive/devloop-2026-07/`, `.agent/scratch/research/`,
 issues, or new demo artifacts.
 
 ## Related Shelves Not Copied Wholesale
@@ -119,9 +123,7 @@ issues, or new demo artifacts.
 
 Before a handoff or final status report:
 
-1. Run `.agent/scripts/devloop-refresh-demos`.
-2. Run `.agent/scripts/devloop-sync`.
 3. Check that `README.md`, `MANIFEST.readable.json`, `SUMMARY_INDEX.json`, and
    `CURATED_CATALOG.md` mention the newest artifact directories named in
-   `.agent/conductor-devloop/OPERATING-LOG.md`.
+   `.agent/archive/devloop-2026-07/OPERATING-LOG.md`.
 4. Record the refresh in `OPERATING-LOG.md`.
