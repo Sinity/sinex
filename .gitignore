@@ -111,7 +111,6 @@ docs/analysis
 
 AGENTS.override.md
 # Generated instruction surface
-AGENTS.md
 .claude/scheduled_tasks.lock
 
 # sqlx offline query cache — intentionally not committed; sqlx macros compile

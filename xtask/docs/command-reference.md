@@ -570,7 +570,7 @@ Inspect and manage background xtask jobs
 | `status` | Show status of a specific job |
 | `output` | Show full output of a job |
 | `wait` | Wait for a job to complete |
-| `cancel` | Cancel a running job |
+| `cancel` | Cancel a running job (SIGTERM to the process group, SIGKILL escalation) |
 | `prune` | Remove completed jobs older than N days |
 
 ### `xtask jobs list`
@@ -636,7 +636,7 @@ Wait for a job to complete
 
 ### `xtask jobs cancel`
 
-Cancel a running job
+Cancel a running job (SIGTERM to the process group, SIGKILL escalation)
 
 **Arguments**
 
@@ -1916,7 +1916,6 @@ Generate and verify repo documentation surfaces
 |---|---|
 | `build` | Build documentation |
 | `serve` | Serve documentation locally (requires `simple-http-server` or `python3`) |
-| `agents` | Generate AGENTS.md by resolving the CLAUDE.md transclusion tree |
 | `command-guide` | Generate the concise xtask command guide used for agent memory and humans |
 | `command-reference` | Generate the exhaustive xtask public command reference from the live clap tree |
 | `schema-bundle` | Generate the checked-in JSON schema bundle from the Rust EventPayload registry |
@@ -1949,19 +1948,6 @@ Serve documentation locally (requires `simple-http-server` or `python3`)
 |---|---|---|---|
 | `-p, --port` | yes | no | Port to serve on |
 | `--build` | no | no | Build docs before serving |
-
-
-### `xtask docs agents`
-
-Generate AGENTS.md by resolving the CLAUDE.md transclusion tree
-
-**Arguments**
-
-| Flag | Value | Required | Description |
-|---|---|---|---|
-| `--output` | yes | no | Output file (default: AGENTS.md in workspace root) |
-| `--stdout` | no | no | Print to stdout instead of writing a file |
-| `--check` | no | no | Exit non-zero if the generated output would change |
 
 
 ### `xtask docs command-guide`
@@ -2041,7 +2027,7 @@ Generate a codebase snapshot for AI context (via repomix)
 | `--diagnostics` | no | no | U1: Auto-include files mentioned in the most recent build_diagnostics run |
 | `--changed` | no | no | U2: Include files changed since HEAD (staged + unstaged) |
 | `--context` | no | no | U3: Inject structured xtask state (recent checks, diagnostics, jobs) into the snapshot |
-| `--project-memory` | no | no | U4: Include CLAUDE.md and .agent/includes/ (project memory) in the snapshot |
+| `--project-memory` | no | no | U4: Include CLAUDE.md and docs/ + .agent/ (project memory) in the snapshot |
 | `--scope` | yes | no | U5: Scope to a crate or directory group (e.g., sinex-db, sinexd, sources, tests) |
 
 
