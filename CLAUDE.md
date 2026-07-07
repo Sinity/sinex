@@ -44,9 +44,11 @@
 
 ## Session Orientation (do this before substantive work)
 
-1. `bd prime` — Beads is the task substrate (durable issues, memories, session rules).
-   Claim with `bd update <id> --claim`, close with reasons + verification commands, create
-   linked beads for discovered follow-ups. No markdown TODO lists as shared truth.
+1. `bd prime` — Beads is the task substrate AND the devloop: `bd ready` → claim
+   (`bd update <id> --claim`) → work → PR → close with reasons + verification commands;
+   create linked beads for discovered follow-ups. No markdown TODO lists as shared truth.
+   The former bespoke conductor packet is archived at `.agent/archive/devloop-2026-07/`
+   (evidence corpus, never scaffold — do not resurrect it or `devloop-*` scripts).
 2. The **current code-grok entry point** is recorded in the bd memory `code-grok-*` key and
    lives at `.agent/scratch/NNN-grok-*.md` (highest NNN wins; each note says what it
    supersedes). Read it before trusting older scratch/audit claims — external audit line
@@ -318,4 +320,4 @@ disposable, relocated to `/var/cache/sinex/<user>/<hash>/` by the devshell.
 | Deployment modules, TLS, env vars, resource scoping, threat model | `nixos/modules/**` |
 | Issue/PR operating model, CI policy, authority surfaces, claim ledger | `.github/**` |
 | Vision / roadmap | `/realm/project/sinex-target-vision/` |
-| Agent conventions, scratch, devloop | `.agent/CONVENTIONS.md`, `.agent/README.md` |
+| Agent conventions, scratch, bead bar, graph lints | `.agent/CONVENTIONS.md`, `.agent/README.md` |
