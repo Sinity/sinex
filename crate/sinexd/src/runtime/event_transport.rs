@@ -740,6 +740,12 @@ impl EventBatcher {
         Ok(())
     }
 
+    /// Test-only helper for seeding a spool file with arbitrary line content
+    /// (including deliberately malformed lines) before exercising replay.
+    /// `recover_recovery_spool_events` no longer calls this itself (sinex-r6d.5
+    /// rewrote it to stream incrementally instead of rewriting the whole file
+    /// from an in-memory Vec), so this would otherwise be dead code outside tests.
+    #[cfg(test)]
     async fn rewrite_recovery_spool_file(
         lines: &[String],
         recovery_spool_path: &Path,
