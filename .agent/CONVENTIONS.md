@@ -78,6 +78,17 @@ Conventions for bead content:
   `bd list --json` dependency objects use `type`/`depends_on_id`; in
   `bd show --json` they use `dependency_type`/`id` — lint against the list
   shape.
+- Two additional lint/reporting tools (ported from polylogue, see their
+  docstrings for stated divergences): `.agent/tools/bead-lint.py` (dangling
+  deps, blocks-cycles, epic-member/description checks, ephemeral-path
+  citations without provenance framing, duplicate titles, dangling bead-id
+  text references, stale decision beads — checks with no equivalent in
+  bd-graph-lint) and `.agent/tools/wave-status.py` (per-wave progress board
+  with a priority histogram — a reminder surface for the priority/wave
+  correlation tension, not an enforced invariant: sinex's wave:N labels
+  interleave genuinely-parallel lanes rather than encoding a strict
+  delivery-gate sequence, so a P1 in a high-numbered wave is not automatically
+  wrong — cross-check sinex-my5's current round notes before "fixing" it).
 - Priorities: 0 = operator directive/campaign or in-flight recovery,
   1 = data-loss correctness and the current consumption unlock, 2 = normal,
   3 = design/meta/legibility, 4 = far-backlog design notes.
