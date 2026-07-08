@@ -491,7 +491,14 @@ where
             return Ok(false);
         }
 
-        Ok(self.health_reporter.as_ref().is_none_or(|reporter| {
+        // sinex-r6d.3: a missing reporter is an absence of measurement, not a
+        // verified-healthy signal — `is_none_or` previously laundered "no
+        // reporter wired" into `true`. `HealthReporter::current_status()`
+        // itself now also reports `Unknown` (not `Healthy`) until it has
+        // recorded real evidence, so both "no reporter" and "reporter with no
+        // evidence yet" correctly fail this bool-only liveness check rather
+        // than reading as confirmed-healthy.
+        Ok(self.health_reporter.as_ref().is_some_and(|reporter| {
             reporter.current_status() == sinex_primitives::domain::HealthStatus::Healthy
         }))
     }
@@ -625,9 +632,11 @@ where
             .health_reporter
             .as_ref()
             .map(|reporter| reporter.current_status());
+        // sinex-r6d.3: a missing reporter (health_status == None) must not
+        // read as healthy — see the matching fix in health_check() above.
         let healthy = runtime_initialized
             && health_status
-                .is_none_or(|status| status == sinex_primitives::domain::HealthStatus::Healthy);
+                .is_some_and(|status| status == sinex_primitives::domain::HealthStatus::Healthy);
         let description = if !runtime_initialized {
             format!("{module_name} automaton ({automaton_model}, runtime not initialized)")
         } else if let Some(status) = health_status {
