@@ -349,6 +349,10 @@ pub struct HealthReporter {
     /// `liveness_ok = false`.
     #[allow(clippy::type_complexity)]
     liveness_probe: Option<LivenessProbe>,
+    /// Whether the liveness probe has run at least once (sinex-r6d.3). Gates
+    /// `calculate_status()`'s evidence check: `liveness_ok`'s optimistic
+    /// `true` default is only trusted once this is true.
+    probe_evaluated: Arc<AtomicBool>,
     liveness_ok: Arc<AtomicBool>,
 }
 
@@ -394,12 +398,20 @@ impl HealthReporter {
             component_name,
             observer,
             metrics: Arc::new(HealthMetrics::with_clock(Arc::clone(&clock))),
-            last_status: Arc::new(RwLock::new(HealthStatus::Healthy)),
+            // sinex-r6d.3: Unknown, not Healthy — calculate_status() now also
+            // returns Unknown until real evidence lands, so this matches the
+            // very first computed status instead of manufacturing a fake
+            // Healthy->Unknown "transition" in the initial-observation log line.
+            last_status: Arc::new(RwLock::new(HealthStatus::Unknown)),
             has_emitted_status: Arc::new(AtomicBool::new(false)),
             last_status_emit_secs: Arc::new(AtomicU64::new(0)),
             thresholds,
             clock,
             liveness_probe: None,
+            probe_evaluated: Arc::new(AtomicBool::new(false)),
+            // Safe default: calculate_status() only consults liveness_ok once
+            // probe_evaluated is true, i.e. once this has been overwritten by
+            // a real probe result — see calculate_status()'s has_evidence gate.
             liveness_ok: Arc::new(AtomicBool::new(true)),
         }
     }
@@ -516,8 +528,26 @@ impl HealthReporter {
         }
     }
 
+    /// Whether this reporter has recorded any real evidence yet: at least one
+    /// `record_success`/`record_error` outcome, or (for reporters that rely
+    /// solely on a liveness probe) at least one completed probe evaluation.
+    ///
+    /// sinex-r6d.3 (doctrine rule 1: every verdict carries evidence-provenance
+    /// or is absent): `error_rate()` returns `0.0` for zero recorded outcomes,
+    /// which — left unguarded — computes as `Healthy` even though nothing has
+    /// been measured. This gate makes `calculate_status()` report `Unknown`
+    /// instead until real evidence exists.
+    fn has_evidence(&self) -> bool {
+        self.metrics.events_processed.load(Ordering::Relaxed) > 0
+            || (self.liveness_probe.is_some() && self.probe_evaluated.load(Ordering::Relaxed))
+    }
+
     /// Calculate current health status based on error rate and emit-stall signal.
     fn calculate_status(&self) -> HealthStatus {
+        if !self.has_evidence() {
+            return HealthStatus::Unknown;
+        }
+
         let error_rate = self.metrics.error_rate(self.thresholds.window_seconds);
 
         let base = if error_rate >= self.thresholds.error_rate_failed {
@@ -618,6 +648,7 @@ impl HealthReporter {
         if let Some(ref probe) = self.liveness_probe {
             let alive = probe().await;
             self.liveness_ok.store(alive, Ordering::Relaxed);
+            self.probe_evaluated.store(true, Ordering::Relaxed);
         }
 
         let new_status = self.calculate_status();

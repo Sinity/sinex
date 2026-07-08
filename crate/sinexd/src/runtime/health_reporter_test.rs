@@ -45,11 +45,46 @@ async fn first_health_check_emits_initial_status_evidence() -> Result<()> {
     let clock = Arc::new(ManualHealthClock::new(1));
     let reporter = reporter_with_clock(clock);
 
+    // sinex-r6d.3: a reporter that has recorded nothing yet reports Unknown,
+    // not a fabricated Healthy — the "initial status evidence" IS the Unknown
+    // observation, and it must still emit (has_emitted_status flips true).
     assert!(!reporter.has_emitted_status.load(Ordering::Relaxed));
-    assert_eq!(reporter.check_and_emit().await?, HealthStatus::Healthy);
+    assert_eq!(reporter.check_and_emit().await?, HealthStatus::Unknown);
 
     assert!(reporter.has_emitted_status.load(Ordering::Relaxed));
     assert_eq!(reporter.last_status_emit_secs.load(Ordering::Relaxed), 1);
+    Ok(())
+}
+
+#[sinex_test]
+async fn health_check_reports_healthy_once_evidence_exists() -> Result<()> {
+    let clock = Arc::new(ManualHealthClock::new(1));
+    let reporter = reporter_with_clock(clock);
+
+    // Before any recorded outcome: Unknown, never a laundered Healthy.
+    assert_eq!(reporter.current_status(), HealthStatus::Unknown);
+
+    reporter.record_success();
+    assert_eq!(
+        reporter.current_status(),
+        HealthStatus::Healthy,
+        "one successful outcome is real evidence of healthiness"
+    );
+    Ok(())
+}
+
+#[sinex_test]
+async fn health_check_stays_unknown_until_liveness_probe_runs() -> Result<()> {
+    let clock = Arc::new(ManualHealthClock::new(1));
+    let reporter = reporter_with_clock(clock).with_liveness_probe(Arc::new(|| {
+        Box::pin(async { true }) as futures::future::BoxFuture<'static, bool>
+    }));
+
+    // No record_success/record_error AND the probe has not run yet.
+    assert_eq!(reporter.current_status(), HealthStatus::Unknown);
+
+    // check_and_emit() runs the probe once — that alone is now evidence.
+    assert_eq!(reporter.check_and_emit().await?, HealthStatus::Healthy);
     Ok(())
 }
 
