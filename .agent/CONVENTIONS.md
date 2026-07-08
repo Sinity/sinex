@@ -53,6 +53,13 @@ Division of responsibility:
   sessions; bead notes capture per-work decisions; the archived operating log
   is the historical corpus for the beads/devloop-as-source work (sinex-pya,
   sinex-hlv, cem.10).
+- **Session–bead cross-links** (sinex-fcb; cross-repo contract with
+  polylogue-lio, polylogue side ratified 2026-07-08): every work slice names
+  its bead(s) in durable git surfaces — `Ref sinex-<id>` in commit bodies and
+  PR bodies — and every worked bead gets a dated `--append-notes` entry naming
+  what changed and where (PR number once it exists). Sessions are recoverable
+  from polylogue; the bead id in the commit/PR is what lets the two be joined
+  later (hlv ingestion is the query surface).
 
 Conventions for bead content:
 
@@ -159,7 +166,12 @@ satisfied, which are deferred, and which follow-up bead owns the remainder.
 `.agent/scratch/` is gitignored thinking space: `README.md`, numbered
 grok/audit notes (`NNN-topic.md` — highest NNN is the current entry point),
 `research/*.md` for long-form evidence, and inbox dirs for external analysis
-batches (`new*/` — verify before trusting). Do not keep active loop state here.
+batches. New external packs land under `.agent/scratch/corpus-<source>-<date>/`
+(the legacy `new/` and `new-gpt-pro/` dirs are grandfathered); lynchpin chisel
+ships these accelerant dirs in the sinex bundle automatically. Packs are
+accelerant, never authority: on claiming a bead that cites one, re-verify its
+file:line anchors against current master first (`bd memories accelerant` has
+the protocol). Do not keep active loop state here.
 
 `.agent/demos/` is a current curated shelf, not an append-only dump. Sinex's
 canonical local shelf is `.agent/demos/sinex/` with `README.md`,
