@@ -174,10 +174,12 @@ struct EventBatcherStats {
     events_sent: AtomicU64,
     publish_failures: AtomicU64,
     recovery_spool_write_failures: AtomicU64,
-    /// Events silently discarded because the recovery spool replay cap
-    /// (`MAX_REMAINING_LINES`) was hit. #751 F36: these events are lost
-    /// after sustained NATS outages and require manual intervention.
-    recovery_spool_discards: AtomicU64,
+    /// Malformed recovery-spool entries moved to the durable quarantine file
+    /// during replay (sinex-r6d.5). Quarantined, never discarded: an operator
+    /// can inspect/retry/delete via the quarantine file. This counter used to
+    /// track events permanently lost past a line-count cap (#751 F36); that
+    /// cap no longer exists.
+    recovery_spool_quarantined: AtomicU64,
 }
 
 impl EventBatcherStats {
@@ -188,7 +190,7 @@ impl EventBatcherStats {
             publish_failures = self.publish_failures.load(Ordering::Relaxed),
             recovery_spool_write_failures =
                 self.recovery_spool_write_failures.load(Ordering::Relaxed),
-            recovery_spool_discards = self.recovery_spool_discards.load(Ordering::Relaxed),
+            recovery_spool_quarantined = self.recovery_spool_quarantined.load(Ordering::Relaxed),
             "Event batcher stats"
         );
     }
@@ -353,6 +355,79 @@ impl EventBatcher {
         Ok(())
     }
 
+    /// Path for the durable quarantine file: malformed spool lines that cannot
+    /// be parsed as an `Event<JsonValue>` land here instead of being discarded
+    /// or endlessly re-attempted inline with retryable entries (sinex-r6d.5).
+    fn recovery_spool_quarantine_path(&self) -> PathBuf {
+        self.work_dir
+            .join("sinex_event_recovery_spool.quarantine.jsonl")
+    }
+
+    /// Best-effort `fsync` of a directory so a preceding `rename()` into it is
+    /// durable across a crash, not just the renamed file's own content
+    /// (sinex-r6d.5 red-team finding: temp-file writes fsync the file but the
+    /// rename into place was never followed by a parent-dir fsync, so the
+    /// rename itself could be lost on crash even though the data was synced).
+    /// Opening a directory read-only and calling `sync_all` is the portable
+    /// Unix idiom; sinex targets Linux only (see repo CLAUDE.md), so this is
+    /// not expected to fail in practice, but a failure here is logged rather
+    /// than propagated — directory durability is a hardening improvement over
+    /// the previous complete absence of it, not a new hard dependency.
+    async fn fsync_dir(dir: &Path) {
+        match tokio::fs::File::open(dir).await {
+            Ok(dir_file) => {
+                if let Err(error) = dir_file.sync_all().await {
+                    warn!(path = ?dir, %error, "Failed to fsync recovery-spool parent directory after rename");
+                }
+            }
+            Err(error) => {
+                warn!(path = ?dir, %error, "Failed to open recovery-spool parent directory for fsync");
+            }
+        }
+    }
+
+    /// Append one quarantine record (original line + line number + error +
+    /// timestamp) to the quarantine file, fsyncing after every write since
+    /// quarantine entries are rare (malformed data, not routine traffic) and
+    /// must never be lost between appends.
+    async fn append_quarantine_record(
+        quarantine_path: &Path,
+        line_no: u64,
+        original_line: &str,
+        error: &str,
+    ) -> RuntimeResult<()> {
+        let record = serde_json::json!({
+            "quarantined_at": sinex_primitives::temporal::now().format_rfc3339(),
+            "line_no": line_no,
+            "error": error,
+            "original_line": original_line,
+        });
+        let mut file = tokio::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(quarantine_path)
+            .await?;
+        file.write_all(serde_json::to_string(&record)?.as_bytes())
+            .await?;
+        file.write_all(b"\n").await?;
+        file.flush().await?;
+        file.sync_all().await?;
+        Ok(())
+    }
+
+    /// Replay the leftover local recovery spool, publishing every entry that
+    /// still parses and streaming everything that doesn't recover (publish
+    /// failure) back into a rewritten spool file.
+    ///
+    /// sinex-r6d.5: no line-count cap, no discard. Malformed lines move to a
+    /// durable quarantine file with enough metadata (original bytes, line
+    /// number, error, timestamp) for an operator to inspect/retry/delete
+    /// explicitly; publish-failed-but-valid lines are preserved verbatim and
+    /// retried on the next replay pass. Both the rewritten spool and the
+    /// quarantine file are written incrementally (bounded memory — no
+    /// unbounded in-memory `Vec` of pending lines) and their directory is
+    /// fsynced after each rename so a crash cannot lose the durability the
+    /// per-file fsync already provides.
     async fn recover_recovery_spool_events(&self) -> RuntimeResult<()> {
         let recovery_spool_path = self.recovery_spool_path();
 
@@ -369,18 +444,26 @@ impl EventBatcher {
             }
         };
 
-        // Maximum number of non-recoverable (malformed or publish-failed) lines to preserve
-        // in the rewritten spool file. Prevents unbounded growth when the spool file
-        // accumulates repeated failures.
-        const MAX_REMAINING_LINES: usize = 1_000;
+        let parent_dir = recovery_spool_path
+            .parent()
+            .unwrap_or_else(|| Path::new("."))
+            .to_path_buf();
+        tokio::fs::create_dir_all(&parent_dir).await?;
+        let quarantine_path = self.recovery_spool_quarantine_path();
+        let remaining_temp_path = parent_dir.join(format!(
+            ".sinex_event_recovery_spool.{}.tmp",
+            Uuid::now_v7()
+        ));
 
         let mut lines = BufReader::new(file).lines();
-        let mut remaining_lines = Vec::new();
+        let mut remaining_file: Option<tokio::fs::File> = None;
         let mut recovered = 0_u64;
         let mut malformed = 0_u64;
-        let mut discarded = 0_u64;
+        let mut preserved = 0_u64;
+        let mut line_no = 0_u64;
 
         while let Some(line) = lines.next_line().await? {
+            line_no += 1;
             if line.trim().is_empty() {
                 continue;
             }
@@ -389,26 +472,24 @@ impl EventBatcher {
                 Ok(event) => event,
                 Err(error) => {
                     malformed += 1;
-                    if remaining_lines.len() >= MAX_REMAINING_LINES {
-                        discarded += 1;
-                        self.stats
-                            .recovery_spool_discards
-                            .fetch_add(1, Ordering::Relaxed);
-                        error!(
-                            target: "sinex_metrics",
-                            metric = "runtime.recovery_spool_discards_total",
-                            path = ?recovery_spool_path,
-                            error = %error,
-                            "Discarding malformed recovery-spool entry (remaining-lines cap of {MAX_REMAINING_LINES} reached); event is permanently lost"
-                        );
-                    } else {
-                        warn!(
-                            path = ?recovery_spool_path,
-                            error = %error,
-                            "Preserving malformed local recovery-spool entry during replay"
-                        );
-                        remaining_lines.push(line);
-                    }
+                    self.stats
+                        .recovery_spool_quarantined
+                        .fetch_add(1, Ordering::Relaxed);
+                    warn!(
+                        target: "sinex_metrics",
+                        metric = "runtime.recovery_spool_quarantined_total",
+                        path = ?recovery_spool_path,
+                        line_no,
+                        error = %error,
+                        "Quarantining malformed recovery-spool entry (durable, never discarded — see quarantine file for operator inspection/retry/delete)"
+                    );
+                    Self::append_quarantine_record(
+                        &quarantine_path,
+                        line_no,
+                        &line,
+                        &error.to_string(),
+                    )
+                    .await?;
                     continue;
                 }
             };
@@ -445,84 +526,64 @@ impl EventBatcher {
             };
 
             if let Err(error) = publish_result {
-                if remaining_lines.len() >= MAX_REMAINING_LINES {
-                    discarded += 1;
-                    self.stats
-                        .recovery_spool_discards
-                        .fetch_add(1, Ordering::Relaxed);
-                    error!(
-                        target: "sinex_metrics",
-                        metric = "runtime.recovery_spool_discards_total",
-                        path = ?recovery_spool_path,
-                        event_id = ?event_id,
-                        error = %error,
-                        "Discarding recovery-spool event after replay publish failure (remaining-lines cap of {MAX_REMAINING_LINES} reached); event is permanently lost"
-                    );
-                } else {
-                    warn!(
-                        path = ?recovery_spool_path,
-                        event_id = ?event_id,
-                        error = %error,
-                        "Preserving recovery-spool entry after replay publish failure"
-                    );
-                    remaining_lines.push(line);
-                }
+                preserved += 1;
+                warn!(
+                    path = ?recovery_spool_path,
+                    event_id = ?event_id,
+                    error = %error,
+                    "Preserving recovery-spool entry after replay publish failure (streamed to rewritten spool, no cap)"
+                );
+                let out = match remaining_file.as_mut() {
+                    Some(out) => out,
+                    None => {
+                        let out = tokio::fs::OpenOptions::new()
+                            .create_new(true)
+                            .write(true)
+                            .open(&remaining_temp_path)
+                            .await?;
+                        remaining_file = Some(out);
+                        remaining_file
+                            .as_mut()
+                            .expect("just inserted Some above")
+                    }
+                };
+                out.write_all(line.as_bytes()).await?;
+                out.write_all(b"\n").await?;
                 continue;
             }
 
             recovered += 1;
         }
 
-        if remaining_lines.is_empty() {
-            tokio::fs::remove_file(&recovery_spool_path).await?;
-            if discarded > 0 {
-                // #751 F36: events were lost due to MAX_REMAINING_LINES cap during
-                // sustained NATS outage. The spool is now clean but the loss is durable.
-                error!(
-                    target: "sinex_metrics",
-                    metric = "runtime.recovery_spool_discards_total",
+        match remaining_file {
+            Some(mut out) => {
+                out.flush().await?;
+                out.sync_all().await?;
+                drop(out);
+                tokio::fs::rename(&remaining_temp_path, &recovery_spool_path).await?;
+                Self::fsync_dir(&parent_dir).await;
+                warn!(
                     path = ?recovery_spool_path,
                     recovered,
                     malformed,
-                    discarded,
-                    max_remaining = MAX_REMAINING_LINES,
-                    "Replayed and removed leftover local recovery spool; {discarded} events permanently lost due to remaining-lines cap"
+                    preserved,
+                    quarantine_path = ?quarantine_path,
+                    "Replayed local recovery spool partially; unpublished entries were preserved (streamed rewrite, zero discard); malformed entries quarantined"
                 );
-            } else {
+            }
+            None => {
+                tokio::fs::remove_file(&recovery_spool_path).await?;
+                Self::fsync_dir(&parent_dir).await;
                 info!(
                     path = ?recovery_spool_path,
                     recovered,
                     malformed,
-                    discarded,
-                    "Replayed and removed leftover local recovery spool"
+                    quarantine_path = ?quarantine_path,
+                    "Replayed and removed leftover local recovery spool (zero discard; malformed entries, if any, are in the quarantine file)"
                 );
             }
-            return Ok(());
         }
 
-        Self::rewrite_recovery_spool_file(&remaining_lines, &recovery_spool_path).await?;
-        if discarded > 0 {
-            error!(
-                target: "sinex_metrics",
-                metric = "runtime.recovery_spool_discards_total",
-                path = ?recovery_spool_path,
-                recovered,
-                malformed,
-                discarded,
-                remaining = remaining_lines.len(),
-                max_remaining = MAX_REMAINING_LINES,
-                "Replayed local recovery spool partially; {discarded} events permanently lost due to remaining-lines cap — unreadable or unpublished entries were preserved"
-            );
-        } else {
-            warn!(
-                path = ?recovery_spool_path,
-                recovered,
-                malformed,
-                discarded,
-                remaining = remaining_lines.len(),
-                "Replayed local recovery spool partially; unreadable or unpublished entries were preserved"
-            );
-        }
         Ok(())
     }
 
@@ -535,10 +596,11 @@ impl EventBatcher {
         let batch_size = batch.len();
         debug!("Sending batch of {} events", batch_size);
 
-        // The original code had retry logic here, but the new config doesn't include retry settings.
-        // Assuming retries are now handled at a lower level or removed for this component.
-        // For now, we'll attempt to send once. If retries are needed, they should be re-added
-        // with appropriate configuration.
+        // Single attempt here by design, not a durability gap: a failed batch
+        // routes to the local recovery spool below (store_recovery_spool_events),
+        // which sinex-r6d.5 hardened to never discard entries and to fsync both
+        // the temp file and its parent directory before/after rename. Retry
+        // happens on the next scheduled recovery-spool replay pass, not inline.
 
         let result = match &mut self.transport {
             EventTransport::Nats(publisher) => {
@@ -668,6 +730,7 @@ impl EventBatcher {
         file.flush().await?;
         file.sync_all().await?;
         tokio::fs::rename(&temp_path, recovery_spool_path).await?;
+        Self::fsync_dir(parent_dir).await;
 
         info!(
             recovery_spool_events = events.len(),
@@ -703,6 +766,7 @@ impl EventBatcher {
         file.flush().await?;
         file.sync_all().await?;
         tokio::fs::rename(&temp_path, recovery_spool_path).await?;
+        Self::fsync_dir(parent_dir).await;
         Ok(())
     }
 
