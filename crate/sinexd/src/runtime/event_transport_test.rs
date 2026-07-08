@@ -280,14 +280,74 @@ async fn malformed_recovery_spool_entries_are_preserved_during_replay(
     );
     batcher.recover_recovery_spool_events().await?;
 
-    let contents = tokio::fs::read_to_string(&recovery_spool_path).await?;
+    // sinex-r6d.5: malformed entries move to a durable quarantine file, not
+    // the main spool — they are never discarded, and never sit inline mixed
+    // with retryable-but-currently-unpublishable entries either. The valid
+    // entry replayed successfully, so the main spool is removed entirely.
     assert!(
-        contents.contains("{not-json"),
-        "malformed recovery-spool entry should remain for manual inspection"
+        tokio::fs::metadata(&recovery_spool_path).await.is_err(),
+        "fully replayed recovery spool (no retryable entries left) should be removed"
+    );
+    let quarantine_path = work_dir
+        .path()
+        .join("sinex_event_recovery_spool.quarantine.jsonl");
+    let quarantine_contents = tokio::fs::read_to_string(&quarantine_path)
+        .await
+        .expect("quarantine file should exist after a malformed entry");
+    assert!(
+        quarantine_contents.contains("{not-json"),
+        "malformed recovery-spool entry should be preserved verbatim in the quarantine file for manual inspection; got: {quarantine_contents}"
     );
     assert!(
-        !contents.contains("recovery_spool.partial_recovery"),
-        "successfully replayed entries should be removed from the preserved recovery spool"
+        !quarantine_contents.contains("recovery_spool.partial_recovery"),
+        "quarantine file should hold only malformed entries, not successfully replayed ones"
+    );
+    Ok(())
+}
+
+#[sinex_test]
+async fn recovery_spool_replay_never_discards_past_a_line_count(
+    ctx: xtask::sandbox::TestContext,
+) -> TestResult<()> {
+    let ctx = ctx.with_nats().dedicated().await?;
+    ensure_events_stream(&ctx.nats_client(), ctx.env()).await?;
+
+    let work_dir = tempdir()?;
+    let recovery_spool_path = work_dir.path().join("sinex_event_recovery_spool.jsonl");
+    // The old MAX_REMAINING_LINES cap was 1_000 — seed comfortably past it
+    // with malformed lines (cheap: no publish round-trip needed) and assert
+    // every single one survives replay into the quarantine file.
+    const OVER_CAP: usize = 1_100;
+    let malformed_lines: Vec<String> = (0..OVER_CAP)
+        .map(|i| format!("{{not-json-{i}"))
+        .collect();
+    EventBatcher::rewrite_recovery_spool_file(&malformed_lines, &recovery_spool_path).await?;
+
+    let (_sender, receiver) = mpsc::channel(1);
+    let (_shutdown_tx, shutdown_rx) = oneshot::channel();
+    let batcher = EventBatcher::new(
+        EventTransport::Nats(Arc::new(NatsPublisher::new(ctx.nats_client()))),
+        EventBatcherConfig::default(),
+        receiver,
+        shutdown_rx,
+        work_dir.path().to_path_buf(),
+    );
+    batcher.recover_recovery_spool_events().await?;
+
+    let quarantine_path = work_dir
+        .path()
+        .join("sinex_event_recovery_spool.quarantine.jsonl");
+    let quarantine_contents = tokio::fs::read_to_string(&quarantine_path).await?;
+    for i in 0..OVER_CAP {
+        assert!(
+            quarantine_contents.contains(&format!("not-json-{i}")),
+            "entry {i} (past the old 1_000-line cap) must survive in the quarantine file, zero discard"
+        );
+    }
+    assert_eq!(
+        quarantine_contents.lines().count(),
+        OVER_CAP,
+        "every malformed entry must produce exactly one quarantine record, none dropped"
     );
     Ok(())
 }
