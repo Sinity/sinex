@@ -1489,7 +1489,34 @@ SQL
                   esac
                 }
 
+                # sinex-ive AC: every proof-producing invocation records which binary
+                # ran it and whether that binary is a fresh rebuild or a stale
+                # fallback, so a false-pass caused by a broken rebuild is auditable
+                # after the fact even when the wrapper didn't refuse outright.
+                _sinex_xtask_stamp_binary_provenance() {
+                  local hash rebuild_status
+                  hash="$(sha256sum "$bin_path" 2>/dev/null | cut -d' ' -f1)"
+                  if [ -e "$build_failure_stamp" ] && ! _sinex_xtask_sources_newer_than "$build_failure_stamp"; then
+                    rebuild_status="stale-after-failed-rebuild"
+                  elif _sinex_xtask_needs_build; then
+                    rebuild_status="stale-rebuild-not-attempted"
+                  else
+                    rebuild_status="current"
+                  fi
+                  mkdir -p "$build_state_dir" || return 0
+                  {
+                    printf '{'
+                    printf '"schema_version":1'
+                    printf ',"observed_at":%s' "$(_sinex_xtask_json_string "$(date -u +%Y-%m-%dT%H:%M:%SZ)")"
+                    printf ',"binary_hash":%s' "$(_sinex_xtask_json_string "$hash")"
+                    printf ',"rebuild_status":%s' "$(_sinex_xtask_json_string "$rebuild_status")"
+                    printf ',"command":%s' "$(_sinex_xtask_json_string "$*")"
+                    printf '}\n'
+                  } >> "$build_state_dir/xtask-binary-provenance.jsonl" 2>/dev/null || true
+                }
+
                 _sinex_xtask_exec_checkout_binary() {
+                  _sinex_xtask_stamp_binary_provenance "$@"
                   if [ -f "$build_postgres_owned_marker" ]; then
                     export SINEX_XTASK_BOOTSTRAP_POSTGRES_OWNED=1
                     rm -f "$build_postgres_owned_marker"
@@ -1911,19 +1938,21 @@ SQL
                     if _sinex_xtask_is_observability_command "$@"; then
                       _sinex_xtask_exec_observability_with_existing_binary "$@"
                     fi
+                    # Not an observability-safe command past this point (that branch
+                    # already exec'd away): sinex-ive — a proof-producing command
+                    # (check/test/build/schema/docs/deps/fix with real changes, or any
+                    # non-read-only doctor/infra/run) must never silently gate on a
+                    # binary that is known stale or fails to rebuild. Refuse loudly
+                    # instead of falling back — see xtask-binary-provenance.jsonl for
+                    # which binary any given proof actually ran under.
                     if _sinex_xtask_failed_build_is_current; then
-                      echo "ℹ  Using existing xtask binary; local rebuild is currently broken for these sources" >&2
-                      if [ -r "$build_failure_log" ]; then
-                        echo "  log: $build_failure_log" >&2
-                      fi
+                      _sinex_xtask_report_current_failure
+                      exit 101
                     else
                       if ! _sinex_xtask_build_with_lock "$@"; then
                         if _sinex_xtask_failed_build_is_current; then
-                          echo "ℹ  Falling back to existing xtask binary after rebuild failure" >&2
-                          if [ -r "$build_failure_log" ]; then
-                            echo "  log: $build_failure_log" >&2
-                          fi
-                          _sinex_xtask_exec_checkout_binary "$@"
+                          _sinex_xtask_report_current_failure
+                          exit 101
                         fi
                         exit 1
                       fi
@@ -1940,13 +1969,12 @@ SQL
                 if [ "$force_rebuild" = "1" ] || _sinex_xtask_needs_build; then
                   if ! _sinex_xtask_build_with_lock "$@"; then
                     if _sinex_xtask_failed_build_is_current; then
-                      if [ -x "$bin_path" ] && _sinex_xtask_can_use_existing_binary "$@"; then
-                        echo "ℹ  Falling back to existing xtask binary after rebuild failure" >&2
-                        if [ -r "$build_failure_log" ]; then
-                          echo "  log: $build_failure_log" >&2
-                        fi
-                        _sinex_xtask_exec_checkout_binary "$@"
-                      fi
+                      # sinex-ive: no existing-binary fallback here either — this path
+                      # is reached only for non-observability commands (the
+                      # observability+no-checkout-binary case already exec'd away above
+                      # via the Nix read-only fallback), so a stale/broken binary must
+                      # never gate a proof. force_rebuild=1 also lands here and must
+                      # never silently serve a pre-existing binary either.
                       _sinex_xtask_report_current_failure
                       exit 101
                     fi
