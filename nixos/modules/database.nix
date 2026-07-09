@@ -299,6 +299,66 @@ in
 
     (mkIf (db.enable && db.autoSetup) {
       systemd.services.postgresql-setup.script = lib.mkAfter ''
+                # Tracks compat dirs already merged into dynamic_library_path this run, so
+                # repeated failures for the same stale extension version don't re-issue
+                # redundant ALTER SYSTEM/reload calls.
+                SINEX_COMPAT_LIBRARY_PATHS_APPLIED=""
+
+                # On minor-version package upgrades (e.g. TimescaleDB 2.27.2 -> 2.28.2) an
+                # already-installed extension's versioned .so (''${extName}-''${version}.so)
+                # can vanish from the new package derivation while the database still has
+                # the OLD version recorded in pg_extension. TimescaleDB's per-database loader
+                # dynamically dlopens that versioned .so on EVERY session touching such a
+                # database (even a plain catalog SELECT), so this can fail before
+                # ALTER EXTENSION UPDATE is ever reached. Parse the missing-file name
+                # directly out of the failing psql output (no separate lookup query
+                # needed -- that query would fail the same way) and extend
+                # dynamic_library_path with the old package's lib dir, found by searching
+                # the nix store for the exact missing filename.
+                #
+                # Ordering matters: the compat dir MUST come AFTER $libdir, never before.
+                # TimescaleDB's own upgrade machinery also resolves the UNVERSIONED
+                # $libdir/timescaledb path (its already-preloaded loader shim) via this
+                # same search path; if the compat dir were searched first, an unversioned
+                # lookup would resolve to the OLD package's shim instead of the currently
+                # preloaded one, and TimescaleDB's preload-consistency check then fails with
+                # "extension \"timescaledb\" must be preloaded" even though it plainly is.
+                apply_extension_compat_library_path_from_error() {
+                  local errorText="$1"
+                  local missingName
+                  missingName=$(printf '%s' "$errorText" \
+                    | sed -n 's/.*could not access file "\([^"]*\)".*/\1/p' | head -1)
+                  if [ -z "$missingName" ]; then
+                    return 1
+                  fi
+                  case " ''${SINEX_COMPAT_LIBRARY_PATHS_APPLIED} " in
+                    *" ''${missingName} "*) return 0 ;;
+                  esac
+                  local compat_dir
+                  compat_dir=$(find /nix/store -maxdepth 3 -name "''${missingName}.so" \
+                    -printf '%h\n' 2>/dev/null | head -1)
+                  if [ -z "$compat_dir" ]; then
+                    return 1
+                  fi
+                  echo "[sinex] $missingName: found compat library at $compat_dir, extending dynamic_library_path (after \$libdir)"
+                  psql -v ON_ERROR_STOP=1 -d postgres \
+                    -c "ALTER SYSTEM SET dynamic_library_path TO '\$libdir:$compat_dir';" >/dev/null
+                  psql -v ON_ERROR_STOP=1 -d postgres \
+                    -c "SELECT pg_reload_conf();" >/dev/null
+                  SINEX_COMPAT_LIBRARY_PATHS_APPLIED="''${SINEX_COMPAT_LIBRARY_PATHS_APPLIED} ''${missingName}"
+                  return 0
+                }
+
+                reset_extension_compat_library_path() {
+                  if [ -n "$SINEX_COMPAT_LIBRARY_PATHS_APPLIED" ]; then
+                    psql -v ON_ERROR_STOP=1 -d postgres \
+                      -c "ALTER SYSTEM RESET dynamic_library_path;" >/dev/null
+                    psql -v ON_ERROR_STOP=1 -d postgres \
+                      -c "SELECT pg_reload_conf();" >/dev/null
+                    SINEX_COMPAT_LIBRARY_PATHS_APPLIED=""
+                  fi
+                }
+
                 ensure_database_owner() {
                   local dbName="$1"
                   local roleName="$2"
@@ -314,15 +374,39 @@ SQL
                 extension_exists() {
                   local dbName="$1"
                   local extName="$2"
-                  psql -X -v ON_ERROR_STOP=1 \
+                  local output rc
+                  output=$(psql -X -v ON_ERROR_STOP=1 \
                     --set=sinex_ext_name="$extName" \
-                    -d "$dbName" -At <<'SQL'
+                    -d "$dbName" -At 2>&1 <<'SQL'
 SELECT EXISTS (
   SELECT 1
   FROM pg_extension
   WHERE extname = :'sinex_ext_name'
 )::int;
 SQL
+                  )
+                  rc=$?
+                  if [ $rc -ne 0 ]; then
+                    if printf '%s' "$output" | grep -qF 'could not access file' \
+                      && apply_extension_compat_library_path_from_error "$output"; then
+                      output=$(psql -X -v ON_ERROR_STOP=1 \
+                        --set=sinex_ext_name="$extName" \
+                        -d "$dbName" -At 2>&1 <<'SQL'
+SELECT EXISTS (
+  SELECT 1
+  FROM pg_extension
+  WHERE extname = :'sinex_ext_name'
+)::int;
+SQL
+                      )
+                      rc=$?
+                    fi
+                  fi
+                  if [ $rc -ne 0 ]; then
+                    printf '%s\n' "$output" >&2
+                    return $rc
+                  fi
+                  printf '%s\n' "$output"
                 }
 
                 create_extension() {
@@ -342,11 +426,12 @@ SQL
                   # fresh psql session after a package update. Keep every extension on
                   # this stricter path so setup behavior stays uniform.
                   #
-                  # On minor-version upgrades (e.g. TimescaleDB 2.26.4 -> 2.27.1) the
-                  # installed .so is no longer present in the new package derivation.
-                  # Detect this via "could not access file" and automatically locate the
-                  # old .so in the nix store by searching for the versioned filename.
-                  local output rc installed_version compat_dir
+                  # On minor-version upgrades (e.g. TimescaleDB 2.27.2 -> 2.28.2) the
+                  # installed .so can be missing from the new package derivation.
+                  # apply_extension_compat_library_path_from_error (shared with
+                  # extension_exists above) detects this via "could not access file" and
+                  # extends dynamic_library_path with a compat dir found in the nix store.
+                  local output rc
                   output=$(psql -X -v ON_ERROR_STOP=1 \
                     --set=sinex_ext_name="$extName" \
                     -d "$dbName" 2>&1 <<'SQL'
@@ -356,45 +441,23 @@ SQL
                   rc=$?
                   [ $rc -eq 0 ] && return 0
 
-                  if printf '%s' "$output" | grep -qF 'could not access file'; then
-                    installed_version=$(psql -X -At -d "$dbName" \
-                      -c "SELECT extversion FROM pg_extension WHERE extname = '$extName'" 2>/dev/null)
-                    if [ -n "$installed_version" ]; then
-                      echo "[sinex] $extName: version $installed_version .so missing from current package, searching nix store for compat library..."
-                      compat_dir=$(find /nix/store -maxdepth 3 \
-                        -name "''${extName}-''${installed_version}.so" \
-                        -printf '%h\n' 2>/dev/null | head -1)
-                      if [ -n "$compat_dir" ]; then
-                        echo "[sinex] $extName: found compat library at $compat_dir, temporarily extending dynamic_library_path"
-                        psql -v ON_ERROR_STOP=1 -d postgres \
-                          -c "ALTER SYSTEM SET dynamic_library_path TO '$compat_dir:\$libdir';" >/dev/null
-                        psql -v ON_ERROR_STOP=1 -d postgres \
-                          -c "SELECT pg_reload_conf();" >/dev/null
-                        psql -X -v ON_ERROR_STOP=1 \
-                          --set=sinex_ext_name="$extName" \
-                          -d "$dbName" <<'SQL' >/dev/null
+                  if printf '%s' "$output" | grep -qF 'could not access file' \
+                    && apply_extension_compat_library_path_from_error "$output"; then
+                    output=$(psql -X -v ON_ERROR_STOP=1 \
+                      --set=sinex_ext_name="$extName" \
+                      -d "$dbName" 2>&1 <<'SQL'
 ALTER EXTENSION :"sinex_ext_name" UPDATE;
 SQL
-                        rc=$?
-                        # Always reset dynamic_library_path whether the update succeeded or failed.
-                        psql -v ON_ERROR_STOP=1 -d postgres \
-                          -c "ALTER SYSTEM RESET dynamic_library_path;" >/dev/null
-                        psql -v ON_ERROR_STOP=1 -d postgres \
-                          -c "SELECT pg_reload_conf();" >/dev/null
-                        if [ $rc -eq 0 ]; then
-                          echo "[sinex] $extName: upgraded via compat library path"
-                          return 0
-                        fi
-                        echo "[sinex] ERROR: $extName: upgrade failed even with compat library" >&2
-                        return $rc
-                      fi
+                    )
+                    rc=$?
+                    if [ $rc -eq 0 ]; then
+                      echo "[sinex] $extName: upgraded via compat library path"
+                      return 0
                     fi
-                    echo "[sinex] ERROR: $extName: version $installed_version .so not found in nix store" >&2
-                    echo "[sinex] Hint: add the old package to services.sinex.database.extensionCompatibilityPackages" >&2
-                    return 1
                   fi
 
                   printf '[sinex] ERROR: %s update failed: %s\n' "$extName" "$output" >&2
+                  echo "[sinex] Hint: add the old package to services.sinex.database.extensionCompatibilityPackages" >&2
                   return $rc
                 }
 
@@ -441,6 +504,8 @@ SQL
                   ensure_extension "$dbName" "vector"
                   ensure_extension "$dbName" "pg_trgm"
                 done
+
+                reset_extension_compat_library_path
       '';
     })
 
