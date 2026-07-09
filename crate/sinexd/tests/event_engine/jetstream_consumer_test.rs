@@ -14,8 +14,8 @@ use sqlx::Row;
 use std::sync::Arc;
 use std::time::Duration;
 use support::{
-    FIXTURE_SOURCE_MATERIAL_ID, admission_envelope, confirmation_subject_for,
-    ensure_fixture_source_material, spawn_consumer_and_wait_ready,
+    FIXTURE_SOURCE_MATERIAL_ID, admission_envelope, admission_envelope_multi,
+    confirmation_subject_for, ensure_fixture_source_material, spawn_consumer_and_wait_ready,
     wait_for_last_stream_message_by_subject,
 };
 use tokio::sync::RwLock;
@@ -1002,5 +1002,219 @@ async fn dlq_captures_multiple_validation_failures(ctx: TestContext) -> TestResu
     .await?;
 
     setup.handle.abort();
+    Ok(())
+}
+
+/// sinex-r6d.12: a valid event and a rejected event sharing ONE physical raw
+/// JetStream message (the shape a batched `EventIntent` actually produces)
+/// must both settle correctly — the rejected sibling routing to DLQ must not
+/// depend on, race, or foreclose the valid sibling's own persistence.
+#[sinex_test]
+async fn multi_child_intent_settles_valid_and_rejected_siblings(
+    ctx: TestContext,
+) -> TestResult<()> {
+    let ctx = ctx.with_nats().shared().await?;
+    let setup = start_isolated_consumer(&ctx, "r6d12-mixed").await?;
+    let nats_client = ctx.nats_client();
+    let env = ctx.env();
+
+    let dlq_stream = setup.topology.dlq_stream.clone();
+    let mut dlq_stream_handle = setup.js.get_stream(&dlq_stream).await?;
+    let initial_dlq_messages = dlq_stream_handle.info().await?.state.messages;
+
+    let good_id = Uuid::now_v7();
+    let good_event = json!({
+        "id": good_id.to_string(),
+        "source": "r6d12mixed",
+        "event_type": "r6d12mixed.good",
+        "payload": {"ok": true},
+        "ts_orig": temporal::now().format_rfc3339(),
+        "host": "test-host",
+        "source_material_id": FIXTURE_SOURCE_MATERIAL_ID,
+        "anchor_byte": 0,
+    });
+    let bad_event = json!({
+        "id": Uuid::now_v7().to_string(),
+        "source": "r6d12mixed",
+        "event_type": "r6d12mixed.bad",
+        "payload": {"data": "bad"},
+        // A well-formed but implausibly-old RFC3339 timestamp: it must
+        // deserialize fine (unlike a malformed string, which would poison
+        // the WHOLE envelope's deserialization and reject the valid
+        // sibling too) yet still get rejected by the per-event
+        // ts_orig_lower_bound (2000-01-01) admission check.
+        "ts_orig": "1990-01-01T00:00:00Z",
+        "host": "test-host",
+        "source_material_id": FIXTURE_SOURCE_MATERIAL_ID,
+        "anchor_byte": 1,
+    });
+
+    let subject =
+        env.nats_subject_with_namespace(Some(&setup.namespace), "events.raw.r6d12mixed.batch");
+    nats_client
+        .publish(
+            subject,
+            serde_json::to_vec(&admission_envelope_multi(
+                "r6d12mixed",
+                vec![good_event, bad_event],
+            ))?
+            .into(),
+        )
+        .await?;
+    nats_client.flush().await?;
+
+    // The valid sibling must be persisted even though its rejected sibling
+    // shares the same raw message.
+    WaitHelpers::wait_for_event_id(&ctx.pool, good_id.into(), Timeouts::SHORT).await?;
+
+    // The rejected sibling must still reach the DLQ.
+    WaitHelpers::wait_for_condition(
+        || {
+            let js = setup.js.clone();
+            let dlq_stream = dlq_stream.clone();
+            async move {
+                let mut stream = js
+                    .get_stream(&dlq_stream)
+                    .await
+                    .map_err(|e| SinexError::network(e.to_string()))?;
+                let state = stream
+                    .info()
+                    .await
+                    .map_err(|e| SinexError::network(e.to_string()))?
+                    .state
+                    .clone();
+                Ok::<bool, SinexError>(state.messages > initial_dlq_messages)
+            }
+        },
+        Timeouts::SHORT,
+    )
+    .await?;
+
+    setup.handle.abort();
+    Ok(())
+}
+
+/// sinex-r6d.12: a not-ready event (unregistered source material) and a
+/// ready event sharing ONE physical raw message. The shared-envelope
+/// settlement coordinator must NAK the whole message when the not-ready
+/// child needs a retry — even though the ready sibling already persisted —
+/// and the ready sibling's inevitable redelivery must re-admit idempotently
+/// (exactly one row), never duplicate.
+#[sinex_test]
+async fn multi_child_intent_settles_not_ready_and_ready_siblings(
+    ctx: TestContext,
+) -> TestResult<()> {
+    let ctx = ctx.with_nats().shared().await?;
+    let nats_client = ctx.nats_client();
+    let pool = ctx.pool.clone();
+    ensure_fixture_source_material(&pool).await?;
+    let validator = IngestEventValidator::new(false);
+
+    let js = ctx.jetstream().await?;
+    let env = ctx.env();
+    let namespace = ctx.pipeline_namespace().prefix().to_string();
+    let topology = JetStreamTopology::new(
+        env,
+        ctx.pipeline_namespace().stream("SINEX_RAW_EVENTS_R6D12_NR"),
+        ctx.pipeline_namespace()
+            .consumer_name("event-engine-r6d12-nr"),
+        Some(&namespace),
+    );
+    let ready_topology = topology.clone();
+    let consumer = JetStreamConsumer::with_test_hooks(
+        nats_client.clone(),
+        pool.clone(),
+        Arc::new(RwLock::new(validator)),
+        topology,
+        Duration::from_secs(Timeouts::STANDARD),
+        None,
+        None,
+        None,
+        None,
+        false,
+        None,
+        None,
+        Some(Duration::from_millis(300)),
+    );
+    let consumer_handle =
+        spawn_consumer_and_wait_ready(&ctx, &js, &ready_topology, consumer).await?;
+
+    let missing_material_id = Uuid::now_v7();
+
+    let ready_id = Uuid::now_v7();
+    let ready_event = json!({
+        "id": ready_id.to_string(),
+        "source": "r6d12nr",
+        "event_type": "r6d12nr.ready",
+        "payload": {"ok": true},
+        "ts_orig": temporal::now().format_rfc3339(),
+        "host": "test-host",
+        "source_material_id": FIXTURE_SOURCE_MATERIAL_ID,
+        "anchor_byte": 0,
+    });
+    let not_ready_id = Uuid::now_v7();
+    let not_ready_event = json!({
+        "id": not_ready_id.to_string(),
+        "source": "r6d12nr",
+        "event_type": "r6d12nr.notready",
+        "payload": {"ok": true},
+        "ts_orig": temporal::now().format_rfc3339(),
+        "host": "test-host",
+        "source_material_id": missing_material_id.to_string(),
+        "anchor_byte": 0,
+    });
+
+    let subject = env.nats_subject_with_namespace(Some(&namespace), "events.raw.r6d12nr.batch");
+    nats_client
+        .publish(
+            subject,
+            serde_json::to_vec(&admission_envelope_multi(
+                "r6d12nr",
+                vec![ready_event, not_ready_event],
+            ))?
+            .into(),
+        )
+        .await?;
+    nats_client.flush().await?;
+
+    // Both siblings admit fine, but the batch INSERT for this raw message is
+    // atomic, so the not-ready sibling's FK violation defers BOTH events
+    // together (pre-existing per-batch, not per-row, FK-defer semantics —
+    // unrelated to sinex-r6d.12). Neither persists yet. Give a couple of
+    // NAK/redelivery cycles a beat to prove the envelope is actively being
+    // retried (not silently stuck), then register the missing material.
+    tokio::time::sleep(Duration::from_millis(800)).await;
+    let ready_count_before: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM core.events WHERE id = $1::uuid")
+            .bind(ready_id)
+            .fetch_one(&ctx.pool)
+            .await?;
+    assert_eq!(
+        ready_count_before, 0,
+        "ready sibling must not persist while its not-ready batch-mate blocks the shared insert"
+    );
+
+    ctx.ensure_specific_material(missing_material_id, Some("r6d12nr-material"))
+        .await?;
+
+    // Once the missing material is registered, the next redelivery's insert
+    // succeeds for both siblings sharing the envelope.
+    WaitHelpers::wait_for_event_id(&ctx.pool, ready_id.into(), Timeouts::SHORT).await?;
+    WaitHelpers::wait_for_event_id(&ctx.pool, not_ready_id.into(), Timeouts::SHORT).await?;
+
+    // Idempotency: repeated NAK/redelivery cycles before the material was
+    // registered must never duplicate either sibling once they do persist.
+    let ready_count: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM core.events WHERE id = $1::uuid")
+            .bind(ready_id)
+            .fetch_one(&ctx.pool)
+            .await?;
+    assert_eq!(
+        ready_count, 1,
+        "ready sibling must not be duplicated by the coordinator's forced redelivery"
+    );
+
+    consumer_handle.abort();
+    let _ = consumer_handle.await;
     Ok(())
 }
