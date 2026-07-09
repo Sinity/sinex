@@ -11,6 +11,13 @@ license.workspace = true
 name = "sinexd"
 path = "src/main.rs"
 
+# sinex-r6d.9 VM crash-window harness: testing-feature only, never built for
+# production (see the module doc on the binary itself).
+[[bin]]
+name = "spool_rename_crash_harness"
+path = "src/bin/spool_rename_crash_harness.rs"
+required-features = ["testing"]
+
 [lib]
 name = "sinexd"
 path = "src/lib.rs"

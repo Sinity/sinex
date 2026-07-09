@@ -233,7 +233,15 @@
             // {
               inherit cargoArtifacts;
               pname = "sinex-vm-runtime";
-              cargoExtraArgs = vmRuntimeCargoExtraArgs;
+              # `sinexd/testing` (an empty, cfg-only feature — no extra
+              # dependencies, so this shares `cargoArtifacts` safely) compiles
+              # in the VM-only crash-window fail points (sinex-r6d.9). This
+              # derivation is exclusively consumed by exported VM checks
+              # (never `services.sinex.enable`'s production package,
+              # `sinexRuntime` above) — every fail point is inert unless its
+              # own env var is set, so this has zero effect on any existing
+              # VM scenario.
+              cargoExtraArgs = "${vmRuntimeCargoExtraArgs} --features sinexd/testing";
               doCheck = false;
               # VM checks need deployment-shaped binaries, not optimized
               # production codegen. Keep this local to the VM runtime

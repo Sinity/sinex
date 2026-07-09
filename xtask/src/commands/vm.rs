@@ -49,6 +49,7 @@ const CHAOS_TESTS: &[&str] = &[
     "chaos-network-partition",
     "chaos-process-restart",
     "chaos-clock-skew",
+    "chaos-spool-rename-durability",
     "xtask-concurrency",
 ];
 /// End-to-end production-shape proof (#1135): source -> NATS -> event engine -> DB -> API.
