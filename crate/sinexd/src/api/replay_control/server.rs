@@ -213,50 +213,107 @@ impl ReplayControlServer {
         };
 
         if let Some(reply_subject) = message.reply {
-            match serde_json::to_vec(&response) {
-                Ok(bytes) => {
-                    let mut headers = async_nats::HeaderMap::new();
-                    transport::insert_transport_class_headers(
-                        &mut headers,
-                        transport::Class::Control,
-                    );
-                    if let Err(err) = ensure_nats_payload_fits(
-                        "replay control response",
-                        &reply_subject,
-                        bytes.len(),
-                    ) {
-                        error!(
-                            target: "sinex_metrics",
-                            metric = "gateway.replay_control_failures_total",
-                            ?err,
-                            "Replay control response exceeded NATS payload limit; reply not sent"
-                        );
-                        return Ok(());
-                    }
-                    if let Err(err) = client
-                        .publish_with_headers(reply_subject, headers, bytes.into())
-                        .await
-                    {
-                        error!(
-                            target: "sinex_metrics",
-                            metric = "gateway.replay_control_failures_total",
-                            ?err,
-                            "Failed to send replay control response"
-                        );
-                    }
-                }
-                Err(err) => {
-                    error!(
-                        target: "sinex_metrics",
-                        metric = "gateway.replay_control_failures_total",
-                        ?err,
-                        "Failed to serialize replay control response; reply not sent"
-                    );
-                }
-            }
+            Self::send_reply_or_compact_error(client, &reply_subject, response).await;
         }
 
         Ok(())
+    }
+
+    /// Publish `response` to `reply_subject`. If it's too large (a legitimate
+    /// response for a large replay scope can be hundreds of MB once
+    /// `root_event_ids` is enumerated) or fails to serialize, fall back to
+    /// publishing a small, generic `ReplayControlResponse::error(..)` instead
+    /// of silently dropping the reply.
+    ///
+    /// Silently not replying (the prior behavior) is worse than a generic
+    /// error: the caller's `request()` call has no other signal, so it just
+    /// hangs until ITS OWN client-side timeout eventually fires with a
+    /// message ("operation timed out") that gives no hint this ever reached
+    /// the server, let alone why it failed there. A caller can always retry
+    /// a scope-narrowing request in response to a clear error; it cannot
+    /// meaningfully react to silence.
+    async fn send_reply_or_compact_error(
+        client: &Client,
+        reply_subject: &str,
+        response: ReplayControlResponse,
+    ) {
+        let mut headers = async_nats::HeaderMap::new();
+        transport::insert_transport_class_headers(&mut headers, transport::Class::Control);
+
+        let bytes = match serde_json::to_vec(&response) {
+            Ok(bytes) if ensure_nats_payload_fits(
+                "replay control response",
+                reply_subject,
+                bytes.len(),
+            )
+            .is_ok() =>
+            {
+                bytes
+            }
+            Ok(bytes) => {
+                error!(
+                    target: "sinex_metrics",
+                    metric = "gateway.replay_control_failures_total",
+                    payload_bytes = bytes.len(),
+                    "Replay control response exceeded NATS payload limit; \
+                     falling back to a compact error reply instead of dropping it silently"
+                );
+                match serde_json::to_vec(&ReplayControlResponse::error(
+                    "Replay control response exceeded the NATS payload limit -- the operation's \
+                     scope likely spans too much data for a single preview/status call. Narrow \
+                     the scope (a shorter time window or a material filter) and retry.",
+                )) {
+                    Ok(bytes) => bytes,
+                    Err(err) => {
+                        error!(
+                            target: "sinex_metrics",
+                            metric = "gateway.replay_control_failures_total",
+                            ?err,
+                            "Failed to serialize even the compact fallback error reply; \
+                             reply not sent"
+                        );
+                        return;
+                    }
+                }
+            }
+            Err(err) => {
+                error!(
+                    target: "sinex_metrics",
+                    metric = "gateway.replay_control_failures_total",
+                    ?err,
+                    "Failed to serialize replay control response; falling back to a compact \
+                     error reply instead of dropping it silently"
+                );
+                match serde_json::to_vec(&ReplayControlResponse::error(
+                    "Replay control response failed to serialize on the server; \
+                     see server logs for details.",
+                )) {
+                    Ok(bytes) => bytes,
+                    Err(err) => {
+                        error!(
+                            target: "sinex_metrics",
+                            metric = "gateway.replay_control_failures_total",
+                            ?err,
+                            "Failed to serialize even the compact fallback error reply; \
+                             reply not sent"
+                        );
+                        return;
+                    }
+                }
+            }
+        };
+
+        if let Err(err) = client
+            .publish_with_headers(reply_subject.to_string(), headers, bytes.into())
+            .await
+        {
+            error!(
+                target: "sinex_metrics",
+                metric = "gateway.replay_control_failures_total",
+                ?err,
+                "Failed to send replay control response"
+            );
+        }
     }
 
     async fn process_request(
@@ -311,9 +368,40 @@ impl ReplayControlServer {
                     map.insert("replay_gates".to_string(), gate_report);
                 }
 
+                // Store the FULL preview (including root_event_ids) -- execution reads
+                // it back from operations_log.preview_summary later (replay_writer.rs)
+                // to verify the root set hasn't drifted since preview and to sanity-check
+                // root_event_ids.len() == total_events (state_machine.rs ~858-872). This
+                // is load-bearing, not display data, so it must not be trimmed here.
                 replay.update_preview(operation_id, preview.clone()).await?;
                 let updated = replay.load_operation(operation_id).await?;
-                ReplayControlResponse::success(Some(updated), Some(preview), None)
+
+                // The CLIENT-FACING response must NOT include the full root_event_ids
+                // array: for a scope covering real event volume this is hundreds of
+                // thousands of UUIDs, producing a reply payload of hundreds of MB --
+                // sinexd's own oversized-publish guard then silently refuses to send it
+                // at all (`nats_payload::publish` logs "Refusing oversized NATS publish"
+                // and the RPC caller hangs until ITS OWN timeout fires, with no error
+                // surfaced anywhere that explains why). sinexctl's own preview rendering
+                // (crate/sinexctl/src/commands/replay.rs) never reads root_event_ids --
+                // it's purely an execution-integrity artifact, never display data.
+                let client_preview = match &preview {
+                    serde_json::Value::Object(map) => {
+                        let mut trimmed = map.clone();
+                        if let Some(serde_json::Value::Array(ids)) =
+                            trimmed.get("root_event_ids")
+                        {
+                            trimmed.insert(
+                                "root_event_ids_count".to_string(),
+                                serde_json::json!(ids.len()),
+                            );
+                        }
+                        trimmed.remove("root_event_ids");
+                        serde_json::Value::Object(trimmed)
+                    }
+                    other => other.clone(),
+                };
+                ReplayControlResponse::success(Some(updated), Some(client_preview), None)
             }
             ReplayControlRequest::Approve {
                 operation_id,
