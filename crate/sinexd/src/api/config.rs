@@ -340,7 +340,15 @@ fn default_max_blob_bytes() -> usize {
 }
 
 fn default_replay_control_timeout_secs() -> u64 {
-    30
+    // Preview/plan queries scan real event volume (COUNT/SELECT over
+    // core.events filtered by source+ts_coided, plus a separate cascade-impact
+    // expansion query) -- a scope covering a day of a dense source can
+    // legitimately take tens of seconds, especially with concurrent load.
+    // 30s was too tight even once sinex-<pending>'s bug fix made this value
+    // actually take effect (previously it was silently capped at ~10s by
+    // async-nats's own default, so this constant's real-world effect had
+    // never actually been exercised above that floor).
+    120
 }
 
 fn default_nats_consumer_create_timeout_secs() -> u64 {
