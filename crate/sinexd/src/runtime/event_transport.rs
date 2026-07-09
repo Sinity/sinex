@@ -694,6 +694,20 @@ impl EventBatcher {
         Self::store_recovery_spool_events_at_path(events, recovery_spool_path).await
     }
 
+    /// sinex-r6d.9 VM crash-window harness entry point: exercises the exact
+    /// production spool-write path (rename, then the `SINEX_TEST_SPOOL_RENAME_MARKER`
+    /// fail point, then the parent-directory fsync) from a small standalone
+    /// binary, without needing a full sinexd service + forced NATS-publish
+    /// failure to reach it. Test/harness-only; not reachable from any
+    /// production build.
+    #[cfg(feature = "testing")]
+    pub async fn test_only_write_recovery_spool(
+        events: &[Event<JsonValue>],
+        recovery_spool_path: &Path,
+    ) -> RuntimeResult<()> {
+        Self::store_recovery_spool_events_at_path(events, recovery_spool_path).await
+    }
+
     async fn store_recovery_spool_events_at_path(
         events: &[Event<JsonValue>],
         recovery_spool_path: &Path,
@@ -730,6 +744,26 @@ impl EventBatcher {
         file.flush().await?;
         file.sync_all().await?;
         tokio::fs::rename(&temp_path, recovery_spool_path).await?;
+
+        // sinex-r6d.9 VM crash-window harness: the rename above is visible
+        // to any reader immediately, but on most filesystems the PARENT
+        // DIRECTORY's own metadata (that this name now points at the new
+        // inode) is not guaranteed durable until fsync_dir below completes.
+        // A process-level fail point cannot prove this — killing a process
+        // does not drop the kernel page cache, so the parent directory's
+        // dirty metadata survives regardless. Proving it requires an actual
+        // power-cut (a real VM crash) between the rename and the fsync, then
+        // inspecting a persistent (non-tmpfs-backed) disk after reboot.
+        // `SINEX_TEST_SPOOL_RENAME_MARKER`, when set, writes a readiness
+        // marker and then blocks forever so the outer VM test driver can
+        // crash the whole machine at exactly this point. Inert unless a VM
+        // test scenario sets the env var; zero effect on any other build.
+        #[cfg(any(test, feature = "testing"))]
+        if let Some(marker_path) = std::env::var_os("SINEX_TEST_SPOOL_RENAME_MARKER") {
+            let _ = tokio::fs::write(&marker_path, b"renamed\n").await;
+            std::future::pending::<()>().await;
+        }
+
         Self::fsync_dir(parent_dir).await;
 
         info!(
