@@ -20,6 +20,15 @@ let
   sourceCfg = cfg.sources;
   automataCfg = cfg.automata;
 
+  # sinex-d4qg: the API gets its own pool size when set, instead of always
+  # sharing the uniform per-service default with the event engine and every
+  # automaton. See default.nix's core.api.poolMaxConnections for why.
+  apiPoolMaxConnections =
+    if coreCfg.api.poolMaxConnections != null then
+      coreCfg.api.poolMaxConnections
+    else
+      cfg.database.connectionPool.maxConnections;
+
   sinexEnabled = cfg.enable;
   coreEnabled = sinexEnabled && coreCfg.enable;
   runtimeEnabled = sinexEnabled && runtimeCfg.enable;
@@ -600,7 +609,7 @@ let
                 "SINEX_API_REQUEST_TIMEOUT_SECS=${toString apiLimits.requestTimeoutSec}"
                 "SINEX_API_MAX_BODY_BYTES=${toString apiLimits.maxBodyBytes}"
                 "SINEX_API_MAX_BLOB_BYTES=${toString apiLimits.maxBlobBytes}"
-                "SINEX_API_POOL_MAX_CONNECTIONS=${toString cfg.database.connectionPool.maxConnections}"
+                "SINEX_API_POOL_MAX_CONNECTIONS=${toString apiPoolMaxConnections}"
                 "SINEX_API_POOL_MIN_CONNECTIONS=${toString cfg.database.connectionPool.minConnections}"
                 "SINEX_API_POOL_ACQUIRE_TIMEOUT_SECS=${toString cfg.database.connectionPool.connectionTimeout}"
                 "SINEX_API_RATE_LIMIT_ENABLED=${if coreCfg.api.limits.rateLimit.enable then "true" else "false"}"

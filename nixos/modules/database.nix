@@ -58,11 +58,24 @@ let
   totalServiceCount = coreServiceCount + runtimeServiceCount + automataCount;
 
   perServiceConnections = max 1 db.connectionPool.maxConnections;
+
+  # sinex-d4qg: the API can carry its own pool size distinct from the
+  # uniform per-service default (see default.nix's core.api.poolMaxConnections
+  # and sources.nix's apiPoolMaxConnections -- keep this in sync with that
+  # computation). uniformServiceCount excludes the API when it has an
+  # override, so the API's actual (possibly larger) pool size is added once
+  # via apiConnections instead of being double-counted at the uniform rate.
+  # No override: uniformServiceCount == totalServiceCount and apiConnections
+  # == 0, i.e. exactly the pre-existing formula (no behavior change).
+  apiHasOverride = apiEnabled && cfg.core.api.poolMaxConnections != null;
+  uniformServiceCount = totalServiceCount - (if apiHasOverride then 1 else 0);
+  apiConnections = if apiHasOverride then cfg.core.api.poolMaxConnections else 0;
+
   # Add a small buffer above per-service pool totals for migrations, admin tools,
   # one-shot sinexctl calls, and exporter/preflight probes. The default service
   # surface is intentionally sized near 100 slots instead of the historical
   # several-hundred-slot overestimate.
-  baselineConnections = totalServiceCount * perServiceConnections + 25;
+  baselineConnections = uniformServiceCount * perServiceConnections + apiConnections + 25;
   computedMaxConnections = max (perServiceConnections + 10) baselineConnections;
 
   postgresqlPkgBase = db.package;
