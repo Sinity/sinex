@@ -119,6 +119,16 @@ where
     health_reporter: Option<Arc<crate::runtime::health_reporter::HealthReporter>>,
     #[cfg(feature = "messaging")]
     self_observer: Option<Arc<crate::runtime::self_observation::SelfObserver>>,
+    /// sinex-r6d.9 crash-window harness hook: when armed, `process_batch`
+    /// deliberately exits the process (`std::process::exit`, not a
+    /// catchable panic) immediately after the durable checkpoint save
+    /// succeeds and before outputs are returned to the caller for
+    /// emission — reproducing the exact window sinex-vxu describes
+    /// (checkpoint durably advanced, derived outputs never durably
+    /// emitted). A deterministic injection point, not a timing race.
+    /// `None` in every production path; zero behavior change when unset.
+    #[cfg(any(test, feature = "testing"))]
+    fail_point_after_checkpoint: Option<Arc<std::sync::atomic::AtomicBool>>,
 }
 
 impl<N> AutomatonRuntime<N>
@@ -157,12 +167,25 @@ where
             health_reporter: None,
             #[cfg(feature = "messaging")]
             self_observer: None,
+            #[cfg(any(test, feature = "testing"))]
+            fail_point_after_checkpoint: None,
         }
     }
 
     /// Create a new adapter (alias for `with_automaton`).
     pub fn new(automaton: N) -> Self {
         Self::with_automaton(automaton)
+    }
+
+    /// Arm the sinex-r6d.9 checkpoint-before-output fail point (see the
+    /// field doc on `fail_point_after_checkpoint`). Test/harness-only.
+    #[cfg(any(test, feature = "testing"))]
+    pub fn with_fail_point_after_checkpoint(
+        mut self,
+        flag: Arc<std::sync::atomic::AtomicBool>,
+    ) -> Self {
+        self.fail_point_after_checkpoint = Some(flag);
+        self
     }
 
     /// Create with custom config.
