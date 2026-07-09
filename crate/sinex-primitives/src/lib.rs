@@ -7,6 +7,7 @@ extern crate self as sinex_primitives;
 pub mod activity;
 pub mod admission_policy;
 pub mod authority;
+pub mod commit_frontier;
 pub mod constants;
 #[cfg(feature = "nats")]
 pub mod coordination;
