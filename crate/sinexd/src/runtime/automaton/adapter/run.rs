@@ -168,7 +168,7 @@ where
                 }
 
                 // Invalidation signal: buffer and set debounce deadline.
-                payload = recv_invalidation(&mut invalidation_sub) => {
+                payload = recv_invalidation(&mut invalidation_sub, self.invalidation_ack_fail_point()) => {
                     if let Some(payload) = payload {
                         pending_invalidations.push(payload);
                         self.observe_pending_invalidations(pending_invalidations.len()).await;
