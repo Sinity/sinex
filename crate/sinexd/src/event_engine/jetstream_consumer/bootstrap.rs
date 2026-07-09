@@ -9,10 +9,17 @@ impl JetStreamConsumer {
     pub(super) async fn bootstrap_streams(&self) -> EventEngineResult<()> {
         // When SINEX_NATS_STREAMS_MANAGED_EXTERNALLY=true, the NixOS module owns
         // stream configuration. Skip bootstrap so the two sources of truth don't
-        // conflict on stream shape or subject overlap.
+        // conflict on stream shape or subject overlap — but sinex-bor: verify
+        // every stream this consumer needs actually exists before serving.
+        // Previously this branch trusted external management blindly; a Nix
+        // topology gap (e.g. the reflection lane, which had zero coverage in
+        // nats.nix until this bead) meant sinexd could start and silently run
+        // with no durable backing for streams it publishes/consumes on. Loud
+        // failure here is strictly better than a consumer that starts, then
+        // fails every publish at runtime with no startup-time signal.
         if std::env::var(env_vars::NATS_STREAMS_MANAGED_EXTERNALLY).as_deref() == Ok("true") {
-            info!("NATS streams managed externally -- skipping bootstrap");
-            return Ok(());
+            info!("NATS streams managed externally -- verifying required streams instead of bootstrapping");
+            return self.verify_externally_managed_streams_present().await;
         }
 
         info!("Bootstrapping JetStream streams");
@@ -124,6 +131,47 @@ impl JetStreamConsumer {
             })?;
 
         info!("JetStream streams bootstrapped successfully");
+        Ok(())
+    }
+
+    /// sinex-bor: when Nix owns stream provisioning, verify every stream this
+    /// consumer needs is actually present before the caller lets this
+    /// consumer start serving. Fails loud (one combined error naming every
+    /// missing stream) rather than skipping bootstrap and hoping — a prod
+    /// deploy with a stale or incomplete Nix topology must not silently run
+    /// degraded.
+    pub(super) async fn verify_externally_managed_streams_present(&self) -> EventEngineResult<()> {
+        let required = [
+            self.topology.events_stream.to_string(),
+            self.topology.confirmed_events_stream.to_string(),
+            self.topology.dlq_stream.to_string(),
+            self.topology.processing_failures_stream.to_string(),
+            self.topology.invalidation_stream.to_string(),
+        ];
+
+        let mut missing = Vec::new();
+        for name in &required {
+            if self.js.get_stream(name).await.is_err() {
+                missing.push(name.clone());
+            }
+        }
+
+        if !missing.is_empty() {
+            return Err(SinexError::configuration(format!(
+                "NATS streams are externally managed (SINEX_NATS_STREAMS_MANAGED_EXTERNALLY=true) \
+                 but {} required stream(s) are missing: {}. sinexd refuses to start serving this \
+                 lane against an incomplete topology — provision these streams (nixos/modules/nats.nix \
+                 services.sinex.nats.bootstrapStreams.streams) before restarting.",
+                missing.len(),
+                missing.join(", ")
+            )));
+        }
+
+        info!(
+            lane = ?self.topology.lane,
+            streams = ?required,
+            "Verified all required externally-managed JetStream streams are present"
+        );
         Ok(())
     }
 }
