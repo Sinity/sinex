@@ -231,6 +231,19 @@ impl ReplayScope {
                 push("clipboard");
                 push("wm.hyprland");
             }
+            // Per-source registered SourceContract ids (source_contracts/desktop/*.rs)
+            // whose `events.source` value differs from the contract id. This alias
+            // table predates the current per-source dotted-id convention and only
+            // ever covered the four legacy umbrella watchers above; sinex-3rwb
+            // found the gap live (a `--source desktop.activitywatch` replay scope
+            // silently matched zero events, since `events.source` is just
+            // "activitywatch") while trying to replay stale AW-parser data. Adding
+            // cases here as they're found is a stopgap -- see that bead for the
+            // structural fix (derive this from the SourceContract registry instead
+            // of hand-maintaining it).
+            "desktop.activitywatch" => {
+                push("activitywatch");
+            }
             "system-watcher" => {
                 push("system");
                 push("journald");
@@ -1454,4 +1467,48 @@ struct StoredReplayPreviewSummary {
     total_events: u64,
     #[serde(default)]
     root_event_ids: Vec<Uuid>,
+}
+
+#[cfg(test)]
+mod replay_event_sources_tests {
+    use super::*;
+
+    fn scope_for(source_name: &str) -> ReplayScope {
+        ReplayScope {
+            source_name: source_name.to_string(),
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn desktop_activitywatch_contract_id_resolves_to_the_actual_events_source_value() {
+        // sinex-3rwb: a replay scope built from the registered SourceContract id
+        // ("desktop.activitywatch", per source_contracts/desktop/activitywatch.rs)
+        // must still match rows whose events.source column is the shorter
+        // "activitywatch" -- otherwise the scope silently matches zero events,
+        // indistinguishable from "no data in this window" at every call site.
+        let sources = scope_for("desktop.activitywatch").replay_event_sources();
+        assert!(
+            sources.iter().any(|s| s == "activitywatch"),
+            "expected \"activitywatch\" among the resolved replay sources, got: {sources:?}"
+        );
+    }
+
+    #[test]
+    fn legacy_umbrella_names_still_resolve_their_existing_aliases() {
+        // Regression guard: the fix must not disturb the four pre-existing cases.
+        let sources = scope_for("desktop-watcher").replay_event_sources();
+        for expected in ["desktop", "activitywatch", "webhistory", "clipboard", "wm.hyprland"] {
+            assert!(
+                sources.iter().any(|s| s == expected),
+                "expected {expected:?} among desktop-watcher's resolved replay sources, got: {sources:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn an_unregistered_source_name_resolves_only_to_itself() {
+        let sources = scope_for("totally-made-up-source").replay_event_sources();
+        assert_eq!(sources, vec!["totally-made-up-source".to_string()]);
+    }
 }
