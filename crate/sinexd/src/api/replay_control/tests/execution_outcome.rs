@@ -108,6 +108,25 @@ async fn replay_execution_records_outcome(ctx: TestContext) -> Result<()> {
             .and_then(serde_json::Value::as_str),
         Some("reexecute_material_roots_via_source_scan")
     );
+    // Regression: the client-facing preview must never carry the full
+    // root_event_ids array -- for a real-scale scope this is hundreds of
+    // thousands of UUIDs, producing a reply payload sinexd's own
+    // oversized-publish guard silently refuses to send (discovered live
+    // while diagnosing sinex-60r's ActivityWatch replay). Execution below
+    // still succeeding proves the FULL id list is still stored server-side
+    // (state_machine.rs's approve/execute integrity checks would fail
+    // loudly otherwise) -- only the wire reply to the client is trimmed.
+    assert!(
+        preview.get("root_event_ids").is_none(),
+        "client-facing preview must not include the full root_event_ids array, got: {preview:?}"
+    );
+    assert_eq!(
+        preview
+            .get("root_event_ids_count")
+            .and_then(serde_json::Value::as_u64),
+        Some(1),
+        "client-facing preview should surface the count in place of the full array"
+    );
 
     let approved = client
         .approve(planned.operation_id, "admin:approver".into())
