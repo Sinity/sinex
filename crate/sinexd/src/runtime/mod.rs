@@ -32,6 +32,7 @@ pub mod diagnostics {
     pub mod regression;
 }
 pub mod dlq_retry;
+pub mod durable_emission;
 
 pub mod automaton;
 pub mod error_helpers;
