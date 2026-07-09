@@ -64,6 +64,7 @@ use crate::event_engine::{
     material_ready_set::MaterialReadySet,
     validator::IngestEventValidator,
 };
+use crate::runtime::durable_emission::{EmissionReceiptState, SettlementRegistry, SuppressionReason};
 use crate::runtime::ingestion_helpers::{LedgerEntry, LedgerReader, MaterialTiming};
 use crate::runtime::nats_payload::ensure_nats_payload_fits;
 use sinex_primitives::Id;
@@ -128,6 +129,16 @@ pub struct JetStreamConsumer {
     /// been registered yet are NAK'd with a short delay instead of attempting a DB insert
     /// that would hit an FK violation.
     ready_set: Option<MaterialReadySet>,
+    /// sinex-r6d.11: per-event-id settlement waiter map. `resolve()` is
+    /// called alongside every `settle_child(` outcome so a future
+    /// `emit_batch_durable()` caller that registered interest in one of
+    /// these event ids learns its terminal `EmissionReceiptState`. Always
+    /// present (not `Option`) — cheap to construct/clone, and `resolve()` is
+    /// a no-op `DashMap` lookup for the overwhelming majority of events that
+    /// nobody registered interest in. Not shared across `JetStreamConsumer`
+    /// instances in this slice; each construction gets its own fresh
+    /// registry (see `JetStreamConsumer::new`).
+    settlement_registry: SettlementRegistry,
     /// Self-observer for emitting internal metrics
     observer: Option<Arc<SelfObserver>>,
     /// How often to log processing stats

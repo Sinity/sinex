@@ -10,6 +10,7 @@ use sinex_primitives::{Uuid, error::SinexError, temporal};
 use sinexd::event_engine::material_ready_set::MaterialReadySet;
 use sinexd::event_engine::validator::IngestEventValidator;
 use sinexd::event_engine::{JetStreamConsumer, JetStreamTopology};
+use sinexd::runtime::durable_emission::{EmissionReceiptState, SuppressionReason};
 use sqlx::Row;
 use std::sync::Arc;
 use std::time::Duration;
@@ -1539,5 +1540,277 @@ async fn multi_child_intent_settles_bisection_isolated_poison_siblings(
     );
 
     setup.handle.abort();
+    Ok(())
+}
+
+// ─── sinex-r6d.11: SettlementRegistry wiring proof ─────────────────────────
+//
+// The settle_child( wiring in persist.rs/prepare.rs is only real if a caller
+// who registered interest in an event's id BEFORE that event was ingested
+// actually receives the correct terminal EmissionReceiptState once the
+// consumer processes it. Each test below registers first, publishes second,
+// and asserts on the resolved state — exercising the real admission/persist
+// pipeline (not a hand-constructed registry call), covering three
+// representative outcomes: persisted+confirmed, suppressed (tombstoned), and
+// DLQ'd (durable debt).
+
+/// A normal event must resolve `PersistedConfirmed` on the registry that
+/// registered interest in it before it was published.
+#[sinex_test]
+async fn settlement_registry_resolves_persisted_confirmed_for_a_real_event(
+    ctx: TestContext,
+) -> TestResult<()> {
+    let ctx = ctx.with_nats().shared().await?;
+    let nats_client = ctx.nats_client();
+    let pool = ctx.pool.clone();
+    ensure_fixture_source_material(&pool).await?;
+    let validator = IngestEventValidator::new(false);
+
+    let js = ctx.jetstream().await?;
+    let env = ctx.env();
+    let namespace = ctx.pipeline_namespace().prefix().to_string();
+    let topology = JetStreamTopology::new(
+        env,
+        ctx.pipeline_namespace().stream("SINEX_RAW_EVENTS_R6D11_PC"),
+        ctx.pipeline_namespace()
+            .consumer_name("event-engine-r6d11-pc"),
+        Some(&namespace),
+    );
+    let ready_topology = topology.clone();
+    let consumer = JetStreamConsumer::new(
+        nats_client.clone(),
+        pool.clone(),
+        Arc::new(RwLock::new(validator)),
+        topology,
+    );
+    // Grab the registry BEFORE the consumer is moved into its spawned task —
+    // SettlementRegistry is cheap to clone (inner Arc) and shares the same
+    // waiter map as the consumer's own copy.
+    let registry = consumer.settlement_registry();
+    let consumer_handle =
+        spawn_consumer_and_wait_ready(&ctx, &js, &ready_topology, consumer).await?;
+
+    let event_id = Uuid::now_v7();
+    // Register interest BEFORE the event is even published — the exact
+    // ordering contract emit_batch_durable's callers must follow.
+    let rx = registry.register(event_id);
+
+    publish_event(
+        &ctx.pool,
+        &nats_client,
+        &namespace,
+        "r6d11pc",
+        "r6d11pc.event",
+        json!({"ok": true}),
+        EventOverrides {
+            id: Some(event_id),
+            ..Default::default()
+        },
+    )
+    .await?;
+
+    let state = tokio::time::timeout(Duration::from_secs(Timeouts::SHORT), rx).await??;
+    assert!(
+        matches!(
+            state,
+            EmissionReceiptState::PersistedConfirmed { inserted: true, .. }
+        ),
+        "expected PersistedConfirmed{{inserted: true, ..}}, got {state:?}"
+    );
+
+    // Cross-check against the real DB row rather than trusting the receipt alone.
+    let event = ctx
+        .pool
+        .events()
+        .get_by_id(event_id.into())
+        .await?
+        .expect("event should be persisted");
+    assert_eq!(event.id.as_ref().unwrap().as_uuid(), &event_id);
+
+    consumer_handle.abort();
+    let _ = consumer_handle.await;
+    Ok(())
+}
+
+/// A tombstoned event must resolve `Suppressed { reason: Tombstoned, .. }` —
+/// never `PersistedConfirmed` — and never hang past the registered receiver
+/// (route_validation_failure's admission-time gaps do not apply here: this
+/// tombstone check happens post-admission, in the wired settle_admission_skips
+/// / persist_and_confirm_prepared_batch tombstoned_batch loop).
+#[sinex_test]
+async fn settlement_registry_resolves_suppressed_for_a_tombstoned_event(
+    ctx: TestContext,
+) -> TestResult<()> {
+    let ctx = ctx.with_nats().shared().await?;
+    let nats_client = ctx.nats_client();
+    let pool = ctx.pool.clone();
+    ensure_fixture_source_material(&pool).await?;
+    let validator = IngestEventValidator::new(false);
+
+    let js = ctx.jetstream().await?;
+    let env = ctx.env();
+    let namespace = ctx.pipeline_namespace().prefix().to_string();
+    let topology = JetStreamTopology::new(
+        env,
+        ctx.pipeline_namespace().stream("SINEX_RAW_EVENTS_R6D11_TS"),
+        ctx.pipeline_namespace()
+            .consumer_name("event-engine-r6d11-ts"),
+        Some(&namespace),
+    );
+    let ready_topology = topology.clone();
+    let consumer = JetStreamConsumer::new(
+        nats_client.clone(),
+        pool.clone(),
+        Arc::new(RwLock::new(validator)),
+        topology,
+    );
+    let registry = consumer.settlement_registry();
+    let consumer_handle =
+        spawn_consumer_and_wait_ready(&ctx, &js, &ready_topology, consumer).await?;
+
+    let event_id = Uuid::now_v7();
+    sqlx::query(
+        r"
+        INSERT INTO core.event_tombstones (
+            id, source, event_type, ts_orig, ts_purged,
+            purge_reason, purge_operation_id, archived_at
+        )
+        VALUES (
+            $1::uuid, 'r6d11ts', 'r6d11ts.event', NOW(), NOW(),
+            'sinex-r6d.11 settlement registry tombstone test', $2::uuid, NOW()
+        )
+        ",
+    )
+    .bind(event_id)
+    .bind(Uuid::now_v7())
+    .execute(&ctx.pool)
+    .await?;
+
+    let rx = registry.register(event_id);
+
+    publish_event(
+        &ctx.pool,
+        &nats_client,
+        &namespace,
+        "r6d11ts",
+        "r6d11ts.event",
+        json!({"sequence": 1}),
+        EventOverrides {
+            id: Some(event_id),
+            ..Default::default()
+        },
+    )
+    .await?;
+
+    let state = tokio::time::timeout(Duration::from_secs(Timeouts::SHORT), rx).await??;
+    assert!(
+        matches!(
+            state,
+            EmissionReceiptState::Suppressed {
+                reason: SuppressionReason::Tombstoned,
+                ..
+            }
+        ),
+        "expected Suppressed{{reason: Tombstoned, ..}}, got {state:?}"
+    );
+
+    assert!(
+        ctx.pool
+            .events()
+            .get_by_id(event_id.into())
+            .await?
+            .is_none(),
+        "tombstoned event must not be persisted"
+    );
+
+    consumer_handle.abort();
+    let _ = consumer_handle.await;
+    Ok(())
+}
+
+/// An event whose source material never registers must eventually resolve
+/// `DurableDebt { .. }` once the DLQ retry budget is exhausted — the
+/// `settle_unready_source_material_event` DLQ path wired in persist.rs.
+#[sinex_test]
+async fn settlement_registry_resolves_durable_debt_for_a_dlqd_event(
+    ctx: TestContext,
+) -> TestResult<()> {
+    let ctx = ctx.with_nats().shared().await?;
+    let nats_client = ctx.nats_client();
+    let pool = ctx.pool.clone();
+    ensure_fixture_source_material(&pool).await?;
+    let validator = IngestEventValidator::new(false);
+
+    let js = ctx.jetstream().await?;
+    let env = ctx.env();
+    let namespace = ctx.pipeline_namespace().prefix().to_string();
+    let topology = JetStreamTopology::new(
+        env,
+        ctx.pipeline_namespace().stream("SINEX_RAW_EVENTS_R6D11_DD"),
+        ctx.pipeline_namespace()
+            .consumer_name("event-engine-r6d11-dd"),
+        Some(&namespace),
+    );
+    let ready_topology = topology.clone();
+    // Force a fast DLQ threshold so the test doesn't wait out the production
+    // retry budget: after 2 deliveries with the source material still
+    // unregistered, settle_unready_source_material_event routes to DLQ.
+    let consumer = JetStreamConsumer::with_test_hooks(
+        nats_client.clone(),
+        pool.clone(),
+        Arc::new(RwLock::new(validator)),
+        topology,
+        Duration::from_secs(Timeouts::SHORT),
+        None,
+        None,
+        None,
+        None,
+        false,
+        None,
+        Some(2),
+        Some(Duration::from_millis(50)),
+    );
+    let registry = consumer.settlement_registry();
+    let consumer_handle =
+        spawn_consumer_and_wait_ready(&ctx, &js, &ready_topology, consumer).await?;
+
+    let bogus_material_id = Uuid::now_v7();
+    let event_id = Uuid::now_v7();
+    let rx = registry.register(event_id);
+
+    let event = json!({
+        "id": event_id.to_string(),
+        "source": "r6d11dd",
+        "event_type": "r6d11dd.event",
+        "payload": {"data": "never-registers"},
+        "ts_orig": temporal::now().format_rfc3339(),
+        "host": "test-host",
+        "source_material_id": bogus_material_id.to_string(),
+        "anchor_byte": 0,
+    });
+    let subject =
+        env.nats_subject_with_namespace(Some(&namespace), "events.raw.r6d11dd.event");
+    nats_client
+        .publish(subject, serde_json::to_vec(&admission_envelope("r6d11dd", event))?.into())
+        .await?;
+    nats_client.flush().await?;
+
+    let state = tokio::time::timeout(Duration::from_secs(Timeouts::STANDARD), rx).await??;
+    match state {
+        EmissionReceiptState::DurableDebt { debt_id, reason } => {
+            assert_eq!(
+                debt_id, event_id,
+                "debt_id has no dedicated DB row here, so it must be the event's own id"
+            );
+            assert!(
+                reason.contains("Source material"),
+                "reason should identify the orphaned source material, got: {reason}"
+            );
+        }
+        other => panic!("expected DurableDebt{{..}}, got {other:?}"),
+    }
+
+    consumer_handle.abort();
+    let _ = consumer_handle.await;
     Ok(())
 }

@@ -33,6 +33,7 @@ pub mod diagnostics {
 }
 pub mod dlq_retry;
 pub mod durable_emission;
+pub mod durable_emission_backend;
 
 pub mod automaton;
 pub mod error_helpers;
