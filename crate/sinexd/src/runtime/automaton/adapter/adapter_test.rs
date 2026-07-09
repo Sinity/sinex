@@ -888,3 +888,91 @@ async fn process_batch_halts_on_retry_error() -> TestResult<()> {
     );
     Ok(())
 }
+
+/// Env var that switches this same test function between its two roles: the
+/// outer harness (spawns a child re-running this exact test) and the inner
+/// scenario (arms the fail point and drives one batch through it). Sharing
+/// one test name/function means the fail point's child gets a real,
+/// independently-provisioned `TestContext` (fresh ephemeral NATS) for free
+/// from the `#[sinex_test]` macro, with no cross-process coordination.
+const R6D9_INNER_SCENARIO_ENV: &str = "SINEX_R6D9_RUN_INNER_SCENARIO";
+
+/// sinex-r6d.9 crash-window harness, first scenario: proves the
+/// `fail_point_after_checkpoint` injection point actually fires exactly at
+/// the boundary sinex-vxu describes — checkpoint durably saved via a real
+/// NATS KV `CheckpointManager`, `process_batch` about to return outputs to
+/// its caller for emission but hasn't yet.
+///
+/// This proves the INJECTION MECHANISM works. It does not yet prove the full
+/// crash+restart recovery contract (input stays behind the checkpoint,
+/// derived output never durable, catch-up does not repair it) — that needs
+/// an actual process restart plus a catch-up assertion, which is future
+/// scope once this fail point is wired into a real automaton lifecycle
+/// under sinex-vxu's fix.
+#[sinex_test]
+async fn r6d9_checkpoint_before_output_fail_point_fires(ctx: TestContext) -> TestResult<()> {
+    if std::env::var(R6D9_INNER_SCENARIO_ENV).is_ok() {
+        let ctx = ctx.with_nats().dedicated().await?;
+        let kv = ctx.checkpoint_kv().await?;
+        let checkpoint_manager = Arc::new(CheckpointManager::new(
+            kv,
+            "derived-adapter-r6d9-test".to_string(),
+            "test-group".to_string(),
+            format!("test-consumer-{}", Uuid::now_v7().simple()),
+        ));
+        let mut adapter = AutomatonRuntime::with_config(
+            TransducerWrapper(EmittingAutomaton),
+            AutomatonAdapterConfig {
+                checkpoint_interval: 1,
+                ..AutomatonAdapterConfig::default()
+            },
+        )
+        .with_fail_point_after_checkpoint(Arc::new(std::sync::atomic::AtomicBool::new(true)));
+        adapter.checkpoint_manager = Some(checkpoint_manager);
+
+        // The fail point exits the process inside this call, after the
+        // checkpoint save succeeds and before outputs are returned. This
+        // line intentionally never returns on a correctly-armed fail point.
+        let _ = adapter.process_batch(vec![make_input_event("r6d9")?]).await;
+        panic!(
+            "fail point did not fire: process_batch returned instead of exiting the process \
+             after the checkpoint save"
+        );
+    }
+
+    let exe = std::env::current_exe().map_err(|e| {
+        color_eyre::eyre::eyre!("current_exe unavailable for r6d9 fail-point harness: {e}")
+    })?;
+    // libtest's --exact filter matches the fully qualified test name as
+    // libtest itself reports it: the module path WITHOUT the leading crate
+    // name (module_path!() includes the crate name; libtest's own test
+    // identifiers, as seen in nextest failure output, do not), plus the
+    // function name.
+    let module_path_without_crate = module_path!()
+        .split_once("::")
+        .map_or(module_path!(), |(_, rest)| rest);
+    let qualified_name = format!(
+        "{module_path_without_crate}::r6d9_checkpoint_before_output_fail_point_fires"
+    );
+    let output = tokio::process::Command::new(exe)
+        .arg(&qualified_name)
+        .arg("--exact")
+        .arg("--nocapture")
+        .env(R6D9_INNER_SCENARIO_ENV, "1")
+        .output()
+        .await
+        .map_err(|e| color_eyre::eyre::eyre!("failed to spawn r6d9 inner-scenario child: {e}"))?;
+
+    assert_eq!(
+        output.status.code(),
+        Some(97),
+        "sinex-r6d.9 fail point must fire exactly at the checkpoint-saved/outputs-not-yet-\
+         returned boundary in process_batch (process.rs) — got exit status {:?} instead of the \
+         expected exit(97).\n--- child stdout ---\n{}\n--- child stderr ---\n{}",
+        output.status,
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr),
+    );
+
+    Ok(())
+}
