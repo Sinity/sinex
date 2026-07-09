@@ -12,7 +12,9 @@ use tracing::{error, info, warn};
 use crate::runtime::nats_payload::ensure_nats_payload_fits;
 
 use super::execution::{ReplayExecutionEngine, ReplayPreviewSummary};
-use super::protocol::{ReplayControlRequest, ReplayControlResponse};
+use super::protocol::{
+    ReplayControlRequest, ReplayControlResponse, trim_root_event_ids_in_place,
+};
 use super::validation::{
     ReplayAction, ensure_preview_allowed, replay_gate_report, run_safety_analysis,
     validate_actor_for_action,
@@ -388,19 +390,13 @@ impl ReplayControlServer {
                 let client_preview = match &preview {
                     serde_json::Value::Object(map) => {
                         let mut trimmed = map.clone();
-                        if let Some(serde_json::Value::Array(ids)) =
-                            trimmed.get("root_event_ids")
-                        {
-                            trimmed.insert(
-                                "root_event_ids_count".to_string(),
-                                serde_json::json!(ids.len()),
-                            );
-                        }
-                        trimmed.remove("root_event_ids");
+                        trim_root_event_ids_in_place(&mut trimmed);
                         serde_json::Value::Object(trimmed)
                     }
                     other => other.clone(),
                 };
+                // `success()` also trims `updated.preview_summary` centrally --
+                // this only handles the dedicated `client_preview` blob above.
                 ReplayControlResponse::success(Some(updated), Some(client_preview), None)
             }
             ReplayControlRequest::Approve {
