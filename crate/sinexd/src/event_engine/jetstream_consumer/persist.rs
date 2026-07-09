@@ -186,11 +186,21 @@ impl JetStreamConsumer {
                             .into_iter()
                             .filter_map(|(id, result)| result.err().map(|err| (id, err)))
                             .collect();
-                    let mut ack_messages = Vec::with_capacity(batch.len());
-                    ack_messages.extend(tombstoned_batch.iter().map(|prepared| &prepared.message));
+                    // sinex-r6d.12: settle through each prepared event's
+                    // shared envelope coordinator, never ack `prepared.message`
+                    // directly — siblings from the same raw message may be
+                    // elsewhere in this batch (or already settled, or still
+                    // pending) and must not be silently orphaned.
+                    let mut settled_count = 0u64;
+                    for prepared in &tombstoned_batch {
+                        prepared.settlement.settle_child(ChildOutcome::Safe).await?;
+                        settled_count += 1;
+                    }
                     let mut confirmation_durability_gaps = Vec::new();
                     for prepared in &confirmation_batch {
                         if let Some(err) = confirmed_publish_failures.get(&prepared.parsed_id) {
+                            // Durability gap: deliberately not settled — see
+                            // the matching note in settle_admission_skips.
                             confirmation_durability_gaps.push((
                                 prepared.parsed_id,
                                 Self::confirmed_event_durability_gap_error(
@@ -208,21 +218,11 @@ impl JetStreamConsumer {
                                 "Re-published confirmed event for already persisted event"
                             );
                         }
-                        ack_messages.push(&prepared.message);
+                        prepared.settlement.settle_child(ChildOutcome::Safe).await?;
+                        settled_count += 1;
                     }
 
-                    let ack_futs: Vec<_> =
-                        ack_messages.iter().map(|message| message.ack()).collect();
-                    let ack_results = join_all(ack_futs).await;
-                    for result in &ack_results {
-                        if let Err(e) = result {
-                            return Err(SinexError::network("Failed to ack batch")
-                                .with_context("batch_size", ack_messages.len().to_string())
-                                .with_source(e.to_string()));
-                        }
-                    }
-
-                    let acked_count = ack_messages.len() as u64;
+                    let acked_count = settled_count;
                     if acked_count > 0 {
                         self.stats
                             .events_processed
@@ -342,11 +342,31 @@ impl JetStreamConsumer {
                             constraint = ?e.context_map().get("constraint"),
                             "Routing isolated non-retryable persistence failure to DLQ"
                         );
-                        self.route_to_dlq_and_ack(
-                            &prepared.message,
-                            format!("Persistence error: {e}"),
-                        )
-                        .await?;
+                        // sinex-r6d.12: this is the bisection-isolated poison
+                        // case. This prepared event may still have siblings
+                        // from the same raw message elsewhere (already
+                        // settled, or in a sibling sub-batch) — settle
+                        // through the shared coordinator, never ack the
+                        // message directly.
+                        match self.route_to_dlq(&prepared.message, format!("Persistence error: {e}")).await {
+                            Ok(()) => {
+                                self.stats.dlq_routed.fetch_add(1, Ordering::Relaxed);
+                                prepared.settlement.settle_child(ChildOutcome::Safe).await?;
+                            }
+                            Err(err) => {
+                                self.stats
+                                    .dlq_publish_failures
+                                    .fetch_add(1, Ordering::Relaxed);
+                                prepared
+                                    .settlement
+                                    .settle_child(ChildOutcome::Retry(None))
+                                    .await?;
+                                return Err(err.with_context(
+                                    "settlement_operation",
+                                    "route_isolated_persistence_failure_to_dlq",
+                                ));
+                            }
+                        }
                         self.stats.events_failed.fetch_add(1, Ordering::Relaxed);
                         if let Some(ref handle) = self.heartbeat_handle {
                             handle.record_error("isolated persistence failure");
@@ -362,35 +382,60 @@ impl JetStreamConsumer {
                     );
                     let mut settlement_errors = Vec::new();
                     for prepared in &attempted_batch {
+                        // sinex-r6d.12: every settlement here goes through the
+                        // shared per-message coordinator (settle_child), not
+                        // prepared.message directly — this loop can contain
+                        // several siblings of the same raw message with
+                        // different individual verdicts (e.g. one terminal,
+                        // one retryable); the coordinator is what keeps that
+                        // safe instead of double/partial-acking the message.
                         match self.should_route_terminal_persistence_failure(&prepared.message, &e)
                         {
                             Ok(true) => {
-                                if let Err(err) = self
-                                    .route_to_dlq_and_ack(
-                                        &prepared.message,
-                                        format!("Persistence error: {e}"),
-                                    )
+                                match self
+                                    .route_to_dlq(&prepared.message, format!("Persistence error: {e}"))
                                     .await
                                 {
-                                    warn!(
-                                        event_id = %prepared.parsed_id,
-                                        error = %err,
-                                        "Failed to route persistence error to DLQ"
-                                    );
-                                    settlement_errors.push((
-                                        prepared.parsed_id,
-                                        Self::message_settlement_failure(
-                                            "failed to route persistence error to DLQ",
-                                            prepared.parsed_id,
-                                            &err,
-                                        ),
-                                    ));
+                                    Ok(()) => {
+                                        self.stats.dlq_routed.fetch_add(1, Ordering::Relaxed);
+                                        if let Err(err) =
+                                            prepared.settlement.settle_child(ChildOutcome::Safe).await
+                                        {
+                                            settlement_errors.push((prepared.parsed_id, err));
+                                        }
+                                    }
+                                    Err(err) => {
+                                        warn!(
+                                            event_id = %prepared.parsed_id,
+                                            error = %err,
+                                            "Failed to route persistence error to DLQ"
+                                        );
+                                        self.stats
+                                            .dlq_publish_failures
+                                            .fetch_add(1, Ordering::Relaxed);
+                                        if let Err(settle_err) = prepared
+                                            .settlement
+                                            .settle_child(ChildOutcome::Retry(None))
+                                            .await
+                                        {
+                                            settlement_errors.push((prepared.parsed_id, settle_err));
+                                        } else {
+                                            settlement_errors.push((
+                                                prepared.parsed_id,
+                                                Self::message_settlement_failure(
+                                                    "failed to route persistence error to DLQ",
+                                                    prepared.parsed_id,
+                                                    &err,
+                                                ),
+                                            ));
+                                        }
+                                    }
                                 }
                             }
                             Ok(false) => {
                                 if let Err(err) = prepared
-                                    .message
-                                    .ack_with(jetstream::AckKind::Nak(None))
+                                    .settlement
+                                    .settle_child(ChildOutcome::Retry(None))
                                     .await
                                 {
                                     warn!(
@@ -423,8 +468,8 @@ impl JetStreamConsumer {
                                     ),
                                 ));
                                 if let Err(nak_err) = prepared
-                                    .message
-                                    .ack_with(jetstream::AckKind::Nak(None))
+                                    .settlement
+                                    .settle_child(ChildOutcome::Retry(None))
                                     .await
                                 {
                                     warn!(
@@ -611,6 +656,14 @@ impl JetStreamConsumer {
         let should_dlq = self.route_db_errors_to_dlq
             || delivery_attempt.is_some_and(|attempt| attempt >= retry_threshold);
 
+        // sinex-r6d.12: settle through the shared envelope coordinator, not
+        // prepared.message directly. This is exactly the "not-ready + ready
+        // siblings" scenario: a not-ready child here must not NAK/ack a raw
+        // message a ready sibling elsewhere in the batch has already (or
+        // will) mark Safe — the coordinator only NAKs the shared message
+        // once every child (ready and not-ready alike) has reported, and
+        // NAKing wins over Safe, so the ready sibling's work simply
+        // re-admits idempotently on redelivery rather than being lost.
         if should_dlq {
             warn!(
                 event_id = %prepared.parsed_id,
@@ -619,16 +672,33 @@ impl JetStreamConsumer {
                 threshold = retry_threshold,
                 "Source material remained unavailable after retry budget; routing event to DLQ"
             );
-            self.route_to_dlq_and_ack(
-                &prepared.message,
-                source_material_unavailable_error(
-                    prepared,
-                    material_id,
-                    persistence_error,
-                    retry_threshold,
-                ),
-            )
-            .await?;
+            match self
+                .route_to_dlq(
+                    &prepared.message,
+                    source_material_unavailable_error(
+                        prepared,
+                        material_id,
+                        persistence_error,
+                        retry_threshold,
+                    ),
+                )
+                .await
+            {
+                Ok(()) => {
+                    self.stats.dlq_routed.fetch_add(1, Ordering::Relaxed);
+                    prepared.settlement.settle_child(ChildOutcome::Safe).await?;
+                }
+                Err(err) => {
+                    self.stats
+                        .dlq_publish_failures
+                        .fetch_add(1, Ordering::Relaxed);
+                    prepared
+                        .settlement
+                        .settle_child(ChildOutcome::Retry(None))
+                        .await?;
+                    return Err(err);
+                }
+            }
             self.stats.events_failed.fetch_add(1, Ordering::Relaxed);
             if let Some(ref handle) = self.heartbeat_handle {
                 handle.record_error("source material unresolved");
@@ -637,8 +707,8 @@ impl JetStreamConsumer {
         }
 
         if let Err(err) = prepared
-            .message
-            .ack_with(jetstream::AckKind::Nak(Some(retry_delay)))
+            .settlement
+            .settle_child(ChildOutcome::Retry(Some(retry_delay)))
             .await
         {
             warn!(

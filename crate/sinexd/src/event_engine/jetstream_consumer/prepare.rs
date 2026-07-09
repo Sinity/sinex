@@ -2,6 +2,7 @@
 
 use std::sync::atomic::Ordering;
 
+use super::dlq::DLQ_RETRY_DELAY;
 use super::*;
 
 impl JetStreamConsumer {
@@ -23,9 +24,21 @@ impl JetStreamConsumer {
         msg: jetstream::Message,
     ) -> EventEngineResult<Vec<PreparedEvent>> {
         let decisions = self.admission.admit_intent_bytes(&msg.payload).await?;
+
+        // sinex-r6d.12: an intent with zero decisions (empty EventIntent.events)
+        // has no children to settle through — ack it directly. Every other
+        // path below goes through the shared RawEnvelopeSettlement so no
+        // child can unilaterally ACK/NAK/DLQ a message a sibling still needs.
+        if decisions.is_empty() {
+            msg.ack().await.map_err(|error| {
+                SinexError::network("Failed to ack empty-intent admission message")
+                    .with_source(error.to_string())
+            })?;
+            return Ok(Vec::new());
+        }
+
+        let settlement = RawEnvelopeSettlement::new(msg.clone(), decisions.len());
         let mut prepared = Vec::with_capacity(decisions.len());
-        let mut suppressed_count = 0usize;
-        let mut routed_terminal_failure = false;
 
         for decision in decisions {
             match decision {
@@ -35,28 +48,20 @@ impl JetStreamConsumer {
                         event: admitted.event,
                         parsed_id: admitted.event_id,
                         message: msg.clone(),
+                        settlement: Arc::clone(&settlement),
                     });
                 }
                 AdmissionDecision::Suppressed(rejection) => {
-                    suppressed_count += 1;
                     self.record_admission_suppression(&rejection).await;
+                    settlement.settle_child(ChildOutcome::Safe).await?;
                 }
                 AdmissionDecision::Rejected(rejection)
                 | AdmissionDecision::QuarantineNeeded(rejection) => {
-                    routed_terminal_failure = true;
                     self.record_admission_rejection(&rejection).await;
-                    self.route_validation_failure(&msg, rejection.reason)
+                    self.route_validation_failure(&msg, rejection.reason, &settlement)
                         .await?;
                 }
             }
-        }
-
-        if prepared.is_empty() && suppressed_count > 0 && !routed_terminal_failure {
-            msg.ack().await.map_err(|error| {
-                SinexError::network("Failed to ack all-suppressed admission message")
-                    .with_context("suppressed_count", suppressed_count.to_string())
-                    .with_source(error.to_string())
-            })?;
         }
 
         Ok(prepared)
@@ -177,16 +182,37 @@ impl JetStreamConsumer {
         Ok(())
     }
 
+    /// sinex-r6d.12: writes the DLQ record, then reports this child's
+    /// outcome to the shared envelope settlement instead of ACKing/NAKing
+    /// the raw message directly — a rejected child must never unilaterally
+    /// settle a message that admitted siblings still need.
     pub(super) async fn route_validation_failure(
         &self,
         msg: &jetstream::Message,
         error: String,
+        settlement: &Arc<RawEnvelopeSettlement>,
     ) -> EventEngineResult<()> {
-        self.route_to_dlq_and_ack(msg, error).await?;
         self.stats
             .validation_failures
             .fetch_add(1, Ordering::Relaxed);
-        Ok(())
+        match self.route_to_dlq(msg, error).await {
+            Ok(()) => {
+                self.stats.dlq_routed.fetch_add(1, Ordering::Relaxed);
+                settlement.settle_child(ChildOutcome::Safe).await
+            }
+            Err(e) => {
+                warn!(
+                    error = %e,
+                    "Failed to route validation failure to DLQ after retries; requesting redelivery"
+                );
+                self.stats
+                    .dlq_publish_failures
+                    .fetch_add(1, Ordering::Relaxed);
+                settlement
+                    .settle_child(ChildOutcome::Retry(Some(DLQ_RETRY_DELAY)))
+                    .await
+            }
+        }
     }
 
     pub(super) async fn record_admission_rejection(&self, rejection: &AdmissionRejection) {
@@ -343,8 +369,15 @@ impl JetStreamConsumer {
             .filter(|prepared| tombstoned_ids.contains(&prepared.parsed_id))
             .collect();
 
-        let mut ack_messages = Vec::with_capacity(duplicate_batch.len() + tombstoned_batch.len());
-        ack_messages.extend(tombstoned_batch.iter().map(|prepared| &prepared.message));
+        // sinex-r6d.12: settle through the shared per-message coordinator,
+        // never ack `prepared.message` directly — a sibling from the same
+        // raw message may still be pending elsewhere in this batch.
+        let mut settled_count = 0u64;
+        for prepared in &tombstoned_batch {
+            prepared.settlement.settle_child(ChildOutcome::Safe).await?;
+            settled_count += 1;
+        }
+
         let mut confirmation_durability_gaps = Vec::new();
         let confirmation_futs: Vec<_> = duplicate_batch
             .iter()
@@ -376,6 +409,11 @@ impl JetStreamConsumer {
 
         for prepared in &duplicate_batch {
             if let Some(err) = confirmed_publish_failures.get(&prepared.parsed_id) {
+                // Durability gap: deliberately NOT settled here. Leaving this
+                // child's contribution to its envelope's countdown pending
+                // means the shared message stays unacked for redelivery
+                // (below), the same "left_unacked_for_redelivery" contract
+                // confirmed_event_durability_gap_error already documents.
                 confirmation_durability_gaps.push((
                     prepared.parsed_id,
                     Self::confirmed_event_durability_gap_error(prepared.parsed_id, err),
@@ -385,23 +423,12 @@ impl JetStreamConsumer {
                     event_id = %prepared.parsed_id,
                     "Re-published confirmed event for duplicate already admitted event"
                 );
-                ack_messages.push(&prepared.message);
+                prepared.settlement.settle_child(ChildOutcome::Safe).await?;
+                settled_count += 1;
             }
         }
 
-        let ack_futs: Vec<_> = ack_messages.iter().map(|message| message.ack()).collect();
-        let ack_results = join_all(ack_futs).await;
-        for result in &ack_results {
-            if let Err(error) = result {
-                return Err(
-                    SinexError::network("Failed to ack admission-skipped messages")
-                        .with_context("batch_size", ack_messages.len().to_string())
-                        .with_source(error.to_string()),
-                );
-            }
-        }
-
-        let acked_count = ack_messages.len() as u64;
+        let acked_count = settled_count;
         if acked_count > 0 {
             self.stats
                 .events_processed

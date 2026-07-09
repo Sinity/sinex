@@ -6,8 +6,11 @@ use sinex_primitives::events::Event;
 use sinex_primitives::events::builder::Provenance;
 use sinex_primitives::{JsonValue, Uuid};
 use std::collections::HashMap;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::time::Duration;
 
-use crate::event_engine::SinexError;
+use crate::event_engine::{EventEngineResult, SinexError};
 
 /// SQLSTATE for foreign-key violation.
 pub(super) const SQLSTATE_DATA_EXCEPTION_CLASS: &str = "22";
@@ -127,6 +130,109 @@ pub(super) struct PreparedEvent {
     pub(super) event: Event<JsonValue>,
     pub(super) parsed_id: Uuid,
     pub(super) message: jetstream::Message,
+    /// Shared with every other `PreparedEvent` derived from the same
+    /// physical raw JetStream message (sinex-r6d.12). Settlement of the
+    /// underlying message goes through this, never `message.ack()`/
+    /// `ack_with()` directly — see [`RawEnvelopeSettlement`].
+    pub(super) settlement: Arc<RawEnvelopeSettlement>,
+}
+
+/// Terminal outcome for one child (admission decision) derived from a
+/// physical raw JetStream message, reported to that message's shared
+/// [`RawEnvelopeSettlement`].
+#[derive(Debug, Clone, Copy)]
+pub(super) enum ChildOutcome {
+    /// Durable and terminal: persisted+confirmed, durably DLQed, durably
+    /// tombstoned, or durably suppressed. Safe to let the shared message be
+    /// removed from the stream once every child reports `Safe`.
+    Safe,
+    /// This child needs the whole envelope redelivered (transient DB
+    /// failure, source material not yet ready, DLQ publish failed after
+    /// retries...). Optional delay mirrors `AckKind::Nak(Some(delay))`.
+    Retry(Option<Duration>),
+}
+
+/// Coordinates ACK/NAK of one physical raw JetStream message across every
+/// admission decision (child) derived from it.
+///
+/// sinex-r6d.12: `prepare_events` used to act on the shared raw message
+/// directly per-child — a rejected child could ACK+DLQ the message while an
+/// admitted sibling was still sitting unprocessed in memory; if that sibling
+/// later needed a NAK, NAKing its message clone was a no-op because the
+/// underlying JetStream delivery was already permanently acked via the
+/// rejected sibling's path. This primitive makes that impossible by
+/// construction: the message settles exactly once, only after EVERY child
+/// has reported a terminal outcome, and NAKs (real redelivery, never silent
+/// loss) if any child needed it — regardless of how many children there are
+/// or what order they settle in. A singleton `EventIntent` degenerates to
+/// "wait for the one child, then ack/nak", so every raw-ingress path uses
+/// this uniformly rather than special-casing multi-child envelopes.
+#[derive(Debug)]
+pub(super) struct RawEnvelopeSettlement {
+    message: jetstream::Message,
+    remaining: AtomicUsize,
+    needs_redelivery: AtomicBool,
+    redelivery_delay: std::sync::Mutex<Option<Duration>>,
+}
+
+impl RawEnvelopeSettlement {
+    /// `child_count` is the total number of admission decisions this
+    /// message produced (admitted, transformed, suppressed, rejected,
+    /// quarantined — every one of them must report exactly once). A
+    /// `child_count` of 0 must never reach here; callers ack an empty-intent
+    /// message directly instead of constructing a settlement for it.
+    pub(super) fn new(message: jetstream::Message, child_count: usize) -> Arc<Self> {
+        debug_assert!(child_count > 0, "RawEnvelopeSettlement requires at least one child");
+        Arc::new(Self {
+            message,
+            remaining: AtomicUsize::new(child_count),
+            needs_redelivery: AtomicBool::new(false),
+            redelivery_delay: std::sync::Mutex::new(None),
+        })
+    }
+
+    /// Report one child's terminal outcome. Once every child has reported,
+    /// the shared message is ACKed (all `Safe`) or NAKed (any `Retry`) —
+    /// exactly once, regardless of settlement order. A duplicate report past
+    /// `child_count` is a logic error (debug-asserted) but degrades safely
+    /// in release builds: it is simply ignored rather than double-settling.
+    pub(super) async fn settle_child(&self, outcome: ChildOutcome) -> EventEngineResult<()> {
+        if let ChildOutcome::Retry(delay) = outcome {
+            self.needs_redelivery.store(true, Ordering::SeqCst);
+            if let Some(delay) = delay
+                && let Ok(mut guard) = self.redelivery_delay.lock()
+            {
+                guard.get_or_insert(delay);
+            }
+        }
+
+        let prev = self.remaining.fetch_update(Ordering::AcqRel, Ordering::Acquire, |n| {
+            n.checked_sub(1)
+        });
+        let Ok(prev) = prev else {
+            debug_assert!(false, "settle_child called more times than child_count");
+            return Ok(());
+        };
+        if prev != 1 {
+            return Ok(());
+        }
+
+        if self.needs_redelivery.load(Ordering::SeqCst) {
+            let delay = self.redelivery_delay.lock().ok().and_then(|guard| *guard);
+            self.message
+                .ack_with(jetstream::AckKind::Nak(delay))
+                .await
+                .map_err(|e| {
+                    SinexError::network("Failed to NAK raw envelope after child settlement")
+                        .with_source(e)
+                })
+        } else {
+            self.message.ack().await.map_err(|e| {
+                SinexError::network("Failed to ACK raw envelope after child settlement")
+                    .with_source(e)
+            })
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
