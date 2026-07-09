@@ -889,37 +889,82 @@ async fn process_batch_halts_on_retry_error() -> TestResult<()> {
     Ok(())
 }
 
-/// Env var that switches this same test function between its two roles: the
-/// outer harness (spawns a child re-running this exact test) and the inner
-/// scenario (arms the fail point and drives one batch through it). Sharing
-/// one test name/function means the fail point's child gets a real,
-/// independently-provisioned `TestContext` (fresh ephemeral NATS) for free
-/// from the `#[sinex_test]` macro, with no cross-process coordination.
-const R6D9_INNER_SCENARIO_ENV: &str = "SINEX_R6D9_RUN_INNER_SCENARIO";
+/// Env var carrying the parent's ephemeral NATS connection URL to the child.
+/// Its presence ALSO switches this same test function into its child role
+/// (the outer/parent role never sets it on itself, only on the spawned
+/// child) — one test function serves both roles, so the child gets a real
+/// `TestContext`/binary re-invocation for free, no separate harness binary.
+/// `.shared()`/`.dedicated()` NATS provisioning
+/// (`xtask::sandbox::nats::ephemeral`) is scoped by an in-process registry —
+/// it reuses one server across tests WITHIN a process, but the child here is
+/// a genuinely separate OS process (re-invoked via `current_exe()`), so
+/// `.shared()` in the child would silently connect to a SEPARATE ephemeral
+/// server the parent can never see. Passing the parent's already-running
+/// server's URL explicitly is what makes cross-process state sharing work.
+const R6D9_NATS_URL_ENV: &str = "SINEX_R6D9_NATS_URL";
 
-/// sinex-r6d.9 crash-window harness, first scenario: proves the
-/// `fail_point_after_checkpoint` injection point actually fires exactly at
-/// the boundary sinex-vxu describes — checkpoint durably saved via a real
-/// NATS KV `CheckpointManager`, `process_batch` about to return outputs to
-/// its caller for emission but hasn't yet.
+/// Fixed (not per-test-random) checkpoint identity shared by both the outer
+/// harness and inner scenario roles of
+/// `r6d9_checkpoint_before_output_fail_point_fires` — the usual
+/// `ctx.checkpoint_kv()` per-test-random namespace would prevent the parent
+/// from ever finding the bucket the child wrote to, even connected to the
+/// same server.
+const R6D9_CHECKPOINT_BUCKET: &str = "sinex_r6d9_crash_window_test_checkpoints";
+const R6D9_MODULE_NAME: &str = "derived-adapter-r6d9-crash-window-test";
+const R6D9_CONSUMER_GROUP: &str = "r6d9-test-group";
+const R6D9_CONSUMER_NAME: &str = "r6d9-test-consumer";
+
+async fn r6d9_fixed_checkpoint_manager(
+    js: &async_nats::jetstream::Context,
+) -> TestResult<CheckpointManager> {
+    let kv = sinex_primitives::nats::create_or_open_kv_store(
+        js,
+        async_nats::jetstream::kv::Config {
+            bucket: R6D9_CHECKPOINT_BUCKET.to_string(),
+            history: 8,
+            ..Default::default()
+        },
+    )
+    .await?;
+    Ok(CheckpointManager::new(
+        kv,
+        R6D9_MODULE_NAME.to_string(),
+        R6D9_CONSUMER_GROUP.to_string(),
+        R6D9_CONSUMER_NAME.to_string(),
+    ))
+}
+
+/// sinex-r6d.9 crash-window harness, first scenario: proves BOTH halves of
+/// the sinex-vxu checkpoint-before-output data-loss contract using a real
+/// NATS KV `CheckpointManager` shared (by fixed bucket/key, not the usual
+/// per-test-random namespace — see `r6d9_fixed_checkpoint_manager`) between
+/// a child process and its parent:
 ///
-/// This proves the INJECTION MECHANISM works. It does not yet prove the full
-/// crash+restart recovery contract (input stays behind the checkpoint,
-/// derived output never durable, catch-up does not repair it) — that needs
-/// an actual process restart plus a catch-up assertion, which is future
-/// scope once this fail point is wired into a real automaton lifecycle
-/// under sinex-vxu's fix.
+/// 1. INJECTION: the `fail_point_after_checkpoint` hook fires exactly at the
+///    boundary sinex-vxu describes — checkpoint durably saved,
+///    `process_batch` about to return outputs to its caller for emission
+///    but hasn't yet — proven by the child process exiting(97) instead of
+///    returning.
+/// 2. IRREPARABILITY: after the crash, a fresh `CheckpointManager` pointed
+///    at the SAME durable checkpoint (simulating what a restarted process's
+///    catch-up would read) shows the input as already processed
+///    (`processed_count == 1`) — proving this is not just "the process
+///    crashed once" but the exact silent-loss shape sinex-vxu names: a
+///    restart's catch-up would skip this input as already-done, yet its
+///    derived output was never captured anywhere.
 #[sinex_test]
 async fn r6d9_checkpoint_before_output_fail_point_fires(ctx: TestContext) -> TestResult<()> {
-    if std::env::var(R6D9_INNER_SCENARIO_ENV).is_ok() {
-        let ctx = ctx.with_nats().dedicated().await?;
-        let kv = ctx.checkpoint_kv().await?;
-        let checkpoint_manager = Arc::new(CheckpointManager::new(
-            kv,
-            "derived-adapter-r6d9-test".to_string(),
-            "test-group".to_string(),
-            format!("test-consumer-{}", Uuid::now_v7().simple()),
-        ));
+    if let Ok(nats_url) = std::env::var(R6D9_NATS_URL_ENV) {
+        // Child role: connect directly to the PARENT's already-running
+        // ephemeral NATS server (see R6D9_NATS_URL_ENV doc) rather than
+        // provisioning our own via ctx.with_nats() — this is what makes the
+        // checkpoint write below visible to the parent after this process
+        // exits.
+        let client = async_nats::connect(&nats_url)
+            .await
+            .map_err(|e| color_eyre::eyre::eyre!("child failed to connect to parent NATS: {e}"))?;
+        let js = async_nats::jetstream::new(client);
+        let checkpoint_manager = Arc::new(r6d9_fixed_checkpoint_manager(&js).await?);
         let mut adapter = AutomatonRuntime::with_config(
             TransducerWrapper(EmittingAutomaton),
             AutomatonAdapterConfig {
@@ -940,6 +985,16 @@ async fn r6d9_checkpoint_before_output_fail_point_fires(ctx: TestContext) -> Tes
         );
     }
 
+    let ctx = ctx.with_nats().shared().await?;
+    let js = ctx.jetstream().await?;
+    let nats_url = ctx.nats_handle()?.client_url().to_string();
+
+    // Defensive: purge any stale checkpoint state a prior run of this fixed
+    // bucket/key may have left behind, so the post-crash assertion below
+    // reflects only THIS run's child.
+    let pre_manager = r6d9_fixed_checkpoint_manager(&js).await?;
+    let _ = pre_manager.reset_checkpoint().await;
+
     let exe = std::env::current_exe().map_err(|e| {
         color_eyre::eyre::eyre!("current_exe unavailable for r6d9 fail-point harness: {e}")
     })?;
@@ -958,7 +1013,7 @@ async fn r6d9_checkpoint_before_output_fail_point_fires(ctx: TestContext) -> Tes
         .arg(&qualified_name)
         .arg("--exact")
         .arg("--nocapture")
-        .env(R6D9_INNER_SCENARIO_ENV, "1")
+        .env(R6D9_NATS_URL_ENV, &nats_url)
         .output()
         .await
         .map_err(|e| color_eyre::eyre::eyre!("failed to spawn r6d9 inner-scenario child: {e}"))?;
@@ -972,6 +1027,23 @@ async fn r6d9_checkpoint_before_output_fail_point_fires(ctx: TestContext) -> Tes
         output.status,
         String::from_utf8_lossy(&output.stdout),
         String::from_utf8_lossy(&output.stderr),
+    );
+
+    // IRREPARABILITY: the crashed child's checkpoint write is durable and
+    // visible to a fresh manager over the same bucket/key/NATS server —
+    // exactly what a restarted process's catch-up would read. This is the
+    // proof that the window is real data loss, not just a crashed process:
+    // catch-up would see this input as done and skip it, yet
+    // EmittingAutomaton's output for it was never returned to any emission
+    // path.
+    let post_manager = r6d9_fixed_checkpoint_manager(&js).await?;
+    let restored = post_manager.load_checkpoint().await?;
+    assert_eq!(
+        restored.processed_count, 1,
+        "the crashed child's checkpoint must durably record the input as processed \
+         (processed_count == 1) even though its output was never returned for emission — \
+         this is the silent-loss shape sinex-vxu describes: a restart's catch-up would skip \
+         this input as already-done. Got: {restored:?}"
     );
 
     Ok(())
