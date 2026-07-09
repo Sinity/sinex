@@ -13,6 +13,7 @@ use serde::Serialize;
 use serde_json::{Value as JsonValue, json};
 use sinex_primitives::{
     Uuid,
+    constants::env_vars,
     domain::{NatsSubject, SourceIdentifier},
     environment::{SinexEnvironment, environment},
     temporal::Timestamp,
@@ -332,8 +333,26 @@ impl AcquisitionManager {
         env: &SinexEnvironment,
         namespace: Option<&str>,
     ) -> RuntimeResult<()> {
+        let stream_name = env.nats_stream_name_with_namespace(namespace, SOURCE_MATERIAL_STREAM);
+
+        // sinex-bor: when Nix owns stream provisioning, this manager must not
+        // mutate SOURCE_MATERIAL out from under it — verify it exists instead.
+        // Previously this ran unconditionally, so the Rust and Nix sources of
+        // truth could fight over stream shape (or one silently win) whenever
+        // SINEX_NATS_STREAMS_MANAGED_EXTERNALLY=true.
+        if std::env::var(env_vars::NATS_STREAMS_MANAGED_EXTERNALLY).as_deref() == Ok("true") {
+            return js.get_stream(&stream_name).await.map(|_| ()).map_err(|e| {
+                SinexError::configuration(format!(
+                    "NATS streams are externally managed but required stream {stream_name} is \
+                     missing; provision it via nixos/modules/nats.nix \
+                     services.sinex.nats.bootstrapStreams.streams before restarting"
+                ))
+                .with_std_error(&e)
+            });
+        }
+
         js.create_or_update_stream(jetstream::stream::Config {
-            name: env.nats_stream_name_with_namespace(namespace, SOURCE_MATERIAL_STREAM),
+            name: stream_name,
             subjects: vec![
                 env.nats_subject_with_namespace(namespace, SOURCE_MATERIAL_FRAMES_SUBJECT.as_str()),
             ],

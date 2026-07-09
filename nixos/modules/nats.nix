@@ -80,6 +80,14 @@ let
     "sinex.coordination.>"
     "sinex.derived.invalidation"
     "sinex.telemetry.>"
+    # sinex-bor: reflection lane subjects — sinexd starts a reflection-lane
+    # consumer unconditionally, so it needs shared-client auth on these too,
+    # not just the stream declarations above.
+    "events.reflection.raw.>"
+    "events.reflection.confirmed.>"
+    "events.reflection.processing_failures.>"
+    "events.reflection.dlq.>"
+    "sinex.reflection.derived.invalidation"
   ];
   sharedClientInternalSubjects = [
     "$JS.API.>"
@@ -446,15 +454,50 @@ in
               default = null;
               description = "Optional duplicate window passed to `nats stream add/edit --dupe-window`.";
             };
+            discard = mkOption {
+              type = nullOr (enum [ "old" "new" ]);
+              default = null;
+              description = ''
+                JetStream discard policy passed through to `nats stream add/edit --discard`.
+                sinex-bor: left null falls back to the nats CLI's own default (new), which is
+                WRONG for a bounded delivery-bus stream like the confirmed-events stream — a
+                full discard:new stream rejects publishes, and the durability gate (raw-ack
+                gated on confirmed publish) turns that rejection into an unbounded redelivery
+                storm (the exact jam sinex-9u4 fixed at the Rust bootstrap level). Every stream
+                whose Rust-side bootstrap sets an explicit discard policy must set the matching
+                value here too, so externally-managed mode cannot silently regress it.
+              '';
+            };
+            allowDirect = mkOption {
+              type = nullOr bool;
+              default = null;
+              description = "Optional JetStream allow_direct flag passed through to `nats stream add/edit --allow-direct`/`--no-allow-direct`.";
+            };
+            maxMessageSize = mkOption {
+              type = nullOr positive;
+              default = null;
+              description = "Optional JetStream per-message size cap passed through to `nats stream add/edit --max-msg-size`.";
+            };
           };
         });
+        # sinex-bor: values below are kept in lockstep with the Rust bootstrap
+        # (crate/sinexd/src/event_engine/jetstream_consumer/bootstrap.rs,
+        # crate/sinexd/src/runtime/jetstream_streams.rs) since this list is what
+        # actually provisions streams when SINEX_NATS_STREAMS_MANAGED_EXTERNALLY=true
+        # skips the Rust-side bootstrap entirely — a value that silently diverges
+        # here (retention/discard especially) is a live prod-vs-dev topology drift,
+        # not a cosmetic one. The reflection lane previously had ZERO coverage here
+        # even though sinexd starts both lane consumers unconditionally.
         default = [
+          # ── Activity lane ──────────────────────────────────────────────
           {
             name = "SINEX_RAW_EVENTS";
             subjects = [ "events.raw.>" ];
-            maxAge = "168h"; # 7d; replay is served from source material/archive, not JetStream
+            retention = "work"; # matches raw_events_stream_config: RetentionPolicy::WorkQueue
+            maxAge = "72h"; # matches Duration::from_secs(72 * 60 * 60) for the Activity lane
             maxMsgs = 2000000;
             maxBytes = natsCliMaxBytes;
+            discard = "old";
           }
           {
             name = "SINEX_RAW_EVENTS_CONFIRMED";
@@ -462,6 +505,10 @@ in
             maxAge = "72h";
             maxMsgs = 2000000;
             maxBytes = natsCliMaxBytes;
+            # discard:old is load-bearing (sinex-9u4): this is a bounded delivery
+            # bus over already-Postgres-durable events, never an archive. Must
+            # never reject a publish — see the `discard` option doc above.
+            discard = "old";
           }
           {
             name = "SOURCE_MATERIAL";
@@ -473,19 +520,72 @@ in
           {
             name = "SINEX_RAW_EVENTS_DLQ";
             subjects = [ "events.dlq.>" ];
-            maxAge = "168h"; # 7d
+            maxAge = "72h"; # matches diagnostic_stream_max_age(Activity) — was 168h, a real drift
             maxBytes = natsCliMaxBytes;
-            dupeWindow = "1h";
+            dupeWindow = "1h"; # matches DLQ_DUPLICATE_WINDOW
+            allowDirect = true;
+            discard = "new";
           }
           {
             name = "SINEX_RAW_EVENTS_PROCESSING_FAILURES";
             subjects = [ "events.processing_failures.>" ];
-            maxAge = "168h"; # 7d
+            maxAge = "72h"; # matches diagnostic_stream_max_age(Activity) — was 168h, a real drift
             maxBytes = natsCliMaxBytes;
+            dupeWindow = "1h"; # matches DLQ_DUPLICATE_WINDOW (shared by both diagnostic streams)
+            allowDirect = true;
+            discard = "new";
           }
           {
             name = "SINEX_RAW_EVENTS_DERIVED_INVALIDATIONS";
             subjects = [ "sinex.derived.invalidation" ];
+            maxAge = "24h";
+            maxBytes = natsCliMaxBytes;
+          }
+          # ── Reflection lane ────────────────────────────────────────────
+          # Self-observation streams: sinexd starts a reflection-lane consumer
+          # unconditionally (crate/sinexd/src/event_engine/service.rs), so prod
+          # must provision these too or it starts without streams the runtime
+          # consumes. Byte caps mirror REFLECTION_STREAM_MAX_BYTES (256MiB) and
+          # REFLECTION_DIAGNOSTIC_MAX_BYTES (64MiB); every reflection stream uses
+          # the 24h retention bootstrap.rs applies uniformly to that lane.
+          {
+            name = "SINEX_REFLECTION_EVENTS";
+            subjects = [ "events.reflection.raw.>" ];
+            retention = "work";
+            maxAge = "24h";
+            maxMsgs = 2000000;
+            maxBytes = "268435456"; # 256 MiB
+            discard = "old";
+          }
+          {
+            name = "SINEX_REFLECTION_EVENTS_CONFIRMED";
+            subjects = [ "events.reflection.confirmed.>" ];
+            maxAge = "24h";
+            maxMsgs = 2000000;
+            maxBytes = "268435456"; # 256 MiB
+            discard = "old";
+          }
+          {
+            name = "SINEX_REFLECTION_EVENTS_DLQ";
+            subjects = [ "events.reflection.dlq.>" ];
+            maxAge = "24h";
+            maxBytes = "67108864"; # 64 MiB
+            dupeWindow = "1h";
+            allowDirect = true;
+            discard = "new";
+          }
+          {
+            name = "SINEX_REFLECTION_EVENTS_PROCESSING_FAILURES";
+            subjects = [ "events.reflection.processing_failures.>" ];
+            maxAge = "24h";
+            maxBytes = "67108864"; # 64 MiB
+            dupeWindow = "1h";
+            allowDirect = true;
+            discard = "new";
+          }
+          {
+            name = "SINEX_REFLECTION_EVENTS_DERIVED_INVALIDATIONS";
+            subjects = [ "sinex.reflection.derived.invalidation" ];
             maxAge = "24h";
             maxBytes = natsCliMaxBytes;
           }
@@ -635,6 +735,9 @@ in
                   (optionalString (stream.maxBytes != null) "  stream_args+=(--max-bytes ${escapeShellArg stream.maxBytes})")
                   (optionalString (stream.maxMsgsPerSubject != null) "  stream_args+=(--max-msgs-per-subject ${escapeShellArg (toString stream.maxMsgsPerSubject)})")
                   (optionalString (stream.dupeWindow != null) "  stream_args+=(--dupe-window ${escapeShellArg stream.dupeWindow})")
+                  (optionalString (stream.discard != null) "  stream_args+=(--discard ${escapeShellArg stream.discard})")
+                  (optionalString (stream.allowDirect != null) "  stream_args+=(${if stream.allowDirect then "--allow-direct" else "--no-allow-direct"})")
+                  (optionalString (stream.maxMessageSize != null) "  stream_args+=(--max-msg-size ${escapeShellArg (toString stream.maxMessageSize)})")
                 ]);
               in
               ''
