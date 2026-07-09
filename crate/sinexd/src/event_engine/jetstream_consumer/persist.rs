@@ -193,6 +193,13 @@ impl JetStreamConsumer {
                     // pending) and must not be silently orphaned.
                     let mut settled_count = 0u64;
                     for prepared in &tombstoned_batch {
+                        self.settlement_registry.resolve(
+                            prepared.parsed_id,
+                            EmissionReceiptState::Suppressed {
+                                reason: SuppressionReason::Tombstoned,
+                                existing_event_id: None,
+                            },
+                        );
                         prepared.settlement.settle_child(ChildOutcome::Safe).await?;
                         settled_count += 1;
                     }
@@ -210,6 +217,9 @@ impl JetStreamConsumer {
                             ));
                             continue;
                         }
+                        let inserted = inserted_set
+                            .as_ref()
+                            .is_some_and(|set| set.contains(&prepared.parsed_id));
                         if let Some(set) = &inserted_set
                             && !set.contains(&prepared.parsed_id)
                         {
@@ -218,6 +228,23 @@ impl JetStreamConsumer {
                                 "Re-published confirmed event for already persisted event"
                             );
                         }
+                        // sinex-r6d.11: the row is persisted (freshly inserted or
+                        // already present — `inserted` distinguishes which) and its
+                        // confirmed-stream publish already succeeded (the
+                        // durability-gap branch above continues before reaching
+                        // here), so this is PersistedConfirmed regardless of which
+                        // case it is. `confirmed_sequence` is unavailable:
+                        // `publish_confirmed_event` discards the JetStream
+                        // `PublishAck` it awaits (confirmation.rs) rather than
+                        // surfacing its sequence number.
+                        self.settlement_registry.resolve(
+                            prepared.parsed_id,
+                            EmissionReceiptState::PersistedConfirmed {
+                                lane: self.admission.storage_lane(),
+                                inserted,
+                                confirmed_sequence: None,
+                            },
+                        );
                         prepared.settlement.settle_child(ChildOutcome::Safe).await?;
                         settled_count += 1;
                     }
@@ -351,12 +378,35 @@ impl JetStreamConsumer {
                         match self.route_to_dlq(&prepared.message, format!("Persistence error: {e}")).await {
                             Ok(()) => {
                                 self.stats.dlq_routed.fetch_add(1, Ordering::Relaxed);
+                                // sinex-r6d.11: the DLQ write itself (route_to_dlq's
+                                // Ok(())) is the durable debt record — debt_id has no
+                                // dedicated DB row id available here (DLQ routing is a
+                                // NATS publish, not a DB insert returning a primary
+                                // key), so the event's own id is the identifier an
+                                // operator would actually look this DLQ entry up by
+                                // (it's also what `route_to_dlq` stamps into the
+                                // `Event-Id` header).
+                                self.settlement_registry.resolve(
+                                    prepared.parsed_id,
+                                    EmissionReceiptState::DurableDebt {
+                                        debt_id: prepared.parsed_id,
+                                        reason: format!(
+                                            "isolated (bisection) persistence failure DLQ'd: {e}"
+                                        ),
+                                    },
+                                );
                                 prepared.settlement.settle_child(ChildOutcome::Safe).await?;
                             }
                             Err(err) => {
                                 self.stats
                                     .dlq_publish_failures
                                     .fetch_add(1, Ordering::Relaxed);
+                                self.settlement_registry.resolve(
+                                    prepared.parsed_id,
+                                    EmissionReceiptState::FailedTransient {
+                                        error: err.to_string(),
+                                    },
+                                );
                                 prepared
                                     .settlement
                                     .settle_child(ChildOutcome::Retry(None))
@@ -398,6 +448,18 @@ impl JetStreamConsumer {
                                 {
                                     Ok(()) => {
                                         self.stats.dlq_routed.fetch_add(1, Ordering::Relaxed);
+                                        // sinex-r6d.11: same debt_id reasoning as the
+                                        // bisection-isolated-poison DLQ site above — no
+                                        // dedicated DB debt-record id exists, so the
+                                        // event's own id is what identifies this DLQ
+                                        // entry.
+                                        self.settlement_registry.resolve(
+                                            prepared.parsed_id,
+                                            EmissionReceiptState::DurableDebt {
+                                                debt_id: prepared.parsed_id,
+                                                reason: format!("Persistence error: {e}"),
+                                            },
+                                        );
                                         if let Err(err) =
                                             prepared.settlement.settle_child(ChildOutcome::Safe).await
                                         {
@@ -413,6 +475,12 @@ impl JetStreamConsumer {
                                         self.stats
                                             .dlq_publish_failures
                                             .fetch_add(1, Ordering::Relaxed);
+                                        self.settlement_registry.resolve(
+                                            prepared.parsed_id,
+                                            EmissionReceiptState::FailedTransient {
+                                                error: err.to_string(),
+                                            },
+                                        );
                                         if let Err(settle_err) = prepared
                                             .settlement
                                             .settle_child(ChildOutcome::Retry(None))
@@ -433,6 +501,16 @@ impl JetStreamConsumer {
                                 }
                             }
                             Ok(false) => {
+                                // sinex-r6d.11: retryable/transient persistence
+                                // failure (or delivery-attempt count below the DLQ
+                                // threshold) — non-progress, recoverable via the
+                                // NAK-triggered redelivery below.
+                                self.settlement_registry.resolve(
+                                    prepared.parsed_id,
+                                    EmissionReceiptState::Deferred {
+                                        reason: e.to_string(),
+                                    },
+                                );
                                 if let Err(err) = prepared
                                     .settlement
                                     .settle_child(ChildOutcome::Retry(None))
@@ -459,6 +537,17 @@ impl JetStreamConsumer {
                                     event_id = %prepared.parsed_id,
                                     error = %err,
                                     "Failed to inspect persistence retry state; NAKing for retry"
+                                );
+                                // sinex-r6d.11: inspecting the retry state itself
+                                // failed (e.g. JetStream delivery metadata
+                                // unreadable) — a genuine settlement-path error,
+                                // not a routine deferred-retry. Captured before
+                                // `err` is moved into `with_context` below.
+                                self.settlement_registry.resolve(
+                                    prepared.parsed_id,
+                                    EmissionReceiptState::FailedTransient {
+                                        error: err.to_string(),
+                                    },
                                 );
                                 settlement_errors.push((
                                     prepared.parsed_id,
@@ -672,26 +761,34 @@ impl JetStreamConsumer {
                 threshold = retry_threshold,
                 "Source material remained unavailable after retry budget; routing event to DLQ"
             );
-            match self
-                .route_to_dlq(
-                    &prepared.message,
-                    source_material_unavailable_error(
-                        prepared,
-                        material_id,
-                        persistence_error,
-                        retry_threshold,
-                    ),
-                )
-                .await
-            {
+            let dlq_reason = source_material_unavailable_error(
+                prepared,
+                material_id,
+                persistence_error,
+                retry_threshold,
+            );
+            match self.route_to_dlq(&prepared.message, dlq_reason.clone()).await {
                 Ok(()) => {
                     self.stats.dlq_routed.fetch_add(1, Ordering::Relaxed);
+                    self.settlement_registry.resolve(
+                        prepared.parsed_id,
+                        EmissionReceiptState::DurableDebt {
+                            debt_id: prepared.parsed_id,
+                            reason: dlq_reason,
+                        },
+                    );
                     prepared.settlement.settle_child(ChildOutcome::Safe).await?;
                 }
                 Err(err) => {
                     self.stats
                         .dlq_publish_failures
                         .fetch_add(1, Ordering::Relaxed);
+                    self.settlement_registry.resolve(
+                        prepared.parsed_id,
+                        EmissionReceiptState::FailedTransient {
+                            error: err.to_string(),
+                        },
+                    );
                     prepared
                         .settlement
                         .settle_child(ChildOutcome::Retry(None))
@@ -706,6 +803,12 @@ impl JetStreamConsumer {
             return Ok(SourceMaterialSettlement::RoutedToDlq);
         }
 
+        self.settlement_registry.resolve(
+            prepared.parsed_id,
+            EmissionReceiptState::Deferred {
+                reason: format!("source material {material_id:?} not yet registered"),
+            },
+        );
         if let Err(err) = prepared
             .settlement
             .settle_child(ChildOutcome::Retry(Some(retry_delay)))
