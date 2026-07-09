@@ -323,6 +323,120 @@ async fn consumer_publishes_confirmation() -> color_eyre::Result<()> {
     Ok(())
 }
 
+/// sinex-z8p regression: the confirmed-events stream must publish the FINAL
+/// persisted+redacted event image, never the pre-redaction image the consumer
+/// parsed off the raw message. With a DB-backed redaction rule active, the
+/// confirmed payload must match what a policy-engine redaction actually
+/// produces, and must NOT contain the plaintext secret that was on the wire.
+#[sinex_test]
+async fn confirmation_publishes_redacted_persisted_image() -> color_eyre::Result<()> {
+    let ctx = TestContext::new().await?;
+    let ctx = ctx.with_nats().shared().await?;
+    let nats = ctx.nats_handle()?;
+    let nats_client = ctx.nats_client();
+    let pool = ctx.pool.clone();
+    ensure_fixture_source_material(&pool).await?;
+
+    // DB-backed redaction rule: replace any occurrence of the literal secret
+    // with a fixed label. Global scope (NULL source/type/field_path) so it
+    // applies to this test's payload without extra binding ceremony.
+    let repo = pool.privacy_policy();
+    repo.add_rule(
+        "z8p-regression-secret",
+        "test rule",
+        "literal",
+        "PLAINTEXT_SECRET_VALUE",
+        false,
+        "redact",
+        Some("<REDACTED>"),
+        "default",
+    )
+    .await?;
+    repo.bind_field_rule("z8p-regression-secret", None, None, None, 0)
+        .await?;
+
+    let validator = IngestEventValidator::new(false);
+    let js = nats.jetstream_with_client(nats_client.clone());
+    let env = ctx.env();
+    let namespace = ctx.pipeline_namespace().prefix().to_string();
+    let topology = JetStreamTopology::new(
+        env,
+        ctx.pipeline_namespace().stream("SINEX_RAW_EVENTS"),
+        ctx.pipeline_namespace()
+            .consumer_name("event-engine-z8p-redact"),
+        Some(&namespace),
+    );
+    let ready_topology = topology.clone();
+    // JetStreamConsumer::new() defaults to a noop policy engine (empty
+    // ruleset, never refreshes) — production/tests must opt in to DB-backed
+    // policy explicitly via with_policy_engine(), or the DB rule inserted
+    // above is never loaded and this test would silently pass on unredacted
+    // content matching itself instead of proving the fix.
+    let consumer = JetStreamConsumer::new(
+        nats_client.clone(),
+        pool.clone(),
+        Arc::new(RwLock::new(validator)),
+        topology,
+    )
+    .with_policy_engine()
+    .await?;
+    let consumer_handle =
+        spawn_consumer_and_wait_ready(&ctx, &js, &ready_topology, consumer).await?;
+
+    let event_id = Uuid::now_v7();
+    publish_event(
+        &ctx.pool,
+        &nats_client,
+        &namespace,
+        "test",
+        "test.event",
+        json!({"secret": "PLAINTEXT_SECRET_VALUE"}),
+        EventOverrides {
+            id: Some(event_id),
+            ..Default::default()
+        },
+    )
+    .await?;
+
+    let confirmation_subject =
+        confirmation_subject_for(&ready_topology.confirmed_events_prefix, "test", "test.event");
+    let confirmation = wait_for_last_stream_message_by_subject(
+        &js,
+        &ready_topology.confirmed_events_stream,
+        &confirmation_subject,
+    )
+    .await?;
+    let confirm_payload: serde_json::Value = serde_json::from_slice(&confirmation.payload)?;
+    assert_eq!(confirm_payload["id"], event_id.to_string());
+    let confirmed_secret_field = confirm_payload["payload"]["secret"]
+        .as_str()
+        .expect("confirmed payload should carry the secret field");
+    assert_eq!(
+        confirmed_secret_field, "<REDACTED>",
+        "confirmed-events stream must publish the redacted persisted image, not the pre-redaction one; got: {confirm_payload}"
+    );
+    assert!(
+        !confirmed_secret_field.contains("PLAINTEXT_SECRET_VALUE"),
+        "confirmed payload leaked the pre-redaction plaintext: {confirm_payload}"
+    );
+
+    // Cross-check against the actual persisted row: the confirmed image must
+    // equal what is durably in Postgres, not merely "some redacted string".
+    let persisted = ctx
+        .pool
+        .events()
+        .get_by_id(event_id.into())
+        .await?
+        .expect("event should be persisted");
+    assert_eq!(
+        persisted.payload["secret"], confirm_payload["payload"]["secret"],
+        "confirmed payload must equal the persisted row's payload exactly"
+    );
+
+    consumer_handle.abort();
+    Ok(())
+}
+
 /// Tests that offset_kind provenance field is correctly persisted through the pipeline.
 /// Uses the Event provenance API (DynamicPayload with `.from_material_at()`, `.with_offset_kind()`)
 /// to set offset fields which should be preserved when ingested.
