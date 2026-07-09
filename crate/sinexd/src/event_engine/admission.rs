@@ -425,6 +425,15 @@ impl AdmissionService {
         self.storage_lane = storage_lane;
     }
 
+    /// Which physical event table (`core.events` vs `reflection.events`) this
+    /// service persists into. Read-only accessor for callers that need to
+    /// label an outcome with its storage lane (sinex-r6d.11 settlement
+    /// receipts) without duplicating the lane decision.
+    #[must_use]
+    pub fn storage_lane(&self) -> EventStorageLane {
+        self.storage_lane
+    }
+
     /// Admit a candidate event already decoded into the canonical event model.
     pub async fn admit_event(
         &self,

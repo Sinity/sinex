@@ -53,6 +53,16 @@ impl JetStreamConsumer {
                 }
                 AdmissionDecision::Suppressed(rejection) => {
                     self.record_admission_suppression(&rejection).await;
+                    // TODO(sinex-r6d.11): no settlement_registry.resolve() call here.
+                    // AdmissionRejection carries only `kind`/`reason` (admission.rs:218-221),
+                    // never an event_id — most rejection sites in admit_event_with_metadata
+                    // construct it before or without a parsed candidate id, so there is no
+                    // reliable key to resolve against here. Threading an `Option<Uuid>`
+                    // through AdmissionRejection's ~20 construction sites to recover it for
+                    // the few paths (e.g. OccurrenceDuplicate) where an id happens to be in
+                    // scope is a wider change to admission.rs's own shape than this bead's
+                    // settle_child-site wiring scope; left as a documented gap rather than
+                    // guessed at.
                     settlement.settle_child(ChildOutcome::Safe).await?;
                 }
                 AdmissionDecision::Rejected(rejection)
@@ -195,6 +205,13 @@ impl JetStreamConsumer {
         self.stats
             .validation_failures
             .fetch_add(1, Ordering::Relaxed);
+        // TODO(sinex-r6d.11): no settlement_registry.resolve() calls in this function.
+        // This runs for AdmissionDecision::Rejected/QuarantineNeeded, both carrying only
+        // an AdmissionRejection (kind + reason string, admission.rs:218-221) with no
+        // event_id — several rejection kinds (MissingEventId, InvalidEventId,
+        // EnvelopeDeserialization, StructuralJson...) are rejected precisely because no
+        // valid id could be parsed, so there is no trustworthy key to resolve against
+        // even in principle. Same documented gap as the Suppressed arm above.
         match self.route_to_dlq(msg, error).await {
             Ok(()) => {
                 self.stats.dlq_routed.fetch_add(1, Ordering::Relaxed);
@@ -374,6 +391,13 @@ impl JetStreamConsumer {
         // raw message may still be pending elsewhere in this batch.
         let mut settled_count = 0u64;
         for prepared in &tombstoned_batch {
+            self.settlement_registry.resolve(
+                prepared.parsed_id,
+                EmissionReceiptState::Suppressed {
+                    reason: SuppressionReason::Tombstoned,
+                    existing_event_id: None,
+                },
+            );
             prepared.settlement.settle_child(ChildOutcome::Safe).await?;
             settled_count += 1;
         }
@@ -422,6 +446,13 @@ impl JetStreamConsumer {
                 debug!(
                     event_id = %prepared.parsed_id,
                     "Re-published confirmed event for duplicate already admitted event"
+                );
+                self.settlement_registry.resolve(
+                    prepared.parsed_id,
+                    EmissionReceiptState::Suppressed {
+                        reason: SuppressionReason::CachedDuplicate,
+                        existing_event_id: None,
+                    },
                 );
                 prepared.settlement.settle_child(ChildOutcome::Safe).await?;
                 settled_count += 1;
