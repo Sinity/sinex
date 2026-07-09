@@ -910,6 +910,27 @@ in
                   default = { };
                   description = "RPC resource guard configuration for the API.";
                 };
+                poolMaxConnections = mkOption {
+                  type = nullOr positive;
+                  default = null;
+                  defaultText = literalExpression "config.services.sinex.database.connectionPool.maxConnections";
+                  description = ''
+                    sinex-d4qg: override the API's own database connection
+                    pool size, distinct from the shared per-service default
+                    (database.connectionPool.maxConnections) used uniformly
+                    by the event engine and every automaton. Null means "use
+                    the shared default" (the pre-existing behavior). A
+                    single long-lived transaction on the API's small shared
+                    pool -- e.g. a large replay preview's cascade-expansion
+                    query -- can hold a connection long enough to starve
+                    routine API traffic (even periodic telemetry sampling)
+                    sharing that same tiny pool; a separate, larger value
+                    here fixes that without inflating every other service's
+                    pool too. When set, this value's contribution is also
+                    reflected in the computed Postgres max_connections (see
+                    database.nix's computedMaxConnections).
+                  '';
+                };
                 tlsCertFile = mkOption {
                   type = nullOr path;
                   default = if cfg.core.api.autoGenerateTls then cfg.stateRoot + "/tls/server.pem" else null;
