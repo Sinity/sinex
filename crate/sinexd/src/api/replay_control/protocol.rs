@@ -63,6 +63,37 @@ pub struct ReplayControlResponse {
     pub preview: Option<serde_json::Value>,
 }
 
+/// Strip the bulky `root_event_ids` array out of a stored operation's
+/// `preview_summary` before it goes out over the wire.
+///
+/// `preview_summary` is stored in full (load-bearing: execution re-reads
+/// `root_event_ids` to sanity-check the root set hasn't drifted since
+/// preview, see `state_machine.rs` ~858-872). But for a scope covering real
+/// event volume that array is hundreds of thousands of UUIDs -- echoing it
+/// back verbatim in every response that carries a `ReplayOperation`
+/// (`Preview`, `Approve`, `Submit`, `Execute`, `Cancel`, `Status`, `List`)
+/// produces a reply payload of hundreds of MB, which trips sinexd's own
+/// oversized-publish guard. Applied centrally in `success()` so no response
+/// path can forget it, rather than trimming per-handler.
+fn trim_stored_preview_for_client(mut operation: ReplayOperation) -> ReplayOperation {
+    if let Some(serde_json::Value::Object(map)) = &mut operation.preview_summary {
+        trim_root_event_ids_in_place(map);
+    }
+    operation
+}
+
+/// Replace a preview object's `root_event_ids` array with its count in place.
+/// Shared by the operation-wide trim above and the dedicated `preview` blob
+/// the `Preview` handler returns (`server.rs`) -- same bulky field, two
+/// different response slots it can leak through.
+pub(crate) fn trim_root_event_ids_in_place(map: &mut serde_json::Map<String, serde_json::Value>) {
+    if let Some(serde_json::Value::Array(ids)) = map.get("root_event_ids") {
+        let count = ids.len();
+        map.insert("root_event_ids_count".to_string(), serde_json::json!(count));
+        map.remove("root_event_ids");
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ReplayControlErrorKind {
@@ -103,8 +134,9 @@ impl ReplayControlResponse {
             status: ReplayControlStatus::Ok,
             message: None,
             error_kind: None,
-            operation,
-            operations,
+            operation: operation.map(trim_stored_preview_for_client),
+            operations: operations
+                .map(|ops| ops.into_iter().map(trim_stored_preview_for_client).collect()),
             preview,
         }
     }
