@@ -106,37 +106,22 @@ impl ReplayControlClient {
             .ok_or_else(|| SinexError::serialization("Replay control response missing operations"))
     }
 
+    /// Issue 126 / sinex-<pending>: `self.client.request(...)` (the plain,
+    /// no-explicit-timeout form) is bound by async-nats's own internal
+    /// default request timeout (10s) regardless of any outer
+    /// `tokio::time::timeout` wrapped around it — the outer wrapper can only
+    /// make the effective deadline LONGER than 10s if async-nats's own
+    /// timeout already fired first, never actually reach the configured
+    /// `self.request_timeout` when it exceeds 10s. `SINEX_REPLAY_CONTROL_TIMEOUT_SECS`
+    /// (default 30s) was therefore silently capped at ~10s in practice.
+    /// `async_nats::Request::new().timeout(Some(_))` overrides the
+    /// per-request deadline explicitly instead of relying on the client's
+    /// default, so `send` and `send_with_timeout` now share one
+    /// implementation that actually honors the requested duration.
     async fn send(&self, request: ReplayControlRequest) -> Result<ReplayControlResponse> {
-        let payload = serde_json::to_vec(&request).map_err(|err| {
-            SinexError::serialization("Failed to serialize replay control request")
-                .with_std_error(&err)
-        })?;
-
-        // Issue 126: Configurable timeout for NATS replay requests
-        let message = tokio::time::timeout(
-            self.request_timeout,
-            self.client.request(self.subject.clone(), payload.into()),
-        )
-        .await
-        .map_err(|_| {
-            let error_msg = format!(
-                "Replay control request timed out after {:?}",
-                self.request_timeout
-            );
-            self.record_error(error_msg.clone());
-            SinexError::timeout(error_msg)
-        })?
-        .inspect_err(|err| {
-            self.record_error(err.to_string());
-        })
-        .map_err(|err| {
-            SinexError::messaging("Replay control request failed").with_std_error(&err)
-        })?;
-
-        self.decode_response_payload(&message.payload)
+        self.send_with_timeout(request, self.request_timeout).await
     }
 
-    #[cfg(test)]
     async fn send_with_timeout(
         &self,
         request: ReplayControlRequest,
@@ -156,8 +141,12 @@ impl ReplayControlClient {
             .inspect_err(|err| {
                 self.record_error(err.to_string());
             })
-            .map_err(|err| {
-                SinexError::timeout("Replay control request timed out").with_std_error(&err)
+            .map_err(|err| match err.kind() {
+                async_nats::RequestErrorKind::TimedOut => {
+                    let error_msg = format!("Replay control request timed out after {timeout:?}");
+                    SinexError::timeout(error_msg).with_std_error(&err)
+                }
+                _ => SinexError::messaging("Replay control request failed").with_std_error(&err),
             })?;
 
         self.decode_response_payload(&message.payload)
