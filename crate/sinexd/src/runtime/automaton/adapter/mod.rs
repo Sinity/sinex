@@ -129,6 +129,15 @@ where
     /// `None` in every production path; zero behavior change when unset.
     #[cfg(any(test, feature = "testing"))]
     fail_point_after_checkpoint: Option<Arc<std::sync::atomic::AtomicBool>>,
+    /// sinex-r6d.9 crash-window harness hook: when armed, `recv_invalidation`
+    /// deliberately exits the process immediately after the invalidation
+    /// message is acked and before its payload is returned to the caller
+    /// for debounce/recompute/checkpoint — reproducing the exact window
+    /// sinex-r6d.7 describes (invalidation durably, permanently removed
+    /// from the stream, recompute never durably happens). `None` in every
+    /// production path; zero behavior change when unset.
+    #[cfg(any(test, feature = "testing"))]
+    fail_point_after_invalidation_ack: Option<Arc<std::sync::atomic::AtomicBool>>,
 }
 
 impl<N> AutomatonRuntime<N>
@@ -169,6 +178,8 @@ where
             self_observer: None,
             #[cfg(any(test, feature = "testing"))]
             fail_point_after_checkpoint: None,
+            #[cfg(any(test, feature = "testing"))]
+            fail_point_after_invalidation_ack: None,
         }
     }
 
@@ -186,6 +197,34 @@ where
     ) -> Self {
         self.fail_point_after_checkpoint = Some(flag);
         self
+    }
+
+    /// Arm the sinex-r6d.9 invalidation-ack-before-recompute fail point (see
+    /// the field doc on `fail_point_after_invalidation_ack`). Test/harness-only.
+    #[cfg(any(test, feature = "testing"))]
+    pub fn with_fail_point_after_invalidation_ack(
+        mut self,
+        flag: Arc<std::sync::atomic::AtomicBool>,
+    ) -> Self {
+        self.fail_point_after_invalidation_ack = Some(flag);
+        self
+    }
+
+    /// Always-present accessor for `recv_invalidation`'s call site — `None`
+    /// unconditionally outside test/harness builds (the field does not even
+    /// exist there), so `run_continuous` never needs its own `#[cfg]`.
+    #[cfg(any(test, feature = "testing"))]
+    pub(super) fn invalidation_ack_fail_point(
+        &self,
+    ) -> Option<&Arc<std::sync::atomic::AtomicBool>> {
+        self.fail_point_after_invalidation_ack.as_ref()
+    }
+
+    #[cfg(not(any(test, feature = "testing")))]
+    pub(super) fn invalidation_ack_fail_point(
+        &self,
+    ) -> Option<&Arc<std::sync::atomic::AtomicBool>> {
+        None
     }
 
     /// Create with custom config.
@@ -266,6 +305,7 @@ where
 #[cfg(feature = "messaging")]
 async fn recv_invalidation(
     sub: &mut Option<async_nats::jetstream::consumer::push::Messages>,
+    fail_point_after_ack: Option<&Arc<std::sync::atomic::AtomicBool>>,
 ) -> Option<Vec<u8>> {
     use futures::StreamExt;
     match sub.as_mut() {
@@ -276,6 +316,19 @@ async fn recv_invalidation(
                 // invalidation message after the ack wait timeout.
                 if let Err(e) = msg.ack().await {
                     warn!("Failed to ack invalidation message: {e}");
+                }
+                // sinex-r6d.9 crash-window harness: this ack is exactly the
+                // sinex-r6d.7 window — the invalidation is durably,
+                // permanently removed from the stream here, before
+                // debounce/recompute/checkpoint ever runs. Exit here (not a
+                // catchable panic) so a harness can prove restart does NOT
+                // repair a lost invalidation on pre-fix code. `fail_point_after_ack`
+                // is always `None` outside test/harness builds (see
+                // `AutomatonRuntime::invalidation_ack_fail_point`).
+                if let Some(flag) = fail_point_after_ack
+                    && flag.load(std::sync::atomic::Ordering::SeqCst)
+                {
+                    std::process::exit(98);
                 }
                 Some(payload)
             }
@@ -291,7 +344,10 @@ async fn recv_invalidation(
 
 /// Stub when messaging feature is disabled — always pends.
 #[cfg(not(feature = "messaging"))]
-async fn recv_invalidation(_sub: &mut ()) -> Option<Vec<u8>> {
+async fn recv_invalidation(
+    _sub: &mut (),
+    _fail_point_after_ack: Option<&Arc<std::sync::atomic::AtomicBool>>,
+) -> Option<Vec<u8>> {
     std::future::pending().await
 }
 
