@@ -4,10 +4,12 @@ mod processing_replay;
 // Inline because these cover a private shutdown-signaling helper.
 #[cfg(feature = "messaging")]
 use super::log_self_observation_failure;
+#[cfg(feature = "messaging")]
+use super::recv_invalidation;
 use super::{AutomatonRuntime, stale_output_ids_or_fail_scope};
 use crate::runtime::automaton::{
-    AutomatonAdapterConfig, AutomatonContext, DerivedOutput, InputProvenanceFilter,
-    ScopeReconcilerWrapper, TransducerWrapper,
+    AutomatonAdapterConfig, AutomatonContext, DerivedOutput, DerivedScopeInvalidation,
+    INVALIDATION_SUBJECT, InputProvenanceFilter, ScopeReconcilerWrapper, TransducerWrapper,
 };
 use crate::runtime::exploration::{ExplorationProvider, ExportFormat};
 #[cfg(feature = "messaging")]
@@ -1045,6 +1047,168 @@ async fn r6d9_checkpoint_before_output_fail_point_fires(ctx: TestContext) -> Tes
          this is the silent-loss shape sinex-vxu describes: a restart's catch-up would skip \
          this input as already-done. Got: {restored:?}"
     );
+
+    Ok(())
+}
+
+// -------------------------------------------------------------------------
+// sinex-r6d.9 crash-window harness, second scenario: invalidation-ack
+// -------------------------------------------------------------------------
+
+const R6D9_INVALIDATION_DELIVER_GROUP: &str = "derived.invalidation.r6d9-crash-window-test";
+
+async fn r6d9_invalidation_stream(
+    js: &async_nats::jetstream::Context,
+) -> TestResult<(async_nats::jetstream::stream::Stream, String)> {
+    let env = sinex_primitives::environment::environment();
+    let stream_name = env.nats_stream_name("SINEX_RAW_EVENTS_DERIVED_INVALIDATIONS");
+    let invalidation_subject = env.nats_subject(INVALIDATION_SUBJECT);
+    let stream = js
+        .get_or_create_stream(async_nats::jetstream::stream::Config {
+            name: stream_name,
+            subjects: vec![invalidation_subject.clone()],
+            ..Default::default()
+        })
+        .await?;
+    Ok((stream, invalidation_subject))
+}
+
+async fn r6d9_invalidation_push_consumer(
+    stream: &async_nats::jetstream::stream::Stream,
+    client: &async_nats::Client,
+) -> TestResult<async_nats::jetstream::consumer::push::Messages> {
+    let deliver_subject = client.new_inbox();
+    let consumer = stream
+        .create_consumer(async_nats::jetstream::consumer::push::Config {
+            deliver_subject,
+            deliver_group: Some(R6D9_INVALIDATION_DELIVER_GROUP.to_string()),
+            ..Default::default()
+        })
+        .await?;
+    Ok(consumer.messages().await?)
+}
+
+/// sinex-r6d.9 crash-window harness, second scenario: proves — empirically,
+/// not just from reading `async-nats` source — whether the invalidation-ack
+/// window (sinex-r6d.7, sinex-vxu) that `recv_invalidation` exposes is
+/// PERMANENT data loss, or self-heals on any restart within the invalidation
+/// stream's own retention window.
+///
+/// Same cross-process shape as `r6d9_checkpoint_before_output_fail_point_fires`:
+/// one test function serves both an outer harness role (spawns a re-invoked
+/// child sharing the parent's NATS server) and an inner scenario role
+/// (switched by `R6D9_NATS_URL_ENV`'s presence).
+///
+/// 1. INJECTION: the child acks a real invalidation message via
+///    `recv_invalidation`, then exits(98) — the exact sinex-r6d.7 window:
+///    the message is durably, permanently removed from THIS consumer's
+///    redelivery queue, before debounce/recompute/checkpoint ever runs.
+/// 2. SELF-HEALING CHECK: the parent then creates a FRESH ephemeral push
+///    consumer against the SAME stream (simulating `run_continuous`
+///    resubscribing after a real restart) and polls for the same
+///    invalidation payload. `async-nats` source review this session
+///    concluded ephemeral consumers get a server-generated name each
+///    creation, with no inherited ack/delivery state, and
+///    `DeliverPolicy::All` (the config default) delivers everything still
+///    present in the stream — so a restart's fresh consumer should see the
+///    message again. This test proves that conclusion instead of trusting it.
+#[sinex_test]
+async fn r6d9_invalidation_ack_fail_point_fires(ctx: TestContext) -> TestResult<()> {
+    if let Ok(nats_url) = std::env::var(R6D9_NATS_URL_ENV) {
+        // Child role: connect directly to the parent's already-running
+        // ephemeral NATS server (see R6D9_NATS_URL_ENV doc on the checkpoint
+        // scenario above).
+        let client = async_nats::connect(&nats_url)
+            .await
+            .map_err(|e| color_eyre::eyre::eyre!("child failed to connect to parent NATS: {e}"))?;
+        let js = async_nats::jetstream::new(client.clone());
+        let (stream, _subject) = r6d9_invalidation_stream(&js).await?;
+        let mut messages = Some(r6d9_invalidation_push_consumer(&stream, &client).await?);
+        let flag = Arc::new(std::sync::atomic::AtomicBool::new(true));
+
+        // The fail point exits the process inside this call, right after the
+        // ack succeeds and before the payload is returned to the caller for
+        // debounce/recompute. This line intentionally never returns on a
+        // correctly-armed fail point.
+        let _ = recv_invalidation(&mut messages, Some(&flag)).await;
+        panic!(
+            "fail point did not fire: recv_invalidation returned instead of exiting the \
+             process after the ack succeeded"
+        );
+    }
+
+    let ctx = ctx.with_nats().shared().await?;
+    let js = ctx.jetstream().await?;
+    let nats_client = ctx.nats_client();
+    let nats_url = ctx.nats_handle()?.client_url().to_string();
+
+    let (stream, invalidation_subject) = r6d9_invalidation_stream(&js).await?;
+
+    let invalidation = DerivedScopeInvalidation::archived(
+        vec![Uuid::now_v7()],
+        sinex_primitives::domain::EventSource::from_static("test.r6d9-invalidation-crash"),
+        sinex_primitives::domain::EventType::new("test.r6d9_invalidation_crash")
+            .expect("valid event type"),
+    );
+    let payload = serde_json::to_vec(&invalidation)?;
+    js.publish(invalidation_subject, payload.clone().into())
+        .await?
+        .await?;
+
+    let exe = std::env::current_exe().map_err(|e| {
+        color_eyre::eyre::eyre!("current_exe unavailable for r6d9 fail-point harness: {e}")
+    })?;
+    let module_path_without_crate = module_path!()
+        .split_once("::")
+        .map_or(module_path!(), |(_, rest)| rest);
+    let qualified_name =
+        format!("{module_path_without_crate}::r6d9_invalidation_ack_fail_point_fires");
+    let output = tokio::process::Command::new(exe)
+        .arg(&qualified_name)
+        .arg("--exact")
+        .arg("--nocapture")
+        .env(R6D9_NATS_URL_ENV, &nats_url)
+        .output()
+        .await
+        .map_err(|e| color_eyre::eyre::eyre!("failed to spawn r6d9 inner-scenario child: {e}"))?;
+
+    assert_eq!(
+        output.status.code(),
+        Some(98),
+        "sinex-r6d.9 fail point must fire exactly at the ack-succeeded/payload-not-yet-\
+         returned boundary in recv_invalidation (adapter/mod.rs) — got exit status {:?} \
+         instead of the expected exit(98).\n--- child stdout ---\n{}\n--- child stderr ---\n{}",
+        output.status,
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr),
+    );
+
+    // SELF-HEALING CHECK: a fresh ephemeral consumer, simulating a restart's
+    // resubscription, must see the same invalidation payload again — proving
+    // the ack-before-recompute window self-heals on restart rather than
+    // permanently losing the invalidation.
+    let mut restart_messages = r6d9_invalidation_push_consumer(&stream, &nats_client).await?;
+    use futures::StreamExt;
+    let redelivered = tokio::time::timeout(Duration::from_secs(10), restart_messages.next())
+        .await
+        .map_err(|_| {
+            color_eyre::eyre::eyre!(
+                "sinex-r6d.7: a fresh consumer (simulating restart) did NOT see the \
+                 invalidation again within 10s — the ack-before-recompute window is \
+                 PERMANENT data loss for this consumer shape, not self-healing"
+            )
+        })?;
+    let redelivered_msg = redelivered
+        .ok_or_else(|| color_eyre::eyre::eyre!("invalidation consumer message stream ended"))?
+        .map_err(|e| color_eyre::eyre::eyre!("error receiving redelivered invalidation: {e}"))?;
+    assert_eq!(
+        redelivered_msg.payload.to_vec(),
+        payload,
+        "the redelivered message must be the SAME invalidation payload the child acked"
+    );
+    redelivered_msg.ack().await.map_err(|e| {
+        color_eyre::eyre::eyre!("failed to ack redelivered invalidation in restart check: {e}")
+    })?;
 
     Ok(())
 }
