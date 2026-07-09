@@ -287,6 +287,77 @@ async fn listen_mode_replaces_stale_socket() -> xtask::sandbox::TestResult<()> {
 }
 
 #[sinex_test]
+async fn connect_mode_reconnects_after_producer_closes_mid_stream()
+-> xtask::sandbox::TestResult<()> {
+    // Exercises the `reconnect_on_eof: true` path end-to-end: the producer
+    // (e.g. a Hyprland compositor restart) closes the connection, and the
+    // adapter must reconnect with backoff and keep yielding records from the
+    // new connection rather than ending the stream.
+    let dir = short_socket_tempdir()?;
+    let socket_path = dir.path().join("reconnect.sock");
+    let listener = UnixListener::bind(&socket_path)?;
+
+    tokio::spawn(async move {
+        let (mut first, _) = listener.accept().await.expect("first accept");
+        first
+            .write_all(b"before-reconnect\n")
+            .await
+            .expect("write before EOF");
+        drop(first); // Producer closes — triggers EOF on the adapter side.
+
+        let (mut second, _) = listener.accept().await.expect("second accept");
+        second
+            .write_all(b"after-reconnect\n")
+            .await
+            .expect("write after reconnect");
+        // Hold the connection open briefly so the client has time to read
+        // before the task (and the socket) drops.
+        tokio::time::sleep(Duration::from_millis(200)).await;
+    });
+
+    let initial_conn = UnixStream::connect(&socket_path).await?;
+    let utf8_path = Utf8PathBuf::from_path_buf(socket_path)
+        .map_err(|path| color_eyre::eyre::eyre!("non-UTF8 socket path: {path:?}"))?;
+    let mut stream = build_unix_stream(dummy_material_id(), initial_conn, utf8_path, true);
+
+    let first = timeout(Duration::from_secs(3), stream.next())
+        .await?
+        .ok_or_else(|| color_eyre::eyre::eyre!("stream ended before reconnect"))??;
+    assert_eq!(first.bytes, b"before-reconnect");
+
+    // Backoff starts at 50ms; give ample margin for the reconnect + accept.
+    let second = timeout(Duration::from_secs(5), stream.next())
+        .await?
+        .ok_or_else(|| color_eyre::eyre::eyre!("stream ended after reconnect"))??;
+    assert_eq!(second.bytes, b"after-reconnect");
+
+    // Frame index and byte offset stay monotonic across the reconnect — the
+    // adapter has no replay cursor, so this is the only continuity signal.
+    let (first_offset, first_frame) = match first.anchor {
+        MaterialAnchor::StreamFrame {
+            material_offset,
+            frame_index,
+        } => (material_offset, frame_index),
+        other => {
+            return Err(color_eyre::eyre::eyre!("expected stream-frame anchor, got {other:?}"));
+        }
+    };
+    let (second_offset, second_frame) = match second.anchor {
+        MaterialAnchor::StreamFrame {
+            material_offset,
+            frame_index,
+        } => (material_offset, frame_index),
+        other => {
+            return Err(color_eyre::eyre::eyre!("expected stream-frame anchor, got {other:?}"));
+        }
+    };
+    assert!(second_offset > first_offset);
+    assert!(second_frame > first_frame);
+
+    Ok(())
+}
+
+#[sinex_test]
 async fn listen_mode_refuses_non_socket_path() -> xtask::sandbox::TestResult<()> {
     let dir = short_socket_tempdir()?;
     let socket_path = dir.path().join("not-a-socket");
