@@ -5,6 +5,7 @@ use sinex_primitives::error::SinexErrorKind;
 use sinex_primitives::events::Event;
 use sinex_primitives::events::builder::Provenance;
 use sinex_primitives::{JsonValue, Uuid};
+use std::collections::HashMap;
 
 use crate::event_engine::SinexError;
 
@@ -106,6 +107,12 @@ pub(super) struct PersistBatchResult {
     pub(super) inserted_ids: Option<Vec<Uuid>>,
     pub(super) duplicate_event_ids: Vec<Uuid>,
     pub(super) tombstoned_event_ids: Vec<Uuid>,
+    /// The FINAL persisted+redacted event image for every event_id in the
+    /// attempted batch (sinex-z8p). This is what actually got written to
+    /// Postgres (or, for a cached duplicate, would have been written had it
+    /// not already existed) — confirmation must publish exactly this, never
+    /// the pre-redaction `PreparedEvent.event` the caller parsed off the wire.
+    pub(super) redacted_events: HashMap<Uuid, Event<JsonValue>>,
 }
 
 #[derive(Debug)]
