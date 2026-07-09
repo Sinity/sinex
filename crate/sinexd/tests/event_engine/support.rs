@@ -19,12 +19,25 @@ pub const FIXTURE_SOURCE_MATERIAL_ID: &str = "00000000-0000-7000-8000-0000000000
 /// inner event and wrap it here. The inner event shape is unchanged.
 #[allow(dead_code)] // Shared across integration-test crates; each crate compiles its own copy.
 pub fn admission_envelope(source_id: &str, event: serde_json::Value) -> serde_json::Value {
+    admission_envelope_multi(source_id, vec![event])
+}
+
+/// Wrap several raw events sharing one physical `EventIntent` admission
+/// envelope (sinex-r6d.12) — the shape a batched `event_transport`
+/// `publish_intent_chunk` actually produces on the wire, letting tests drive
+/// multi-child settlement scenarios (rejected/not-ready/poison siblings of a
+/// valid event) through one raw JetStream message.
+#[allow(dead_code)] // Shared across integration-test crates; each crate compiles its own copy.
+pub fn admission_envelope_multi(
+    source_id: &str,
+    events: Vec<serde_json::Value>,
+) -> serde_json::Value {
     serde_json::json!({
         "envelope_version": "1",
         "source_id": source_id,
         "parser_id": format!("{source_id}-parser"),
         "parser_version": "1.0.0",
-        "events": [event],
+        "events": events,
         "admitted_at": sinex_primitives::temporal::now().format_rfc3339(),
         "admitted_by": "test-host",
     })
