@@ -4,6 +4,7 @@ use std::sync::atomic::Ordering;
 
 use super::confirmation::BATCH_ATOMICITY_SCOPE;
 use super::*;
+use sinex_primitives::events::Event;
 
 impl JetStreamConsumer {
     #[tracing::instrument(skip(self, batch), fields(batch_size = batch.len()))]
@@ -141,10 +142,24 @@ impl JetStreamConsumer {
                     // The raw message is acked below only if this publish also
                     // succeeds; otherwise JetStream must redeliver and re-publish
                     // rather than silently dropping the event downstream.
+                    //
+                    // sinex-z8p: publish `persisted.redacted_events`, NOT
+                    // `prepared.event`. The latter is the pre-redaction image
+                    // this consumer parsed off the raw message; the former is
+                    // exactly what `persist_batch_optimized` redacted and
+                    // attempted to persist. `redacted_events` is built 1:1 from
+                    // the same `batch` this loop iterates, keyed by
+                    // `prepared.parsed_id` — a miss here means that invariant
+                    // broke, not a benign gap, so it panics loudly rather than
+                    // silently falling back to the unredacted image.
+                    let redacted_events = &persisted.redacted_events;
                     let confirmed_event_futs: Vec<_> = confirmation_batch
                         .iter()
                         .map(|prepared| {
                             let sem = Arc::clone(&self.confirmation_semaphore);
+                            let confirmed_event = redacted_events
+                                .get(&prepared.parsed_id)
+                                .expect("redacted_events is built 1:1 from this same batch");
                             async move {
                                 let _permit = match sem.acquire().await {
                                     Ok(permit) => permit,
@@ -159,7 +174,7 @@ impl JetStreamConsumer {
                                     }
                                 };
                                 let result = self
-                                    .publish_confirmed_event_with_retry(&prepared.event)
+                                    .publish_confirmed_event_with_retry(confirmed_event)
                                     .await;
                                 (prepared.parsed_id, result)
                             }
@@ -463,6 +478,7 @@ impl JetStreamConsumer {
                 inserted_ids: None,
                 duplicate_event_ids: Vec::new(),
                 tombstoned_event_ids: Vec::new(),
+                redacted_events: HashMap::new(),
             });
         }
 
@@ -483,6 +499,15 @@ impl JetStreamConsumer {
         self.policy_engine.ensure_fresh().await;
         let admitted_batch = self.policy_engine.redact_batch(admitted_batch).await;
         // ── End chokepoint ──────────────────────────────────────────────────
+
+        // sinex-z8p: capture the redacted image per event_id BEFORE the plan
+        // filters duplicates/tombstones out of `plan.events` — confirmation
+        // needs this for every attempted event_id, not just the ones that end
+        // up newly inserted.
+        let redacted_events: HashMap<Uuid, Event<JsonValue>> = admitted_batch
+            .iter()
+            .map(|admitted| (admitted.event_id, admitted.event.clone()))
+            .collect();
 
         let admitted_refs: Vec<&AdmittedEvent> = admitted_batch.iter().collect();
 
@@ -518,6 +543,7 @@ impl JetStreamConsumer {
             inserted_ids: result.inserted_ids,
             duplicate_event_ids: result.duplicate_event_ids,
             tombstoned_event_ids: result.tombstoned_event_ids,
+            redacted_events,
         })
     }
 
