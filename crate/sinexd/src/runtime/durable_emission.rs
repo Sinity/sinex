@@ -1,13 +1,16 @@
-//! Durable emission receipt types (sinex-r6d.11 — types-only slice).
+//! Durable emission receipt types (sinex-r6d.11).
 //!
 //! Transcribes the ratified API sketch from the 2026-07-07 GPT-Pro red-team
 //! report (`.agent/scratch/new-gpt-pro/01-batch-a-receipt-red-team.report.md`,
-//! section B) into real Rust types. Pure data model only — no backend
-//! implementation, no wiring into any real call site. This is deliberately
-//! the SAME scoping discipline as [`sinex_primitives::commit_frontier`]
-//! (sinex-4as3): land the shape first, land it correctly, and let the
-//! reorder work (sinex-r6d.4, sinex-vxu, sinex-r6d.7, sinex-w4i) consume it
-//! later as its own reviewable, individually-tested change.
+//! section B) into real Rust types, plus (as of the second slice)
+//! [`SettlementRegistry`] — a per-event-id waiter map that a future
+//! `emit_batch_durable()` will use to await [`EmissionReceiptState`]
+//! resolution. Pure primitives only — no backend implementation, no wiring
+//! into any real call site. This is deliberately the SAME scoping discipline
+//! as [`sinex_primitives::commit_frontier`] (sinex-4as3): land the shape
+//! first, land it correctly, and let the reorder work (sinex-r6d.4,
+//! sinex-vxu, sinex-r6d.7, sinex-w4i) consume it later as its own
+//! reviewable, individually-tested change.
 //!
 //! # Why this exists before the reorder
 //!
@@ -31,6 +34,40 @@
 //! `Prepared`, `Submitted`). A cursor/checkpoint/ack MUST NEVER advance on a
 //! non-progress state.
 //!
+//! # `SettlementRegistry`: the future backend's notification primitive
+//!
+//! [`SettlementRegistry`] is the mechanism a future `emit_batch_durable()`
+//! will use to turn "some other task, at some later point, learns this
+//! event's terminal [`EmissionReceiptState`]" into an `await`able value. The
+//! natural future hook point is the ~15 `settle_child(` call sites in
+//! `event_engine::jetstream_consumer::persist`/`prepare` (see
+//! `persistence_support::RawEnvelopeSettlement`) — each already knows the
+//! exact settlement outcome for the event it just persisted/suppressed/
+//! DLQ'd; wiring `registry.resolve(parsed_id, state)` in next to each of
+//! those call sites, and threading a shared `SettlementRegistry` through
+//! `JetStreamConsumer`'s construction (`service_container.rs`, `main.rs`,
+//! every place a `JetStreamConsumer` gets built), is explicitly NOT part of
+//! this slice — see "Not done here" below.
+//!
+//! Registration/resolution contract:
+//!
+//! - A caller `register()`s once per event **before** emitting, getting back
+//!   a `oneshot::Receiver<EmissionReceiptState>`.
+//! - The (future) settlement call site calls `resolve(event_id, state)`
+//!   exactly once when that event reaches a terminal outcome. `resolve` is a
+//!   cheap no-op (`false`) for the overwhelmingly common case of an event id
+//!   nobody registered for — ordinary event traffic will eventually call
+//!   `resolve()` for every persisted/suppressed/DLQ'd event regardless of
+//!   whether any receipt caller is waiting, so a miss must never be treated
+//!   as an error.
+//! - **Cleanup invariant**: the ONLY sanctioned way to wait on registered
+//!   receivers is [`SettlementRegistry::await_batch`]. It removes its own
+//!   registry entries when it gives up (timeout or a dropped sender), so
+//!   nothing leaks in the `DashMap` as long as every `register()` is
+//!   eventually awaited through it. A caller that registers and then never
+//!   awaits (via this helper or a manual `cancel()`) leaks that one entry
+//!   until `resolve()` happens to be called for the same id later.
+//!
 //! # Not done here (see sinex-r6d.11's own AC for the rest)
 //!
 //! - No backend implementation (the ratified design is (A) settlement-channel
@@ -41,14 +78,23 @@
 //! - No caller integration (source cursors, automaton checkpoints,
 //!   invalidation acks all still act exactly as before this module was
 //!   added — this module has zero behavior change on its own).
+//! - No wiring of [`SettlementRegistry`] into `settle_child`'s ~15 call
+//!   sites or `JetStreamConsumer`'s construction — `register`/`resolve` are
+//!   never called from real event-engine code by this slice.
+//! - No `emit_batch_durable()` — [`SettlementRegistry::await_batch`] is the
+//!   assembly primitive it will call, not the function itself.
 //! - `allow_spool_backend` / `SpoolAcceptedLossless` is included in the type
 //!   shape per the ratified design, but any real backend must gate it behind
 //!   sinex-r6d.5 (already landed — the recovery spool is lossless) before
 //!   ever constructing that variant.
 
+use std::time::Duration;
+
+use dashmap::DashMap;
 use sinex_db::repositories::EventStorageLane;
 use sinex_primitives::events::Event;
 use sinex_primitives::{JsonValue, Uuid};
+use tokio::sync::oneshot;
 
 /// A caller's request to durably emit a batch of events as a single
 /// progress atom. `events` share one [`ProgressAtom`] — see
@@ -258,6 +304,142 @@ impl EmissionReceiptState {
     }
 }
 
+/// Per-event-id waiter map: a future settlement call site resolves an event
+/// id to its terminal [`EmissionReceiptState`]; a future emission-side
+/// caller awaits it. See this module's top-level "`SettlementRegistry`"
+/// section for the registration/resolution/cleanup contract.
+///
+/// Cheap to clone (inner `Arc`), matching this crate's existing idiom for
+/// shared runtime coordination state (e.g.
+/// `event_engine::material_ready_set::MaterialReadySet`) rather than an
+/// `Arc<Self>`-wrapped constructor.
+#[derive(Debug, Clone, Default)]
+pub struct SettlementRegistry {
+    waiters: std::sync::Arc<DashMap<Uuid, oneshot::Sender<EmissionReceiptState>>>,
+}
+
+impl SettlementRegistry {
+    /// Create an empty registry.
+    #[must_use]
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Register interest in `event_id`'s eventual settlement, returning the
+    /// receiver half. Must be called before the event is emitted, and the
+    /// returned receiver should be awaited via [`Self::await_batch`] (see
+    /// the cleanup invariant on this module's top-level doc) rather than
+    /// directly, unless the caller has its own equivalent cleanup path.
+    ///
+    /// Registering the same `event_id` twice replaces the previous sender —
+    /// the earlier receiver then observes a closed channel (`RecvError`).
+    /// No caller in this codebase does this today; documented rather than
+    /// guarded against, since guarding would require an error return for a
+    /// case with no real caller yet.
+    pub fn register(&self, event_id: Uuid) -> oneshot::Receiver<EmissionReceiptState> {
+        let (tx, rx) = oneshot::channel();
+        self.waiters.insert(event_id, tx);
+        rx
+    }
+
+    /// Resolve `event_id` to its terminal `state`, waking anyone awaiting
+    /// it. Returns `true` if a waiter was found and removed, `false` if
+    /// nobody had registered for this id (the common case — most events
+    /// have no receipt caller) or the entry was already resolved/cancelled.
+    /// Never treats "the receiver was already dropped" (nobody is awaiting
+    /// it anymore) as an error — [`oneshot::Sender::send`]'s `Err` in that
+    /// case is intentionally discarded.
+    pub fn resolve(&self, event_id: Uuid, state: EmissionReceiptState) -> bool {
+        match self.waiters.remove(&event_id) {
+            Some((_, tx)) => {
+                let _ = tx.send(state);
+                true
+            }
+            None => false,
+        }
+    }
+
+    /// Remove `event_id`'s registration without resolving it (the receiver,
+    /// if still held, then observes a closed channel). A no-op if nothing
+    /// is registered for this id. Exposed for callers with their own
+    /// cleanup path outside [`Self::await_batch`]; `await_batch` itself
+    /// calls this internally on timeout/drop, so callers that always go
+    /// through it never need to call this directly.
+    pub fn cancel(&self, event_id: Uuid) {
+        self.waiters.remove(&event_id);
+    }
+
+    /// Number of currently in-flight (unresolved, uncancelled)
+    /// registrations. Test/diagnostic accessor.
+    #[must_use]
+    pub fn len(&self) -> usize {
+        self.waiters.len()
+    }
+
+    /// `true` iff there are no in-flight registrations.
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.waiters.is_empty()
+    }
+
+    /// Await a batch of `(event_id, receiver)` pairs concurrently (not
+    /// serially — preserves the "no per-event await serialization" AC),
+    /// each bounded by `per_item_timeout`, and assemble the results into
+    /// one [`EmissionItemReceipt`] per pair in input order. This is the
+    /// primitive a future `emit_batch_durable()` will call after
+    /// `register()`-ing every event in a [`DurableEmissionRequest`] and
+    /// submitting them to a backend.
+    ///
+    /// A receiver that does not resolve within `per_item_timeout`, or whose
+    /// sender was dropped without resolving (e.g. the registry's owner shut
+    /// down), maps to [`EmissionReceiptState::FailedTransient`] — never
+    /// silently treated as success, so [`DurableEmissionReceipt::unlocks_progress`]
+    /// correctly stays `false` for a receipt containing it. Every such case
+    /// also removes the id's registry entry (see this module's cleanup
+    /// invariant), so a caller that always awaits through this method never
+    /// leaks a `DashMap` entry.
+    ///
+    /// A timed-out or dropped sibling never corrupts the outcome of the
+    /// OTHER pairs in the same batch — each pair resolves (or times out)
+    /// completely independently.
+    pub async fn await_batch(
+        &self,
+        waiters: Vec<(Uuid, oneshot::Receiver<EmissionReceiptState>)>,
+        per_item_timeout: Duration,
+    ) -> Vec<EmissionItemReceipt> {
+        let pending = waiters.into_iter().map(|(event_id, rx)| async move {
+            match tokio::time::timeout(per_item_timeout, rx).await {
+                Ok(Ok(state)) => EmissionItemReceipt {
+                    event_id: Some(event_id),
+                    state,
+                },
+                Ok(Err(_)) => {
+                    // Sender dropped without resolving: the registry entry may
+                    // or may not have already been removed by whoever dropped
+                    // it, so cancel() is a no-op in the already-removed case.
+                    self.cancel(event_id);
+                    EmissionItemReceipt {
+                        event_id: Some(event_id),
+                        state: EmissionReceiptState::FailedTransient {
+                            error: "settlement registry dropped before resolving".to_string(),
+                        },
+                    }
+                }
+                Err(_elapsed) => {
+                    self.cancel(event_id);
+                    EmissionItemReceipt {
+                        event_id: Some(event_id),
+                        state: EmissionReceiptState::FailedTransient {
+                            error: "settlement wait timed out".to_string(),
+                        },
+                    }
+                }
+            }
+        });
+        futures::future::join_all(pending).await
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -364,5 +546,204 @@ mod tests {
         for state in non_progress {
             assert!(!state.is_progress_unlocking(), "{state:?} must NOT be progress-unlocking");
         }
+    }
+}
+
+#[cfg(test)]
+mod settlement_registry_tests {
+    // `TestResult` appears only as the declared return type in `#[sinex_test]`
+    // signatures below; the macro replaces that annotation during expansion (same
+    // import-free precedent as `dlq_retry_test.rs`), so importing the alias here
+    // triggers an unused-import warning.
+    use xtask::sandbox::sinex_test;
+
+    use super::*;
+
+    fn debt(reason: &str) -> EmissionReceiptState {
+        EmissionReceiptState::DurableDebt {
+            debt_id: Uuid::now_v7(),
+            reason: reason.to_string(),
+        }
+    }
+
+    #[test]
+    fn register_then_resolve_delivers_exact_state_to_the_receiver() {
+        let registry = SettlementRegistry::new();
+        let event_id = Uuid::now_v7();
+        let mut rx = registry.register(event_id);
+
+        assert!(registry.resolve(event_id, EmissionReceiptState::NoOutputSettled));
+
+        match rx.try_recv() {
+            Ok(EmissionReceiptState::NoOutputSettled) => {}
+            other => panic!("expected NoOutputSettled, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn resolve_with_no_matching_registration_returns_false_without_panicking() {
+        let registry = SettlementRegistry::new();
+        assert!(!registry.resolve(Uuid::now_v7(), EmissionReceiptState::NoOutputSettled));
+    }
+
+    #[test]
+    fn two_in_flight_event_ids_resolve_independently_with_no_cross_talk() {
+        let registry = SettlementRegistry::new();
+        let id_a = Uuid::now_v7();
+        let id_b = Uuid::now_v7();
+        let mut rx_a = registry.register(id_a);
+        let mut rx_b = registry.register(id_b);
+
+        assert!(registry.resolve(id_b, debt("b-debt")));
+        assert!(registry.resolve(id_a, EmissionReceiptState::NoOutputSettled));
+
+        match rx_a.try_recv() {
+            Ok(EmissionReceiptState::NoOutputSettled) => {}
+            other => panic!("id_a: expected NoOutputSettled, got {other:?}"),
+        }
+        match rx_b.try_recv() {
+            Ok(EmissionReceiptState::DurableDebt { reason, .. }) => assert_eq!(reason, "b-debt"),
+            other => panic!("id_b: expected DurableDebt(b-debt), got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn duplicate_resolve_for_the_same_id_is_a_no_op_second_time() {
+        let registry = SettlementRegistry::new();
+        let event_id = Uuid::now_v7();
+        let _rx = registry.register(event_id);
+
+        assert!(registry.resolve(event_id, EmissionReceiptState::NoOutputSettled));
+        assert!(!registry.resolve(event_id, debt("second-call-should-be-ignored")));
+        assert!(registry.is_empty(), "entry must be removed after the first resolve");
+    }
+
+    #[test]
+    fn resolving_after_the_receiver_was_dropped_directly_does_not_panic() {
+        let registry = SettlementRegistry::new();
+        let event_id = Uuid::now_v7();
+        let rx = registry.register(event_id);
+        drop(rx);
+
+        // The registration still exists (nothing removed it) — resolve() finds and
+        // removes it, `Sender::send` silently no-ops on the closed channel, and the
+        // call must not panic.
+        assert!(registry.resolve(event_id, EmissionReceiptState::NoOutputSettled));
+        assert!(registry.is_empty());
+    }
+
+    #[sinex_test]
+    async fn await_batch_all_resolve_before_timeout_collects_every_state() -> TestResult<()> {
+        let registry = SettlementRegistry::new();
+        let id_a = Uuid::now_v7();
+        let id_b = Uuid::now_v7();
+        let rx_a = registry.register(id_a);
+        let rx_b = registry.register(id_b);
+
+        // Resolve both before awaiting — a oneshot channel buffers the sent value,
+        // so this is deterministic (no scheduling race with await_batch).
+        registry.resolve(id_a, EmissionReceiptState::NoOutputSettled);
+        registry.resolve(id_b, debt("b-debt"));
+
+        let items = registry
+            .await_batch(vec![(id_a, rx_a), (id_b, rx_b)], Duration::from_millis(200))
+            .await;
+
+        assert_eq!(items.len(), 2);
+        assert!(matches!(
+            items[0],
+            EmissionItemReceipt {
+                event_id: Some(id),
+                state: EmissionReceiptState::NoOutputSettled,
+            } if id == id_a
+        ));
+        assert!(matches!(
+            &items[1],
+            EmissionItemReceipt {
+                event_id: Some(id),
+                state: EmissionReceiptState::DurableDebt { reason, .. },
+            } if *id == id_b && reason == "b-debt"
+        ));
+        assert!(registry.is_empty(), "await_batch must not leave entries behind");
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn await_batch_one_timeout_does_not_corrupt_sibling_results_and_blocks_unlocks_progress()
+    -> TestResult<()> {
+        let registry = SettlementRegistry::new();
+        let resolved_id = Uuid::now_v7();
+        let stuck_id = Uuid::now_v7();
+        let rx_resolved = registry.register(resolved_id);
+        let rx_stuck = registry.register(stuck_id);
+
+        registry.resolve(resolved_id, EmissionReceiptState::NoOutputSettled);
+        // stuck_id is deliberately never resolved — its receiver must time out.
+
+        let items = registry
+            .await_batch(
+                vec![(resolved_id, rx_resolved), (stuck_id, rx_stuck)],
+                Duration::from_millis(75),
+            )
+            .await;
+
+        assert_eq!(items.len(), 2);
+        assert!(
+            matches!(items[0].state, EmissionReceiptState::NoOutputSettled),
+            "the resolved sibling must keep its real state: {:?}",
+            items[0]
+        );
+        assert!(
+            matches!(items[1].state, EmissionReceiptState::FailedTransient { .. }),
+            "the stuck item must be FailedTransient, not silently dropped: {:?}",
+            items[1]
+        );
+        assert!(
+            registry.is_empty(),
+            "await_batch must cancel the timed-out registration, not leak it"
+        );
+
+        // Prove the r6d.11 "partial == not a commit permission" rule holds for a
+        // receipt assembled from a batch containing one timeout.
+        let receipt = DurableEmissionReceipt {
+            request_id: Uuid::now_v7(),
+            atom: ProgressAtom::AutomatonInputBatch {
+                automaton: "test-automaton".to_string(),
+                input_event_ids: vec![resolved_id, stuck_id],
+            },
+            items,
+            backend: ReceiptBackend::Direct,
+        };
+        assert!(
+            !receipt.unlocks_progress(),
+            "one non-progress (timed-out) item must block the whole receipt"
+        );
+        assert!(matches!(
+            receipt.first_non_progress().expect("one non-progress item").state,
+            EmissionReceiptState::FailedTransient { .. }
+        ));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn resolve_after_await_batch_timeout_is_a_noop_because_the_entry_is_already_gone()
+    -> TestResult<()> {
+        let registry = SettlementRegistry::new();
+        let event_id = Uuid::now_v7();
+        let rx = registry.register(event_id);
+
+        let items = registry
+            .await_batch(vec![(event_id, rx)], Duration::from_millis(50))
+            .await;
+        assert!(matches!(
+            items[0].state,
+            EmissionReceiptState::FailedTransient { .. }
+        ));
+
+        // A late-arriving settlement (e.g. a slow persist that finally completes
+        // after the caller gave up) must not panic and must report "nobody was
+        // waiting" honestly, since await_batch already removed the registration.
+        assert!(!registry.resolve(event_id, EmissionReceiptState::NoOutputSettled));
+        Ok(())
     }
 }
