@@ -45,6 +45,7 @@ impl JetStreamConsumer {
             batch_fetch_max_bytes: DEFAULT_BATCH_FETCH_MAX_BYTES,
             batch_fetch_timeout: DEFAULT_BATCH_FETCH_TIMEOUT,
             ready_set: None,
+            settlement_registry: SettlementRegistry::new(),
             observer: None,
             stats_log_interval: Duration::from_mins(1),
             heartbeat_handle: None,
@@ -167,6 +168,19 @@ impl JetStreamConsumer {
     pub fn with_ready_set(mut self, ready_set: MaterialReadySet) -> Self {
         self.ready_set = Some(ready_set);
         self
+    }
+
+    /// Test-only accessor for this consumer's settlement registry
+    /// (sinex-r6d.11): lets integration tests `register()` interest in an
+    /// event's settlement BEFORE publishing it, then assert on the resolved
+    /// `EmissionReceiptState` once the consumer actually processes it.
+    /// `SettlementRegistry` is cheap to clone (inner `Arc`), so the clone
+    /// returned here shares the same underlying waiter map as the consumer's
+    /// own copy.
+    #[cfg(any(test, feature = "testing"))]
+    #[must_use]
+    pub fn settlement_registry(&self) -> SettlementRegistry {
+        self.settlement_registry.clone()
     }
 
     /// Build a consumer with optional test-only hooks.
