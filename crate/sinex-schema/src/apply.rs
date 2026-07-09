@@ -1952,13 +1952,26 @@ BEGIN
             -- If yes, the cascade exceeds the configured limit and we MUST
             -- raise rather than silently truncate; the caller's preview/audit
             -- surfaces depend on this signal to stay honest.
+            -- sinex-o1mg: aggregate current_level's ids into ONE array and
+            -- use it as a single `&&` predicate, rather than joining each
+            -- row of current_level against core.events via a per-row
+            -- ARRAY[cl.id]. The per-row join form defeats the GIN index on
+            -- source_event_ids once current_level's cardinality grows large
+            -- (measured: planner falls back to a hash anti-join sequential
+            -- scan across the whole hypertable, EXPLAIN cost 268M+ at
+            -- 200k rows). The array_agg form lets Postgres treat this as a
+            -- plain `column && bind_param` predicate, evaluated via a
+            -- Bitmap Index Scan on the GIN index regardless of cardinality
+            -- (measured: EXPLAIN cost 2.6M at the same 200k rows -- ~100x).
+            -- Same pattern already proven in core.locate_cascade_violations
+            -- just above this function.
             EXECUTE format(
                 'WITH current_level AS (
                     SELECT id FROM %I WHERE depth = $1 AND processed = FALSE
                 )
                 SELECT COUNT(*)::INTEGER FROM core.events e
-                JOIN current_level cl ON e.source_event_ids && ARRAY[cl.id]
-                WHERE NOT EXISTS (SELECT 1 FROM %I existing WHERE existing.id = e.id)',
+                WHERE e.source_event_ids && (SELECT array_agg(id) FROM current_level)
+                  AND NOT EXISTS (SELECT 1 FROM %I existing WHERE existing.id = e.id)',
                 temp_table,
                 temp_table
             ) INTO pending_at_limit USING current_depth;
@@ -1972,6 +1985,7 @@ BEGIN
             EXIT;
         END IF;
 
+        -- sinex-o1mg: same array_agg rewrite as the depth-limit probe above.
         EXECUTE format(
             'WITH current_level AS (
                 SELECT id FROM %I WHERE depth = $1 AND processed = FALSE
@@ -1979,8 +1993,8 @@ BEGIN
             children AS (
                 SELECT DISTINCT e.id, COALESCE(e.source_event_ids, ''{}''::uuid[]) AS parent_ids
                 FROM core.events e
-                JOIN current_level cl ON e.source_event_ids && ARRAY[cl.id]
-                WHERE NOT EXISTS (SELECT 1 FROM %I existing WHERE existing.id = e.id)
+                WHERE e.source_event_ids && (SELECT array_agg(id) FROM current_level)
+                  AND NOT EXISTS (SELECT 1 FROM %I existing WHERE existing.id = e.id)
             )
             INSERT INTO %I (id, depth, parent_ids, processed)
             SELECT c.id, $1 + 1, c.parent_ids, FALSE FROM children c',
