@@ -72,6 +72,10 @@
     inherit pkgs pg_jsonschema sinex sinexCli sinexVmTestSuite;
   };
 
+  "chaos-spool-rename-durability" = import ./test-scenarios/chaos-spool-rename-durability.nix {
+    inherit pkgs sinex;
+  };
+
   # ─── xtask concurrency (requires pre-built xtask binary) ─────────────────────
 
   "xtask-concurrency" = import ./test-scenarios/xtask-concurrency.nix {
