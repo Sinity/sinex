@@ -1410,21 +1410,94 @@ async fn function_exists(pool: &PgPool, signature: &str) -> Result<bool, ApplyEr
     Ok(exists)
 }
 
+/// Content hash of a declared function-set's SQL, used to detect body drift
+/// without diffing text against Postgres's own reformatted
+/// `pg_get_functiondef` output (fragile: comments stripped, whitespace and
+/// `$$`-delimiter choices differ). Stored via `COMMENT ON FUNCTION` on the
+/// set's first (representative) signature after each successful apply.
+fn function_set_hash(sql: &str) -> String {
+    blake3::hash(sql.as_bytes()).to_hex().to_string()
+}
+
+/// `sinex-o1mg`: read back the hash stashed by the previous apply, if any.
+async fn applied_function_set_hash(
+    pool: &PgPool,
+    representative_signature: &str,
+) -> Result<Option<String>, ApplyError> {
+    let hash: Option<String> =
+        sqlx::query_scalar("SELECT obj_description(to_regprocedure($1), 'pg_proc')")
+            .bind(representative_signature)
+            .fetch_one(pool)
+            .await?;
+    Ok(hash)
+}
+
+async fn mark_function_set_applied(
+    pool: &PgPool,
+    representative_signature: &str,
+    hash: &str,
+) -> Result<(), ApplyError> {
+    // COMMENT ON is DDL and doesn't accept bind parameters for the comment
+    // text (Postgres's grammar requires a literal there, not a placeholder).
+    // Both interpolated values are trusted, non-attacker-controlled: the
+    // signature is always one of our own compile-time &'static str
+    // constants, and hash is always our own blake3 hex digest (`[0-9a-f]`
+    // only, cannot contain a quote or break out of the literal).
+    let sql = format!("COMMENT ON FUNCTION {representative_signature} IS '{hash}'");
+    execute_sql(pool, &sql).await
+}
+
+/// `sinex-o1mg` (2026-07-10): previously this only checked function
+/// *existence*, so a body-only change to an already-existing function (e.g.
+/// rewriting a query inside `core.expand_cascade` to fix a bad query plan)
+/// was silently never reconciled at boot -- the binary shipped the fix, but
+/// the live database kept the old function body forever, since "already
+/// exists" was treated as "already correct". Confirmed live: restarting
+/// sinexd after deploying the expand_cascade rewrite did NOT apply it --
+/// `pg_get_functiondef` still showed the old per-row join after the
+/// restart, until applied by hand.
+///
+/// The existence-only skip was deliberate (gh#2182): `CREATE OR REPLACE
+/// FUNCTION` still briefly needs a lock that can race with a concurrent
+/// TimescaleDB CAGG refresh job during boot, and re-running it on every boot
+/// for functions that haven't changed was the original failure. Preserved
+/// here via the hash check: skip only when nothing has actually changed
+/// (real boot-race protection for the common no-op case), always apply when
+/// the declared SQL differs from what was last applied (the case this was
+/// silently skipping).
 async fn ensure_function_set_sql(
     pool: &PgPool,
     signatures: &[&str],
     sql: &str,
 ) -> Result<(), ApplyError> {
+    let Some(&representative) = signatures.first() else {
+        return Ok(());
+    };
+
+    let mut all_exist = true;
     for signature in signatures {
         if !function_exists(pool, signature).await? {
-            execute_sql(pool, sql).await?;
-            return Ok(());
+            all_exist = false;
+            break;
         }
     }
 
+    let expected_hash = function_set_hash(sql);
+    if all_exist
+        && applied_function_set_hash(pool, representative).await? == Some(expected_hash.clone())
+    {
+        return Ok(());
+    }
+
+    execute_sql(pool, sql).await?;
+    mark_function_set_applied(pool, representative, &expected_hash).await?;
     Ok(())
 }
 
+/// See [`ensure_function_set_sql`] -- same hash-based drift check, extended
+/// to also require every declared trigger to exist (trigger existence alone
+/// is still existence-only; trigger body drift is out of scope for this fix,
+/// see sinex-o1mg for why functions specifically needed it).
 async fn ensure_function_and_trigger_set_sql(
     pool: &PgPool,
     signatures: &[&str],
@@ -1432,19 +1505,35 @@ async fn ensure_function_and_trigger_set_sql(
     trigger_names: &[&str],
     sql: &str,
 ) -> Result<(), ApplyError> {
+    let Some(&representative) = signatures.first() else {
+        return Ok(());
+    };
+
+    let mut all_exist = true;
     for signature in signatures {
         if !function_exists(pool, signature).await? {
-            execute_sql(pool, sql).await?;
-            return Ok(());
+            all_exist = false;
+            break;
         }
     }
-    for trigger_name in trigger_names {
-        if !trigger_exists(pool, qualified_table, trigger_name).await? {
-            execute_sql(pool, sql).await?;
-            return Ok(());
+    if all_exist {
+        for trigger_name in trigger_names {
+            if !trigger_exists(pool, qualified_table, trigger_name).await? {
+                all_exist = false;
+                break;
+            }
         }
     }
 
+    let expected_hash = function_set_hash(sql);
+    if all_exist
+        && applied_function_set_hash(pool, representative).await? == Some(expected_hash.clone())
+    {
+        return Ok(());
+    }
+
+    execute_sql(pool, sql).await?;
+    mark_function_set_applied(pool, representative, &expected_hash).await?;
     Ok(())
 }
 
