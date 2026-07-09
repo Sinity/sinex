@@ -401,12 +401,16 @@ impl JetStreamConsumer {
                                 self.stats
                                     .dlq_publish_failures
                                     .fetch_add(1, Ordering::Relaxed);
-                                self.settlement_registry.resolve(
-                                    prepared.parsed_id,
-                                    EmissionReceiptState::FailedTransient {
-                                        error: err.to_string(),
-                                    },
-                                );
+                                // sinex-r6d.11: deliberately NOT resolved here --
+                                // ChildOutcome::Retry means this message is NAK'd
+                                // for redelivery, so `prepared.parsed_id` will pass
+                                // through settlement again. Resolving now with a
+                                // non-progress state would consume the one-shot
+                                // registry entry before the eventual terminal
+                                // outcome is known, permanently stranding any
+                                // waiter (same bug class the durable-debt DLQ test
+                                // caught: a premature `Deferred` resolve here
+                                // starves the later `DurableDebt` resolution).
                                 prepared
                                     .settlement
                                     .settle_child(ChildOutcome::Retry(None))
@@ -475,12 +479,11 @@ impl JetStreamConsumer {
                                         self.stats
                                             .dlq_publish_failures
                                             .fetch_add(1, Ordering::Relaxed);
-                                        self.settlement_registry.resolve(
-                                            prepared.parsed_id,
-                                            EmissionReceiptState::FailedTransient {
-                                                error: err.to_string(),
-                                            },
-                                        );
+                                        // sinex-r6d.11: deliberately not resolved --
+                                        // see the matching note at the isolated
+                                        // (bisection) DLQ-publish-failure site above.
+                                        // Retry means redelivery, so this event_id
+                                        // will reach a settle_child call again.
                                         if let Err(settle_err) = prepared
                                             .settlement
                                             .settle_child(ChildOutcome::Retry(None))
@@ -504,13 +507,10 @@ impl JetStreamConsumer {
                                 // sinex-r6d.11: retryable/transient persistence
                                 // failure (or delivery-attempt count below the DLQ
                                 // threshold) — non-progress, recoverable via the
-                                // NAK-triggered redelivery below.
-                                self.settlement_registry.resolve(
-                                    prepared.parsed_id,
-                                    EmissionReceiptState::Deferred {
-                                        reason: e.to_string(),
-                                    },
-                                );
+                                // NAK-triggered redelivery below. Deliberately not
+                                // resolved: redelivery means this event_id reaches
+                                // settle_child again, and only that eventual
+                                // terminal outcome may consume the registry entry.
                                 if let Err(err) = prepared
                                     .settlement
                                     .settle_child(ChildOutcome::Retry(None))
@@ -541,14 +541,10 @@ impl JetStreamConsumer {
                                 // sinex-r6d.11: inspecting the retry state itself
                                 // failed (e.g. JetStream delivery metadata
                                 // unreadable) — a genuine settlement-path error,
-                                // not a routine deferred-retry. Captured before
-                                // `err` is moved into `with_context` below.
-                                self.settlement_registry.resolve(
-                                    prepared.parsed_id,
-                                    EmissionReceiptState::FailedTransient {
-                                        error: err.to_string(),
-                                    },
-                                );
+                                // not a routine deferred-retry. Still NAK'd for
+                                // redelivery below, so deliberately not resolved
+                                // here for the same reason as the other
+                                // Retry-paired sites in this function.
                                 settlement_errors.push((
                                     prepared.parsed_id,
                                     err.with_context(
@@ -783,12 +779,10 @@ impl JetStreamConsumer {
                     self.stats
                         .dlq_publish_failures
                         .fetch_add(1, Ordering::Relaxed);
-                    self.settlement_registry.resolve(
-                        prepared.parsed_id,
-                        EmissionReceiptState::FailedTransient {
-                            error: err.to_string(),
-                        },
-                    );
+                    // sinex-r6d.11: deliberately not resolved -- Retry means
+                    // redelivery, so this event_id reaches settle_child again;
+                    // see the matching note on the below-threshold Deferred
+                    // branch a few lines down.
                     prepared
                         .settlement
                         .settle_child(ChildOutcome::Retry(None))
@@ -803,12 +797,17 @@ impl JetStreamConsumer {
             return Ok(SourceMaterialSettlement::RoutedToDlq);
         }
 
-        self.settlement_registry.resolve(
-            prepared.parsed_id,
-            EmissionReceiptState::Deferred {
-                reason: format!("source material {material_id:?} not yet registered"),
-            },
-        );
+        // sinex-r6d.11: deliberately NOT resolved here. This is the
+        // below-DLQ-threshold retry path -- ChildOutcome::Retry means the
+        // message is NAK'd and this event_id will reach
+        // settle_unready_source_material_event again on redelivery, either
+        // succeeding once the material registers or eventually crossing the
+        // DLQ threshold above. Resolving on this transient `Deferred` state
+        // would consume the one-shot registry entry immediately (on the
+        // FIRST retry attempt) and permanently strand any waiter before the
+        // real terminal outcome is known -- this exact bug made
+        // `settlement_registry_resolves_durable_debt_for_a_dlqd_event`
+        // observe `Deferred` instead of the eventual `DurableDebt`.
         if let Err(err) = prepared
             .settlement
             .settle_child(ChildOutcome::Retry(Some(retry_delay)))
