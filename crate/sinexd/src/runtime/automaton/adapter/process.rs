@@ -393,6 +393,18 @@ where
             {
                 Ok(()) => {
                     self.consecutive_checkpoint_failures = 0;
+                    // sinex-r6d.9 crash-window harness: the checkpoint just
+                    // saved durably above is exactly the sinex-vxu window —
+                    // `outputs` has not been returned to the caller for
+                    // emission yet. Exit here (not a catchable panic) so a
+                    // harness can prove restart+catch-up does NOT repair
+                    // this gap on pre-fix code.
+                    #[cfg(any(test, feature = "testing"))]
+                    if let Some(flag) = &self.fail_point_after_checkpoint
+                        && flag.load(std::sync::atomic::Ordering::SeqCst)
+                    {
+                        std::process::exit(97);
+                    }
                 }
                 Err(e) => {
                     self.consecutive_checkpoint_failures += 1;
