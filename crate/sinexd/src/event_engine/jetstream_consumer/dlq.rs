@@ -1,7 +1,6 @@
 //! Dead-letter routing and payload identity helpers for `JetStreamConsumer`.
 
 use serde::Serialize;
-use std::sync::atomic::Ordering;
 
 use super::*;
 
@@ -210,34 +209,9 @@ impl JetStreamConsumer {
             .unwrap_or_else(|| SinexError::network("Failed to route to DLQ after retries")))
     }
 
-    pub(super) async fn route_to_dlq_and_ack(
-        &self,
-        msg: &jetstream::Message,
-        error: String,
-    ) -> EventEngineResult<()> {
-        let dlq_error = error.clone();
-        match self.route_to_dlq(msg, error).await {
-            Ok(()) => {
-                msg.ack().await.map_err(|e| {
-                    SinexError::network("Failed to ack after DLQ route").with_source(e)
-                })?;
-                self.stats.dlq_routed.fetch_add(1, Ordering::Relaxed);
-            }
-            Err(e) => {
-                warn!(error = %e, "Failed to route to DLQ after retries; NAKing for retry");
-                self.stats
-                    .dlq_publish_failures
-                    .fetch_add(1, Ordering::Relaxed);
-                msg.ack_with(jetstream::AckKind::Nak(Some(DLQ_RETRY_DELAY)))
-                    .await
-                    .map_err(|nak_err| {
-                        self.stats.nack_failures.fetch_add(1, Ordering::Relaxed);
-                        SinexError::network("Failed to NAK after DLQ publish failure")
-                            .with_context("dlq_error", dlq_error.clone())
-                            .with_source(nak_err.to_string())
-                    })?;
-            }
-        }
-        Ok(())
-    }
+    // route_to_dlq_and_ack was removed (sinex-r6d.12): it acked the raw
+    // message directly, which is exactly the unilateral per-child settlement
+    // this bead eliminated. Every caller now calls route_to_dlq (write-only,
+    // above) and reports the outcome to the message's shared
+    // RawEnvelopeSettlement via settle_child instead.
 }
