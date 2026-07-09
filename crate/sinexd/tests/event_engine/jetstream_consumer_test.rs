@@ -1218,3 +1218,326 @@ async fn multi_child_intent_settles_not_ready_and_ready_siblings(
     let _ = consumer_handle.await;
     Ok(())
 }
+
+/// sinex-r6d.12: a tombstoned child (settled `Safe` without ever attempting a
+/// confirmation publish) and a confirmation-publish-failure child sharing ONE
+/// physical raw message. The tombstone must still settle on its own, but per
+/// the durability-gap contract (`confirmed_event_durability_gap_error`,
+/// context `raw_message_settlement = "left_unacked_for_redelivery"`) the
+/// confirmation-failure sibling is deliberately left UNSETTLED — so the
+/// shared envelope's countdown never reaches zero and the raw message stays
+/// unacked for redelivery, rather than acking early just because its
+/// tombstone sibling settled cleanly.
+#[sinex_test]
+async fn multi_child_intent_settles_tombstone_and_confirmation_failure_siblings(
+    ctx: TestContext,
+) -> TestResult<()> {
+    let ctx = ctx.with_nats().shared().await?;
+    let nats_client = ctx.nats_client();
+    let pool = ctx.pool.clone();
+    ensure_fixture_source_material(&pool).await?;
+    let validator = IngestEventValidator::new(false);
+
+    let js = ctx.jetstream().await?;
+    let env = ctx.env();
+    let namespace = ctx.pipeline_namespace().prefix().to_string();
+    let topology = JetStreamTopology::new(
+        env,
+        ctx.pipeline_namespace().stream("SINEX_RAW_EVENTS_R6D12_TC"),
+        ctx.pipeline_namespace()
+            .consumer_name("event-engine-r6d12-tc"),
+        Some(&namespace),
+    );
+    let ready_topology = topology.clone();
+
+    // CONFIRM_PUBLISH_MAX_ATTEMPTS (confirmation.rs) is 3: forcing exactly 3
+    // confirmation-publish failures deterministically exhausts every retry
+    // for the ONE child that ever attempts a confirmation publish here (the
+    // tombstoned child never does), producing a durability gap on the first
+    // — and, within this test's assertion window, only — delivery attempt.
+    // ack_wait is deliberately long so JetStream does not redeliver the
+    // still-unacked message mid-assertion.
+    let consumer = JetStreamConsumer::with_test_hooks(
+        nats_client.clone(),
+        pool.clone(),
+        Arc::new(RwLock::new(validator)),
+        topology,
+        Duration::from_secs(Timeouts::STANDARD),
+        None,
+        None,
+        None,
+        None,
+        false,
+        Some(Arc::new(std::sync::atomic::AtomicUsize::new(3))),
+        None,
+        None,
+    );
+    let consumer_handle =
+        spawn_consumer_and_wait_ready(&ctx, &js, &ready_topology, consumer).await?;
+
+    let tombstone_id = Uuid::now_v7();
+    sqlx::query(
+        r"
+        INSERT INTO core.event_tombstones (
+            id, source, event_type, ts_orig, ts_purged,
+            purge_reason, purge_operation_id, archived_at
+        )
+        VALUES (
+            $1::uuid, 'r6d12tc', 'r6d12tc.tombstoned', NOW(), NOW(),
+            'multi-child tombstone+confirmation-gap test', $2::uuid, NOW()
+        )
+        ",
+    )
+    .bind(tombstone_id)
+    .bind(Uuid::now_v7())
+    .execute(&ctx.pool)
+    .await?;
+
+    let confirm_fail_id = Uuid::now_v7();
+    let tombstone_event = json!({
+        "id": tombstone_id.to_string(),
+        "source": "r6d12tc",
+        "event_type": "r6d12tc.tombstoned",
+        "payload": {"sequence": 1},
+        "ts_orig": temporal::now().format_rfc3339(),
+        "host": "test-host",
+        "source_material_id": FIXTURE_SOURCE_MATERIAL_ID,
+        "anchor_byte": 0,
+    });
+    let confirm_fail_event = json!({
+        "id": confirm_fail_id.to_string(),
+        "source": "r6d12tc",
+        "event_type": "r6d12tc.confirmgap",
+        "payload": {"sequence": 2},
+        "ts_orig": temporal::now().format_rfc3339(),
+        "host": "test-host",
+        "source_material_id": FIXTURE_SOURCE_MATERIAL_ID,
+        "anchor_byte": 1,
+    });
+
+    let subject = env.nats_subject_with_namespace(Some(&namespace), "events.raw.r6d12tc.batch");
+    nats_client
+        .publish(
+            subject,
+            serde_json::to_vec(&admission_envelope_multi(
+                "r6d12tc",
+                vec![tombstone_event, confirm_fail_event],
+            ))?
+            .into(),
+        )
+        .await?;
+    nats_client.flush().await?;
+
+    // The confirmation-failure sibling still gets persisted to Postgres — the
+    // durability gap is strictly about the confirmed-events NATS publish,
+    // which happens AFTER the DB commit.
+    WaitHelpers::wait_for_event_id(&ctx.pool, confirm_fail_id.into(), Timeouts::SHORT).await?;
+
+    // The tombstoned sibling must never be persisted.
+    assert!(
+        ctx.pool
+            .events()
+            .get_by_id(tombstone_id.into())
+            .await?
+            .is_none(),
+        "tombstoned event must not be persisted"
+    );
+
+    // The durability-gap error is fatal at the run-loop level (the design's
+    // documented recovery path: "shut down the consumer and let JetStream
+    // redeliver ... once confirmed-event transport recovers") — wait for the
+    // consumer task to exit rather than racing the assertions below against
+    // its 3 in-flight confirmation-publish retries (bounded backoff, ~600ms
+    // total).
+    WaitHelpers::wait_for_condition(
+        || {
+            let finished = consumer_handle.is_finished();
+            async move { Ok::<bool, SinexError>(finished) }
+        },
+        Timeouts::SHORT,
+    )
+    .await?;
+
+    let confirmation_subject = confirmation_subject_for(
+        &ready_topology.confirmed_events_prefix,
+        "r6d12tc",
+        "r6d12tc.confirmgap",
+    );
+    let confirmed_stream = js
+        .get_stream(&ready_topology.confirmed_events_stream)
+        .await?;
+    assert!(
+        confirmed_stream
+            .get_last_raw_message_by_subject(&confirmation_subject)
+            .await
+            .is_err(),
+        "confirmation-failure sibling must not have a published confirmation \
+         (the durability gap must block it, not silently succeed)"
+    );
+
+    // The tombstone sibling settled Safe on its own, but the shared raw
+    // message must NOT be acked while its confirmation-failure sibling
+    // remains unsettled — the whole envelope's ack is gated on every child.
+    let raw_stream = js.get_stream(&ready_topology.events_stream).await?;
+    let mut raw_consumer = raw_stream
+        .get_consumer::<jetstream::consumer::pull::Config>(&ready_topology.consumer_durable)
+        .await
+        .map_err(|e| SinexError::network(e.to_string()))?;
+    let info = raw_consumer
+        .info()
+        .await
+        .map_err(|e| SinexError::network(e.to_string()))?;
+    assert!(
+        info.num_ack_pending >= 1,
+        "the shared raw message must remain unacked while the confirmation-failure \
+         sibling is unsettled (num_pending={}, num_ack_pending={})",
+        info.num_pending,
+        info.num_ack_pending
+    );
+
+    consumer_handle.abort();
+    Ok(())
+}
+
+/// sinex-r6d.12: two admitted siblings from ONE physical raw message land in
+/// the SAME `persist_batch_optimized` attempt; one is a poison row (a DB
+/// CHECK violation admission cannot see ahead of time — `ts_orig` more than
+/// 1 second ahead of the id's own UUIDv7-derived `ts_coided`, well inside
+/// admission's much looser wall-clock future-skew tolerance of 1 hour) and
+/// the other is healthy. The bisection-isolated poison-row DLQ path
+/// (`is_isolatable_batch_persistence_failure` in persist.rs) must route the
+/// poison child to the DLQ through `settle_child`, the healthy sibling must
+/// persist+confirm independently, and the shared raw message must only be
+/// acked once BOTH children have reported a terminal outcome.
+#[sinex_test]
+async fn multi_child_intent_settles_bisection_isolated_poison_siblings(
+    ctx: TestContext,
+) -> TestResult<()> {
+    let ctx = ctx.with_nats().shared().await?;
+    let setup = start_isolated_consumer(&ctx, "r6d12-poison").await?;
+    let nats_client = ctx.nats_client();
+    let env = ctx.env();
+
+    let dlq_stream = setup.topology.dlq_stream.clone();
+    let mut dlq_stream_handle = setup.js.get_stream(&dlq_stream).await?;
+    let initial_dlq_messages = dlq_stream_handle.info().await?.state.messages;
+
+    let good_id = Uuid::now_v7();
+    let good_event = json!({
+        "id": good_id.to_string(),
+        "source": "r6d12poison",
+        "event_type": "r6d12poison.good",
+        "payload": {"ok": true},
+        "ts_orig": temporal::now().format_rfc3339(),
+        "host": "test-host",
+        "source_material_id": FIXTURE_SOURCE_MATERIAL_ID,
+        "anchor_byte": 0,
+    });
+    let poison_id = Uuid::now_v7();
+    // A well-formed RFC3339 timestamp comfortably inside admission's
+    // future_ts_skew tolerance (1 hour) but past the DB's much tighter
+    // "ts_orig <= ts_coided + 1s" CHECK constraint (ts_coided is derived
+    // from THIS id's own UUIDv7 timestamp, minted just now): it deserializes
+    // and validates fine at admission, and only fails once it actually
+    // reaches the DB INSERT.
+    let poison_ts_orig = (temporal::now() + temporal::Duration::seconds(5)).format_rfc3339();
+    let poison_event = json!({
+        "id": poison_id.to_string(),
+        "source": "r6d12poison",
+        "event_type": "r6d12poison.poison",
+        "payload": {"kind": "poison"},
+        "ts_orig": poison_ts_orig,
+        "host": "test-host",
+        "source_material_id": FIXTURE_SOURCE_MATERIAL_ID,
+        "anchor_byte": 1,
+    });
+
+    let subject =
+        env.nats_subject_with_namespace(Some(&setup.namespace), "events.raw.r6d12poison.batch");
+    nats_client
+        .publish(
+            subject,
+            serde_json::to_vec(&admission_envelope_multi(
+                "r6d12poison",
+                vec![good_event, poison_event],
+            ))?
+            .into(),
+        )
+        .await?;
+    nats_client.flush().await?;
+
+    // The healthy sibling must persist even though the poison sibling shares
+    // the same raw message AND the same initial persist_batch_optimized
+    // attempt (both land in one atomic INSERT before bisection kicks in).
+    WaitHelpers::wait_for_event_id(&ctx.pool, good_id.into(), Timeouts::SHORT).await?;
+
+    // The poison sibling must reach the DLQ via the bisection-isolated path.
+    WaitHelpers::wait_for_condition(
+        || {
+            let js = setup.js.clone();
+            let dlq_stream = dlq_stream.clone();
+            async move {
+                let mut stream = js
+                    .get_stream(&dlq_stream)
+                    .await
+                    .map_err(|e| SinexError::network(e.to_string()))?;
+                let state = stream
+                    .info()
+                    .await
+                    .map_err(|e| SinexError::network(e.to_string()))?
+                    .state
+                    .clone();
+                Ok::<bool, SinexError>(state.messages > initial_dlq_messages)
+            }
+        },
+        Timeouts::SHORT,
+    )
+    .await?;
+
+    assert!(
+        ctx.pool
+            .events()
+            .get_by_id(poison_id.into())
+            .await?
+            .is_none(),
+        "poison sibling must not be persisted"
+    );
+
+    // The shared raw message reaches 0 ack-pending only once BOTH children
+    // (poisoned-to-DLQ and persisted) have settled Safe — the coordinator
+    // acks the envelope exactly once, after every child reports in.
+    WaitHelpers::wait_for_condition(
+        || {
+            let js = setup.js.clone();
+            let stream_name = setup.topology.events_stream.clone();
+            let consumer_name = setup.topology.consumer_durable.clone();
+            async move {
+                let stream = js
+                    .get_stream(&stream_name)
+                    .await
+                    .map_err(|error| SinexError::network(error.to_string()))?;
+                let mut consumer = stream
+                    .get_consumer::<jetstream::consumer::pull::Config>(&consumer_name)
+                    .await
+                    .map_err(|error| SinexError::network(error.to_string()))?;
+                let info = consumer
+                    .info()
+                    .await
+                    .map_err(|error| SinexError::network(error.to_string()))?;
+                Ok::<bool, SinexError>(info.num_pending == 0 && info.num_ack_pending == 0)
+            }
+        },
+        Timeouts::SHORT,
+    )
+    .await?;
+
+    // A poisoned batch-mate's isolation must never starve or crash the
+    // consumer — it should still be running normally afterwards.
+    assert!(
+        !setup.handle.is_finished(),
+        "consumer must keep running after isolating a poison row from a healthy sibling"
+    );
+
+    setup.handle.abort();
+    Ok(())
+}
