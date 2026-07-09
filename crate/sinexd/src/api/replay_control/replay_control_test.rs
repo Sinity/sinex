@@ -765,6 +765,54 @@ async fn replay_preview_surfaces_safety_analysis_failure(ctx: TestContext) -> Re
     Ok(())
 }
 
+#[sinex_test]
+async fn replay_client_honors_a_configured_timeout_longer_than_ten_seconds(
+    ctx: TestContext,
+) -> Result<()> {
+    // Regression test for the bug this session found and fixed: `send()` used
+    // to wrap `self.client.request(...)` (async-nats's plain, no-explicit-
+    // timeout request form) in an OUTER `tokio::time::timeout`. Async-nats's
+    // own internal default request timeout (10s) fired first regardless of
+    // how long the outer wrapper's duration was, so any configured
+    // `SINEX_REPLAY_CONTROL_TIMEOUT_SECS` value above 10s was silently
+    // capped at ~10s. The fix uses `async_nats::Request::new().timeout(Some(_))`
+    // to set the deadline on the request itself.
+    //
+    // With the broker gone, a pending request has no other signal except its
+    // own configured deadline (matches `replay_client_errors_when_broker_disappears`'s
+    // shutdown approach), so timing the failure precisely proves whether the
+    // EFFECTIVE timeout matches the CONFIGURED one rather than being capped.
+    let ctx = ctx.with_nats().dedicated().await?;
+    let nats = ctx.nats_handle()?;
+
+    let replay = Arc::new(ReplayStateMachine::new(ctx.pool.clone()));
+    let nats_client = ctx.nats_client();
+    let client = spawn_replay_control(replay, nats_client, Duration::from_secs(30)).await?;
+
+    nats.shutdown().await?;
+
+    let configured_timeout = Duration::from_millis(10_500);
+    let scope = sample_scope();
+    let started = std::time::Instant::now();
+    let err = client
+        .plan_with_timeout("test:user".into(), scope, configured_timeout)
+        .await
+        .expect_err("plan should fail once the broker is gone");
+    let elapsed = started.elapsed();
+
+    assert!(
+        error_contains(&err, "timed out"),
+        "expected a timeout error, got: {err}"
+    );
+    assert!(
+        elapsed >= Duration::from_millis(10_200),
+        "request failed after {elapsed:?}, well under the configured {configured_timeout:?} \
+         deadline -- the pre-fix bug capped every request at async-nats's internal 10s default \
+         regardless of the configured value"
+    );
+    Ok(())
+}
+
 #[path = "tests/abort.rs"]
 mod abort;
 #[path = "tests/bookkeeping.rs"]
