@@ -12,6 +12,7 @@ use sinex_primitives::{DynamicPayload, temporal::Timestamp};
 use std::time::Duration;
 use xtask::sandbox::{EnvGuard, sinex_test};
 
+#[path = "common/mod.rs"]
 mod common;
 use common::{
     FakeReplayScanSource, LiveGateway, await_fake_replay_scan_source, spawn_fake_replay_scan_source,

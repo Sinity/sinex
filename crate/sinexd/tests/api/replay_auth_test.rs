@@ -12,6 +12,7 @@ use sinex_primitives::rpc::methods;
 use sinex_primitives::temporal::Timestamp;
 use xtask::sandbox::{EnvGuard, prelude::*};
 
+#[path = "common/mod.rs"]
 mod common;
 use common::LiveGateway;
 

@@ -2,6 +2,7 @@
 //!
 //! Tests DLQ statistics and purge operations.
 
+#[path = "common/mod.rs"]
 mod common;
 
 use async_nats::jetstream;
