@@ -267,6 +267,82 @@ async fn test_infer_test_binaries_for_test_filter_requires_complete_coverage() -
 }
 
 #[sinex_test]
+async fn test_extract_simple_binary_name_terms_accepts_boolean_binary_names() -> TestResult<()> {
+    let names = extract_simple_binary_name_terms(
+        "(binary(cascade_analyzer_test) | binary(cascade_depth_truncation_test))",
+    )
+    .expect("simple boolean binary-name filter should parse");
+    assert_eq!(
+        names,
+        vec!["cascade_analyzer_test", "cascade_depth_truncation_test"]
+    );
+    Ok(())
+}
+
+#[sinex_test]
+async fn test_extract_simple_binary_name_terms_rejects_complex_filter_predicates() -> TestResult<()>
+{
+    assert!(extract_simple_binary_name_terms("package(sinexd) & binary(cascade_analyzer_test)")
+        .is_none());
+    assert!(extract_simple_binary_name_terms("not binary(cascade_analyzer_test)").is_none());
+    assert!(extract_simple_binary_name_terms("test(cascade_analyzer_test)").is_none());
+    Ok(())
+}
+
+/// sinex-d4qg: `binary(name)` is an exact match against a known `[[test]]`
+/// target, not a content search -- so unlike the `test(name)` path, this
+/// must resolve correctly even when the file's contents mention nothing
+/// that looks like the requested name.
+#[sinex_test]
+async fn test_infer_test_binaries_for_binary_filter_resolves_exact_targets() -> TestResult<()> {
+    let repo = tempfile::tempdir()?;
+    let cascade_cycle = repo
+        .path()
+        .join("crate/sinexd/tests/api/cascade_analyzer_cycle_test.rs");
+    let large_payload = repo.path().join("tests/e2e/tests/large_payload_test.rs");
+    fs::create_dir_all(cascade_cycle.parent().expect("cascade cycle parent"))?;
+    fs::create_dir_all(large_payload.parent().expect("large payload parent"))?;
+    fs::write(
+        repo.path().join("crate/sinexd/Cargo.toml"),
+        r#"
+[[test]]
+name = "cascade_analyzer_cycle_test"
+path = "tests/api/cascade_analyzer_cycle_test.rs"
+"#,
+    )?;
+    fs::write(&cascade_cycle, "async fn unrelated_helper() {}\n")?;
+    fs::write(&large_payload, "async fn another_unrelated_helper() {}\n")?;
+
+    let inferred = infer_test_binaries_for_test_filter_in(
+        repo.path(),
+        "binary(cascade_analyzer_cycle_test) | binary(large_payload_test)",
+    )?;
+    assert_eq!(
+        inferred,
+        vec![
+            "cascade_analyzer_cycle_test".to_string(),
+            "large_payload_test".to_string()
+        ]
+    );
+    Ok(())
+}
+
+#[sinex_test]
+async fn test_infer_test_binaries_for_binary_filter_requires_complete_coverage() -> TestResult<()> {
+    let repo = tempfile::tempdir()?;
+    let large_payload = repo.path().join("tests/e2e/tests/large_payload_test.rs");
+    fs::create_dir_all(large_payload.parent().expect("large payload parent"))?;
+    fs::write(&large_payload, "async fn unrelated_helper() {}\n")?;
+
+    let inferred = infer_test_binaries_for_test_filter_in(
+        repo.path(),
+        "binary(large_payload_test) | binary(nonexistent_binary)",
+    )?;
+    assert!(inferred.is_empty());
+    Ok(())
+}
+
+#[sinex_test]
 async fn test_infer_lib_target_for_test_filter_maps_inline_unit_tests() -> TestResult<()> {
     let repo = tempfile::tempdir()?;
     let inline_test = repo.path().join("crate/sinexd/src/coordination.rs");

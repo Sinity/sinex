@@ -282,6 +282,28 @@ fn infer_test_binary_packages_for_test_filter_in(
     repo_root: &Path,
     filter: &str,
 ) -> Result<Vec<(String, String)>> {
+    // sinex-d4qg (2026-07-10): try `-E 'binary(x) or binary(y)'` first. This
+    // is an exact-name match against known `[[test]]` targets, not a
+    // content search -- unambiguous whenever the filter is a pure binary()
+    // union, so it's tried independently of (and before) the test-name path
+    // below, which cannot recognize this predicate at all (confirmed: a
+    // 3-binary `-E binary(...)` filter silently fell through to "infer
+    // nothing", building all 88 of sinexd's [[test]] targets instead of 3).
+    if let Some(binary_names) = extract_simple_binary_name_terms(filter) {
+        let resolved = resolve_binary_name_packages_in(repo_root, &binary_names)?;
+        // Only trust this if EVERY requested name was actually found as a
+        // real [[test]] target -- an unresolved name means the filter may
+        // reference something this lookup doesn't understand yet, so fall
+        // back to the conservative "build everything" behavior rather than
+        // silently dropping a binary the caller asked for.
+        if resolved.len() == binary_names.len() {
+            let mut binary_packages: Vec<(String, String)> = resolved.into_values().collect();
+            binary_packages.sort();
+            return Ok(binary_packages);
+        }
+        return Ok(Vec::new());
+    }
+
     let Some(test_names) = extract_simple_test_name_terms(filter) else {
         return Ok(Vec::new());
     };
@@ -760,6 +782,92 @@ fn extract_simple_test_name_terms(filter: &str) -> Option<Vec<String>> {
 
 fn is_simple_test_name_char(ch: char) -> bool {
     ch.is_ascii_alphanumeric() || matches!(ch, '_' | ':' | '$' | '-')
+}
+
+/// Same conservative shape as [`extract_simple_test_name_terms`], but for
+/// nextest's `binary(name)` predicate instead of `test(name)`. A pure union
+/// of `binary(...)` terms names compiled `[[test]]` targets directly and
+/// exactly -- unlike `test(name)`, which is a substring search over test
+/// FUNCTION names, `binary(name)` is an exact match against a known target,
+/// so resolving it needs no content search at all (see
+/// `resolve_binary_name_packages_in`).
+fn extract_simple_binary_name_terms(filter: &str) -> Option<Vec<String>> {
+    let mut names = Vec::new();
+    let mut stripped = String::with_capacity(filter.len());
+    let mut cursor = 0usize;
+
+    while let Some(relative_start) = filter[cursor..].find("binary(") {
+        let start = cursor + relative_start;
+        stripped.push_str(&filter[cursor..start]);
+
+        let name_start = start + "binary(".len();
+        let relative_end = filter[name_start..].find(')')?;
+        let end = name_start + relative_end;
+        let name = &filter[name_start..end];
+
+        if name.is_empty() || !name.chars().all(is_simple_test_name_char) {
+            return None;
+        }
+
+        names.push(name.to_string());
+        stripped.push(' ');
+        cursor = end + 1;
+    }
+
+    if names.is_empty() {
+        return None;
+    }
+
+    stripped.push_str(&filter[cursor..]);
+    // Same connective allowance as extract_simple_test_name_terms, and the
+    // same reasoning for excluding `!`: `!binary(foo)` means "not this
+    // binary", which isn't a set of binaries TO build, it's everything ELSE.
+    if stripped
+        .chars()
+        .all(|ch| ch.is_whitespace() || matches!(ch, '(' | ')' | '|' | '&'))
+    {
+        Some(names)
+    } else {
+        None
+    }
+}
+
+/// Resolve each requested binary name to its `(package, binary)` pair by
+/// exact match against every candidate path's actual `[[test]]` binary name
+/// (reusing the same resolution `test_binary_for_path`/
+/// `test_binary_for_nested_integration_module` already use for the
+/// content-search path, so nested-integration-module and manifest-based
+/// binaries resolve identically here). Returns only the names that were
+/// actually found; the caller decides how to handle a partial match.
+fn resolve_binary_name_packages_in(
+    repo_root: &Path,
+    binary_names: &[String],
+) -> Result<HashMap<String, (String, String)>> {
+    let wanted: HashSet<&str> = binary_names.iter().map(String::as_str).collect();
+    let mut resolved: HashMap<String, (String, String)> = HashMap::new();
+
+    for relative_path in candidate_rust_paths(repo_root)? {
+        if resolved.len() == wanted.len() {
+            break;
+        }
+
+        let binary = if let Some(binary) = test_binary_for_path(&relative_path) {
+            Some(binary)
+        } else {
+            test_binary_for_nested_integration_module(repo_root, &relative_path)?
+        };
+
+        let Some(binary) = binary else { continue };
+        if !wanted.contains(binary.as_str()) || resolved.contains_key(&binary) {
+            continue;
+        }
+        let Some(package) = package_for_path(&relative_path) else {
+            continue;
+        };
+        resolved.insert(binary.clone(), (package, binary));
+    }
+
+    Ok(resolved)
 }
 
 fn candidate_rust_paths(repo_root: &Path) -> Result<Vec<String>> {
