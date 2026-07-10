@@ -1,9 +1,22 @@
 # Issue Operating Model
 
-This document defines how the sinex GitHub issue tracker is used. It is the
-authoritative reference for issue **kinds**, **readiness states**, and
-**closure rules**. Drift between this doc and how issues are filed is itself a
-bug — fix the doc or fix the issue.
+> **SUPERSEDED (2026-07-10):** GitHub Issues are retired as the sinex task
+> substrate. Beads (`bd`) is now the sole durable source of truth for task
+> state — see `CLAUDE.md` and `CONTRIBUTING.md`'s "Planning and Source
+> Documents" section. All 7 issues open at retirement time were closed as
+> not-planned with bead cross-references; new work is filed with
+> `bd create`, not a GitHub issue. This document is kept for historical
+> reference (it explains the shape of already-closed issues) and because the
+> closure-fabrication guard it describes (`xtask verify closure`,
+> `.github/workflows/verify-closure.yml`) still operates on GitHub issues
+> pending its bead-native replacement — tracked as sinex-e7e9. Do not file
+> new GitHub issues against the kinds/rules below.
+
+This document defines how the sinex GitHub issue tracker was used prior to
+retirement. It is the authoritative reference for issue **kinds**, **readiness
+states**, and **closure rules** for the closed-issue archive. Drift between
+this doc and how issues were filed is itself a bug — fix the doc or fix the
+issue.
 
 The model exists because the tracker has accumulated mixed artifact types
 (execution tickets, tracking spines, design questions, catalog overlays) under

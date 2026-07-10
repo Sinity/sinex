@@ -124,28 +124,38 @@ runtime operation belongs to `sinexctl`, while host activation proof belongs to
 NixOS activation checks and VM tests. Keep these responsibilities explicit; see
 [`xtask/docs/runtime-target-boundaries.md`](xtask/docs/runtime-target-boundaries.md).
 
-## Planning, Issues, and Source Documents
+## Planning, Beads, and Source Documents
+
+> **GitHub Issues are retired as of 2026-07-10.** Beads (`bd`) is the sole
+> durable task substrate for this repo. The `.github/ISSUE_TEMPLATE/` kinds
+> and `.github/issue-operating-model.md` below describe the pre-retirement
+> shape of already-closed issues; do not file new GitHub issues. `bd prime`
+> gives current workflow context; `bd create --type <task|bug|epic|...>`
+> replaces "open an issue."
 
 Large or pre-planned work should not live only in scratch notes or chat history.
-Use a GitHub issue or an explicit source document/report before implementation
-starts.
+Create a bead (`bd create`) or cite an explicit source document/report before
+implementation starts.
 
-Target-vision-derived claims that may steer architecture, issue scope, naming,
-or verification obligations should also be checked against
+Target-vision-derived claims that may steer architecture, scope, naming, or
+verification obligations should also be checked against
 [`target-vision-claim-ledger.md`](.github/target-vision-claim-ledger.md).
-The ledger records whether a claim is raw, issue-backed, implemented, verified,
+The ledger records whether a claim is raw, tracked, implemented, verified,
 semantic debt, superseded, or rejected. Do not copy full target-vision prose
-into issues; summarize the claim, link the source, and keep GitHub as the
+into a bead; summarize the claim, link the source, and keep beads as the
 implementation authority.
 
-Use the issue templates intentionally:
+Pick the right bead `issue_type` intentionally — mirrors the retired issue
+kinds:
 
-- `Feature or Change` for concrete implementation slices with a defined outcome
-- `Cleanup or Refactor` for simplification, unification, or removal of awkward
-  parallel paths
-- `Research or Decision` for architectural questions, comparisons, or
-  recommendation work before implementation
-- `Bug or Regression` for wrong or regressed behavior with a repro and severity
+- `task` / `feature` for concrete implementation slices with a defined outcome
+- `task` (cleanup-scoped) for simplification, unification, or removal of
+  awkward parallel paths
+- `task` (research-scoped, `design` field carries the decision) for
+  architectural questions, comparisons, or recommendation work before
+  implementation
+- `bug` for wrong or regressed behavior with a repro and severity
+- `epic` for campaigns/umbrellas spanning multiple beads
 
 Treat scratch notes as input material, not as the project-facing planning
 surface, when the work is:
@@ -154,22 +164,24 @@ surface, when the work is:
 - likely to span multiple sessions or PRs
 - architectural enough that alternatives and non-goals need to stay explicit
 
-The templates imply a workflow that should be followed explicitly:
+The workflow that should be followed explicitly:
 
-1. Pick the right issue type.
-2. Record scope, invariants, non-goals, and verification up front.
-3. If the work starts as investigation, use `Research or Decision` first, then
-   spin out implementation issues after the shape is settled.
-4. When opening a PR, link it to an issue or cite the source document/report.
-5. Split deferred work into follow-up issues instead of burying it in PR text or
+1. Pick the right bead type.
+2. Record scope, invariants, non-goals, and verification (`description`,
+   `design`, `acceptance` fields) up front.
+3. If the work starts as investigation, record the decision in `design` once
+   settled, then spin out implementation beads (`depends_on`/`parent-child`)
+   after the shape is settled.
+4. When opening a PR, cite the bead id or the source document/report.
+5. Split deferred work into follow-up beads instead of burying it in PR text or
    scratch notes.
 
 In practice, that means:
 
-- a cross-cutting redesign should usually begin as an issue before code changes
+- a cross-cutting redesign should usually begin as a bead before code changes
 - a PR should not be the first place where the intended shape, constraints, and
   verification story become visible
-- “Derived from doc / report / note” in the PR template is not filler; use it to
+- "Derived from doc / report / note" in the PR template is not filler; use it to
   preserve provenance when the branch is driven by a scratch note, audit, or
   design memo
 
@@ -179,52 +191,55 @@ The PR template also implies these review norms:
 - explain why this shape won over plausible alternatives
 - record exact verification honestly
 - call out impact on schema, operations, docs, and security/privacy when relevant
-- turn real deferred work into explicit follow-up issues
+- turn real deferred work into explicit follow-up beads
 
 ## Acceptance-criteria honesty
 
 The PR template's `## Acceptance Criteria Drift` section is not optional
-when the linked issue carries an AC list. For each AC item, mark whether
-this PR satisfies it as written, defers it to a follow-up issue, or
+when the linked bead carries an `acceptance` field. For each AC item, mark
+whether this PR satisfies it as written, defers it to a follow-up bead, or
 discovered the AC was misframed.
 
 This requirement exists because of a recurring failure mode (caught in
-the 2026-04-26 audit cycle): an issue with five AC items closes on a PR
-that satisfies three structurally and silently drops the two
-measurement-under-load items. Future readers — including future-you —
-treat the issue as "done" and rebuild on top of a partial foundation.
+the 2026-04-26 audit cycle, back when this was GitHub-issue-native): an
+issue with five AC items closed on a PR that satisfied three structurally
+and silently dropped the two measurement-under-load items. Future readers
+— including future-you — treat the item as "done" and rebuild on top of a
+partial foundation. The same failure mode applies equally to beads.
 
 Concrete shape:
 
 ```
-- [ ] AC #1 ("Lag and parent fan-in observed under prod traffic") — ⏭ deferred to #561
+- [ ] AC #1 ("Lag and parent fan-in observed under prod traffic") — ⏭ deferred to sinex-abcd
 - [ ] AC #2 ("Schemas registered for every emitter") — ✅ satisfied
-- [ ] AC #3 ("Heavy-lane scenario asserts on lag bound") — ⏭ deferred to #561
+- [ ] AC #3 ("Heavy-lane scenario asserts on lag bound") — ⏭ deferred to sinex-abcd
 ```
 
-If the issue has no AC list (research / design / cleanup tickets often
-don't), say so explicitly: "no AC list — issue closes on the decision
+If the bead has no `acceptance` field (research / design / cleanup tickets
+often don't), say so explicitly: "no AC list — bead closes on the decision
 recorded in this PR body."
 
 The cost of this section is two minutes of writing. The cost of
 skipping it has been entire audit cycles re-doing forensic work on
-issues that "closed."
+tickets that "closed."
 
 ## Closure verification commands
 
-When closing an issue (or merging the PR that closes it), the closing
-comment must include the **commands a future reader can run themselves
-to verify the claim**, not just an assertion that it landed.
+When closing a bead (`bd update <id> --status closed --close-reason "..."`,
+or merging the PR that closes it), the close reason must include the
+**commands a future reader can run themselves to verify the claim**, not
+just an assertion that it landed.
 
 This requirement exists because of a recurring failure mode (caught in
-the 2026-05-11 audit cycle): closing comments described work that lived
-only in a working tree and never reached `master`. The most severe case
-was issue #1081 — the closing comment claimed "44K-line delete, all
-legacy crate directories deleted" against zero actual commits. A second
-case attributed issue #987 to "PRs #998–#1002" when PR #1000 in that
-range had `state=CLOSED, mergedAt=null`. Both fabrications survived for
-days because future agents trusted the closing comments without
-re-verifying against `master`.
+the 2026-05-11 audit cycle, back when this was GitHub-issue-native):
+closing comments described work that lived only in a working tree and
+never reached `master`. The most severe case was issue #1081 — the
+closing comment claimed "44K-line delete, all legacy crate directories
+deleted" against zero actual commits. A second case attributed issue #987
+to "PRs #998–#1002" when PR #1000 in that range had `state=CLOSED,
+mergedAt=null`. Both fabrications survived for days because future agents
+trusted the closing comments without re-verifying against `master`. The
+same discipline applies to bead `close_reason` text now.
 
 Verification commands you might include:
 
@@ -243,19 +258,11 @@ grep -rn "<symbol>" crate/ --include="*.rs"
 xtask test -p <pkg> -E 'test(<name>)'
 ```
 
-The commands embedded in a closing comment are not just documentation —
-`xtask verify closure <N>` parses the closing comment / issue body and
-actually runs each command, reporting per-command exit codes. Run it
-locally before closing:
-
-```bash
-xtask verify closure 1081
-```
-
-The `.github/workflows/verify-closure.yml` workflow exposes the same
-command on demand (`gh workflow run verify-closure.yml -f issue_number=N`)
-so any reviewer or future reader can re-run the closure verification
-without checking out the repo.
+`xtask verify closure <N>` (and the `.github/workflows/verify-closure.yml`
+workflow) still parses this way for the GitHub-issue-era closed-issue
+archive, but has no bead-native equivalent yet — tracked as sinex-e7e9.
+Until that lands, re-verify bead `close_reason` claims by hand using the
+same command discipline above before trusting them.
 
 Two antipatterns to avoid:
 
