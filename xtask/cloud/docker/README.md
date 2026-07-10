@@ -10,6 +10,12 @@ expects, packaged for use inside Claude Code Web / Codex Cloud sandboxes.
 
 Both are referenced by [`docker-compose.yml`](../docker-compose.yml).
 
+> **Publication status (verified 2026-07-10):** neither tag is anonymously
+> pullable from ghcr.io (403/404 — never published). The compose file
+> therefore declares `build:` contexts and sandboxes build the images
+> locally during setup (`docker compose up -d --build`). Publishing them
+> publicly (workflow below) would turn the tags into a pull fast-path.
+
 ## Building locally
 
 ```bash
@@ -39,11 +45,12 @@ cloud sandboxes that lack ghcr credentials cannot pull).
 
 ## How cloud agents consume the images
 
-The cloud-agent setup script ([`.claude/setup.sh`](../../../.claude/setup.sh))
-pulls and starts these sidecars on docker-capable sandboxes so SQLx macros
-can validate against a live database. On docker-less sandboxes, setup skips
-this step and the agent must provide `DATABASE_URL` / `NATS_URL` before
-running checks that need them.
+[`xtask/cloud/bootstrap.sh`](../bootstrap.sh) (profile `db`) builds and
+starts these sidecars on Docker-capable sandboxes so SQLx macros can
+validate against a live database. On docker-less sandboxes (Codex Cloud's
+`codex-universal` has no daemon) the bootstrap fails hard unless
+`DATABASE_URL` already points at a reachable external database — it never
+silently skips the requirement.
 
 To stand up the sidecars on demand inside a sandbox:
 

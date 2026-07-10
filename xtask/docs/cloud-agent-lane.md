@@ -46,74 +46,71 @@ Route the above to the Hetzner self-hosted runner.
 
 ## Sandbox bootstrap
 
-Both surfaces honour `.claude/setup.sh`:
+All surfaces run ONE profile-aware, idempotent script:
+[`xtask/cloud/bootstrap.sh`](../cloud/bootstrap.sh).
 
-- Installs Ubuntu apt deps (`pkg-config`, `libssl-dev`, `libdbus-1-dev`,
-  `libsystemd-dev`, `protobuf-compiler`, `mold`, `clang`).
-- Installs `rustup`; `rustup show` then materialises the toolchain pinned
-  by [`rust-toolchain.toml`](../../rust-toolchain.toml).
-- Runs `cargo fetch --locked` to pre-warm the registry used by `xtask`.
-- Builds `xtask` and exposes `<repo>/.target/debug` on `PATH`, so `xtask
-  check` / `xtask test` are available in fresh sandbox shells.
-- Installs `cargo-nextest` (best-effort).
-- Writes `.claude/settings.local.json` with the sandbox environment and
-  permission allowances (see below).
+| Surface | Entry point |
+| --- | --- |
+| Claude Code Web setup | `.claude/setup.sh` (thin wrapper; profile from `SINEX_CLOUD_PROFILE`, default `db`) |
+| Claude cached session | `SessionStart` hook (installed into `.claude/settings.local.json` by the bootstrap) runs `bootstrap.sh <profile> --maintenance` — cached snapshots restore files, not running services |
+| Codex Cloud setup script | `xtask/cloud/bootstrap.sh <profile>` |
+| Codex Cloud maintenance script | `xtask/cloud/bootstrap.sh <profile> --maintenance` (runs after task-branch checkout; also refreshes the `xtask` binary so a cached default-branch build never verifies branch-modified code) |
+
+Codex setup-phase exports do **not** persist into the agent phase; the
+bootstrap therefore persists its environment via an idempotent `~/.bashrc`
+block and `.claude/settings.local.json`, and prepends `PATH` entries with
+growth guards.
+
+### Profiles
+
+- **`static`** — no-compile lanes only (docs, config, prompts, shell
+  tooling). No rustup, no builds, no services. Works on any provider.
+- **`db`** — the only Rust profile. `xtask` itself depends on `sinex-db`,
+  whose `sqlx::query!` macros compile against a live, schema-populated
+  PostgreSQL (no offline cache by doctrine), so even `sinex-primitives`
+  lanes need a database to *build the frontend*. Bootstrap order is
+  load-bearing: database reachable → `schema-apply-bootstrap` (the explicit
+  pre-`xtask` chicken-and-egg exception in `sinex-schema`) → `cargo build
+  -p xtask` → `cargo-nextest` (required, not best-effort).
+
+### Database strategy (probed, never assumed)
+
+1. **external** — `DATABASE_URL` already answers → use it, provision nothing.
+2. **docker** — a working Docker daemon exists → build the in-repo sidecar
+   images and `docker compose up -d --build --wait`. The
+   `ghcr.io/sinity/sinex-*` tags are **not published** (verified 2026-07-10:
+   anonymous pull 403/404), so compose carries `build:` contexts and images
+   are built during the internet-enabled setup phase; container caches make
+   later sessions cheap.
+3. **neither** — hard fail with an explicit blocker. Codex Cloud runs inside
+   `codex-universal`, which has **no Docker daemon** — `db` there requires an
+   external ephemeral Postgres URL. A native-PG18 apt path (timescaledb +
+   pgvector + pg_jsonschema in-sandbox) is not implemented; do not claim it
+   until a capability probe passes. Never fall back to `SQLX_OFFLINE`.
+
+The bootstrap also runs an **identity preflight** (`git remote -v`,
+`rev-parse HEAD`, optional `SINEX_EXPECTED_REPO` assertion, archived-fork
+guard) — the first cloud wave silently ran against an archived fork; lanes
+must abort on a mis-bound environment instead of producing stale-base diffs.
 
 ### Settings: committed vs sandbox-only
 
-The committed `.claude/settings.json` is deliberately **minimal** — it carries
-only the `forbid-bare-cargo` PreToolUse hook used by the local Nix dev
-environment. It is **not** specialised for the cloud, so it never perturbs a
-contributor's local workstation.
-
-The cloud sandbox's environment and permissions are written by
-`.claude/setup.sh` into `.claude/settings.local.json`, which Claude Code reads
-and merges over `settings.json`. That path is gitignored
-(`.claude/*.local.json`), so the sandbox config is never committed. The
-generated file sets:
-
-| Variable             | Value                       | Why                                            |
-| -------------------- | --------------------------- | ---------------------------------------------- |
-| `CARGO_HOME`         | `<repo>/.cargo`             | Survives within the sandbox lifetime.          |
-| `CARGO_TARGET_DIR`   | `<repo>/.target`            | Same.                                          |
-| `PATH`               | `<repo>/.target/debug:$PATH` | Makes the bootstrapped `xtask` executable.     |
-| `DATABASE_URL`       | resolved sidecar URL        | So `sqlx::query!()` macros see the live DB through `xtask`. |
-| `NATS_URL`           | resolved sidecar URL        | Integration tests run through `xtask`.         |
-| `SINEX_AUTO_INFRA`   | `0`                         | Disables autostart of local infra in cloud.    |
-| `SINEX_AUTO_STATUS`  | `0`                         | Disables status polling daemons.               |
-| `RUSTC_WRAPPER`      | empty                       | No sccache; the sandbox cache is local-only.   |
-
-It also allows `cargo`, `rustup`, `docker`, and `docker-compose` without
-prompts because `xtask` invokes the Rust toolchain internally.
+The committed `.claude/settings.json` stays minimal (the `forbid-bare-cargo`
+PreToolUse hook only). Sandbox env, permission allowances, and the
+SessionStart maintenance hook are generated into
+`.claude/settings.local.json` (gitignored) by the bootstrap, so cloud config
+never perturbs a local workstation.
 
 ### Use xtask in the cloud lane
 
 The `forbid-bare-cargo` hook only blocks bare `cargo` inside the sinex Nix
-devshell (detected via `SINEX_DEV_ROOT` / `IN_NIX_SHELL`). Cloud setup still
-materializes the pinned toolchain and repository `xtask`; agents should use
-`xtask check` / `xtask test` there too. Direct `cargo` is reserved for
-toolchain bootstrap diagnostics when `xtask` itself cannot start, and that
-failure should be reported as a harness problem rather than worked around
-silently.
+devshell. Cloud lanes still do all check/test work through `xtask`; direct
+`cargo` is reserved for the bootstrap itself (toolchain, schema bootstrap,
+xtask build) and for diagnostics when `xtask` cannot start — report that as
+a harness failure rather than working around it.
 
-## Database / NATS sidecars
+If a fresh shell lacks the environment, `source ~/.bashrc` (the bootstrap's
+persisted block) instead of hand-exporting URLs.
 
-Live Postgres and NATS are provided via docker-compose sidecar; no SQLx
-offline prep is needed. `.claude/setup.sh` pulls and starts
-[`xtask/cloud/docker-compose.yml`](../cloud/docker-compose.yml) at sandbox
-boot, then exports `DATABASE_URL` and `NATS_URL` so `xtask check` /
-`xtask test` see a real database for the `sqlx::query!()` macro validation.
-The sidecars are ephemeral (`tmpfs` data dir for Postgres); each sandbox boot
-starts clean.
-
-If `xtask check` is run in a fresh shell that did not source `.claude/setup.sh`,
-export `DATABASE_URL` manually:
-
-```bash
-export DATABASE_URL="postgres://sinex:dev@localhost:5432/sinex_dev"
-export NATS_URL="nats://localhost:4222"
-xtask check -p sinex-primitives
-```
-
-See [`xtask/cloud/docker/README.md`](../cloud/docker/README.md) for the sidecar image
-build/push workflow.
+See [`xtask/cloud/docker/README.md`](../cloud/docker/README.md) for the
+sidecar image build/publish workflow.
