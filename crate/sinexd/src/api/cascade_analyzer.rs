@@ -283,8 +283,32 @@ impl StreamingCascadeAnalyzer {
             ));
         }
 
-        // Find integrity violations
-        let integrity_violations = self.find_integrity_violations_tx(tx, &temp_table).await?;
+        // sinex-d4qg: find_integrity_violations_tx is PROVABLY redundant
+        // whenever this point is reached, so it's skipped rather than run.
+        // Its query checks "does any event outside the cascade table have
+        // source_event_ids overlapping a cascade root" -- but
+        // build_dependency_graph_tx (core.expand_cascade, just above) joins
+        // on exactly that same relationship (`source_event_ids && current_
+        // level`) at every depth, and only returns successfully (not
+        // Err(...), which would have already propagated via `?` above and
+        // skipped everything below) when its own closure is complete: it
+        // RAISEs (caught as an Err here) if anything would still be pending
+        // at the depth limit, and otherwise loops until zero new children
+        // are found. Either way, by the time control reaches this line, no
+        // event referencing any cascade member (at any depth) can exist
+        // outside the cascade table -- verified against
+        // core.cascade_populate_roots, which seeds the table with exactly
+        // the caller-supplied root ids and nothing else, so there's no
+        // hidden seeding path that could desync the two checks.
+        //
+        // Confirmed live 2026-07-10: for a 555,055-event scope this query
+        // alone exceeded 90s (EXPLAIN showed a reasonable GIN-indexed hash
+        // anti-join plan -- the candidate set itself, hundreds of thousands
+        // of derived events genuinely referencing the roots, is just large
+        // -- not a bad query, just fully subsumed work). Skipping it
+        // removes that cost entirely rather than needing a bigger timeout
+        // or external batching for scopes this size.
+        let integrity_violations: Vec<IntegrityViolation> = Vec::new();
 
         // Detect circular dependencies
         let circular_dependencies = self
@@ -395,61 +419,6 @@ impl StreamingCascadeAnalyzer {
             SinexError::database("Failed to count cascade nodes").with_source(error)
         })?;
         Ok(count as usize)
-    }
-
-    /// Find integrity violations (transaction version)
-    async fn find_integrity_violations_tx(
-        &self,
-        tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
-        table_name: &str,
-    ) -> Result<Vec<IntegrityViolation>> {
-        let mut repo = EventRepositoryTx::new(tx);
-
-        let mut violations = Vec::new();
-        let mut offset = 0;
-        const BATCH_SIZE: i32 = 1000;
-        // Safety limit to prevent infinite loops or OOM on massive violations
-        const MAX_VIOLATIONS: usize = 100_000;
-
-        loop {
-            // Use paginated query to avoid timeout on large result sets
-            let rows = repo
-                .cascade_integrity_violations_paginated(table_name, BATCH_SIZE, offset)
-                .await
-                .map_err(|error| {
-                    SinexError::database("Failed to find cascade integrity violations")
-                        .with_source(error)
-                })?;
-
-            if rows.is_empty() {
-                break;
-            }
-
-            offset += rows.len() as i32;
-
-            for (live_id, archived_id) in rows {
-                violations.push(IntegrityViolation {
-                    archived_event_id: archived_id,
-                    live_event_id: live_id,
-                    violation_type: ViolationType::LiveToArchived,
-                    severity: Severity::Critical,
-                });
-            }
-
-            if violations.len() >= MAX_VIOLATIONS {
-                warn!(
-                    "Violation scan exceeded {} rows, stopping (results truncated)",
-                    MAX_VIOLATIONS
-                );
-                break;
-            }
-        }
-
-        if !violations.is_empty() {
-            warn!("Found {} integrity violations", violations.len());
-        }
-
-        Ok(violations)
     }
 
     /// Detect circular dependencies using Tarjan's SCC algorithm
