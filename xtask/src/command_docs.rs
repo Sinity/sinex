@@ -518,6 +518,7 @@ pub fn render_command_guide(commands: &[CommandInfo]) -> String {
     out.push_str("## Agent Defaults\n\n");
     out.push_str("- Prefer `--json` or `--format json` when another tool will parse the output.\n");
     out.push_str("- Use `--bg` for long-running work you want to inspect through `xtask jobs`.\n");
+    out.push_str("- Use `--bg --wait` with fix, check, test, or build when the command must return terminal proof instead of launch acknowledgement.\n");
     out.push_str("- Use `xtask <command> --help` only to confirm the exact live flags for commands already named below.\n\n");
 
     for section in GUIDE_SECTIONS {

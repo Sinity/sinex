@@ -488,6 +488,7 @@ pub struct CommandContext {
     start_time: std::time::Instant,
     writer: crate::output::OutputWriter,
     background: bool,
+    background_wait: bool,
     command_name: String,
     invocation_id: Option<i64>,
     /// Set to true when `finish_invocation` is called explicitly in lib.rs.
@@ -525,6 +526,7 @@ impl CommandContext {
             start_time: std::time::Instant::now(),
             writer,
             background,
+            background_wait: false,
             command_name: command_name.into(),
             invocation_id,
             finished: AtomicBool::new(false),
@@ -552,6 +554,7 @@ impl CommandContext {
             start_time: std::time::Instant::now(),
             writer,
             background,
+            background_wait: false,
             command_name: command_name.into(),
             invocation_id,
             finished: AtomicBool::new(false),
@@ -628,6 +631,12 @@ impl CommandContext {
         runner: std::sync::Arc<dyn crate::cargo_runner::CargoRunner>,
     ) -> Self {
         self.cargo_runner = runner;
+        self
+    }
+
+    #[must_use]
+    pub fn with_background_wait(mut self, background_wait: bool) -> Self {
+        self.background_wait = self.background && background_wait;
         self
     }
 
@@ -756,6 +765,11 @@ impl CommandContext {
     #[must_use]
     pub fn is_background(&self) -> bool {
         self.background
+    }
+
+    #[must_use]
+    pub fn background_wait(&self) -> bool {
+        self.background_wait
     }
 
     #[must_use]
@@ -1249,6 +1263,7 @@ impl CommandContext {
                 "history_hint": history_hint,
                 "progress_hint": progress_hint,
                 "test_analysis_hint": test_analysis_hint,
+                "proof_status": "incomplete",
             }));
 
         if self.is_human() {

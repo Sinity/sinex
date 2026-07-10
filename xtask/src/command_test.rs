@@ -214,6 +214,28 @@ async fn test_command_context_is_json() -> TestResult<()> {
 }
 
 #[sinex_test]
+async fn test_background_wait_requires_background_context() -> TestResult<()> {
+    let foreground = CommandContext::new(
+        OutputWriter::new(crate::output::OutputFormat::Silent),
+        false,
+        None,
+        "test",
+    )
+    .with_background_wait(true);
+    assert!(!foreground.background_wait());
+
+    let background = CommandContext::new(
+        OutputWriter::new(crate::output::OutputFormat::Silent),
+        true,
+        None,
+        "test",
+    )
+    .with_background_wait(true);
+    assert!(background.background_wait());
+    Ok(())
+}
+
+#[sinex_test]
 async fn test_command_metadata_builders() -> TestResult<()> {
     let build_meta = CommandMetadata::build();
     assert_eq!(build_meta.category, Some("build"));

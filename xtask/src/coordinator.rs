@@ -261,6 +261,25 @@ impl JobCoordinator {
         is_foreground: bool,
         output_format: OutputFormat,
     ) -> Result<CoordinationResult> {
+        self.request_with_format_policy(
+            command,
+            spawn_args,
+            scope_args,
+            is_foreground,
+            output_format,
+            true,
+        )
+    }
+
+    fn request_with_format_policy(
+        &self,
+        command: &str,
+        spawn_args: &[String],
+        scope_args: &[String],
+        is_foreground: bool,
+        output_format: OutputFormat,
+        allow_fresh_reuse: bool,
+    ) -> Result<CoordinationResult> {
         let lock_path = self.lock_path_for(command);
         let state_path = self.state_path_for(command);
 
@@ -328,7 +347,8 @@ impl JobCoordinator {
             }
         } else {
             // No state — check for fresh result (check/build only), then start new
-            if supports_fresh_reuse_for(command, spawn_args)
+            if allow_fresh_reuse
+                && supports_fresh_reuse_for(command, spawn_args)
                 && let Some(fresh) =
                     self.check_fresh(command, spawn_args, &tree_fingerprint, &scope_key)
             {
@@ -1647,18 +1667,22 @@ pub fn coordinate_and_spawn_with_scope(
     let coordinator = if JobCoordinator::should_coordinate(command, spawn_args) {
         let coordinator = JobCoordinator::new()
             .with_context(|| format!("failed to initialize coordinator for `{command}`"))?;
-        match coordinator.request_with_format(
+        match coordinator.request_with_format_policy(
             command,
             spawn_args,
             coordination_args,
             false,
             ctx.writer().format(),
+            !ctx.background_wait(),
         ) {
             Ok(
                 result @ (CoordinationResult::Attached { .. }
                 | CoordinationResult::Fresh { .. }
                 | CoordinationResult::Queued { .. }),
             ) => {
+                if ctx.background_wait() {
+                    return wait_for_coordination_result(command, &result, ctx);
+                }
                 return Ok(coordination_to_result(&result, ctx));
             }
             Ok(CoordinationResult::Started { .. } | CoordinationResult::Superseded { .. }) => {
@@ -1702,7 +1726,104 @@ pub fn coordinate_and_spawn_with_scope(
     update_coordinator_state(command, &bg_result).with_context(|| {
         format!("failed to record background `{command}` invocation in coordinator state")
     })?;
+    if ctx.background_wait()
+        && let Some(job_id) = bg_result
+            .data
+            .as_ref()
+            .and_then(|data| data["job_id"].as_i64())
+    {
+        return wait_for_background_job(command, job_id, ctx);
+    }
     Ok(bg_result)
+}
+
+fn wait_for_coordination_result(
+    command: &str,
+    result: &CoordinationResult,
+    ctx: &CommandContext,
+) -> Result<CommandResult> {
+    match result {
+        CoordinationResult::Attached { job_id } => wait_for_background_job(command, *job_id, ctx),
+        CoordinationResult::Started { job_id } => wait_for_background_job(command, *job_id, ctx),
+        CoordinationResult::Superseded { new_job_id, .. } => {
+            wait_for_background_job(command, *new_job_id, ctx)
+        }
+        CoordinationResult::Queued { current_job_id } => {
+            let pending_job_assignment = *current_job_id < 0;
+            let message = if pending_job_assignment {
+                "proof wait cannot identify the queued job before it is assigned an ID; no proof was produced".to_string()
+            } else {
+                format!(
+                    "proof wait cannot identify the future queued job behind {current_job_id}; no proof was produced"
+                )
+            };
+            let suggestion = if pending_job_assignment {
+                "wait for the active coordinated slot, then rerun this command with --bg --wait"
+                    .to_string()
+            } else {
+                format!("wait for job {current_job_id}, then rerun this command with --bg --wait")
+            };
+            Ok(CommandResult::failure(
+                crate::output::StructuredError::new("XTASK_BG_WAIT_QUEUED", message)
+                    .with_suggestion(suggestion),
+            )
+            .with_data(serde_json::json!({
+                "action": "queued",
+                "current_job_id": (!pending_job_assignment).then_some(current_job_id),
+                "current_job_pending_assignment": pending_job_assignment,
+                "proof_status": "incomplete",
+            })))
+        }
+        CoordinationResult::Fresh { .. } => {
+            Ok(CommandResult::failure(crate::output::StructuredError::new(
+                "XTASK_BG_WAIT_UNSEALED_FRESH",
+                "proof wait refused an unsealed freshness hit; no proof was produced",
+            ))
+            .with_data(serde_json::json!({
+                "action": "fresh",
+                "proof_status": "incomplete",
+            })))
+        }
+    }
+}
+
+fn wait_for_background_job(
+    command: &str,
+    job_id: i64,
+    ctx: &CommandContext,
+) -> Result<CommandResult> {
+    let manager = crate::jobs::JobQueryManager::new(config().jobs_dir())?;
+    let job = tokio::task::block_in_place(|| {
+        tokio::runtime::Handle::current().block_on(manager.wait(job_id, None))
+    })?;
+    let exit_code = job.exit_code.unwrap_or(1);
+    let proof_status = if exit_code == 0 {
+        "success"
+    } else if exit_code == 124 {
+        "timed_out"
+    } else {
+        "failed"
+    };
+    let mut result = CommandResult::success()
+        .with_message(format!(
+            "Background job {job_id} finished with exit code {exit_code}"
+        ))
+        .with_data(serde_json::json!({
+            "action": "wait",
+            "job_id": job_id,
+            "exit_code": exit_code,
+            "job_status": job.job_status.as_str(),
+            "proof_status": proof_status,
+        }));
+    if exit_code != 0 {
+        result.status = if exit_code == 124 {
+            crate::output::Status::Cancelled
+        } else {
+            crate::output::Status::Failed
+        };
+    }
+    result.print(ctx.writer(), command);
+    std::process::exit(exit_code);
 }
 
 /// After spawning a background job, update coordinator state with the real `job_id` and `pid`.
@@ -1787,6 +1908,7 @@ fn coordination_attached_result(job_id: i64, ctx: &CommandContext) -> CommandRes
             "action": "attached",
             "job_id": job_id,
             "hint": format!("Monitor with: xtask jobs status {job_id}"),
+            "proof_status": "incomplete",
         }))
 }
 
@@ -1811,6 +1933,7 @@ fn coordination_superseded_result(
             "action": "superseded",
             "old_job_id": old_job_id,
             "new_job_id": new_job_id,
+            "proof_status": "incomplete",
         }))
 }
 
@@ -1848,6 +1971,7 @@ fn coordination_queued_result(current_job_id: i64, ctx: &CommandContext) -> Comm
             } else {
                 format!("Monitor with: xtask jobs status {current_job_id}")
             },
+            "proof_status": "incomplete",
         }))
 }
 
@@ -1886,6 +2010,7 @@ pub fn coordination_to_result(result: &CoordinationResult, ctx: &CommandContext)
                 .with_data(serde_json::json!({
                     "action": "started",
                     "job_id": job_id,
+                    "proof_status": "incomplete",
                 }))
         }
     }
@@ -1973,6 +2098,7 @@ fn coordination_fresh_result(
             "cached_duration_secs": duration_secs,
             "compiled_packages": packages_probe.packages,
             "compiled_packages_issue": packages_probe.issue,
+            "proof_status": "incomplete",
         }));
 
     if let Some(issue) = packages_probe.issue {

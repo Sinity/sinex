@@ -273,15 +273,26 @@ fn terminal_status_from_exit_code_file(job_dir: &Path) -> Result<(InvocationStat
     }
 }
 
+fn lifecycle_status_from_terminal(
+    invocation_status: InvocationStatus,
+    exit_code: Option<i32>,
+) -> JobLifecycleStatus {
+    if exit_code == Some(124) {
+        JobLifecycleStatus::TimedOut
+    } else if exit_code.is_some() {
+        JobLifecycleStatus::from_invocation_status(invocation_status)
+    } else {
+        JobLifecycleStatus::Orphaned
+    }
+}
+
 fn synthesize_job_for_query(bg: BackgroundJob, jobs_dir: &Path) -> Result<Job> {
     let mut job = Job::from_background_job(bg, jobs_dir);
     if matches!(job.job_status, JobLifecycleStatus::Running) {
         let job_dir = jobs_dir.join(job.id.to_string());
         let (invocation_status, exit_code) = terminal_status_from_exit_code_file(&job_dir)?;
-        job.job_status = if exit_code.is_some() {
-            JobLifecycleStatus::from_invocation_status(invocation_status)
-        } else if !job.is_alive() {
-            JobLifecycleStatus::Orphaned
+        job.job_status = if exit_code.is_some() || !job.is_alive() {
+            lifecycle_status_from_terminal(invocation_status, exit_code)
         } else {
             return Ok(job);
         };
@@ -366,11 +377,7 @@ impl JobManager {
     fn finish_stale_running_job(&self, db: &HistoryDb, job: &BackgroundJob) -> Result<()> {
         let job_dir = self.jobs_dir.join(job.id.to_string());
         let (inv_status, exit_code) = terminal_status_from_exit_code_file(&job_dir)?;
-        let job_status = if exit_code.is_some() {
-            JobLifecycleStatus::from_invocation_status(inv_status)
-        } else {
-            JobLifecycleStatus::Orphaned
-        };
+        let job_status = lifecycle_status_from_terminal(inv_status, exit_code);
 
         let stdout_path = job_dir.join("stdout.log");
         let stderr_path = job_dir.join("stderr.log");
@@ -581,9 +588,44 @@ impl JobManager {
                 &watchdog_db_path,
                 &job_dir,
             ) {
-                eprintln!(
-                    "Warning: failed to spawn detached reaper for background job {job_id} (pid {pid}): {error}"
-                );
+                let tree_termination_error = terminate_process_tree_by_root_pid(
+                    pid,
+                    &format!("watchdog setup failed for background job {job_id}"),
+                )
+                .err()
+                .map(|cleanup_error| format!("{cleanup_error:#}"));
+                let root_termination_error =
+                    terminate_job_process(nix::unistd::Pid::from_raw(pid as i32))
+                        .err()
+                        .map(|cleanup_error| format!("{cleanup_error:#}"));
+                let history_error = (|| -> Result<()> {
+                    let db = self.db.lock().map_err(|_| eyre!("db lock poisoned"))?;
+                    db.finish_invocation_cancelled(
+                        invocation_id,
+                        None,
+                        0.0,
+                        "watchdog_spawn_failure",
+                        "launcher",
+                    )?;
+                    db.finish_background_job(
+                        job_id,
+                        JobLifecycleStatus::Killed,
+                        None,
+                        0.0,
+                        stdout_path.exists().then_some(stdout_path.as_path()),
+                        stderr_path.exists().then_some(stderr_path.as_path()),
+                    )
+                })()
+                .err()
+                .map(|cleanup_error| format!("{cleanup_error:#}"));
+                return Err(error).with_context(|| {
+                    format!(
+                        "detached watchdog setup is required for finite background job {job_id}; descendant cleanup error: {}; root cleanup error: {}; history cleanup error: {}",
+                        tree_termination_error.as_deref().unwrap_or("none"),
+                        root_termination_error.as_deref().unwrap_or("none"),
+                        history_error.as_deref().unwrap_or("none")
+                    )
+                });
             }
         }
 

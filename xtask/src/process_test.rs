@@ -2,6 +2,15 @@ use super::*;
 use crate::sandbox::{EnvGuard, sinex_test};
 use tempfile::tempdir;
 
+#[sinex_test]
+async fn typed_process_timeouts_survive_report_context() -> TestResult<()> {
+    let error = Err::<(), color_eyre::eyre::Report>(ProcessTimedOut::new("timed out").into())
+        .wrap_err("outer context")
+        .expect_err("typed timeout should remain an error");
+    assert!(report_is_process_timeout(&error));
+    Ok(())
+}
+
 fn command_env_value(command: &Command, key: &str) -> Option<String> {
     command.get_envs().find_map(|(env_key, env_value)| {
         (env_key == key).then(|| env_value.map(|value| value.to_string_lossy().into_owned()))?
