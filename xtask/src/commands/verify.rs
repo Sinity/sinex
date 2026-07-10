@@ -96,12 +96,10 @@ pub enum VerifySubcommand {
         #[arg(long)]
         history_db: Option<PathBuf>,
     },
-    /// Operationalize the 2026-05-11 closure-verification policy: fetch an
-    /// issue body via `gh`, extract AC checkboxes and shell code blocks marked
-    /// `verify`, and run each command, reporting pass/fail per command.
+    /// Verify a closed Bead's AC dispositions and execute its evidence commands.
     Closure {
-        /// GitHub issue number to verify.
-        issue: u64,
+        /// Bead id to verify (for example, sinex-e7e9).
+        bead_id: String,
         /// Emit JSON output.
         #[arg(long)]
         json: bool,
@@ -309,10 +307,10 @@ impl XtaskCommand for VerifyCommand {
                 ctx,
             ),
             VerifySubcommand::Closure {
-                issue,
+                bead_id,
                 json,
                 dry_run,
-            } => execute_closure(*issue, *json, *dry_run, ctx),
+            } => execute_closure(bead_id, *json, *dry_run, ctx),
         }
     }
 
@@ -1128,7 +1126,9 @@ struct ClosureEvidence {
 
 #[derive(Debug, Clone, Serialize)]
 struct ClosureVerificationReport {
-    issue: u64,
+    bead_id: String,
+    bead_status: String,
+    acceptance_criteria_found: usize,
     dry_run: bool,
     commands_found: usize,
     commands_run: usize,
@@ -1144,12 +1144,14 @@ struct ClosureVerificationReport {
 }
 
 fn execute_closure(
-    issue: u64,
+    bead_id: &str,
     json: bool,
     dry_run: bool,
     ctx: &CommandContext,
 ) -> Result<CommandResult> {
-    let evidence = fetch_closure_evidence(issue)?;
+    let payload = fetch_bead_closure_payload(bead_id)?;
+    let acceptance_criteria = extract_bead_acceptance_criteria(&payload.acceptance_criteria);
+    let evidence = collect_closure_evidence(&payload);
     let commands = &evidence.commands;
     let evidence_sources = evidence
         .commands
@@ -1165,12 +1167,19 @@ fn execute_closure(
         .collect::<Vec<_>>();
 
     let matrix_errors = validate_closure_matrix_items(&evidence.matrix_items);
-    let manifest_errors = validate_closure_evidence_readiness(&evidence);
+    let mut manifest_errors = validate_closure_evidence_readiness(&evidence);
+    manifest_errors.extend(validate_bead_closure_contract(
+        &payload,
+        &acceptance_criteria,
+        &evidence,
+    ));
 
     if commands.is_empty() && evidence.matrix_items.is_empty() && evidence.manifest_items.is_empty()
     {
         let report = ClosureVerificationReport {
-            issue,
+            bead_id: payload.id.clone(),
+            bead_status: payload.status.clone(),
+            acceptance_criteria_found: acceptance_criteria.len(),
             dry_run,
             commands_found: 0,
             commands_run: 0,
@@ -1190,13 +1199,11 @@ fn execute_closure(
         let mut result = CommandResult::failure(crate::output::StructuredError::new(
             "CLOSURE_VERIFICATION_MISSING_EVIDENCE",
             format!(
-                "issue #{issue}: no verification commands or closure matrix found in issue body \
-                 or comments"
+                "bead {}: no closure evidence manifest or verification commands found in close_reason",
+                payload.id
             ),
         ))
-        .with_message(format!(
-            "issue #{issue}: closure verification missing evidence"
-        ))
+        .with_message(format!("bead {}: closure verification missing evidence", payload.id))
         .with_data(serde_json::to_value(&report)?)
         .with_duration(ctx.elapsed());
         if json && !ctx.is_json() {
@@ -1208,7 +1215,8 @@ fn execute_closure(
 
     if ctx.is_human() && !json {
         println!(
-            "Issue #{issue}: {} verification command(s), {} closure matrix item(s), {} evidence manifest item(s) found",
+            "Bead {}: {} verification command(s), {} closure matrix item(s), {} evidence manifest item(s) found",
+            payload.id,
             commands.len(),
             evidence.matrix_items.len(),
             evidence.manifest_items.len()
@@ -1255,7 +1263,7 @@ fn execute_closure(
 
     let mut results: Vec<ClosureCommandResult> = Vec::new();
 
-    if !dry_run {
+    if !dry_run && matrix_errors.is_empty() && manifest_errors.is_empty() {
         for command in commands {
             let outcome = run_shell_command(command);
             if ctx.is_human() && !json {
@@ -1276,7 +1284,9 @@ fn execute_closure(
         commands_failed == 0 && matrix_errors.is_empty() && manifest_errors.is_empty();
 
     let report = ClosureVerificationReport {
-        issue,
+        bead_id: payload.id.clone(),
+        bead_status: payload.status.clone(),
+        acceptance_criteria_found: acceptance_criteria.len(),
         dry_run,
         commands_found: commands.len(),
         commands_run,
@@ -1295,7 +1305,8 @@ fn execute_closure(
         println!("{}", serde_json::to_string_pretty(&report)?);
     } else if ctx.is_human() && !dry_run {
         println!(
-            "Issue #{issue}: {commands_passed}/{commands_run} passed{}{}",
+            "Bead {}: {commands_passed}/{commands_run} passed{}{}",
+            payload.id,
             if commands_failed > 0 {
                 format!(", {commands_failed} FAILED")
             } else {
@@ -1315,21 +1326,24 @@ fn execute_closure(
 
     let mut result = if overall_passed || dry_run {
         CommandResult::success()
-            .with_message(format!("issue #{issue}: closure verification passed"))
+            .with_message(format!("bead {}: closure verification passed", payload.id))
     } else {
         CommandResult::failure(crate::output::StructuredError::new(
             "CLOSURE_VERIFICATION_FAILED",
             format!(
-                "issue #{issue}: {commands_failed} verification command(s) failed, {} closure matrix error(s), {} evidence manifest error(s)",
+                "bead {}: {commands_failed} verification command(s) failed, {} closure matrix error(s), {} evidence manifest error(s)",
+                payload.id,
                 matrix_errors.len(),
                 manifest_errors.len()
             ),
         ))
-        .with_message(format!("issue #{issue}: closure verification FAILED"))
+        .with_message(format!("bead {}: closure verification FAILED", payload.id))
     };
 
     result = result
-        .with_detail(format!("issue={issue}"))
+        .with_detail(format!("bead_id={}", payload.id))
+        .with_detail(format!("bead_status={}", payload.status))
+        .with_detail(format!("acceptance_criteria={}", acceptance_criteria.len()))
         .with_detail(format!("commands_found={}", commands.len()))
         .with_detail(format!("commands_run={commands_run}"))
         .with_detail(format!("passed={commands_passed}"))
@@ -1350,92 +1364,103 @@ fn execute_closure(
 }
 
 #[derive(Debug, Deserialize)]
-struct ClosureIssuePayload {
+struct BeadClosurePayload {
+    id: String,
+    status: String,
     #[serde(default)]
-    body: String,
+    acceptance_criteria: String,
     #[serde(default)]
-    comments: Vec<ClosureIssueComment>,
+    close_reason: String,
 }
 
-#[derive(Debug, Deserialize)]
-struct ClosureIssueComment {
-    #[serde(default)]
-    body: String,
-    #[serde(rename = "createdAt")]
-    created_at: String,
-}
+fn collect_closure_evidence(payload: &BeadClosurePayload) -> ClosureEvidence {
+    let source = "close_reason";
+    let mut evidence = ClosureEvidence {
+        commands: extract_closure_command_entries(&payload.close_reason, source),
+        matrix_items: extract_closure_matrix_items(&payload.close_reason, source),
+        manifest_items: extract_closure_evidence_manifest_items(&payload.close_reason, source),
+    };
 
-/// Fetch closure verification evidence from a GitHub issue body and comments.
-fn fetch_closure_evidence(issue: u64) -> Result<ClosureEvidence> {
-    let payload = fetch_issue_closure_payload(issue)?;
-    Ok(collect_closure_evidence(&payload))
-}
-
-fn collect_closure_evidence(payload: &ClosureIssuePayload) -> ClosureEvidence {
-    let mut evidence = ClosureEvidence::default();
-    evidence
-        .commands
-        .extend(extract_closure_command_entries(&payload.body, "body"));
-    evidence
-        .matrix_items
-        .extend(extract_closure_matrix_items(&payload.body, "body"));
-    evidence
-        .manifest_items
-        .extend(extract_closure_evidence_manifest_items(
-            &payload.body,
-            "body",
-        ));
-
-    for (index, comment) in payload.comments.iter().enumerate() {
-        let source = if comment.created_at.is_empty() {
-            format!("comment[{index}]")
-        } else {
-            format!("comment[{index}]@{}", comment.created_at)
+    for item in &evidence.manifest_items {
+        let Some(command) = item.command.as_deref() else {
+            continue;
         };
-        evidence
+        let command = command.trim().trim_matches('`').trim();
+        if !looks_like_runnable_command(command) || is_closure_verifier_self_command(command) {
+            continue;
+        }
+        if !evidence
             .commands
-            .extend(extract_closure_command_entries(&comment.body, &source));
-        evidence
-            .matrix_items
-            .extend(extract_closure_matrix_items(&comment.body, &source));
-        evidence
-            .manifest_items
-            .extend(extract_closure_evidence_manifest_items(
-                &comment.body,
-                &source,
-            ));
+            .iter()
+            .any(|existing| existing.command == command)
+        {
+            evidence.commands.push(ClosureCommand {
+                command: command.to_string(),
+                source: format!("{source}:manifest:{}", item.ac_id),
+            });
+        }
     }
 
     evidence
 }
 
-/// Fetch issue body and comments via the `gh` CLI.
-fn fetch_issue_closure_payload(issue: u64) -> Result<ClosureIssuePayload> {
-    let output = Command::new("gh")
-        .args([
-            "issue",
-            "view",
-            &issue.to_string(),
-            "--json",
-            "body,comments",
-        ])
+fn fetch_bead_closure_payload(bead_id: &str) -> Result<BeadClosurePayload> {
+    validate_bead_id(bead_id)?;
+    let output = Command::new("bd")
+        .args(["show", bead_id, "--json"])
         .output();
 
-    match output {
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
-            bail!(
-                "gh CLI not found; install GitHub CLI (https://cli.github.com/) to use \
-                 `xtask verify closure`"
-            )
+    let output = match output {
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            bail!("bd CLI not found; install Beads to use `xtask verify closure`");
         }
-        Err(e) => bail!("failed to invoke gh CLI: {e}"),
-        Ok(out) if !out.status.success() => {
-            let stderr = String::from_utf8_lossy(&out.stderr);
-            bail!("gh issue view #{issue} failed: {stderr}")
+        Err(error) => bail!("failed to invoke bd CLI: {error}"),
+        Ok(output) if !output.status.success() => {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            bail!("bd show {bead_id} failed: {}", stderr.trim());
         }
-        Ok(out) => serde_json::from_slice(&out.stdout)
-            .with_context(|| "gh issue view output is not valid closure JSON"),
+        Ok(output) => output,
+    };
+
+    parse_bead_closure_payload(&output.stdout, bead_id)
+}
+
+fn validate_bead_id(bead_id: &str) -> Result<()> {
+    if !looks_like_bead_id(bead_id) {
+        bail!("closure verification requires a Bead string id such as `sinex-e7e9`");
     }
+    Ok(())
+}
+
+fn looks_like_bead_id(candidate: &str) -> bool {
+    let Some((prefix, suffix)) = candidate.split_once('-') else {
+        return false;
+    };
+    !prefix.is_empty()
+        && !suffix.is_empty()
+        && prefix.chars().any(|ch| ch.is_ascii_alphabetic())
+        && candidate
+            .chars()
+            .all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '-' | '.' | '_'))
+}
+
+fn parse_bead_closure_payload(bytes: &[u8], expected_id: &str) -> Result<BeadClosurePayload> {
+    let mut payloads: Vec<BeadClosurePayload> = serde_json::from_slice(bytes)
+        .with_context(|| "bd show output is not valid Beads JSON")?;
+    if payloads.len() != 1 {
+        bail!(
+            "bd show {expected_id} returned {} top-level records; expected exactly one",
+            payloads.len()
+        );
+    }
+    let payload = payloads.pop().expect("length checked above");
+    if payload.id != expected_id {
+        bail!(
+            "bd show returned bead `{}` while `{expected_id}` was requested",
+            payload.id
+        );
+    }
+    Ok(payload)
 }
 
 fn extract_closure_command_entries(body: &str, source: &str) -> Vec<ClosureCommand> {
@@ -1636,19 +1661,191 @@ fn optional_manifest_cell(header: &[String], cells: &[String], key: &str) -> Opt
 
 fn normalize_manifest_status(status: &str) -> String {
     let lower = status.trim().to_lowercase();
-    if lower.contains("satisfied") || lower.contains("done") || lower.contains("pass") {
+    let words = lower
+        .split(|ch: char| !ch.is_ascii_alphanumeric())
+        .filter(|word| !word.is_empty())
+        .collect::<BTreeSet<_>>();
+    if ["satisfied", "done", "pass", "passed", "checked"]
+        .iter()
+        .any(|word| words.contains(word))
+    {
         "satisfied".to_string()
-    } else if lower.contains("required") || lower.contains("require") {
+    } else if ["required", "require"]
+        .iter()
+        .any(|word| words.contains(word))
+    {
         "required".to_string()
-    } else if lower.contains("defer") || lower.contains("owner") || lower.contains("tracked") {
+    } else if ["defer", "deferred", "owner", "tracked"]
+        .iter()
+        .any(|word| words.contains(word))
+    {
         "deferred".to_string()
-    } else if lower.contains("misframed") {
+    } else if words.contains("misframed") {
         "misframed".to_string()
-    } else if lower.contains("fail") {
+    } else if ["fail", "failed"]
+        .iter()
+        .any(|word| words.contains(word))
+    {
         "failed".to_string()
     } else {
         lower
     }
+}
+
+fn extract_bead_acceptance_criteria(text: &str) -> Vec<String> {
+    let mut criteria: Vec<String> = Vec::new();
+    for line in text.lines() {
+        let trimmed = line.trim();
+        if trimmed.is_empty()
+            || trimmed
+                .trim_start_matches('#')
+                .trim()
+                .eq_ignore_ascii_case("acceptance criteria")
+        {
+            continue;
+        }
+
+        let bullet = trimmed
+            .strip_prefix("- [ ] ")
+            .or_else(|| trimmed.strip_prefix("- [x] "))
+            .or_else(|| trimmed.strip_prefix("- [X] "))
+            .or_else(|| trimmed.strip_prefix("- "))
+            .or_else(|| trimmed.strip_prefix("* "))
+            .or_else(|| strip_numbered_list_prefix(trimmed));
+        if let Some(criterion) = bullet {
+            criteria.push(criterion.trim().to_string());
+        } else if line.chars().next().is_some_and(char::is_whitespace)
+            && !criteria.is_empty()
+        {
+            let previous = criteria.last_mut().expect("non-empty checked above");
+            previous.push(' ');
+            previous.push_str(trimmed);
+        } else {
+            criteria.push(trimmed.to_string());
+        }
+    }
+    criteria.retain(|criterion| !criterion.is_empty());
+    criteria
+}
+
+fn strip_numbered_list_prefix(line: &str) -> Option<&str> {
+    let (prefix, rest) = line.split_once(". ")?;
+    prefix.chars().all(|ch| ch.is_ascii_digit()).then_some(rest)
+}
+
+fn validate_bead_closure_contract(
+    payload: &BeadClosurePayload,
+    acceptance_criteria: &[String],
+    evidence: &ClosureEvidence,
+) -> Vec<ClosureEvidenceManifestError> {
+    let mut errors = Vec::new();
+    if payload.status != "closed" {
+        errors.push(ClosureEvidenceManifestError {
+            source: "bd.status".to_string(),
+            ac_id: None,
+            reason: format!(
+                "bead status is `{}`; closure verification requires `closed`",
+                payload.status
+            ),
+        });
+    }
+    if acceptance_criteria.is_empty() {
+        errors.push(ClosureEvidenceManifestError {
+            source: "bd.acceptance_criteria".to_string(),
+            ac_id: None,
+            reason: "bead has no acceptance criteria to verify".to_string(),
+        });
+        return errors;
+    }
+
+    let mut covered = BTreeSet::new();
+    for item in &evidence.manifest_items {
+        let Some(ordinal) = manifest_ac_ordinal(&item.ac_id) else {
+            errors.push(manifest_error(
+                item,
+                "Bead closure manifest AC ids must use AC-1, AC-2, ... in acceptance_criteria order",
+            ));
+            continue;
+        };
+        if ordinal == 0 || ordinal > acceptance_criteria.len() {
+            errors.push(manifest_error(
+                item,
+                &format!(
+                    "AC ordinal {ordinal} is outside the bead's {} acceptance criteria",
+                    acceptance_criteria.len()
+                ),
+            ));
+            continue;
+        }
+        if !covered.insert(ordinal) {
+            errors.push(manifest_error(item, "duplicate disposition for this acceptance criterion"));
+        }
+
+        match item.status.as_str() {
+            "satisfied" | "checked" => {
+                if !item.evidence_kind.trim().eq_ignore_ascii_case("docs") {
+                    let runnable = item.command.as_deref().is_some_and(|command| {
+                        let command = command.trim().trim_matches('`').trim();
+                        looks_like_runnable_command(command)
+                            && !is_closure_verifier_self_command(command)
+                    });
+                    if !runnable {
+                        errors.push(manifest_error(
+                            item,
+                            "satisfied non-doc Bead criteria require a runnable command",
+                        ));
+                    }
+                }
+            }
+            "deferred" => {
+                let follow_up = format!(
+                    "{} {}",
+                    item.evidence,
+                    item.artifact.as_deref().unwrap_or_default()
+                );
+                if !contains_bead_id(&follow_up) {
+                    errors.push(manifest_error(
+                        item,
+                        "deferred criteria must name a durable follow-up Bead",
+                    ));
+                }
+            }
+            "misframed" => {}
+            _ => errors.push(manifest_error(
+                item,
+                "Bead criteria require an explicit Satisfied, Deferred, or Misframed disposition",
+            )),
+        }
+    }
+
+    for (index, criterion) in acceptance_criteria.iter().enumerate() {
+        let ordinal = index + 1;
+        if !covered.contains(&ordinal) {
+            errors.push(ClosureEvidenceManifestError {
+                source: "bd.acceptance_criteria".to_string(),
+                ac_id: Some(format!("AC-{ordinal}")),
+                reason: format!("missing closure manifest disposition for `{criterion}`"),
+            });
+        }
+    }
+
+    errors
+}
+
+fn manifest_ac_ordinal(ac_id: &str) -> Option<usize> {
+    let normalized = ac_id.trim().to_ascii_lowercase();
+    let suffix = normalized.strip_prefix("ac").unwrap_or(&normalized);
+    suffix
+        .trim_start_matches(|ch| matches!(ch, ' ' | '-' | '_' | '#' | ':'))
+        .parse()
+        .ok()
+}
+
+fn contains_bead_id(text: &str) -> bool {
+    text.split(|ch: char| {
+        !(ch.is_ascii_alphanumeric() || matches!(ch, '-' | '.' | '_'))
+    })
+    .any(looks_like_bead_id)
 }
 
 fn validate_closure_evidence_readiness(
@@ -1881,6 +2078,7 @@ fn looks_like_shell_command(candidate: &str) -> bool {
         || candidate == "xtask"
         || candidate.starts_with("git ")
         || candidate.starts_with("gh ")
+        || candidate.starts_with("bd ")
         || candidate.starts_with("rg ")
         || candidate.starts_with("nix ")
         || candidate.starts_with("SINEX_")
@@ -1914,7 +2112,9 @@ fn looks_like_runnable_command(candidate: &str) -> bool {
         return false;
     }
     match cmd {
-        "xtask" | "sinexctl" | "git" | "gh" | "rg" | "nix" | "psql" | "nats" => true,
+        "xtask" | "sinexctl" | "git" | "gh" | "bd" | "rg" | "nix" | "psql" | "nats" => {
+            true
+        }
         _ => looks_like_shell_command(head),
     }
 }

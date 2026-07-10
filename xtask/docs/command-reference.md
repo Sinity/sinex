@@ -1807,7 +1807,7 @@ Verify phase plans and performance contracts
 | `report` | Print summary from a perf report JSON |
 | `compare` | Compare two perf reports |
 | `all` | Run perf only |
-| `closure` | Operationalize the 2026-05-11 closure-verification policy: fetch an issue body via `gh`, extract AC checkboxes and shell code blocks marked `verify`, and run each command, reporting pass/fail per command |
+| `closure` | Verify a closed Bead's AC dispositions and execute its evidence commands |
 
 ### `xtask verify plan`
 
@@ -1882,13 +1882,13 @@ Run perf only
 
 ### `xtask verify closure`
 
-Operationalize the 2026-05-11 closure-verification policy: fetch an issue body via `gh`, extract AC checkboxes and shell code blocks marked `verify`, and run each command, reporting pass/fail per command
+Verify a closed Bead's AC dispositions and execute its evidence commands
 
 **Arguments**
 
 | Flag | Value | Required | Description |
 |---|---|---|---|
-| `issue` | yes | yes | GitHub issue number to verify |
+| `bead-id` | yes | yes | Bead id to verify (for example, sinex-e7e9) |
 | `--json` | no | no | Emit JSON output |
 | `--dry-run` | no | no | Dry-run: parse and print commands without executing them |
 
