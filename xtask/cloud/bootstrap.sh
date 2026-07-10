@@ -59,26 +59,48 @@ repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$repo_root"
 
 # ---------------------------------------------------------------------------
-# Identity preflight: the first wave of cloud tasks silently ran against an
-# archived fork. Refuse to proceed when the remote is not the expected repo.
-# Set SINEX_EXPECTED_REPO (e.g. "Sinity/sinex") in the environment settings;
-# defaults to requiring a remote URL containing "sinex" and NOT "archive".
+# Identity preflight. The first cloud wave silently ran against an archived
+# fork, so identity must be PROVEN — but proven from history, not remotes:
+# Codex task checkouts at /workspace/<repo> have NO `origin` remote at all
+# (verified on the corrected live canary), so remote inspection can only
+# corroborate, never gate, cross-provider.
+#
+# Required gate: a live-repo lineage anchor — a commit that exists on the
+# live repository's master strictly after the archived fork diverged
+# (archive last push 2026-04-03). If the checkout doesn't contain it, the
+# base is stale or mis-bound. Override per-environment with
+# SINEX_LINEAGE_ANCHOR; per-packet exactness rides SINEX_EXPECTED_BASE_SHA.
 # ---------------------------------------------------------------------------
+# Default anchor: master commit c425316f9 (2026-07-10, test-consolidation
+# merge) — present on live master, absent from the archived fork.
+DEFAULT_LINEAGE_ANCHOR="c425316f9"
+
 identity_preflight() {
-  local remotes head
+  local remotes head anchor
   remotes="$(git remote -v 2>/dev/null || true)"
   head="$(git rev-parse HEAD 2>/dev/null || echo unknown)"
-  log "remote(s): $(echo "$remotes" | head -1)"
+  log "remote(s): $(echo "${remotes:-<none — normal on Codex task checkouts>}" | head -1)"
   log "HEAD: ${head}"
-  if [[ -n "${SINEX_EXPECTED_REPO:-}" ]]; then
-    echo "$remotes" | grep -q "$SINEX_EXPECTED_REPO" || \
+
+  # Optional corroboration only — many hosted checkouts carry no remote.
+  if [[ -n "$remotes" ]]; then
+    if [[ -n "${SINEX_EXPECTED_REPO:-}" ]] && ! echo "$remotes" | grep -q "$SINEX_EXPECTED_REPO"; then
       die "remote does not match SINEX_EXPECTED_REPO=${SINEX_EXPECTED_REPO} — mis-bound environment"
+    fi
+    if echo "$remotes" | grep -qi 'archive'; then
+      die "remote looks like an archived fork — rebind the environment to the live repo"
+    fi
   fi
-  if echo "$remotes" | grep -qi 'archive'; then
-    die "remote looks like an archived fork — rebind the environment to the live repo"
-  fi
-  # Task packets carry a base_sha; when the coordinator exports it, assert the
-  # checkout actually contains it (display labels on hosted envs have lied).
+
+  # Required lineage gate: works with or without remotes.
+  anchor="${SINEX_LINEAGE_ANCHOR:-${DEFAULT_LINEAGE_ANCHOR}}"
+  git cat-file -e "${anchor}^{commit}" 2>/dev/null || \
+    die "lineage anchor ${anchor} is absent from this checkout — stale or mis-bound base (archived fork?)"
+  git merge-base --is-ancestor "$anchor" HEAD 2>/dev/null || \
+    die "HEAD does not descend from lineage anchor ${anchor} — stale or mis-bound base"
+
+  # Task packets carry an exact base_sha; when the coordinator exports it,
+  # assert the checkout actually contains it (env display labels have lied).
   if [[ -n "${SINEX_EXPECTED_BASE_SHA:-}" ]]; then
     git merge-base --is-ancestor "$SINEX_EXPECTED_BASE_SHA" HEAD 2>/dev/null || \
       die "HEAD does not contain SINEX_EXPECTED_BASE_SHA=${SINEX_EXPECTED_BASE_SHA} — stale or mis-bound base"

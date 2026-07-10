@@ -53,8 +53,13 @@ All surfaces run ONE profile-aware, idempotent script:
 | --- | --- |
 | Claude Code Web setup | `.claude/setup.sh` (thin wrapper; profile from `SINEX_CLOUD_PROFILE`, default `db`) |
 | Claude cached session | `SessionStart` hook (installed into `.claude/settings.local.json` by the bootstrap) runs `bootstrap.sh <profile> --maintenance` — cached snapshots restore files, not running services |
-| Codex Cloud setup script | `xtask/cloud/bootstrap.sh <profile>` |
-| Codex Cloud maintenance script | `xtask/cloud/bootstrap.sh <profile> --maintenance` (runs after task-branch checkout; also refreshes the `xtask` binary so a cached default-branch build never verifies branch-modified code) |
+| Codex Cloud setup script | `cd /workspace/sinex && ./xtask/cloud/bootstrap.sh <profile>` |
+| Codex Cloud maintenance script | `cd /workspace/sinex && ./xtask/cloud/bootstrap.sh <profile> --maintenance` (runs after task-branch checkout; also refreshes the `xtask` binary so a cached default-branch build never verifies branch-modified code) |
+
+Codex scripts execute from `/workspace`, with the repo checked out at
+`/workspace/sinex` — the explicit `cd` is required (the first live wave failed
+partly on this). The script itself also re-anchors to the repo root from its
+own location, so any invocation that reaches the file works.
 
 Codex setup-phase exports do **not** persist into the agent phase; the
 bootstrap therefore persists its environment via an idempotent `~/.bashrc`
@@ -88,10 +93,17 @@ growth guards.
    pgvector + pg_jsonschema in-sandbox) is not implemented; do not claim it
    until a capability probe passes. Never fall back to `SQLX_OFFLINE`.
 
-The bootstrap also runs an **identity preflight** (`git remote -v`,
-`rev-parse HEAD`, optional `SINEX_EXPECTED_REPO` assertion, archived-fork
-guard) — the first cloud wave silently ran against an archived fork; lanes
-must abort on a mis-bound environment instead of producing stale-base diffs.
+The bootstrap also runs an **identity preflight**. The required gate is a
+**live-repo lineage anchor** — `git cat-file -e <anchor>^{commit}` plus
+`git merge-base --is-ancestor <anchor> HEAD` (default baked into the script;
+override with `SINEX_LINEAGE_ANCHOR`; per-packet exactness via
+`SINEX_EXPECTED_BASE_SHA`). Remote inspection (`SINEX_EXPECTED_REPO`,
+archived-fork pattern) is optional corroboration only: **Codex task
+checkouts at `/workspace/<repo>` have no `origin` remote at all** (verified
+on the live canary), so remotes can never be the cross-provider identity
+mechanism. Background: the first cloud wave silently ran against an archived
+fork; lanes must abort on a stale or mis-bound base instead of producing
+stale-base diffs.
 
 ### Settings: committed vs sandbox-only
 
