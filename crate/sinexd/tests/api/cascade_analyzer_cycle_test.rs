@@ -191,6 +191,119 @@ async fn handles_mixed_uuid_arrays(ctx: TestContext) -> color_eyre::Result<()> {
     Ok(())
 }
 
+/// sinex-d4qg: `find_integrity_violations_tx` was removed from
+/// `analyze_cascades_in_transaction` as provably redundant with
+/// `core.expand_cascade`'s own truncation guard -- expand_cascade only
+/// returns successfully when its transitive closure over `source_event_ids`
+/// is complete, and RAISEs otherwise, which is caught here as an Err before
+/// the (now-removed) violation check would ever have run. This test proves
+/// that safety net is still intact: a chain deeper than the configured
+/// max_depth must still surface as an error, not a silently-truncated
+/// "clean" result.
+#[sinex_test]
+async fn chain_exceeding_max_depth_still_errors_without_the_removed_violation_check(
+    ctx: TestContext,
+) -> color_eyre::Result<()> {
+    let pool = ctx.pool.clone();
+    color_eyre::eyre::ensure!(
+        cascade_prereqs_available(&pool).await?,
+        "core.prepare_cascade_session missing; run migrations before tests"
+    );
+    let analyzer = StreamingCascadeAnalyzer::with_config(
+        pool.clone(),
+        CascadeAnalyzerConfig {
+            batch_size: 10,
+            max_depth: 3,
+            include_weak_dependencies: false,
+            memory_limit_bytes: Some(32 * 1024 * 1024),
+            timeout: std::time::Duration::from_secs(30),
+        },
+    );
+
+    // Straight-line chain root -> e1 -> e2 -> e3 -> e4 -> e5: six levels
+    // (depth 0..5), two deeper than max_depth=3. expand_cascade must RAISE
+    // once it reaches the depth-3 probe and still finds e4 pending.
+    // The root is material-anchored (source_event_ids NULL, not an empty
+    // array -- the events_source_event_ids_non_empty CHECK constraint
+    // forbids `{}`, matching the Material XOR Derived provenance model).
+    let chain_len = 6;
+    let chain_ids: Vec<CoreUuid> = (0..chain_len).map(|_| CoreUuid::now_v7()).collect();
+    let unique_path = format!("/tmp/sinex-test-depth-chain-{}", CoreUuid::now_v7());
+    let material = pool
+        .source_materials()
+        .register_in_flight("depth-chain.source", Some(&unique_path), json!({}))
+        .await?;
+
+    for (idx, &id) in chain_ids.iter().enumerate() {
+        if idx == 0 {
+            sqlx::query!(
+                r#"
+                INSERT INTO core.events (
+                    id, source, event_type, host, payload, ts_orig,
+                    source_material_id, anchor_byte
+                ) VALUES ($1::uuid, $2, $3, $4, $5, $6, $7::uuid, $8)
+                "#,
+                id,
+                "depth-chain.source",
+                "depth-chain.event",
+                "localhost",
+                json!({"idx": idx}),
+                *temporal::now(),
+                material.id,
+                0_i64
+            )
+            .execute(&pool)
+            .await?;
+            continue;
+        }
+        let source_event_ids = vec![chain_ids[idx - 1]];
+        sqlx::query!(
+            r#"
+            INSERT INTO core.events (
+                id,
+                source,
+                event_type,
+                host,
+                payload,
+                ts_orig,
+                source_event_ids
+            ) VALUES (
+                $1::uuid,
+                $2,
+                $3,
+                $4,
+                $5,
+                $6,
+                $7::uuid[]::uuid[]
+            )
+            "#,
+            id,
+            "depth-chain.source",
+            "depth-chain.event",
+            "localhost",
+            json!({"idx": idx}),
+            *temporal::now(),
+            &source_event_ids
+        )
+        .execute(&pool)
+        .await?;
+    }
+
+    let root = chain_ids[0];
+    let result = analyzer.analyze_cascades(&[root]).await;
+    assert!(
+        result.is_err(),
+        "expected a max-depth error for a 6-level chain against max_depth=3, got Ok: {result:?}"
+    );
+    let err_str = result.unwrap_err().to_string();
+    assert!(
+        err_str.contains("max depth") || err_str.contains("depth"),
+        "expected a depth-exceeded error, got: {err_str}"
+    );
+
+    Ok(())
+}
+
 #[sinex_test]
 async fn timeout_prevents_indefinite_transaction_hold(ctx: TestContext) -> color_eyre::Result<()> {
     let pool = ctx.pool.clone();

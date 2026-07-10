@@ -2259,34 +2259,6 @@ impl<'a, 't> EventRepositoryTx<'a, 't> {
             .collect())
     }
 
-    pub async fn cascade_integrity_violations_paginated(
-        &mut self,
-        table_name: &str,
-        limit: i32,
-        offset: i32,
-    ) -> DbResult<Vec<(Uuid, Uuid)>> {
-        #[derive(sqlx::FromRow)]
-        struct ViolationRow {
-            live_event_id: Uuid,
-            archived_event_id: Uuid,
-        }
-
-        let rows = sqlx::query_as::<_, ViolationRow>(
-            "SELECT live_event_id, archived_event_id FROM core.cascade_find_integrity_violations_paginated($1, $2, $3)"
-        )
-        .bind(table_name)
-        .bind(limit)
-        .bind(offset)
-        .fetch_all(&mut **self.tx)
-        .await
-        .map_err(|e| db_error(e, "find cascade integrity violations paginated"))?;
-
-        Ok(rows
-            .into_iter()
-            .map(|row| (row.live_event_id, row.archived_event_id))
-            .collect())
-    }
-
     pub async fn get_event_dependencies(
         &mut self,
         table_name: &str,
