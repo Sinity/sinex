@@ -457,6 +457,33 @@ async fn bead_closure_contract_accepts_complete_manifest()
 }
 
 #[sinex_test]
+async fn bead_closure_contract_rejects_docs_claim_without_artifact_or_command()
+-> ::xtask::sandbox::TestResult<()> {
+    let payload = BeadClosurePayload {
+        id: "sinex-e7e9".to_string(),
+        status: "closed".to_string(),
+        acceptance_criteria: "- contributor guidance is current".to_string(),
+        close_reason: "\
+## Closure Evidence Manifest
+
+| AC | Evidence kind | Surface | Evidence | Status |
+| --- | --- | --- | --- | --- |
+| AC-1 | docs | contributor guide | guidance was updated | Satisfied |
+"
+        .to_string(),
+    };
+    let evidence = collect_closure_evidence(&payload);
+    let criteria = extract_bead_acceptance_criteria(&payload.acceptance_criteria);
+    let errors = validate_bead_closure_contract(&payload, &criteria, &evidence);
+    assert!(
+        errors
+            .iter()
+            .any(|error| error.reason.contains("command or named artifact"))
+    );
+    Ok(())
+}
+
+#[sinex_test]
 async fn extract_closure_matrix_items_reports_checkbox_status() -> ::xtask::sandbox::TestResult<()>
 {
     let body = "\

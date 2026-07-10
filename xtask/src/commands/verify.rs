@@ -1783,7 +1783,14 @@ fn validate_bead_closure_contract(
 
         match item.status.as_str() {
             "satisfied" | "checked" => {
-                if !item.evidence_kind.trim().eq_ignore_ascii_case("docs") {
+                if item.evidence_kind.trim().eq_ignore_ascii_case("docs") {
+                    if item.command.is_none() && item.artifact.is_none() {
+                        errors.push(manifest_error(
+                            item,
+                            "satisfied docs criteria require a runnable command or named artifact",
+                        ));
+                    }
+                } else {
                     let runnable = item.command.as_deref().is_some_and(|command| {
                         let command = command.trim().trim_matches('`').trim();
                         looks_like_runnable_command(command)

@@ -273,10 +273,11 @@ order of the Bead's `acceptance_criteria` field:
 ```
 
 Use exactly `Satisfied`, `Deferred`, or `Misframed`. Every original AC needs
-one ordinal row. A satisfied non-doc row needs a runnable command; a deferred
-row needs a follow-up Bead id. The verifier executes commands from the manifest
-or from a `Verification` shell block and fails closed on missing/malformed Beads
-JSON, an open Bead, incomplete AC coverage, invalid evidence, or command failure.
+one ordinal row. A satisfied non-doc row needs a runnable command; a docs row
+needs a command or named artifact; a deferred row needs a follow-up Bead id.
+The verifier executes commands from the manifest or from a `Verification` shell
+block and fails closed on missing/malformed Beads JSON, an open Bead, incomplete
+AC coverage, invalid evidence, or command failure.
 There is no GitHub Actions replacement: Beads has no GitHub close event, so the
 verifier is a local pre-close/review gate.
 
