@@ -4,7 +4,7 @@ What is this PR trying to achieve?
 
 ## Source
 
-- Closes:
+- Bead: (e.g. `sinex-abcd` — `bd show <id>` for design/AC; GitHub Issues are retired as of 2026-07-10, see CONTRIBUTING.md)
 - Related:
 - Derived from doc / report / note:
 
@@ -90,7 +90,7 @@ Anything that should become a separate issue after this lands.
 
 ## Checklist
 
-- [ ] This branch is tied to an issue or an explicit source document/report.
+- [ ] This branch is tied to a bead (`bd`) or an explicit source document/report.
 - [ ] The PR body explains scope and non-goals clearly.
 - [ ] Verification is recorded honestly.
 - [ ] Docs / operational impact is called out if relevant.
