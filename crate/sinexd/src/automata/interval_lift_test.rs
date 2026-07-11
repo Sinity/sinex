@@ -166,7 +166,7 @@ async fn interval_lift_closes_previous_focus_on_next_transition(
 
     assert_eq!(output.ts_orig, end);
     assert_eq!(output.source_event_ids, vec![first_id, second_id]);
-    assert_eq!(output.semantics_version.as_deref(), Some("1.0.0"));
+    assert_eq!(output.semantics_version.as_deref(), Some("2.0.0"));
     assert_eq!(output.payload.state_kind, "desktop.focus");
     assert_eq!(output.payload.subject_id.as_deref(), Some("0xabc"));
     assert_eq!(output.payload.label.as_deref(), Some("kitty: codex"));
@@ -183,24 +183,28 @@ async fn interval_lift_closes_previous_focus_on_next_transition(
         output.payload.attributes.get("workspace_id").map(String::as_str),
         Some("2")
     );
-    let expected_key = format!("interval:desktop.focus:0xabc:{first_id}:{second_id}");
+    let expected_key = format!("interval:desktop.focus:0xabc:ts:{start}");
     assert_eq!(output.equivalence_key.as_deref(), Some(expected_key.as_str()));
     Ok(())
 }
 
 #[sinex_test]
-async fn interval_lift_equivalence_key_uses_parent_ids_not_local_sequence(
+async fn interval_lift_equivalence_key_is_start_occurrence_not_parent_ids(
 ) -> xtask::sandbox::TestResult<()> {
+    // sinex-ecy / y8v: the interval key is the material occurrence of the START
+    // evidence (start-anchored — ends move, starts do not), never the parent event
+    // interpretation ids (which re-mint every replay and collide -> silent suppression).
     let start = Timestamp::from_unix_timestamp(1_700_000_000)
         .ok_or_else(|| color_eyre::eyre::eyre!("valid timestamp"))?;
     let end = Timestamp::from_unix_timestamp(1_700_000_010)
         .ok_or_else(|| color_eyre::eyre::eyre!("valid timestamp"))?;
+    let material = Uuid::now_v7();
 
     let mut automaton = IntervalLift;
     let mut state = IntervalLiftState::default();
-    let first_context = focus_context(start);
+    let first_context = focus_context_with_material(start, material, 100);
     let first_id = first_context.trigger_uuid();
-    let second_context = focus_context(end);
+    let second_context = focus_context_with_material(end, material, 200);
     let second_id = second_context.trigger_uuid();
 
     automaton
@@ -231,13 +235,19 @@ async fn interval_lift_equivalence_key_uses_parent_ids_not_local_sequence(
         .await?
         .expect("subject transition closes one interval");
 
-    assert_eq!(
-        output.payload.interval_id,
-        format!("interval:desktop.focus:0xabc:{first_id}:{second_id}")
+    // Start-anchored on the FIRST evidence's material occurrence (anchor 100), not
+    // the end's (200), and not either parent event interpretation id.
+    let expected = format!("interval:desktop.focus:0xabc:{material}:100");
+    assert_eq!(output.payload.interval_id, expected);
+    assert_eq!(output.equivalence_key.as_deref(), Some(expected.as_str()));
+    let key = output.equivalence_key.expect("interval carries an equivalence key");
+    assert!(
+        !key.contains(&first_id.to_string()) && !key.contains(&second_id.to_string()),
+        "occurrence key must not embed parent event interpretation ids: {key}"
     );
-    assert_eq!(
-        output.equivalence_key.as_deref(),
-        Some(output.payload.interval_id.as_str())
+    assert!(
+        !key.contains(":200"),
+        "key must be start-anchored (anchor 100), not the moved end (200): {key}"
     );
     Ok(())
 }
@@ -430,7 +440,7 @@ async fn interval_lift_closes_previous_workspace_on_next_switch(
             .map(String::as_str),
         Some("0xabc")
     );
-    let expected_key = format!("interval:desktop.workspace:workspace:2:{first_id}:{second_id}");
+    let expected_key = format!("interval:desktop.workspace:workspace:2:ts:{start}");
     assert_eq!(output.equivalence_key.as_deref(), Some(expected_key.as_str()));
     Ok(())
 }
@@ -536,7 +546,7 @@ async fn interval_lift_lifts_activitywatch_window_observed_duration(
         Some("30000")
     );
     let expected_key =
-        format!("interval:desktop.activitywatch.window:app:kitty|title:codex:{first_id}:{first_id}");
+        format!("interval:desktop.activitywatch.window:app:kitty|title:codex:ts:{start}");
     assert_eq!(output.equivalence_key.as_deref(), Some(expected_key.as_str()));
     Ok(())
 }
@@ -762,7 +772,7 @@ async fn interval_lift_lifts_activitywatch_afk_observed_duration(
         Some("afk")
     );
     let expected_key =
-        format!("interval:desktop.activitywatch.afk:status:afk:{parent_id}:{parent_id}");
+        format!("interval:desktop.activitywatch.afk:status:afk:ts:{start}");
     assert_eq!(output.equivalence_key.as_deref(), Some(expected_key.as_str()));
     Ok(())
 }
@@ -803,6 +813,8 @@ async fn interval_lift_clamps_open_activitywatch_afk_duration_at_creation_time(
     let observation = StateObservation {
         state_kind: "desktop.activitywatch.afk".to_string(),
         event_id,
+        material_id: Some(Uuid::now_v7()),
+        anchor_byte: Some(4096),
         ts_orig: start,
         subject_id: Some("status:afk".to_string()),
         label: Some("afk".to_string()),
@@ -898,7 +910,7 @@ async fn interval_lift_closes_systemd_unit_on_stop() -> xtask::sandbox::TestResu
         Some("running")
     );
     let expected_key =
-        format!("interval:system.systemd.unit:sinexd.service:{start_id}:{stop_id}");
+        format!("interval:system.systemd.unit:sinexd.service:ts:{start}");
     assert_eq!(output.equivalence_key.as_deref(), Some(expected_key.as_str()));
     Ok(())
 }
@@ -959,6 +971,18 @@ async fn interval_lift_decodes_legacy_focus_checkpoint_state(
         Some("2")
     );
     Ok(())
+}
+
+fn focus_context_with_material(
+    ts_orig: Timestamp,
+    material_id: Uuid,
+    anchor_byte: i64,
+) -> AutomatonContext {
+    AutomatonContext {
+        trigger_material_id: Some(material_id),
+        trigger_anchor_byte: Some(anchor_byte),
+        ..focus_context(ts_orig)
+    }
 }
 
 fn focus_context(ts_orig: Timestamp) -> AutomatonContext {
