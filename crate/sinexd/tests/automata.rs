@@ -14,6 +14,7 @@ mod automata {
     mod entity_resolver_test;
     mod hourly_summarizer_test;
     mod instruction_reconciler_test;
+    mod interval_property_test;
     mod relation_extractor_test;
     mod session_detector_test;
     mod summarizer_support;
