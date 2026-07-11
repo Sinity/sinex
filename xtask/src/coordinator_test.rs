@@ -1583,6 +1583,30 @@ fn json_ctx() -> CommandContext {
 }
 
 #[sinex_test]
+async fn proof_wait_fails_closed_for_unidentifiable_queue() -> TestResult<()> {
+    let ctx = json_ctx();
+    let result = wait_for_coordination_result(
+        "check",
+        &CoordinationResult::Queued { current_job_id: 55 },
+        &ctx,
+    )?;
+    assert!(result.is_failure());
+    let data = result.data.as_ref().expect("should have data");
+    assert_eq!(data["proof_status"], "incomplete");
+    assert_eq!(result.errors[0].code, "XTASK_BG_WAIT_QUEUED");
+
+    let pending = wait_for_coordination_result(
+        "check",
+        &CoordinationResult::Queued { current_job_id: -1 },
+        &ctx,
+    )?;
+    let pending_data = pending.data.as_ref().expect("should have data");
+    assert_eq!(pending_data["current_job_id"], serde_json::Value::Null);
+    assert_eq!(pending_data["current_job_pending_assignment"], true);
+    Ok(())
+}
+
+#[sinex_test]
 async fn test_coordination_to_result_fresh() -> TestResult<()> {
     let ctx = json_ctx();
     let result = coordination_fresh_result(
@@ -1608,6 +1632,7 @@ async fn test_coordination_to_result_fresh() -> TestResult<()> {
         serde_json::json!(["sinex-db", "xtask"])
     );
     assert_eq!(data["compiled_packages_issue"], serde_json::Value::Null);
+    assert_eq!(data["proof_status"], "incomplete");
     Ok(())
 }
 
@@ -1660,6 +1685,7 @@ async fn test_coordination_to_result_attached() -> TestResult<()> {
     assert_eq!(data["action"], "attached");
     assert_eq!(data["job_id"], 99);
     assert!(data["hint"].as_str().unwrap().contains("99"));
+    assert_eq!(data["proof_status"], "incomplete");
     Ok(())
 }
 
@@ -1677,6 +1703,7 @@ async fn test_coordination_to_result_superseded() -> TestResult<()> {
     assert_eq!(data["action"], "superseded");
     assert_eq!(data["old_job_id"], 10);
     assert_eq!(data["new_job_id"], 20);
+    assert_eq!(data["proof_status"], "incomplete");
     Ok(())
 }
 
@@ -1691,6 +1718,7 @@ async fn test_coordination_to_result_queued() -> TestResult<()> {
     assert_eq!(data["action"], "queued");
     assert_eq!(data["current_job_id"], 55);
     assert_eq!(data["hint"], "Monitor with: xtask jobs status 55");
+    assert_eq!(data["proof_status"], "incomplete");
     Ok(())
 }
 
@@ -1710,6 +1738,7 @@ async fn test_coordination_to_result_queued_pending_assignment() -> TestResult<(
     assert_eq!(data["current_job_id"], serde_json::Value::Null);
     assert_eq!(data["current_job_pending_assignment"], true);
     assert_eq!(data["hint"], "Monitor with: xtask jobs active");
+    assert_eq!(data["proof_status"], "incomplete");
     Ok(())
 }
 
@@ -1723,6 +1752,7 @@ async fn test_coordination_to_result_started() -> TestResult<()> {
     let data = result.data.as_ref().expect("should have data");
     assert_eq!(data["action"], "started");
     assert_eq!(data["job_id"], -1);
+    assert_eq!(data["proof_status"], "incomplete");
     Ok(())
 }
 

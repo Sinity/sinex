@@ -1,9 +1,9 @@
 //! Cargo diagnostic parsing - extract structured errors from cargo --message-format=json
 
-use color_eyre::eyre::{bail, eyre};
+use color_eyre::eyre::bail;
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
-use std::io::{BufRead, BufReader, Read};
+use std::io::{BufRead, BufReader, Read, Write};
 use std::process::Stdio;
 use std::time::Duration;
 
@@ -55,6 +55,39 @@ pub struct LintCount {
 pub struct FileCount {
     pub path: String,
     pub count: usize,
+}
+
+const CARGO_STDERR_TAIL_LIMIT: usize = 64 * 1024;
+const CARGO_STDERR_TRUNCATION_MARKER: &str = "\n[xtask: stderr truncated to last 65536 bytes]\n";
+
+fn bounded_tail_append(buffer: &mut Vec<u8>, bytes: &[u8]) {
+    buffer.extend_from_slice(bytes);
+    if buffer.len() > CARGO_STDERR_TAIL_LIMIT {
+        let keep = CARGO_STDERR_TAIL_LIMIT.saturating_sub(CARGO_STDERR_TRUNCATION_MARKER.len());
+        let start = buffer.len().saturating_sub(keep);
+        let mut trimmed = CARGO_STDERR_TRUNCATION_MARKER.as_bytes().to_vec();
+        trimmed.extend_from_slice(&buffer[start..]);
+        *buffer = trimmed;
+    }
+}
+
+fn spawn_stderr_tee<R: Read + Send + 'static>(mut stderr: R) -> std::thread::JoinHandle<Vec<u8>> {
+    std::thread::spawn(move || {
+        let mut tail = Vec::new();
+        let mut chunk = [0_u8; 8192];
+        loop {
+            match stderr.read(&mut chunk) {
+                Ok(0) => break,
+                Ok(count) => {
+                    let bytes = &chunk[..count];
+                    let _ = std::io::stderr().write_all(bytes);
+                    bounded_tail_append(&mut tail, bytes);
+                }
+                Err(_) => break,
+            }
+        }
+        tail
+    })
 }
 
 fn diagnostic_identity_key(diagnostic: &CompilerDiagnostic) -> String {
@@ -210,15 +243,18 @@ impl CompilerDiagnostic {
 /// Uses `SINEX_CARGO_TIMEOUT` (default: 600s) to prevent indefinite hangs when
 /// the cargo target/ lock is held by a concurrent process (e.g., nextest, another
 /// `cargo check`). On timeout, kills the child process and returns an error.
-fn run_cargo_with_timeout(cargo_args: &[&str]) -> color_eyre::eyre::Result<(Vec<u8>, bool)> {
+fn run_cargo_with_timeout(
+    cargo_args: &[&str],
+) -> color_eyre::eyre::Result<(Vec<u8>, bool, Vec<u8>)> {
     let timeout_secs =
         crate::parse_positive_u64_env_or_default("SINEX_CARGO_TIMEOUT", 600, "cargo timeout");
 
     let mut child = cargo_command()
         .args(cargo_args)
         .stdout(Stdio::piped())
-        .stderr(Stdio::inherit()) // Stream compiler progress/errors to terminal in real-time
+        .stderr(Stdio::piped())
         .spawn()?;
+    let stderr_handle = child.stderr.take().map(spawn_stderr_tee);
 
     let mut timeout_guard = ProcessTimeoutGuard::start_for_process_group_leader(
         child.id(),
@@ -234,17 +270,21 @@ fn run_cargo_with_timeout(cargo_args: &[&str]) -> color_eyre::eyre::Result<(Vec<
     }
 
     let exit_status = child.wait()?;
+    let stderr_tail = stderr_handle
+        .and_then(|handle| handle.join().ok())
+        .unwrap_or_default();
 
     if timeout_guard.finish() {
-        return Err(eyre!(
+        return Err(crate::process::ProcessTimedOut::new(format!(
             "cargo timed out after {timeout_secs}s — possible cargo target/ lock contention \
              from a concurrent cargo process. \
              Set SINEX_CARGO_TIMEOUT env var to adjust. \
              Check for other running xtask/cargo processes with: xtask jobs active"
-        ));
+        ))
+        .into());
     }
 
-    Ok((stdout_bytes, exit_status.success()))
+    Ok((stdout_bytes, exit_status.success(), stderr_tail))
 }
 
 /// Estimate how many packages would be compiled for the given cargo args.
@@ -354,7 +394,7 @@ fn track_progress_artifact(
 fn run_cargo_streaming<F>(
     cargo_args: &[&str],
     mut on_artifact: F,
-) -> color_eyre::eyre::Result<(Vec<u8>, bool)>
+) -> color_eyre::eyre::Result<(Vec<u8>, bool, Vec<u8>)>
 where
     F: FnMut(usize),
 {
@@ -364,8 +404,9 @@ where
     let mut child = cargo_command()
         .args(cargo_args)
         .stdout(Stdio::piped())
-        .stderr(Stdio::inherit())
+        .stderr(Stdio::piped())
         .spawn()?;
+    let stderr_handle = child.stderr.take().map(spawn_stderr_tee);
 
     let mut timeout_guard = ProcessTimeoutGuard::start_for_process_group_leader(
         child.id(),
@@ -393,17 +434,21 @@ where
     }
 
     let exit_status = child.wait()?;
+    let stderr_tail = stderr_handle
+        .and_then(|handle| handle.join().ok())
+        .unwrap_or_default();
 
     if timeout_guard.finish() {
-        return Err(eyre!(
+        return Err(crate::process::ProcessTimedOut::new(format!(
             "cargo timed out after {timeout_secs}s — possible cargo target/ lock contention \
              from a concurrent cargo process. \
              Set SINEX_CARGO_TIMEOUT env var to adjust. \
              Check for other running xtask/cargo processes with: xtask jobs active"
-        ));
+        ))
+        .into());
     }
 
-    Ok((all_bytes, exit_status.success()))
+    Ok((all_bytes, exit_status.success(), stderr_tail))
 }
 
 /// Run cargo check with JSON output and parse diagnostics
@@ -422,9 +467,9 @@ pub fn run_cargo_check(args: &[&str]) -> color_eyre::eyre::Result<DiagnosticSumm
     let mut cmd_args = vec!["check", "--message-format=json"];
     cmd_args.extend(args);
 
-    let (stdout_bytes, success) = run_cargo_with_timeout(&cmd_args)?;
+    let (stdout_bytes, success, stderr_tail) = run_cargo_with_timeout(&cmd_args)?;
     let stdout = String::from_utf8_lossy(&stdout_bytes);
-    parse_cargo_json_output(&stdout, success)
+    parse_cargo_json_output_with_stderr(&stdout, success, &stderr_tail)
 }
 
 /// Run cargo clippy with JSON output and parse diagnostics
@@ -442,9 +487,9 @@ pub fn run_cargo_clippy(args: &[&str]) -> color_eyre::eyre::Result<DiagnosticSum
     let mut cmd_args = vec!["clippy", "--message-format=json"];
     cmd_args.extend(args);
 
-    let (stdout_bytes, success) = run_cargo_with_timeout(&cmd_args)?;
+    let (stdout_bytes, success, stderr_tail) = run_cargo_with_timeout(&cmd_args)?;
     let stdout = String::from_utf8_lossy(&stdout_bytes);
-    parse_cargo_json_output(&stdout, success)
+    parse_cargo_json_output_with_stderr(&stdout, success, &stderr_tail)
 }
 
 /// Run cargo check with streaming artifact count callbacks for progress reporting.
@@ -470,9 +515,9 @@ where
     let mut cmd_args = vec!["check", "--message-format=json"];
     cmd_args.extend(args);
 
-    let (stdout_bytes, success) = run_cargo_streaming(&cmd_args, on_artifact)?;
+    let (stdout_bytes, success, stderr_tail) = run_cargo_streaming(&cmd_args, on_artifact)?;
     let stdout = String::from_utf8_lossy(&stdout_bytes);
-    parse_cargo_json_output(&stdout, success)
+    parse_cargo_json_output_with_stderr(&stdout, success, &stderr_tail)
 }
 
 /// Run cargo clippy with streaming artifact count callbacks for progress reporting.
@@ -495,9 +540,9 @@ where
     let mut cmd_args = vec!["clippy", "--message-format=json"];
     cmd_args.extend(args);
 
-    let (stdout_bytes, success) = run_cargo_streaming(&cmd_args, on_artifact)?;
+    let (stdout_bytes, success, stderr_tail) = run_cargo_streaming(&cmd_args, on_artifact)?;
     let stdout = String::from_utf8_lossy(&stdout_bytes);
-    parse_cargo_json_output(&stdout, success)
+    parse_cargo_json_output_with_stderr(&stdout, success, &stderr_tail)
 }
 
 /// Run cargo build with streaming artifact count callbacks for progress reporting.
@@ -519,15 +564,23 @@ where
     let mut cmd_args = vec!["build", "--message-format=json"];
     cmd_args.extend(args);
 
-    let (stdout_bytes, success) = run_cargo_streaming(&cmd_args, on_artifact)?;
+    let (stdout_bytes, success, stderr_tail) = run_cargo_streaming(&cmd_args, on_artifact)?;
     let stdout = String::from_utf8_lossy(&stdout_bytes);
-    parse_cargo_json_output(&stdout, success)
+    parse_cargo_json_output_with_stderr(&stdout, success, &stderr_tail)
 }
 
 /// Parse cargo's JSON output format
 pub fn parse_cargo_json_output(
     output: &str,
     success: bool,
+) -> color_eyre::eyre::Result<DiagnosticSummary> {
+    parse_cargo_json_output_with_stderr(output, success, &[])
+}
+
+pub fn parse_cargo_json_output_with_stderr(
+    output: &str,
+    success: bool,
+    stderr_tail: &[u8],
 ) -> color_eyre::eyre::Result<DiagnosticSummary> {
     let mut diagnostics = Vec::new();
     let mut compiled_packages = std::collections::HashSet::new();
@@ -574,7 +627,7 @@ pub fn parse_cargo_json_output(
         .filter(|diag| diag.level == "warning")
         .count();
     if !success && errors == 0 {
-        diagnostics.push(unparsed_cargo_failure_diagnostic(output));
+        diagnostics.push(unparsed_cargo_failure_diagnostic(output, stderr_tail));
         errors = 1;
     }
 
@@ -587,12 +640,23 @@ pub fn parse_cargo_json_output(
     })
 }
 
-fn unparsed_cargo_failure_diagnostic(output: &str) -> CompilerDiagnostic {
-    let tail = output_tail(output, 24);
-    let message = if tail.is_empty() {
-        "cargo failed without parseable compiler diagnostics and emitted no stdout".to_string()
+fn unparsed_cargo_failure_diagnostic(output: &str, stderr_tail: &[u8]) -> CompilerDiagnostic {
+    let stdout_tail = output_tail(output, 24);
+    let stderr_tail = String::from_utf8_lossy(stderr_tail).trim().to_string();
+    let mut evidence = Vec::new();
+    if !stderr_tail.is_empty() {
+        evidence.push(format!("stderr tail:\n{stderr_tail}"));
+    }
+    if !stdout_tail.is_empty() {
+        evidence.push(format!("raw output tail:\n{stdout_tail}"));
+    }
+    let message = if evidence.is_empty() {
+        "cargo failed without parseable compiler diagnostics and emitted no output".to_string()
     } else {
-        format!("cargo failed without parseable compiler diagnostics; raw output tail:\n{tail}")
+        format!(
+            "cargo failed without parseable compiler diagnostics; {}",
+            evidence.join("\n")
+        )
     };
     CompilerDiagnostic {
         level: "error".to_string(),

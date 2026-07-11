@@ -87,6 +87,10 @@ struct GlobalOpts {
     #[arg(long, global = true)]
     bg: bool,
 
+    /// With --bg, wait for terminal proof instead of returning after launch.
+    #[arg(long, global = true, requires = "bg")]
+    wait: bool,
+
     /// Run command in foreground (default). Explicit flag for scripts.
     #[arg(long, global = true, conflicts_with = "bg")]
     fg: bool,
@@ -123,6 +127,10 @@ impl GlobalOpts {
     /// Check if background execution is requested.
     pub(crate) fn is_background(&self) -> bool {
         self.bg && !self.fg
+    }
+
+    pub(crate) fn background_wait(&self) -> bool {
+        self.is_background() && self.wait
     }
 }
 
@@ -414,6 +422,10 @@ fn command_dispatch_metadata(
     }
 }
 
+fn command_supports_background_wait(command_name: &str) -> bool {
+    matches!(command_name, "fix" | "check" | "test" | "build")
+}
+
 pub async fn run_cli() -> Result<()> {
     // Use try_get_matches so we can intercept parse errors and route them
     // through the JSON formatter when --json is present, instead of letting
@@ -465,6 +477,20 @@ pub async fn run_cli() -> Result<()> {
 
     // Dispatch — extract metadata (including timeout/history behavior) before consuming the command
     let (command_name, subcommand, profile, command_metadata) = command_dispatch_metadata(&command);
+    if cli.global.background_wait() && !command_supports_background_wait(command_name) {
+        let result = crate::command::CommandResult::failure(
+            crate::output::StructuredError::new(
+                "XTASK_BG_WAIT_UNSUPPORTED",
+                format!("--wait is not supported by 'xtask {command_name}'"),
+            )
+            .with_suggestion(
+                "use --wait with a coordinated background command (fix, check, test, or build)",
+            ),
+        )
+        .with_data(serde_json::json!({"proof_status": "incomplete"}));
+        result.print(&OutputWriter::new(output_format), command_name);
+        std::process::exit(2);
+    }
 
     let command_timeout = command_metadata.timeout;
     let tracks_invocation = command_metadata.track_in_history;
@@ -523,6 +549,7 @@ pub async fn run_cli() -> Result<()> {
         invocation_id,
         command_name,
     )
+    .with_background_wait(cli.global.background_wait())
     .with_preopened_history_db_write(history_db_write.take())
     .with_preopened_history_db_query(history_db_query.take());
 
@@ -576,8 +603,21 @@ pub async fn run_cli() -> Result<()> {
         &mut timed_out,
     ))
     .await;
+    let result_timed_out = timed_out
+        || result
+            .as_ref()
+            .err()
+            .is_some_and(process::report_is_process_timeout);
+    if result_timed_out {
+        result = match result {
+            Ok(result) => Ok(result),
+            Err(error) => Ok(crate::command::CommandResult::failure(
+                crate::output::StructuredError::new("XTASK_TIMEOUT", error.to_string()),
+            )),
+        };
+    }
 
-    let lingering_process_groups = if timed_out {
+    let lingering_process_groups = if result_timed_out {
         0
     } else {
         match process::terminate_registered_process_groups("command completion") {
@@ -605,15 +645,19 @@ pub async fn run_cli() -> Result<()> {
         .as_mut()
         .map(process::InvocationResourceMonitor::stop);
 
-    let invocation_exit_code = match &result {
-        Ok(res)
-            if res.status == crate::output::Status::Failed
-                || res.status == crate::output::Status::Partial =>
-        {
-            1
+    let invocation_exit_code = if result_timed_out {
+        124
+    } else {
+        match &result {
+            Ok(res)
+                if res.status == crate::output::Status::Failed
+                    || res.status == crate::output::Status::Partial =>
+            {
+                1
+            }
+            Ok(_) => 0,
+            Err(_) => 1,
         }
-        Ok(_) => 0,
-        Err(_) => 1,
     };
 
     // Update history
@@ -623,6 +667,7 @@ pub async fn run_cli() -> Result<()> {
             id,
             &result,
             invocation_exit_code,
+            result_timed_out,
             process_metrics.as_ref(),
             history_db_open_error.as_deref(),
         );
@@ -650,6 +695,9 @@ pub async fn run_cli() -> Result<()> {
     match result {
         Ok(res) => {
             res.print(ctx.writer(), command_name);
+            if result_timed_out {
+                std::process::exit(124);
+            }
             if res.status == crate::output::Status::Failed
                 || res.status == crate::output::Status::Partial
             {
@@ -667,18 +715,23 @@ fn finish_invocation_history(
     id: i64,
     result: &Result<command::CommandResult>,
     invocation_exit_code: i32,
+    timed_out: bool,
     process_metrics: Option<&process::InvocationResourceMetrics>,
     history_db_open_error: Option<&str>,
 ) {
-    let status = match result {
-        Ok(res)
-            if res.status == crate::output::Status::Failed
-                || res.status == crate::output::Status::Partial =>
-        {
-            crate::history::InvocationStatus::Failed
+    let status = if timed_out {
+        crate::history::InvocationStatus::Cancelled
+    } else {
+        match result {
+            Ok(res)
+                if res.status == crate::output::Status::Failed
+                    || res.status == crate::output::Status::Partial =>
+            {
+                crate::history::InvocationStatus::Failed
+            }
+            Ok(_) => crate::history::InvocationStatus::Success,
+            Err(_) => crate::history::InvocationStatus::Failed,
         }
-        Ok(_) => crate::history::InvocationStatus::Success,
-        Err(_) => crate::history::InvocationStatus::Failed,
     };
     let duration = match result {
         Ok(res) => res.duration_secs.unwrap_or(ctx.elapsed().as_secs_f64()),
@@ -819,7 +872,7 @@ fn record_bg_job_completion(
         let job_status = if invocation_exit_code == 0 {
             crate::history::JobLifecycleStatus::Completed
         } else if invocation_exit_code == 124 {
-            crate::history::JobLifecycleStatus::Killed
+            crate::history::JobLifecycleStatus::TimedOut
         } else {
             crate::history::JobLifecycleStatus::Failed
         };
@@ -849,6 +902,8 @@ fn record_bg_job_completion(
     if config().prefs.notify_on_completion {
         let status_str = if invocation_exit_code == 0 {
             "success"
+        } else if invocation_exit_code == 124 {
+            "timed out"
         } else {
             "failed"
         };
@@ -907,9 +962,10 @@ where
             );
         }
     }
-    Err(eyre!(
+    Err(process::ProcessTimedOut::new(format!(
         "Command '{command_name}' timed out after {timeout:?}"
     ))
+    .into())
 }
 
 fn open_history_db(history_access: HistoryAccessMode) -> Result<HistoryDb> {

@@ -89,7 +89,7 @@ impl HistoryDb {
         self.mark_background_jobs_orphaned(
             &orphaned_background_job_ids.into_iter().collect::<Vec<_>>(),
         )?;
-        self.mark_background_jobs_killed_by_watchdog(
+        self.mark_background_jobs_timed_out_by_watchdog(
             &killed_background_job_ids.into_iter().collect::<Vec<_>>(),
         )?;
         Ok(())
@@ -253,7 +253,7 @@ impl HistoryDb {
         Ok(())
     }
 
-    fn mark_background_jobs_killed_by_watchdog(&self, background_job_ids: &[i64]) -> Result<()> {
+    fn mark_background_jobs_timed_out_by_watchdog(&self, background_job_ids: &[i64]) -> Result<()> {
         if background_job_ids.is_empty() {
             return Ok(());
         }
@@ -264,7 +264,7 @@ impl HistoryDb {
             let sql = format!(
                 r"
                 UPDATE background_jobs
-                SET job_status = 'killed',
+                SET job_status = 'timed_out',
                     exit_code = 124,
                     finished_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now')
                 WHERE id IN ({})
@@ -274,7 +274,7 @@ impl HistoryDb {
             );
             self.conn
                 .execute(&sql, rusqlite::params_from_iter(chunk.iter()))
-                .context("failed to mark zombie background jobs as killed")?;
+                .context("failed to mark zombie background jobs as timed out")?;
         }
         Ok(())
     }

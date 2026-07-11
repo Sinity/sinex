@@ -566,7 +566,10 @@ async fn execute_wait(
 
     let job_failed = matches!(
         job.job_status,
-        JobLifecycleStatus::Failed | JobLifecycleStatus::Orphaned | JobLifecycleStatus::Killed
+        JobLifecycleStatus::Failed
+            | JobLifecycleStatus::Orphaned
+            | JobLifecycleStatus::Killed
+            | JobLifecycleStatus::TimedOut
     ) || job.exit_code.is_some_and(|c| c != 0);
 
     let mut result = if job_failed {
@@ -682,6 +685,7 @@ fn status_to_str(status: JobLifecycleStatus) -> &'static str {
         JobLifecycleStatus::Failed => "failed",
         JobLifecycleStatus::Orphaned => "orphaned",
         JobLifecycleStatus::Killed => "killed",
+        JobLifecycleStatus::TimedOut => "timed_out",
     }
 }
 

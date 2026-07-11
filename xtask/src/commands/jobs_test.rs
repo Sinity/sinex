@@ -63,6 +63,7 @@ async fn test_status_to_str() -> ::xtask::sandbox::TestResult<()> {
     assert_eq!(status_to_str(JobLifecycleStatus::Failed), "failed");
     assert_eq!(status_to_str(JobLifecycleStatus::Orphaned), "orphaned");
     assert_eq!(status_to_str(JobLifecycleStatus::Killed), "killed");
+    assert_eq!(status_to_str(JobLifecycleStatus::TimedOut), "timed_out");
     Ok(())
 }
 

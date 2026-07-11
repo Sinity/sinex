@@ -430,6 +430,7 @@ async fn render_status_tick(ctx: &CommandContext, watch: bool) -> Result<Option<
                 crate::history::JobLifecycleStatus::Failed
                     | crate::history::JobLifecycleStatus::Orphaned
                     | crate::history::JobLifecycleStatus::Killed
+                    | crate::history::JobLifecycleStatus::TimedOut
             )
         })
         .count();

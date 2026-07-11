@@ -1066,6 +1066,35 @@ fn terminate_process_timeout_handle(handle: &ProcessTimeoutHandle, reason: &str)
     )
 }
 
+#[derive(Debug)]
+pub struct ProcessTimedOut {
+    message: String,
+}
+
+impl ProcessTimedOut {
+    #[must_use]
+    pub fn new(message: impl Into<String>) -> Self {
+        Self {
+            message: message.into(),
+        }
+    }
+}
+
+impl std::fmt::Display for ProcessTimedOut {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str(&self.message)
+    }
+}
+
+impl std::error::Error for ProcessTimedOut {}
+
+#[must_use]
+pub fn report_is_process_timeout(error: &color_eyre::eyre::Report) -> bool {
+    error
+        .chain()
+        .any(|cause| cause.downcast_ref::<ProcessTimedOut>().is_some())
+}
+
 pub struct ProcessTimeoutGuard {
     #[cfg(target_os = "linux")]
     cancel_tx: Option<std::sync::mpsc::Sender<()>>,
