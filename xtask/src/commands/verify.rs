@@ -2119,11 +2119,31 @@ fn looks_like_runnable_command(candidate: &str) -> bool {
         return false;
     }
     match cmd {
-        "xtask" | "sinexctl" | "git" | "gh" | "bd" | "rg" | "nix" | "psql" | "nats" => {
-            true
+        // Project tools rarely start prose; any argument form is a real command.
+        "xtask" | "sinexctl" | "bd" | "nix" | "psql" | "nats" => true,
+        // General tools also open narrative sentences ("git push pre-push drift
+        // guard passes"). Require at least one command-shaped argument token to
+        // distinguish a real invocation from prose.
+        "git" | "gh" | "rg" => {
+            let args = &parts[cmd_idx.unwrap_or(0) + 1..];
+            args.iter().any(|tok| is_command_shaped_arg(tok))
         }
         _ => looks_like_shell_command(head),
     }
+}
+
+/// A token that reads as a command argument rather than an English word: a flag,
+/// a number, an uppercase ref (HEAD), or something carrying path/assignment
+/// punctuation. Used to keep `git log --oneline -3` / `gh pr view 1234` while
+/// rejecting `git push pre-push drift guard`.
+fn is_command_shaped_arg(tok: &str) -> bool {
+    tok.starts_with('-')
+        || (!tok.is_empty() && tok.chars().all(|c| c.is_ascii_digit()))
+        || tok.chars().any(|c| c.is_ascii_uppercase())
+        || tok.contains('/')
+        || tok.contains('=')
+        || tok.contains('.')
+        || tok.contains(':')
 }
 
 fn is_closure_verifier_self_command(candidate: &str) -> bool {
