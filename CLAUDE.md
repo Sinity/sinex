@@ -277,10 +277,10 @@ disposable, relocated to `/var/cache/sinex/<user>/<hash>/` by the devshell.
   matters). No resolver keywords next to issue numbers — `Ref #N` only.
 - Pre-push drift guard (`.githooks/pre-push`): schema-bundle check + `--changed-strict` when
   Rust changed. Bypass only in emergencies with `SINEX_SKIP_DRIFT_GUARD=1`, documented.
-- **Closure honesty**: closing comments include runnable verification commands
-  (`xtask verify closure <N>` executes them). AC matrices mark each item
-  satisfied/deferred/misframed. Never claim "closed by PRs #X–#Y" without checking each
-  merged.
+- **Closure honesty**: Bead `close_reason` text includes a Closure Evidence Manifest;
+  `xtask verify closure <bead-id>` checks every AC disposition and executes its commands.
+  Deferred rows name follow-up Beads. Never claim "closed by PRs #X–#Y" without checking
+  each merge.
 - No hosted PR-blocking CI: **the local gate is the gate.**
 
 ## Traps (verified the hard way)
