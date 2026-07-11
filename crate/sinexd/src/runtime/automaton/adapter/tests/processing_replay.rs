@@ -225,6 +225,8 @@ async fn scope_invalidation_outputs_preserve_payload_for_policy_admission() -> T
         processing_mode: ProcessingMode::Replay,
         trigger_kind: TriggerKind::ScopeInvalidation,
         created_by_operation_id: None,
+        trigger_material_id: None,
+        trigger_anchor_byte: None,
     };
 
     let event = adapter.build_output_event(output, 0, None, &context)?;

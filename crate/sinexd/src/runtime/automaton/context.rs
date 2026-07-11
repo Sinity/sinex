@@ -2,7 +2,7 @@
 
 use sinex_primitives::domain::{EventSource, EventType, ProcessingMode, TriggerKind};
 use sinex_primitives::events::Event;
-use sinex_primitives::events::builder::OperationMarker;
+use sinex_primitives::events::builder::{OperationMarker, Provenance};
 use sinex_primitives::temporal::Timestamp;
 use sinex_primitives::{Id, JsonValue, Uuid};
 
@@ -36,6 +36,25 @@ pub struct AutomatonContext {
 
     /// If processing was initiated by a replay operation, its ID.
     pub created_by_operation_id: Option<Id<OperationMarker>>,
+
+    /// Material occurrence coordinates of the trigger event, when it carries
+    /// material provenance. `None` for derived-provenance triggers and synthetic
+    /// (timer-flush) contexts. Automata derive occurrence-stable equivalence
+    /// keys from these coordinates instead of processing-order counters that
+    /// collide across replay/checkpoint-reset and silently suppress fresh
+    /// derived rows (sinex-ecy).
+    pub trigger_material_id: Option<Uuid>,
+    pub trigger_anchor_byte: Option<i64>,
+}
+
+/// Extract the trigger event's material occurrence coordinates, if it carries
+/// material provenance. Derived-provenance triggers have no direct material
+/// occurrence and yield `(None, None)`.
+fn trigger_material_occurrence(event: &Event<JsonValue>) -> (Option<Uuid>, Option<i64>) {
+    match &event.provenance {
+        Provenance::Material { id, anchor_byte, .. } => (Some(*id.as_uuid()), Some(*anchor_byte)),
+        Provenance::Derived { .. } => (None, None),
+    }
 }
 
 impl AutomatonContext {
@@ -72,6 +91,7 @@ impl AutomatonContext {
                 .with_context("event_type", event.event_type.as_ref())
                 .with_context("source", event.source.as_ref())
         })?;
+        let (trigger_material_id, trigger_anchor_byte) = trigger_material_occurrence(event);
         Ok(Self {
             trigger_event_id,
             source: event.source.clone(),
@@ -83,6 +103,8 @@ impl AutomatonContext {
             created_by_operation_id: event
                 .created_by_operation_id
                 .map(Id::<OperationMarker>::from_uuid),
+            trigger_material_id,
+            trigger_anchor_byte,
         })
     }
 
@@ -102,6 +124,8 @@ impl AutomatonContext {
             processing_mode: ProcessingMode::Live,
             trigger_kind: TriggerKind::NewEvent,
             created_by_operation_id: None,
+            trigger_material_id: None,
+            trigger_anchor_byte: None,
         })
     }
 
@@ -116,6 +140,7 @@ impl AutomatonContext {
                 .with_context("event_type", event.event_type.as_ref())
                 .with_context("source", event.source.as_ref())
         })?;
+        let (trigger_material_id, trigger_anchor_byte) = trigger_material_occurrence(event);
         Ok(Self {
             trigger_event_id,
             source: event.source.clone(),
@@ -129,6 +154,8 @@ impl AutomatonContext {
                     .created_by_operation_id
                     .map(Id::<OperationMarker>::from_uuid)
             }),
+            trigger_material_id,
+            trigger_anchor_byte,
         })
     }
 }

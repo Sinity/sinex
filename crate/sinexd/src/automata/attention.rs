@@ -94,7 +94,7 @@ register_source_contract! {
         horizons: &[ContractHorizon::Continuous],
         retention: ContractRetentionPolicy::Forever,
         occurrence_identity: ContractOccurrenceIdentity::Uuid5From(
-            "(source, parent_event_id)",
+            "(source_window_occurrence_key)",
         ),
         access_scope: AccessScope::Internal,
     }
