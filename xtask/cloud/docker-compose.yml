@@ -11,12 +11,18 @@
 #     xtask test -p <crate>
 #   docker compose -f xtask/cloud/docker-compose.yml down
 #
-# Both images live at ghcr.io/sinity/. See xtask/cloud/docker/README.md for the
-# build/push workflow.
+# Image resolution: the ghcr.io/sinity/* tags are NOT published (verified
+# 2026-07-10: anonymous pull returns 403/404). Each service therefore carries
+# a `build:` context pointing at the in-repo Dockerfile; `docker compose up
+# --build` builds them locally during the sandbox's internet-enabled setup
+# phase, and the 12h/7d container caches make later sessions cheap. If the
+# images are ever published publicly, the tags below become a pull fast-path.
+# See xtask/cloud/docker/README.md for the build/push workflow.
 
 services:
   postgres:
     image: ghcr.io/sinity/sinex-pg18:latest
+    build: docker/pg18-sinex
     environment:
       POSTGRES_USER: sinex
       POSTGRES_PASSWORD: dev
@@ -34,6 +40,7 @@ services:
 
   nats:
     image: ghcr.io/sinity/sinex-nats:latest
+    build: docker/nats-sinex
     ports:
       - "4222:4222"
       - "8222:8222"
