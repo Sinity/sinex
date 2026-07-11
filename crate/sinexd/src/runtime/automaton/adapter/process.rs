@@ -228,7 +228,7 @@ where
                 self.observe_output_batch(&outputs, "live").await;
                 let output_events =
                     self.build_output_events(outputs, Some(source_event_id), &context)?;
-                self.record_processed_input(source_event_id);
+                self.record_processed_input(source_event_id, event.ts_orig);
                 self.observe_runtime_snapshot().await;
                 Ok(output_events)
             }
@@ -250,7 +250,7 @@ where
                 match settlement {
                     Settlement::Commit => {
                         warn!(automaton = %self.automaton.name(), error = %e, "Committing (settled as benign)");
-                        self.record_processed_input(source_event_id);
+                        self.record_processed_input(source_event_id, event.ts_orig);
                         self.observe_runtime_snapshot().await;
                         Ok(Vec::new())
                     }
@@ -260,7 +260,7 @@ where
                         warn!(automaton = %self.automaton.name(), error = %e, "Routing to processing-failure queue");
                         self.send_to_processing_failure_queue_or_fail(&event, &e)
                             .await?;
-                        self.record_processed_input(source_event_id);
+                        self.record_processed_input(source_event_id, event.ts_orig);
                         self.observe_runtime_snapshot().await;
                         Ok(Vec::new())
                     }
@@ -327,13 +327,26 @@ where
     /// No-op for `Transducer` and `ScopeReconciler` automata (their
     /// `timer_flush_derived` default returns empty).
     pub async fn timer_flush(&mut self, now: Timestamp) -> RuntimeResult<u64> {
+        // sinex-5s6: the flush decision consults the two-mode input-time
+        // watermark, not raw wall clock. In Catchup (historical replay/backfill,
+        // old-timestamped events flowing) the watermark is the max input
+        // `ts_orig`, so trailing-bucket flush never chops continuity by
+        // processing delay; in Live (caught up — quiet or current) it tracks
+        // wall time so a genuine quiet period still closes the window/session.
+        let (watermark, _mode) = super::watermark::flush_watermark(
+            self.persisted_state.max_input_ts_orig,
+            self.last_input_wall,
+            now,
+        );
+
         // Build a synthetic context for the timer flush. There is no upstream
-        // trigger event, so we use a fresh synthetic ID and the current time.
-        let context = AutomatonContext::timer_flush(now)?;
+        // trigger event, so we use a fresh synthetic ID and the watermark as the
+        // flush moment (input-time in Catchup, wall-time in Live).
+        let context = AutomatonContext::timer_flush(watermark)?;
 
         let outputs = self
             .automaton
-            .timer_flush_derived(&mut self.persisted_state.state, now, &context)
+            .timer_flush_derived(&mut self.persisted_state.state, watermark, &context)
             .await
             .map_err(|e| {
                 SinexError::processing("windowed timer flush failed")
