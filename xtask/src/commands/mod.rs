@@ -18,6 +18,7 @@ pub mod infra;
 pub mod jobs;
 pub mod lint_forbidden;
 pub mod privacy;
+pub mod proof_obligations;
 pub mod ra;
 pub mod reap;
 pub mod record_drift_bypass;
