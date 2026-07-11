@@ -60,6 +60,19 @@ async fn test_terminal_status_from_exit_code_file() -> TestResult<()> {
     let (status, code) = terminal_status_from_exit_code_file(dir.path())?;
     assert!(matches!(status, InvocationStatus::Cancelled));
     assert_eq!(code, Some(124));
+    assert_eq!(
+        lifecycle_status_from_terminal(status, code),
+        JobLifecycleStatus::TimedOut
+    );
+    assert_eq!(JobLifecycleStatus::TimedOut.as_str(), "timed_out");
+    assert_eq!(
+        JobLifecycleStatus::try_from_str("timed_out")?,
+        JobLifecycleStatus::TimedOut
+    );
+    assert_eq!(
+        serde_json::to_string(&JobLifecycleStatus::TimedOut)?,
+        "\"timed_out\""
+    );
 
     fs::write(dir.path().join("exit_code"), "0\n")?;
     let (status, code) = terminal_status_from_exit_code_file(dir.path())?;

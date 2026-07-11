@@ -9,6 +9,7 @@ It is intentionally selective: hidden automation plumbing and one-off implementa
 
 - Prefer `--json` or `--format json` when another tool will parse the output.
 - Use `--bg` for long-running work you want to inspect through `xtask jobs`.
+- Use `--bg --wait` with fix, check, test, or build when the command must return terminal proof instead of launch acknowledgement.
 - Use `xtask <command> --help` only to confirm the exact live flags for commands already named below.
 
 ## Core Loop

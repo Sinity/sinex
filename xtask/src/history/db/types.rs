@@ -56,13 +56,14 @@ impl InvocationStatus {
 
 /// Process lifecycle status for background jobs (separate from invocation success/failure).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "lowercase")]
+#[serde(rename_all = "snake_case")]
 pub enum JobLifecycleStatus {
     Running,
     Completed,
     Failed,
     Orphaned,
     Killed,
+    TimedOut,
 }
 
 impl JobLifecycleStatus {
@@ -73,6 +74,7 @@ impl JobLifecycleStatus {
             Self::Failed => "failed",
             Self::Orphaned => "orphaned",
             Self::Killed => "killed",
+            Self::TimedOut => "timed_out",
         }
     }
 
@@ -83,6 +85,7 @@ impl JobLifecycleStatus {
             "failed" => Ok(Self::Failed),
             "orphaned" => Ok(Self::Orphaned),
             "killed" => Ok(Self::Killed),
+            "timed_out" => Ok(Self::TimedOut),
             _ => Err(color_eyre::eyre::eyre!("invalid job lifecycle status: {s}")),
         }
     }

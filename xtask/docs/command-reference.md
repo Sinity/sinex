@@ -15,6 +15,7 @@ Regenerate with `xtask docs sync` or `xtask docs command-reference`; verify drif
 | `--json` | no | Shorthand for --format json |
 | `--list-commands` | no | List all available commands and exit |
 | `--bg` | no | Run command in background (returns immediately with job ID). Output is captured to files accessible via `xtask jobs` |
+| `--wait` | no | With --bg, wait for terminal proof instead of returning after launch |
 | `--fg` | no | Run command in foreground (default). Explicit flag for scripts |
 | `-v` | no | Increase log verbosity. Use -v for INFO, -vv for DEBUG, -vvv for TRACE. Overridden by SINEX_LOG env var |
 
@@ -2104,7 +2105,7 @@ Internal detached process watchdog — not for human use
 | `--target-pid` | yes | yes | PID of the background job process to monitor |
 | `--max-secs` | yes | yes | Maximum seconds to allow before killing the target |
 | `--invocation-id` | yes | yes | Invocation ID to mark as cancelled on timeout |
-| `--job-id` | yes | yes | Background job ID to mark as killed on timeout |
+| `--job-id` | yes | yes | Background job ID to mark as timed out |
 | `--db-path` | yes | yes | Path to the history DB file |
 | `--job-dir` | yes | yes | Directory containing the job's exit_code file (written on timeout) |
 

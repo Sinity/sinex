@@ -13,6 +13,49 @@ fn env_set(key: &str, value: Option<std::ffi::OsString>) -> EnvGuard {
 }
 
 #[sinex_test]
+async fn background_wait_requires_background_mode() -> TestResult<()> {
+    let cli = Cli::try_parse_from(["xtask", "--bg", "--wait", "check"])?;
+    assert!(cli.global.background_wait());
+
+    let error = match Cli::try_parse_from(["xtask", "--wait", "check"]) {
+        Ok(_) => bail!("--wait without --bg must be rejected"),
+        Err(error) => error,
+    };
+    assert_eq!(
+        error.kind(),
+        clap::error::ErrorKind::MissingRequiredArgument
+    );
+    Ok(())
+}
+
+#[sinex_test]
+async fn background_wait_is_limited_to_coordinated_commands() -> TestResult<()> {
+    for command_name in ["fix", "check", "test", "build"] {
+        assert!(command_supports_background_wait(command_name));
+    }
+    for command_name in ["run", "exercise", "verify", "jobs"] {
+        assert!(!command_supports_background_wait(command_name));
+    }
+    Ok(())
+}
+
+#[sinex_test]
+async fn command_deadline_returns_typed_timeout() -> TestResult<()> {
+    let mut timed_out = false;
+    let error = execute_with_optional_timeout(
+        std::future::pending::<Result<crate::command::CommandResult>>(),
+        Some(std::time::Duration::ZERO),
+        "test",
+        &mut timed_out,
+    )
+    .await
+    .expect_err("expired command deadline must fail");
+    assert!(timed_out);
+    assert!(process::report_is_process_timeout(&error));
+    Ok(())
+}
+
+#[sinex_test]
 async fn parse_positive_u64_env_or_default_rejects_invalid_values() -> TestResult<()> {
     let _guard = env_set("SINEX_TEST_TIMEOUT", Some("not-a-number".into()));
 

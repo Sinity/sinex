@@ -36,7 +36,7 @@ pub struct ReapCommand {
     #[arg(long)]
     pub invocation_id: i64,
 
-    /// Background job ID to mark as killed on timeout.
+    /// Background job ID to mark as timed out.
     #[arg(long)]
     pub job_id: i64,
 
@@ -170,7 +170,7 @@ fn run_reaper_grandchild(args: &ReapCommand) {
         );
         let _ = db.finish_background_job(
             args.job_id,
-            JobLifecycleStatus::Killed,
+            JobLifecycleStatus::TimedOut,
             Some(124),
             duration_secs,
             None,
