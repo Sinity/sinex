@@ -1802,12 +1802,24 @@ Verify phase plans and performance contracts
 
 | Command | Purpose |
 |---|---|
+| `obligations` | Compile a bounded proof-obligation manifest without executing its commands |
 | `plan` | Inspect and validate the phase verification manifest |
 | `perf` | Run perf sweeps and enforce contract budgets |
 | `report` | Print summary from a perf report JSON |
 | `compare` | Compare two perf reports |
 | `all` | Run perf only |
 | `closure` | Verify a closed Bead's AC dispositions and execute its evidence commands |
+
+### `xtask verify obligations`
+
+Compile a bounded proof-obligation manifest without executing its commands
+
+**Arguments**
+
+| Flag | Value | Required | Description |
+|---|---|---|---|
+| `manifest` | yes | yes | Proof-obligation IR JSON manifest |
+
 
 ### `xtask verify plan`
 
@@ -1888,7 +1900,7 @@ Verify a closed Bead's AC dispositions and execute its evidence commands
 
 | Flag | Value | Required | Description |
 |---|---|---|---|
-| `bead-id` | yes | yes | Bead id to verify (for example, sinex-e7e9) |
+| `bead_id` | yes | yes | Bead id to verify (for example, sinex-e7e9) |
 | `--json` | no | no | Emit JSON output |
 | `--dry-run` | no | no | Dry-run: parse and print commands without executing them |
 
