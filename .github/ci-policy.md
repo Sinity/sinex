@@ -98,4 +98,4 @@ workspace passes are phase-boundary checks, not a tax on every small PR.
 
 Do not skip CI. If a lane fails, fix the root cause — do not bypass with
 `--no-verify` or force-push to skip hooks. If a lane is genuinely flaky,
-open an issue with the failure evidence and work around it transparently.
+create a Bead with the failure evidence and work around it transparently.

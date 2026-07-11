@@ -127,11 +127,10 @@ NixOS activation checks and VM tests. Keep these responsibilities explicit; see
 ## Planning, Beads, and Source Documents
 
 > **GitHub Issues are retired as of 2026-07-10.** Beads (`bd`) is the sole
-> durable task substrate for this repo. The `.github/ISSUE_TEMPLATE/` kinds
-> and `.github/issue-operating-model.md` below describe the pre-retirement
-> shape of already-closed issues; do not file new GitHub issues. `bd prime`
-> gives current workflow context; `bd create --type <task|bug|epic|...>`
-> replaces "open an issue."
+> durable task substrate for this repo. GitHub issue forms and the automatic
+> issue-closure workflow have been removed; `.github/issue-operating-model.md`
+> is only a superseded pointer. `bd prime` gives current workflow context;
+> `bd create --type <task|bug|epic|...>` replaces "open an issue."
 
 Large or pre-planned work should not live only in scratch notes or chat history.
 Create a bead (`bd create`) or cite an explicit source document/report before
@@ -225,8 +224,8 @@ tickets that "closed."
 
 ## Closure verification commands
 
-When closing a bead (`bd update <id> --status closed --close-reason "..."`,
-or merging the PR that closes it), the close reason must include the
+When closing a bead (`bd close <id> --reason "..."`, or merging the PR that
+closes it), the close reason must include the
 **commands a future reader can run themselves to verify the claim**, not
 just an assertion that it landed.
 
@@ -258,11 +257,29 @@ grep -rn "<symbol>" crate/ --include="*.rs"
 xtask test -p <pkg> -E 'test(<name>)'
 ```
 
-`xtask verify closure <N>` (and the `.github/workflows/verify-closure.yml`
-workflow) still parses this way for the GitHub-issue-era closed-issue
-archive, but has no bead-native equivalent yet — tracked as sinex-e7e9.
-Until that lands, re-verify bead `close_reason` claims by hand using the
-same command discipline above before trusting them.
+`xtask verify closure <bead-id>` reads the structured Bead via
+`bd show <bead-id> --json`, validates the Bead state and complete AC
+dispositions, then executes the manifest commands. Numeric GitHub issue ids
+are rejected. Put this table in the Bead's `close_reason`; rows follow the
+order of the Bead's `acceptance_criteria` field:
+
+```markdown
+## Closure Evidence Manifest
+
+| AC | Evidence kind | Surface | Evidence | Command | Artifact | Status |
+| --- | --- | --- | --- | --- | --- | --- |
+| AC-1 | runtime | replay integration test | replay survives restart | xtask test -p sinexd -E 'test(replay_restart)' | - | Satisfied |
+| AC-2 | contract | deferred provider | owned by sinex-abcd | - | sinex-abcd | Deferred |
+```
+
+Use exactly `Satisfied`, `Deferred`, or `Misframed`. Every original AC needs
+one ordinal row. A satisfied non-doc row needs a runnable command; a docs row
+needs a command or named artifact; a deferred row needs a follow-up Bead id.
+The verifier executes commands from the manifest or from a `Verification` shell
+block and fails closed on missing/malformed Beads JSON, an open Bead, incomplete
+AC coverage, invalid evidence, or command failure.
+There is no GitHub Actions replacement: Beads has no GitHub close event, so the
+verifier is a local pre-close/review gate.
 
 Two antipatterns to avoid:
 
