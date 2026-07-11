@@ -185,6 +185,9 @@ pub(super) async fn execute_coverage(
 pub(super) fn execute_mutants(m: &MutantsArgs, _ctx: &CommandContext) -> Result<CommandResult> {
     use color_eyre::eyre::eyre;
 
+    let witness_summary =
+        super::witnesses::validate_registry(m.package.as_deref(), m.file.as_deref())?;
+
     // Guard: mutants invokes cargo-mutants which needs target/ lock
     if std::env::var("NEXTEST_RUN_ID").is_ok() {
         return Err(eyre!(
@@ -231,6 +234,10 @@ pub(super) fn execute_mutants(m: &MutantsArgs, _ctx: &CommandContext) -> Result<
 
     Ok(CommandResult::success()
         .with_message("Mutation testing completed successfully")
+        .with_detail(format!(
+            "Compatibility witnesses: {} registered, {} in scope",
+            witness_summary.registered, witness_summary.in_scope
+        ))
         .with_detail(format!("Timeout per mutant: {}s", m.timeout))
         .with_detail(format!("Parallel jobs: {}", m.jobs)))
 }

@@ -28,6 +28,7 @@ use console::style;
 
 mod modes;
 mod plan;
+mod witnesses;
 
 #[derive(Debug, Clone, Serialize)]
 struct ReusedImpactPackageProof {
