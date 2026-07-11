@@ -96,5 +96,84 @@ fn trusted_window_context(event_time: Timestamp) -> AutomatonContext {
         processing_mode: ProcessingMode::Live,
         trigger_kind: TriggerKind::NewEvent,
         created_by_operation_id: None,
+        trigger_material_id: None,
+        trigger_anchor_byte: None,
     }
+}
+
+fn trusted_window_context_with_material(
+    event_time: Timestamp,
+    material_id: Uuid,
+    anchor_byte: i64,
+) -> AutomatonContext {
+    AutomatonContext {
+        trigger_material_id: Some(material_id),
+        trigger_anchor_byte: Some(anchor_byte),
+        ..trusted_window_context(event_time)
+    }
+}
+
+/// sinex-ecy regression: the window equivalence key must be occurrence-derived,
+/// not a processing-order counter. A counter (`activity-window-{n}`) restarts at
+/// 0 on every checkpoint reset / replay, so a fresh derived window collides with
+/// an unrelated live row and admission's fail-open dedup silently drops it. This
+/// drives the automaton twice against fresh state (counter reset) and asserts the
+/// key is stable AND specific to the first event's material occurrence.
+#[sinex_test]
+async fn window_equivalence_key_is_occurrence_stable_across_counter_reset(
+) -> xtask::sandbox::TestResult<()> {
+    async fn emit_window_for(material: Uuid, anchor: i64) -> xtask::sandbox::TestResult<String> {
+        let mut automaton = AnalyticsAutomaton::default();
+        let mut state = AnalyticsState::default();
+        let t = Timestamp::now();
+        // The FIRST contributing event anchors the window's occurrence identity.
+        let first = trusted_window_context_with_material(t, material, anchor);
+        automaton
+            .accumulate(&mut state, JsonValue::Null, &first)
+            .await?;
+        // Fill the budget with other events, then overflow to close (MaxEventCount).
+        for _ in 1..DEFAULT_WINDOW_MAX_EVENTS {
+            let ctx = trusted_window_context_with_material(t, Uuid::now_v7(), anchor + 7);
+            automaton
+                .accumulate(&mut state, JsonValue::Null, &ctx)
+                .await?;
+        }
+        let overflow = trusted_window_context_with_material(t, Uuid::now_v7(), anchor + 99);
+        automaton
+            .accumulate(&mut state, JsonValue::Null, &overflow)
+            .await?;
+        assert!(automaton.window_complete(&state));
+        let output = automaton
+            .emit(&mut state, &AutomatonContext::timer_flush(t)?)
+            .await?
+            .expect("closed window should emit a summary");
+        Ok(output
+            .equivalence_key
+            .expect("window summary must carry an occurrence-derived equivalence key"))
+    }
+
+    let material = Uuid::now_v7();
+    let anchor = 4096_i64;
+
+    // Same occurrence, processed twice against fresh state (window_counter restarts
+    // at 0, exactly as a checkpoint reset / replay does).
+    let k1 = emit_window_for(material, anchor).await?;
+    let k2 = emit_window_for(material, anchor).await?;
+    assert_eq!(
+        k1, k2,
+        "same occurrence must yield the same key across a counter reset"
+    );
+    assert_eq!(k1, format!("activity-window:{material}:{anchor}"));
+    assert!(
+        !k1.contains("activity-window-"),
+        "occurrence key must never be a processing-order counter: {k1}"
+    );
+
+    // A different first-event occurrence must not collide with the first window.
+    let k3 = emit_window_for(Uuid::now_v7(), anchor).await?;
+    assert_ne!(
+        k1, k3,
+        "distinct occurrences must not share an equivalence key"
+    );
+    Ok(())
 }
