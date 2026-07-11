@@ -6,6 +6,7 @@
 //! catalog discovers them through `inventory`.
 
 pub mod analytics;
+pub mod civil;
 pub mod attention;
 pub mod canonicalizer;
 pub mod daily;

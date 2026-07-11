@@ -41,30 +41,15 @@ where
     }
 }
 
+// sinex-2ged: hourly/daily now bucket on the operator-local CIVIL hour/day, so
+// these expected-boundary helpers delegate to the same civil functions the
+// automata use. (Names kept `utc_*` to avoid churning call sites; at a
+// whole-hour tz offset the civil and UTC *hour* boundaries coincide, but the
+// *day* boundary shifts, which is exactly what the daily summaries must honour.)
 pub fn utc_hour_start(timestamp: Timestamp) -> Timestamp {
-    Timestamp::from(
-        timestamp
-            .inner()
-            .replace_minute(0)
-            .expect("valid UTC hour minute")
-            .replace_second(0)
-            .expect("valid UTC hour second")
-            .replace_nanosecond(0)
-            .expect("valid UTC hour nanosecond"),
-    )
+    sinexd::automata::civil::floor_to_civil_hour(timestamp)
 }
 
 pub fn utc_day_start(timestamp: Timestamp) -> Timestamp {
-    Timestamp::from(
-        timestamp
-            .inner()
-            .replace_hour(0)
-            .expect("valid UTC day hour")
-            .replace_minute(0)
-            .expect("valid UTC day minute")
-            .replace_second(0)
-            .expect("valid UTC day second")
-            .replace_nanosecond(0)
-            .expect("valid UTC day nanosecond"),
-    )
+    sinexd::automata::civil::floor_to_civil_day(timestamp)
 }

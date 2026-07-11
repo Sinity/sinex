@@ -125,7 +125,9 @@ async fn daily_summary_aggregates_hourly_rollups() -> TestResult<()> {
     let mut summarizer = DailySummarizer;
     let mut state = DailySummaryState::default();
 
-    let day_start = Timestamp::from_unix_timestamp(1_700_000_000).expect("valid timestamp");
+    // Mid-civil-day base (2023-11-14 12:00 UTC == 13:00 CET) so first_hour + 1h
+    // stays within the same operator-local civil day (sinex-2ged civil bucketing).
+    let day_start = Timestamp::from_unix_timestamp(1_699_963_200).expect("valid timestamp");
     let first_hour = utc_hour_start(day_start);
     let second_hour = first_hour + Duration::hours(1);
     let next_day_hour = first_hour + Duration::days(1);
