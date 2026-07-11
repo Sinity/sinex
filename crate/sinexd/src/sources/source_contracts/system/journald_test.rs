@@ -85,7 +85,11 @@ async fn test_journald_parser_suppresses_sinexd_confirmation_feedback() -> TestR
 }
 
 #[sinex_test]
-async fn test_journald_parser_keeps_unrelated_sinexd_logs() -> TestResult<()> {
+async fn test_journald_parser_drops_all_sinexd_self_logs() -> TestResult<()> {
+    // fresh-rebuild B1: ALL of sinexd's own journald output is dropped at parse
+    // (not just the old confirmation-feedback special case) — sinex no longer
+    // re-ingests its own logs as activity. An ordinary sinexd log line is dropped
+    // exactly like the confirmation-feedback ones.
     let mid = Id::<SourceMaterial>::new();
     let line = r#"{"__CURSOR":"s=ordinary;i=1","__REALTIME_TIMESTAMP":"1700000000000000","_SYSTEMD_UNIT":"sinexd.service","SYSLOG_IDENTIFIER":"sinexd","MESSAGE":"source catalog exported"}"#;
     let records = records_from_journal_lines(mid, &[line]);
@@ -95,8 +99,28 @@ async fn test_journald_parser_keeps_unrelated_sinexd_logs() -> TestResult<()> {
     let ctx = make_ctx(mid);
     let intents = parser.parse_record(record, &ctx).await?;
 
+    assert!(
+        intents.is_empty(),
+        "sinexd's own journald entries must not create activity events (self-capture relic removed)"
+    );
+    Ok(())
+}
+
+#[sinex_test]
+async fn test_journald_parser_keeps_non_sinexd_logs() -> TestResult<()> {
+    // Real external host chatter (a different unit) is still captured — B1 only
+    // drops sinexd's OWN entries.
+    let mid = Id::<SourceMaterial>::new();
+    let line = r#"{"__CURSOR":"s=ordinary;i=1","__REALTIME_TIMESTAMP":"1700000000000000","_SYSTEMD_UNIT":"nginx.service","SYSLOG_IDENTIFIER":"nginx","MESSAGE":"served request"}"#;
+    let records = records_from_journal_lines(mid, &[line]);
+    let record = records[0].as_ref().unwrap().clone();
+
+    let mut parser = JournaldParser;
+    let ctx = make_ctx(mid);
+    let intents = parser.parse_record(record, &ctx).await?;
+
     assert_eq!(intents.len(), 1);
     assert_eq!(intents[0].event_type.as_str(), "entry.written");
-    assert_eq!(intents[0].payload["message"], "source catalog exported");
+    assert_eq!(intents[0].payload["message"], "served request");
     Ok(())
 }
