@@ -311,7 +311,7 @@
         "id": "analytics",
         "namespace": "derived",
         "occurrence_identity": {
-          "key": "(source, parent_event_ids)",
+          "key": "(first_contributing_event_material_id, first_contributing_event_anchor_byte)",
           "kind": "uuid5_from"
         },
         "privacy_tier": "sensitive",
@@ -395,7 +395,7 @@
         "id": "attention-stream",
         "namespace": "derived",
         "occurrence_identity": {
-          "key": "(source, parent_event_id)",
+          "key": "(source_window_occurrence_key)",
           "kind": "uuid5_from"
         },
         "privacy_tier": "sensitive",
@@ -646,7 +646,6 @@
           ]
         ],
         "privacy_contexts": [
-          "clipboard",
           "metadata"
         ],
         "description": "Parses browser history from SQLite DBs and JSONL dump files."
@@ -4036,7 +4035,7 @@
         "id": "session-detector",
         "namespace": "derived",
         "occurrence_identity": {
-          "key": "(source, parent_event_ids)",
+          "key": "(first_contributing_window_occurrence_key)",
           "kind": "uuid5_from"
         },
         "privacy_tier": "sensitive",

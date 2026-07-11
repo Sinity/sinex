@@ -117,6 +117,8 @@ async fn terminal_chunks_are_not_parser_redacted() -> TestResult<()> {
         processing_mode: ProcessingMode::Live,
         trigger_kind: TriggerKind::NewEvent,
         created_by_operation_id: None,
+        trigger_material_id: None,
+        trigger_anchor_byte: None,
     };
     let token = ["ghp_", "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"].concat();
 

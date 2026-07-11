@@ -24,6 +24,8 @@ fn context(source: &str, event_type: &str, ts_orig: Timestamp) -> AutomatonConte
         processing_mode: ProcessingMode::Live,
         trigger_kind: TriggerKind::NewEvent,
         created_by_operation_id: None,
+        trigger_material_id: None,
+        trigger_anchor_byte: None,
     }
 }
 
