@@ -1,0 +1,16 @@
+{
+  "version": 1,
+  "witnesses": [
+    {
+      "id": "operation-kind-projection-rebuild-token",
+      "contract": "OperationKind::ProjectionRebuild persists and crosses JSON/API boundaries as projection-rebuild",
+      "package": "sinex-primitives",
+      "product_file": "crate/sinex-primitives/src/domain/operations.rs",
+      "mutation_anchor": "Self::ProjectionRebuild => \"projection-rebuild\"",
+      "oracle_file": "crate/sinex-primitives/tests/operation_view_test.rs",
+      "oracle_test": "operation_kind_known_variants_round_trip",
+      "oracle_literal": "(OperationKind::ProjectionRebuild, \"projection-rebuild\")",
+      "authority": "The token is an operation ledger and public view value; the test literal is intentionally independent of producer and parser tables."
+    }
+  ]
+}
