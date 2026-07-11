@@ -14,24 +14,17 @@ use sinex_primitives::events::{
     EventPayload,
     payloads::{ActivityHourlySummaryPayload, ActivityWindowSummaryPayload},
 };
-use sinex_primitives::temporal::{Duration, Timestamp};
+use sinex_primitives::temporal::Timestamp;
 use std::collections::{BTreeMap, BTreeSet};
 use tracing::debug;
 
 fn floor_to_hour(timestamp: Timestamp) -> Timestamp {
-    let Ok(rounded) = timestamp
-        .inner()
-        .replace_minute(0)
-        .and_then(|value| value.replace_second(0))
-        .and_then(|value| value.replace_nanosecond(0))
-    else {
-        unreachable!("zeroed minute, second, and nanosecond are valid time components");
-    };
-    Timestamp::from(rounded)
+    // sinex-2ged: bucket on the operator-local civil hour (DST-aware), not UTC.
+    super::civil::floor_to_civil_hour(timestamp)
 }
 
 fn hour_end(hour_start: Timestamp) -> Timestamp {
-    Timestamp::from(hour_start.inner() + Duration::hours(1))
+    super::civil::civil_hour_end(hour_start)
 }
 
 fn sorted_top_sources(counts: &BTreeMap<String, u64>) -> Vec<String> {
@@ -241,7 +234,7 @@ impl Windowed for HourlySummarizer {
         let event_timestamp = state.last_window_end.unwrap_or(hour_start);
         let output = DerivedOutput::windowed(payload, event_timestamp, source_event_ids)
             .with_temporal_policy(sinex_primitives::domain::SyntheticTemporalPolicy::WindowBoundary)
-            .with_semantics_version("1.0.0")
+            .with_semantics_version("2.0.0")
             .with_equivalence_key(hour_id)
             .with_aggregation(DerivedAggregationMeta::new(
                 "activity.summary.hourly",

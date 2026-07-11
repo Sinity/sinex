@@ -14,25 +14,18 @@ use sinex_primitives::events::{
     EventPayload,
     payloads::{ActivityDailySummaryPayload, ActivityHourlySummaryPayload},
 };
-use sinex_primitives::temporal::{Duration, Timestamp};
+use sinex_primitives::temporal::Timestamp;
 use std::collections::{BTreeMap, BTreeSet};
 use tracing::debug;
 
 fn floor_to_day(timestamp: Timestamp) -> Timestamp {
-    let Ok(rounded) = timestamp
-        .inner()
-        .replace_hour(0)
-        .and_then(|value| value.replace_minute(0))
-        .and_then(|value| value.replace_second(0))
-        .and_then(|value| value.replace_nanosecond(0))
-    else {
-        unreachable!("zeroed hour, minute, second, and nanosecond are valid time components");
-    };
-    Timestamp::from(rounded)
+    // sinex-2ged: bucket on the operator-local civil day (DST-aware 23h/25h days),
+    // not UTC — otherwise the operator's day boundary sits at 01:00-02:00 local.
+    super::civil::floor_to_civil_day(timestamp)
 }
 
 fn day_end(day_start: Timestamp) -> Timestamp {
-    Timestamp::from(day_start.inner() + Duration::days(1))
+    super::civil::civil_day_end(day_start)
 }
 
 fn sorted_top_sources(counts: &BTreeMap<String, u64>) -> Vec<String> {
@@ -245,7 +238,7 @@ impl Windowed for DailySummarizer {
         let event_timestamp = state.last_hour_start.unwrap_or(day_start);
         let output = DerivedOutput::windowed(payload, event_timestamp, source_event_ids)
             .with_temporal_policy(sinex_primitives::domain::SyntheticTemporalPolicy::WindowBoundary)
-            .with_semantics_version("1.0.0")
+            .with_semantics_version("2.0.0")
             .with_equivalence_key(day_id)
             .with_aggregation(DerivedAggregationMeta::new(
                 "activity.summary.daily",
