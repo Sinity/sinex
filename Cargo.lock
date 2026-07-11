@@ -5575,6 +5575,7 @@ dependencies = [
  "notify",
  "parking_lot",
  "petgraph",
+ "proptest",
  "rcgen",
  "regex",
  "reqwest",

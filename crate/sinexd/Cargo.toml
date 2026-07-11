@@ -142,6 +142,8 @@ rcgen = { workspace = true }
 # `json` for typed bodies. Test-only; the runtime dependency (above) stays minimal.
 reqwest = { workspace = true, features = ["stream", "query", "json", "rustls"] }
 syn = { workspace = true }
+# sinex-pdq5: property/simulation suite for the interval-lift invariant families.
+proptest = { workspace = true }
 
 [lints]
 workspace = true
