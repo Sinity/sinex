@@ -29,7 +29,7 @@ async fn command_catalog_exposes_core_public_surface() -> TestResult<()> {
         "schema backfill runner must stay discoverable"
     );
     let global_args = collect_global_args();
-    for arg in ["json", "list_commands", "bg"] {
+    for arg in ["json", "list_commands", "bg", "wait"] {
         assert!(
             global_args.iter().any(|candidate| candidate.name == arg),
             "missing global xtask arg `{arg}`"

@@ -56,6 +56,33 @@ async fn test_failed_unparsed_cargo_output_becomes_visible_diagnostic() -> TestR
 }
 
 #[sinex_test]
+async fn test_stderr_only_cargo_failure_becomes_visible_diagnostic() -> TestResult<()> {
+    let result = parse_cargo_json_output_with_stderr(
+        "",
+        false,
+        b"manifest parse failed before compiler startup",
+    )?;
+    assert_eq!(result.errors, 1);
+    let diagnostic = &result.diagnostics[0];
+    assert_eq!(
+        diagnostic.code.as_deref(),
+        Some("XTASK_UNPARSED_CARGO_FAILURE")
+    );
+    assert!(diagnostic.message.contains("stderr tail"));
+    assert!(diagnostic.message.contains("manifest parse failed"));
+    Ok(())
+}
+
+#[sinex_test]
+async fn test_cargo_stderr_tail_is_bounded_and_marked() -> TestResult<()> {
+    let mut tail = Vec::new();
+    bounded_tail_append(&mut tail, &vec![b'a'; CARGO_STDERR_TAIL_LIMIT + 1024]);
+    assert!(tail.len() <= CARGO_STDERR_TAIL_LIMIT);
+    assert!(String::from_utf8_lossy(&tail).contains("stderr truncated"));
+    Ok(())
+}
+
+#[sinex_test]
 async fn test_extract_package_name_registry() -> TestResult<()> {
     // Format 1: registry packages — "registry+URL#name@version"
     let id = "registry+https://github.com/rust-lang/crates.io-index#proc-macro2@1.0.103";
@@ -173,7 +200,7 @@ async fn test_run_cargo_with_timeout_rejects_invalid_timeout_override() -> TestR
     let mut _guard = EnvGuard::new();
     _guard.set("SINEX_CARGO_TIMEOUT", "bogus");
 
-    let (stdout, success) = run_cargo_with_timeout(&["--version"])?;
+    let (stdout, success, _stderr_tail) = run_cargo_with_timeout(&["--version"])?;
     assert!(success);
     assert!(String::from_utf8(stdout)?.contains("cargo"));
     Ok(())
@@ -184,7 +211,7 @@ async fn test_run_cargo_with_timeout_rejects_zero_timeout_override() -> TestResu
     let mut _guard = EnvGuard::new();
     _guard.set("SINEX_CARGO_TIMEOUT", "0");
 
-    let (stdout, success) = run_cargo_with_timeout(&["--version"])?;
+    let (stdout, success, _stderr_tail) = run_cargo_with_timeout(&["--version"])?;
     assert!(success);
     assert!(String::from_utf8(stdout)?.contains("cargo"));
     Ok(())

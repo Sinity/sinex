@@ -460,7 +460,7 @@ async fn test_history_db_open_preserves_live_background_job_rows() -> TestResult
 }
 
 #[sinex_test(timeout = 30)]
-async fn test_history_db_open_kills_overage_background_job_rows() -> TestResult<()> {
+async fn test_history_db_open_times_out_overage_background_job_rows() -> TestResult<()> {
     let dir = tempdir()?;
     let db_path = dir
         .path()
@@ -525,7 +525,7 @@ async fn test_history_db_open_kills_overage_background_job_rows() -> TestResult<
     );
     assert_eq!(cancel_reason, "zombie_reaped");
     assert_eq!(cancelled_by, "open_time_sweep");
-    assert_eq!(background_status, "killed");
+    assert_eq!(background_status, "timed_out");
     assert_eq!(background_exit_code, Some(124));
     Ok(())
 }
