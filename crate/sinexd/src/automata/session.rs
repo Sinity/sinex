@@ -170,6 +170,23 @@ impl Windowed for SessionDetector {
         state.session_complete && state.window_count > 0
     }
 
+    /// Clock-driven closure (sinex-5s6): a backstop for a trailing session whose
+    /// final contributing window did not carry a `Gap` close (e.g. a
+    /// `MaxDuration`/`MaxEventCount` window) and is then followed by silence.
+    /// Uses the same window gap threshold — a gap in activity long enough to
+    /// close a window also ends the session. `watermark` is the adapter's
+    /// two-mode input-time watermark (wall clock when live, max input `ts_orig`
+    /// during replay/backfill). `emit` guards only on `session_start`, so no
+    /// state mutation is needed here.
+    fn flush_due(&self, state: &Self::State, watermark: Timestamp) -> bool {
+        if state.window_count == 0 || state.session_complete {
+            return false;
+        }
+        state.last_window_end.is_some_and(|last| {
+            (watermark - last) >= crate::automata::analytics::window_gap_threshold()
+        })
+    }
+
     async fn emit(
         &mut self,
         state: &mut Self::State,

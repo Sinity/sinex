@@ -10,6 +10,7 @@ mod output;
 mod process;
 mod run;
 mod state_io;
+mod watermark;
 
 use super::traits::{Automaton, AutomatonAdapterConfig, InputProvenanceFilter};
 
@@ -105,6 +106,12 @@ where
     /// Inputs processed since this process/run started. This intentionally
     /// differs from persisted checkpoint totals, which survive restarts.
     run_events_processed: u64,
+    /// Wall-clock instant the last input event was received (in-memory, not
+    /// persisted — wall time is meaningless across a restart). Combined with
+    /// the persisted `max_input_ts_orig` high-water mark, this drives the
+    /// two-mode flush watermark (sinex-5s6): "old-timestamped events still
+    /// arriving" is Catchup; "quiet" or "current-timestamped" is Live.
+    last_input_wall: Option<sinex_primitives::temporal::Timestamp>,
     /// Per-event lag samples (ms between `event.ts_orig` and dispatch).
     /// Drives the `event_lag_p50_ms` / `event_lag_p99_ms` fields of the
     /// `derived.latency_snapshot` event.
@@ -163,6 +170,7 @@ where
             pending_hot_reload_cleanup: None,
             consecutive_checkpoint_failures: 0,
             run_events_processed: 0,
+            last_input_wall: None,
             lag_window: super::histograms::LatencyWindow::new(
                 super::histograms::DEFAULT_LATENCY_RESERVOIR,
             ),

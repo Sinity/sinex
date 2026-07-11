@@ -79,6 +79,12 @@ pub(crate) struct PersistedState<S> {
     /// Last input event that was durably incorporated into this state.
     #[serde(default)]
     pub last_input_event_id: Option<uuid::Uuid>,
+    /// Highest input `ts_orig` durably incorporated — the input-time high-water
+    /// mark that anchors the two-mode flush watermark (sinex-5s6). Persisted so
+    /// watermark continuity survives a restart. `None` until the first
+    /// timestamped input.
+    #[serde(default)]
+    pub max_input_ts_orig: Option<sinex_primitives::temporal::Timestamp>,
     /// Last checkpoint time.
     pub last_checkpoint: sinex_primitives::temporal::Timestamp,
     /// State version for future migrations.
@@ -92,6 +98,7 @@ impl<S: Default + Serialize + DeserializeOwned> Default for PersistedState<S> {
             state: S::default(),
             events_processed: 0,
             last_input_event_id: None,
+            max_input_ts_orig: None,
             last_checkpoint: sinex_primitives::temporal::Timestamp::now(),
             version: 1,
         }

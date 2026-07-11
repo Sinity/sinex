@@ -1,5 +1,5 @@
 use super::*;
-use crate::runtime::Transducer;
+use crate::runtime::MultiOutputTransducer;
 use crate::runtime::automaton::AutomatonContext;
 use sinex_primitives::domain::{ProcessingMode, TriggerKind};
 use sinex_primitives::events::enums::{SystemdActiveState, SystemdUnitType};
@@ -25,7 +25,7 @@ async fn interval_lift_consumes_focus_transitions() -> xtask::sandbox::TestResul
             "unit.stopped"
         ]
     );
-    assert_eq!(automaton.output_event_type(), "state.interval");
+    assert_eq!(automaton.output_event_types(), &["state.interval"]);
     assert_eq!(automaton.output_event_source(), "derived.interval-lift");
     assert_eq!(
         automaton.input_provenance_filter(),
@@ -145,7 +145,7 @@ async fn interval_lift_closes_previous_focus_on_next_transition(
     };
 
     let first_output = automaton
-        .process(&mut state, serde_json::to_value(first)?, &first_context)
+        .process_single(&mut state, serde_json::to_value(first)?, &first_context)
         .await?;
     assert!(first_output.is_none(), "first transition seeds the open interval");
 
@@ -160,7 +160,7 @@ async fn interval_lift_closes_previous_focus_on_next_transition(
     };
 
     let output = automaton
-        .process(&mut state, serde_json::to_value(second)?, &second_context)
+        .process_single(&mut state, serde_json::to_value(second)?, &second_context)
         .await?
         .expect("second transition closes the previous focus interval");
 
@@ -208,7 +208,7 @@ async fn interval_lift_equivalence_key_is_start_occurrence_not_parent_ids(
     let second_id = second_context.trigger_uuid();
 
     automaton
-        .process(
+        .process_single(
             &mut state,
             serde_json::to_value(HyprlandWindowFocusedPayload {
                 window_id: Some("0xabc".to_string()),
@@ -221,7 +221,7 @@ async fn interval_lift_equivalence_key_is_start_occurrence_not_parent_ids(
         )
         .await?;
     let output = automaton
-        .process(
+        .process_single(
             &mut state,
             serde_json::to_value(HyprlandWindowFocusedPayload {
                 window_id: Some("0xdef".to_string()),
@@ -292,10 +292,10 @@ async fn interval_lift_updates_same_focus_without_closing_interval(
     };
 
     automaton
-        .process(&mut state, serde_json::to_value(first)?, &first_context)
+        .process_single(&mut state, serde_json::to_value(first)?, &first_context)
         .await?;
     let same_focus_output = automaton
-        .process(
+        .process_single(
             &mut state,
             serde_json::to_value(refresh_payload)?,
             &focus_context(refresh),
@@ -307,7 +307,7 @@ async fn interval_lift_updates_same_focus_without_closing_interval(
     );
 
     let output = automaton
-        .process(&mut state, serde_json::to_value(second)?, &second_context)
+        .process_single(&mut state, serde_json::to_value(second)?, &second_context)
         .await?
         .expect("different subject closes the original focus interval");
 
@@ -344,10 +344,10 @@ async fn interval_lift_ignores_non_monotonic_transition() -> xtask::sandbox::Tes
     };
 
     automaton
-        .process(&mut state, serde_json::to_value(first)?, &focus_context(later))
+        .process_single(&mut state, serde_json::to_value(first)?, &focus_context(later))
         .await?;
     let output = automaton
-        .process(
+        .process_single(
             &mut state,
             serde_json::to_value(second)?,
             &focus_context(earlier),
@@ -374,7 +374,7 @@ async fn interval_lift_closes_previous_workspace_on_next_switch(
     let second_id = second_context.trigger_uuid();
 
     let first_output = automaton
-        .process(
+        .process_single(
             &mut state,
             serde_json::to_value(HyprlandWorkspaceSwitchedPayload {
                 to_workspace_id: 2,
@@ -392,7 +392,7 @@ async fn interval_lift_closes_previous_workspace_on_next_switch(
     );
 
     let output = automaton
-        .process(
+        .process_single(
             &mut state,
             serde_json::to_value(HyprlandWorkspaceSwitchedPayload {
                 to_workspace_id: 3,
@@ -456,7 +456,7 @@ async fn interval_lift_updates_same_workspace_without_closing_interval(
     let mut automaton = IntervalLift;
     let mut state = IntervalLiftState::default();
     automaton
-        .process(
+        .process_single(
             &mut state,
             serde_json::to_value(HyprlandWorkspaceSwitchedPayload {
                 to_workspace_id: 2,
@@ -470,7 +470,7 @@ async fn interval_lift_updates_same_workspace_without_closing_interval(
         .await?;
 
     let output = automaton
-        .process(
+        .process_single(
             &mut state,
             serde_json::to_value(HyprlandWorkspaceSwitchedPayload {
                 to_workspace_id: 2,
@@ -511,7 +511,7 @@ async fn interval_lift_lifts_activitywatch_window_observed_duration(
     let first_id = first_context.trigger_uuid();
 
     let output = automaton
-        .process(
+        .process_single(
             &mut state,
             serde_json::to_value(ActivityWatchWindowActivePayload {
                 app: "kitty".to_string(),
@@ -562,7 +562,7 @@ async fn interval_lift_emits_each_activitywatch_window_row_independently(
     let mut automaton = IntervalLift;
     let mut state = IntervalLiftState::default();
     let first = automaton
-        .process(
+        .process_single(
             &mut state,
             serde_json::to_value(ActivityWatchWindowActivePayload {
                 app: "kitty".to_string(),
@@ -576,7 +576,7 @@ async fn interval_lift_emits_each_activitywatch_window_row_independently(
         .expect("first AW row emits a span");
 
     let second = automaton
-        .process(
+        .process_single(
             &mut state,
             serde_json::to_value(ActivityWatchWindowActivePayload {
                 app: "qutebrowser".to_string(),
@@ -617,7 +617,7 @@ async fn interval_lift_merges_activitywatch_zero_duration_heartbeats(
     let switch_id = switch_context.trigger_uuid();
 
     let first = automaton
-        .process(
+        .process_single(
             &mut state,
             serde_json::to_value(ActivityWatchWindowActivePayload {
                 app: "kitty".to_string(),
@@ -634,7 +634,7 @@ async fn interval_lift_merges_activitywatch_zero_duration_heartbeats(
     );
 
     let refresh = automaton
-        .process(
+        .process_single(
             &mut state,
             serde_json::to_value(ActivityWatchWindowActivePayload {
                 app: "kitty".to_string(),
@@ -651,7 +651,7 @@ async fn interval_lift_merges_activitywatch_zero_duration_heartbeats(
     );
 
     let output = automaton
-        .process(
+        .process_single(
             &mut state,
             serde_json::to_value(ActivityWatchWindowActivePayload {
                 app: "qutebrowser".to_string(),
@@ -691,7 +691,7 @@ async fn interval_lift_splits_activitywatch_heartbeat_after_large_gap(
     let late_context = activitywatch_context(late_ts);
 
     let first = automaton
-        .process(
+        .process_single(
             &mut state,
             serde_json::to_value(ActivityWatchWindowActivePayload {
                 app: "kitty".to_string(),
@@ -705,7 +705,7 @@ async fn interval_lift_splits_activitywatch_heartbeat_after_large_gap(
     assert!(first.is_none());
 
     let output = automaton
-        .process(
+        .process_single(
             &mut state,
             serde_json::to_value(ActivityWatchWindowActivePayload {
                 app: "kitty".to_string(),
@@ -754,7 +754,7 @@ async fn interval_lift_continuous_heartbeat_stream_is_one_bout(
     for i in 0..=12 {
         let ts = start + sinex_primitives::temporal::Duration::seconds(i * 5);
         let out = automaton
-            .process(&mut state, payload()?, &activitywatch_context(ts))
+            .process_single(&mut state, payload()?, &activitywatch_context(ts))
             .await?;
         assert!(out.is_none(), "continuous 5s heartbeats must merge, not chop (beat {i})");
     }
@@ -762,7 +762,7 @@ async fn interval_lift_continuous_heartbeat_stream_is_one_bout(
     // A beat after a 2-minute silence (>30s) ends the bout at last_seen(+60) + slack.
     let after_silence = start + sinex_primitives::temporal::Duration::seconds(180);
     let output = automaton
-        .process(&mut state, payload()?, &activitywatch_context(after_silence))
+        .process_single(&mut state, payload()?, &activitywatch_context(after_silence))
         .await?
         .expect("the post-silence beat closes the single continuous bout");
 
@@ -789,7 +789,7 @@ async fn interval_lift_lifts_activitywatch_afk_observed_duration(
     let parent_id = context.trigger_uuid();
 
     let output = automaton
-        .process(
+        .process_single(
             &mut state,
             serde_json::to_value(ActivityWatchAfkChangedPayload {
                 status: "afk".to_string(),
@@ -836,7 +836,7 @@ async fn interval_lift_emits_not_afk_as_distinct_status_interval(
         .ok_or_else(|| color_eyre::eyre::eyre!("valid timestamp"))?;
 
     let output = IntervalLift
-        .process(
+        .process_single(
             &mut IntervalLiftState::default(),
             serde_json::to_value(ActivityWatchAfkChangedPayload {
                 status: "not-afk".to_string(),
@@ -911,7 +911,7 @@ async fn interval_lift_closes_systemd_unit_on_stop() -> xtask::sandbox::TestResu
     let stop_id = stop_context.trigger_uuid();
 
     let start_output = automaton
-        .process(
+        .process_single(
             &mut state,
             serde_json::to_value(SystemdUnitStartedPayload {
                 unit_name: "sinexd.service".to_string(),
@@ -926,7 +926,7 @@ async fn interval_lift_closes_systemd_unit_on_stop() -> xtask::sandbox::TestResu
     assert!(start_output.is_none(), "start opens the unit interval");
 
     let output = automaton
-        .process(
+        .process_single(
             &mut state,
             serde_json::to_value(SystemdUnitStoppedPayload {
                 unit_name: "sinexd.service".to_string(),
@@ -997,9 +997,9 @@ async fn interval_lift_uzc_tie_supersedes_open_state_in_place() -> xtask::sandbo
     let later = t + sinex_primitives::temporal::Duration::seconds(10);
     let mut automaton = IntervalLift;
     let mut state = IntervalLiftState::default();
-    assert!(automaton.process(&mut state, uzc_focus("0xA")?, &focus_context(t)).await?.is_none());
-    assert!(automaton.process(&mut state, uzc_focus("0xB")?, &focus_context(t)).await?.is_none());
-    let out = automaton.process(&mut state, uzc_focus("0xC")?, &focus_context(later)).await?
+    assert!(automaton.process_single(&mut state, uzc_focus("0xA")?, &focus_context(t)).await?.is_none());
+    assert!(automaton.process_single(&mut state, uzc_focus("0xB")?, &focus_context(t)).await?.is_none());
+    let out = automaton.process_single(&mut state, uzc_focus("0xC")?, &focus_context(later)).await?
         .expect("next transition closes the superseding state");
     assert_eq!(out.payload.subject_id.as_deref(), Some("0xB"));
     assert_eq!(out.payload.start_time, t);
@@ -1017,9 +1017,9 @@ async fn interval_lift_uzc_out_of_order_transition_is_skipped() -> xtask::sandbo
     let t20 = Timestamp::from_unix_timestamp(1_700_000_020).ok_or_else(|| color_eyre::eyre::eyre!("ts"))?;
     let mut automaton = IntervalLift;
     let mut state = IntervalLiftState::default();
-    assert!(automaton.process(&mut state, uzc_focus("0xA")?, &focus_context(t10)).await?.is_none());
-    assert!(automaton.process(&mut state, uzc_focus("0xB")?, &focus_context(t0)).await?.is_none());
-    let out = automaton.process(&mut state, uzc_focus("0xC")?, &focus_context(t20)).await?
+    assert!(automaton.process_single(&mut state, uzc_focus("0xA")?, &focus_context(t10)).await?.is_none());
+    assert!(automaton.process_single(&mut state, uzc_focus("0xB")?, &focus_context(t0)).await?.is_none());
+    let out = automaton.process_single(&mut state, uzc_focus("0xC")?, &focus_context(t20)).await?
         .expect("in-order transition closes the still-open 0xA");
     assert_eq!(out.payload.subject_id.as_deref(), Some("0xA"));
     assert_eq!(out.payload.start_time, t10);
@@ -1035,8 +1035,8 @@ async fn interval_lift_uzc_start_after_start_emits_restart_fence() -> xtask::san
     let restart = t + sinex_primitives::temporal::Duration::seconds(10);
     let mut automaton = IntervalLift;
     let mut state = IntervalLiftState::default();
-    assert!(automaton.process(&mut state, uzc_unit_started()?, &systemd_context("unit.started", t)).await?.is_none());
-    let out = automaton.process(&mut state, uzc_unit_started()?, &systemd_context("unit.started", restart)).await?
+    assert!(automaton.process_single(&mut state, uzc_unit_started()?, &systemd_context("unit.started", t)).await?.is_none());
+    let out = automaton.process_single(&mut state, uzc_unit_started()?, &systemd_context("unit.started", restart)).await?
         .expect("start-after-start emits the implied restart-fence close");
     assert_eq!(out.payload.subject_id.as_deref(), Some("u.service"));
     assert_eq!(out.payload.start_time, t);
@@ -1053,8 +1053,8 @@ async fn interval_lift_uzc_stop_before_start_is_zero_duration() -> xtask::sandbo
     let early_stop = Timestamp::from_unix_timestamp(1_700_000_005).ok_or_else(|| color_eyre::eyre::eyre!("ts"))?;
     let mut automaton = IntervalLift;
     let mut state = IntervalLiftState::default();
-    automaton.process(&mut state, uzc_unit_started()?, &systemd_context("unit.started", start)).await?;
-    let out = automaton.process(&mut state, serde_json::to_value(SystemdUnitStoppedPayload {
+    automaton.process_single(&mut state, uzc_unit_started()?, &systemd_context("unit.started", start)).await?;
+    let out = automaton.process_single(&mut state, serde_json::to_value(SystemdUnitStoppedPayload {
         unit_name: "u.service".to_string(),
         unit_type: SystemdUnitType::Service,
         exit_code: None,
@@ -1075,7 +1075,7 @@ async fn interval_lift_ignores_systemd_stop_without_matching_start(
         .ok_or_else(|| color_eyre::eyre::eyre!("valid timestamp"))?;
 
     let output = IntervalLift
-        .process(
+        .process_single(
             &mut IntervalLiftState::default(),
             serde_json::to_value(SystemdUnitStoppedPayload {
                 unit_name: "sinexd.service".to_string(),
@@ -1122,6 +1122,127 @@ async fn interval_lift_decodes_legacy_focus_checkpoint_state(
             .get("workspace_id")
             .map(String::as_str),
         Some("2")
+    );
+    Ok(())
+}
+
+/// sinex-5s6: a machine suspend (systemd sleep.target start) fences the open
+/// focus interval — it ends at the suspend, not at the next-morning focus event
+/// (which would otherwise attribute the whole overnight gap to focus).
+#[sinex_test]
+async fn suspend_fence_closes_open_focus_interval() -> xtask::sandbox::TestResult<()> {
+    let mut automaton = IntervalLift::default();
+    let mut state = IntervalLiftState::default();
+    let focus_start = Timestamp::from_unix_timestamp(1_700_000_000).expect("valid ts");
+    let suspend_ts = Timestamp::from_unix_timestamp(1_700_000_300).expect("valid ts");
+
+    let focus_ctx = focus_context(focus_start);
+    let focus_id = focus_ctx.trigger_uuid();
+    let opened = automaton
+        .process(
+            &mut state,
+            serde_json::to_value(HyprlandWindowFocusedPayload {
+                window_id: Some("0xabc".to_string()),
+                window_class: Some("kitty".to_string()),
+                window_title: Some("codex".to_string()),
+                workspace_id: Some(1),
+                previous_window_id: None,
+            })?,
+            &focus_ctx,
+        )
+        .await?;
+    assert!(opened.is_empty(), "focus start only opens the interval");
+
+    let suspend_ctx = systemd_context("unit.started", suspend_ts);
+    let suspend_id = suspend_ctx.trigger_uuid();
+    let closes = automaton
+        .process(
+            &mut state,
+            serde_json::to_value(SystemdUnitStartedPayload {
+                unit_name: "sleep.target".to_string(),
+                unit_type: SystemdUnitType::Target,
+                main_pid: None,
+                active_state: SystemdActiveState::Active,
+                sub_state: "active".to_string(),
+            })?,
+            &suspend_ctx,
+        )
+        .await?;
+
+    assert_eq!(closes.len(), 1, "suspend closes the one open focus interval");
+    let closed = &closes[0];
+    assert_eq!(
+        closed.payload.end_time, suspend_ts,
+        "focus interval ends at the suspend, not the next focus event"
+    );
+    assert_eq!(closed.payload.start_time, focus_start);
+    assert_eq!(closed.payload.end_event_type, "fence.suspend");
+    assert_eq!(closed.source_event_ids, vec![focus_id, suspend_id]);
+    assert!(
+        state.active_focus.is_none(),
+        "the fence cleared the open focus slot"
+    );
+    // The sleep unit is a fence, not a subject interval — no unit state opened.
+    assert!(
+        state.active_subject_states.is_empty(),
+        "the suspend unit is a fence, not lifted as a subject interval"
+    );
+    Ok(())
+}
+
+/// sinex-5s6: an AFK transition fences the open focus interval (the user stopped
+/// attending) AND still lifts the AFK period as its own interval.
+#[sinex_test]
+async fn afk_fence_closes_focus_and_lifts_afk_interval() -> xtask::sandbox::TestResult<()> {
+    let mut automaton = IntervalLift::default();
+    let mut state = IntervalLiftState::default();
+    let focus_start = Timestamp::from_unix_timestamp(1_700_000_000).expect("valid ts");
+    let afk_ts = Timestamp::from_unix_timestamp(1_700_000_600).expect("valid ts");
+
+    let focus_ctx = focus_context(focus_start);
+    let focus_id = focus_ctx.trigger_uuid();
+    automaton
+        .process(
+            &mut state,
+            serde_json::to_value(HyprlandWindowFocusedPayload {
+                window_id: Some("0xabc".to_string()),
+                window_class: Some("kitty".to_string()),
+                window_title: Some("codex".to_string()),
+                workspace_id: Some(1),
+                previous_window_id: None,
+            })?,
+            &focus_ctx,
+        )
+        .await?;
+
+    let afk_ctx = activitywatch_afk_context(afk_ts);
+    let outputs = automaton
+        .process(
+            &mut state,
+            serde_json::to_value(ActivityWatchAfkChangedPayload {
+                status: "afk".to_string(),
+                duration_ms: 60_000,
+                bucket_id: "aw-watcher-afk".to_string(),
+            })?,
+            &afk_ctx,
+        )
+        .await?;
+
+    let focus_close = outputs
+        .iter()
+        .find(|o| o.payload.end_event_type == "fence.afk")
+        .expect("afk fences the open focus interval");
+    assert_eq!(focus_close.payload.end_time, afk_ts);
+    assert!(focus_close.source_event_ids.contains(&focus_id));
+    assert!(
+        state.active_focus.is_none(),
+        "the afk fence cleared the open focus slot"
+    );
+    // The AFK period itself is still lifted as its own interval.
+    assert!(
+        outputs.len() >= 2,
+        "afk fence emits the focus close AND the afk interval (got {})",
+        outputs.len()
     );
     Ok(())
 }

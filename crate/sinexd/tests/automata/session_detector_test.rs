@@ -79,6 +79,67 @@ async fn budget_windows_accumulate_without_emitting_session() -> TestResult<()> 
 }
 
 #[sinex_test]
+async fn session_closes_on_quiet_via_flush() -> TestResult<()> {
+    // sinex-5s6: a session whose final contributing window did NOT carry a Gap
+    // close (here MaxDuration windows) and then falls silent must still close
+    // via the clock-driven flush backstop — not hang open until future activity.
+    let mut detector = SessionDetector;
+    let mut state = SessionState::default();
+    let start = Timestamp::from_unix_timestamp(1_700_000_000).expect("valid timestamp");
+
+    let w1 = make_window(
+        1,
+        start,
+        start + Duration::seconds(60),
+        5,
+        ActivityWindowCloseReason::MaxDuration,
+        ActivitySourceKind::Terminal,
+    );
+    detector.accumulate(&mut state, w1, &make_context(start)).await?;
+    let w2_end = start + Duration::seconds(120);
+    let w2 = make_window(
+        2,
+        start + Duration::seconds(60),
+        w2_end,
+        5,
+        ActivityWindowCloseReason::MaxDuration,
+        ActivitySourceKind::Terminal,
+    );
+    detector
+        .accumulate(&mut state, w2, &make_context(start + Duration::seconds(60)))
+        .await?;
+
+    assert!(
+        !detector.window_complete(&state),
+        "no Gap-closed window arrived — the normal completion path stays open"
+    );
+
+    // Window gap threshold default is 300 s.
+    let gap = 300_i64;
+    assert!(
+        !detector.flush_due(&state, w2_end + Duration::seconds(gap - 1)),
+        "must not close before gap of quiet"
+    );
+    assert!(
+        detector.flush_due(&state, w2_end + Duration::seconds(gap)),
+        "gap of quiet closes the trailing session without a next window"
+    );
+
+    let flush_ctx = AutomatonContext::timer_flush(w2_end + Duration::seconds(gap))?;
+    let output = detector
+        .emit(&mut state, &flush_ctx)
+        .await?
+        .expect("flush must emit the trailing session");
+    assert_eq!(output.payload.window_count, 2);
+    assert_eq!(output.payload.end_time, w2_end);
+    assert!(
+        state.session_start.is_none() && state.window_count == 0,
+        "flush emit resets the session"
+    );
+    Ok(())
+}
+
+#[sinex_test]
 async fn gap_closed_window_emits_completed_session() -> TestResult<()> {
     let mut detector = SessionDetector;
     let mut state = SessionState::default();

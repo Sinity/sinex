@@ -4,8 +4,10 @@
 //! `state.interval` events. Additional point/transition sources should add
 //! rules here instead of creating source-specific interval silos.
 
-use crate::runtime::automaton::{DerivedOutput, TransducerAdapter};
-use crate::runtime::{AutomatonContext, AutomatonLogicError, InputProvenanceFilter, Transducer};
+use crate::runtime::automaton::{DerivedOutput, MultiOutputTransducerAdapter};
+use crate::runtime::{
+    AutomatonContext, AutomatonLogicError, InputProvenanceFilter, MultiOutputTransducer,
+};
 use serde::{Deserialize, Deserializer, Serialize};
 use sinex_primitives::domain::SyntheticTemporalPolicy;
 use sinex_primitives::events::payloads::{
@@ -41,6 +43,43 @@ const ACTIVITYWATCH_HEARTBEAT_MERGE_WINDOW_SECS: i64 = 30;
 /// heartbeat (one merge-window of tolerance), never at the next post-gap event —
 /// heartbeat absence is absence of evidence, not continued activity.
 const ACTIVITYWATCH_HEARTBEAT_END_SLACK_SECS: i64 = ACTIVITYWATCH_HEARTBEAT_MERGE_WINDOW_SECS;
+
+/// sinex-5s6 cross-kind fences. A fence event ends open desktop *attention*
+/// intervals at its own `ts_orig`, so an interval does not require a next
+/// same-kind event to become queryable (a focus interval no longer spans an
+/// overnight suspend as one 9-hour block).
+const FENCE_SUSPEND_EVENT_TYPE: &str = "fence.suspend";
+const FENCE_AFK_EVENT_TYPE: &str = "fence.afk";
+const AFK_STATUS_AFK: &str = "afk";
+
+/// systemd units whose *start* marks the machine suspending/hibernating — a
+/// desktop-attention fence. (Boot would fence too, but no boot event payload is
+/// captured yet; tracked on sinex-5s6.)
+const SUSPEND_UNIT_NAMES: &[&str] = &[
+    "sleep.target",
+    "suspend.target",
+    "systemd-suspend.service",
+    "hibernate.target",
+    "systemd-hibernate.service",
+    "hybrid-sleep.target",
+    "systemd-hybrid-sleep.service",
+    "suspend-then-hibernate.target",
+    "systemd-suspend-then-hibernate.service",
+];
+
+fn is_suspend_unit(unit_name: &str) -> bool {
+    SUSPEND_UNIT_NAMES.contains(&unit_name)
+}
+
+/// The cross-kind fence an input represents, if any (sinex-5s6).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Fence {
+    /// Machine suspend/hibernate: fences focus, workspace, and AW heartbeats.
+    Suspend,
+    /// AFK transition: fences focus and workspace (the AFK interval itself is
+    /// still lifted normally).
+    Afk,
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum IntervalLiftRuleShape {
@@ -458,6 +497,50 @@ impl StateObservation {
         .with_equivalence_key(interval_id)
     }
 
+    /// Close this open interval at an external cross-kind fence (sinex-5s6): a
+    /// suspend or AFK-transition event ends the interval at the fence `ts_orig`,
+    /// not at the next same-kind event. The fence event is a parent alongside
+    /// the interval's own start. Occurrence identity stays start-anchored (ecy),
+    /// so a fence-closed interval carries a stable equivalence key.
+    fn close_at_fence(
+        &self,
+        fence_ts: Timestamp,
+        fence_event_type: &str,
+        fence_event_id: Uuid,
+    ) -> DerivedOutput<StateIntervalPayload> {
+        let duration_secs = (fence_ts - self.ts_orig).whole_seconds().max(0) as u64;
+        let subject_part = self
+            .subject_id
+            .as_deref()
+            .unwrap_or("unknown-subject")
+            .to_string();
+        let interval_id = interval_occurrence_key(
+            &self.state_kind,
+            &subject_part,
+            self.material_id,
+            self.anchor_byte,
+            self.ts_orig,
+        );
+
+        let payload = StateIntervalPayload {
+            interval_id: interval_id.clone(),
+            state_kind: self.state_kind.clone(),
+            subject_id: self.subject_id.clone(),
+            label: self.label.clone(),
+            start_time: self.ts_orig,
+            end_time: fence_ts,
+            duration_secs,
+            start_event_type: self.event_type.clone(),
+            end_event_type: fence_event_type.to_string(),
+            attributes: self.attributes.clone(),
+        };
+
+        DerivedOutput::windowed(payload, fence_ts, vec![self.event_id, fence_event_id])
+            .with_temporal_policy(SyntheticTemporalPolicy::WindowBoundary)
+            .with_semantics_version(SEMANTICS_VERSION)
+            .with_equivalence_key(interval_id)
+    }
+
     /// Close a heartbeat bout at the LAST observed heartbeat plus a bounded slack
     /// (sinex-zs6), NOT at the next post-gap event's ts_orig. Only the bout's own
     /// start event is a parent — the post-gap event belongs to the next bout.
@@ -627,7 +710,7 @@ where
     }
 }
 
-impl Transducer for IntervalLift {
+impl MultiOutputTransducer for IntervalLift {
     type State = IntervalLiftState;
     type Input = JsonValue;
     type Output = StateIntervalPayload;
@@ -647,8 +730,8 @@ impl Transducer for IntervalLift {
             .collect()
     }
 
-    fn output_event_type(&self) -> &'static str {
-        StateIntervalPayload::EVENT_TYPE.as_static_str()
+    fn output_event_types(&self) -> &[&'static str] {
+        &["state.interval"]
     }
 
     fn output_event_source(&self) -> &'static str {
@@ -659,12 +742,127 @@ impl Transducer for IntervalLift {
         InputProvenanceFilter::MaterialOnly
     }
 
+    /// Multi-output entry (sinex-5s6). Most inputs still map 1:1 through
+    /// `process_single`, but a cross-kind fence (machine suspend, AFK
+    /// transition) closes SEVERAL open desktop-attention intervals at once, so
+    /// interval-lift is a `MultiOutputTransducer`.
     async fn process(
         &mut self,
         state: &mut Self::State,
         input: Self::Input,
         context: &AutomatonContext,
-    ) -> Result<Option<DerivedOutput<Self::Output>>, AutomatonLogicError> {
+    ) -> Result<Vec<DerivedOutput<Self::Output>>, AutomatonLogicError> {
+        match Self::classify_fence(&input, context) {
+            Some(Fence::Suspend) => {
+                let fence_ts = context.require_ts_orig()?;
+                let fence_id = context.trigger_uuid();
+                // A suspend ends user-attention intervals; machine-state systemd
+                // unit intervals legitimately span the suspend, so the sleep unit
+                // is NOT also lifted as a subject interval here.
+                Ok(Self::fence_desktop_attention(
+                    state,
+                    fence_ts,
+                    FENCE_SUSPEND_EVENT_TYPE,
+                    fence_id,
+                ))
+            }
+            Some(Fence::Afk) => {
+                let fence_ts = context.require_ts_orig()?;
+                let fence_id = context.trigger_uuid();
+                let mut outputs =
+                    Self::fence_focus_workspace(state, fence_ts, FENCE_AFK_EVENT_TYPE, fence_id);
+                // The AFK interval itself is still lifted via the normal path.
+                outputs.extend(self.process_single(state, input, context).await?);
+                Ok(outputs)
+            }
+            None => Ok(self
+                .process_single(state, input, context)
+                .await?
+                .into_iter()
+                .collect()),
+        }
+    }
+}
+
+impl IntervalLift {
+    /// Classify an input as a cross-kind fence (sinex-5s6) by peeking the raw
+    /// JSON — without consuming `input`, so the non-fence and AFK paths can
+    /// still parse it in `process_single`.
+    fn classify_fence(input: &JsonValue, context: &AutomatonContext) -> Option<Fence> {
+        let source = context.source.as_str();
+        let event_type = context.event_type.as_str();
+        if source == "systemd"
+            && event_type == SystemdUnitStartedPayload::EVENT_TYPE.as_static_str()
+            && input
+                .get("unit_name")
+                .and_then(|v| v.as_str())
+                .is_some_and(is_suspend_unit)
+        {
+            return Some(Fence::Suspend);
+        }
+        if source == "activitywatch"
+            && event_type == ActivityWatchAfkChangedPayload::EVENT_TYPE.as_static_str()
+            && input.get("status").and_then(|v| v.as_str()) == Some(AFK_STATUS_AFK)
+        {
+            return Some(Fence::Afk);
+        }
+        None
+    }
+
+    /// Close the open focus and workspace intervals at the fence (sinex-5s6). An
+    /// interval that started AFTER the fence ts (out-of-order arrival) is left
+    /// open rather than closed with a negative span.
+    fn fence_focus_workspace(
+        state: &mut IntervalLiftState,
+        fence_ts: Timestamp,
+        fence_event_type: &str,
+        fence_event_id: Uuid,
+    ) -> Vec<DerivedOutput<StateIntervalPayload>> {
+        let mut outputs = Vec::new();
+        for slot in [&mut state.active_focus, &mut state.active_workspace] {
+            if slot.as_ref().is_some_and(|o| o.ts_orig <= fence_ts) {
+                let observation = slot.take().expect("checked Some above");
+                outputs.push(observation.close_at_fence(fence_ts, fence_event_type, fence_event_id));
+            }
+        }
+        outputs
+    }
+
+    /// Close all open desktop-attention intervals — focus, workspace, and
+    /// ActivityWatch heartbeat bouts — at the fence (sinex-5s6, suspend).
+    fn fence_desktop_attention(
+        state: &mut IntervalLiftState,
+        fence_ts: Timestamp,
+        fence_event_type: &str,
+        fence_event_id: Uuid,
+    ) -> Vec<DerivedOutput<StateIntervalPayload>> {
+        let mut outputs =
+            Self::fence_focus_workspace(state, fence_ts, fence_event_type, fence_event_id);
+        let heartbeats = std::mem::take(&mut state.active_activitywatch_heartbeats);
+        for (key, observation) in heartbeats {
+            if observation.ts_orig <= fence_ts {
+                outputs.push(observation.close_at_fence(
+                    fence_ts,
+                    fence_event_type,
+                    fence_event_id,
+                ));
+            } else {
+                // Opened after the fence (out-of-order) — keep it open.
+                state.active_activitywatch_heartbeats.insert(key, observation);
+            }
+        }
+        outputs
+    }
+
+    /// Single-transition lift (0/1 output): the original transducer logic,
+    /// unchanged. The `MultiOutputTransducer::process` above wraps it, adding
+    /// cross-kind fence closure.
+    async fn process_single(
+        &mut self,
+        state: &mut IntervalLiftState,
+        input: JsonValue,
+        context: &AutomatonContext,
+    ) -> Result<Option<DerivedOutput<StateIntervalPayload>>, AutomatonLogicError> {
         let (slot, current) =
             match (context.source.as_str(), context.event_type.as_str()) {
                 ("wm.hyprland", event_type)
@@ -908,7 +1106,7 @@ impl IntervalLift {
 }
 
 /// RuntimeModule type alias registered via `AutomatonSpec` in `automata::registry`.
-pub type IntervalLiftRuntime = TransducerAdapter<IntervalLift>;
+pub type IntervalLiftRuntime = MultiOutputTransducerAdapter<IntervalLift>;
 
 // --- Source descriptor ------------------------------------------------------
 
