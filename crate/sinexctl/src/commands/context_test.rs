@@ -151,7 +151,6 @@ async fn recall_machine_output_uses_recall_surface() -> xtask::sandbox::TestResu
             total: std::time::Duration::from_millis(42),
             base_event_cards: std::time::Duration::from_millis(20),
             diversity_top_up: std::time::Duration::from_millis(10),
-            self_observation_filter: std::time::Duration::from_millis(1),
             source_caveats: std::time::Duration::from_millis(11),
             attention_lineage: std::time::Duration::from_millis(12),
         },
@@ -172,10 +171,6 @@ async fn recall_machine_output_uses_recall_surface() -> xtask::sandbox::TestResu
     assert_eq!(
         value["query_echo"]["stage_timings_ms"]["diversity_top_up"],
         10
-    );
-    assert_eq!(
-        value["query_echo"]["stage_timings_ms"]["self_observation_filter"],
-        1
     );
     assert_eq!(
         value["query_echo"]["stage_timings_ms"]["source_caveats"],
@@ -687,41 +682,25 @@ async fn recall_diversity_sources_use_emitted_source_ids() -> xtask::sandbox::Te
 }
 
 #[sinex_test]
-async fn recall_self_observation_filter_keeps_operator_activity() -> xtask::sandbox::TestResult<()>
-{
-    let mut event_cards = EventCardListView {
-        schema_version: EVENT_CARD_LIST_SCHEMA_VERSION.to_string(),
-        count: 4,
-        cards: vec![
-            context_event("sinex", "metric.gauge"),
-            context_event("sinexd.event_engine", "batch.stats"),
-            context_event("shell.atuin", "command.executed"),
-            context_event("fs-watcher", "file.modified"),
-        ],
-        next_cursor: None,
-        total_estimate: None,
-    };
-
-    apply_self_observation_mode(&mut event_cards, SelfObservationMode::Exclude);
-
-    assert_eq!(event_cards.count, 2);
-    assert!(
-        event_cards
-            .cards
-            .iter()
-            .all(|card| !card.source.raw.starts_with("sinex"))
+async fn self_observation_mode_selects_query_lane() -> xtask::sandbox::TestResult<()> {
+    // The context/recall base query is built with self_observation_lane(mode):
+    // Exclude reads the Activity lane, whose SourceRole filter drops
+    // self-observation rows (physical reflection.events and legacy reflection
+    // rows in core.events) at the database; Include reads the full All relation
+    // so reflection rows actually reach the packet. The old string-matched
+    // post-filter could only remove cards the Activity query already returned —
+    // it could never recover reflection rows the DB never sent — so Include was
+    // silently broken. The DB-level exclusion/union behavior is proven in
+    // sinex-db composable_query_test (event_query_defaults_to_activity_lane /
+    // event_query_all_lane_unions_activity_and_reflection); this pins the
+    // CLI-side mode->lane contract the base query depends on.
+    assert_eq!(
+        self_observation_lane(SelfObservationMode::Exclude),
+        EventQueryLane::Activity
     );
-    assert!(
-        event_cards
-            .cards
-            .iter()
-            .any(|card| card.source.raw == "shell.atuin")
-    );
-    assert!(
-        event_cards
-            .cards
-            .iter()
-            .any(|card| card.source.raw == "fs-watcher")
+    assert_eq!(
+        self_observation_lane(SelfObservationMode::Include),
+        EventQueryLane::All
     );
     Ok(())
 }

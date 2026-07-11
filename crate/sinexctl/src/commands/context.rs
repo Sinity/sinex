@@ -10,14 +10,14 @@ use sinex_primitives::ids::Id;
 #[cfg(test)]
 use sinex_primitives::query::QueryResultEvent;
 use sinex_primitives::query::{
-    EventQuery, LineageDirection, LineageNode, LineageQuery, LineageResult, SortDirection,
-    TimeRange,
+    EventQuery, EventQueryLane, LineageDirection, LineageNode, LineageQuery, LineageResult,
+    SortDirection, TimeRange,
 };
 use sinex_primitives::relations::{
     EventRelationExpr, EvidenceRef, EvidenceRole, EvidenceWindow, ExpansionStep, ExpansionStepKind,
     ExpansionTrace, ObservedRange, TimeBasis,
 };
-use sinex_primitives::sources::{is_self_observation_source, source_identity_matches_family};
+use sinex_primitives::sources::source_identity_matches_family;
 use sinex_primitives::temporal::Timestamp;
 use sinex_primitives::views::{
     ActionAvailability, ActionAvailabilityState, CaveatView, ContextAttentionSpanView,
@@ -280,7 +280,6 @@ struct ContextStageTimings {
     total: StdDuration,
     base_event_cards: StdDuration,
     diversity_top_up: StdDuration,
-    self_observation_filter: StdDuration,
     source_caveats: StdDuration,
     attention_lineage: StdDuration,
 }
@@ -291,7 +290,6 @@ impl ContextStageTimings {
             "total": duration_millis(self.total),
             "base_event_cards": duration_millis(self.base_event_cards),
             "diversity_top_up": duration_millis(self.diversity_top_up),
-            "self_observation_filter": duration_millis(self.self_observation_filter),
             "source_caveats": duration_millis(self.source_caveats),
             "attention_lineage": duration_millis(self.attention_lineage),
         })
@@ -334,6 +332,7 @@ async fn execute_context_request(
         payload: None,
         limit: i64::from(limit),
         direction: SortDirection::Desc,
+        lane: self_observation_lane(self_observation),
         ..Default::default()
     };
 
@@ -368,10 +367,6 @@ async fn execute_context_request(
     let started = Instant::now();
     let diversity_caveat = top_up_context_diversity(client, &mut event_cards, &window).await?;
     timings.diversity_top_up = started.elapsed();
-
-    let started = Instant::now();
-    apply_self_observation_mode(&mut event_cards, self_observation);
-    timings.self_observation_filter = started.elapsed();
 
     let started = Instant::now();
     let mut source_caveats = context_source_caveats(client, &event_cards, source_caveats).await;
@@ -480,18 +475,16 @@ async fn execute_context_request(
     Ok(())
 }
 
-fn apply_self_observation_mode(event_cards: &mut EventCardListView, mode: SelfObservationMode) {
-    if mode == SelfObservationMode::Include {
-        return;
+/// Map the operator's self-observation choice onto the physical query lane.
+/// Include reads the full `All` relation (activity + reflection); Exclude reads
+/// the `Activity` lane, whose SourceRole filter already drops self-observation
+/// rows (physical `reflection.events` and legacy reflection rows in
+/// `core.events`) at the database — no string-matched post-filter.
+fn self_observation_lane(mode: SelfObservationMode) -> EventQueryLane {
+    match mode {
+        SelfObservationMode::Include => EventQueryLane::All,
+        SelfObservationMode::Exclude => EventQueryLane::Activity,
     }
-    event_cards
-        .cards
-        .retain(|card| !is_self_observation_card(card));
-    event_cards.count = event_cards.cards.len();
-}
-
-fn is_self_observation_card(card: &EventCardView) -> bool {
-    is_self_observation_source(card.source.raw.as_str())
 }
 
 #[derive(Debug, Clone)]
