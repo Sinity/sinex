@@ -22,6 +22,11 @@ pub struct VerifyCommand {
 
 #[derive(Debug, Clone, clap::Subcommand)]
 pub enum VerifySubcommand {
+    /// Compile a bounded proof-obligation manifest without executing its commands.
+    Obligations {
+        /// Proof-obligation IR JSON manifest.
+        manifest: PathBuf,
+    },
     /// Inspect and validate the phase verification manifest.
     Plan {
         /// Select one phase by id.
@@ -250,6 +255,9 @@ impl XtaskCommand for VerifyCommand {
 
     async fn execute(&self, ctx: &CommandContext) -> Result<CommandResult> {
         match &self.subcommand {
+            VerifySubcommand::Obligations { manifest } => {
+                crate::commands::proof_obligations::execute(manifest, ctx)
+            }
             VerifySubcommand::Plan {
                 phase,
                 all,
