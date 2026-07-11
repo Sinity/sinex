@@ -2950,7 +2950,7 @@
         "id": "interval-lift",
         "namespace": "derived",
         "occurrence_identity": {
-          "key": "(source, state_kind, subject_id, start_parent_event_id, end_parent_event_id)",
+          "key": "(state_kind, subject_id, start_material_id, start_anchor_byte)",
           "kind": "uuid5_from"
         },
         "privacy_tier": "sensitive",
