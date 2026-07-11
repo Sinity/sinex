@@ -19,7 +19,7 @@ async fn activitywatch_parser_declares_required_sqlite_keys() -> TestResult<()> 
             "buckets.id",
             "buckets.name",
             "events.bucketrow",
-            "events.data",
+            "events.datastr",
             "events.endtime",
             "events.id",
             "events.starttime",
