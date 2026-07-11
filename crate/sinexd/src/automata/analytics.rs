@@ -111,7 +111,16 @@ pub struct AnalyticsState {
     pub sources: BTreeSet<String>,
     pub activity_source_counts: BTreeMap<ActivitySourceKind, u64>,
     pub event_ids: Vec<Uuid>,
+    /// Processing-order counter — RETAINED as a display ordinal only, never as
+    /// occurrence identity (sinex-ecy: counter keys collide across
+    /// replay/checkpoint-reset and silently suppress fresh derived rows).
     pub window_counter: u64,
+    /// Material occurrence of the first contributing event of the current
+    /// window — the occurrence anchor for the window's stable equivalence key.
+    #[serde(default)]
+    pub start_material_id: Option<Uuid>,
+    #[serde(default)]
+    pub start_anchor_byte: Option<i64>,
     pub close_reason: Option<ActivityWindowCloseReason>,
     pub pending_window_seed: Option<PendingWindowSeed>,
 }
@@ -124,6 +133,8 @@ impl AnalyticsState {
         self.sources.clear();
         self.activity_source_counts.clear();
         self.event_ids.clear();
+        self.start_material_id = None;
+        self.start_anchor_byte = None;
         self.close_reason = None;
         self.pending_window_seed = None;
     }
@@ -138,8 +149,30 @@ impl AnalyticsState {
         self.activity_source_counts.insert(seed.activity_source, 1);
         self.event_ids.clear();
         self.event_ids.push(seed.event_id);
+        self.start_material_id = seed.material_id;
+        self.start_anchor_byte = seed.anchor_byte;
         self.close_reason = None;
         self.pending_window_seed = None;
+    }
+}
+
+/// Occurrence-stable identity for an `activity.window.summary`, derived from the
+/// material occurrence of the window's first contributing event (sinex-ecy).
+/// Never a processing-order counter: counters restart on replay/checkpoint-reset
+/// and collide with unrelated live rows, so admission's fail-open dedup silently
+/// drops fresh derived windows. Analytics is `MaterialOnly`, so the coordinates
+/// are normally present; the timestamp fallback keeps identity occurrence-derived
+/// (never a counter) in the degenerate case. The `:`-delimited format never
+/// collides with the old `activity-window-{counter}` keys, so the format change
+/// causes no false suppression across the migration.
+fn activity_window_occurrence_key(
+    material_id: Option<Uuid>,
+    anchor_byte: Option<i64>,
+    window_start: Timestamp,
+) -> String {
+    match (material_id, anchor_byte) {
+        (Some(id), Some(anchor)) => format!("activity-window:{id}:{anchor}"),
+        _ => format!("activity-window:ts:{window_start}"),
     }
 }
 
@@ -149,6 +182,13 @@ pub struct PendingWindowSeed {
     pub raw_source: String,
     pub activity_source: ActivitySourceKind,
     pub event_id: Uuid,
+    /// Material occurrence of this event (analytics is `MaterialOnly`, so a
+    /// trigger always carries these) — the occurrence anchor for the window's
+    /// stable equivalence key (sinex-ecy).
+    #[serde(default)]
+    pub material_id: Option<Uuid>,
+    #[serde(default)]
+    pub anchor_byte: Option<i64>,
 }
 
 pub struct AnalyticsAutomaton {
@@ -222,6 +262,8 @@ impl Windowed for AnalyticsAutomaton {
             raw_source,
             activity_source,
             event_id,
+            material_id: context.trigger_material_id,
+            anchor_byte: context.trigger_anchor_byte,
         };
 
         if let Some(last_time) = state.last_event_time
@@ -250,6 +292,8 @@ impl Windowed for AnalyticsAutomaton {
 
         if state.window_start.is_none() {
             state.window_start = Some(event_time);
+            state.start_material_id = seed.material_id;
+            state.start_anchor_byte = seed.anchor_byte;
         }
         state.last_event_time = Some(event_time);
         state.event_count += 1;
@@ -283,7 +327,11 @@ impl Windowed for AnalyticsAutomaton {
         let duration_secs = (end_time - start_time).whole_seconds().max(0) as u64;
 
         state.window_counter += 1;
-        let window_id = format!("activity-window-{}", state.window_counter);
+        let window_id = activity_window_occurrence_key(
+            state.start_material_id,
+            state.start_anchor_byte,
+            start_time,
+        );
         let event_count = state.event_count;
         let sources: Vec<String> = state.sources.iter().cloned().collect();
         let activity_sources: Vec<ActivitySourceKind> =
@@ -354,7 +402,7 @@ register_source_contract! {
         horizons: &[ContractHorizon::Continuous],
         retention: ContractRetentionPolicy::Forever,
         occurrence_identity: ContractOccurrenceIdentity::Uuid5From(
-            "(source, parent_event_ids)",
+            "(first_contributing_event_material_id, first_contributing_event_anchor_byte)",
         ),
         access_scope: AccessScope::Internal,
     }

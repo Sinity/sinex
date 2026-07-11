@@ -20,6 +20,19 @@ use sinex_primitives::temporal::Timestamp;
 use std::collections::{BTreeMap, BTreeSet};
 use tracing::warn;
 
+/// Occurrence-stable identity for an `activity.session.boundary`, derived from
+/// the first contributing window's occurrence-stable id (sinex-ecy). Inherits
+/// the window's stability; `session_counter` is a display ordinal only. The old
+/// `session-{counter}` keys collided across replay/checkpoint-reset; the
+/// `activity-session:` format never collides with them, so the migration causes
+/// no false suppression.
+fn session_occurrence_key(first_window_id: Option<&str>) -> String {
+    match first_window_id {
+        Some(id) => format!("activity-session:{id}"),
+        None => "activity-session:unknown".to_string(),
+    }
+}
+
 /// Persistent window state tracking the current activity session.
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct SessionState {
@@ -44,8 +57,14 @@ pub struct SessionState {
     /// `UUIDv7` IDs of contributing `activity.window.summary` events.
     pub window_event_ids: Vec<Uuid>,
 
-    /// Session counter for generating deterministic session IDs.
+    /// Session counter — a display ordinal only, never occurrence identity
+    /// (sinex-ecy: counter keys collide across replay/checkpoint-reset).
     pub session_counter: u64,
+
+    /// Occurrence-stable id of the FIRST contributing window — the session's
+    /// occurrence anchor (sinex-ecy). Inherits the window's occurrence stability.
+    #[serde(default)]
+    pub first_window_id: Option<String>,
 
     /// Whether the current session has received a gap-closed final window.
     #[serde(default)]
@@ -62,6 +81,7 @@ impl SessionState {
         self.sources.clear();
         self.activity_source_counts.clear();
         self.window_event_ids.clear();
+        self.first_window_id = None;
         self.session_complete = false;
     }
 }
@@ -110,6 +130,7 @@ impl Windowed for SessionDetector {
     ) -> Result<(), AutomatonLogicError> {
         if state.session_start.is_none() {
             state.session_start = Some(input.window_start);
+            state.first_window_id = Some(input.window_id.clone());
         }
 
         state.last_window_end = Some(input.window_end);
@@ -162,7 +183,7 @@ impl Windowed for SessionDetector {
         let duration_secs = (end_time - start_time).whole_seconds().max(0) as u64;
 
         state.session_counter += 1;
-        let session_id = format!("session-{}", state.session_counter);
+        let session_id = session_occurrence_key(state.first_window_id.as_deref());
 
         let sources: Vec<String> = state.sources.iter().cloned().collect();
         let activity_sources: Vec<ActivitySourceKind> =
@@ -228,7 +249,7 @@ register_source_contract! {
         horizons: &[ContractHorizon::Continuous],
         retention: ContractRetentionPolicy::Forever,
         occurrence_identity: ContractOccurrenceIdentity::Uuid5From(
-            "(source, parent_event_ids)",
+            "(first_contributing_window_occurrence_key)",
         ),
         access_scope: AccessScope::Internal,
     }

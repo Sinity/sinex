@@ -972,6 +972,8 @@ fn focus_context(ts_orig: Timestamp) -> AutomatonContext {
         processing_mode: ProcessingMode::Live,
         trigger_kind: TriggerKind::NewEvent,
         created_by_operation_id: None,
+        trigger_material_id: None,
+        trigger_anchor_byte: None,
     }
 }
 
@@ -986,6 +988,8 @@ fn activitywatch_context(ts_orig: Timestamp) -> AutomatonContext {
         processing_mode: ProcessingMode::Live,
         trigger_kind: TriggerKind::NewEvent,
         created_by_operation_id: None,
+        trigger_material_id: None,
+        trigger_anchor_byte: None,
     }
 }
 
@@ -1000,6 +1004,8 @@ fn workspace_context(ts_orig: Timestamp) -> AutomatonContext {
         processing_mode: ProcessingMode::Live,
         trigger_kind: TriggerKind::NewEvent,
         created_by_operation_id: None,
+        trigger_material_id: None,
+        trigger_anchor_byte: None,
     }
 }
 
@@ -1014,6 +1020,8 @@ fn activitywatch_afk_context(ts_orig: Timestamp) -> AutomatonContext {
         processing_mode: ProcessingMode::Live,
         trigger_kind: TriggerKind::NewEvent,
         created_by_operation_id: None,
+        trigger_material_id: None,
+        trigger_anchor_byte: None,
     }
 }
 
@@ -1028,5 +1036,7 @@ fn systemd_context(event_type: &'static str, ts_orig: Timestamp) -> AutomatonCon
         processing_mode: ProcessingMode::Live,
         trigger_kind: TriggerKind::NewEvent,
         created_by_operation_id: None,
+        trigger_material_id: None,
+        trigger_anchor_byte: None,
     }
 }

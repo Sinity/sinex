@@ -197,6 +197,8 @@ where
                 processing_mode: sinex_primitives::domain::ProcessingMode::Replay,
                 trigger_kind: sinex_primitives::domain::TriggerKind::ScopeInvalidation,
                 created_by_operation_id: operation_id,
+                trigger_material_id: None,
+                trigger_anchor_byte: None,
             };
 
             info!(
