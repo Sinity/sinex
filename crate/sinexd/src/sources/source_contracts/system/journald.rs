@@ -42,15 +42,6 @@ fn is_sinexd_journal_entry(json: &serde_json::Value) -> bool {
         })
 }
 
-fn is_confirmation_feedback_message(message: &str) -> bool {
-    message.contains("Late confirmation arrived after provisional timeout")
-        || message.contains("Late confirmations accepted after timeout")
-        || message.contains("runtime.confirmation_late_total")
-}
-
-fn suppresses_confirmation_feedback_entry(json: &serde_json::Value, message: &str) -> bool {
-    is_sinexd_journal_entry(json) && is_confirmation_feedback_message(message)
-}
 
 /// Parser for `system.journald` — converts journal JSON lines into typed events.
 #[derive(Default, SourceMeta)]
@@ -169,15 +160,22 @@ impl MaterialParser for JournaldParser {
             Timestamp::now()
         };
 
+        // sinex-1877 / fresh-rebuild B1: sinexd's own journald output is redundant
+        // with its in-process structured self-telemetry (self_observation.rs ->
+        // health.status/metrics on the reflection lane); re-ingesting it as activity
+        // events was a multi-daemon-era self-capture loop (a daemon observing itself
+        // through the shared journal). With one sinexd it is pure volume + a feedback
+        // loop, so drop all sinexd self-journal entries at parse. Health/liveness is
+        // unaffected — it never flowed through this re-ingest path.
+        if is_sinexd_journal_entry(&json) {
+            return Ok(Vec::new());
+        }
+
         let message = json
             .get("MESSAGE")
             .and_then(|v| v.as_str())
             .unwrap_or("")
             .to_string();
-
-        if suppresses_confirmation_feedback_entry(&json, &message) {
-            return Ok(Vec::new());
-        }
 
         let cmdline = json
             .get("_CMDLINE")
