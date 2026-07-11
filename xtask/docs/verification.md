@@ -38,6 +38,15 @@ integration tests, schema strict-diff, or generated-surface checks can own.
 | Release boundary | `xtask release-readiness --target rc-local --base-ref origin/master --run-required-checks`; `xtask schema strict-diff` when DB/schema claims are part of the release | Before claiming release readiness or broad shipped/non-shipped scope. This aggregates required checks; it does not replace focused behavior tests for changed code. |
 | Scheduled or human-requested broad sweep | `xtask test --impact-mode=off --all`; larger `xtask impact audit` samples; heavy trybuild/fuzz/mutation suites | When validating planner quality, finding stale evidence, or exercising expensive suites outside the normal PR loop. Do not turn these into default per-PR gates without measurement. |
 
+### Compatibility mutation witnesses
+
+`xtask test mutants` validates `xtask/config/compatibility-witnesses.json`
+before invoking `cargo-mutants`. Each entry names a compatibility value whose
+authority has been reviewed, the single production anchor a drift mutation
+would change, and an independently authored test literal that must catch that
+change. Keep this registry small: round trips alone are not witnesses, and
+private encodings do not belong here merely because they can be frozen.
+
 ## Simplification Landed
 
 The dependency-hygiene duplicate-vocabulary guard was removed from
