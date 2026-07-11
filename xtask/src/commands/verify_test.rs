@@ -218,7 +218,7 @@ async fn extract_closure_command_entries_preserve_source_location()
 #[sinex_test]
 async fn extract_closure_commands_skips_prose_inside_fenced_blocks()
 -> ::xtask::sandbox::TestResult<()> {
-    // Closure comments sometimes describe verification narratively inside
+    // Bead close reasons sometimes describe verification narratively inside
     // a fenced block. The verifier must not try to execute prose as a
     // shell command. Regression test for #1552.
     let body = "## Verification\n\n```\n\
@@ -243,15 +243,15 @@ async fn extract_closure_commands_skips_verifier_self_rerun_instructions()
     let body = "\
 ## Closure verification failed
 
-`xtask verify closure 1576` returned a non-zero status when this issue was closed.
+`xtask verify closure sinex-e7e9` returned a non-zero status for this Bead.
 
 Re-run locally with:
 
 ```bash
-xtask verify closure 1576
+xtask verify closure sinex-e7e9
 ```
 
-Either add the missing verification commands to the closing comment / issue body, or re-open the issue if the closure was premature.
+Either add the missing evidence to `close_reason`, or re-open the Bead if closure was premature.
 ";
     let cmds = extract_closure_command_entries(body, "comment[0]@2026-06-06T03:11:40Z");
     assert!(
@@ -274,6 +274,7 @@ async fn looks_like_runnable_command_filters_prose_and_bare_commands()
     assert!(looks_like_runnable_command("xtask check -p xtask"));
     assert!(looks_like_runnable_command("git log --oneline -3"));
     assert!(looks_like_runnable_command("gh pr view 1234"));
+    assert!(looks_like_runnable_command("bd show sinex-e7e9 --json"));
     assert!(looks_like_runnable_command(
         "SINEX_FOO=bar xtask test -p xtask"
     ));
@@ -284,10 +285,10 @@ async fn looks_like_runnable_command_filters_prose_and_bare_commands()
 async fn closure_verifier_self_command_detects_env_prefixed_forms()
 -> ::xtask::sandbox::TestResult<()> {
     assert!(is_closure_verifier_self_command(
-        "xtask verify closure 1576"
+        "xtask verify closure sinex-e7e9"
     ));
     assert!(is_closure_verifier_self_command(
-        "RUST_LOG=debug xtask verify closure 1576 --json"
+        "RUST_LOG=debug xtask verify closure sinex-e7e9 --json"
     ));
     // "source-worker" was a subcommand removed in Wave-B (#1081); used here
     // as an arbitrary non-closure-verifier string for the negative assertion.
@@ -319,37 +320,166 @@ Verification:
 }
 
 #[sinex_test]
-async fn collect_closure_evidence_includes_comment_commands() -> ::xtask::sandbox::TestResult<()> {
-    let payload = ClosureIssuePayload {
-        body: "## Summary\nNo command here.".to_string(),
-        comments: vec![ClosureIssueComment {
-            body: "## Verification\n\n```bash\nxtask check -p xtask\n```".to_string(),
-            created_at: "2026-05-19T00:00:00Z".to_string(),
-        }],
+async fn collect_closure_evidence_reads_bead_close_reason() -> ::xtask::sandbox::TestResult<()> {
+    let payload = BeadClosurePayload {
+        id: "sinex-e7e9".to_string(),
+        status: "closed".to_string(),
+        acceptance_criteria: "- command is runnable".to_string(),
+        close_reason: "## Verification\n\n```bash\nxtask check -p xtask\n```".to_string(),
     };
     let evidence = collect_closure_evidence(&payload);
     assert_eq!(evidence.commands.len(), 1);
     assert_eq!(evidence.commands[0].command, "xtask check -p xtask");
-    assert_eq!(
-        evidence.commands[0].source,
-        "comment[0]@2026-05-19T00:00:00Z"
-    );
+    assert_eq!(evidence.commands[0].source, "close_reason");
     Ok(())
 }
 
 #[sinex_test]
 async fn collect_closure_evidence_is_empty_without_commands_or_matrix()
 -> ::xtask::sandbox::TestResult<()> {
-    let payload = ClosureIssuePayload {
-        body: "## Summary\nText-only issue discussion.".to_string(),
-        comments: vec![ClosureIssueComment {
-            body: "Still no verification evidence.".to_string(),
-            created_at: String::new(),
-        }],
+    let payload = BeadClosurePayload {
+        id: "sinex-e7e9".to_string(),
+        status: "closed".to_string(),
+        acceptance_criteria: "- behavior is proven".to_string(),
+        close_reason: "Text-only landing claim.".to_string(),
     };
     let evidence = collect_closure_evidence(&payload);
     assert!(evidence.commands.is_empty());
     assert!(evidence.matrix_items.is_empty());
+    Ok(())
+}
+
+#[sinex_test]
+async fn bead_payload_parser_requires_one_matching_top_level_record()
+-> ::xtask::sandbox::TestResult<()> {
+    let payload = parse_bead_closure_payload(
+        br#"[{"id":"sinex-e7e9","status":"closed","acceptance_criteria":"- AC","close_reason":"proof"}]"#,
+        "sinex-e7e9",
+    )?;
+    assert_eq!(payload.id, "sinex-e7e9");
+
+    let mismatch = parse_bead_closure_payload(
+        br#"[{"id":"sinex-other1","status":"closed"}]"#,
+        "sinex-e7e9",
+    )
+    .expect_err("mismatched id must fail closed");
+    assert!(format!("{mismatch:#}").contains("while `sinex-e7e9` was requested"));
+
+    let empty = parse_bead_closure_payload(b"[]", "sinex-e7e9")
+        .expect_err("empty bd response must fail closed");
+    assert!(format!("{empty:#}").contains("expected exactly one"));
+    assert!(looks_like_bead_id("sinex-dffy"));
+    assert!(looks_like_bead_id("sinex-r6d.12"));
+    assert!(!looks_like_bead_id("2462"));
+    Ok(())
+}
+
+#[sinex_test]
+async fn bead_closure_contract_requires_closed_status_and_every_ac_disposition()
+-> ::xtask::sandbox::TestResult<()> {
+    let payload = BeadClosurePayload {
+        id: "sinex-e7e9".to_string(),
+        status: "open".to_string(),
+        acceptance_criteria: "- first behavior\n- second behavior".to_string(),
+        close_reason: "\
+## Closure Evidence Manifest
+
+| AC | Evidence kind | Surface | Evidence | Command | Status |
+| --- | --- | --- | --- | --- | --- |
+| AC-1 | runtime | closure verifier | first behavior is exercised | xtask test -p xtask -E 'test(closure)' | Satisfied |
+"
+        .to_string(),
+    };
+    let evidence = collect_closure_evidence(&payload);
+    let criteria = extract_bead_acceptance_criteria(&payload.acceptance_criteria);
+    let errors = validate_bead_closure_contract(&payload, &criteria, &evidence);
+    assert!(errors.iter().any(|error| error.source == "bd.status"));
+    assert!(
+        errors
+            .iter()
+            .any(|error| error.ac_id.as_deref() == Some("AC-2"))
+    );
+    Ok(())
+}
+
+#[sinex_test]
+async fn bead_closure_contract_rejects_unowned_deferral_and_prose_only_satisfaction()
+-> ::xtask::sandbox::TestResult<()> {
+    let payload = BeadClosurePayload {
+        id: "sinex-e7e9".to_string(),
+        status: "closed".to_string(),
+        acceptance_criteria: "- first behavior\n- second behavior".to_string(),
+        close_reason: "\
+## Closure Evidence Manifest
+
+| AC | Evidence kind | Surface | Evidence | Status |
+| --- | --- | --- | --- | --- |
+| AC-1 | runtime | closure verifier | implemented in PR #1 | Satisfied |
+| AC-2 | runtime | deferred work | fix this later | Deferred |
+"
+        .to_string(),
+    };
+    let evidence = collect_closure_evidence(&payload);
+    let criteria = extract_bead_acceptance_criteria(&payload.acceptance_criteria);
+    let errors = validate_bead_closure_contract(&payload, &criteria, &evidence);
+    let reasons = errors
+        .iter()
+        .map(|error| error.reason.as_str())
+        .collect::<Vec<_>>();
+    assert!(reasons.iter().any(|reason| reason.contains("runnable command")));
+    assert!(reasons.iter().any(|reason| reason.contains("follow-up Bead")));
+    Ok(())
+}
+
+#[sinex_test]
+async fn bead_closure_contract_accepts_complete_manifest()
+-> ::xtask::sandbox::TestResult<()> {
+    let payload = BeadClosurePayload {
+        id: "sinex-e7e9".to_string(),
+        status: "closed".to_string(),
+        acceptance_criteria: "- first behavior\n- second behavior".to_string(),
+        close_reason: "\
+## Closure Evidence Manifest
+
+| AC | Evidence kind | Surface | Evidence | Command | Status |
+| --- | --- | --- | --- | --- | --- |
+| AC-1 | runtime | closure verifier | first behavior is exercised | xtask test -p xtask -E 'test(closure)' | Satisfied |
+| AC-2 | runtime | follow-up | owned by sinex-a1b2 | - | Deferred |
+"
+        .to_string(),
+    };
+    let evidence = collect_closure_evidence(&payload);
+    let criteria = extract_bead_acceptance_criteria(&payload.acceptance_criteria);
+    assert!(
+        validate_bead_closure_contract(&payload, &criteria, &evidence).is_empty()
+    );
+    Ok(())
+}
+
+#[sinex_test]
+async fn bead_closure_contract_rejects_docs_claim_without_artifact_or_command()
+-> ::xtask::sandbox::TestResult<()> {
+    let payload = BeadClosurePayload {
+        id: "sinex-e7e9".to_string(),
+        status: "closed".to_string(),
+        acceptance_criteria: "- contributor guidance is current".to_string(),
+        close_reason: "\
+## Closure Evidence Manifest
+
+| AC | Evidence kind | Surface | Evidence | Status |
+| --- | --- | --- | --- | --- |
+| AC-1 | docs | contributor guide | guidance was updated | Satisfied |
+"
+        .to_string(),
+    };
+    let evidence = collect_closure_evidence(&payload);
+    let criteria = extract_bead_acceptance_criteria(&payload.acceptance_criteria);
+    let errors = validate_bead_closure_contract(&payload, &criteria, &evidence);
+    assert!(
+        errors
+            .iter()
+            .any(|error| error.reason.contains("command or named artifact"))
+    );
     Ok(())
 }
 
@@ -426,7 +556,7 @@ async fn extract_closure_matrix_items_reports_markdown_table_status()
 | Acceptance criterion | Evidence | Status |
 | --- | --- | --- |
 | EvidenceWindow v0 is declared complete | `relations.rs` defines the DTOs. | Satisfied |
-| Privacy enforcement is owned elsewhere | Follow-up owner is recorded in issue #123. | Satisfied with owner |
+| Privacy enforcement is owned elsewhere | Follow-up owner is recorded in sinex-abcd. | Satisfied with owner |
 ";
     let items = extract_closure_matrix_items(body, "body");
     assert_eq!(items.len(), 2);
@@ -438,7 +568,7 @@ async fn extract_closure_matrix_items_reports_markdown_table_status()
     assert_eq!(items[1].status, "satisfied");
     assert_eq!(
         items[1].text,
-        "Privacy enforcement is owned elsewhere | Follow-up owner is recorded in issue #123."
+        "Privacy enforcement is owned elsewhere | Follow-up owner is recorded in sinex-abcd."
     );
     Ok(())
 }
@@ -453,14 +583,14 @@ Acceptance matrix:
 
 | AC | Evidence | Status |
 | --- | --- | --- |
-| Every finding has a ledger state | Follow-up owner is recorded in issue #456. | Satisfied |
+| Every finding has a ledger state | Follow-up owner is recorded in sinex-efgh. | Satisfied |
 ";
     let items = extract_closure_matrix_items(body, "comment[0]");
     assert_eq!(items.len(), 1);
     assert_eq!(items[0].status, "satisfied");
     assert_eq!(
         items[0].text,
-        "Every finding has a ledger state | Follow-up owner is recorded in issue #456."
+        "Every finding has a ledger state | Follow-up owner is recorded in sinex-efgh."
     );
     Ok(())
 }
@@ -516,28 +646,36 @@ async fn closure_evidence_manifest_rejects_grep_only_runtime_claim()
 }
 
 #[sinex_test]
+async fn closure_manifest_status_does_not_accept_substring_false_positives()
+-> ::xtask::sandbox::TestResult<()> {
+    assert_eq!(normalize_manifest_status("Passed"), "satisfied");
+    assert_eq!(normalize_manifest_status("bypass pending"), "bypass pending");
+    Ok(())
+}
+
+#[sinex_test]
 async fn collect_closure_evidence_includes_manifest_items() -> ::xtask::sandbox::TestResult<()> {
-    let payload = ClosureIssuePayload {
-        body: "## Summary\nNo command here.".to_string(),
-        comments: vec![ClosureIssueComment {
-            body: "\
+    let payload = BeadClosurePayload {
+        id: "sinex-e7e9".to_string(),
+        status: "closed".to_string(),
+        acceptance_criteria: "- strict-diff behavior is proven".to_string(),
+        close_reason: "\
 ## Closure Evidence Manifest
 
 | AC | Evidence kind | Surface | Evidence | Command | Status |
 | --- | --- | --- | --- | --- | --- |
 | AC-1 | schema | strict-diff report | inline check drift is rejected by strict-diff output | xtask test -p sinex-schema -E 'test(strict_diff)' | Satisfied |
 "
-            .to_string(),
-            created_at: "2026-06-21T00:00:00Z".to_string(),
-        }],
+        .to_string(),
     };
     let evidence = collect_closure_evidence(&payload);
-    assert!(evidence.commands.is_empty());
-    assert_eq!(evidence.manifest_items.len(), 1);
+    assert_eq!(evidence.commands.len(), 1);
     assert_eq!(
-        evidence.manifest_items[0].source,
-        "comment[0]@2026-06-21T00:00:00Z"
+        evidence.commands[0].source,
+        "close_reason:manifest:AC-1"
     );
+    assert_eq!(evidence.manifest_items.len(), 1);
+    assert_eq!(evidence.manifest_items[0].source, "close_reason");
     assert!(validate_closure_evidence_manifest(&evidence.manifest_items).is_empty());
     Ok(())
 }
