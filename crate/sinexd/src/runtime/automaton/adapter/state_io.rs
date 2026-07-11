@@ -377,11 +377,27 @@ where
         self.checkpoint_position()
     }
 
-    pub(super) fn record_processed_input(&mut self, event_id: Id<Event<JsonValue>>) {
+    pub(super) fn record_processed_input(
+        &mut self,
+        event_id: Id<Event<JsonValue>>,
+        input_ts_orig: Option<sinex_primitives::temporal::Timestamp>,
+    ) {
         self.persisted_state.last_input_event_id = Some(*event_id.as_uuid());
         self.persisted_state.events_processed += 1;
         self.events_since_checkpoint += 1;
         self.run_events_processed = self.run_events_processed.saturating_add(1);
+        // Advance the two-mode flush watermark facts (sinex-5s6): the persisted
+        // input-time high-water mark and the in-memory wall-clock receipt time.
+        if let Some(ts_orig) = input_ts_orig {
+            let advance = self
+                .persisted_state
+                .max_input_ts_orig
+                .is_none_or(|hi| ts_orig > hi);
+            if advance {
+                self.persisted_state.max_input_ts_orig = Some(ts_orig);
+            }
+        }
+        self.last_input_wall = Some(sinex_primitives::temporal::Timestamp::now());
     }
 
     pub(super) fn record_state_mutation(&mut self) {

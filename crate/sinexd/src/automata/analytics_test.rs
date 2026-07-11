@@ -101,6 +101,62 @@ fn trusted_window_context(event_time: Timestamp) -> AutomatonContext {
     }
 }
 
+/// sinex-5s6: an activity window must close after `gap_threshold` of quiet
+/// WITHOUT a next event arriving — the clock-driven flush path. Before this, the
+/// final window of any activity bout was unqueryable until future activity, and
+/// `flush_due` defaulted false for analytics. Feeds a bout, then asserts the
+/// flush watermark closes it (as a `Gap`) once the quiet exceeds the threshold,
+/// and NOT before.
+#[sinex_test]
+async fn analytics_window_closes_on_quiet_via_flush() -> xtask::sandbox::TestResult<()> {
+    let mut automaton = AnalyticsAutomaton::default();
+    let mut state = AnalyticsState::default();
+    let start = Timestamp::from_unix_timestamp(1_700_000_000).expect("valid ts");
+
+    // A short bout of three events, one minute apart.
+    for i in 0..3 {
+        let ctx = trusted_window_context(start + time::Duration::seconds(i * 60));
+        automaton.accumulate(&mut state, JsonValue::Null, &ctx).await?;
+    }
+    assert!(
+        !automaton.window_complete(&state),
+        "bout is still open — no gap-closed next event yet"
+    );
+
+    let last_event = start + time::Duration::seconds(120);
+    let gap = DEFAULT_WINDOW_GAP_THRESHOLD_SECS;
+
+    // Quiet shorter than the gap threshold must NOT flush.
+    assert!(
+        !automaton.flush_due(&state, last_event + time::Duration::seconds(gap - 1)),
+        "must not close before gap_threshold of quiet"
+    );
+    // Quiet at/after the gap threshold closes the trailing window.
+    assert!(
+        automaton.flush_due(&state, last_event + time::Duration::seconds(gap)),
+        "gap_threshold of quiet closes the trailing window without a next event"
+    );
+
+    let flush_ctx = AutomatonContext::timer_flush(last_event + time::Duration::seconds(gap))?;
+    let output = automaton
+        .emit(&mut state, &flush_ctx)
+        .await?
+        .expect("flush must emit the trailing window");
+    assert_eq!(
+        output.payload.close_reason,
+        ActivityWindowCloseReason::Gap,
+        "a quiescent flush close is a Gap close (propagates to session completion)"
+    );
+    assert_eq!(output.payload.event_count, 3);
+    assert_eq!(output.payload.window_end, last_event);
+    // State is reset after the flush (no pending next-event seed).
+    assert!(
+        state.window_start.is_none() && state.event_count == 0,
+        "flush emit resets the window"
+    );
+    Ok(())
+}
+
 fn trusted_window_context_with_material(
     event_time: Timestamp,
     material_id: Uuid,
