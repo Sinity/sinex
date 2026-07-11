@@ -968,6 +968,106 @@ async fn interval_lift_closes_systemd_unit_on_stop() -> xtask::sandbox::TestResu
     Ok(())
 }
 
+fn uzc_focus(window_id: &str) -> serde_json::Result<serde_json::Value> {
+    serde_json::to_value(HyprlandWindowFocusedPayload {
+        window_id: Some(window_id.to_string()),
+        window_class: Some("kitty".to_string()),
+        window_title: Some("x".to_string()),
+        workspace_id: Some(1),
+        previous_window_id: None,
+    })
+}
+
+fn uzc_unit_started() -> serde_json::Result<serde_json::Value> {
+    serde_json::to_value(SystemdUnitStartedPayload {
+        unit_name: "u.service".to_string(),
+        unit_type: SystemdUnitType::Service,
+        main_pid: None,
+        active_state: SystemdActiveState::Active,
+        sub_state: "running".to_string(),
+    })
+}
+
+#[sinex_test]
+async fn interval_lift_uzc_tie_supersedes_open_state_in_place() -> xtask::sandbox::TestResult<()> {
+    // sinex-uzc(a): two transitions at the SAME ts — the later supersedes in place
+    // (deterministic tiebreak), no zero-duration interval; the next transition closes
+    // from the superseding observation.
+    let t = Timestamp::from_unix_timestamp(1_700_000_000).ok_or_else(|| color_eyre::eyre::eyre!("ts"))?;
+    let later = t + sinex_primitives::temporal::Duration::seconds(10);
+    let mut automaton = IntervalLift;
+    let mut state = IntervalLiftState::default();
+    assert!(automaton.process(&mut state, uzc_focus("0xA")?, &focus_context(t)).await?.is_none());
+    assert!(automaton.process(&mut state, uzc_focus("0xB")?, &focus_context(t)).await?.is_none());
+    let out = automaton.process(&mut state, uzc_focus("0xC")?, &focus_context(later)).await?
+        .expect("next transition closes the superseding state");
+    assert_eq!(out.payload.subject_id.as_deref(), Some("0xB"));
+    assert_eq!(out.payload.start_time, t);
+    assert_eq!(out.payload.end_time, later);
+    Ok(())
+}
+
+#[sinex_test]
+async fn interval_lift_uzc_out_of_order_transition_is_skipped() -> xtask::sandbox::TestResult<()> {
+    // sinex-uzc(a): a transition older than the open state is skipped (durable debt),
+    // never silently folded — the open state survives and closes on the next in-order
+    // transition.
+    let t10 = Timestamp::from_unix_timestamp(1_700_000_010).ok_or_else(|| color_eyre::eyre::eyre!("ts"))?;
+    let t0 = Timestamp::from_unix_timestamp(1_700_000_000).ok_or_else(|| color_eyre::eyre::eyre!("ts"))?;
+    let t20 = Timestamp::from_unix_timestamp(1_700_000_020).ok_or_else(|| color_eyre::eyre::eyre!("ts"))?;
+    let mut automaton = IntervalLift;
+    let mut state = IntervalLiftState::default();
+    assert!(automaton.process(&mut state, uzc_focus("0xA")?, &focus_context(t10)).await?.is_none());
+    assert!(automaton.process(&mut state, uzc_focus("0xB")?, &focus_context(t0)).await?.is_none());
+    let out = automaton.process(&mut state, uzc_focus("0xC")?, &focus_context(t20)).await?
+        .expect("in-order transition closes the still-open 0xA");
+    assert_eq!(out.payload.subject_id.as_deref(), Some("0xA"));
+    assert_eq!(out.payload.start_time, t10);
+    assert_eq!(out.payload.end_time, t20);
+    Ok(())
+}
+
+#[sinex_test]
+async fn interval_lift_uzc_start_after_start_emits_restart_fence() -> xtask::sandbox::TestResult<()> {
+    // sinex-uzc(c): a second start for the same unit emits an implied restart-fence
+    // close of the first, instead of silently discarding it.
+    let t = Timestamp::from_unix_timestamp(1_700_000_000).ok_or_else(|| color_eyre::eyre::eyre!("ts"))?;
+    let restart = t + sinex_primitives::temporal::Duration::seconds(10);
+    let mut automaton = IntervalLift;
+    let mut state = IntervalLiftState::default();
+    assert!(automaton.process(&mut state, uzc_unit_started()?, &systemd_context("unit.started", t)).await?.is_none());
+    let out = automaton.process(&mut state, uzc_unit_started()?, &systemd_context("unit.started", restart)).await?
+        .expect("start-after-start emits the implied restart-fence close");
+    assert_eq!(out.payload.subject_id.as_deref(), Some("u.service"));
+    assert_eq!(out.payload.start_time, t);
+    assert_eq!(out.payload.end_time, restart);
+    assert_eq!(out.payload.duration_secs, 10);
+    Ok(())
+}
+
+#[sinex_test]
+async fn interval_lift_uzc_stop_before_start_is_zero_duration() -> xtask::sandbox::TestResult<()> {
+    // sinex-uzc(b): a stop with ts <= start closes a zero-duration interval (end
+    // clamped to start) rather than discarding the matched start+stop.
+    let start = Timestamp::from_unix_timestamp(1_700_000_010).ok_or_else(|| color_eyre::eyre::eyre!("ts"))?;
+    let early_stop = Timestamp::from_unix_timestamp(1_700_000_005).ok_or_else(|| color_eyre::eyre::eyre!("ts"))?;
+    let mut automaton = IntervalLift;
+    let mut state = IntervalLiftState::default();
+    automaton.process(&mut state, uzc_unit_started()?, &systemd_context("unit.started", start)).await?;
+    let out = automaton.process(&mut state, serde_json::to_value(SystemdUnitStoppedPayload {
+        unit_name: "u.service".to_string(),
+        unit_type: SystemdUnitType::Service,
+        exit_code: None,
+        active_state: SystemdActiveState::Inactive,
+        sub_state: "dead".to_string(),
+    })?, &systemd_context("unit.stopped", early_stop)).await?
+        .expect("stop-before-start still closes (zero duration), never dropped");
+    assert_eq!(out.payload.start_time, start);
+    assert_eq!(out.payload.end_time, start);
+    assert_eq!(out.payload.duration_secs, 0);
+    Ok(())
+}
+
 #[sinex_test]
 async fn interval_lift_ignores_systemd_stop_without_matching_start(
 ) -> xtask::sandbox::TestResult<()> {

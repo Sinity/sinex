@@ -17,6 +17,12 @@ use sinex_primitives::events::EventPayload;
 use sinex_primitives::temporal::Duration;
 use sinex_primitives::{JsonValue, Timestamp, Uuid};
 use std::collections::BTreeMap;
+use tracing::warn;
+
+/// sinex-uzc(d): cap on concurrently-open systemd unit states. A unit that never
+/// emits a stop cannot grow `active_subject_states` without bound — the stalest
+/// open start is evicted (with a debt warning) once this many are open.
+const MAX_ACTIVE_SUBJECT_STATES: usize = 1024;
 
 const SEMANTICS_VERSION: &str = "2.0.0";
 const FOCUS_STATE_KIND: &str = "desktop.focus";
@@ -746,10 +752,39 @@ impl Transducer for IntervalLift {
                         })?;
                     let observation =
                         StateObservation::from_systemd_started_payload(payload, context)?;
-                    if let Some(subject_id) = observation.subject_id.clone() {
-                        state.active_subject_states.insert(subject_id, observation);
+                    let Some(subject_id) = observation.subject_id.clone() else {
+                        return Ok(None);
+                    };
+                    // sinex-uzc(c): start-after-start for the same subject — the new
+                    // start implies the previous instance ran until now; emit an implied
+                    // close (restart fence) instead of silently discarding the open start.
+                    let restart_close = state
+                        .active_subject_states
+                        .get(&subject_id)
+                        .filter(|previous| observation.ts_orig > previous.ts_orig)
+                        .map(|previous| previous.close_with(&observation));
+                    // sinex-uzc(d): bound the map — evict the stalest open start (with a
+                    // debt warning) before inserting a genuinely new subject at capacity.
+                    if !state.active_subject_states.contains_key(&subject_id)
+                        && state.active_subject_states.len() >= MAX_ACTIVE_SUBJECT_STATES
+                    {
+                        if let Some(stalest) = state
+                            .active_subject_states
+                            .iter()
+                            .min_by_key(|(_, obs)| obs.ts_orig)
+                            .map(|(key, _)| key.clone())
+                        {
+                            warn!(
+                                module = "interval-lift",
+                                evicted = %stalest,
+                                cap = MAX_ACTIVE_SUBJECT_STATES,
+                                "interval-lift evicted stalest open systemd state (durable debt, unbounded-growth guard)"
+                            );
+                            state.active_subject_states.remove(&stalest);
+                        }
                     }
-                    return Ok(None);
+                    state.active_subject_states.insert(subject_id, observation);
+                    return Ok(restart_close);
                 }
                 ("systemd", event_type)
                     if event_type == SystemdUnitStoppedPayload::EVENT_TYPE.as_static_str() =>
@@ -766,12 +801,27 @@ impl Transducer for IntervalLift {
                         return Ok(None);
                     };
                     let Some(previous) = state.active_subject_states.remove(&subject_id) else {
+                        // sinex-uzc: a stop with no open start — record debt, don't
+                        // silently drop (missed/duplicate boundary).
+                        warn!(
+                            module = "interval-lift",
+                            subject = %subject_id,
+                            "interval-lift saw a systemd stop with no open start (durable debt)"
+                        );
                         return Ok(None);
                     };
-                    if current.ts_orig <= previous.ts_orig {
-                        return Ok(None);
-                    }
-                    return Ok(Some(previous.close_with(&current)));
+                    // sinex-uzc(b): a stop with ts <= start is a tie/out-of-order
+                    // boundary; close a zero-duration interval (end clamped to start)
+                    // rather than discarding the matched start+stop and losing it.
+                    let stop = if current.ts_orig < previous.ts_orig {
+                        StateObservation {
+                            ts_orig: previous.ts_orig,
+                            ..current
+                        }
+                    } else {
+                        current
+                    };
+                    return Ok(Some(previous.close_with(&stop)));
                 }
                 _ => return Ok(None),
             };
@@ -781,8 +831,28 @@ impl Transducer for IntervalLift {
             return Ok(None);
         };
 
-        if current.ts_orig <= previous.ts_orig {
-            return Ok(None);
+        match current.ts_orig.cmp(&previous.ts_orig) {
+            std::cmp::Ordering::Greater => {}
+            std::cmp::Ordering::Equal => {
+                // sinex-uzc(a): tie — two transitions at the same instant. Deterministic
+                // tiebreak: the later-processed observation supersedes the open state
+                // in place; no zero-duration interval is emitted.
+                *previous = current;
+                return Ok(None);
+            }
+            std::cmp::Ordering::Less => {
+                // sinex-uzc(a): a transition older than the open state cannot fold into a
+                // forward stream without reordering — record durable debt (warn), never a
+                // silent drop.
+                warn!(
+                    module = "interval-lift",
+                    state_kind = %current.state_kind,
+                    current_ts = %current.ts_orig,
+                    open_ts = %previous.ts_orig,
+                    "interval-lift skipped out-of-order transition (durable debt)"
+                );
+                return Ok(None);
+            }
         }
 
         if previous.same_subject_as(&current) {
