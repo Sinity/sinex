@@ -281,7 +281,7 @@ impl MaterialParser for ActivityWatchParser {
             "buckets.id",
             "buckets.name",
             "events.bucketrow",
-            "events.data",
+            "events.datastr",
             "events.endtime",
             "events.id",
             "events.starttime",
@@ -305,7 +305,7 @@ impl MaterialParser for ActivityWatchParser {
         // `BucketKind::Unknown` (the prefix `aw-watcher-*` never matched
         // integer "1","2",...) and silently dropped 4.8M events.
         serde_json::json!({
-            "query": "SELECT events.id AS rowid, buckets.name AS bucket_id, events.starttime AS started_at, ((events.endtime - events.starttime) / 1000000000.0) AS duration, events.data AS data FROM events JOIN buckets ON events.bucketrow = buckets.id ORDER BY events.id",
+            "query": "SELECT events.id AS rowid, buckets.name AS bucket_id, events.starttime AS started_at, ((events.endtime - events.starttime) / 1000000000.0) AS duration, events.datastr AS data FROM events JOIN buckets ON events.bucketrow = buckets.id ORDER BY events.id",
             "table": "events"
         })
     }
