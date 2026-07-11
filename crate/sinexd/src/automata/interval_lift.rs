@@ -31,6 +31,10 @@ const AFK_CHANGED_EVENT_TYPE: &str = "afk.changed";
 const UNIT_STARTED_EVENT_TYPE: &str = "unit.started";
 const UNIT_STOPPED_EVENT_TYPE: &str = "unit.stopped";
 const ACTIVITYWATCH_HEARTBEAT_MERGE_WINDOW_SECS: i64 = 30;
+/// sinex-zs6: a heartbeat bout ends this many seconds after its LAST observed
+/// heartbeat (one merge-window of tolerance), never at the next post-gap event —
+/// heartbeat absence is absence of evidence, not continued activity.
+const ACTIVITYWATCH_HEARTBEAT_END_SLACK_SECS: i64 = ACTIVITYWATCH_HEARTBEAT_MERGE_WINDOW_SECS;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum IntervalLiftRuleShape {
@@ -125,6 +129,12 @@ struct StateObservation {
     #[serde(default)]
     anchor_byte: Option<i64>,
     ts_orig: Timestamp,
+    /// Last observed evidence timestamp within a heartbeat bout (sinex-zs6).
+    /// Merging advances this; heartbeat gap-tolerance and bout-end are measured
+    /// against it, not the bout start (`ts_orig`). `None` == not advanced (equals
+    /// `ts_orig`).
+    #[serde(default)]
+    last_seen: Option<Timestamp>,
     subject_id: Option<String>,
     label: Option<String>,
     event_type: String,
@@ -177,6 +187,7 @@ impl StateObservation {
             event_id: context.trigger_uuid(),
             material_id: context.trigger_material_id,
             anchor_byte: context.trigger_anchor_byte,
+            last_seen: None,
             ts_orig: context.require_ts_orig()?,
             subject_id,
             label,
@@ -218,6 +229,7 @@ impl StateObservation {
             event_id: context.trigger_uuid(),
             material_id: context.trigger_material_id,
             anchor_byte: context.trigger_anchor_byte,
+            last_seen: None,
             ts_orig: context.require_ts_orig()?,
             subject_id,
             label,
@@ -264,6 +276,7 @@ impl StateObservation {
             event_id: context.trigger_uuid(),
             material_id: context.trigger_material_id,
             anchor_byte: context.trigger_anchor_byte,
+            last_seen: None,
             ts_orig: context.require_ts_orig()?,
             subject_id: Some(subject_id),
             label: Some(label),
@@ -292,6 +305,7 @@ impl StateObservation {
             event_id: context.trigger_uuid(),
             material_id: context.trigger_material_id,
             anchor_byte: context.trigger_anchor_byte,
+            last_seen: None,
             ts_orig: context.require_ts_orig()?,
             subject_id,
             label,
@@ -320,6 +334,7 @@ impl StateObservation {
             event_id: context.trigger_uuid(),
             material_id: context.trigger_material_id,
             anchor_byte: context.trigger_anchor_byte,
+            last_seen: None,
             ts_orig: context.require_ts_orig()?,
             subject_id: Some(input.unit_name.clone()),
             label: Some(input.unit_name),
@@ -348,6 +363,7 @@ impl StateObservation {
             event_id: context.trigger_uuid(),
             material_id: context.trigger_material_id,
             anchor_byte: context.trigger_anchor_byte,
+            last_seen: None,
             ts_orig: context.require_ts_orig()?,
             subject_id: Some(input.unit_name.clone()),
             label: Some(input.unit_name),
@@ -368,11 +384,21 @@ impl StateObservation {
         other.subject_id.as_deref() == Some(subject_id.as_str())
     }
 
+    /// Last observed evidence timestamp of the current bout (defaults to the
+    /// bout start when no merge has advanced it yet).
+    fn last_seen(&self) -> Timestamp {
+        self.last_seen.unwrap_or(self.ts_orig)
+    }
+
     fn refresh_metadata_from(&mut self, other: &Self) {
         if other.label.is_some() {
             self.label.clone_from(&other.label);
         }
         self.attributes.extend(other.attributes.clone());
+        // sinex-zs6: advance last_seen so a continuous heartbeat stream is ONE
+        // bout — gap tolerance is measured from the last heartbeat, not the first,
+        // and the bout ends near the last heartbeat rather than the next event.
+        self.last_seen = Some(self.last_seen().max(other.ts_orig));
     }
 
     fn activitywatch_stream_key(&self) -> String {
@@ -385,7 +411,7 @@ impl StateObservation {
     }
 
     fn activitywatch_gap_to(&self, current: &Self) -> i64 {
-        (current.ts_orig - self.ts_orig).whole_seconds()
+        (current.ts_orig - self.last_seen()).whole_seconds()
     }
 
     fn close_with(&self, current: &Self) -> DerivedOutput<StateIntervalPayload> {
@@ -424,6 +450,44 @@ impl StateObservation {
         .with_temporal_policy(SyntheticTemporalPolicy::WindowBoundary)
         .with_semantics_version(SEMANTICS_VERSION)
         .with_equivalence_key(interval_id)
+    }
+
+    /// Close a heartbeat bout at the LAST observed heartbeat plus a bounded slack
+    /// (sinex-zs6), NOT at the next post-gap event's ts_orig. Only the bout's own
+    /// start event is a parent — the post-gap event belongs to the next bout.
+    fn close_heartbeat_bout(&self, slack_secs: i64) -> DerivedOutput<StateIntervalPayload> {
+        let end_time = self.last_seen() + Duration::seconds(slack_secs);
+        let duration_secs = (end_time - self.ts_orig).whole_seconds().max(0) as u64;
+        let subject_part = self
+            .subject_id
+            .as_deref()
+            .unwrap_or("unknown-subject")
+            .to_string();
+        let interval_id = interval_occurrence_key(
+            &self.state_kind,
+            &subject_part,
+            self.material_id,
+            self.anchor_byte,
+            self.ts_orig,
+        );
+
+        let payload = StateIntervalPayload {
+            interval_id: interval_id.clone(),
+            state_kind: self.state_kind.clone(),
+            subject_id: self.subject_id.clone(),
+            label: self.label.clone(),
+            start_time: self.ts_orig,
+            end_time,
+            duration_secs,
+            start_event_type: self.event_type.clone(),
+            end_event_type: self.event_type.clone(),
+            attributes: self.attributes.clone(),
+        };
+
+        DerivedOutput::windowed(payload, end_time, vec![self.event_id])
+            .with_temporal_policy(SyntheticTemporalPolicy::WindowBoundary)
+            .with_semantics_version(SEMANTICS_VERSION)
+            .with_equivalence_key(interval_id)
     }
 
     fn observed_duration_interval(
@@ -522,6 +586,7 @@ impl From<LegacyFocusTransition> for StateObservation {
             event_id: input.event_id,
             material_id: None,
             anchor_byte: None,
+            last_seen: None,
             ts_orig: input.ts_orig,
             subject_id,
             label,
@@ -750,15 +815,23 @@ impl IntervalLift {
             return None;
         }
 
+        let same_subject = previous.same_subject_as(&current);
         let gap_secs = previous.activitywatch_gap_to(&current);
-        if previous.same_subject_as(&current)
-            && gap_secs <= ACTIVITYWATCH_HEARTBEAT_MERGE_WINDOW_SECS
-        {
+        if same_subject && gap_secs <= ACTIVITYWATCH_HEARTBEAT_MERGE_WINDOW_SECS {
             previous.refresh_metadata_from(&current);
             return None;
         }
 
-        let closed = previous.clone().close_with(&current);
+        // sinex-zs6: a same-subject gap beyond the window means the heartbeat stream
+        // stopped — absence of a heartbeat is absence of evidence, so end the bout at
+        // last_seen + slack, not at the next post-gap event. A DIFFERENT subject is a
+        // direct switch: the transition itself is evidence the previous state ended
+        // now, so end at the switch ts.
+        let closed = if same_subject {
+            previous.close_heartbeat_bout(ACTIVITYWATCH_HEARTBEAT_END_SLACK_SECS)
+        } else {
+            previous.close_with(&current)
+        };
         active.insert(key, current);
         Some(closed)
     }
