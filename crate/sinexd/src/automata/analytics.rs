@@ -63,7 +63,9 @@ fn parse_positive_usize_env(var: &str, description: &str, default: usize) -> usi
         .unwrap_or(default)
 }
 
-fn window_gap_threshold() -> Duration {
+/// The inactivity gap that closes an activity window (and, reused by the
+/// session detector's sinex-5s6 flush backstop, ends a session).
+pub(crate) fn window_gap_threshold() -> Duration {
     let secs = shared_env::parse_optional::<i64>(
         "SINEX_ACTIVITY_WINDOW_GAP_SECS",
         "activity window gap threshold",
@@ -311,6 +313,21 @@ impl Windowed for AnalyticsAutomaton {
         state.close_reason.is_some() && state.event_count > 0
     }
 
+    /// Clock-driven closure (sinex-5s6): close a trailing window after
+    /// `gap_threshold` of quiet without waiting for a next event. `watermark` is
+    /// the two-mode input-time watermark from the adapter (wall clock when live,
+    /// max input `ts_orig` during replay/backfill), so historical continuity is
+    /// never chopped by processing delay. Fires only when the window has content
+    /// and is not already pending a next-event close.
+    fn flush_due(&self, state: &Self::State, watermark: Timestamp) -> bool {
+        if state.event_count == 0 || state.close_reason.is_some() {
+            return false;
+        }
+        state
+            .last_event_time
+            .is_some_and(|last| (watermark - last) >= self.gap_threshold)
+    }
+
     async fn emit(
         &mut self,
         state: &mut Self::State,
@@ -319,6 +336,15 @@ impl Windowed for AnalyticsAutomaton {
         let Some(start_time) = state.window_start else {
             return Ok(None);
         };
+        // sinex-5s6: a flush-driven close (watermark past `gap_threshold` of
+        // quiet) reaches emit with no `close_reason` — the `window_complete`
+        // path always sets one first, so `close_reason == None` here is
+        // unambiguously the quiescent flush path. Treat it as a `Gap` close
+        // (inactivity ended the window), which also propagates to session
+        // completion downstream exactly like a next-event gap close.
+        if state.close_reason.is_none() && state.event_count > 0 {
+            state.close_reason = Some(ActivityWindowCloseReason::Gap);
+        }
         let Some(close_reason) = state.close_reason else {
             return Ok(None);
         };

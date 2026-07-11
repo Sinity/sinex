@@ -528,7 +528,7 @@ where
                     }
                 }
                 events_processed += 1;
-                self.record_processed_input(trigger_event_id);
+                self.record_processed_input(trigger_event_id, query_event.event.ts_orig);
                 self.observe_runtime_snapshot().await;
             }
 
