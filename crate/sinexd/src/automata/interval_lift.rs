@@ -18,7 +18,7 @@ use sinex_primitives::temporal::Duration;
 use sinex_primitives::{JsonValue, Timestamp, Uuid};
 use std::collections::BTreeMap;
 
-const SEMANTICS_VERSION: &str = "1.0.0";
+const SEMANTICS_VERSION: &str = "2.0.0";
 const FOCUS_STATE_KIND: &str = "desktop.focus";
 const WORKSPACE_STATE_KIND: &str = "desktop.workspace";
 const ACTIVITYWATCH_WINDOW_STATE_KIND: &str = "desktop.activitywatch.window";
@@ -115,7 +115,15 @@ pub struct IntervalLiftState {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct StateObservation {
     state_kind: String,
+    /// Trigger event interpretation id — parent lineage, NOT identity (sinex-ecy).
     event_id: Uuid,
+    /// Material occurrence of the trigger event — the start-anchored occurrence
+    /// identity for the interval's equivalence key (sinex-ecy). `None` for legacy
+    /// / synthetic triggers with no material provenance.
+    #[serde(default)]
+    material_id: Option<Uuid>,
+    #[serde(default)]
+    anchor_byte: Option<i64>,
     ts_orig: Timestamp,
     subject_id: Option<String>,
     label: Option<String>,
@@ -167,6 +175,8 @@ impl StateObservation {
         Ok(Self {
             state_kind: FOCUS_STATE_KIND.to_string(),
             event_id: context.trigger_uuid(),
+            material_id: context.trigger_material_id,
+            anchor_byte: context.trigger_anchor_byte,
             ts_orig: context.require_ts_orig()?,
             subject_id,
             label,
@@ -206,6 +216,8 @@ impl StateObservation {
         Ok(Self {
             state_kind: ACTIVITYWATCH_WINDOW_STATE_KIND.to_string(),
             event_id: context.trigger_uuid(),
+            material_id: context.trigger_material_id,
+            anchor_byte: context.trigger_anchor_byte,
             ts_orig: context.require_ts_orig()?,
             subject_id,
             label,
@@ -250,6 +262,8 @@ impl StateObservation {
         Ok(Self {
             state_kind: WORKSPACE_STATE_KIND.to_string(),
             event_id: context.trigger_uuid(),
+            material_id: context.trigger_material_id,
+            anchor_byte: context.trigger_anchor_byte,
             ts_orig: context.require_ts_orig()?,
             subject_id: Some(subject_id),
             label: Some(label),
@@ -276,6 +290,8 @@ impl StateObservation {
         Ok(Self {
             state_kind: ACTIVITYWATCH_AFK_STATE_KIND.to_string(),
             event_id: context.trigger_uuid(),
+            material_id: context.trigger_material_id,
+            anchor_byte: context.trigger_anchor_byte,
             ts_orig: context.require_ts_orig()?,
             subject_id,
             label,
@@ -302,6 +318,8 @@ impl StateObservation {
         Ok(Self {
             state_kind: SYSTEMD_UNIT_STATE_KIND.to_string(),
             event_id: context.trigger_uuid(),
+            material_id: context.trigger_material_id,
+            anchor_byte: context.trigger_anchor_byte,
             ts_orig: context.require_ts_orig()?,
             subject_id: Some(input.unit_name.clone()),
             label: Some(input.unit_name),
@@ -328,6 +346,8 @@ impl StateObservation {
         Ok(Self {
             state_kind: SYSTEMD_UNIT_STATE_KIND.to_string(),
             event_id: context.trigger_uuid(),
+            material_id: context.trigger_material_id,
+            anchor_byte: context.trigger_anchor_byte,
             ts_orig: context.require_ts_orig()?,
             subject_id: Some(input.unit_name.clone()),
             label: Some(input.unit_name),
@@ -375,9 +395,12 @@ impl StateObservation {
             .as_deref()
             .unwrap_or("unknown-subject")
             .to_string();
-        let interval_id = format!(
-            "interval:{}:{subject_part}:{}:{}",
-            self.state_kind, self.event_id, current.event_id
+        let interval_id = interval_occurrence_key(
+            &self.state_kind,
+            &subject_part,
+            self.material_id,
+            self.anchor_byte,
+            self.ts_orig,
         );
 
         let payload = StateIntervalPayload {
@@ -416,9 +439,12 @@ impl StateObservation {
             .as_deref()
             .unwrap_or("unknown-subject")
             .to_string();
-        let interval_id = format!(
-            "interval:{}:{subject_part}:{}:{}",
-            self.state_kind, self.event_id, self.event_id
+        let interval_id = interval_occurrence_key(
+            &self.state_kind,
+            &subject_part,
+            self.material_id,
+            self.anchor_byte,
+            self.ts_orig,
         );
 
         let payload = StateIntervalPayload {
@@ -438,6 +464,28 @@ impl StateObservation {
             .with_temporal_policy(SyntheticTemporalPolicy::WindowBoundary)
             .with_semantics_version(SEMANTICS_VERSION)
             .with_equivalence_key(interval_id)
+    }
+}
+
+/// Start-anchored occurrence identity for a `state.interval` (sinex-ecy / y8v):
+/// identity is the material occurrence of the interval's START evidence. Ends move
+/// (an interval can be learned longer/later); starts do not — so the end is
+/// deliberately excluded from the key, and a revised interval keeps its identity
+/// (superseded, not duplicated). Never the parent event interpretation ids (which
+/// re-mint every replay and collide). The `:`-delimited format never collides with
+/// the old `interval:...:{event_id}:{event_id}` keys, so the migration causes no
+/// false suppression. Timestamp fallback keeps identity occurrence-derived (never a
+/// counter) for legacy/synthetic starts lacking material coordinates.
+fn interval_occurrence_key(
+    state_kind: &str,
+    subject_part: &str,
+    material_id: Option<Uuid>,
+    anchor_byte: Option<i64>,
+    start: Timestamp,
+) -> String {
+    match (material_id, anchor_byte) {
+        (Some(id), Some(anchor)) => format!("interval:{state_kind}:{subject_part}:{id}:{anchor}"),
+        _ => format!("interval:{state_kind}:{subject_part}:ts:{start}"),
     }
 }
 
@@ -472,6 +520,8 @@ impl From<LegacyFocusTransition> for StateObservation {
         Self {
             state_kind: FOCUS_STATE_KIND.to_string(),
             event_id: input.event_id,
+            material_id: None,
+            anchor_byte: None,
             ts_orig: input.ts_orig,
             subject_id,
             label,
@@ -739,7 +789,7 @@ register_source_contract! {
         horizons: &[ContractHorizon::Continuous],
         retention: ContractRetentionPolicy::Forever,
         occurrence_identity: ContractOccurrenceIdentity::Uuid5From(
-            "(source, state_kind, subject_id, start_parent_event_id, end_parent_event_id)",
+            "(state_kind, subject_id, start_material_id, start_anchor_byte)",
         ),
         access_scope: AccessScope::Internal,
     }
