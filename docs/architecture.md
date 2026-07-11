@@ -85,6 +85,34 @@ Suppressing a duplicate *real-world occurrence* (user re-ingests the same file; 
 
 > **Tripwire.** If you reach for a deterministic/content-derived event `id`, an `ON CONFLICT (id)` to suppress "the same datapoint," or a `UNIQUE(material_id, anchor_byte)` *for idempotency* — **stop, you've misread the model.** Event ids are interpretations (new on replay); occurrence identity lives in columns; there is no id-based idempotency. (`ON CONFLICT (id) DO NOTHING` on the insert paths exists only to absorb NATS at-least-once *redelivery* of an already-minted message — a transport concern, not occurrence dedup.)
 
+### The dedup contract: three idempotence regimes (sinex-908)
+
+Idempotence in Sinex is **deliberately non-uniform**. The design names *which regime governs each surface* instead of pursuing blanket dedup. The three regimes (ratified in sinex-y8v):
+
+- **Regime 1 — interpretation plane, deliberately NON-idempotent.** Replay mints new `id`/`ts_coided` by design; every reading is preserved (live or archived). Nothing may "dedupe interpretations." Supersession (below) is *not* idempotence — it is single-live-interpretation-per-occurrence *with full archival*.
+- **Regime 2 — occurrence plane, idempotence DESIRED.** The same real-world occurrence re-observed (re-import, re-scan, overlapping exports, mutable-row growth) must not yield two live rows claiming distinct occurrences. Enforced at admission by a per-event-type **`RevisionPolicy`**: `SuppressDuplicate` (default) or `SupersedeOnChange` (revisable kinds — intervals/sessions/windows, start-anchored keys per sinex-ecy). This is the machine-checkable form of the matrix below.
+- **Regime 3 — operator-adjudicated ambiguity.** When occurrence identity is genuinely uncertain (two providers rendering the same conversation; the same email via IMAP and via export; near-duplicate files with different anchors), the system must **not auto-decide** — it surfaces candidates with evidence through the curation plane (judgment seat sinex-7z0.4); the judgment is durable and reversible.
+
+**Per-modality contract matrix.** Each registered source contract declares an `OccurrenceIdentity` + `CheckpointFamily`; those declarations map to a modality row here. "Dup-detection point" names the enforcing rung of the type-enforcement ladder; "revision" names the intended `RevisionPolicy`.
+
+| Modality (declared identity / checkpoint) | Occurrence anchor | Dup-detection point | Re-import behavior | Revision behavior | Cross-source rule |
+|---|---|---|---|---|---|
+| **Append-only file** (`Anchor` / `AppendStream`, Historical) — git, hledger, most exports | `(material_id, anchor_byte)` byte offset | source cursor + admission `equivalence_key` | same bytes @ same offset → same occurrence | `SuppressDuplicate` (append-only never revises) | n/a |
+| **Mutable-row DB** (`Uuid5From(source,bucket_id,event_timestamp)` / `MutableSnapshot`) — ActivityWatch | start-anchored `(source, bucket_id, event_ts)` (sinex-h3g: anchor the START, not the mutated row) | admission `equivalence_key` | same bucket-event re-observed → same occurrence | **`SupersedeOnChange`** (durations settle as the row grows) | n/a |
+| **API sync** (`Uuid5From(provider_id…)` / `Polling`) — reddit, raindrop, spotify | provider id (`reddit_id`, `raindrop_id`, `comment_id`) | source cursor + admission | same provider id → suppress | **`SupersedeOnChange`** if etag/content changed (edited posts) | n/a |
+| **Export re-import** (`Uuid5From(…,content_hash)` / `AppendStream`) — chatlog, document staging | `(provider_id \| path, content_hash)` | admission `equivalence_key` (content hash) | same export twice → **all suppressed, zero new live rows** | `SupersedeOnChange` if a newer export changed the content | within one provider only |
+| **Overlapping exports, DIFFERENT providers** — same chat via ChatGPT+Claude export; email via IMAP+Takeout | **genuinely ambiguous** (different anchors, same referent) | **none auto** → curation plane (sinex-7z0.4) | candidates surfaced, never auto-merged | **adjudicate** (Regime 3) | operator judgment, durable + reversible |
+| **Live stream, no natural id** (`Uuid5From(app,summary,ts…)` / `LiveObservation`, Continuous) — clipboard, notifications, dbus, window-manager, kitty, udev | capture-time synthetic `(fields, ts)` | admission within a capture session | **N/A — re-capture is a NEW occurrence by definition** (ephemeral_raw, not re-importable) | `SuppressDuplicate` | n/a |
+| **Journal** (`Uuid5From(source,journal_cursor)` / `Journal`) — journald | `(source, journal_cursor)` | source cursor + admission | same cursor → suppress | `SuppressDuplicate` | n/a |
+| **Directory snapshot** (`Uuid5From(source,path,content_hash)` / `MutableSnapshot`) — filesystem, knowledgebase | `(source, path, content_hash)` | admission `equivalence_key` | unchanged file → suppress | **`SupersedeOnChange`** if content_hash changed (file edited) | n/a |
+| **Derived plane** (automata, `Uuid5From(occurrence coords)` / `AppendStream`) | start-anchored occurrence key (sinex-ecy) — `(state_kind, subject, start_material_id, start_anchor_byte)` for intervals; `(bucket, parent occurrence)` for summaries | admission `equivalence_key` | n/a (derived — re-run, not re-imported) | **`SupersedeOnChange`** for revisable kinds (intervals/sessions/windows); `SuppressDuplicate` for point derivations | n/a |
+
+**Declaration-vs-implementation reconciliation** (the enforcing gap, tracked, not silent):
+
+- The **live admission mechanism today is `SuppressDuplicate`-only** — `exists_with_equivalence_key` suppresses a re-insert when a live row already carries the key (`event_engine/admission.rs`, fail-open). The typed per-event-type `RevisionPolicy` and its `SupersedeOnChange` branch (archive live row → admit new → invalidate descendants) are the **intended** contract, enforced by **sinex-n9a** (not yet landed). Until n9a lands, the "`SupersedeOnChange`" rows above behave as `SuppressDuplicate` — a *revised* AW duration or edited file/post is currently **suppressed, not superseded**. That is the known gap n9a closes; it is forward-correctness (a single historical scan emits each occurrence once, so supersession never triggers during the rebuild).
+- **Mutable-row settling** (AW durations frozen at scan time) is reconciled by the start-anchored occurrence key (sinex-ecy, landed #2475/#2481) + n9a supersession — tracked by **sinex-h3g**.
+- **Regime-3 adjudication surface** (evidence panes, reversible merge/distinct judgment) and the import-idempotence report ("N new / M suppressed / K superseded") are **sinex-08z**, riding the existing judgment seat (sinex-7z0.4) — no new authority surface.
+
 ### Negative Space (Load-Bearing Absences)
 
 These are design decisions, not missing features:
