@@ -719,8 +719,60 @@ async fn interval_lift_splits_activitywatch_heartbeat_after_large_gap(
         .expect("large same-subject gap closes the previous heartbeat interval");
 
     assert_eq!(output.payload.start_time, first_ts);
-    assert_eq!(output.payload.end_time, late_ts);
-    assert_eq!(output.payload.duration_secs, 45);
+    // sinex-zs6: the bout ends at last_seen (== first_ts, the only heartbeat) plus
+    // the slack, NOT at the next post-gap event (+45s) — the idle 30..45s window is
+    // absence of evidence and must not be attributed to the bout.
+    let expected_end = first_ts + sinex_primitives::temporal::Duration::seconds(30);
+    assert_eq!(output.payload.end_time, expected_end);
+    assert_eq!(output.payload.duration_secs, 30);
+    Ok(())
+}
+
+#[sinex_test]
+async fn interval_lift_continuous_heartbeat_stream_is_one_bout(
+) -> xtask::sandbox::TestResult<()> {
+    // sinex-zs6 regression: a continuous same-subject heartbeat stream must be ONE
+    // interval, not chopped into fixed ~30s pieces. Pre-fix the gap was measured
+    // from the FIRST heartbeat, so the merge window degenerated into a max interval
+    // length. Now gap is measured from last_seen, so 5s beats merge indefinitely.
+    let start = Timestamp::from_unix_timestamp(1_700_000_000)
+        .ok_or_else(|| color_eyre::eyre::eyre!("valid timestamp"))?;
+    let mut automaton = IntervalLift;
+    let mut state = IntervalLiftState::default();
+
+    let payload = || {
+        serde_json::to_value(ActivityWatchWindowActivePayload {
+            app: "kitty".to_string(),
+            title: "codex".to_string(),
+            duration_ms: 0,
+            bucket_id: "aw-watcher-window_sinnix-prime".to_string(),
+        })
+    };
+
+    // 13 heartbeats, 5s apart (0..60s). Every 5s gap is within the 30s window, so
+    // they all merge — zero intervals emitted, last_seen advances to +60s.
+    for i in 0..=12 {
+        let ts = start + sinex_primitives::temporal::Duration::seconds(i * 5);
+        let out = automaton
+            .process(&mut state, payload()?, &activitywatch_context(ts))
+            .await?;
+        assert!(out.is_none(), "continuous 5s heartbeats must merge, not chop (beat {i})");
+    }
+
+    // A beat after a 2-minute silence (>30s) ends the bout at last_seen(+60) + slack.
+    let after_silence = start + sinex_primitives::temporal::Duration::seconds(180);
+    let output = automaton
+        .process(&mut state, payload()?, &activitywatch_context(after_silence))
+        .await?
+        .expect("the post-silence beat closes the single continuous bout");
+
+    assert_eq!(output.payload.start_time, start);
+    let expected_end = start + sinex_primitives::temporal::Duration::seconds(60 + 30);
+    assert_eq!(
+        output.payload.end_time, expected_end,
+        "one bout spanning the whole stream, ending at last_seen + slack"
+    );
+    assert_eq!(output.payload.duration_secs, 90);
     Ok(())
 }
 
@@ -815,6 +867,7 @@ async fn interval_lift_clamps_open_activitywatch_afk_duration_at_creation_time(
         event_id,
         material_id: Some(Uuid::now_v7()),
         anchor_byte: Some(4096),
+        last_seen: None,
         ts_orig: start,
         subject_id: Some("status:afk".to_string()),
         label: Some("afk".to_string()),
