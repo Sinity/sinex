@@ -20,6 +20,10 @@ use crate::runtime::automaton::{AutomatonContext, DerivedOutput, ScopeReconciler
 use crate::runtime::{AutomatonLogicError, InputProvenanceFilter, ScopeReconciler};
 use serde::{Deserialize, Serialize};
 use sinex_primitives::Uuid;
+use sinex_primitives::derivation::{
+    ClaimSupportTemplate, ClaimTemporalQuality, DerivationOutputDeclaration,
+    DerivationWriteSurface, DerivedProductClass, InputEligibility, SourceCoverage, SupportLevel,
+};
 use sinex_primitives::domain::{RelationType, SyntheticTemporalPolicy};
 use sinex_primitives::events::EventPayload;
 use sinex_primitives::events::payloads::{EntityRelatedPayload, EntityResolvedPayload};
@@ -82,6 +86,28 @@ pub struct WindowEntry {
     pub trigger_uuid: Uuid,
 }
 
+/// Derivation control-plane declaration for `relation-extractor` (sinex-0vx.1/0vx.3).
+pub const RELATION_EXTRACTOR_OUTPUT_DECLARATIONS: &[DerivationOutputDeclaration] =
+    &[DerivationOutputDeclaration {
+        declaration_id: "relation-extractor.entity.related",
+        owner: "relation-extractor",
+        product_class: DerivedProductClass::SemanticCandidate,
+        write_surface: DerivationWriteSurface::DerivedOutput,
+        output_source: Some("relation-extractor"),
+        output_event_type: Some("entity.related"),
+        projection_kind: None,
+        artifact_kind: None,
+        proposal_kind: None,
+        semantics_version: "1.0.0",
+        input_eligibility: InputEligibility::ExplicitOnly,
+        default_support: ClaimSupportTemplate::new(
+            SupportLevel::Heuristic,
+            SourceCoverage::Partial,
+            ClaimTemporalQuality::WindowBoundary,
+        ),
+        verification_command: "xtask test -p sinexd -E 'test(relation_extractor)'",
+    }];
+
 #[derive(Default)]
 pub struct RelationExtractor;
 
@@ -112,6 +138,10 @@ impl ScopeReconciler for RelationExtractor {
     fn input_provenance_filter(&self) -> InputProvenanceFilter {
         InputProvenanceFilter::SynthesizedOnly
     }
+
+    const OUTPUT_DECLARATIONS: &'static [DerivationOutputDeclaration] =
+        RELATION_EXTRACTOR_OUTPUT_DECLARATIONS;
+
     fn scope_keys(&self, _input: &Self::Input, _context: &AutomatonContext) -> Vec<String> {
         vec![CO_OCCURRENCE_SCOPE.to_string()]
     }

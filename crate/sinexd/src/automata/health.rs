@@ -8,6 +8,10 @@
 use crate::runtime::automaton::{AutomatonContext, DerivedOutput, ScopeReconcilerAdapter};
 use crate::runtime::{AutomatonLogicError, InputProvenanceFilter, ScopeReconciler};
 use serde::{Deserialize, Serialize};
+use sinex_primitives::derivation::{
+    ClaimSupportTemplate, ClaimTemporalQuality, DerivationOutputDeclaration,
+    DerivationWriteSurface, DerivedProductClass, InputEligibility, SourceCoverage, SupportLevel,
+};
 use sinex_primitives::domain::{HealthStatus, SyntheticTemporalPolicy};
 use sinex_primitives::events::{
     EventPayload,
@@ -190,6 +194,32 @@ pub struct HealthEvent {
 
 // HealthStatus is imported from sinex_primitives::domain; no local alias needed.
 
+/// Derivation control-plane declaration for `health` (sinex-0vx.1/0vx.3).
+///
+/// `analysis_claim`: an aggregated evaluation over per-component health
+/// signals, not default-eligible as canonical derivation input (a health
+/// report about the system is not itself a fact about user activity).
+pub const HEALTH_OUTPUT_DECLARATIONS: &[DerivationOutputDeclaration] =
+    &[DerivationOutputDeclaration {
+        declaration_id: "health.health.aggregated_report",
+        owner: "health",
+        product_class: DerivedProductClass::AnalysisClaim,
+        write_surface: DerivationWriteSurface::DerivedOutput,
+        output_source: Some("health-aggregator"),
+        output_event_type: Some("health.aggregated_report"),
+        projection_kind: None,
+        artifact_kind: None,
+        proposal_kind: None,
+        semantics_version: "1.0.0",
+        input_eligibility: InputEligibility::ExplicitOnly,
+        default_support: ClaimSupportTemplate::new(
+            SupportLevel::Convergent,
+            SourceCoverage::Partial,
+            ClaimTemporalQuality::DeclaredEffective,
+        ),
+        verification_command: "xtask test -p sinexd -E 'test(health)'",
+    }];
+
 #[derive(Default)]
 pub struct HealthAggregator {
     pub config: HealthAggregatorConfig,
@@ -217,6 +247,9 @@ impl ScopeReconciler for HealthAggregator {
     fn input_provenance_filter(&self) -> InputProvenanceFilter {
         InputProvenanceFilter::MaterialOnly
     }
+
+    const OUTPUT_DECLARATIONS: &'static [DerivationOutputDeclaration] = HEALTH_OUTPUT_DECLARATIONS;
+
     fn scope_keys(&self, input: &Self::Input, context: &AutomatonContext) -> Vec<String> {
         // Keep malformed payloads isolated on the live path so they do not all collide into a
         // shared "unknown" scope before reconcile rejects them into DLQ.

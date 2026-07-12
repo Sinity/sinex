@@ -10,6 +10,10 @@ use crate::runtime::{AutomatonLogicError, InputProvenanceFilter, Windowed};
 use serde::{Deserialize, Serialize};
 use sinex_primitives::Uuid;
 use sinex_primitives::activity::{ActivitySourceKind, primary_activity_source};
+use sinex_primitives::derivation::{
+    ClaimSupportTemplate, ClaimTemporalQuality, DerivationOutputDeclaration,
+    DerivationWriteSurface, DerivedProductClass, InputEligibility, SourceCoverage, SupportLevel,
+};
 use sinex_primitives::events::{
     EventPayload,
     payloads::{ActivityHourlySummaryPayload, ActivityWindowSummaryPayload},
@@ -106,6 +110,28 @@ impl HourlySummaryState {
     }
 }
 
+/// Derivation control-plane declaration for `hourly` (sinex-0vx.1/0vx.3).
+pub const HOURLY_OUTPUT_DECLARATIONS: &[DerivationOutputDeclaration] =
+    &[DerivationOutputDeclaration {
+        declaration_id: "hourly.activity.summary.hourly",
+        owner: "hourly",
+        product_class: DerivedProductClass::CanonicalDerivedEvent,
+        write_surface: DerivationWriteSurface::DerivedOutput,
+        output_source: Some("derived.hourly-summarizer"),
+        output_event_type: Some("activity.summary.hourly"),
+        projection_kind: None,
+        artifact_kind: None,
+        proposal_kind: None,
+        semantics_version: "2.0.0",
+        input_eligibility: InputEligibility::DefaultCanonicalInput,
+        default_support: ClaimSupportTemplate::new(
+            SupportLevel::Convergent,
+            SourceCoverage::Covered,
+            ClaimTemporalQuality::WindowBoundary,
+        ),
+        verification_command: "xtask test -p sinexd -E 'test(hourly)'",
+    }];
+
 #[derive(Default)]
 pub struct HourlySummarizer;
 
@@ -133,6 +159,9 @@ impl Windowed for HourlySummarizer {
     fn input_provenance_filter(&self) -> InputProvenanceFilter {
         InputProvenanceFilter::SynthesizedOnly
     }
+
+    const OUTPUT_DECLARATIONS: &'static [DerivationOutputDeclaration] = HOURLY_OUTPUT_DECLARATIONS;
+
     async fn accumulate(
         &mut self,
         state: &mut Self::State,

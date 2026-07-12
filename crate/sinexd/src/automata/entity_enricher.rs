@@ -13,6 +13,10 @@ use crate::runtime::automaton::{AutomatonContext, DerivedOutput, ScopeReconciler
 use crate::runtime::{AutomatonLogicError, InputProvenanceFilter, ScopeReconciler};
 use serde::{Deserialize, Serialize};
 use sinex_primitives::Uuid;
+use sinex_primitives::derivation::{
+    ClaimSupportTemplate, ClaimTemporalQuality, DerivationOutputDeclaration,
+    DerivationWriteSurface, DerivedProductClass, InputEligibility, SourceCoverage, SupportLevel,
+};
 use sinex_primitives::domain::{EntityTypeName, SyntheticTemporalPolicy};
 use sinex_primitives::events::EventPayload;
 use sinex_primitives::events::payloads::{
@@ -76,6 +80,28 @@ impl Default for EnricherConfig {
     }
 }
 
+/// Derivation control-plane declaration for `entity-enricher` (sinex-0vx.1/0vx.3).
+pub const ENTITY_ENRICHER_OUTPUT_DECLARATIONS: &[DerivationOutputDeclaration] =
+    &[DerivationOutputDeclaration {
+        declaration_id: "entity-enricher.entity.enriched",
+        owner: "entity-enricher",
+        product_class: DerivedProductClass::SemanticCandidate,
+        write_surface: DerivationWriteSurface::DerivedOutput,
+        output_source: Some("entity-enricher"),
+        output_event_type: Some("entity.enriched"),
+        projection_kind: None,
+        artifact_kind: None,
+        proposal_kind: None,
+        semantics_version: "1.0.0",
+        input_eligibility: InputEligibility::ExplicitOnly,
+        default_support: ClaimSupportTemplate::new(
+            SupportLevel::Heuristic,
+            SourceCoverage::Partial,
+            ClaimTemporalQuality::DeclaredEffective,
+        ),
+        verification_command: "xtask test -p sinexd -E 'test(entity_enricher)'",
+    }];
+
 #[derive(Default)]
 pub struct EntityEnricher {
     pub config: EnricherConfig,
@@ -105,6 +131,10 @@ impl ScopeReconciler for EntityEnricher {
     fn input_provenance_filter(&self) -> InputProvenanceFilter {
         InputProvenanceFilter::SynthesizedOnly
     }
+
+    const OUTPUT_DECLARATIONS: &'static [DerivationOutputDeclaration] =
+        ENTITY_ENRICHER_OUTPUT_DECLARATIONS;
+
     fn scope_keys(&self, input: &Self::Input, _context: &AutomatonContext) -> Vec<String> {
         // Each entity is its own scope.
         vec![input.entity_id.to_string()]

@@ -3,7 +3,37 @@
 use crate::runtime::automaton::{AutomatonContext, DerivedOutput, TransducerAdapter};
 use crate::runtime::{AutomatonLogicError, InputProvenanceFilter, Transducer};
 use serde_json::Value as JsonValue;
+use sinex_primitives::derivation::{
+    ClaimSupportTemplate, DerivationOutputDeclaration, DerivationWriteSurface,
+    DerivedProductClass, InputEligibility,
+};
 use sinex_primitives::llm::{ModelEffectRequest, hash_model_input};
+
+/// Derivation control-plane declaration for `embedding-producer` (sinex-0vx.1/0vx.3).
+///
+/// `report_artifact`: the current output is an effect-key/replay-policy
+/// receipt for a chunk embedding, not the embedding vector itself — never a
+/// default-eligible input to further canonical derivation. Support defaults
+/// to the doctrine-mandated unknown/low baseline (`ClaimSupportTemplate::UNKNOWN`)
+/// rather than a fabricated `model_inferred` grade until the real vector is
+/// recorded (see blueprint `04-interpretation-plane-blueprint.report.md`
+/// per-automaton classification table).
+pub const EMBEDDING_PRODUCER_OUTPUT_DECLARATIONS: &[DerivationOutputDeclaration] =
+    &[DerivationOutputDeclaration {
+        declaration_id: "embedding-producer.document.embedded",
+        owner: "embedding-producer",
+        product_class: DerivedProductClass::ReportArtifact,
+        write_surface: DerivationWriteSurface::DerivedOutput,
+        output_source: Some("embedding-producer"),
+        output_event_type: Some("document.embedded"),
+        projection_kind: None,
+        artifact_kind: None,
+        proposal_kind: None,
+        semantics_version: "1.0.0",
+        input_eligibility: InputEligibility::NeverInput,
+        default_support: ClaimSupportTemplate::UNKNOWN,
+        verification_command: "xtask test -p sinexd -E 'test(embedding_producer)'",
+    }];
 
 #[derive(Default)]
 pub struct EmbeddingProducer;
@@ -28,6 +58,10 @@ impl Transducer for EmbeddingProducer {
     fn input_provenance_filter(&self) -> InputProvenanceFilter {
         InputProvenanceFilter::Any
     }
+
+    const OUTPUT_DECLARATIONS: &'static [DerivationOutputDeclaration] =
+        EMBEDDING_PRODUCER_OUTPUT_DECLARATIONS;
+
     async fn process(
         &mut self,
         _state: &mut Self::State,

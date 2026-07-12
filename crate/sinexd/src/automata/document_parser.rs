@@ -28,6 +28,10 @@ use crate::runtime::automaton::{
 };
 use crate::runtime::processing::AutomatonLogicError;
 use sinex_primitives::JsonValue;
+use sinex_primitives::derivation::{
+    ClaimSupportTemplate, ClaimTemporalQuality, DerivationOutputDeclaration,
+    DerivationWriteSurface, DerivedProductClass, InputEligibility, SourceCoverage, SupportLevel,
+};
 use sinex_primitives::events::EventPayload;
 use sinex_primitives::events::payloads::{
     CanonicalCommandPayload, DocumentIngestedPayload, DocumentKind,
@@ -54,6 +58,53 @@ pub struct DocumentParserState {
 }
 
 // ── RuntimeModule ───────────────────────────────────────────────────────────────
+
+/// Derivation control-plane declarations for `document-parser` (sinex-0vx.1/0vx.3).
+///
+/// One declaration per event type in [`MultiOutputTransducer::output_event_types`]
+/// — `document.parsed` and `document.chunked` are genuinely distinct output
+/// shapes from a single processing call, unlike `interval-lift`'s
+/// single-type-many-instances use of the same trait.
+pub const DOCUMENT_PARSER_OUTPUT_DECLARATIONS: &[DerivationOutputDeclaration] = &[
+    DerivationOutputDeclaration {
+        declaration_id: "document-parser.document.parsed",
+        owner: "document-parser",
+        product_class: DerivedProductClass::CanonicalDerivedEvent,
+        write_surface: DerivationWriteSurface::DerivedOutput,
+        output_source: Some("document-parser"),
+        output_event_type: Some("document.parsed"),
+        projection_kind: None,
+        artifact_kind: None,
+        proposal_kind: None,
+        semantics_version: "1.0.0",
+        input_eligibility: InputEligibility::DefaultCanonicalInput,
+        default_support: ClaimSupportTemplate::new(
+            SupportLevel::Direct,
+            SourceCoverage::Covered,
+            ClaimTemporalQuality::InheritParent,
+        ),
+        verification_command: "xtask test -p sinexd -E 'test(document_parser)'",
+    },
+    DerivationOutputDeclaration {
+        declaration_id: "document-parser.document.chunked",
+        owner: "document-parser",
+        product_class: DerivedProductClass::CanonicalDerivedEvent,
+        write_surface: DerivationWriteSurface::DerivedOutput,
+        output_source: Some("document-parser"),
+        output_event_type: Some("document.chunked"),
+        projection_kind: None,
+        artifact_kind: None,
+        proposal_kind: None,
+        semantics_version: "1.0.0",
+        input_eligibility: InputEligibility::DefaultCanonicalInput,
+        default_support: ClaimSupportTemplate::new(
+            SupportLevel::Direct,
+            SourceCoverage::Covered,
+            ClaimTemporalQuality::InheritParent,
+        ),
+        verification_command: "xtask test -p sinexd -E 'test(document_parser)'",
+    },
+];
 
 #[derive(Debug, Clone, Default)]
 pub struct DocumentParserAutomaton {
@@ -84,6 +135,10 @@ impl MultiOutputTransducer for DocumentParserAutomaton {
     fn output_event_types(&self) -> &[&'static str] {
         &["document.parsed", "document.chunked"]
     }
+
+    const OUTPUT_DECLARATIONS: &'static [DerivationOutputDeclaration] =
+        DOCUMENT_PARSER_OUTPUT_DECLARATIONS;
+
     fn input_provenance_filter(&self) -> InputProvenanceFilter {
         InputProvenanceFilter::Any
     }

@@ -12,6 +12,10 @@ use serde::{Deserialize, Serialize};
 use sinex_primitives::activity::{
     ActivitySourceKind, classify_trusted_activity_signal, primary_activity_source,
 };
+use sinex_primitives::derivation::{
+    ClaimSupportTemplate, ClaimTemporalQuality, DerivationOutputDeclaration,
+    DerivationWriteSurface, DerivedProductClass, InputEligibility, SourceCoverage, SupportLevel,
+};
 use sinex_primitives::events::{
     EventPayload,
     payloads::{
@@ -193,6 +197,32 @@ pub struct PendingWindowSeed {
     pub anchor_byte: Option<i64>,
 }
 
+/// Derivation control-plane declaration for `analytics` (sinex-0vx.1/0vx.3).
+///
+/// Rollup: `canonical_derived_event`, `convergent` support level since a
+/// window is a synthesis over multiple trusted activity signals rather than
+/// one direct observation.
+pub const ANALYTICS_OUTPUT_DECLARATIONS: &[DerivationOutputDeclaration] =
+    &[DerivationOutputDeclaration {
+        declaration_id: "analytics.activity.window.summary",
+        owner: "analytics",
+        product_class: DerivedProductClass::CanonicalDerivedEvent,
+        write_surface: DerivationWriteSurface::DerivedOutput,
+        output_source: Some("derived.activity-window"),
+        output_event_type: Some("activity.window.summary"),
+        projection_kind: None,
+        artifact_kind: None,
+        proposal_kind: None,
+        semantics_version: "2.0.0",
+        input_eligibility: InputEligibility::DefaultCanonicalInput,
+        default_support: ClaimSupportTemplate::new(
+            SupportLevel::Convergent,
+            SourceCoverage::Covered,
+            ClaimTemporalQuality::WindowBoundary,
+        ),
+        verification_command: "xtask test -p sinexd -E 'test(analytics)'",
+    }];
+
 pub struct AnalyticsAutomaton {
     gap_threshold: Duration,
     max_duration: Duration,
@@ -243,6 +273,9 @@ impl Windowed for AnalyticsAutomaton {
     fn input_provenance_filter(&self) -> InputProvenanceFilter {
         InputProvenanceFilter::MaterialOnly
     }
+
+    const OUTPUT_DECLARATIONS: &'static [DerivationOutputDeclaration] =
+        ANALYTICS_OUTPUT_DECLARATIONS;
     async fn accumulate(
         &mut self,
         state: &mut Self::State,

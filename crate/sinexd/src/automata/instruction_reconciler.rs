@@ -8,6 +8,10 @@
 use crate::runtime::automaton::{AutomatonContext, DerivedOutput, ScopeReconcilerAdapter};
 use crate::runtime::{AutomatonLogicError, InputProvenanceFilter, ScopeReconciler};
 use serde::{Deserialize, Serialize};
+use sinex_primitives::derivation::{
+    ClaimSupportTemplate, ClaimTemporalQuality, DerivationOutputDeclaration,
+    DerivationWriteSurface, DerivedProductClass, InputEligibility, SourceCoverage, SupportLevel,
+};
 use sinex_primitives::domain::SyntheticTemporalPolicy;
 use sinex_primitives::events::EventPayload;
 use sinex_primitives::events::payloads::{
@@ -39,6 +43,32 @@ struct PendingWorkspaceInstruction {
     instruction_event_id: Uuid,
     instruction: DesktopWorkspaceSwitchInstructionPayload,
 }
+
+/// Derivation control-plane declaration for `instruction-reconciler`
+/// (sinex-0vx.1/0vx.3).
+///
+/// `analysis_claim`: a comparison/evaluation of admitted instruction vs.
+/// observation events, not a fact about the world in its own right.
+pub const INSTRUCTION_RECONCILER_OUTPUT_DECLARATIONS: &[DerivationOutputDeclaration] =
+    &[DerivationOutputDeclaration {
+        declaration_id: "instruction-reconciler.expectation.status",
+        owner: "instruction-reconciler",
+        product_class: DerivedProductClass::AnalysisClaim,
+        write_surface: DerivationWriteSurface::DerivedOutput,
+        output_source: Some("runtime.instruction"),
+        output_event_type: Some("expectation.status"),
+        projection_kind: None,
+        artifact_kind: None,
+        proposal_kind: None,
+        semantics_version: SEMANTICS_VERSION,
+        input_eligibility: InputEligibility::ExplicitOnly,
+        default_support: ClaimSupportTemplate::new(
+            SupportLevel::Direct,
+            SourceCoverage::Partial,
+            ClaimTemporalQuality::DeclaredEffective,
+        ),
+        verification_command: "xtask test -p sinexd -E 'test(instruction_reconciler)'",
+    }];
 
 #[derive(Debug, Clone, Default)]
 pub struct InstructionExpectationReconciler;
@@ -73,6 +103,9 @@ impl ScopeReconciler for InstructionExpectationReconciler {
     fn input_provenance_filter(&self) -> InputProvenanceFilter {
         InputProvenanceFilter::Any
     }
+
+    const OUTPUT_DECLARATIONS: &'static [DerivationOutputDeclaration] =
+        INSTRUCTION_RECONCILER_OUTPUT_DECLARATIONS;
 
     fn scope_keys(&self, _input: &Self::Input, context: &AutomatonContext) -> Vec<String> {
         if is_hyprland_workspace_instruction(context) || is_hyprland_workspace_observation(context)

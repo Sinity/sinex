@@ -30,9 +30,40 @@
 use crate::runtime::automaton::{AutomatonContext, DerivedOutput, TransducerAdapter};
 use crate::runtime::{AutomatonLogicError, InputProvenanceFilter, Transducer};
 use regex::Regex;
+use sinex_primitives::derivation::{
+    ClaimSupportTemplate, ClaimTemporalQuality, DerivationOutputDeclaration,
+    DerivationWriteSurface, DerivedProductClass, InputEligibility, SourceCoverage, SupportLevel,
+};
 use sinex_primitives::domain::EntityTypeName;
 use sinex_primitives::events::payloads::EntityExtractedPayload;
 use std::sync::LazyLock;
+
+/// Derivation control-plane declaration for `entity-extractor` (sinex-0vx.1/0vx.3).
+///
+/// `semantic_candidate`: a heuristic pattern match, not an authority-backed
+/// fact — never default-eligible as input to further canonical derivation
+/// until an operator/agent judgment promotes it via the curation/authority
+/// seam (sinex-0vx.5+).
+pub const ENTITY_EXTRACTOR_OUTPUT_DECLARATIONS: &[DerivationOutputDeclaration] =
+    &[DerivationOutputDeclaration {
+        declaration_id: "entity-extractor.entity.extracted",
+        owner: "entity-extractor",
+        product_class: DerivedProductClass::SemanticCandidate,
+        write_surface: DerivationWriteSurface::DerivedOutput,
+        output_source: Some("entity-extractor"),
+        output_event_type: Some("entity.extracted"),
+        projection_kind: None,
+        artifact_kind: None,
+        proposal_kind: None,
+        semantics_version: "1.0.0",
+        input_eligibility: InputEligibility::ExplicitOnly,
+        default_support: ClaimSupportTemplate::new(
+            SupportLevel::Heuristic,
+            SourceCoverage::Partial,
+            ClaimTemporalQuality::Unknown,
+        ),
+        verification_command: "xtask test -p sinexd -E 'test(entity_extractor)'",
+    }];
 
 // ── Pattern catalog ────────────────────────────────────────────────────
 
@@ -74,6 +105,10 @@ impl Transducer for EntityExtractor {
     fn output_event_type(&self) -> &'static str {
         "entity.extracted"
     }
+
+    const OUTPUT_DECLARATIONS: &'static [DerivationOutputDeclaration] =
+        ENTITY_EXTRACTOR_OUTPUT_DECLARATIONS;
+
     fn input_provenance_filter(&self) -> InputProvenanceFilter {
         // MaterialOnly, NOT Any. Entities are observed in real source data (a URL
         // in a command, an email in a journal line, a path in a file event) —
