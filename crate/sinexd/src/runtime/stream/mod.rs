@@ -24,7 +24,7 @@ pub use kernel::{
     validate_pull_consumer_config,
 };
 pub use runner::RuntimeRunner;
-pub use runtime_module::RuntimeModule;
+pub use runtime_module::{ErasedInitContext, ErasedRuntimeModule, RuntimeModule};
 pub use runtime_state::RuntimeContext;
 pub use stats::ProcessingStats;
 pub use time_horizon::TimeHorizon;

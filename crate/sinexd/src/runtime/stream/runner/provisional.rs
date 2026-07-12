@@ -1,4 +1,4 @@
-//! Bridge checkpoint loading for `RuntimeRunner<T>`.
+//! Bridge checkpoint loading for `RuntimeRunner`.
 //!
 //! With the confirmed-delivery redesign (#2187 / #2202, "Option C") automata
 //! receive the full post-redaction `Event<JsonValue>` directly from the
@@ -7,9 +7,9 @@
 //! `build_event_from_provisional`) was deleted. What remains here is the
 //! bridge's checkpoint-state loader.
 
-use super::{CheckpointManager, RuntimeModule, RuntimeResult, RuntimeRunner, SinexError};
+use super::{CheckpointManager, RuntimeResult, RuntimeRunner, SinexError};
 
-impl<T: RuntimeModule + 'static> RuntimeRunner<T> {
+impl RuntimeRunner {
     #[cfg(feature = "messaging")]
     pub(super) async fn load_bridge_checkpoint_state(
         checkpoint_manager: &CheckpointManager,

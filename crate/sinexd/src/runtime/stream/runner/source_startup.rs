@@ -1,15 +1,15 @@
-//! Source startup sequence for `RuntimeRunner<T>`.
+//! Source startup sequence for `RuntimeRunner`.
 //!
 //! Drives the snapshot -> gap-fill -> continuous transition for source
 //! modules, including drain awareness and checkpoint persistence between
 //! phases.
 
 use super::{
-    Checkpoint, RuntimeModule, RuntimeResult, RuntimeRunner, ScanArgs, SinexError, TimeHorizon,
-    debug, info, systemd_notify, warn,
+    Checkpoint, RuntimeResult, RuntimeRunner, ScanArgs, SinexError, TimeHorizon, debug, info,
+    systemd_notify, warn,
 };
 
-impl<T: RuntimeModule + 'static> RuntimeRunner<T> {
+impl RuntimeRunner {
     /// Run source startup sequence (Snapshot -> Gap-fill -> Continuous)
     pub(super) async fn run_source_startup_sequence(&mut self) -> RuntimeResult<()> {
         let preexisting_checkpoint = self.module.current_checkpoint().await?;

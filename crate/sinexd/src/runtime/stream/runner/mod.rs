@@ -1,4 +1,4 @@
-//! `RuntimeRunner<T>` and its associated lifecycle/runtime helpers.
+//! `RuntimeRunner` and its associated lifecycle/runtime helpers.
 //!
 //! This is the long-lived runtime kernel of stream modules. Keeping it isolated
 //! from wire types, listener plumbing, and control-message helpers makes the
@@ -13,10 +13,10 @@ use super::listener::{
     run_resubscribing_listener,
 };
 use super::{
-    Checkpoint, EventEmitter, ModuleKind, RunnerLifecycle, RuntimeCapabilities, RuntimeContext,
-    RuntimeDrainController, RuntimeHandles, RuntimeInitContext, RuntimeModule, ScanArgs,
-    ScanEstimate, ScanReport, ServiceInfo, SourceScanAck, SourceScanCommand, SourceScanProgress,
-    TimeHorizon,
+    Checkpoint, ErasedInitContext, ErasedRuntimeModule, EventEmitter, ModuleKind, RunnerLifecycle,
+    RuntimeCapabilities, RuntimeContext, RuntimeDrainController, RuntimeHandles, RuntimeModule,
+    ScanArgs, ScanEstimate, ScanReport, ServiceInfo, SourceScanAck, SourceScanCommand,
+    SourceScanProgress, TimeHorizon,
 };
 use crate::runtime::{
     RuntimeResult, SinexError,
@@ -41,12 +41,24 @@ use tracing::{debug, error, info, warn};
 
 const DEFAULT_EVENT_CHANNEL_SIZE: usize = 1024;
 
-/// Unified runner for source drivers and automata.
+/// Caller-facing source factory: produces fresh typed module instances.
+/// Accepted by [`RuntimeRunner::new_with_factory`] and wrapped into an
+/// [`ErasedSourceFactory`] internally.
 type SourceFactory<T> = Arc<dyn Fn() -> T + Send + Sync>;
 
-pub struct RuntimeRunner<T: RuntimeModule> {
-    module: T,
-    source_factory: Option<SourceFactory<T>>,
+/// Type-erased source factory stored on the runner: produces fresh boxed
+/// modules for replay-worker dispatch without the runner being generic.
+type ErasedSourceFactory = Arc<dyn Fn() -> Box<dyn ErasedRuntimeModule> + Send + Sync>;
+
+/// Unified runner for source drivers and automata.
+///
+/// The runner is deliberately NON-generic over the module: it drives every
+/// module through the object-safe [`ErasedRuntimeModule`] so the ~15 impl files
+/// of this runtime kernel are monomorphized ONCE rather than once per module
+/// type (sinex-qabz — the per-`T` monomorphization was 46% of the crate's IR).
+pub struct RuntimeRunner {
+    module: Box<dyn ErasedRuntimeModule>,
+    source_factory: Option<ErasedSourceFactory>,
     lifecycle: RunnerLifecycle,
     handles: Option<RuntimeHandles>,
     service_info: Option<ServiceInfo>,
@@ -105,7 +117,7 @@ mod source_startup;
 #[path = "runner_test.rs"]
 mod runner_test;
 
-impl<T: RuntimeModule + 'static> RuntimeRunner<T> {
+impl RuntimeRunner {
     /// Get module capabilities
     pub fn get_capabilities(&self) -> RuntimeCapabilities {
         self.module.capabilities()

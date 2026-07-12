@@ -1,10 +1,10 @@
-//! Tests for `RuntimeRunner<T>` private control-plane and runtime helpers.
+//! Tests for `RuntimeRunner` private control-plane and runtime helpers.
 //! Inline because they cover items that are not exposed beyond the runner module.
 
 // Inline because these cover private control-plane encoding helpers.
 use super::*;
-use crate::runtime::stream::{ContinuousStart, ProcessingStats};
 use crate::runtime::checkpoint::CheckpointManager;
+use crate::runtime::stream::{ContinuousStart, ProcessingStats, RuntimeInitContext};
 use crate::runtime::{NatsPublisher, SourceDriver, SourceDriverRuntime};
 use async_nats::jetstream;
 use serde::Serialize;
@@ -235,7 +235,7 @@ async fn automaton_consumer_config_targets_confirmed_events_stream() -> TestResu
     // type; the consumer name is derived from the service name; delivery is
     // `New` because the per-automaton checkpoint + historical scan cover anything
     // before the consumer starts (#2187 / #2202).
-    let config = RuntimeRunner::<RuntimeTestModule>::automaton_consumer_config(
+    let config = RuntimeRunner::automaton_consumer_config(
         "sinex.entity-extractor",
         crate::runtime::automaton::traits::InputProvenanceFilter::MaterialOnly,
         vec!["entity.extracted"],
@@ -258,7 +258,7 @@ async fn automaton_consumer_config_targets_confirmed_events_stream() -> TestResu
         "sinex_entity-extractor-confirmed-events-material-filter-entity_d_extracted"
     );
 
-    let wildcard_config = RuntimeRunner::<RuntimeTestModule>::automaton_consumer_config(
+    let wildcard_config = RuntimeRunner::automaton_consumer_config(
         "sinex.entity-extractor",
         crate::runtime::automaton::traits::InputProvenanceFilter::Any,
         Vec::new(),
@@ -283,7 +283,7 @@ async fn automaton_consumer_config_targets_confirmed_events_stream() -> TestResu
 #[cfg(feature = "messaging")]
 #[sinex_test]
 async fn automaton_consumer_config_names_multi_type_filters() -> TestResult<()> {
-    let config = RuntimeRunner::<RuntimeTestModule>::automaton_consumer_config(
+    let config = RuntimeRunner::automaton_consumer_config(
         "sinex.entity-extractor",
         crate::runtime::automaton::traits::InputProvenanceFilter::Any,
         vec!["document.chunked", "command.executed", "command.canonical"],
@@ -308,7 +308,7 @@ async fn automaton_consumer_config_names_multi_type_filters() -> TestResult<()> 
 async fn checkpoint_consumer_name_is_stable_for_sources() -> TestResult<()> {
     let raw_config = HashMap::new();
 
-    let consumer_name = RuntimeRunner::<RuntimeTestModule>::checkpoint_consumer_name(
+    let consumer_name = RuntimeRunner::checkpoint_consumer_name(
         ModuleKind::Source,
         &raw_config,
         "system.journald",
@@ -323,7 +323,7 @@ async fn checkpoint_consumer_name_is_stable_for_sources() -> TestResult<()> {
 async fn checkpoint_consumer_name_is_stable_for_automata() -> TestResult<()> {
     let raw_config = HashMap::new();
 
-    let consumer_name = RuntimeRunner::<RuntimeTestModule>::checkpoint_consumer_name(
+    let consumer_name = RuntimeRunner::checkpoint_consumer_name(
         ModuleKind::Automaton,
         &raw_config,
         "sinex.entity-extractor",
@@ -341,7 +341,7 @@ async fn configured_checkpoint_consumer_name_overrides_source_default() -> TestR
         serde_json::json!("stable-consumer"),
     )]);
 
-    let consumer_name = RuntimeRunner::<RuntimeTestModule>::checkpoint_consumer_name(
+    let consumer_name = RuntimeRunner::checkpoint_consumer_name(
         ModuleKind::Source,
         &raw_config,
         "system.journald",

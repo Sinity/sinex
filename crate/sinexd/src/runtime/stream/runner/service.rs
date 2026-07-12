@@ -1,4 +1,4 @@
-//! `run_scan` and `run_service` for `RuntimeRunner<T>`.
+//! `run_scan` and `run_service` for `RuntimeRunner`.
 //!
 //! These are the two top-level entry points: a one-shot scan operation
 //! (snapshot/historical/continuous) and the long-running service-mode loop
@@ -6,13 +6,13 @@
 //! and automaton processing.
 
 use super::{
-    Checkpoint, ModuleKind, ModuleState, RunnerLifecycle, RuntimeDrainComplete, RuntimeModule,
-    RuntimeResult, RuntimeRunner, ScanArgs, ScanReport, SinexError, TimeHorizon, Timestamp, info,
-    systemd_notify, warn,
+    Checkpoint, ModuleKind, ModuleState, RunnerLifecycle, RuntimeDrainComplete, RuntimeResult,
+    RuntimeRunner, ScanArgs, ScanReport, SinexError, TimeHorizon, Timestamp, info, systemd_notify,
+    warn,
 };
 use sinex_primitives::env as shared_env;
 
-impl<T: RuntimeModule + 'static> RuntimeRunner<T> {
+impl RuntimeRunner {
     /// Run a scan operation
     pub async fn run_scan(
         &mut self,
@@ -63,10 +63,7 @@ impl<T: RuntimeModule + 'static> RuntimeRunner<T> {
     }
 
     /// Run in service mode with startup sequence
-    pub async fn run_service(&mut self) -> RuntimeResult<()>
-    where
-        T: Default,
-    {
+    pub async fn run_service(&mut self) -> RuntimeResult<()> {
         match self.lifecycle {
             RunnerLifecycle::Initialized => {}
             RunnerLifecycle::Running => {
