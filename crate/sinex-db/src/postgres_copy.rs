@@ -113,7 +113,7 @@ impl EventCopyColumn {
 
 const DB_MANAGED_EVENT_COLUMNS: [&str; 2] = ["ts_coided", "ts_persisted"];
 
-const EVENT_COPY_COLUMNS: [EventCopyColumn; 24] = [
+const EVENT_COPY_COLUMNS: [EventCopyColumn; 30] = [
     EventCopyColumn {
         event: Events::Id,
         copy_type: EventCopyColumnType::Uuid,
@@ -209,6 +209,40 @@ const EVENT_COPY_COLUMNS: [EventCopyColumn; 24] = [
     EventCopyColumn {
         event: Events::TsQuality,
         copy_type: EventCopyColumnType::Text,
+    },
+    // Derivation control plane (sinex-0vx.4 / W1). COPY-based bulk material
+    // import is not a derived-output write path (product_class is required
+    // only when source_event_ids is set — see the events_derived_requires_
+    // product_class CHECK in sinex-schema), so both ToPostgresCopy impls
+    // below write NULL unconditionally for these six columns. Wiring COPY
+    // batches to actually declare a product_class is out of scope for this
+    // bead (sinex-db COPY/batch-path waves 8cr.2/0vx.5/0vx.6); this addition
+    // is the minimal, mechanical fix required to keep verify_event_copy_
+    // contract() (and query_as_insert_columns_match_copy_contract) green
+    // after core.events gained these columns.
+    EventCopyColumn {
+        event: Events::ProductClass,
+        copy_type: EventCopyColumnType::Text,
+    },
+    EventCopyColumn {
+        event: Events::ClaimSupport,
+        copy_type: EventCopyColumnType::Jsonb,
+    },
+    EventCopyColumn {
+        event: Events::DerivationDeclarationId,
+        copy_type: EventCopyColumnType::Text,
+    },
+    EventCopyColumn {
+        event: Events::DerivationEpochId,
+        copy_type: EventCopyColumnType::Uuid,
+    },
+    EventCopyColumn {
+        event: Events::DerivationLaneId,
+        copy_type: EventCopyColumnType::Uuid,
+    },
+    EventCopyColumn {
+        event: Events::AdjudicationEventId,
+        copy_type: EventCopyColumnType::Uuid,
     },
 ];
 
@@ -546,6 +580,14 @@ impl ToPostgresCopy for Event<JsonValue> {
                 .map(std::string::ToString::to_string)
                 .as_deref(),
         )?;
+        // Derivation control plane (sinex-0vx.4 / W1): see the EVENT_COPY_COLUMNS
+        // doc comment above — COPY is not a derived-output write path yet.
+        writer.field(Events::ProductClass, None)?;
+        writer.field(Events::ClaimSupport, None)?;
+        writer.field(Events::DerivationDeclarationId, None)?;
+        writer.field(Events::DerivationEpochId, None)?;
+        writer.field(Events::DerivationLaneId, None)?;
+        writer.field(Events::AdjudicationEventId, None)?;
 
         writer.finish()
     }
@@ -621,6 +663,14 @@ impl ToPostgresCopy for StreamBatchRow {
         }
         writer.field(Events::AutomatonModel, self.automaton_model.as_deref())?;
         writer.field(Events::TsQuality, self.ts_quality.as_deref())?;
+        // Derivation control plane (sinex-0vx.4 / W1): see the EVENT_COPY_COLUMNS
+        // doc comment above — COPY is not a derived-output write path yet.
+        writer.field(Events::ProductClass, None)?;
+        writer.field(Events::ClaimSupport, None)?;
+        writer.field(Events::DerivationDeclarationId, None)?;
+        writer.field(Events::DerivationEpochId, None)?;
+        writer.field(Events::DerivationLaneId, None)?;
+        writer.field(Events::AdjudicationEventId, None)?;
 
         writer.finish()
     }

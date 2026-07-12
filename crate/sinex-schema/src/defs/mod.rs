@@ -10,7 +10,9 @@ use sea_query::Alias;
 // Define the core schema modules. Each file is responsible for a logical
 // domain of the database.
 pub mod annotations;
+pub mod authority;
 pub mod blobs;
+pub mod derivation;
 pub mod documents;
 pub mod embeddings;
 pub mod entities;
@@ -25,7 +27,9 @@ pub mod temporal_ledger;
 
 // Re-export all schema definitions for easy access from apply orchestration and repositories.
 pub use annotations::*;
+pub use authority::*;
 pub use blobs::*;
+pub use derivation::*;
 pub use documents::*;
 pub use embeddings::*;
 pub use entities::*;
@@ -41,7 +45,13 @@ pub use temporal_ledger::*;
 // Create a records submodule that re-exports all Record structs
 pub mod records {
     pub use super::annotations::{EventAnnotationRecord, TagRecord};
+    pub use super::authority::AuthorityFinalizerRegistryRecord;
     pub use super::blobs::BlobRecord;
+    pub use super::derivation::{
+        DerivationEpochRecord, DerivationLaneDiffRecord, DerivationLaneOutputRecord,
+        DerivationLaneRecord, DerivationProductDeclarationRecord,
+        DerivationProjectionDependencyRecord, DerivationProjectionRegistryRecord,
+    };
     pub use super::documents::{DocumentChunkRecord, DocumentRecord};
     pub use super::embeddings::EmbeddingModelRecord;
     pub use super::entities::EntityRecord;
@@ -449,6 +459,72 @@ const ALL_TABLES: &[TableMeta] = &[
         schema: "privacy",
         name: "field_rules",
         qualified_name: "privacy.field_rules",
+        is_hypertable: false,
+        has_triggers: false,
+        cleanup_protected: false,
+    },
+    // Derivation control plane (sinex-0vx.4 / W1). See defs/derivation.rs.
+    TableMeta {
+        schema: "derivation",
+        name: "product_declarations",
+        qualified_name: "derivation.product_declarations",
+        is_hypertable: false,
+        has_triggers: false,
+        cleanup_protected: false,
+    },
+    TableMeta {
+        schema: "derivation",
+        name: "epochs",
+        qualified_name: "derivation.epochs",
+        is_hypertable: false,
+        has_triggers: false,
+        cleanup_protected: false,
+    },
+    TableMeta {
+        schema: "derivation",
+        name: "lanes",
+        qualified_name: "derivation.lanes",
+        is_hypertable: false,
+        has_triggers: false,
+        cleanup_protected: false,
+    },
+    TableMeta {
+        schema: "derivation",
+        name: "lane_outputs",
+        qualified_name: "derivation.lane_outputs",
+        is_hypertable: false,
+        has_triggers: false,
+        cleanup_protected: false,
+    },
+    TableMeta {
+        schema: "derivation",
+        name: "lane_diffs",
+        qualified_name: "derivation.lane_diffs",
+        is_hypertable: false,
+        has_triggers: false,
+        cleanup_protected: false,
+    },
+    TableMeta {
+        schema: "derivation",
+        name: "projection_registry",
+        qualified_name: "derivation.projection_registry",
+        is_hypertable: false,
+        has_triggers: false,
+        cleanup_protected: false,
+    },
+    TableMeta {
+        schema: "derivation",
+        name: "projection_dependencies",
+        qualified_name: "derivation.projection_dependencies",
+        is_hypertable: false,
+        has_triggers: false,
+        cleanup_protected: false,
+    },
+    // Authority finalizer registry (sinex-0vx.4 / W1). See defs/authority.rs.
+    TableMeta {
+        schema: "authority",
+        name: "finalizer_registry",
+        qualified_name: "authority.finalizer_registry",
         is_hypertable: false,
         has_triggers: false,
         cleanup_protected: false,
