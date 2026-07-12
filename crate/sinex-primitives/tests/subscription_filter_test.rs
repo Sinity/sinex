@@ -37,6 +37,12 @@ fn test_event(source: &str, event_type: &str, host: &str, payload: serde_json::V
         created_by_operation_id: None,
         automaton_model: None,
         anchor_payload_hash: None,
+        product_class: None,
+        claim_support: None,
+        derivation_declaration_id: None,
+        derivation_epoch_id: None,
+        derivation_lane_id: None,
+        adjudication_event_id: None,
     }
 }
 

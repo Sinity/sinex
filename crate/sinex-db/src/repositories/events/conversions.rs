@@ -2,6 +2,7 @@ use crate::EventRecord;
 use crate::repositories::common::DbResult;
 use sinex_primitives::Id;
 use sinex_primitives::Timestamp;
+use sinex_primitives::derivation::DerivedProductClass;
 use sinex_primitives::domain::{AutomatonModel, SyntheticTemporalPolicy, TemporalSourceType};
 use sinex_primitives::events::{EventId, SourceMaterial};
 use sinex_primitives::non_empty::NonEmptyVec;
@@ -113,6 +114,24 @@ impl EventRecordExt for EventRecord {
             self.ts_orig
         };
 
+        // Derivation control plane (sinex-0vx.4 / sinex-8cr.2): parse the
+        // wire-format columns back into their typed Event<T> counterparts.
+        let product_class = parse_optional_enum::<DerivedProductClass>(
+            self.product_class,
+            "product_class",
+            self.id,
+        )?;
+        let claim_support = match self.claim_support {
+            Some(value) => Some(serde_json::from_value(value).map_err(|error| {
+                sinex_primitives::SinexError::invalid_state(
+                    "event record has invalid claim_support",
+                )
+                .with_context("event_id", self.id.to_string())
+                .with_context("parse_error", error.to_string())
+            })?),
+            None => None,
+        };
+
         Ok(Event::<JsonValue> {
             id: Some(EventId::from_uuid(self.id)),
             source: self.source.into(),
@@ -146,6 +165,12 @@ impl EventRecordExt for EventRecord {
                 "automaton_model",
                 self.id,
             )?,
+            product_class,
+            claim_support,
+            derivation_declaration_id: self.derivation_declaration_id,
+            derivation_epoch_id: self.derivation_epoch_id,
+            derivation_lane_id: self.derivation_lane_id,
+            adjudication_event_id: self.adjudication_event_id,
         })
     }
 }

@@ -32,6 +32,12 @@ fn minimal_row() -> StreamBatchRow {
         equivalence_key: None,
         created_by_operation_id: None,
         automaton_model: None,
+        product_class: None,
+        claim_support: None,
+        derivation_declaration_id: None,
+        derivation_epoch_id: None,
+        derivation_lane_id: None,
+        adjudication_event_id: None,
     }
 }
 
@@ -88,6 +94,12 @@ async fn null_optionals_write_null_sentinel() -> ::xtask::sandbox::TestResult<()
         Events::EquivalenceKey,
         Events::CreatedByOperationId,
         Events::AutomatonModel,
+        Events::ProductClass,
+        Events::ClaimSupport,
+        Events::DerivationDeclarationId,
+        Events::DerivationEpochId,
+        Events::DerivationLaneId,
+        Events::AdjudicationEventId,
     ] {
         let idx = event_copy_column_index(event);
         assert_eq!(
@@ -126,6 +138,12 @@ async fn missing_event_ts_orig_is_rejected() -> ::xtask::sandbox::TestResult<()>
         equivalence_key: None,
         created_by_operation_id: None,
         automaton_model: None,
+        product_class: None,
+        claim_support: None,
+        derivation_declaration_id: None,
+        derivation_epoch_id: None,
+        derivation_lane_id: None,
+        adjudication_event_id: None,
     };
 
     let mut buf = Vec::new();
@@ -301,6 +319,138 @@ async fn carriage_return_in_payload_is_escaped() -> ::xtask::sandbox::TestResult
         payload_field.contains("\\n"),
         "Escaped \\n must appear alongside \\r"
     );
+    Ok(())
+}
+
+/// COPY column contract (sinex-8cr.2): `query_as_insert_columns_match_copy_contract`
+/// (persistence_test.rs) already proves the COPY column *names* line up with
+/// the authoritative schema. That test alone would stay green even if the
+/// writer silently emitted `\N` for every derivation-control-plane field
+/// forever (the sinex-0vx.4 bug this bead fixes) — it only checks list
+/// parity, never field *values*. This test proves the COPY text-protocol
+/// writer round-trips non-null `product_class`/`claim_support` (plus the
+/// other four derivation columns) for both `StreamBatchRow` and
+/// `Event<JsonValue>`, the two `ToPostgresCopy` implementors.
+#[sinex_test]
+async fn copy_column_contract() -> ::xtask::sandbox::TestResult<()> {
+    use sinex_primitives::derivation::{
+        ClaimSupport, ClaimTemporalQuality, SourceCoverage, SupportLevel,
+    };
+
+    let claim_support = ClaimSupport::unreviewed(
+        SupportLevel::Direct,
+        SourceCoverage::Covered,
+        ClaimTemporalQuality::RealtimeCapture,
+        3,
+        1,
+        2,
+        0,
+    );
+    let claim_support_json = serde_json::to_value(&claim_support)?;
+    let declaration_id = "test.declaration".to_string();
+    let epoch_id = Uuid::now_v7();
+    let lane_id = Uuid::now_v7();
+    let adjudication_id = Uuid::now_v7();
+
+    // StreamBatchRow side.
+    let mut row = minimal_row();
+    row.product_class = Some("canonical_derived_event".to_string());
+    row.claim_support = Some(claim_support_json.clone());
+    row.derivation_declaration_id = Some(declaration_id.clone());
+    row.derivation_epoch_id = Some(epoch_id);
+    row.derivation_lane_id = Some(lane_id);
+    row.adjudication_event_id = Some(adjudication_id);
+
+    let row_field_values = row_fields(&row);
+    assert_eq!(
+        row_field_values[event_copy_column_index(Events::ProductClass)],
+        "canonical_derived_event"
+    );
+    let decoded_support: serde_json::Value = serde_json::from_str(
+        &row_field_values[event_copy_column_index(Events::ClaimSupport)],
+    )?;
+    assert_eq!(decoded_support, claim_support_json);
+    assert_eq!(
+        row_field_values[event_copy_column_index(Events::DerivationDeclarationId)],
+        declaration_id
+    );
+    assert_eq!(
+        row_field_values[event_copy_column_index(Events::DerivationEpochId)].parse::<Uuid>()?,
+        epoch_id
+    );
+    assert_eq!(
+        row_field_values[event_copy_column_index(Events::DerivationLaneId)].parse::<Uuid>()?,
+        lane_id
+    );
+    assert_eq!(
+        row_field_values[event_copy_column_index(Events::AdjudicationEventId)].parse::<Uuid>()?,
+        adjudication_id
+    );
+
+    // Event<JsonValue> side — same six fields, same assertions.
+    let product_class = sinex_primitives::derivation::DerivedProductClass::CanonicalDerivedEvent;
+    let event = Event::<JsonValue> {
+        id: Some(Id::new()),
+        source: EventSource::from_static("test.source"),
+        event_type: EventType::from_static("test.event"),
+        payload: json!({"ok": true}),
+        ts_orig: Some(Timestamp::now()),
+        ts_quality: None,
+        host: sinex_primitives::domain::HostName::from_static("localhost"),
+        module_run_id: None,
+        payload_schema_id: None,
+        anchor_payload_hash: None,
+        provenance: crate::Provenance::Material {
+            id: Id::new(),
+            anchor_byte: 0,
+            offset_start: None,
+            offset_end: None,
+            offset_kind: sinex_primitives::events::builder::OffsetKind::Byte,
+        },
+        associated_blob_ids: None,
+        temporal_policy: None,
+        semantics_version: None,
+        scope_key: None,
+        equivalence_key: None,
+        created_by_operation_id: None,
+        automaton_model: None,
+        product_class: Some(product_class),
+        claim_support: Some(claim_support),
+        derivation_declaration_id: Some(declaration_id.clone()),
+        derivation_epoch_id: Some(epoch_id),
+        derivation_lane_id: Some(lane_id),
+        adjudication_event_id: Some(adjudication_id),
+    };
+
+    let mut buf = Vec::new();
+    event.write_copy_row(&mut buf)?;
+    let s = String::from_utf8(buf).expect("non-UTF-8 output");
+    let event_fields: Vec<String> = s.trim_end_matches('\n').split('\t').map(str::to_string).collect();
+
+    assert_eq!(
+        event_fields[event_copy_column_index(Events::ProductClass)],
+        "canonical_derived_event"
+    );
+    let decoded_event_support: serde_json::Value =
+        serde_json::from_str(&event_fields[event_copy_column_index(Events::ClaimSupport)])?;
+    assert_eq!(decoded_event_support, claim_support_json);
+    assert_eq!(
+        event_fields[event_copy_column_index(Events::DerivationDeclarationId)],
+        declaration_id
+    );
+    assert_eq!(
+        event_fields[event_copy_column_index(Events::DerivationEpochId)].parse::<Uuid>()?,
+        epoch_id
+    );
+    assert_eq!(
+        event_fields[event_copy_column_index(Events::DerivationLaneId)].parse::<Uuid>()?,
+        lane_id
+    );
+    assert_eq!(
+        event_fields[event_copy_column_index(Events::AdjudicationEventId)].parse::<Uuid>()?,
+        adjudication_id
+    );
+
     Ok(())
 }
 

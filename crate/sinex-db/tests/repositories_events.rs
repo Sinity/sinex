@@ -47,6 +47,12 @@ fn stream_batch_material_row(
         created_by_operation_id: None,
         automaton_model: None,
         ts_quality: None,
+        product_class: None,
+        claim_support: None,
+        derivation_declaration_id: None,
+        derivation_epoch_id: None,
+        derivation_lane_id: None,
+        adjudication_event_id: None,
     })
 }
 
@@ -361,6 +367,12 @@ async fn stream_batch_copy_roundtrip_diverse_payloads(ctx: TestContext) -> TestR
             created_by_operation_id: None,
             automaton_model: None,
             ts_quality: None,
+            product_class: None,
+            claim_support: None,
+            derivation_declaration_id: None,
+            derivation_epoch_id: None,
+            derivation_lane_id: None,
+            adjudication_event_id: None,
         });
     }
 
@@ -647,6 +659,12 @@ async fn stream_batch_insert_rejects_self_referential_synthesis_rows(
         created_by_operation_id: None,
         automaton_model: None,
         ts_quality: None,
+        product_class: None,
+        claim_support: None,
+        derivation_declaration_id: None,
+        derivation_epoch_id: None,
+        derivation_lane_id: None,
+        adjudication_event_id: None,
     }];
 
     let error = ctx
@@ -696,6 +714,12 @@ async fn stream_batch_insert_rejects_intra_batch_synthesis_cycles(
             created_by_operation_id: None,
             automaton_model: None,
             ts_quality: None,
+            product_class: None,
+            claim_support: None,
+            derivation_declaration_id: None,
+            derivation_epoch_id: None,
+            derivation_lane_id: None,
+            adjudication_event_id: None,
         },
         StreamBatchRow {
             id: second_id,
@@ -721,6 +745,12 @@ async fn stream_batch_insert_rejects_intra_batch_synthesis_cycles(
             created_by_operation_id: None,
             automaton_model: None,
             ts_quality: None,
+            product_class: None,
+            claim_support: None,
+            derivation_declaration_id: None,
+            derivation_epoch_id: None,
+            derivation_lane_id: None,
+            adjudication_event_id: None,
         },
     ];
 

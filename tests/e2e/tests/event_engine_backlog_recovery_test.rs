@@ -119,6 +119,12 @@ async fn event_engine_processes_backlog_after_downtime(ctx: TestContext) -> Test
             automaton_model: None,
             ts_quality: None,
             anchor_payload_hash: None,
+            product_class: None,
+            claim_support: None,
+            derivation_declaration_id: None,
+            derivation_epoch_id: None,
+            derivation_lane_id: None,
+            adjudication_event_id: None,
         };
         let payload = serde_json::to_vec(&event)?;
         nats_client.publish(subject.clone(), payload.into()).await?;
