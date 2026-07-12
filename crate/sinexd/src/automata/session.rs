@@ -254,6 +254,7 @@ impl Windowed for SessionDetector {
             primary_source,
         };
 
+        let declaration = &SESSION_OUTPUT_DECLARATIONS[0];
         let output = DerivedOutput::windowed(payload, end_time, source_event_ids)
             .with_temporal_policy(sinex_primitives::domain::SyntheticTemporalPolicy::WindowBoundary)
             .with_semantics_version("2.0.0")
@@ -262,6 +263,14 @@ impl Windowed for SessionDetector {
                 "activity.session",
                 1,
                 event_count,
+            ))
+            .with_declaration_id(declaration.declaration_id)
+            .with_product_class(declaration.product_class)
+            .with_claim_support(declaration.default_support.instantiate(
+                event_count as u32,
+                0,
+                window_count as u32,
+                0,
             ));
 
         state.reset_session();

@@ -157,10 +157,14 @@ impl Windowed for EntityResolver {
         let entity_id = payload.entity_id;
         let canonical_name = payload.canonical_name.clone();
 
+        let declaration = &ENTITY_RESOLVER_OUTPUT_DECLARATIONS[0];
         let output = DerivedOutput::windowed_now(payload, vec![source_event_id])
             .with_temporal_policy(SyntheticTemporalPolicy::DeclaredEffective)
             .with_semantics_version("1.0.0")
-            .with_equivalence_key(format!("entity-resolver:{entity_id}:{canonical_name}"));
+            .with_equivalence_key(format!("entity-resolver:{entity_id}:{canonical_name}"))
+            .with_declaration_id(declaration.declaration_id)
+            .with_product_class(declaration.product_class)
+            .with_claim_support(declaration.default_support.instantiate(1, 0, 1, 0));
 
         Ok(Some(output))
     }

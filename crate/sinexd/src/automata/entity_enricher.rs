@@ -223,11 +223,21 @@ impl ScopeReconciler for EntityEnricher {
                 active_hours: stats.active_hours.clone(),
             };
 
+            let declaration = &ENTITY_ENRICHER_OUTPUT_DECLARATIONS[0];
+            let evidence_event_count = source_event_ids.len() as u32;
             let output =
                 DerivedOutput::reconciled(payload, now, source_event_ids, entity_key.clone())
                     .with_temporal_policy(SyntheticTemporalPolicy::DeclaredEffective)
                     .with_semantics_version("1.0.0")
-                    .with_equivalence_key(format!("entity-enricher:{entity_id}:{now}"));
+                    .with_equivalence_key(format!("entity-enricher:{entity_id}:{now}"))
+                    .with_declaration_id(declaration.declaration_id)
+                    .with_product_class(declaration.product_class)
+                    .with_claim_support(declaration.default_support.instantiate(
+                        evidence_event_count,
+                        0,
+                        1,
+                        0,
+                    ));
 
             outputs.push(output);
         }

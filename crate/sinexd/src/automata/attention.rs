@@ -89,11 +89,15 @@ impl Transducer for AttentionStream {
             source_window_close_reason: input.close_reason,
         };
 
+        let declaration = &ATTENTION_STREAM_OUTPUT_DECLARATIONS[0];
         Ok(Some(
             DerivedOutput::transduced(payload, input.window_end, context.trigger_uuid())
                 .with_temporal_policy(SyntheticTemporalPolicy::InheritParent)
                 .with_semantics_version("1.0.0")
-                .with_equivalence_key(span_id),
+                .with_equivalence_key(span_id)
+                .with_declaration_id(declaration.declaration_id)
+                .with_product_class(declaration.product_class)
+                .with_claim_support(declaration.default_support.instantiate(1, 0, 1, 0)),
         ))
     }
 }
