@@ -5,17 +5,17 @@
 //! helper that persists progress through the bridge.
 
 use super::{
-    Checkpoint, CheckpointManager, Event, EventTransport, JsonValue, RuntimeModule, RuntimeResult,
-    RuntimeRunner, SinexError, Uuid, debug, error, info, warn,
+    Checkpoint, CheckpointManager, ErasedRuntimeModule, Event, EventTransport, JsonValue,
+    RuntimeResult, RuntimeRunner, SinexError, Uuid, debug, error, info, warn,
 };
 
-impl<T: RuntimeModule + 'static> RuntimeRunner<T> {
+impl RuntimeRunner {
     /// Process a batch of events, falling back to per-event processing with DLQ
     /// routing if the batch fails. Returns the total number of events processed
     /// (including those routed to the DLQ).
     #[cfg(feature = "messaging")]
     pub(super) async fn process_batch_with_dlq_fallback(
-        module: &mut T,
+        module: &mut dyn ErasedRuntimeModule,
         transport: &EventTransport,
         events: Vec<Event<JsonValue>>,
     ) -> RuntimeResult<u64> {

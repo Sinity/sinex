@@ -6,11 +6,10 @@
 //! runners.
 
 use super::{
-    RunnerLifecycle, RuntimeModule, RuntimeResult, RuntimeRunner, TASK_SHUTDOWN_GRACE_PERIOD,
-    debug, info, watch,
+    RunnerLifecycle, RuntimeResult, RuntimeRunner, TASK_SHUTDOWN_GRACE_PERIOD, debug, info, watch,
 };
 
-impl<T: RuntimeModule + 'static> RuntimeRunner<T> {
+impl RuntimeRunner {
     /// Graceful shutdown.
     ///
     /// Idempotent: safe to call multiple times or on a never-initialized runner.

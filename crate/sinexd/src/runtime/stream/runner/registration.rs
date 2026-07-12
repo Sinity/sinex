@@ -5,7 +5,7 @@
 //! identity to operators and downstream automation.
 
 #[cfg(feature = "db")]
-use super::{RuntimeModule, RuntimeRunner, ServiceInfo};
+use super::{RuntimeRunner, ServiceInfo};
 #[cfg(feature = "db")]
 use crate::runtime::{RuntimeResult, SinexError};
 #[cfg(feature = "db")]
@@ -22,7 +22,7 @@ use std::collections::HashMap;
 use tracing::warn;
 
 #[cfg(feature = "db")]
-impl<T: RuntimeModule + 'static> RuntimeRunner<T> {
+impl RuntimeRunner {
     pub(super) async fn register_runtime_identity(
         &self,
         pool: &PgPool,

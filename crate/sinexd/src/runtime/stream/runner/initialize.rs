@@ -5,15 +5,15 @@
 //! preparation, DB-backed registration, and runtime state assembly.
 
 use super::{
-    Arc, CheckpointManager, DEFAULT_EVENT_CHANNEL_SIZE, Event, EventBatcherConfig, EventEmitter,
-    EventTransport, HashMap, JsonValue, ModuleKind, ModuleState, PgPool, ProcessingModel,
-    RunnerLifecycle, RuntimeHandles, RuntimeInitContext, RuntimeModule, RuntimeResult,
-    RuntimeRunner, ServiceInfo, SinexError, Utf8PathBuf, create_checkpoint_kv, info,
-    maybe_start_schema_listener, mpsc, spawn_event_batcher, watch,
+    Arc, CheckpointManager, DEFAULT_EVENT_CHANNEL_SIZE, ErasedInitContext, Event,
+    EventBatcherConfig, EventEmitter, EventTransport, HashMap, JsonValue, ModuleKind, ModuleState,
+    PgPool, ProcessingModel, RunnerLifecycle, RuntimeHandles, RuntimeResult, RuntimeRunner,
+    ServiceInfo, SinexError, Utf8PathBuf, create_checkpoint_kv, info, maybe_start_schema_listener,
+    mpsc, spawn_event_batcher, watch,
 };
 use sinex_primitives::domain::ServiceName;
 
-impl<T: RuntimeModule + 'static> RuntimeRunner<T> {
+impl RuntimeRunner {
     /// Initialize the module with a specific transport.
     pub async fn initialize_with_transport(
         &mut self,
@@ -236,24 +236,15 @@ impl<T: RuntimeModule + 'static> RuntimeRunner<T> {
                 .unwrap_or_else(|_| Utf8PathBuf::from("/tmp/sinex"))
         });
 
-        let typed_config = if raw_config.is_empty() {
-            T::Config::default()
-        } else {
-            let config_value = serde_json::to_value(&raw_config).map_err(|e| {
-                SinexError::configuration(format!("Failed to serialize runtime config: {e}"))
-            })?;
-            serde_json::from_value(config_value).map_err(|e| {
-                SinexError::configuration(format!("Failed to parse runtime config: {e}"))
-            })?
+        // The typed `T::Config` deserialization happens inside the erased
+        // `initialize` boundary (see `ErasedRuntimeModule`), so the runner is no
+        // longer generic over the module. It receives only the non-typed parts.
+        let init_context = ErasedInitContext {
+            raw_config: raw_config.clone(),
+            service: service_info.clone(),
+            handles: handles.clone(),
+            work_dir_utf8: work_dir_utf8.clone(),
         };
-
-        let init_context = RuntimeInitContext::new(
-            typed_config,
-            raw_config.clone(),
-            service_info.clone(),
-            handles.clone(),
-            work_dir_utf8.clone(),
-        );
 
         if let Err(e) = self.module.initialize(init_context).await {
             #[cfg(feature = "db")]

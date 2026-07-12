@@ -8,8 +8,7 @@
 use super::super::control_protocol::RuntimeDrainComplete;
 use super::super::control_protocol::{encode_control_message, ensure_control_payload_fits};
 use super::{
-    RuntimeDrainController, RuntimeModule, RuntimeRunner, ServiceInfo, SourceScanAck,
-    SourceScanProgress,
+    RuntimeDrainController, RuntimeRunner, ServiceInfo, SourceScanAck, SourceScanProgress,
 };
 use crate::runtime::{RuntimeResult, SinexError};
 #[cfg(feature = "db")]
@@ -18,7 +17,7 @@ use sinex_primitives::domain::ModuleState;
 use sinex_primitives::transport;
 use tracing::{info, warn};
 
-impl<T: RuntimeModule + 'static> RuntimeRunner<T> {
+impl RuntimeRunner {
     pub(super) async fn publish_scan_ack(
         nats_client: &async_nats::Client,
         reply: Option<async_nats::Subject>,

@@ -6,16 +6,16 @@
 //! the worker on completion.
 
 use super::{
-    Arc, AtomicU64, CheckpointManager, DEFAULT_EVENT_CHANNEL_SIZE, DispatchedScanOutcome, Event,
-    FailedDispatchedScanOutcome, HashMap, JsonValue, Ordering, RuntimeHandles, RuntimeInitContext,
-    RuntimeModule, RuntimeResult, RuntimeRunner, ServiceInfo, SinexError, SourceFactory,
+    Arc, AtomicU64, CheckpointManager, DEFAULT_EVENT_CHANNEL_SIZE, DispatchedScanOutcome,
+    ErasedInitContext, ErasedSourceFactory, Event, FailedDispatchedScanOutcome, HashMap, JsonValue,
+    Ordering, RuntimeHandles, RuntimeResult, RuntimeRunner, ServiceInfo, SinexError,
     SourceScanCommand, Utf8PathBuf, Uuid, create_checkpoint_kv, mpsc,
 };
 
-impl<T: RuntimeModule + 'static> RuntimeRunner<T> {
+impl RuntimeRunner {
     #[cfg(feature = "messaging")]
     pub(super) async fn execute_dispatched_scan(
-        source_factory: SourceFactory<T>,
+        source_factory: ErasedSourceFactory,
         base_handles: RuntimeHandles,
         base_service_info: ServiceInfo,
         raw_config: HashMap<String, serde_json::Value>,
@@ -52,31 +52,14 @@ impl<T: RuntimeModule + 'static> RuntimeRunner<T> {
                 events_emitted: 0,
             })?;
 
-        let typed_config = if raw_config.is_empty() {
-            T::Config::default()
-        } else {
-            let config_value =
-                serde_json::to_value(&raw_config).map_err(|error| FailedDispatchedScanOutcome {
-                    error: SinexError::configuration(format!(
-                        "Failed to serialize replay worker config: {error}"
-                    )),
-                    events_emitted: 0,
-                })?;
-            serde_json::from_value(config_value).map_err(|error| FailedDispatchedScanOutcome {
-                error: SinexError::configuration(format!(
-                    "Failed to parse replay worker config: {error}"
-                )),
-                events_emitted: 0,
-            })?
-        };
-
-        let init_context = RuntimeInitContext::new(
-            typed_config,
+        // Config deserialization happens inside the erased `initialize`
+        // boundary (see `ErasedRuntimeModule`); the worker receives raw config.
+        let init_context = ErasedInitContext {
             raw_config,
-            replay_service_info,
-            replay_handles,
+            service: replay_service_info,
+            handles: replay_handles,
             work_dir_utf8,
-        );
+        };
 
         let mut worker = source_factory();
         if let Err(error) = worker.initialize(init_context).await {
