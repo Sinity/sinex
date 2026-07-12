@@ -1,9 +1,8 @@
 use super::{EventEmitter, EventSender, RuntimeHandles, ServiceInfo};
 use crate::runtime::{
-    EventTransport, RuntimeResult,
+    EventTransport,
     acquisition_manager::{AcquisitionManager, RotationPolicy},
     checkpoint::CheckpointManager,
-    coordination::RuntimeCoordination,
     heartbeat::HeartbeatEmitter,
 };
 use camino::Utf8PathBuf;
@@ -165,13 +164,6 @@ impl RuntimeContext {
     #[must_use]
     pub fn heartbeat_emitter(&self, interval_seconds: Seconds) -> HeartbeatEmitter {
         HeartbeatEmitter::from_runtime(self, interval_seconds)
-    }
-
-    pub fn coordination(
-        &self,
-        instance_id: impl Into<String>,
-    ) -> RuntimeResult<RuntimeCoordination> {
-        RuntimeCoordination::from_runtime(self, instance_id.into())
     }
 
     #[must_use]
