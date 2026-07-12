@@ -65,3 +65,74 @@ async fn test_try_to_event_rejects_invalid_automaton_model() -> xtask::sandbox::
     assert!(rendered.contains("value: not-a-model"));
     Ok(())
 }
+
+#[sinex_test]
+async fn test_try_to_event_rejects_invalid_product_class() -> xtask::sandbox::TestResult<()> {
+    let mut record = base_event_record();
+    record.product_class = Some("not-a-product-class".to_string());
+
+    let error = record.try_to_event().unwrap_err();
+    let rendered = format!("{error:#}");
+    assert!(rendered.contains("event record has invalid product_class"));
+    assert!(rendered.contains("value: not-a-product-class"));
+    Ok(())
+}
+
+#[sinex_test]
+async fn test_try_to_event_rejects_invalid_claim_support() -> xtask::sandbox::TestResult<()> {
+    let mut record = base_event_record();
+    record.claim_support = Some(serde_json::json!({"not": "a claim support vector"}));
+
+    let error = record.try_to_event().unwrap_err();
+    let rendered = format!("{error:#}");
+    assert!(rendered.contains("event record has invalid claim_support"));
+    Ok(())
+}
+
+/// sinex-8cr.2: `try_to_event` must parse a concrete non-null
+/// `product_class`/`claim_support`/`derivation_declaration_id`/
+/// `derivation_epoch_id`/`derivation_lane_id`/`adjudication_event_id` back
+/// into their typed `Event<T>` counterparts, not just pass `None` through.
+#[sinex_test]
+async fn test_try_to_event_parses_derivation_control_plane_fields()
+-> xtask::sandbox::TestResult<()> {
+    use sinex_primitives::derivation::{
+        AdjudicationStatus, ClaimSupport, ClaimTemporalQuality, DerivedProductClass,
+        SourceCoverage, SupportLevel,
+    };
+
+    let claim_support = ClaimSupport::unreviewed(
+        SupportLevel::Direct,
+        SourceCoverage::Covered,
+        ClaimTemporalQuality::RealtimeCapture,
+        5,
+        2,
+        1,
+        0,
+    );
+    let epoch_id = uuid::Uuid::now_v7();
+    let lane_id = uuid::Uuid::now_v7();
+
+    let mut record = base_event_record();
+    record.product_class = Some(DerivedProductClass::AnalysisClaim.as_str().to_string());
+    record.claim_support = Some(serde_json::to_value(&claim_support)?);
+    record.derivation_declaration_id = Some("sinex.test.conversion".to_string());
+    record.derivation_epoch_id = Some(epoch_id);
+    record.derivation_lane_id = Some(lane_id);
+
+    let event = record.try_to_event()?;
+    assert_eq!(event.product_class, Some(DerivedProductClass::AnalysisClaim));
+    assert_eq!(event.claim_support, Some(claim_support));
+    assert_eq!(
+        event.claim_support.as_ref().map(ClaimSupport::adjudication),
+        Some(AdjudicationStatus::Unreviewed)
+    );
+    assert_eq!(
+        event.derivation_declaration_id.as_deref(),
+        Some("sinex.test.conversion")
+    );
+    assert_eq!(event.derivation_epoch_id, Some(epoch_id));
+    assert_eq!(event.derivation_lane_id, Some(lane_id));
+    assert_eq!(event.adjudication_event_id, None);
+    Ok(())
+}

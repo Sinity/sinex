@@ -88,6 +88,12 @@ fn build_test_event_bytes(
         automaton_model: None,
         ts_quality: None,
         anchor_payload_hash: None,
+        product_class: None,
+        claim_support: None,
+        derivation_declaration_id: None,
+        derivation_epoch_id: None,
+        derivation_lane_id: None,
+        adjudication_event_id: None,
     };
 
     Ok(serde_json::to_vec(&event)?)
@@ -308,6 +314,12 @@ async fn test_shutdown_under_continuous_load(ctx: TestContext) -> TestResult<()>
                 automaton_model: None,
                 ts_quality: None,
                 anchor_payload_hash: None,
+                product_class: None,
+                claim_support: None,
+                derivation_declaration_id: None,
+                derivation_epoch_id: None,
+                derivation_lane_id: None,
+                adjudication_event_id: None,
             };
             let payload = serde_json::to_vec(&event)?;
             publisher_client
