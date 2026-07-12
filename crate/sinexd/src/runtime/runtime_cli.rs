@@ -5,7 +5,7 @@
 
 use crate::runtime::event_transport::EventTransport;
 pub use crate::runtime::exploration::{ExplorationProvider, ExportFormat, SourceState};
-use crate::runtime::stream::{Checkpoint, ModuleKind, RuntimeRunner, TimeHorizon};
+use crate::runtime::stream::{Checkpoint, RuntimeRunner, TimeHorizon};
 use crate::runtime::{RuntimeResult, SinexError};
 use clap::{Parser, Subcommand};
 use sinex_primitives::SanitizedPath;
@@ -610,56 +610,12 @@ impl<T: crate::runtime::stream::RuntimeModule + ExplorationProvider + Default + 
             )
             .await?;
 
-        let coordination_disabled =
-            shared_env::bool_or("SINEX_COORDINATION_DISABLED", false, "runtime coordination");
-        let module_kind = runner.module_kind();
-
-        // Run service with optional coordination
-        if dry_run || coordination_disabled {
-            runner.run_service().await?;
-        } else if matches!(module_kind, ModuleKind::Automaton) {
-            // Automata already execute leader/standby acquisition in RuntimeRunner.
-            // Avoid stacking a second coordination loop around the same runtime.
-            info!(
-                "Automaton uses internal leader/standby coordination; skipping outer coordination wrapper"
-            );
-            runner.run_service().await?;
-        } else {
-            use crate::runtime::coordination::RuntimeCoordination;
-
-            use std::sync::Arc;
-            use tokio::sync::Mutex;
-            use uuid::Uuid;
-
-            let runtime_snapshot = runner
-                .runtime_state()
-                .ok_or_else(|| SinexError::unknown("Runtime state unavailable for coordination"))?;
-
-            // Create coordination with generated instance ID
-            let instance_id = Uuid::new_v4().to_string();
-
-            let mut coordination =
-                RuntimeCoordination::from_runtime(&runtime_snapshot, instance_id)?;
-
-            // Wrap runner in Arc<Mutex<>> for sharing
-            let runner = Arc::new(Mutex::new(runner));
-
-            // Run with coordination (hot standby pattern)
-            coordination
-                .run_coordination_loop(move || {
-                    let runner = runner.clone();
-                    async move {
-                        // Only leader processes events
-                        let mut runner = runner.lock().await;
-                        runner.run_service().await.map_err(|e| {
-                            sinex_primitives::SinexError::service(format!(
-                                "RuntimeModule error: {e}"
-                            ))
-                        })
-                    }
-                })
-                .await?;
-        }
+        // Single-daemon: exactly one instance per source exists, so the outer
+        // leader/standby coordination wrapper (per-tick NATS-KV acquire_leadership
+        // CAS for an impossible handoff) is a multi-daemon relic (sinex-9h32).
+        // Run the service directly. (Automata never used the wrapper; they had
+        // their own internal leader/standby path — tracked separately.)
+        runner.run_service().await?;
         Ok(())
     }
 

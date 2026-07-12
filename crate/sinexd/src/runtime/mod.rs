@@ -27,7 +27,6 @@ pub mod checkpoint;
 pub mod config;
 pub mod confirmation_handler;
 pub mod content_store;
-pub mod coordination;
 pub mod diagnostics {
     pub mod regression;
 }
@@ -98,7 +97,6 @@ pub use config::{
     AutomatonConfig, EventSourceConfig, MaterialMetadataPolicy, PathClassRule, RuntimeConfig,
 };
 pub use confirmation_handler::{ConfirmedEventHandler, ProcessingModel};
-pub use coordination::{HandoffRequest, InstanceMode, RuntimeCoordination};
 pub use dlq_retry::{DlqRetryConfig, DlqRetryHandler, DlqRetryResult, DlqStats};
 pub use event_transport::{EventBatcher, EventBatcherConfig, EventTransport, spawn_event_batcher};
 pub use exploration::{ExplorationProvider, ExportFormat, SourceState};

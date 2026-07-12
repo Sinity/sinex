@@ -236,14 +236,15 @@ async fn collect_runtime_and_dlq_signals(
     signals: &mut Vec<RuntimeStatusSignal>,
     warnings: &mut Vec<RuntimeStatusWarning>,
 ) {
-    match client.list_runtime(None).await {
-        Ok(modules) => {
+    match client.runtime_list_active(31_536_000).await {
+        Ok(response) => {
+            let modules = response.modules;
             let total = modules.len();
             let now = Timestamp::now();
             let healthy = modules
                 .iter()
                 .filter(|n| {
-                    n.last_heartbeat
+                    n.last_heartbeat_at
                         .is_some_and(|hb| (now - hb).whole_seconds() < 60)
                 })
                 .count();

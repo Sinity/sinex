@@ -23,7 +23,6 @@ mod api {
     mod client_test;
     mod config_test;
     mod content_service_test;
-    mod coordination_handlers_test;
     mod curation_handlers_test;
     mod distributed_rate_limit_test;
     mod dlq_handlers_test;
