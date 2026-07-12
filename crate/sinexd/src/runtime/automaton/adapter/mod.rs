@@ -797,6 +797,23 @@ where
     }
 }
 
+// ── Registry bridge (sinex-0vx.1) ────────────────────────────────────────
+
+/// Exposes an automaton adapter's static output-declaration catalog to
+/// callers that only know the adapter's concrete type alias (e.g.
+/// `crate::automata::registry`), without requiring those callers to name
+/// the wrapped `N: Automaton` type or depend on `RuntimeModule` (which is
+/// implemented by many non-automaton runtime modules that have no
+/// declarations at all).
+pub trait DeclaresOutputs {
+    const OUTPUT_DECLARATIONS: &'static [sinex_primitives::derivation::DerivationOutputDeclaration];
+}
+
+impl<N: Automaton> DeclaresOutputs for AutomatonRuntime<N> {
+    const OUTPUT_DECLARATIONS: &'static [sinex_primitives::derivation::DerivationOutputDeclaration] =
+        N::OUTPUT_DECLARATIONS;
+}
+
 // ── Type aliases for user-facing API ───────────────────────────────────
 
 /// Adapter for a `Transducer` implementation.

@@ -26,8 +26,39 @@
 use crate::runtime::automaton::{AutomatonContext, DerivedOutput, TransducerAdapter};
 use crate::runtime::tags;
 use crate::runtime::{AutomatonLogicError, InputProvenanceFilter, Transducer};
+use sinex_primitives::derivation::{
+    ClaimSupportTemplate, ClaimTemporalQuality, DerivationOutputDeclaration,
+    DerivationWriteSurface, DerivedProductClass, InputEligibility, SourceCoverage, SupportLevel,
+};
 use sinex_primitives::events::EventPayload;
 use sinex_primitives::events::payloads::KnowledgeTagAppliedPayload;
+
+/// Derivation control-plane declaration for `tag-applier` (sinex-0vx.1/0vx.3).
+///
+/// `semantic_candidate`: rule matches are `direct` evidence (the rule
+/// literally matched observed payload/source data — no inference), but the
+/// tag ASSERTION itself is still a candidate awaiting promotion, not an
+/// authority-backed classification.
+pub const TAG_APPLIER_OUTPUT_DECLARATIONS: &[DerivationOutputDeclaration] =
+    &[DerivationOutputDeclaration {
+        declaration_id: "tag-applier.knowledge.tag_applied",
+        owner: "tag-applier",
+        product_class: DerivedProductClass::SemanticCandidate,
+        write_surface: DerivationWriteSurface::DerivedOutput,
+        output_source: Some("knowledge-graph"),
+        output_event_type: Some("knowledge.tag_applied"),
+        projection_kind: None,
+        artifact_kind: None,
+        proposal_kind: None,
+        semantics_version: "1.0.0",
+        input_eligibility: InputEligibility::ExplicitOnly,
+        default_support: ClaimSupportTemplate::new(
+            SupportLevel::Direct,
+            SourceCoverage::Covered,
+            ClaimTemporalQuality::InheritParent,
+        ),
+        verification_command: "xtask test -p sinexd -E 'test(tag_applier)'",
+    }];
 
 #[derive(Debug, Clone, Default)]
 pub struct TagApplier;
@@ -55,6 +86,9 @@ impl Transducer for TagApplier {
     fn input_provenance_filter(&self) -> InputProvenanceFilter {
         InputProvenanceFilter::MaterialOnly
     }
+
+    const OUTPUT_DECLARATIONS: &'static [DerivationOutputDeclaration] =
+        TAG_APPLIER_OUTPUT_DECLARATIONS;
 
     async fn process(
         &mut self,

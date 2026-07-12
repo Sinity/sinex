@@ -14,6 +14,7 @@ use crate::runtime::processing::AutomatonLogicError;
 
 use serde::{Serialize, de::DeserializeOwned};
 use sinex_primitives::JsonValue;
+use sinex_primitives::derivation::DerivationOutputDeclaration;
 use sinex_primitives::domain::AutomatonModel;
 use sinex_primitives::events::Event;
 use sinex_primitives::temporal::Timestamp;
@@ -146,6 +147,14 @@ pub trait Transducer: Send + Sync + 'static {
         AutomatonModel::Transducer
     }
 
+    /// Static output declarations for the derivation control plane
+    /// (sinex-0vx). Defaults empty so ad-hoc/test fixture automata are
+    /// unaffected; every automaton registered in
+    /// `crate::automata::registry::AUTOMATA` must override this with at
+    /// least one declaration — enforced by the registry startup test, not
+    /// a compile-time requirement on this trait.
+    const OUTPUT_DECLARATIONS: &'static [DerivationOutputDeclaration] = &[];
+
     /// Process a single input event into zero or one output events.
     fn process(
         &mut self,
@@ -220,6 +229,10 @@ pub trait Windowed: Send + Sync + 'static {
     fn automaton_model(&self) -> AutomatonModel {
         AutomatonModel::Windowed
     }
+
+    /// Static output declarations for the derivation control plane
+    /// (sinex-0vx). See [`Transducer::OUTPUT_DECLARATIONS`].
+    const OUTPUT_DECLARATIONS: &'static [DerivationOutputDeclaration] = &[];
 
     /// Accumulate an event into the window state.
     fn accumulate(
@@ -337,6 +350,10 @@ pub trait ScopeReconciler: Send + Sync + 'static {
         AutomatonModel::ScopeReconciler
     }
 
+    /// Static output declarations for the derivation control plane
+    /// (sinex-0vx). See [`Transducer::OUTPUT_DECLARATIONS`].
+    const OUTPUT_DECLARATIONS: &'static [DerivationOutputDeclaration] = &[];
+
     /// Derive the live scope key from a trigger event.
     ///
     /// Return an empty vector to skip live processing for this trigger. Returning more than one
@@ -442,6 +459,12 @@ pub trait MultiOutputTransducer: Send + Sync + 'static {
         AutomatonModel::Transducer
     }
 
+    /// Static output declarations for the derivation control plane
+    /// (sinex-0vx). See [`Transducer::OUTPUT_DECLARATIONS`]. A
+    /// `MultiOutputTransducer` typically declares one entry per event type
+    /// returned by [`output_event_types`](Self::output_event_types).
+    const OUTPUT_DECLARATIONS: &'static [DerivationOutputDeclaration] = &[];
+
     /// Process a single input event into zero or more output events.
     ///
     /// Each output should carry its event type set via
@@ -485,6 +508,14 @@ pub trait Automaton: Send + Sync + 'static {
     fn output_event_type(&self) -> &'static str;
     fn output_event_source(&self) -> &'static str;
     fn automaton_model(&self) -> AutomatonModel;
+
+    /// Static output declarations for the derivation control plane
+    /// (sinex-0vx). Required (no default) on this unifying trait: each of
+    /// the four wrapper impls below forwards the underlying model's
+    /// [`Transducer::OUTPUT_DECLARATIONS`] (or `Windowed`/`ScopeReconciler`/
+    /// `MultiOutputTransducer` equivalent), which itself defaults to empty
+    /// for un-registered/test-fixture automata.
+    const OUTPUT_DECLARATIONS: &'static [DerivationOutputDeclaration];
 
     /// Process a single event through the automaton's model-specific logic.
     fn process_derived(
@@ -577,6 +608,7 @@ impl<N: Transducer> Automaton for TransducerWrapper<N> {
     fn automaton_model(&self) -> AutomatonModel {
         self.0.automaton_model()
     }
+    const OUTPUT_DECLARATIONS: &'static [DerivationOutputDeclaration] = N::OUTPUT_DECLARATIONS;
 
     async fn process_derived(
         &mut self,
@@ -653,6 +685,7 @@ impl<N: Windowed> Automaton for WindowedWrapper<N> {
     fn automaton_model(&self) -> AutomatonModel {
         self.0.automaton_model()
     }
+    const OUTPUT_DECLARATIONS: &'static [DerivationOutputDeclaration] = N::OUTPUT_DECLARATIONS;
 
     async fn process_derived(
         &mut self,
@@ -791,6 +824,7 @@ where
     fn automaton_model(&self) -> AutomatonModel {
         self.0.automaton_model()
     }
+    const OUTPUT_DECLARATIONS: &'static [DerivationOutputDeclaration] = N::OUTPUT_DECLARATIONS;
 
     async fn process_derived(
         &mut self,
@@ -913,6 +947,7 @@ impl<N: MultiOutputTransducer> Automaton for MultiOutputTransducerWrapper<N> {
     fn automaton_model(&self) -> AutomatonModel {
         self.0.automaton_model()
     }
+    const OUTPUT_DECLARATIONS: &'static [DerivationOutputDeclaration] = N::OUTPUT_DECLARATIONS;
 
     async fn process_derived(
         &mut self,

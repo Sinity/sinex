@@ -11,6 +11,7 @@
 //! an `AutomatonSpec` entry.
 
 use futures::future::BoxFuture;
+use sinex_primitives::derivation::DerivationOutputDeclaration;
 use sinex_primitives::error::{Result, SinexError};
 use tracing::info;
 
@@ -21,6 +22,7 @@ use crate::automata::{
     IntervalLiftRuntime, RelationExtractorRuntime, SessionDetectorRuntime, TagApplierRuntime,
     TerminalCommandCanonicalizerRuntime,
 };
+use crate::runtime::automaton::DeclaresOutputs;
 
 /// Type-erased automaton runner. Returns `Ok(())` when the automaton exits
 /// cleanly; `Err` is logged by the supervisor without aborting siblings.
@@ -51,6 +53,14 @@ pub struct AutomatonSpec {
     pub run: AutomatonRunFn,
     /// Probe for the same concrete runtime type's bridge-safety contract.
     pub contract: AutomatonContractFn,
+    /// Static derivation control-plane declarations for every output this
+    /// automaton emits (sinex-0vx.1). Forwarded from the same
+    /// `Automaton::OUTPUT_DECLARATIONS` the runtime adapter enforces
+    /// against (`crate::runtime::automaton::adapter::output::build_output_event`),
+    /// so registry data and runtime enforcement can never drift apart.
+    /// Populated for every entry below; validated non-empty and
+    /// tuple-unique by `registry_test`.
+    pub outputs: &'static [DerivationOutputDeclaration],
 }
 
 /// All automata hosted by `sinexd`. Order is preserved in `all` selection.
@@ -63,76 +73,91 @@ pub const AUTOMATA: &[AutomatonSpec] = &[
             ))
         },
         contract: contract_for::<TerminalCommandCanonicalizerRuntime>,
+        outputs: <TerminalCommandCanonicalizerRuntime as DeclaresOutputs>::OUTPUT_DECLARATIONS,
     },
     AutomatonSpec {
         name: "analytics",
         run: || Box::pin(run_one::<AnalyticsAutomatonRuntime>("analytics")),
         contract: contract_for::<AnalyticsAutomatonRuntime>,
+        outputs: <AnalyticsAutomatonRuntime as DeclaresOutputs>::OUTPUT_DECLARATIONS,
     },
     AutomatonSpec {
         name: "attention-stream",
         run: || Box::pin(run_one::<AttentionStreamRuntime>("attention-stream")),
         contract: contract_for::<AttentionStreamRuntime>,
+        outputs: <AttentionStreamRuntime as DeclaresOutputs>::OUTPUT_DECLARATIONS,
     },
     AutomatonSpec {
         name: "interval-lift",
         run: || Box::pin(run_one::<IntervalLiftRuntime>("interval-lift")),
         contract: contract_for::<IntervalLiftRuntime>,
+        outputs: <IntervalLiftRuntime as DeclaresOutputs>::OUTPUT_DECLARATIONS,
     },
     AutomatonSpec {
         name: "health",
         run: || Box::pin(run_one::<HealthAggregatorRuntime>("health")),
         contract: contract_for::<HealthAggregatorRuntime>,
+        outputs: <HealthAggregatorRuntime as DeclaresOutputs>::OUTPUT_DECLARATIONS,
     },
     AutomatonSpec {
         name: "session",
         run: || Box::pin(run_one::<SessionDetectorRuntime>("session")),
         contract: contract_for::<SessionDetectorRuntime>,
+        outputs: <SessionDetectorRuntime as DeclaresOutputs>::OUTPUT_DECLARATIONS,
     },
     AutomatonSpec {
         name: "hourly",
         run: || Box::pin(run_one::<HourlySummarizerRuntime>("hourly")),
         contract: contract_for::<HourlySummarizerRuntime>,
+        outputs: <HourlySummarizerRuntime as DeclaresOutputs>::OUTPUT_DECLARATIONS,
     },
     AutomatonSpec {
         name: "daily",
         run: || Box::pin(run_one::<DailySummarizerRuntime>("daily")),
         contract: contract_for::<DailySummarizerRuntime>,
+        outputs: <DailySummarizerRuntime as DeclaresOutputs>::OUTPUT_DECLARATIONS,
     },
     AutomatonSpec {
         name: "entity-extractor",
         run: || Box::pin(run_one::<EntityExtractorRuntime>("entity-extractor")),
         contract: contract_for::<EntityExtractorRuntime>,
+        outputs: <EntityExtractorRuntime as DeclaresOutputs>::OUTPUT_DECLARATIONS,
     },
     AutomatonSpec {
         name: "entity-resolver",
         run: || Box::pin(run_one::<EntityResolverRuntime>("entity-resolver")),
         contract: contract_for::<EntityResolverRuntime>,
+        outputs: <EntityResolverRuntime as DeclaresOutputs>::OUTPUT_DECLARATIONS,
     },
     AutomatonSpec {
         name: "relation-extractor",
         run: || Box::pin(run_one::<RelationExtractorRuntime>("relation-extractor")),
         contract: contract_for::<RelationExtractorRuntime>,
+        outputs: <RelationExtractorRuntime as DeclaresOutputs>::OUTPUT_DECLARATIONS,
     },
     AutomatonSpec {
         name: "entity-enricher",
         run: || Box::pin(run_one::<EntityEnricherRuntime>("entity-enricher")),
         contract: contract_for::<EntityEnricherRuntime>,
+        outputs: <EntityEnricherRuntime as DeclaresOutputs>::OUTPUT_DECLARATIONS,
     },
     AutomatonSpec {
         name: "tag-applier",
         run: || Box::pin(run_one::<TagApplierRuntime>("tag-applier")),
         contract: contract_for::<TagApplierRuntime>,
+        outputs: <TagApplierRuntime as DeclaresOutputs>::OUTPUT_DECLARATIONS,
     },
     AutomatonSpec {
         name: "embedding-producer",
         run: || Box::pin(run_one::<EmbeddingProducerRuntime>("embedding-producer")),
         contract: contract_for::<EmbeddingProducerRuntime>,
+        outputs: <EmbeddingProducerRuntime as DeclaresOutputs>::OUTPUT_DECLARATIONS,
     },
     AutomatonSpec {
         name: "document-parser",
         run: || Box::pin(run_one::<DocumentParserRuntime>("document-parser")),
         contract: contract_for::<DocumentParserRuntime>,
+        outputs: <DocumentParserRuntime as DeclaresOutputs>::OUTPUT_DECLARATIONS,
     },
     AutomatonSpec {
         name: "instruction-reconciler",
@@ -142,6 +167,7 @@ pub const AUTOMATA: &[AutomatonSpec] = &[
             ))
         },
         contract: contract_for::<InstructionExpectationReconcilerRuntime>,
+        outputs: <InstructionExpectationReconcilerRuntime as DeclaresOutputs>::OUTPUT_DECLARATIONS,
     },
 ];
 

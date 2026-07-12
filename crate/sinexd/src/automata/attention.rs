@@ -6,9 +6,35 @@
 
 use crate::runtime::automaton::{DerivedOutput, TransducerAdapter};
 use crate::runtime::{AutomatonContext, AutomatonLogicError, InputProvenanceFilter, Transducer};
+use sinex_primitives::derivation::{
+    ClaimSupportTemplate, ClaimTemporalQuality, DerivationOutputDeclaration,
+    DerivationWriteSurface, DerivedProductClass, InputEligibility, SourceCoverage, SupportLevel,
+};
 use sinex_primitives::domain::SyntheticTemporalPolicy;
 use sinex_primitives::events::EventPayload;
 use sinex_primitives::events::payloads::{ActivityWindowSummaryPayload, AttentionSpanPayload};
+
+/// Derivation control-plane declaration for `attention-stream` (sinex-0vx.1/0vx.3).
+pub const ATTENTION_STREAM_OUTPUT_DECLARATIONS: &[DerivationOutputDeclaration] =
+    &[DerivationOutputDeclaration {
+        declaration_id: "attention-stream.attention.span",
+        owner: "attention-stream",
+        product_class: DerivedProductClass::CanonicalDerivedEvent,
+        write_surface: DerivationWriteSurface::DerivedOutput,
+        output_source: Some("derived.attention-stream"),
+        output_event_type: Some("attention.span"),
+        projection_kind: None,
+        artifact_kind: None,
+        proposal_kind: None,
+        semantics_version: "1.0.0",
+        input_eligibility: InputEligibility::DefaultCanonicalInput,
+        default_support: ClaimSupportTemplate::new(
+            SupportLevel::Direct,
+            SourceCoverage::Covered,
+            ClaimTemporalQuality::InheritParent,
+        ),
+        verification_command: "xtask test -p sinexd -E 'test(attention_stream)'",
+    }];
 
 #[derive(Debug, Clone, Default)]
 pub struct AttentionStream;
@@ -37,6 +63,9 @@ impl Transducer for AttentionStream {
     fn input_provenance_filter(&self) -> InputProvenanceFilter {
         InputProvenanceFilter::SynthesizedOnly
     }
+
+    const OUTPUT_DECLARATIONS: &'static [DerivationOutputDeclaration] =
+        ATTENTION_STREAM_OUTPUT_DECLARATIONS;
 
     async fn process(
         &mut self,
