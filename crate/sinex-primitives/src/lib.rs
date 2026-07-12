@@ -12,6 +12,7 @@ pub mod constants;
 #[cfg(feature = "nats")]
 pub mod coordination;
 pub mod deployment_readiness;
+pub mod derivation;
 pub mod derivations;
 pub mod domain;
 pub mod domain_reducer;
@@ -117,6 +118,12 @@ pub use deployment_readiness::{
     DeploymentNatsRuntime, DeploymentReadinessDescriptor, DeploymentReadinessMode,
     DeploymentSecrets, DeploymentSurface, DeploymentTarget, DesktopDeploymentSurface,
     DocumentDeploymentSurface, TerminalDeploymentSurface, TerminalHistorySource,
+};
+pub use derivation::{
+    AdjudicationStatus, ClaimSupport, ClaimSupportTemplate, ClaimTemporalQuality,
+    DerivationDeclarationId, DerivationOutputDeclaration, DerivationScope,
+    DerivationWriteSurface, DerivedProductClass, InputEligibility, SourceCoverage, SupportLevel,
+    TstzRange,
 };
 pub use derivations::{
     DERIVATION_SPECS, DESKTOP_CONTEXT_CURRENT_VIEW_DERIVATION,

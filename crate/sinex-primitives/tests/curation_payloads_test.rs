@@ -4,8 +4,8 @@ use sinex_primitives::Uuid;
 use sinex_primitives::authority::{Judgment, JudgmentVerdict, Proposal, ProposalKind};
 use sinex_primitives::events::EventPayload;
 use sinex_primitives::events::payloads::{
-    CurationFinalizedPayload, CurationJudgmentDecision, CurationJudgmentPayload,
-    CurationProposalPayload,
+    CurationFinalizedPayload, CurationJudgmentActorKind, CurationJudgmentDecision,
+    CurationJudgmentPayload, CurationProposalPayload,
 };
 use sinex_primitives::views::{SinexObjectKind, SinexObjectRef};
 use xtask::sandbox::prelude::*;
@@ -182,6 +182,51 @@ async fn replayed_identical_proposal_keeps_judgment_addressable() -> TestResult<
     assert_eq!(replayed.proposal_key, original.proposal_key);
     assert_ne!(judgment.proposal_id, replayed.proposal_id);
     assert_eq!(judgment.proposal_id, original.proposal_id);
+    Ok(())
+}
+
+#[sinex_test]
+async fn curation_actor_kind_agent_is_distinct_typed_non_human_actor() -> TestResult<()> {
+    // sinex-8cr.1 decision (a): Agent is a typed, auditable non-human actor
+    // class distinct from Operator — never agent-as-Operator-with-actor_id.
+    assert_ne!(CurationJudgmentActorKind::Agent, CurationJudgmentActorKind::Operator);
+    assert_ne!(
+        CurationJudgmentActorKind::Agent,
+        CurationJudgmentActorKind::DeterministicPolicy
+    );
+
+    let json = serde_json::to_value(CurationJudgmentActorKind::Agent).unwrap();
+    assert_eq!(json, json!("agent"));
+    let round_tripped: CurationJudgmentActorKind = serde_json::from_value(json).unwrap();
+    assert_eq!(round_tripped, CurationJudgmentActorKind::Agent);
+    Ok(())
+}
+
+#[sinex_test]
+async fn curation_actor_kind_agent_judgment_round_trips_through_effective_payload() -> TestResult<()>
+{
+    // The Agent variant must plug into the existing judgment payload and
+    // authority gate without special-casing: an Agent Accept judgment is
+    // still gated by the same Proposal::apply seam as any other actor kind
+    // (the finalizer-policy restriction on Agent-sufficiency is 0vx.5 work,
+    // not this bead — this test only proves the enum change doesn't break
+    // the existing judged-value extraction path).
+    let proposal = CurationProposalPayload::test_fixture_tag();
+    let mut judgment = CurationJudgmentPayload::test_accept(proposal.proposal_id);
+    judgment.actor_kind = CurationJudgmentActorKind::Agent;
+    judgment.actor_id = "agent:claude-opus@session-test".to_string();
+
+    let finalized = CurationFinalizedPayload::from_judgment(
+        Uuid::from_u128(40),
+        &proposal,
+        &judgment,
+        Timestamp::UNIX_EPOCH,
+    )?;
+    assert_eq!(finalized.output_payload, proposal.candidate_payload);
+
+    let json = serde_json::to_value(&judgment).unwrap();
+    assert_eq!(json["actor_kind"], "agent");
+    assert_eq!(json["actor_id"], "agent:claude-opus@session-test");
     Ok(())
 }
 

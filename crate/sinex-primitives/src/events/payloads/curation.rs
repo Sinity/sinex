@@ -27,12 +27,30 @@ pub enum CurationProposalStatus {
 }
 
 /// Actor class authorized to record a judgment.
+///
+/// `Agent` is a typed, auditable non-human actor class (precedent:
+/// `DeterministicPolicy`) — NOT agents-as-`Operator`-with-`actor_id`. Letting
+/// an agent wear the `Operator` hat would leave "agent judgments are not
+/// automatically human-operator authority" at convention-only string-matching
+/// on `actor_id`; a dedicated variant lifts the invariant to compile-time
+/// (exhaustive match) and DB CHECK (`actor_kind = 'agent'`).
+/// `actor_id` is retained and now unambiguous: it carries the specific agent
+/// identity (e.g. `agent:claude-opus@session-...`) while `actor_kind = Agent`
+/// carries the CLASS.
+///
+/// Default posture (enforced by the finalizer policy, not by this enum): an
+/// `Agent` judgment is NON-SUFFICIENT to flip an adjudication to `Accepted`
+/// by itself — it produces at most a proposed-acceptance requiring
+/// `Operator`/`User` confirmation, unless a finalizer registry row
+/// explicitly grants `Agent` authority for that proposal kind. See
+/// `.agent/scratch/027-0vx-derivation-control-plane-design.md` decision (a).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum CurationJudgmentActorKind {
     User,
     Operator,
     DeterministicPolicy,
+    Agent,
     TestFixture,
 }
 
