@@ -48,6 +48,16 @@ pub const SINEX_SCHEMAS: &[SchemaInfo] = &[
         requires_grants: true,
     },
     SchemaInfo {
+        name: "derivation",
+        description: "Derivation control plane: product declarations, epochs, lanes, lane outputs/diffs, projection registry (sinex-0vx)",
+        requires_grants: true,
+    },
+    SchemaInfo {
+        name: "authority",
+        description: "Authority finalizer registry: proposal-to-judgment writer catalog (sinex-0vx)",
+        requires_grants: true,
+    },
+    SchemaInfo {
         name: "metrics",
         description: "Metrics and monitoring data",
         requires_grants: true,

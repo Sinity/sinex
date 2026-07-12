@@ -333,14 +333,18 @@ impl<'a> EventRepository<'a> {
                             source_material_id, offset_start, offset_end, offset_kind,
                             anchor_byte, associated_blob_ids,
                             temporal_policy, semantics_version, scope_key, equivalence_key,
-                            created_by_operation_id, automaton_model, anchor_payload_hash, ts_quality
+                            created_by_operation_id, automaton_model, anchor_payload_hash, ts_quality,
+                            product_class, claim_support, derivation_declaration_id,
+                            derivation_epoch_id, derivation_lane_id, adjudication_event_id
                         ) VALUES (
                             $1::uuid, $2, $3, $4, $5,
                             $6, $7, $8, $9::uuid, $10::uuid[],
                             $11::uuid, $12, $13, $14,
                             $15, $16::uuid[],
                             $17, $18, $19, $20,
-                            $21::uuid, $22, $23, $24
+                            $21::uuid, $22, $23, $24,
+                            $25, $26, $27,
+                            $28::uuid, $29::uuid, $30::uuid
                         )
                         RETURNING
                             id as "id!: uuid::Uuid",
@@ -368,7 +372,13 @@ impl<'a> EventRepository<'a> {
                             created_by_operation_id::uuid as "created_by_operation_id: uuid::Uuid",
                             automaton_model,
                             anchor_payload_hash as "anchor_payload_hash: Vec<u8>",
-                            ts_quality
+                            ts_quality,
+                            product_class,
+                            claim_support,
+                            derivation_declaration_id,
+                            derivation_epoch_id::uuid as "derivation_epoch_id: uuid::Uuid",
+                            derivation_lane_id::uuid as "derivation_lane_id: uuid::Uuid",
+                            adjudication_event_id::uuid as "adjudication_event_id: uuid::Uuid"
                         "#,
                         id.to_uuid(),
                         event_source.as_str(),
@@ -393,7 +403,24 @@ impl<'a> EventRepository<'a> {
                         created_by_operation_id,
                         automaton_model_str,
                         anchor_payload_hash,
-                        ts_quality_str
+                        ts_quality_str,
+                        // Derivation control plane (sinex-0vx.4 / W1): not yet
+                        // settable via this write path — Event<T> (sinex-
+                        // primitives) carries no product_class/claim_support/
+                        // derivation_*/adjudication_event_id fields yet. Wiring
+                        // real values through is a future wave (0vx.1-3 already
+                        // landed the runtime lane without touching sinex-db;
+                        // 8cr.2/0vx.5/0vx.6 own the sinex-db/primitives side).
+                        // Explicit NULL keeps this INSERT column list — and the
+                        // query_as_insert_columns_match_copy_contract drift
+                        // guard — in lockstep with EVENT_COPY_COLUMNS (the SSOT)
+                        // without inventing functionality out of scope here.
+                        None::<String>,
+                        None::<JsonValue>,
+                        None::<String>,
+                        None::<Uuid>,
+                        None::<Uuid>,
+                        None::<Uuid>
                     )
                     .fetch_one(&mut **tx)
                     .await
@@ -480,14 +507,18 @@ impl<'a> EventRepository<'a> {
                 source_material_id, offset_start, offset_end, offset_kind,
                 anchor_byte, associated_blob_ids,
                 temporal_policy, semantics_version, scope_key, equivalence_key,
-                created_by_operation_id, automaton_model, anchor_payload_hash, ts_quality
+                created_by_operation_id, automaton_model, anchor_payload_hash, ts_quality,
+                product_class, claim_support, derivation_declaration_id,
+                derivation_epoch_id, derivation_lane_id, adjudication_event_id
             ) VALUES (
                 $1::uuid, $2, $3, $4, $5,
                 $6, $7, $8, $9::uuid, $10::uuid[],
                 $11::uuid, $12, $13, $14,
                 $15, $16::uuid[],
                 $17, $18, $19, $20,
-                $21::uuid, $22, $23, $24
+                $21::uuid, $22, $23, $24,
+                $25, $26, $27,
+                $28::uuid, $29::uuid, $30::uuid
             )
             RETURNING
                 id as "id!: uuid::Uuid",
@@ -515,7 +546,13 @@ impl<'a> EventRepository<'a> {
                 created_by_operation_id::uuid as "created_by_operation_id: uuid::Uuid",
                 automaton_model,
                 anchor_payload_hash as "anchor_payload_hash: Vec<u8>",
-                ts_quality
+                ts_quality,
+                product_class,
+                claim_support,
+                derivation_declaration_id,
+                derivation_epoch_id::uuid as "derivation_epoch_id: uuid::Uuid",
+                derivation_lane_id::uuid as "derivation_lane_id: uuid::Uuid",
+                adjudication_event_id::uuid as "adjudication_event_id: uuid::Uuid"
             "#,
             id.to_uuid(),
             event.source.as_str(),
@@ -540,7 +577,17 @@ impl<'a> EventRepository<'a> {
             created_by_operation_id,
             automaton_model_str,
             anchor_payload_hash,
-            ts_quality_str
+            ts_quality_str,
+            // Derivation control plane (sinex-0vx.4 / W1): see the matching
+            // comment in `insert` above — not yet settable via this write
+            // path, explicit NULL keeps the INSERT column list in lockstep
+            // with EVENT_COPY_COLUMNS (the SSOT).
+            None::<String>,
+            None::<JsonValue>,
+            None::<String>,
+            None::<Uuid>,
+            None::<Uuid>,
+            None::<Uuid>
         )
         .fetch_one(&mut **tx)
         .await
