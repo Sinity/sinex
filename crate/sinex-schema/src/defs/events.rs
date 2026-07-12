@@ -335,17 +335,36 @@ impl Events {
     /// hold tens of thousands of rows. `id DESC` keeps within-segment ordering
     /// aligned with the `UUIDv7` partition for time-range pruning. Tunable once
     /// real ingest is measured (see #2182).
+    ///
+    /// ## Convergence, not create-if-absent
+    ///
+    /// A database whose settings were created under the old pathological
+    /// `source_material_id` segmentby must be CONVERGED, not left alone: the
+    /// compression policy installed by `configure_timescaledb` would otherwise
+    /// compress under the stale settings (or re-enter the #2158 fail/retry
+    /// lock-holding loop). The DO block compares the live settings against the
+    /// desired shape and re-runs `ALTER TABLE ... SET` on mismatch. Altering
+    /// settings only affects how future `compress_chunk` calls compress — and on
+    /// any database still carrying the stale segmentby, no chunk ever compressed
+    /// successfully in the first place (that was the defect). NB the comparison
+    /// strings match the canonical rendering of
+    /// `timescaledb_information.hypertable_compression_settings`: segmentby is
+    /// comma-joined WITHOUT spaces. Ref sinex-h8no.
     #[must_use]
     pub fn enable_compression_sql() -> &'static str {
         r"
         DO $$
+        DECLARE
+            actual_segmentby text;
+            actual_orderby text;
         BEGIN
-            IF NOT EXISTS (
-                SELECT 1
-                FROM timescaledb_information.compression_settings
-                WHERE hypertable_name = 'events'
-                  AND hypertable_schema = 'core'
-            ) THEN
+            SELECT s.segmentby, s.orderby
+            INTO actual_segmentby, actual_orderby
+            FROM timescaledb_information.hypertable_compression_settings s
+            WHERE s.hypertable = 'core.events'::regclass;
+
+            IF actual_segmentby IS DISTINCT FROM 'source,event_type'
+               OR actual_orderby IS DISTINCT FROM 'id DESC' THEN
                 ALTER TABLE core.events SET (
                     timescaledb.compress,
                     timescaledb.compress_segmentby = 'source, event_type',

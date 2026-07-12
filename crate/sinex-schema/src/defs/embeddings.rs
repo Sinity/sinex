@@ -6,7 +6,7 @@
 //! `PostgreSQL`, enabling powerful AI-driven features.
 
 use crate::primitives::Uuid;
-use crate::{Events, TableDef};
+use crate::TableDef;
 use sea_query::{
     Alias, ColumnDef, Expr, ForeignKey, ForeignKeyAction, Iden, Index, IndexCreateStatement, Table,
     TableCreateStatement,
@@ -286,12 +286,16 @@ impl EventEmbeddings {
                     .custom(Alias::new("vector"))
                     .not_null(),
             )
-            .foreign_key(
-                ForeignKey::create()
-                    .from(Self::table_iden(), EventEmbeddings::EventId)
-                    .to(Events::table_iden(), Alias::new("id"))
-                    .on_delete(ForeignKeyAction::Cascade),
-            )
+            // No declarative FK on event_id -> core.events(id). core.events is a
+            // TimescaleDB hypertable; current TimescaleDB accepts FKs whose target
+            // is a hypertable, but a chunk that is the target of a foreign key
+            // cannot be compressed ("found a FK into a chunk while truncating"), so
+            // an inbound FK silently defeats the columnstore policy on the whole
+            // events hypertable. The ON DELETE CASCADE it would provide is already
+            // enforced by the core.fn_archive_before_delete trigger (defs/events.rs),
+            // which archives + deletes matching embedding rows in the same
+            // transaction as the parent event delete (#579). Same rationale as
+            // core.event_annotations (defs/annotations.rs). Ref sinex-h8no.
             .foreign_key(
                 ForeignKey::create()
                     .from(Self::table_iden(), EventEmbeddings::EmbeddingModelId)
@@ -433,12 +437,10 @@ impl EventClusterMembers {
                     .to(EventClusters::table_iden(), EventClusters::Id)
                     .on_delete(ForeignKeyAction::Cascade),
             )
-            .foreign_key(
-                ForeignKey::create()
-                    .from(Self::table_iden(), EventClusterMembers::EventId)
-                    .to(Events::table_iden(), Alias::new("id"))
-                    .on_delete(ForeignKeyAction::Cascade),
-            )
+            // No declarative FK on event_id -> core.events(id): an inbound FK to the
+            // events hypertable blocks columnstore compression of its chunks (see the
+            // EventEmbeddings note above). Cascade-on-event-delete is enforced by the
+            // core.fn_archive_before_delete trigger (defs/events.rs). Ref sinex-h8no.
             .to_owned()
     }
 }

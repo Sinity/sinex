@@ -1112,13 +1112,53 @@ async fn configure_timescaledb(pool: &PgPool) -> Result<(), ApplyError> {
     )
     .await?;
 
-    // Enable native compression for manual maintenance, but do not install an
-    // automatic compression policy. The background worker takes strong locks on
-    // core.events and can starve boot-time schema convergence and live ingest.
+    // Drop inbound foreign keys that target the core.events hypertable. Current
+    // TimescaleDB accepts FKs whose referenced side is a hypertable, but a chunk
+    // that is the target of a foreign key cannot be converted to columnstore
+    // ("found a FK into a chunk while truncating"), so a single inbound FK silently
+    // defeats the compression policy on the whole events hypertable — the observed
+    // sinex-h8no failure (98GB across 7 uncompressed chunks). The referenced tables'
+    // ON DELETE cascade is already enforced by core.fn_archive_before_delete
+    // (see defs/events.rs), so the FK carried no integrity benefit here — only an
+    // insert-time existence check on rebuildable derived rows. The declarations are
+    // also removed from the table defs so fresh databases never create them; these
+    // DROPs converge existing databases. Same rationale as core.event_annotations,
+    // whose FK was removed earlier (defs/annotations.rs). Ref sinex-h8no.
+    execute_sql(
+        pool,
+        "ALTER TABLE core.event_embeddings DROP CONSTRAINT IF EXISTS event_embeddings_event_id_fkey",
+    )
+    .await?;
+    execute_sql(
+        pool,
+        "ALTER TABLE core.event_cluster_members DROP CONSTRAINT IF EXISTS event_cluster_members_event_id_fkey",
+    )
+    .await?;
+    execute_sql(
+        pool,
+        "ALTER TABLE semantic.lane_outputs DROP CONSTRAINT IF EXISTS lane_outputs_source_event_id_fkey",
+    )
+    .await?;
+
+    // Enable native compression and install the automatic columnstore policy on
+    // core.events. The remove-then-add pattern converges any pre-existing policy
+    // to the exact desired interval. The earlier concern (#2158) that the policy
+    // starves boot-time convergence was caused by a compression job that failed and
+    // retried forever while holding locks — itself caused by the pathological
+    // `source_material_id` segmentby (fixed to `(source, event_type)`, see
+    // Events::enable_compression_sql) and by the inbound-FK block removed above.
+    // With both resolved, the policy compresses old (>7d) chunks cleanly; live
+    // ingest writes only the current chunk and is not contended. INTERVAL '7 days'
+    // is evaluated against the UUIDv7 partition time, mirroring reflection.events.
     execute_sql(pool, Events::enable_compression_sql()).await?;
     execute_sql(
         pool,
         "SELECT remove_compression_policy('core.events', if_exists => true)",
+    )
+    .await?;
+    execute_sql(
+        pool,
+        "SELECT add_compression_policy('core.events', INTERVAL '7 days')",
     )
     .await?;
 

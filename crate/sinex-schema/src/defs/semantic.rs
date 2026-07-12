@@ -11,7 +11,7 @@
 //! effects or admitted facts.
 
 use crate::primitives::{Timestamp, Uuid};
-use crate::{Events, OperationsLog, SourceMaterialRegistry, TableDef};
+use crate::{OperationsLog, SourceMaterialRegistry, TableDef};
 use sea_query::{
     Alias, ColumnDef, Expr, ForeignKey, ForeignKeyAction, Iden, Index, IndexCreateStatement, Table,
     TableCreateStatement,
@@ -334,12 +334,13 @@ impl SemanticLaneOutputs {
                     .to(SemanticLanes::table_iden(), SemanticLanes::Id)
                     .on_delete(ForeignKeyAction::Cascade),
             )
-            .foreign_key(
-                ForeignKey::create()
-                    .from(Self::table_iden(), Self::SourceEventId)
-                    .to(Events::table_iden(), Events::Id)
-                    .on_delete(ForeignKeyAction::SetNull),
-            )
+            // No declarative FK on source_event_id -> core.events(id): an inbound FK
+            // to the events hypertable blocks columnstore compression of its chunks
+            // ("found a FK into a chunk while truncating"), silently defeating the
+            // policy on the whole hypertable. source_event_id is a soft provenance
+            // pointer (nullable, and event ids are per-interpretation identities that
+            // churn on replay), not a referential-integrity invariant, so it carries
+            // no enforced cascade. Ref sinex-h8no.
             .foreign_key(
                 ForeignKey::create()
                     .from(Self::table_iden(), Self::SourceMaterialId)
