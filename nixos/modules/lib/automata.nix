@@ -12,6 +12,8 @@ rec {
     (mkSpec "canonicalizer" "canonicalizer" "canonicalizer" "Sinex canonical command synthesizer")
     (mkSpec "healthAggregator" "health_aggregator" "health" "Sinex health automaton")
     (mkSpec "analyticsAutomaton" "analytics_automaton" "analytics" "Sinex analytics automaton")
+    (mkSpec "attentionStream" "attention_stream" "attention-stream" "Sinex attention-stream automaton")
+    (mkSpec "intervalLift" "interval_lift" "interval-lift" "Sinex interval-lift automaton")
     (mkSpec "sessionDetector" "session_detector" "session" "Sinex session detector")
     (mkSpec "hourlySummarizer" "hourly_summarizer" "hourly" "Sinex hourly activity summarizer")
     (mkSpec "dailySummarizer" "daily_summarizer" "daily" "Sinex daily activity summarizer")
