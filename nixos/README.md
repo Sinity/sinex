@@ -385,6 +385,50 @@ services.sinex = {
 > database listed, so schema/bootstrap tooling works consistently no matter which schema you
 > target.
 
+### Automata: default-enabled set and activation profiles
+
+`services.sinex.automata` is a **top-level** option (not nested under
+`runtime`, despite the example snippet above, which predates the
+post-collapse automaton hosting model — see `nixos/modules/default.nix`
+for the authoritative shape). Each of the 16 registered automata
+(`crate/sinexd/src/automata/registry.rs` is the runtime census;
+`nixos/modules/lib/automata.nix` is the deployment catalog) has its own
+`services.sinex.automata.<name>.enable` flag. As of sinex-ijz6's ratified
+portfolio (pq5/vfy/nbi.4), the default deployment runs 8 pipeline-core
+automata plus 2 profile-gated ones:
+
+```nix
+services.sinex.automata = {
+  enable = true; # master switch for the whole automata subsystem
+
+  # Default-enabled (pipeline core): canonicalizer, healthAggregator,
+  # analyticsAutomaton, attentionStream, intervalLift, sessionDetector,
+  # hourlySummarizer, dailySummarizer.
+
+  # Default-off (demand-gated / dark-substrate retire-until-needed, sinex-pq5):
+  # embeddingProducer, tagApplier, entityExtractor, entityResolver,
+  # relationExtractor, entityEnricher. Code stays; re-enable when a named
+  # consumer exists (see each option's description for the re-entry gate).
+
+  # Profile-gated: documentParser ("document" profile) and
+  # instructionReconciler ("actuation" profile) are enable = true by
+  # default, but ALSO require their profile name in `enabledProfiles`
+  # below. Default `enabledProfiles` includes every known profile, so a
+  # fresh deployment keeps both running unless narrowed:
+  enabledProfiles = [ "document" "actuation" ];
+
+  # A headless capture host with no desktop-actuation surface would instead
+  # narrow to just the document profile:
+  # enabledProfiles = [ "document" ];
+};
+```
+
+`SINEX_AUTOMATA_ENABLED` (the env var `sinexd` reads at startup) is
+assembled from exactly this: an automaton's own `enable` flag AND (if it
+declares an `activationProfile`) membership of that profile in
+`enabledProfiles`. See `nixos/modules/sources.nix`'s `automataEnabledNames`
+and `nixos/modules/lib/automata.nix`'s `profileAllows`.
+
 ### 2. Server/Headless (Data Collection Only)
 
 Minimal setup for server environments:
