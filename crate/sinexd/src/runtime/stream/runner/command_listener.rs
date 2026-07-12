@@ -1,16 +1,16 @@
-//! `start_command_listener` for `RuntimeRunner<T>`.
+//! `start_command_listener` for `RuntimeRunner`.
 //!
 //! Subscribes to `sinex.control.sources.<module_name>.scan` and dispatches
 //! incoming `SourceScanCommand`s to isolated replay workers. Only compiled
 //! with the `messaging` feature.
 
 use super::{
-    Arc, AtomicBool, ControlCommandKind, LISTENER_RETRY_DELAY, ModuleKind, Ordering, RuntimeModule,
-    RuntimeRunner, SourceScanAck, SourceScanCommand, SourceScanProgress, StreamExt, Uuid,
-    control_command_kind, debug, error, info, run_resubscribing_listener, warn, watch,
+    Arc, AtomicBool, ControlCommandKind, LISTENER_RETRY_DELAY, ModuleKind, Ordering, RuntimeRunner,
+    SourceScanAck, SourceScanCommand, SourceScanProgress, StreamExt, Uuid, control_command_kind,
+    debug, error, info, run_resubscribing_listener, warn, watch,
 };
 
-impl<T: RuntimeModule + 'static> RuntimeRunner<T> {
+impl RuntimeRunner {
     /// Start the NATS command listener for source-dispatch replay.
     ///
     /// Subscribes to `sinex.control.sources.<module_name>.scan` using NATS request-reply.
@@ -471,7 +471,7 @@ impl<T: RuntimeModule + 'static> RuntimeRunner<T> {
 }
 
 #[cfg(all(feature = "messaging", feature = "db"))]
-impl<T: RuntimeModule + 'static> RuntimeRunner<T> {
+impl RuntimeRunner {
     /// Start the per-source NATS parse listener (#1780).
     ///
     /// The gateway replay engine dispatches `SourceParseCommand` to

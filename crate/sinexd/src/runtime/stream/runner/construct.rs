@@ -1,4 +1,4 @@
-//! Constructors and simple accessors for `RuntimeRunner<T>`.
+//! Constructors and simple accessors for `RuntimeRunner`.
 //!
 //! Holds the runner constructors (`new`, `new_with_factory`) and the
 //! cheap accessors (`lifecycle`, `module_kind`, `runtime_state`) plus the two
@@ -6,26 +6,39 @@
 //! `drain_completion_checkpoint_description`) that only touch `&self` fields.
 
 use super::{
-    Checkpoint, ModuleKind, ProcessingModel, RunnerLifecycle, RuntimeContext, RuntimeModule,
-    RuntimeRunner, SourceFactory,
+    Arc, Checkpoint, ErasedRuntimeModule, ErasedSourceFactory, ModuleKind, ProcessingModel,
+    RunnerLifecycle, RuntimeContext, RuntimeModule, RuntimeRunner, SourceFactory,
 };
 use std::collections::HashMap;
 
-impl<T: RuntimeModule + 'static> RuntimeRunner<T> {
-    /// Create a new module runner
-    pub fn new(module: T) -> Self {
-        Self::new_with_optional_factory(module, None)
+impl RuntimeRunner {
+    /// Create a new module runner.
+    ///
+    /// Generic only at the constructor boundary: the concrete module is boxed
+    /// into [`ErasedRuntimeModule`] immediately, so no downstream runner code is
+    /// monomorphized per module type.
+    pub fn new<M: RuntimeModule + 'static>(module: M) -> Self {
+        Self::new_with_optional_factory(module, None::<SourceFactory<M>>)
     }
 
     /// Create a module runner with a factory for fresh worker instances.
-    pub fn new_with_factory(module: T, source_factory: SourceFactory<T>) -> Self {
+    pub fn new_with_factory<M: RuntimeModule + 'static>(
+        module: M,
+        source_factory: SourceFactory<M>,
+    ) -> Self {
         Self::new_with_optional_factory(module, Some(source_factory))
     }
 
-    pub(super) fn new_with_optional_factory(
-        module: T,
-        source_factory: Option<SourceFactory<T>>,
+    pub(super) fn new_with_optional_factory<M: RuntimeModule + 'static>(
+        module: M,
+        source_factory: Option<SourceFactory<M>>,
     ) -> Self {
+        let module: Box<dyn ErasedRuntimeModule> = Box::new(module);
+        let source_factory: Option<ErasedSourceFactory> = source_factory.map(|factory| {
+            let erased: ErasedSourceFactory =
+                Arc::new(move || Box::new(factory()) as Box<dyn ErasedRuntimeModule>);
+            erased
+        });
         Self {
             module,
             source_factory,

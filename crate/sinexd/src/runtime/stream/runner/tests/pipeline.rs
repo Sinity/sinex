@@ -1,10 +1,10 @@
-//! Pipeline-side `RuntimeRunner<T>` tests: control-plane encoding, scan ack,
+//! Pipeline-side `RuntimeRunner` tests: control-plane encoding, scan ack,
 //! drain orchestration, replay forwarder, provisional resolution, source
 //! startup, and DLQ fallback paths.
 
 use super::*;
-use crate::runtime::stream::ProcessingStats;
 use crate::runtime::stream::control_protocol::encode_control_message;
+use crate::runtime::stream::{ProcessingStats, RuntimeInitContext};
 
 #[sinex_test]
 async fn encode_control_message_serializes_scan_ack() -> TestResult<()> {
@@ -57,13 +57,9 @@ async fn publish_scan_ack_reports_nats_failures(ctx: TestContext) -> TestResult<
         error: Some("x".repeat(2_000_000)),
     };
 
-    let error = RuntimeRunner::<RuntimeTestModule>::publish_scan_ack(
-        &client,
-        Some("sinex.test.reply".into()),
-        &ack,
-    )
-    .await
-    .expect_err("oversized control payloads must fail scan acknowledgements honestly");
+    let error = RuntimeRunner::publish_scan_ack(&client, Some("sinex.test.reply".into()), &ack)
+        .await
+        .expect_err("oversized control payloads must fail scan acknowledgements honestly");
 
     let message = error.to_string();
     assert!(message.contains("Failed to publish scan acknowledgement"));
@@ -184,13 +180,10 @@ async fn publish_scan_progress_reports_nats_failures(ctx: TestContext) -> TestRe
         error: Some("x".repeat(2_000_000)),
     };
 
-    let error = RuntimeRunner::<RuntimeTestModule>::publish_scan_progress(
-        &client,
-        "sinex.test.progress".to_string(),
-        &progress,
-    )
-    .await
-    .expect_err("oversized control payloads must fail scan progress honestly");
+    let error =
+        RuntimeRunner::publish_scan_progress(&client, "sinex.test.progress".to_string(), &progress)
+            .await
+            .expect_err("oversized control payloads must fail scan progress honestly");
 
     let message = error.to_string();
     assert!(message.contains("Failed to publish scan progress update"));
@@ -209,10 +202,9 @@ async fn finish_replay_forwarder_surfaces_forwarder_error() -> TestResult<()> {
         ))
     });
 
-    let outcome =
-        RuntimeRunner::<RuntimeTestModule>::finish_replay_forwarder(handle, emitted_counter)
-            .await
-            .expect_err("forwarder failures must fail the dispatched scan honestly");
+    let outcome = RuntimeRunner::finish_replay_forwarder(handle, emitted_counter)
+        .await
+        .expect_err("forwarder failures must fail the dispatched scan honestly");
 
     assert_eq!(outcome.events_emitted, 7);
     assert!(
@@ -232,10 +224,9 @@ async fn finish_replay_forwarder_surfaces_join_error() -> TestResult<()> {
         panic!("forwarder panic");
     });
 
-    let outcome =
-        RuntimeRunner::<RuntimeTestModule>::finish_replay_forwarder(handle, emitted_counter)
-            .await
-            .expect_err("forwarder panics must fail the dispatched scan honestly");
+    let outcome = RuntimeRunner::finish_replay_forwarder(handle, emitted_counter)
+        .await
+        .expect_err("forwarder panics must fail the dispatched scan honestly");
 
     assert_eq!(outcome.events_emitted, 3);
     assert!(
@@ -601,13 +592,10 @@ async fn process_batch_with_dlq_fallback_propagates_checkpoint_errors(
         anchor_payload_hash: None,
     };
 
-    let error = RuntimeRunner::<CheckpointErrorBatchModule>::process_batch_with_dlq_fallback(
-        &mut module,
-        &transport,
-        vec![event],
-    )
-    .await
-    .expect_err("checkpoint error must propagate, not be DLQ-fallback'd");
+    let error =
+        RuntimeRunner::process_batch_with_dlq_fallback(&mut module, &transport, vec![event])
+            .await
+            .expect_err("checkpoint error must propagate, not be DLQ-fallback'd");
 
     // The error must remain a Checkpoint variant — the runtime supervisor
     // matches on this to halt the consumer instead of advancing.
@@ -660,13 +648,10 @@ async fn process_batch_with_dlq_fallback_fails_when_dlq_route_fails(
         anchor_payload_hash: None,
     };
 
-    let error = RuntimeRunner::<FailingBatchModule>::process_batch_with_dlq_fallback(
-        &mut module,
-        &transport,
-        vec![event],
-    )
-    .await
-    .expect_err("failed DLQ routing must stop checkpoint advancement");
+    let error =
+        RuntimeRunner::process_batch_with_dlq_fallback(&mut module, &transport, vec![event])
+            .await
+            .expect_err("failed DLQ routing must stop checkpoint advancement");
 
     let message = format!("{error:#}");
     assert!(
@@ -698,7 +683,7 @@ async fn load_bridge_checkpoint_state_surfaces_corrupt_kv(ctx: TestContext) -> T
     kv.put(&key, b"{ definitely not valid json".as_slice().into())
         .await?;
 
-    let error = RuntimeRunner::<RuntimeTestModule>::load_bridge_checkpoint_state(&manager)
+    let error = RuntimeRunner::load_bridge_checkpoint_state(&manager)
         .await
         .expect_err("corrupt bridge checkpoint state must surface");
     let message = format!("{error:#}");

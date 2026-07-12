@@ -1,4 +1,4 @@
-//! Automaton runtime loop for `RuntimeRunner<T>`.
+//! Automaton runtime loop for `RuntimeRunner`.
 //!
 //! Runs the automaton continuous mode entry point, drives leader-standby
 //! coordination over the NATS coordination KV, and operates the
@@ -8,11 +8,11 @@
 use super::{
     Arc, CONFIRMED_EVENT_CHANNEL_CAPACITY, Checkpoint, Event, JetStreamEventConsumer,
     JetStreamEventConsumerConfig, JsonValue, LeaderState, ProcessingModel,
-    RunnerConfirmedEventHandler, RuntimeModule, RuntimeResult, RuntimeRunner, ScanArgs, SinexError,
-    TimeHorizon, Uuid, debug, info, mpsc, systemd_notify, warn,
+    RunnerConfirmedEventHandler, RuntimeResult, RuntimeRunner, ScanArgs, SinexError, TimeHorizon,
+    Uuid, debug, info, mpsc, systemd_notify, warn,
 };
 
-impl<T: RuntimeModule + 'static> RuntimeRunner<T> {
+impl RuntimeRunner {
     /// Run automaton in continuous mode
     #[cfg(feature = "messaging")]
     pub(super) async fn run_automaton_continuous_mode(&mut self) -> RuntimeResult<()> {
@@ -366,9 +366,12 @@ impl<T: RuntimeModule + 'static> RuntimeRunner<T> {
                         .and_then(|event| event.id)
                         .map(|id| *id.as_uuid());
 
-                    let batch_count =
-                        Self::process_batch_with_dlq_fallback(&mut self.module, &transport, events)
-                            .await?;
+                    let batch_count = Self::process_batch_with_dlq_fallback(
+                        self.module.as_mut(),
+                        &transport,
+                        events,
+                    )
+                    .await?;
 
                     processed_events += batch_count;
                     events_since_checkpoint += batch_count;
