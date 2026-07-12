@@ -156,9 +156,112 @@ let
       echo "NATS JetStream ready after ''${waited}s; continuing stream bootstrap" >&2
     fi
   '';
-  namespacedStreams = map
-    (stream: stream // {
-      name = prefixStreamName stream.name;
+  # Canonical Sinex JetStream topology. Kept in lockstep with the Rust bootstrap
+  # (crate/sinexd/src/event_engine/jetstream_consumer/bootstrap.rs,
+  # crate/sinexd/src/runtime/jetstream_streams.rs): this attrset is what actually
+  # provisions streams when SINEX_NATS_STREAMS_MANAGED_EXTERNALLY=true skips the
+  # Rust-side bootstrap entirely. It is shipped as a mkDefault-priority definition
+  # of bootstrapStreams.streams (see config below) so downstream flakes express
+  # only genuine per-field DELTAS (e.g. a host's maxBytes=null natscli workaround)
+  # and inherit every other field — and any stream ADDED here automatically flows
+  # into every downstream deployment instead of silently missing until sinexd
+  # refuses to serve (sinex-dffy: the 2026-07-09 mkForce whole-list-shadow outage).
+  # A value that silently diverges here (retention/discard especially) is a live
+  # prod-vs-dev topology drift, not a cosmetic one.
+  defaultBootstrapStreams = {
+    # ── Activity lane ──────────────────────────────────────────────
+    SINEX_RAW_EVENTS = {
+      subjects = [ "events.raw.>" ];
+      retention = "work"; # matches raw_events_stream_config: RetentionPolicy::WorkQueue
+      maxAge = "72h"; # matches Duration::from_secs(72 * 60 * 60) for the Activity lane
+      maxMsgs = 2000000;
+      maxBytes = natsCliMaxBytes;
+      discard = "old";
+    };
+    SINEX_RAW_EVENTS_CONFIRMED = {
+      subjects = [ "events.confirmed.>" ];
+      maxAge = "72h";
+      maxMsgs = 2000000;
+      maxBytes = natsCliMaxBytes;
+      # discard:old is load-bearing (sinex-9u4): this is a bounded delivery
+      # bus over already-Postgres-durable events, never an archive. Must
+      # never reject a publish — see the `discard` option doc below.
+      discard = "old";
+    };
+    SOURCE_MATERIAL = {
+      subjects = [ "source_material.frames.>" ];
+      retention = "work";
+      maxAge = "72h";
+      maxBytes = natsCliMaxBytes;
+    };
+    SINEX_RAW_EVENTS_DLQ = {
+      subjects = [ "events.dlq.>" ];
+      maxAge = "72h"; # matches diagnostic_stream_max_age(Activity) — was 168h, a real drift
+      maxBytes = natsCliMaxBytes;
+      dupeWindow = "1h"; # matches DLQ_DUPLICATE_WINDOW
+      allowDirect = true;
+      discard = "new";
+    };
+    SINEX_RAW_EVENTS_PROCESSING_FAILURES = {
+      subjects = [ "events.processing_failures.>" ];
+      maxAge = "72h"; # matches diagnostic_stream_max_age(Activity) — was 168h, a real drift
+      maxBytes = natsCliMaxBytes;
+      dupeWindow = "1h"; # matches DLQ_DUPLICATE_WINDOW (shared by both diagnostic streams)
+      allowDirect = true;
+      discard = "new";
+    };
+    SINEX_RAW_EVENTS_DERIVED_INVALIDATIONS = {
+      subjects = [ "sinex.derived.invalidation" ];
+      maxAge = "24h";
+      maxBytes = natsCliMaxBytes;
+    };
+    # ── Reflection lane ────────────────────────────────────────────
+    # Self-observation streams: sinexd starts a reflection-lane consumer
+    # unconditionally (crate/sinexd/src/event_engine/service.rs), so prod
+    # must provision these too or it starts without streams the runtime
+    # consumes. Byte caps mirror REFLECTION_STREAM_MAX_BYTES (256MiB) and
+    # REFLECTION_DIAGNOSTIC_MAX_BYTES (64MiB); every reflection stream uses
+    # the 24h retention bootstrap.rs applies uniformly to that lane.
+    SINEX_REFLECTION_EVENTS = {
+      subjects = [ "events.reflection.raw.>" ];
+      retention = "work";
+      maxAge = "24h";
+      maxMsgs = 2000000;
+      maxBytes = "268435456"; # 256 MiB
+      discard = "old";
+    };
+    SINEX_REFLECTION_EVENTS_CONFIRMED = {
+      subjects = [ "events.reflection.confirmed.>" ];
+      maxAge = "24h";
+      maxMsgs = 2000000;
+      maxBytes = "268435456"; # 256 MiB
+      discard = "old";
+    };
+    SINEX_REFLECTION_EVENTS_DLQ = {
+      subjects = [ "events.reflection.dlq.>" ];
+      maxAge = "24h";
+      maxBytes = "67108864"; # 64 MiB
+      dupeWindow = "1h";
+      allowDirect = true;
+      discard = "new";
+    };
+    SINEX_REFLECTION_EVENTS_PROCESSING_FAILURES = {
+      subjects = [ "events.reflection.processing_failures.>" ];
+      maxAge = "24h";
+      maxBytes = "67108864"; # 64 MiB
+      dupeWindow = "1h";
+      allowDirect = true;
+      discard = "new";
+    };
+    SINEX_REFLECTION_EVENTS_DERIVED_INVALIDATIONS = {
+      subjects = [ "sinex.reflection.derived.invalidation" ];
+      maxAge = "24h";
+      maxBytes = natsCliMaxBytes;
+    };
+  };
+  namespacedStreams = lib.mapAttrsToList
+    (streamName: stream: stream // {
+      name = prefixStreamName streamName;
       subjects = map prefixSubject stream.subjects;
     })
     cfg.bootstrapStreams.streams;
@@ -415,12 +518,8 @@ in
       };
 
       streams = mkOption {
-        type = listOf (submodule {
+        type = attrsOf (submodule {
           options = {
-            name = mkOption {
-              type = str;
-              description = "Logical stream name before environment namespacing.";
-            };
             subjects = mkOption {
               type = listOf str;
               description = "Subjects attached to the stream before environment namespacing.";
@@ -480,122 +579,46 @@ in
             };
           };
         });
-        # sinex-bor: values below are kept in lockstep with the Rust bootstrap
-        # (crate/sinexd/src/event_engine/jetstream_consumer/bootstrap.rs,
-        # crate/sinexd/src/runtime/jetstream_streams.rs) since this list is what
-        # actually provisions streams when SINEX_NATS_STREAMS_MANAGED_EXTERNALLY=true
-        # skips the Rust-side bootstrap entirely — a value that silently diverges
-        # here (retention/discard especially) is a live prod-vs-dev topology drift,
-        # not a cosmetic one. The reflection lane previously had ZERO coverage here
-        # even though sinexd starts both lane consumers unconditionally.
-        default = [
-          # ── Activity lane ──────────────────────────────────────────────
+        # The canonical topology is defined in config below as
+        # `bootstrapStreams.streams = mkDefault defaultBootstrapStreams`, keyed
+        # by logical stream name, so downstream flakes deep-merge per-field
+        # DELTAS through the ordinary NixOS module system (attrsOf submodule)
+        # rather than replacing the whole list with mkForce (sinex-dffy). The
+        # default here is the empty attrset only so the option is well-defined
+        # when the module is imported but bootstrapStreams is disabled.
+        default = { };
+        example = literalExpression ''
           {
-            name = "SINEX_RAW_EVENTS";
-            subjects = [ "events.raw.>" ];
-            retention = "work"; # matches raw_events_stream_config: RetentionPolicy::WorkQueue
-            maxAge = "72h"; # matches Duration::from_secs(72 * 60 * 60) for the Activity lane
-            maxMsgs = 2000000;
-            maxBytes = natsCliMaxBytes;
-            discard = "old";
+            # inherit every field of sinex's SINEX_RAW_EVENTS default, override one:
+            SINEX_RAW_EVENTS.maxBytes = null; # natscli 32-bit --max-bytes ceiling workaround
+            # add a host-local stream not in sinex's canonical topology:
+            MY_HOST_STREAM = { subjects = [ "my.subject.>" ]; maxAge = "24h"; };
           }
-          {
-            name = "SINEX_RAW_EVENTS_CONFIRMED";
-            subjects = [ "events.confirmed.>" ];
-            maxAge = "72h";
-            maxMsgs = 2000000;
-            maxBytes = natsCliMaxBytes;
-            # discard:old is load-bearing (sinex-9u4): this is a bounded delivery
-            # bus over already-Postgres-durable events, never an archive. Must
-            # never reject a publish — see the `discard` option doc above.
-            discard = "old";
-          }
-          {
-            name = "SOURCE_MATERIAL";
-            subjects = [ "source_material.frames.>" ];
-            retention = "work";
-            maxAge = "72h";
-            maxBytes = natsCliMaxBytes;
-          }
-          {
-            name = "SINEX_RAW_EVENTS_DLQ";
-            subjects = [ "events.dlq.>" ];
-            maxAge = "72h"; # matches diagnostic_stream_max_age(Activity) — was 168h, a real drift
-            maxBytes = natsCliMaxBytes;
-            dupeWindow = "1h"; # matches DLQ_DUPLICATE_WINDOW
-            allowDirect = true;
-            discard = "new";
-          }
-          {
-            name = "SINEX_RAW_EVENTS_PROCESSING_FAILURES";
-            subjects = [ "events.processing_failures.>" ];
-            maxAge = "72h"; # matches diagnostic_stream_max_age(Activity) — was 168h, a real drift
-            maxBytes = natsCliMaxBytes;
-            dupeWindow = "1h"; # matches DLQ_DUPLICATE_WINDOW (shared by both diagnostic streams)
-            allowDirect = true;
-            discard = "new";
-          }
-          {
-            name = "SINEX_RAW_EVENTS_DERIVED_INVALIDATIONS";
-            subjects = [ "sinex.derived.invalidation" ];
-            maxAge = "24h";
-            maxBytes = natsCliMaxBytes;
-          }
-          # ── Reflection lane ────────────────────────────────────────────
-          # Self-observation streams: sinexd starts a reflection-lane consumer
-          # unconditionally (crate/sinexd/src/event_engine/service.rs), so prod
-          # must provision these too or it starts without streams the runtime
-          # consumes. Byte caps mirror REFLECTION_STREAM_MAX_BYTES (256MiB) and
-          # REFLECTION_DIAGNOSTIC_MAX_BYTES (64MiB); every reflection stream uses
-          # the 24h retention bootstrap.rs applies uniformly to that lane.
-          {
-            name = "SINEX_REFLECTION_EVENTS";
-            subjects = [ "events.reflection.raw.>" ];
-            retention = "work";
-            maxAge = "24h";
-            maxMsgs = 2000000;
-            maxBytes = "268435456"; # 256 MiB
-            discard = "old";
-          }
-          {
-            name = "SINEX_REFLECTION_EVENTS_CONFIRMED";
-            subjects = [ "events.reflection.confirmed.>" ];
-            maxAge = "24h";
-            maxMsgs = 2000000;
-            maxBytes = "268435456"; # 256 MiB
-            discard = "old";
-          }
-          {
-            name = "SINEX_REFLECTION_EVENTS_DLQ";
-            subjects = [ "events.reflection.dlq.>" ];
-            maxAge = "24h";
-            maxBytes = "67108864"; # 64 MiB
-            dupeWindow = "1h";
-            allowDirect = true;
-            discard = "new";
-          }
-          {
-            name = "SINEX_REFLECTION_EVENTS_PROCESSING_FAILURES";
-            subjects = [ "events.reflection.processing_failures.>" ];
-            maxAge = "24h";
-            maxBytes = "67108864"; # 64 MiB
-            dupeWindow = "1h";
-            allowDirect = true;
-            discard = "new";
-          }
-          {
-            name = "SINEX_REFLECTION_EVENTS_DERIVED_INVALIDATIONS";
-            subjects = [ "sinex.reflection.derived.invalidation" ];
-            maxAge = "24h";
-            maxBytes = natsCliMaxBytes;
-          }
-        ];
-        description = "Stream definitions to bootstrap when bootstrapStreams.enable is true.";
+        '';
+        description = ''
+          Stream definitions to bootstrap when bootstrapStreams.enable is true,
+          keyed by logical stream name (before environment namespacing). Sinex's
+          canonical topology is merged in at mkDefault priority; downstream
+          deployments override individual named streams field-by-field and
+          inherit everything else, so a stream added to sinex's defaults flows
+          into every deployment automatically instead of silently missing.
+        '';
       };
     };
   };
 
   config = mkIf (cfg.enable || cfg.autoSetup) {
+    # Ship the canonical topology with every field at mkDefault priority so
+    # downstream flakes override individual streams field-by-field (attrsOf
+    # submodule per-field merge) and inherit the rest — see
+    # defaultBootstrapStreams above (sinex-dffy). mkDefault must wrap each LEAF,
+    # not the whole attrset: a mkDefault on the whole set would be discarded
+    # entirely the moment a downstream defines any stream (priority filtering
+    # happens before the attrset merge), which would drop every canonical
+    # stream the downstream did not re-declare — the original bug in a new hat.
+    services.sinex.nats.bootstrapStreams.streams =
+      mapAttrs (_: mapAttrs (_: mkDefault)) defaultBootstrapStreams;
+
     assertions = [
       {
         assertion = !(cfg.bootstrapStreams.enable && natsCli == null);
