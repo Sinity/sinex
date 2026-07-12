@@ -1,6 +1,7 @@
 //! Derived output type for synthetic events.
 
 use sinex_primitives::Uuid;
+use sinex_primitives::derivation::{ClaimSupport, DerivationDeclarationId, DerivedProductClass};
 use sinex_primitives::domain::SyntheticTemporalPolicy;
 use sinex_primitives::temporal::Timestamp;
 
@@ -78,6 +79,42 @@ pub struct DerivedOutput<T> {
     /// `MultiOutputTransducer` to emit events of different types from
     /// a single processing call.
     pub event_type: Option<&'static str>,
+
+    /// Derivation control-plane declaration this output claims to satisfy
+    /// (sinex-0vx.2). When `Some`, the adapter looks up
+    /// `Automaton::OUTPUT_DECLARATIONS` for a matching `declaration_id` and
+    /// rejects the output if none exists, or if `product_class` /
+    /// the resolved `(output_source, output_event_type)` disagree with the
+    /// declaration. `None` is accepted unconditionally during the
+    /// transition period before sinex-0vx.3 stamps every call site —
+    /// automata that have not been migrated yet emit exactly as before.
+    pub declaration_id: Option<DerivationDeclarationId>,
+
+    /// Product class this output claims (sinex-0vx.2). Must match the
+    /// looked-up declaration's `product_class` when `declaration_id` is
+    /// `Some`. Not yet persisted to `core.events` — the wire column and
+    /// `Event` struct field land in sinex-8cr.2; this stage validates at
+    /// the adapter boundary only.
+    pub product_class: Option<DerivedProductClass>,
+
+    /// Claim-support vector this output claims (sinex-0vx.2). If its
+    /// adjudication status is `Accepted`/`Rejected`/`Superseded`, the
+    /// adapter rejects the output unless `ClaimSupport::adjudication_event_id`
+    /// is set — re-asserting `ClaimSupport::is_shape_valid()` at the
+    /// emission boundary as a defense against any construction path that
+    /// bypasses the compile-time constructors. Not yet persisted; see
+    /// `product_class` doc above.
+    pub claim_support: Option<ClaimSupport>,
+
+    /// Non-canonical lane epoch this output was produced under (sinex-0vx.2).
+    /// `None` means the implicit canonical epoch for `declaration_id`'s
+    /// current `semantics_version` — the hot live path stays lookup-free.
+    /// Only shadow/experiment/replay-into-lane runs stamp this explicitly.
+    pub derivation_epoch_id: Option<Uuid>,
+
+    /// Non-canonical lane this output was produced under (sinex-0vx.2).
+    /// `None` means the implicit canonical lane. See `derivation_epoch_id`.
+    pub derivation_lane_id: Option<Uuid>,
 }
 
 impl<T> DerivedOutput<T> {
@@ -93,6 +130,11 @@ impl<T> DerivedOutput<T> {
             equivalence_key: None,
             aggregation: None,
             event_type: None,
+            declaration_id: None,
+            product_class: None,
+            claim_support: None,
+            derivation_epoch_id: None,
+            derivation_lane_id: None,
         }
     }
 
@@ -116,6 +158,11 @@ impl<T> DerivedOutput<T> {
             equivalence_key: None,
             aggregation: None,
             event_type: None,
+            declaration_id: None,
+            product_class: None,
+            claim_support: None,
+            derivation_epoch_id: None,
+            derivation_lane_id: None,
         }
     }
 
@@ -135,6 +182,11 @@ impl<T> DerivedOutput<T> {
             equivalence_key: None,
             aggregation: None,
             event_type: None,
+            declaration_id: None,
+            product_class: None,
+            claim_support: None,
+            derivation_epoch_id: None,
+            derivation_lane_id: None,
         }
     }
 
@@ -155,6 +207,11 @@ impl<T> DerivedOutput<T> {
             equivalence_key: None,
             aggregation: None,
             event_type: None,
+            declaration_id: None,
+            product_class: None,
+            claim_support: None,
+            derivation_epoch_id: None,
+            derivation_lane_id: None,
         }
     }
 
@@ -200,6 +257,46 @@ impl<T> DerivedOutput<T> {
     #[must_use]
     pub fn with_aggregation(mut self, aggregation: DerivedAggregationMeta) -> Self {
         self.aggregation = Some(aggregation);
+        self
+    }
+
+    /// Claim a derivation control-plane declaration for this output
+    /// (sinex-0vx.2). The adapter rejects the output at emission time if no
+    /// declaration with this id exists on `Automaton::OUTPUT_DECLARATIONS`.
+    #[must_use]
+    pub fn with_declaration_id(mut self, declaration_id: DerivationDeclarationId) -> Self {
+        self.declaration_id = Some(declaration_id);
+        self
+    }
+
+    /// Set the product class this output claims (sinex-0vx.2). Must match
+    /// the declaration named by `with_declaration_id` when both are set.
+    #[must_use]
+    pub fn with_product_class(mut self, product_class: DerivedProductClass) -> Self {
+        self.product_class = Some(product_class);
+        self
+    }
+
+    /// Attach the claim-support vector for this output (sinex-0vx.2).
+    #[must_use]
+    pub fn with_claim_support(mut self, claim_support: ClaimSupport) -> Self {
+        self.claim_support = Some(claim_support);
+        self
+    }
+
+    /// Stamp the non-canonical lane epoch this output was produced under
+    /// (sinex-0vx.2). Leave unset for the canonical live path.
+    #[must_use]
+    pub fn with_derivation_epoch_id(mut self, epoch_id: Uuid) -> Self {
+        self.derivation_epoch_id = Some(epoch_id);
+        self
+    }
+
+    /// Stamp the non-canonical lane this output was produced under
+    /// (sinex-0vx.2). Leave unset for the canonical live path.
+    #[must_use]
+    pub fn with_derivation_lane_id(mut self, lane_id: Uuid) -> Self {
+        self.derivation_lane_id = Some(lane_id);
         self
     }
 }
