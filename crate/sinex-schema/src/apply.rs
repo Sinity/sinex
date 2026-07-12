@@ -52,10 +52,11 @@ const EVENTS_REQUIRED_INDEXES: &[&str] = &[
     "ix_events_sinex_metric_gauge_latest",
     "ix_events_module_run_synthesis_latest",
     "ix_events_module_run_material_latest",
-    // Load-bearing for admission dedup (`event_engine/admission.rs`
-    // `exists_with_equivalence_key`). Without it a dropped index degrades the
-    // dedup lookup to a sequential scan on the hypertable and `apply::diff`
-    // never reports the loss (#2196 Finding 2).
+    // Load-bearing for admission occurrence dedup/supersession
+    // (`event_engine/admission.rs`, via
+    // `EventRepository::find_live_by_equivalence_key`). Without it a dropped
+    // index degrades the lookup to a sequential scan on the hypertable and
+    // `apply::diff` never reports the loss (#2196 Finding 2).
     "ix_events_equivalence_key",
     // Partial index backing self-telemetry queries (created by
     // `configure_timescaledb`). Listed here so drift detection covers it.

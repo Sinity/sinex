@@ -9,6 +9,46 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::OnceLock;
 
+/// How admission reconciles a fresh interpretation against an existing live
+/// event that shares its occurrence identity (`equivalence_key`).
+///
+/// Declared per payload type via `#[event_payload(revision_policy = "...")]`
+/// so the choice is a typed, registry-level property of the event contract —
+/// never an ad-hoc string match scattered across admission call sites.
+///
+/// The distinction is load-bearing: occurrence-stable equivalence keys
+/// (sinex-ecy) make every legitimate revision of an interval/window/session
+/// re-arrive with the SAME key. Under [`Self::SuppressDuplicate`] admission
+/// silently discards those revisions; [`Self::SupersedeOnChange`] instead
+/// archives the stale interpretation and admits the new one when the content
+/// actually changed (sinex-n9a — the two beads only work together).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum RevisionPolicy {
+    /// A live event already carrying this occurrence's `equivalence_key`
+    /// suppresses the new interpretation unconditionally. The exact
+    /// pre-n9a behavior, and the default for every payload type.
+    #[default]
+    SuppressDuplicate,
+    /// A live event with the same `equivalence_key` is compared by content
+    /// hash: identical content still suppresses (idempotent re-emit), but
+    /// changed content archives the live row and admits the revision.
+    SupersedeOnChange,
+}
+
+impl RevisionPolicy {
+    /// Parse the `revision_policy` attribute spelling emitted by the
+    /// `#[derive(EventPayload)]` macro. Kept here (not in the macro crate) so
+    /// the accepted spellings live next to the enum they map to.
+    #[must_use]
+    pub fn from_attr(value: &str) -> Option<Self> {
+        match value {
+            "suppress_duplicate" => Some(Self::SuppressDuplicate),
+            "supersede_on_change" => Some(Self::SupersedeOnChange),
+            _ => None,
+        }
+    }
+}
+
 /// Information about a payload type collected by the inventory registry.
 ///
 /// This struct holds metadata for a single registered `EventPayload` type,
@@ -24,10 +64,38 @@ pub struct PayloadInfo {
     pub version: &'static str,
     /// Function that generates the JSON schema for this payload
     pub schema_fn: fn() -> Result<Value>,
+    /// Admission revision policy for events of this type (see
+    /// [`RevisionPolicy`]). Defaults to [`RevisionPolicy::SuppressDuplicate`]
+    /// unless the payload opts into supersession.
+    pub revision_policy: RevisionPolicy,
 }
 
 // Register PayloadInfo for inventory collection
 inventory::collect!(PayloadInfo);
+
+static REVISION_POLICY_CACHE: OnceLock<HashMap<&'static str, RevisionPolicy>> = OnceLock::new();
+
+/// Resolve the [`RevisionPolicy`] for an event type string.
+///
+/// Built once from the inventory of registered payloads and cached. Event
+/// types with no registered payload (dynamic/escape-hatch events) and any
+/// type that did not opt in resolve to [`RevisionPolicy::SuppressDuplicate`],
+/// so admission behavior is unchanged for everything that does not explicitly
+/// declare `revision_policy = "supersede_on_change"`.
+#[must_use]
+pub fn revision_policy_for_event_type(event_type: &str) -> RevisionPolicy {
+    REVISION_POLICY_CACHE
+        .get_or_init(|| {
+            // Only carry non-default entries; the accessor defaults the rest.
+            get_all_payloads()
+                .filter(|payload| payload.revision_policy != RevisionPolicy::SuppressDuplicate)
+                .map(|payload| (payload.event_type, payload.revision_policy))
+                .collect()
+        })
+        .get(event_type)
+        .copied()
+        .unwrap_or_default()
+}
 
 static ALL_SCHEMAS_CACHE: OnceLock<HashMap<(String, String, String), Value>> = OnceLock::new();
 static ALL_SCHEMA_BUNDLE_CACHE: OnceLock<SchemaBundle> = OnceLock::new();

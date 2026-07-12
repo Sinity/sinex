@@ -4,6 +4,8 @@ use std::sync::atomic::Ordering;
 
 use super::dlq::DLQ_RETRY_DELAY;
 use super::*;
+use crate::runtime::automaton::DerivedScopeInvalidation;
+use sinex_primitives::events::Event;
 
 impl JetStreamConsumer {
     #[cfg(test)]
@@ -50,6 +52,41 @@ impl JetStreamConsumer {
                         message: msg.clone(),
                         settlement: Arc::clone(&settlement),
                     });
+                }
+                AdmissionDecision::Superseded {
+                    admitted,
+                    superseded_event_id,
+                } => {
+                    // sinex-n9a: the candidate carries an occurrence key whose
+                    // live row changed. Archive the predecessor BEFORE the new
+                    // interpretation is persisted (single-live-interpretation
+                    // upheld across this prepare→persist boundary) and fire the
+                    // descendant scope invalidation. If the archive fails we
+                    // fall back to suppression rather than admit a second live
+                    // row for the same occurrence — the revision re-arrives on
+                    // the next re-emit (occurrence keys are stable) or replay.
+                    if self
+                        .apply_supersession(superseded_event_id, &admitted.event)
+                        .await
+                    {
+                        self.record_admission_supersession().await;
+                        prepared.push(PreparedEvent {
+                            event: admitted.event,
+                            parsed_id: admitted.event_id,
+                            message: msg.clone(),
+                            settlement: Arc::clone(&settlement),
+                        });
+                    } else {
+                        let rejection = AdmissionRejection {
+                            kind: AdmissionRejectionKind::OccurrenceDuplicate,
+                            reason: format!(
+                                "supersession archive of {superseded_event_id} failed; \
+                                 kept existing live interpretation and suppressed this revision"
+                            ),
+                        };
+                        self.record_admission_suppression(&rejection).await;
+                        settlement.settle_child(ChildOutcome::Safe).await?;
+                    }
                 }
                 AdmissionDecision::Suppressed(rejection) => {
                     self.record_admission_suppression(&rejection).await;
@@ -360,6 +397,141 @@ impl JetStreamConsumer {
                     &error,
                 );
             }
+        }
+    }
+
+    /// Apply an occurrence supersession (sinex-n9a): archive the prior live
+    /// interpretation and fire a descendant scope invalidation, so the
+    /// candidate revision can replace it.
+    ///
+    /// Returns `true` when the predecessor was archived (the caller then
+    /// prepares the candidate for persistence), `false` when the archive
+    /// failed (the caller suppresses the candidate to preserve
+    /// single-live-interpretation). The archive commits in its own
+    /// transaction; the candidate is inserted later in the persist phase, so
+    /// there is a brief window where the occurrence has no live row — a crash
+    /// there self-heals on redelivery (the archived predecessor is gone, so
+    /// re-admission inserts the revision fresh; no duplicate is ever created).
+    ///
+    /// Invalidation publishing is fail-open: a publish failure only means
+    /// descendants reconcile a beat later (on the next re-emit or replay), so
+    /// it never blocks the supersession or the persist path — matching replay's
+    /// compensating-invalidation tolerance and the "never block admission on a
+    /// NATS publish" contract.
+    pub(super) async fn apply_supersession(
+        &self,
+        superseded_event_id: Uuid,
+        candidate: &Event<JsonValue>,
+    ) -> bool {
+        // Fresh audit-correlation id for this single-row supersession archive.
+        let operation_id = Uuid::now_v7();
+        match self
+            .pool
+            .events()
+            .execute_cascade_archive(
+                &[superseded_event_id],
+                "occurrence supersession (sinex-n9a): live interpretation replaced by a changed re-emit",
+                &operation_id.to_string(),
+                "admission:supersede",
+            )
+            .await
+        {
+            Ok(_) => {
+                self.publish_supersession_invalidation(superseded_event_id, candidate, operation_id)
+                    .await;
+                true
+            }
+            Err(error) => {
+                warn!(
+                    superseded_event_id = %superseded_event_id,
+                    event_type = %candidate.event_type,
+                    error = %error,
+                    "supersession archive failed; keeping existing live interpretation and suppressing this revision"
+                );
+                false
+            }
+        }
+    }
+
+    /// Publish the `Replaced` scope invalidation for a superseded event so
+    /// scope-based/windowed automata recompute their derived descendants.
+    /// Fail-open: any error is logged and swallowed (see
+    /// [`Self::apply_supersession`]).
+    async fn publish_supersession_invalidation(
+        &self,
+        superseded_event_id: Uuid,
+        candidate: &Event<JsonValue>,
+        operation_id: Uuid,
+    ) {
+        let invalidation = DerivedScopeInvalidation::replaced(
+            vec![superseded_event_id],
+            candidate.source.clone(),
+            candidate.event_type.clone(),
+        )
+        .with_operation(operation_id);
+
+        let subject = self.topology.invalidation_subject.to_string();
+        let payload = match serde_json::to_vec(&invalidation) {
+            Ok(payload) => payload,
+            Err(error) => {
+                warn!(
+                    superseded_event_id = %superseded_event_id,
+                    error = %error,
+                    "failed to serialize supersession scope invalidation; descendants reconcile on next re-emit/replay"
+                );
+                return;
+            }
+        };
+
+        if let Err(error) = ensure_nats_payload_fits("supersession invalidation", &subject, payload.len())
+        {
+            warn!(
+                superseded_event_id = %superseded_event_id,
+                error = %error,
+                "supersession scope invalidation exceeds NATS payload limit; skipping publish"
+            );
+            return;
+        }
+
+        let mut headers = async_nats::HeaderMap::new();
+        transport::insert_transport_class_headers(&mut headers, transport::Class::Invalidation);
+
+        if let Err(error) = self
+            .js
+            .publish_with_headers(subject, headers, payload.into())
+            .await
+        {
+            warn!(
+                superseded_event_id = %superseded_event_id,
+                event_type = %candidate.event_type,
+                error = %error,
+                "failed to publish supersession scope invalidation; descendants reconcile on next re-emit/replay"
+            );
+        }
+    }
+
+    /// Record telemetry for an admitted occurrence supersession (sinex-n9a),
+    /// kept distinct from suppression counters so a revision that replaced a
+    /// predecessor is separately visible from an ordinary duplicate drop.
+    pub(super) async fn record_admission_supersession(&self) {
+        self.stats.supersessions.fetch_add(1, Ordering::Relaxed);
+
+        tracing::debug!(
+            target: "sinex_metrics",
+            metric = "event_engine.admission_supersessions_total",
+            "Occurrence revision admitted via supersession"
+        );
+
+        if let Some(ref observer) = self.observer
+            && let Err(error) = observer
+                .emit_counter("event_engine.admission_supersessions_total", 1, None)
+                .await
+        {
+            Self::log_observer_error(
+                &self.stats,
+                "event_engine.admission_supersessions_total",
+                &error,
+            );
         }
     }
 

@@ -52,6 +52,7 @@ mod persistence;
 pub mod queries;
 
 pub use conversions::{EventRecordExt, records_to_events};
+pub use queries::LiveEquivalenceRow;
 pub use persistence::{
     BatchViolation, COPY_BATCH_THRESHOLD, CascadeSource, EventAnnotation, EventPayloadSchema,
     EventRepository, EventRepositoryTx, EventStorageLane, InvalidPayloadEvent, InvalidTimestamp,

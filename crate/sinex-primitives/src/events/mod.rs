@@ -8,6 +8,7 @@
 
 pub mod admission;
 pub mod builder;
+pub mod content_hash;
 pub mod enums;
 pub mod identity_keys;
 pub mod occurrence;
@@ -17,6 +18,7 @@ pub mod schema_registry;
 
 pub use admission::*;
 pub use builder::*;
+pub use content_hash::payload_content_hash;
 pub use identity_keys::{EquivalenceKey, ScopeKey};
 pub use occurrence::MaterialOccurrenceKey;
 pub use payload::*;
