@@ -8,7 +8,7 @@
 use crate::event_engine::validator::{IngestEventValidator, ValidationResult};
 use crate::event_engine::{EventEngineResult, SinexError};
 use sinex_db::DbPool;
-use sinex_db::repositories::{DbPoolExt, EventStorageLane, StreamBatchRow};
+use sinex_db::repositories::{DbPoolExt, EventStorageLane, LiveEquivalenceRow, StreamBatchRow};
 use sinex_primitives::admission_policy::{
     AdmissionOutcome, AdmissionOutcomeReason, AdmissionOutcomeRef,
     STANDARD_EVENT_ADMISSION_POLICY_ID,
@@ -18,9 +18,10 @@ use sinex_primitives::error::SinexErrorKind;
 use sinex_primitives::event_contracts::find_event_contract_for_pair;
 use sinex_primitives::events::admission::{ACCEPTED_ENVELOPE_VERSIONS, EventIntent};
 use sinex_primitives::events::builder::{EventId, Provenance};
-use sinex_primitives::events::{EquivalenceKey, Event, ScopeKey};
+use sinex_primitives::events::schema_registry::{RevisionPolicy, revision_policy_for_event_type};
+use sinex_primitives::events::{EquivalenceKey, Event, ScopeKey, payload_content_hash};
 use sinex_primitives::{Id, JsonValue, Timestamp, Uuid, strip_postgres_jsonb_nul_chars};
-use std::collections::{HashSet, VecDeque};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use tokio::sync::{Mutex, RwLock};
@@ -111,12 +112,62 @@ impl CandidateEvent {
     }
 }
 
+/// How an incoming event's occurrence `equivalence_key` reconciles against the
+/// current live table. Internal to admission — the public surface is
+/// [`AdmissionDecision`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum EquivalenceOutcome {
+    /// No key, or no live row shares it — admit as a fresh interpretation.
+    Fresh,
+    /// A live row shares the key and policy says drop this interpretation
+    /// (a `SuppressDuplicate` type, or an unchanged `SupersedeOnChange` re-emit).
+    Suppress,
+    /// A live row shares the key, the type is `SupersedeOnChange`, and the
+    /// content changed — archive `superseded_event_id` and admit this revision.
+    Supersede { superseded_event_id: Uuid },
+}
+
+/// Decide the [`EquivalenceOutcome`] for a candidate that collided with an
+/// existing live row on its `equivalence_key`, per the event type's
+/// [`RevisionPolicy`]. Shared by the direct and batch admission paths so the
+/// revision decision lives in exactly one place.
+fn classify_live_match(
+    candidate: &Event<JsonValue>,
+    live: &LiveEquivalenceRow,
+) -> EquivalenceOutcome {
+    match revision_policy_for_event_type(candidate.event_type.as_str()) {
+        RevisionPolicy::SuppressDuplicate => EquivalenceOutcome::Suppress,
+        RevisionPolicy::SupersedeOnChange => {
+            if payload_content_hash(&candidate.payload) == payload_content_hash(&live.payload) {
+                // Identical re-emit of the same occurrence: idempotent, suppress.
+                EquivalenceOutcome::Suppress
+            } else {
+                EquivalenceOutcome::Supersede {
+                    superseded_event_id: live.id,
+                }
+            }
+        }
+    }
+}
+
 /// Result of attempting to admit a candidate event.
 #[derive(Debug)]
 pub enum AdmissionDecision {
     Admitted(AdmittedEvent),
     Transformed(AdmittedEvent),
     Suppressed(AdmissionRejection),
+    /// The candidate carries an occurrence `equivalence_key` whose live row
+    /// has *changed* content, and the event type opted into
+    /// [`RevisionPolicy::SupersedeOnChange`]. The candidate is admitted; the
+    /// consumer must first archive `superseded_event_id` (upholding
+    /// single-live-interpretation) and fire a descendant scope invalidation
+    /// before persisting the new interpretation. Kept distinct from
+    /// `Admitted` so telemetry and (future, sinex-r6d.11) receipt states can
+    /// tell a fresh insert apart from a revision that replaced a predecessor.
+    Superseded {
+        admitted: AdmittedEvent,
+        superseded_event_id: Uuid,
+    },
     QuarantineNeeded(AdmissionRejection),
     Rejected(AdmissionRejection),
 }
@@ -131,7 +182,13 @@ impl AdmissionDecision {
     #[must_use]
     pub fn to_admission_outcome(&self) -> AdmissionOutcome {
         match self {
-            Self::Admitted(admitted) | Self::Transformed(admitted) => admitted.admitted_outcome(),
+            Self::Admitted(admitted)
+            | Self::Transformed(admitted)
+            // A supersession IS an admission of the candidate (the new
+            // interpretation becomes the live row); the distinct predecessor
+            // archival is exposed via dedicated supersession telemetry, not by
+            // demoting this outcome out of the admitted vocabulary.
+            | Self::Superseded { admitted, .. } => admitted.admitted_outcome(),
             Self::Suppressed(rejection)
                 if rejection.kind == AdmissionRejectionKind::OccurrenceDuplicate =>
             {
@@ -439,7 +496,7 @@ impl AdmissionService {
         &self,
         event: Event<JsonValue>,
     ) -> EventEngineResult<AdmissionDecision> {
-        self.admit_event_with_metadata(event, None).await
+        self.admit_event_with_metadata(event, None, None).await
     }
 
     /// Admit a staged-parser candidate with parser/source metadata.
@@ -503,37 +560,71 @@ impl AdmissionService {
             }
         }
 
-        self.admit_event_with_metadata(event, Some(metadata)).await
+        self.admit_event_with_metadata(event, Some(metadata), None)
+            .await
+    }
+
+    /// Resolve how an incoming event's occurrence `equivalence_key` reconciles
+    /// against the current live table (#1637 + sinex-n9a).
+    ///
+    /// Returns [`EquivalenceOutcome::Fresh`] for events with no key or no
+    /// live collision. When a live row shares the key, the payload's
+    /// [`RevisionPolicy`] decides: [`RevisionPolicy::SuppressDuplicate`]
+    /// always suppresses (the pre-n9a behavior), while
+    /// [`RevisionPolicy::SupersedeOnChange`] suppresses only when the content
+    /// hash matches and supersedes otherwise. Fail-open on DB error: resolve
+    /// to `Fresh` so a transient lookup failure never silently drops data
+    /// (matching the original occurrence-dedup contract).
+    async fn resolve_equivalence(&self, event: &Event<JsonValue>) -> EquivalenceOutcome {
+        let Some(key) = event.equivalence_key.as_ref() else {
+            return EquivalenceOutcome::Fresh;
+        };
+        match self.pool.events().find_live_by_equivalence_key(key).await {
+            Ok(Some(live)) => classify_live_match(event, &live),
+            Ok(None) => EquivalenceOutcome::Fresh,
+            Err(e) => {
+                warn!(
+                    equivalence_key = %key,
+                    error = %e,
+                    "equivalence_key lookup failed; admitting event (fail-open)"
+                );
+                EquivalenceOutcome::Fresh
+            }
+        }
     }
 
     async fn admit_event_with_metadata(
         &self,
         mut event: Event<JsonValue>,
         metadata: Option<CandidateEventMetadata>,
+        precomputed_equivalence: Option<EquivalenceOutcome>,
     ) -> EventEngineResult<AdmissionDecision> {
-        // Occurrence suppression (#1637): if the event carries an equivalence_key and a live
-        // event with that key already exists in core.events, return Suppressed rather than
-        // admitting a duplicate.  Only sources that use OccurrenceIdentity::Uuid5From ever
-        // populate equivalence_key, so the check is gated entirely on the field being Some.
-        // Fail-open on DB errors: admit the event so we never silently drop data.
-        if let Some(key) = &event.equivalence_key {
-            match self.pool.events().exists_with_equivalence_key(key).await {
-                Ok(true) => {
-                    return Ok(AdmissionDecision::Suppressed(AdmissionRejection::new(
-                        AdmissionRejectionKind::OccurrenceDuplicate,
-                        format!("live event with equivalence_key {key} already exists"),
-                    )));
-                }
-                Ok(false) => {} // proceed
-                Err(e) => {
-                    warn!(
-                        equivalence_key = %key,
-                        error = %e,
-                        "equivalence_key existence check failed; admitting event"
-                    );
-                }
+        // Occurrence reconciliation (#1637 + sinex-n9a). A live row sharing the
+        // event's equivalence_key either suppresses this interpretation, or —
+        // for SupersedeOnChange event types whose content actually changed —
+        // marks the live row for archival so this revision can replace it.
+        // The batch pre-pass resolves this once per intent and threads the
+        // result in; direct callers resolve it here. Only sources that set an
+        // equivalence_key ever reach a non-Fresh outcome.
+        let equivalence = match precomputed_equivalence {
+            Some(outcome) => outcome,
+            None => self.resolve_equivalence(&event).await,
+        };
+        let supersede_target = match equivalence {
+            EquivalenceOutcome::Fresh => None,
+            EquivalenceOutcome::Suppress => {
+                return Ok(AdmissionDecision::Suppressed(AdmissionRejection::new(
+                    AdmissionRejectionKind::OccurrenceDuplicate,
+                    match &event.equivalence_key {
+                        Some(key) => format!("live event with equivalence_key {key} already exists"),
+                        None => "live event with equivalence_key already exists".to_string(),
+                    },
+                )));
             }
-        }
+            EquivalenceOutcome::Supersede {
+                superseded_event_id,
+            } => Some(superseded_event_id),
+        };
 
         // #1570 Prong B: material-provenance events legitimately arrive with
         // `ts_orig = None` — they defer resolution to the persistence stage,
@@ -695,11 +786,18 @@ impl AdmissionService {
             )));
         }
 
-        Ok(AdmissionDecision::Admitted(AdmittedEvent {
+        let admitted = AdmittedEvent {
             event,
             event_id,
             metadata,
-        }))
+        };
+        Ok(match supersede_target {
+            Some(superseded_event_id) => AdmissionDecision::Superseded {
+                admitted,
+                superseded_event_id,
+            },
+            None => AdmissionDecision::Admitted(admitted),
+        })
     }
 
     /// Admit a canonical event encoded as bytes from a durable transport.
@@ -824,57 +922,59 @@ impl AdmissionService {
 
         let mut decisions = Vec::with_capacity(intent.events.len());
 
-        // Batch pre-pass (#1637): collect all equivalence_keys present in this intent
-        // and check which already exist in core.events with a single round-trip. Events
-        // whose key is in the existing set are suppressed here; the remainder proceed
-        // to per-event admit_event() which handles the single-event equivalence_key check.
-        // Fail-open on DB error: fall back to per-event checks so no events are silently dropped.
+        // Batch pre-pass (#1637 + sinex-n9a): fetch every live occurrence row
+        // sharing an equivalence_key present in this intent with a single
+        // round-trip. Occurrence-stable interval sources re-emit keyed events
+        // whose key already exists on essentially every batch, so this bulk
+        // fetch (rows, not just keys) lets each event resolve its full
+        // revision decision — Fresh / Suppress / Supersede — from the map
+        // without a per-event lookup. Fail-open on DB error: an empty map
+        // makes every event resolve as Fresh (per-event resolution is skipped
+        // because it would re-hit the same unavailable DB), so no event is
+        // silently dropped.
         let equiv_keys: Vec<String> = intent
             .events
             .iter()
             .filter_map(|e| e.equivalence_key.as_ref().map(|k| k.as_str().to_owned()))
             .collect();
-        let existing_keys: HashSet<String> = if equiv_keys.is_empty() {
-            HashSet::new()
+        let live_by_key: HashMap<String, LiveEquivalenceRow> = if equiv_keys.is_empty() {
+            HashMap::new()
         } else {
             match self
                 .pool
                 .events()
-                .filter_existing_equivalence_keys(&equiv_keys)
+                .find_live_by_equivalence_keys(&equiv_keys)
                 .await
             {
-                Ok(keys) => keys.into_iter().collect(),
+                Ok(rows) => rows
+                    .into_iter()
+                    .map(|row| (row.equivalence_key.clone(), row))
+                    .collect(),
                 Err(e) => {
                     warn!(
                         error = %e,
                         equiv_key_count = equiv_keys.len(),
-                        "batch equivalence_key pre-pass failed; falling back to per-event check"
+                        "batch equivalence_key pre-pass failed; admitting this batch fresh (fail-open)"
                     );
-                    HashSet::new()
+                    HashMap::new()
                 }
             }
         };
 
         for event in intent.events {
-            // Check if this event's equivalence_key was pre-identified as a duplicate.
-            // The map() call resolves the borrow before the else-branch moves `event`.
-            let suppressed = event
+            // Resolve this event's occurrence outcome from the pre-fetched map
+            // (borrow released before `event` is moved into admit).
+            let outcome = event
                 .equivalence_key
                 .as_deref()
-                .filter(|k| existing_keys.contains(*k))
-                .map(|k| {
-                    AdmissionDecision::Suppressed(AdmissionRejection::new(
-                        AdmissionRejectionKind::OccurrenceDuplicate,
-                        format!(
-                            "live event with equivalence_key {k} already exists (batch pre-pass)"
-                        ),
-                    ))
+                .and_then(|key| live_by_key.get(key))
+                .map_or(EquivalenceOutcome::Fresh, |live| {
+                    classify_live_match(&event, live)
                 });
-            if let Some(decision) = suppressed {
-                decisions.push(decision);
-            } else {
-                decisions.push(self.admit_event(event).await?);
-            }
+            decisions.push(
+                self.admit_event_with_metadata(event, None, Some(outcome))
+                    .await?,
+            );
         }
         Ok(decisions)
     }

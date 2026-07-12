@@ -12,6 +12,11 @@ pub(super) struct ConsumerStats {
     pub(super) suspicious_past_ts_orig: AtomicU64,
     pub(super) negative_anchor_byte: AtomicU64,
     pub(super) validation_failures: AtomicU64,
+    /// Occurrence revisions admitted via supersession (sinex-n9a): a
+    /// changed-content re-emit that archived the prior live interpretation.
+    /// Distinct from `validation_failures` (which counts plain suppressions)
+    /// so supersession is separately visible from ordinary duplicate drops.
+    pub(super) supersessions: AtomicU64,
     pub(super) tombstoned_events_rejected: AtomicU64,
     pub(super) dlq_routed: AtomicU64,
     pub(super) confirmation_durability_gaps: AtomicU64,
@@ -31,6 +36,7 @@ impl ConsumerStats {
             suspicious_past_ts_orig = self.suspicious_past_ts_orig.load(Ordering::Relaxed),
             negative_anchor_byte = self.negative_anchor_byte.load(Ordering::Relaxed),
             validation_failures = self.validation_failures.load(Ordering::Relaxed),
+            supersessions = self.supersessions.load(Ordering::Relaxed),
             tombstoned_events_rejected = self.tombstoned_events_rejected.load(Ordering::Relaxed),
             nats_errors = self.nats_errors.load(Ordering::Relaxed),
             dlq_routed = self.dlq_routed.load(Ordering::Relaxed),
