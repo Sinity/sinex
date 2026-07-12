@@ -912,23 +912,30 @@ in
                 };
                 poolMaxConnections = mkOption {
                   type = nullOr positive;
-                  default = null;
-                  defaultText = literalExpression "config.services.sinex.database.connectionPool.maxConnections";
+                  default = 16;
                   description = ''
-                    sinex-d4qg: override the API's own database connection
-                    pool size, distinct from the shared per-service default
-                    (database.connectionPool.maxConnections) used uniformly
-                    by the event engine and every automaton. Null means "use
-                    the shared default" (the pre-existing behavior). A
-                    single long-lived transaction on the API's small shared
+                    sinex-d4qg: the API's own database connection pool size,
+                    kept distinct from the shared per-service default
+                    (database.connectionPool.maxConnections, currently 4)
+                    that is applied uniformly to the event engine and every
+                    automaton. A single long-lived transaction on the API's
                     pool -- e.g. a large replay preview's cascade-expansion
-                    query -- can hold a connection long enough to starve
-                    routine API traffic (even periodic telemetry sampling)
-                    sharing that same tiny pool; a separate, larger value
-                    here fixes that without inflating every other service's
-                    pool too. When set, this value's contribution is also
-                    reflected in the computed Postgres max_connections (see
-                    database.nix's computedMaxConnections).
+                    query, which is intrinsically one connection held for the
+                    graph traversal's whole duration -- can hold a connection
+                    long enough to starve routine API traffic (even periodic
+                    telemetry sampling) sharing that same tiny pool. The
+                    default here is 16 rather than the shared 4: it matches
+                    sinex's own Rust-level PoolConfig::default()
+                    (crate/sinex-db/src/pool.rs), i.e. the value the shared
+                    per-service knob otherwise clamps the API back down to.
+                    The API is the only service with a bursty + long-running-
+                    transaction workload, so it -- and only it -- gets the
+                    larger pool by default; the event engine and automata
+                    stay on the tight shared default. This value's
+                    contribution is reflected once in the computed Postgres
+                    max_connections (see database.nix's computedMaxConnections
+                    and apiConnections). Set to null to make the API fall
+                    back to the shared per-service default instead.
                   '';
                 };
                 tlsCertFile = mkOption {
