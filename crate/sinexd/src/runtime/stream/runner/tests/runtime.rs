@@ -1,4 +1,4 @@
-//! Runtime-side `RuntimeRunner<T>` tests: drain bridge under live traffic,
+//! Runtime-side `RuntimeRunner` tests: drain bridge under live traffic,
 //! signal/watch shutdown channel behaviour, leader-standby coordination,
 //! resubscribing listener retries, and shutdown error collapse.
 

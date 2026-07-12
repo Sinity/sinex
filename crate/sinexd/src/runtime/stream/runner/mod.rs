@@ -1,4 +1,4 @@
-//! `RuntimeRunner<T>` and its associated lifecycle/runtime helpers.
+//! `RuntimeRunner` and its associated lifecycle/runtime helpers.
 //!
 //! This is the long-lived runtime kernel of stream modules. Keeping it isolated
 //! from wire types, listener plumbing, and control-message helpers makes the

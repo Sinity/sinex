@@ -1,4 +1,4 @@
-//! Shutdown sequence for `RuntimeRunner<T>`.
+//! Shutdown sequence for `RuntimeRunner`.
 //!
 //! Hosts the public `shutdown` entry point and its supporting helpers
 //! (`shutdown_task`, `shutdown_leader_state`, `shutdown_event_batcher`).

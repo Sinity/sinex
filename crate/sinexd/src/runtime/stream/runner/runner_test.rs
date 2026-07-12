@@ -1,4 +1,4 @@
-//! Tests for `RuntimeRunner<T>` private control-plane and runtime helpers.
+//! Tests for `RuntimeRunner` private control-plane and runtime helpers.
 //! Inline because they cover items that are not exposed beyond the runner module.
 
 // Inline because these cover private control-plane encoding helpers.

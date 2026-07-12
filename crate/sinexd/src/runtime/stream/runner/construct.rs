@@ -1,4 +1,4 @@
-//! Constructors and simple accessors for `RuntimeRunner<T>`.
+//! Constructors and simple accessors for `RuntimeRunner`.
 //!
 //! Holds the runner constructors (`new`, `new_with_factory`) and the
 //! cheap accessors (`lifecycle`, `module_kind`, `runtime_state`) plus the two

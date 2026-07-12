@@ -1,4 +1,4 @@
-//! Replay-worker dispatch helpers for `RuntimeRunner<T>`.
+//! Replay-worker dispatch helpers for `RuntimeRunner`.
 //!
 //! These helpers run an isolated replay worker for a `SourceScanCommand`
 //! received over the command listener: spawn a fresh module instance with

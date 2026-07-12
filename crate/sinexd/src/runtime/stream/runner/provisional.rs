@@ -1,4 +1,4 @@
-//! Bridge checkpoint loading for `RuntimeRunner<T>`.
+//! Bridge checkpoint loading for `RuntimeRunner`.
 //!
 //! With the confirmed-delivery redesign (#2187 / #2202, "Option C") automata
 //! receive the full post-redaction `Event<JsonValue>` directly from the

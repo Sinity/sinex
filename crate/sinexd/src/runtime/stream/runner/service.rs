@@ -1,4 +1,4 @@
-//! `run_scan` and `run_service` for `RuntimeRunner<T>`.
+//! `run_scan` and `run_service` for `RuntimeRunner`.
 //!
 //! These are the two top-level entry points: a one-shot scan operation
 //! (snapshot/historical/continuous) and the long-running service-mode loop

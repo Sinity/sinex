@@ -1,4 +1,4 @@
-//! Control-plane message helpers for `RuntimeRunner<T>`.
+//! Control-plane message helpers for `RuntimeRunner`.
 //!
 //! Hosts the static helpers that build, sign, and publish control-plane NATS
 //! messages: scan acknowledgements, scan progress, drain completion signals,

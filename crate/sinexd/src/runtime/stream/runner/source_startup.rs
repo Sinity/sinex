@@ -1,4 +1,4 @@
-//! Source startup sequence for `RuntimeRunner<T>`.
+//! Source startup sequence for `RuntimeRunner`.
 //!
 //! Drives the snapshot -> gap-fill -> continuous transition for source
 //! modules, including drain awareness and checkpoint persistence between

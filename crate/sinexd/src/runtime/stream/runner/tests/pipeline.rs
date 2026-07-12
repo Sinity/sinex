@@ -1,4 +1,4 @@
-//! Pipeline-side `RuntimeRunner<T>` tests: control-plane encoding, scan ack,
+//! Pipeline-side `RuntimeRunner` tests: control-plane encoding, scan ack,
 //! drain orchestration, replay forwarder, provisional resolution, source
 //! startup, and DLQ fallback paths.
 

@@ -1,4 +1,4 @@
-//! `initialize_with_transport` for `RuntimeRunner<T>`.
+//! `initialize_with_transport` for `RuntimeRunner`.
 //!
 //! The module initialization sequence: lifecycle gate, transport wiring,
 //! checkpoint manager bootstrap, schema/checkpoint listeners, leader election

@@ -1,4 +1,4 @@
-//! Automaton runtime loop for `RuntimeRunner<T>`.
+//! Automaton runtime loop for `RuntimeRunner`.
 //!
 //! Runs the automaton continuous mode entry point, drives leader-standby
 //! coordination over the NATS coordination KV, and operates the

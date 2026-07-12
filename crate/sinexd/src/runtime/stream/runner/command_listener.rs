@@ -1,4 +1,4 @@
-//! `start_command_listener` for `RuntimeRunner<T>`.
+//! `start_command_listener` for `RuntimeRunner`.
 //!
 //! Subscribes to `sinex.control.sources.<module_name>.scan` and dispatches
 //! incoming `SourceScanCommand`s to isolated replay workers. Only compiled

@@ -1,4 +1,4 @@
-//! Batch processing helpers for `RuntimeRunner<T>`.
+//! Batch processing helpers for `RuntimeRunner`.
 //!
 //! Hosts the per-batch automaton processing path: batch dispatch with
 //! per-event DLQ fallback if the batch fails, and the checkpoint-save
