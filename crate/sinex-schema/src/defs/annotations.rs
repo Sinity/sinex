@@ -320,14 +320,16 @@ impl EventAnnotations {
                     .not_null()
                     .default(Expr::current_timestamp()),
             )
-            // No declarative FK to core.events(id): TimescaleDB does not allow
-            // hypertables as FK targets (timescale/timescaledb#865), so any
-            // `FOREIGN KEY (event_id) REFERENCES core.events(id)` declaration
-            // is silently absent after apply. Cascade-on-event-delete is
-            // enforced by the `core.fn_archive_before_delete` trigger
-            // (see crate/sinex-schema/src/schema/events.rs), which
-            // archives + deletes matching annotation rows in the same
-            // transaction as the parent event delete.
+            // No declarative FK to core.events(id): an inbound FK to the events
+            // hypertable blocks columnstore compression of its chunks ("found a FK
+            // into a chunk while truncating"), silently defeating the compression
+            // policy on the whole hypertable (sinex-h8no). (Older TimescaleDB
+            // rejected hypertable FK targets outright, timescale/timescaledb#865;
+            // current versions accept them, which is what makes the inbound FK
+            // actively harmful rather than merely ignored.) Cascade-on-event-delete
+            // is enforced by the `core.fn_archive_before_delete` trigger (see
+            // defs/events.rs), which archives + deletes matching annotation rows in
+            // the same transaction as the parent event delete.
             .to_owned()
     }
 

@@ -872,6 +872,52 @@ async fn check_hypertable_settings(pool: &PgPool) -> Result<Vec<StrictDrift>, Ap
         drifts.push(drift);
     }
 
+    // Compression (columnstore) policy MUST exist on core.events. Without it the
+    // hypertable never compresses and grows unbounded (sinex-h8no: 98GB in 7
+    // uncompressed chunks). `apply::configure_timescaledb` installs a 7-day policy.
+    let compression_policy_count: i64 = sqlx::query_scalar(
+        r"
+        SELECT count(*)::bigint
+        FROM timescaledb_information.jobs
+        WHERE proc_name = 'policy_compression'
+          AND hypertable_schema = 'core'
+          AND hypertable_name = 'events'
+        ",
+    )
+    .fetch_one(pool)
+    .await
+    .map_err(ApplyError::from)?;
+
+    if let Some(drift) = hypertable_compression_policy_drift(compression_policy_count) {
+        drifts.push(drift);
+    }
+
+    // No table may hold an inbound FK referencing core.events. TimescaleDB cannot
+    // compress a chunk that is the target of a foreign key, so any such FK silently
+    // disables the compression policy above (sinex-h8no). The referenced-side
+    // cascade is enforced by the core.fn_archive_before_delete trigger instead.
+    // to_regclass (not a ::regclass cast, which RAISES on a missing relation)
+    // keeps strict-diff runnable against a partially-initialized database: when
+    // core.events is absent, to_regclass returns NULL, `confrelid = NULL` matches
+    // nothing, and the missing hypertable is already reported by the chunk
+    // interval check above.
+    let inbound_fks: Vec<(String,)> = sqlx::query_as(
+        r"
+        SELECT con.conrelid::regclass::text AS referencing_table
+        FROM pg_constraint con
+        WHERE con.contype = 'f'
+          AND con.confrelid = to_regclass('core.events')
+        ORDER BY referencing_table
+        ",
+    )
+    .fetch_all(pool)
+    .await
+    .map_err(ApplyError::from)?;
+
+    if let Some(drift) = hypertable_inbound_fk_drift(&inbound_fks) {
+        drifts.push(drift);
+    }
+
     Ok(drifts)
 }
 
@@ -911,6 +957,31 @@ fn hypertable_retention_policy_drift(retention_count: i64) -> Option<StrictDrift
         location: "core.events::retention_policy".to_string(),
         declared_summary: "no retention policy".to_string(),
         observed_summary: format!("{retention_count} retention policy job(s) present"),
+    })
+}
+
+fn hypertable_compression_policy_drift(compression_policy_count: i64) -> Option<StrictDrift> {
+    (compression_policy_count == 0).then(|| StrictDrift {
+        category: DriftCategory::HypertableSetting,
+        location: "core.events::compression_policy".to_string(),
+        declared_summary: "one columnstore compression policy".to_string(),
+        observed_summary: "no compression policy job present".to_string(),
+    })
+}
+
+fn hypertable_inbound_fk_drift(inbound_fks: &[(String,)]) -> Option<StrictDrift> {
+    (!inbound_fks.is_empty()).then(|| {
+        let tables = inbound_fks
+            .iter()
+            .map(|(t,)| t.as_str())
+            .collect::<Vec<_>>()
+            .join(", ");
+        StrictDrift {
+            category: DriftCategory::HypertableSetting,
+            location: "core.events::inbound_foreign_keys".to_string(),
+            declared_summary: "no inbound FK references (would block compression)".to_string(),
+            observed_summary: format!("inbound FK(s) from: {tables}"),
+        }
     })
 }
 
