@@ -6,7 +6,8 @@ mod support;
 use async_nats::jetstream;
 use serde_json::json;
 use sinex_db::DbPoolExt;
-use sinex_primitives::events::payloads::StateIntervalPayload;
+use sinex_primitives::activity::ActivitySourceKind;
+use sinex_primitives::events::payloads::{ActivityDailySummaryPayload, StateIntervalPayload};
 use sinex_primitives::{Timestamp, Uuid, error::SinexError, temporal};
 use sinexd::event_engine::material_ready_set::MaterialReadySet;
 use sinexd::event_engine::validator::IngestEventValidator;
@@ -964,6 +965,179 @@ async fn supersede_on_change_archives_predecessor_and_admits_revision(
         confirmed_payload["id"],
         revision_id.to_string(),
         "the revision must reach the confirmed-events stream for derived consumers"
+    );
+
+    setup.handle.abort();
+    Ok(())
+}
+
+/// A schema-valid `activity.summary.daily` payload (a `SupersedeOnChange`
+/// event type as of sinex-74yj). `event_count` is the content knob varied
+/// between calls: two calls with the same value are byte-for-byte identical
+/// content, differing values are a genuine content change (as a
+/// post-supersession rollup recompute for the same day bucket would
+/// produce).
+fn n74yj_daily_summary_payload(ts: Timestamp, day_id: &str, event_count: u64) -> serde_json::Value {
+    serde_json::to_value(ActivityDailySummaryPayload {
+        day_id: day_id.to_string(),
+        day_start: ts,
+        day_end: ts,
+        duration_secs: 3600,
+        hour_count: 1,
+        window_count: 1,
+        event_count,
+        source_count: 1,
+        sources: vec!["test-source".to_string()],
+        top_sources: vec!["test-source".to_string()],
+        source_window_counts: BTreeMap::new(),
+        activity_sources: vec![ActivitySourceKind::Window],
+        activity_source_counts: BTreeMap::new(),
+        focus_time_secs_by_source: BTreeMap::new(),
+        primary_source: ActivitySourceKind::Window,
+    })
+    .expect("activity.summary.daily payload serializes")
+}
+
+/// sinex-74yj end-to-end repro: the daily rollup automaton emits
+/// `activity.summary.daily` with an occurrence-stable equivalence key
+/// (`day_id`, floor-of-day bucket start — see `daily.rs`). Before this bead
+/// the payload type defaulted to `RevisionPolicy::SuppressDuplicate`, so a
+/// post-supersession recompute for the same day bucket with changed
+/// aggregate content (e.g. a superseded upstream interval/window/session)
+/// was silently discarded, leaving the stored rollup stale forever — the
+/// exact ecy-without-n9a failure mode one layer up. It must now supersede,
+/// archiving the stale predecessor and admitting the revision as the sole
+/// live row for the occurrence — all through the real consumer pipeline
+/// (JetStream → admission → archive → persist), not a direct
+/// `AdmissionService` call.
+#[sinex_test]
+async fn daily_summary_supersede_on_change_archives_predecessor_and_admits_revision(
+    ctx: TestContext,
+) -> TestResult<()> {
+    let ctx = ctx.with_nats().shared().await?;
+
+    let setup = start_isolated_consumer(&ctx, "74yj-daily-supersession").await?;
+    let nats_client = ctx.nats_client();
+    let day_id = "activity-day-74yj-consumer".to_string();
+    let equivalence_key = day_id.clone();
+    let ts = temporal::now();
+
+    let live_id = publish_event(
+        &ctx.pool,
+        &nats_client,
+        &setup.namespace,
+        "derived.daily-summarizer",
+        "activity.summary.daily",
+        n74yj_daily_summary_payload(ts, &day_id, 10),
+        EventOverrides {
+            equivalence_key: Some(equivalence_key.clone()),
+            ..Default::default()
+        },
+    )
+    .await?;
+    WaitHelpers::wait_for_event_id(&ctx.pool, live_id.into(), Timeouts::SHORT).await?;
+
+    // Recomputed totals for the SAME day bucket, SAME occurrence key: must
+    // supersede rather than suppress.
+    let revision_id = publish_event(
+        &ctx.pool,
+        &nats_client,
+        &setup.namespace,
+        "derived.daily-summarizer",
+        "activity.summary.daily",
+        n74yj_daily_summary_payload(ts, &day_id, 42),
+        EventOverrides {
+            equivalence_key: Some(equivalence_key.clone()),
+            ..Default::default()
+        },
+    )
+    .await?;
+    WaitHelpers::wait_for_event_id(&ctx.pool, revision_id.into(), Timeouts::SHORT).await?;
+
+    // The stale rollup must no longer be live...
+    assert!(
+        ctx.pool.events().get_by_id(live_id.into()).await?.is_none(),
+        "superseded stale rollup must not remain live"
+    );
+    // ...but archived exactly once (single-live-interpretation upheld).
+    let archived_count: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM audit.archived_events WHERE id = $1")
+            .bind(live_id)
+            .fetch_one(&ctx.pool)
+            .await?;
+    assert_eq!(
+        archived_count, 1,
+        "superseded stale rollup must be archived exactly once"
+    );
+
+    // The revision is the sole live row for this bucket occurrence.
+    let live_now: Option<Uuid> = sqlx::query_scalar(
+        "SELECT id FROM core.events WHERE equivalence_key = $1",
+    )
+    .bind(&equivalence_key)
+    .fetch_optional(&ctx.pool)
+    .await?;
+    assert_eq!(
+        live_now,
+        Some(revision_id),
+        "the revision must be the sole live row for this rollup occurrence"
+    );
+
+    // A THIRD re-emit with identical content to the revision must suppress,
+    // not supersede -- SupersedeOnChange only fires on an actual change.
+    let repeat_id = publish_event(
+        &ctx.pool,
+        &nats_client,
+        &setup.namespace,
+        "derived.daily-summarizer",
+        "activity.summary.daily",
+        n74yj_daily_summary_payload(ts, &day_id, 42),
+        EventOverrides {
+            equivalence_key: Some(equivalence_key.clone()),
+            ..Default::default()
+        },
+    )
+    .await?;
+
+    WaitHelpers::wait_for_condition(
+        || {
+            let js = setup.js.clone();
+            let stream_name = setup.topology.events_stream.clone();
+            let consumer_name = setup.topology.consumer_durable.clone();
+            async move {
+                let stream = js
+                    .get_stream(&stream_name)
+                    .await
+                    .map_err(|error| SinexError::network(error.to_string()))?;
+                let mut consumer = stream
+                    .get_consumer::<jetstream::consumer::pull::Config>(&consumer_name)
+                    .await
+                    .map_err(|error| SinexError::network(error.to_string()))?;
+                let info = consumer
+                    .info()
+                    .await
+                    .map_err(|error| SinexError::network(error.to_string()))?;
+                Ok::<bool, SinexError>(info.num_pending == 0 && info.num_ack_pending == 0)
+            }
+        },
+        Timeouts::SHORT,
+    )
+    .await?;
+
+    assert!(
+        ctx.pool.events().get_by_id(repeat_id.into()).await?.is_none(),
+        "identical-content re-emit must be suppressed, never persisted"
+    );
+    let live_still: Option<Uuid> = sqlx::query_scalar(
+        "SELECT id FROM core.events WHERE equivalence_key = $1",
+    )
+    .bind(&equivalence_key)
+    .fetch_optional(&ctx.pool)
+    .await?;
+    assert_eq!(
+        live_still,
+        Some(revision_id),
+        "identical-content re-emit must not disturb the live revision"
     );
 
     setup.handle.abort();
