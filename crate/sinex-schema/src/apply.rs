@@ -1,11 +1,14 @@
 use crate::defs::{
     ArchivedEventAnnotations, ArchivedEventEmbeddings, ArchivedEvents, ArchivedTaggedItems,
-    BinarySchemaVersion, Blobs, DocumentChunks, Documents, EmailMailboxProjection,
-    EmailProviderState, EmbeddingCache, EmbeddingModels, Entities, EntityRelations,
-    EventAnnotations, EventClusterMembers, EventClusters, EventEmbeddings, EventPayloadSchemas,
-    EventReplacements, EventTombstones, Events, Manifests, ModelEffects, OperationsLog, Runs,
-    SemanticEpochs, SemanticLaneDiffs, SemanticLaneOutputs, SemanticLanes, SourceMaterialLinks,
-    SourceMaterialRegistry, SourceSessionState, TaggedItems, Tags, TemporalLedger,
+    AuthorityFinalizerRegistry, BinarySchemaVersion, Blobs, DerivationEpochs,
+    DerivationLaneDiffs, DerivationLaneOutputs, DerivationLanes, DerivationProductDeclarations,
+    DerivationProjectionDependencies, DerivationProjectionRegistry, DocumentChunks, Documents,
+    EmailMailboxProjection, EmailProviderState, EmbeddingCache, EmbeddingModels, Entities,
+    EntityRelations, EventAnnotations, EventClusterMembers, EventClusters, EventEmbeddings,
+    EventPayloadSchemas, EventReplacements, EventTombstones, Events, Manifests, ModelEffects,
+    OperationsLog, Runs, SemanticEpochs, SemanticLaneDiffs, SemanticLaneOutputs, SemanticLanes,
+    SourceMaterialLinks, SourceMaterialRegistry, SourceSessionState, TaggedItems, Tags,
+    TemporalLedger,
 };
 use crate::registry;
 use sea_query::{IndexCreateStatement, PostgresQueryBuilder, TableCreateStatement};
@@ -26,6 +29,8 @@ const EVENTS_REQUIRED_TRIGGERS: &[&str] = &[
     "trg_events_maintain_material_event_count_insert",
     "trg_events_maintain_material_event_count_delete",
     "trg_document_projection",
+    // Derivation control plane (sinex-0vx.4 / W1).
+    "trg_events_enforce_product_declaration",
 ];
 const SOURCE_MATERIAL_REQUIRED_TRIGGERS: &[&str] = &["trg_source_material_validate_event_bounds"];
 const TEMPORAL_LEDGER_REQUIRED_TRIGGERS: &[&str] = &["trg_tl_no_update_delete"];
@@ -65,11 +70,16 @@ const EVENTS_REQUIRED_INDEXES: &[&str] = &[
     // in core.events. Reflection queries primarily read reflection.events, but
     // mixed migration support must not scan the whole activity hypertable.
     "ix_events_legacy_reflection_latest",
+    // Derivation control plane (sinex-0vx.4 / W1).
+    "ix_events_product_class",
+    "ix_events_claim_adjudication",
 ];
 const REFLECTION_EVENTS_REQUIRED_TRIGGERS: &[&str] = &[
     "trg_events_no_update",
     "trg_events_validate_material_bounds",
     "trg_events_validate_payload",
+    // Derivation control plane (sinex-0vx.4 / W1).
+    "trg_events_enforce_product_declaration",
 ];
 const ARCHIVED_EVENTS_REQUIRED_INDEXES: &[&str] = &[
     "ix_archived_events_ts_orig",
@@ -829,6 +839,13 @@ async fn create_tables(pool: &PgPool) -> Result<(), ApplyError> {
         render_table(&SourceMaterialLinks::create_table_statement()),
         render_table(&Manifests::create_table_statement()),
         render_table(&Runs::create_table_statement()),
+        // Derivation control plane (sinex-0vx.4 / W1): product_declarations,
+        // epochs, and lanes must exist before core.events — Events::
+        // create_table_statement() carries outbound FKs to all three
+        // (derivation_declaration_id/derivation_epoch_id/derivation_lane_id).
+        render_table(&DerivationProductDeclarations::create_table_statement()),
+        render_table(&DerivationEpochs::create_table_statement()),
+        render_table(&DerivationLanes::create_table_statement()),
         render_table(&Events::create_table_statement()),
         render_table(&ModelEffects::create_table_statement()),
         render_table(&BinarySchemaVersion::create_table_statement()),
@@ -839,6 +856,16 @@ async fn create_tables(pool: &PgPool) -> Result<(), ApplyError> {
         render_table(&SemanticLanes::create_table_statement()),
         render_table(&SemanticLaneOutputs::create_table_statement()),
         render_table(&SemanticLaneDiffs::create_table_statement()),
+        // Derivation control plane (sinex-0vx.4 / W1), continued — these
+        // depend on tables created above (derivation.lanes, raw.source_
+        // material_registry, derivation.product_declarations) but nothing
+        // depends on them, so ordering here (after the semantic block) is
+        // unconstrained.
+        render_table(&DerivationLaneOutputs::create_table_statement()),
+        render_table(&DerivationLaneDiffs::create_table_statement()),
+        render_table(&DerivationProjectionRegistry::create_table_statement()),
+        render_table(&DerivationProjectionDependencies::create_table_statement()),
+        render_table(&AuthorityFinalizerRegistry::create_table_statement()),
         render_table(&TaggedItems::create_table_statement()),
         render_table(&EventAnnotations::create_table_statement()),
         render_table(&EmbeddingCache::create_table_statement()),
@@ -905,6 +932,22 @@ async fn create_indexes(pool: &PgPool) -> Result<(), ApplyError> {
     index_sql.extend(render_indexes(SourceMaterialLinks::create_indexes()));
     index_sql.extend(render_indexes(Events::create_indexes()));
     index_sql.extend(Events::create_gin_indexes_sql());
+    index_sql.push(Events::create_claim_adjudication_index_sql());
+    // Derivation control plane (sinex-0vx.4 / W1): reflection.events needs the
+    // same two indexes as core.events. reflection.events is not in the
+    // ConvergibleTable/MirrorSpec engine (it converges via the hand-rolled
+    // REFLECTION_EVENTS_TABLE_SQL DO-block instead — see that constant), and
+    // CREATE TABLE ... LIKE only clones indexes existing on core.events at
+    // creation time, so these are declared explicitly rather than assumed
+    // inherited.
+    index_sql.push(
+        "CREATE INDEX IF NOT EXISTS ix_events_product_class ON reflection.events (product_class, source, event_type) WHERE product_class IS NOT NULL"
+            .to_string(),
+    );
+    index_sql.push(
+        "CREATE INDEX IF NOT EXISTS ix_events_claim_adjudication ON reflection.events ((claim_support->>'adjudication')) WHERE claim_support IS NOT NULL"
+            .to_string(),
+    );
     index_sql.extend(ArchivedEvents::create_indexes_sql());
     index_sql.extend(vec![
         format!(
@@ -938,6 +981,15 @@ async fn create_indexes(pool: &PgPool) -> Result<(), ApplyError> {
     index_sql.extend(render_indexes(SemanticLanes::create_indexes()));
     index_sql.extend(render_indexes(SemanticLaneOutputs::create_indexes()));
     index_sql.extend(render_indexes(SemanticLaneDiffs::create_indexes()));
+    index_sql.extend(render_indexes(DerivationProductDeclarations::create_indexes()));
+    index_sql.extend(render_indexes(DerivationEpochs::create_indexes()));
+    index_sql.extend(render_indexes(DerivationLanes::create_indexes()));
+    index_sql.extend(render_indexes(DerivationLaneOutputs::create_indexes()));
+    index_sql.extend(render_indexes(DerivationLaneDiffs::create_indexes()));
+    index_sql.extend(render_indexes(DerivationProjectionRegistry::create_indexes()));
+    index_sql.extend(DerivationProjectionRegistry::create_gist_indexes_sql());
+    index_sql.extend(render_indexes(DerivationProjectionDependencies::create_indexes()));
+    index_sql.extend(render_indexes(AuthorityFinalizerRegistry::create_indexes()));
     index_sql.extend(render_indexes(TaggedItems::create_indexes()));
     index_sql.extend(render_indexes(EventAnnotations::create_indexes()));
     index_sql.extend(EventAnnotations::create_gin_indexes_sql());
@@ -1080,6 +1132,28 @@ async fn create_triggers_and_functions(pool: &PgPool) -> Result<(), ApplyError> 
         "core.events",
         &["trg_document_projection"],
         DocumentChunks::create_projection_trigger_sql(),
+    )
+    .await?;
+    // Derivation control plane (sinex-0vx.4 / W1): one shared function
+    // (derivation.enforce_event_product_declaration), two triggers (one per
+    // event lane). Both calls execute the same combined SQL (function +
+    // both CREATE TRIGGER statements); checking each table's trigger
+    // existence independently means either lane missing the trigger
+    // re-applies the whole idempotent block. Load-bearing to register both —
+    // a trigger registered on only one lane silently never reconciles the
+    // other on redeploy (see Events::create_product_declaration_trigger_sql).
+    ensure_trigger_set_sql(
+        pool,
+        "core.events",
+        &["trg_events_enforce_product_declaration"],
+        Events::create_product_declaration_trigger_sql(),
+    )
+    .await?;
+    ensure_trigger_set_sql(
+        pool,
+        "reflection.events",
+        &["trg_events_enforce_product_declaration"],
+        Events::create_product_declaration_trigger_sql(),
     )
     .await?;
 
@@ -2577,6 +2651,19 @@ $$;
 const REFLECTION_EVENTS_TABLE_SQL: &str = r"
 CREATE TABLE IF NOT EXISTS reflection.events (LIKE core.events INCLUDING ALL);
 
+-- CREATE TABLE ... LIKE only copies columns at creation time. Columns added
+-- to core.events after reflection.events already existed on a given database
+-- must be explicitly propagated here (sinex-0vx.4 / W1: product_class,
+-- claim_support, derivation_declaration_id, derivation_epoch_id,
+-- derivation_lane_id, adjudication_event_id).
+ALTER TABLE reflection.events
+    ADD COLUMN IF NOT EXISTS product_class TEXT,
+    ADD COLUMN IF NOT EXISTS claim_support JSONB,
+    ADD COLUMN IF NOT EXISTS derivation_declaration_id TEXT,
+    ADD COLUMN IF NOT EXISTS derivation_epoch_id UUID,
+    ADD COLUMN IF NOT EXISTS derivation_lane_id UUID,
+    ADD COLUMN IF NOT EXISTS adjudication_event_id UUID;
+
 DO $$
 BEGIN
     IF NOT EXISTS (
@@ -2614,6 +2701,84 @@ BEGIN
             ADD CONSTRAINT reflection_events_module_run_id_fkey
             FOREIGN KEY (module_run_id)
             REFERENCES core.runs(id);
+    END IF;
+
+    -- Derivation control plane (sinex-0vx.4 / W1). No FK for
+    -- adjudication_event_id — see Events::AdjudicationEventId doc comment
+    -- (defs/events.rs): no FK into core.events/reflection.events, both
+    -- hypertables.
+    IF NOT EXISTS (
+        SELECT 1
+        FROM pg_constraint
+        WHERE conrelid = 'reflection.events'::regclass
+          AND conname = 'reflection_events_derivation_declaration_id_fkey'
+    ) THEN
+        ALTER TABLE reflection.events
+            ADD CONSTRAINT reflection_events_derivation_declaration_id_fkey
+            FOREIGN KEY (derivation_declaration_id)
+            REFERENCES derivation.product_declarations(declaration_id);
+    END IF;
+
+    IF NOT EXISTS (
+        SELECT 1
+        FROM pg_constraint
+        WHERE conrelid = 'reflection.events'::regclass
+          AND conname = 'reflection_events_derivation_epoch_id_fkey'
+    ) THEN
+        ALTER TABLE reflection.events
+            ADD CONSTRAINT reflection_events_derivation_epoch_id_fkey
+            FOREIGN KEY (derivation_epoch_id)
+            REFERENCES derivation.epochs(id)
+            ON DELETE SET NULL;
+    END IF;
+
+    IF NOT EXISTS (
+        SELECT 1
+        FROM pg_constraint
+        WHERE conrelid = 'reflection.events'::regclass
+          AND conname = 'reflection_events_derivation_lane_id_fkey'
+    ) THEN
+        ALTER TABLE reflection.events
+            ADD CONSTRAINT reflection_events_derivation_lane_id_fkey
+            FOREIGN KEY (derivation_lane_id)
+            REFERENCES derivation.lanes(id)
+            ON DELETE SET NULL;
+    END IF;
+
+    IF NOT EXISTS (
+        SELECT 1
+        FROM pg_constraint
+        WHERE conrelid = 'reflection.events'::regclass
+          AND conname = 'reflection_events_product_class_valid'
+    ) THEN
+        ALTER TABLE reflection.events
+            ADD CONSTRAINT reflection_events_product_class_valid
+            CHECK (product_class IS NULL OR product_class IN ('canonical_derived_event', 'projection_row', 'analysis_claim', 'report_artifact', 'semantic_candidate', 'operator_judgment'))
+            NOT VALID;
+    END IF;
+
+    IF NOT EXISTS (
+        SELECT 1
+        FROM pg_constraint
+        WHERE conrelid = 'reflection.events'::regclass
+          AND conname = 'reflection_events_claim_support_requires_product_class'
+    ) THEN
+        ALTER TABLE reflection.events
+            ADD CONSTRAINT reflection_events_claim_support_requires_product_class
+            CHECK (product_class IS NULL OR claim_support IS NOT NULL)
+            NOT VALID;
+    END IF;
+
+    IF NOT EXISTS (
+        SELECT 1
+        FROM pg_constraint
+        WHERE conrelid = 'reflection.events'::regclass
+          AND conname = 'reflection_events_derived_requires_product_class'
+    ) THEN
+        ALTER TABLE reflection.events
+            ADD CONSTRAINT reflection_events_derived_requires_product_class
+            CHECK (source_event_ids IS NULL OR product_class IS NOT NULL)
+            NOT VALID;
     END IF;
 END $$;
 ";

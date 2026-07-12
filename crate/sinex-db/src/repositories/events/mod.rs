@@ -40,7 +40,13 @@ macro_rules! event_select_columns {
          equivalence_key, \
          created_by_operation_id::uuid as created_by_operation_id, \
          automaton_model, \
-         ts_quality"
+         ts_quality, \
+         product_class, \
+         claim_support, \
+         derivation_declaration_id, \
+         derivation_epoch_id::uuid as derivation_epoch_id, \
+         derivation_lane_id::uuid as derivation_lane_id, \
+         adjudication_event_id::uuid as adjudication_event_id"
     };
 }
 

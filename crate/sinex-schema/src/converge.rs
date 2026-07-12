@@ -67,10 +67,13 @@ use std::collections::{HashMap, HashSet};
 
 use crate::apply::ApplyError;
 use crate::defs::{
-    Blobs, EmailMailboxProjection, EmailProviderState, EmbeddingCache, EmbeddingModels, Entities,
-    EntityRelations, EventAnnotations, EventEmbeddings, EventPayloadSchemas, Events, ModelEffects,
-    OperationsLog, SemanticEpochs, SemanticLaneDiffs, SemanticLaneOutputs, SemanticLanes,
-    SourceMaterialRegistry, SourceSessionState, TableMeta, TaggedItems, Tags,
+    AuthorityFinalizerRegistry, Blobs, DerivationEpochs, DerivationLaneDiffs,
+    DerivationLaneOutputs, DerivationLanes, DerivationProductDeclarations,
+    DerivationProjectionDependencies, DerivationProjectionRegistry, EmailMailboxProjection,
+    EmailProviderState, EmbeddingCache, EmbeddingModels, Entities, EntityRelations,
+    EventAnnotations, EventEmbeddings, EventPayloadSchemas, Events, ModelEffects, OperationsLog,
+    SemanticEpochs, SemanticLaneDiffs, SemanticLaneOutputs, SemanticLanes, SourceMaterialRegistry,
+    SourceSessionState, TableMeta, TaggedItems, Tags,
 };
 use sea_query::{
     Alias, ColumnDef, ColumnSpec, ForeignKeyCreateStatement, PostgresQueryBuilder, Table,
@@ -809,11 +812,41 @@ pub fn convergible_tables() -> Result<Vec<ConvergibleTable>, ApplyError> {
                     name: "events_semantics_version_bounds",
                     expression: "semantics_version IS NULL OR length(semantics_version) BETWEEN 1 AND 64",
                 },
+                // Derivation control plane (sinex-0vx.4 / W1).
+                NamedConstraint {
+                    name: "events_product_class_valid",
+                    expression: "product_class IS NULL OR product_class IN ('canonical_derived_event', 'projection_row', 'analysis_claim', 'report_artifact', 'semantic_candidate', 'operator_judgment')",
+                },
+                NamedConstraint {
+                    name: "events_claim_support_requires_product_class",
+                    expression: "product_class IS NULL OR claim_support IS NOT NULL",
+                },
+                NamedConstraint {
+                    name: "events_derived_requires_product_class",
+                    expression: "source_event_ids IS NULL OR product_class IS NOT NULL",
+                },
             ],
-            foreign_keys: vec![NamedForeignKey {
-                name: "events_module_run_id_fkey",
-                statement_fn: Events::create_module_run_foreign_key,
-            }],
+            foreign_keys: vec![
+                NamedForeignKey {
+                    name: "events_module_run_id_fkey",
+                    statement_fn: Events::create_module_run_foreign_key,
+                },
+                // Derivation control plane (sinex-0vx.4 / W1). No entry for
+                // adjudication_event_id — see the AdjudicationEventId variant
+                // doc comment in defs/events.rs (no FK into core.events).
+                NamedForeignKey {
+                    name: "events_derivation_declaration_id_fkey",
+                    statement_fn: Events::create_derivation_declaration_foreign_key,
+                },
+                NamedForeignKey {
+                    name: "events_derivation_epoch_id_fkey",
+                    statement_fn: Events::create_derivation_epoch_foreign_key,
+                },
+                NamedForeignKey {
+                    name: "events_derivation_lane_id_fkey",
+                    statement_fn: Events::create_derivation_lane_foreign_key,
+                },
+            ],
             // node_version was the predecessor to module_run_id.
             // occurrence_id was removed when occurrence rows were folded back
             // into material provenance identity: (source_material_id, anchor_byte).
@@ -1198,6 +1231,94 @@ pub fn convergible_tables() -> Result<Vec<ConvergibleTable>, ApplyError> {
                     expression: "attachment_count >= 0 AND attachment_observed_count >= 0",
                 },
             ],
+            foreign_keys: vec![],
+            columns_to_drop: &[],
+            mirror: None,
+        },
+        // Derivation control plane (sinex-0vx.4 / W1). All new tables — no
+        // named constraints/FKs/columns_to_drop needed yet (inline CHECKs and
+        // FKs in create_table_statement() are sufficient for brand-new
+        // tables), same minimal-registration shape as core.model_effects /
+        // core.tagged_items / core.embedding_cache / core.event_embeddings
+        // above. Registered here so future column additions to these tables
+        // auto-converge instead of needing a hand-rolled ALTER TABLE.
+        ConvergibleTable {
+            meta: find_meta("derivation.product_declarations")?,
+            statement_fn: DerivationProductDeclarations::create_table_statement,
+            column_renames: &[],
+            pending_drop: &[],
+            named_constraints: vec![],
+            foreign_keys: vec![],
+            columns_to_drop: &[],
+            mirror: None,
+        },
+        ConvergibleTable {
+            meta: find_meta("derivation.epochs")?,
+            statement_fn: DerivationEpochs::create_table_statement,
+            column_renames: &[],
+            pending_drop: &[],
+            named_constraints: vec![],
+            foreign_keys: vec![],
+            columns_to_drop: &[],
+            mirror: None,
+        },
+        ConvergibleTable {
+            meta: find_meta("derivation.lanes")?,
+            statement_fn: DerivationLanes::create_table_statement,
+            column_renames: &[],
+            pending_drop: &[],
+            named_constraints: vec![],
+            foreign_keys: vec![],
+            columns_to_drop: &[],
+            mirror: None,
+        },
+        ConvergibleTable {
+            meta: find_meta("derivation.lane_outputs")?,
+            statement_fn: DerivationLaneOutputs::create_table_statement,
+            column_renames: &[],
+            pending_drop: &[],
+            named_constraints: vec![],
+            foreign_keys: vec![],
+            columns_to_drop: &[],
+            mirror: None,
+        },
+        ConvergibleTable {
+            meta: find_meta("derivation.lane_diffs")?,
+            statement_fn: DerivationLaneDiffs::create_table_statement,
+            column_renames: &[],
+            pending_drop: &[],
+            named_constraints: vec![],
+            foreign_keys: vec![],
+            columns_to_drop: &[],
+            mirror: None,
+        },
+        ConvergibleTable {
+            meta: find_meta("derivation.projection_registry")?,
+            statement_fn: DerivationProjectionRegistry::create_table_statement,
+            column_renames: &[],
+            pending_drop: &[],
+            named_constraints: vec![],
+            foreign_keys: vec![],
+            columns_to_drop: &[],
+            mirror: None,
+        },
+        ConvergibleTable {
+            meta: find_meta("derivation.projection_dependencies")?,
+            statement_fn: DerivationProjectionDependencies::create_table_statement,
+            column_renames: &[],
+            pending_drop: &[],
+            named_constraints: vec![],
+            foreign_keys: vec![],
+            columns_to_drop: &[],
+            mirror: None,
+        },
+        // Authority finalizer registry (sinex-0vx.4 / W1).
+        ConvergibleTable {
+            meta: find_meta("authority.finalizer_registry")?,
+            statement_fn: AuthorityFinalizerRegistry::create_table_statement,
+            column_renames: &[],
+            pending_drop: &[],
+            named_constraints: vec![],
             foreign_keys: vec![],
             columns_to_drop: &[],
             mirror: None,

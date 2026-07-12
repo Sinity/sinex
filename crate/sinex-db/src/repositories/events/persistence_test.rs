@@ -63,6 +63,12 @@ fn base_record() -> EventRecord {
         created_by_operation_id: None,
         automaton_model: None,
         ts_quality: None,
+        product_class: None,
+        claim_support: None,
+        derivation_declaration_id: None,
+        derivation_epoch_id: None,
+        derivation_lane_id: None,
+        adjudication_event_id: None,
     }
 }
 
@@ -297,7 +303,7 @@ async fn copy_staging_probe_avoids_repeated_create_notice() -> Result<()> {
 /// catches that by asserting the same names appear in both. (#1575)
 #[sinex_test]
 async fn query_as_insert_columns_match_copy_contract() -> Result<()> {
-    // These are the 24 columns listed in both `insert` and `insert_with_tx`
+    // These are the 30 columns listed in both `insert` and `insert_with_tx`
     // `query_as!` sites. If those sites ever gain or lose a column, this
     // constant must be updated — which forces an explicit review of whether
     // EVENT_COPY_COLUMNS was updated too.
@@ -326,6 +332,16 @@ async fn query_as_insert_columns_match_copy_contract() -> Result<()> {
         "created_by_operation_id",
         "automaton_model",
         "anchor_payload_hash",
+        // Derivation control plane (sinex-0vx.4 / W1): explicit NULL in both
+        // query_as! sites (see the comments there) — not yet settable via
+        // this write path, but must appear in the INSERT column list to stay
+        // in lockstep with EVENT_COPY_COLUMNS (this test's whole point).
+        "product_class",
+        "claim_support",
+        "derivation_declaration_id",
+        "derivation_epoch_id",
+        "derivation_lane_id",
+        "adjudication_event_id",
     ]
     .iter()
     .map(std::string::ToString::to_string)

@@ -6,7 +6,10 @@
 //! core architectural invariants related to events and their provenance.
 
 use crate::primitives::{Timestamp, Uuid};
-use crate::{EventPayloadSchemas, Runs, SourceMaterialRegistry, TableDef};
+use crate::{
+    DerivationEpochs, DerivationLanes, DerivationProductDeclarations, EventPayloadSchemas, Runs,
+    SourceMaterialRegistry, TableDef,
+};
 use sea_query::{
     Alias, ColumnDef, ColumnType, ConditionalStatement, Expr, ForeignKey, ForeignKeyAction,
     ForeignKeyCreateStatement, Iden, Index, IndexCreateStatement, IndexOrder, IntoIden, Table,
@@ -100,6 +103,25 @@ pub enum Events {
 
     /// Quality rung of the resolved `ts_orig` (TemporalSourceType display string).
     TsQuality,
+
+    // Derivation control plane (sinex-0vx.4 / W1, nullable — only set for
+    // events that declare a DerivedProductClass). Mirrors
+    // sinex_primitives::derivation on the wire; see defs/derivation.rs.
+    ProductClass,
+    ClaimSupport,
+    DerivationDeclarationId,
+    DerivationEpochId,
+    DerivationLaneId,
+    /// Points at the `operator_judgment` event that adjudicated this row's
+    /// `claim_support`. Deliberately carries NO declarative FK to
+    /// `core.events(id)` — see the `enable_compression_sql` DROP CONSTRAINT
+    /// block in apply.rs (event_embeddings/event_cluster_members/
+    /// lane_outputs) and the `SourceEventId` comment in
+    /// `derivation::DerivationLaneOutputs::create_table_statement`: any FK
+    /// whose referenced side is `core.events` (including a self-referencing
+    /// one) blocks TimescaleDB columnstore compression of the referenced
+    /// chunk. Ref sinex-h8no.
+    AdjudicationEventId,
 }
 
 impl TableDef for Events {
@@ -164,6 +186,14 @@ pub struct EventRecord {
     /// string, e.g. `intrinsic_content` / `staged_at`). Nullable for legacy
     /// rows written before #1570 Prong B.
     pub ts_quality: Option<String>,
+
+    // Derivation control plane (sinex-0vx.4 / W1, nullable).
+    pub product_class: Option<String>,
+    pub claim_support: Option<JsonValue>,
+    pub derivation_declaration_id: Option<String>,
+    pub derivation_epoch_id: Option<Uuid>,
+    pub derivation_lane_id: Option<Uuid>,
+    pub adjudication_event_id: Option<Uuid>,
 }
 
 impl Events {
@@ -171,6 +201,17 @@ impl Events {
     #[must_use]
     pub fn create_table_statement() -> TableCreateStatement {
         let mut module_run_foreign_key = Self::create_module_run_foreign_key();
+        // Derivation control plane (sinex-0vx.4 / W1): reuse the same named
+        // statement builders for both CREATE TABLE and convergence (see
+        // converge::convergible_tables's "core.events" foreign_keys list),
+        // same idiom as module_run_foreign_key above — guarantees the fresh-
+        // database constraint name matches the one the convergence engine
+        // looks for on existing databases, rather than relying on Postgres's
+        // implicit `<table>_<column>_fkey` default-naming convention.
+        let mut derivation_declaration_foreign_key =
+            Self::create_derivation_declaration_foreign_key();
+        let mut derivation_epoch_foreign_key = Self::create_derivation_epoch_foreign_key();
+        let mut derivation_lane_foreign_key = Self::create_derivation_lane_foreign_key();
 
         Table::create()
             .table((Alias::new("core"), Events::Table))
@@ -234,6 +275,18 @@ impl Events {
             .col(ColumnDef::new(Events::TsQuality).text().check(
                 Expr::cust("ts_quality IS NULL OR ts_quality IN ('realtime_capture', 'intrinsic_content', 'inferred_mtime', 'inferred_ctime', 'inferred_user', 'staged_at')")
             ))
+            // Derivation control plane (sinex-0vx.4 / W1, nullable — only set for
+            // events that declare a DerivedProductClass). See defs/derivation.rs.
+            .col(ColumnDef::new(Events::ProductClass).text().check(
+                Expr::cust("product_class IS NULL OR product_class IN ('canonical_derived_event', 'projection_row', 'analysis_claim', 'report_artifact', 'semantic_candidate', 'operator_judgment')")
+            ))
+            .col(ColumnDef::new(Events::ClaimSupport).json_binary())
+            .col(ColumnDef::new(Events::DerivationDeclarationId).text())
+            .col(ColumnDef::new(Events::DerivationEpochId).custom(Alias::new("UUID")))
+            .col(ColumnDef::new(Events::DerivationLaneId).custom(Alias::new("UUID")))
+            // No declarative FK to core.events(id) — see the AdjudicationEventId
+            // variant doc comment above (Ref sinex-h8no).
+            .col(ColumnDef::new(Events::AdjudicationEventId).custom(Alias::new("UUID")))
             // The Provenance XOR Invariant: an event MUST have exactly one type of provenance.
             .check(
                 Expr::cust("(source_material_id IS NOT NULL AND source_event_ids IS NULL) OR (source_material_id IS NULL AND source_event_ids IS NOT NULL)")
@@ -268,6 +321,15 @@ impl Events {
             .check(Expr::cust(
                 "ts_orig <= ts_coided + INTERVAL '1 second'",
             ))
+            // Derivation control plane (sinex-0vx.4 / W1): a declared product_class
+            // must carry a claim_support vector, and any derived event (source_event_ids
+            // set) must declare a product_class — material events need not.
+            .check(Expr::cust(
+                "product_class IS NULL OR claim_support IS NOT NULL",
+            ))
+            .check(Expr::cust(
+                "source_event_ids IS NULL OR product_class IS NOT NULL",
+            ))
             .foreign_key(
                 ForeignKey::create()
                     .from(Self::table_iden(), Events::SourceMaterialId)
@@ -279,6 +341,9 @@ impl Events {
                     .to(EventPayloadSchemas::table_iden(), Alias::new("id"))
                     .on_delete(ForeignKeyAction::SetNull)
             )
+            .foreign_key(&mut derivation_declaration_foreign_key)
+            .foreign_key(&mut derivation_epoch_foreign_key)
+            .foreign_key(&mut derivation_lane_foreign_key)
             .foreign_key(&mut module_run_foreign_key)
             .to_owned()
     }
@@ -293,6 +358,47 @@ impl Events {
             .name("events_module_run_id_fkey")
             .from(Self::table_iden(), Events::ModuleRunId)
             .to(Runs::table_iden(), Alias::new("id"))
+            .to_owned()
+    }
+
+    /// Generates the named foreign key for `events.derivation_declaration_id`.
+    ///
+    /// Same late-addition convergence shape as
+    /// [`Events::create_module_run_foreign_key`]: declared inline in
+    /// `create_table_statement()` for fresh databases, and registered as a
+    /// `NamedForeignKey` in `converge::convergible_tables()` for existing
+    /// ones (sinex-0vx.4).
+    #[must_use]
+    pub fn create_derivation_declaration_foreign_key() -> ForeignKeyCreateStatement {
+        ForeignKey::create()
+            .name("events_derivation_declaration_id_fkey")
+            .from(Self::table_iden(), Events::DerivationDeclarationId)
+            .to(
+                DerivationProductDeclarations::table_iden(),
+                DerivationProductDeclarations::DeclarationId,
+            )
+            .to_owned()
+    }
+
+    /// Generates the named foreign key for `events.derivation_epoch_id`.
+    #[must_use]
+    pub fn create_derivation_epoch_foreign_key() -> ForeignKeyCreateStatement {
+        ForeignKey::create()
+            .name("events_derivation_epoch_id_fkey")
+            .from(Self::table_iden(), Events::DerivationEpochId)
+            .to(DerivationEpochs::table_iden(), DerivationEpochs::Id)
+            .on_delete(ForeignKeyAction::SetNull)
+            .to_owned()
+    }
+
+    /// Generates the named foreign key for `events.derivation_lane_id`.
+    #[must_use]
+    pub fn create_derivation_lane_foreign_key() -> ForeignKeyCreateStatement {
+        ForeignKey::create()
+            .name("events_derivation_lane_id_fkey")
+            .from(Self::table_iden(), Events::DerivationLaneId)
+            .to(DerivationLanes::table_iden(), DerivationLanes::Id)
+            .on_delete(ForeignKeyAction::SetNull)
             .to_owned()
     }
 
@@ -500,6 +606,17 @@ impl Events {
                         .and(Expr::col(Events::SourceMaterialId).is_not_null()),
                 )
                 .to_owned(),
+            // Derivation control plane (sinex-0vx.4 / W1): scoped lookup of
+            // declared-product-class rows, and adjudication-status filtering.
+            Index::create()
+                .if_not_exists()
+                .name("ix_events_product_class")
+                .table(Self::table_iden())
+                .col(Events::ProductClass)
+                .col(Events::Source)
+                .col(Events::EventType)
+                .cond_where(Expr::col(Events::ProductClass).is_not_null())
+                .to_owned(),
             // Note: GIN indexes require raw SQL - see create_gin_indexes_sql()
         ]
     }
@@ -521,6 +638,19 @@ impl Events {
                 Self::table_name()
             ),
         ]
+    }
+
+    /// Expression index on `claim_support->>'adjudication'` (sinex-0vx.4 / W1)
+    /// — sea-query's column-list `Index::create()` API cannot express a JSONB
+    /// path expression, so this is raw SQL, same reason `create_gin_indexes_sql`
+    /// is raw SQL.
+    #[must_use]
+    pub fn create_claim_adjudication_index_sql() -> String {
+        format!(
+            "CREATE INDEX IF NOT EXISTS ix_events_claim_adjudication ON {}.{} ((claim_support->>'adjudication')) WHERE claim_support IS NOT NULL",
+            Self::schema_name(),
+            Self::table_name()
+        )
     }
 
     /// Generates the trigger enforcing append-only semantics for `core.events`.
@@ -682,6 +812,77 @@ impl Events {
         CREATE TRIGGER trg_events_validate_material_bounds
         BEFORE INSERT ON core.events
         FOR EACH ROW EXECUTE FUNCTION core.fn_events_validate_material_bounds();
+        "
+    }
+
+    /// Generates the `derivation.enforce_event_product_declaration()` trigger
+    /// (sinex-0vx.4 / W1).
+    ///
+    /// Unlike the `no_update`/`validate_payload`/`validate_material_bounds`
+    /// trigger functions above (which are duplicated per-schema —
+    /// `core.fn_events_*` vs `reflection.fn_events_*` — because their bodies
+    /// reference their own table by name), this is ONE shared function in the
+    /// `derivation` schema bound by TWO triggers, one per event lane. The
+    /// returned SQL creates the function and both triggers together, so a
+    /// single `execute_sql` call is self-contained regardless of which lane
+    /// invoked it; `create_triggers_and_functions` in apply.rs calls
+    /// `ensure_trigger_set_sql` against both `core.events` and
+    /// `reflection.events` (checking each table's trigger existence
+    /// independently) so either lane missing the trigger re-applies this
+    /// whole idempotent block.
+    ///
+    /// An unreviewed `claim_support` never carries `adjudication_event_id`
+    /// (enforced at construction in `ClaimSupport::unreviewed` /
+    /// `ClaimSupport::adjudicated`), so this only checks the adjudicated
+    /// (`accepted`/`rejected`/`superseded`) states — mirrored by
+    /// `ClaimSupport::is_shape_valid` in sinex-primitives so the same
+    /// invariant is testable without a database.
+    #[must_use]
+    pub fn create_product_declaration_trigger_sql() -> &'static str {
+        r"
+        CREATE OR REPLACE FUNCTION derivation.enforce_event_product_declaration()
+        RETURNS trigger LANGUAGE plpgsql AS $$
+        BEGIN
+          IF NEW.product_class IS NULL THEN
+            RETURN NEW;
+          END IF;
+
+          IF NOT EXISTS (
+            SELECT 1 FROM derivation.product_declarations d
+            WHERE d.declaration_id = NEW.derivation_declaration_id
+              AND d.product_class = NEW.product_class
+              AND (d.output_source IS NULL OR d.output_source = NEW.source)
+              AND (d.output_event_type IS NULL OR d.output_event_type = NEW.event_type)
+          ) THEN
+            RAISE EXCEPTION
+                'undeclared product write: %.% class % declaration %',
+                NEW.source, NEW.event_type, NEW.product_class, NEW.derivation_declaration_id
+                USING ERRCODE = 'check_violation';
+          END IF;
+
+          IF NEW.claim_support->>'adjudication' IN ('accepted', 'rejected', 'superseded')
+             AND NEW.product_class <> 'operator_judgment'
+             AND NEW.adjudication_event_id IS NULL THEN
+            RAISE EXCEPTION
+                'adjudicated claim requires adjudication_event_id (source=%, event_type=%)',
+                NEW.source, NEW.event_type
+                USING ERRCODE = 'check_violation';
+          END IF;
+
+          RETURN NEW;
+        END $$;
+
+        DROP TRIGGER IF EXISTS trg_events_enforce_product_declaration ON core.events;
+        CREATE TRIGGER trg_events_enforce_product_declaration
+        BEFORE INSERT OR UPDATE OF product_class, claim_support, derivation_declaration_id, adjudication_event_id
+        ON core.events
+        FOR EACH ROW EXECUTE FUNCTION derivation.enforce_event_product_declaration();
+
+        DROP TRIGGER IF EXISTS trg_events_enforce_product_declaration ON reflection.events;
+        CREATE TRIGGER trg_events_enforce_product_declaration
+        BEFORE INSERT OR UPDATE OF product_class, claim_support, derivation_declaration_id, adjudication_event_id
+        ON reflection.events
+        FOR EACH ROW EXECUTE FUNCTION derivation.enforce_event_product_declaration();
         "
     }
 
