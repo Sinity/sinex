@@ -289,6 +289,21 @@ impl<'a> EventRepository<'a> {
         let automaton_model_str = event.automaton_model.map(|m| m.to_string());
         let ts_quality_str = event.ts_quality.map(|q| q.to_string());
 
+        // Derivation control plane (sinex-0vx.4 / sinex-8cr.2)
+        let product_class_str = event.product_class.map(|p| p.to_string());
+        let claim_support_json = event
+            .claim_support
+            .as_ref()
+            .map(serde_json::to_value)
+            .transpose()
+            .map_err(|e| {
+                SinexError::database("Failed to serialize event claim_support").with_source(e)
+            })?;
+        let derivation_declaration_id = event.derivation_declaration_id.clone();
+        let derivation_epoch_id = event.derivation_epoch_id;
+        let derivation_lane_id = event.derivation_lane_id;
+        let adjudication_event_id = event.adjudication_event_id;
+
         // Execute with retry logic
         with_retry_transaction_idempotent(
             self.pool,
@@ -313,6 +328,12 @@ impl<'a> EventRepository<'a> {
                 let equivalence_key = equivalence_key.clone();
                 let automaton_model_str = automaton_model_str.clone();
                 let ts_quality_str = ts_quality_str.clone();
+                let product_class_str = product_class_str.clone();
+                let claim_support_json = claim_support_json.clone();
+                let derivation_declaration_id = derivation_declaration_id.clone();
+                let derivation_epoch_id = derivation_epoch_id;
+                let derivation_lane_id = derivation_lane_id;
+                let adjudication_event_id = adjudication_event_id;
 
                 Box::pin(async move {
                     // Enforce REPEATABLE READ for consistent view during cycle check
@@ -404,23 +425,18 @@ impl<'a> EventRepository<'a> {
                         automaton_model_str,
                         anchor_payload_hash,
                         ts_quality_str,
-                        // Derivation control plane (sinex-0vx.4 / W1): not yet
-                        // settable via this write path — Event<T> (sinex-
-                        // primitives) carries no product_class/claim_support/
-                        // derivation_*/adjudication_event_id fields yet. Wiring
-                        // real values through is a future wave (0vx.1-3 already
-                        // landed the runtime lane without touching sinex-db;
-                        // 8cr.2/0vx.5/0vx.6 own the sinex-db/primitives side).
-                        // Explicit NULL keeps this INSERT column list — and the
-                        // query_as_insert_columns_match_copy_contract drift
-                        // guard — in lockstep with EVENT_COPY_COLUMNS (the SSOT)
-                        // without inventing functionality out of scope here.
-                        None::<String>,
-                        None::<JsonValue>,
-                        None::<String>,
-                        None::<Uuid>,
-                        None::<Uuid>,
-                        None::<Uuid>
+                        // Derivation control plane (sinex-0vx.4 / sinex-8cr.2):
+                        // real values, read off Event<T> above. derivation_epoch_id/
+                        // derivation_lane_id stay None on every live path today —
+                        // no canonical-epoch-id resolution mechanism exists yet
+                        // (0vx.5/0vx.6/0vx.7/0vx.9) — and adjudication_event_id is
+                        // set only by the future curation finalizer (0vx.5).
+                        product_class_str,
+                        claim_support_json,
+                        derivation_declaration_id,
+                        derivation_epoch_id,
+                        derivation_lane_id,
+                        adjudication_event_id
                     )
                     .fetch_one(&mut **tx)
                     .await
@@ -497,6 +513,17 @@ impl<'a> EventRepository<'a> {
         let created_by_operation_id = resolved_created_by_operation_id(&event)?;
         let automaton_model_str = event.automaton_model.map(|m| m.to_string());
         let ts_quality_str = event.ts_quality.map(|q| q.to_string());
+
+        // Derivation control plane (sinex-0vx.4 / sinex-8cr.2)
+        let product_class_str = event.product_class.map(|p| p.to_string());
+        let claim_support_json = event
+            .claim_support
+            .as_ref()
+            .map(serde_json::to_value)
+            .transpose()
+            .map_err(|e| {
+                SinexError::database("Failed to serialize event claim_support").with_source(e)
+            })?;
 
         let record = sqlx::query_as!(
             EventRecord,
@@ -578,16 +605,14 @@ impl<'a> EventRepository<'a> {
             automaton_model_str,
             anchor_payload_hash,
             ts_quality_str,
-            // Derivation control plane (sinex-0vx.4 / W1): see the matching
-            // comment in `insert` above — not yet settable via this write
-            // path, explicit NULL keeps the INSERT column list in lockstep
-            // with EVENT_COPY_COLUMNS (the SSOT).
-            None::<String>,
-            None::<JsonValue>,
-            None::<String>,
-            None::<Uuid>,
-            None::<Uuid>,
-            None::<Uuid>
+            // Derivation control plane (sinex-0vx.4 / sinex-8cr.2): see the
+            // matching comment in `insert` above.
+            product_class_str,
+            claim_support_json,
+            event.derivation_declaration_id,
+            event.derivation_epoch_id,
+            event.derivation_lane_id,
+            event.adjudication_event_id
         )
         .fetch_one(&mut **tx)
         .await
@@ -745,6 +770,12 @@ impl<'a> EventRepository<'a> {
         let mut created_by_operation_ids: Vec<Option<Uuid>> = Vec::with_capacity(events.len());
         let mut automaton_models: Vec<Option<String>> = Vec::with_capacity(events.len());
         let mut ts_qualities: Vec<Option<String>> = Vec::with_capacity(events.len());
+        let mut product_classes: Vec<Option<String>> = Vec::with_capacity(events.len());
+        let mut claim_supports: Vec<Option<JsonValue>> = Vec::with_capacity(events.len());
+        let mut derivation_declaration_ids: Vec<Option<String>> = Vec::with_capacity(events.len());
+        let mut derivation_epoch_ids: Vec<Option<Uuid>> = Vec::with_capacity(events.len());
+        let mut derivation_lane_ids: Vec<Option<Uuid>> = Vec::with_capacity(events.len());
+        let mut adjudication_event_ids: Vec<Option<Uuid>> = Vec::with_capacity(events.len());
 
         for event in &events {
             let event_id = event
@@ -808,6 +839,26 @@ impl<'a> EventRepository<'a> {
             created_by_operation_ids.push(resolved_created_by_operation_id(event)?);
             automaton_models.push(event.automaton_model.map(|m| m.to_string()));
             ts_qualities.push(event.ts_quality.map(|q| q.to_string()));
+            product_classes.push(event.product_class.map(|p| p.to_string()));
+            claim_supports.push(
+                event
+                    .claim_support
+                    .as_ref()
+                    .map(serde_json::to_value)
+                    .transpose()
+                    .map_err(|e| {
+                        db_error(
+                            sqlx::Error::Protocol(format!(
+                                "failed to serialize event claim_support: {e}"
+                            )),
+                            "insert batch",
+                        )
+                    })?,
+            );
+            derivation_declaration_ids.push(event.derivation_declaration_id.clone());
+            derivation_epoch_ids.push(event.derivation_epoch_id);
+            derivation_lane_ids.push(event.derivation_lane_id);
+            adjudication_event_ids.push(event.adjudication_event_id);
         }
 
         ensure_no_intra_batch_synthesis_cycles(&synthesis_checks)?;
@@ -840,7 +891,9 @@ impl<'a> EventRepository<'a> {
             // source_material_id, anchor_byte, offset_start, offset_end, offset_kind,
             // source_event_ids, payload_schema_id, module_run_id, anchor_payload_hash,
             // associated_blob_ids, temporal_policy, semantics_version, scope_key,
-            // equivalence_key, created_by_operation_id, automaton_model
+            // equivalence_key, created_by_operation_id, automaton_model, ts_quality,
+            // product_class, claim_support, derivation_declaration_id,
+            // derivation_epoch_id, derivation_lane_id, adjudication_event_id
             // — matches EVENT_COPY_COLUMNS order.
             b.push_bind(ids[idx]).push_unseparated("::uuid");
             b.push_bind(&sources[idx]);
@@ -871,6 +924,15 @@ impl<'a> EventRepository<'a> {
                 .push_unseparated("::uuid");
             b.push_bind(&automaton_models[idx]);
             b.push_bind(&ts_qualities[idx]);
+            b.push_bind(&product_classes[idx]);
+            b.push_bind(&claim_supports[idx]);
+            b.push_bind(&derivation_declaration_ids[idx]);
+            b.push_bind(derivation_epoch_ids[idx])
+                .push_unseparated("::uuid");
+            b.push_bind(derivation_lane_ids[idx])
+                .push_unseparated("::uuid");
+            b.push_bind(adjudication_event_ids[idx])
+                .push_unseparated("::uuid");
         });
 
         builder.build().execute(&mut **tx).await.map_err(|e| {
@@ -1081,6 +1143,17 @@ impl<'a> EventRepository<'a> {
         let created_by_op_ids: Vec<_> = batch.iter().map(|r| r.created_by_operation_id).collect();
         let automaton_models: Vec<_> = batch.iter().map(|r| r.automaton_model.clone()).collect();
         let ts_qualities: Vec<_> = batch.iter().map(|r| r.ts_quality.clone()).collect();
+        // Derivation control plane (sinex-0vx.4 / sinex-8cr.2).
+        let product_classes: Vec<_> = batch.iter().map(|r| r.product_class.clone()).collect();
+        let claim_supports: Vec<_> = batch.iter().map(|r| r.claim_support.clone()).collect();
+        let derivation_declaration_ids: Vec<_> = batch
+            .iter()
+            .map(|r| r.derivation_declaration_id.clone())
+            .collect();
+        let derivation_epoch_ids: Vec<_> = batch.iter().map(|r| r.derivation_epoch_id).collect();
+        let derivation_lane_ids: Vec<_> = batch.iter().map(|r| r.derivation_lane_id).collect();
+        let adjudication_event_ids: Vec<_> =
+            batch.iter().map(|r| r.adjudication_event_id).collect();
 
         // Build INSERT with VALUES using QueryBuilder (required for ragged arrays).
         //
@@ -1098,7 +1171,9 @@ impl<'a> EventRepository<'a> {
             // source_material_id, anchor_byte, offset_start, offset_end, offset_kind,
             // source_event_ids, payload_schema_id, module_run_id, anchor_payload_hash,
             // associated_blob_ids, temporal_policy, semantics_version, scope_key,
-            // equivalence_key, created_by_operation_id, automaton_model, ts_quality
+            // equivalence_key, created_by_operation_id, automaton_model, ts_quality,
+            // product_class, claim_support, derivation_declaration_id,
+            // derivation_epoch_id, derivation_lane_id, adjudication_event_id
             // — matches EVENT_COPY_COLUMNS order.
             b.push_bind(ids[idx]).push_unseparated("::uuid");
             b.push_bind(&sources[idx]);
@@ -1129,6 +1204,15 @@ impl<'a> EventRepository<'a> {
                 .push_unseparated("::uuid");
             b.push_bind(&automaton_models[idx]);
             b.push_bind(&ts_qualities[idx]);
+            b.push_bind(&product_classes[idx]);
+            b.push_bind(&claim_supports[idx]);
+            b.push_bind(&derivation_declaration_ids[idx]);
+            b.push_bind(derivation_epoch_ids[idx])
+                .push_unseparated("::uuid");
+            b.push_bind(derivation_lane_ids[idx])
+                .push_unseparated("::uuid");
+            b.push_bind(adjudication_event_ids[idx])
+                .push_unseparated("::uuid");
         });
 
         builder.push(" ON CONFLICT (id) DO NOTHING RETURNING id::uuid");

@@ -210,16 +210,15 @@ const EVENT_COPY_COLUMNS: [EventCopyColumn; 30] = [
         event: Events::TsQuality,
         copy_type: EventCopyColumnType::Text,
     },
-    // Derivation control plane (sinex-0vx.4 / W1). COPY-based bulk material
-    // import is not a derived-output write path (product_class is required
-    // only when source_event_ids is set — see the events_derived_requires_
-    // product_class CHECK in sinex-schema), so both ToPostgresCopy impls
-    // below write NULL unconditionally for these six columns. Wiring COPY
-    // batches to actually declare a product_class is out of scope for this
-    // bead (sinex-db COPY/batch-path waves 8cr.2/0vx.5/0vx.6); this addition
-    // is the minimal, mechanical fix required to keep verify_event_copy_
-    // contract() (and query_as_insert_columns_match_copy_contract) green
-    // after core.events gained these columns.
+    // Derivation control plane (sinex-0vx.4 / sinex-8cr.2). The COPY path is
+    // material-only (large batches never carry source_event_ids — the
+    // Derived strategy routes through execute_batch_insert instead, see
+    // stream_batch_insert_strategy), so product_class/claim_support are
+    // structurally always NULL here (material events don't declare a
+    // product class). derivation_declaration_id/derivation_epoch_id/
+    // derivation_lane_id/adjudication_event_id mirror whatever the source
+    // Event<JsonValue>/StreamBatchRow actually carries (None on every live
+    // path today — see Event::derivation_epoch_id doc comment).
     EventCopyColumn {
         event: Events::ProductClass,
         copy_type: EventCopyColumnType::Text,
@@ -580,14 +579,44 @@ impl ToPostgresCopy for Event<JsonValue> {
                 .map(std::string::ToString::to_string)
                 .as_deref(),
         )?;
-        // Derivation control plane (sinex-0vx.4 / W1): see the EVENT_COPY_COLUMNS
-        // doc comment above — COPY is not a derived-output write path yet.
-        writer.field(Events::ProductClass, None)?;
-        writer.field(Events::ClaimSupport, None)?;
-        writer.field(Events::DerivationDeclarationId, None)?;
-        writer.field(Events::DerivationEpochId, None)?;
-        writer.field(Events::DerivationLaneId, None)?;
-        writer.field(Events::AdjudicationEventId, None)?;
+        // Derivation control plane (sinex-0vx.4 / sinex-8cr.2): see the
+        // EVENT_COPY_COLUMNS doc comment above — real values, not
+        // unconditional NULL.
+        writer.field(
+            Events::ProductClass,
+            self.product_class
+                .as_ref()
+                .map(std::string::ToString::to_string)
+                .as_deref(),
+        )?;
+        let claim_support_str = self
+            .claim_support
+            .as_ref()
+            .map(serde_json::to_string)
+            .transpose()
+            .map_err(|err| {
+                Error::Protocol(format!("Failed to serialize claim_support for COPY: {err}"))
+            })?;
+        writer.field(Events::ClaimSupport, claim_support_str.as_deref())?;
+        writer.field(
+            Events::DerivationDeclarationId,
+            self.derivation_declaration_id.as_deref(),
+        )?;
+        {
+            let derivation_epoch_id_str = self.derivation_epoch_id.map(|id| id.to_string());
+            writer.field(Events::DerivationEpochId, derivation_epoch_id_str.as_deref())?;
+        }
+        {
+            let derivation_lane_id_str = self.derivation_lane_id.map(|id| id.to_string());
+            writer.field(Events::DerivationLaneId, derivation_lane_id_str.as_deref())?;
+        }
+        {
+            let adjudication_event_id_str = self.adjudication_event_id.map(|id| id.to_string());
+            writer.field(
+                Events::AdjudicationEventId,
+                adjudication_event_id_str.as_deref(),
+            )?;
+        }
 
         writer.finish()
     }
@@ -663,14 +692,38 @@ impl ToPostgresCopy for StreamBatchRow {
         }
         writer.field(Events::AutomatonModel, self.automaton_model.as_deref())?;
         writer.field(Events::TsQuality, self.ts_quality.as_deref())?;
-        // Derivation control plane (sinex-0vx.4 / W1): see the EVENT_COPY_COLUMNS
-        // doc comment above — COPY is not a derived-output write path yet.
-        writer.field(Events::ProductClass, None)?;
-        writer.field(Events::ClaimSupport, None)?;
-        writer.field(Events::DerivationDeclarationId, None)?;
-        writer.field(Events::DerivationEpochId, None)?;
-        writer.field(Events::DerivationLaneId, None)?;
-        writer.field(Events::AdjudicationEventId, None)?;
+        // Derivation control plane (sinex-0vx.4 / sinex-8cr.2): see the
+        // EVENT_COPY_COLUMNS doc comment above — real values, not
+        // unconditional NULL.
+        writer.field(Events::ProductClass, self.product_class.as_deref())?;
+        let claim_support_str = self
+            .claim_support
+            .as_ref()
+            .map(serde_json::to_string)
+            .transpose()
+            .map_err(|err| {
+                Error::Protocol(format!("Failed to serialize claim_support for COPY: {err}"))
+            })?;
+        writer.field(Events::ClaimSupport, claim_support_str.as_deref())?;
+        writer.field(
+            Events::DerivationDeclarationId,
+            self.derivation_declaration_id.as_deref(),
+        )?;
+        {
+            let derivation_epoch_id_str = self.derivation_epoch_id.map(|id| id.to_string());
+            writer.field(Events::DerivationEpochId, derivation_epoch_id_str.as_deref())?;
+        }
+        {
+            let derivation_lane_id_str = self.derivation_lane_id.map(|id| id.to_string());
+            writer.field(Events::DerivationLaneId, derivation_lane_id_str.as_deref())?;
+        }
+        {
+            let adjudication_event_id_str = self.adjudication_event_id.map(|id| id.to_string());
+            writer.field(
+                Events::AdjudicationEventId,
+                adjudication_event_id_str.as_deref(),
+            )?;
+        }
 
         writer.finish()
     }

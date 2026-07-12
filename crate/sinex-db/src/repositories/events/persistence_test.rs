@@ -1,4 +1,5 @@
 use super::*;
+use crate::repositories::DbPoolExt;
 use serde_json::json;
 use sinex_primitives::Result;
 use sinex_primitives::domain::{EventType, HostName};
@@ -30,6 +31,12 @@ fn base_stream_batch_row() -> Result<StreamBatchRow> {
         created_by_operation_id: None,
         automaton_model: None,
         ts_quality: None,
+        product_class: None,
+        claim_support: None,
+        derivation_declaration_id: None,
+        derivation_epoch_id: None,
+        derivation_lane_id: None,
+        adjudication_event_id: None,
     })
 }
 
@@ -176,6 +183,12 @@ async fn mismatched_operation_lineage_is_rejected() -> Result<()> {
         created_by_operation_id: Some(uuid::Uuid::now_v7()),
         automaton_model: None,
         anchor_payload_hash: None,
+        product_class: None,
+        claim_support: None,
+        derivation_declaration_id: None,
+        derivation_epoch_id: None,
+        derivation_lane_id: None,
+        adjudication_event_id: None,
     };
 
     let err = resolved_created_by_operation_id(&event).expect_err("should fail");
@@ -256,6 +269,12 @@ async fn derived_insert_rejects_non_live_parent(
         created_by_operation_id: None,
         automaton_model: None,
         anchor_payload_hash: None,
+        product_class: None,
+        claim_support: None,
+        derivation_declaration_id: None,
+        derivation_epoch_id: None,
+        derivation_lane_id: None,
+        adjudication_event_id: None,
     };
 
     let error = match EventRepository::new(ctx.pool()).insert(event).await {
@@ -359,5 +378,365 @@ async fn query_as_insert_columns_match_copy_contract() -> Result<()> {
              Add the missing column to both the query_as! INSERT and EVENT_COPY_COLUMNS, \
              or remove it from both."
     );
+    Ok(())
+}
+
+/// Register a `derivation.product_declarations` row so
+/// `derivation.enforce_event_product_declaration()` accepts a test event that
+/// declares `product_class`. No sinexd startup reconciler exists yet
+/// (sinex-0vx.5) to populate this table from `AutomatonSpec::OUTPUT_DECLARATIONS`,
+/// so every test that persists a non-null `product_class` seeds its own row.
+async fn seed_product_declaration(
+    pool: &sqlx::PgPool,
+    declaration_id: &str,
+    product_class: sinex_primitives::derivation::DerivedProductClass,
+    output_source: &str,
+    output_event_type: &str,
+) -> Result<()> {
+    sqlx::query!(
+        r#"
+        INSERT INTO derivation.product_declarations (
+            declaration_id, owner, product_class, write_surface,
+            output_source, output_event_type, semantics_version,
+            input_eligibility, default_claim_support, verification_command
+        ) VALUES (
+            $1, 'sinex-8cr.2-test', $2, 'derived_output',
+            $3, $4, 'v1', 'default_canonical_input', '{}'::jsonb, 'true'
+        )
+        ON CONFLICT (declaration_id) DO NOTHING
+        "#,
+        declaration_id,
+        product_class.as_str(),
+        output_source,
+        output_event_type,
+    )
+    .execute(pool)
+    .await
+    .map_err(|e| sinex_primitives::SinexError::database("seed product declaration").with_source(e))?;
+    Ok(())
+}
+
+/// Round-trip proof for the "Single insert" + "EventRecord, conversion" AC
+/// lines (sinex-8cr.2): a concrete non-default `product_class`/`claim_support`
+/// survives `EventRepository::insert` unchanged, both in the `RETURNING`
+/// value and in an independent read-back via `get_by_id`. Before this bead,
+/// `insert`/`insert_with_tx` bound `None::<..>` unconditionally for these six
+/// columns regardless of what the caller set on `Event<T>` — this test fails
+/// against that code (the fields silently come back `None`).
+#[sinex_test]
+async fn event_product_metadata_persists(
+    ctx: xtask::sandbox::TestContext,
+) -> xtask::sandbox::TestResult<()> {
+    use sinex_primitives::derivation::{
+        ClaimSupport, ClaimTemporalQuality, DerivedProductClass, SourceCoverage, SupportLevel,
+    };
+
+    let material_id = ctx
+        .create_source_material(Some("event-product-metadata-material"))
+        .await?;
+
+    let declaration_id = "sinex.test.event_product_metadata_persists";
+    let product_class = DerivedProductClass::CanonicalDerivedEvent;
+    seed_product_declaration(
+        ctx.pool(),
+        declaration_id,
+        product_class,
+        "test.product.single",
+        "test.event.product_metadata_persists",
+    )
+    .await?;
+
+    let claim_support = ClaimSupport::unreviewed(
+        SupportLevel::Direct,
+        SourceCoverage::Covered,
+        ClaimTemporalQuality::RealtimeCapture,
+        2,
+        1,
+        1,
+        0,
+    );
+
+    let event = Event {
+        id: Some(Id::new()),
+        source: EventSource::new("test.product.single")?,
+        event_type: EventType::new("test.event.product_metadata_persists")?,
+        host: HostName::from_static("localhost"),
+        payload: json!({"ok": true}),
+        ts_orig: Some(Timestamp::now()),
+        ts_quality: None,
+        module_run_id: None,
+        payload_schema_id: None,
+        provenance: crate::models::Provenance::from_material(material_id, 0, None, None),
+        anchor_payload_hash: None,
+        associated_blob_ids: None,
+        temporal_policy: None,
+        semantics_version: None,
+        scope_key: None,
+        equivalence_key: None,
+        created_by_operation_id: None,
+        automaton_model: None,
+        product_class: Some(product_class),
+        claim_support: Some(claim_support.clone()),
+        derivation_declaration_id: Some(declaration_id.to_string()),
+        derivation_epoch_id: None,
+        derivation_lane_id: None,
+        adjudication_event_id: None,
+    };
+
+    let inserted = EventRepository::new(ctx.pool()).insert(event).await?;
+    let event_id = inserted.id.expect("inserted event should have id");
+
+    assert_eq!(inserted.product_class, Some(product_class));
+    assert_eq!(inserted.claim_support.as_ref(), Some(&claim_support));
+    assert_eq!(
+        inserted.derivation_declaration_id.as_deref(),
+        Some(declaration_id)
+    );
+    assert_eq!(inserted.derivation_epoch_id, None);
+    assert_eq!(inserted.derivation_lane_id, None);
+    assert_eq!(inserted.adjudication_event_id, None);
+
+    let retrieved = ctx
+        .pool()
+        .events()
+        .get_by_id(event_id)
+        .await?
+        .expect("event should be retrievable by id");
+    assert_eq!(retrieved.product_class, Some(product_class));
+    assert_eq!(retrieved.claim_support.as_ref(), Some(&claim_support));
+    assert_eq!(
+        retrieved.derivation_declaration_id.as_deref(),
+        Some(declaration_id)
+    );
+
+    Ok(())
+}
+
+/// Round-trip proof for the "QueryBuilder batch" and "stream batch" AC lines
+/// (sinex-8cr.2), each a separate `QueryBuilder`-VALUES construction site:
+/// `insert_batch` (the `Vec<Event<T>>` API/replay path,
+/// `insert_batch_unnest_in_tx`) and `insert_stream_batch` (the `StreamBatchRow`
+/// event_engine ingestion path, `execute_batch_insert`). Both batches carry
+/// two rows with *different* `product_class` values plus a null-`product_class`
+/// row — proof against an off-by-one/wrong-row bind-order bug that a
+/// single-row test would not catch.
+#[sinex_test]
+async fn batch_product_metadata(
+    ctx: xtask::sandbox::TestContext,
+) -> xtask::sandbox::TestResult<()> {
+    use sinex_primitives::derivation::{
+        ClaimSupport, ClaimTemporalQuality, DerivedProductClass, SourceCoverage, SupportLevel,
+    };
+
+    let claim_support = ClaimSupport::unreviewed(
+        SupportLevel::Convergent,
+        SourceCoverage::Partial,
+        ClaimTemporalQuality::InferredMtime,
+        4,
+        2,
+        1,
+        1,
+    );
+
+    // --- QueryBuilder batch path: insert_batch -> insert_batch_unnest_in_tx ---
+    let material_id = ctx
+        .create_source_material(Some("batch-product-metadata-material"))
+        .await?;
+
+    seed_product_declaration(
+        ctx.pool(),
+        "sinex.test.batch_metadata.canonical",
+        DerivedProductClass::CanonicalDerivedEvent,
+        "test.product.batch",
+        "test.event.batch.canonical",
+    )
+    .await?;
+    seed_product_declaration(
+        ctx.pool(),
+        "sinex.test.batch_metadata.claim",
+        DerivedProductClass::AnalysisClaim,
+        "test.product.batch",
+        "test.event.batch.claim",
+    )
+    .await?;
+
+    let make_event = |event_type: &str,
+                       product_class: Option<DerivedProductClass>,
+                       declaration_id: Option<&str>|
+     -> Result<Event<JsonValue>> {
+        Ok(Event {
+            id: Some(Id::new()),
+            source: EventSource::new("test.product.batch")?,
+            event_type: EventType::new(event_type)?,
+            host: HostName::from_static("localhost"),
+            payload: json!({"ok": true}),
+            ts_orig: Some(Timestamp::now()),
+            ts_quality: None,
+            module_run_id: None,
+            payload_schema_id: None,
+            provenance: crate::models::Provenance::from_material(material_id, 0, None, None),
+            anchor_payload_hash: None,
+            associated_blob_ids: None,
+            temporal_policy: None,
+            semantics_version: None,
+            scope_key: None,
+            equivalence_key: None,
+            created_by_operation_id: None,
+            automaton_model: None,
+            product_class,
+            claim_support: product_class.map(|_| claim_support.clone()),
+            derivation_declaration_id: declaration_id.map(str::to_string),
+            derivation_epoch_id: None,
+            derivation_lane_id: None,
+            adjudication_event_id: None,
+        })
+    };
+
+    let events = vec![
+        make_event(
+            "test.event.batch.canonical",
+            Some(DerivedProductClass::CanonicalDerivedEvent),
+            Some("sinex.test.batch_metadata.canonical"),
+        )?,
+        make_event(
+            "test.event.batch.claim",
+            Some(DerivedProductClass::AnalysisClaim),
+            Some("sinex.test.batch_metadata.claim"),
+        )?,
+        make_event("test.event.batch.none", None, None)?,
+    ];
+    let expected: Vec<(Id<Event<JsonValue>>, Option<DerivedProductClass>)> = events
+        .iter()
+        .map(|e| (e.id.expect("test event has id"), e.product_class))
+        .collect();
+
+    let inserted = EventRepository::new(ctx.pool()).insert_batch(events).await?;
+    assert_eq!(inserted.len(), expected.len());
+
+    for (id, expected_class) in &expected {
+        let row = inserted
+            .iter()
+            .find(|e| e.id.as_ref() == Some(id))
+            .unwrap_or_else(|| panic!("insert_batch result missing event {id:?}"));
+        assert_eq!(
+            row.product_class, *expected_class,
+            "insert_batch product_class mismatch for event {id:?}"
+        );
+
+        let retrieved = ctx
+            .pool()
+            .events()
+            .get_by_id(*id)
+            .await?
+            .unwrap_or_else(|| panic!("batch event {id:?} should be retrievable by id"));
+        assert_eq!(
+            retrieved.product_class, *expected_class,
+            "persisted product_class mismatch for batch event {id:?}"
+        );
+    }
+
+    // --- Stream batch path: insert_stream_batch -> execute_batch_insert ---
+    let stream_material_id = ctx
+        .create_source_material(Some("batch-product-metadata-stream-material"))
+        .await?;
+
+    seed_product_declaration(
+        ctx.pool(),
+        "sinex.test.batch_metadata.stream.canonical",
+        DerivedProductClass::CanonicalDerivedEvent,
+        "test.product.batch.stream",
+        "test.event.batch.stream.canonical",
+    )
+    .await?;
+    seed_product_declaration(
+        ctx.pool(),
+        "sinex.test.batch_metadata.stream.claim",
+        DerivedProductClass::AnalysisClaim,
+        "test.product.batch.stream",
+        "test.event.batch.stream.claim",
+    )
+    .await?;
+
+    let make_stream_row = |event_type: &str,
+                            product_class: Option<DerivedProductClass>,
+                            declaration_id: Option<&str>|
+     -> Result<StreamBatchRow> {
+        Ok(StreamBatchRow {
+            id: Uuid::now_v7(),
+            source: EventSource::new("test.product.batch.stream")?,
+            event_type: EventType::new(event_type)?,
+            ts_orig: Timestamp::now(),
+            ts_quality: None,
+            host: HostName::from_static("localhost"),
+            payload: json!({"ok": true}),
+            source_material_id: Some(stream_material_id),
+            anchor_byte: Some(0),
+            offset_start: None,
+            offset_end: None,
+            offset_kind: None,
+            source_event_ids: None,
+            payload_schema_id: None,
+            module_run_id: None,
+            anchor_payload_hash: None,
+            associated_blob_ids: None,
+            temporal_policy: None,
+            semantics_version: None,
+            scope_key: None,
+            equivalence_key: None,
+            created_by_operation_id: None,
+            automaton_model: None,
+            product_class: product_class.map(|p| p.to_string()),
+            claim_support: product_class
+                .map(|_| serde_json::to_value(&claim_support))
+                .transpose()
+                .map_err(|e| {
+                    sinex_primitives::SinexError::database("serialize test claim_support")
+                        .with_source(e)
+                })?,
+            derivation_declaration_id: declaration_id.map(str::to_string),
+            derivation_epoch_id: None,
+            derivation_lane_id: None,
+            adjudication_event_id: None,
+        })
+    };
+
+    let stream_specs = [
+        (
+            "test.event.batch.stream.canonical",
+            Some(DerivedProductClass::CanonicalDerivedEvent),
+            Some("sinex.test.batch_metadata.stream.canonical"),
+        ),
+        (
+            "test.event.batch.stream.claim",
+            Some(DerivedProductClass::AnalysisClaim),
+            Some("sinex.test.batch_metadata.stream.claim"),
+        ),
+    ];
+    let mut stream_rows = Vec::new();
+    let mut stream_expected: Vec<(Uuid, Option<DerivedProductClass>)> = Vec::new();
+    for (event_type, product_class, declaration_id) in stream_specs {
+        let row = make_stream_row(event_type, product_class, declaration_id)?;
+        stream_expected.push((row.id, product_class));
+        stream_rows.push(row);
+    }
+
+    let stream_result = EventRepository::new(ctx.pool())
+        .insert_stream_batch(&stream_rows)
+        .await?;
+    assert_eq!(stream_result.inserted_count, stream_rows.len());
+
+    for (uuid, expected_class) in stream_expected {
+        let retrieved = ctx
+            .pool()
+            .events()
+            .get_by_id(Id::from_uuid(uuid))
+            .await?
+            .unwrap_or_else(|| panic!("stream batch event {uuid} should be retrievable by id"));
+        assert_eq!(
+            retrieved.product_class, expected_class,
+            "persisted product_class mismatch for stream batch event {uuid}"
+        );
+    }
+
     Ok(())
 }

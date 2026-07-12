@@ -99,6 +99,22 @@ impl std::fmt::Display for DerivedProductClass {
     }
 }
 
+impl std::str::FromStr for DerivedProductClass {
+    type Err = String;
+
+    fn from_str(s: &str) -> std::result::Result<Self, Self::Err> {
+        match s {
+            "canonical_derived_event" => Ok(Self::CanonicalDerivedEvent),
+            "projection_row" => Ok(Self::ProjectionRow),
+            "analysis_claim" => Ok(Self::AnalysisClaim),
+            "report_artifact" => Ok(Self::ReportArtifact),
+            "semantic_candidate" => Ok(Self::SemanticCandidate),
+            "operator_judgment" => Ok(Self::OperatorJudgment),
+            _ => Err(format!("unknown derived product class: {s}")),
+        }
+    }
+}
+
 // ─── DerivationWriteSurface / InputEligibility ─────────────────────────────
 
 /// Which writer mechanism produces a declared output.
