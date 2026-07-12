@@ -428,22 +428,6 @@ struct AuditTrailArgs {
 }
 
 #[derive(Debug, Deserialize, Serialize)]
-struct CoordinationInstancesArgs {
-    #[serde(default)]
-    module_kind: Option<String>,
-}
-
-#[derive(Debug, Deserialize, Serialize)]
-struct CoordinationLeaderArgs {
-    module_kind: String,
-}
-
-#[derive(Debug, Deserialize, Serialize)]
-struct CoordinationInstanceHealthArgs {
-    instance_id: String,
-}
-
-#[derive(Debug, Deserialize, Serialize)]
 struct ShadowConsumersArgs {
     #[serde(default)]
     prefix: Option<String>,
@@ -986,30 +970,6 @@ pub fn tool_catalog() -> Vec<McpCatalogEntry> {
             kind: McpSurfaceKind::Tool,
             description: "Read-only audit trail for one operation.",
             backing_rpc_methods: &[methods::AUDIT_GET],
-            read_only: true,
-            output_contract: McpOutputContract::ViewEnvelope,
-        },
-        McpCatalogEntry {
-            name: "sinex_coordination_instances",
-            kind: McpSurfaceKind::Tool,
-            description: "Read-only coordination instance listing.",
-            backing_rpc_methods: &[methods::COORDINATION_LIST_INSTANCES],
-            read_only: true,
-            output_contract: McpOutputContract::ViewEnvelope,
-        },
-        McpCatalogEntry {
-            name: "sinex_coordination_leader",
-            kind: McpSurfaceKind::Tool,
-            description: "Read-only coordination leader lookup.",
-            backing_rpc_methods: &[methods::COORDINATION_GET_LEADER],
-            read_only: true,
-            output_contract: McpOutputContract::ViewEnvelope,
-        },
-        McpCatalogEntry {
-            name: "sinex_coordination_instance_health",
-            kind: McpSurfaceKind::Tool,
-            description: "Read-only coordination instance health lookup.",
-            backing_rpc_methods: &[methods::COORDINATION_INSTANCE_HEALTH],
             read_only: true,
             output_contract: McpOutputContract::ViewEnvelope,
         },
@@ -1594,44 +1554,6 @@ pub fn tools() -> Vec<McpTool> {
             }),
         ),
         mcp_tool(
-            "sinex_coordination_instances",
-            json!({
-                "type": "object",
-                "properties": {
-                    "module_kind": {
-                        "type": "string",
-                        "enum": ["source", "automaton", "service"]
-                    }
-                },
-                "additionalProperties": false
-            }),
-        ),
-        mcp_tool(
-            "sinex_coordination_leader",
-            json!({
-                "type": "object",
-                "required": ["module_kind"],
-                "properties": {
-                    "module_kind": {
-                        "type": "string",
-                        "enum": ["source", "automaton", "service"]
-                    }
-                },
-                "additionalProperties": false
-            }),
-        ),
-        mcp_tool(
-            "sinex_coordination_instance_health",
-            json!({
-                "type": "object",
-                "required": ["instance_id"],
-                "properties": {
-                    "instance_id": { "type": "string" }
-                },
-                "additionalProperties": false
-            }),
-        ),
-        mcp_tool(
             "sinex_shadow_consumers",
             json!({
                 "type": "object",
@@ -1882,7 +1804,9 @@ async fn call_tool_events_sources(
         "sinex_source_material" => source_material(client, arguments).await?,
         "sinex_source_coverage" => source_coverage(client, arguments).await?,
         "sinex_source_remediation_plan" => source_remediation_plan(client, arguments).await?,
-        "sinex_source_package_completeness" => source_package_completeness(client, arguments).await?,
+        "sinex_source_package_completeness" => {
+            source_package_completeness(client, arguments).await?
+        }
         "sinex_source_presets" => source_presets(client, arguments).await?,
         "sinex_source_bindings" => source_bindings(client, arguments).await?,
         "sinex_privacy_status" => privacy_status(client, arguments).await?,
@@ -1996,11 +1920,6 @@ async fn call_tool_ops_infra(
         "sinex_ops_get" => ops_get(client, arguments).await?,
         "sinex_lifecycle_status" => lifecycle_status(client, arguments).await?,
         "sinex_audit_trail" => audit_trail(client, arguments).await?,
-        "sinex_coordination_instances" => coordination_instances(client, arguments).await?,
-        "sinex_coordination_leader" => coordination_leader(client, arguments).await?,
-        "sinex_coordination_instance_health" => {
-            coordination_instance_health(client, arguments).await?
-        }
         "sinex_shadow_consumers" => shadow_consumers(client, arguments).await?,
         "sinex_context_pack" => context_pack(client, arguments).await?,
         _ => return Ok(None),
@@ -2788,42 +2707,6 @@ async fn audit_trail(client: &GatewayClient, arguments: Value) -> Result<Value> 
     ))
 }
 
-async fn coordination_instances(client: &GatewayClient, arguments: Value) -> Result<Value> {
-    let args: CoordinationInstancesArgs = serde_json::from_value(arguments)?;
-    let response = client
-        .coordination_list_instances(args.module_kind.clone())
-        .await?;
-    Ok(envelope(
-        "sinex_coordination_instances",
-        &json!(args),
-        &json!({ "result": response }),
-    ))
-}
-
-async fn coordination_leader(client: &GatewayClient, arguments: Value) -> Result<Value> {
-    let args: CoordinationLeaderArgs = serde_json::from_value(arguments)?;
-    let response = client
-        .coordination_get_leader(args.module_kind.clone())
-        .await?;
-    Ok(envelope(
-        "sinex_coordination_leader",
-        &json!(args),
-        &json!({ "result": response }),
-    ))
-}
-
-async fn coordination_instance_health(client: &GatewayClient, arguments: Value) -> Result<Value> {
-    let args: CoordinationInstanceHealthArgs = serde_json::from_value(arguments)?;
-    let response = client
-        .coordination_instance_health(args.instance_id.clone())
-        .await?;
-    Ok(envelope(
-        "sinex_coordination_instance_health",
-        &json!(args),
-        &json!({ "result": response }),
-    ))
-}
-
 async fn shadow_consumers(client: &GatewayClient, arguments: Value) -> Result<Value> {
     let args: ShadowConsumersArgs = serde_json::from_value(arguments)?;
     let response = client.shadow_list(args.prefix.clone()).await?;
@@ -3303,7 +3186,9 @@ struct ContextPackArgs {
 #[serde(tag = "kind", rename_all = "snake_case")]
 enum ContextPackScope {
     Unscoped,
-    ProjectPathUnavailable { requested_project_path: String },
+    ProjectPathUnavailable {
+        requested_project_path: String,
+    },
     SourceHint {
         requested_project_path: String,
         source: String,
@@ -3390,8 +3275,11 @@ fn context_pack_project_scope_caveat(
         id: "context_pack.project_scope_unavailable".to_string(),
         message: format!("{message} requested_project_path={requested_path};{hint}"),
         ref_: Some(
-            SinexObjectRef::new(SinexObjectKind::ContextPack, "sinex_context_pack.project_path")
-                .with_label("sinex_context_pack project_path"),
+            SinexObjectRef::new(
+                SinexObjectKind::ContextPack,
+                "sinex_context_pack.project_path",
+            )
+            .with_label("sinex_context_pack project_path"),
         ),
     }
 }

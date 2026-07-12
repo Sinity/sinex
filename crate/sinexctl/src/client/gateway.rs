@@ -6,17 +6,13 @@ use reqwest::{ClientBuilder, StatusCode};
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use serde_json::Value;
 use sinex_primitives::constants::env_vars;
-use sinex_primitives::domain::{EventSource, InstanceId, ModuleKind};
+use sinex_primitives::domain::{EventSource, HostName, InstanceId};
+use sinex_primitives::error::SinexError;
 use sinex_primitives::rpc::{
     JsonRpcError, RpcMethod,
     automata::{AUTOMATA_STATUS_METHOD, AutomataStatusRequest, AutomataStatusResponse},
     content::{CONTENT_STORE_BLOB_METHOD, StoreBlobRequest, StoreBlobResponse},
-    coordination::{
-        COORDINATION_GET_LEADER_METHOD, COORDINATION_INSTANCE_HEALTH_METHOD,
-        COORDINATION_LIST_INSTANCES_METHOD, GetLeaderRequest, GetLeaderResponse,
-        InstanceHealthRequest, InstanceHealthResponse, InstanceInfo, ListInstancesRequest,
-        ListInstancesResponse,
-    },
+    coordination::{InstanceHealthResponse, InstanceInfo},
     curation::{
         CURATION_DUPLICATE_CANDIDATES_LIST_METHOD, CURATION_DUPLICATE_JUDGMENTS_RECORD_METHOD,
         CURATION_FINALIZE_METHOD, CURATION_JUDGMENTS_RECORD_METHOD, CURATION_PROPOSALS_LIST_METHOD,
@@ -195,7 +191,6 @@ use sinex_primitives::temporal::Timestamp;
 use crate::Result;
 use crate::auth::load_token;
 use crate::client::RetryConfig;
-use crate::model::RuntimeModuleRole;
 use crate::validation::{parse_time_input, parse_time_input_with_now, validate_time_range};
 use sinex_primitives::RuntimeTargetGatewayTokenRole;
 use sinex_primitives::query::{
@@ -541,41 +536,6 @@ impl GatewayClient {
         false
     }
 
-    /// List coordination instances.
-    pub async fn coordination_list_instances(
-        &self,
-        module_kind: Option<String>,
-    ) -> Result<ListInstancesResponse> {
-        let request = ListInstancesRequest {
-            module_kind: module_kind
-                .map(|value| serde_json::from_value(Value::String(value)))
-                .transpose()?,
-        };
-        self.call_typed(COORDINATION_LIST_INSTANCES_METHOD, &request)
-            .await
-    }
-
-    /// Get the current coordination leader for a module kind.
-    pub async fn coordination_get_leader(&self, module_kind: String) -> Result<GetLeaderResponse> {
-        let request = GetLeaderRequest {
-            module_kind: serde_json::from_value(Value::String(module_kind))?,
-        };
-        self.call_typed(COORDINATION_GET_LEADER_METHOD, &request)
-            .await
-    }
-
-    /// Get coordination health for one instance.
-    pub async fn coordination_instance_health(
-        &self,
-        instance_id: String,
-    ) -> Result<InstanceHealthResponse> {
-        let request = InstanceHealthRequest {
-            instance_id: InstanceId::new(instance_id),
-        };
-        self.call_typed(COORDINATION_INSTANCE_HEALTH_METHOD, &request)
-            .await
-    }
-
     /// List read-only shadow consumers.
     pub async fn shadow_list(&self, prefix: Option<String>) -> Result<ShadowListResponse> {
         let request = ShadowListRequest { prefix };
@@ -671,22 +631,6 @@ impl GatewayClient {
         .await
     }
 
-    /// List all modules, optionally filtered by role.
-    pub async fn list_runtime(&self, role: Option<RuntimeModuleRole>) -> Result<Vec<InstanceInfo>> {
-        let req = ListInstancesRequest {
-            module_kind: role.map(|r| match r {
-                RuntimeModuleRole::Capture => ModuleKind::Source,
-                RuntimeModuleRole::Derived => ModuleKind::Automaton,
-                RuntimeModuleRole::Core => ModuleKind::Service,
-                RuntimeModuleRole::Gateway => ModuleKind::Service,
-            }),
-        };
-        let response: ListInstancesResponse = self
-            .call_typed(COORDINATION_LIST_INSTANCES_METHOD, &req)
-            .await?;
-        Ok(response.instances)
-    }
-
     /// List active runtime-module presence from runtime registry state.
     pub async fn runtime_list_active(
         &self,
@@ -708,13 +652,41 @@ impl GatewayClient {
         self.call_typed(RUNTIME_HEALTH_METHOD, &req).await
     }
 
-    /// Get runtime module status
+    /// Get runtime module status.
+    ///
+    /// sinex-9h32/7y77: single-module status is sourced from the heartbeat-backed
+    /// runtime registry (`runtime_list_active`), not the removed coordination-KV
+    /// `instance_health` path. A single daemon is always its own leader.
     pub async fn runtime_status(&self, module_name: &str) -> Result<InstanceHealthResponse> {
-        let req = InstanceHealthRequest {
-            instance_id: module_name.into(),
-        };
-        self.call_typed(COORDINATION_INSTANCE_HEALTH_METHOD, &req)
-            .await
+        let active = self.runtime_list_active(31_536_000).await?;
+        let info = active
+            .modules
+            .into_iter()
+            .find(|m| {
+                m.module_name.as_ref() == module_name
+                    || m.instance_id.as_deref() == Some(module_name)
+            })
+            .ok_or_else(|| {
+                SinexError::not_found("Runtime module not found")
+                    .with_context("module", module_name)
+            })?;
+        let hostname = info.host.as_deref().and_then(|h| HostName::new(h).ok());
+        let healthy = info.status == "active";
+        Ok(InstanceHealthResponse {
+            instance: InstanceInfo {
+                instance_id: InstanceId::new(
+                    info.instance_id
+                        .as_deref()
+                        .unwrap_or(info.module_name.as_ref()),
+                ),
+                module_kind: info.module_kind,
+                hostname,
+                last_heartbeat: info.last_heartbeat_at,
+                is_leader: true,
+            },
+            healthy,
+            last_error: None,
+        })
     }
 
     /// Drain a runtime module for maintenance

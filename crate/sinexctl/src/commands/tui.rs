@@ -32,8 +32,8 @@ use time::Duration;
 use crate::client::GatewayClient;
 use crate::commands::ops::operations_to_views;
 use crate::fmt::{format_bytes, format_heartbeat_age};
-use sinex_primitives::rpc::coordination::InstanceInfo;
 use sinex_primitives::rpc::dlq::DlqListResponse;
+use sinex_primitives::rpc::runtime::RuntimeInfo;
 
 /// Launch interactive TUI dashboard
 #[derive(Debug, Args)]
@@ -90,7 +90,7 @@ struct App {
     refresh_interval: u64,
 
     // Live data
-    modules: Vec<InstanceInfo>,
+    modules: Vec<RuntimeInfo>,
     dlq_stats: Option<DlqListResponse>,
     dlq_operation_card: Option<OperationControlCardView>,
     automaton_dlq_operation_card: Option<OperationControlCardView>,
@@ -303,8 +303,8 @@ impl App {
     }
 
     async fn refresh_runtime_and_dlq(&mut self) {
-        match self.client.list_runtime(None).await {
-            Ok(modules) => self.modules = modules,
+        match self.client.runtime_list_active(31_536_000).await {
+            Ok(response) => self.modules = response.modules,
             Err(e) => {
                 self.error = Some(format!("Failed to fetch modules: {e}"));
             }
@@ -671,7 +671,7 @@ fn render_dashboard(f: &mut Frame, area: Rect, app: &App) {
         .modules
         .iter()
         .filter(|n| {
-            n.last_heartbeat
+            n.last_heartbeat_at
                 .is_some_and(|hb| (Timestamp::now() - hb).whole_seconds() < 60)
         })
         .count();
@@ -711,7 +711,7 @@ fn render_dashboard(f: &mut Frame, area: Rect, app: &App) {
         .iter()
         .map(|n| {
             let has_recent_heartbeat = n
-                .last_heartbeat
+                .last_heartbeat_at
                 .is_some_and(|hb| (Timestamp::now() - hb).whole_seconds() < 60);
             let status_icon = if has_recent_heartbeat { "●" } else { "○" };
             let color = if has_recent_heartbeat {
@@ -719,13 +719,13 @@ fn render_dashboard(f: &mut Frame, area: Rect, app: &App) {
             } else {
                 Color::Red
             };
-            let leader = if n.is_leader { " [leader]" } else { "" };
-            let name = n.hostname.as_deref().unwrap_or(&n.instance_id);
-            ListItem::new(format!(
-                "{} {} ({}){}",
-                status_icon, name, n.module_kind, leader
-            ))
-            .style(Style::default().fg(color))
+            let name = n
+                .host
+                .as_deref()
+                .or(n.instance_id.as_deref())
+                .unwrap_or(n.module_name.as_ref());
+            ListItem::new(format!("{} {} ({})", status_icon, name, n.module_kind))
+                .style(Style::default().fg(color))
         })
         .collect();
 
@@ -1129,7 +1129,7 @@ fn render_modules(f: &mut Frame, area: Rect, app: &App) {
         .enumerate()
         .map(|(i, n)| {
             let has_recent_heartbeat = n
-                .last_heartbeat
+                .last_heartbeat_at
                 .is_some_and(|hb| (Timestamp::now() - hb).whole_seconds() < 60);
             let status_icon = if has_recent_heartbeat { "●" } else { "○" };
             let color = if has_recent_heartbeat {
@@ -1142,15 +1142,18 @@ fn render_modules(f: &mut Frame, area: Rect, app: &App) {
             } else {
                 Style::default().fg(color)
             };
-            let name = n.hostname.as_deref().unwrap_or(&n.instance_id);
-            let leader = if n.is_leader { " [leader]" } else { "" };
+            let name = n
+                .host
+                .as_deref()
+                .or(n.instance_id.as_deref())
+                .unwrap_or(n.module_name.as_ref());
             let heartbeat_str = n
-                .last_heartbeat
+                .last_heartbeat_at
                 .as_ref()
                 .map_or_else(|| "none".to_string(), format_heartbeat_age);
             ListItem::new(format!(
-                "{} {} | Type: {} | Heartbeat: {}{}",
-                status_icon, name, n.module_kind, heartbeat_str, leader
+                "{} {} | Type: {} | Heartbeat: {}",
+                status_icon, name, n.module_kind, heartbeat_str
             ))
             .style(style)
         })
