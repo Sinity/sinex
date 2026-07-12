@@ -1740,7 +1740,11 @@ let
   automataEnabledNames =
     if !(runtimeEnabled && automataCfg.enable) then [ ] else
     map (spec: spec.automaton)
-      (filter (spec: automataCfg.${spec.optionName}.enable) automataLib.specs);
+      (filter
+        (spec:
+          automataCfg.${spec.optionName}.enable
+          && automataLib.profileAllows automataCfg.enabledProfiles spec)
+        automataLib.specs);
 
   # ── Support-glue assembly ────────────────────────────────────────────────
   # Post-collapse: per-source service emission is gone. Each domain glue
