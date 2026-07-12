@@ -1919,6 +1919,27 @@ in
         options = {
           enable = mkOption { type = bool; default = true; description = "Enable automata services."; };
 
+          enabledProfiles = mkOption {
+            type = listOf (enum automataLib.activationProfiles);
+            default = automataLib.activationProfiles;
+            description = ''
+              Activation profiles currently enabled on this host (sinex-ijz6,
+              ratified rulings pq5/vfy/nbi.4). An automaton whose catalog
+              entry (`nixos/modules/lib/automata.nix`) declares an
+              `activationProfile` only runs when that profile name is a
+              member of this list, in addition to its own per-automaton
+              `enable` flag being true; automata without a declared
+              activation profile are unaffected by this option. Currently
+              gated: `document-parser` (profile `"document"`, until
+              68c.2/nbi.3 replace the trigger path) and
+              `instruction-reconciler` (profile `"actuation"`). Default:
+              every known profile — preserves the pre-ijz6-profile-gating
+              blanket-enabled behavior for both until a deployment
+              deliberately narrows this list (e.g. a headless/no-actuation
+              host would set `enabledProfiles = [ "document" ];`).
+            '';
+          };
+
           canonicalizer = mkOption {
             type = submodule {
               options = {
@@ -2024,7 +2045,7 @@ in
               };
             };
             default = { };
-            description = "Document parser automaton. Consumes `document.ingested` and `command.canonical` events, emits `document.parsed` + `document.chunked` derived events.";
+            description = "Document parser automaton. Consumes `document.ingested` and `command.canonical` events, emits `document.parsed` + `document.chunked` derived events. Profile-gated (sinex-ijz6): also requires \"document\" in `services.sinex.automata.enabledProfiles`.";
           };
 
           embeddingProducer = mkOption {
@@ -2060,7 +2081,7 @@ in
               };
             };
             default = { };
-            description = "Instruction expectation reconciler. Compares desired-state instruction events with ordinary observations — emits `runtime.instruction/expectation.status`.";
+            description = "Instruction expectation reconciler. Compares desired-state instruction events with ordinary observations — emits `runtime.instruction/expectation.status`. Profile-gated (sinex-ijz6): also requires \"actuation\" in `services.sinex.automata.enabledProfiles`.";
           };
 
           entityExtractor = mkOption {
@@ -2669,6 +2690,7 @@ in
                   cfg.runtime.enable
                   && cfg.automata.enable
                   && cfg.automata.${spec.optionName}.enable
+                  && automataLib.profileAllows cfg.automata.enabledProfiles spec
                 )
               )
               automataLib.specs
