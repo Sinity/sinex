@@ -17,6 +17,10 @@ use crate::runtime::automaton::{AutomatonContext, DerivedOutput, WindowedAdapter
 use crate::runtime::{AutomatonLogicError, InputProvenanceFilter, Windowed};
 use serde::{Deserialize, Serialize};
 use sinex_primitives::Uuid;
+use sinex_primitives::derivation::{
+    ClaimSupportTemplate, ClaimTemporalQuality, DerivationOutputDeclaration,
+    DerivationWriteSurface, DerivedProductClass, InputEligibility, SourceCoverage, SupportLevel,
+};
 use sinex_primitives::domain::{EntityTypeName, SyntheticTemporalPolicy};
 use sinex_primitives::events::EventPayload;
 use sinex_primitives::events::payloads::{EntityExtractedPayload, EntityResolvedPayload};
@@ -47,6 +51,28 @@ pub struct ResolverState {
     pending_source_event_id: Option<Uuid>,
 }
 
+/// Derivation control-plane declaration for `entity-resolver` (sinex-0vx.1/0vx.3).
+pub const ENTITY_RESOLVER_OUTPUT_DECLARATIONS: &[DerivationOutputDeclaration] =
+    &[DerivationOutputDeclaration {
+        declaration_id: "entity-resolver.entity.resolved",
+        owner: "entity-resolver",
+        product_class: DerivedProductClass::SemanticCandidate,
+        write_surface: DerivationWriteSurface::DerivedOutput,
+        output_source: Some("entity-resolver"),
+        output_event_type: Some("entity.resolved"),
+        projection_kind: None,
+        artifact_kind: None,
+        proposal_kind: None,
+        semantics_version: "1.0.0",
+        input_eligibility: InputEligibility::ExplicitOnly,
+        default_support: ClaimSupportTemplate::new(
+            SupportLevel::Heuristic,
+            SourceCoverage::Partial,
+            ClaimTemporalQuality::DeclaredEffective,
+        ),
+        verification_command: "xtask test -p sinexd -E 'test(entity_resolver)'",
+    }];
+
 #[derive(Default)]
 pub struct EntityResolver;
 
@@ -74,6 +100,10 @@ impl Windowed for EntityResolver {
     fn input_provenance_filter(&self) -> InputProvenanceFilter {
         InputProvenanceFilter::SynthesizedOnly
     }
+
+    const OUTPUT_DECLARATIONS: &'static [DerivationOutputDeclaration] =
+        ENTITY_RESOLVER_OUTPUT_DECLARATIONS;
+
     async fn accumulate(
         &mut self,
         state: &mut Self::State,

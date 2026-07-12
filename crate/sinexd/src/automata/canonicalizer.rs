@@ -13,6 +13,10 @@
 use crate::runtime::automaton::{AutomatonContext, DerivedOutput, TransducerAdapter};
 use crate::runtime::{AutomatonLogicError, InputProvenanceFilter, Transducer};
 use sinex_primitives::JsonValue;
+use sinex_primitives::derivation::{
+    ClaimSupportTemplate, ClaimTemporalQuality, DerivationOutputDeclaration,
+    DerivationWriteSurface, DerivedProductClass, InputEligibility, SourceCoverage, SupportLevel,
+};
 use sinex_primitives::domain::SyntheticTemporalPolicy;
 use sinex_primitives::events::EventPayload;
 use sinex_primitives::events::payloads::{
@@ -20,6 +24,32 @@ use sinex_primitives::events::payloads::{
     FishCommandExecutedPayload, KittyCommandExecutedPayload, ZshCommandExecutedPayload,
 };
 use tracing::info;
+
+/// Derivation control-plane declaration for `canonicalizer` (sinex-0vx.1/0vx.3).
+///
+/// `canonical_derived_event`: a deterministic 1:1 transform of an admitted
+/// shell-history event, default-eligible as input to further canonical
+/// derivation (e.g. `document-parser` reads `command.canonical`).
+pub const CANONICALIZER_OUTPUT_DECLARATIONS: &[DerivationOutputDeclaration] =
+    &[DerivationOutputDeclaration {
+        declaration_id: "canonicalizer.command.canonical",
+        owner: "canonicalizer",
+        product_class: DerivedProductClass::CanonicalDerivedEvent,
+        write_surface: DerivationWriteSurface::DerivedOutput,
+        output_source: Some("canonical.terminal"),
+        output_event_type: Some("command.canonical"),
+        projection_kind: None,
+        artifact_kind: None,
+        proposal_kind: None,
+        semantics_version: "1.0.0",
+        input_eligibility: InputEligibility::DefaultCanonicalInput,
+        default_support: ClaimSupportTemplate::new(
+            SupportLevel::Direct,
+            SourceCoverage::Covered,
+            ClaimTemporalQuality::InheritParent,
+        ),
+        verification_command: "xtask test -p sinexd -E 'test(canonicalizer)'",
+    }];
 
 #[derive(Default)]
 pub struct TerminalCommandCanonicalizer;
@@ -55,6 +85,10 @@ impl Transducer for TerminalCommandCanonicalizer {
     fn input_provenance_filter(&self) -> InputProvenanceFilter {
         InputProvenanceFilter::MaterialOnly
     }
+
+    const OUTPUT_DECLARATIONS: &'static [DerivationOutputDeclaration] =
+        CANONICALIZER_OUTPUT_DECLARATIONS;
+
     async fn process(
         &mut self,
         _state: &mut Self::State,
