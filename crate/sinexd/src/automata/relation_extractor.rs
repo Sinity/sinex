@@ -224,6 +224,7 @@ fn drain_and_emit_pairs(
             };
             // Only the two contributing entries' triggers — see drain_and_emit_pairs doc.
             let source_event_ids = vec![entries[i].trigger_uuid, entries[j].trigger_uuid];
+            let declaration = &RELATION_EXTRACTOR_OUTPUT_DECLARATIONS[0];
             let output = DerivedOutput::reconciled(
                 payload,
                 ts_orig,
@@ -235,7 +236,10 @@ fn drain_and_emit_pairs(
             .with_equivalence_key(format!(
                 "relation:{}:{}:co_occurs_with",
                 entries[i].entity_id, entries[j].entity_id
-            ));
+            ))
+            .with_declaration_id(declaration.declaration_id)
+            .with_product_class(declaration.product_class)
+            .with_claim_support(declaration.default_support.instantiate(2, 0, 1, 0));
             outputs.push(output);
             state.relations_emitted += 1;
         }

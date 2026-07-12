@@ -216,6 +216,13 @@ fn reconcile_workspace_observation(
                 "hyprland-workspace-expectation:{}",
                 pending.instruction.instruction_id
             ))
+            .with_declaration_id(INSTRUCTION_RECONCILER_OUTPUT_DECLARATIONS[0].declaration_id)
+            .with_product_class(INSTRUCTION_RECONCILER_OUTPUT_DECLARATIONS[0].product_class)
+            .with_claim_support(
+                INSTRUCTION_RECONCILER_OUTPUT_DECLARATIONS[0]
+                    .default_support
+                    .instantiate(2, 0, 1, 0),
+            )
         })
         .collect();
 

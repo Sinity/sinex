@@ -102,6 +102,7 @@ impl Transducer for TagApplier {
             let ts_orig = context
                 .ts_orig
                 .unwrap_or_else(sinex_primitives::Timestamp::now);
+            let declaration = &TAG_APPLIER_OUTPUT_DECLARATIONS[0];
             let output = DerivedOutput::transduced(
                 KnowledgeTagAppliedPayload {
                     entity_id: context.trigger_uuid(),
@@ -110,7 +111,10 @@ impl Transducer for TagApplier {
                 },
                 ts_orig,
                 context.trigger_uuid(),
-            );
+            )
+            .with_declaration_id(declaration.declaration_id)
+            .with_product_class(declaration.product_class)
+            .with_claim_support(declaration.default_support.instantiate(1, 0, 1, 0));
             Ok(Some(output))
         } else {
             Ok(None)
