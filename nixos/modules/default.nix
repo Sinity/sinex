@@ -1948,6 +1948,30 @@ in
             description = "Analytics automaton. Emits bounded `activity.window.summary` rollups from trusted activity signals.";
           };
 
+          attentionStream = mkOption {
+            type = submodule {
+              options = {
+                enable = mkOption { type = bool; default = true; description = "Enable attention-stream automaton."; };
+                profile = mkOption { type = str; default = "standard"; description = "Performance profile key."; };
+                env = mkOption { type = envModule; default = { }; description = "Extra environment variables."; };
+              };
+            };
+            default = { };
+            description = "Attention-stream automaton. Emits desktop-attention interval derived events from window/focus activity signals.";
+          };
+
+          intervalLift = mkOption {
+            type = submodule {
+              options = {
+                enable = mkOption { type = bool; default = true; description = "Enable interval-lift automaton."; };
+                profile = mkOption { type = str; default = "standard"; description = "Performance profile key."; };
+                env = mkOption { type = envModule; default = { }; description = "Extra environment variables."; };
+              };
+            };
+            default = { };
+            description = "Interval-lift automaton. Lifts point-in-time state observations into `state.interval` spans with clock-driven closure and suspend/AFK fences.";
+          };
+
           sessionDetector = mkOption {
             type = submodule {
               options = {
@@ -1999,7 +2023,7 @@ in
           embeddingProducer = mkOption {
             type = submodule {
               options = {
-                enable = mkOption { type = bool; default = true; description = "Enable embedding producer automaton."; };
+                enable = mkOption { type = bool; default = false; description = "Enable embedding producer automaton. Default-off (sinex-ijz6): no real model-effect embedding backend until sinex-5v6 lands."; };
                 profile = mkOption { type = str; default = "standard"; description = "Performance profile key."; };
                 env = mkOption { type = envModule; default = { }; description = "Extra environment variables."; };
               };
@@ -2011,7 +2035,7 @@ in
           tagApplier = mkOption {
             type = submodule {
               options = {
-                enable = mkOption { type = bool; default = true; description = "Enable tag applier automaton."; };
+                enable = mkOption { type = bool; default = false; description = "Enable tag applier automaton. Default-off (sinex-ijz6): zero named consumer of knowledge.tag_applied — demand-gate re-enable when one exists."; };
                 profile = mkOption { type = str; default = "standard"; description = "Performance profile key."; };
                 env = mkOption { type = envModule; default = { }; description = "Extra environment variables."; };
               };
@@ -2035,7 +2059,7 @@ in
           entityExtractor = mkOption {
             type = submodule {
               options = {
-                enable = mkOption { type = bool; default = true; description = "Enable entity extractor automaton."; };
+                enable = mkOption { type = bool; default = false; description = "Enable entity extractor automaton. Default-off (sinex-ijz6, pq5 dark-substrate): re-entry only as sinex-0vx shadow-lane proposals with a named consumer."; };
                 profile = mkOption { type = str; default = "standard"; description = "Performance profile key."; };
                 env = mkOption { type = envModule; default = { }; description = "Extra environment variables."; };
               };
@@ -2047,7 +2071,7 @@ in
           entityResolver = mkOption {
             type = submodule {
               options = {
-                enable = mkOption { type = bool; default = true; description = "Enable entity resolver automaton."; };
+                enable = mkOption { type = bool; default = false; description = "Enable entity resolver automaton. Default-off (sinex-ijz6, pq5 dark-substrate): re-entry only as sinex-0vx shadow-lane proposals with a named consumer."; };
                 profile = mkOption { type = str; default = "standard"; description = "Performance profile key."; };
                 env = mkOption { type = envModule; default = { }; description = "Extra environment variables."; };
               };
@@ -2059,7 +2083,7 @@ in
           relationExtractor = mkOption {
             type = submodule {
               options = {
-                enable = mkOption { type = bool; default = true; description = "Enable relation extractor automaton."; };
+                enable = mkOption { type = bool; default = false; description = "Enable relation extractor automaton. Default-off (sinex-ijz6, pq5 dark-substrate): re-entry only as sinex-0vx shadow-lane proposals with a named consumer."; };
                 profile = mkOption { type = str; default = "standard"; description = "Performance profile key."; };
                 env = mkOption { type = envModule; default = { }; description = "Extra environment variables."; };
               };
@@ -2071,7 +2095,7 @@ in
           entityEnricher = mkOption {
             type = submodule {
               options = {
-                enable = mkOption { type = bool; default = true; description = "Enable entity enricher automaton."; };
+                enable = mkOption { type = bool; default = false; description = "Enable entity enricher automaton. Default-off (sinex-ijz6, pq5 dark-substrate): re-entry only as sinex-0vx shadow-lane proposals with a named consumer."; };
                 profile = mkOption { type = str; default = "standard"; description = "Performance profile key."; };
                 env = mkOption { type = envModule; default = { }; description = "Extra environment variables."; };
               };
