@@ -6,12 +6,14 @@ mod support;
 use async_nats::jetstream;
 use serde_json::json;
 use sinex_db::DbPoolExt;
-use sinex_primitives::{Uuid, error::SinexError, temporal};
+use sinex_primitives::events::payloads::StateIntervalPayload;
+use sinex_primitives::{Timestamp, Uuid, error::SinexError, temporal};
 use sinexd::event_engine::material_ready_set::MaterialReadySet;
 use sinexd::event_engine::validator::IngestEventValidator;
 use sinexd::event_engine::{JetStreamConsumer, JetStreamTopology};
 use sinexd::runtime::durable_emission::{EmissionReceiptState, SuppressionReason};
 use sqlx::Row;
+use std::collections::BTreeMap;
 use std::sync::Arc;
 use std::time::Duration;
 use support::{
@@ -836,6 +838,229 @@ async fn duplicate_equivalence_key_is_suppressed_without_dlq(ctx: TestContext) -
     assert_eq!(
         dlq_messages, initial_dlq_messages,
         "duplicate equivalence-key suppression must not route to DLQ"
+    );
+
+    setup.handle.abort();
+    Ok(())
+}
+
+/// A schema-valid `state.interval` payload (a `SupersedeOnChange` event
+/// type). `duration_secs` is the only knob varied between calls so two
+/// invocations with the same value are byte-for-byte identical content and
+/// differing values are a genuine content change.
+fn n9a_interval_payload(ts: Timestamp, duration_secs: u64) -> serde_json::Value {
+    serde_json::to_value(StateIntervalPayload {
+        interval_id: "iv-n9a-consumer".to_string(),
+        state_kind: "reading".to_string(),
+        subject_id: None,
+        label: None,
+        start_time: ts,
+        end_time: ts,
+        duration_secs,
+        start_event_type: "start".to_string(),
+        end_event_type: "end".to_string(),
+        attributes: BTreeMap::new(),
+    })
+    .expect("state.interval payload serializes")
+}
+
+/// sinex-n9a end-to-end: a changed-content re-emit sharing an occurrence
+/// `equivalence_key` on a `SupersedeOnChange` event type (`state.interval`)
+/// archives the prior live interpretation, admits the revision, and fires a
+/// descendant scope invalidation naming the archived predecessor — all
+/// through the real consumer pipeline (JetStream → admission → persist →
+/// invalidation publish), not a direct `AdmissionService` call.
+#[sinex_test]
+async fn supersede_on_change_archives_predecessor_and_invalidates_descendants(
+    ctx: TestContext,
+) -> TestResult<()> {
+    let ctx = ctx.with_nats().shared().await?;
+
+    let setup = start_isolated_consumer(&ctx, "n9a-supersession").await?;
+    let nats_client = ctx.nats_client();
+    let equivalence_key = "n9a-consumer-supersede-key".to_string();
+    let ts = temporal::now();
+
+    let live_id = publish_event(
+        &ctx.pool,
+        &nats_client,
+        &setup.namespace,
+        "derived.interval-lift",
+        "state.interval",
+        n9a_interval_payload(ts, 300),
+        EventOverrides {
+            equivalence_key: Some(equivalence_key.clone()),
+            ..Default::default()
+        },
+    )
+    .await?;
+    WaitHelpers::wait_for_event_id(&ctx.pool, live_id.into(), Timeouts::SHORT).await?;
+
+    // Changed content (duration_secs 300 -> 999), SAME occurrence key: must
+    // supersede rather than suppress.
+    let revision_id = publish_event(
+        &ctx.pool,
+        &nats_client,
+        &setup.namespace,
+        "derived.interval-lift",
+        "state.interval",
+        n9a_interval_payload(ts, 999),
+        EventOverrides {
+            equivalence_key: Some(equivalence_key.clone()),
+            ..Default::default()
+        },
+    )
+    .await?;
+    WaitHelpers::wait_for_event_id(&ctx.pool, revision_id.into(), Timeouts::SHORT).await?;
+
+    // The predecessor must no longer be live...
+    assert!(
+        ctx.pool.events().get_by_id(live_id.into()).await?.is_none(),
+        "superseded predecessor must not remain live"
+    );
+    // ...but archived exactly once (single-live-interpretation upheld).
+    let archived_count: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM audit.archived_events WHERE id = $1")
+            .bind(live_id)
+            .fetch_one(&ctx.pool)
+            .await?;
+    assert_eq!(
+        archived_count, 1,
+        "superseded predecessor must be archived exactly once"
+    );
+
+    // The revision itself is the live row for this occurrence.
+    let live_now: Option<Uuid> = sqlx::query_scalar(
+        "SELECT id FROM core.events WHERE equivalence_key = $1",
+    )
+    .bind(&equivalence_key)
+    .fetch_optional(&ctx.pool)
+    .await?;
+    assert_eq!(
+        live_now,
+        Some(revision_id),
+        "the revision must be the sole live row for this occurrence"
+    );
+
+    // A descendant scope invalidation naming the archived predecessor must
+    // have been published.
+    let invalidation_subject = setup.topology.invalidation_subject.to_string();
+    let invalidation_msg = wait_for_last_stream_message_by_subject(
+        &setup.js,
+        &setup.topology.invalidation_stream,
+        &invalidation_subject,
+    )
+    .await?;
+    let invalidation: sinexd::runtime::automaton::DerivedScopeInvalidation =
+        serde_json::from_slice(&invalidation_msg.payload)?;
+    assert_eq!(
+        invalidation.affected_event_ids,
+        vec![live_id],
+        "invalidation must name the archived predecessor, not the revision"
+    );
+    assert_eq!(
+        invalidation.event_type.as_str(),
+        "state.interval",
+        "invalidation must carry the superseded event's type"
+    );
+
+    setup.handle.abort();
+    Ok(())
+}
+
+/// Regression: an event type that did NOT opt into `SupersedeOnChange`
+/// (`RevisionPolicy` defaults to `SuppressDuplicate`) keeps the exact pre-n9a
+/// behavior end-to-end — a changed re-emit sharing an equivalence_key is
+/// suppressed, never superseded, and no invalidation is published for it.
+#[sinex_test]
+async fn suppress_duplicate_type_changed_content_suppresses_through_consumer(
+    ctx: TestContext,
+) -> TestResult<()> {
+    let ctx = ctx.with_nats().shared().await?;
+
+    let setup = start_isolated_consumer(&ctx, "n9a-suppress-default").await?;
+    let nats_client = ctx.nats_client();
+    let equivalence_key = "n9a-consumer-suppress-default-key".to_string();
+
+    let live_id = publish_event(
+        &ctx.pool,
+        &nats_client,
+        &setup.namespace,
+        "n9a-suppress-default",
+        "pipeline.event",
+        json!({"sequence": 1}),
+        EventOverrides {
+            equivalence_key: Some(equivalence_key.clone()),
+            ..Default::default()
+        },
+    )
+    .await?;
+    WaitHelpers::wait_for_event_id(&ctx.pool, live_id.into(), Timeouts::SHORT).await?;
+
+    let changed_id = publish_event(
+        &ctx.pool,
+        &nats_client,
+        &setup.namespace,
+        "n9a-suppress-default",
+        "pipeline.event",
+        json!({"sequence": 2}),
+        EventOverrides {
+            equivalence_key: Some(equivalence_key.clone()),
+            ..Default::default()
+        },
+    )
+    .await?;
+
+    WaitHelpers::wait_for_condition(
+        || {
+            let js = setup.js.clone();
+            let stream_name = setup.topology.events_stream.clone();
+            let consumer_name = setup.topology.consumer_durable.clone();
+            async move {
+                let stream = js
+                    .get_stream(&stream_name)
+                    .await
+                    .map_err(|error| SinexError::network(error.to_string()))?;
+                let mut consumer = stream
+                    .get_consumer::<jetstream::consumer::pull::Config>(&consumer_name)
+                    .await
+                    .map_err(|error| SinexError::network(error.to_string()))?;
+                let info = consumer
+                    .info()
+                    .await
+                    .map_err(|error| SinexError::network(error.to_string()))?;
+                Ok::<bool, SinexError>(info.num_pending == 0 && info.num_ack_pending == 0)
+            }
+        },
+        Timeouts::SHORT,
+    )
+    .await?;
+
+    // The original live row is unchanged; the changed re-emit never persisted.
+    assert!(
+        ctx.pool
+            .events()
+            .get_by_id(live_id.into())
+            .await?
+            .is_some(),
+        "original live row must remain untouched for a SuppressDuplicate type"
+    );
+    assert!(
+        ctx.pool
+            .events()
+            .get_by_id(changed_id.into())
+            .await?
+            .is_none(),
+        "changed re-emit of a SuppressDuplicate type must not persist"
+    );
+    let archived_count: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM audit.archived_events WHERE id = $1")
+            .bind(live_id)
+            .fetch_one(&ctx.pool)
+            .await?;
+    assert_eq!(
+        archived_count, 0,
+        "a SuppressDuplicate type must never archive its live predecessor"
     );
 
     setup.handle.abort();

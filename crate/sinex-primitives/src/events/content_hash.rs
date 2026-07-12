@@ -26,7 +26,7 @@ fn canonicalize(value: &Value) -> Value {
     match value {
         Value::Object(map) => {
             let mut sorted: Vec<(&String, &Value)> = map.iter().collect();
-            sorted.sort_by(|(a, _), (b, _)| a.cmp(b));
+            sorted.sort_by_key(|(key, _)| *key);
             let mut out = Map::with_capacity(map.len());
             for (key, val) in sorted {
                 out.insert(key.clone(), canonicalize(val));
