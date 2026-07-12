@@ -896,12 +896,17 @@ async fn check_hypertable_settings(pool: &PgPool) -> Result<Vec<StrictDrift>, Ap
     // compress a chunk that is the target of a foreign key, so any such FK silently
     // disables the compression policy above (sinex-h8no). The referenced-side
     // cascade is enforced by the core.fn_archive_before_delete trigger instead.
+    // to_regclass (not a ::regclass cast, which RAISES on a missing relation)
+    // keeps strict-diff runnable against a partially-initialized database: when
+    // core.events is absent, to_regclass returns NULL, `confrelid = NULL` matches
+    // nothing, and the missing hypertable is already reported by the chunk
+    // interval check above.
     let inbound_fks: Vec<(String,)> = sqlx::query_as(
         r"
         SELECT con.conrelid::regclass::text AS referencing_table
         FROM pg_constraint con
         WHERE con.contype = 'f'
-          AND con.confrelid = 'core.events'::regclass
+          AND con.confrelid = to_regclass('core.events')
         ORDER BY referencing_table
         ",
     )
