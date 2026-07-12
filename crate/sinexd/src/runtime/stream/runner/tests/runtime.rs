@@ -1,4 +1,4 @@
-//! Runtime-side `RuntimeRunner<T>` tests: drain bridge under live traffic,
+//! Runtime-side `RuntimeRunner` tests: drain bridge under live traffic,
 //! signal/watch shutdown channel behaviour, leader-standby coordination,
 //! resubscribing listener retries, and shutdown error collapse.
 
@@ -98,7 +98,7 @@ async fn signal_shutdown_channel_reports_dropped_receiver() -> TestResult<()> {
     let (tx, rx) = tokio::sync::oneshot::channel::<()>();
     drop(rx);
 
-    assert!(!RuntimeRunner::<RuntimeTestModule>::signal_shutdown_channel(tx, "heartbeat"));
+    assert!(!RuntimeRunner::signal_shutdown_channel(tx, "heartbeat"));
     Ok(())
 }
 
@@ -106,10 +106,7 @@ async fn signal_shutdown_channel_reports_dropped_receiver() -> TestResult<()> {
 async fn signal_shutdown_channel_delivers_to_receiver() -> TestResult<()> {
     let (tx, rx) = tokio::sync::oneshot::channel::<()>();
 
-    assert!(RuntimeRunner::<RuntimeTestModule>::signal_shutdown_channel(
-        tx,
-        "heartbeat"
-    ));
+    assert!(RuntimeRunner::signal_shutdown_channel(tx, "heartbeat"));
     rx.await?;
     Ok(())
 }
@@ -119,9 +116,7 @@ async fn signal_watch_shutdown_reports_dropped_receiver() -> TestResult<()> {
     let (tx, rx) = tokio::sync::watch::channel(false);
     drop(rx);
 
-    assert!(!RuntimeRunner::<RuntimeTestModule>::signal_watch_shutdown(
-        tx, "listener"
-    ));
+    assert!(!RuntimeRunner::signal_watch_shutdown(tx, "listener"));
     Ok(())
 }
 
@@ -129,9 +124,7 @@ async fn signal_watch_shutdown_reports_dropped_receiver() -> TestResult<()> {
 async fn signal_watch_shutdown_delivers_to_receiver() -> TestResult<()> {
     let (tx, mut rx) = tokio::sync::watch::channel(false);
 
-    assert!(RuntimeRunner::<RuntimeTestModule>::signal_watch_shutdown(
-        tx, "listener"
-    ));
+    assert!(RuntimeRunner::signal_watch_shutdown(tx, "listener"));
     rx.changed().await?;
     assert!(*rx.borrow());
     Ok(())
@@ -207,9 +200,8 @@ async fn shutdown_join_result_rejects_panicked_tasks() -> TestResult<()> {
         panic!("runtime panic");
     });
 
-    let error =
-        RuntimeRunner::<RuntimeTestModule>::shutdown_join_result("runtime-task", handle.await)
-            .expect_err("panicked runtime tasks must fail shutdown honestly");
+    let error = RuntimeRunner::shutdown_join_result("runtime-task", handle.await)
+        .expect_err("panicked runtime tasks must fail shutdown honestly");
     let message = format!("{error:#}");
     assert!(message.contains("Task failed during shutdown"));
     assert!(message.contains("runtime-task"));
@@ -359,7 +351,7 @@ async fn event_batcher_shutdown_result_rejects_join_panics() -> TestResult<()> {
         Ok::<(), SinexError>(())
     });
 
-    let error = RuntimeRunner::<RuntimeTestModule>::event_batcher_shutdown_result(handle.await)
+    let error = RuntimeRunner::event_batcher_shutdown_result(handle.await)
         .expect_err("panicked batcher tasks must fail shutdown honestly");
     let message = format!("{error:#}");
     assert!(message.contains("Event batcher failed during shutdown"));
@@ -377,8 +369,7 @@ async fn shutdown_task_waits_for_watch_signalled_exit() -> TestResult<()> {
     });
 
     let mut task = Some(task);
-    RuntimeRunner::<RuntimeTestModule>::shutdown_task(&mut task, Some(shutdown_tx), "listener")
-        .await?;
+    RuntimeRunner::shutdown_task(&mut task, Some(shutdown_tx), "listener").await?;
 
     assert!(finished.load(Ordering::SeqCst));
     assert!(task.is_none());
@@ -387,7 +378,7 @@ async fn shutdown_task_waits_for_watch_signalled_exit() -> TestResult<()> {
 
 #[sinex_test]
 async fn collapse_shutdown_errors_preserves_additional_failures() -> TestResult<()> {
-    let error = RuntimeRunner::<RuntimeTestModule>::collapse_shutdown_errors(vec![
+    let error = RuntimeRunner::collapse_shutdown_errors(vec![
         (
             "heartbeat".to_string(),
             SinexError::processing("primary shutdown failure"),
