@@ -44,7 +44,8 @@ pub use embeddings::{
 };
 pub use events::{
     COPY_BATCH_THRESHOLD, EventAnnotation, EventPayloadSchema, EventRepository, EventRepositoryTx,
-    EventStorageLane, ReplacementKind, ReplacementRecord, StreamBatchInsertResult, StreamBatchRow,
+    EventStorageLane, LiveEquivalenceRow, ReplacementKind, ReplacementRecord,
+    StreamBatchInsertResult, StreamBatchRow,
 };
 pub use integrity::IntegrityRepository;
 pub use knowledge_graph::{

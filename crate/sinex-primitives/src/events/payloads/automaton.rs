@@ -115,7 +115,8 @@ pub enum ActivityWindowCloseReason {
 #[event_payload(
     source = "derived.activity-window",
     event_type = "activity.window.summary",
-    version = "1.0.0"
+    version = "1.0.0",
+    revision_policy = "supersede_on_change"
 )]
 pub struct ActivityWindowSummaryPayload {
     pub window_id: String,
@@ -136,7 +137,8 @@ pub struct ActivityWindowSummaryPayload {
 #[event_payload(
     source = "derived.attention-stream",
     event_type = "attention.span",
-    version = "1.0.0"
+    version = "1.0.0",
+    revision_policy = "supersede_on_change"
 )]
 pub struct AttentionSpanPayload {
     pub span_id: String,
@@ -158,7 +160,8 @@ pub struct AttentionSpanPayload {
 #[event_payload(
     source = "derived.interval-lift",
     event_type = "state.interval",
-    version = "1.0.0"
+    version = "1.0.0",
+    revision_policy = "supersede_on_change"
 )]
 pub struct StateIntervalPayload {
     pub interval_id: String,
@@ -178,7 +181,8 @@ pub struct StateIntervalPayload {
 #[event_payload(
     source = "derived.session-detector",
     event_type = "activity.session.boundary",
-    version = "1.0.0"
+    version = "1.0.0",
+    revision_policy = "supersede_on_change"
 )]
 pub struct ActivitySessionBoundaryPayload {
     pub session_id: String,

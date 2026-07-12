@@ -3,7 +3,9 @@ use sinex_primitives::{
     AdmissionOutcome, AdmissionOutcomeRef, DynamicPayload, Id, JsonValue,
     STANDARD_EVENT_ADMISSION_POLICY_ID, SourceMaterial, Timestamp, Uuid,
     event_contracts::SHELL_HISTORY_COMMAND_IMPORTED_CONTRACT_ID, events::Event,
+    events::payloads::StateIntervalPayload,
 };
+use std::collections::BTreeMap;
 use sinexd::event_engine::{
     AdmissionDecision, AdmissionRejection, AdmissionRejectionKind, AdmissionService, AdmittedEvent,
     CandidateEvent, CandidateEventMetadata, IngestEventValidator,
@@ -536,6 +538,175 @@ async fn admission_tombstone_disposition_wins_over_recent_id_cache(
     assert!(repeated_tombstone.inserted_ids.is_none());
     assert!(repeated_tombstone.duplicate_event_ids.is_empty());
     assert_eq!(repeated_tombstone.tombstoned_event_ids, vec![tombstoned_id]);
+
+    Ok(())
+}
+
+// ─── sinex-n9a: RevisionPolicy occurrence reconciliation ──────────────────
+
+/// A schema-valid `state.interval` payload (a `SupersedeOnChange` event type).
+/// `duration_secs` is the content knob the tests vary to force a hash change;
+/// all timestamps come from `ts` so two calls with the same `ts`/`duration`
+/// are byte-for-byte identical content.
+fn interval_payload(ts: Timestamp, duration_secs: u64) -> JsonValue {
+    serde_json::to_value(StateIntervalPayload {
+        interval_id: "iv-n9a".to_string(),
+        state_kind: "reading".to_string(),
+        subject_id: None,
+        label: None,
+        start_time: ts,
+        end_time: ts,
+        duration_secs,
+        start_event_type: "start".to_string(),
+        end_event_type: "end".to_string(),
+        attributes: BTreeMap::new(),
+    })
+    .expect("state.interval payload serializes")
+}
+
+/// Admit and persist a single event, returning its inserted id. Used to seed a
+/// live occurrence row before a supersession/suppression re-emit.
+async fn admit_and_persist(
+    service: &AdmissionService,
+    event: Event<JsonValue>,
+) -> TestResult<Uuid> {
+    let admitted = admit(service, event).await?;
+    let result = service.persist_batch(&[admitted]).await?;
+    let inserted = result
+        .inserted_ids
+        .and_then(|ids| ids.first().copied())
+        .expect("event persisted");
+    Ok(inserted)
+}
+
+#[sinex_test]
+async fn supersede_on_change_changed_content_returns_superseded(
+    ctx: TestContext,
+) -> TestResult<()> {
+    let material_id = ctx.create_source_material(Some("n9a-supersede-changed")).await?;
+    let ts = Timestamp::now();
+    let key = "n9a-supersede-changed-key".to_string();
+    let service = admission_service(&ctx);
+
+    // Seed the live interpretation.
+    let live_id = Uuid::now_v7();
+    let mut live = material_event(
+        material_id,
+        live_id,
+        "derived.interval-lift",
+        "state.interval",
+        interval_payload(ts, 300),
+    )?;
+    live.equivalence_key = Some(key.clone());
+    let persisted_id = admit_and_persist(&service, live).await?;
+    assert_eq!(persisted_id, live_id);
+
+    // A changed re-emit with the SAME occurrence key must supersede.
+    let revision_id = Uuid::now_v7();
+    let mut revision = material_event(
+        material_id,
+        revision_id,
+        "derived.interval-lift",
+        "state.interval",
+        interval_payload(ts, 999),
+    )?;
+    revision.equivalence_key = Some(key.clone());
+
+    match service.admit_event(revision).await? {
+        AdmissionDecision::Superseded {
+            admitted,
+            superseded_event_id,
+        } => {
+            assert_eq!(
+                superseded_event_id, live_id,
+                "the live interpretation is the supersession target"
+            );
+            assert_eq!(admitted.event_id, revision_id, "the revision is admitted");
+        }
+        other => panic!("changed re-emit of a SupersedeOnChange type must supersede: {other:?}"),
+    }
+
+    Ok(())
+}
+
+#[sinex_test]
+async fn supersede_on_change_identical_content_suppresses(ctx: TestContext) -> TestResult<()> {
+    let material_id = ctx.create_source_material(Some("n9a-supersede-identical")).await?;
+    let ts = Timestamp::now();
+    let key = "n9a-supersede-identical-key".to_string();
+    let service = admission_service(&ctx);
+
+    let live_id = Uuid::now_v7();
+    let mut live = material_event(
+        material_id,
+        live_id,
+        "derived.interval-lift",
+        "state.interval",
+        interval_payload(ts, 300),
+    )?;
+    live.equivalence_key = Some(key.clone());
+    admit_and_persist(&service, live).await?;
+
+    // Identical content (same ts, same duration) → idempotent re-emit → suppress.
+    let repeat_id = Uuid::now_v7();
+    let mut repeat = material_event(
+        material_id,
+        repeat_id,
+        "derived.interval-lift",
+        "state.interval",
+        interval_payload(ts, 300),
+    )?;
+    repeat.equivalence_key = Some(key.clone());
+
+    match service.admit_event(repeat).await? {
+        AdmissionDecision::Suppressed(rejection) => {
+            assert_eq!(rejection.kind, AdmissionRejectionKind::OccurrenceDuplicate);
+        }
+        other => panic!("identical re-emit must suppress, not supersede: {other:?}"),
+    }
+
+    Ok(())
+}
+
+#[sinex_test]
+async fn suppress_duplicate_type_changed_content_still_suppresses(
+    ctx: TestContext,
+) -> TestResult<()> {
+    // A type that did NOT opt into SupersedeOnChange keeps the pre-n9a
+    // behavior: any live row on the same key suppresses, even changed content.
+    let material_id = ctx.create_source_material(Some("n9a-suppress-default")).await?;
+    let key = "n9a-suppress-default-key".to_string();
+    let service = admission_service(&ctx);
+
+    let live_id = Uuid::now_v7();
+    let mut live = material_event(
+        material_id,
+        live_id,
+        "admission-test",
+        "pipeline.event",
+        serde_json::json!({ "sequence": 1 }),
+    )?;
+    live.equivalence_key = Some(key.clone());
+    admit_and_persist(&service, live).await?;
+
+    let changed_id = Uuid::now_v7();
+    let mut changed = material_event(
+        material_id,
+        changed_id,
+        "admission-test",
+        "pipeline.event",
+        serde_json::json!({ "sequence": 2 }),
+    )?;
+    changed.equivalence_key = Some(key.clone());
+
+    match service.admit_event(changed).await? {
+        AdmissionDecision::Suppressed(rejection) => {
+            assert_eq!(rejection.kind, AdmissionRejectionKind::OccurrenceDuplicate);
+        }
+        other => {
+            panic!("default SuppressDuplicate type must suppress a changed re-emit: {other:?}")
+        }
+    }
 
     Ok(())
 }
