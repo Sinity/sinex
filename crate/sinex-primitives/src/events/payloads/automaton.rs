@@ -203,7 +203,8 @@ pub struct ActivitySessionBoundaryPayload {
 #[event_payload(
     source = "derived.hourly-summarizer",
     event_type = "activity.summary.hourly",
-    version = "1.0.0"
+    version = "1.0.0",
+    revision_policy = "supersede_on_change"
 )]
 pub struct ActivityHourlySummaryPayload {
     pub hour_id: String,
@@ -227,7 +228,8 @@ pub struct ActivityHourlySummaryPayload {
 #[event_payload(
     source = "derived.daily-summarizer",
     event_type = "activity.summary.daily",
-    version = "1.0.0"
+    version = "1.0.0",
+    revision_policy = "supersede_on_change"
 )]
 pub struct ActivityDailySummaryPayload {
     pub day_id: String,

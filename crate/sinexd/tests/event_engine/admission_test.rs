@@ -2,8 +2,10 @@ use sinex_db::DbPoolExt;
 use sinex_primitives::{
     AdmissionOutcome, AdmissionOutcomeRef, DynamicPayload, Id, JsonValue,
     STANDARD_EVENT_ADMISSION_POLICY_ID, SourceMaterial, Timestamp, Uuid,
-    event_contracts::SHELL_HISTORY_COMMAND_IMPORTED_CONTRACT_ID, events::Event,
-    events::payloads::StateIntervalPayload,
+    activity::ActivitySourceKind,
+    event_contracts::SHELL_HISTORY_COMMAND_IMPORTED_CONTRACT_ID,
+    events::Event,
+    events::payloads::{ActivityDailySummaryPayload, ActivityHourlySummaryPayload, StateIntervalPayload},
 };
 use std::collections::BTreeMap;
 use sinexd::event_engine::{
@@ -706,6 +708,212 @@ async fn suppress_duplicate_type_changed_content_still_suppresses(
         other => {
             panic!("default SuppressDuplicate type must suppress a changed re-emit: {other:?}")
         }
+    }
+
+    Ok(())
+}
+
+// ─── sinex-74yj: rollup types opted into SupersedeOnChange ────────────────
+//
+// Rollup equivalence keys (`hour_id`/`day_id` in hourly.rs/daily.rs) are
+// derived purely from the floored civil-hour/day bucket start timestamp, so
+// the same bucket always yields the same key across re-emits (occurrence
+// stable) and a changed aggregate for the same bucket is a genuine content
+// revision, not a different occurrence -- the same shape as the four
+// interval-class types n9a opted in. `event_count` is the content knob
+// varied between calls: two calls with the same value are byte-for-byte
+// identical content, differing values are a genuine change.
+
+fn daily_summary_payload(ts: Timestamp, day_id: &str, event_count: u64) -> JsonValue {
+    serde_json::to_value(ActivityDailySummaryPayload {
+        day_id: day_id.to_string(),
+        day_start: ts,
+        day_end: ts,
+        duration_secs: 3600,
+        hour_count: 1,
+        window_count: 1,
+        event_count,
+        source_count: 1,
+        sources: vec!["test-source".to_string()],
+        top_sources: vec!["test-source".to_string()],
+        source_window_counts: BTreeMap::new(),
+        activity_sources: vec![ActivitySourceKind::Window],
+        activity_source_counts: BTreeMap::new(),
+        focus_time_secs_by_source: BTreeMap::new(),
+        primary_source: ActivitySourceKind::Window,
+    })
+    .expect("activity.summary.daily payload serializes")
+}
+
+fn hourly_summary_payload(ts: Timestamp, hour_id: &str, event_count: u64) -> JsonValue {
+    serde_json::to_value(ActivityHourlySummaryPayload {
+        hour_id: hour_id.to_string(),
+        hour_start: ts,
+        hour_end: ts,
+        duration_secs: 3600,
+        window_count: 1,
+        event_count,
+        source_count: 1,
+        sources: vec!["test-source".to_string()],
+        top_sources: vec!["test-source".to_string()],
+        source_window_counts: BTreeMap::new(),
+        activity_sources: vec![ActivitySourceKind::Window],
+        activity_source_counts: BTreeMap::new(),
+        focus_time_secs_by_source: BTreeMap::new(),
+        primary_source: ActivitySourceKind::Window,
+    })
+    .expect("activity.summary.hourly payload serializes")
+}
+
+/// Repro from the bead: persist a daily rollup with an occurrence-stable
+/// bucket key, then re-emit the SAME bucket with changed aggregate content
+/// (as a post-supersession recompute of the same day would produce). Before
+/// this bead, `ActivityDailySummaryPayload` defaulted to `SuppressDuplicate`
+/// so the changed re-emit was silently discarded, leaving the stored rollup
+/// stale forever. It must now supersede.
+#[sinex_test]
+async fn daily_summary_supersede_on_change_changed_content_returns_superseded(
+    ctx: TestContext,
+) -> TestResult<()> {
+    let material_id = ctx.create_source_material(Some("74yj-daily-supersede-changed")).await?;
+    let ts = Timestamp::now();
+    let day_id = "activity-day-74yj-changed".to_string();
+    let key = day_id.clone();
+    let service = admission_service(&ctx);
+
+    let live_id = Uuid::now_v7();
+    let mut live = material_event(
+        material_id,
+        live_id,
+        "derived.daily-summarizer",
+        "activity.summary.daily",
+        daily_summary_payload(ts, &day_id, 10),
+    )?;
+    live.equivalence_key = Some(key.clone());
+    let persisted_id = admit_and_persist(&service, live).await?;
+    assert_eq!(persisted_id, live_id);
+
+    // Recomputed totals for the SAME day bucket: same key, changed content.
+    let revision_id = Uuid::now_v7();
+    let mut revision = material_event(
+        material_id,
+        revision_id,
+        "derived.daily-summarizer",
+        "activity.summary.daily",
+        daily_summary_payload(ts, &day_id, 42),
+    )?;
+    revision.equivalence_key = Some(key.clone());
+
+    match service.admit_event(revision).await? {
+        AdmissionDecision::Superseded {
+            admitted,
+            superseded_event_id,
+        } => {
+            assert_eq!(
+                superseded_event_id, live_id,
+                "the live rollup interpretation is the supersession target"
+            );
+            assert_eq!(admitted.event_id, revision_id, "the revision is admitted");
+        }
+        other => panic!(
+            "changed-content re-emit of a rollup bucket must supersede, not {other:?} \
+             (activity.summary.daily is expected to opt into SupersedeOnChange)"
+        ),
+    }
+
+    Ok(())
+}
+
+/// Identical-content re-emit for the same day bucket (e.g. a harmless
+/// re-run that recomputes the exact same totals) must still suppress, not
+/// supersede -- SupersedeOnChange only fires on an actual content change.
+#[sinex_test]
+async fn daily_summary_supersede_on_change_identical_content_suppresses(
+    ctx: TestContext,
+) -> TestResult<()> {
+    let material_id = ctx.create_source_material(Some("74yj-daily-supersede-identical")).await?;
+    let ts = Timestamp::now();
+    let day_id = "activity-day-74yj-identical".to_string();
+    let key = day_id.clone();
+    let service = admission_service(&ctx);
+
+    let live_id = Uuid::now_v7();
+    let mut live = material_event(
+        material_id,
+        live_id,
+        "derived.daily-summarizer",
+        "activity.summary.daily",
+        daily_summary_payload(ts, &day_id, 10),
+    )?;
+    live.equivalence_key = Some(key.clone());
+    admit_and_persist(&service, live).await?;
+
+    let repeat_id = Uuid::now_v7();
+    let mut repeat = material_event(
+        material_id,
+        repeat_id,
+        "derived.daily-summarizer",
+        "activity.summary.daily",
+        daily_summary_payload(ts, &day_id, 10),
+    )?;
+    repeat.equivalence_key = Some(key.clone());
+
+    match service.admit_event(repeat).await? {
+        AdmissionDecision::Suppressed(rejection) => {
+            assert_eq!(rejection.kind, AdmissionRejectionKind::OccurrenceDuplicate);
+        }
+        other => panic!("identical-content rollup re-emit must suppress, not {other:?}"),
+    }
+
+    Ok(())
+}
+
+/// Same contract, hourly rollup: a changed-content re-emit for the same hour
+/// bucket must supersede. Cross-checked against the daily test above so the
+/// fix is proven for both opted-in rollup types, not just one call site.
+#[sinex_test]
+async fn hourly_summary_supersede_on_change_changed_content_returns_superseded(
+    ctx: TestContext,
+) -> TestResult<()> {
+    let material_id = ctx.create_source_material(Some("74yj-hourly-supersede-changed")).await?;
+    let ts = Timestamp::now();
+    let hour_id = "activity-hour-74yj-changed".to_string();
+    let key = hour_id.clone();
+    let service = admission_service(&ctx);
+
+    let live_id = Uuid::now_v7();
+    let mut live = material_event(
+        material_id,
+        live_id,
+        "derived.hourly-summarizer",
+        "activity.summary.hourly",
+        hourly_summary_payload(ts, &hour_id, 10),
+    )?;
+    live.equivalence_key = Some(key.clone());
+    let persisted_id = admit_and_persist(&service, live).await?;
+    assert_eq!(persisted_id, live_id);
+
+    let revision_id = Uuid::now_v7();
+    let mut revision = material_event(
+        material_id,
+        revision_id,
+        "derived.hourly-summarizer",
+        "activity.summary.hourly",
+        hourly_summary_payload(ts, &hour_id, 42),
+    )?;
+    revision.equivalence_key = Some(key.clone());
+
+    match service.admit_event(revision).await? {
+        AdmissionDecision::Superseded {
+            admitted,
+            superseded_event_id,
+        } => {
+            assert_eq!(superseded_event_id, live_id);
+            assert_eq!(admitted.event_id, revision_id);
+        }
+        other => panic!(
+            "changed-content re-emit of an hourly rollup bucket must supersede, not {other:?}"
+        ),
     }
 
     Ok(())
