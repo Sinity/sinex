@@ -24,6 +24,7 @@ fn derive_event_payload_inner(input: &DeriveInput) -> syn::Result<TokenStream> {
     let source = attrs.source;
     let event_type = attrs.event_type;
     let version = attrs.version;
+    let revision_policy_variant = format_ident!("{}", attrs.revision_policy_variant);
 
     let builder_methods = generate_builder_methods(input);
     let builder_impl = if builder_methods.is_empty() {
@@ -52,6 +53,7 @@ fn derive_event_payload_inner(input: &DeriveInput) -> syn::Result<TokenStream> {
                         source: #source,
                         event_type: #event_type,
                         version: #version,
+                        revision_policy: schema_registry::RevisionPolicy::#revision_policy_variant,
                         schema_fn: || {
                             let schema = ::schemars::schema_for!(#name);
                             ::serde_json::to_value(&schema).map_err(|error| {
@@ -162,12 +164,17 @@ struct EventPayloadAttrs {
     source: String,
     event_type: String,
     version: String,
+    /// Bare `RevisionPolicy` variant identifier (e.g. `SuppressDuplicate`)
+    /// emitted into the generated `PayloadInfo`. Defaults to the suppress
+    /// behavior when the attribute is absent.
+    revision_policy_variant: &'static str,
 }
 
 fn parse_event_payload_attrs(attrs: &[syn::Attribute]) -> syn::Result<EventPayloadAttrs> {
     let mut source = None;
     let mut event_type = None;
     let mut version = None;
+    let mut revision_policy_variant: &'static str = "SuppressDuplicate";
 
     for attr in attrs {
         if attr.path().is_ident("event_payload") {
@@ -188,6 +195,20 @@ fn parse_event_payload_attrs(attrs: &[syn::Attribute]) -> syn::Result<EventPaylo
                     let s: syn::LitStr = value.parse()?;
                     version = Some(s.value());
                     Ok(())
+                } else if meta.path.is_ident("revision_policy") {
+                    let value = meta.value()?;
+                    let s: syn::LitStr = value.parse()?;
+                    revision_policy_variant = match s.value().as_str() {
+                        "suppress_duplicate" => "SuppressDuplicate",
+                        "supersede_on_change" => "SupersedeOnChange",
+                        other => {
+                            return Err(meta.error(format!(
+                                "unrecognized revision_policy '{other}' (expected \
+                                 'suppress_duplicate' or 'supersede_on_change')"
+                            )));
+                        }
+                    };
+                    Ok(())
                 } else {
                     Err(meta.error("unrecognized event_payload attribute"))
                 }
@@ -205,5 +226,6 @@ fn parse_event_payload_attrs(attrs: &[syn::Attribute]) -> syn::Result<EventPaylo
         source,
         event_type,
         version,
+        revision_policy_variant,
     })
 }

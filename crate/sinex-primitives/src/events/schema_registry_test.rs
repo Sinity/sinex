@@ -23,6 +23,7 @@ async fn generate_schemas_collects_entries() -> TestResult<()> {
         source: "test-source",
         event_type: "test.event",
         version: "1.0.0",
+        revision_policy: super::RevisionPolicy::SuppressDuplicate,
         schema_fn: schema_ok,
     }];
 
@@ -51,6 +52,7 @@ async fn generate_schemas_surfaces_schema_generation_failures() -> TestResult<()
         source: "test-source",
         event_type: "test.broken",
         version: "1.0.0",
+        revision_policy: super::RevisionPolicy::SuppressDuplicate,
         schema_fn: schema_err,
     }];
 

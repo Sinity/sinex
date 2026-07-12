@@ -4,6 +4,7 @@ use std::sync::atomic::Ordering;
 
 use super::dlq::DLQ_RETRY_DELAY;
 use super::*;
+use sinex_primitives::events::Event;
 
 impl JetStreamConsumer {
     #[cfg(test)]
@@ -50,6 +51,53 @@ impl JetStreamConsumer {
                         message: msg.clone(),
                         settlement: Arc::clone(&settlement),
                     });
+                }
+                AdmissionDecision::Superseded {
+                    admitted,
+                    superseded_event_id,
+                } => {
+                    // sinex-n9a: the candidate carries an occurrence key whose
+                    // live row changed. Archive the predecessor BEFORE the new
+                    // interpretation is persisted (single-live-interpretation
+                    // upheld across this prepare→persist boundary). If the
+                    // archive fails we fall back to suppression rather than
+                    // admit a second live row for the same occurrence — the
+                    // revision re-arrives on the next re-emit (occurrence keys
+                    // are stable) or replay.
+                    //
+                    // Downstream propagation is deliberately NOT an
+                    // invalidation publish: the admitted revision flows through
+                    // the normal confirmed-events -> derived-consumer path, so
+                    // downstream automata see it as ordinary new input. A
+                    // DerivedScopeInvalidation naming the archived predecessor
+                    // would be a verified no-op here — the adapter's
+                    // prepare_invalidation derives scope keys by get_by_id on
+                    // core.events (invalidate.rs), which returns None for the
+                    // row we just archived, and none of the SupersedeOnChange
+                    // event types stamp scope_key on their outputs anyway, so
+                    // it always resolved to "No scope keys to recompute".
+                    if self
+                        .apply_supersession(superseded_event_id, &admitted.event)
+                        .await
+                    {
+                        self.record_admission_supersession().await;
+                        prepared.push(PreparedEvent {
+                            event: admitted.event,
+                            parsed_id: admitted.event_id,
+                            message: msg.clone(),
+                            settlement: Arc::clone(&settlement),
+                        });
+                    } else {
+                        let rejection = AdmissionRejection {
+                            kind: AdmissionRejectionKind::OccurrenceDuplicate,
+                            reason: format!(
+                                "supersession archive of {superseded_event_id} failed; \
+                                 kept existing live interpretation and suppressed this revision"
+                            ),
+                        };
+                        self.record_admission_suppression(&rejection).await;
+                        settlement.settle_child(ChildOutcome::Safe).await?;
+                    }
                 }
                 AdmissionDecision::Suppressed(rejection) => {
                     self.record_admission_suppression(&rejection).await;
@@ -360,6 +408,83 @@ impl JetStreamConsumer {
                     &error,
                 );
             }
+        }
+    }
+
+    /// Apply an occurrence supersession (sinex-n9a): archive the prior live
+    /// interpretation so the candidate revision can replace it.
+    ///
+    /// Returns `true` when the predecessor was archived (the caller then
+    /// prepares the candidate for persistence), `false` when the archive
+    /// failed (the caller suppresses the candidate to preserve
+    /// single-live-interpretation). The archive commits in its own
+    /// transaction; the candidate is inserted later in the persist phase, so
+    /// there is a brief window where the occurrence has no live row — a crash
+    /// there self-heals on redelivery (the archived predecessor is gone, so
+    /// re-admission inserts the revision fresh; no duplicate is ever created).
+    ///
+    /// No `DerivedScopeInvalidation` is published here: downstream automata
+    /// receive the admitted revision through the normal confirmed-events →
+    /// derived-consumer path as ordinary new input, which is what actually
+    /// drives descendant recomputation. An invalidation naming the archived
+    /// predecessor would be a no-op — the adapter derives scope keys by
+    /// `get_by_id` on `core.events` (`runtime/automaton/adapter/invalidate.rs`),
+    /// which returns `None` for the row this function just archived, and the
+    /// `SupersedeOnChange` event types don't stamp `scope_key` on their
+    /// outputs, so the adapter always resolved "no scope keys to recompute".
+    pub(super) async fn apply_supersession(
+        &self,
+        superseded_event_id: Uuid,
+        candidate: &Event<JsonValue>,
+    ) -> bool {
+        // Fresh audit-correlation id for this single-row supersession archive.
+        let operation_id = Uuid::now_v7();
+        match self
+            .pool
+            .events()
+            .execute_cascade_archive(
+                &[superseded_event_id],
+                "occurrence supersession (sinex-n9a): live interpretation replaced by a changed re-emit",
+                &operation_id.to_string(),
+                "admission:supersede",
+            )
+            .await
+        {
+            Ok(_) => true,
+            Err(error) => {
+                warn!(
+                    superseded_event_id = %superseded_event_id,
+                    event_type = %candidate.event_type,
+                    error = %error,
+                    "supersession archive failed; keeping existing live interpretation and suppressing this revision"
+                );
+                false
+            }
+        }
+    }
+
+    /// Record telemetry for an admitted occurrence supersession (sinex-n9a),
+    /// kept distinct from suppression counters so a revision that replaced a
+    /// predecessor is separately visible from an ordinary duplicate drop.
+    pub(super) async fn record_admission_supersession(&self) {
+        self.stats.supersessions.fetch_add(1, Ordering::Relaxed);
+
+        tracing::debug!(
+            target: "sinex_metrics",
+            metric = "event_engine.admission_supersessions_total",
+            "Occurrence revision admitted via supersession"
+        );
+
+        if let Some(ref observer) = self.observer
+            && let Err(error) = observer
+                .emit_counter("event_engine.admission_supersessions_total", 1, None)
+                .await
+        {
+            Self::log_observer_error(
+                &self.stats,
+                "event_engine.admission_supersessions_total",
+                &error,
+            );
         }
     }
 
