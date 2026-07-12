@@ -9,6 +9,10 @@ use crate::runtime::{
     AutomatonContext, AutomatonLogicError, InputProvenanceFilter, MultiOutputTransducer,
 };
 use serde::{Deserialize, Deserializer, Serialize};
+use sinex_primitives::derivation::{
+    ClaimSupportTemplate, ClaimTemporalQuality, DerivationOutputDeclaration,
+    DerivationWriteSurface, DerivedProductClass, InputEligibility, SourceCoverage, SupportLevel,
+};
 use sinex_primitives::domain::SyntheticTemporalPolicy;
 use sinex_primitives::events::payloads::{
     ActivityWatchAfkChangedPayload, ActivityWatchWindowActivePayload, HyprlandWindowFocusedPayload,
@@ -134,6 +138,33 @@ const INTERVAL_LIFT_RULES: &[IntervalLiftRule] = &[
         consumer_hint: "machine.context/change.episode/ops.forensics",
     },
 ];
+
+/// Derivation control-plane declaration for `interval-lift` (sinex-0vx.1/0vx.3).
+///
+/// `output_event_types()` returns a single-element list (`["state.interval"]`)
+/// despite the `MultiOutputTransducer` model — the model is used for its
+/// one-input-to-many-outputs shape (a fence event closes several open
+/// intervals at once), not for multiple distinct event *types*.
+pub const INTERVAL_LIFT_OUTPUT_DECLARATIONS: &[DerivationOutputDeclaration] =
+    &[DerivationOutputDeclaration {
+        declaration_id: "interval-lift.state.interval",
+        owner: "interval-lift",
+        product_class: DerivedProductClass::CanonicalDerivedEvent,
+        write_surface: DerivationWriteSurface::DerivedOutput,
+        output_source: Some("derived.interval-lift"),
+        output_event_type: Some("state.interval"),
+        projection_kind: None,
+        artifact_kind: None,
+        proposal_kind: None,
+        semantics_version: SEMANTICS_VERSION,
+        input_eligibility: InputEligibility::DefaultCanonicalInput,
+        default_support: ClaimSupportTemplate::new(
+            SupportLevel::Direct,
+            SourceCoverage::Covered,
+            ClaimTemporalQuality::WindowBoundary,
+        ),
+        verification_command: "xtask test -p sinexd -E 'test(interval_lift)'",
+    }];
 
 #[derive(Debug, Clone, Default)]
 pub struct IntervalLift;
@@ -741,6 +772,9 @@ impl MultiOutputTransducer for IntervalLift {
     fn input_provenance_filter(&self) -> InputProvenanceFilter {
         InputProvenanceFilter::MaterialOnly
     }
+
+    const OUTPUT_DECLARATIONS: &'static [DerivationOutputDeclaration] =
+        INTERVAL_LIFT_OUTPUT_DECLARATIONS;
 
     /// Multi-output entry (sinex-5s6). Most inputs still map 1:1 through
     /// `process_single`, but a cross-kind fence (machine suspend, AFK

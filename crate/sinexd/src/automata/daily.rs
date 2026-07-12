@@ -10,6 +10,10 @@ use crate::runtime::{AutomatonLogicError, InputProvenanceFilter, Windowed};
 use serde::{Deserialize, Serialize};
 use sinex_primitives::Uuid;
 use sinex_primitives::activity::{ActivitySourceKind, primary_activity_source};
+use sinex_primitives::derivation::{
+    ClaimSupportTemplate, ClaimTemporalQuality, DerivationOutputDeclaration,
+    DerivationWriteSurface, DerivedProductClass, InputEligibility, SourceCoverage, SupportLevel,
+};
 use sinex_primitives::events::{
     EventPayload,
     payloads::{ActivityDailySummaryPayload, ActivityHourlySummaryPayload},
@@ -109,6 +113,28 @@ impl DailySummaryState {
     }
 }
 
+/// Derivation control-plane declaration for `daily` (sinex-0vx.1/0vx.3).
+pub const DAILY_OUTPUT_DECLARATIONS: &[DerivationOutputDeclaration] =
+    &[DerivationOutputDeclaration {
+        declaration_id: "daily.activity.summary.daily",
+        owner: "daily",
+        product_class: DerivedProductClass::CanonicalDerivedEvent,
+        write_surface: DerivationWriteSurface::DerivedOutput,
+        output_source: Some("derived.daily-summarizer"),
+        output_event_type: Some("activity.summary.daily"),
+        projection_kind: None,
+        artifact_kind: None,
+        proposal_kind: None,
+        semantics_version: "2.0.0",
+        input_eligibility: InputEligibility::DefaultCanonicalInput,
+        default_support: ClaimSupportTemplate::new(
+            SupportLevel::Convergent,
+            SourceCoverage::Covered,
+            ClaimTemporalQuality::WindowBoundary,
+        ),
+        verification_command: "xtask test -p sinexd -E 'test(daily)'",
+    }];
+
 #[derive(Default)]
 pub struct DailySummarizer;
 
@@ -136,6 +162,9 @@ impl Windowed for DailySummarizer {
     fn input_provenance_filter(&self) -> InputProvenanceFilter {
         InputProvenanceFilter::SynthesizedOnly
     }
+
+    const OUTPUT_DECLARATIONS: &'static [DerivationOutputDeclaration] = DAILY_OUTPUT_DECLARATIONS;
+
     async fn accumulate(
         &mut self,
         state: &mut Self::State,

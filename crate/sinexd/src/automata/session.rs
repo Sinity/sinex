@@ -10,6 +10,10 @@ use crate::runtime::{AutomatonLogicError, InputProvenanceFilter, Windowed};
 use serde::{Deserialize, Serialize};
 use sinex_primitives::Uuid;
 use sinex_primitives::activity::{ActivitySourceKind, primary_activity_source};
+use sinex_primitives::derivation::{
+    ClaimSupportTemplate, ClaimTemporalQuality, DerivationOutputDeclaration,
+    DerivationWriteSurface, DerivedProductClass, InputEligibility, SourceCoverage, SupportLevel,
+};
 use sinex_primitives::events::{
     EventPayload,
     payloads::{
@@ -95,6 +99,28 @@ impl SessionState {
 /// session with a `warn!` log so the truncation is visible.
 pub const MAX_SESSION_WINDOW_COUNT: u64 = 10_000;
 
+/// Derivation control-plane declaration for `session` (sinex-0vx.1/0vx.3).
+pub const SESSION_OUTPUT_DECLARATIONS: &[DerivationOutputDeclaration] =
+    &[DerivationOutputDeclaration {
+        declaration_id: "session.activity.session.boundary",
+        owner: "session",
+        product_class: DerivedProductClass::CanonicalDerivedEvent,
+        write_surface: DerivationWriteSurface::DerivedOutput,
+        output_source: Some("derived.session-detector"),
+        output_event_type: Some("activity.session.boundary"),
+        projection_kind: None,
+        artifact_kind: None,
+        proposal_kind: None,
+        semantics_version: "2.0.0",
+        input_eligibility: InputEligibility::DefaultCanonicalInput,
+        default_support: ClaimSupportTemplate::new(
+            SupportLevel::Convergent,
+            SourceCoverage::Covered,
+            ClaimTemporalQuality::WindowBoundary,
+        ),
+        verification_command: "xtask test -p sinexd -E 'test(session)'",
+    }];
+
 #[derive(Default)]
 pub struct SessionDetector;
 
@@ -122,6 +148,10 @@ impl Windowed for SessionDetector {
     fn input_provenance_filter(&self) -> InputProvenanceFilter {
         InputProvenanceFilter::SynthesizedOnly
     }
+
+    const OUTPUT_DECLARATIONS: &'static [DerivationOutputDeclaration] =
+        SESSION_OUTPUT_DECLARATIONS;
+
     async fn accumulate(
         &mut self,
         state: &mut Self::State,
