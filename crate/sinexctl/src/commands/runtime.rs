@@ -195,7 +195,10 @@ impl RuntimeCommands {
                 if envelope.payload.modules.is_empty() {
                     println!("No modules found.");
                 } else {
-                    println!("{}", format_runtime_presence_table(&envelope.payload.modules));
+                    println!(
+                        "{}",
+                        format_runtime_presence_table(&envelope.payload.modules)
+                    );
                 }
             }
             Self::Modules(cmd) => {
@@ -298,8 +301,7 @@ fn runtime_heartbeat_source_name(source: RuntimeHeartbeatSource) -> &'static str
 }
 
 fn runtime_health_envelope(health: SystemHealthResponse) -> ViewEnvelope<RuntimeHealthView> {
-    let mut envelope =
-        ViewEnvelope::new("sinexctl.runtime.health", RuntimeHealthView::new(health));
+    let mut envelope = ViewEnvelope::new("sinexctl.runtime.health", RuntimeHealthView::new(health));
     envelope.caveats = runtime_health_caveats(&envelope.payload.health);
     envelope
 }
@@ -399,11 +401,8 @@ fn runtime_health_ref(component: &str) -> SinexObjectRef {
         .with_rpc_method("system.health")
 }
 
-fn runtime_status_envelope(
-    status: InstanceHealthResponse,
-) -> ViewEnvelope<RuntimeStatusView> {
-    let mut envelope =
-        ViewEnvelope::new("sinexctl.runtime.status", RuntimeStatusView::new(status));
+fn runtime_status_envelope(status: InstanceHealthResponse) -> ViewEnvelope<RuntimeStatusView> {
+    let mut envelope = ViewEnvelope::new("sinexctl.runtime.status", RuntimeStatusView::new(status));
     envelope.caveats = runtime_status_caveats(&envelope.payload.status);
     envelope
 }
@@ -447,7 +446,7 @@ fn runtime_status_ref(status: &InstanceHealthResponse) -> SinexObjectRef {
         "sinexctl runtime status {}",
         status.instance.instance_id
     ))
-    .with_rpc_method("coordination.instance_health")
+    .with_rpc_method("runtime.list_active")
 }
 
 /// Format system health as table
