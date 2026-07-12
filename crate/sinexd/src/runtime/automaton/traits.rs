@@ -67,6 +67,11 @@ fn serialize_output<T: Serialize>(
         equivalence_key: output.equivalence_key,
         aggregation: output.aggregation,
         event_type: output.event_type,
+        declaration_id: output.declaration_id,
+        product_class: output.product_class,
+        claim_support: output.claim_support,
+        derivation_epoch_id: output.derivation_epoch_id,
+        derivation_lane_id: output.derivation_lane_id,
     })
 }
 
@@ -746,6 +751,11 @@ impl<N: Windowed> Automaton for WindowedWrapper<N> {
                     equivalence_key: output.equivalence_key,
                     aggregation: output.aggregation,
                     event_type: output.event_type,
+                    declaration_id: output.declaration_id,
+                    product_class: output.product_class,
+                    claim_support: output.claim_support,
+                    derivation_epoch_id: output.derivation_epoch_id,
+                    derivation_lane_id: output.derivation_lane_id,
                 }])
             }
             None => Ok(Vec::new()),
@@ -891,6 +901,11 @@ where
                     equivalence_key: output.equivalence_key,
                     aggregation: output.aggregation,
                     event_type: None,
+                    declaration_id: output.declaration_id,
+                    product_class: output.product_class,
+                    claim_support: output.claim_support,
+                    derivation_epoch_id: output.derivation_epoch_id,
+                    derivation_lane_id: output.derivation_lane_id,
                 })
             })
             .collect()
