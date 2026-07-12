@@ -21,6 +21,7 @@ use crate::runtime::automaton::traits::Automaton;
 use crate::runtime::stream::RuntimeContext;
 use crate::runtime::{RuntimeResult, SinexError};
 
+use sinex_primitives::derivation::{ClaimSupport, DerivationDeclarationId, DerivedProductClass};
 use sinex_primitives::events::Event;
 use sinex_primitives::events::builder::Provenance;
 use sinex_primitives::non_empty::NonEmptyVec;
@@ -240,6 +241,96 @@ where
         }
     }
 
+    /// Enforce the derivation control-plane contract for one output
+    /// (sinex-0vx.2). `declaration_id: None` (with no `product_class` set
+    /// either) passes unconditionally — this is the transition-period shape
+    /// every automaton emits until sinex-0vx.3 stamps its call sites.
+    ///
+    /// When a declaration is claimed, it must exist on
+    /// `N::OUTPUT_DECLARATIONS` and agree with the output on product class
+    /// and the resolved `(output_source, output_event_type)`. A claim-support
+    /// vector with an adjudicated status must carry an
+    /// `adjudication_event_id` — re-asserting `ClaimSupport::is_shape_valid()`
+    /// at the emission boundary defends against any construction path that
+    /// bypasses `ClaimSupport`'s compile-time constructors (e.g. a
+    /// wire-deserialized value fed back through a replay path).
+    fn validate_output_declaration(
+        &self,
+        declaration_id: Option<DerivationDeclarationId>,
+        product_class: Option<DerivedProductClass>,
+        claim_support: Option<&ClaimSupport>,
+        resolved_event_type: &'static str,
+    ) -> RuntimeResult<()> {
+        if let Some(claim_support) = claim_support
+            && !claim_support.is_shape_valid()
+        {
+            return Err(SinexError::validation(
+                "derived output claim_support is adjudicated without an adjudication_event_id",
+            )
+            .with_context("automaton", self.automaton.name())
+            .with_context("output_event_type", resolved_event_type));
+        }
+
+        let Some(declaration_id) = declaration_id else {
+            if product_class.is_some() {
+                return Err(SinexError::validation(
+                    "derived output set product_class without a declaration_id",
+                )
+                .with_context("automaton", self.automaton.name())
+                .with_context("output_event_type", resolved_event_type));
+            }
+            return Ok(());
+        };
+
+        let declaration = N::OUTPUT_DECLARATIONS
+            .iter()
+            .find(|declaration| declaration.declaration_id == declaration_id)
+            .ok_or_else(|| {
+                SinexError::validation("derived output claims an undeclared declaration_id")
+                    .with_context("automaton", self.automaton.name())
+                    .with_context("output_event_type", resolved_event_type)
+                    .with_context("declaration_id", declaration_id)
+            })?;
+
+        if let Some(product_class) = product_class
+            && product_class != declaration.product_class
+        {
+            return Err(SinexError::validation(
+                "derived output product_class disagrees with its declaration",
+            )
+            .with_context("automaton", self.automaton.name())
+            .with_context("declaration_id", declaration_id)
+            .with_context("declared_product_class", declaration.product_class.as_str())
+            .with_context("output_product_class", product_class.as_str()));
+        }
+
+        let source_matches = declaration
+            .output_source
+            .is_none_or(|source| source == self.automaton.output_event_source());
+        let type_matches = declaration
+            .output_event_type
+            .is_none_or(|event_type| event_type == resolved_event_type);
+        if !source_matches || !type_matches {
+            return Err(SinexError::validation(
+                "derived output (source, event_type) disagrees with its declaration",
+            )
+            .with_context("automaton", self.automaton.name())
+            .with_context("declaration_id", declaration_id)
+            .with_context(
+                "declared_source",
+                declaration.output_source.unwrap_or("<any>"),
+            )
+            .with_context(
+                "declared_event_type",
+                declaration.output_event_type.unwrap_or("<any>"),
+            )
+            .with_context("output_source", self.automaton.output_event_source())
+            .with_context("output_event_type", resolved_event_type));
+        }
+
+        Ok(())
+    }
+
     pub(super) fn build_output_events(
         &self,
         outputs: Vec<DerivedOutput<JsonValue>>,
@@ -273,9 +364,21 @@ where
             equivalence_key,
             aggregation: _aggregation,
             event_type,
+            declaration_id,
+            product_class,
+            claim_support,
+            derivation_epoch_id: _derivation_epoch_id,
+            derivation_lane_id: _derivation_lane_id,
         } = output;
 
         let resolved_event_type = event_type.unwrap_or_else(|| self.automaton.output_event_type());
+
+        self.validate_output_declaration(
+            declaration_id,
+            product_class,
+            claim_support.as_ref(),
+            resolved_event_type,
+        )?;
 
         let typed_ids: Vec<Id<Event<JsonValue>>> =
             source_event_ids.into_iter().map(Id::from_uuid).collect();
