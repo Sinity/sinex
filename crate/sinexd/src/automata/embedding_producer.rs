@@ -92,17 +92,26 @@ impl Transducer for EmbeddingProducer {
 
         let ts_orig = ctx.require_ts_orig()?;
         let source_id = ctx.trigger_uuid();
-        Ok(Some(DerivedOutput::transduced(
-            serde_json::json!({
-                "chunk_id": chunk_id,
-                "document_id": document_id,
-                "chunk_hash": chunk_hash,
-                "effect_key": request.composite_key(),
-                "replay_policy": "reuse_recorded",
-            }),
-            ts_orig,
-            source_id,
-        )))
+        let declaration = &EMBEDDING_PRODUCER_OUTPUT_DECLARATIONS[0];
+        Ok(Some(
+            DerivedOutput::transduced(
+                serde_json::json!({
+                    "chunk_id": chunk_id,
+                    "document_id": document_id,
+                    "chunk_hash": chunk_hash,
+                    "effect_key": request.composite_key(),
+                    "replay_policy": "reuse_recorded",
+                }),
+                ts_orig,
+                source_id,
+            )
+            .with_declaration_id(declaration.declaration_id)
+            .with_product_class(declaration.product_class)
+            // Zero evidence counts: this is a receipt, not the embedding vector
+            // itself (see the declaration's doc — ClaimSupportTemplate::UNKNOWN
+            // until sinex-5v6 lands real model effects).
+            .with_claim_support(declaration.default_support.instantiate(0, 0, 0, 0)),
+        ))
     }
 }
 

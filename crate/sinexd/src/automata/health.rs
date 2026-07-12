@@ -334,6 +334,8 @@ impl ScopeReconciler for HealthAggregator {
 
             // Immediate alert for component failure
             if status_changed && matches!(current_status, HealthStatus::Unhealthy) {
+                let declaration = &HEALTH_OUTPUT_DECLARATIONS[0];
+                let evidence_event_count = window_event_ids.len() as u32;
                 immediate_alert = Some(
                     DerivedOutput::reconciled(
                         self.create_alert(
@@ -347,7 +349,15 @@ impl ScopeReconciler for HealthAggregator {
                         component.clone(),
                     )
                     .with_temporal_policy(SyntheticTemporalPolicy::DeclaredEffective)
-                    .with_equivalence_key(format!("alert:{component}:{}", now.format_rfc3339())),
+                    .with_equivalence_key(format!("alert:{component}:{}", now.format_rfc3339()))
+                    .with_declaration_id(declaration.declaration_id)
+                    .with_product_class(declaration.product_class)
+                    .with_claim_support(declaration.default_support.instantiate(
+                        evidence_event_count,
+                        0,
+                        1,
+                        0,
+                    )),
                 );
             }
 
@@ -366,6 +376,8 @@ impl ScopeReconciler for HealthAggregator {
             });
 
             if should_emit_component && state.config.enable_component_health_reports {
+                let declaration = &HEALTH_OUTPUT_DECLARATIONS[0];
+                let evidence_event_count = window_event_ids.len() as u32;
                 component_report = Some(
                     DerivedOutput::reconciled(
                         self.create_component_report(component_health, now),
@@ -373,7 +385,15 @@ impl ScopeReconciler for HealthAggregator {
                         window_event_ids,
                         component.clone(),
                     )
-                    .with_temporal_policy(SyntheticTemporalPolicy::DeclaredEffective),
+                    .with_temporal_policy(SyntheticTemporalPolicy::DeclaredEffective)
+                    .with_declaration_id(declaration.declaration_id)
+                    .with_product_class(declaration.product_class)
+                    .with_claim_support(declaration.default_support.instantiate(
+                        evidence_event_count,
+                        0,
+                        1,
+                        0,
+                    )),
                 );
                 component_health.last_check_emission = Some(now);
             }
@@ -396,6 +416,8 @@ impl ScopeReconciler for HealthAggregator {
                     "system status",
                 )?);
             }
+            let declaration = &HEALTH_OUTPUT_DECLARATIONS[0];
+            let evidence_event_count = all_event_ids.len() as u32;
             periodic_reports.push(
                 DerivedOutput::reconciled(
                     self.create_system_status(state, now),
@@ -403,7 +425,15 @@ impl ScopeReconciler for HealthAggregator {
                     all_event_ids,
                     component.clone(),
                 )
-                .with_temporal_policy(SyntheticTemporalPolicy::DeclaredEffective),
+                .with_temporal_policy(SyntheticTemporalPolicy::DeclaredEffective)
+                .with_declaration_id(declaration.declaration_id)
+                .with_product_class(declaration.product_class)
+                .with_claim_support(declaration.default_support.instantiate(
+                    evidence_event_count,
+                    0,
+                    1,
+                    0,
+                )),
             );
             state.last_window_emission = Some(now);
         }

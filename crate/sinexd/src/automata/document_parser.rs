@@ -250,8 +250,17 @@ impl DocumentParserAutomaton {
         }))
         .map_err(|e| AutomatonLogicError::Processing(format!("serialize document.parsed: {e}")))?;
 
+        let parsed_declaration = &DOCUMENT_PARSER_OUTPUT_DECLARATIONS[0];
         let parsed_output = DerivedOutput::transduced(parsed_payload, ts_orig, parent_event_id)
-            .with_event_type("document.parsed");
+            .with_event_type("document.parsed")
+            .with_declaration_id(parsed_declaration.declaration_id)
+            .with_product_class(parsed_declaration.product_class)
+            .with_claim_support(parsed_declaration.default_support.instantiate(
+                1,
+                1,
+                1,
+                0,
+            ));
 
         outputs.push(parsed_output);
 
@@ -283,8 +292,17 @@ impl DocumentParserAutomaton {
                 AutomatonLogicError::Processing(format!("serialize document.chunked: {e}"))
             })?;
 
+            let chunk_declaration = &DOCUMENT_PARSER_OUTPUT_DECLARATIONS[1];
             let chunk_output = DerivedOutput::transduced(chunk_payload, ts_orig, parent_event_id)
-                .with_event_type("document.chunked");
+                .with_event_type("document.chunked")
+                .with_declaration_id(chunk_declaration.declaration_id)
+                .with_product_class(chunk_declaration.product_class)
+                .with_claim_support(chunk_declaration.default_support.instantiate(
+                    1,
+                    1,
+                    1,
+                    0,
+                ));
 
             outputs.push(chunk_output);
             byte_offset += chunk_len;
@@ -346,9 +364,18 @@ impl DocumentParserAutomaton {
         }))
         .map_err(|e| AutomatonLogicError::Processing(format!("serialize document.parsed: {e}")))?;
 
+        let parsed_declaration = &DOCUMENT_PARSER_OUTPUT_DECLARATIONS[0];
         outputs.push(
             DerivedOutput::transduced(parsed_payload, ts_orig, parent_event_id)
-                .with_event_type("document.parsed"),
+                .with_event_type("document.parsed")
+                .with_declaration_id(parsed_declaration.declaration_id)
+                .with_product_class(parsed_declaration.product_class)
+                .with_claim_support(parsed_declaration.default_support.instantiate(
+                    1,
+                    1,
+                    1,
+                    0,
+                )),
         );
 
         let mut byte_offset: u64 = 0;
@@ -368,9 +395,18 @@ impl DocumentParserAutomaton {
                 AutomatonLogicError::Processing(format!("serialize document.chunked: {e}"))
             })?;
 
+            let chunk_declaration = &DOCUMENT_PARSER_OUTPUT_DECLARATIONS[1];
             outputs.push(
                 DerivedOutput::transduced(chunk_payload, ts_orig, parent_event_id)
-                    .with_event_type("document.chunked"),
+                    .with_event_type("document.chunked")
+                    .with_declaration_id(chunk_declaration.declaration_id)
+                    .with_product_class(chunk_declaration.product_class)
+                    .with_claim_support(chunk_declaration.default_support.instantiate(
+                        1,
+                        1,
+                        1,
+                        0,
+                    )),
             );
             byte_offset += chunk_len;
         }
