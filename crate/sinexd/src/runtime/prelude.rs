@@ -7,7 +7,7 @@
 //! use crate::runtime::prelude::*;
 //!
 //! // Instead of:
-//! // use crate::runtime::{RuntimeModule, CheckpointManager, RuntimeCoordination};
+//! // use crate::runtime::{RuntimeModule, CheckpointManager};
 //! // use crate::runtime::{RuntimeConfig, TimeHorizon, Checkpoint};
 //! ```
 
@@ -29,7 +29,6 @@ pub use crate::runtime::{RuntimeModule, TimeHorizon};
 // Configuration and coordination
 pub use crate::runtime::{AutomatonConfig, EventSourceConfig, RuntimeConfig};
 #[cfg(feature = "messaging")]
-pub use crate::runtime::{HandoffRequest, InstanceMode, RuntimeCoordination};
 pub use crate::runtime::{RuntimeInstance, RuntimeVersion};
 
 // Lifecycle management

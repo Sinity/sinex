@@ -10,17 +10,12 @@ use crate::api::service_container::ServiceContainer;
 use serde::{Serialize, de::DeserializeOwned};
 use serde_json::Value as JsonValue;
 use sinex_db::pkm::PkmService;
-use sinex_primitives::coordination::CoordinationKvClient;
 use sinex_primitives::rpc::{
     RpcMethod,
     audit::AUDIT_GET_METHOD,
     automata::AUTOMATA_STATUS_METHOD,
     browser::BROWSER_CAPTURE_BATCH_METHOD,
     content::{CONTENT_RETRIEVE_BLOB_METHOD, CONTENT_STORE_BLOB_METHOD},
-    coordination::{
-        COORDINATION_GET_LEADER_METHOD, COORDINATION_INSTANCE_HEALTH_METHOD,
-        COORDINATION_LIST_INSTANCES_METHOD,
-    },
     curation::{
         CURATION_DUPLICATE_CANDIDATES_LIST_METHOD, CURATION_DUPLICATE_JUDGMENTS_RECORD_METHOD,
         CURATION_FINALIZE_METHOD, CURATION_JUDGMENTS_RECORD_METHOD, CURATION_PROPOSALS_LIST_METHOD,
@@ -409,50 +404,6 @@ impl RpcRegistry {
         self
     }
 
-    /// Register a typed coordination RPC handler.
-    pub(crate) fn coord_typed_rpc<Req, Resp, F>(
-        mut self,
-        method: RpcMethod<Req, Resp>,
-        f: F,
-    ) -> Self
-    where
-        Req: DeserializeOwned + 'static,
-        Resp: Serialize + 'static,
-        F: for<'a> Fn(
-                &'a CoordinationKvClient,
-                Req,
-            ) -> Pin<Box<dyn Future<Output = Result<Resp>> + Send + 'a>>
-            + Send
-            + Sync
-            + 'static,
-    {
-        let f = Arc::new(f);
-        self.methods.insert(
-            method.name,
-            RegistryEntry {
-                handler: Arc::new(move |params, services, _auth| {
-                    let f = Arc::clone(&f);
-                    Box::pin(async move {
-                        let client = services
-                            .coordination
-                            .as_ref()
-                            .map(std::convert::AsRef::as_ref)
-                            .ok_or_else(|| {
-                                SinexError::configuration(
-                                    "Coordination client is not initialized (NATS connection required)"
-                                )
-                            })?;
-                        let request = decode_rpc_params(method.name, params)?;
-                        let response = f(client, request).await?;
-                        encode_rpc_response(method.name, &response)
-                    })
-                }),
-                required_role: method.role.into(),
-            },
-        );
-        self
-    }
-
     /// Returns a map of method names to their required roles.
     #[must_use]
     pub fn method_roles(&self) -> HashMap<&'static str, Role> {
@@ -563,8 +514,7 @@ pub fn list_all_methods() -> Vec<(String, crate::api::auth::Role)> {
 fn build_registry_impl() -> RpcRegistry {
     use crate::api::handlers::{
         handle_audit_get, handle_automata_status, handle_browser_capture_batch,
-        handle_coordination_get_leader, handle_coordination_instance_health,
-        handle_coordination_list_instances, handle_create_entities, handle_create_note,
+        handle_create_entities, handle_create_note,
         handle_curation_finalize, handle_curation_list_duplicate_candidates,
         handle_curation_list_proposals, handle_curation_record_duplicate_judgment,
         handle_curation_record_judgment, handle_dlq_list, handle_dlq_peek, handle_dlq_purge,
@@ -666,19 +616,6 @@ fn build_registry_impl() -> RpcRegistry {
         .pool_typed_rpc(
             SEMANTIC_LANE_DIFFS_LIST_METHOD,
             boxed!(handle_semantic_lane_diffs_list),
-        )
-        // Coordination methods (ReadOnly)
-        .coord_typed_rpc(
-            COORDINATION_LIST_INSTANCES_METHOD,
-            boxed!(handle_coordination_list_instances),
-        )
-        .coord_typed_rpc(
-            COORDINATION_GET_LEADER_METHOD,
-            boxed!(handle_coordination_get_leader),
-        )
-        .coord_typed_rpc(
-            COORDINATION_INSTANCE_HEALTH_METHOD,
-            boxed!(handle_coordination_instance_health),
         )
         // Audit trail methods (ReadOnly)
         .pool_typed_rpc(AUDIT_GET_METHOD, boxed!(handle_audit_get))

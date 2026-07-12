@@ -6,7 +6,6 @@ pub mod audit;
 pub mod automata;
 pub mod browser;
 pub mod content;
-pub mod coordination;
 pub mod curation;
 pub mod dlq;
 pub mod documents;
@@ -81,10 +80,6 @@ pub use shadow::{handle_shadow_create, handle_shadow_delete, handle_shadow_list}
 pub use source_status::{handle_sources_status, handle_sources_status_view};
 
 pub use content::{handle_retrieve_blob, handle_store_blob};
-pub use coordination::{
-    handle_coordination_get_leader, handle_coordination_instance_health,
-    handle_coordination_list_instances,
-};
 pub use documents::{
     handle_documents_get, handle_documents_get_chunks, handle_documents_get_chunks_redacted,
     handle_documents_search,
