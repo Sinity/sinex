@@ -518,6 +518,7 @@ impl StateObservation {
             attributes: self.attributes.clone(),
         };
 
+        let declaration = &INTERVAL_LIFT_OUTPUT_DECLARATIONS[0];
         DerivedOutput::windowed(
             payload,
             current.ts_orig,
@@ -526,6 +527,9 @@ impl StateObservation {
         .with_temporal_policy(SyntheticTemporalPolicy::WindowBoundary)
         .with_semantics_version(SEMANTICS_VERSION)
         .with_equivalence_key(interval_id)
+        .with_declaration_id(declaration.declaration_id)
+        .with_product_class(declaration.product_class)
+        .with_claim_support(declaration.default_support.instantiate(2, 0, 1, 0))
     }
 
     /// Close this open interval at an external cross-kind fence (sinex-5s6): a
@@ -566,10 +570,14 @@ impl StateObservation {
             attributes: self.attributes.clone(),
         };
 
+        let declaration = &INTERVAL_LIFT_OUTPUT_DECLARATIONS[0];
         DerivedOutput::windowed(payload, fence_ts, vec![self.event_id, fence_event_id])
             .with_temporal_policy(SyntheticTemporalPolicy::WindowBoundary)
             .with_semantics_version(SEMANTICS_VERSION)
             .with_equivalence_key(interval_id)
+            .with_declaration_id(declaration.declaration_id)
+            .with_product_class(declaration.product_class)
+            .with_claim_support(declaration.default_support.instantiate(2, 0, 1, 0))
     }
 
     /// Close a heartbeat bout at the LAST observed heartbeat plus a bounded slack
@@ -604,10 +612,14 @@ impl StateObservation {
             attributes: self.attributes.clone(),
         };
 
+        let declaration = &INTERVAL_LIFT_OUTPUT_DECLARATIONS[0];
         DerivedOutput::windowed(payload, end_time, vec![self.event_id])
             .with_temporal_policy(SyntheticTemporalPolicy::WindowBoundary)
             .with_semantics_version(SEMANTICS_VERSION)
             .with_equivalence_key(interval_id)
+            .with_declaration_id(declaration.declaration_id)
+            .with_product_class(declaration.product_class)
+            .with_claim_support(declaration.default_support.instantiate(1, 0, 1, 0))
     }
 
     fn observed_duration_interval(
@@ -644,10 +656,14 @@ impl StateObservation {
             attributes: self.attributes.clone(),
         };
 
+        let declaration = &INTERVAL_LIFT_OUTPUT_DECLARATIONS[0];
         DerivedOutput::windowed(payload, end_time, vec![self.event_id])
             .with_temporal_policy(SyntheticTemporalPolicy::WindowBoundary)
             .with_semantics_version(SEMANTICS_VERSION)
             .with_equivalence_key(interval_id)
+            .with_declaration_id(declaration.declaration_id)
+            .with_product_class(declaration.product_class)
+            .with_claim_support(declaration.default_support.instantiate(1, 0, 1, 0))
     }
 }
 

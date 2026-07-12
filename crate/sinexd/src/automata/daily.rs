@@ -265,6 +265,7 @@ impl Windowed for DailySummarizer {
         };
 
         let event_timestamp = state.last_hour_start.unwrap_or(day_start);
+        let declaration = &DAILY_OUTPUT_DECLARATIONS[0];
         let output = DerivedOutput::windowed(payload, event_timestamp, source_event_ids)
             .with_temporal_policy(sinex_primitives::domain::SyntheticTemporalPolicy::WindowBoundary)
             .with_semantics_version("2.0.0")
@@ -273,6 +274,14 @@ impl Windowed for DailySummarizer {
                 "activity.summary.daily",
                 state.summary_counter - 1,
                 event_count,
+            ))
+            .with_declaration_id(declaration.declaration_id)
+            .with_product_class(declaration.product_class)
+            .with_claim_support(declaration.default_support.instantiate(
+                event_count as u32,
+                0,
+                state.sources.len() as u32,
+                0,
             ));
 
         let pending_hour = state.pending_hour.take();

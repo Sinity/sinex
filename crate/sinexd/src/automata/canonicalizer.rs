@@ -108,9 +108,13 @@ impl Transducer for TerminalCommandCanonicalizer {
         info!("Canonicalizing command: {}", payload.command);
         payload.source_events = vec![context.trigger_uuid().to_string()];
 
+        let declaration = &CANONICALIZER_OUTPUT_DECLARATIONS[0];
         Ok(Some(
             DerivedOutput::transduced(payload, ts_orig, context.trigger_uuid())
-                .with_temporal_policy(SyntheticTemporalPolicy::InheritParent),
+                .with_temporal_policy(SyntheticTemporalPolicy::InheritParent)
+                .with_declaration_id(declaration.declaration_id)
+                .with_product_class(declaration.product_class)
+                .with_claim_support(declaration.default_support.instantiate(1, 0, 1, 0)),
         ))
     }
 }

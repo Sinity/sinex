@@ -261,6 +261,7 @@ impl Windowed for HourlySummarizer {
         };
 
         let event_timestamp = state.last_window_end.unwrap_or(hour_start);
+        let declaration = &HOURLY_OUTPUT_DECLARATIONS[0];
         let output = DerivedOutput::windowed(payload, event_timestamp, source_event_ids)
             .with_temporal_policy(sinex_primitives::domain::SyntheticTemporalPolicy::WindowBoundary)
             .with_semantics_version("2.0.0")
@@ -269,6 +270,14 @@ impl Windowed for HourlySummarizer {
                 "activity.summary.hourly",
                 state.summary_counter - 1,
                 event_count,
+            ))
+            .with_declaration_id(declaration.declaration_id)
+            .with_product_class(declaration.product_class)
+            .with_claim_support(declaration.default_support.instantiate(
+                event_count as u32,
+                0,
+                state.sources.len() as u32,
+                0,
             ));
 
         let pending_window = state.pending_window.take();
