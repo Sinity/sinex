@@ -111,7 +111,7 @@
       "event_type": "curation.judgment",
       "version": "1.0.0",
       "path": "curation/curation.judgment.json",
-      "content_hash": "ccdefc46b8e7c0a701a5314bf64f132a22f6f9c6ff7b1640264bde31553cb131"
+      "content_hash": "5a8a26acab2fdd9629302da05ddf2ce2940ce2d1214cb003a43ca16a77f1917e"
     },
     {
       "source": "curation",

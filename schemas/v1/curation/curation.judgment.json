@@ -1,11 +1,12 @@
 {
   "$defs": {
     "CurationJudgmentActorKind": {
-      "description": "Actor class authorized to record a judgment.",
+      "description": "Actor class authorized to record a judgment.\n\n`Agent` is a typed, auditable non-human actor class (precedent:\n`DeterministicPolicy`) — NOT agents-as-`Operator`-with-`actor_id`. Letting\nan agent wear the `Operator` hat would leave \"agent judgments are not\nautomatically human-operator authority\" at convention-only string-matching\non `actor_id`; a dedicated variant lifts the invariant to compile-time\n(exhaustive match) and DB CHECK (`actor_kind = 'agent'`).\n`actor_id` is retained and now unambiguous: it carries the specific agent\nidentity (e.g. `agent:claude-opus@session-...`) while `actor_kind = Agent`\ncarries the CLASS.\n\nDefault posture (enforced by the finalizer policy, not by this enum): an\n`Agent` judgment is NON-SUFFICIENT to flip an adjudication to `Accepted`\nby itself — it produces at most a proposed-acceptance requiring\n`Operator`/`User` confirmation, unless a finalizer registry row\nexplicitly grants `Agent` authority for that proposal kind. See\n`.agent/scratch/027-0vx-derivation-control-plane-design.md` decision (a).",
       "enum": [
         "user",
         "operator",
         "deterministic_policy",
+        "agent",
         "test_fixture"
       ],
       "type": "string"
