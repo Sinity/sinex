@@ -1283,6 +1283,18 @@ fn admitted_to_stream_rows(batch: &[&AdmittedEvent]) -> EventEngineResult<Vec<St
                 );
             }
 
+            // Derivation control plane (sinex-0vx.4 / sinex-8cr.2).
+            let claim_support = event
+                .claim_support
+                .as_ref()
+                .map(serde_json::to_value)
+                .transpose()
+                .map_err(|e| {
+                    SinexError::validation("failed to serialize event claim_support")
+                        .with_context("event_id", admitted.event_id.to_string())
+                        .with_context("parse_error", e.to_string())
+                })?;
+
             Ok(StreamBatchRow {
                 id: admitted.event_id,
                 source: event.source.clone(),
@@ -1312,6 +1324,12 @@ fn admitted_to_stream_rows(batch: &[&AdmittedEvent]) -> EventEngineResult<Vec<St
                 created_by_operation_id: event.created_by_operation_id,
                 automaton_model: event.automaton_model.map(|model| model.to_string()),
                 ts_quality: event.ts_quality.map(|quality| quality.to_string()),
+                product_class: event.product_class.map(|p| p.to_string()),
+                claim_support,
+                derivation_declaration_id: event.derivation_declaration_id.clone(),
+                derivation_epoch_id: event.derivation_epoch_id,
+                derivation_lane_id: event.derivation_lane_id,
+                adjudication_event_id: event.adjudication_event_id,
             })
         })
         .collect()

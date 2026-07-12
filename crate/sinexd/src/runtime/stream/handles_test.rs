@@ -45,6 +45,12 @@ async fn emit_stamps_payload_schema_id_from_validator() -> TestResult<()> {
         automaton_model: None,
         ts_quality: None,
         anchor_payload_hash: None,
+        product_class: None,
+        claim_support: None,
+        derivation_declaration_id: None,
+        derivation_epoch_id: None,
+        derivation_lane_id: None,
+        adjudication_event_id: None,
     };
 
     emitter.emit(event).await?;
@@ -98,6 +104,12 @@ async fn emit_preserves_existing_payload_schema_id() -> TestResult<()> {
         automaton_model: None,
         ts_quality: None,
         anchor_payload_hash: None,
+        product_class: None,
+        claim_support: None,
+        derivation_declaration_id: None,
+        derivation_epoch_id: None,
+        derivation_lane_id: None,
+        adjudication_event_id: None,
     };
 
     emitter.emit(event).await?;
@@ -133,6 +145,12 @@ async fn emit_stamps_missing_event_id() -> TestResult<()> {
         automaton_model: None,
         ts_quality: None,
         anchor_payload_hash: None,
+        product_class: None,
+        claim_support: None,
+        derivation_declaration_id: None,
+        derivation_epoch_id: None,
+        derivation_lane_id: None,
+        adjudication_event_id: None,
     };
 
     emitter.emit(event).await?;
@@ -170,6 +188,12 @@ async fn emit_stamps_default_created_by_operation_id() -> TestResult<()> {
         automaton_model: None,
         ts_quality: None,
         anchor_payload_hash: None,
+        product_class: None,
+        claim_support: None,
+        derivation_declaration_id: None,
+        derivation_epoch_id: None,
+        derivation_lane_id: None,
+        adjudication_event_id: None,
     };
 
     emitter.emit(event).await?;

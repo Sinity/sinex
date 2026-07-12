@@ -171,6 +171,12 @@ impl DemoCommand {
                     created_by_operation_id: None,
                     automaton_model: None,
                     ts_quality: None,
+                    product_class: None,
+                    claim_support: None,
+                    derivation_declaration_id: None,
+                    derivation_epoch_id: None,
+                    derivation_lane_id: None,
+                    adjudication_event_id: None,
                 };
                 batch.push(row);
             }

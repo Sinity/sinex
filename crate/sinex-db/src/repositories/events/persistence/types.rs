@@ -74,6 +74,22 @@ pub struct StreamBatchRow {
     pub created_by_operation_id: Option<Uuid>,
     /// Which automaton model produced this event
     pub automaton_model: Option<String>,
+
+    // Derivation control plane (sinex-0vx.4 / sinex-8cr.2, nullable — only
+    // set for events that declare a `DerivedProductClass`).
+    /// Output-layer epistemic-class declaration (wire string, see
+    /// `DerivedProductClass::as_str`).
+    pub product_class: Option<String>,
+    /// Claim-support evidentiary vector, pre-serialized to JSON.
+    pub claim_support: Option<JsonValue>,
+    /// Declaration id this output claims.
+    pub derivation_declaration_id: Option<String>,
+    /// Non-canonical lane epoch this output was produced under.
+    pub derivation_epoch_id: Option<Uuid>,
+    /// Non-canonical lane this output was produced under.
+    pub derivation_lane_id: Option<Uuid>,
+    /// The `operator_judgment` event that adjudicated this row's `claim_support`.
+    pub adjudication_event_id: Option<Uuid>,
 }
 
 /// Result of a stream batch insert operation.

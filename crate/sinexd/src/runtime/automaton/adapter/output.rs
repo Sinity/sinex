@@ -367,8 +367,8 @@ where
             declaration_id,
             product_class,
             claim_support,
-            derivation_epoch_id: _derivation_epoch_id,
-            derivation_lane_id: _derivation_lane_id,
+            derivation_epoch_id,
+            derivation_lane_id,
         } = output;
 
         let resolved_event_type = event_type.unwrap_or_else(|| self.automaton.output_event_type());
@@ -439,6 +439,17 @@ where
             created_by_operation_id,
             automaton_model: Some(self.automaton.automaton_model()),
             anchor_payload_hash: None,
+            // Derivation control plane (sinex-0vx.2 stamped these on
+            // DerivedOutput; sinex-8cr.2 carries them onto the persisted
+            // Event instead of discarding them here). adjudication_event_id
+            // has no DerivedOutput carrier — only the future curation
+            // finalizer (sinex-0vx.5) sets it.
+            product_class,
+            claim_support,
+            derivation_declaration_id: declaration_id.map(String::from),
+            derivation_epoch_id,
+            derivation_lane_id,
+            adjudication_event_id: None,
         })
     }
 }

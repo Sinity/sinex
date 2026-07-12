@@ -590,6 +590,12 @@ async fn process_batch_with_dlq_fallback_propagates_checkpoint_errors(
         automaton_model: None,
         ts_quality: None,
         anchor_payload_hash: None,
+        product_class: None,
+        claim_support: None,
+        derivation_declaration_id: None,
+        derivation_epoch_id: None,
+        derivation_lane_id: None,
+        adjudication_event_id: None,
     };
 
     let error =
@@ -646,6 +652,12 @@ async fn process_batch_with_dlq_fallback_fails_when_dlq_route_fails(
         automaton_model: None,
         ts_quality: None,
         anchor_payload_hash: None,
+        product_class: None,
+        claim_support: None,
+        derivation_declaration_id: None,
+        derivation_epoch_id: None,
+        derivation_lane_id: None,
+        adjudication_event_id: None,
     };
 
     let error =

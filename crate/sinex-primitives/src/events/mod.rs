@@ -24,6 +24,7 @@ pub use occurrence::MaterialOccurrenceKey;
 pub use payload::*;
 pub use payloads::*;
 
+use crate::derivation::{ClaimSupport, DerivedProductClass};
 use crate::domain::{
     AutomatonModel, EventSource, EventType, HostName, SyntheticTemporalPolicy, TemporalSourceType,
 };
@@ -121,6 +122,40 @@ pub struct Event<T = JsonValue> {
     /// Which automaton model produced this event
     #[serde(skip_serializing_if = "Option::is_none")]
     pub automaton_model: Option<AutomatonModel>,
+
+    // Derivation control plane (sinex-0vx.2 / sinex-0vx.4 / sinex-8cr.2,
+    // nullable — only set for events that declare a `DerivedProductClass`).
+    // Mirrors the `core.events`/`reflection.events` columns 1:1.
+    /// Output-layer epistemic-class declaration for this event.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub product_class: Option<DerivedProductClass>,
+
+    /// Claim-support evidentiary vector accompanying `product_class`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub claim_support: Option<ClaimSupport>,
+
+    /// Declaration id this output claims (`AutomatonSpec::OUTPUT_DECLARATIONS`).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub derivation_declaration_id: Option<String>,
+
+    /// Non-canonical lane epoch this output was produced under. `None`
+    /// means the implicit canonical epoch — no canonical-epoch-id
+    /// resolution mechanism exists yet (sinex-0vx.5/0vx.6/0vx.7/0vx.9), so
+    /// this stays `None` end-to-end on every live write path today.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub derivation_epoch_id: Option<Uuid>,
+
+    /// Non-canonical lane this output was produced under. `None` means the
+    /// implicit canonical lane. See `derivation_epoch_id`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub derivation_lane_id: Option<Uuid>,
+
+    /// The `operator_judgment` event that adjudicated this row's
+    /// `claim_support`, if any. Set only by the future curation finalizer
+    /// (sinex-0vx.5) — `None` everywhere on every write path this bead
+    /// touches.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub adjudication_event_id: Option<Uuid>,
 }
 
 /// Marker type for source material IDs
@@ -231,6 +266,12 @@ impl<T: Serialize> Event<T> {
             equivalence_key: self.equivalence_key,
             created_by_operation_id: self.created_by_operation_id,
             automaton_model: self.automaton_model,
+            product_class: self.product_class,
+            claim_support: self.claim_support,
+            derivation_declaration_id: self.derivation_declaration_id,
+            derivation_epoch_id: self.derivation_epoch_id,
+            derivation_lane_id: self.derivation_lane_id,
+            adjudication_event_id: self.adjudication_event_id,
         })
     }
 }
@@ -261,6 +302,12 @@ impl Event<JsonValue> {
             equivalence_key: self.equivalence_key.clone(),
             created_by_operation_id: self.created_by_operation_id,
             automaton_model: self.automaton_model,
+            product_class: self.product_class,
+            claim_support: self.claim_support.clone(),
+            derivation_declaration_id: self.derivation_declaration_id.clone(),
+            derivation_epoch_id: self.derivation_epoch_id,
+            derivation_lane_id: self.derivation_lane_id,
+            adjudication_event_id: self.adjudication_event_id,
         })
     }
 
@@ -293,6 +340,12 @@ impl Event<JsonValue> {
             equivalence_key: None,
             created_by_operation_id,
             automaton_model: None,
+            product_class: None,
+            claim_support: None,
+            derivation_declaration_id: None,
+            derivation_epoch_id: None,
+            derivation_lane_id: None,
+            adjudication_event_id: None,
         }
     }
 }
