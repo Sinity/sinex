@@ -672,9 +672,8 @@ impl EventRepository<'_> {
     /// against when it carries an already-present `equivalence_key`.
     ///
     /// Carries exactly what the admission `RevisionPolicy` needs: the live
-    /// `id` (the archive target under supersession), the `payload` (to
-    /// content-hash against the candidate), and the `source`/`event_type`
-    /// (to construct the derived-scope invalidation for descendants).
+    /// `id` (the archive target under supersession) and the `payload` (to
+    /// content-hash against the candidate).
     ///
     /// Look up the newest live row per key (`DISTINCT ON` / `ORDER BY id
     /// DESC`): the single-live-interpretation invariant means there is
@@ -688,8 +687,6 @@ impl EventRepository<'_> {
             r#"
             SELECT
                 id::uuid as "id!",
-                source as "source!",
-                event_type as "event_type!",
                 payload as "payload!"
             FROM core.events
             WHERE equivalence_key = $1
@@ -705,8 +702,6 @@ impl EventRepository<'_> {
         Ok(row.map(|row| LiveEquivalenceRow {
             equivalence_key: key.to_string(),
             id: row.id,
-            event_source: row.source,
-            event_type: row.event_type,
             payload: row.payload,
         }))
     }
@@ -733,8 +728,6 @@ impl EventRepository<'_> {
             SELECT DISTINCT ON (equivalence_key)
                 equivalence_key as "equivalence_key!",
                 id::uuid as "id!",
-                source as "source!",
-                event_type as "event_type!",
                 payload as "payload!"
             FROM core.events
             WHERE equivalence_key = ANY($1::text[])
@@ -751,8 +744,6 @@ impl EventRepository<'_> {
             .map(|row| LiveEquivalenceRow {
                 equivalence_key: row.equivalence_key,
                 id: row.id,
-                event_source: row.source,
-                event_type: row.event_type,
                 payload: row.payload,
             })
             .collect())
@@ -767,10 +758,6 @@ pub struct LiveEquivalenceRow {
     pub equivalence_key: String,
     /// Interpretation id of the live row (archive target on supersession).
     pub id: Uuid,
-    /// `source` of the live row (for the descendant invalidation signal).
-    pub event_source: String,
-    /// `event_type` of the live row (for the descendant invalidation signal).
-    pub event_type: String,
     /// Stored payload of the live row (content-hashed against the candidate).
     pub payload: JsonValue,
 }

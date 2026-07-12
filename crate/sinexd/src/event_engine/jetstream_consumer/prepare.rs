@@ -4,7 +4,6 @@ use std::sync::atomic::Ordering;
 
 use super::dlq::DLQ_RETRY_DELAY;
 use super::*;
-use crate::runtime::automaton::DerivedScopeInvalidation;
 use sinex_primitives::events::Event;
 
 impl JetStreamConsumer {
@@ -60,11 +59,23 @@ impl JetStreamConsumer {
                     // sinex-n9a: the candidate carries an occurrence key whose
                     // live row changed. Archive the predecessor BEFORE the new
                     // interpretation is persisted (single-live-interpretation
-                    // upheld across this prepare→persist boundary) and fire the
-                    // descendant scope invalidation. If the archive fails we
-                    // fall back to suppression rather than admit a second live
-                    // row for the same occurrence — the revision re-arrives on
-                    // the next re-emit (occurrence keys are stable) or replay.
+                    // upheld across this prepare→persist boundary). If the
+                    // archive fails we fall back to suppression rather than
+                    // admit a second live row for the same occurrence — the
+                    // revision re-arrives on the next re-emit (occurrence keys
+                    // are stable) or replay.
+                    //
+                    // Downstream propagation is deliberately NOT an
+                    // invalidation publish: the admitted revision flows through
+                    // the normal confirmed-events -> derived-consumer path, so
+                    // downstream automata see it as ordinary new input. A
+                    // DerivedScopeInvalidation naming the archived predecessor
+                    // would be a verified no-op here — the adapter's
+                    // prepare_invalidation derives scope keys by get_by_id on
+                    // core.events (invalidate.rs), which returns None for the
+                    // row we just archived, and none of the SupersedeOnChange
+                    // event types stamp scope_key on their outputs anyway, so
+                    // it always resolved to "No scope keys to recompute".
                     if self
                         .apply_supersession(superseded_event_id, &admitted.event)
                         .await
@@ -401,8 +412,7 @@ impl JetStreamConsumer {
     }
 
     /// Apply an occurrence supersession (sinex-n9a): archive the prior live
-    /// interpretation and fire a descendant scope invalidation, so the
-    /// candidate revision can replace it.
+    /// interpretation so the candidate revision can replace it.
     ///
     /// Returns `true` when the predecessor was archived (the caller then
     /// prepares the candidate for persistence), `false` when the archive
@@ -413,11 +423,15 @@ impl JetStreamConsumer {
     /// there self-heals on redelivery (the archived predecessor is gone, so
     /// re-admission inserts the revision fresh; no duplicate is ever created).
     ///
-    /// Invalidation publishing is fail-open: a publish failure only means
-    /// descendants reconcile a beat later (on the next re-emit or replay), so
-    /// it never blocks the supersession or the persist path — matching replay's
-    /// compensating-invalidation tolerance and the "never block admission on a
-    /// NATS publish" contract.
+    /// No `DerivedScopeInvalidation` is published here: downstream automata
+    /// receive the admitted revision through the normal confirmed-events →
+    /// derived-consumer path as ordinary new input, which is what actually
+    /// drives descendant recomputation. An invalidation naming the archived
+    /// predecessor would be a no-op — the adapter derives scope keys by
+    /// `get_by_id` on `core.events` (`runtime/automaton/adapter/invalidate.rs`),
+    /// which returns `None` for the row this function just archived, and the
+    /// `SupersedeOnChange` event types don't stamp `scope_key` on their
+    /// outputs, so the adapter always resolved "no scope keys to recompute".
     pub(super) async fn apply_supersession(
         &self,
         superseded_event_id: Uuid,
@@ -436,11 +450,7 @@ impl JetStreamConsumer {
             )
             .await
         {
-            Ok(_) => {
-                self.publish_supersession_invalidation(superseded_event_id, candidate, operation_id)
-                    .await;
-                true
-            }
+            Ok(_) => true,
             Err(error) => {
                 warn!(
                     superseded_event_id = %superseded_event_id,
@@ -450,63 +460,6 @@ impl JetStreamConsumer {
                 );
                 false
             }
-        }
-    }
-
-    /// Publish the `Replaced` scope invalidation for a superseded event so
-    /// scope-based/windowed automata recompute their derived descendants.
-    /// Fail-open: any error is logged and swallowed (see
-    /// [`Self::apply_supersession`]).
-    async fn publish_supersession_invalidation(
-        &self,
-        superseded_event_id: Uuid,
-        candidate: &Event<JsonValue>,
-        operation_id: Uuid,
-    ) {
-        let invalidation = DerivedScopeInvalidation::replaced(
-            vec![superseded_event_id],
-            candidate.source.clone(),
-            candidate.event_type.clone(),
-        )
-        .with_operation(operation_id);
-
-        let subject = self.topology.invalidation_subject.to_string();
-        let payload = match serde_json::to_vec(&invalidation) {
-            Ok(payload) => payload,
-            Err(error) => {
-                warn!(
-                    superseded_event_id = %superseded_event_id,
-                    error = %error,
-                    "failed to serialize supersession scope invalidation; descendants reconcile on next re-emit/replay"
-                );
-                return;
-            }
-        };
-
-        if let Err(error) = ensure_nats_payload_fits("supersession invalidation", &subject, payload.len())
-        {
-            warn!(
-                superseded_event_id = %superseded_event_id,
-                error = %error,
-                "supersession scope invalidation exceeds NATS payload limit; skipping publish"
-            );
-            return;
-        }
-
-        let mut headers = async_nats::HeaderMap::new();
-        transport::insert_transport_class_headers(&mut headers, transport::Class::Invalidation);
-
-        if let Err(error) = self
-            .js
-            .publish_with_headers(subject, headers, payload.into())
-            .await
-        {
-            warn!(
-                superseded_event_id = %superseded_event_id,
-                event_type = %candidate.event_type,
-                error = %error,
-                "failed to publish supersession scope invalidation; descendants reconcile on next re-emit/replay"
-            );
         }
     }
 

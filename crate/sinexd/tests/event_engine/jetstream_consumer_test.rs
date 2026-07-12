@@ -866,12 +866,15 @@ fn n9a_interval_payload(ts: Timestamp, duration_secs: u64) -> serde_json::Value 
 
 /// sinex-n9a end-to-end: a changed-content re-emit sharing an occurrence
 /// `equivalence_key` on a `SupersedeOnChange` event type (`state.interval`)
-/// archives the prior live interpretation, admits the revision, and fires a
-/// descendant scope invalidation naming the archived predecessor — all
-/// through the real consumer pipeline (JetStream → admission → persist →
-/// invalidation publish), not a direct `AdmissionService` call.
+/// archives the prior live interpretation and admits the revision as the
+/// sole live row — all through the real consumer pipeline (JetStream →
+/// admission → archive → persist), not a direct `AdmissionService` call.
+///
+/// Downstream propagation is the revision itself flowing through the normal
+/// confirmed-events → derived-consumer path (no invalidation publish; see
+/// `apply_supersession`'s doc for why one would be a no-op here).
 #[sinex_test]
-async fn supersede_on_change_archives_predecessor_and_invalidates_descendants(
+async fn supersede_on_change_archives_predecessor_and_admits_revision(
     ctx: TestContext,
 ) -> TestResult<()> {
     let ctx = ctx.with_nats().shared().await?;
@@ -942,26 +945,25 @@ async fn supersede_on_change_archives_predecessor_and_invalidates_descendants(
         "the revision must be the sole live row for this occurrence"
     );
 
-    // A descendant scope invalidation naming the archived predecessor must
-    // have been published.
-    let invalidation_subject = setup.topology.invalidation_subject.to_string();
-    let invalidation_msg = wait_for_last_stream_message_by_subject(
+    // Downstream visibility: the revision must have been published to the
+    // confirmed-events stream (the path derived consumers actually ingest),
+    // which is what propagates the supersession to descendants.
+    let confirmation_subject = confirmation_subject_for(
+        &setup.topology.confirmed_events_prefix,
+        "derived.interval-lift",
+        "state.interval",
+    );
+    let confirmation = wait_for_last_stream_message_by_subject(
         &setup.js,
-        &setup.topology.invalidation_stream,
-        &invalidation_subject,
+        &setup.topology.confirmed_events_stream,
+        &confirmation_subject,
     )
     .await?;
-    let invalidation: sinexd::runtime::automaton::DerivedScopeInvalidation =
-        serde_json::from_slice(&invalidation_msg.payload)?;
+    let confirmed_payload: serde_json::Value = serde_json::from_slice(&confirmation.payload)?;
     assert_eq!(
-        invalidation.affected_event_ids,
-        vec![live_id],
-        "invalidation must name the archived predecessor, not the revision"
-    );
-    assert_eq!(
-        invalidation.event_type.as_str(),
-        "state.interval",
-        "invalidation must carry the superseded event's type"
+        confirmed_payload["id"],
+        revision_id.to_string(),
+        "the revision must reach the confirmed-events stream for derived consumers"
     );
 
     setup.handle.abort();
@@ -971,7 +973,7 @@ async fn supersede_on_change_archives_predecessor_and_invalidates_descendants(
 /// Regression: an event type that did NOT opt into `SupersedeOnChange`
 /// (`RevisionPolicy` defaults to `SuppressDuplicate`) keeps the exact pre-n9a
 /// behavior end-to-end — a changed re-emit sharing an equivalence_key is
-/// suppressed, never superseded, and no invalidation is published for it.
+/// suppressed, never superseded, and never archives the live predecessor.
 #[sinex_test]
 async fn suppress_duplicate_type_changed_content_suppresses_through_consumer(
     ctx: TestContext,

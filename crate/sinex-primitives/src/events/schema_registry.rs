@@ -32,21 +32,13 @@ pub enum RevisionPolicy {
     /// A live event with the same `equivalence_key` is compared by content
     /// hash: identical content still suppresses (idempotent re-emit), but
     /// changed content archives the live row and admits the revision.
+    ///
+    /// The attribute spellings (`"suppress_duplicate"` / `"supersede_on_change"`)
+    /// are parsed by the `#[derive(EventPayload)]` macro
+    /// (`sinex-macros/src/event_payload.rs`), which emits these variant
+    /// identifiers directly into the generated `PayloadInfo` — the macro's
+    /// match is the single spelling table.
     SupersedeOnChange,
-}
-
-impl RevisionPolicy {
-    /// Parse the `revision_policy` attribute spelling emitted by the
-    /// `#[derive(EventPayload)]` macro. Kept here (not in the macro crate) so
-    /// the accepted spellings live next to the enum they map to.
-    #[must_use]
-    pub fn from_attr(value: &str) -> Option<Self> {
-        match value {
-            "suppress_duplicate" => Some(Self::SuppressDuplicate),
-            "supersede_on_change" => Some(Self::SupersedeOnChange),
-            _ => None,
-        }
-    }
 }
 
 /// Information about a payload type collected by the inventory registry.
