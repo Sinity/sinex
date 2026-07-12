@@ -304,6 +304,69 @@ async fn automaton_consumer_config_names_multi_type_filters() -> TestResult<()> 
     Ok(())
 }
 
+/// sinex-ijz6 (vfy ruling): hourly-summarizer and daily-summarizer must
+/// consume a narrow `filter_subjects` allowlist on the confirmed-events
+/// stream instead of the broad activity wildcard. This exercises the REAL
+/// registered `HourlySummarizerRuntime`/`DailySummarizerRuntime` types (the
+/// same `AutomatonRuntime<WindowedWrapper<..>>` the supervisor spawns via
+/// `automata::registry::AUTOMATA`) through the same
+/// `automaton_consumer_config` helper the runtime uses to build the
+/// JetStream consumer config. It fails if either summarizer's
+/// `Windowed::input_event_type()` is ever widened (e.g. an accidental
+/// `input_event_types()` override returning `"*"`), since that is exactly
+/// the mutation that would silently re-widen the confirmed-stream fan-in
+/// this ruling closed.
+#[cfg(feature = "messaging")]
+#[sinex_test]
+async fn summarizer_confirmed_consumers_stay_narrowed_to_declared_input_types() -> TestResult<()> {
+    use crate::automata::{DailySummarizerRuntime, HourlySummarizerRuntime};
+    use crate::runtime::automaton::traits::InputProvenanceFilter;
+    use crate::runtime::stream::RuntimeModule;
+
+    // `RuntimeModule::event_type_filters`/`confirmed_event_provenance_filter`
+    // are called via fully-qualified syntax: `AutomatonRuntime<N>` also gets a
+    // blanket `ErasedRuntimeModule` impl (sinex-qabz type-erasure, #2498) with
+    // methods of the same name, so plain `.event_type_filters()` is ambiguous.
+    let hourly = HourlySummarizerRuntime::default();
+    let hourly_types = RuntimeModule::event_type_filters(&hourly);
+    let hourly_provenance = RuntimeModule::confirmed_event_provenance_filter(&hourly);
+    assert_eq!(
+        hourly_types,
+        vec!["activity.window.summary"],
+        "hourly-summarizer must consume exactly the analytics-produced \
+         activity.window.summary type, not a wildcard"
+    );
+    assert_eq!(hourly_provenance, InputProvenanceFilter::SynthesizedOnly);
+    let hourly_config = RuntimeRunner::automaton_consumer_config(
+        "sinex.hourly",
+        hourly_provenance,
+        hourly_types,
+    );
+    assert_eq!(
+        hourly_config.event_type_filters,
+        vec!["activity.window.summary".to_string()]
+    );
+
+    let daily = DailySummarizerRuntime::default();
+    let daily_types = RuntimeModule::event_type_filters(&daily);
+    let daily_provenance = RuntimeModule::confirmed_event_provenance_filter(&daily);
+    assert_eq!(
+        daily_types,
+        vec!["activity.summary.hourly"],
+        "daily-summarizer must consume exactly the hourly-summarizer's \
+         activity.summary.hourly output, not a wildcard"
+    );
+    assert_eq!(daily_provenance, InputProvenanceFilter::SynthesizedOnly);
+    let daily_config =
+        RuntimeRunner::automaton_consumer_config("sinex.daily", daily_provenance, daily_types);
+    assert_eq!(
+        daily_config.event_type_filters,
+        vec!["activity.summary.hourly".to_string()]
+    );
+
+    Ok(())
+}
+
 #[sinex_test]
 async fn checkpoint_consumer_name_is_stable_for_sources() -> TestResult<()> {
     let raw_config = HashMap::new();
