@@ -90,7 +90,7 @@ disabled (e.g. staging migrations).
 
 ### Storage
 - Raw-ingest DLQ retention is a JetStream concern; configure it through
-  `nats.bootstrapStreams.retention`.
+  `nats.bootstrapStreams.streams.<name>.retention`.
 - Per-runtime recovery spool files live under the runtime work directories beneath
   `${stateRoot}/spool/runtime`; there is no separate centralized local DLQ path.
 - Blob repository lives at `storage.blob.repositoryPath` (default:
@@ -107,6 +107,13 @@ disabled (e.g. staging migrations).
   CLI (requires `pkgs.natscli`). Existing streams are reconciled with the
   declared `retention` / `maxAge` / `maxMsgs` / `maxBytes` policy on boot, so
   stream-shape changes land without imperative follow-up.
+- `nats.bootstrapStreams.streams` is an attribute set keyed by logical stream
+  name. Sinex ships its canonical topology at `mkDefault` priority, so a
+  downstream flake overrides only the individual streams/fields it must change
+  (e.g. `streams.SINEX_RAW_EVENTS.maxBytes = null`) and inherits the rest —
+  including any stream later added to sinex's defaults. This replaces the old
+  `mkForce` whole-list override, which silently dropped new sinex streams
+  (sinex-dffy).
 - Source-material streams default to work-queue retention. They are an ingest
   handoff into `event_engine`, not a long-lived archive; once the material assembler
   acknowledges them they should leave JetStream.
