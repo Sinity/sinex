@@ -218,10 +218,6 @@ Current controls:
 - systemd hardening from the NixOS deployment layer, including helper/maintenance units
 - typed managed-NATS TLS and subject-level authorization surfaces in the NixOS module
 
-## License
-
-MIT.
-
 ---
 
 <sub>Built for personal use. Not yet production-ready for general deployment.</sub>
