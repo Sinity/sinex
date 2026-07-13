@@ -89,6 +89,7 @@ tests/e2e/target-ci/
 *.snap.new
 
 # Ephemeral reports
+/.cache/
 *_report*.txt
 audit_*.txt
 audit_*.md

@@ -1,9 +1,9 @@
 # Sinex Agent Memory
 
-> Personal event-driven capture platform ("exocortex substrate"). Rust nightly / edition 2024,
+> Local-first event-driven capture platform. Rust nightly / edition 2024,
 > NATS JetStream, PostgreSQL (TimescaleDB + pgvector). One workspace, one daemon (`sinexd`),
-> one CLI (`sinexctl`), one automation plane (`xtask`). Pre-release, single operator
-> (AuDHD user), zero trusted production data — no backwards-compatibility obligations, ever.
+> one CLI (`sinexctl`), one automation plane (`xtask`). Pre-release, single-operator
+> deployment with no external backwards-compatibility obligations.
 > Deployed on `sinnix-prime` via the sinnix NixOS flake (`services.sinex.enable`).
 >
 > This file is the complete always-loaded agent surface. `AGENTS.md` is a symlink to it.
@@ -27,14 +27,38 @@
 - **Use general mechanisms.** Before inventing a per-source field/policy/scope, map the need
   onto the existing privacy / disclosure / lifecycle / coverage / session-state planes.
 
+## Public Repository Boundary
+
+Treat every tracked file, commit message, branch, tag, Beads issue, CI log, and
+GitHub discussion as public.
+
+- Capture code, schemas, deployment interfaces, and unmistakably synthetic
+  fixtures belong in Git. Secrets, real encrypted secret payloads, private
+  datasets or exports, transcripts, narratives, identity profiles, and
+  unrelated personal information do not.
+- Operator-specific identities, account names, private source roots, and
+  deployment credentials come from external configuration. Fixtures must not
+  encode real-looking personal finance, health, employment, or activity data.
+- Before committing, review the complete staged diff as public content. Path
+  and regex checks cannot decide whether prose, fixtures, or commit messages
+  are appropriate.
+- If there is any doubt whether material belongs in the public repository,
+  confirm with the operator before committing it.
+- Publish product changes through the normal PR flow. Review every additional
+  branch or tag independently; never use `--mirror`, `--all`, or `--tags` as a
+  publication shortcut.
+- If private material enters history, stop publication and rewrite the allowed
+  ref. A later deletion does not remove the historical blob or message.
+
 ### Doctrine tripwires (each of these has burned a session)
 
 - **Never falsify provenance clocks.** No backdating `ts_coided`, no minting UUIDv7 from
   `ts_orig`. The clocks are SUPPOSED to differ for imports — that difference is the point.
 - **State is durable.** Sinex state should never need wiping; fix forward via archive
   cascade + replay. A wipe proposal is a design-failure signal.
-- **Privacy/redaction is an optional extra**, not a security boundary (single user, zero
-  prod data, default-zero-redaction by design). Don't rank redaction gaps as blockers.
+- **Privacy/redaction is a presentation feature**, not a security boundary. Source access
+  and deployment isolation own confidentiality; don't treat display redaction as a
+  substitute for either.
 - **sqlx compiles against the LIVE dev DB only.** No `.sqlx/` offline cache, no
   `SQLX_OFFLINE`. On connection-refused, fix the dev DB (`xtask doctor`), never work around.
 - **No id-based idempotency, no `UNIQUE(material_id, anchor_byte)`, no content-derived
