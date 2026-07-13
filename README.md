@@ -4,6 +4,8 @@
 
 [Quick Start](#quick-start) · [Architecture](#architecture) · [Security](#security) · [Deployment & Operations](#deployment--operations)
 
+[Project overview](https://sinity.github.io/sinex/) · [Roadmap and work graph](https://sinity.github.io/sinex/beads/)
+
 ---
 
 ## What Is Sinex?
@@ -172,22 +174,10 @@ validators) is owned by `sinexd` startup preflight and `sinexctl`/NixOS, not by
 | Understand event schemas | [crate/sinex-db/docs/schema/event-taxonomy.md](crate/sinex-db/docs/schema/event-taxonomy.md) |
 | Separate notes, typed records, graph, and artifacts | [crate/sinex-primitives/docs/knowledge_boundaries.md](crate/sinex-primitives/docs/knowledge_boundaries.md) |
 | Define current-state projections for event-native domains | [crate/sinex-primitives/docs/domain_reducers.md](crate/sinex-primitives/docs/domain_reducers.md) |
-| Model tasks as event-native workflow objects | [issue #1107](https://github.com/Sinity/sinex/issues/1107) |
-| Model sensitive health and self-observation logs | [issue #1108](https://github.com/Sinity/sinex/issues/1108) |
-| Model declarations, omissions, and conceptual time | [issue #1113](https://github.com/Sinity/sinex/issues/1113) |
-| Design interval-backed moment queries | [issue #1110](https://github.com/Sinity/sinex/issues/1110) |
-| Define versioned SQL-shaped derivations | [issue #1117](https://github.com/Sinity/sinex/issues/1117) |
-| Record replayable inference confidence and seeds | [issue #1118](https://github.com/Sinity/sinex/issues/1118) |
-| Explain semantic composition beyond ancestry trace | [issue #1114](https://github.com/Sinity/sinex/issues/1114) |
-| Run replay-safe semantic experiments | [issue #1109](https://github.com/Sinity/sinex/issues/1109) |
-| Route model calls through prompts, policy, and budgets | [issue #1116](https://github.com/Sinity/sinex/issues/1116) |
 | Promote generated suggestions through human or policy authority | [crate/sinex-primitives/docs/curation_authority.md](crate/sinex-primitives/docs/curation_authority.md) |
-| Bound active instruction and actuator loops | [issue #1104](https://github.com/Sinity/sinex/issues/1104) |
 | Expose read-only evidence to coding agents | [crate/sinexctl/docs/mcp_readonly_server.md](crate/sinexctl/docs/mcp_readonly_server.md) |
-| Rename event taxonomy labels without parser replay | [issue #1101](https://github.com/Sinity/sinex/issues/1101) |
 | Reason about replay evidence and source snapshots | [crate/sinexd/docs/sources/evidence_lanes.md](crate/sinexd/docs/sources/evidence_lanes.md) |
 | Reason about large aggregate provenance | [crate/sinexd/docs/automata/high_fan_in_lineage.md](crate/sinexd/docs/automata/high_fan_in_lineage.md) |
-| Coordinate late-arriving evidence in derived outputs | [issue #1111](https://github.com/Sinity/sinex/issues/1111) |
 | Reason about runtime backpressure and loss policy | [crate/sinexd/docs/runtime_qos.md](crate/sinexd/docs/runtime_qos.md) |
 | Suppress live capture through private mode | [crate/sinexctl/docs/private_mode.md](crate/sinexctl/docs/private_mode.md) |
 | Add a staged personal-export parser | [crate/sinexd/docs/sources/adding_staged_export_parser.md](crate/sinexd/docs/sources/adding_staged_export_parser.md) |
@@ -198,6 +188,10 @@ validators) is owned by `sinexd` startup preflight and `sinexctl`/NixOS, not by
 | Integrate an external tool or sibling project | [crate/sinexd/docs/sources/integration_authority.md](crate/sinexd/docs/sources/integration_authority.md) |
 | Work on repo workflow or verification | [CONTRIBUTING.md](CONTRIBUTING.md), [TESTING.md](TESTING.md) |
 | Work on the CLI/tooling loop | [xtask/docs/README.md](xtask/docs/README.md) |
+
+Active and proposed work belongs to the committed Beads graph, not historical
+GitHub Issues. Browse it on the [web board](https://sinity.github.io/sinex/beads/)
+or query it locally with `bd ready` and `bd list`.
 
 ## Security
 

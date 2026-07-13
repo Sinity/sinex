@@ -1,0 +1,56 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="description" content="Sinex is a local-first, append-only event platform for machine activity, replayable derived state, and operator-visible automation.">
+  <title>Sinex — the event spine for a local machine</title>
+  <link rel="stylesheet" href="assets/project.css">
+  <script defer src="assets/project.js"></script>
+</head>
+<body>
+  <header class="site-header"><div class="header-inner"><a class="brand" href="./">sin<span>ex</span></a><nav class="header-nav"><a href="#architecture">Architecture</a><a href="#documentation">Documentation</a><a href="beads/">Roadmap</a><a href="https://github.com/Sinity/sinex">GitHub</a></nav><button class="theme-toggle" data-theme-toggle type="button" aria-label="Toggle color theme">◐</button></div></header>
+  <main class="shell">
+    <section class="hero">
+      <p class="eyebrow">Local-first · append-only · replayable</p>
+      <h1>The event spine for a local machine.</h1>
+      <p class="lede">Sinex captures activity as typed, timestamped events; carries it through a durable stream; preserves it in an append-only PostgreSQL log; and rebuilds queryable state through explicit, replay-aware derivations.</p>
+      <div class="actions"><a class="button primary" href="#architecture">See the runtime shape →</a><a class="button" href="beads/">Browse the work graph</a><a class="button" href="https://github.com/Sinity/sinex">Read the source</a></div>
+    </section>
+    <section class="section" id="architecture">
+      <p class="eyebrow">Runtime architecture</p>
+      <h2>Observe once. Preserve the evidence. Rebuild the views.</h2>
+      <p class="section-intro">The system keeps ingestion, transport, canonical persistence, and derived state distinct so that capture can evolve without turning historical data into an opaque application database.</p>
+      <div class="flow">
+        <article class="card"><span class="label">01 · Sources</span><h3>Observe</h3><p>Filesystem, terminal, desktop, browser, system, and export adapters emit typed material-provenance events.</p></article>
+        <article class="card"><span class="label">02 · JetStream</span><h3>Carry</h3><p>NATS subjects provide an explicit transport boundary, backpressure policy, and replayable delivery.</p></article>
+        <article class="card"><span class="label">03 · Event engine</span><h3>Preserve</h3><p>A single canonical write path validates and appends events, provenance, blobs, and operational receipts.</p></article>
+        <article class="card"><span class="label">04 · Automata + API</span><h3>Derive and query</h3><p>Checkpointed automata rebuild state; sinexctl and the hardened API expose control and read surfaces.</p></article>
+      </div>
+    </section>
+    <section class="section">
+      <p class="eyebrow">System properties</p>
+      <h2>Durability is a behavior, not a storage slogan</h2>
+      <div class="grid">
+        <article class="card"><span class="label">Append-only truth</span><h3>Corrections are events too</h3><p>Canonical records are never silently rewritten. Corrections, curation, and interpretation retain their own authority and provenance.</p></article>
+        <article class="card"><span class="label">Replay-aware state</span><h3>Derived products declare their contract</h3><p>Automata carry source, temporal, declaration, epoch, and lane metadata so rebuilt results remain attributable.</p></article>
+        <article class="card"><span class="label">Typed capture</span><h3>Source shape stays visible</h3><p>Staged materials, input adapters, parsers, and source contracts separate what was observed from how it was normalized.</p></article>
+        <article class="card"><span class="label">Operated as a system</span><h3>NixOS owns the deployed boundary</h3><p>Services, PostgreSQL, NATS, TLS, authorization, backups, and systemd hardening are composed declaratively.</p></article>
+      </div>
+    </section>
+    <section class="section" id="documentation">
+      <p class="eyebrow">Documentation</p>
+      <h2>Start from the boundary you are changing</h2>
+      <div class="docs">
+        <a class="doc-link" href="https://github.com/Sinity/sinex#quick-start">Quick start<small>Bring up local infrastructure and inspect recent events.</small></a>
+        <a class="doc-link" href="https://github.com/Sinity/sinex/blob/master/docs/architecture.md">Architecture<small>System boundaries, data flow, and ownership.</small></a>
+        <a class="doc-link" href="https://github.com/Sinity/sinex/blob/master/crate/sinexd/docs/sources/README.md">Source contracts<small>Add capture and staged-export adapters coherently.</small></a>
+        <a class="doc-link" href="https://github.com/Sinity/sinex/blob/master/crate/sinex-db/docs/schema/event-taxonomy.md">Event taxonomy<small>Canonical schema and classification vocabulary.</small></a>
+        <a class="doc-link" href="https://github.com/Sinity/sinex/blob/master/nixos/README.md">NixOS deployment<small>Deploy the service stack and its trust boundary.</small></a>
+        <a class="doc-link" href="https://github.com/Sinity/sinex/blob/master/TESTING.md">Verification<small>Use the repository-owned xtask test contract.</small></a>
+      </div>
+    </section>
+  </main>
+  <footer class="footer"><div class="footer-inner"><span>Sinex · local event capture and replay</span><span><a href="beads/">Roadmap</a> · <a href="https://github.com/Sinity/sinex">Source</a></span></div></footer>
+</body>
+</html>

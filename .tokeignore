@@ -1,7 +1,11 @@
 # Files kept out of LOC stats — tokei reads this with .gitignore semantics.
 # tokei does NOT honor .gitattributes linguist-generated, so generated/vendored
 # surfaces must be listed here explicitly. Keep in sync with .gitattributes.
-# (tokei already skips dot-dirs like .sqlx/ and .agent/ by default.)
+
+# Agent working records and archived implementation packets are project
+# evidence, not maintained product code. Chisel supplies an explicit file set,
+# so dot-directory auto-discovery rules do not apply here.
+.agent/
 
 # Generated JSON schemas (from Rust types).
 schemas/
