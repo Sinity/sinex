@@ -363,5 +363,5 @@ xtask deps unused
 
 ## See Also
 
-- [Testing Guide](../../testing/) - How to test deps commands
-- [Development Workflow](../../development-workflow.md) - Using deps in development
+- [Verification](../verification.md) - Test lanes, CI parity, and performance contracts
+- [Command Guide](../command-guide.md) - The normal development and investigation loop

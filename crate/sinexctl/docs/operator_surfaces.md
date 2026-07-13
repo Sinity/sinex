@@ -1,140 +1,64 @@
-# Operator Surfaces
+# Operator surfaces
 
-Sinex exposes several operator-facing surfaces other than the read-only MCP
-server. They are not interchangeable: each has a distinct authority class, a
-distinct latency budget, and a distinct relationship to durable runtime state.
-Confusing the *contract* of these surfaces with the *UX* of any particular
-build is how aspirational sketches turn into shipped surfaces that quietly
-violate the runtime boundary they were meant to respect.
+Sinex has several ways to inspect or control one runtime. They share one
+authority model rather than becoming independent tools with overlapping state.
 
-This record fixes the long-lived contract. Concrete TUI screens, panel
-layouts, key maps, and visual polish belong to the UX-MK3 program
-(#1438–#1443) and to per-issue design notes; they are intentionally not
-duplicated here.
+## Surface map
 
-## Scope And Non-Scope
+| Surface | Role | Authority |
+| --- | --- | --- |
+| `sinexctl` | Canonical command-line query and control surface | Reads and explicit mutations through the typed `sinexd` API client. |
+| `sinexctl tui` | Interactive dashboard for runtime, operations, modules, sources, events, and DLQ state | Read-only API views plus copyable canonical commands; it does not implement a second mutation path. |
+| MCP server | Agent-facing evidence reader | Read-only tools over the same query and view contracts. |
+| Shell completions and prompt helpers | Discovery and status adornment | Derived metadata or bounded reads only. |
+| Desktop launchers | Start a canonical operator surface | No embedded runtime or persistence logic. |
+| `xtask` | Checkout development and verification | Development plane, not the deployed control plane. |
 
-Owned by this record:
+## Authority rules
 
-- which operator surfaces exist beyond MCP read access;
-- what authority class each surface holds;
-- how each surface relates to the runtime planes defined in
-  `xtask/docs/runtime-target-boundaries.md`;
-- which surfaces may issue writes and through which authority spine they must
-  flow.
+1. **Runtime mutations terminate at the `sinexd` API.** A CLI action uses the
+   typed client and the runtime's authorization, validation, audit, and
+   operation-recording path.
+2. **Interactive views do not own truth.** The TUI renders API view models and
+   offers canonical command hints. It does not write directly to PostgreSQL,
+   NATS, source material, or local caches.
+3. **Agent reads remain reads.** MCP exposes bounded query and evidence views.
+   Write-like suggestions enter the proposal and judgment model described in
+   [curation authority](../../sinex-primitives/docs/curation_authority.md).
+4. **Privacy is enforced below the view.** CLI, TUI, and MCP consume redacted
+   responses and do not bypass [private mode](private_mode.md) or disclosure
+   policy through local side channels.
+5. **Runtime target identity stays visible.** Every live view follows the
+   [runtime-target contract](../../../xtask/docs/runtime-target-boundaries.md)
+   so checkout-local and deployed-host evidence are not silently combined.
 
-Not owned by this record:
+## Shared view model
 
-- TUI panel layouts, screen compositions, key chords, color schemes — those
-  are UX-MK3 territory.
-- MCP tool contracts and the MCP read role — owned by
-  `crate/sinexctl/docs/mcp_readonly_server.md`.
-- `xtask` vs `sinexctl` vs Rust tests vs VM tests command ownership — owned
-  by `xtask/docs/runtime-target-boundaries.md`.
-- Proposal/judgment authority for write-like operations — owned by
-  `crate/sinex-primitives/docs/curation_authority.md`.
+The CLI, TUI, and MCP surfaces converge on typed views such as
+`ViewEnvelope`, `EventCardView`, `OperationControlCardView`,
+`SourceCoverageView`, and `ActionAvailability`. A view carries stable object
+references, caveats, provenance or material references where relevant,
+redaction state, and generation time. Human tables and interactive panels are
+renderings of those contracts, not parallel schemas.
 
-## Surfaces
+The TUI currently provides six tabs: dashboard, operations, modules, sources,
+events, and DLQ. It refreshes those views through `GatewayClient`, preserves
+failure state instead of displaying missing data as empty, and can copy
+bounded values or suggested `sinexctl` commands through OSC52.
 
-| Surface | Authority class | Plane | Notes |
-| --- | --- | --- | --- |
-| `sinexctl` (CLI) | Live runtime operation through the `sinexd` API | Deployed host runtime | Authoritative operator surface for events, query, replay, lifecycle, DLQ, runtime, status, privacy, source materials. |
-| TUI workbench (`sinexctl tui`) | View layer over `sinexctl` and the MCP read role; write actions tunnel through API authority | Deployed host runtime | UX-MK3 program owns the design surface (#1438–#1443). |
-| Shell integration (prompt, aliases, completions) | Read-only adornment of the operator's shell session | Operator workstation, outside Sinex runtime | Pulls cached status; must not become a write path. |
-| Hyprland keybinds | Launchers for the surfaces above | Operator workstation, outside Sinex runtime | Bind to existing `sinexctl`/TUI commands; do not encode bespoke logic. |
-| MCP read-only server | Agent-facing read role | Deployed host runtime | Owned by `crate/sinexctl/docs/mcp_readonly_server.md`. |
+## Adding or changing a surface
 
-`sinexctl` is the only one that holds authority to act on live runtime. Every
-other surface either renders data it does not own, or fires commands that
-ultimately flow through `sinexctl` (or its underlying gateway RPCs) and the
-proposal/judgment spine when the action would mutate canonical state.
+An operator-surface change should demonstrate:
 
-## Authority Rules
+- typed API-client use rather than raw transport calls;
+- the correct finite or streaming output contract;
+- JSON/YAML/table agreement for non-interactive commands;
+- redaction, unavailable, partial, empty, loading, and error states where the
+  surface can encounter them;
+- runtime-target attribution for live evidence;
+- command-catalog and MCP-schema synchronization when public leaves change.
 
-1. **Write actions terminate at the API.** TUI buttons, key chords, and
-   shell aliases that look like they mutate state must dispatch through the
-   same RPCs that `sinexctl` uses. There is no second mutation path.
-2. **Write-like agent actions become proposals.** Any operator surface that
-   surfaces an agent-driven action must record it as a proposal per
-   `crate/sinex-primitives/docs/curation_authority.md`; it does not promote to canonical state
-   on its own.
-3. **Shell and Hyprland surfaces are read-shaped by default.** Adding a
-   write-capable shortcut to either surface is a design change that needs the
-   same review as a new gateway RPC. Prompt adornments and tab completion are
-   not exempt because they happen "in the terminal".
-4. **Privacy mode is opaque to view surfaces.** TUI/shell surfaces render
-   redacted content the same way `sinexctl` does; they do not bypass redaction
-   by reading from local caches. Privacy enforcement remains owned by
-   `crate/sinexctl/docs/private_mode.md`.
-5. **Runtime target attribution is preserved.** Per
-   `xtask/docs/runtime-target-boundaries.md`, every surface that renders runtime signals
-   must show which target it probed. The TUI must not silently merge
-   checkout-local and deployed-host views.
-
-## Relation To The UX-MK3 Program
-
-UX-MK3 (#1438–#1443) is the active design surface for the workbench TUI:
-
-- #1438 fixes the shared view DTO spine (`ViewEnvelope`, `SinexObjectRef`,
-  `ActionAvailability`, `EventCardView`) so CLI, TUI, and MCP read the same
-  projections.
-- #1439 builds the TUI workbench shell over those DTOs.
-- #1440 covers the event inspector and copy/action system.
-- #1441 covers the source-readiness cockpit.
-- #1442 covers the operations room: replay, DLQ, snapshot, lifecycle, and
-  privacy authority grammar.
-- #1443 covers fixture and visual smoke coverage.
-
-This record's job is to ensure that whatever UX-MK3 ships respects the
-authority contract above. If a UX-MK3 panel wants to issue a write, it does
-  so through the same API authority `sinexctl` uses; if it wants to render
-runtime signals, it must do so with target attribution; if it wants to embed
-agent-proposed actions, those actions are proposals first.
-
-When UX-MK3 closes, the per-panel ergonomics belong in issue threads and
-crate-level docs, not in this record.
-
-## Shell And Hyprland Surfaces
-
-These surfaces are best understood as ergonomic shortcuts that launch the
-authoritative surfaces — not as separate substrates.
-
-- Prompt segments should read cached status emitted by the bare `sinexctl`
-  command center, `sinexctl runtime health`, or the MCP read role. They must degrade silently when no runtime is reachable;
-  they must not synthesize state.
-- Tab completions should derive their option lists from the runtime
-  (registered sources, schema-known event types, known material ids,
-  registered source contracts, cached graph entities) rather than maintaining
-  parallel registries.
-- Hyprland keybinds bind to `sinexctl` and the TUI; they should not embed
-  pipelines that bypass redaction, hold credentials, or write directly to
-  CAS, the API, or NATS.
-- Aspirational keybind sets in target-vision references are illustrative.
-  Adopting one requires an active issue and a written contract for what it
-  invokes.
-
-## Verification Expectations
-
-An operator-surface change is complete only when:
-
-- the surface's authority class is explicit (read-only view, launcher,
-  write-through-gateway);
-- write-capable interactions are exercised through the same RPCs as
-  `sinexctl`, with tests that cover gateway authority enforcement;
-- target attribution is preserved in any rendered status;
-- privacy classification is honored without bypassing the redactor;
-- agent-driven actions enter as proposals and are not promoted by the
-  surface itself;
-- shell/Hyprland sketches are gated on an active issue when they introduce a
-  new shape rather than alias an existing command.
-
-## Boundaries
-
-- Do not redefine command ownership here; that belongs to
-  `xtask/docs/runtime-target-boundaries.md`.
-- Do not redefine MCP semantics here; that belongs to
-  `crate/sinexctl/docs/mcp_readonly_server.md`.
-- Do not encode TUI panel layouts or visual grammar here; UX-MK3 owns the
-  living design.
-- Do not let shell adornments or Hyprland keybinds become a parallel
-  mutation path or a parallel redaction policy.
+The repository-wide ownership map lives in
+[`.github/authority-surfaces.md`](../../../.github/authority-surfaces.md).
+CLI-specific convergence work is documented in
+[`operator_ux_convergence.md`](operator_ux_convergence.md).

@@ -46,9 +46,9 @@ The capture layer uses a staged-source parser substrate: source material is
 registered, an input-shape adapter enumerates records or bytes, and a parser
 emits material-provenance events. See
 [`crate/sinexd/docs/sources/staged_source_parser_substrate.md`](crate/sinexd/docs/sources/staged_source_parser_substrate.md).
-The diagram below shows the deployed runtime shape; #1054 owns the remaining
-decision about whether staged local parsers always cross NATS or can run closer
-to persistence.
+The diagram below shows the deployed runtime shape. NATS is the event transport
+for live producers and derived services; staged material parsing is hosted by
+`sinexd` and still enters canonical persistence through the event engine.
 
 ```text
 sinexd::sources    sinexd::automata      Clients
@@ -165,8 +165,12 @@ validators) is owned by `sinexd` startup preflight and `sinexctl`/NixOS, not by
 
 ## Documentation
 
+The [documentation map](docs/README.md) groups the current architecture,
+capture, operator, deployment, and contributor contracts.
+
 | I want to... | Start here |
 |--------------|------------|
+| Browse the documentation by concern | [docs/README.md](docs/README.md) |
 | Understand the system shape | [README.md#architecture](README.md#architecture) |
 | Deploy and harden the common NixOS path | [README.md#deployment--operations](README.md#deployment--operations) |
 | Deploy on NixOS | [nixos/README.md](nixos/README.md) |
