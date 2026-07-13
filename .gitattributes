@@ -10,6 +10,7 @@ flake.lock linguist-generated -diff
 
 # SQLx offline cache (query metadata, not source code)
 .sqlx/** linguist-generated -diff binary
+.agent/** linguist-generated -diff
 
 # JSON schemas (generated from Rust types)
 schemas/**/*.json linguist-generated
