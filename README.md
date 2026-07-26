@@ -10,9 +10,9 @@
 
 ## What Is Sinex?
 
-Sinex captures local activity as typed, timestamped events and stores them in
-an append-only PostgreSQL event log. The runtime is built around Rust services,
-NATS JetStream transport, and a NixOS deployment surface.
+Sinex captures local activity as typed, timestamped events and persists it
+through append-only PostgreSQL event lanes. The runtime is built around Rust
+services, NATS JetStream transport, and a NixOS deployment surface.
 
 The system is meant for grounded local analytics, replayable derived state, and
 operator-visible automation, not opaque cloud processing.
@@ -46,50 +46,80 @@ The capture layer uses a staged-source parser substrate: source material is
 registered, an input-shape adapter enumerates records or bytes, and a parser
 emits material-provenance events. See
 [`crate/sinexd/docs/sources/staged_source_parser_substrate.md`](crate/sinexd/docs/sources/staged_source_parser_substrate.md).
-The diagram below shows the deployed runtime shape. NATS is the event transport
-for live producers and derived services; staged material parsing is hosted by
-`sinexd` and still enters canonical persistence through the event engine.
+
+NATS is the transport for live producers and derived services. Finite staged
+parsers are hosted by `sinexd` and can enter the reusable event-admission
+boundary directly; they do not need to manufacture a JetStream hop merely to
+reach canonical persistence.
 
 ```text
-sinexd::sources    sinexd::automata      Clients
-  fs, terminal,      analytics,           CLI, browser
-  desktop, system,   automata        extension
-  browser, exports
-       │                 │                    │
-       ▼                 ▼                    │
-  ┌────────────────────────────────────────┐  │
-  │         NATS JetStream                 │  │
-  │       (event transport)                │  │
-  └──────────────┬─────────────────────────┘  │
-                 │                            │
-                 ▼                            │
-        ┌──────────────────┐                  │
-        │ sinexd           │                  │
-        │ ::event_engine   │ validate, persist │
-        └───────┬──────────┘                  │
-                │                             │
-                ▼                             │
-        ┌────────────────┐                    │
-        │   PostgreSQL   │ TimescaleDB,       │
-        │   + extensions │ pgvector, schemas  │
-        └───────┬────────┘                    │
-                │                             │
-                ▼                             │
-        ┌──────────────────┐                  │
-        │ sinexd           │◄─────────────────┘
-        │ ::api            │ auth, rate limits
-        │   JSON-RPC       │
-        └──────────────────┘
+Live producers                     Finite staged material
+fs, terminal, desktop,             exports, recordings, snapshots
+browser, system, runtime hooks                 │
+        │                                      ▼
+        ▼                              sinexd::sources
+┌────────────────────────┐                    │
+│ NATS JetStream         │                    │ direct admission
+│ live + derived traffic │                    │
+└────────────┬───────────┘                    │
+             └──────────────┬─────────────────┘
+                            ▼
+                   ┌──────────────────┐
+                   │ sinexd           │
+                   │ ::event_engine   │ validate, admit, persist
+                   └────────┬─────────┘
+                            ▼
+                   ┌──────────────────┐
+                   │ PostgreSQL 18    │ core.events, reflection.events,
+                   │ + extensions     │ raw material, audit, projections
+                   └────────┬─────────┘
+                            ▼
+                   ┌──────────────────┐
+                   │ sinexd::api      │ JSON-RPC, SSE, auth, rate limits
+                   └────────┬─────────┘
+                            ▼
+                     sinexctl / MCP / clients
+
+Confirmed events also feed durable automaton consumers; derived outputs re-enter
+through the same admission and persistence rules.
 ```
 
 ### Core Invariants
 
 - canonical persistence flows through `sinexd::event_engine`
-- `core.events` is append-only; corrections become new events with provenance
+- `core.events` is the canonical activity/source-interpretation lane;
+  corrections become new events with provenance rather than in-place edits
+- `reflection.events` is a separate self-observation/derived-product lane;
+  reflection outputs carry declared product, support, derivation, and
+  adjudication metadata instead of silently becoming activity facts
 - derived events carry source, temporal, and replay metadata
-- `UUIDv7` IDs provide ordering; `ts_orig` and `ts_coided` are distinct and load-bearing
+- `UUIDv7` IDs provide interpretation ordering; `ts_orig` and `ts_coided` are
+  distinct and load-bearing
+- occurrence-equivalent re-emissions follow a registered revision policy:
+  identical values can be suppressed, while changed `SupersedeOnChange`
+  interpretations archive their predecessor before admission
 - blobs are content-addressed and referenced stably
 - long-running replay/lifecycle work is recorded in `operations_log`
+
+### Current Implementation Boundaries
+
+Sinex is a substantial event runtime, but the complete personal-world-model and
+curation architecture is not yet one finished generic subsystem:
+
+- the shared domain-reducer vocabulary and the `tasks.current` reducer spec are
+  implemented; generic reducer registration, current-object storage, replay
+  invalidation, and cross-domain trace orchestration remain partial/planned
+- the derivation/reflection control plane has landed schema and event-write
+  support, but every proposed analytical product has not yet migrated onto it
+- proposal/judgment/finalizer is the authority contract for model-generated
+  changes, not yet a universally deployed workflow across tasks, health,
+  entities, and external actuation
+- current stable query units cover events, source drivers/materials, debt,
+  operations, and runtime health; they should not be mistaken for a completed
+  query language over every future personal domain
+
+The committed Beads graph is the authority for which part of those programs is
+implemented, blocked, or still proposed.
 
 ### Operating Model
 
@@ -161,7 +191,7 @@ journalctl -u sinexd -f
 
 Deployment/host readiness proof (systemd units, schema, source-config
 validators) is owned by `sinexd` startup preflight and `sinexctl`/NixOS, not by
-`xtask` — see [runtime-target boundaries](xtask/docs/runtime-target-boundaries.md).
+`xtask` - see [runtime-target boundaries](xtask/docs/runtime-target-boundaries.md).
 
 ## Documentation
 
