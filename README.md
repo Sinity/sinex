@@ -1,148 +1,126 @@
 # Sinex
 
-**Local-first event capture for your machine. Query your digital history like a database.**
+Sinex records local machine activity as typed events in PostgreSQL. It preserves
+where each event came from, keeps original and interpretation timestamps
+separate, supports replay and revision, and provides explicit tools for
+inspection, recovery, and deployment.
 
-[Quick Start](#quick-start) · [Architecture](#architecture) · [Security](#security) · [Deployment & Operations](#deployment--operations)
+The current system captures filesystem, terminal, browser, desktop, and system
+activity. Live producers use NATS JetStream. Finite imports such as exports,
+recordings, and snapshots can enter the same event-admission path directly.
 
-[Project overview](https://sinity.github.io/sinex/) · [Roadmap and work graph](https://sinity.github.io/sinex/beads/)
+Sinex is an active personal deployment and a pre-1.0 engineering project. Event
+capture, admission, persistence, APIs, replay infrastructure, NixOS deployment,
+and recovery tooling are implemented. Generic current-state reducers and the
+full proposal, judgment, and finalization workflow remain incomplete.
 
----
+[Quick start](#quick-start) | [Architecture](#how-events-enter-the-system) | [Documentation](docs/README.md) | [Roadmap](https://sinity.github.io/sinex/beads/)
 
-## What Is Sinex?
+## What Sinex does
 
-Sinex captures local activity as typed, timestamped events and persists it
-through append-only PostgreSQL event lanes. The runtime is built around Rust
-services, NATS JetStream transport, and a NixOS deployment surface.
+Sinex gives local data sources one consistent event path:
 
-The system is meant for grounded local analytics, replayable derived state, and
-operator-visible automation, not opaque cloud processing.
+- source material is identified and recorded before parsing;
+- parsers emit typed events with provenance;
+- one admission layer validates revision, time, and storage rules;
+- confirmed events are appended to PostgreSQL;
+- replayable consumers build derived state;
+- operators inspect the system through `sinexctl`, JSON-RPC, SSE, logs, and
+  telemetry;
+- snapshots, archives, and restore commands make recovery testable.
 
-Example payoff:
+This is meant for long-running personal capture and analysis on machines the
+operator controls. It is not a hosted analytics service.
 
-```sql
--- What was I researching when that build failed?
-SELECT v.url
-FROM commands c
-JOIN visits v ON v.ts BETWEEN c.ts AND c.ts + interval '5 min'
-WHERE c.command LIKE 'cargo test%'
-  AND c.exit_code = 1
-  AND v.domain = 'stackoverflow.com';
-```
+## Current inputs and outputs
 
-## Current Surfaces
+| Area | Current implementation |
+|---|---|
+| Live capture | filesystem, terminal, desktop, browser, system, and runtime producers over NATS JetStream |
+| Finite inputs | staged exports, recordings, snapshots, and other bounded source material parsed inside `sinexd` |
+| Persistence | PostgreSQL 18 through `sinexd::event_engine` |
+| Derived work | replay-aware automata and reflection products |
+| Query and control | `sinexctl`, JSON-RPC, SSE, and a read-only MCP server |
+| Deployment | NixOS modules, systemd units, preflight checks, telemetry, and recovery commands |
 
-| Surface | Current Owner |
-|---------|---------------|
-| Capture | source contracts over staged materials, input-shape adapters, and parsers under `crate/sinexd/src/sources/` |
-| Query / control | `sinexd::api` + `sinexctl` |
-| Persistence | `sinexd::event_engine` + PostgreSQL |
-| Derived state | `sinexd::automata` and replay-aware stream runtime |
-| Deployment | NixOS modules + systemd |
-| Runtime extension | inline `sinexd` runtime support and source/automaton traits |
-
-## Architecture
-
-The capture layer uses a staged-source parser substrate: source material is
-registered, an input-shape adapter enumerates records or bytes, and a parser
-emits material-provenance events. See
-[`crate/sinexd/docs/sources/staged_source_parser_substrate.md`](crate/sinexd/docs/sources/staged_source_parser_substrate.md).
-
-NATS is the transport for live producers and derived services. Finite staged
-parsers are hosted by `sinexd` and can enter the reusable event-admission
-boundary directly; they do not need to manufacture a JetStream hop merely to
-reach canonical persistence.
+## How events enter the system
 
 ```text
-Live producers                     Finite staged material
-fs, terminal, desktop,             exports, recordings, snapshots
-browser, system, runtime hooks                 │
-        │                                      ▼
-        ▼                              sinexd::sources
-┌────────────────────────┐                    │
-│ NATS JetStream         │                    │ direct admission
-│ live + derived traffic │                    │
-└────────────┬───────────┘                    │
-             └──────────────┬─────────────────┘
-                            ▼
-                   ┌──────────────────┐
-                   │ sinexd           │
-                   │ ::event_engine   │ validate, admit, persist
-                   └────────┬─────────┘
-                            ▼
-                   ┌──────────────────┐
-                   │ PostgreSQL 18    │ core.events, reflection.events,
-                   │ + extensions     │ raw material, audit, projections
-                   └────────┬─────────┘
-                            ▼
-                   ┌──────────────────┐
-                   │ sinexd::api      │ JSON-RPC, SSE, auth, rate limits
-                   └────────┬─────────┘
-                            ▼
-                     sinexctl / MCP / clients
-
-Confirmed events also feed durable automaton consumers; derived outputs re-enter
-through the same admission and persistence rules.
+Live producers                         Finite source material
+filesystem, terminal, browser,        exports, recordings, snapshots
+system, desktop, runtime hooks                    |
+        |                                         v
+        v                                  sinexd::sources
++-------------------------+                       |
+| NATS JetStream          |                       | direct admission
+| live and derived events |                       |
++------------+------------+                       |
+             +-------------------+----------------+
+                                 v
+                         +---------------+
+                         | event_engine  |
+                         | validate      |
+                         | admit         |
+                         | persist       |
+                         +-------+-------+
+                                 v
+                         +---------------+
+                         | PostgreSQL 18 |
+                         | core events   |
+                         | reflection    |
+                         | source data   |
+                         | operations    |
+                         +-------+-------+
+                                 v
+                         +---------------+
+                         | sinexd::api   |
+                         | JSON-RPC/SSE  |
+                         +-------+-------+
+                                 v
+                         sinexctl, MCP, clients
 ```
 
-### Core Invariants
+Confirmed events also feed durable consumers. Derived events return through the
+same admission and persistence rules rather than writing around the event
+engine.
 
-- canonical persistence flows through `sinexd::event_engine`
-- `core.events` is the canonical activity/source-interpretation lane;
-  corrections become new events with provenance rather than in-place edits
-- `reflection.events` is a separate self-observation/derived-product lane; its
-  schema and write paths support declared product, claim-support, derivation,
-  and adjudication metadata so reflection need not masquerade as activity
-- derived events carry source, temporal, and replay metadata
-- `UUIDv7` IDs provide interpretation ordering; `ts_orig` and `ts_coided` are
-  distinct and load-bearing
-- occurrence-equivalent re-emissions follow a registered revision policy:
-  identical values can be suppressed; changed `SupersedeOnChange` candidates
-  are classified as revisions and their predecessor is archived before the
-  replacement is persisted on the stream-consumer path
-- blobs are content-addressed and referenced stably
-- long-running replay/lifecycle work is recorded in `operations_log`
+The staged-source parser model is documented in
+[`crate/sinexd/docs/sources/staged_source_parser_substrate.md`](crate/sinexd/docs/sources/staged_source_parser_substrate.md).
 
-### Current Implementation Boundaries
+## Data rules
 
-Sinex is a substantial event runtime, but the complete personal-world-model and
-curation architecture is not yet one finished generic subsystem:
+Several rules define what the event log means:
 
-- the shared domain-reducer vocabulary and the `tasks.current` reducer spec are
-  implemented; generic reducer registration, current-object storage, replay
-  invalidation, and cross-domain trace orchestration remain partial/planned
-- the derivation/reflection control plane has landed schema and event-write
-  support, but every proposed analytical product has not yet migrated onto it
-- proposal/judgment/finalizer is the authority contract for model-generated
-  changes, not yet a universally deployed workflow across tasks, health,
-  entities, and external actuation
-- current stable query units cover events, source drivers/materials, debt,
-  operations, and runtime health; they should not be mistaken for a completed
-  query language over every future personal domain
+- **One write boundary.** Canonical event persistence goes through
+  `sinexd::event_engine`.
+- **Corrections are new records.** Existing events are not edited in place.
+  Later interpretations keep links to what they replace.
+- **Source time and interpretation time are separate.** `ts_orig` records when
+  the source says something happened. `ts_coided` records when Sinex accepted
+  that interpretation.
+- **Activity and reflection are separate.** `core.events` stores captured
+  activity and source interpretation. `reflection.events` stores derived or
+  self-observational products with support, derivation, and adjudication
+  metadata.
+- **Repeated observations follow a revision policy.** Identical values can be
+  suppressed. Event types configured for supersession can archive the previous
+  interpretation and admit the changed one.
+- **Derived state is replayable.** Consumers retain source and replay metadata,
+  and long-running work is recorded in `operations_log`.
+- **Large payloads are referenced by content hash.** Blobs remain stable across
+  replay and repair.
 
-The committed Beads graph is the authority for which part of those programs is
-implemented, blocked, or still proposed.
+See [the event taxonomy](crate/sinex-db/docs/schema/event-taxonomy.md) and
+[the source evidence model](crate/sinexd/docs/sources/evidence_lanes.md).
 
-### Operating Model
+## Quick start
 
-- services run as separate systemd units with NixOS-managed configuration
-- observability is journald-first; service logs are part of the event universe
-- runtime modules and derived automata recover through checkpoints and replay
-- replay, archive, and restore are explicit control-plane operations
-- direct DB access is diagnostic; the normal control/query boundary is `sinexd::api`
-
-### Stack
-
-- Rust
-- PostgreSQL 18 + TimescaleDB + pgvector + pg_jsonschema
-- NATS JetStream
-- NixOS modules + systemd hardening
-
-## Quick Start
+The supported development environment is Nix-first:
 
 ```bash
 git clone https://github.com/sinity/sinex.git
 cd sinex
-direnv allow  # loads the flake devShell and puts xtask on PATH
+direnv allow
 
 xtask infra start
 xtask run core --logs
@@ -150,38 +128,7 @@ xtask run list
 sinexctl events recent -n 10
 ```
 
-## Development
-
-Start with the canonical repo workflow docs:
-
-- contributing workflow: [CONTRIBUTING.md](CONTRIBUTING.md)
-- testing workflow: [TESTING.md](TESTING.md)
-- local runtime loop and devshell smoke: [xtask/docs/devshell-runtime.md](xtask/docs/devshell-runtime.md)
-- xtask/tooling reference: [xtask/docs/README.md](xtask/docs/README.md)
-- sandbox harness details: [xtask/docs/sandbox/README.md](xtask/docs/sandbox/README.md)
-
-## Deployment & Operations
-
-The canonical deployment surface is the NixOS module tree under `services.sinex`.
-Stable operational guidance lives here and in [nixos/modules/README.md](nixos/modules/README.md).
-There is no separate top-level operations runbook anymore.
-
-Hardening defaults that are already part of the repo:
-
-- API RPC is TLS-only and non-loopback binds require mTLS policy
-- managed long-running units and helper/maintenance oneshots use systemd sandboxing
-- managed local NATS now has typed server TLS under `services.sinex.nats.tls.*`
-- managed local NATS now has typed subject-level authz for the current shared runtime identity under `services.sinex.nats.authorization.sharedClient.*`
-- shared client transport still lives under `services.sinex.runtime.nats.{servers,tls,auth}` and is exported to all managed services automatically
-
-Conventional secret names that the module now resolves automatically through agenix:
-
-- API admin token: `sinex-api-admin-token`
-- local NATS server TLS: `sinex-nats-server-cert`, `sinex-nats-server-key`, `sinex-nats-client-ca`
-- shared NATS client TLS/auth: `sinex-nats-ca`, `sinex-nats-client-cert`, `sinex-nats-client-key`, `sinex-nats-client-creds`, `sinex-nats-client-nkey`, `sinex-nats-token`
-- compatibility aliases are also accepted for the NATS client path: `nats-ca`, `nats-client-cert`, `nats-client-key`, `nats-client-creds`, `nats-client-nkey`, `nats-token`
-
-Common operator entrypoints:
+Useful operator commands:
 
 ```bash
 xtask doctor
@@ -190,63 +137,102 @@ xtask infra status
 journalctl -u sinexd -f
 ```
 
-Deployment/host readiness proof (systemd units, schema, source-config
-validators) is owned by `sinexd` startup preflight and `sinexctl`/NixOS, not by
-`xtask` — see [runtime-target boundaries](xtask/docs/runtime-target-boundaries.md).
+## What is implemented and what is not
+
+The event runtime is substantial, but several higher-level programs are still
+partial.
+
+Implemented now:
+
+- typed source materials, parser contracts, and event admission;
+- PostgreSQL event persistence and source provenance;
+- live and derived NATS transport;
+- revision classification and supersession on the stream-consumer path;
+- replay-aware automata, checkpoints, and operations records;
+- API, CLI, SSE, telemetry, private mode, snapshots, restore, and deployment;
+- schema and write support for reflection and derivation metadata;
+- a shared reducer vocabulary and the `tasks.current` reducer specification.
+
+Still incomplete or limited:
+
+- generic reducer registration and current-object storage across domains;
+- complete replay invalidation and cross-domain trace tooling;
+- migration of every analytical product onto the reflection control plane;
+- universal proposal, judgment, and finalization for model-generated changes;
+- a general query language over every planned personal-data domain.
+
+The committed Beads graph records which parts are implemented, blocked, or
+proposed. Run `bd ready` and `bd list`, or browse the
+[web board](https://sinity.github.io/sinex/beads/).
+
+## Deployment and operations
+
+The canonical deployment is the NixOS module tree under `services.sinex`.
+Service configuration, startup preflight, schema validation, source checks,
+resource policy, and recovery are part of that deployment.
+
+Current hardening includes:
+
+- TLS-only API RPC;
+- stronger policy for non-loopback binds;
+- bearer-token authentication and per-token rate limits;
+- structured access logs for RPC, SSE, and native messaging;
+- systemd sandboxing for long-running and maintenance units;
+- typed NATS TLS and subject authorization in the NixOS module.
+
+Conventional agenix secret names and the full module contract are documented in
+[nixos/modules/README.md](nixos/modules/README.md).
+
+Deployment and host readiness are checked by `sinexd` startup preflight,
+`sinexctl`, and NixOS evaluation. `xtask` owns repository and development
+workflows, not the final host proof. See
+[xtask/docs/runtime-target-boundaries.md](xtask/docs/runtime-target-boundaries.md).
+
+## Development
+
+Start with:
+
+- [CONTRIBUTING.md](CONTRIBUTING.md)
+- [TESTING.md](TESTING.md)
+- [xtask/docs/devshell-runtime.md](xtask/docs/devshell-runtime.md)
+- [xtask/docs/README.md](xtask/docs/README.md)
+- [xtask/docs/sandbox/README.md](xtask/docs/sandbox/README.md)
 
 ## Documentation
 
-The [documentation map](docs/README.md) groups the current architecture,
-capture, operator, deployment, and contributor contracts.
+The [documentation map](docs/README.md) groups architecture, capture, operator,
+deployment, and contributor material.
 
-| I want to... | Start here |
-|--------------|------------|
-| Browse the documentation by concern | [docs/README.md](docs/README.md) |
-| Understand the system shape | [README.md#architecture](README.md#architecture) |
-| Deploy and harden the common NixOS path | [README.md#deployment--operations](README.md#deployment--operations) |
-| Deploy on NixOS | [nixos/README.md](nixos/README.md) |
-| Build a source or derived service | [crate/sinexd/docs/sources/README.md](crate/sinexd/docs/sources/README.md) |
-| Understand event schemas | [crate/sinex-db/docs/schema/event-taxonomy.md](crate/sinex-db/docs/schema/event-taxonomy.md) |
-| Separate notes, typed records, graph, and artifacts | [crate/sinex-primitives/docs/knowledge_boundaries.md](crate/sinex-primitives/docs/knowledge_boundaries.md) |
-| Define current-state projections for event-native domains | [crate/sinex-primitives/docs/domain_reducers.md](crate/sinex-primitives/docs/domain_reducers.md) |
-| Promote generated suggestions through human or policy authority | [crate/sinex-primitives/docs/curation_authority.md](crate/sinex-primitives/docs/curation_authority.md) |
-| Expose read-only evidence to coding agents | [crate/sinexctl/docs/mcp_readonly_server.md](crate/sinexctl/docs/mcp_readonly_server.md) |
-| Reason about replay evidence and source snapshots | [crate/sinexd/docs/sources/evidence_lanes.md](crate/sinexd/docs/sources/evidence_lanes.md) |
-| Reason about large aggregate provenance | [crate/sinexd/docs/automata/high_fan_in_lineage.md](crate/sinexd/docs/automata/high_fan_in_lineage.md) |
-| Reason about runtime backpressure and loss policy | [crate/sinexd/docs/runtime_qos.md](crate/sinexd/docs/runtime_qos.md) |
-| Suppress live capture through private mode | [crate/sinexctl/docs/private_mode.md](crate/sinexctl/docs/private_mode.md) |
-| Add a staged personal-export parser | [crate/sinexd/docs/sources/adding_staged_export_parser.md](crate/sinexd/docs/sources/adding_staged_export_parser.md) |
-| Drain and recover source material cleanly | [crate/sinexd/docs/sources/source_drain.md](crate/sinexd/docs/sources/source_drain.md) |
-| Snapshot or restore runtime state | [crate/sinexctl/docs/state_snapshot.md](crate/sinexctl/docs/state_snapshot.md) |
-| Configure PostgreSQL backup/restore | [crate/sinex-db/docs/backup_restore.md](crate/sinex-db/docs/backup_restore.md) |
-| Decide which surface owns a runtime or data concern | [.github/authority-surfaces.md](.github/authority-surfaces.md) |
-| Integrate an external tool or sibling project | [crate/sinexd/docs/sources/integration_authority.md](crate/sinexd/docs/sources/integration_authority.md) |
-| Work on repo workflow or verification | [CONTRIBUTING.md](CONTRIBUTING.md), [TESTING.md](TESTING.md) |
-| Work on the CLI/tooling loop | [xtask/docs/README.md](xtask/docs/README.md) |
-
-Active and proposed work belongs to the committed Beads graph, not historical
-GitHub Issues. Browse it on the [web board](https://sinity.github.io/sinex/beads/)
-or query it locally with `bd ready` and `bd list`.
+| Task | Start here |
+|---|---|
+| Understand source parsing | [source docs](crate/sinexd/docs/sources/README.md) |
+| Understand event schemas | [event taxonomy](crate/sinex-db/docs/schema/event-taxonomy.md) |
+| Define current-state projections | [domain reducers](crate/sinex-primitives/docs/domain_reducers.md) |
+| Review generated-change authority | [curation authority](crate/sinex-primitives/docs/curation_authority.md) |
+| Expose evidence to agents | [read-only MCP server](crate/sinexctl/docs/mcp_readonly_server.md) |
+| Understand replay and source snapshots | [evidence model](crate/sinexd/docs/sources/evidence_lanes.md) |
+| Review backpressure and loss policy | [runtime QoS](crate/sinexd/docs/runtime_qos.md) |
+| Suppress capture temporarily | [private mode](crate/sinexctl/docs/private_mode.md) |
+| Add a staged export parser | [parser guide](crate/sinexd/docs/sources/adding_staged_export_parser.md) |
+| Snapshot or restore state | [state snapshot](crate/sinexctl/docs/state_snapshot.md) |
+| Configure PostgreSQL recovery | [backup and restore](crate/sinex-db/docs/backup_restore.md) |
+| Find the owner of a concern | [authority surfaces](.github/authority-surfaces.md) |
 
 ## Security
 
-Threat model shorthand:
+Sinex assumes a trusted single-user host with full-disk encryption and
+capture-time privacy controls. Runtime modules submit events through NATS, while
+`sinexd::api` is the hardened external boundary. Direct database access is for
+diagnostics; normal writes and queries go through the event engine and API.
 
-- trusted single-user local host
-- runtime modules submit over NATS; the `sinexd` API is the hardened external boundary
-- canonical persistence stays single-writer through `sinexd::event_engine`
-- host full-disk encryption and capture-time privacy controls are the intended baseline
+Read the deployment and security documentation before exposing any interface
+outside the local host.
 
-Current controls:
+## Status
 
-- typed payload validation with schema checks
-- TLS-only API RPC; non-loopback binds require stronger transport policy
-- bearer-token auth with constant-time comparison
-- per-token rate limiting
-- structured request access audit logs on RPC, SSE, and native-messaging dispatch paths
-- systemd hardening from the NixOS deployment layer, including helper/maintenance units
-- typed managed-NATS TLS and subject-level authorization surfaces in the NixOS module
+Built and operated for personal use. Not yet production-ready for general
+deployment.
 
----
+## License
 
-<sub>Built for personal use. Not yet production-ready for general deployment.</sub>
+MIT
