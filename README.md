@@ -89,15 +89,16 @@ through the same admission and persistence rules.
 - canonical persistence flows through `sinexd::event_engine`
 - `core.events` is the canonical activity/source-interpretation lane;
   corrections become new events with provenance rather than in-place edits
-- `reflection.events` is a separate self-observation/derived-product lane;
-  reflection outputs carry declared product, support, derivation, and
-  adjudication metadata instead of silently becoming activity facts
+- `reflection.events` is a separate self-observation/derived-product lane; its
+  schema and write paths support declared product, claim-support, derivation,
+  and adjudication metadata so reflection need not masquerade as activity
 - derived events carry source, temporal, and replay metadata
 - `UUIDv7` IDs provide interpretation ordering; `ts_orig` and `ts_coided` are
   distinct and load-bearing
 - occurrence-equivalent re-emissions follow a registered revision policy:
-  identical values can be suppressed, while changed `SupersedeOnChange`
-  interpretations archive their predecessor before admission
+  identical values can be suppressed; changed `SupersedeOnChange` candidates
+  are classified as revisions and their predecessor is archived before the
+  replacement is persisted on the stream-consumer path
 - blobs are content-addressed and referenced stably
 - long-running replay/lifecycle work is recorded in `operations_log`
 
@@ -191,7 +192,7 @@ journalctl -u sinexd -f
 
 Deployment/host readiness proof (systemd units, schema, source-config
 validators) is owned by `sinexd` startup preflight and `sinexctl`/NixOS, not by
-`xtask` - see [runtime-target boundaries](xtask/docs/runtime-target-boundaries.md).
+`xtask` — see [runtime-target boundaries](xtask/docs/runtime-target-boundaries.md).
 
 ## Documentation
 
