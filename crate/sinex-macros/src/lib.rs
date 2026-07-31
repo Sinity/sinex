@@ -303,8 +303,6 @@ pub fn derive_source_meta(input: TokenStream) -> TokenStream {
 /// - `#[sinex_config(parser = path::to::fn)]` — custom parser
 ///   `fn(&str) -> Result<T, _>`; requires a default fallback
 /// - `#[sinex_config(skip)]` — leave the field at `Default::default()`
-///
-/// See `thoughtspace/crystal/decisions/sinex-config-derive.md` for design.
 #[proc_macro_derive(SinexConfig, attributes(sinex_config))]
 pub fn derive_sinex_config(input: TokenStream) -> TokenStream {
     sinex_config::expand(input)

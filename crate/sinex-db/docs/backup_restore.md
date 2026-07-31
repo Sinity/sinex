@@ -233,8 +233,8 @@ A backup setup is operationally trusted when:
 
 - `systemctl list-timers sinex-basebackup.timer` shows a recent successful run.
 - At least one full restore drill has completed end-to-end with parity
-  verification, and the result was recorded somewhere durable (commit a
-  note to `thoughtspace/`, or the host's runbook repo).
+  verification, and the result was recorded in the operator's external
+  runbook.
 - `pg_stat_archiver.failed_count` is stable at 0 (if WAL archiving is
   enabled).
 - Source-material and blob-CAS volumes are covered by a file-level

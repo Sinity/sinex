@@ -1,7 +1,6 @@
 //! Proof-of-concept tests for `#[derive(SinexConfig)]`.
 //!
-//! See `thoughtspace/crystal/decisions/sinex-config-derive.md` for the design
-//! these tests exercise.
+//! The in-repository config guide documents the design these tests exercise.
 
 use std::{ffi::OsString, path::PathBuf, time::Duration};
 

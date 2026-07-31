@@ -1,7 +1,6 @@
 //! `#[derive(SinexConfig)]` — generate `from_env()` for env-driven config structs.
 //!
-//! See the design at `thoughtspace/crystal/decisions/sinex-config-derive.md`
-//! and `sinex-macros/docs/sinex_config.md` for the attribute grammar and the
+//! See `sinex-macros/docs/sinex_config.md` for the attribute grammar and the
 //! field-type inference table.
 
 use proc_macro::TokenStream;

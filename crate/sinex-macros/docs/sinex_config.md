@@ -122,6 +122,6 @@ LoC and gains a consistent env-key naming convention.
 
 ## Design
 
-See `thoughtspace/crystal/decisions/sinex-config-derive.md` for the full
-design including rejected alternatives, risks, and the field-inference
-rationale.
+The derive keeps parsing policy explicit in field attributes while centralizing
+the repetitive environment lookup, fallback, and diagnostic behavior. The
+attribute grammar and inference table above are the current design contract.
