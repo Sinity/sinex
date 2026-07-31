@@ -681,7 +681,7 @@ async fn media_package_operations_surface_operator_actions() -> xtask::TestResul
         local_model_mode.implementation,
         "local-transcription-worker"
     );
-    assert_eq!(local_model_mode.adapter, "LocalProcessWorker");
+    assert_eq!(local_model_mode.adapter, "MediaWorkerCommandExecutor");
     assert_eq!(local_model_mode.runtime_shape, "on_demand");
     assert_eq!(local_model_mode.material_lifecycle, "derived_only");
     assert_eq!(local_model_mode.transport, "direct");

@@ -2,8 +2,13 @@
 //!
 //! The implemented parsers consume transcript/OCR text material and staged
 //! bundle manifests that anchor raw recording/screenshot/video observations.
-//! Worker-backed local model and on-demand capture modes consume bounded
-//! operation output. Long-lived session control bindings stay proposed until a
+//! `local-model-batch` bindings (`adapter = "MediaWorkerCommandExecutor"`) are
+//! real and complete: their `run-model`/`run-ocr` operations are backed by
+//! `execute_media_worker_command` in `api/handlers/ops/media.rs`, which either
+//! spawns an operator-configured local worker process directly or admits
+//! operator/external-script-supplied `worker_output`/`worker_output_path`
+//! evidence — an RPC-driven executor, not an `InputShapeAdapter`. On-demand
+//! capture and long-lived session control bindings stay proposed until a
 //! durable live runner owns the capture process.
 
 use async_trait::async_trait;
@@ -63,7 +68,7 @@ use sinex_primitives::source_contracts::{
         subject = "source:media.audio-transcript.local-model-batch",
         event_type = "media.audio.transcription_run_observed",
         implementation = "local-transcription-worker",
-        adapter = "LocalProcessWorker",
+        adapter = "MediaWorkerCommandExecutor",
         resource_profile = ResourceProfile::Oneshot,
         runner_pack = RunnerPack::SinexdSource,
         checkpoint_family = CheckpointFamily::AppendStream,
@@ -155,7 +160,7 @@ pub struct MediaAudioTranscriptParser;
         subject = "source:media.screen-ocr.local-model-batch",
         event_type = "media.screen.ocr_run_observed",
         implementation = "local-ocr-worker",
-        adapter = "LocalProcessWorker",
+        adapter = "MediaWorkerCommandExecutor",
         resource_profile = ResourceProfile::Oneshot,
         runner_pack = RunnerPack::SinexdSource,
         checkpoint_family = CheckpointFamily::AppendStream,
