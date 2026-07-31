@@ -769,6 +769,241 @@ async fn stream_batch_insert_rejects_intra_batch_synthesis_cycles(
     Ok(())
 }
 
+/// Chunking in `insert_stream_batch_into` exists solely to stay under
+/// PostgreSQL's bound-parameter limit (sinex-wv7: `SYNTHESIS_CHUNK_MAX` in
+/// `crate/sinex-db/src/repositories/events/persistence.rs`, currently 2000).
+/// It must not change which parent references are considered valid: a valid
+/// acyclic derived batch larger than the chunk threshold, where an early
+/// chunk's child references a parent that only appears in a later chunk,
+/// must still commit in full — not be misidentified as referencing a
+/// missing/poison parent.
+const WV7_CHUNK_BOUNDARY: usize = 2000;
+
+/// Register a `derivation.product_declarations` row so derived-event inserts
+/// with a matching `(product_class, output_source, output_event_type,
+/// derivation_declaration_id)` satisfy the `enforce_event_product_declaration`
+/// trigger (sinex-0vx.4 / sinex-8cr.2). Mirrors the proven pattern in
+/// `crate/sinex-db/src/repositories/events/persistence_test.rs::seed_product_declaration`
+/// (this integration-test binary can't reuse that private helper directly, as
+/// it compiles separately from the unit-test module).
+async fn seed_product_declaration(
+    pool: &sqlx::PgPool,
+    declaration_id: &str,
+    output_source: &str,
+    output_event_type: &str,
+) -> color_eyre::Result<()> {
+    sqlx::query!(
+        r#"
+        INSERT INTO derivation.product_declarations (
+            declaration_id, owner, product_class, write_surface,
+            output_source, output_event_type, semantics_version,
+            input_eligibility, default_claim_support, verification_command
+        ) VALUES (
+            $1, 'sinex-wv7-test', 'canonical_derived_event', 'derived_output',
+            $2, $3, 'v1', 'default_canonical_input', '{}'::jsonb, 'true'
+        )
+        ON CONFLICT (declaration_id) DO NOTHING
+        "#,
+        declaration_id,
+        output_source,
+        output_event_type,
+    )
+    .execute(pool)
+    .await?;
+    Ok(())
+}
+
+fn stream_batch_derived_row(
+    event_type: &str,
+    payload: serde_json::Value,
+    source_event_ids: Vec<EventId>,
+    derivation_declaration_id: &str,
+) -> color_eyre::Result<StreamBatchRow> {
+    // Derived rows (source_event_ids set) must carry product_class, and
+    // product_class requires both claim_support and a registered
+    // derivation.product_declarations row matching derivation_declaration_id
+    // (events_derived_requires_product_class /
+    // events_claim_support_requires_product_class CHECK constraints, plus
+    // the enforce_event_product_declaration trigger — sinex-egyf).
+    let claim_support = sinex_primitives::derivation::ClaimSupport::unknown();
+    Ok(StreamBatchRow {
+        id: Uuid::now_v7(),
+        source: EventSource::new("test.source")?,
+        event_type: EventType::new(event_type)?,
+        ts_orig: Timestamp::now(),
+        host: HostName::from_static("localhost"),
+        payload,
+        source_material_id: None,
+        anchor_byte: None,
+        offset_start: None,
+        offset_end: None,
+        offset_kind: None,
+        source_event_ids: Some(source_event_ids),
+        payload_schema_id: None,
+        module_run_id: None,
+        anchor_payload_hash: None,
+        associated_blob_ids: None,
+        temporal_policy: None,
+        semantics_version: None,
+        scope_key: None,
+        equivalence_key: None,
+        created_by_operation_id: None,
+        automaton_model: None,
+        ts_quality: None,
+        product_class: Some("canonical_derived_event".to_string()),
+        claim_support: Some(serde_json::to_value(claim_support)?),
+        derivation_declaration_id: Some(derivation_declaration_id.to_string()),
+        derivation_epoch_id: None,
+        derivation_lane_id: None,
+        adjudication_event_id: None,
+    })
+}
+
+#[sinex_test]
+async fn stream_batch_insert_accepts_forward_parent_reference_across_chunk_boundary(
+    ctx: TestContext,
+) -> TestResult<()> {
+    let material_record = ctx
+        .pool
+        .source_materials()
+        .register_in_flight(
+            sinex_db::repositories::source_materials::material_types::STREAM,
+            Some("wv7-chunk-boundary-forward-ref-material"),
+            json!({ "test": true }),
+        )
+        .await?;
+    let material_id = Id::<SourceMaterial>::from_uuid(material_record.id);
+
+    // total spans two chunks (2700 + 50); the parent lives well inside the
+    // second chunk so the reference genuinely crosses the chunk boundary.
+    let total = WV7_CHUNK_BOUNDARY + 50;
+    let parent_index = WV7_CHUNK_BOUNDARY + 5;
+
+    let mut rows = (0..total)
+        .map(|index| stream_batch_material_row(material_id, index as i64))
+        .collect::<color_eyre::Result<Vec<_>>>()?;
+    let parent_id = rows[parent_index].id;
+
+    seed_product_declaration(
+        &ctx.pool,
+        "wv7-forward-ref-decl",
+        "test.source",
+        "test.batch.derived.chunk_boundary",
+    )
+    .await?;
+
+    // Row 0 (chunk 0) is a derived event whose only parent (row parent_index,
+    // chunk 1) has not committed to core.events yet when chunk 0 is
+    // validated and inserted.
+    let derived_row = stream_batch_derived_row(
+        "test.batch.derived.chunk_boundary",
+        json!({ "wv7": "forward-ref" }),
+        vec![EventId::from_uuid(parent_id)],
+        "wv7-forward-ref-decl",
+    )?;
+    let child_id = derived_row.id;
+    rows[0] = derived_row;
+
+    let result = ctx.pool.events().insert_stream_batch(&rows).await?;
+    assert_eq!(
+        result.inserted_count, total,
+        "the whole acyclic batch must commit despite the forward cross-chunk parent reference"
+    );
+
+    let loaded_child = ctx
+        .pool
+        .events()
+        .get_by_id(EventId::from_uuid(child_id))
+        .await?
+        .expect("child event referencing a sibling-chunk parent must be persisted, not DLQ'd");
+    match loaded_child.provenance() {
+        Provenance::Derived {
+            source_event_ids, ..
+        } => {
+            assert_eq!(source_event_ids.len(), 1);
+            assert_eq!(source_event_ids[0], EventId::from_uuid(parent_id));
+        }
+        other => unreachable!("expected derived provenance, got: {other:?}"),
+    }
+
+    let loaded_parent = ctx
+        .pool
+        .events()
+        .get_by_id(EventId::from_uuid(parent_id))
+        .await?
+        .expect("sibling-chunk parent must also be persisted");
+    assert_eq!(loaded_parent.id, Some(EventId::from_uuid(parent_id)));
+
+    Ok(())
+}
+
+#[sinex_test]
+async fn stream_batch_insert_rejects_genuinely_missing_parent_across_chunk_boundary(
+    ctx: TestContext,
+) -> TestResult<()> {
+    let material_record = ctx
+        .pool
+        .source_materials()
+        .register_in_flight(
+            sinex_db::repositories::source_materials::material_types::STREAM,
+            Some("wv7-chunk-boundary-missing-parent-material"),
+            json!({ "test": true }),
+        )
+        .await?;
+    let material_id = Id::<SourceMaterial>::from_uuid(material_record.id);
+
+    let total = WV7_CHUNK_BOUNDARY + 50;
+    let mut rows = (0..total)
+        .map(|index| stream_batch_material_row(material_id, index as i64))
+        .collect::<color_eyre::Result<Vec<_>>>()?;
+
+    seed_product_declaration(
+        &ctx.pool,
+        "wv7-missing-parent-decl",
+        "test.source",
+        "test.batch.derived.missing_parent",
+    )
+    .await?;
+
+    // A UUIDv7 that never appears anywhere in this batch and was never
+    // inserted into the DB — the regression guard for the false-positive
+    // fix: this must still be correctly rejected, not silently accepted.
+    // (The parent-liveness check runs and fails before the row ever reaches
+    // the product_class/declaration-trigger checks, but the row is built the
+    // same way as a real derived event for realism.)
+    let missing_parent_id = Uuid::now_v7();
+    let derived_row = stream_batch_derived_row(
+        "test.batch.derived.missing_parent",
+        json!({ "wv7": "missing-parent" }),
+        vec![EventId::from_uuid(missing_parent_id)],
+        "wv7-missing-parent-decl",
+    )?;
+    rows[0] = derived_row;
+
+    let error = ctx
+        .pool
+        .events()
+        .insert_stream_batch(&rows)
+        .await
+        .expect_err("batch referencing a genuinely missing parent must still be rejected");
+    assert!(
+        error.to_string().contains("non-live source_event_ids"),
+        "unexpected error: {error}"
+    );
+
+    let stored = ctx
+        .pool
+        .events()
+        .get_by_source(&EventSource::new("test.source")?, Pagination::new(Some(1), None))
+        .await?;
+    assert!(
+        stored.is_empty(),
+        "no row from the rejected batch should have committed"
+    );
+
+    Ok(())
+}
+
 #[sinex_test]
 async fn register_external_in_flight_uses_provided_id(ctx: TestContext) -> TestResult<()> {
     let forced_id = uuid::Uuid::now_v7();
