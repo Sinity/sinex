@@ -8,6 +8,7 @@ use crate::repositories::common::{DbResult, EnhancedRepository, Repository, db_e
 use crate::schema::Events;
 use crate::{EventRecord, SinexError};
 use sinex_primitives::domain::{DataTier, EventSource};
+use sinex_primitives::sources::{SourceRole, source_role};
 use sinex_primitives::{Id, Timestamp};
 use std::collections::HashSet;
 use uuid::Uuid;
@@ -271,6 +272,19 @@ impl<'a> EventRepository<'a> {
             .to_postgres_parts();
         let (ts_orig, ts_orig_subnano) = (Some(pg), Some(sub));
 
+        // Route through the same activity/reflection lane split as the batch
+        // path (`insert_stream_batch_into`): self-observation events
+        // (`source_role() == Reflection`, e.g. "sinex", "sinex.*", "sinexd.*")
+        // must land in `reflection.events`, never `core.events` — otherwise
+        // `sinex_telemetry.current_health` (which reads only
+        // `reflection.events WHERE source='sinex'`) and everything built on
+        // it (runtime/health, automata-status API handlers) silently never
+        // sees the row. See sinex-4k4b.
+        let lane = match source_role(event.source.as_str()) {
+            SourceRole::Activity => EventStorageLane::Activity,
+            SourceRole::Reflection => EventStorageLane::Reflection,
+        };
+
         // Clone data needed for the closure
         let event_source = event.source.clone();
         let event_type = event.event_type.clone();
@@ -311,6 +325,7 @@ impl<'a> EventRepository<'a> {
             IdempotentTransaction::new(),
             move |tx| {
                 let id = id;
+                let lane = lane;
                 let source_event_ids = source_event_ids.clone();
                 let source_material_id = source_material_id;
                 let source_event_uuids = source_event_uuids.clone();
@@ -345,101 +360,203 @@ impl<'a> EventRepository<'a> {
                             .await?;
                     }
 
-                    let record = sqlx::query_as!(
-                        EventRecord,
-                        r#"
-                        INSERT INTO core.events (
-                            id, source, event_type, host, payload,
-                            ts_orig, ts_orig_subnano, module_run_id, payload_schema_id, source_event_ids,
-                            source_material_id, offset_start, offset_end, offset_kind,
-                            anchor_byte, associated_blob_ids,
-                            temporal_policy, semantics_version, scope_key, equivalence_key,
-                            created_by_operation_id, automaton_model, anchor_payload_hash, ts_quality,
-                            product_class, claim_support, derivation_declaration_id,
-                            derivation_epoch_id, derivation_lane_id, adjudication_event_id
-                        ) VALUES (
-                            $1::uuid, $2, $3, $4, $5,
-                            $6, $7, $8, $9::uuid, $10::uuid[],
-                            $11::uuid, $12, $13, $14,
-                            $15, $16::uuid[],
-                            $17, $18, $19, $20,
-                            $21::uuid, $22, $23, $24,
-                            $25, $26, $27,
-                            $28::uuid, $29::uuid, $30::uuid
-                        )
-                        RETURNING
-                            id as "id!: uuid::Uuid",
-                            source as "source!",
-                            event_type as "event_type!",
-                            ts_coided as "ts_coided!: Timestamp",
-                            ts_persisted as "ts_persisted!: Timestamp",
-                            ts_orig as "ts_orig!: Timestamp",
+                    // sqlx::query_as! needs a literal table name for compile-time
+                    // checking, and core.events / reflection.events share an
+                    // identical column contract, so route by duplicating the bound
+                    // INSERT once per table rather than interpolating the table
+                    // name — mirrors `insert_stream_batch_into`'s lane split.
+                    let record = match lane {
+                        EventStorageLane::Activity => sqlx::query_as!(
+                            EventRecord,
+                            r#"
+                            INSERT INTO core.events (
+                                id, source, event_type, host, payload,
+                                ts_orig, ts_orig_subnano, module_run_id, payload_schema_id, source_event_ids,
+                                source_material_id, offset_start, offset_end, offset_kind,
+                                anchor_byte, associated_blob_ids,
+                                temporal_policy, semantics_version, scope_key, equivalence_key,
+                                created_by_operation_id, automaton_model, anchor_payload_hash, ts_quality,
+                                product_class, claim_support, derivation_declaration_id,
+                                derivation_epoch_id, derivation_lane_id, adjudication_event_id
+                            ) VALUES (
+                                $1::uuid, $2, $3, $4, $5,
+                                $6, $7, $8, $9::uuid, $10::uuid[],
+                                $11::uuid, $12, $13, $14,
+                                $15, $16::uuid[],
+                                $17, $18, $19, $20,
+                                $21::uuid, $22, $23, $24,
+                                $25, $26, $27,
+                                $28::uuid, $29::uuid, $30::uuid
+                            )
+                            RETURNING
+                                id as "id!: uuid::Uuid",
+                                source as "source!",
+                                event_type as "event_type!",
+                                ts_coided as "ts_coided!: Timestamp",
+                                ts_persisted as "ts_persisted!: Timestamp",
+                                ts_orig as "ts_orig!: Timestamp",
+                                ts_orig_subnano,
+                                host as "host!",
+                                module_run_id::uuid as "module_run_id: uuid::Uuid",
+                                payload_schema_id::uuid as "payload_schema_id: uuid::Uuid",
+                                payload as "payload!",
+                                source_event_ids::uuid[] as "source_event_ids: Vec<uuid::Uuid>",
+                                source_material_id::uuid as "source_material_id: uuid::Uuid",
+                                offset_start,
+                                offset_end,
+                                offset_kind,
+                                anchor_byte,
+                                associated_blob_ids::uuid[] as "associated_blob_ids: Vec<uuid::Uuid>",
+                                temporal_policy,
+                                semantics_version,
+                                scope_key,
+                                equivalence_key,
+                                created_by_operation_id::uuid as "created_by_operation_id: uuid::Uuid",
+                                automaton_model,
+                                anchor_payload_hash as "anchor_payload_hash: Vec<u8>",
+                                ts_quality,
+                                product_class,
+                                claim_support,
+                                derivation_declaration_id,
+                                derivation_epoch_id::uuid as "derivation_epoch_id: uuid::Uuid",
+                                derivation_lane_id::uuid as "derivation_lane_id: uuid::Uuid",
+                                adjudication_event_id::uuid as "adjudication_event_id: uuid::Uuid"
+                            "#,
+                            id.to_uuid(),
+                            event_source.as_str(),
+                            event_type.as_str(),
+                            host.as_str(),
+                            payload,
+                            ts_orig,
                             ts_orig_subnano,
-                            host as "host!",
-                            module_run_id::uuid as "module_run_id: uuid::Uuid",
-                            payload_schema_id::uuid as "payload_schema_id: uuid::Uuid",
-                            payload as "payload!",
-                            source_event_ids::uuid[] as "source_event_ids: Vec<uuid::Uuid>",
-                            source_material_id::uuid as "source_material_id: uuid::Uuid",
+                            module_run_id,
+                            payload_schema_id,
+                            source_event_uuids.as_deref(),
+                            source_material_id.map(|id| id.to_uuid()),
                             offset_start,
                             offset_end,
-                            offset_kind,
+                            offset_kind.as_deref(),
                             anchor_byte,
-                            associated_blob_ids::uuid[] as "associated_blob_ids: Vec<uuid::Uuid>",
-                            temporal_policy,
+                            associated_blob_uuids.as_deref(),
+                            temporal_policy_str,
                             semantics_version,
                             scope_key,
                             equivalence_key,
-                            created_by_operation_id::uuid as "created_by_operation_id: uuid::Uuid",
-                            automaton_model,
-                            anchor_payload_hash as "anchor_payload_hash: Vec<u8>",
-                            ts_quality,
-                            product_class,
-                            claim_support,
+                            created_by_operation_id,
+                            automaton_model_str,
+                            anchor_payload_hash,
+                            ts_quality_str,
+                            // Derivation control plane (sinex-0vx.4 / sinex-8cr.2):
+                            // real values, read off Event<T> above. derivation_epoch_id/
+                            // derivation_lane_id stay None on every live path today —
+                            // no canonical-epoch-id resolution mechanism exists yet
+                            // (0vx.5/0vx.6/0vx.7/0vx.9) — and adjudication_event_id is
+                            // set only by the future curation finalizer (0vx.5).
+                            product_class_str,
+                            claim_support_json,
                             derivation_declaration_id,
-                            derivation_epoch_id::uuid as "derivation_epoch_id: uuid::Uuid",
-                            derivation_lane_id::uuid as "derivation_lane_id: uuid::Uuid",
-                            adjudication_event_id::uuid as "adjudication_event_id: uuid::Uuid"
-                        "#,
-                        id.to_uuid(),
-                        event_source.as_str(),
-                        event_type.as_str(),
-                        host.as_str(),
-                        payload,
-                        ts_orig,
-                        ts_orig_subnano,
-                        module_run_id,
-                        payload_schema_id,
-                        source_event_uuids.as_deref(),
-                        source_material_id.map(|id| id.to_uuid()),
-                        offset_start,
-                        offset_end,
-                        offset_kind.as_deref(),
-                        anchor_byte,
-                        associated_blob_uuids.as_deref(),
-                        temporal_policy_str,
-                        semantics_version,
-                        scope_key,
-                        equivalence_key,
-                        created_by_operation_id,
-                        automaton_model_str,
-                        anchor_payload_hash,
-                        ts_quality_str,
-                        // Derivation control plane (sinex-0vx.4 / sinex-8cr.2):
-                        // real values, read off Event<T> above. derivation_epoch_id/
-                        // derivation_lane_id stay None on every live path today —
-                        // no canonical-epoch-id resolution mechanism exists yet
-                        // (0vx.5/0vx.6/0vx.7/0vx.9) — and adjudication_event_id is
-                        // set only by the future curation finalizer (0vx.5).
-                        product_class_str,
-                        claim_support_json,
-                        derivation_declaration_id,
-                        derivation_epoch_id,
-                        derivation_lane_id,
-                        adjudication_event_id
-                    )
-                    .fetch_one(&mut **tx)
-                    .await
+                            derivation_epoch_id,
+                            derivation_lane_id,
+                            adjudication_event_id
+                        )
+                        .fetch_one(&mut **tx)
+                        .await,
+                        EventStorageLane::Reflection => sqlx::query_as!(
+                            EventRecord,
+                            r#"
+                            INSERT INTO reflection.events (
+                                id, source, event_type, host, payload,
+                                ts_orig, ts_orig_subnano, module_run_id, payload_schema_id, source_event_ids,
+                                source_material_id, offset_start, offset_end, offset_kind,
+                                anchor_byte, associated_blob_ids,
+                                temporal_policy, semantics_version, scope_key, equivalence_key,
+                                created_by_operation_id, automaton_model, anchor_payload_hash, ts_quality,
+                                product_class, claim_support, derivation_declaration_id,
+                                derivation_epoch_id, derivation_lane_id, adjudication_event_id
+                            ) VALUES (
+                                $1::uuid, $2, $3, $4, $5,
+                                $6, $7, $8, $9::uuid, $10::uuid[],
+                                $11::uuid, $12, $13, $14,
+                                $15, $16::uuid[],
+                                $17, $18, $19, $20,
+                                $21::uuid, $22, $23, $24,
+                                $25, $26, $27,
+                                $28::uuid, $29::uuid, $30::uuid
+                            )
+                            RETURNING
+                                id as "id!: uuid::Uuid",
+                                source as "source!",
+                                event_type as "event_type!",
+                                ts_coided as "ts_coided!: Timestamp",
+                                ts_persisted as "ts_persisted!: Timestamp",
+                                ts_orig as "ts_orig!: Timestamp",
+                                ts_orig_subnano,
+                                host as "host!",
+                                module_run_id::uuid as "module_run_id: uuid::Uuid",
+                                payload_schema_id::uuid as "payload_schema_id: uuid::Uuid",
+                                payload as "payload!",
+                                source_event_ids::uuid[] as "source_event_ids: Vec<uuid::Uuid>",
+                                source_material_id::uuid as "source_material_id: uuid::Uuid",
+                                offset_start,
+                                offset_end,
+                                offset_kind,
+                                anchor_byte,
+                                associated_blob_ids::uuid[] as "associated_blob_ids: Vec<uuid::Uuid>",
+                                temporal_policy,
+                                semantics_version,
+                                scope_key,
+                                equivalence_key,
+                                created_by_operation_id::uuid as "created_by_operation_id: uuid::Uuid",
+                                automaton_model,
+                                anchor_payload_hash as "anchor_payload_hash: Vec<u8>",
+                                ts_quality,
+                                product_class,
+                                claim_support,
+                                derivation_declaration_id,
+                                derivation_epoch_id::uuid as "derivation_epoch_id: uuid::Uuid",
+                                derivation_lane_id::uuid as "derivation_lane_id: uuid::Uuid",
+                                adjudication_event_id::uuid as "adjudication_event_id: uuid::Uuid"
+                            "#,
+                            id.to_uuid(),
+                            event_source.as_str(),
+                            event_type.as_str(),
+                            host.as_str(),
+                            payload,
+                            ts_orig,
+                            ts_orig_subnano,
+                            module_run_id,
+                            payload_schema_id,
+                            source_event_uuids.as_deref(),
+                            source_material_id.map(|id| id.to_uuid()),
+                            offset_start,
+                            offset_end,
+                            offset_kind.as_deref(),
+                            anchor_byte,
+                            associated_blob_uuids.as_deref(),
+                            temporal_policy_str,
+                            semantics_version,
+                            scope_key,
+                            equivalence_key,
+                            created_by_operation_id,
+                            automaton_model_str,
+                            anchor_payload_hash,
+                            ts_quality_str,
+                            // Derivation control plane (sinex-0vx.4 / sinex-8cr.2):
+                            // real values, read off Event<T> above. derivation_epoch_id/
+                            // derivation_lane_id stay None on every live path today —
+                            // no canonical-epoch-id resolution mechanism exists yet
+                            // (0vx.5/0vx.6/0vx.7/0vx.9) — and adjudication_event_id is
+                            // set only by the future curation finalizer (0vx.5).
+                            product_class_str,
+                            claim_support_json,
+                            derivation_declaration_id,
+                            derivation_epoch_id,
+                            derivation_lane_id,
+                            adjudication_event_id
+                        )
+                        .fetch_one(&mut **tx)
+                        .await,
+                    }
                     .map_err(|e| db_error(e, "insert event"))?;
 
                     record.try_to_event()
@@ -525,97 +642,198 @@ impl<'a> EventRepository<'a> {
                 SinexError::database("Failed to serialize event claim_support").with_source(e)
             })?;
 
-        let record = sqlx::query_as!(
-            EventRecord,
-            r#"
-            INSERT INTO core.events (
-                id, source, event_type, host, payload,
-                ts_orig, ts_orig_subnano, module_run_id, payload_schema_id, source_event_ids,
-                source_material_id, offset_start, offset_end, offset_kind,
-                anchor_byte, associated_blob_ids,
-                temporal_policy, semantics_version, scope_key, equivalence_key,
-                created_by_operation_id, automaton_model, anchor_payload_hash, ts_quality,
-                product_class, claim_support, derivation_declaration_id,
-                derivation_epoch_id, derivation_lane_id, adjudication_event_id
-            ) VALUES (
-                $1::uuid, $2, $3, $4, $5,
-                $6, $7, $8, $9::uuid, $10::uuid[],
-                $11::uuid, $12, $13, $14,
-                $15, $16::uuid[],
-                $17, $18, $19, $20,
-                $21::uuid, $22, $23, $24,
-                $25, $26, $27,
-                $28::uuid, $29::uuid, $30::uuid
-            )
-            RETURNING
-                id as "id!: uuid::Uuid",
-                source as "source!",
-                event_type as "event_type!",
-                ts_coided as "ts_coided!: Timestamp",
-                ts_persisted as "ts_persisted!: Timestamp",
-                ts_orig as "ts_orig!: Timestamp",
+        // Route via the same activity/reflection lane split as `insert` above
+        // (see sinex-4k4b) — self-observation events must land in
+        // `reflection.events`, never `core.events`.
+        let lane = match source_role(event.source.as_str()) {
+            SourceRole::Activity => EventStorageLane::Activity,
+            SourceRole::Reflection => EventStorageLane::Reflection,
+        };
+
+        let record = match lane {
+            EventStorageLane::Activity => sqlx::query_as!(
+                EventRecord,
+                r#"
+                INSERT INTO core.events (
+                    id, source, event_type, host, payload,
+                    ts_orig, ts_orig_subnano, module_run_id, payload_schema_id, source_event_ids,
+                    source_material_id, offset_start, offset_end, offset_kind,
+                    anchor_byte, associated_blob_ids,
+                    temporal_policy, semantics_version, scope_key, equivalence_key,
+                    created_by_operation_id, automaton_model, anchor_payload_hash, ts_quality,
+                    product_class, claim_support, derivation_declaration_id,
+                    derivation_epoch_id, derivation_lane_id, adjudication_event_id
+                ) VALUES (
+                    $1::uuid, $2, $3, $4, $5,
+                    $6, $7, $8, $9::uuid, $10::uuid[],
+                    $11::uuid, $12, $13, $14,
+                    $15, $16::uuid[],
+                    $17, $18, $19, $20,
+                    $21::uuid, $22, $23, $24,
+                    $25, $26, $27,
+                    $28::uuid, $29::uuid, $30::uuid
+                )
+                RETURNING
+                    id as "id!: uuid::Uuid",
+                    source as "source!",
+                    event_type as "event_type!",
+                    ts_coided as "ts_coided!: Timestamp",
+                    ts_persisted as "ts_persisted!: Timestamp",
+                    ts_orig as "ts_orig!: Timestamp",
+                    ts_orig_subnano,
+                    host as "host!",
+                    module_run_id::uuid as "module_run_id: uuid::Uuid",
+                    payload_schema_id::uuid as "payload_schema_id: uuid::Uuid",
+                    payload as "payload!",
+                    source_event_ids::uuid[] as "source_event_ids: Vec<uuid::Uuid>",
+                    source_material_id::uuid as "source_material_id: uuid::Uuid",
+                    offset_start,
+                    offset_end,
+                    offset_kind,
+                    anchor_byte,
+                    associated_blob_ids::uuid[] as "associated_blob_ids: Vec<uuid::Uuid>",
+                    temporal_policy,
+                    semantics_version,
+                    scope_key,
+                    equivalence_key,
+                    created_by_operation_id::uuid as "created_by_operation_id: uuid::Uuid",
+                    automaton_model,
+                    anchor_payload_hash as "anchor_payload_hash: Vec<u8>",
+                    ts_quality,
+                    product_class,
+                    claim_support,
+                    derivation_declaration_id,
+                    derivation_epoch_id::uuid as "derivation_epoch_id: uuid::Uuid",
+                    derivation_lane_id::uuid as "derivation_lane_id: uuid::Uuid",
+                    adjudication_event_id::uuid as "adjudication_event_id: uuid::Uuid"
+                "#,
+                id.to_uuid(),
+                event.source.as_str(),
+                event.event_type.as_str(),
+                event.host.as_str(),
+                event.payload,
+                ts_orig,
                 ts_orig_subnano,
-                host as "host!",
-                module_run_id::uuid as "module_run_id: uuid::Uuid",
-                payload_schema_id::uuid as "payload_schema_id: uuid::Uuid",
-                payload as "payload!",
-                source_event_ids::uuid[] as "source_event_ids: Vec<uuid::Uuid>",
-                source_material_id::uuid as "source_material_id: uuid::Uuid",
+                event.module_run_id,
+                event.payload_schema_id,
+                source_event_uuids.as_deref(),
+                source_material_id.map(|id| id.to_uuid()),
                 offset_start,
                 offset_end,
-                offset_kind,
+                offset_kind.as_deref(),
                 anchor_byte,
-                associated_blob_ids::uuid[] as "associated_blob_ids: Vec<uuid::Uuid>",
-                temporal_policy,
-                semantics_version,
-                scope_key,
-                equivalence_key,
-                created_by_operation_id::uuid as "created_by_operation_id: uuid::Uuid",
-                automaton_model,
-                anchor_payload_hash as "anchor_payload_hash: Vec<u8>",
-                ts_quality,
-                product_class,
-                claim_support,
-                derivation_declaration_id,
-                derivation_epoch_id::uuid as "derivation_epoch_id: uuid::Uuid",
-                derivation_lane_id::uuid as "derivation_lane_id: uuid::Uuid",
-                adjudication_event_id::uuid as "adjudication_event_id: uuid::Uuid"
-            "#,
-            id.to_uuid(),
-            event.source.as_str(),
-            event.event_type.as_str(),
-            event.host.as_str(),
-            event.payload,
-            ts_orig,
-            ts_orig_subnano,
-            event.module_run_id,
-            event.payload_schema_id,
-            source_event_uuids.as_deref(),
-            source_material_id.map(|id| id.to_uuid()),
-            offset_start,
-            offset_end,
-            offset_kind.as_deref(),
-            anchor_byte,
-            associated_blob_uuids.as_deref(),
-            temporal_policy_str,
-            event.semantics_version,
-            event.scope_key,
-            event.equivalence_key,
-            created_by_operation_id,
-            automaton_model_str,
-            anchor_payload_hash,
-            ts_quality_str,
-            // Derivation control plane (sinex-0vx.4 / sinex-8cr.2): see the
-            // matching comment in `insert` above.
-            product_class_str,
-            claim_support_json,
-            event.derivation_declaration_id,
-            event.derivation_epoch_id,
-            event.derivation_lane_id,
-            event.adjudication_event_id
-        )
-        .fetch_one(&mut **tx)
-        .await
+                associated_blob_uuids.as_deref(),
+                temporal_policy_str,
+                event.semantics_version,
+                event.scope_key,
+                event.equivalence_key,
+                created_by_operation_id,
+                automaton_model_str,
+                anchor_payload_hash,
+                ts_quality_str,
+                // Derivation control plane (sinex-0vx.4 / sinex-8cr.2): see the
+                // matching comment in `insert` above.
+                product_class_str,
+                claim_support_json,
+                event.derivation_declaration_id,
+                event.derivation_epoch_id,
+                event.derivation_lane_id,
+                event.adjudication_event_id
+            )
+            .fetch_one(&mut **tx)
+            .await,
+            EventStorageLane::Reflection => sqlx::query_as!(
+                EventRecord,
+                r#"
+                INSERT INTO reflection.events (
+                    id, source, event_type, host, payload,
+                    ts_orig, ts_orig_subnano, module_run_id, payload_schema_id, source_event_ids,
+                    source_material_id, offset_start, offset_end, offset_kind,
+                    anchor_byte, associated_blob_ids,
+                    temporal_policy, semantics_version, scope_key, equivalence_key,
+                    created_by_operation_id, automaton_model, anchor_payload_hash, ts_quality,
+                    product_class, claim_support, derivation_declaration_id,
+                    derivation_epoch_id, derivation_lane_id, adjudication_event_id
+                ) VALUES (
+                    $1::uuid, $2, $3, $4, $5,
+                    $6, $7, $8, $9::uuid, $10::uuid[],
+                    $11::uuid, $12, $13, $14,
+                    $15, $16::uuid[],
+                    $17, $18, $19, $20,
+                    $21::uuid, $22, $23, $24,
+                    $25, $26, $27,
+                    $28::uuid, $29::uuid, $30::uuid
+                )
+                RETURNING
+                    id as "id!: uuid::Uuid",
+                    source as "source!",
+                    event_type as "event_type!",
+                    ts_coided as "ts_coided!: Timestamp",
+                    ts_persisted as "ts_persisted!: Timestamp",
+                    ts_orig as "ts_orig!: Timestamp",
+                    ts_orig_subnano,
+                    host as "host!",
+                    module_run_id::uuid as "module_run_id: uuid::Uuid",
+                    payload_schema_id::uuid as "payload_schema_id: uuid::Uuid",
+                    payload as "payload!",
+                    source_event_ids::uuid[] as "source_event_ids: Vec<uuid::Uuid>",
+                    source_material_id::uuid as "source_material_id: uuid::Uuid",
+                    offset_start,
+                    offset_end,
+                    offset_kind,
+                    anchor_byte,
+                    associated_blob_ids::uuid[] as "associated_blob_ids: Vec<uuid::Uuid>",
+                    temporal_policy,
+                    semantics_version,
+                    scope_key,
+                    equivalence_key,
+                    created_by_operation_id::uuid as "created_by_operation_id: uuid::Uuid",
+                    automaton_model,
+                    anchor_payload_hash as "anchor_payload_hash: Vec<u8>",
+                    ts_quality,
+                    product_class,
+                    claim_support,
+                    derivation_declaration_id,
+                    derivation_epoch_id::uuid as "derivation_epoch_id: uuid::Uuid",
+                    derivation_lane_id::uuid as "derivation_lane_id: uuid::Uuid",
+                    adjudication_event_id::uuid as "adjudication_event_id: uuid::Uuid"
+                "#,
+                id.to_uuid(),
+                event.source.as_str(),
+                event.event_type.as_str(),
+                event.host.as_str(),
+                event.payload,
+                ts_orig,
+                ts_orig_subnano,
+                event.module_run_id,
+                event.payload_schema_id,
+                source_event_uuids.as_deref(),
+                source_material_id.map(|id| id.to_uuid()),
+                offset_start,
+                offset_end,
+                offset_kind.as_deref(),
+                anchor_byte,
+                associated_blob_uuids.as_deref(),
+                temporal_policy_str,
+                event.semantics_version,
+                event.scope_key,
+                event.equivalence_key,
+                created_by_operation_id,
+                automaton_model_str,
+                anchor_payload_hash,
+                ts_quality_str,
+                // Derivation control plane (sinex-0vx.4 / sinex-8cr.2): see the
+                // matching comment in `insert` above.
+                product_class_str,
+                claim_support_json,
+                event.derivation_declaration_id,
+                event.derivation_epoch_id,
+                event.derivation_lane_id,
+                event.adjudication_event_id
+            )
+            .fetch_one(&mut **tx)
+            .await,
+        }
         .map_err(|e| db_error(e, "insert event with tx"))?;
 
         record.try_to_event()
