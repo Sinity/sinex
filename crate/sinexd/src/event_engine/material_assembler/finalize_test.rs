@@ -951,7 +951,7 @@ async fn finalization_transaction_reuses_existing_blob_by_blake3_inside_transact
     let (assembler, _content_store_dir, state_dir) = test_assembler(&ctx).await?;
     let material_id = Uuid::now_v7();
     let material_id_typed = Id::<SourceMaterialRecord>::from_uuid(material_id);
-    let content_hash = "existing-blob-blake3";
+    let content_hash = "abababababababababababababababababababababababababababababababab";
     let content_key = ContentStoreKey::parse(&format!("SINEXBLAKE3-s32--{content_hash}"))?;
 
     let existing_blob = ctx
