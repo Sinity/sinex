@@ -1,11 +1,15 @@
 use serde_json::json;
 use sinex_db::DbPoolExt;
+use sinex_primitives::derivation::DerivedProductClass;
 use sinex_primitives::temporal;
 use sinexd::api::cascade_analyzer::{CascadeAnalyzerConfig, StreamingCascadeAnalyzer};
 use sqlx::PgPool;
 use uuid::Uuid as CoreUuid;
 use uuid::Uuid;
 use xtask::sandbox::sinex_test;
+
+#[path = "common/mod.rs"]
+mod common;
 
 async fn cascade_prereqs_available(pool: &PgPool) -> color_eyre::Result<bool> {
     let exists: bool = sqlx::query_scalar!(
@@ -42,6 +46,16 @@ async fn detects_cycles_beyond_default_depth(ctx: TestContext) -> color_eyre::Re
         },
     );
 
+    let product_class = DerivedProductClass::CanonicalDerivedEvent;
+    common::seed_product_declaration(
+        &pool,
+        "sinex.test.detects_cycles_beyond_default_depth",
+        product_class,
+        "cycle.source",
+        "cycle.event",
+    )
+    .await?;
+
     let cycle_len = 16;
     let event_ids: Vec<_> = (0..cycle_len).map(|_| CoreUuid::now_v7()).collect();
 
@@ -59,7 +73,10 @@ async fn detects_cycles_beyond_default_depth(ctx: TestContext) -> color_eyre::Re
                 host,
                 payload,
                 ts_orig,
-                source_event_ids
+                source_event_ids,
+                product_class,
+                claim_support,
+                derivation_declaration_id
             ) VALUES (
                 $1::uuid,
                 $2,
@@ -67,7 +84,10 @@ async fn detects_cycles_beyond_default_depth(ctx: TestContext) -> color_eyre::Re
                 $4,
                 $5,
                 $6,
-                $7::uuid[]::uuid[]
+                $7::uuid[]::uuid[],
+                $8,
+                $9,
+                $10
             )
             "#,
             uuid,
@@ -76,7 +96,10 @@ async fn detects_cycles_beyond_default_depth(ctx: TestContext) -> color_eyre::Re
             "localhost",
             json!({"idx": idx }),
             *temporal::now(),
-            &parent_array
+            &parent_array,
+            product_class.as_str(),
+            json!({}),
+            "sinex.test.detects_cycles_beyond_default_depth",
         )
         .execute(&pool)
         .await?;
@@ -118,6 +141,27 @@ async fn handles_mixed_uuid_arrays(ctx: TestContext) -> color_eyre::Result<()> {
     // under test.
     let anchor_root = Uuid::new_v4();
 
+    // "mixed.anchor" and "mixed.child" are two distinct event_types on the
+    // same source, so each needs its own declaration row --
+    // `declaration_id` is the table's primary key.
+    let product_class = DerivedProductClass::CanonicalDerivedEvent;
+    common::seed_product_declaration(
+        &pool,
+        "sinex.test.handles_mixed_uuid_arrays.anchor",
+        product_class,
+        "mixed.source",
+        "mixed.anchor",
+    )
+    .await?;
+    common::seed_product_declaration(
+        &pool,
+        "sinex.test.handles_mixed_uuid_arrays.child",
+        product_class,
+        "mixed.source",
+        "mixed.child",
+    )
+    .await?;
+
     sqlx::query!(
         r#"
         INSERT INTO core.events (
@@ -127,7 +171,10 @@ async fn handles_mixed_uuid_arrays(ctx: TestContext) -> color_eyre::Result<()> {
             host,
             payload,
             ts_orig,
-            source_event_ids
+            source_event_ids,
+            product_class,
+            claim_support,
+            derivation_declaration_id
         ) VALUES (
             $1::uuid,
             $2,
@@ -135,7 +182,10 @@ async fn handles_mixed_uuid_arrays(ctx: TestContext) -> color_eyre::Result<()> {
             $4,
             $5,
             $6,
-            ARRAY[$7::uuid]::uuid[]::uuid[]
+            ARRAY[$7::uuid]::uuid[]::uuid[],
+            $8,
+            $9,
+            $10
         )
         "#,
         parent,
@@ -144,7 +194,10 @@ async fn handles_mixed_uuid_arrays(ctx: TestContext) -> color_eyre::Result<()> {
         "localhost",
         json!({"kind": "anchor"}),
         *temporal::now(),
-        anchor_root
+        anchor_root,
+        product_class.as_str(),
+        json!({}),
+        "sinex.test.handles_mixed_uuid_arrays.anchor",
     )
     .execute(&pool)
     .await?;
@@ -158,7 +211,10 @@ async fn handles_mixed_uuid_arrays(ctx: TestContext) -> color_eyre::Result<()> {
             host,
             payload,
             ts_orig,
-            source_event_ids
+            source_event_ids,
+            product_class,
+            claim_support,
+            derivation_declaration_id
         ) VALUES (
             $1::uuid,
             $2,
@@ -166,7 +222,10 @@ async fn handles_mixed_uuid_arrays(ctx: TestContext) -> color_eyre::Result<()> {
             $4,
             $5,
             $6,
-            ARRAY[$7::uuid, $8::uuid]::uuid[]::uuid[]
+            ARRAY[$7::uuid, $8::uuid]::uuid[]::uuid[],
+            $9,
+            $10,
+            $11
         )
         "#,
         child,
@@ -176,7 +235,10 @@ async fn handles_mixed_uuid_arrays(ctx: TestContext) -> color_eyre::Result<()> {
         json!({"kind": "dependent"}),
         *temporal::now(),
         parent,
-        stray_uuid
+        stray_uuid,
+        product_class.as_str(),
+        json!({}),
+        "sinex.test.handles_mixed_uuid_arrays.child",
     )
     .execute(&pool)
     .await?;
@@ -226,6 +288,16 @@ async fn chain_exceeding_max_depth_still_errors_without_the_removed_violation_ch
     // The root is material-anchored (source_event_ids NULL, not an empty
     // array -- the events_source_event_ids_non_empty CHECK constraint
     // forbids `{}`, matching the Material XOR Derived provenance model).
+    let product_class = DerivedProductClass::CanonicalDerivedEvent;
+    common::seed_product_declaration(
+        &pool,
+        "sinex.test.chain_exceeding_max_depth_still_errors",
+        product_class,
+        "depth-chain.source",
+        "depth-chain.event",
+    )
+    .await?;
+
     let chain_len = 6;
     let chain_ids: Vec<CoreUuid> = (0..chain_len).map(|_| CoreUuid::now_v7()).collect();
     let unique_path = format!("/tmp/sinex-test-depth-chain-{}", CoreUuid::now_v7());
@@ -266,7 +338,10 @@ async fn chain_exceeding_max_depth_still_errors_without_the_removed_violation_ch
                 host,
                 payload,
                 ts_orig,
-                source_event_ids
+                source_event_ids,
+                product_class,
+                claim_support,
+                derivation_declaration_id
             ) VALUES (
                 $1::uuid,
                 $2,
@@ -274,7 +349,10 @@ async fn chain_exceeding_max_depth_still_errors_without_the_removed_violation_ch
                 $4,
                 $5,
                 $6,
-                $7::uuid[]::uuid[]
+                $7::uuid[]::uuid[],
+                $8,
+                $9,
+                $10
             )
             "#,
             id,
@@ -283,7 +361,10 @@ async fn chain_exceeding_max_depth_still_errors_without_the_removed_violation_ch
             "localhost",
             json!({"idx": idx}),
             *temporal::now(),
-            &source_event_ids
+            &source_event_ids,
+            product_class.as_str(),
+            json!({}),
+            "sinex.test.chain_exceeding_max_depth_still_errors",
         )
         .execute(&pool)
         .await?;

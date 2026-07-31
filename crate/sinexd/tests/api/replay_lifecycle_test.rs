@@ -1,6 +1,7 @@
 use async_nats::jetstream::consumer::{AckPolicy, DeliverPolicy, pull::Config as ConsumerConfig};
 use futures::StreamExt;
 use sinex_db::{DbPool, repositories::DbPoolExt};
+use sinex_primitives::derivation::{ClaimSupport, DerivedProductClass};
 use sinex_primitives::{DynamicPayload, Id, Uuid, temporal::Timestamp};
 use sinexd::api::ServiceContainer;
 use sinexd::runtime::{
@@ -9,6 +10,9 @@ use sinexd::runtime::{
 use std::time::Duration;
 use tokio::time::sleep;
 use xtask::sandbox::prelude::*;
+
+#[path = "common/mod.rs"]
+mod common;
 
 async fn spawn_fake_scan_source_runtime(
     pool: DbPool,
@@ -206,13 +210,20 @@ async fn replay_lifecycle_enforces_reexecution_invariants(ctx: TestContext) -> T
         .ts_orig
         .expect("seeded replay target should carry ts_orig");
 
-    let cascade_event = DynamicPayload::new(
+    let product_class = DerivedProductClass::CanonicalDerivedEvent;
+    let declaration_id = "sinex.test.replay_lifecycle_enforces_reexecution_invariants";
+    common::seed_product_declaration(&ctx.pool, declaration_id, product_class, "automaton", "file.derived")
+        .await?;
+    let mut cascade_event = DynamicPayload::new(
         "automaton",
         "file.derived",
         serde_json::json!({ "path": "/tmp/replay-lifecycle-derived.txt" }),
     )
     .from_parents([replay_target_event_id])?
     .build()?;
+    cascade_event.product_class = Some(product_class);
+    cascade_event.claim_support = Some(ClaimSupport::unknown());
+    cascade_event.derivation_declaration_id = Some(declaration_id.to_string());
     let inserted_cascade = ctx.pool.events().insert(cascade_event).await?;
     let cascade_id = inserted_cascade
         .id

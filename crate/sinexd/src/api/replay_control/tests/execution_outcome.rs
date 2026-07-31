@@ -25,13 +25,26 @@ async fn replay_execution_records_outcome(ctx: TestContext) -> Result<()> {
     let target_window_end = replay_target_event_id.timestamp();
     let target_window_start = target_window_end - time::Duration::milliseconds(1);
 
-    let cascaded = DynamicPayload::new(
+    let product_class = DerivedProductClass::CanonicalDerivedEvent;
+    seed_product_declaration(
+        &ctx.pool,
+        "sinex.test.replay_execution_records_outcome",
+        product_class,
+        "analytics-test",
+        "analytics.summary",
+    )
+    .await?;
+    let mut cascaded = DynamicPayload::new(
         "analytics-test",
         "analytics.summary",
         json!({ "path": "/tmp/replay-summary.txt" }),
     )
     .from_parents([replay_target_event_id])?
     .build()?;
+    cascaded.product_class = Some(product_class);
+    cascaded.claim_support = Some(sinex_primitives::derivation::ClaimSupport::unknown());
+    cascaded.derivation_declaration_id =
+        Some("sinex.test.replay_execution_records_outcome".to_string());
     let cascaded_inserted = ctx.pool.events().insert(cascaded).await?;
     let cascaded_id = cascaded_inserted
         .id
@@ -275,13 +288,25 @@ async fn replay_execution_records_outcome(ctx: TestContext) -> Result<()> {
     let root_inserted = ctx.pool.events().insert(root).await?;
     let root_event_id = root_inserted.id.expect("reexecution root must have id");
     let root_id = root_event_id.to_uuid();
-    let reexecution_derived = DynamicPayload::new(
+    seed_product_declaration(
+        &ctx.pool,
+        "sinex.test.replay_execution_records_outcome.reexecution",
+        product_class,
+        "reexecution-test",
+        "file.derived",
+    )
+    .await?;
+    let mut reexecution_derived = DynamicPayload::new(
         "reexecution-test",
         "file.derived",
         json!({ "path": "/tmp/reexecution-derived.txt" }),
     )
     .from_parents([root_event_id])?
     .build()?;
+    reexecution_derived.product_class = Some(product_class);
+    reexecution_derived.claim_support = Some(sinex_primitives::derivation::ClaimSupport::unknown());
+    reexecution_derived.derivation_declaration_id =
+        Some("sinex.test.replay_execution_records_outcome.reexecution".to_string());
     let derived_inserted = ctx.pool.events().insert(reexecution_derived).await?;
     let derived_id = derived_inserted
         .id

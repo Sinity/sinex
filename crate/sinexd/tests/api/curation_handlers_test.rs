@@ -2,6 +2,7 @@ use serde_json::json;
 use sinex_db::DbPoolExt;
 use sinex_primitives::JsonValue;
 use sinex_primitives::authority::JudgmentVerdict;
+use sinex_primitives::derivation::{ClaimSupport, DerivedProductClass};
 use sinex_primitives::domain::OperationStatus;
 use sinex_primitives::events::DynamicPayload;
 use sinex_primitives::events::payloads::{
@@ -21,6 +22,9 @@ use sinexd::api::handlers::{
 };
 use sinexd::api::rpc_server::RpcAuthContext;
 use xtask::sandbox::prelude::*;
+
+#[path = "common/mod.rs"]
+mod common;
 
 #[sinex_test]
 async fn curation_list_proposals_returns_pending_events(ctx: TestContext) -> TestResult<()> {
@@ -425,7 +429,9 @@ async fn insert_fixture_proposal(
         .id
         .ok_or_else(|| color_eyre::eyre::eyre!("published parent missing id"))?;
     let proposal = CurationProposalPayload::test_fixture_tag();
-    let event = proposal.from_parents([parent_id])?.build()?;
+    let mut event = proposal.from_parents([parent_id])?.build()?;
+    seed_curation_proposal_declaration(ctx.pool()).await?;
+    apply_curation_proposal_product_metadata(&mut event);
     Ok(ctx.pool().events().insert(event).await?)
 }
 
@@ -473,6 +479,37 @@ async fn insert_replayed_fixture_proposal(
         .ok_or_else(|| color_eyre::eyre::eyre!("published replay parent missing id"))?;
     let mut proposal = CurationProposalPayload::test_fixture_tag();
     proposal.proposal_id = sinex_primitives::Uuid::from_u128(12);
-    let event = proposal.from_parents([parent_id])?.build()?;
+    let mut event = proposal.from_parents([parent_id])?.build()?;
+    seed_curation_proposal_declaration(ctx.pool()).await?;
+    apply_curation_proposal_product_metadata(&mut event);
     Ok(ctx.pool().events().insert(event).await?)
+}
+
+/// `curation.proposal` events are derived (built via `from_parents`), so
+/// they need a declared `product_class` to satisfy
+/// `events_derived_requires_product_class` (sinex-0vx.4). NOTE: this only
+/// covers the proposal fixtures this file builds directly -- the judgment /
+/// duplicate-judgment / finalize RPC handlers (`handle_curation_*` in
+/// `crate/sinexd/src/api/handlers/curation.rs`) build their OWN derived
+/// events without ever setting `product_class`, which is a production-code
+/// gap outside this test-fixture sweep's scope (sinex-egyf); tests that go
+/// through those handlers still fail the same DB constraint downstream of
+/// this fix. See PR description / bead notes for the tracked follow-up.
+const CURATION_PROPOSAL_DECLARATION_ID: &str = "sinex.test.curation_handlers_proposal";
+
+async fn seed_curation_proposal_declaration(pool: &sqlx::PgPool) -> TestResult<()> {
+    common::seed_product_declaration(
+        pool,
+        CURATION_PROPOSAL_DECLARATION_ID,
+        DerivedProductClass::CanonicalDerivedEvent,
+        "curation",
+        "curation.proposal",
+    )
+    .await
+}
+
+fn apply_curation_proposal_product_metadata<T>(event: &mut sinex_primitives::events::Event<T>) {
+    event.product_class = Some(DerivedProductClass::CanonicalDerivedEvent);
+    event.claim_support = Some(ClaimSupport::unknown());
+    event.derivation_declaration_id = Some(CURATION_PROPOSAL_DECLARATION_ID.to_string());
 }

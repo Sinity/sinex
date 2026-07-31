@@ -1,7 +1,45 @@
 use super::*;
 use serde_json::json;
+use sinex_primitives::derivation::DerivedProductClass;
 use sinex_primitives::temporal::now;
 use xtask::sandbox::prelude::*;
+
+/// Register a `derivation.product_declarations` row so
+/// `derivation.enforce_event_product_declaration()` accepts a test-built
+/// derived event that declares `product_class` (sinex-0vx.4). This is a
+/// src-level unit-test module (not `crate/sinexd/tests/**`), so it can't
+/// reach the `tests/api/common` helper of the same name -- mirrors
+/// `persistence_test.rs::seed_product_declaration` /
+/// `automata_handlers_test.rs::seed_product_declaration` (sinex-egyf).
+async fn seed_product_declaration(
+    pool: &sqlx::PgPool,
+    declaration_id: &str,
+    product_class: DerivedProductClass,
+    output_source: &str,
+    output_event_type: &str,
+) -> sinex_primitives::Result<()> {
+    sqlx::query!(
+        r#"
+        INSERT INTO derivation.product_declarations (
+            declaration_id, owner, product_class, write_surface,
+            output_source, output_event_type, semantics_version,
+            input_eligibility, default_claim_support, verification_command
+        ) VALUES (
+            $1, 'sinex-egyf-test', $2, 'derived_output',
+            $3, $4, 'v1', 'default_canonical_input', '{}'::jsonb, 'true'
+        )
+        ON CONFLICT (declaration_id) DO NOTHING
+        "#,
+        declaration_id,
+        product_class.as_str(),
+        output_source,
+        output_event_type,
+    )
+    .execute(pool)
+    .await
+    .map_err(|e| sinex_primitives::SinexError::database("seed product declaration").with_source(e))?;
+    Ok(())
+}
 
 #[sinex_test]
 async fn session_id_validation_enforces_length() -> TestResult<()> {
@@ -87,6 +125,10 @@ async fn cascade_order_detects_cycles(ctx: TestContext) -> TestResult<()> {
     let analyzer = StreamingCascadeAnalyzer::new(ctx.pool.clone());
     let current_time = now();
     let payload = json!({});
+    let product_class = DerivedProductClass::CanonicalDerivedEvent;
+    let declaration_id = "sinex.test.cascade_order_detects_cycles";
+    seed_product_declaration(&ctx.pool, declaration_id, product_class, "cascade-test", "cascade.test")
+        .await?;
 
     let a = Uuid::now_v7();
     let b = Uuid::now_v7();
@@ -96,8 +138,9 @@ async fn cascade_order_detects_cycles(ctx: TestContext) -> TestResult<()> {
     for (event_id, parents) in &cycle_links {
         let parents_uuid: Vec<Uuid> = parents.clone();
         sqlx::query(
-            "INSERT INTO core.events (id, source, event_type, host, payload, ts_orig, source_event_ids) \
-             VALUES ($1::uuid, $2, $3, $4, $5, $6, $7::uuid[]::uuid[])",
+            "INSERT INTO core.events (id, source, event_type, host, payload, ts_orig, source_event_ids, \
+             product_class, claim_support, derivation_declaration_id) \
+             VALUES ($1::uuid, $2, $3, $4, $5, $6, $7::uuid[]::uuid[], $8, $9, $10)",
         )
         .bind(*event_id)
         .bind("cascade-test")
@@ -106,6 +149,9 @@ async fn cascade_order_detects_cycles(ctx: TestContext) -> TestResult<()> {
         .bind(payload.clone())
         .bind(current_time)
         .bind(parents_uuid)
+        .bind(product_class.as_str())
+        .bind(json!({}))
+        .bind(declaration_id)
         .execute(&ctx.pool)
         .await?;
     }
