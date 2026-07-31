@@ -429,11 +429,22 @@ where
                         consecutive_failures = self.consecutive_checkpoint_failures,
                         "Failed to save checkpoint after batch"
                     );
+                    // Halt immediately for genuinely non-retryable error classes
+                    // (runtime lifecycle/config/permission problems that will not
+                    // clear themselves before the next batch), but NOT for
+                    // `SinexError::Checkpoint` itself: `save_state_with_file_fallback`
+                    // wraps every failure where BOTH the NATS KV save and the file
+                    // fallback fail into this same generic checkpoint-kind error —
+                    // including ordinary transient conditions, not only permanently
+                    // unrecoverable ones. Matching on it here would make the
+                    // consecutive-failure counter below unreachable dead code (every
+                    // failure from this call site is Checkpoint-classed by
+                    // construction), silently collapsing the intended 3-strike grace
+                    // period into an immediate halt on the very first failure.
                     if self.consecutive_checkpoint_failures >= 3
                         || matches!(
                             e,
-                            SinexError::Checkpoint(_)
-                                | SinexError::Lifecycle(_)
+                            SinexError::Lifecycle(_)
                                 | SinexError::Configuration(_)
                                 | SinexError::PermissionDenied(_)
                         )
