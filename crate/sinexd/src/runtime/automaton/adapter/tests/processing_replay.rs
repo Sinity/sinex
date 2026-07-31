@@ -1,5 +1,44 @@
 use super::*;
 
+/// Register a `derivation.product_declarations` row so
+/// `derivation.enforce_event_product_declaration()` accepts a test-built
+/// derived event that declares `product_class` (sinex-0vx.4). Src-level unit
+/// test module (`use super::*`, not `crate/sinexd/tests/**`), so it mirrors
+/// rather than reuses `tests/api/common::seed_product_declaration` (same
+/// pattern as `cascade_analyzer_test.rs` / `replay_control_test.rs`,
+/// sinex-egyf / sinex-li78 quiet-host reverification follow-up).
+async fn seed_product_declaration(
+    pool: &sqlx::PgPool,
+    declaration_id: &str,
+    product_class: sinex_primitives::derivation::DerivedProductClass,
+    output_source: &str,
+    output_event_type: &str,
+) -> sinex_primitives::Result<()> {
+    sqlx::query!(
+        r#"
+        INSERT INTO derivation.product_declarations (
+            declaration_id, owner, product_class, write_surface,
+            output_source, output_event_type, semantics_version,
+            input_eligibility, default_claim_support, verification_command
+        ) VALUES (
+            $1, 'sinex-li78-test', $2, 'derived_output',
+            $3, $4, 'v1', 'default_canonical_input', '{}'::jsonb, 'true'
+        )
+        ON CONFLICT (declaration_id) DO NOTHING
+        "#,
+        declaration_id,
+        product_class.as_str(),
+        output_source,
+        output_event_type,
+    )
+    .execute(pool)
+    .await
+    .map_err(|e| {
+        sinex_primitives::SinexError::database("seed product declaration").with_source(e)
+    })?;
+    Ok(())
+}
+
 async fn make_db_input_event(
     ctx: &TestContext,
     material_label: &str,
@@ -507,6 +546,10 @@ async fn historical_replay_filters_wildcard_material_only_inputs(
     let material_event_id = material_event
         .id
         .expect("material event fixture should carry an id");
+    let product_class = sinex_primitives::derivation::DerivedProductClass::CanonicalDerivedEvent;
+    let declaration_id = "sinex.test.historical_replay_filters_wildcard_material_only_inputs";
+    seed_product_declaration(ctx.pool(), declaration_id, product_class, "test.source", "test.input")
+        .await?;
     let mut synthesized_event = DynamicPayload::new(
         "test.source",
         "test.input",
@@ -515,6 +558,9 @@ async fn historical_replay_filters_wildcard_material_only_inputs(
     .from_parents([material_event_id])?
     .build()?;
     synthesized_event.id = Some(synthesized_event.id.unwrap_or_else(Id::new));
+    synthesized_event.product_class = Some(product_class);
+    synthesized_event.claim_support = Some(sinex_primitives::derivation::ClaimSupport::unknown());
+    synthesized_event.derivation_declaration_id = Some(declaration_id.to_string());
 
     ctx.pool()
         .events()
@@ -570,6 +616,16 @@ async fn handle_invalidation_message_returns_none_when_output_emit_fails(
         .first()
         .and_then(|event| event.id)
         .expect("inserted input should have id");
+    let product_class = sinex_primitives::derivation::DerivedProductClass::CanonicalDerivedEvent;
+    let declaration_id = "sinex.test.handle_invalidation_message_returns_none_when_output_emit_fails";
+    seed_product_declaration(
+        ctx.pool(),
+        declaration_id,
+        product_class,
+        "adapter-regression-scope-reconciler",
+        "measurement.aggregate",
+    )
+    .await?;
     let mut stale_output = DynamicPayload::new(
         "adapter-regression-scope-reconciler",
         "measurement.aggregate",
@@ -578,6 +634,9 @@ async fn handle_invalidation_message_returns_none_when_output_emit_fails(
     .from_parents(vec![input_id])?
     .build()?;
     stale_output.scope_key = Some(scope_key.to_string());
+    stale_output.product_class = Some(product_class);
+    stale_output.claim_support = Some(sinex_primitives::derivation::ClaimSupport::unknown());
+    stale_output.derivation_declaration_id = Some(declaration_id.to_string());
     ctx.pool().events().insert_batch(vec![stale_output]).await?;
 
     let (runtime, event_receiver) =
