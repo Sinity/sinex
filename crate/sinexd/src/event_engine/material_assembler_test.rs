@@ -91,8 +91,17 @@ async fn disk_backpressure_rejects_high_percent_with_low_free_floor() -> TestRes
     Ok(())
 }
 
+/// A zero-parsed-event orphaned sensing row is recovered as a partial
+/// success, not hard-failed: `reconcile_orphaned_sensing_materials` routes
+/// materials with `parsed_event_count == 0` through
+/// `recover_orphaned_zero_event_source_material`, which marks the row
+/// `RecoveredPartial` (not `Failed`) and skips the DLQ. This intentionally
+/// changed from an unconditional `Failed` outcome — see the
+/// `orphan_reconcile_recovers_globally_stale_zero_event_source_material_without_dlq`
+/// sibling test in `maintenance_test.rs`, which covers the same code path
+/// with the current expected shape.
 #[sinex_test]
-async fn stale_cleanup_marks_orphaned_sensing_registry_rows_failed(
+async fn stale_cleanup_marks_orphaned_sensing_registry_rows_recovered_partial(
     ctx: TestContext,
 ) -> TestResult<()> {
     let ctx = ctx.with_nats().shared().await?;
@@ -119,10 +128,14 @@ async fn stale_cleanup_marks_orphaned_sensing_registry_rows_failed(
         .get_by_id(Id::from_uuid(material_id))
         .await?
         .expect("orphaned material row should still exist");
-    assert_eq!(record.status, MaterialStatus::Failed);
+    assert_eq!(record.status, MaterialStatus::RecoveredPartial);
     assert_eq!(
-        record.metadata["failure_reason"],
-        serde_json::json!("orphaned_sensing_material")
+        record.metadata["recovery_info"]["recovery_reason"],
+        serde_json::json!("orphaned_zero_event_source_material_recovered_partial")
+    );
+    assert_eq!(
+        record.metadata["orphaned_sensing_material"]["source_identifier"],
+        serde_json::json!("test://orphaned-sensing")
     );
     Ok(())
 }

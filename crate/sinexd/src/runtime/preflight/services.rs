@@ -860,8 +860,13 @@ async fn discover_unit_files_in_path(unit_path: &str) -> RuntimeResult<Vec<Strin
                         "Failed to inspect file type for systemd unit entry '{unit_path}/{file_name_str}': {error}"
                     ))
                 })?;
+                // Matches both the main daemon unit ("sinexd.service") and
+                // hyphenated support units ("sinex-blob-init.service",
+                // "sinex-preflight.service", ...) — see nixos/modules/*.nix
+                // for the full generated unit census. A bare "sinex-" prefix
+                // excludes "sinexd.service" itself.
                 if file_type.is_file()
-                    && file_name_str.starts_with("sinex-")
+                    && file_name_str.starts_with("sinex")
                     && file_name_str.ends_with(".service")
                 {
                     found.push(format!("{unit_path}/{file_name_str}"));
