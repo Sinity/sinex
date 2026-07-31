@@ -19,6 +19,7 @@ pub mod health;
 pub mod hourly;
 pub mod instruction_reconciler;
 pub mod interval_lift;
+pub mod product_declarations;
 pub mod registry;
 pub mod relation_extractor;
 pub mod session;
