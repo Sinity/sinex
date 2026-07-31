@@ -132,7 +132,7 @@ pub struct EmailMailboxParserConfig;
         runtime_shape = RuntimeShape::Continuous,
         material_lifecycle = MaterialLifecyclePolicy::ExternalReferenceOnly,
         transport_semantics = TransportSemantics::EXTERNAL_API_CURSOR,
-        capabilities = "coverage:source-coverage, debt:unified-debt-view, operation:email.mailbox.authorize, operation:email.mailbox.check, operation:email.mailbox.pause, operation:email.mailbox.resume, operation:email.mailbox.inspect, operation:email.mailbox.export, operation:email.mailbox.fetch-attachments, operation:email.mailbox.rebuild-projection"
+        capabilities = "coverage:source-coverage, debt:unified-debt-view, operation:email.mailbox.authorize, operation:email.mailbox.check, operation:email.mailbox.sync, operation:email.mailbox.pause, operation:email.mailbox.resume, operation:email.mailbox.inspect, operation:email.mailbox.export, operation:email.mailbox.fetch-attachments, operation:email.mailbox.rebuild-projection"
     )
 )]
 pub struct EmailMailboxParser;
@@ -1484,8 +1484,9 @@ struct ParsedEmailAttachment {
 }
 
 fn parse_rfc822(record: &SourceRecord) -> ParserResult<ParsedEmail> {
-    let text = String::from_utf8_lossy(&record.bytes);
-    let (headers, body) = split_headers_body(&text);
+    let text = std::str::from_utf8(&record.bytes)
+        .map_err(|error| ParserError::Parse(format!("email material is not UTF-8: {error}")))?;
+    let (headers, body) = split_headers_body(text);
     let headers = parse_headers(headers);
     let header_attachments = attachment_headers(&text);
     let parsed_message = MessageParser::default().parse(&record.bytes);
@@ -1635,7 +1636,12 @@ fn attachment_headers(text: &str) -> Vec<ParsedEmailAttachment> {
         let value = value.trim();
         match name.as_str() {
             "content-type" => {
-                current_content_type = content_type_token(value).map(str::to_string);
+                // Preserve the full header value (including parameters such as
+                // `name="..."`), not just the bare type/subtype token: the
+                // enrichment step in `enriched_attachment_value` relies on this
+                // value being a superset of the mime-parsed bare content type so
+                // it can supply the richer header form when the two disagree.
+                current_content_type = (!value.is_empty()).then(|| value.to_string());
             }
             "content-id" => {
                 current_content_id = message_id_token(value);
@@ -1694,14 +1700,6 @@ fn enriched_attachment_value(parsed: Option<String>, header: Option<&str>) -> Op
         (None, Some(header)) => Some(header.to_string()),
         (None, None) => None,
     }
-}
-
-fn content_type_token(value: &str) -> Option<&str> {
-    value
-        .split(';')
-        .next()
-        .map(str::trim)
-        .filter(|token| !token.is_empty())
 }
 
 fn mime_part_attachment(part: &MessagePart<'_>) -> ParsedEmailAttachment {

@@ -55,7 +55,8 @@ use sinex_primitives::source_contracts::{
     event_source = "shell.atuin",
     event_type = "command.executed",
     input_shape = "sqlite_row",
-    default_privacy_context = "Command"
+    default_privacy_context = "Command",
+    baseline_adapter_config = r#"{"query":"history","table":"history"}"#
 )]
 pub struct AtuinHistoryRecord {
     /// `SQLite` rowid — occurrence anchor (excluded from the emitted payload).

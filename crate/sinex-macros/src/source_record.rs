@@ -122,7 +122,7 @@ impl ParserSpecAttrs {
             version: attrs.version.clone().unwrap_or_else(|| "1.0.0".to_string()),
             discriminator_field: attrs.discriminator_field.clone(),
             on_unknown: attrs.on_unknown.clone(),
-            baseline_adapter_config: None,
+            baseline_adapter_config: attrs.baseline_adapter_config.clone(),
         }
     }
 }
@@ -548,6 +548,13 @@ struct SourceRecordAttrs {
     // Extension A: discriminator support
     discriminator_field: Option<String>,
     on_unknown: Option<String>,
+    /// Optional JSON literal emitted as the parser's
+    /// `MaterialParser::baseline_adapter_config()` override. For
+    /// `input_shape = "sqlite_row"` a `"table"` key also drives the
+    /// `{table}.{column}` prefix on generated `required_input_keys()`, so it
+    /// matches the table-qualified column keys `SourceRecordFingerprint`
+    /// computes from `PRAGMA table_info`.
+    baseline_adapter_config: Option<String>,
 }
 
 fn parse_source_record_attrs(attrs: &[syn::Attribute]) -> syn::Result<SourceRecordAttrs> {
@@ -560,6 +567,7 @@ fn parse_source_record_attrs(attrs: &[syn::Attribute]) -> syn::Result<SourceReco
     let mut version = None;
     let mut discriminator_field = None;
     let mut on_unknown = None;
+    let mut baseline_adapter_config = None;
 
     let mut found = false;
     for attr in attrs {
@@ -585,11 +593,13 @@ fn parse_source_record_attrs(attrs: &[syn::Attribute]) -> syn::Result<SourceReco
                 "version" => version = Some(s.value()),
                 "discriminator" => discriminator_field = Some(s.value()),
                 "on_unknown" => on_unknown = Some(s.value()),
+                "baseline_adapter_config" => baseline_adapter_config = Some(s.value()),
                 other => {
                     return Err(meta.error(format!(
                         "unknown source_record attribute '{other}'; expected one of: id, \
                          source_id, input_shape, event_type, event_source, \
-                         default_privacy_context, version, discriminator, on_unknown"
+                         default_privacy_context, version, discriminator, on_unknown, \
+                         baseline_adapter_config"
                     )));
                 }
             }
@@ -622,6 +632,7 @@ fn parse_source_record_attrs(attrs: &[syn::Attribute]) -> syn::Result<SourceReco
         version,
         discriminator_field,
         on_unknown,
+        baseline_adapter_config,
     })
 }
 

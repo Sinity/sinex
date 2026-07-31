@@ -551,9 +551,20 @@ async fn prime_begins_material_without_staging_content(ctx: TestContext) -> Test
     Ok(())
 }
 
-// Preserved from the pre-existing split test file during inline extraction.
+// `append_slice` is a thin single-record wrapper over `append_record_batch`
+// (see `AcquisitionManager::append_slice`). Oversized slices used to be
+// rejected outright; `0feab250e` ("restore dogfood source bindings and
+// runtime targets", #2218) introduced transparent transport chunking
+// (`MATERIAL_SLICE_PAYLOAD_BYTES`, 256KiB) so a logical record larger than
+// one NATS frame is split into multiple ≤256KiB slices instead of being
+// rejected — `publish_slice`'s `MAX_NATS_PAYLOAD_BYTES` (512KiB) guard is
+// unreachable through this path today because the chunker never hands it
+// more than 256KiB at a time. This test now asserts the current contract:
+// an oversized `append_slice` call succeeds and stages the full payload
+// locally, mirroring `oversized_logical_record_is_chunked_without_losing_anchor`
+// but through the single-record `append_slice` entry point.
 #[sinex_test]
-async fn oversized_slice_rejection_does_not_mutate_local_stage(ctx: TestContext) -> TestResult<()> {
+async fn oversized_slice_is_chunked_and_staged_locally(ctx: TestContext) -> TestResult<()> {
     let ctx = ctx.with_nats().shared().await?;
     let work_dir = tempfile::tempdir()?;
     let manager = AcquisitionManager::with_defaults(ctx.nats_client(), "oversized-test")
@@ -561,26 +572,23 @@ async fn oversized_slice_rejection_does_not_mutate_local_stage(ctx: TestContext)
     let mut handle = manager.begin_material("test://oversized").await?;
     let oversized = vec![0u8; AcquisitionManager::MAX_NATS_PAYLOAD_BYTES + 1];
 
-    let error = manager
-        .append_slice(&mut handle, &oversized)
-        .await
-        .expect_err("oversized slice should be rejected before mutating local state");
+    manager.append_slice(&mut handle, &oversized).await?;
 
-    assert!(
-        error.to_string().contains("exceeds NATS max payload"),
-        "unexpected error: {error}"
+    assert_eq!(handle.bytes_written(), oversized.len() as i64);
+    assert_eq!(
+        handle.slice_count, 3,
+        "a 512KiB+1 slice should publish as three 256KiB transport slices"
     );
-    assert_eq!(handle.bytes_written(), 0);
     assert_eq!(
         handle.hasher.clone().finalize().to_hex().to_string(),
-        blake3::Hasher::new().finalize().to_hex().to_string()
+        blake3::hash(&oversized).to_hex().to_string()
     );
 
     let metadata = tokio::fs::metadata(handle.temp_path()).await?;
     assert_eq!(
         metadata.len(),
-        0,
-        "oversized rejection must not stage bytes locally"
+        oversized.len() as u64,
+        "oversized slice bytes should be mirrored locally exactly once"
     );
     Ok(())
 }
