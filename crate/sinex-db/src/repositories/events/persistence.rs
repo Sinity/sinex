@@ -1208,10 +1208,12 @@ impl<'a> EventRepository<'a> {
             // COPY cannot be mixed with cycle-detection queries in the same
             // transaction easily, so derived batches use the VALUES path.
             //
-            // PostgreSQL caps bound parameters at 65 535 per query. With 24
-            // bound parameters per event (see execute_batch_insert's column
-            // list), each chunk must stay ≤ ⌊65535 / 24⌋ = 2730 events to
-            // stay within the wire-protocol limit. Large mixed batches
+            // PostgreSQL caps bound parameters at 65 535 per query. With 30
+            // bound parameters per event (see execute_batch_insert's bind
+            // order comment / EVENT_COPY_COLUMNS — 24 base columns plus the 6
+            // derivation-control-plane columns added by sinex-0vx.4 /
+            // sinex-8cr.2), each chunk must stay ≤ ⌊65535 / 30⌋ = 2184 events
+            // to stay within the wire-protocol limit. Large mixed batches
             // (material + derived) arrive during burst replay and would
             // otherwise exceed the limit and fail.
             Some(StreamBatchInsertStrategy::Derived) => {
@@ -1229,10 +1231,31 @@ impl<'a> EventRepository<'a> {
                     .collect::<Vec<_>>();
                 ensure_no_intra_batch_synthesis_cycles(&synthesis_checks)?;
 
-                // 24 binds per row × SYNTHESIS_CHUNK_MAX ≤ 65535 PostgreSQL
-                // param limit (⌊65535 / 24⌋ = 2730). Keep headroom so future
-                // column additions don't immediately overflow.
-                const SYNTHESIS_CHUNK_MAX: usize = 2700;
+                // Parent-liveness must be checked against the FULL batch's id
+                // set, not just the current chunk's. Chunking below exists
+                // solely to stay under PostgreSQL's bound-parameter limit; it
+                // has no bearing on which ids are "valid" parents. A child in
+                // chunk 0 that references a parent in chunk 1 of the same
+                // acyclic batch is legitimate — the parent hasn't committed
+                // to core.events yet (chunk 1 commits in a later
+                // transaction), but it *is* part of this batch and the
+                // full-batch cycle check above already proved the whole DAG
+                // is acyclic. Without this, such references were wrongly
+                // treated as missing parents and routed to the DLQ
+                // (sinex-wv7). A source id absent from this set is either
+                // already-persisted (checked against core.events below) or
+                // genuinely missing — both cases are still handled correctly.
+                let batch_event_ids = batch.iter().map(|row| row.id).collect::<HashSet<_>>();
+
+                // 30 binds per row × SYNTHESIS_CHUNK_MAX ≤ 65535 PostgreSQL
+                // param limit (⌊65535 / 30⌋ = 2184). Keep headroom below that
+                // exact ceiling so future column additions don't immediately
+                // overflow — update this in lockstep with the column count
+                // in execute_batch_insert's bind order (this constant had
+                // drifted stale at 2700/24-binds, which itself overflowed
+                // the 65535 param cap once derivation-control-plane columns
+                // brought the per-row bind count to 30; sinex-wv7).
+                const SYNTHESIS_CHUNK_MAX: usize = 2000;
                 let mut total = StreamBatchInsertResult::default();
                 for chunk in batch.chunks(SYNTHESIS_CHUNK_MAX) {
                     let chunk_synthesis_checks = chunk
@@ -1253,7 +1276,6 @@ impl<'a> EventRepository<'a> {
                         .await
                         .map_err(|e| db_error(e, "begin stream batch transaction"))?;
                     set_repeatable_read(&mut tx).await?;
-                    let chunk_event_ids = chunk.iter().map(|row| row.id).collect::<HashSet<_>>();
 
                     for (event_id, source_ids) in &chunk_synthesis_checks {
                         ensure_no_synthesis_cycles(&mut *tx, event_id, source_ids)?;
@@ -1261,7 +1283,7 @@ impl<'a> EventRepository<'a> {
                             &mut *tx,
                             event_id,
                             source_ids,
-                            Some(&chunk_event_ids),
+                            Some(&batch_event_ids),
                         )
                         .await?;
                     }
