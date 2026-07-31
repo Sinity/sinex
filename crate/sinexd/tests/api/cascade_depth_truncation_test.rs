@@ -13,11 +13,25 @@
 use serde_json::json;
 use sinex_db::CascadeSource;
 use sinex_db::repositories::EventRepositoryTx;
+use sinex_primitives::derivation::DerivedProductClass;
 use sinex_primitives::temporal;
 use sqlx::PgPool;
 use std::collections::BTreeSet;
 use uuid::Uuid;
 use xtask::sandbox::sinex_test;
+
+#[path = "common/mod.rs"]
+mod common;
+
+// `declaration_id` is the primary key of `derivation.product_declarations`,
+// so the two event_types `build_chain` emits ("cascade.root"/"cascade.link")
+// each need their own declaration row -- reusing one id would let the first
+// `ON CONFLICT DO NOTHING` insert win and leave the second event_type
+// undeclared. `seed_product_declaration` is idempotent per id, so
+// re-registering per `build_chain` call across the tests in this file is
+// fine.
+const CHAIN_ROOT_DECLARATION_ID: &str = "sinex.test.cascade_depth_truncation_chain.root";
+const CHAIN_LINK_DECLARATION_ID: &str = "sinex.test.cascade_depth_truncation_chain.link";
 
 async fn cascade_prereqs_available(pool: &PgPool) -> color_eyre::Result<bool> {
     let exists: bool = sqlx::query_scalar!(
@@ -50,15 +64,38 @@ async fn build_chain(pool: &PgPool, depth: usize) -> color_eyre::Result<Vec<Uuid
     assert!(depth >= 1, "build_chain requires at least one event");
     let mut ids = Vec::with_capacity(depth);
     let synthetic_upstream = vec![Uuid::now_v7()];
+    let product_class = DerivedProductClass::CanonicalDerivedEvent;
+
+    // Every row `build_chain` inserts sets `source_event_ids`, so each needs
+    // a `product_class`/`claim_support`/`derivation_declaration_id` that
+    // satisfies `events_derived_requires_product_class` and the
+    // `derivation.enforce_event_product_declaration()` trigger (sinex-0vx.4).
+    // One declaration covers both event_types this chain uses.
+    common::seed_product_declaration(
+        pool,
+        CHAIN_ROOT_DECLARATION_ID,
+        product_class,
+        "cascade.depth.test",
+        "cascade.root",
+    )
+    .await?;
+    common::seed_product_declaration(
+        pool,
+        CHAIN_LINK_DECLARATION_ID,
+        product_class,
+        "cascade.depth.test",
+        "cascade.link",
+    )
+    .await?;
 
     let root = Uuid::now_v7();
     sqlx::query!(
         r#"
         INSERT INTO core.events (
             id, source, event_type, host, payload, ts_orig,
-            source_event_ids
+            source_event_ids, product_class, claim_support, derivation_declaration_id
         ) VALUES (
-            $1::uuid, $2, $3, $4, $5, $6, $7::uuid[]
+            $1::uuid, $2, $3, $4, $5, $6, $7::uuid[], $8, $9, $10
         )
         "#,
         root,
@@ -67,7 +104,10 @@ async fn build_chain(pool: &PgPool, depth: usize) -> color_eyre::Result<Vec<Uuid
         "localhost",
         json!({"depth": 0_u32}),
         *temporal::now(),
-        &synthetic_upstream
+        &synthetic_upstream,
+        product_class.as_str(),
+        json!({}),
+        CHAIN_ROOT_DECLARATION_ID,
     )
     .execute(pool)
     .await?;
@@ -80,9 +120,9 @@ async fn build_chain(pool: &PgPool, depth: usize) -> color_eyre::Result<Vec<Uuid
             r#"
             INSERT INTO core.events (
                 id, source, event_type, host, payload, ts_orig,
-                source_event_ids
+                source_event_ids, product_class, claim_support, derivation_declaration_id
             ) VALUES (
-                $1::uuid, $2, $3, $4, $5, $6, $7::uuid[]
+                $1::uuid, $2, $3, $4, $5, $6, $7::uuid[], $8, $9, $10
             )
             "#,
             id,
@@ -91,7 +131,10 @@ async fn build_chain(pool: &PgPool, depth: usize) -> color_eyre::Result<Vec<Uuid
             "localhost",
             json!({"depth": level as u32}),
             *temporal::now(),
-            &parents
+            &parents,
+            product_class.as_str(),
+            json!({}),
+            CHAIN_LINK_DECLARATION_ID,
         )
         .execute(pool)
         .await?;

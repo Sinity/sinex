@@ -4,6 +4,7 @@ use serde_json::json;
 use sinex_db::repositories::DbPoolExt;
 use sinex_db::repositories::source_materials::TemporalLedgerEntry;
 use sinex_primitives::Timestamp;
+use sinex_primitives::derivation::{ClaimSupport, DerivedProductClass};
 use sinex_primitives::domain::{SourceMaterialFormat, SourceMaterialTimingInfoType};
 use sinex_primitives::events::DynamicPayload;
 use sinex_primitives::privacy::MaterialCaptureClass;
@@ -16,6 +17,9 @@ use sinexd::api::rpc_server::RpcAuthContext;
 use sinexd::api::service_container::ServiceContainer;
 use std::path::PathBuf;
 use xtask::sandbox::prelude::*;
+
+#[path = "common/mod.rs"]
+mod common;
 
 fn durable_material_dir(label: &str) -> TestResult<PathBuf> {
     let dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
@@ -211,19 +215,27 @@ async fn sources_archive_scopes_to_requested_material_and_derived_cascade(
     let target_event_id = target_event.id.expect("target event id");
     let target_event_id_string = target_event_id.to_string();
 
-    let derived_event = ctx
-        .pool()
-        .events()
-        .insert(
-            DynamicPayload::new(
-                "test.sources.archive.derived",
-                "test.sources.archive.child",
-                json!({ "parent": target_event_id_string }),
-            )
-            .from_parents([target_event_id])?
-            .build()?,
-        )
-        .await?;
+    let product_class = DerivedProductClass::CanonicalDerivedEvent;
+    let declaration_id = "sinex.test.sources_archive_scopes_to_requested_material_and_derived_cascade";
+    common::seed_product_declaration(
+        ctx.pool(),
+        declaration_id,
+        product_class,
+        "test.sources.archive.derived",
+        "test.sources.archive.child",
+    )
+    .await?;
+    let mut derived_event_payload = DynamicPayload::new(
+        "test.sources.archive.derived",
+        "test.sources.archive.child",
+        json!({ "parent": target_event_id_string }),
+    )
+    .from_parents([target_event_id])?
+    .build()?;
+    derived_event_payload.product_class = Some(product_class);
+    derived_event_payload.claim_support = Some(ClaimSupport::unknown());
+    derived_event_payload.derivation_declaration_id = Some(declaration_id.to_string());
+    let derived_event = ctx.pool().events().insert(derived_event_payload).await?;
     let derived_event_id = derived_event.id.expect("derived event id").to_string();
 
     let other_event = ctx

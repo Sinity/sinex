@@ -14,6 +14,7 @@ use sinex_db::DbPool;
 use sinex_db::replay::state_machine::ReplayState;
 use sinex_db::repositories::DbPoolExt;
 use sinex_db::repositories::state::Operation;
+use sinex_primitives::derivation::DerivedProductClass;
 use sinex_primitives::environment::{SinexEnvironment, environment};
 use sinex_primitives::events::{EventPayload, payloads::filesystem::FileCreatedPayload};
 use sinex_primitives::{DynamicPayload, Id, SinexError, Uuid};
@@ -24,6 +25,41 @@ use xtask::sandbox::sinex_test;
 
 fn test_error(message: impl std::fmt::Display) -> SinexError {
     SinexError::service(message)
+}
+
+/// Register a `derivation.product_declarations` row so
+/// `derivation.enforce_event_product_declaration()` accepts a test-built
+/// derived event that declares `product_class` (sinex-0vx.4). Src-level
+/// unit-test module (not `crate/sinexd/tests/**`), so it mirrors rather than
+/// reuses `tests/api/common::seed_product_declaration` (sinex-egyf).
+async fn seed_product_declaration(
+    pool: &sqlx::PgPool,
+    declaration_id: &str,
+    product_class: DerivedProductClass,
+    output_source: &str,
+    output_event_type: &str,
+) -> Result<()> {
+    sqlx::query!(
+        r#"
+        INSERT INTO derivation.product_declarations (
+            declaration_id, owner, product_class, write_surface,
+            output_source, output_event_type, semantics_version,
+            input_eligibility, default_claim_support, verification_command
+        ) VALUES (
+            $1, 'sinex-egyf-test', $2, 'derived_output',
+            $3, $4, 'v1', 'default_canonical_input', '{}'::jsonb, 'true'
+        )
+        ON CONFLICT (declaration_id) DO NOTHING
+        "#,
+        declaration_id,
+        product_class.as_str(),
+        output_source,
+        output_event_type,
+    )
+    .execute(pool)
+    .await
+    .map_err(|e| SinexError::database("seed product declaration").with_source(e))?;
+    Ok(())
 }
 
 fn error_contains(error: &SinexError, needle: &str) -> bool {

@@ -59,6 +59,45 @@ impl NatsHarness {
     }
 }
 
+/// Register a `derivation.product_declarations` row so
+/// `derivation.enforce_event_product_declaration()` accepts a test-built
+/// derived event that declares `product_class` (sinex-0vx.4). No sinexd
+/// startup reconciler exists yet (sinex-0vx.5) to populate this table from
+/// `AutomatonSpec::OUTPUT_DECLARATIONS`, so every test that persists a
+/// non-null `product_class` seeds its own row here (mirrors
+/// `persistence_test.rs::seed_product_declaration` and
+/// `automata_handlers_test.rs::seed_product_declaration`; lifted to this
+/// shared module by sinex-egyf so files under `tests/api/` that already pull
+/// in `common` don't hand-roll their own copy).
+pub async fn seed_product_declaration(
+    pool: &sqlx::PgPool,
+    declaration_id: &str,
+    product_class: sinex_primitives::derivation::DerivedProductClass,
+    output_source: &str,
+    output_event_type: &str,
+) -> TestResult<()> {
+    sqlx::query!(
+        r#"
+        INSERT INTO derivation.product_declarations (
+            declaration_id, owner, product_class, write_surface,
+            output_source, output_event_type, semantics_version,
+            input_eligibility, default_claim_support, verification_command
+        ) VALUES (
+            $1, 'sinex-egyf-test', $2, 'derived_output',
+            $3, $4, 'v1', 'default_canonical_input', '{}'::jsonb, 'true'
+        )
+        ON CONFLICT (declaration_id) DO NOTHING
+        "#,
+        declaration_id,
+        product_class.as_str(),
+        output_source,
+        output_event_type,
+    )
+    .execute(pool)
+    .await?;
+    Ok(())
+}
+
 pub fn admin_auth() -> RpcAuthContext {
     RpcAuthContext {
         token_prefix: "test****".to_string(),
