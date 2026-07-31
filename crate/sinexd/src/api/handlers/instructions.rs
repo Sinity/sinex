@@ -7,6 +7,10 @@ use crate::runtime::{
 use serde_json::json;
 use sinex_db::DbPoolExt;
 use sinex_db::repositories::SourceMaterial as DbSourceMaterial;
+use sinex_primitives::derivation::{
+    ClaimSupportTemplate, ClaimTemporalQuality, DerivationOutputDeclaration,
+    DerivationWriteSurface, DerivedProductClass, InputEligibility, SourceCoverage, SupportLevel,
+};
 use sinex_primitives::events::payloads::{
     ActuationAttemptPayload, ActuationStatus, DesktopWorkspaceSwitchInstructionPayload,
     HyprlandWorkspaceSwitchedPayload, plan_hyprland_workspace_switch,
@@ -19,6 +23,39 @@ use sinex_primitives::{Id, JsonValue, Result, SinexError, Timestamp, Uuid};
 use sqlx::PgPool;
 
 use crate::api::rpc_server::RpcAuthContext;
+
+/// Derivation control-plane declaration for the instructions RPC handlers
+/// (sinex-q46n), reconciled the same way as `curation::CURATION_OUTPUT_DECLARATIONS`
+/// (see its doc comment for the general shape/rationale) — this handler builds
+/// its own `ActuationAttemptPayload` event directly rather than through the
+/// automaton adapter.
+///
+/// `runtime.instruction/actuation.attempted`: a sanitized record of an
+/// actuator decision or command-socket attempt — `ReportArtifact` (a
+/// generated receipt of what the actuator did), `artifact_writer`.
+pub const INSTRUCTIONS_OUTPUT_DECLARATIONS: &[DerivationOutputDeclaration] =
+    &[ACTUATION_ATTEMPT_DECLARATION];
+
+const ACTUATION_ATTEMPT_DECLARATION: DerivationOutputDeclaration = DerivationOutputDeclaration {
+    declaration_id: "instructions-rpc.actuation.attempted",
+    owner: "instructions-rpc",
+    product_class: DerivedProductClass::ReportArtifact,
+    write_surface: DerivationWriteSurface::ArtifactWriter,
+    output_source: None,
+    output_event_type: None,
+    projection_kind: None,
+    artifact_kind: None,
+    proposal_kind: None,
+    semantics_version: "1.0.0",
+    input_eligibility: InputEligibility::NeverInput,
+    default_support: ClaimSupportTemplate::new(
+        SupportLevel::Direct,
+        SourceCoverage::Covered,
+        ClaimTemporalQuality::RealtimeCapture,
+    ),
+    verification_command:
+        "xtask test -p sinexd -E 'test(hyprland_workspace_switch_dispatches_typed_command_when_observation_ready)'",
+};
 
 pub async fn handle_hyprland_workspace_switch(
     pool: &PgPool,
@@ -164,12 +201,20 @@ async fn persist_attempt(
     pool: &PgPool,
     pending: PendingInstructionAttempt,
 ) -> Result<HyprlandWorkspaceSwitchResponse> {
-    let attempt_event = pending
+    let mut attempt_event = pending
         .attempt
         .clone()
         .from_parents([pending.instruction_event_id])?
         .at_time(pending.attempt.attempted_at)
         .build()?;
+    attempt_event.product_class = Some(ACTUATION_ATTEMPT_DECLARATION.product_class);
+    attempt_event.claim_support = Some(
+        ACTUATION_ATTEMPT_DECLARATION
+            .default_support
+            .instantiate(1, 0, 1, 0),
+    );
+    attempt_event.derivation_declaration_id =
+        Some(ACTUATION_ATTEMPT_DECLARATION.declaration_id.to_string());
     let inserted_attempt = pool.events().insert(attempt_event).await?;
     let _attempt_event_id = inserted_attempt.id.ok_or_else(|| {
         SinexError::invalid_state(

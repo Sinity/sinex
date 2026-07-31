@@ -18,9 +18,13 @@
 //! Fail-closed by design: an existing DB row that disagrees with the static
 //! declaration for the same `declaration_id` is a startup error, not a
 //! silent overwrite or silent skip — code and DB must never quietly drift
-//! for a security-relevant enforcement table like this one. Curation/
-//! non-automaton declarations (sinex-q46n) are explicitly out of scope; this
-//! reconciler only ever writes rows for `AutomatonSpec` entries.
+//! for a security-relevant enforcement table like this one.
+//!
+//! Non-automaton writers that build and insert their own derived events
+//! outside the automaton adapter (curation/instructions RPC handlers,
+//! sinex-q46n) reconcile through the same [`reconcile_declarations`]
+//! primitive this module exposes for [`reconcile_product_declarations`]
+//! itself, rather than a second bespoke mechanism.
 
 use sinex_db::DbPool;
 use sinex_db::repositories::{DbPoolExt, ExistingProductDeclaration};
@@ -43,24 +47,44 @@ pub async fn reconcile_product_declarations(
     let mut inserted = 0usize;
 
     for spec in automata {
-        for declaration in spec.outputs {
-            declaration.validate().map_err(|error| {
-                SinexError::configuration(format!(
-                    "automaton '{}' declares an invalid product declaration '{}': {error}",
-                    spec.name, declaration.declaration_id
-                ))
-            })?;
-
-            if reconcile_one(pool, spec.name, declaration).await? {
-                inserted += 1;
-            }
-        }
+        inserted += reconcile_declarations(pool, spec.name, spec.outputs).await?;
     }
 
     info!(
         automata = automata.len(),
         inserted, "reconciled derivation.product_declarations from static automaton registry"
     );
+
+    Ok(inserted)
+}
+
+/// Reconcile `derivation.product_declarations` for one writer's static
+/// output declarations. `writer_name` is used only for log/error
+/// attribution (it need not be a registered automaton). Shared by
+/// [`reconcile_product_declarations`] (one call per `AutomatonSpec`) and by
+/// non-automaton writers such as the curation/instructions RPC handlers.
+///
+/// Fails closed on the first `declaration_id` whose static shape disagrees
+/// with an existing DB row — see module docs.
+pub async fn reconcile_declarations(
+    pool: &DbPool,
+    writer_name: &'static str,
+    declarations: &[DerivationOutputDeclaration],
+) -> Result<usize> {
+    let mut inserted = 0usize;
+
+    for declaration in declarations {
+        declaration.validate().map_err(|error| {
+            SinexError::configuration(format!(
+                "writer '{writer_name}' declares an invalid product declaration '{}': {error}",
+                declaration.declaration_id
+            ))
+        })?;
+
+        if reconcile_one(pool, writer_name, declaration).await? {
+            inserted += 1;
+        }
+    }
 
     Ok(inserted)
 }
