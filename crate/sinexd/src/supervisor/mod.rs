@@ -261,9 +261,18 @@ fn start_event_engine(
     tokio::sync::oneshot::Receiver<()>,
 ) {
     let (ready_tx, ready_rx) = tokio::sync::oneshot::channel();
+    // sinex-r6d.11: one settlement registry per `sinexd` process, shared
+    // between every `JetStreamConsumer` this event engine spawns and every
+    // same-process emission caller (source bindings) via the process-wide
+    // `durable_emission_registry`. Installed BEFORE source bindings can
+    // possibly spawn (`Supervisor::run` awaits event-engine readiness
+    // before calling `start_source_bindings`), so production source
+    // initialization always observes it.
+    let settlement_registry = crate::runtime::durable_emission::SettlementRegistry::new();
+    crate::runtime::durable_emission_registry::install(settlement_registry.clone());
     let handle = tokio::spawn(async move {
         let mut service = match IngestService::new(config).await {
-            Ok(s) => s,
+            Ok(s) => s.with_settlement_registry(settlement_registry),
             Err(error) => {
                 error!(
                     ?error,

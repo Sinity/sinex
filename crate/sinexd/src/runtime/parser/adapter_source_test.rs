@@ -1309,6 +1309,258 @@ async fn adapter_source_updates_parser_checkpoint_after_successful_parse(
     Ok(())
 }
 
+// =============================================================================
+// sinex-r6d.11: durable-emission receipt gates the adapter-source cursor
+// =============================================================================
+//
+// These are the killpoint-style tests required by sinex-r6d.11's reference
+// caller integration: `EventEmitter::emit` succeeding (the mpsc handoff to
+// `EventBatcher`) must NEVER be sufficient to advance the adapter cursor —
+// only a `DurableEmissionReceipt` that `unlocks_progress()` may. A caller-
+// controlled `SettlementRegistry` stands in for the real event-engine's
+// admission/persist/confirm pipeline here: never resolving an event's
+// registration is exactly the "process crashes before the event-engine
+// durably confirms it" crash window from the bead's own bug report.
+
+async fn make_adapter_runtime_with_settlement_registry(
+    ctx: &TestContext,
+    registry: crate::runtime::durable_emission::SettlementRegistry,
+) -> TestResult<(RuntimeContext, mpsc::Receiver<Event<JsonValue>>)> {
+    let kv = ctx.checkpoint_kv().await?;
+    let checkpoint_manager = Arc::new(CheckpointManager::new(
+        kv,
+        "adapter-durable-emission-test".to_string(),
+        "test-group".to_string(),
+        format!("test-consumer-{}", Uuid::now_v7().simple()),
+    ));
+    let (event_sender, event_receiver) = mpsc::channel::<Event<JsonValue>>(8);
+    let emitter = EventEmitter::new(event_sender, false);
+    let publisher = Arc::new(NatsPublisher::new(ctx.nats_client()));
+    let handles = RuntimeHandles::new_edge(
+        checkpoint_manager,
+        emitter,
+        EventTransport::Nats(publisher),
+        None,
+    )
+    .with_settlement_registry(registry);
+    let work_dir = tempfile::tempdir()?;
+    let work_dir_path = work_dir.keep();
+    let work_dir_utf8 = Utf8PathBuf::from_path_buf(work_dir_path.clone()).map_err(|path| {
+        SinexError::validation("temporary work dir should be UTF-8")
+            .with_context("path", path.display().to_string())
+    })?;
+    Ok((
+        RuntimeContext::new(
+            ServiceInfo::new(
+                "adapter-durable-emission-test".to_string(),
+                "adapter-durable-emission-test".to_string(),
+                HostName::from_static("test-host"),
+                work_dir_path,
+                false,
+                format!("instance-{}", Uuid::now_v7().simple()),
+                env!("CARGO_PKG_VERSION").to_string(),
+                None,
+            ),
+            handles,
+            HashMap::new(),
+            work_dir_utf8,
+        ),
+        event_receiver,
+    ))
+}
+
+#[sinex_test]
+async fn adapter_durable_emission_receipt_blocks_cursor_when_never_settled(
+    ctx: TestContext,
+) -> TestResult<()> {
+    let ctx = ctx.with_nats().shared().await?;
+    let registry = crate::runtime::durable_emission::SettlementRegistry::new();
+    let (runtime, mut event_receiver) =
+        make_adapter_runtime_with_settlement_registry(&ctx, registry.clone()).await?;
+    let mut source = AdapterBackedSource::<TwoRecordAdapter, StatefulCheckpointParser>::new(
+        "desktop.clipboard",
+    )
+    .with_durable_emission_timeout(std::time::Duration::from_millis(150));
+    let mut state = AdapterModuleState::<u64>::default();
+
+    source
+        .initialize(AdapterSourceConfig::default(), &runtime, &mut state)
+        .await?;
+
+    // Drain the mpsc channel — proving both events really did reach the
+    // EventBatcher handoff — but NEVER resolve the settlement registry for
+    // them. This is exactly the sinex-r6d.11 crash window: `emit()`
+    // succeeded, but nothing downstream ever durably confirmed the event.
+    let drainer = tokio::spawn(async move {
+        let mut received = 0u32;
+        while received < 2 {
+            if event_receiver.recv().await.is_none() {
+                break;
+            }
+            received += 1;
+        }
+        received
+    });
+
+    let emitted = source.drain_adapter(None, &mut state, None).await?;
+    let received = drainer.await.expect("drainer task did not panic");
+
+    assert_eq!(received, 2, "both records must reach the mpsc handoff");
+    assert_eq!(
+        emitted, 0,
+        "an event whose receipt never settled must not count as durably emitted"
+    );
+    assert_eq!(
+        state.cursor, None,
+        "cursor must NOT advance past events whose durable-emission receipt never settled"
+    );
+    assert_eq!(
+        state.parser_checkpoint, None,
+        "persisted parser checkpoint must roll back to its pre-drain snapshot when no \
+         record's cursor was allowed to advance — otherwise a same-process retry would \
+         re-parse the same unsettled record through parser state that already 'saw' it"
+    );
+    assert!(
+        registry.is_empty(),
+        "await_batch must cancel timed-out registrations rather than leaking them"
+    );
+    Ok(())
+}
+
+#[sinex_test]
+async fn adapter_durable_emission_receipt_unlocks_cursor_once_settled(
+    ctx: TestContext,
+) -> TestResult<()> {
+    let ctx = ctx.with_nats().shared().await?;
+    let registry = crate::runtime::durable_emission::SettlementRegistry::new();
+    let (runtime, mut event_receiver) =
+        make_adapter_runtime_with_settlement_registry(&ctx, registry.clone()).await?;
+    let mut source = AdapterBackedSource::<TwoRecordAdapter, StatefulCheckpointParser>::new(
+        "desktop.clipboard",
+    )
+    .with_durable_emission_timeout(std::time::Duration::from_secs(5));
+    let mut state = AdapterModuleState::<u64>::default();
+
+    source
+        .initialize(AdapterSourceConfig::default(), &runtime, &mut state)
+        .await?;
+
+    // Settle every event with PersistedConfirmed as it reaches the mpsc
+    // handoff — standing in for the real event-engine's confirmed publish.
+    let registry_for_settler = registry.clone();
+    let settler = tokio::spawn(async move {
+        let mut settled = 0u32;
+        while settled < 2 {
+            let Some(event) = event_receiver.recv().await else {
+                break;
+            };
+            let id = *event.id.expect("emit() assigns an id").as_uuid();
+            registry_for_settler.resolve(
+                id,
+                crate::runtime::durable_emission::EmissionReceiptState::PersistedConfirmed {
+                    lane: sinex_db::repositories::EventStorageLane::Activity,
+                    inserted: true,
+                    confirmed_sequence: None,
+                },
+            );
+            settled += 1;
+        }
+        settled
+    });
+
+    let emitted = source.drain_adapter(None, &mut state, None).await?;
+    let settled = settler.await.expect("settler task did not panic");
+
+    assert_eq!(settled, 2);
+    assert_eq!(
+        emitted, 2,
+        "both events durably settled, so both must count as emitted"
+    );
+    assert_eq!(
+        state.cursor,
+        Some(2),
+        "cursor must advance past both records once their durable-emission receipts unlock \
+         progress — proving the mechanism gates on settlement, not merely on mpsc handoff"
+    );
+    assert_eq!(
+        state.parser_checkpoint,
+        Some(json!({ "seen": ["alpha", "beta"] })),
+        "persisted parser checkpoint must reflect both durably-settled records"
+    );
+    assert!(registry.is_empty(), "every registration should have resolved and been removed");
+    Ok(())
+}
+
+#[sinex_test]
+async fn adapter_durable_emission_receipt_partial_batch_settlement_blocks_only_the_hole(
+    ctx: TestContext,
+) -> TestResult<()> {
+    let ctx = ctx.with_nats().shared().await?;
+    let registry = crate::runtime::durable_emission::SettlementRegistry::new();
+    let (runtime, mut event_receiver) =
+        make_adapter_runtime_with_settlement_registry(&ctx, registry.clone()).await?;
+    let mut source = AdapterBackedSource::<TwoRecordAdapter, StatefulCheckpointParser>::new(
+        "desktop.clipboard",
+    )
+    .with_durable_emission_timeout(std::time::Duration::from_millis(150));
+    let mut state = AdapterModuleState::<u64>::default();
+
+    source
+        .initialize(AdapterSourceConfig::default(), &runtime, &mut state)
+        .await?;
+
+    // Settle ONLY the first record's event ("alpha", cursor 1). The second
+    // ("beta", cursor 2) reaches the mpsc handoff but is never resolved —
+    // proving a later record's success can never fold in past an earlier
+    // hole, per `CommitFrontier`'s contiguous-prefix rule.
+    let registry_for_settler = registry.clone();
+    let settler = tokio::spawn(async move {
+        let mut seen = 0u32;
+        while seen < 2 {
+            let Some(event) = event_receiver.recv().await else {
+                break;
+            };
+            seen += 1;
+            if seen == 1 {
+                let id = *event.id.expect("emit() assigns an id").as_uuid();
+                registry_for_settler.resolve(
+                    id,
+                    crate::runtime::durable_emission::EmissionReceiptState::PersistedConfirmed {
+                        lane: sinex_db::repositories::EventStorageLane::Activity,
+                        inserted: true,
+                        confirmed_sequence: None,
+                    },
+                );
+            }
+            // seen == 2 ("beta"): deliberately never resolved.
+        }
+        seen
+    });
+
+    let emitted = source.drain_adapter(None, &mut state, None).await?;
+    let seen = settler.await.expect("settler task did not panic");
+
+    assert_eq!(seen, 2, "both records reach the mpsc handoff");
+    assert_eq!(
+        emitted, 2,
+        "both events were accounted for in the batch receipt, one settled one timed out"
+    );
+    assert_eq!(
+        state.cursor,
+        Some(1),
+        "cursor must advance only past the record whose receipt actually unlocked progress, \
+         even though a LATER record in the same materialized batch also reached the mpsc \
+         handoff"
+    );
+    assert_eq!(
+        state.parser_checkpoint,
+        Some(json!({ "seen": ["alpha"] })),
+        "persisted parser checkpoint must roll back to just after the last durably-settled \
+         record, not the fully-advanced in-memory parser state"
+    );
+    Ok(())
+}
+
 #[sinex_test]
 async fn adapter_cursor_update_preserves_chained_leg_state() -> xtask::sandbox::TestResult<()> {
     let current = ChainedCursor {

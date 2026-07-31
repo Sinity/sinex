@@ -170,6 +170,18 @@ impl JetStreamConsumer {
         self
     }
 
+    /// Attach an externally-owned settlement registry (sinex-r6d.11),
+    /// replacing the fresh one `new()` constructs by default. Production
+    /// callers (`IngestService::new`) use this to share one registry with
+    /// same-process emission callers via
+    /// `crate::runtime::durable_emission_registry` — see that module's doc
+    /// for why process-wide sharing is the right shape here.
+    #[must_use]
+    pub fn with_settlement_registry(mut self, registry: SettlementRegistry) -> Self {
+        self.settlement_registry = registry;
+        self
+    }
+
     /// Test-only accessor for this consumer's settlement registry
     /// (sinex-r6d.11): lets integration tests `register()` interest in an
     /// event's settlement BEFORE publishing it, then assert on the resolved

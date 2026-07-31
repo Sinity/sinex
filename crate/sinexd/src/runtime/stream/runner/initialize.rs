@@ -190,6 +190,13 @@ impl RuntimeRunner {
 
         // No LeaseManager passed to handles
         // No LeaseManager passed to handles
+        //
+        // sinex-r6d.11: attach the process-wide settlement registry, if the
+        // hosted event engine has installed one (it always has by the time
+        // source bindings spawn — see `supervisor::start_event_engine`).
+        // Standalone/edge invocations with no event engine in this process
+        // fall back to `RuntimeHandles`' own disconnected default registry.
+        let settlement_registry = crate::runtime::durable_emission_registry::get();
         let handles = {
             #[cfg(feature = "db")]
             if let Some(pool) = db_pool {
@@ -216,6 +223,11 @@ impl RuntimeRunner {
                 transport_for_context,
                 schema_cache.clone(),
             )
+        };
+        let handles = if let Some(registry) = settlement_registry {
+            handles.with_settlement_registry(registry)
+        } else {
+            handles
         };
 
         let service_info = ServiceInfo::new_with_runtime_identity(

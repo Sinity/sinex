@@ -427,6 +427,15 @@ pub struct RuntimeHandles {
     transport: EventTransport,
     schema_cache: Option<Arc<crate::runtime::stream::SchemaBroadcastCache>>,
     runtime_drain: Arc<RuntimeDrainController>,
+    /// Shared durable-emission settlement registry (sinex-r6d.11). Defaults
+    /// to a fresh, disconnected registry — every `register()` on it simply
+    /// times out until a caller explicitly wires in the process's real
+    /// registry via [`Self::with_settlement_registry`]. Production source
+    /// initialization does this once, from
+    /// `crate::runtime::durable_emission_registry::get()`; tests that care
+    /// about durable-emission behavior wire in their own explicit registry
+    /// instead of relying on any process-global state.
+    settlement_registry: crate::runtime::durable_emission::SettlementRegistry,
 }
 
 impl RuntimeHandles {
@@ -447,6 +456,7 @@ impl RuntimeHandles {
             transport,
             schema_cache,
             runtime_drain: Arc::new(RuntimeDrainController::new()),
+            settlement_registry: crate::runtime::durable_emission::SettlementRegistry::new(),
         }
     }
 
@@ -467,7 +477,26 @@ impl RuntimeHandles {
             transport,
             schema_cache,
             runtime_drain: Arc::new(RuntimeDrainController::new()),
+            settlement_registry: crate::runtime::durable_emission::SettlementRegistry::new(),
         }
+    }
+
+    /// Attach an explicit settlement registry, overriding the default
+    /// disconnected one. See the field doc on `settlement_registry` above.
+    #[must_use]
+    pub fn with_settlement_registry(
+        mut self,
+        registry: crate::runtime::durable_emission::SettlementRegistry,
+    ) -> Self {
+        self.settlement_registry = registry;
+        self
+    }
+
+    /// The settlement registry attached to this handle set — see the field
+    /// doc on `settlement_registry` for what "attached" vs "default" means.
+    #[must_use]
+    pub fn settlement_registry(&self) -> crate::runtime::durable_emission::SettlementRegistry {
+        self.settlement_registry.clone()
     }
 
     /// Get database pool if available (Edge Mode returns None)

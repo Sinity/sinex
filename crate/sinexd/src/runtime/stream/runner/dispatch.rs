@@ -182,6 +182,12 @@ impl RuntimeRunner {
             base_handles.transport().clone(),
             schema_cache,
         );
+        // sinex-r6d.11: replay handles carry the same settlement registry as
+        // the base handles they were derived from, so replayed emission
+        // durably settles through the same receipt backend as live emission.
+        let replay_handles = replay_handles.with_settlement_registry(
+            base_handles.settlement_registry(),
+        );
 
         Ok((replay_handles, emitted_counter, forwarder_handle))
     }

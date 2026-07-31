@@ -140,6 +140,16 @@ pub struct IngestService {
     task_handles: Arc<Mutex<Vec<JoinHandle<()>>>>,
     /// Heartbeat counter handle — set during `start()`, passed to `JetStreamConsumer`
     heartbeat_counter_handle: Option<crate::runtime::heartbeat::HeartbeatCounterHandle>,
+    /// Shared settlement registry (sinex-r6d.11) attached to every
+    /// `JetStreamConsumer` this service spawns (both the Activity and
+    /// Reflection lanes), so any same-process emission caller registered
+    /// against it can observe real settlement outcomes regardless of which
+    /// lane an event lands in. Defaults to a fresh registry in `new()`;
+    /// `supervisor::start_event_engine` overrides it via
+    /// `with_settlement_registry` so the SAME registry is also installed
+    /// process-wide (`crate::runtime::durable_emission_registry`) for
+    /// source-side callers.
+    settlement_registry: crate::runtime::durable_emission::SettlementRegistry,
 }
 
 type CriticalTaskOutcome = (
@@ -161,6 +171,7 @@ impl Clone for IngestService {
             runtime_failure_flag: self.runtime_failure_flag.clone(),
             task_handles: self.task_handles.clone(),
             heartbeat_counter_handle: self.heartbeat_counter_handle.clone(),
+            settlement_registry: self.settlement_registry.clone(),
         }
     }
 }
@@ -200,10 +211,31 @@ impl IngestService {
             runtime_failure_flag: Arc::new(AtomicBool::new(false)),
             task_handles: Arc::new(Mutex::new(Vec::new())),
             heartbeat_counter_handle: None,
+            settlement_registry: crate::runtime::durable_emission::SettlementRegistry::new(),
         };
 
         info!("Ingestion service initialized successfully");
         Ok(service)
+    }
+
+    /// Attach an externally-owned settlement registry (sinex-r6d.11),
+    /// replacing the fresh one `new()` constructs by default. Every
+    /// `JetStreamConsumer` this service spawns (both lanes) is attached to
+    /// this same registry.
+    #[must_use]
+    pub fn with_settlement_registry(
+        mut self,
+        registry: crate::runtime::durable_emission::SettlementRegistry,
+    ) -> Self {
+        self.settlement_registry = registry;
+        self
+    }
+
+    /// The settlement registry this service's `JetStreamConsumer`s are (or
+    /// will be) attached to.
+    #[must_use]
+    pub fn settlement_registry(&self) -> crate::runtime::durable_emission::SettlementRegistry {
+        self.settlement_registry.clone()
     }
 
     async fn init_db_pool(config: &EventEngineConfig) -> EventEngineResult<Option<PgPool>> {
@@ -1005,6 +1037,7 @@ impl IngestService {
         let reject_initial_replay = self.config.reject_initial_replay;
         let future_ts_skew = time::Duration::seconds(self.config.ts_orig_future_skew_secs as i64);
         let heartbeat_handle = self.heartbeat_counter_handle.clone();
+        let settlement_registry = self.settlement_registry.clone();
         let (ready_tx, ready_rx) = tokio::sync::oneshot::channel();
         let Some(ts_orig_lower_bound) =
             Timestamp::from_unix_timestamp(self.config.ts_orig_lower_bound_unix)
@@ -1033,7 +1066,8 @@ impl IngestService {
             .with_future_ts_skew(future_ts_skew)
             .with_ts_orig_lower_bound(ts_orig_lower_bound)
             .with_reject_initial_replay(reject_initial_replay)
-            .with_observer(observer);
+            .with_observer(observer)
+            .with_settlement_registry(settlement_registry);
 
             // Load DB-backed privacy policy (#1042). Admission must not run
             // with an implicit noop policy in production.

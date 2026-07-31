@@ -120,6 +120,11 @@ use crate::runtime::acquisition_manager::{
     AcquisitionManager, AppendStreamAcquirer, RotationPolicy,
 };
 use crate::runtime::checkpoint::{CheckpointManager, CheckpointState};
+use crate::runtime::durable_emission::{
+    DurableEmissionRequest, EmissionOrigin, ProgressAtom, ReceiptLevel,
+};
+use crate::runtime::durable_emission_backend::emit_batch_durable;
+use sinex_primitives::commit_frontier::{CommitFrontier, TerminalOutcome};
 use crate::runtime::parser::adapters::{LatestSqliteSnapshotEvidence, SqliteSnapshotLane};
 use crate::runtime::parser::{
     BindingConfig, DriftEvent, InitialStreamPosition, InputShapeAdapter, InputShapeAdapterExt,
@@ -141,6 +146,12 @@ const ADAPTER_MATERIAL_BATCH_MAX_RECORDS: usize = 1024;
 const ADAPTER_MATERIAL_BATCH_MAX_BYTES: usize = 256 * 1024;
 const ADAPTER_BATCH_DRAIN_WINDOW: Duration = Duration::from_millis(1);
 const STREAM_IDLE_FINALIZE_REASON: &str = "adapter-stream-idle";
+/// Per-event budget for a materialized batch's durable-emission receipt
+/// (sinex-r6d.11). A batch is bounded by `ADAPTER_MATERIAL_BATCH_MAX_RECORDS`
+/// records / `ADAPTER_MATERIAL_BATCH_MAX_BYTES` bytes, so this is a per-item
+/// timeout inside `SettlementRegistry::await_batch`'s concurrent wait, not a
+/// per-batch serialization cost.
+const ADAPTER_DURABLE_EMISSION_PER_ITEM_TIMEOUT: Duration = Duration::from_secs(30);
 
 // =============================================================================
 // Typed runtime config — wraps adapter config + optional binding flags
@@ -471,6 +482,14 @@ where
     /// Sleep duration between continuous-mode adapter drains.
     poll_interval: Duration,
 
+    /// Per-item timeout for a materialized batch's durable-emission receipt
+    /// (sinex-r6d.11). Defaults to
+    /// [`ADAPTER_DURABLE_EMISSION_PER_ITEM_TIMEOUT`]; overridable via
+    /// [`Self::with_durable_emission_timeout`] so tests can prove the
+    /// crash-window behavior (cursor does not advance until settlement)
+    /// without waiting out the production timeout.
+    durable_emission_timeout: Duration,
+
     _phantom: PhantomData<()>,
 }
 
@@ -527,6 +546,7 @@ where
             sqlite_snapshot_evidence: LatestSqliteSnapshotEvidence::default(),
             private_mode_control_task: None,
             poll_interval: Duration::from_secs(30),
+            durable_emission_timeout: ADAPTER_DURABLE_EMISSION_PER_ITEM_TIMEOUT,
             _phantom: PhantomData,
         }
     }
@@ -537,6 +557,17 @@ where
     #[must_use]
     pub fn with_rotation_policy(mut self, policy: RotationPolicy) -> Self {
         self.rotation_policy = policy;
+        self
+    }
+
+    /// Override the per-item durable-emission receipt timeout (sinex-r6d.11).
+    ///
+    /// Intended for tests that need to prove crash-window behavior (a
+    /// receipt that never settles must never advance the cursor) without
+    /// waiting out the production timeout.
+    #[must_use]
+    pub fn with_durable_emission_timeout(mut self, timeout: Duration) -> Self {
+        self.durable_emission_timeout = timeout;
         self
     }
 
@@ -1279,6 +1310,35 @@ where
 
         let mut emitted: u64 = 0;
         let mut deferred_pending_record: Option<PendingAdapterRecord<A::Cursor>> = None;
+        // sinex-r6d.11 reference caller: one commit frontier per drain call.
+        // Records are processed strictly sequentially in this loop (each
+        // materialized batch's durable-emission receipt is fully awaited
+        // before the next batch starts), so there is no genuine out-of-order
+        // completion here — but routing cursor advancement through
+        // `CommitFrontier` still buys the correct semantics for free: a
+        // record whose receipt does not unlock progress becomes a permanent
+        // hole for the remainder of THIS drain call, which correctly blocks
+        // every subsequently-processed record's cursor contribution from
+        // being folded in, even though those later records may themselves
+        // settle cleanly. The frontier is scoped to one `drain_adapter` call
+        // (not the source's whole lifetime): a fresh one starts on the next
+        // drain, so a stuck record does not permanently wedge the source —
+        // it simply gets retried from the last successfully-committed
+        // cursor.
+        let mut cursor_frontier: CommitFrontier<A::Cursor> = CommitFrontier::new();
+        // Running composite-cursor reconstruction (see `merge_cursor_update`
+        // doc) seeded from the last durably-persisted checkpoint. Updated as
+        // each record is queued, independent of that record's eventual
+        // durability outcome — this only reconstructs what the FULL
+        // composite cursor value would be at that point in the stream;
+        // whether it's safe to actually persist is decided separately by
+        // `cursor_frontier`.
+        let mut latest_known_cursor: Option<A::Cursor> = state.cursor.clone();
+        let settlement_registry = self
+            .runtime
+            .as_ref()
+            .map(RuntimeContext::settlement_registry)
+            .unwrap_or_default();
 
         loop {
             let first_pending = if let Some(pending) = deferred_pending_record.take() {
@@ -1415,6 +1475,37 @@ where
                 }
             };
 
+            // sinex-r6d.11: parse every record in this materialized batch
+            // first (unchanged parse semantics — a record whose own parse
+            // fails still rolls back its parser-checkpoint delta and never
+            // contributes events), collecting the resulting events without
+            // emitting them yet. Every record that DID parse cleanly gets a
+            // `CommitFrontier` ticket up front, in order, so a durable
+            // emission failure for one record correctly blocks the cursor
+            // from advancing past it even though later records in the same
+            // batch may have parsed (and later durably settled) just fine.
+            //
+            // `parser_checkpoint_before` is retained per record (not just
+            // used transiently like the old parse-failure-only rollback)
+            // because `self.parser`'s in-memory state must keep advancing
+            // through the WHOLE batch for correct incremental parsing (e.g.
+            // dedup windows spanning records), but the PERSISTED checkpoint
+            // must never reflect a record past the first one whose receipt
+            // did not durably settle — otherwise a same-process retry (no
+            // restart) would re-parse an unsettled record through parser
+            // state that already "remembers" it, silently losing it a
+            // second time. See the post-receipt rollback below.
+            struct PendingRecordEmission<C> {
+                ticket: sinex_primitives::commit_frontier::AtomTicket,
+                next_cursor: C,
+                event_count: usize,
+                material_id: Uuid,
+                anchor_byte: i64,
+                parser_checkpoint_before: Option<JsonValue>,
+            }
+            let mut batch_events: Vec<Event<JsonValue>> = Vec::new();
+            let mut record_plan: Vec<PendingRecordEmission<A::Cursor>> = Vec::new();
+
             for (materialized, next_cursor) in materialized_batch {
                 let material_id = materialized.material_id;
                 self.link_latest_sqlite_snapshot_backing_material(material_id)
@@ -1453,6 +1544,7 @@ where
 
                 let anchor_payload_hash = materialized.anchor_payload_hash;
                 let mut record_processed = true;
+                let record_events_start = batch_events.len();
                 for intent in intents {
                     // Use the materialization anchor so events reference their real
                     // material location, whether the record came from the default
@@ -1466,18 +1558,7 @@ where
                         anchor_payload_hash,
                     ) {
                         Ok(event) => {
-                            if let Err(e) = event_emitter.emit(event).await {
-                                warn!(
-                                    source = self.source_id,
-                                    error = %e,
-                                    "emit failed — event dropped"
-                                );
-                                record_processed = false;
-                            } else {
-                                emitted += 1;
-                                state.total_events_emitted =
-                                    state.total_events_emitted.saturating_add(1);
-                            }
+                            batch_events.push(event);
                         }
                         Err(e) => {
                             warn!(
@@ -1490,11 +1571,28 @@ where
                     }
                 }
 
+                let record_event_count = batch_events.len() - record_events_start;
                 if record_processed {
-                    self.refresh_parser_checkpoint_state(state);
+                    // NOTE: `state.parser_checkpoint` (the PERSISTED field)
+                    // is deliberately NOT refreshed here. It is only ever
+                    // updated once, after this materialized batch's durable
+                    // emission outcome is known — see below. `self.parser`'s
+                    // own in-memory state has already advanced past this
+                    // record's parse (needed for correct incremental
+                    // parsing of the rest of the batch); only the
+                    // externally-persisted snapshot is deferred.
                     if let Some(cursor) = next_cursor {
-                        state.cursor = Some(merge_cursor_update(state.cursor.clone(), cursor));
-                        self.persist_stream_checkpoint_if_due(state, false).await;
+                        let merged_cursor = merge_cursor_update(latest_known_cursor.clone(), cursor);
+                        latest_known_cursor = Some(merged_cursor.clone());
+                        let ticket = cursor_frontier.submit();
+                        record_plan.push(PendingRecordEmission {
+                            ticket,
+                            next_cursor: merged_cursor,
+                            event_count: record_event_count,
+                            material_id: material_id.to_uuid(),
+                            anchor_byte: materialized.anchor_byte,
+                            parser_checkpoint_before,
+                        });
                     }
                 } else {
                     self.restore_parser_checkpoint_after_failed_record(parser_checkpoint_before);
@@ -1503,6 +1601,118 @@ where
                         "record processing failed — cursor not advanced so the record can be retried"
                     );
                 }
+            }
+
+            // sinex-r6d.11: durably emit every event collected across this
+            // materialized batch as ONE request, then only fold a record's
+            // cursor contribution into `cursor_frontier` (and therefore into
+            // `state.cursor`) once that record's OWN slice of the receipt
+            // fully unlocks progress. `receipt.items` preserves the
+            // submission order of `batch_events`
+            // (`emit_batch_durable`'s ordering contract), so slicing by each
+            // record's `event_count` in order correctly reassembles
+            // per-record outcomes from one batched call — this is what
+            // keeps the "no per-event await serialization" property while
+            // still gating cursor advancement per record.
+            let receipt = if batch_events.is_empty() {
+                None
+            } else {
+                let cursor_after_json = record_plan
+                    .iter()
+                    .rev()
+                    .find(|entry| entry.event_count > 0)
+                    .and_then(|entry| serde_json::to_value(&entry.next_cursor).ok())
+                    .unwrap_or(JsonValue::Null);
+                let (atom_material_id, atom_anchor_byte) = record_plan
+                    .iter()
+                    .rev()
+                    .find(|entry| entry.event_count > 0)
+                    .map(|entry| (entry.material_id, entry.anchor_byte))
+                    .unwrap_or((Uuid::nil(), 0));
+                let request = DurableEmissionRequest {
+                    origin: EmissionOrigin::SourceAdapter,
+                    required_level: ReceiptLevel::AdmissionSettled,
+                    progress_atom: ProgressAtom::SourceRecord {
+                        source_id: self.source_id.to_string(),
+                        material_id: atom_material_id,
+                        anchor_byte: atom_anchor_byte,
+                        cursor_after: cursor_after_json,
+                    },
+                    events: std::mem::take(&mut batch_events),
+                    allow_spool_backend: false,
+                };
+
+                Some(
+                    emit_batch_durable(
+                        &settlement_registry,
+                        &event_emitter,
+                        request,
+                        self.durable_emission_timeout,
+                    )
+                    .await,
+                )
+            };
+
+            if let Some(receipt) = &receipt {
+                emitted = emitted.saturating_add(receipt.items.len() as u64);
+                state.total_events_emitted =
+                    state.total_events_emitted.saturating_add(receipt.items.len() as u64);
+            }
+
+            // Single ordered pass: a record either has zero events (nothing
+            // to durably confirm — settles immediately as
+            // `NoOutputSettled`) or a slice of `receipt`'s items. The FIRST
+            // record that does not unlock progress is the actual crash-
+            // recovery boundary — every record's `parser_checkpoint_before`
+            // stored above lets us roll `self.parser` (and therefore the
+            // persisted `state.parser_checkpoint`) back to exactly that
+            // point, matching where `cursor_frontier` itself stops
+            // advancing. Records after the first hole still get their
+            // tickets completed/left pending correctly (for accurate
+            // `holes()` bookkeeping), but never affect the rollback target.
+            let mut receipt_offset = 0usize;
+            let mut first_hole_rollback: Option<Option<JsonValue>> = None;
+            for entry in record_plan {
+                let unlocked = if entry.event_count == 0 {
+                    true
+                } else if let Some(receipt) = &receipt {
+                    let span_end = (receipt_offset + entry.event_count).min(receipt.items.len());
+                    let span = &receipt.items[receipt_offset.min(receipt.items.len())..span_end];
+                    receipt_offset += entry.event_count;
+                    !span.is_empty() && span.iter().all(|item| item.state.is_progress_unlocking())
+                } else {
+                    false
+                };
+
+                if unlocked {
+                    cursor_frontier.complete(
+                        entry.ticket,
+                        TerminalOutcome::PersistedConfirmed,
+                        entry.next_cursor,
+                    );
+                } else {
+                    if first_hole_rollback.is_none() {
+                        first_hole_rollback = Some(entry.parser_checkpoint_before);
+                    }
+                    warn!(
+                        source = self.source_id,
+                        material_id = %entry.material_id,
+                        anchor_byte = entry.anchor_byte,
+                        "record's durable-emission receipt did not fully unlock progress — \
+                         cursor not advanced past this record so it can be retried"
+                    );
+                }
+            }
+
+            if let Some(rollback_to) = first_hole_rollback {
+                self.restore_parser_checkpoint_after_failed_record(rollback_to);
+            }
+            self.refresh_parser_checkpoint_state(state);
+
+            let (_, committed_checkpoint) = cursor_frontier.frontier();
+            if let Some(checkpoint) = committed_checkpoint {
+                state.cursor = Some(checkpoint.clone());
+                self.persist_stream_checkpoint_if_due(state, false).await;
             }
 
             if stream_exhausted {
@@ -2120,6 +2330,24 @@ fn merge_json_over(base: JsonValue, over: JsonValue) -> JsonValue {
     }
 }
 
+/// Merge a chained/composite adapter cursor update on top of the last known
+/// composite cursor.
+///
+/// [`crate::runtime::parser::adapters::ChainedAdapter`] cursors
+/// (`ChainedCursor`) carry independent per-leg state (e.g. primary +
+/// secondary), and `cursor_after()` only populates the leg that produced the
+/// given record, leaving sibling legs `None`. Folding a record's cursor
+/// straight into the durable checkpoint without merging would silently drop
+/// the untouched leg's position on every single-leg update — a real
+/// regression for `browser.history`-shaped sources, not a theoretical one.
+/// This is intentionally NOT the ad hoc overlay this bead's design doc
+/// singles out for deletion: it does not merge into a separately-tracked
+/// `state.cursor` before durability is proven (sinex-r6d.11's actual bug).
+/// It is the composite-cursor reconstruction step applied while PREPARING
+/// the checkpoint payload a `CommitFrontier` ticket will carry — the
+/// frontier's own folded-in checkpoint remains the single source of truth
+/// for what actually persists, and only durably-settled tickets ever reach
+/// it (see `drain_adapter`).
 fn merge_cursor_json_update(base: JsonValue, over: JsonValue) -> JsonValue {
     match (base, over) {
         (base, JsonValue::Null) => base,

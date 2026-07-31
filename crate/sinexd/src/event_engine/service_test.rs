@@ -16,6 +16,7 @@ fn test_service() -> IngestService {
         runtime_failure_flag: Arc::new(AtomicBool::new(false)),
         task_handles: Arc::new(Mutex::new(Vec::new())),
         heartbeat_counter_handle: None,
+        settlement_registry: crate::runtime::durable_emission::SettlementRegistry::new(),
     }
 }
 

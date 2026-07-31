@@ -106,6 +106,13 @@ impl RuntimeContext {
         self.handles.emitter()
     }
 
+    /// The durable-emission settlement registry attached to this runtime's
+    /// handles (sinex-r6d.11) — see `RuntimeHandles::settlement_registry`.
+    #[must_use]
+    pub fn settlement_registry(&self) -> crate::runtime::durable_emission::SettlementRegistry {
+        self.handles.settlement_registry()
+    }
+
     #[must_use]
     pub fn event_sender(&self) -> EventSender {
         (*self.handles.emitter().sender()).clone()
