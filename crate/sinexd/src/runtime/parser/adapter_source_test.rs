@@ -522,7 +522,97 @@ impl MaterialParser for FailingParser {
     }
 }
 
+/// Auto-resolve every event as `PersistedConfirmed` (sinex-r6d.11) the
+/// instant it reaches the mpsc handoff, forwarding it onward unchanged to a
+/// fresh receiver. This is what lets the many pre-existing tests in this
+/// module that were written before durable-emission gating existed keep
+/// their "successful emit == cursor advances" assumption, without each of
+/// them needing to know about `SettlementRegistry`. Tests that specifically
+/// exercise sinex-r6d.11's gating use
+/// `make_adapter_runtime_with_settlement_registry` with an explicit,
+/// caller-controlled registry instead — see that helper below.
+fn auto_settle_events(
+    mut raw: mpsc::Receiver<Event<JsonValue>>,
+    registry: crate::runtime::durable_emission::SettlementRegistry,
+) -> mpsc::Receiver<Event<JsonValue>> {
+    let (forward_tx, forward_rx) = mpsc::channel::<Event<JsonValue>>(8);
+    tokio::spawn(async move {
+        while let Some(event) = raw.recv().await {
+            if let Some(id) = event.id {
+                registry.resolve(
+                    *id.as_uuid(),
+                    crate::runtime::durable_emission::EmissionReceiptState::PersistedConfirmed {
+                        lane: sinex_db::repositories::EventStorageLane::Activity,
+                        inserted: true,
+                        confirmed_sequence: None,
+                    },
+                );
+            }
+            if forward_tx.send(event).await.is_err() {
+                break;
+            }
+        }
+    });
+    forward_rx
+}
+
 async fn make_adapter_runtime(
+    ctx: &TestContext,
+) -> TestResult<(RuntimeContext, mpsc::Receiver<Event<JsonValue>>)> {
+    let kv = ctx.checkpoint_kv().await?;
+    let checkpoint_manager = Arc::new(CheckpointManager::new(
+        kv,
+        "adapter-append-failure-test".to_string(),
+        "test-group".to_string(),
+        format!("test-consumer-{}", Uuid::now_v7().simple()),
+    ));
+    let (event_sender, event_receiver_raw) = mpsc::channel::<Event<JsonValue>>(8);
+    let emitter = EventEmitter::new(event_sender, false);
+    let publisher = Arc::new(NatsPublisher::new(ctx.nats_client()));
+    let settlement_registry = crate::runtime::durable_emission::SettlementRegistry::new();
+    let event_receiver = auto_settle_events(event_receiver_raw, settlement_registry.clone());
+    let handles = RuntimeHandles::new_edge(
+        checkpoint_manager,
+        emitter,
+        EventTransport::Nats(publisher),
+        None,
+    )
+    .with_settlement_registry(settlement_registry);
+    let work_dir = tempfile::tempdir()?;
+    let work_dir_path = work_dir.keep();
+    let work_dir_utf8 = Utf8PathBuf::from_path_buf(work_dir_path.clone()).map_err(|path| {
+        SinexError::validation("temporary work dir should be UTF-8")
+            .with_context("path", path.display().to_string())
+    })?;
+    Ok((
+        RuntimeContext::new(
+            ServiceInfo::new(
+                "adapter-append-failure-test".to_string(),
+                "adapter-append-failure-test".to_string(),
+                HostName::from_static("test-host"),
+                work_dir_path,
+                false,
+                format!("instance-{}", Uuid::now_v7().simple()),
+                env!("CARGO_PKG_VERSION").to_string(),
+                None,
+            ),
+            handles,
+            HashMap::new(),
+            work_dir_utf8,
+        ),
+        event_receiver,
+    ))
+}
+
+/// Like `make_adapter_runtime`, but WITHOUT the auto-settle tee: the
+/// returned receiver is the raw mpsc receiver directly. Dropping it closes
+/// the channel, making `EventEmitter::emit()` fail immediately — the exact
+/// mechanism `adapter_emit_failure_does_not_advance_cursor` and
+/// `adapter_emit_failure_rolls_back_parser_checkpoint` need to simulate an
+/// emit-side failure. `auto_settle_events` would defeat this: it holds the
+/// raw receiver alive in a background task regardless of what the caller
+/// does with the forwarded one.
+async fn make_adapter_runtime_no_auto_settle(
     ctx: &TestContext,
 ) -> TestResult<(RuntimeContext, mpsc::Receiver<Event<JsonValue>>)> {
     let kv = ctx.checkpoint_kv().await?;
@@ -577,16 +667,19 @@ async fn make_adapter_runtime_with_db(
         "test-group".to_string(),
         format!("test-consumer-{}", Uuid::now_v7().simple()),
     ));
-    let (event_sender, event_receiver) = mpsc::channel::<Event<JsonValue>>(8);
+    let (event_sender, event_receiver_raw) = mpsc::channel::<Event<JsonValue>>(8);
     let emitter = EventEmitter::new(event_sender, false);
     let publisher = Arc::new(NatsPublisher::new(ctx.nats_client()));
+    let settlement_registry = crate::runtime::durable_emission::SettlementRegistry::new();
+    let event_receiver = auto_settle_events(event_receiver_raw, settlement_registry.clone());
     let handles = RuntimeHandles::new(
         ctx.pool().clone(),
         checkpoint_manager,
         emitter,
         EventTransport::Nats(publisher),
         None,
-    );
+    )
+    .with_settlement_registry(settlement_registry);
     let work_dir = tempfile::tempdir()?;
     let work_dir_path = work_dir.keep();
     let work_dir_utf8 = Utf8PathBuf::from_path_buf(work_dir_path.clone()).map_err(|path| {
@@ -910,7 +1003,7 @@ async fn adapter_parse_failure_does_not_advance_cursor(ctx: TestContext) -> Test
 #[sinex_test]
 async fn adapter_emit_failure_does_not_advance_cursor(ctx: TestContext) -> TestResult<()> {
     let ctx = ctx.with_nats().shared().await?;
-    let (runtime, event_receiver) = make_adapter_runtime(&ctx).await?;
+    let (runtime, event_receiver) = make_adapter_runtime_no_auto_settle(&ctx).await?;
     drop(event_receiver);
     let mut source = AdapterBackedSource::<EmptyLogicalPathRecordAdapter, EmittingParser>::new(
         "desktop.clipboard",
@@ -935,7 +1028,7 @@ async fn adapter_emit_failure_does_not_advance_cursor(ctx: TestContext) -> TestR
 #[sinex_test]
 async fn adapter_emit_failure_rolls_back_parser_checkpoint(ctx: TestContext) -> TestResult<()> {
     let ctx = ctx.with_nats().shared().await?;
-    let (runtime, event_receiver) = make_adapter_runtime(&ctx).await?;
+    let (runtime, event_receiver) = make_adapter_runtime_no_auto_settle(&ctx).await?;
     drop(event_receiver);
     let mut source =
         AdapterBackedSource::<TwoRecordAdapter, StatefulCheckpointParser>::new(
@@ -955,8 +1048,12 @@ async fn adapter_emit_failure_rolls_back_parser_checkpoint(ctx: TestContext) -> 
         state.cursor, None,
         "emit failures must leave the cursor behind for retry"
     );
-    assert!(
-        state.parser_checkpoint.is_none(),
+    // StatefulCheckpointParser::checkpoint_state() always returns
+    // `Some(..)` (even for an empty `seen` list), so "no progress persisted"
+    // is the pre-drain snapshot `Some({"seen": []})`, not a bare `None`.
+    assert_eq!(
+        state.parser_checkpoint,
+        Some(json!({ "seen": [] })),
         "parser-local progress must not persist when the record was not emitted"
     );
     assert!(
@@ -1406,13 +1503,10 @@ async fn adapter_durable_emission_receipt_blocks_cursor_when_never_settled(
     let received = drainer.await.expect("drainer task did not panic");
 
     assert_eq!(received, 2, "both records must reach the mpsc handoff");
-    // `emitted` reflects the batch's receipt item count (attempted
-    // durable-emission requests), matching the pre-existing "handed to
-    // transport" meaning of this counter — it is NOT the correctness
-    // invariant this test exists to prove. The invariant is `state.cursor`
-    // and `state.parser_checkpoint` below: progress must never advance past
-    // an event whose receipt never settled.
-    assert_eq!(emitted, 2, "both events were submitted in the batch receipt");
+    assert_eq!(
+        emitted, 0,
+        "emitted counts only durably-confirmed events — neither event settled"
+    );
     assert_eq!(
         state.cursor, None,
         "cursor must NOT advance past events whose durable-emission receipt never settled"
@@ -1547,8 +1641,8 @@ async fn adapter_durable_emission_receipt_partial_batch_settlement_blocks_only_t
 
     assert_eq!(seen, 2, "both records reach the mpsc handoff");
     assert_eq!(
-        emitted, 2,
-        "both events were accounted for in the batch receipt, one settled one timed out"
+        emitted, 1,
+        "only the durably-settled record's event counts as emitted"
     );
     assert_eq!(
         state.cursor,

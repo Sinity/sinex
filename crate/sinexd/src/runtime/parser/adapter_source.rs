@@ -1653,12 +1653,6 @@ where
                 )
             };
 
-            if let Some(receipt) = &receipt {
-                emitted = emitted.saturating_add(receipt.items.len() as u64);
-                state.total_events_emitted =
-                    state.total_events_emitted.saturating_add(receipt.items.len() as u64);
-            }
-
             // Single ordered pass: a record either has zero events (nothing
             // to durably confirm — settles immediately as
             // `NoOutputSettled`) or a slice of `receipt`'s items. The FIRST
@@ -1685,6 +1679,9 @@ where
                 };
 
                 if unlocked {
+                    emitted = emitted.saturating_add(entry.event_count as u64);
+                    state.total_events_emitted =
+                        state.total_events_emitted.saturating_add(entry.event_count as u64);
                     cursor_frontier.complete(
                         entry.ticket,
                         TerminalOutcome::PersistedConfirmed,
