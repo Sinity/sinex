@@ -128,6 +128,24 @@ impl JetStreamEventConsumer {
 
     /// Start consuming confirmed events.
     pub async fn run(&self) -> RuntimeResult<()> {
+        self.run_with_ready_signal(None).await
+    }
+
+    /// Run the consumer, optionally signalling readiness after the durable
+    /// consumer has been created and the pull loop is about to start.
+    ///
+    /// Mirrors `JetStreamConsumer::run_with_ready_signal` (the raw-ingestion
+    /// sibling in `event_engine/jetstream_consumer/run_loop.rs`). Production
+    /// callers can use this to gate `sd_notify(READY)` on real consumer
+    /// readiness; tests can use it for deterministic ordering against
+    /// `DeliverPolicy::New`, which only sees messages published after this
+    /// point — see `crate::runtime::stream::runner::automaton_runtime` for why
+    /// that race matters for bridge-backed automaton tests without a real
+    /// scannable backing store (sinex-li78).
+    pub async fn run_with_ready_signal(
+        &self,
+        ready_tx: Option<tokio::sync::oneshot::Sender<()>>,
+    ) -> RuntimeResult<()> {
         {
             let mut running = self.running.write().await;
             if *running {
@@ -138,12 +156,15 @@ impl JetStreamEventConsumer {
             *running = true;
         }
 
-        let result = self.run_inner().await;
+        let result = self.run_inner(ready_tx).await;
         *self.running.write().await = false;
         result
     }
 
-    async fn run_inner(&self) -> RuntimeResult<()> {
+    async fn run_inner(
+        &self,
+        ready_tx: Option<tokio::sync::oneshot::Sender<()>>,
+    ) -> RuntimeResult<()> {
         info!(
             "Starting confirmed-event consumer: {}",
             self.config.consumer_name
@@ -159,18 +180,17 @@ impl JetStreamEventConsumer {
         let confirmed_stream = format!("{raw_stream}_CONFIRMED");
 
         let confirmed_subject = self.confirmed_filter_subject();
-        eprintln!(
-            "BREADCRUMB: jetstream_consumer creating consumer stream={confirmed_stream} subject={confirmed_subject} deliver_policy={:?}",
-            self.config.deliver_policy
-        );
 
         let consumer = self
             .create_or_get_consumer(&js, &confirmed_stream, &confirmed_subject)
             .await?;
-        eprintln!("BREADCRUMB: jetstream_consumer consumer created/fetched OK");
         self.retire_legacy_filter_consumers(&js, &confirmed_stream)
             .await?;
-        eprintln!("BREADCRUMB: jetstream_consumer entering consume_confirmed_events");
+
+        if let Some(tx) = ready_tx {
+            // Best-effort: a dropped receiver just means nobody cared.
+            let _ = tx.send(());
+        }
 
         Self::consume_confirmed_events(
             consumer,
@@ -275,7 +295,6 @@ impl JetStreamEventConsumer {
                 Duration::from_secs(1),
             )
             .await?;
-            eprintln!("BREADCRUMB: pull_batch_bounded returned {} messages", messages.len());
             for msg in messages {
                 // Break promptly on stop() instead of finishing the whole batch,
                 // so graceful shutdown completes well under the stop timeout.

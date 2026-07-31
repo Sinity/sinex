@@ -79,6 +79,19 @@ pub struct RuntimeRunner {
     parse_listener_handle: Option<tokio::task::JoinHandle<()>>,
     processing_model: ProcessingModel,
     leader_state: Option<LeaderState>,
+    /// sinex-li78 test/harness-only hook, paired with `confirmed_consumer_ready_tx`
+    /// below: exposed to callers (via `take_confirmed_consumer_ready`) so a
+    /// test can deterministically wait for the automaton bridge's
+    /// `JetStreamEventConsumer` durable consumer to exist before publishing,
+    /// instead of racing `DeliverPolicy::New`. See
+    /// `JetStreamEventConsumer::run_with_ready_signal` for why this gap only
+    /// matters for test fixtures without a real scannable backing store.
+    #[cfg(any(test, feature = "testing"))]
+    confirmed_consumer_ready_rx: Option<tokio::sync::oneshot::Receiver<()>>,
+    /// Sender half of `confirmed_consumer_ready_rx`, consumed by the automaton
+    /// bridge and handed to `JetStreamEventConsumer::run_with_ready_signal`.
+    #[cfg(any(test, feature = "testing"))]
+    confirmed_consumer_ready_tx: Option<tokio::sync::oneshot::Sender<()>>,
 }
 
 struct LeaderState {
