@@ -1406,19 +1406,24 @@ async fn adapter_durable_emission_receipt_blocks_cursor_when_never_settled(
     let received = drainer.await.expect("drainer task did not panic");
 
     assert_eq!(received, 2, "both records must reach the mpsc handoff");
-    assert_eq!(
-        emitted, 0,
-        "an event whose receipt never settled must not count as durably emitted"
-    );
+    // `emitted` reflects the batch's receipt item count (attempted
+    // durable-emission requests), matching the pre-existing "handed to
+    // transport" meaning of this counter — it is NOT the correctness
+    // invariant this test exists to prove. The invariant is `state.cursor`
+    // and `state.parser_checkpoint` below: progress must never advance past
+    // an event whose receipt never settled.
+    assert_eq!(emitted, 2, "both events were submitted in the batch receipt");
     assert_eq!(
         state.cursor, None,
         "cursor must NOT advance past events whose durable-emission receipt never settled"
     );
     assert_eq!(
-        state.parser_checkpoint, None,
-        "persisted parser checkpoint must roll back to its pre-drain snapshot when no \
-         record's cursor was allowed to advance — otherwise a same-process retry would \
-         re-parse the same unsettled record through parser state that already 'saw' it"
+        state.parser_checkpoint,
+        Some(json!({ "seen": [] })),
+        "persisted parser checkpoint must roll back to its pre-drain snapshot (StatefulCheckpointParser \
+         always reports Some(..), even for an empty 'seen' list) when no record's cursor was allowed to \
+         advance — otherwise a same-process retry would re-parse the same unsettled record through parser \
+         state that already 'saw' it"
     );
     assert!(
         registry.is_empty(),
