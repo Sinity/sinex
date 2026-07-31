@@ -133,6 +133,21 @@ pub enum DerivationWriteSurface {
     AuthorityFinalizer,
 }
 
+impl DerivationWriteSurface {
+    /// The `derivation.product_declarations.write_surface` CHECK-constraint
+    /// spelling (mirrors the `#[serde(rename_all = "snake_case")]` shape).
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::DerivedOutput => "derived_output",
+            Self::ProjectionWriter => "projection_writer",
+            Self::ArtifactWriter => "artifact_writer",
+            Self::CurationWriter => "curation_writer",
+            Self::AuthorityFinalizer => "authority_finalizer",
+        }
+    }
+}
+
 /// Whether a declared output is a default-eligible input to further
 /// canonical derivation.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]
@@ -144,6 +159,19 @@ pub enum InputEligibility {
     ExplicitOnly,
     /// Never eligible as input to further derivation (terminal output).
     NeverInput,
+}
+
+impl InputEligibility {
+    /// The `derivation.product_declarations.input_eligibility`
+    /// CHECK-constraint spelling.
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::DefaultCanonicalInput => "default_canonical_input",
+            Self::ExplicitOnly => "explicit_only",
+            Self::NeverInput => "never_input",
+        }
+    }
 }
 
 // ─── ClaimSupport vector ────────────────────────────────────────────────────

@@ -61,10 +61,11 @@ impl NatsHarness {
 
 /// Register a `derivation.product_declarations` row so
 /// `derivation.enforce_event_product_declaration()` accepts a test-built
-/// derived event that declares `product_class` (sinex-0vx.4). No sinexd
-/// startup reconciler exists yet (sinex-0vx.5) to populate this table from
-/// `AutomatonSpec::OUTPUT_DECLARATIONS`, so every test that persists a
-/// non-null `product_class` seeds its own row here (mirrors
+/// derived event that declares `product_class` (sinex-0vx.4). The `sinexd`
+/// startup reconciler (`sinexd::automata::product_declarations`, sinex-x79t)
+/// only runs from `Supervisor::run`, not inside this test sandbox, so every
+/// test that persists a non-null `product_class` still seeds its own row
+/// here (mirrors
 /// `persistence_test.rs::seed_product_declaration` and
 /// `automata_handlers_test.rs::seed_product_declaration`; lifted to this
 /// shared module by sinex-egyf so files under `tests/api/` that already pull

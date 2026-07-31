@@ -4,6 +4,7 @@ pub mod blobs;
 // pub mod checkpoints; // Removed
 pub mod common;
 pub mod continuity;
+pub mod derivation;
 pub mod document_search;
 pub mod email_mailbox_projection;
 pub mod email_provider_state;
@@ -27,6 +28,7 @@ pub use blobs::{BlobRepository, StorageStats};
 // pub use checkpoints::{Checkpoint, CheckpointExt, CheckpointRecord, CheckpointRepository}; // Removed
 pub use common::{DbResult, EnhancedRepository, Repository, TableDef, TransactionSupport};
 pub use continuity::ContinuityRepository;
+pub use derivation::{ExistingProductDeclaration, ProductDeclarationRepository};
 pub use document_search::{
     DEFAULT_PAGE_SIZE, DocumentSearchQuery, DocumentSearchRepository, DocumentSearchResult,
     DocumentSearchResults, MAX_PAGE_SIZE, SearchEmptyReason, SearchMode,
@@ -96,6 +98,7 @@ pub trait DbPoolExt {
     fn source_session_states(&self) -> source_session_state::SourceSessionStateRepository<'_>;
     fn events(&self) -> events::EventRepository<'_>;
     fn source_materials(&self) -> source_materials::SourceMaterialRepository<'_>;
+    fn product_declarations(&self) -> derivation::ProductDeclarationRepository<'_>;
     fn knowledge_graph(&self) -> knowledge_graph::KnowledgeGraphRepository<'_>;
     fn state(&self) -> state::StateRepository<'_>;
     fn schemas(&self) -> schema_management::SchemaManagementRepository<'_>;
@@ -141,6 +144,10 @@ impl DbPoolExt for PgPool {
 
     fn source_materials(&self) -> source_materials::SourceMaterialRepository<'_> {
         source_materials::SourceMaterialRepository::new(self)
+    }
+
+    fn product_declarations(&self) -> derivation::ProductDeclarationRepository<'_> {
+        derivation::ProductDeclarationRepository::new(self)
     }
 
     fn knowledge_graph(&self) -> knowledge_graph::KnowledgeGraphRepository<'_> {

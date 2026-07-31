@@ -383,9 +383,10 @@ async fn query_as_insert_columns_match_copy_contract() -> Result<()> {
 
 /// Register a `derivation.product_declarations` row so
 /// `derivation.enforce_event_product_declaration()` accepts a test event that
-/// declares `product_class`. No sinexd startup reconciler exists yet
-/// (sinex-0vx.5) to populate this table from `AutomatonSpec::OUTPUT_DECLARATIONS`,
-/// so every test that persists a non-null `product_class` seeds its own row.
+/// declares `product_class`. The `sinexd` startup reconciler
+/// (`sinexd::automata::product_declarations`, sinex-x79t) only runs from
+/// `Supervisor::run`, not inside this sandbox, so tests below the `sinexd`
+/// crate that persist a non-null `product_class` still seed their own row.
 async fn seed_product_declaration(
     pool: &sqlx::PgPool,
     declaration_id: &str,

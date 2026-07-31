@@ -90,6 +90,12 @@ impl Supervisor {
         let (escalate_tx, escalate_rx) = watch::channel(false);
         let shutdown_rx = os_shutdown_rx.clone();
 
+        // Cloned before the match below moves `event_engine_config` — the
+        // product-declaration reconciler (sinex-x79t) needs its own
+        // `database_url` after event-engine startup has already consumed the
+        // original config.
+        let reconcile_config = event_engine_config.clone();
+
         let (mut event_engine_handle, event_engine_ready_rx) =
             match (self.event_engine_enabled, event_engine_config) {
                 (true, Some(config)) => {
@@ -117,6 +123,28 @@ impl Supervisor {
                 join_event_engine_after_startup_failure(handle).await;
             }
             return Err(error);
+        }
+
+        // Reconcile derivation.product_declarations from the static
+        // AutomatonSpec registry (sinex-x79t) before any automaton spawns.
+        // The DB is up (event engine is ready) and no automaton has started
+        // writing yet, so a mismatch here is caught before it can surface as
+        // a per-write "undeclared product write" rejection later. Only
+        // relevant when the event engine (and therefore a database) is
+        // actually configured for this process.
+        if let Some(reconcile_config) = reconcile_config.as_ref() {
+            if let Err(error) = reconcile_product_declarations(reconcile_config).await {
+                error!(
+                    ?error,
+                    "derivation.product_declarations reconciliation failed; \
+                     tearing down supervisor startup"
+                );
+                let _ = escalate_tx.send(true);
+                if let Some(handle) = event_engine_handle.take() {
+                    join_event_engine_after_startup_failure(handle).await;
+                }
+                return Err(error);
+            }
         }
 
         // If API setup fails after the event-engine task has already been
@@ -387,6 +415,27 @@ async fn start_api(
             }
         }
     }))
+}
+
+/// Open a short-lived DB pool from `event_engine_config` and reconcile
+/// `derivation.product_declarations` from the static `AUTOMATA` registry
+/// (sinex-x79t). Runs once at startup, before any automaton spawns; the pool
+/// is closed again immediately after — this is not the long-lived pool the
+/// event engine or automata use.
+async fn reconcile_product_declarations(event_engine_config: &EventEngineConfig) -> Result<()> {
+    let pool = event_engine_config.create_db_pool().await?;
+
+    let inserted = crate::automata::product_declarations::reconcile_product_declarations(
+        &pool,
+        automata_registry::AUTOMATA,
+    )
+    .await;
+
+    pool.close().await;
+
+    let inserted = inserted?;
+    info!(inserted, "derivation.product_declarations reconciled");
+    Ok(())
 }
 
 /// Start each automaton enabled via `SINEX_AUTOMATA_ENABLED`.
