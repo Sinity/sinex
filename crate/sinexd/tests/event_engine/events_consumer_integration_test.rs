@@ -617,9 +617,16 @@ async fn jetstream_consumer_republishes_confirmed_event_without_raw_redelivery(
         "confirm-retry-{}",
         Uuid::now_v7().to_string().to_lowercase()
     );
+    // CONFIRM_PUBLISH_MAX_ATTEMPTS = 3: force exactly 2 in-process publish
+    // failures so the 3rd (final) attempt inside publish_confirmed_event_with_retry
+    // succeeds before the retry budget is exhausted. `fail_confirmations(3)` would
+    // consume the entire budget, force a confirmation_durability_gap, and crash the
+    // consumer task (fatal per is_fatal_batch_processing_error) -- the opposite of
+    // what this test's name and assertions (deliveries stays 1, confirmed event is
+    // published, no raw redelivery) are exercising. See sinex-r6d.13 / sinex-5smc.
     let (hooks, counters) = TestHooks::builder()
         .count_deliveries()
-        .fail_confirmations(3)
+        .fail_confirmations(2)
         .build();
     let setup =
         start_consumer_with_hooks(&ctx, &suffix, Duration::from_secs(Timeouts::SHORT), &hooks)
