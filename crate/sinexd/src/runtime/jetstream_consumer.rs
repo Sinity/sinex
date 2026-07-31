@@ -128,6 +128,24 @@ impl JetStreamEventConsumer {
 
     /// Start consuming confirmed events.
     pub async fn run(&self) -> RuntimeResult<()> {
+        self.run_with_ready_signal(None).await
+    }
+
+    /// Run the consumer, optionally signalling readiness after the durable
+    /// consumer has been created and the pull loop is about to start.
+    ///
+    /// Mirrors `JetStreamConsumer::run_with_ready_signal` (the raw-ingestion
+    /// sibling in `event_engine/jetstream_consumer/run_loop.rs`). Production
+    /// callers can use this to gate `sd_notify(READY)` on real consumer
+    /// readiness; tests can use it for deterministic ordering against
+    /// `DeliverPolicy::New`, which only sees messages published after this
+    /// point — see `crate::runtime::stream::runner::automaton_runtime` for why
+    /// that race matters for bridge-backed automaton tests without a real
+    /// scannable backing store (sinex-li78).
+    pub async fn run_with_ready_signal(
+        &self,
+        ready_tx: Option<tokio::sync::oneshot::Sender<()>>,
+    ) -> RuntimeResult<()> {
         {
             let mut running = self.running.write().await;
             if *running {
@@ -138,12 +156,15 @@ impl JetStreamEventConsumer {
             *running = true;
         }
 
-        let result = self.run_inner().await;
+        let result = self.run_inner(ready_tx).await;
         *self.running.write().await = false;
         result
     }
 
-    async fn run_inner(&self) -> RuntimeResult<()> {
+    async fn run_inner(
+        &self,
+        ready_tx: Option<tokio::sync::oneshot::Sender<()>>,
+    ) -> RuntimeResult<()> {
         info!(
             "Starting confirmed-event consumer: {}",
             self.config.consumer_name
@@ -165,6 +186,11 @@ impl JetStreamEventConsumer {
             .await?;
         self.retire_legacy_filter_consumers(&js, &confirmed_stream)
             .await?;
+
+        if let Some(tx) = ready_tx {
+            // Best-effort: a dropped receiver just means nobody cared.
+            let _ = tx.send(());
+        }
 
         Self::consume_confirmed_events(
             consumer,

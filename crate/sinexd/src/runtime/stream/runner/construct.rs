@@ -39,6 +39,9 @@ impl RuntimeRunner {
                 Arc::new(move || Box::new(factory()) as Box<dyn ErasedRuntimeModule>);
             erased
         });
+        #[cfg(any(test, feature = "testing"))]
+        let (confirmed_consumer_ready_tx, confirmed_consumer_ready_rx) =
+            tokio::sync::oneshot::channel();
         Self {
             module,
             source_factory,
@@ -59,7 +62,22 @@ impl RuntimeRunner {
             parse_listener_handle: None,
             processing_model: ProcessingModel::StatelessWorker,
             leader_state: None,
+            #[cfg(any(test, feature = "testing"))]
+            confirmed_consumer_ready_rx: Some(confirmed_consumer_ready_rx),
+            #[cfg(any(test, feature = "testing"))]
+            confirmed_consumer_ready_tx: Some(confirmed_consumer_ready_tx),
         }
+    }
+
+    /// Test/harness-only handle to the sinex-li78 consumer-ready signal (see
+    /// the field doc on `RuntimeRunner::confirmed_consumer_ready_rx`). Takes
+    /// the receiver — call before spawning `run_service()` and await it to
+    /// know when the automaton bridge's durable JetStream consumer exists,
+    /// instead of racing `DeliverPolicy::New` by publishing immediately.
+    /// Returns `None` if already taken.
+    #[cfg(any(test, feature = "testing"))]
+    pub fn take_confirmed_consumer_ready(&mut self) -> Option<tokio::sync::oneshot::Receiver<()>> {
+        self.confirmed_consumer_ready_rx.take()
     }
 
     pub(super) fn config_identity_value(

@@ -245,6 +245,18 @@ impl RuntimeRunner {
             handler,
         ));
 
+        // sinex-li78: hand the test/harness-only consumer-ready sender (see
+        // `RuntimeRunner::confirmed_consumer_ready_tx` field doc) to the
+        // consumer task below via `run_with_ready_signal`, so a test can
+        // deterministically wait for the durable JetStream consumer to exist
+        // before publishing a confirmed event, instead of racing
+        // `DeliverPolicy::New`. `None` outside test/testing builds — zero
+        // behavior change (`run_with_ready_signal(None)` is exactly `run()`).
+        #[cfg(any(test, feature = "testing"))]
+        let ready_tx = self.confirmed_consumer_ready_tx.take();
+        #[cfg(not(any(test, feature = "testing")))]
+        let ready_tx = None;
+
         // Process historical backlog BEFORE starting the JetStream consumer.
         // The confirmed-event consumer ACKs after enqueueing into this bridge,
         // before the automaton finishes processing the batch. A restart is safe
@@ -270,7 +282,7 @@ impl RuntimeRunner {
         let consumer_runner = consumer.clone();
         let consumer_failure_reporter = Arc::clone(&consumer_failure);
         let consumer_handle = tokio::spawn(async move {
-            if let Err(err) = consumer_runner.run().await {
+            if let Err(err) = consumer_runner.run_with_ready_signal(ready_tx).await {
                 warn!(error = %err, "Automaton JetStream consumer terminated unexpectedly");
                 let mut guard = consumer_failure_reporter.lock().await;
                 *guard = Some(err);

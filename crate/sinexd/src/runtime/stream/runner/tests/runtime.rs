@@ -44,7 +44,25 @@ async fn run_service_drain_finishes_inflight_automaton_batch_and_emits_completio
     ));
     let mut drain_complete_sub = client.subscribe(drain_complete_subject).await?;
 
+    // sinex-li78: the bridge's confirmed-event consumer uses
+    // `DeliverPolicy::New`, which only sees messages published after the
+    // durable JetStream consumer is created. In production that race is
+    // closed by the mandatory historical DB catch-up scan every bridge-backed
+    // automaton runs first (a confirmed event is only ever published after
+    // its row is already durably persisted, so the scan sees anything the
+    // live tail could otherwise miss). `DrainBridgeTestModule::scan()` is a
+    // stub with no backing store, so it can't replicate that guarantee here —
+    // grab the consumer-ready signal before spawning `run_service()` and wait
+    // on it before publishing, instead of racing consumer creation.
+    let consumer_ready = runner
+        .take_confirmed_consumer_ready()
+        .ok_or_else(|| color_eyre::eyre::eyre!("confirmed-consumer-ready receiver already taken"))?;
     let run_handle = tokio::spawn(async move { runner.run_service().await });
+
+    tokio::time::timeout(Duration::from_secs(3), consumer_ready)
+        .await
+        .map_err(|_| color_eyre::eyre::eyre!("automaton confirmed-event consumer did not become ready"))?
+        .map_err(|_| color_eyre::eyre::eyre!("confirmed-consumer-ready sender dropped before signalling"))?;
 
     let event_id = Uuid::now_v7();
     let event = runtime_test_material_event(

@@ -643,10 +643,17 @@ impl RuntimeModule for DrainBridgeTestModule {
     }
 
     fn capabilities(&self) -> RuntimeCapabilities {
-        RuntimeCapabilities {
-            supports_historical: false,
-            ..RuntimeCapabilities::default()
-        }
+        // sinex-li78: `run_automaton_event_bridge` (crate::runtime::stream::runner::
+        // automaton_runtime) has required `supports_historical` since #2299
+        // (sinex-r6d.6 / sinex-vxu crash-window hardening) — it hard-errors
+        // before ever subscribing the confirmed-event consumer when this is
+        // false, so `process_event_batch` never runs. This module goes through
+        // the generic bridge (no `manages_own_continuous_loop`), so it must
+        // advertise `supports_historical: true` like a real bridge-backed
+        // automaton; the fixture's `scan()` stub above already satisfies that
+        // capability. Plain `RuntimeCapabilities::default()` already has
+        // `supports_historical: true`.
+        RuntimeCapabilities::default()
     }
 
     async fn current_checkpoint(&self) -> RuntimeResult<Checkpoint> {
