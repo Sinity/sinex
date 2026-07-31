@@ -99,6 +99,36 @@ pub async fn seed_product_declaration(
     Ok(())
 }
 
+/// Reconcile the curation/instructions RPC-handler product declarations
+/// (sinex-q46n) via the *real* production reconciler
+/// (`sinexd::automata::product_declarations::reconcile_declarations`) — the
+/// exact function `Supervisor::run` calls at real `sinexd` startup, applied
+/// here to `CURATION_OUTPUT_DECLARATIONS`/`INSTRUCTIONS_OUTPUT_DECLARATIONS`
+/// instead of the `AutomatonSpec` registry. Unlike `seed_product_declaration`
+/// above (a hand-rolled `INSERT` standing in for a declaration this test file
+/// doesn't otherwise care about), this calls the actual production
+/// declaration constants and the actual production insert path, so breaking
+/// either (an invalid declaration, a dropped/altered reconcile call, a
+/// declaration_id typo) turns every test that calls this red — see the
+/// module doc on the `sinexd` side for why the reconciler can't just run
+/// once for the whole test sandbox (it only runs from `Supervisor::run`,
+/// which this test sandbox never spawns).
+pub async fn seed_rpc_handler_product_declarations(pool: &sqlx::PgPool) -> TestResult<()> {
+    sinexd::automata::product_declarations::reconcile_declarations(
+        pool,
+        "curation-rpc",
+        sinexd::api::handlers::curation::CURATION_OUTPUT_DECLARATIONS,
+    )
+    .await?;
+    sinexd::automata::product_declarations::reconcile_declarations(
+        pool,
+        "instructions-rpc",
+        sinexd::api::handlers::instructions::INSTRUCTIONS_OUTPUT_DECLARATIONS,
+    )
+    .await?;
+    Ok(())
+}
+
 pub fn admin_auth() -> RpcAuthContext {
     RpcAuthContext {
         token_prefix: "test****".to_string(),

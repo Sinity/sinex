@@ -4,6 +4,10 @@ use serde_json::json;
 use sinex_db::repositories::DbPoolExt;
 use sinex_db::repositories::state::Operation as DbOperation;
 use sinex_primitives::authority::{Judgment, JudgmentVerdict, Proposal, ProposalKind};
+use sinex_primitives::derivation::{
+    ClaimSupportTemplate, ClaimTemporalQuality, DerivationOutputDeclaration,
+    DerivationWriteSurface, DerivedProductClass, InputEligibility, SourceCoverage, SupportLevel,
+};
 use sinex_primitives::domain::{EventSource, EventType, OperationStatus};
 use sinex_primitives::events::payloads::{
     CurationFinalizedPayload, CurationJudgmentDecision, CurationJudgmentPayload,
@@ -26,6 +30,126 @@ use std::collections::HashSet;
 use std::str::FromStr;
 
 use crate::api::rpc_server::RpcAuthContext;
+
+/// Derivation control-plane declarations for the curation RPC handlers
+/// (sinex-q46n). Unlike automaton outputs (`AutomatonSpec.outputs`, reconciled
+/// by `crate::automata::product_declarations::reconcile_product_declarations`),
+/// these handlers build and insert their own derived events directly rather
+/// than through the automaton adapter — reconciled through the same
+/// `reconcile_declarations` primitive, called separately from
+/// `Supervisor::run` with this slice.
+///
+/// One declaration per distinct `(source, event_type)` pair the curation
+/// handlers emit: `handle_curation_record_judgment` and
+/// `handle_curation_record_duplicate_judgment` both emit `curation.judgment`
+/// and share `CURATION_JUDGMENT_DECLARATION`; `handle_curation_finalize`
+/// emits `curation.finalized`; `handle_curation_record_duplicate_judgment`
+/// additionally emits a `curation.proposal` (the duplicate-resolution
+/// cluster proposal it records ahead of its judgment).
+pub const CURATION_OUTPUT_DECLARATIONS: &[DerivationOutputDeclaration] = &[
+    CURATION_PROPOSAL_DECLARATION,
+    CURATION_JUDGMENT_DECLARATION,
+    CURATION_FINALIZED_DECLARATION,
+];
+
+/// `curation.proposal` written by `handle_curation_record_duplicate_judgment`
+/// for the duplicate-candidate cluster it proposes resolving. A candidate
+/// awaiting explicit authority/deterministic-policy finalization —
+/// `SemanticCandidate`, `curation_writer` (this is a curation-domain RPC
+/// write, not an automaton `DerivedOutput`).
+const CURATION_PROPOSAL_DECLARATION: DerivationOutputDeclaration = DerivationOutputDeclaration {
+    declaration_id: "curation-rpc.curation.proposal",
+    owner: "curation-rpc",
+    product_class: DerivedProductClass::SemanticCandidate,
+    write_surface: DerivationWriteSurface::CurationWriter,
+    output_source: None,
+    output_event_type: None,
+    projection_kind: None,
+    artifact_kind: None,
+    proposal_kind: None,
+    semantics_version: "1.0.0",
+    input_eligibility: InputEligibility::ExplicitOnly,
+    default_support: ClaimSupportTemplate::new(
+        SupportLevel::Heuristic,
+        SourceCoverage::Partial,
+        ClaimTemporalQuality::RealtimeCapture,
+    ),
+    verification_command:
+        "xtask test -p sinexd -E 'test(curation_duplicate_judgment_records_proposal_over_candidate_set)'",
+};
+
+/// `curation.judgment` written by `handle_curation_record_judgment` and
+/// `handle_curation_record_duplicate_judgment` (same source/event_type,
+/// shared declaration). An authority decision over a proposal —
+/// `OperatorJudgment` per `DerivedProductClass::OperatorJudgment`'s doc
+/// ("only the curation/authority finalizer writer may emit this class").
+const CURATION_JUDGMENT_DECLARATION: DerivationOutputDeclaration = DerivationOutputDeclaration {
+    declaration_id: "curation-rpc.curation.judgment",
+    owner: "curation-rpc",
+    product_class: DerivedProductClass::OperatorJudgment,
+    write_surface: DerivationWriteSurface::CurationWriter,
+    output_source: None,
+    output_event_type: None,
+    projection_kind: None,
+    artifact_kind: None,
+    proposal_kind: None,
+    semantics_version: "1.0.0",
+    input_eligibility: InputEligibility::ExplicitOnly,
+    default_support: ClaimSupportTemplate::new(
+        SupportLevel::Direct,
+        SourceCoverage::Covered,
+        ClaimTemporalQuality::RealtimeCapture,
+    ),
+    verification_command:
+        "xtask test -p sinexd -E 'test(curation_record_judgment_persists_synthesis_event)'",
+};
+
+/// `curation.finalized` written by `handle_curation_finalize`: a
+/// deterministic receipt recording that an accepted/modified judgment was
+/// applied — `ReportArtifact` ("a persisted generated report, receipt,
+/// export, or artifact pointer"), `artifact_writer`.
+const CURATION_FINALIZED_DECLARATION: DerivationOutputDeclaration = DerivationOutputDeclaration {
+    declaration_id: "curation-rpc.curation.finalized",
+    owner: "curation-rpc",
+    product_class: DerivedProductClass::ReportArtifact,
+    write_surface: DerivationWriteSurface::ArtifactWriter,
+    output_source: None,
+    output_event_type: None,
+    projection_kind: None,
+    artifact_kind: None,
+    proposal_kind: None,
+    semantics_version: "1.0.0",
+    input_eligibility: InputEligibility::NeverInput,
+    default_support: ClaimSupportTemplate::new(
+        SupportLevel::Direct,
+        SourceCoverage::Covered,
+        ClaimTemporalQuality::RealtimeCapture,
+    ),
+    verification_command:
+        "xtask test -p sinexd -E 'test(curation_finalize_persists_lineage_to_original_proposal_and_judgment)'",
+};
+
+/// Stamp `product_class`/`claim_support`/`derivation_declaration_id` on a
+/// handler-built event from its static declaration, so
+/// `derivation.enforce_event_product_declaration()` (sinex-0vx.4) admits the
+/// write once `CURATION_OUTPUT_DECLARATIONS` has been reconciled into
+/// `derivation.product_declarations` (sinex-x79t's `reconcile_declarations`,
+/// called with this file's declarations from `Supervisor::run`).
+fn apply_curation_declaration<T>(
+    event: &mut Event<T>,
+    declaration: &DerivationOutputDeclaration,
+    evidence_event_count: u32,
+    evidence_material_count: u32,
+) {
+    event.product_class = Some(declaration.product_class);
+    event.claim_support = Some(declaration.default_support.instantiate(
+        evidence_event_count,
+        evidence_material_count,
+        1,
+        0,
+    ));
+    event.derivation_declaration_id = Some(declaration.declaration_id.to_string());
+}
 
 pub async fn handle_curation_list_proposals(
     pool: &PgPool,
@@ -99,11 +223,12 @@ pub async fn handle_curation_record_judgment(
     let parent = proposal_event.id.ok_or_else(|| {
         SinexError::invalid_state("curation.judgments.record: persisted proposal event missing id")
     })?;
-    let event = judgment
+    let mut event = judgment
         .clone()
         .from_parents([parent])?
         .at_time(judgment.judged_at)
         .build()?;
+    apply_curation_declaration(&mut event, &CURATION_JUDGMENT_DECLARATION, 1, 0);
     let inserted = pool.events().insert(event).await?;
 
     Ok(CurationRecordJudgmentResponse {
@@ -332,11 +457,17 @@ pub async fn handle_curation_record_duplicate_judgment(
             .to_string(),
         status: CurationProposalStatus::Pending,
     };
-    let proposal_event = proposal
+    let mut proposal_event = proposal
         .clone()
         .from_parents(event_ids.clone())?
         .at_time(Timestamp::now())
         .build()?;
+    apply_curation_declaration(
+        &mut proposal_event,
+        &CURATION_PROPOSAL_DECLARATION,
+        event_ids.len() as u32,
+        evidence_material_ids.len() as u32,
+    );
     let proposal_event = pool.events().insert(proposal_event).await?;
     let proposal_event_id = proposal_event.id.ok_or_else(|| {
         SinexError::invalid_state(
@@ -373,11 +504,12 @@ pub async fn handle_curation_record_duplicate_judgment(
             "preferred_event_id": req.preferred_event_id,
         })),
     };
-    let judgment_event = judgment
+    let mut judgment_event = judgment
         .clone()
         .from_parents([proposal_event_id])?
         .at_time(judgment.judged_at)
         .build()?;
+    apply_curation_declaration(&mut judgment_event, &CURATION_JUDGMENT_DECLARATION, 1, 0);
     let judgment_event = pool.events().insert(judgment_event).await?;
 
     Ok(CurationRecordDuplicateJudgmentResponse {
@@ -465,11 +597,12 @@ pub async fn handle_curation_finalize(
         SinexError::invalid_state("curation.finalize: persisted judgment event missing id")
     })?;
     let parents: [EventId; 2] = [proposal_event_id, judgment_parent];
-    let event = finalized
+    let mut event = finalized
         .clone()
         .from_parents(parents)?
         .at_time(finalized_at)
         .build()?;
+    apply_curation_declaration(&mut event, &CURATION_FINALIZED_DECLARATION, 2, 0);
     let inserted = pool.events().insert(event).await?;
     let operation_record = pool
         .state()

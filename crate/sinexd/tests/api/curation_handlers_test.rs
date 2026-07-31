@@ -52,6 +52,7 @@ async fn curation_list_proposals_returns_pending_events(ctx: TestContext) -> Tes
 
 #[sinex_test]
 async fn curation_record_judgment_persists_synthesis_event(ctx: TestContext) -> TestResult<()> {
+    common::seed_rpc_handler_product_declarations(ctx.pool()).await?;
     let proposal_event = insert_fixture_proposal(&ctx).await?;
     let proposal_event_id = proposal_event
         .id
@@ -141,6 +142,7 @@ async fn curation_duplicate_candidates_list_cross_material_clusters(
 async fn curation_duplicate_judgment_records_proposal_over_candidate_set(
     ctx: TestContext,
 ) -> TestResult<()> {
+    common::seed_rpc_handler_product_declarations(ctx.pool()).await?;
     let candidate_a = insert_duplicate_candidate(&ctx, "visit-1", "material-a").await?;
     let candidate_b = insert_duplicate_candidate(&ctx, "visit-1", "material-b").await?;
     let auth = RpcAuthContext::system();
@@ -230,6 +232,7 @@ async fn curation_duplicate_judgment_records_proposal_over_candidate_set(
 async fn curation_duplicate_accept_finalizes_through_operation_record(
     ctx: TestContext,
 ) -> TestResult<()> {
+    common::seed_rpc_handler_product_declarations(ctx.pool()).await?;
     let candidate_a = insert_duplicate_candidate(&ctx, "visit-1", "material-a").await?;
     let candidate_b = insert_duplicate_candidate(&ctx, "visit-1", "material-b").await?;
     let auth = RpcAuthContext::system();
@@ -289,6 +292,7 @@ async fn curation_duplicate_accept_finalizes_through_operation_record(
 async fn curation_duplicate_reject_does_not_create_finalization_operation(
     ctx: TestContext,
 ) -> TestResult<()> {
+    common::seed_rpc_handler_product_declarations(ctx.pool()).await?;
     let candidate_a = insert_duplicate_candidate(&ctx, "visit-1", "material-a").await?;
     let candidate_b = insert_duplicate_candidate(&ctx, "visit-1", "material-b").await?;
     let auth = RpcAuthContext::system();
@@ -341,6 +345,7 @@ async fn curation_duplicate_reject_does_not_create_finalization_operation(
 async fn curation_finalize_persists_lineage_to_original_proposal_and_judgment(
     ctx: TestContext,
 ) -> TestResult<()> {
+    common::seed_rpc_handler_product_declarations(ctx.pool()).await?;
     let proposal_event = insert_fixture_proposal(&ctx).await?;
     let original_proposal_event_id = proposal_event
         .id

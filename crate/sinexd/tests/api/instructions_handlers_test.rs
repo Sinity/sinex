@@ -11,10 +11,14 @@ use tokio::{
 };
 use xtask::sandbox::prelude::*;
 
+#[path = "common/mod.rs"]
+mod common;
+
 #[sinex_test]
 async fn hyprland_workspace_switch_records_unavailable_without_observation(
     ctx: TestContext,
 ) -> TestResult<()> {
+    common::seed_rpc_handler_product_declarations(ctx.pool()).await?;
     let auth = RpcAuthContext::system();
 
     let response = handle_hyprland_workspace_switch(
@@ -69,6 +73,7 @@ async fn hyprland_workspace_switch_records_unavailable_without_observation(
 async fn hyprland_workspace_switch_dispatches_typed_command_when_observation_ready(
     ctx: TestContext,
 ) -> TestResult<()> {
+    common::seed_rpc_handler_product_declarations(ctx.pool()).await?;
     let material_id = ctx
         .create_source_material(Some("hyprland-workspace-observation"))
         .await?;
@@ -132,6 +137,7 @@ async fn hyprland_workspace_switch_dispatches_typed_command_when_observation_rea
 async fn hyprland_workspace_switch_rejects_duplicate_active_idempotency_key(
     ctx: TestContext,
 ) -> TestResult<()> {
+    common::seed_rpc_handler_product_declarations(ctx.pool()).await?;
     let material_id = ctx
         .create_source_material(Some("hyprland-workspace-observation"))
         .await?;
@@ -225,6 +231,7 @@ async fn hyprland_workspace_switch_rejects_duplicate_active_idempotency_key(
 async fn hyprland_workspace_switch_noops_when_already_satisfied(
     ctx: TestContext,
 ) -> TestResult<()> {
+    common::seed_rpc_handler_product_declarations(ctx.pool()).await?;
     let material_id = ctx
         .create_source_material(Some("hyprland-workspace-observation"))
         .await?;
@@ -284,6 +291,7 @@ async fn hyprland_workspace_switch_noops_when_already_satisfied(
 async fn hyprland_workspace_switch_dry_run_records_plan_without_dispatch(
     ctx: TestContext,
 ) -> TestResult<()> {
+    common::seed_rpc_handler_product_declarations(ctx.pool()).await?;
     let material_id = ctx
         .create_source_material(Some("hyprland-workspace-observation"))
         .await?;
@@ -352,6 +360,7 @@ async fn hyprland_workspace_switch_dry_run_records_plan_without_dispatch(
 async fn hyprland_workspace_switch_records_failed_attempt_on_socket_rejection(
     ctx: TestContext,
 ) -> TestResult<()> {
+    common::seed_rpc_handler_product_declarations(ctx.pool()).await?;
     let material_id = ctx
         .create_source_material(Some("hyprland-workspace-observation"))
         .await?;
@@ -435,6 +444,7 @@ async fn hyprland_workspace_switch_records_failed_attempt_on_socket_rejection(
 async fn hyprland_workspace_switch_resolves_default_socket_from_runtime_env(
     ctx: TestContext,
 ) -> TestResult<()> {
+    common::seed_rpc_handler_product_declarations(ctx.pool()).await?;
     let material_id = ctx
         .create_source_material(Some("hyprland-workspace-observation"))
         .await?;

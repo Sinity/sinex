@@ -419,21 +419,39 @@ async fn start_api(
 
 /// Open a short-lived DB pool from `event_engine_config` and reconcile
 /// `derivation.product_declarations` from the static `AUTOMATA` registry
-/// (sinex-x79t). Runs once at startup, before any automaton spawns; the pool
+/// (sinex-x79t) plus the non-automaton RPC-handler writers that build and
+/// insert their own derived events directly (curation/instructions,
+/// sinex-q46n). Runs once at startup, before any automaton spawns; the pool
 /// is closed again immediately after — this is not the long-lived pool the
 /// event engine or automata use.
 async fn reconcile_product_declarations(event_engine_config: &EventEngineConfig) -> Result<()> {
     let pool = event_engine_config.create_db_pool().await?;
 
-    let inserted = crate::automata::product_declarations::reconcile_product_declarations(
-        &pool,
-        automata_registry::AUTOMATA,
-    )
+    let outcome: Result<usize> = async {
+        let mut inserted = crate::automata::product_declarations::reconcile_product_declarations(
+            &pool,
+            automata_registry::AUTOMATA,
+        )
+        .await?;
+        inserted += crate::automata::product_declarations::reconcile_declarations(
+            &pool,
+            "curation-rpc",
+            crate::api::handlers::curation::CURATION_OUTPUT_DECLARATIONS,
+        )
+        .await?;
+        inserted += crate::automata::product_declarations::reconcile_declarations(
+            &pool,
+            "instructions-rpc",
+            crate::api::handlers::instructions::INSTRUCTIONS_OUTPUT_DECLARATIONS,
+        )
+        .await?;
+        Ok(inserted)
+    }
     .await;
 
     pool.close().await;
 
-    let inserted = inserted?;
+    let inserted = outcome?;
     info!(inserted, "derivation.product_declarations reconciled");
     Ok(())
 }
