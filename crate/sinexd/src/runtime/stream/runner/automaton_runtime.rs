@@ -17,6 +17,7 @@ impl RuntimeRunner {
     #[cfg(feature = "messaging")]
     pub(super) async fn run_automaton_continuous_mode(&mut self) -> RuntimeResult<()> {
         info!("Starting automaton continuous mode");
+        eprintln!("BREADCRUMB: entered run_automaton_continuous_mode");
         let drain_controller = self
             .runtime_state()
             .ok_or_else(|| SinexError::lifecycle("Runtime state missing".to_string()))?
@@ -26,6 +27,7 @@ impl RuntimeRunner {
         // Get current checkpoint to resume from previous state if available
         let current_checkpoint = self.module.current_checkpoint().await?;
         let capabilities = self.module.capabilities();
+        eprintln!("BREADCRUMB: capabilities = {capabilities:?}");
 
         if capabilities.supports_continuous {
             info!("Starting continuous event processing for automaton");
@@ -194,6 +196,7 @@ impl RuntimeRunner {
         let drain_controller = handles.runtime_drain();
         let capabilities = self.module.capabilities();
 
+        eprintln!("BREADCRUMB: entered run_automaton_event_bridge, capabilities={capabilities:?}");
         if !capabilities.supports_historical {
             return Err(SinexError::validation(format!(
                 "Automaton bridge for module '{}' requires historical scan support before consuming confirmed events",
@@ -266,14 +269,19 @@ impl RuntimeRunner {
             )
             .await?;
 
+        eprintln!("BREADCRUMB: about to spawn consumer task");
         let consumer_failure = Arc::new(tokio::sync::Mutex::new(None));
         let consumer_runner = consumer.clone();
         let consumer_failure_reporter = Arc::clone(&consumer_failure);
         let consumer_handle = tokio::spawn(async move {
+            eprintln!("BREADCRUMB: consumer task started, calling consumer_runner.run()");
             if let Err(err) = consumer_runner.run().await {
+                eprintln!("BREADCRUMB: consumer_runner.run() returned Err: {err}");
                 warn!(error = %err, "Automaton JetStream consumer terminated unexpectedly");
                 let mut guard = consumer_failure_reporter.lock().await;
                 *guard = Some(err);
+            } else {
+                eprintln!("BREADCRUMB: consumer_runner.run() returned Ok (loop ended)");
             }
         });
         drain_controller.register_runtime_abort(consumer_handle.abort_handle());
@@ -312,6 +320,7 @@ impl RuntimeRunner {
         // Skip the immediately-firing first tick so we don't flush on startup.
         flush_ticker.tick().await;
 
+        eprintln!("BREADCRUMB: entering bridge select loop");
         loop {
             // Normal mode: select! between an incoming event and the flush timer.
             // Once drain is requested the consumer is aborted; switch to draining
@@ -342,6 +351,7 @@ impl RuntimeRunner {
                     }
                 }
                 LoopAction::Event(next_event) => {
+                    eprintln!("BREADCRUMB: loop got LoopAction::Event, is_some={}", next_event.is_some());
                     let Some(first) = next_event else {
                         if let Some(error) = consumer_failure.lock().await.take() {
                             return Err(error);

@@ -159,12 +159,18 @@ impl JetStreamEventConsumer {
         let confirmed_stream = format!("{raw_stream}_CONFIRMED");
 
         let confirmed_subject = self.confirmed_filter_subject();
+        eprintln!(
+            "BREADCRUMB: jetstream_consumer creating consumer stream={confirmed_stream} subject={confirmed_subject} deliver_policy={:?}",
+            self.config.deliver_policy
+        );
 
         let consumer = self
             .create_or_get_consumer(&js, &confirmed_stream, &confirmed_subject)
             .await?;
+        eprintln!("BREADCRUMB: jetstream_consumer consumer created/fetched OK");
         self.retire_legacy_filter_consumers(&js, &confirmed_stream)
             .await?;
+        eprintln!("BREADCRUMB: jetstream_consumer entering consume_confirmed_events");
 
         Self::consume_confirmed_events(
             consumer,
@@ -269,6 +275,7 @@ impl JetStreamEventConsumer {
                 Duration::from_secs(1),
             )
             .await?;
+            eprintln!("BREADCRUMB: pull_batch_bounded returned {} messages", messages.len());
             for msg in messages {
                 // Break promptly on stop() instead of finishing the whole batch,
                 // so graceful shutdown completes well under the stop timeout.
