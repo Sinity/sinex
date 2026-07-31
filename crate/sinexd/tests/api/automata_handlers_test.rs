@@ -2,11 +2,48 @@
 
 use serde_json::json;
 use sinex_db::DbPoolExt;
+use sinex_primitives::derivation::{ClaimSupport, DerivedProductClass};
 use sinex_primitives::domain::{ModuleKind, ModuleName};
 use sinex_primitives::events::DynamicPayload;
 use sinex_primitives::rpc::automata::AutomataStatusRequest;
 use sinexd::api::handlers::automata::handle_automata_status;
 use xtask::sandbox::prelude::*;
+
+/// Register a `derivation.product_declarations` row so
+/// `derivation.enforce_event_product_declaration()` accepts a test-built
+/// derived event that declares `product_class`. No sinexd startup
+/// reconciler exists yet (sinex-0vx.5) to populate this table from
+/// `AutomatonSpec::OUTPUT_DECLARATIONS`, so every test that persists a
+/// non-null `product_class` seeds its own row (mirrors
+/// `persistence_test.rs::seed_product_declaration`).
+async fn seed_product_declaration(
+    pool: &sqlx::PgPool,
+    declaration_id: &str,
+    product_class: DerivedProductClass,
+    output_source: &str,
+    output_event_type: &str,
+) -> TestResult<()> {
+    sqlx::query!(
+        r#"
+        INSERT INTO derivation.product_declarations (
+            declaration_id, owner, product_class, write_surface,
+            output_source, output_event_type, semantics_version,
+            input_eligibility, default_claim_support, verification_command
+        ) VALUES (
+            $1, 'sinex-4k4b-test', $2, 'derived_output',
+            $3, $4, 'v1', 'default_canonical_input', '{}'::jsonb, 'true'
+        )
+        ON CONFLICT (declaration_id) DO NOTHING
+        "#,
+        declaration_id,
+        product_class.as_str(),
+        output_source,
+        output_event_type,
+    )
+    .execute(pool)
+    .await?;
+    Ok(())
+}
 
 async fn insert_material_event(
     ctx: &TestContext,
@@ -152,10 +189,23 @@ async fn automata_status_surfaces_registry_run_and_derived_metrics(
     let parent =
         insert_material_event(&ctx, "test.input", "test.input", json!({ "command": "ls" })).await?;
     let parent_id = parent.id.expect("inserted parent must have id");
-    let output = DynamicPayload::new("test.output", "test.output", json!({ "canonical": "ls" }))
+    let declaration_id = "sinex.test.automata_status_surfaces_registry_run_and_derived_metrics";
+    let product_class = DerivedProductClass::CanonicalDerivedEvent;
+    seed_product_declaration(
+        ctx.pool(),
+        declaration_id,
+        product_class,
+        "test.output",
+        "test.output",
+    )
+    .await?;
+    let mut output = DynamicPayload::new("test.output", "test.output", json!({ "canonical": "ls" }))
         .module_run_id(run.id.to_uuid())
         .from_parents(vec![parent_id])?
         .build()?;
+    output.product_class = Some(product_class);
+    output.claim_support = Some(ClaimSupport::unknown());
+    output.derivation_declaration_id = Some(declaration_id.to_string());
     pool.events().insert(output).await?;
 
     let response = handle_automata_status(
