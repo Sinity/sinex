@@ -46,7 +46,8 @@ macro_rules! event_select_columns {
          derivation_declaration_id, \
          derivation_epoch_id::uuid as derivation_epoch_id, \
          derivation_lane_id::uuid as derivation_lane_id, \
-         adjudication_event_id::uuid as adjudication_event_id"
+         adjudication_event_id::uuid as adjudication_event_id, \
+         content_hash"
     };
 }
 

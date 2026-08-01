@@ -1005,6 +1005,7 @@ impl<'a> EventRepository<'a> {
         let mut module_run_ids: Vec<Option<Uuid>> = Vec::with_capacity(events.len());
         let mut payload_schema_ids = Vec::with_capacity(events.len());
         let mut anchor_payload_hashes = Vec::with_capacity(events.len());
+        let mut content_hashes = Vec::with_capacity(events.len());
         let mut source_event_ids = Vec::with_capacity(events.len());
         let mut source_material_ids = Vec::with_capacity(events.len());
         let mut offset_starts = Vec::with_capacity(events.len());
@@ -1074,6 +1075,11 @@ impl<'a> EventRepository<'a> {
             module_run_ids.push(event.module_run_id);
             payload_schema_ids.push(event.payload_schema_id);
             anchor_payload_hashes.push(event.anchor_payload_hash.clone());
+            // sinex-w1w7: same rationale as `insert`/`insert_with_tx` — this
+            // batch path has no separate admission stage, so hashing
+            // `event.payload` here is self-consistent.
+            content_hashes
+                .push(sinex_primitives::events::payload_content_hash(&event.payload).to_vec());
             source_event_ids.push(source_event_uuids);
             source_material_ids.push(source_material_id.map(|id| id.to_uuid()));
             offset_starts.push(offset_start);
@@ -1182,6 +1188,7 @@ impl<'a> EventRepository<'a> {
                 .push_unseparated("::uuid");
             b.push_bind(adjudication_event_ids[idx])
                 .push_unseparated("::uuid");
+            b.push_bind(&content_hashes[idx]);
         });
 
         builder.build().execute(&mut **tx).await.map_err(|e| {
@@ -1376,6 +1383,7 @@ impl<'a> EventRepository<'a> {
         let mut module_run_ids: Vec<Option<Uuid>> = Vec::with_capacity(batch.len());
         let mut associated_blob_ids = Vec::with_capacity(batch.len());
         let mut anchor_payload_hashes = Vec::with_capacity(batch.len());
+        let mut content_hashes = Vec::with_capacity(batch.len());
 
         for row in batch {
             // Postgres timestamps are microsecond precision. Store sub-microsecond
@@ -1403,6 +1411,7 @@ impl<'a> EventRepository<'a> {
             module_run_ids.push(row.module_run_id);
             associated_blob_ids.push(row.associated_blob_ids.clone());
             anchor_payload_hashes.push(row.anchor_payload_hash.clone());
+            content_hashes.push(row.content_hash.clone());
         }
 
         // Synthetic event metadata vectors
@@ -1484,6 +1493,7 @@ impl<'a> EventRepository<'a> {
                 .push_unseparated("::uuid");
             b.push_bind(adjudication_event_ids[idx])
                 .push_unseparated("::uuid");
+            b.push_bind(&content_hashes[idx]);
         });
 
         builder.push(" ON CONFLICT (id) DO NOTHING RETURNING id::uuid");

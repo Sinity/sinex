@@ -138,31 +138,7 @@ fn classify_live_match(
     match revision_policy_for_event_type(candidate.event_type.as_str()) {
         RevisionPolicy::SuppressDuplicate => EquivalenceOutcome::Suppress,
         RevisionPolicy::SupersedeOnChange => {
-            // sinex-w1w7: compare against the live row's STORED admission-time
-            // hash, never a hash recomputed from its (possibly NUL-stripped or
-            // redacted) persisted `payload` — those downstream mutations would
-            // otherwise make an unchanged re-emission misclassify as "changed
-            // content" and churn archive/re-insert forever. Fall back to
-            // recomputing from `live.payload` only for rows written before the
-            // content_hash column existed (`NULL`) — best effort, self-heals
-            // once such a row is ever superseded and rewritten with a stored
-            // hash.
-            let live_hash = live
-                .content_hash
-                .as_deref()
-                .map_or_else(|| payload_content_hash(&live.payload), |stored| {
-                    let mut hash = [0u8; 32];
-                    if stored.len() == 32 {
-                        hash.copy_from_slice(stored);
-                    } else {
-                        // Defensive: the DB CHECK constraint guarantees this
-                        // never happens for real rows, but never let a
-                        // malformed value silently compare as an empty hash.
-                        return payload_content_hash(&live.payload);
-                    }
-                    hash
-                });
-            if payload_content_hash(&candidate.payload) == live_hash {
+            if payload_content_hash(&candidate.payload) == live_row_content_hash(live) {
                 // Identical re-emit of the same occurrence: idempotent, suppress.
                 EquivalenceOutcome::Suppress
             } else {
@@ -171,6 +147,34 @@ fn classify_live_match(
                 }
             }
         }
+    }
+}
+
+/// The live row's admission-time content hash, for `classify_live_match`'s
+/// `SupersedeOnChange` comparison (sinex-w1w7).
+///
+/// Prefers the STORED `content_hash` column over recomputing from `payload`:
+/// `payload` reflects the live row's CURRENT persisted state, which may have
+/// been mutated (NUL-stripped, redacted) since that row was itself admitted.
+/// Comparing a fresh candidate's admission-time hash against a hash
+/// recomputed from a since-mutated payload made an unchanged re-emission
+/// misclassify as "changed content" and churn archive/re-insert forever —
+/// comparing admission-time hash to STORED admission-time hash sidesteps the
+/// question of what happened to the bytes in between entirely.
+///
+/// Falls back to recomputing from `live.payload` only when `content_hash` is
+/// `NULL` (rows written before this column existed) or malformed (defensive;
+/// the DB CHECK constraint guarantees a real row's `content_hash` is either
+/// `NULL` or exactly 32 bytes) — best effort, self-heals once such a row is
+/// ever superseded and rewritten with a stored hash.
+fn live_row_content_hash(live: &LiveEquivalenceRow) -> [u8; 32] {
+    match live.content_hash.as_deref() {
+        Some(stored) if stored.len() == 32 => {
+            let mut hash = [0u8; 32];
+            hash.copy_from_slice(stored);
+            hash
+        }
+        _ => payload_content_hash(&live.payload),
     }
 }
 
@@ -1516,3 +1520,7 @@ fn is_non_live_derived_parent_validation(error: &SinexError) -> bool {
             .to_string()
             .contains(NON_LIVE_DERIVED_PARENT_ERROR_FRAGMENT)
 }
+
+#[cfg(test)]
+#[path = "admission_test.rs"]
+mod tests;
