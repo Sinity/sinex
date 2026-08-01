@@ -479,9 +479,12 @@ async fn current_health_tracks_latest_status_per_component(ctx: TestContext) -> 
         reason: &str,
     ) -> TestResult<()> {
         let material_id = ctx.create_source_material(Some("sinex")).await?;
+        // sinex_telemetry.current_health reads from reflection.events (the
+        // self-observation lane), not core.events -- health.status is a
+        // sinex-about-itself signal, routed there like all reflection events.
         sqlx::query!(
             r#"
-            INSERT INTO core.events (
+            INSERT INTO reflection.events (
                 id,
                 source,
                 event_type,
@@ -532,12 +535,13 @@ async fn current_health_tracks_latest_status_per_component(ctx: TestContext) -> 
         2,
         "current_health must retain one row per component"
     );
-    assert_eq!(rows[0].component.as_deref(), Some("gateway"));
-    assert_eq!(rows[0].status.as_deref(), Some("degraded"));
-    assert_eq!(rows[0].reason.as_deref(), Some("warming caches"));
-    assert_eq!(rows[1].component.as_deref(), Some("event_engine"));
-    assert_eq!(rows[1].status.as_deref(), Some("unhealthy"));
-    assert_eq!(rows[1].reason.as_deref(), Some("lost database"));
+    // ORDER BY component ASC: "event_engine" sorts before "gateway".
+    assert_eq!(rows[0].component.as_deref(), Some("event_engine"));
+    assert_eq!(rows[0].status.as_deref(), Some("unhealthy"));
+    assert_eq!(rows[0].reason.as_deref(), Some("lost database"));
+    assert_eq!(rows[1].component.as_deref(), Some("gateway"));
+    assert_eq!(rows[1].status.as_deref(), Some("degraded"));
+    assert_eq!(rows[1].reason.as_deref(), Some("warming caches"));
 
     Ok(())
 }
@@ -635,7 +639,7 @@ async fn telemetry_relations_expose_expected_contract_columns(ctx: TestContext) 
             ][..],
         ),
         (
-            "node_stats_1h",
+            "source_stats_1h",
             &[
                 "bucket",
                 "module_kind",
@@ -768,12 +772,13 @@ async fn operator_telemetry_does_not_register_continuous_aggregates(
     let expected = [
         "assembly_stats_1h",
         "command_frequency_hourly",
+        "current_system_state",
         "current_window_focus",
         "file_activity_summary",
         "gateway_stats_1h",
         "event_engine_batch_stats_1h",
         "metric_counters_1h",
-        "node_stats_1h",
+        "source_stats_1h",
         "stream_stats_1h",
     ]
     .iter()
@@ -795,9 +800,13 @@ async fn operator_telemetry_views_include_live_rows(ctx: TestContext) -> TestRes
     let material_id = ctx
         .create_source_material(Some("sinexd.event_engine"))
         .await?;
+    // sinex_telemetry.event_engine_batch_stats_1h reads from reflection.events
+    // (the self-observation lane) -- batch.stats is sinex reporting on its own
+    // pipeline, not activity, so it must land in reflection.events like the
+    // production event_engine emitter does.
     sqlx::query!(
         r#"
-        INSERT INTO core.events (
+        INSERT INTO reflection.events (
             id,
             source,
             event_type,

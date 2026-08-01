@@ -133,18 +133,24 @@ async fn test_all_record_structs_match_tables() -> color_eyre::eyre::Result<()> 
     // Test that we can select into Record structs
     // This will fail at compile time if the structs don't match the tables
 
-    // Insert test data
+    // Insert test data. Material provenance (source_material_id + anchor_byte),
+    // not derived provenance (source_event_ids) -- a derived row also requires
+    // a matching `derivation.product_declarations` registration and
+    // claim_support (sinex-0vx.4 / W1 derivation control plane), which is
+    // irrelevant to what this test actually checks: that the Record structs
+    // match the live table shape.
     let event_id = uuid::Uuid::now_v7();
-    let parent_event_id = uuid::Uuid::now_v7();
+    let material_id = ctx.create_source_material(Some("test-source")).await?;
     sqlx::query!(
-        "INSERT INTO core.events (id, source, event_type, host, payload, ts_orig, source_event_ids) VALUES ($1::uuid, $2, $3, $4, $5, $6, $7::uuid[])",
+        "INSERT INTO core.events (id, source, event_type, host, payload, ts_orig, source_material_id, anchor_byte) VALUES ($1::uuid, $2, $3, $4, $5, $6, $7::uuid, $8)",
         event_id,
         "test-source",
         "test-event",
         "test-host",
         serde_json::json!({"test": "data"}),
         *sinex_primitives::temporal::now(),
-        &[parent_event_id][..]
+        material_id.to_uuid(),
+        0_i64,
     ).execute(pool).await.unwrap();
 
     // Query and verify the stored fields — proves the schema stores data without corruption,

@@ -9,6 +9,52 @@
 use sinex_db::schema::strict_diff::{DriftCategory, check_strict};
 use xtask::sandbox::prelude::*;
 
+/// Restores a trigger-backed function to its canonical, current-schema body
+/// after a test has deliberately corrupted it to exercise drift detection.
+///
+/// `ensure_trigger_set_sql` (the `apply()` helper backing these triggers)
+/// only checks trigger *existence*, not body drift -- by design, per the
+/// doc comment on `DECLARED_FUNCTION_BODIES` in `strict_diff.rs`, this is
+/// exactly the "silent CREATE OR REPLACE that convergence won't notice"
+/// scenario strict-diff exists to catch. That means a plain `apply()` call
+/// after corrupting one of these functions does NOT repair it. Dropping the
+/// trigger first forces the next `apply()` call to see it missing and
+/// recreate both the function and the trigger from the canonical SQL.
+///
+/// Without this, a test that corrupts a trigger function leaves that
+/// corruption live in the shared sandbox pool database it ran against,
+/// which can silently poison other tests that reuse the same pool slot or
+/// a template promoted from it (observed: `check_strict_returns_empty_after_apply`
+/// failing on a pool database contaminated by
+/// `detects_manual_edit_to_fn_archive_before_delete`, sinex-xjx8).
+async fn restore_trigger(pool: &sqlx::PgPool, table: &str, trigger_name: &str) -> TestResult<()> {
+    sqlx::query(&format!("DROP TRIGGER IF EXISTS {trigger_name} ON {table}"))
+        .execute(pool)
+        .await?;
+    sinex_db::schema::apply::apply(pool).await?;
+    Ok(())
+}
+
+/// Same restoration problem as [`restore_trigger`], for hash-gated (non-trigger)
+/// function sets: `ensure_function_set_sql` skips re-running a function set
+/// when every function in it already exists AND the `COMMENT ON FUNCTION`
+/// hash stashed on the set's representative signature still matches the
+/// current source (`sinex-o1mg`). A manual `CREATE OR REPLACE` bypasses that
+/// tracking entirely -- the stale hash comment survives the corruption, so
+/// the next `apply()` call still thinks nothing changed and skips. Clearing
+/// the comment forces a hash mismatch, which forces `apply()` to re-run the
+/// whole function-set SQL and restore every function in the set (including
+/// the one this test corrupted) to its canonical body.
+async fn restore_function_set(pool: &sqlx::PgPool, representative_signature: &str) -> TestResult<()> {
+    sqlx::query(&format!(
+        "COMMENT ON FUNCTION {representative_signature} IS NULL"
+    ))
+    .execute(pool)
+    .await?;
+    sinex_db::schema::apply::apply(pool).await?;
+    Ok(())
+}
+
 #[sinex_test]
 async fn check_strict_returns_empty_after_apply(ctx: TestContext) -> TestResult<()> {
     sinex_db::schema::apply::apply(&ctx.pool).await?;
@@ -139,6 +185,8 @@ async fn detects_manual_edit_to_trigger_function_body(ctx: TestContext) -> TestR
         "observed summary should name the missing markers: {}",
         matched[0].observed_summary
     );
+
+    restore_function_set(&ctx.pool, "core.start_operation(text,text,jsonb,tstzrange)").await?;
 
     Ok(())
 }
@@ -620,6 +668,8 @@ async fn detects_manual_edit_to_fn_archive_before_delete(ctx: TestContext) -> Te
         matched[0].observed_summary
     );
 
+    restore_trigger(&ctx.pool, "core.events", "trg_events_archive_before_delete").await?;
+
     Ok(())
 }
 
@@ -660,6 +710,8 @@ async fn detects_manual_edit_to_fn_events_validate_material_bounds(
         "expected exactly one trigger_body drift on fn_events_validate_material_bounds, got: {drifts:?}"
     );
 
+    restore_trigger(&ctx.pool, "core.events", "trg_events_validate_material_bounds").await?;
+
     Ok(())
 }
 
@@ -698,6 +750,13 @@ async fn detects_manual_edit_to_fn_source_material_validate_event_bounds(
         1,
         "expected exactly one trigger_body drift on fn_source_material_validate_event_bounds, got: {drifts:?}"
     );
+
+    restore_trigger(
+        &ctx.pool,
+        "raw.source_material_registry",
+        "trg_source_material_validate_event_bounds",
+    )
+    .await?;
 
     Ok(())
 }
@@ -801,6 +860,13 @@ async fn detects_manual_edit_to_fn_temporal_ledger_append_only(ctx: TestContext)
         "expected exactly one trigger_body drift on fn_temporal_ledger_append_only, got: {drifts:?}"
     );
 
+    restore_trigger(
+        &ctx.pool,
+        "raw.temporal_ledger",
+        "trg_tl_no_update_delete",
+    )
+    .await?;
+
     Ok(())
 }
 
@@ -836,6 +902,8 @@ async fn detects_manual_edit_to_fn_events_no_update(ctx: TestContext) -> TestRes
         1,
         "expected exactly one trigger_body drift on fn_events_no_update, got: {drifts:?}"
     );
+
+    restore_trigger(&ctx.pool, "core.events", "trg_events_no_update").await?;
 
     Ok(())
 }
@@ -873,6 +941,8 @@ async fn detects_manual_edit_to_execute_cascade_tombstone(ctx: TestContext) -> T
         "expected exactly one trigger_body drift on execute_cascade_tombstone, got: {drifts:?}"
     );
 
+    restore_function_set(&ctx.pool, "core.execute_cascade_tombstone(uuid[],text,uuid)").await?;
+
     Ok(())
 }
 
@@ -907,6 +977,8 @@ async fn detects_manual_edit_to_execute_cascade_restore(ctx: TestContext) -> Tes
         1,
         "expected exactly one trigger_body drift on execute_cascade_restore, got: {drifts:?}"
     );
+
+    restore_function_set(&ctx.pool, "core.execute_cascade_tombstone(uuid[],text,uuid)").await?;
 
     Ok(())
 }
