@@ -39,6 +39,7 @@ fn base_event_record() -> EventRecord {
         derivation_epoch_id: None,
         derivation_lane_id: None,
         adjudication_event_id: None,
+        content_hash: None,
     }
 }
 

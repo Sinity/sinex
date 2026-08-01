@@ -53,6 +53,7 @@ fn stream_batch_material_row(
         derivation_epoch_id: None,
         derivation_lane_id: None,
         adjudication_event_id: None,
+        content_hash: None,
     })
 }
 
@@ -373,6 +374,7 @@ async fn stream_batch_copy_roundtrip_diverse_payloads(ctx: TestContext) -> TestR
             derivation_epoch_id: None,
             derivation_lane_id: None,
             adjudication_event_id: None,
+        content_hash: None,
         });
     }
 
@@ -665,6 +667,7 @@ async fn stream_batch_insert_rejects_self_referential_synthesis_rows(
         derivation_epoch_id: None,
         derivation_lane_id: None,
         adjudication_event_id: None,
+        content_hash: None,
     }];
 
     let error = ctx
@@ -720,6 +723,7 @@ async fn stream_batch_insert_rejects_intra_batch_synthesis_cycles(
             derivation_epoch_id: None,
             derivation_lane_id: None,
             adjudication_event_id: None,
+        content_hash: None,
         },
         StreamBatchRow {
             id: second_id,
@@ -751,6 +755,7 @@ async fn stream_batch_insert_rejects_intra_batch_synthesis_cycles(
             derivation_epoch_id: None,
             derivation_lane_id: None,
             adjudication_event_id: None,
+        content_hash: None,
         },
     ];
 
@@ -856,6 +861,7 @@ fn stream_batch_derived_row(
         derivation_epoch_id: None,
         derivation_lane_id: None,
         adjudication_event_id: None,
+        content_hash: None,
     })
 }
 

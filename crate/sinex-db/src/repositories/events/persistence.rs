@@ -317,6 +317,14 @@ impl<'a> EventRepository<'a> {
         let derivation_epoch_id = event.derivation_epoch_id;
         let derivation_lane_id = event.derivation_lane_id;
         let adjudication_event_id = event.adjudication_event_id;
+        // Admission-time content hash (sinex-w1w7). This direct single-event
+        // insert path has no separate admission stage between construction
+        // and persistence (unlike the batch/COPY path, which threads an
+        // admission-computed hash through `StreamBatchRow` — see
+        // `insert_stream_batch_into` / `ToPostgresCopy for StreamBatchRow`),
+        // so hashing `payload` here, before any retry/clone, is
+        // self-consistent: it is the same bytes this call persists.
+        let content_hash = sinex_primitives::events::payload_content_hash(&payload);
 
         // Execute with retry logic
         with_retry_transaction_idempotent(
@@ -349,6 +357,7 @@ impl<'a> EventRepository<'a> {
                 let derivation_epoch_id = derivation_epoch_id;
                 let derivation_lane_id = derivation_lane_id;
                 let adjudication_event_id = adjudication_event_id;
+                let content_hash = content_hash;
 
                 Box::pin(async move {
                     // Enforce REPEATABLE READ for consistent view during cycle check
@@ -377,7 +386,8 @@ impl<'a> EventRepository<'a> {
                                 temporal_policy, semantics_version, scope_key, equivalence_key,
                                 created_by_operation_id, automaton_model, anchor_payload_hash, ts_quality,
                                 product_class, claim_support, derivation_declaration_id,
-                                derivation_epoch_id, derivation_lane_id, adjudication_event_id
+                                derivation_epoch_id, derivation_lane_id, adjudication_event_id,
+                                content_hash
                             ) VALUES (
                                 $1::uuid, $2, $3, $4, $5,
                                 $6, $7, $8, $9::uuid, $10::uuid[],
@@ -386,7 +396,8 @@ impl<'a> EventRepository<'a> {
                                 $17, $18, $19, $20,
                                 $21::uuid, $22, $23, $24,
                                 $25, $26, $27,
-                                $28::uuid, $29::uuid, $30::uuid
+                                $28::uuid, $29::uuid, $30::uuid,
+                                $31
                             )
                             RETURNING
                                 id as "id!: uuid::Uuid",
@@ -420,7 +431,8 @@ impl<'a> EventRepository<'a> {
                                 derivation_declaration_id,
                                 derivation_epoch_id::uuid as "derivation_epoch_id: uuid::Uuid",
                                 derivation_lane_id::uuid as "derivation_lane_id: uuid::Uuid",
-                                adjudication_event_id::uuid as "adjudication_event_id: uuid::Uuid"
+                                adjudication_event_id::uuid as "adjudication_event_id: uuid::Uuid",
+                                content_hash
                             "#,
                             id.to_uuid(),
                             event_source.as_str(),
@@ -457,7 +469,10 @@ impl<'a> EventRepository<'a> {
                             derivation_declaration_id,
                             derivation_epoch_id,
                             derivation_lane_id,
-                            adjudication_event_id
+                            adjudication_event_id,
+                            // sinex-w1w7: computed once above, before this closure's
+                            // retry-loop clones — the same bytes this call persists.
+                            content_hash.as_slice()
                         )
                         .fetch_one(&mut **tx)
                         .await,
@@ -472,7 +487,8 @@ impl<'a> EventRepository<'a> {
                                 temporal_policy, semantics_version, scope_key, equivalence_key,
                                 created_by_operation_id, automaton_model, anchor_payload_hash, ts_quality,
                                 product_class, claim_support, derivation_declaration_id,
-                                derivation_epoch_id, derivation_lane_id, adjudication_event_id
+                                derivation_epoch_id, derivation_lane_id, adjudication_event_id,
+                                content_hash
                             ) VALUES (
                                 $1::uuid, $2, $3, $4, $5,
                                 $6, $7, $8, $9::uuid, $10::uuid[],
@@ -481,7 +497,8 @@ impl<'a> EventRepository<'a> {
                                 $17, $18, $19, $20,
                                 $21::uuid, $22, $23, $24,
                                 $25, $26, $27,
-                                $28::uuid, $29::uuid, $30::uuid
+                                $28::uuid, $29::uuid, $30::uuid,
+                                $31
                             )
                             RETURNING
                                 id as "id!: uuid::Uuid",
@@ -515,7 +532,8 @@ impl<'a> EventRepository<'a> {
                                 derivation_declaration_id,
                                 derivation_epoch_id::uuid as "derivation_epoch_id: uuid::Uuid",
                                 derivation_lane_id::uuid as "derivation_lane_id: uuid::Uuid",
-                                adjudication_event_id::uuid as "adjudication_event_id: uuid::Uuid"
+                                adjudication_event_id::uuid as "adjudication_event_id: uuid::Uuid",
+                                content_hash
                             "#,
                             id.to_uuid(),
                             event_source.as_str(),
@@ -552,7 +570,8 @@ impl<'a> EventRepository<'a> {
                             derivation_declaration_id,
                             derivation_epoch_id,
                             derivation_lane_id,
-                            adjudication_event_id
+                            adjudication_event_id,
+                            content_hash.as_slice()
                         )
                         .fetch_one(&mut **tx)
                         .await,
@@ -649,6 +668,10 @@ impl<'a> EventRepository<'a> {
             SourceRole::Activity => EventStorageLane::Activity,
             SourceRole::Reflection => EventStorageLane::Reflection,
         };
+        // Admission-time content hash (sinex-w1w7) — see the matching
+        // comment in `insert` above; this direct path has no separate
+        // admission stage, so hashing `event.payload` here is self-consistent.
+        let content_hash = sinex_primitives::events::payload_content_hash(&event.payload);
 
         let record = match lane {
             EventStorageLane::Activity => sqlx::query_as!(
@@ -662,7 +685,8 @@ impl<'a> EventRepository<'a> {
                     temporal_policy, semantics_version, scope_key, equivalence_key,
                     created_by_operation_id, automaton_model, anchor_payload_hash, ts_quality,
                     product_class, claim_support, derivation_declaration_id,
-                    derivation_epoch_id, derivation_lane_id, adjudication_event_id
+                    derivation_epoch_id, derivation_lane_id, adjudication_event_id,
+                    content_hash
                 ) VALUES (
                     $1::uuid, $2, $3, $4, $5,
                     $6, $7, $8, $9::uuid, $10::uuid[],
@@ -671,7 +695,8 @@ impl<'a> EventRepository<'a> {
                     $17, $18, $19, $20,
                     $21::uuid, $22, $23, $24,
                     $25, $26, $27,
-                    $28::uuid, $29::uuid, $30::uuid
+                    $28::uuid, $29::uuid, $30::uuid,
+                    $31
                 )
                 RETURNING
                     id as "id!: uuid::Uuid",
@@ -705,7 +730,8 @@ impl<'a> EventRepository<'a> {
                     derivation_declaration_id,
                     derivation_epoch_id::uuid as "derivation_epoch_id: uuid::Uuid",
                     derivation_lane_id::uuid as "derivation_lane_id: uuid::Uuid",
-                    adjudication_event_id::uuid as "adjudication_event_id: uuid::Uuid"
+                    adjudication_event_id::uuid as "adjudication_event_id: uuid::Uuid",
+                    content_hash
                 "#,
                 id.to_uuid(),
                 event.source.as_str(),
@@ -738,7 +764,8 @@ impl<'a> EventRepository<'a> {
                 event.derivation_declaration_id,
                 event.derivation_epoch_id,
                 event.derivation_lane_id,
-                event.adjudication_event_id
+                event.adjudication_event_id,
+                content_hash.as_slice()
             )
             .fetch_one(&mut **tx)
             .await,
@@ -753,7 +780,8 @@ impl<'a> EventRepository<'a> {
                     temporal_policy, semantics_version, scope_key, equivalence_key,
                     created_by_operation_id, automaton_model, anchor_payload_hash, ts_quality,
                     product_class, claim_support, derivation_declaration_id,
-                    derivation_epoch_id, derivation_lane_id, adjudication_event_id
+                    derivation_epoch_id, derivation_lane_id, adjudication_event_id,
+                    content_hash
                 ) VALUES (
                     $1::uuid, $2, $3, $4, $5,
                     $6, $7, $8, $9::uuid, $10::uuid[],
@@ -762,7 +790,8 @@ impl<'a> EventRepository<'a> {
                     $17, $18, $19, $20,
                     $21::uuid, $22, $23, $24,
                     $25, $26, $27,
-                    $28::uuid, $29::uuid, $30::uuid
+                    $28::uuid, $29::uuid, $30::uuid,
+                    $31
                 )
                 RETURNING
                     id as "id!: uuid::Uuid",
@@ -796,7 +825,8 @@ impl<'a> EventRepository<'a> {
                     derivation_declaration_id,
                     derivation_epoch_id::uuid as "derivation_epoch_id: uuid::Uuid",
                     derivation_lane_id::uuid as "derivation_lane_id: uuid::Uuid",
-                    adjudication_event_id::uuid as "adjudication_event_id: uuid::Uuid"
+                    adjudication_event_id::uuid as "adjudication_event_id: uuid::Uuid",
+                    content_hash
                 "#,
                 id.to_uuid(),
                 event.source.as_str(),
@@ -829,7 +859,8 @@ impl<'a> EventRepository<'a> {
                 event.derivation_declaration_id,
                 event.derivation_epoch_id,
                 event.derivation_lane_id,
-                event.adjudication_event_id
+                event.adjudication_event_id,
+                content_hash.as_slice()
             )
             .fetch_one(&mut **tx)
             .await,
