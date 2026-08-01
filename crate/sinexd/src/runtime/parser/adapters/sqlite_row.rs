@@ -317,6 +317,26 @@ pub struct SqliteRowConfig {
     #[cfg(feature = "messaging")]
     #[serde(default)]
     pub snapshot: SqliteSnapshotConfig,
+
+    /// Width, in rowids, of a trailing window of already-cursored rows to
+    /// re-read on every poll, in addition to rows past the cursor.
+    ///
+    /// `0` (default) preserves the original strictly-append `WHERE rowid >
+    /// cursor` behavior: once a row is read, the cursor advances past it
+    /// forever.
+    ///
+    /// Sources backed by a store that mutates its most-recently-inserted
+    /// row(s) in place — ActivityWatch's heartbeat-merged `endtime` growth is
+    /// the motivating case, sinex-h3g — set this to re-observe those rows
+    /// after the cursor has moved past them. The re-read flows through the
+    /// normal parse → admission path unchanged; whether a re-read of an
+    /// unmodified row is free (suppressed as an identical duplicate) or
+    /// corrects a stale interpretation (superseded) is entirely the event
+    /// type's `RevisionPolicy` and occurrence-key identity, not this
+    /// adapter's concern. This field only decides which rows get re-offered
+    /// to the parser.
+    #[serde(default)]
+    pub mutable_trailing_rows: u32,
 }
 
 impl Default for SqliteRowConfig {
@@ -331,6 +351,7 @@ impl Default for SqliteRowConfig {
             batch_size: default_batch_size(),
             #[cfg(feature = "messaging")]
             snapshot: SqliteSnapshotConfig::default(),
+            mutable_trailing_rows: 0,
         }
     }
 }
@@ -382,6 +403,15 @@ impl InputShapeAdapter for SqliteRowAdapter {
         let rowid_col = config.rowid_column.clone();
         let last_rowid = cursor.map_or(0, |c| c.last_rowid);
 
+        // Sources with `mutable_trailing_rows > 0` (e.g. desktop.activitywatch,
+        // sinex-h3g) re-include a trailing window of already-cursored rows on
+        // every poll instead of only rows strictly past the cursor, so a row
+        // whose backing store mutated it in place after it was first read
+        // gets re-offered to the parser. `query_from` (not `last_rowid`)
+        // drives the query; the cursor itself still advances to the newest
+        // rowid seen, same as before — only the read window widens.
+        let query_from = last_rowid.saturating_sub(i64::from(config.mutable_trailing_rows));
+
         // Build the full query from the config.
         let base_query = if config.query.to_uppercase().contains("SELECT") {
             config.query.clone()
@@ -390,12 +420,12 @@ impl InputShapeAdapter for SqliteRowAdapter {
         };
 
         let batch_size = config.batch_size;
-        let (sql, bind_rowid) = if last_rowid > 0 {
+        let (sql, bind_rowid) = if query_from > 0 {
             (
                 format!(
                     "SELECT {rowid_col}, * FROM ({base_query}) WHERE {rowid_col} > ?1 ORDER BY {rowid_col} ASC LIMIT {batch_size}"
                 ),
-                Some(last_rowid),
+                Some(query_from),
             )
         } else {
             (

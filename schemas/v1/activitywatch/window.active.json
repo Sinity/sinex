@@ -1,5 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "ActivityWatch mutates its most-recently-inserted row per bucket in place\nvia heartbeat merging (`endtime` — and therefore `duration_ms` — grows\nwithout a new `SQLite` row). `supersede_on_change` lets a later re-read of\nthe same start-anchored occurrence (see\n`ActivityWatchParser::parse_record`'s `occurrence_key`, keyed on\n`bucket_id` + start timestamp, never `endtime`) archive the stale short\ninterpretation and admit the grown one instead of duplicating it\n(sinex-h3g, ruling sinex-y8v).",
   "properties": {
     "app": {
       "type": "string"

@@ -10,6 +10,34 @@
 //! Anchor: `SqliteRow`
 //! Checkpoint family: `MutableSnapshot { backing_store: "sqlite", anchor: "bucket_event_timestamp" }`
 //! Privacy tier: `Secret` — title/URL fields are policy-scoped by payload path.
+//!
+//! ## Mutability (sinex-h3g)
+//!
+//! `aw-server-rust` extends the newest event row *for each bucket* in place
+//! via heartbeat merging: as long as consecutive observations for a bucket
+//! arrive within its `pulsetime`, the existing row's `endtime` (and derived
+//! `duration`) grows instead of a new row being inserted. A plain
+//! `WHERE rowid > cursor` scan therefore reads a still-growing row exactly
+//! once, at whatever duration it had at that moment, and never learns it grew
+//! — the `MutableSnapshot` contract's promise was previously undelivered.
+//!
+//! The fix is `SqliteRowConfig::mutable_trailing_rows` (see
+//! `baseline_adapter_config` below): each poll re-reads the trailing N rows
+//! *before* the cursor in addition to the new ones, so a growing row is
+//! re-observed on every subsequent poll until it stops being the newest row
+//! for its bucket. The window is sized in raw rowids (not per-bucket) because
+//! the adapter has no bucket-aware cursor; it only needs to comfortably cover
+//! the number of buckets that can be concurrently active (window/afk/web
+//! watchers — a handful), not every row ActivityWatch has ever grown.
+//!
+//! Re-reads flow through the *normal* parser → admission path. Occurrence
+//! identity is start-anchored (`bucket_id` + start timestamp — see
+//! `occurrence_key` in `parse_record`, never `endtime`), and the AW payloads
+//! opt into `RevisionPolicy::SupersedeOnChange`
+//! (`sinex_primitives::events::payloads::desktop`): an unchanged re-read
+//! content-hashes identically and is suppressed; a grown re-read archives the
+//! stale short interpretation and admits the new one as the sole live row
+//! for that occurrence (sinex-y8v).
 
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
@@ -17,8 +45,8 @@ use serde::{Deserialize, Serialize};
 use sinex_macros::SourceMeta;
 use sinex_primitives::domain::{EventSource, EventType};
 use sinex_primitives::parser::{
-    InputShapeKind, ParsedEventIntent, ParserContext, ParserId, ParserManifest, SourceId,
-    TimingConfidence, TimingEvidence,
+    InputShapeKind, OccurrenceKey, ParsedEventIntent, ParserContext, ParserId, ParserManifest,
+    SourceId, TimingConfidence, TimingEvidence,
 };
 use sinex_primitives::privacy::{ProcessingContext, SensitivityHint};
 use sinex_primitives::source_contracts::{
@@ -255,6 +283,19 @@ impl MaterialParser for ActivityWatchParser {
             BucketKind::Unknown => unreachable!("filtered above"),
         };
 
+        // Start-anchored occurrence identity (sinex-y8v): keyed on bucket_id +
+        // the START timestamp only, never `endtime`/`duration`. A grown
+        // re-read of the same row (see module docs, sinex-h3g) carries the
+        // SAME key here, so admission's SupersedeOnChange path treats it as a
+        // revision of the same occurrence rather than a fresh interpretation.
+        let occurrence_key = OccurrenceKey {
+            source_id: ctx.source_id.clone(),
+            fields: vec![
+                ("bucket_id".into(), bucket_id.to_string()),
+                ("event_timestamp".into(), ts_orig.format_rfc3339()),
+            ],
+        };
+
         let intent = ParsedEventIntent::builder()
             .source_id(ctx.source_id.clone())
             .parser_id(ParserId::from_static("activitywatch-sqlite"))
@@ -270,6 +311,7 @@ impl MaterialParser for ActivityWatchParser {
                 confidence: TimingConfidence::Intrinsic,
             })
             .anchor(record.anchor.clone())
+            .occurrence_key(occurrence_key)
             .privacy_context(ProcessingContext::Document)
             .build();
 
@@ -304,9 +346,17 @@ impl MaterialParser for ActivityWatchParser {
         // selected `buckets.id` so every row classified as
         // `BucketKind::Unknown` (the prefix `aw-watcher-*` never matched
         // integer "1","2",...) and silently dropped 4.8M events.
+        // `mutable_trailing_rows`: re-read the trailing rows below the cursor
+        // on every poll (see module docs, sinex-h3g) so a bucket's growing
+        // tail row is re-observed after heartbeats extend its `endtime`. 32
+        // comfortably covers the handful of watcher buckets
+        // (window/afk/web-per-browser) that can be concurrently active
+        // without materially widening each poll's row count against the
+        // 10_000-row default batch size.
         serde_json::json!({
             "query": "SELECT events.id AS rowid, buckets.name AS bucket_id, events.starttime AS started_at, ((events.endtime - events.starttime) / 1000000000.0) AS duration, events.datastr AS data FROM events JOIN buckets ON events.bucketrow = buckets.id ORDER BY events.id",
-            "table": "events"
+            "table": "events",
+            "mutable_trailing_rows": 32
         })
     }
 }
