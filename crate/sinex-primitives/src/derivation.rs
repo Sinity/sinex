@@ -34,11 +34,14 @@
 //! only via an explicit FREEZE (`end_seq = Some(..)`), never a wall clock.
 
 use schemars::JsonSchema;
+use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
+use serde_json::Value as JsonValue;
 
 use crate::error::{Result, SinexError};
 use crate::events::Event;
 use crate::ids::Id;
+use crate::primitives::Uuid;
 use crate::temporal::Timestamp;
 
 // ─── DerivedProductClass ───────────────────────────────────────────────────
@@ -672,6 +675,120 @@ impl std::str::FromStr for ProjectionFreshnessClass {
             "manual" => Ok(Self::Manual),
             _ => Err(format!("unknown projection freshness class: {s}")),
         }
+    }
+}
+
+// ─── LaneOutputKind / LaneDiffReport ────────────────────────────────────────
+
+/// Cross-kind churn totals every `derivation.lane_diffs` row carries,
+/// regardless of `output_kind`.
+///
+/// This is the stable shape a dashboard/health surface can read without
+/// knowing the per-kind semantics — `counts`/`examples` (below) carry the
+/// typed, per-kind detail (split/merge for entity/relation, boundary-shift
+/// for sessionization, etc.), which does NOT generalize across kinds. Only
+/// the coarse added/removed/changed/unchanged shape does.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct LaneDiffSummary {
+    pub added: usize,
+    pub removed: usize,
+    pub changed: usize,
+    pub unchanged: usize,
+}
+
+/// The generic diff abstraction every `derivation.lane_outputs.output_kind`
+/// value implements.
+///
+/// `EntityRelationDiffReport` semantics (split/merge, category_changed,
+/// confidence_changed — `crate::semantic`) do NOT generalize to other lane
+/// kinds (sessionization boundaries, entity-chain scope reconciliation).
+/// `LaneOutputKind` is the trait that lets [`LaneDiffReport`] stay
+/// output-kind-generic at the cross-kind [`LaneDiffSummary`] layer while
+/// preserving full per-kind fidelity in `Self::Counts`/`Self::Example`.
+///
+/// Entity/relation (`crate::semantic::EntityRelationLaneOutputs`) is the
+/// first implementation — a port of `diff_entity_relation_lanes`, not a
+/// reimplementation: `diff` below calls that function directly. Sessionization
+/// (sinex-0vx.7) and the entity-chain lane (sinex-0vx.9) are later
+/// implementations over the same trait.
+pub trait LaneOutputKind {
+    /// Per-kind aggregate churn counts (serialized into
+    /// `derivation.lane_diffs.counts`).
+    type Counts: Serialize + DeserializeOwned;
+    /// One representative diff example (serialized into
+    /// `derivation.lane_diffs.examples`).
+    type Example: Serialize + DeserializeOwned;
+
+    /// The `derivation.lane_outputs.output_kind` / `derivation.lane_diffs`
+    /// vocabulary string this implementation owns.
+    fn output_kind() -> &'static str;
+
+    /// Compare a baseline and candidate output set of this kind, returning
+    /// the cross-kind [`LaneDiffSummary`] alongside the typed per-kind
+    /// counts and up to `max_examples` representative examples.
+    fn diff(
+        baseline: &Self,
+        candidate: &Self,
+        max_examples: usize,
+    ) -> (LaneDiffSummary, Self::Counts, Vec<Self::Example>);
+}
+
+/// Output-kind-generic lane diff report.
+///
+/// Maps 1:1 onto a `derivation.lane_diffs` row: `counts`/`examples` are the
+/// serialized `K::Counts`/`K::Example` for whichever [`LaneOutputKind`] `K`
+/// produced this report — [`LaneDiffReport::compute`] is the only
+/// construction path, so a caller can never hand-assemble a report whose
+/// `counts` shape doesn't match its declared `output_kind`.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub struct LaneDiffReport {
+    pub baseline_lane_id: Uuid,
+    pub candidate_lane_id: Uuid,
+    pub product_class: DerivedProductClass,
+    pub output_kind: String,
+    pub input_set_hash: String,
+    pub summary: LaneDiffSummary,
+    pub counts: JsonValue,
+    pub examples: Vec<JsonValue>,
+}
+
+impl LaneDiffReport {
+    /// Compute a [`LaneDiffReport`] from two typed lane output sets of the
+    /// same [`LaneOutputKind`]. The only construction path — `counts` and
+    /// `examples` are always the serialized form of exactly what `K::diff`
+    /// returned for `K::output_kind()`, never assembled by hand.
+    pub fn compute<K: LaneOutputKind>(
+        baseline_lane_id: Uuid,
+        candidate_lane_id: Uuid,
+        product_class: DerivedProductClass,
+        input_set_hash: impl Into<String>,
+        baseline: &K,
+        candidate: &K,
+        max_examples: usize,
+    ) -> Result<Self> {
+        let (summary, counts, examples) = K::diff(baseline, candidate, max_examples);
+        let counts = serde_json::to_value(counts).map_err(|error| {
+            SinexError::serialization("serialize lane diff counts").with_std_error(&error)
+        })?;
+        let examples = examples
+            .into_iter()
+            .map(|example| {
+                serde_json::to_value(example).map_err(|error| {
+                    SinexError::serialization("serialize lane diff example").with_std_error(&error)
+                })
+            })
+            .collect::<Result<Vec<_>>>()?;
+
+        Ok(Self {
+            baseline_lane_id,
+            candidate_lane_id,
+            product_class,
+            output_kind: K::output_kind().to_string(),
+            input_set_hash: input_set_hash.into(),
+            summary,
+            counts,
+            examples,
+        })
     }
 }
 

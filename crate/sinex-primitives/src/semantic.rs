@@ -10,6 +10,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value as JsonValue;
 
 use crate::Uuid;
+use crate::derivation::{LaneDiffSummary, LaneOutputKind};
 
 /// Input scope for a semantic lane.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
@@ -337,6 +338,48 @@ pub fn diff_entity_relation_lanes(
         input_set_hash: input_set_hash.into(),
         counts,
         examples,
+    }
+}
+
+/// Entity/relation is the first [`LaneOutputKind`] implementation
+/// (sinex-0vx.6) — a port of [`diff_entity_relation_lanes`] onto the generic
+/// trait, not a reimplementation: `diff` below calls that function directly
+/// and reshapes its output into the cross-kind [`LaneDiffSummary`] plus the
+/// existing typed `EntityRelationDiffCounts`/`EntityRelationDiffExample`.
+impl LaneOutputKind for EntityRelationLaneOutputs {
+    type Counts = EntityRelationDiffCounts;
+    type Example = EntityRelationDiffExample;
+
+    fn output_kind() -> &'static str {
+        "entity_relation"
+    }
+
+    fn diff(
+        baseline: &Self,
+        candidate: &Self,
+        max_examples: usize,
+    ) -> (LaneDiffSummary, Self::Counts, Vec<Self::Example>) {
+        let report = diff_entity_relation_lanes(
+            Uuid::nil(),
+            Uuid::nil(),
+            String::new(),
+            baseline,
+            candidate,
+            max_examples,
+        );
+        let counts = &report.counts;
+        let summary = LaneDiffSummary {
+            added: counts.entity_new + counts.relation_added,
+            removed: counts.entity_missing + counts.relation_removed,
+            changed: counts.entity_split
+                + counts.entity_merge
+                + counts.entity_category_changed
+                + counts.entity_confidence_changed
+                + counts.relation_predicate_changed
+                + counts.relation_weight_changed,
+            unchanged: 0,
+        };
+        (summary, report.counts, report.examples)
     }
 }
 

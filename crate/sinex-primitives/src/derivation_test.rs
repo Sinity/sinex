@@ -2,6 +2,8 @@
 
 use super::*;
 use crate::Uuid;
+use serde::{Deserialize, Serialize};
+use std::collections::BTreeSet;
 use xtask::sandbox::sinex_test;
 
 // ─── DerivedProductClass ───────────────────────────────────────────────────
@@ -353,6 +355,120 @@ async fn derivation_scope_serde_round_trips_stream_checkpoint_tag() -> TestResul
 
     let round_tripped: DerivationScope = serde_json::from_value(json).unwrap();
     assert_eq!(round_tripped, scope);
+    Ok(())
+}
+
+// ─── LaneOutputKind / LaneDiffReport ────────────────────────────────────────
+
+/// A deliberately non-entity/relation [`LaneOutputKind`] fixture: a flat set
+/// of stable string tags. Exists purely to prove `LaneDiffReport`/
+/// `LaneOutputKind` generalize beyond `EntityRelationLaneOutputs` — the
+/// sinex-0vx.6 AC requires >=1 non-entity implementation exercised by a
+/// test, and sessionization (0vx.7) / entity-chain (0vx.9) — the real second
+/// and third implementations — are explicitly out of this bead's scope.
+#[derive(Debug, Clone, Default, PartialEq)]
+struct TagSetFixture(BTreeSet<String>);
+
+impl LaneOutputKind for TagSetFixture {
+    type Counts = TagSetDiffCounts;
+    type Example = String;
+
+    fn output_kind() -> &'static str {
+        "test.tag_set_fixture"
+    }
+
+    fn diff(
+        baseline: &Self,
+        candidate: &Self,
+        max_examples: usize,
+    ) -> (LaneDiffSummary, Self::Counts, Vec<Self::Example>) {
+        let added: Vec<String> = candidate.0.difference(&baseline.0).cloned().collect();
+        let removed: Vec<String> = baseline.0.difference(&candidate.0).cloned().collect();
+        let unchanged = baseline.0.intersection(&candidate.0).count();
+
+        let summary = LaneDiffSummary {
+            added: added.len(),
+            removed: removed.len(),
+            changed: 0,
+            unchanged,
+        };
+        let counts = TagSetDiffCounts {
+            added: added.len(),
+            removed: removed.len(),
+        };
+        let examples = added
+            .into_iter()
+            .chain(removed)
+            .take(max_examples)
+            .collect();
+
+        (summary, counts, examples)
+    }
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+struct TagSetDiffCounts {
+    added: usize,
+    removed: usize,
+}
+
+#[sinex_test]
+async fn lane_diff_report_generalizes_to_non_entity_relation_output_kind() -> TestResult<()> {
+    // Entity/relation: the first (ported) LaneOutputKind implementation.
+    let baseline_entities = crate::semantic::EntityRelationLaneOutputs {
+        entities: vec![crate::semantic::SemanticEntityOutput::new(
+            "e1", "Alice", "person",
+        )],
+        relations: vec![],
+    };
+    let candidate_entities = crate::semantic::EntityRelationLaneOutputs {
+        entities: vec![
+            crate::semantic::SemanticEntityOutput::new("e1", "Alice", "person"),
+            crate::semantic::SemanticEntityOutput::new("e2", "Bob", "person"),
+        ],
+        relations: vec![],
+    };
+    let entity_report = LaneDiffReport::compute(
+        Uuid::from_u128(1),
+        Uuid::from_u128(2),
+        DerivedProductClass::SemanticCandidate,
+        "hash-entities",
+        &baseline_entities,
+        &candidate_entities,
+        10,
+    )
+    .unwrap();
+    assert_eq!(
+        entity_report.output_kind,
+        crate::semantic::EntityRelationLaneOutputs::output_kind()
+    );
+    assert_eq!(entity_report.summary.added, 1);
+    assert_eq!(entity_report.counts["entity_new"], 1);
+
+    // A second, non-entity/relation LaneOutputKind: proves the trait/report
+    // generalize rather than being entity/relation-shaped in disguise.
+    let baseline_tags = TagSetFixture(BTreeSet::from(["a".to_string(), "b".to_string()]));
+    let candidate_tags = TagSetFixture(BTreeSet::from(["b".to_string(), "c".to_string()]));
+    let tag_report = LaneDiffReport::compute(
+        Uuid::from_u128(3),
+        Uuid::from_u128(4),
+        DerivedProductClass::AnalysisClaim,
+        "hash-tags",
+        &baseline_tags,
+        &candidate_tags,
+        10,
+    )
+    .unwrap();
+
+    assert_eq!(tag_report.output_kind, "test.tag_set_fixture");
+    assert_ne!(tag_report.output_kind, entity_report.output_kind);
+    assert_eq!(tag_report.summary.added, 1);
+    assert_eq!(tag_report.summary.removed, 1);
+    assert_eq!(tag_report.summary.unchanged, 1);
+    assert_eq!(tag_report.counts["added"], 1);
+    assert_eq!(tag_report.counts["removed"], 1);
+    assert_eq!(tag_report.examples.len(), 2);
+
     Ok(())
 }
 
