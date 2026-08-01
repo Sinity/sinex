@@ -126,6 +126,17 @@ pub async fn seed_rpc_handler_product_declarations(pool: &sqlx::PgPool) -> TestR
         sinexd::api::handlers::instructions::INSTRUCTIONS_OUTPUT_DECLARATIONS,
     )
     .await?;
+    // sinex-0vx.5: `handle_curation_finalize` now requires a registered,
+    // active `authority.finalizer_registry` row before it will emit a
+    // finalized output (the curation-bypass rejection gate) -- reconcile
+    // through the real production reconciler, same rationale as the product
+    // declarations above (only runs from `Supervisor::run` at real `sinexd`
+    // startup, never in this test sandbox).
+    sinexd::authority::reconcile_finalizer_registrations(
+        pool,
+        sinexd::api::handlers::curation::CURATION_FINALIZER_DECLARATIONS,
+    )
+    .await?;
     Ok(())
 }
 

@@ -127,6 +127,50 @@ async fn reconcile_allows_real_canonicalizer_output_insert(
     Ok(())
 }
 
+/// Named for sinex-0vx.5's original VERIFY line
+/// (`xtask test -p sinexd -E 'test(product_declaration_startup_diff)'`,
+/// carried over unchanged when the startup-reconcile half of that bead was
+/// split out into sinex-x79t). Proves the "startup diff" framing literally:
+/// a binary that reconciles successfully once, then observes the DB row for
+/// one of its own declarations get changed out from under it (e.g. an
+/// older/newer binary version, or a manual edit) between the first and
+/// second reconcile call, refuses to start on the second call rather than
+/// silently accepting the drifted value. Complements
+/// `reconcile_rejects_conflicting_existing_row` (which seeds the conflict
+/// before the reconciler ever runs) by proving the diff is caught even when
+/// the first run legitimately succeeded.
+#[sinex_test]
+async fn product_declaration_startup_diff(ctx: TestContext) -> TestResult<()> {
+    let declaration = &CANONICALIZER_OUTPUT_DECLARATIONS[0];
+
+    let first_run = reconcile_product_declarations(ctx.pool(), AUTOMATA).await?;
+    assert!(
+        first_run > 0,
+        "first reconcile against a fresh schema-applied database must insert declarations"
+    );
+
+    // Simulate drift: something other than the reconciler changed the row
+    // for a declaration_id the static registry still declares.
+    sqlx::query!(
+        "UPDATE derivation.product_declarations SET product_class = $1 WHERE declaration_id = $2",
+        DerivedProductClass::AnalysisClaim.as_str(),
+        declaration.declaration_id,
+    )
+    .execute(ctx.pool())
+    .await
+    .map_err(|error| color_eyre::eyre::eyre!("simulate DB drift: {error}"))?;
+
+    let error = reconcile_product_declarations(ctx.pool(), AUTOMATA)
+        .await
+        .expect_err("a second reconcile must fail closed on the drifted row, not accept it");
+    assert!(
+        error.to_string().contains(declaration.declaration_id),
+        "startup-diff error should name the drifted declaration_id"
+    );
+
+    Ok(())
+}
+
 /// Fail-closed AC: a `derivation.product_declarations` row that already
 /// exists for a registered automaton's `declaration_id` but disagrees on
 /// shape (here: `product_class`) must make the reconciler refuse to start,

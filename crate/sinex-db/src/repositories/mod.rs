@@ -1,5 +1,6 @@
 #![doc = include_str!("../../docs/db_repositories.md")]
 //! See `docs/db_repositories.md` for the repository architecture overview.
+pub mod authority;
 pub mod blobs;
 // pub mod checkpoints; // Removed
 pub mod common;
@@ -25,6 +26,7 @@ pub mod source_session_state;
 pub mod state;
 
 // Re-export main types
+pub use authority::{ActiveFinalizerPolicy, AuthorityRepository, ExistingFinalizerRegistration};
 pub use blobs::{BlobRepository, StorageStats};
 // pub use checkpoints::{Checkpoint, CheckpointExt, CheckpointRecord, CheckpointRepository}; // Removed
 pub use common::{DbResult, EnhancedRepository, Repository, TableDef, TransactionSupport};
@@ -93,6 +95,7 @@ use sqlx::PgPool;
 /// let schema = pool.schemas().get_active_schema(source, event_type).await?;
 /// ```
 pub trait DbPoolExt {
+    fn authority(&self) -> authority::AuthorityRepository<'_>;
     fn blobs(&self) -> blobs::BlobRepository;
     fn embeddings(&self) -> embeddings::EmbeddingRepository<'_>;
     fn email_mailbox_projections(
@@ -121,6 +124,10 @@ pub trait DbPoolExt {
 }
 
 impl DbPoolExt for PgPool {
+    fn authority(&self) -> authority::AuthorityRepository<'_> {
+        authority::AuthorityRepository::new(self)
+    }
+
     fn blobs(&self) -> blobs::BlobRepository {
         blobs::BlobRepository::new(self.clone())
     }

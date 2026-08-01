@@ -7,6 +7,7 @@
 //! replay-control fabric.
 
 pub mod api;
+pub mod authority;
 pub mod automata;
 pub mod event_engine;
 pub mod runtime;
