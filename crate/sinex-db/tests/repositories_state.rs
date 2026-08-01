@@ -17,9 +17,16 @@ async fn insert_runtime_health_status(
     reason: &str,
 ) -> TestResult<()> {
     let material_id = ctx.create_source_material(Some("sinex")).await?;
+    // source="sinex" is a self-observation source (source_role() ==
+    // SourceRole::Reflection — see sources_test.rs) and must land in
+    // reflection.events, never core.events: sinex_telemetry.current_health
+    // (which list_live_runtime_presence/get_runtime_health both join
+    // against) is a view over reflection.events only (sinex-4k4b). This
+    // fixture predates that lane split and inserted into core.events,
+    // silently making the health row invisible to every reader.
     sqlx::query!(
         r#"
-        INSERT INTO core.events (
+        INSERT INTO reflection.events (
             id,
             source,
             event_type,

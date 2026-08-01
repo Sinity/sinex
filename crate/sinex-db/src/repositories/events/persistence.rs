@@ -360,10 +360,22 @@ impl<'a> EventRepository<'a> {
                 let content_hash = content_hash;
 
                 Box::pin(async move {
-                    // Enforce REPEATABLE READ for consistent view during cycle check
-                    set_repeatable_read(tx).await?;
-
                     if let Some(source_event_ids) = source_event_ids.as_ref() {
+                        // REPEATABLE READ only serves the cycle/liveness checks below
+                        // (a consistent snapshot across their multiple queries); it is
+                        // scoped to the derived path, matching insert_stream_batch's
+                        // "Derived batches: wrap in REPEATABLE READ for cycle
+                        // detection" split. Applying it unconditionally to every
+                        // single-event insert (material events included) made
+                        // concurrent inserts sharing a source_material_id spuriously
+                        // fail with 40001 "could not serialize access due to
+                        // concurrent update": REPEATABLE READ turns the
+                        // material-event-count trigger's UPDATE of the shared
+                        // raw.source_material_registry row from an ordinary
+                        // row-lock wait (READ COMMITTED) into a hard serialization
+                        // conflict whenever two concurrent transactions touch that
+                        // row inside the same snapshot window — see sinex-94mh.
+                        set_repeatable_read(tx).await?;
                         ensure_no_synthesis_cycles(&mut **tx, &id, source_event_ids)?;
                         ensure_source_event_ids_are_live(&mut **tx, &id, source_event_ids, None)
                             .await?;

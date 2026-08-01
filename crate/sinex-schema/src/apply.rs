@@ -2291,18 +2291,24 @@ BEGIN
             ts_orig, ts_orig_subnano,
             source_material_id, anchor_byte, offset_start, offset_end, offset_kind,
             source_event_ids, associated_blob_ids,
-            payload_schema_id, module_run_id,
+            payload_schema_id, module_run_id, anchor_payload_hash,
             temporal_policy, semantics_version, scope_key, equivalence_key,
-            created_by_operation_id, automaton_model
+            created_by_operation_id, automaton_model, ts_quality,
+            product_class, claim_support, derivation_declaration_id,
+            derivation_epoch_id, derivation_lane_id, adjudication_event_id,
+            content_hash
         )
         SELECT
             ae.id, ae.source, ae.event_type, ae.host, ae.payload,
             ae.ts_orig, ae.ts_orig_subnano,
             ae.source_material_id, ae.anchor_byte, ae.offset_start, ae.offset_end, ae.offset_kind,
             ae.source_event_ids, ae.associated_blob_ids,
-            ae.payload_schema_id, ae.module_run_id,
+            ae.payload_schema_id, ae.module_run_id, ae.anchor_payload_hash,
             ae.temporal_policy, ae.semantics_version, ae.scope_key, ae.equivalence_key,
-            ae.created_by_operation_id, ae.automaton_model
+            ae.created_by_operation_id, ae.automaton_model, ae.ts_quality,
+            ae.product_class, ae.claim_support, ae.derivation_declaration_id,
+            ae.derivation_epoch_id, ae.derivation_lane_id, ae.adjudication_event_id,
+            ae.content_hash
         FROM audit.archived_events ae
         WHERE ae.id = ANY(p_archived_ids)
           -- Occurrence safety (#2194 F2): never restore a material

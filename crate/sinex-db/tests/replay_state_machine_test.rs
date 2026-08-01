@@ -12,6 +12,33 @@ fn test_file_payload(path: &str) -> TestResult<FileCreatedPayload> {
     ))
 }
 
+/// Registers a `derivation.product_declarations` row for
+/// `fs-watcher`/`file.created` so this file's derived-event fixture (built
+/// via `.from_parents(..)`) satisfies the `events_derived_requires_product_class`
+/// CHECK constraint and the `enforce_event_product_declaration` trigger
+/// (sinex-0vx.4 / sinex-8cr.2 derivation control plane, landed after this
+/// fixture was written — see sinex-94mh). Idempotent via `ON CONFLICT`.
+async fn ensure_replay_preview_test_declaration(pool: &sqlx::PgPool) -> color_eyre::Result<()> {
+    sqlx::query(
+        r#"
+        INSERT INTO derivation.product_declarations (
+            declaration_id, owner, product_class, write_surface,
+            output_source, output_event_type, semantics_version,
+            input_eligibility, default_claim_support, verification_command
+        )
+        VALUES (
+            'replay-preview-test-decl', 'test-owner', 'canonical_derived_event',
+            'derived_output', 'fs-watcher', 'file.created', 'v1',
+            'default_canonical_input', '{}'::jsonb, 'true'
+        )
+        ON CONFLICT (declaration_id) DO NOTHING
+        "#,
+    )
+    .execute(pool)
+    .await?;
+    Ok(())
+}
+
 #[sinex_test]
 async fn replay_preview_nulls_cascade_impact_when_metadata_queries_fail(
     ctx: TestContext,
@@ -33,10 +60,14 @@ async fn replay_preview_nulls_cascade_impact_when_metadata_queries_fail(
         .await?;
     let root_id = root.id.expect("inserted root event should have an id");
 
+    ensure_replay_preview_test_declaration(ctx.pool()).await?;
     let mut derived = Event::builder(test_file_payload("/tmp/replay-preview-derived.txt")?)
         .from_parents(vec![root_id])?
         .build()?;
     derived.scope_key = Some("scope:replay-preview".to_string());
+    derived.product_class = Some(sinex_primitives::derivation::DerivedProductClass::CanonicalDerivedEvent);
+    derived.claim_support = Some(sinex_primitives::derivation::ClaimSupport::unknown());
+    derived.derivation_declaration_id = Some("replay-preview-test-decl".to_string());
     ctx.pool().events().insert(derived).await?;
 
     sqlx::query!("ALTER TABLE core.events RENAME COLUMN scope_key TO scope_key_broken")

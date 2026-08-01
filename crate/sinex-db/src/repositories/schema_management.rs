@@ -872,6 +872,19 @@ impl<'a> SchemaManagementRepository<'a> {
     async fn insert_new_schema(&self, candidate: &SchemaCandidate) -> DbResult<Uuid> {
         let id = Uuid::now_v7();
 
+        // Arbiter is uk_schema_identity (source, event_type, schema_version),
+        // not the separate content_hash unique constraint: sync_schema_bundle
+        // only reaches this path after its own existing.get(&key) lookup (keyed
+        // on the same source/event_type/version triple, see
+        // SchemaCandidate::key) found nothing, so the identity index is the one
+        // this call path can actually race on. Two concurrent syncs of the
+        // identical bundle entry produce the same (source, event_type, version)
+        // AND the same content_hash, but Postgres's ON CONFLICT only suppresses
+        // a violation of the named arbiter — a violation of the OTHER unique
+        // index still raises a hard error. Targeting content_hash here left
+        // the identity constraint unguarded, so the losing side of the race
+        // got a raw 23505 instead of converging (concurrent_schema_bundle_sync_
+        // is_idempotent, sinex-94mh).
         let row = sqlx::query!(
             r#"
             INSERT INTO sinex_schemas.event_payload_schemas (
@@ -880,8 +893,10 @@ impl<'a> SchemaManagementRepository<'a> {
             ) VALUES (
                 $1::uuid, $2, $3, $4, $5, $6, true, NOW()
             )
-            ON CONFLICT (content_hash) DO UPDATE
-            SET is_active = true,
+            ON CONFLICT (source, event_type, schema_version) DO UPDATE
+            SET schema_content = EXCLUDED.schema_content,
+                content_hash = EXCLUDED.content_hash,
+                is_active = true,
                 updated_at = NOW()
             RETURNING id as "id!: Uuid"
             "#,

@@ -57,6 +57,54 @@ fn stream_batch_material_row(
     })
 }
 
+/// Declaration id shared by every fixture in this file that builds a
+/// `fs-watcher`/`file.created` derived event via `.from_parents(..)`
+/// (`Event::builder(FileCreatedPayload...)`). Registered lazily by
+/// `ensure_fs_watcher_derived_declaration` and stamped onto the built event
+/// by `mark_fs_watcher_derived_event`.
+const FS_WATCHER_DERIVED_DECLARATION_ID: &str = "repositories-events-fs-watcher-derived-decl";
+
+/// Registers a `derivation.product_declarations` row for `fs-watcher`/
+/// `file.created` so this file's many `FileCreatedPayload` derived-event
+/// fixtures satisfy `events_derived_requires_product_class` and the
+/// `enforce_event_product_declaration` trigger (sinex-0vx.4 / sinex-8cr.2
+/// derivation control plane, landed after these fixtures were written —
+/// see sinex-94mh). Idempotent via `ON CONFLICT`.
+async fn ensure_fs_watcher_derived_declaration(pool: &sqlx::PgPool) -> color_eyre::Result<()> {
+    sqlx::query(
+        r#"
+        INSERT INTO derivation.product_declarations (
+            declaration_id, owner, product_class, write_surface,
+            output_source, output_event_type, semantics_version,
+            input_eligibility, default_claim_support, verification_command
+        )
+        VALUES (
+            $1, 'test-owner', 'canonical_derived_event',
+            'derived_output', 'fs-watcher', 'file.created', 'v1',
+            'default_canonical_input', '{}'::jsonb, 'true'
+        )
+        ON CONFLICT (declaration_id) DO NOTHING
+        "#,
+    )
+    .bind(FS_WATCHER_DERIVED_DECLARATION_ID)
+    .execute(pool)
+    .await?;
+    Ok(())
+}
+
+/// Stamps a built `fs-watcher`/`file.created` derived event (`source_event_ids`
+/// set via `.from_parents`) with the product/claim metadata
+/// `events_derived_requires_product_class` and the product-declaration
+/// trigger require. Pairs with `ensure_fs_watcher_derived_declaration`.
+fn mark_fs_watcher_derived_event<T>(
+    mut event: sinex_primitives::Event<T>,
+) -> sinex_primitives::Event<T> {
+    event.product_class = Some(sinex_primitives::derivation::DerivedProductClass::CanonicalDerivedEvent);
+    event.claim_support = Some(sinex_primitives::derivation::ClaimSupport::unknown());
+    event.derivation_declaration_id = Some(FS_WATCHER_DERIVED_DECLARATION_ID.to_string());
+    event
+}
+
 #[sinex_test]
 async fn events_repository_inserts_typed_events(ctx: TestContext) -> TestResult<()> {
     let material_record = ctx
@@ -112,12 +160,15 @@ async fn events_repository_preserves_provenance(ctx: TestContext) -> TestResult<
     let source = ctx.pool.events().insert(source_event).await?;
     let source_id = source.id.unwrap();
 
+    ensure_fs_watcher_derived_declaration(&ctx.pool).await?;
     let derived_payload = FileCreatedPayload::test_default(
         RecordedPath::from_observed("/tmp/derived.txt").map_err(|e| color_eyre::eyre::eyre!(e))?,
     );
-    let derived_event = Event::builder(derived_payload)
-        .from_parents(vec![source_id])?
-        .build()?;
+    let derived_event = mark_fs_watcher_derived_event(
+        Event::builder(derived_payload)
+            .from_parents(vec![source_id])?
+            .build()?,
+    );
 
     let inserted = ctx.pool.events().insert(derived_event).await?;
     match inserted.provenance() {
@@ -601,13 +652,23 @@ async fn get_material_root_events_in_range_excludes_synthesis_rows(
         .id
         .expect("material event must have an id");
 
-    let derived_event = DynamicPayload::new(
+    seed_product_declaration(
+        &ctx.pool,
+        "material-root-range-filter-decl",
+        "test.repo.range.filter",
+        "test.repo.range.derived",
+    )
+    .await?;
+    let mut derived_event = DynamicPayload::new(
         source.as_str(),
         "test.repo.range.derived",
         json!({ "kind": "derived" }),
     )
     .from_parents(vec![material_event_id])?
     .build()?;
+    derived_event.product_class = Some(sinex_primitives::derivation::DerivedProductClass::CanonicalDerivedEvent);
+    derived_event.claim_support = Some(sinex_primitives::derivation::ClaimSupport::unknown());
+    derived_event.derivation_declaration_id = Some("material-root-range-filter-decl".to_string());
     ctx.pool.events().insert(derived_event).await?;
 
     let end = Timestamp::now() + time::Duration::seconds(1);
@@ -1577,9 +1638,12 @@ async fn synthetic_metadata_roundtrips_through_insert(ctx: TestContext) -> TestR
         RecordedPath::from_observed("/tmp/synth-meta.txt")
             .map_err(|e| color_eyre::eyre::eyre!(e))?,
     );
-    let mut derived = Event::builder(derived_payload)
-        .from_parents(vec![source_id])?
-        .build()?;
+    ensure_fs_watcher_derived_declaration(&ctx.pool).await?;
+    let mut derived = mark_fs_watcher_derived_event(
+        Event::builder(derived_payload)
+            .from_parents(vec![source_id])?
+            .build()?,
+    );
 
     derived.temporal_policy = Some(SyntheticTemporalPolicy::LatestInput);
     derived.semantics_version = Some("v2.3.1".to_string());
@@ -1696,14 +1760,17 @@ async fn all_temporal_policy_variants_roundtrip(ctx: TestContext) -> TestResult<
     let source = ctx.pool.events().insert(source_event).await?;
     let source_id = source.id.unwrap();
 
+    ensure_fs_watcher_derived_declaration(&ctx.pool).await?;
     for policy in policies {
         let payload = FileCreatedPayload::test_default(
             RecordedPath::from_observed(format!("/tmp/policy-{policy}.txt"))
                 .map_err(|e| color_eyre::eyre::eyre!(e))?,
         );
-        let mut event = Event::builder(payload)
-            .from_parents(vec![source_id])?
-            .build()?;
+        let mut event = mark_fs_watcher_derived_event(
+            Event::builder(payload)
+                .from_parents(vec![source_id])?
+                .build()?,
+        );
         event.temporal_policy = Some(policy);
 
         let inserted = ctx.pool.events().insert(event).await?;
@@ -1751,14 +1818,17 @@ async fn all_automaton_model_variants_roundtrip(ctx: TestContext) -> TestResult<
     let source = ctx.pool.events().insert(source_event).await?;
     let source_id = source.id.unwrap();
 
+    ensure_fs_watcher_derived_declaration(&ctx.pool).await?;
     for model in models {
         let payload = FileCreatedPayload::test_default(
             RecordedPath::from_observed(format!("/tmp/model-{model}.txt"))
                 .map_err(|e| color_eyre::eyre::eyre!(e))?,
         );
-        let mut event = Event::builder(payload)
-            .from_parents(vec![source_id])?
-            .build()?;
+        let mut event = mark_fs_watcher_derived_event(
+            Event::builder(payload)
+                .from_parents(vec![source_id])?
+                .build()?,
+        );
         event.automaton_model = Some(model);
 
         let inserted = ctx.pool.events().insert(event).await?;
@@ -1803,6 +1873,7 @@ async fn synthetic_metadata_survives_batch_insert(ctx: TestContext) -> TestResul
 
     let operation_id = Uuid::now_v7();
 
+    ensure_fs_watcher_derived_declaration(&ctx.pool).await?;
     // Build a batch of events with varying metadata
     let mut events = Vec::new();
     for i in 0..5 {
@@ -1810,9 +1881,11 @@ async fn synthetic_metadata_survives_batch_insert(ctx: TestContext) -> TestResul
             RecordedPath::from_observed(format!("/tmp/batch-{i}.txt"))
                 .map_err(|e| color_eyre::eyre::eyre!(e))?,
         );
-        let mut event = Event::builder(payload)
-            .from_parents(vec![source_id])?
-            .build()?;
+        let mut event = mark_fs_watcher_derived_event(
+            Event::builder(payload)
+                .from_parents(vec![source_id])?
+                .build()?,
+        );
         event.temporal_policy = Some(SyntheticTemporalPolicy::LatestInput);
         event.semantics_version = Some(format!("v1.{i}"));
         event.scope_key = Some(format!("batch-scope:{i}"));
@@ -2181,13 +2254,16 @@ async fn test_replacement_query_distinguishes_material_from_derived(
     let parent_id = parent_inserted.id.expect("parent event id");
 
     // Insert a derived-provenance event (derived from parent, no material)
+    ensure_fs_watcher_derived_declaration(pool).await?;
     let syn_payload = FileCreatedPayload::test_default(
         RecordedPath::from_observed("/tmp/replacement-derived.txt")
             .map_err(|e| color_eyre::eyre::eyre!(e))?,
     );
-    let syn_event = Event::builder(syn_payload)
-        .from_parents(vec![parent_id])?
-        .build()?;
+    let syn_event = mark_fs_watcher_derived_event(
+        Event::builder(syn_payload)
+            .from_parents(vec![parent_id])?
+            .build()?,
+    );
     let syn_inserted = pool.events().insert(syn_event).await?;
     let syn_event_id = syn_inserted.id.expect("derived event id");
 

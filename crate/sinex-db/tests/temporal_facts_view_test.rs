@@ -30,6 +30,44 @@ async fn register_test_material(
     Ok(Id::from_uuid(record.id))
 }
 
+/// Registers a `derivation.product_declarations` row for `fs-watcher`/
+/// `file.created` so this file's derived-event fixtures (built via
+/// `.from_parents(..)`) satisfy the `events_derived_requires_product_class`
+/// CHECK constraint and the `enforce_event_product_declaration` trigger
+/// (sinex-0vx.4 / sinex-8cr.2 derivation control plane, landed after these
+/// fixtures were written — see sinex-94mh). Idempotent via `ON CONFLICT`.
+async fn ensure_fs_watcher_derived_declaration(pool: &sqlx::PgPool) -> color_eyre::Result<()> {
+    sqlx::query(
+        r#"
+        INSERT INTO derivation.product_declarations (
+            declaration_id, owner, product_class, write_surface,
+            output_source, output_event_type, semantics_version,
+            input_eligibility, default_claim_support, verification_command
+        )
+        VALUES (
+            'temporal-facts-fs-watcher-derived-decl', 'test-owner', 'canonical_derived_event',
+            'derived_output', 'fs-watcher', 'file.created', 'v1',
+            'default_canonical_input', '{}'::jsonb, 'true'
+        )
+        ON CONFLICT (declaration_id) DO NOTHING
+        "#,
+    )
+    .execute(pool)
+    .await?;
+    Ok(())
+}
+
+/// Stamps a built `fs-watcher`/`file.created` derived event (`source_event_ids`
+/// set via `.from_parents`) with the product/claim metadata
+/// `events_derived_requires_product_class` and the product-declaration
+/// trigger require. Pairs with `ensure_fs_watcher_derived_declaration`.
+fn mark_fs_watcher_derived_event<T>(mut event: Event<T>) -> Event<T> {
+    event.product_class = Some(sinex_primitives::derivation::DerivedProductClass::CanonicalDerivedEvent);
+    event.claim_support = Some(sinex_primitives::derivation::ClaimSupport::unknown());
+    event.derivation_declaration_id = Some("temporal-facts-fs-watcher-derived-decl".to_string());
+    event
+}
+
 #[sinex_test]
 async fn material_event_projected_through_ledger(ctx: TestContext) -> TestResult<()> {
     let material_id = register_test_material(&ctx, "temporal-facts-material").await?;
@@ -134,15 +172,18 @@ async fn synthetic_event_projected_inline(ctx: TestContext) -> TestResult<()> {
     let source = ctx.pool.events().insert(source_event).await?;
     let source_id = source.id.unwrap();
 
+    ensure_fs_watcher_derived_declaration(&ctx.pool).await?;
     // Build synthetic/derived event with inline metadata
     let operation_id = Uuid::now_v7();
     let derived_payload = FileCreatedPayload::test_default(
         RecordedPath::from_observed("/tmp/synth-facts.txt")
             .map_err(|e| color_eyre::eyre::eyre!(e))?,
     );
-    let mut derived = Event::builder(derived_payload)
-        .from_parents(vec![source_id])?
-        .build()?;
+    let mut derived = mark_fs_watcher_derived_event(
+        Event::builder(derived_payload)
+            .from_parents(vec![source_id])?
+            .build()?,
+    );
 
     derived.temporal_policy = Some(SyntheticTemporalPolicy::LatestInput);
     derived.semantics_version = Some("v1.0.0".to_string());
@@ -220,13 +261,16 @@ async fn mixed_projection_no_cross_contamination(ctx: TestContext) -> TestResult
     let mat_id = mat_inserted.id.unwrap();
 
     // Insert synthetic event derived from the material event
+    ensure_fs_watcher_derived_declaration(&ctx.pool).await?;
     let synth_payload = FileCreatedPayload::test_default(
         RecordedPath::from_observed("/tmp/mixed-synthetic.txt")
             .map_err(|e| color_eyre::eyre::eyre!(e))?,
     );
-    let mut synth = Event::builder(synth_payload)
-        .from_parents(vec![mat_id])?
-        .build()?;
+    let mut synth = mark_fs_watcher_derived_event(
+        Event::builder(synth_payload)
+            .from_parents(vec![mat_id])?
+            .build()?,
+    );
     synth.temporal_policy = Some(SyntheticTemporalPolicy::InheritParent);
     synth.scope_key = Some("mixed-scope".to_string());
 
