@@ -35,17 +35,69 @@ async fn test_events_provenance_constraint() -> color_eyre::eyre::Result<()> {
         0i64
     ).execute(pool).await.unwrap();
 
-    // Test 2: Valid case with source_event_ids only (need to create the referenced event first)
+    // Test 2: Valid case with source_event_ids only (need to create the referenced event first).
+    // A derived write (source_event_ids set) also requires a declared
+    // product_class + claim_support (sinex-0vx.4 / W1 derivation control
+    // plane), and product_class is only accepted for a source/event_type
+    // pair with a matching derivation.product_declarations row -- register
+    // one here, matching the pattern in
+    // crate/sinex-schema/src/defs/derivation_test.rs.
+    sqlx::query(
+        r#"
+        INSERT INTO derivation.product_declarations (
+            declaration_id, owner, product_class, write_surface,
+            output_source, output_event_type, semantics_version,
+            input_eligibility, default_claim_support, verification_command
+        )
+        VALUES ('test-decl-provenance', 'test-owner', 'canonical_derived_event', 'derived_output',
+                'test-source', 'test-event', 'v1',
+                'default_canonical_input', $1::jsonb, 'xtask test -p sinex-db')
+        "#,
+    )
+    .bind(
+        r#"{
+            "support_level": "unsupported",
+            "source_coverage": "unknown",
+            "temporal_quality": "unknown",
+            "adjudication": "unreviewed",
+            "evidence_event_count": 0,
+            "evidence_material_count": 0,
+            "support_family_count": 0,
+            "counterevidence_count": 0
+        }"#,
+    )
+    .execute(pool)
+    .await
+    .unwrap();
+
     let event_id2 = uuid::Uuid::now_v7();
     sqlx::query!(
-        "INSERT INTO core.events (id, source, event_type, host, payload, ts_orig, source_event_ids) VALUES ($1::uuid, $2, $3, $4, $5, $6, $7::uuid[])",
+        r#"
+        INSERT INTO core.events (
+            id, source, event_type, host, payload, ts_orig, source_event_ids,
+            product_class, claim_support, derivation_declaration_id
+        )
+        VALUES ($1::uuid, $2, $3, $4, $5, $6, $7::uuid[], $8, $9::jsonb, $10)
+        "#,
         event_id2,
         "test-source",
         "test-event",
         "test-host",
         serde_json::json!({"test": "data"}),
         *sinex_primitives::temporal::now(),
-        &[event_id][..]
+        &[event_id][..],
+        "canonical_derived_event",
+        serde_json::json!({
+            "support_level": "unsupported",
+            "source_coverage": "unknown",
+            "temporal_quality": "unknown",
+            "adjudication": "unreviewed",
+            "evidence_event_count": 0,
+            "evidence_material_count": 0,
+            "support_family_count": 0,
+            "counterevidence_count": 0
+        }),
+        "test-decl-provenance",
     ).execute(pool).await.unwrap();
 
     // Test 3: Invalid case - both source_material_id AND source_event_ids

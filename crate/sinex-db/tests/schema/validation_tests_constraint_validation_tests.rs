@@ -34,17 +34,23 @@ async fn test_events_provenance_xor_constraint() -> TestResult<()> {
         "Should accept event with source_material_id only"
     );
 
-    // Test Case 2: Valid - source_event_ids only
+    // Test Case 2: Valid - source_event_ids only. A derived write also needs
+    // a declared product_class + claim_support (sinex-0vx.4 / W1 derivation
+    // control plane).
+    ensure_product_declaration_for(pool, "test-source", "derived-event").await?;
     let event_id2 = Uuid::now_v7();
     let result = sqlx::query!(
-        "INSERT INTO core.events (id, source, event_type, host, payload, ts_orig, source_event_ids) VALUES ($1::uuid, $2, $3, $4, $5, $6, $7::uuid[])",
+        "INSERT INTO core.events (id, source, event_type, host, payload, ts_orig, source_event_ids, product_class, claim_support, derivation_declaration_id) VALUES ($1::uuid, $2, $3, $4, $5, $6, $7::uuid[], $8, $9::jsonb, $10)",
         event_id2,
         "test-source",
         "derived-event",
         "test-host",
         serde_json::json!({"derived": "from_event"}),
         *Timestamp::now(),
-        &[event_id1][..]
+        &[event_id1][..],
+        "canonical_derived_event",
+        serde_json::from_str::<serde_json::Value>(UNREVIEWED_CLAIM_SUPPORT_JSON).unwrap(),
+        "test-decl-test-source-derived-event",
     ).execute(pool).await;
     assert!(
         result.is_ok(),
@@ -746,17 +752,32 @@ async fn test_array_constraints() -> TestResult<()> {
         0i64
     ).execute(pool).await.unwrap();
 
+    // A derived write (source_event_ids set) also needs a declared
+    // product_class + claim_support (sinex-0vx.4 / W1 derivation control
+    // plane) -- register one declaration per (source, event_type) pair used
+    // below (a NULL-wildcarded declaration is not possible for
+    // write_surface='derived_output', see ensure_product_declaration_for).
+    ensure_product_declaration_for(pool, "derived-source", "derived-event").await?;
+    ensure_product_declaration_for(pool, "multi-derived", "multi-event").await?;
+    ensure_product_declaration_for(pool, "empty-array", "empty-event").await?;
+    ensure_product_declaration_for(pool, "self-parent", "self-event").await?;
+    let claim_support: serde_json::Value =
+        serde_json::from_str(UNREVIEWED_CLAIM_SUPPORT_JSON).unwrap();
+
     // Test valid UUIDv7 arrays
     let event_id1 = Uuid::now_v7();
     let result = sqlx::query!(
-        "INSERT INTO core.events (id, source, event_type, host, payload, ts_orig, source_event_ids) VALUES ($1::uuid, $2, $3, $4, $5, $6, $7::uuid[])",
+        "INSERT INTO core.events (id, source, event_type, host, payload, ts_orig, source_event_ids, product_class, claim_support, derivation_declaration_id) VALUES ($1::uuid, $2, $3, $4, $5, $6, $7::uuid[], $8, $9::jsonb, $10)",
         event_id1,
         "derived-source",
         "derived-event",
         "test-host",
         serde_json::json!({}),
         *Timestamp::now(),
-        &[source_event_id][..]
+        &[source_event_id][..],
+        "canonical_derived_event",
+        claim_support,
+        "test-decl-derived-source-derived-event",
     ).execute(pool).await;
     assert!(result.is_ok(), "Should accept valid UUIDv7 array");
 
@@ -776,14 +797,17 @@ async fn test_array_constraints() -> TestResult<()> {
     ).execute(pool).await.unwrap();
 
     let result = sqlx::query!(
-        "INSERT INTO core.events (id, source, event_type, host, payload, ts_orig, source_event_ids) VALUES ($1::uuid, $2, $3, $4, $5, $6, $7::uuid[])",
+        "INSERT INTO core.events (id, source, event_type, host, payload, ts_orig, source_event_ids, product_class, claim_support, derivation_declaration_id) VALUES ($1::uuid, $2, $3, $4, $5, $6, $7::uuid[], $8, $9::jsonb, $10)",
         event_id2,
         "multi-derived",
         "multi-event",
         "test-host",
         serde_json::json!({}),
         *Timestamp::now(),
-        &[source_event_id, source_event_id2][..]
+        &[source_event_id, source_event_id2][..],
+        "canonical_derived_event",
+        claim_support,
+        "test-decl-multi-derived-multi-event",
     ).execute(pool).await;
     assert!(result.is_ok(), "Should accept multiple UUIDv7 IDs in array");
 
@@ -791,14 +815,17 @@ async fn test_array_constraints() -> TestResult<()> {
     let event_id3 = Uuid::now_v7();
     let empty_array: Vec<uuid::Uuid> = vec![];
     let result = sqlx::query!(
-        "INSERT INTO core.events (id, source, event_type, host, payload, ts_orig, source_event_ids) VALUES ($1::uuid, $2, $3, $4, $5, $6, $7::uuid[])",
+        "INSERT INTO core.events (id, source, event_type, host, payload, ts_orig, source_event_ids, product_class, claim_support, derivation_declaration_id) VALUES ($1::uuid, $2, $3, $4, $5, $6, $7::uuid[], $8, $9::jsonb, $10)",
         event_id3,
         "empty-array",
         "empty-event",
         "test-host",
         serde_json::json!({}),
         *Timestamp::now(),
-        &empty_array[..]
+        &empty_array[..],
+        "canonical_derived_event",
+        claim_support,
+        "test-decl-empty-array-empty-event",
     ).execute(pool).await;
     assert!(result.is_err(), "Should reject empty UUIDv7 array");
 
@@ -809,7 +836,7 @@ async fn test_array_constraints() -> TestResult<()> {
     // CHECK can refuse to write the row.
     let self_parent_id = Uuid::now_v7();
     let result = sqlx::query!(
-        "INSERT INTO core.events (id, source, event_type, host, payload, ts_orig, source_event_ids) VALUES ($1::uuid, $2, $3, $4, $5, $6, $7::uuid[])",
+        "INSERT INTO core.events (id, source, event_type, host, payload, ts_orig, source_event_ids, product_class, claim_support, derivation_declaration_id) VALUES ($1::uuid, $2, $3, $4, $5, $6, $7::uuid[], $8, $9::jsonb, $10)",
         self_parent_id,
         "self-parent",
         "self-event",
@@ -817,6 +844,9 @@ async fn test_array_constraints() -> TestResult<()> {
         serde_json::json!({}),
         *Timestamp::now(),
         &[self_parent_id][..],
+        "canonical_derived_event",
+        claim_support,
+        "test-decl-self-parent-self-event",
     ).execute(pool).await;
     let err = result.expect_err("self-parent insert must be rejected");
     let msg = err.to_string();

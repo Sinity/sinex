@@ -9,6 +9,52 @@
 use sinex_db::schema::strict_diff::{DriftCategory, check_strict};
 use xtask::sandbox::prelude::*;
 
+/// Restores a trigger-backed function to its canonical, current-schema body
+/// after a test has deliberately corrupted it to exercise drift detection.
+///
+/// `ensure_trigger_set_sql` (the `apply()` helper backing these triggers)
+/// only checks trigger *existence*, not body drift -- by design, per the
+/// doc comment on `DECLARED_FUNCTION_BODIES` in `strict_diff.rs`, this is
+/// exactly the "silent CREATE OR REPLACE that convergence won't notice"
+/// scenario strict-diff exists to catch. That means a plain `apply()` call
+/// after corrupting one of these functions does NOT repair it. Dropping the
+/// trigger first forces the next `apply()` call to see it missing and
+/// recreate both the function and the trigger from the canonical SQL.
+///
+/// Without this, a test that corrupts a trigger function leaves that
+/// corruption live in the shared sandbox pool database it ran against,
+/// which can silently poison other tests that reuse the same pool slot or
+/// a template promoted from it (observed: `check_strict_returns_empty_after_apply`
+/// failing on a pool database contaminated by
+/// `detects_manual_edit_to_fn_archive_before_delete`, sinex-xjx8).
+async fn restore_trigger(pool: &sqlx::PgPool, table: &str, trigger_name: &str) -> TestResult<()> {
+    sqlx::query(&format!("DROP TRIGGER IF EXISTS {trigger_name} ON {table}"))
+        .execute(pool)
+        .await?;
+    sinex_db::schema::apply::apply(pool).await?;
+    Ok(())
+}
+
+/// Same restoration problem as [`restore_trigger`], for hash-gated (non-trigger)
+/// function sets: `ensure_function_set_sql` skips re-running a function set
+/// when every function in it already exists AND the `COMMENT ON FUNCTION`
+/// hash stashed on the set's representative signature still matches the
+/// current source (`sinex-o1mg`). A manual `CREATE OR REPLACE` bypasses that
+/// tracking entirely -- the stale hash comment survives the corruption, so
+/// the next `apply()` call still thinks nothing changed and skips. Clearing
+/// the comment forces a hash mismatch, which forces `apply()` to re-run the
+/// whole function-set SQL and restore every function in the set (including
+/// the one this test corrupted) to its canonical body.
+async fn restore_function_set(pool: &sqlx::PgPool, representative_signature: &str) -> TestResult<()> {
+    sqlx::query(&format!(
+        "COMMENT ON FUNCTION {representative_signature} IS NULL"
+    ))
+    .execute(pool)
+    .await?;
+    sinex_db::schema::apply::apply(pool).await?;
+    Ok(())
+}
+
 #[sinex_test]
 async fn check_strict_returns_empty_after_apply(ctx: TestContext) -> TestResult<()> {
     sinex_db::schema::apply::apply(&ctx.pool).await?;
@@ -52,6 +98,18 @@ async fn detects_dropped_default_on_existing_column(ctx: TestContext) -> TestRes
         "observed summary should reflect the dropped default: {}",
         matched[0].observed_summary
     );
+
+    // Restore the original DEFAULT so this slot is not contaminated for
+    // other tests sharing the sandbox DB pool (same reasoning as
+    // detects_replaced_default_on_existing_column below, which already does
+    // this -- DDL mutations persist across the pool's data-cleaning pass, so
+    // we must undo the structural change explicitly here). Without this, a
+    // plain `INSERT INTO core.events` that omits ts_persisted (relying on
+    // its DEFAULT) fails with a NOT NULL violation on whatever pool slot
+    // this test ran against, observed in sinex-xjx8.
+    sqlx::query("ALTER TABLE core.events ALTER COLUMN ts_persisted SET DEFAULT CURRENT_TIMESTAMP")
+        .execute(&ctx.pool)
+        .await?;
 
     Ok(())
 }
@@ -140,6 +198,8 @@ async fn detects_manual_edit_to_trigger_function_body(ctx: TestContext) -> TestR
         matched[0].observed_summary
     );
 
+    restore_function_set(&ctx.pool, "core.start_operation(text,text,jsonb,tstzrange)").await?;
+
     Ok(())
 }
 
@@ -187,6 +247,22 @@ async fn detects_dropped_inline_check_on_events(ctx: TestContext) -> TestResult<
         1,
         "expected exactly one inline_check_expr drift on xor_provenance, got: {drifts:?}"
     );
+
+    // This CHECK is declared inline in Events::create_table_statement(), so
+    // it is only ever applied via `CREATE TABLE IF NOT EXISTS` -- a no-op on
+    // an existing table -- and is not one of the NamedConstraint entries
+    // converge_tables() reconciles either. A plain apply() call cannot
+    // restore it once dropped, so restore it explicitly: leaving core.events
+    // without its provenance-XOR guard would let other tests sharing this
+    // pool slot insert material+derived (or neither) provenance without
+    // error (sinex-xjx8).
+    sqlx::query(
+        "ALTER TABLE core.events ADD CONSTRAINT events_provenance_xor_check
+            CHECK ((source_material_id IS NOT NULL AND source_event_ids IS NULL)
+                OR (source_material_id IS NULL AND source_event_ids IS NOT NULL))",
+    )
+    .execute(&ctx.pool)
+    .await?;
 
     Ok(())
 }
@@ -250,6 +326,23 @@ async fn detects_changed_foreign_key_action(ctx: TestContext) -> TestResult<()> 
         "observed summary should no longer contain CASCADE: {}",
         matched[0].observed_summary
     );
+
+    // core.tagged_items has no `foreign_keys` entries in
+    // crate/sinex-schema/src/converge.rs's convergible_tables(), so this FK
+    // action is NOT reconciled by a plain apply() call -- restore it
+    // explicitly so this pool slot isn't left permanently drifted for
+    // other tests sharing it (observed: check_strict_returns_empty_after_apply
+    // failing on ForeignKeyAction for core.tagged_items, sinex-xjx8).
+    sqlx::query("ALTER TABLE core.tagged_items DROP CONSTRAINT tagged_items_tag_id_drift_fkey")
+        .execute(&ctx.pool)
+        .await?;
+    sqlx::query(&format!(
+        "ALTER TABLE core.tagged_items
+            ADD CONSTRAINT {constraint_name}
+            FOREIGN KEY (tag_id) REFERENCES core.tags(id) ON DELETE CASCADE"
+    ))
+    .execute(&ctx.pool)
+    .await?;
 
     Ok(())
 }
@@ -361,6 +454,14 @@ async fn detects_orphan_column_in_convergible_table(ctx: TestContext) -> TestRes
         "observed summary should name the orphan column: {}",
         matched[0].observed_summary
     );
+
+    // Orphan columns are detected but never auto-dropped by apply()/converge
+    // (by design -- auto-dropping an undeclared column would be dangerous),
+    // so this stays a permanent orphan on this pool slot unless removed
+    // explicitly (sinex-xjx8).
+    sqlx::query("ALTER TABLE core.blobs DROP COLUMN IF EXISTS orphan_test_col")
+        .execute(&ctx.pool)
+        .await?;
 
     Ok(())
 }
@@ -519,6 +620,16 @@ async fn nullability_convergence_fails_loudly_on_null_rows(ctx: TestContext) -> 
         "error message should contain table/column context: {err_msg}"
     );
 
+    // The whole point of this test is that apply() CANNOT restore NOT NULL
+    // while the blocking row exists, so nothing above leaves core.blobs
+    // clean. Remove the blocking row and re-apply so this pool slot isn't
+    // left with a permanently-nullable original_filename (and a live NULL
+    // row) for other tests sharing it (sinex-xjx8).
+    sqlx::query("DELETE FROM core.blobs WHERE original_filename IS NULL")
+        .execute(&ctx.pool)
+        .await?;
+    sinex_db::schema::apply::apply(&ctx.pool).await?;
+
     Ok(())
 }
 
@@ -572,6 +683,14 @@ async fn column_rename_is_idempotent(ctx: TestContext) -> TestResult<()> {
     // We verify this by calling apply() — no error should surface.
     sinex_db::schema::apply::apply(&ctx.pool).await?;
 
+    // rename_test_new is not a declared column, so it stays a permanent
+    // orphan on this pool slot (same reasoning as
+    // detects_orphan_column_in_convergible_table) unless removed here
+    // (sinex-xjx8).
+    sqlx::query("ALTER TABLE core.blobs DROP COLUMN IF EXISTS rename_test_new")
+        .execute(&ctx.pool)
+        .await?;
+
     Ok(())
 }
 
@@ -620,6 +739,8 @@ async fn detects_manual_edit_to_fn_archive_before_delete(ctx: TestContext) -> Te
         matched[0].observed_summary
     );
 
+    restore_trigger(&ctx.pool, "core.events", "trg_events_archive_before_delete").await?;
+
     Ok(())
 }
 
@@ -660,6 +781,8 @@ async fn detects_manual_edit_to_fn_events_validate_material_bounds(
         "expected exactly one trigger_body drift on fn_events_validate_material_bounds, got: {drifts:?}"
     );
 
+    restore_trigger(&ctx.pool, "core.events", "trg_events_validate_material_bounds").await?;
+
     Ok(())
 }
 
@@ -698,6 +821,13 @@ async fn detects_manual_edit_to_fn_source_material_validate_event_bounds(
         1,
         "expected exactly one trigger_body drift on fn_source_material_validate_event_bounds, got: {drifts:?}"
     );
+
+    restore_trigger(
+        &ctx.pool,
+        "raw.source_material_registry",
+        "trg_source_material_validate_event_bounds",
+    )
+    .await?;
 
     Ok(())
 }
@@ -801,6 +931,13 @@ async fn detects_manual_edit_to_fn_temporal_ledger_append_only(ctx: TestContext)
         "expected exactly one trigger_body drift on fn_temporal_ledger_append_only, got: {drifts:?}"
     );
 
+    restore_trigger(
+        &ctx.pool,
+        "raw.temporal_ledger",
+        "trg_tl_no_update_delete",
+    )
+    .await?;
+
     Ok(())
 }
 
@@ -836,6 +973,8 @@ async fn detects_manual_edit_to_fn_events_no_update(ctx: TestContext) -> TestRes
         1,
         "expected exactly one trigger_body drift on fn_events_no_update, got: {drifts:?}"
     );
+
+    restore_trigger(&ctx.pool, "core.events", "trg_events_no_update").await?;
 
     Ok(())
 }
@@ -873,6 +1012,8 @@ async fn detects_manual_edit_to_execute_cascade_tombstone(ctx: TestContext) -> T
         "expected exactly one trigger_body drift on execute_cascade_tombstone, got: {drifts:?}"
     );
 
+    restore_function_set(&ctx.pool, "core.execute_cascade_tombstone(uuid[],text,uuid)").await?;
+
     Ok(())
 }
 
@@ -907,6 +1048,8 @@ async fn detects_manual_edit_to_execute_cascade_restore(ctx: TestContext) -> Tes
         1,
         "expected exactly one trigger_body drift on execute_cascade_restore, got: {drifts:?}"
     );
+
+    restore_function_set(&ctx.pool, "core.execute_cascade_tombstone(uuid[],text,uuid)").await?;
 
     Ok(())
 }

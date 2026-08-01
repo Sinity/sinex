@@ -5,7 +5,7 @@
 
 use sea_query::PostgresQueryBuilder;
 use sinex_primitives::temporal::Timestamp;
-use sinex_db::schema::{apply, schema::*};
+use sinex_db::schema::{apply, defs::*};
 use sqlx::PgPool;
 use std::str::FromStr;
 use uuid::Uuid;
@@ -101,6 +101,60 @@ async fn insert_material_event(
     .await
 }
 
+/// An `unreviewed` claim-support vector -- valid shape, no adjudication yet.
+/// Reused wherever a fixture needs *some* claim_support to satisfy the
+/// `product_class IS NULL OR claim_support IS NOT NULL` constraint without
+/// exercising the adjudication-specific trigger behavior.
+const UNREVIEWED_CLAIM_SUPPORT_JSON: &str = r#"{
+    "support_level": "unsupported",
+    "source_coverage": "unknown",
+    "temporal_quality": "unknown",
+    "adjudication": "unreviewed",
+    "evidence_event_count": 0,
+    "evidence_material_count": 0,
+    "support_family_count": 0,
+    "counterevidence_count": 0
+}"#;
+
+/// Registers a `derivation.product_declarations` row for `canonical_derived_event`
+/// writes pinned to one (source, event_type) pair. A derived event
+/// (`source_event_ids` set) requires a declared `product_class`, and
+/// `product_class` is only accepted for a source/event_type pair with a
+/// matching declaration (sinex-0vx.4 / W1 derivation control plane; see
+/// `crate/sinex-schema/src/defs/derivation_test.rs` for the same pattern).
+/// NULL-wildcarded `output_source`/`output_event_type` is NOT an option for
+/// `write_surface = 'derived_output'`: the table's own CHECK constraint
+/// requires `(write_surface = 'derived_output') = (output_source IS NOT NULL
+/// AND output_event_type IS NOT NULL)`, so one declaration per pinned pair is
+/// registered instead (idempotent via `ON CONFLICT`, keyed by a
+/// deterministic declaration_id derived from the pair).
+async fn ensure_product_declaration_for(
+    pool: &PgPool,
+    source: &str,
+    event_type: &str,
+) -> TestResult<()> {
+    let declaration_id = format!("test-decl-{source}-{event_type}");
+    sqlx::query(
+        r#"
+        INSERT INTO derivation.product_declarations (
+            declaration_id, owner, product_class, write_surface,
+            output_source, output_event_type, semantics_version,
+            input_eligibility, default_claim_support, verification_command
+        )
+        VALUES ($1, 'test-owner', 'canonical_derived_event', 'derived_output',
+                $2, $3, 'v1', 'default_canonical_input', $4::jsonb, 'xtask test -p sinex-db')
+        ON CONFLICT (declaration_id) DO NOTHING
+        "#,
+    )
+    .bind(&declaration_id)
+    .bind(source)
+    .bind(event_type)
+    .bind(UNREVIEWED_CLAIM_SUPPORT_JSON)
+    .execute(pool)
+    .await?;
+    Ok(())
+}
+
 async fn truncate_constraint_tables(pool: &PgPool) -> TestResult<()> {
     let mut tx = pool.begin().await?;
     for table in [
@@ -109,6 +163,12 @@ async fn truncate_constraint_tables(pool: &PgPool) -> TestResult<()> {
         "raw.source_material_registry",
         "core.blobs",
         "audit.archived_events",
+        // core.events.derivation_declaration_id FKs into this table, so it
+        // must be truncated after core.events. Test fixtures that register a
+        // product declaration (ensure_product_declaration_for) rely on this
+        // to keep the sandbox's "clean slate" residual-data check passing
+        // across shared pool database reuse.
+        "derivation.product_declarations",
     ] {
         let query = format!("TRUNCATE {table} CASCADE");
         sqlx::query(&query).execute(&mut *tx).await?;
