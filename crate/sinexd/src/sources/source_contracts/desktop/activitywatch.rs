@@ -51,7 +51,7 @@ use sinex_primitives::parser::{
 use sinex_primitives::privacy::{ProcessingContext, SensitivityHint};
 use sinex_primitives::source_contracts::{
     AccessScope, CheckpointFamily, Horizon, OccurrenceIdentity, PrivacyTier, ResourceProfile,
-    RetentionPolicy, RunnerPack, RuntimeShape,
+    RetentionPolicy, RunnerPack, RuntimeShape, SourceCriticality,
 };
 use sinex_primitives::temporal::Timestamp;
 
@@ -158,6 +158,9 @@ fn activitywatch_data_object(row: &serde_json::Value) -> serde_json::Value {
     runner_pack = RunnerPack::SinexdSource,
     checkpoint_family = CheckpointFamily::MutableSnapshot { backing_store_kind: "sqlite", occurrence_anchor: "bucket_event_timestamp" },
     runtime_shape = RuntimeShape::Continuous,
+    // sinex-sn6s: ActivityWatch owns its own SQLite store; Sinex is a
+    // downstream reader, never the sole copy.
+    criticality = SourceCriticality::Reconstructable,
 )]
 pub struct ActivityWatchParser;
 

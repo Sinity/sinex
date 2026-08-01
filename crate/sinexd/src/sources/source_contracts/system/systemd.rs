@@ -18,7 +18,7 @@ use sinex_primitives::parser::{
 use sinex_primitives::privacy::ProcessingContext;
 use sinex_primitives::source_contracts::{
     AccessScope, CheckpointFamily, Horizon, OccurrenceIdentity, PrivacyTier, ResourceProfile,
-    RetentionPolicy, RunnerPack, RuntimeShape,
+    RetentionPolicy, RunnerPack, RuntimeShape, SourceCriticality,
 };
 use sinex_primitives::temporal::Timestamp;
 
@@ -46,6 +46,9 @@ use sinex_primitives::temporal::Timestamp;
     runner_pack = RunnerPack::SinexdSource,
     checkpoint_family = CheckpointFamily::Journal,
     runtime_shape = RuntimeShape::Continuous,
+    // sinex-sn6s: unit lifecycle transitions are observed live from the
+    // journal, which is a capped rolling export; no other durable store.
+    criticality = SourceCriticality::NotReconstructable,
 )]
 pub struct SystemdParser;
 

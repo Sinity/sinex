@@ -84,6 +84,11 @@ pub(crate) struct RegistrationAttrs {
     /// Typed enum-expression token (`TransportSemantics::JETSTREAM_DURABLE`),
     /// emitted verbatim. `None` => generator supplies the default path.
     pub transport_semantics: Option<TokenStream>,
+    /// Typed enum path token (`SourceCriticality::Reconstructable` or
+    /// `SourceCriticality::NotReconstructable`), emitted verbatim. `None` =>
+    /// left undeclared on the binding; startup validation requires every
+    /// deployed, non-proposed binding to declare this (sinex-sn6s).
+    pub criticality: Option<TokenStream>,
     pub capabilities: Vec<String>,
     /// Mark the runtime binding as future-state metadata rather than a live
     /// deployment binding.
@@ -136,6 +141,7 @@ pub(crate) struct RuntimeBindingAttrs {
     pub runtime_shape: Option<TokenStream>,
     pub material_lifecycle: Option<TokenStream>,
     pub transport_semantics: Option<TokenStream>,
+    pub criticality: Option<TokenStream>,
     pub capabilities: Vec<String>,
     pub proposed: Option<bool>,
 }
@@ -323,6 +329,11 @@ fn generate_one_source_runtime_binding(
     let proposed = binding
         .and_then(|binding| binding.proposed)
         .unwrap_or(attrs.proposed);
+    let criticality_call = binding
+        .and_then(|binding| binding.criticality.clone())
+        .or_else(|| attrs.criticality.clone())
+        .map(|criticality| quote!(.criticality(#criticality)))
+        .unwrap_or_default();
 
     Ok(quote! {
         ::sinex_primitives::source_contracts::__register::inventory::submit! {
@@ -345,6 +356,7 @@ fn generate_one_source_runtime_binding(
             .runtime_shape(#runtime_shape)
             .build_impact(::sinex_primitives::source_contracts::SourceBuildImpact::ZERO)
             .proposed(#proposed)
+            #criticality_call
             .build()
         }
     })

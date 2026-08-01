@@ -179,6 +179,9 @@ struct SourceDefinitionAttrs {
     material_lifecycle: Option<proc_macro2::TokenStream>,
     /// Typed enum-expression token (`TransportSemantics::DIRECT_APPEND_STREAM`), verbatim.
     transport_semantics: Option<proc_macro2::TokenStream>,
+    /// Typed enum path token (`SourceCriticality::Reconstructable` or
+    /// `SourceCriticality::NotReconstructable`), emitted verbatim.
+    criticality: Option<proc_macro2::TokenStream>,
     capabilities: Vec<String>,
 }
 
@@ -225,6 +228,7 @@ impl SourceDefinitionAttrs {
             runtime_shape: self.runtime_shape.clone(),
             material_lifecycle: self.material_lifecycle.clone(),
             transport_semantics: self.transport_semantics.clone(),
+            criticality: self.criticality.clone(),
             capabilities: self.capabilities.clone(),
             proposed: false,
             // SourceDefinition is the declarative adapter+parser form; it never
@@ -275,6 +279,10 @@ fn parse_source_definition_attrs(attrs: &[syn::Attribute]) -> syn::Result<Source
                 }
                 "transport_semantics" => {
                     out.transport_semantics = Some(parse_enum_expr_attr(&meta)?);
+                    return Ok(());
+                }
+                "criticality" => {
+                    out.criticality = Some(parse_enum_path_attr(&meta)?);
                     return Ok(());
                 }
                 "checkpoint_family" => {

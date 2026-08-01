@@ -23,7 +23,7 @@ use sinex_primitives::parser::{
 use sinex_primitives::privacy::ProcessingContext;
 use sinex_primitives::source_contracts::{
     AccessScope, CheckpointFamily, Horizon, OccurrenceIdentity, PrivacyTier, ResourceProfile,
-    RetentionPolicy, RunnerPack, RuntimeShape,
+    RetentionPolicy, RunnerPack, RuntimeShape, SourceCriticality,
 };
 use sinex_primitives::temporal::Timestamp;
 
@@ -55,6 +55,9 @@ const MAX_DBUS_MESSAGE_BYTES: usize = 1_048_576;
     runner_pack = RunnerPack::SinexdSource,
     checkpoint_family = CheckpointFamily::LiveObservation,
     runtime_shape = RuntimeShape::Continuous,
+    // sinex-sn6s: D-Bus signals are pure live observation; nothing external
+    // retains history once the bus delivers the message.
+    criticality = SourceCriticality::NotReconstructable,
 )]
 pub struct DbusParser;
 

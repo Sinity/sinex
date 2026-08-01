@@ -14,7 +14,7 @@ use sinex_primitives::parser::{
 use sinex_primitives::privacy::ProcessingContext;
 use sinex_primitives::source_contracts::{
     AccessScope, CheckpointFamily, Horizon, OccurrenceIdentity, PrivacyTier, ResourceProfile,
-    RetentionPolicy, RunnerPack, RuntimeShape,
+    RetentionPolicy, RunnerPack, RuntimeShape, SourceCriticality,
 };
 use sinex_primitives::temporal::Timestamp;
 use sinex_primitives::units::{Microseconds, ProcessId, SyslogPriority, UnixGid, UnixUid};
@@ -63,6 +63,10 @@ fn is_sinexd_journal_entry(json: &serde_json::Value) -> bool {
     runner_pack = RunnerPack::SinexdSource,
     checkpoint_family = CheckpointFamily::Journal,
     runtime_shape = RuntimeShape::Continuous,
+    // sinex-sn6s: the external journal export is itself a capped rolling
+    // window (journald retention), not a full-history canonical copy —
+    // Sinex's own row is the only durable record beyond that window.
+    criticality = SourceCriticality::NotReconstructable,
 )]
 pub struct JournaldParser;
 

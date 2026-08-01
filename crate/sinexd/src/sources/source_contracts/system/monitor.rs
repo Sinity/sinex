@@ -14,7 +14,7 @@ use sinex_macros::SourceMeta;
 use sinex_primitives::privacy::ProcessingContext;
 use sinex_primitives::source_contracts::{
     AccessScope, CheckpointFamily, Horizon, OccurrenceIdentity, PrivacyTier, ResourceProfile,
-    RetentionPolicy, RunnerPack, RuntimeShape,
+    RetentionPolicy, RunnerPack, RuntimeShape, SourceCriticality,
 };
 use sinex_primitives::{
     JsonValue, SinexError,
@@ -44,6 +44,9 @@ use sinex_primitives::{
     runtime_shape = RuntimeShape::OnDemand,
     monitor_emit_fn = "emit_system_monitor",
     monitor_phase = "ServiceStart",
+    // sinex-sn6s: telemetry.sqlite (/realm/data/captures/machine) is the
+    // canonical copy; Sinex's rows are a downstream projection.
+    criticality = SourceCriticality::Reconstructable,
 )]
 pub struct SystemMonitorSource;
 

@@ -25,6 +25,34 @@ pub enum CheckpointFamily {
     LiveObservation,
 }
 
+/// Whether wiping Sinex's own copy of this source's data would lose
+/// information that exists nowhere else (sinex-sn6s).
+///
+/// Sinex's dataset is currently treated as safely wipeable-and-reimportable
+/// (dev speed over durability) precisely because every live source has *some*
+/// other durable copy: the upstream app/service's own store, or Sinex's own
+/// replay pipeline re-deriving the event from a reconstructable parent. That
+/// assumption holds only as long as every deployed [`SourceRuntimeBinding`]
+/// says so explicitly. The day an ephemeral-upstream-only source comes online
+/// (IMAP email, a comms bridge, anything whose only durable copy is Sinex's
+/// own row) without declaring `NotReconstructable`, the "safe to wipe"
+/// premise silently breaks. Startup validation refuses to enable a deployed
+/// binding that omits this declaration — see
+/// `sinexd::sources::bindings::validate_bindings`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum SourceCriticality {
+    /// A canonical copy of this source's data exists outside Sinex (the
+    /// upstream app/service keeps its own durable store), or Sinex's copy is
+    /// itself rebuildable by replay from reconstructable parent events.
+    /// Wiping Sinex's own copy loses nothing durable.
+    Reconstructable,
+    /// No canonical copy exists outside Sinex beyond a bounded retention
+    /// window (e.g. a capped rolling journal export). Sinex's own copy is
+    /// the only durable record of history past that window.
+    NotReconstructable,
+}
+
 /// Privacy classification of the source's payloads.
 ///
 /// The schema-apply engine reconciles a CHECK constraint on the

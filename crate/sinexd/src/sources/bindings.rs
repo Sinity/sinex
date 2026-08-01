@@ -10,6 +10,7 @@ use camino::Utf8PathBuf;
 use serde::{Deserialize, Serialize};
 use sinex_primitives::error::{Result, SinexError};
 use sinex_primitives::parser::SourceId;
+use sinex_primitives::source_contracts::source_runtime_bindings;
 use std::collections::HashMap;
 use std::future::Future;
 use std::pin::Pin;
@@ -130,6 +131,16 @@ impl SourceBindingsManifest {
 /// registry, returning an error listing every offending entry. Fail-fast
 /// on startup so a malformed manifest cannot silently shrink the active
 /// capture surface.
+///
+/// Also enforces the sinex-sn6s criticality declaration: every
+/// [`SourceRuntimeBinding`](sinex_primitives::source_contracts::SourceRuntimeBinding)
+/// matching an enabled binding's `source_id` must declare
+/// `criticality` (`Reconstructable` or `NotReconstructable`). Sinex's dataset
+/// is only safe to wipe-and-reimport because every deployed source currently
+/// has a canonical copy elsewhere; this check is the enforced version of that
+/// assumption so a newly-deployed ephemeral-upstream source cannot silently
+/// flip it. Startup refuses to enable a binding that omits the declaration —
+/// there is no default and no silent pass.
 pub fn validate_bindings(bindings: &[SourceBinding]) -> Result<()> {
     let registry = SourceContractRegistry::from_inventory();
     let mut errors = Vec::new();
@@ -150,6 +161,19 @@ pub fn validate_bindings(bindings: &[SourceBinding]) -> Result<()> {
                  (missing register_source! factory call)",
                 binding.source_id
             ));
+        }
+        for runtime_binding in
+            source_runtime_bindings().filter(|rb| rb.source_id == binding.source_id)
+        {
+            if runtime_binding.criticality.is_none() {
+                errors.push(format!(
+                    "{}: runtime binding `{}` has no declared SourceCriticality \
+                     (Reconstructable or NotReconstructable) — every enabled source must \
+                     state explicitly whether Sinex's own copy is safe to wipe before it \
+                     can be turned on; see sinex-sn6s",
+                    binding.source_id, runtime_binding.id
+                ));
+            }
         }
     }
     if !errors.is_empty() {

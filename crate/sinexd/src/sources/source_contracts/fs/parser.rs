@@ -9,7 +9,7 @@ use async_trait::async_trait;
 use sinex_macros::SourceMeta;
 use sinex_primitives::source_contracts::{
     AccessScope, CheckpointFamily, Horizon, OccurrenceIdentity, PrivacyTier, ResourceProfile,
-    RetentionPolicy, RunnerPack, RuntimeShape,
+    RetentionPolicy, RunnerPack, RuntimeShape, SourceCriticality,
 };
 use sinex_primitives::{
     domain::{EventSource, EventType, RecordedPath},
@@ -49,7 +49,11 @@ const PARSER_VERSION: &str = "1.0.0";
     resource_profile = ResourceProfile::LiveWatcher,
     runner_pack = RunnerPack::SinexdSource,
     checkpoint_family = CheckpointFamily::AppendStream,
-    runtime_shape = RuntimeShape::Continuous
+    runtime_shape = RuntimeShape::Continuous,
+    // sinex-sn6s: filesystem change events themselves (create/modify/delete)
+    // have no external durable store; Sinex's row is the only record that
+    // the change happened (content-drop bytes are separate and short-lived).
+    criticality = SourceCriticality::NotReconstructable,
 )]
 pub struct FilesystemParser;
 

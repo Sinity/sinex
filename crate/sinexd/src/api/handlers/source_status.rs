@@ -16,8 +16,8 @@ use sinex_primitives::rpc::{
 use sinex_primitives::source_contracts::{
     AccessScope, BudgetPressureAction, CheckpointFamily, DeliverySemantics,
     MaterialLifecyclePolicy, OrderingSemantics, ResourceBudgetSpec, ResourceProfile, RunnerPack,
-    SourceCapabilityKind, SourceContract, SourceRuntimeBinding, TransportKind, WorkClass,
-    all_source_contracts, source_runtime_bindings,
+    SourceCapabilityKind, SourceContract, SourceCriticality, SourceRuntimeBinding, TransportKind,
+    WorkClass, all_source_contracts, source_runtime_bindings,
 };
 use sinex_primitives::sources::source_identity_matches_family;
 use sinex_primitives::temporal::Timestamp;
@@ -1041,6 +1041,7 @@ fn source_mode_status_view(
         backpressure: binding.transport_semantics.backpressure,
         privacy_context: format!("{:?}", binding.privacy_context).to_ascii_lowercase(),
         resource_budget: source_resource_budget_view(binding),
+        criticality: binding.criticality.map(criticality_name).map(str::to_string),
         runtime_observed: runtime_observation.map(|_| true),
         runtime_live: runtime_observation.map(|observation| observation.live),
         last_heartbeat_at: runtime_observation
@@ -1339,6 +1340,13 @@ fn material_lifecycle_name(policy: MaterialLifecyclePolicy) -> &'static str {
         MaterialLifecyclePolicy::DerivedOnly => "derived_only",
         MaterialLifecyclePolicy::QuarantineUntilReviewed => "quarantine_until_reviewed",
         MaterialLifecyclePolicy::ExternalReferenceOnly => "external_reference_only",
+    }
+}
+
+fn criticality_name(criticality: SourceCriticality) -> &'static str {
+    match criticality {
+        SourceCriticality::Reconstructable => "reconstructable",
+        SourceCriticality::NotReconstructable => "not_reconstructable",
     }
 }
 

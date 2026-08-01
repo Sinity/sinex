@@ -20,7 +20,7 @@ use crate::runtime::parser::{
 };
 use sinex_primitives::source_contracts::{
     AccessScope, CheckpointFamily, Horizon, OccurrenceIdentity, PrivacyTier, ResourceProfile,
-    RetentionPolicy, RunnerPack, RuntimeShape,
+    RetentionPolicy, RunnerPack, RuntimeShape, SourceCriticality,
 };
 use sinex_primitives::{
     domain::{EventSource, EventType},
@@ -172,7 +172,10 @@ pub struct BrowserHistoryParserConfig {}
         occurrence_anchor: "visit_id",
     },
     runtime_shape = RuntimeShape::Continuous,
-    factory_adapter = BrowserHistoryAdapter
+    factory_adapter = BrowserHistoryAdapter,
+    // sinex-sn6s: qutebrowser/Chrome own their own history SQLite stores;
+    // Sinex is a downstream reader, never the sole copy.
+    criticality = SourceCriticality::Reconstructable,
 )]
 pub struct BrowserHistoryParser;
 
