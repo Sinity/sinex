@@ -445,6 +445,12 @@ async fn reconcile_product_declarations(event_engine_config: &EventEngineConfig)
             crate::api::handlers::instructions::INSTRUCTIONS_OUTPUT_DECLARATIONS,
         )
         .await?;
+        inserted += crate::automata::product_declarations::reconcile_declarations(
+            &pool,
+            "semantic-rpc",
+            crate::api::handlers::semantic::SEMANTIC_LANE_OUTPUT_DECLARATIONS,
+        )
+        .await?;
 
         // sinex-0vx.5: reconcile authority.finalizer_registry AFTER product
         // declarations — finalizer_registry.derivation_declaration_id
