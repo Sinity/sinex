@@ -918,3 +918,129 @@ async fn hourly_summary_supersede_on_change_changed_content_returns_superseded(
 
     Ok(())
 }
+
+// ─── sinex-h3g: ActivityWatch grown-row supersession ───────────────────────
+//
+// AW's `aw-server-rust` extends the newest event row per bucket in place via
+// heartbeat merging (`endtime`, and therefore `duration_ms`, grows without a
+// new SQLite row). `ActivityWatchParser::parse_record` keys its occurrence
+// identity on `bucket_id` + the START timestamp only (never `endtime`), so a
+// re-read of the same row after it has grown carries the SAME
+// `equivalence_key` here. `duration_ms` is the content knob: two calls with
+// the same value are byte-for-byte identical content (an unmodified re-read),
+// a larger value is the genuine growth a heartbeat produces.
+
+fn window_active_payload(duration_ms: u64) -> JsonValue {
+    serde_json::to_value(sinex_primitives::events::payloads::ActivityWatchWindowActivePayload {
+        app: "kitty".to_string(),
+        title: "sinex-h3g".to_string(),
+        duration_ms,
+        bucket_id: "aw-watcher-window_test-host".to_string(),
+    })
+    .expect("window.active payload serializes")
+}
+
+/// Reproduces the bead: an initial short-duration read followed by a
+/// re-read of the SAME (start-anchored) occurrence after AW's heartbeat grew
+/// the row's `endtime`. Before this fix, `window.active` defaulted to
+/// `SuppressDuplicate` (silently dropping the grown re-read) AND the parser
+/// never set `occurrence_key` at all (so no dedup path fired in either
+/// direction). It must now supersede, leaving exactly the grown duration
+/// live.
+#[sinex_test]
+async fn activitywatch_window_active_supersede_on_change_grown_duration_returns_superseded(
+    ctx: TestContext,
+) -> TestResult<()> {
+    let material_id = ctx.create_source_material(Some("h3g-aw-supersede-grown")).await?;
+    let key = "desktop.activitywatch|bucket_id=aw-watcher-window_test-host|event_timestamp=2026-07-01T00:00:00Z".to_string();
+    let service = admission_service(&ctx);
+
+    // Initial scan: the row read at heartbeat-merge time N, duration 30s.
+    let live_id = Uuid::now_v7();
+    let mut live = material_event(
+        material_id,
+        live_id,
+        "activitywatch",
+        "window.active",
+        window_active_payload(30_000),
+    )?;
+    live.equivalence_key = Some(key.clone());
+    let persisted_id = admit_and_persist(&service, live).await?;
+    assert_eq!(persisted_id, live_id);
+
+    // Re-scan after a heartbeat grew `endtime`: SAME occurrence key (start
+    // anchor unchanged), duration grown from 30s to 300s.
+    let revision_id = Uuid::now_v7();
+    let mut revision = material_event(
+        material_id,
+        revision_id,
+        "activitywatch",
+        "window.active",
+        window_active_payload(300_000),
+    )?;
+    revision.equivalence_key = Some(key.clone());
+
+    match service.admit_event(revision).await? {
+        AdmissionDecision::Superseded {
+            admitted,
+            superseded_event_id,
+        } => {
+            assert_eq!(
+                superseded_event_id, live_id,
+                "the short-duration read is the supersession target"
+            );
+            assert_eq!(
+                admitted.event_id, revision_id,
+                "the grown-duration revision is admitted"
+            );
+        }
+        other => panic!(
+            "a grown re-read of the same AW occurrence must supersede, not {other:?} \
+             (window.active is expected to opt into SupersedeOnChange, sinex-h3g)"
+        ),
+    }
+
+    Ok(())
+}
+
+/// An unmodified re-read of the same row (e.g. a poll cycle that lands
+/// between heartbeats, so nothing actually grew) must suppress, not
+/// supersede — a bare re-observation is not a revision.
+#[sinex_test]
+async fn activitywatch_window_active_supersede_on_change_unmodified_reread_suppresses(
+    ctx: TestContext,
+) -> TestResult<()> {
+    let material_id = ctx.create_source_material(Some("h3g-aw-supersede-identical")).await?;
+    let key = "desktop.activitywatch|bucket_id=aw-watcher-window_test-host|event_timestamp=2026-07-01T00:05:00Z".to_string();
+    let service = admission_service(&ctx);
+
+    let live_id = Uuid::now_v7();
+    let mut live = material_event(
+        material_id,
+        live_id,
+        "activitywatch",
+        "window.active",
+        window_active_payload(30_000),
+    )?;
+    live.equivalence_key = Some(key.clone());
+    admit_and_persist(&service, live).await?;
+
+    let repeat_id = Uuid::now_v7();
+    let mut repeat = material_event(
+        material_id,
+        repeat_id,
+        "activitywatch",
+        "window.active",
+        window_active_payload(30_000),
+    )?;
+    repeat.equivalence_key = Some(key.clone());
+
+    match service.admit_event(repeat).await? {
+        AdmissionDecision::Suppressed(rejection) => {
+            assert_eq!(rejection.kind, AdmissionRejectionKind::OccurrenceDuplicate);
+        }
+        other => panic!("unmodified AW re-read must suppress, not {other:?}"),
+    }
+
+    Ok(())
+}

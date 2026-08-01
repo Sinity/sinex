@@ -7,7 +7,9 @@ use async_nats::jetstream;
 use serde_json::json;
 use sinex_db::DbPoolExt;
 use sinex_primitives::activity::ActivitySourceKind;
-use sinex_primitives::events::payloads::{ActivityDailySummaryPayload, StateIntervalPayload};
+use sinex_primitives::events::payloads::{
+    ActivityDailySummaryPayload, ActivityWatchWindowActivePayload, StateIntervalPayload,
+};
 use sinex_primitives::{Timestamp, Uuid, error::SinexError, temporal};
 use sinexd::event_engine::material_ready_set::MaterialReadySet;
 use sinexd::event_engine::validator::IngestEventValidator;
@@ -1138,6 +1140,119 @@ async fn daily_summary_supersede_on_change_archives_predecessor_and_admits_revis
         live_still,
         Some(revision_id),
         "identical-content re-emit must not disturb the live revision"
+    );
+
+    setup.handle.abort();
+    Ok(())
+}
+
+/// A schema-valid `window.active` payload (a `SupersedeOnChange` event type
+/// as of sinex-h3g). `duration_ms` is the content knob: it stands in for
+/// AV's heartbeat-extended `endtime` — the SAME occurrence (same `bucket_id`
+/// + start timestamp) re-read with a larger duration is exactly what a
+/// `SqliteRowAdapter` `mutable_trailing_rows` re-read of a still-growing AW
+/// row produces (see `crate::runtime::parser::adapters::sqlite_row`'s
+/// `test_sqlite_mutable_trailing_rows_rereads_mutated_row` for that half of
+/// the fix).
+fn h3g_window_active_payload(duration_ms: u64) -> serde_json::Value {
+    serde_json::to_value(ActivityWatchWindowActivePayload {
+        app: "kitty".to_string(),
+        title: "sinex-h3g-consumer".to_string(),
+        duration_ms,
+        bucket_id: "aw-watcher-window_test-host".to_string(),
+    })
+    .expect("window.active payload serializes")
+}
+
+/// sinex-h3g end-to-end repro, the bead's own fixture: ingest an AW window
+/// row (short duration, as read while the row was still growing), then
+/// re-ingest the SAME occurrence (same start-anchored `equivalence_key`)
+/// with a grown duration, simulating a heartbeat extending `endtime` between
+/// scans. Before this fix `window.active` had no `occurrence_key` wired at
+/// all (so no dedup path fired) and defaulted to `SuppressDuplicate` (so even
+/// with a key wired, the grown re-read would have been silently discarded).
+/// It must now supersede through the real consumer pipeline (JetStream →
+/// admission → archive → persist), leaving exactly ONE live interpretation
+/// carrying the grown duration and the stale short one archived — never a
+/// silent overlapping duplicate.
+#[sinex_test]
+async fn activitywatch_grown_row_supersedes_stale_short_interpretation(
+    ctx: TestContext,
+) -> TestResult<()> {
+    let ctx = ctx.with_nats().shared().await?;
+
+    let setup = start_isolated_consumer(&ctx, "h3g-aw-supersession").await?;
+    let nats_client = ctx.nats_client();
+    let equivalence_key =
+        "desktop.activitywatch|bucket_id=aw-watcher-window_test-host|event_timestamp=2026-07-01T12:00:00Z"
+            .to_string();
+
+    // Initial scan: the row read while still growing, duration 30s.
+    let live_id = publish_event(
+        &ctx.pool,
+        &nats_client,
+        &setup.namespace,
+        "activitywatch",
+        "window.active",
+        h3g_window_active_payload(30_000),
+        EventOverrides {
+            equivalence_key: Some(equivalence_key.clone()),
+            ..Default::default()
+        },
+    )
+    .await?;
+    WaitHelpers::wait_for_event_id(&ctx.pool, live_id.into(), Timeouts::SHORT).await?;
+
+    // Re-scan after AW's heartbeat extended `endtime`: SAME occurrence key
+    // (start anchor unchanged), duration grown from 30s to 300s.
+    let revision_id = publish_event(
+        &ctx.pool,
+        &nats_client,
+        &setup.namespace,
+        "activitywatch",
+        "window.active",
+        h3g_window_active_payload(300_000),
+        EventOverrides {
+            equivalence_key: Some(equivalence_key.clone()),
+            ..Default::default()
+        },
+    )
+    .await?;
+    WaitHelpers::wait_for_event_id(&ctx.pool, revision_id.into(), Timeouts::SHORT).await?;
+
+    // The stale short interpretation must no longer be live...
+    assert!(
+        ctx.pool.events().get_by_id(live_id.into()).await?.is_none(),
+        "superseded short-duration interpretation must not remain live"
+    );
+    // ...but archived exactly once (single-live-interpretation upheld).
+    let archived_count: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM audit.archived_events WHERE id = $1")
+            .bind(live_id)
+            .fetch_one(&ctx.pool)
+            .await?;
+    assert_eq!(
+        archived_count, 1,
+        "superseded short-duration interpretation must be archived exactly once"
+    );
+
+    // Exactly ONE live row for this occurrence, carrying the GROWN duration.
+    let live_row: Option<(Uuid, serde_json::Value)> = sqlx::query(
+        "SELECT id, payload FROM core.events WHERE equivalence_key = $1",
+    )
+    .bind(&equivalence_key)
+    .fetch_optional(&ctx.pool)
+    .await?
+    .map(|row| (row.get("id"), row.get("payload")));
+    let (live_id_now, live_payload) =
+        live_row.expect("exactly one live row must exist for this occurrence");
+    assert_eq!(
+        live_id_now, revision_id,
+        "the grown-duration revision must be the sole live row"
+    );
+    assert_eq!(
+        live_payload["duration_ms"], 300_000,
+        "the live row must carry the GROWN duration, not the stale short one"
     );
 
     setup.handle.abort();
