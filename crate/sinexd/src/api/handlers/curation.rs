@@ -5,8 +5,9 @@ use sinex_db::repositories::DbPoolExt;
 use sinex_db::repositories::state::Operation as DbOperation;
 use sinex_primitives::authority::{Judgment, JudgmentVerdict, Proposal, ProposalKind};
 use sinex_primitives::derivation::{
-    ClaimSupportTemplate, ClaimTemporalQuality, DerivationOutputDeclaration,
-    DerivationWriteSurface, DerivedProductClass, InputEligibility, SourceCoverage, SupportLevel,
+    AdjudicationStatus, ClaimSupport, ClaimSupportTemplate, ClaimTemporalQuality,
+    DerivationOutputDeclaration, DerivationWriteSurface, DerivedProductClass, InputEligibility,
+    SourceCoverage, SupportLevel,
 };
 use sinex_primitives::domain::{EventSource, EventType, OperationStatus};
 use sinex_primitives::events::payloads::{
@@ -129,12 +130,58 @@ const CURATION_FINALIZED_DECLARATION: DerivationOutputDeclaration = DerivationOu
         "xtask test -p sinexd -E 'test(curation_finalize_persists_lineage_to_original_proposal_and_judgment)'",
 };
 
+/// Static `authority.finalizer_registry` declarations for the curation-rpc
+/// writer (sinex-0vx.5): the set of `proposal_kind`s this handler file is
+/// permitted to finalize, and the actor-kind policy governing each one.
+/// Reconciled at `sinexd` startup the same way as `CURATION_OUTPUT_DECLARATIONS`
+/// (`crate::authority::reconcile_finalizer_registrations`, called from
+/// `Supervisor::run`) — a proposal whose `(proposal_kind, candidate_source,
+/// candidate_event_type)` doesn't match a row here is rejected by
+/// `handle_curation_finalize` before it ever reaches an adjudicated write.
+///
+/// Both entries default to `requires_human_judgment: true` with no
+/// `auto_accept_policy` — the safe default posture (decision (a) of the 0vx
+/// design pass): every actor kind including `Agent` gets exactly the same
+/// treatment here, because neither of the currently-registered proposal
+/// kinds has been granted any auto-accept exception. Operators wishing to
+/// grant an actor kind auto-accept authority for a specific proposal kind do
+/// so by adding an explicit `auto_accept_policy` here — never implicitly.
+pub const CURATION_FINALIZER_DECLARATIONS: &[crate::authority::FinalizerDeclaration] = &[
+    crate::authority::FinalizerDeclaration {
+        finalizer_id: "curation-rpc.knowledge.tag_applied",
+        proposal_kind: "knowledge.tag_applied",
+        output_source: "knowledge-graph",
+        output_event_type: "knowledge.tag_applied",
+        output_product_class: DerivedProductClass::ReportArtifact,
+        derivation_declaration_id: CURATION_FINALIZED_DECLARATION.declaration_id,
+        requires_human_judgment: true,
+        auto_accept_policy: None,
+        registered_by: "curation-rpc",
+    },
+    crate::authority::FinalizerDeclaration {
+        finalizer_id: "curation-rpc.curation.duplicate_resolution",
+        proposal_kind: "curation.duplicate_resolution",
+        output_source: "curation",
+        output_event_type: "curation.duplicate_resolution",
+        output_product_class: DerivedProductClass::ReportArtifact,
+        derivation_declaration_id: CURATION_FINALIZED_DECLARATION.declaration_id,
+        requires_human_judgment: true,
+        auto_accept_policy: None,
+        registered_by: "curation-rpc",
+    },
+];
+
 /// Stamp `product_class`/`claim_support`/`derivation_declaration_id` on a
 /// handler-built event from its static declaration, so
 /// `derivation.enforce_event_product_declaration()` (sinex-0vx.4) admits the
 /// write once `CURATION_OUTPUT_DECLARATIONS` has been reconciled into
 /// `derivation.product_declarations` (sinex-x79t's `reconcile_declarations`,
 /// called with this file's declarations from `Supervisor::run`).
+///
+/// Produces an UNREVIEWED claim-support vector — the shape every proposal
+/// and judgment record carries (they are the evidence trail, not themselves
+/// adjudicated claims). Use [`apply_curation_finalized_declaration`] for the
+/// one event that IS an adjudicated output: `curation.finalized`.
 fn apply_curation_declaration<T>(
     event: &mut Event<T>,
     declaration: &DerivationOutputDeclaration,
@@ -149,6 +196,40 @@ fn apply_curation_declaration<T>(
         0,
     ));
     event.derivation_declaration_id = Some(declaration.declaration_id.to_string());
+}
+
+/// Stamp the `curation.finalized` event with an ADJUDICATED claim-support
+/// vector (sinex-0vx.5): this is the one curation-rpc write that represents
+/// an actual promoted claim, so — unlike `apply_curation_declaration` above
+/// — its `claim_support.adjudication` is `Accepted` and carries
+/// `adjudication_event_id` pointing at the judgment event that authorized
+/// it. `Event.adjudication_event_id` (the DB column mirror) is set to the
+/// same id so `derivation.enforce_event_product_declaration()`'s adjudicated-
+/// claim check (sinex-0vx.4) is satisfied by construction, not by accident.
+fn apply_curation_finalized_declaration<T>(
+    event: &mut Event<T>,
+    judgment_event_id: EventId,
+    evidence_event_count: u32,
+    evidence_material_count: u32,
+) -> Result<()> {
+    let template = CURATION_FINALIZED_DECLARATION.default_support;
+    let claim_support = ClaimSupport::adjudicated(
+        template.support_level,
+        template.source_coverage,
+        template.temporal_quality,
+        AdjudicationStatus::Accepted,
+        judgment_event_id,
+        evidence_event_count,
+        evidence_material_count,
+        1,
+        0,
+    )?;
+    event.product_class = Some(CURATION_FINALIZED_DECLARATION.product_class);
+    event.claim_support = Some(claim_support);
+    event.derivation_declaration_id =
+        Some(CURATION_FINALIZED_DECLARATION.declaration_id.to_string());
+    event.adjudication_event_id = Some(judgment_event_id.to_uuid());
+    Ok(())
 }
 
 pub async fn handle_curation_list_proposals(
@@ -586,6 +667,22 @@ pub async fn handle_curation_finalize(
             SinexError::serialization("curation.finalize: invalid proposal payload")
                 .with_std_error(&error)
         })?;
+
+    // sinex-0vx.5: the curation-bypass rejection AND the actor-kind
+    // acceptance gate. A finalizer must be registered for this exact
+    // (proposal_kind, output_source, output_event_type) triple, and the
+    // judgment's actor_kind must be sufficient authority under that
+    // finalizer's policy (Agent is never sufficient by default). Runs
+    // before any adjudicated write is built.
+    crate::authority::authorize_finalization(
+        pool,
+        &proposal.proposal_kind,
+        &proposal.candidate_source,
+        &proposal.candidate_event_type,
+        judgment.actor_kind,
+    )
+    .await?;
+
     let finalized_at = Timestamp::now();
     let finalized = CurationFinalizedPayload::from_judgment(
         Uuid::now_v7(),
@@ -602,7 +699,7 @@ pub async fn handle_curation_finalize(
         .from_parents(parents)?
         .at_time(finalized_at)
         .build()?;
-    apply_curation_declaration(&mut event, &CURATION_FINALIZED_DECLARATION, 2, 0);
+    apply_curation_finalized_declaration(&mut event, judgment_parent, 2, 0)?;
     let inserted = pool.events().insert(event).await?;
     let operation_record = pool
         .state()

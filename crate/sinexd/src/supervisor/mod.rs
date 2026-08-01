@@ -445,6 +445,18 @@ async fn reconcile_product_declarations(event_engine_config: &EventEngineConfig)
             crate::api::handlers::instructions::INSTRUCTIONS_OUTPUT_DECLARATIONS,
         )
         .await?;
+
+        // sinex-0vx.5: reconcile authority.finalizer_registry AFTER product
+        // declarations — finalizer_registry.derivation_declaration_id
+        // foreign-keys into derivation.product_declarations, so the
+        // declaration row this finalizer's own output stamps must already
+        // exist. Same fail-closed startup posture as the reconcile above.
+        crate::authority::reconcile_finalizer_registrations(
+            &pool,
+            crate::api::handlers::curation::CURATION_FINALIZER_DECLARATIONS,
+        )
+        .await?;
+
         Ok(inserted)
     }
     .await;
