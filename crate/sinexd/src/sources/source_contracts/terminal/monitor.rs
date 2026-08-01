@@ -14,7 +14,7 @@ use sinex_macros::SourceMeta;
 use sinex_primitives::privacy::ProcessingContext;
 use sinex_primitives::source_contracts::{
     AccessScope, CheckpointFamily, Horizon, OccurrenceIdentity, PrivacyTier, ResourceProfile,
-    RetentionPolicy, RunnerPack, RuntimeShape,
+    RetentionPolicy, RunnerPack, RuntimeShape, SourceCriticality,
 };
 use sinex_primitives::{
     JsonValue, SinexError,
@@ -44,6 +44,9 @@ use sinex_primitives::{
     runtime_shape = RuntimeShape::OnDemand,
     monitor_emit_fn = "emit_terminal_monitor",
     monitor_phase = "ServiceStart",
+    // sinex-sn6s: terminal session lifecycle markers are pure live
+    // observation; Sinex's row is the only durable record.
+    criticality = SourceCriticality::NotReconstructable,
 )]
 pub struct TerminalMonitorSource;
 

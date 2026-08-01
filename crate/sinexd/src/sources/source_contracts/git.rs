@@ -35,7 +35,7 @@ use sinex_primitives::parser::{
 use sinex_primitives::privacy::ProcessingContext;
 use sinex_primitives::source_contracts::{
     AccessScope, CheckpointFamily, Horizon, OccurrenceIdentity, PrivacyTier, ResourceProfile,
-    RetentionPolicy, RunnerPack, RuntimeShape,
+    RetentionPolicy, RunnerPack, RuntimeShape, SourceCriticality,
 };
 use sinex_primitives::temporal::Timestamp;
 
@@ -145,6 +145,9 @@ pub struct GitCommitHistoryParserConfig;
     runner_pack = RunnerPack::SinexdSource,
     checkpoint_family = CheckpointFamily::AppendStream,
     runtime_shape = RuntimeShape::OnDemand,
+    // sinex-sn6s: the tracked git repos themselves are authoritative; `git
+    // log` is always re-derivable.
+    criticality = SourceCriticality::Reconstructable,
 )]
 pub struct GitCommitHistoryParser;
 

@@ -17,7 +17,7 @@ use sinex_primitives::parser::{
 use sinex_primitives::privacy::ProcessingContext;
 use sinex_primitives::source_contracts::{
     AccessScope, CheckpointFamily, Horizon, OccurrenceIdentity, PrivacyTier, ResourceProfile,
-    RetentionPolicy, RunnerPack, RuntimeShape,
+    RetentionPolicy, RunnerPack, RuntimeShape, SourceCriticality,
 };
 use sinex_primitives::temporal::Timestamp;
 use tracing::warn;
@@ -48,6 +48,9 @@ use std::collections::HashMap;
     runner_pack = RunnerPack::SinexdSource,
     checkpoint_family = CheckpointFamily::LiveObservation,
     runtime_shape = RuntimeShape::Continuous,
+    // sinex-sn6s: kernel uevents are pure live observation; nothing external
+    // retains device-connect history.
+    criticality = SourceCriticality::NotReconstructable,
 )]
 pub struct UdevParser;
 

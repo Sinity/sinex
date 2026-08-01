@@ -60,6 +60,11 @@ pub struct PackageCompletenessSummary {
     pub manual_mode_count: usize,
     pub incomplete_mode_count: usize,
     pub blocking_missing_count: usize,
+    /// sinex-sn6s criticality breakdown across bound modes (re-checkable
+    /// query surface for "what's the current all-reconstructible status").
+    pub criticality_reconstructable_count: usize,
+    pub criticality_not_reconstructable_count: usize,
+    pub criticality_undeclared_count: usize,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -198,6 +203,10 @@ pub struct RuntimeBindingRef {
     pub checkpoint_family: Value,
     pub runtime_shape: Value,
     pub build_impact: Value,
+    /// sinex-sn6s: whether wiping Sinex's own copy is safe. `null` when
+    /// undeclared (undeclared + non-proposed + deployed is a startup-time
+    /// hard failure, see `sinexd::sources::bindings::validate_bindings`).
+    pub criticality: Value,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -385,6 +394,9 @@ fn summarize_packages(
         manual_mode_count: 0,
         incomplete_mode_count: 0,
         blocking_missing_count: 0,
+        criticality_reconstructable_count: 0,
+        criticality_not_reconstructable_count: 0,
+        criticality_undeclared_count: 0,
     };
 
     for mode in packages.values().flat_map(|package| package.modes.values()) {
@@ -397,6 +409,15 @@ fn summarize_packages(
         }
         if mode.completeness == PackageCompleteness::Incomplete {
             summary.incomplete_mode_count += 1;
+        }
+        if let Some(binding) = mode.sources.runtime_binding.as_ref() {
+            match binding.criticality.as_str() {
+                Some("reconstructable") => summary.criticality_reconstructable_count += 1,
+                Some("not_reconstructable") => {
+                    summary.criticality_not_reconstructable_count += 1;
+                }
+                _ => summary.criticality_undeclared_count += 1,
+            }
         }
         summary.blocking_missing_count += mode.requirements.iter().filter(|r| r.blocking).count();
     }
@@ -775,6 +796,38 @@ fn finalize_mode(
             },
         ),
     );
+    // Non-blocking: this row is informational (feeds the sinex-sn6s
+    // criticality breakdown query surface). The ENFORCED gate is
+    // deploy-time, in `sinexd::sources::bindings::validate_bindings` — it
+    // fails startup for any binding actually turned on via the source-
+    // bindings manifest that omits this declaration. Package completeness
+    // covers every compiled source, deployed or not (dozens are compiled
+    // but not currently enabled on this host), so blocking `Accepted` status
+    // on it here would conflate "not yet deployed" with "package incomplete"
+    // for sources this bead never asked to backfill.
+    diagnostics.require(
+        "criticality_declaration",
+        match binding.and_then(|binding| binding.criticality) {
+            Some(_) => RequirementStatus::Present,
+            None if binding.is_some() => RequirementStatus::Caveat,
+            None => RequirementStatus::NotApplicable,
+        },
+        false,
+        binding.map_or_else(
+            || "no binding; SourceCriticality cannot be declared".to_string(),
+            |binding| {
+                binding.criticality.map_or_else(
+                    || {
+                        "sinex-sn6s: no SourceCriticality declared yet — enabling this \
+                         binding via the source-bindings manifest without declaring it \
+                         is a startup-time hard failure"
+                            .to_string()
+                    },
+                    |criticality| format!("criticality {}", to_json_value(criticality)),
+                )
+            },
+        ),
+    );
     diagnostics.require(
         "fixtures_and_tests",
         RequirementStatus::Caveat,
@@ -942,6 +995,7 @@ fn requirement_owner_file(id: &str) -> &'static str {
         "material_class" | "storage_material_lifecycle_policy" | "transport_semantics" => {
             "crate/sinex-primitives/src/source_contracts/lifecycle.rs"
         }
+        "criticality_declaration" => "crate/sinexd/src/sources/bindings.rs",
         "resource_budget_spec" => "crate/sinex-primitives/src/source_contracts/resource.rs",
         "parser_binding" => "crate/sinexd/src/sources/source_contracts/",
         "source_factory" => "crate/sinexd/src/sources/source_factory.rs",
@@ -977,6 +1031,10 @@ fn requirement_next_action(id: &str) -> &'static str {
         }
         "resource_budget_spec" => "select a ResourceProfile that derives the budget spec",
         "transport_semantics" => "declare transport semantics on the runtime binding",
+        "criticality_declaration" => {
+            "declare .criticality(SourceCriticality::Reconstructable | NotReconstructable) \
+             on the runtime binding (sinex-sn6s)"
+        }
         "runtime_profile" => "declare checkpoint and runtime shape on the binding",
         "fixtures_and_tests" => "add behavior fixtures for the parser/runtime contract",
         "coverage_and_debt_views" => "add typed coverage and debt capability refs",
@@ -1218,6 +1276,10 @@ fn runtime_binding_ref(binding: &SourceRuntimeBinding) -> RuntimeBindingRef {
         checkpoint_family: to_json_value(binding.checkpoint_family),
         runtime_shape: to_json_value(binding.runtime_shape),
         build_impact: to_json_value(binding.build_impact),
+        criticality: binding
+            .criticality
+            .map(to_json_value)
+            .unwrap_or(Value::Null),
     }
 }
 

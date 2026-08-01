@@ -21,7 +21,7 @@ use sinex_primitives::parser::{
 use sinex_primitives::privacy::{ProcessingContext, SensitivityHint};
 use sinex_primitives::source_contracts::{
     AccessScope, CheckpointFamily, Horizon, OccurrenceIdentity, PrivacyTier, ResourceProfile,
-    RetentionPolicy, RunnerPack, RuntimeShape,
+    RetentionPolicy, RunnerPack, RuntimeShape, SourceCriticality,
 };
 use sinex_primitives::temporal::Timestamp;
 
@@ -83,6 +83,9 @@ pub struct HyprlandParserConfig {
     runner_pack = RunnerPack::SinexdSource,
     checkpoint_family = CheckpointFamily::LiveObservation,
     runtime_shape = RuntimeShape::Continuous,
+    // sinex-sn6s: Hyprland's IPC socket carries no history; Sinex's row is
+    // the only durable record of window/workspace transitions.
+    criticality = SourceCriticality::NotReconstructable,
 )]
 pub struct HyprlandParser {
     /// Buffered (window_class, window_title) from the most recent `activewindow`

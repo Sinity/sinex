@@ -42,7 +42,7 @@ use sinex_primitives::parser::{
 use sinex_primitives::privacy::ProcessingContext;
 use sinex_primitives::source_contracts::{
     AccessScope, CheckpointFamily, Horizon, OccurrenceIdentity, PrivacyTier, ResourceProfile,
-    RetentionPolicy, RunnerPack, RuntimeShape,
+    RetentionPolicy, RunnerPack, RuntimeShape, SourceCriticality,
 };
 use sinex_primitives::temporal::Timestamp;
 
@@ -97,6 +97,9 @@ pub struct RaindropParserConfig;
     runner_pack = RunnerPack::SinexdSource,
     checkpoint_family = CheckpointFamily::AppendStream,
     runtime_shape = RuntimeShape::OnDemand,
+    // sinex-sn6s: raindrop.io is the authoritative store; Sinex's copy is a
+    // cache.
+    criticality = SourceCriticality::Reconstructable,
 )]
 pub struct RaindropBookmarkParser;
 

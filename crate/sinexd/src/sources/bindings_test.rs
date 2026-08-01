@@ -1,4 +1,10 @@
 use super::*;
+use sinex_primitives::privacy::ProcessingContext;
+use sinex_primitives::source_contracts::{
+    AccessScope, CheckpointFamily, Horizon, OccurrenceIdentity, PrivacyTier, ResourceProfile,
+    RetentionPolicy, RunnerPack, RuntimeShape, SourceBuildImpact, SourceContract,
+    SourceRuntimeBinding, SubjectRef,
+};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use xtask::sandbox::prelude::sinex_test;
@@ -6,6 +12,84 @@ use xtask::sandbox::prelude::sinex_test;
 /// Marker env var used by the concurrent-binding regression test. Picked
 /// to be specific enough that no other code in the process sets it.
 const TEST_KEY: &str = "SINEX_BINDINGS_TEST_DISPLAY_RACE";
+
+// ---------------------------------------------------------------------------
+// sinex-sn6s: criticality-declaration enforcement fixture
+// ---------------------------------------------------------------------------
+//
+// A permanent (proposed = false, so it is treated as "active") test-only
+// source registered at link time into the same global `inventory`
+// collections `validate_bindings` reads at real sinexd startup. It
+// deliberately never calls `.criticality(..)` on the runtime binding, so
+// `validate_bindings` must reject a manifest that enables it. This exercises
+// the actual production validation path — not a reimplementation — so
+// reverting the criticality check inside `validate_bindings` (or reverting
+// the `criticality: Option<SourceCriticality>` field/enforcement itself)
+// makes `enabling_binding_without_criticality_fails_loudly` below fail.
+const CRITICALITY_FIXTURE_SOURCE_ID: &str = "sinex.fixture.criticality-undeclared";
+
+sinex_primitives::register_source_contract! {
+    SourceContract {
+        id: CRITICALITY_FIXTURE_SOURCE_ID,
+        namespace: "test",
+        event_types: &[("sinex.fixture", "criticality.undeclared")],
+        privacy_tier: PrivacyTier::Public,
+        horizons: &[Horizon::Continuous],
+        retention: RetentionPolicy::Forever,
+        occurrence_identity: OccurrenceIdentity::Natural,
+        access_scope: AccessScope::Internal,
+    }
+}
+
+sinex_primitives::register_source_runtime_binding! {
+    SourceRuntimeBinding::builder(
+        SubjectRef::from_static("source:sinex.fixture.criticality-undeclared"),
+        CRITICALITY_FIXTURE_SOURCE_ID,
+        "test",
+    )
+    .implementation("sinexd::test-fixture")
+    .adapter("test_adapter")
+    .output_event_type("criticality.undeclared")
+    .privacy_context(ProcessingContext::Metadata)
+    .resource_profile(ResourceProfile::EmbeddedEmitter)
+    .source_id(CRITICALITY_FIXTURE_SOURCE_ID)
+    .runner_pack(RunnerPack::InProcess)
+    .checkpoint_family(CheckpointFamily::AppendStream)
+    .runtime_shape(RuntimeShape::OnDemand)
+    .build_impact(SourceBuildImpact::ZERO)
+    // Deliberately no `.criticality(..)` call — this is the missing
+    // declaration the test asserts startup rejects.
+    .build()
+}
+
+#[sinex_test]
+async fn enabling_binding_without_criticality_fails_loudly() -> xtask::sandbox::TestResult<()> {
+    let manifest_binding = SourceBinding {
+        source_id: CRITICALITY_FIXTURE_SOURCE_ID.to_string(),
+        instance_idx: 1,
+        service_name: None,
+        runtime_config: None,
+        extra_args: Vec::new(),
+        extra_env: HashMap::new(),
+    };
+
+    let result = validate_bindings(std::slice::from_ref(&manifest_binding));
+
+    let error = result.expect_err(
+        "validate_bindings must fail loudly when an enabled binding has no \
+         declared SourceCriticality",
+    );
+    let message = error.to_string();
+    assert!(
+        message.contains(CRITICALITY_FIXTURE_SOURCE_ID),
+        "error must name the offending source id, got: {message}"
+    );
+    assert!(
+        message.to_lowercase().contains("criticality"),
+        "error must explain the missing SourceCriticality declaration, got: {message}"
+    );
+    Ok(())
+}
 
 #[sinex_test]
 async fn binding_defaults_control_identity_to_source_id() -> xtask::sandbox::TestResult<()> {

@@ -412,6 +412,7 @@ fn mode_fixture() -> SourceModeStatusView {
             checkpoint_interval_ms: None,
             pressure_actions: vec!["pause".to_string()],
         },
+        criticality: None,
         runtime_observed: None,
         runtime_live: None,
         last_heartbeat_at: None,

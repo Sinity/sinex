@@ -5,7 +5,7 @@ use serde::Serialize;
 use crate::privacy::ProcessingContext;
 use crate::source_contracts::{
     CheckpointFamily, MaterialLifecyclePolicy, ResourceBudgetSpec, ResourceProfile, RunnerPack,
-    RuntimeShape, SourceCapabilityRef, SubjectRef, TransportSemantics,
+    RuntimeShape, SourceCapabilityRef, SourceCriticality, SubjectRef, TransportSemantics,
 };
 
 #[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq)]
@@ -49,6 +49,11 @@ pub struct SourceRuntimeBinding {
     pub material_lifecycle: MaterialLifecyclePolicy,
     /// Transport, delivery, replay, DLQ, and backpressure semantics.
     pub transport_semantics: TransportSemantics,
+    /// Whether wiping Sinex's own copy of this source's data is safe
+    /// (sinex-sn6s). `None` means undeclared; startup validation
+    /// (`sinexd::sources::bindings::validate_bindings`) refuses to enable a
+    /// deployed, non-proposed binding that leaves this undeclared.
+    pub criticality: Option<SourceCriticality>,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -110,6 +115,7 @@ impl SourceRuntimeBinding {
                 build_impact: SourceBuildImpact::ZERO,
                 material_lifecycle: MaterialLifecyclePolicy::RetainRaw,
                 transport_semantics: TransportSemantics::DIRECT_APPEND_STREAM,
+                criticality: None,
             },
             _state: PhantomData,
         }
@@ -191,6 +197,14 @@ impl<O, P, CF, RS, BI> SourceRuntimeBindingBuilder<O, P, CF, RS, BI> {
     #[must_use]
     pub const fn transport_semantics(mut self, semantics: TransportSemantics) -> Self {
         self.descriptor.transport_semantics = semantics;
+        self
+    }
+
+    /// Declare whether Sinex's own copy of this source's data is safe to
+    /// wipe (sinex-sn6s). See [`SourceCriticality`] for the tier meanings.
+    #[must_use]
+    pub const fn criticality(mut self, criticality: SourceCriticality) -> Self {
+        self.descriptor.criticality = Some(criticality);
         self
     }
 }

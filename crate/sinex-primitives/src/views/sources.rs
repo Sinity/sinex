@@ -113,6 +113,12 @@ pub struct SourceModeStatusView {
     pub backpressure: bool,
     pub privacy_context: String,
     pub resource_budget: SourceResourceBudgetView,
+    /// sinex-sn6s: whether wiping Sinex's own copy of this source's data is
+    /// safe (`reconstructable`, `not_reconstructable`), or `None` when
+    /// undeclared. Undeclared + non-proposed + deployed is a startup-time
+    /// hard failure, so this should never read `None` for a live mode.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub criticality: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub runtime_observed: Option<bool>,
     #[serde(default, skip_serializing_if = "Option::is_none")]

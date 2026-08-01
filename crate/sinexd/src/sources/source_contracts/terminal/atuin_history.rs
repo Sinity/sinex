@@ -40,7 +40,7 @@ use sinex_primitives::parser::{
 use sinex_primitives::privacy::ProcessingContext;
 use sinex_primitives::source_contracts::{
     AccessScope, CheckpointFamily, Horizon, OccurrenceIdentity, PrivacyTier, ResourceProfile,
-    RetentionPolicy, RunnerPack, RuntimeShape,
+    RetentionPolicy, RunnerPack, RuntimeShape, SourceCriticality,
 };
 
 /// Declarative Atuin history source definition.
@@ -144,6 +144,9 @@ impl Default for AtuinHistoryRecord {
     runner_pack = RunnerPack::SinexdSource,
     checkpoint_family = CheckpointFamily::MutableSnapshot { backing_store_kind: "sqlite", occurrence_anchor: "atuin_history_id" },
     runtime_shape = RuntimeShape::Continuous,
+    // sinex-sn6s: Atuin owns its own history/records/kv SQLite DBs; Sinex is
+    // a downstream reader, never the sole copy.
+    criticality = SourceCriticality::Reconstructable,
 )]
 pub struct AtuinHistoryParser;
 
