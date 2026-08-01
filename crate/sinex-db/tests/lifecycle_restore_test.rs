@@ -10,6 +10,33 @@ fn test_file_payload(path: &str) -> TestResult<FileCreatedPayload> {
     ))
 }
 
+/// Registers a `derivation.product_declarations` row for
+/// `fs-watcher`/`file.created` so this file's derived-event fixture (built
+/// via `.from_parents(..)`) satisfies the `events_derived_requires_product_class`
+/// CHECK constraint and the `enforce_event_product_declaration` trigger
+/// (sinex-0vx.4 / sinex-8cr.2 derivation control plane, landed after this
+/// fixture was written — see sinex-94mh). Idempotent via `ON CONFLICT`.
+async fn ensure_lifecycle_restore_test_declaration(pool: &sqlx::PgPool) -> color_eyre::Result<()> {
+    sqlx::query(
+        r#"
+        INSERT INTO derivation.product_declarations (
+            declaration_id, owner, product_class, write_surface,
+            output_source, output_event_type, semantics_version,
+            input_eligibility, default_claim_support, verification_command
+        )
+        VALUES (
+            'lifecycle-restore-test-decl', 'test-owner', 'canonical_derived_event',
+            'derived_output', 'fs-watcher', 'file.created', 'v1',
+            'default_canonical_input', '{}'::jsonb, 'true'
+        )
+        ON CONFLICT (declaration_id) DO NOTHING
+        "#,
+    )
+    .execute(pool)
+    .await?;
+    Ok(())
+}
+
 #[sinex_test]
 async fn cascade_restore_preserves_synthetic_metadata_columns(ctx: TestContext) -> TestResult<()> {
     let material_id = ctx
@@ -31,6 +58,7 @@ async fn cascade_restore_preserves_synthetic_metadata_columns(ctx: TestContext) 
         .await?;
     let parent_id = parent.id.expect("published parent should have an id");
 
+    ensure_lifecycle_restore_test_declaration(ctx.pool()).await?;
     let mut derived = Event::builder(test_file_payload("/tmp/lifecycle-derived.txt")?)
         .from_parents(vec![parent_id])?
         .build()?;
@@ -41,6 +69,9 @@ async fn cascade_restore_preserves_synthetic_metadata_columns(ctx: TestContext) 
     derived.equivalence_key = Some("equiv:lifecycle-restore".to_string());
     derived.created_by_operation_id = Some(replay_operation_id);
     derived.automaton_model = Some(AutomatonModel::ScopeReconciler);
+    derived.product_class = Some(sinex_primitives::derivation::DerivedProductClass::CanonicalDerivedEvent);
+    derived.claim_support = Some(sinex_primitives::derivation::ClaimSupport::unknown());
+    derived.derivation_declaration_id = Some("lifecycle-restore-test-decl".to_string());
 
     let inserted = ctx.pool().events().insert(derived).await?;
     let event_id = inserted
