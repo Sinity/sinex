@@ -1286,11 +1286,18 @@ async fn adapter_private_mode_control_listener_persists_broadcast(
     let ctx = ctx.with_nats().shared().await?;
     let dir = tempfile::tempdir()?;
     save_private_mode_state(dir.path(), &RuntimePrivateModeState::disabled())?;
-    let handle = spawn_private_mode_control_listener(
+    // Wait for the listener's NATS subscription to actually be registered
+    // before publishing -- otherwise this races the spawned task's
+    // subscribe() against the publish below and can lose the (non-durable,
+    // core-NATS) message whenever publish wins the race.
+    let (ready_tx, ready_rx) = tokio::sync::oneshot::channel();
+    let handle = spawn_private_mode_control_listener_with_ready_signal(
         ctx.nats_client(),
         dir.path().to_path_buf(),
         "desktop.clipboard",
+        Some(ready_tx),
     );
+    ready_rx.await?;
 
     let state = RuntimePrivateModeState::enabled_by(
         "sinity",

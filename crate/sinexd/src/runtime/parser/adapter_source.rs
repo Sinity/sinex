@@ -2238,6 +2238,24 @@ fn spawn_private_mode_control_listener(
     state_dir: PathBuf,
     source_id: &'static str,
 ) -> tokio::task::JoinHandle<()> {
+    spawn_private_mode_control_listener_with_ready_signal(client, state_dir, source_id, None)
+}
+
+/// `ready_tx`, when `Some`, fires once the NATS subscription is actually
+/// registered with the server -- test/harness-only (see call site in
+/// `adapter_source_test.rs`), so a test can deterministically wait for the
+/// subscription to exist before publishing a control message instead of
+/// racing a bare `tokio::spawn` + immediate publish, which loses the message
+/// whenever the publish reaches the server before the spawned subscribe
+/// does. `None` in production -- zero behavior change, mirrors the
+/// `run_with_ready_signal` pattern used for the confirmed-event consumer
+/// (sinex-li78).
+fn spawn_private_mode_control_listener_with_ready_signal(
+    client: async_nats::Client,
+    state_dir: PathBuf,
+    source_id: &'static str,
+    ready_tx: Option<tokio::sync::oneshot::Sender<()>>,
+) -> tokio::task::JoinHandle<()> {
     let subject =
         sinex_primitives::environment::environment().nats_subject(PRIVATE_MODE_CONTROL_SUBJECT);
 
@@ -2254,6 +2272,10 @@ fn spawn_private_mode_control_listener(
                 return;
             }
         };
+
+        if let Some(ready_tx) = ready_tx {
+            let _ = ready_tx.send(());
+        }
 
         info!(
             source = source_id,
