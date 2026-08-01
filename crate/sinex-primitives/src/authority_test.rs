@@ -140,6 +140,91 @@ async fn finalizer_registration_declares_human_requirement() -> TestResult<()> {
     Ok(())
 }
 
+/// Core sinex-0vx.5 decision (a) invariant: an `Agent` judgment is NEVER
+/// sufficient by itself, no matter how permissive `requires_human_judgment`
+/// looks in isolation — it additionally needs an explicit grant naming
+/// `Agent`. Deleting either half of the `&&` in
+/// `judgment_actor_sufficient_for_acceptance` (the `!requires_human_judgment`
+/// check or the `policy.grants` check) turns this red.
+#[sinex_test]
+async fn agent_judgment_not_auto_accepted_by_default() -> TestResult<()> {
+    // Default posture: requires_human_judgment = true (the DB column
+    // DEFAULT), no policy at all.
+    assert!(!judgment_actor_sufficient_for_acceptance(
+        CurationJudgmentActorKind::Agent,
+        true,
+        None,
+    ));
+
+    // requires_human_judgment flipped to false but no policy grants Agent
+    // anything (e.g. it grants only DeterministicPolicy) — still refused.
+    let policy_without_agent = AutoAcceptPolicy {
+        granted_actor_kinds: vec![CurationJudgmentActorKind::DeterministicPolicy],
+    };
+    assert!(!judgment_actor_sufficient_for_acceptance(
+        CurationJudgmentActorKind::Agent,
+        false,
+        Some(&policy_without_agent),
+    ));
+
+    // Policy grants Agent but requires_human_judgment is still true —
+    // human-judgment requirement wins, still refused.
+    let policy_with_agent = AutoAcceptPolicy {
+        granted_actor_kinds: vec![CurationJudgmentActorKind::Agent],
+    };
+    assert!(!judgment_actor_sufficient_for_acceptance(
+        CurationJudgmentActorKind::Agent,
+        true,
+        Some(&policy_with_agent),
+    ));
+
+    // Only when BOTH conditions hold is an Agent judgment sufficient.
+    assert!(judgment_actor_sufficient_for_acceptance(
+        CurationJudgmentActorKind::Agent,
+        false,
+        Some(&policy_with_agent),
+    ));
+
+    Ok(())
+}
+
+/// The existing trusted actor classes are unaffected by finalizer policy —
+/// they are sufficient by themselves regardless of `requires_human_judgment`
+/// or `auto_accept_policy` (this is the pre-existing, unchanged default
+/// posture for `Operator`/`User`/`DeterministicPolicy`/`TestFixture`).
+#[sinex_test]
+async fn trusted_actor_kinds_remain_sufficient_regardless_of_policy() -> TestResult<()> {
+    for actor_kind in [
+        CurationJudgmentActorKind::User,
+        CurationJudgmentActorKind::Operator,
+        CurationJudgmentActorKind::DeterministicPolicy,
+        CurationJudgmentActorKind::TestFixture,
+    ] {
+        assert!(judgment_actor_sufficient_for_acceptance(
+            actor_kind, true, None,
+        ));
+        assert!(judgment_actor_sufficient_for_acceptance(
+            actor_kind, false, None,
+        ));
+    }
+
+    Ok(())
+}
+
+#[sinex_test]
+async fn auto_accept_policy_grants_checks_membership() -> TestResult<()> {
+    let policy = AutoAcceptPolicy {
+        granted_actor_kinds: vec![CurationJudgmentActorKind::Agent],
+    };
+    assert!(policy.grants(CurationJudgmentActorKind::Agent));
+    assert!(!policy.grants(CurationJudgmentActorKind::Operator));
+
+    let empty = AutoAcceptPolicy::default();
+    assert!(!empty.grants(CurationJudgmentActorKind::Agent));
+
+    Ok(())
+}
+
 #[sinex_test]
 async fn schema_generation_covers_all_authority_types() -> TestResult<()> {
     let proposal_schema =

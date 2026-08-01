@@ -13,6 +13,7 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 use crate::error::{Result, SinexError};
+use crate::events::CurationJudgmentActorKind;
 use crate::ids::Id;
 use crate::temporal::Timestamp;
 use crate::views::{CaveatView, SinexObjectRef, ViewEnvelope};
@@ -266,6 +267,67 @@ impl FinalizerRegistration {
             requires_human_judgment: true,
             auto_accept_above_confidence: None,
         }
+    }
+}
+
+// ─── AutoAcceptPolicy / actor-kind sufficiency (sinex-0vx.5) ──────────────────
+
+/// Which actor kinds an `authority.finalizer_registry` row explicitly grants
+/// auto-accept authority to, for the proposal kind that row governs.
+///
+/// Mirrors the DB `finalizer_registry.auto_accept_policy` `jsonb` column.
+/// Only meaningful when the row's `requires_human_judgment = false` — a row
+/// that still requires human judgment ignores this field entirely
+/// (`judgment_actor_sufficient_for_acceptance` checks both).
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct AutoAcceptPolicy {
+    /// Actor kinds explicitly granted auto-accept authority. Empty by
+    /// default — an omitted or empty policy grants no one.
+    #[serde(default)]
+    pub granted_actor_kinds: Vec<CurationJudgmentActorKind>,
+}
+
+impl AutoAcceptPolicy {
+    /// Whether this policy explicitly grants `actor_kind` auto-accept
+    /// authority.
+    #[must_use]
+    pub fn grants(&self, actor_kind: CurationJudgmentActorKind) -> bool {
+        self.granted_actor_kinds.contains(&actor_kind)
+    }
+}
+
+/// The enforcement decision for sinex-0vx.5 decision (a): is a
+/// `curation.judgment` recorded by `actor_kind`, by itself, sufficient
+/// authority to promote its proposal to an Accepted adjudication?
+///
+/// `User`/`Operator`/`DeterministicPolicy`/`TestFixture` are always
+/// sufficient by themselves — these are the existing trusted actor classes
+/// (`TestFixture` only exists in `cfg(test)`/`testing` builds and fixtures).
+///
+/// `Agent` is NEVER sufficient by default: confidence (or an agent's
+/// judgment) cannot become authority without an EXPLICIT grant. It requires
+/// BOTH `requires_human_judgment == false` AND an `auto_accept_policy` that
+/// lists `Agent` in `granted_actor_kinds` for the specific finalizer
+/// governing this proposal kind. Absent either condition, an Agent Accept
+/// produces at most a proposed-acceptance requiring Operator/User
+/// confirmation — the caller (a curation finalizer) must not promote the
+/// claim to `AdjudicationStatus::Accepted` and must instead reject/defer the
+/// finalize attempt.
+#[must_use]
+pub fn judgment_actor_sufficient_for_acceptance(
+    actor_kind: CurationJudgmentActorKind,
+    requires_human_judgment: bool,
+    auto_accept_policy: Option<&AutoAcceptPolicy>,
+) -> bool {
+    match actor_kind {
+        CurationJudgmentActorKind::Agent => {
+            !requires_human_judgment
+                && auto_accept_policy.is_some_and(|policy| policy.grants(actor_kind))
+        }
+        CurationJudgmentActorKind::User
+        | CurationJudgmentActorKind::Operator
+        | CurationJudgmentActorKind::DeterministicPolicy
+        | CurationJudgmentActorKind::TestFixture => true,
     }
 }
 
