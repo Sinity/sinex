@@ -16,6 +16,7 @@ pub mod llm;
 pub mod ops;
 pub mod pkm;
 pub mod privacy;
+pub mod projection;
 pub mod query;
 pub mod replay;
 pub mod rpc_handlers;

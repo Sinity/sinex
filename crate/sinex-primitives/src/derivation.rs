@@ -545,6 +545,136 @@ impl TstzRange {
     }
 }
 
+// ─── ProjectionStatus / ProjectionFreshnessClass ───────────────────────────
+
+/// Lifecycle status of a `derivation.projection_registry` row (sinex-68c.1).
+///
+/// Mirrors the `derivation.projection_registry.status` CHECK constraint
+/// (`defs::derivation::DerivationProjectionRegistry::create_table_statement`).
+/// `Absent` is an explicit tracked state ("we expect this projection to
+/// exist but nothing has built it yet"), distinct from simply having no row
+/// — a registry consumer that wants to warn about an un-built projection
+/// needs to be able to say so.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum ProjectionStatus {
+    /// Expected but never built.
+    Absent,
+    /// A build is in flight; not yet queryable as ready.
+    Building,
+    /// Built and within its acceptable-staleness window.
+    Ready,
+    /// Built once but now outside its acceptable-staleness window, or an
+    /// input dependency has changed since the last build.
+    Stale,
+    /// The last build attempt errored out.
+    Failed,
+    /// Built for only part of the intended scope/coverage window.
+    Partial,
+}
+
+impl ProjectionStatus {
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Absent => "absent",
+            Self::Building => "building",
+            Self::Ready => "ready",
+            Self::Stale => "stale",
+            Self::Failed => "failed",
+            Self::Partial => "partial",
+        }
+    }
+
+    /// Whether this status requires `stale_reason` to be set — mirrors the
+    /// `status NOT IN ('stale', 'failed', 'partial') OR stale_reason IS NOT
+    /// NULL` CHECK constraint.
+    #[must_use]
+    pub const fn requires_reason(self) -> bool {
+        matches!(self, Self::Stale | Self::Failed | Self::Partial)
+    }
+
+    /// Whether a consumer may treat a row in this status as authoritative
+    /// current state.
+    #[must_use]
+    pub const fn is_read_ready(self) -> bool {
+        matches!(self, Self::Ready)
+    }
+}
+
+impl std::fmt::Display for ProjectionStatus {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
+impl std::str::FromStr for ProjectionStatus {
+    type Err = String;
+
+    fn from_str(s: &str) -> std::result::Result<Self, Self::Err> {
+        match s {
+            "absent" => Ok(Self::Absent),
+            "building" => Ok(Self::Building),
+            "ready" => Ok(Self::Ready),
+            "stale" => Ok(Self::Stale),
+            "failed" => Ok(Self::Failed),
+            "partial" => Ok(Self::Partial),
+            _ => Err(format!("unknown projection status: {s}")),
+        }
+    }
+}
+
+/// How often a projection is expected to be refreshed, per the 2026-07-06
+/// blueprint fold: readiness caveats report staleness RELATIVE to this
+/// class (a 2-minute-stale `seconds`-class health surface is degraded; a
+/// 2-minute-stale `days`-class rollup is fine). Mirrors the
+/// `derivation.projection_registry.freshness_class` CHECK constraint.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum ProjectionFreshnessClass {
+    Seconds,
+    Minutes,
+    Hours,
+    Days,
+    /// No automatic staleness expectation; freshness is judged by explicit
+    /// operator/automaton action only.
+    Manual,
+}
+
+impl ProjectionFreshnessClass {
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Seconds => "seconds",
+            Self::Minutes => "minutes",
+            Self::Hours => "hours",
+            Self::Days => "days",
+            Self::Manual => "manual",
+        }
+    }
+}
+
+impl std::fmt::Display for ProjectionFreshnessClass {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
+impl std::str::FromStr for ProjectionFreshnessClass {
+    type Err = String;
+
+    fn from_str(s: &str) -> std::result::Result<Self, Self::Err> {
+        match s {
+            "seconds" => Ok(Self::Seconds),
+            "minutes" => Ok(Self::Minutes),
+            "hours" => Ok(Self::Hours),
+            "days" => Ok(Self::Days),
+            "manual" => Ok(Self::Manual),
+            _ => Err(format!("unknown projection freshness class: {s}")),
+        }
+    }
+}
+
 // ─── DerivationScope ────────────────────────────────────────────────────────
 
 /// Input scope for a derivation epoch.

@@ -227,6 +227,18 @@ pub enum ReadinessCaveatId {
     /// A derivation lane exists but has not been promoted to authoritative use.
     #[serde(rename = "derivation.lane_not_promoted")]
     DerivationLaneNotPromoted,
+    /// A read model is expected but no build has ever produced it.
+    #[serde(rename = "readmodel.absent")]
+    ReadmodelAbsent,
+    /// A read model build is currently in flight.
+    #[serde(rename = "readmodel.building")]
+    ReadmodelBuilding,
+    /// The last read-model build attempt errored out.
+    #[serde(rename = "readmodel.failed")]
+    ReadmodelFailed,
+    /// A read model was only built for part of its intended scope.
+    #[serde(rename = "readmodel.partial")]
+    ReadmodelPartial,
 }
 
 impl ReadinessCaveatId {
@@ -238,6 +250,10 @@ impl ReadinessCaveatId {
             Self::WindowPartial => "window.partial",
             Self::CoverageUnmeasurable => "coverage.unmeasurable",
             Self::DerivationLaneNotPromoted => "derivation.lane_not_promoted",
+            Self::ReadmodelAbsent => "readmodel.absent",
+            Self::ReadmodelBuilding => "readmodel.building",
+            Self::ReadmodelFailed => "readmodel.failed",
+            Self::ReadmodelPartial => "readmodel.partial",
         }
     }
 }
