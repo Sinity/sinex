@@ -351,64 +351,26 @@ async fn ensure_core_events_triggers(pool: &DbPool) -> TestResult<()> {
     // Recreate the trigger functions and bindings on every cleanup pass.
     // Reused slot databases can carry stale trigger bodies even when the trigger names
     // still exist, and schema diff does not currently treat that as structural drift.
-    sqlx::query(
-        r"
-        CREATE OR REPLACE FUNCTION core.fn_events_no_update()
-        RETURNS trigger LANGUAGE plpgsql AS $$
-        BEGIN
-            RAISE EXCEPTION 'UPDATE on core.events is forbidden';
-        END $$;
-        ",
-    )
-    .execute(&mut *conn)
-    .await
-    .map_err(|e| eyre!(e.to_string()))?;
-    sqlx::query("DROP TRIGGER IF EXISTS trg_events_no_update ON core.events")
+    //
+    // Use the canonical SQL from sinex-schema rather than a hand-maintained
+    // copy: this file previously carried its own stripped-down
+    // fn_archive_before_delete() (missing the archived_annotations/
+    // archived_embeddings cascade that the real trigger has had since #579),
+    // so every sandbox cleanup pass silently downgraded core.events' archive
+    // trigger to that stale stub -- which made
+    // strict_diff_test::check_strict_returns_empty_after_apply fail
+    // deterministically on any pool slot that had already been cleaned once
+    // (sinex-xjx8). Delegating to `Events`/`ArchivedEvents`'s own trigger-SQL
+    // constructors makes that class of drift impossible: there is only one
+    // place these trigger bodies are declared.
+    sqlx::query(sinex_db::schema::defs::Events::create_no_update_trigger_sql())
         .execute(&mut *conn)
         .await
         .map_err(|e| eyre!(e.to_string()))?;
-    sqlx::query(
-        "CREATE TRIGGER trg_events_no_update \
-         BEFORE UPDATE ON core.events \
-         FOR EACH ROW EXECUTE FUNCTION core.fn_events_no_update()",
-    )
-    .execute(&mut *conn)
-    .await
-    .map_err(|e| eyre!(e.to_string()))?;
-
-    sqlx::query(
-        r"
-        CREATE OR REPLACE FUNCTION core.fn_archive_before_delete()
-        RETURNS trigger LANGUAGE plpgsql AS $$
-        DECLARE
-          op_id TEXT := current_setting('sinex.operation_id', true);
-          who TEXT := current_setting('sinex.archived_by', true);
-          why TEXT := current_setting('sinex.archive_reason', true);
-        BEGIN
-          IF op_id IS NULL OR op_id = '' THEN
-            RAISE EXCEPTION 'DELETE on core.events requires sinex.operation_id to be set in this session';
-          END IF;
-
-          INSERT INTO audit.archived_events SELECT OLD.*, now(), who, why;
-          RETURN OLD;
-        END $$;
-        ",
-    )
-    .execute(&mut *conn)
-    .await
-    .map_err(|e| eyre!(e.to_string()))?;
-    sqlx::query("DROP TRIGGER IF EXISTS trg_events_archive_before_delete ON core.events")
+    sqlx::query(sinex_db::schema::defs::ArchivedEvents::create_archive_trigger_sql())
         .execute(&mut *conn)
         .await
         .map_err(|e| eyre!(e.to_string()))?;
-    sqlx::query(
-        "CREATE TRIGGER trg_events_archive_before_delete \
-         BEFORE DELETE ON core.events \
-         FOR EACH ROW EXECUTE FUNCTION core.fn_archive_before_delete()",
-    )
-    .execute(&mut *conn)
-    .await
-    .map_err(|e| eyre!(e.to_string()))?;
 
     if let Some(reason) = missing_reason {
         slog!(Level::Warn, "trigger_restored", reason = reason);

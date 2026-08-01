@@ -99,6 +99,18 @@ async fn detects_dropped_default_on_existing_column(ctx: TestContext) -> TestRes
         matched[0].observed_summary
     );
 
+    // Restore the original DEFAULT so this slot is not contaminated for
+    // other tests sharing the sandbox DB pool (same reasoning as
+    // detects_replaced_default_on_existing_column below, which already does
+    // this -- DDL mutations persist across the pool's data-cleaning pass, so
+    // we must undo the structural change explicitly here). Without this, a
+    // plain `INSERT INTO core.events` that omits ts_persisted (relying on
+    // its DEFAULT) fails with a NOT NULL violation on whatever pool slot
+    // this test ran against, observed in sinex-xjx8.
+    sqlx::query("ALTER TABLE core.events ALTER COLUMN ts_persisted SET DEFAULT CURRENT_TIMESTAMP")
+        .execute(&ctx.pool)
+        .await?;
+
     Ok(())
 }
 
