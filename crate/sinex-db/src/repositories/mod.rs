@@ -15,6 +15,7 @@ pub mod integrity;
 pub mod knowledge_graph;
 pub mod model_effects;
 pub mod privacy_policy;
+pub mod projection_registry;
 pub mod replay;
 pub mod schema_cache;
 pub mod schema_management;
@@ -58,6 +59,9 @@ pub use privacy_policy::{
     DictionaryRecord, DictionaryTermRecord, EncryptionKeyRecord, FieldRuleRecord, LoadedRule,
     PrivacyPolicyRepository, PrivacyRuleRecord, RecognizerBackendRecord,
 };
+pub use projection_registry::{
+    ProjectionCoverageWindow, ProjectionRegistrationInput, ProjectionRegistryRepository,
+};
 pub use replay::ReplayRepository;
 pub use schema_cache::{CachedSchema, SchemaCacheRepository};
 pub use schema_management::{
@@ -99,6 +103,7 @@ pub trait DbPoolExt {
     fn events(&self) -> events::EventRepository<'_>;
     fn source_materials(&self) -> source_materials::SourceMaterialRepository<'_>;
     fn product_declarations(&self) -> derivation::ProductDeclarationRepository<'_>;
+    fn projection_registry(&self) -> projection_registry::ProjectionRegistryRepository<'_>;
     fn knowledge_graph(&self) -> knowledge_graph::KnowledgeGraphRepository<'_>;
     fn state(&self) -> state::StateRepository<'_>;
     fn schemas(&self) -> schema_management::SchemaManagementRepository<'_>;
@@ -148,6 +153,10 @@ impl DbPoolExt for PgPool {
 
     fn product_declarations(&self) -> derivation::ProductDeclarationRepository<'_> {
         derivation::ProductDeclarationRepository::new(self)
+    }
+
+    fn projection_registry(&self) -> projection_registry::ProjectionRegistryRepository<'_> {
+        projection_registry::ProjectionRegistryRepository::new(self)
     }
 
     fn knowledge_graph(&self) -> knowledge_graph::KnowledgeGraphRepository<'_> {

@@ -6,6 +6,7 @@ mod debt;
 mod desktop;
 mod events;
 mod operations;
+mod projection;
 mod sources;
 
 #[cfg(test)]
@@ -18,4 +19,5 @@ pub use debt::*;
 pub use desktop::*;
 pub use events::*;
 pub use operations::*;
+pub use projection::*;
 pub use sources::*;

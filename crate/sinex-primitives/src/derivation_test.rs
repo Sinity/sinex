@@ -365,3 +365,65 @@ async fn tstz_range_rejects_start_after_end() -> TestResult<()> {
     assert!(err.to_string().contains("start must not be after end"));
     Ok(())
 }
+
+// ─── ProjectionStatus / ProjectionFreshnessClass ───────────────────────────
+
+#[sinex_test]
+async fn projection_status_round_trips_through_check_constraint_spelling() -> TestResult<()> {
+    for status in [
+        ProjectionStatus::Absent,
+        ProjectionStatus::Building,
+        ProjectionStatus::Ready,
+        ProjectionStatus::Stale,
+        ProjectionStatus::Failed,
+        ProjectionStatus::Partial,
+    ] {
+        let parsed: ProjectionStatus = status.as_str().parse().unwrap();
+        assert_eq!(parsed, status);
+    }
+    Ok(())
+}
+
+#[sinex_test]
+async fn projection_status_requires_reason_matches_db_check() -> TestResult<()> {
+    // Mirrors `status NOT IN ('stale', 'failed', 'partial') OR stale_reason
+    // IS NOT NULL` in `defs::derivation::DerivationProjectionRegistry`.
+    assert!(!ProjectionStatus::Absent.requires_reason());
+    assert!(!ProjectionStatus::Building.requires_reason());
+    assert!(!ProjectionStatus::Ready.requires_reason());
+    assert!(ProjectionStatus::Stale.requires_reason());
+    assert!(ProjectionStatus::Failed.requires_reason());
+    assert!(ProjectionStatus::Partial.requires_reason());
+    Ok(())
+}
+
+#[sinex_test]
+async fn projection_status_only_ready_is_read_ready() -> TestResult<()> {
+    assert!(ProjectionStatus::Ready.is_read_ready());
+    for status in [
+        ProjectionStatus::Absent,
+        ProjectionStatus::Building,
+        ProjectionStatus::Stale,
+        ProjectionStatus::Failed,
+        ProjectionStatus::Partial,
+    ] {
+        assert!(!status.is_read_ready());
+    }
+    Ok(())
+}
+
+#[sinex_test]
+async fn projection_freshness_class_round_trips_through_check_constraint_spelling()
+-> TestResult<()> {
+    for class in [
+        ProjectionFreshnessClass::Seconds,
+        ProjectionFreshnessClass::Minutes,
+        ProjectionFreshnessClass::Hours,
+        ProjectionFreshnessClass::Days,
+        ProjectionFreshnessClass::Manual,
+    ] {
+        let parsed: ProjectionFreshnessClass = class.as_str().parse().unwrap();
+        assert_eq!(parsed, class);
+    }
+    Ok(())
+}

@@ -122,8 +122,8 @@ pub use deployment_readiness::{
 pub use derivation::{
     AdjudicationStatus, ClaimSupport, ClaimSupportTemplate, ClaimTemporalQuality,
     DerivationDeclarationId, DerivationOutputDeclaration, DerivationScope,
-    DerivationWriteSurface, DerivedProductClass, InputEligibility, SourceCoverage, SupportLevel,
-    TstzRange,
+    DerivationWriteSurface, DerivedProductClass, InputEligibility, ProjectionFreshnessClass,
+    ProjectionStatus, SourceCoverage, SupportLevel, TstzRange,
 };
 pub use derivations::{
     DERIVATION_SPECS, DESKTOP_CONTEXT_CURRENT_VIEW_DERIVATION,
