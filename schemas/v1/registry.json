@@ -20,7 +20,7 @@
       "event_type": "window.active",
       "version": "1.0.0",
       "path": "activitywatch/window.active.json",
-      "content_hash": "c622973c72e270e7a5a033a549f22bb14643645ad644086244597105c6a30202"
+      "content_hash": "e3c4a0ed45126cac70928307e138e4baf0bbc7930d7b36d240f692765f055027"
     },
     {
       "source": "blob_storage",
