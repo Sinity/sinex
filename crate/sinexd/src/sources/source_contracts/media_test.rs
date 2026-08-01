@@ -108,12 +108,24 @@ async fn media_runtime_bindings_cover_staged_model_on_demand_and_live_modes() ->
         !binding("source:media.audio-transcript.local-model-batch").proposed,
         "audio local model worker output is executable through media operations"
     );
-    assert!(!binding("source:media.audio-transcript.on-demand-session").proposed);
+    // Both on-demand-session and live-session are backed by
+    // MediaAudioCaptureDriver (registered via register_source! under
+    // media.audio-transcript, see media_audio_capture_driver.rs) despite the
+    // `adapter = "AudioSessionCaptureAdapter"` label not matching any
+    // struct/impl name -- adapter is purely a descriptive display string
+    // (source_status.rs), never resolved to a real type. Not proposed.
+    assert!(
+        !binding("source:media.audio-transcript.on-demand-session").proposed,
+        "on-demand audio session capture is implemented by MediaAudioCaptureDriver"
+    );
     assert_eq!(
         binding("source:media.audio-transcript.live-session").runner_pack,
         RunnerPack::Live
     );
-    assert!(!binding("source:media.audio-transcript.live-session").proposed);
+    assert!(
+        !binding("source:media.audio-transcript.live-session").proposed,
+        "live audio session capture is implemented by MediaAudioCaptureDriver"
+    );
     assert!(
         binding("source:media.audio-transcript.audio-bundle-staged")
             .capabilities
@@ -141,9 +153,14 @@ async fn media_runtime_bindings_cover_staged_model_on_demand_and_live_modes() ->
         !binding("source:media.screen-ocr.on-demand-region").proposed,
         "on-demand screen region capture is executable through bounded worker output"
     );
+    // Unlike on-demand-region/live-session (both backed by
+    // MediaScreenCaptureDriver), on-demand-video's adapter =
+    // "ScreenVideoCaptureAdapter" has no backing SourceDriver anywhere in
+    // the codebase (sinex-xfqe) -- stays proposed until a real video
+    // capture driver lands.
     assert!(
-        !binding("source:media.screen-ocr.on-demand-video").proposed,
-        "on-demand screen video capture is executable through bounded worker output"
+        binding("source:media.screen-ocr.on-demand-video").proposed,
+        "on-demand screen video capture has no backing ScreenVideoCaptureAdapter"
     );
     assert_eq!(
         binding("source:media.screen-ocr.live-session").runner_pack,

@@ -701,7 +701,12 @@ async fn media_package_operations_surface_operator_actions() -> xtask::TestResul
         .iter()
         .find(|mode| mode.mode_id == "source:media.audio-transcript.live-session")
         .expect("audio live mode expected");
-    assert!(live_audio_mode.proposed);
+    // media.audio-transcript.live-session is implemented by
+    // MediaAudioCaptureDriver (registered via register_source!, see
+    // media_audio_capture_driver.rs), so it is no longer proposed despite
+    // the `adapter = "AudioSessionCaptureAdapter"` label not matching any
+    // struct/impl name -- adapter is a purely descriptive display string.
+    assert!(!live_audio_mode.proposed);
     assert_eq!(live_audio_mode.runner_pack, "live");
     assert_eq!(live_audio_mode.runtime_shape, "continuous");
     assert_eq!(live_audio_mode.material_lifecycle, "ephemeral_raw");
