@@ -122,6 +122,26 @@ pub enum Events {
     /// one) blocks TimescaleDB columnstore compression of the referenced
     /// chunk. Ref sinex-h8no.
     AdjudicationEventId,
+
+    /// Admission-time canonical content hash of the payload (sinex-w1w7).
+    ///
+    /// Populated by `sinexd::event_engine::admission` at the moment a
+    /// candidate is admitted — BEFORE any downstream mutation
+    /// (`strip_postgres_jsonb_nul_chars`, the redaction chokepoint's
+    /// `redact_batch`) can rewrite `payload`. `RevisionPolicy::SupersedeOnChange`
+    /// compares a fresh candidate's admission-time hash against this STORED
+    /// value, never against a hash recomputed from the (possibly mutated)
+    /// live `payload` column. That asymmetry — hashing the wire form on one
+    /// side and the persisted form on the other — is exactly what made an
+    /// unchanged re-emit misclassify as "changed content" and churn
+    /// archive/re-insert forever once NUL-stripping or a redaction rule
+    /// touched the payload. Comparing admission-time hash to admission-time
+    /// hash sidesteps the question of what the pipeline does to the bytes in
+    /// between. `NULL` on rows written before this column existed; admission
+    /// falls back to hashing the live `payload` for those (best effort —
+    /// self-heals once such a row is ever superseded and rewritten with a
+    /// stored hash).
+    ContentHash,
 }
 
 impl TableDef for Events {
@@ -194,6 +214,9 @@ pub struct EventRecord {
     pub derivation_epoch_id: Option<Uuid>,
     pub derivation_lane_id: Option<Uuid>,
     pub adjudication_event_id: Option<Uuid>,
+
+    /// Admission-time content hash (sinex-w1w7). See `Events::ContentHash`.
+    pub content_hash: Option<Vec<u8>>,
 }
 
 impl Events {
@@ -287,6 +310,9 @@ impl Events {
             // No declarative FK to core.events(id) — see the AdjudicationEventId
             // variant doc comment above (Ref sinex-h8no).
             .col(ColumnDef::new(Events::AdjudicationEventId).custom(Alias::new("UUID")))
+            // Admission-time content hash (sinex-w1w7) — see the ContentHash
+            // variant doc comment above. BLAKE3 is a fixed 32-byte digest.
+            .col(ColumnDef::new(Events::ContentHash).custom(Alias::new("bytea")).check(Expr::cust("content_hash IS NULL OR length(content_hash) = 32")))
             // The Provenance XOR Invariant: an event MUST have exactly one type of provenance.
             .check(
                 Expr::cust("(source_material_id IS NOT NULL AND source_event_ids IS NULL) OR (source_material_id IS NULL AND source_event_ids IS NOT NULL)")

@@ -66,6 +66,7 @@ fn reflection_stream_row(
         derivation_epoch_id: None,
         derivation_lane_id: None,
         adjudication_event_id: None,
+        content_hash: None,
     })
 }
 

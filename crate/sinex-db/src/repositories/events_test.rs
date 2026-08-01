@@ -9,7 +9,7 @@ use xtask::sandbox::sinex_test;
 /// 2. Update the `EventRecord` struct in both schema + sinex-db conversions.rs
 /// 3. Update the `event_select_columns!` macro above
 /// 4. Update this constant
-const EXPECTED_COLUMN_COUNT: usize = 26;
+const EXPECTED_COLUMN_COUNT: usize = 33;
 
 /// Load-bearing column names that MUST appear in `event_select_columns!`.
 /// Every column that appears in the SELECT list should appear here so that
@@ -41,6 +41,17 @@ const EXPECTED_COLUMNS: &[&str] = &[
     "created_by_operation_id",
     "automaton_model",
     "ts_quality",
+    // Derivation control plane (sinex-0vx.4 / sinex-8cr.2) — pre-existing
+    // drift found and closed alongside sinex-w1w7 (this list had not been
+    // updated when these columns landed).
+    "product_class",
+    "claim_support",
+    "derivation_declaration_id",
+    "derivation_epoch_id",
+    "derivation_lane_id",
+    "adjudication_event_id",
+    // sinex-w1w7: admission-time content hash.
+    "content_hash",
 ];
 
 #[sinex_test]

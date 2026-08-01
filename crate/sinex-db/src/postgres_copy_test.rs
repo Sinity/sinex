@@ -38,6 +38,7 @@ fn minimal_row() -> StreamBatchRow {
         derivation_epoch_id: None,
         derivation_lane_id: None,
         adjudication_event_id: None,
+        content_hash: None,
     }
 }
 
@@ -100,6 +101,7 @@ async fn null_optionals_write_null_sentinel() -> ::xtask::sandbox::TestResult<()
         Events::DerivationEpochId,
         Events::DerivationLaneId,
         Events::AdjudicationEventId,
+        Events::ContentHash,
     ] {
         let idx = event_copy_column_index(event);
         assert_eq!(

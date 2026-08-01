@@ -687,7 +687,8 @@ impl EventRepository<'_> {
             r#"
             SELECT
                 id::uuid as "id!",
-                payload as "payload!"
+                payload as "payload!",
+                content_hash
             FROM core.events
             WHERE equivalence_key = $1
             ORDER BY id DESC
@@ -703,6 +704,7 @@ impl EventRepository<'_> {
             equivalence_key: key.to_string(),
             id: row.id,
             payload: row.payload,
+            content_hash: row.content_hash,
         }))
     }
 
@@ -728,7 +730,8 @@ impl EventRepository<'_> {
             SELECT DISTINCT ON (equivalence_key)
                 equivalence_key as "equivalence_key!",
                 id::uuid as "id!",
-                payload as "payload!"
+                payload as "payload!",
+                content_hash
             FROM core.events
             WHERE equivalence_key = ANY($1::text[])
             ORDER BY equivalence_key, id DESC
@@ -745,6 +748,7 @@ impl EventRepository<'_> {
                 equivalence_key: row.equivalence_key,
                 id: row.id,
                 payload: row.payload,
+                content_hash: row.content_hash,
             })
             .collect())
     }
@@ -758,8 +762,18 @@ pub struct LiveEquivalenceRow {
     pub equivalence_key: String,
     /// Interpretation id of the live row (archive target on supersession).
     pub id: Uuid,
-    /// Stored payload of the live row (content-hashed against the candidate).
+    /// Stored payload of the live row. Kept for the `content_hash.is_none()`
+    /// fallback below (sinex-w1w7) — the live match comparison prefers the
+    /// stored `content_hash` and only recomputes from this if that's absent.
     pub payload: JsonValue,
+    /// Admission-time content hash of the live row (sinex-w1w7), `NULL` only
+    /// for rows written before this column existed. `classify_live_match`
+    /// compares the fresh candidate's own admission-time hash against THIS
+    /// stored value, never against a hash recomputed from `payload` — which
+    /// may differ from what the candidate looked like at ITS admission time
+    /// if NUL-stripping or redaction has since mutated the live row's stored
+    /// payload, causing spurious "changed content" churn.
+    pub content_hash: Option<Vec<u8>>,
 }
 
 pub(crate) fn extract_plan_rows(plan: &serde_json::Value) -> i64 {

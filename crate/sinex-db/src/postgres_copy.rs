@@ -113,7 +113,7 @@ impl EventCopyColumn {
 
 const DB_MANAGED_EVENT_COLUMNS: [&str; 2] = ["ts_coided", "ts_persisted"];
 
-const EVENT_COPY_COLUMNS: [EventCopyColumn; 30] = [
+const EVENT_COPY_COLUMNS: [EventCopyColumn; 31] = [
     EventCopyColumn {
         event: Events::Id,
         copy_type: EventCopyColumnType::Uuid,
@@ -242,6 +242,13 @@ const EVENT_COPY_COLUMNS: [EventCopyColumn; 30] = [
     EventCopyColumn {
         event: Events::AdjudicationEventId,
         copy_type: EventCopyColumnType::Uuid,
+    },
+    // sinex-w1w7: admission-time content hash, threaded through explicitly
+    // by the admission layer rather than recomputed here — see the
+    // Events::ContentHash doc comment.
+    EventCopyColumn {
+        event: Events::ContentHash,
+        copy_type: EventCopyColumnType::Bytea,
     },
 ];
 
@@ -617,6 +624,12 @@ impl ToPostgresCopy for Event<JsonValue> {
                 adjudication_event_id_str.as_deref(),
             )?;
         }
+        // sinex-w1w7: this direct Event<JsonValue> path has no separate
+        // admission stage between construction and serialization (unlike
+        // StreamBatchRow, which carries an admission-computed hash — see
+        // below), so hashing `self.payload` here is self-consistent.
+        let content_hash = sinex_primitives::events::payload_content_hash(&self.payload);
+        writer.bytea_field(Events::ContentHash, Some(content_hash.as_slice()))?;
 
         writer.finish()
     }
@@ -724,6 +737,10 @@ impl ToPostgresCopy for StreamBatchRow {
                 adjudication_event_id_str.as_deref(),
             )?;
         }
+        // sinex-w1w7: the admission-time hash, computed by
+        // sinexd::event_engine::admission BEFORE redact_batch/NUL-stripping
+        // could mutate `payload` — never recomputed from `self.payload` here.
+        writer.bytea_field(Events::ContentHash, self.content_hash.as_deref())?;
 
         writer.finish()
     }

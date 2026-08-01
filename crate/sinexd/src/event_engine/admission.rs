@@ -138,7 +138,7 @@ fn classify_live_match(
     match revision_policy_for_event_type(candidate.event_type.as_str()) {
         RevisionPolicy::SuppressDuplicate => EquivalenceOutcome::Suppress,
         RevisionPolicy::SupersedeOnChange => {
-            if payload_content_hash(&candidate.payload) == payload_content_hash(&live.payload) {
+            if payload_content_hash(&candidate.payload) == live_row_content_hash(live) {
                 // Identical re-emit of the same occurrence: idempotent, suppress.
                 EquivalenceOutcome::Suppress
             } else {
@@ -147,6 +147,34 @@ fn classify_live_match(
                 }
             }
         }
+    }
+}
+
+/// The live row's admission-time content hash, for `classify_live_match`'s
+/// `SupersedeOnChange` comparison (sinex-w1w7).
+///
+/// Prefers the STORED `content_hash` column over recomputing from `payload`:
+/// `payload` reflects the live row's CURRENT persisted state, which may have
+/// been mutated (NUL-stripped, redacted) since that row was itself admitted.
+/// Comparing a fresh candidate's admission-time hash against a hash
+/// recomputed from a since-mutated payload made an unchanged re-emission
+/// misclassify as "changed content" and churn archive/re-insert forever —
+/// comparing admission-time hash to STORED admission-time hash sidesteps the
+/// question of what happened to the bytes in between entirely.
+///
+/// Falls back to recomputing from `live.payload` only when `content_hash` is
+/// `NULL` (rows written before this column existed) or malformed (defensive;
+/// the DB CHECK constraint guarantees a real row's `content_hash` is either
+/// `NULL` or exactly 32 bytes) — best effort, self-heals once such a row is
+/// ever superseded and rewritten with a stored hash.
+fn live_row_content_hash(live: &LiveEquivalenceRow) -> [u8; 32] {
+    match live.content_hash.as_deref() {
+        Some(stored) if stored.len() == 32 => {
+            let mut hash = [0u8; 32];
+            hash.copy_from_slice(stored);
+            hash
+        }
+        _ => payload_content_hash(&live.payload),
     }
 }
 
@@ -1271,6 +1299,17 @@ fn admitted_to_stream_rows(batch: &[&AdmittedEvent]) -> EventEngineResult<Vec<St
                 anchor_byte,
             ) = sinex_db::repositories::events::conversions::extract_provenance(event)?;
 
+            // sinex-w1w7: hash the candidate payload exactly as it arrived at
+            // admission, BEFORE strip_postgres_jsonb_nul_chars (below) or the
+            // downstream redact_batch chokepoint can mutate it. SupersedeOnChange's
+            // live-match comparison (`classify_live_match`) compares this stored
+            // hash against a future candidate's own admission-time hash — never
+            // against a hash recomputed from the (possibly mutated) persisted
+            // payload — so an unchanged re-emission whose payload happens to
+            // contain NUL bytes or get redacted no longer misclassifies as
+            // "changed content" and churns archive/re-insert forever.
+            let content_hash = sinex_primitives::events::payload_content_hash(&event.payload);
+
             let mut payload = event.payload.clone();
             let stripped_nul_bytes = strip_postgres_jsonb_nul_chars(&mut payload);
             if stripped_nul_bytes > 0 {
@@ -1330,6 +1369,7 @@ fn admitted_to_stream_rows(batch: &[&AdmittedEvent]) -> EventEngineResult<Vec<St
                 derivation_epoch_id: event.derivation_epoch_id,
                 derivation_lane_id: event.derivation_lane_id,
                 adjudication_event_id: event.adjudication_event_id,
+                content_hash: Some(content_hash.to_vec()),
             })
         })
         .collect()
@@ -1480,3 +1520,7 @@ fn is_non_live_derived_parent_validation(error: &SinexError) -> bool {
             .to_string()
             .contains(NON_LIVE_DERIVED_PARENT_ERROR_FRAGMENT)
 }
+
+#[cfg(test)]
+#[path = "admission_test.rs"]
+mod tests;

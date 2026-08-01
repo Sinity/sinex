@@ -37,6 +37,7 @@ fn base_stream_batch_row() -> Result<StreamBatchRow> {
         derivation_epoch_id: None,
         derivation_lane_id: None,
         adjudication_event_id: None,
+        content_hash: None,
     })
 }
 
@@ -76,6 +77,7 @@ fn base_record() -> EventRecord {
         derivation_epoch_id: None,
         derivation_lane_id: None,
         adjudication_event_id: None,
+        content_hash: None,
     }
 }
 
@@ -361,6 +363,8 @@ async fn query_as_insert_columns_match_copy_contract() -> Result<()> {
         "derivation_epoch_id",
         "derivation_lane_id",
         "adjudication_event_id",
+        // sinex-w1w7: admission-time content hash.
+        "content_hash",
     ]
     .iter()
     .map(std::string::ToString::to_string)
@@ -698,6 +702,7 @@ async fn batch_product_metadata(
             derivation_epoch_id: None,
             derivation_lane_id: None,
             adjudication_event_id: None,
+            content_hash: None,
         })
     };
 

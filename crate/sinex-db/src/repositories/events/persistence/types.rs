@@ -90,6 +90,13 @@ pub struct StreamBatchRow {
     pub derivation_lane_id: Option<Uuid>,
     /// The `operator_judgment` event that adjudicated this row's `claim_support`.
     pub adjudication_event_id: Option<Uuid>,
+
+    /// Admission-time canonical content hash (sinex-w1w7), computed by the
+    /// admission layer from the candidate payload BEFORE
+    /// `strip_postgres_jsonb_nul_chars` / `redact_batch` can mutate it. Always
+    /// `Some` on the live admission path; `None` only in ad-hoc test rows
+    /// that construct a `StreamBatchRow` directly.
+    pub content_hash: Option<Vec<u8>>,
 }
 
 /// Result of a stream batch insert operation.
