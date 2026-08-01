@@ -1073,7 +1073,7 @@ pub(super) async fn handle_slice(
             drop(state);
 
             assembler
-                .route_material_error(
+                .route_material_error_and_finalize_failed_claimed(
                     material_id,
                     "slice_offset_overflow",
                     serde_json::json!({
@@ -1081,12 +1081,6 @@ pub(super) async fn handle_slice(
                         "incoming_bytes": data.len(),
                         "expected_total_bytes": expected_total_bytes,
                     }),
-                )
-                .await;
-            assembler
-                .finalize_failed_material_claimed_checked(
-                    material_id,
-                    "slice_offset_overflow",
                     resume_phase,
                 )
                 .await?;
@@ -1111,7 +1105,7 @@ pub(super) async fn handle_slice(
             drop(state);
 
             assembler
-                .route_material_error(
+                .route_material_error_and_finalize_failed_claimed(
                     material_id,
                     "slice_exceeds_end_contract",
                     serde_json::json!({
@@ -1121,12 +1115,6 @@ pub(super) async fn handle_slice(
                         "expected_total_bytes": expected_total_bytes,
                         "expected_slices": expected_slices,
                     }),
-                )
-                .await;
-            assembler
-                .finalize_failed_material_claimed_checked(
-                    material_id,
-                    "slice_exceeds_end_contract",
                     resume_phase,
                 )
                 .await?;
@@ -1165,7 +1153,7 @@ pub(super) async fn handle_slice(
                 drop(state);
 
                 assembler
-                    .route_material_error(
+                    .route_material_error_and_finalize_failed_claimed(
                         material_id,
                         "material_size_limit_exceeded",
                         serde_json::json!({
@@ -1177,12 +1165,6 @@ pub(super) async fn handle_slice(
                             "projected_total_bytes": projected_total,
                             "max_material_size_bytes": assembler.max_material_size_bytes,
                         }),
-                    )
-                    .await;
-                assembler
-                    .finalize_failed_material_claimed_checked(
-                        material_id,
-                        "material_size_limit_exceeded",
                         resume_phase,
                     )
                     .await?;
@@ -1228,7 +1210,7 @@ pub(super) async fn handle_slice(
                 drop(state);
 
                 assembler
-                    .route_material_error(
+                    .route_material_error_and_finalize_failed_claimed(
                         material_id,
                         "buffered_slice_limit_exceeded",
                         serde_json::json!({
@@ -1238,12 +1220,6 @@ pub(super) async fn handle_slice(
                             "buffered_offsets": buffered_offsets,
                             "max_buffered_slices": assembler.max_buffered_slices
                         }),
-                    )
-                    .await;
-                assembler
-                    .finalize_failed_material_claimed_checked(
-                        material_id,
-                        "buffered_slice_limit_exceeded",
                         resume_phase,
                     )
                     .await?;
@@ -1260,7 +1236,7 @@ pub(super) async fn handle_slice(
                     drop(state);
 
                     assembler
-                        .route_material_error(
+                        .route_material_error_and_finalize_failed_claimed(
                             material_id,
                             "material_size_limit_exceeded",
                             serde_json::json!({
@@ -1273,12 +1249,6 @@ pub(super) async fn handle_slice(
                                 "projected_total_bytes": projected_total,
                                 "max_material_size_bytes": assembler.max_material_size_bytes,
                             }),
-                        )
-                        .await;
-                    assembler
-                        .finalize_failed_material_claimed_checked(
-                            material_id,
-                            "material_size_limit_exceeded",
                             resume_phase,
                         )
                         .await?;

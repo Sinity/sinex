@@ -135,13 +135,18 @@ impl MaterialAssembler {
         // WAL is immutable — End message remains. In-memory state reverted.
     }
 
-    /// Route material failure to DLQ
+    /// Route material failure to DLQ.
+    ///
+    /// Mirrors the raw-event DLQ discipline (`jetstream_consumer::dlq::route_to_dlq`):
+    /// the caller is responsible for deciding what happens when the DLQ publish
+    /// itself fails. Never swallow a DLQ publish failure here and let a caller
+    /// treat it as if durable failure evidence exists (sinex-wb1).
     pub(super) async fn route_material_error(
         &self,
         material_id: Uuid,
         error: impl Into<String>,
         context: JsonValue,
-    ) {
+    ) -> EventEngineResult<()> {
         let payload = MaterialDlqPayload {
             material_id: material_id.to_string(),
             error: error.into(),
@@ -149,56 +154,108 @@ impl MaterialAssembler {
             failed_at: Timestamp::now(),
         };
 
-        match serde_json::to_vec(&payload) {
-            Ok(bytes) => {
-                let mut headers = async_nats::HeaderMap::new();
-                insert_traffic_class_header(&mut headers, NatsTrafficClass::RawIngestDlq);
-                transport::insert_semantic_transport_class_header(
-                    &mut headers,
-                    transport::Class::SourceMaterial,
+        let bytes = serde_json::to_vec(&payload).map_err(|e| {
+            error!(
+                target: "sinex_metrics",
+                metric = "event_engine.material_dlq_publish_failures_total",
+                material_id = %material_id,
+                error = %e,
+                "Failed to encode DLQ payload"
+            );
+            SinexError::serialization(format!("Failed to encode material DLQ payload: {e}"))
+                .with_context("material_id", material_id.to_string())
+        })?;
+
+        let mut headers = async_nats::HeaderMap::new();
+        insert_traffic_class_header(&mut headers, NatsTrafficClass::RawIngestDlq);
+        transport::insert_semantic_transport_class_header(
+            &mut headers,
+            transport::Class::SourceMaterial,
+        );
+
+        ensure_nats_payload_fits("source-material DLQ entry", &self.dlq_subject, bytes.len())
+            .map_err(|error| {
+                let error = error.with_context("material_id", material_id.to_string());
+                error!(
+                    target: "sinex_metrics",
+                    metric = "event_engine.material_dlq_publish_failures_total",
+                    material_id = %material_id,
+                    error = %error,
+                    "Failed to publish material DLQ entry"
                 );
+                error
+            })?;
 
-                let publish_result = ensure_nats_payload_fits(
-                    "source-material DLQ entry",
-                    &self.dlq_subject,
-                    bytes.len(),
-                )
-                .map_err(|error| error.with_context("material_id", material_id.to_string()));
-
-                if let Err(e) = publish_result {
-                    error!(
-                        target: "sinex_metrics",
-                        metric = "event_engine.material_dlq_publish_failures_total",
-                        material_id = %material_id,
-                        error = %e,
-                        "Failed to publish material DLQ entry"
-                    );
-                } else if let Err(e) = self
-                    .nats_client
-                    .publish_with_headers(self.dlq_subject.clone(), headers, bytes.into())
-                    .await
-                {
-                    error!(
-                        target: "sinex_metrics",
-                        metric = "event_engine.material_dlq_publish_failures_total",
-                        material_id = %material_id,
-                        error = %e,
-                        "Failed to publish material DLQ entry"
-                    );
-                } else {
-                    debug!(material_id = %material_id, "Routed to DLQ");
-                }
-            }
-            Err(e) => {
+        self.nats_client
+            .publish_with_headers(self.dlq_subject.clone(), headers, bytes.into())
+            .await
+            .map_err(|e| {
                 error!(
                     target: "sinex_metrics",
                     metric = "event_engine.material_dlq_publish_failures_total",
                     material_id = %material_id,
                     error = %e,
-                    "Failed to encode DLQ payload"
+                    "Failed to publish material DLQ entry"
                 );
-            }
+                SinexError::network("Failed to publish material DLQ entry")
+                    .with_context("material_id", material_id.to_string())
+                    .with_source(e)
+            })?;
+
+        debug!(material_id = %material_id, "Routed to DLQ");
+        Ok(())
+    }
+
+    /// Route a material failure to DLQ, then durably settle it as terminal-failed —
+    /// but only if the DLQ publish actually succeeded. This is the "claimed" variant:
+    /// the caller has already flipped `state.phase` to `Finalizing` under the
+    /// per-material lock and is holding `resume_phase` to restore on failure.
+    ///
+    /// On DLQ failure, the in-memory phase is reverted to `resume_phase` and the DLQ
+    /// error is propagated so the caller preserves retry state (redelivery / maintenance
+    /// re-drive) instead of settling the material Failed with zero durable trace
+    /// (sinex-wb1: a material that fails processing AND fails to DLQ must never
+    /// silently vanish).
+    pub(super) async fn route_material_error_and_finalize_failed_claimed(
+        &self,
+        material_id: Uuid,
+        reason: &'static str,
+        context: JsonValue,
+        resume_phase: AssemblyPhase,
+    ) -> EventEngineResult<()> {
+        if let Err(error) = self.route_material_error(material_id, reason, context).await {
+            warn!(
+                material_id = %material_id,
+                failure_reason = reason,
+                error = %error,
+                "DLQ publish failed for material failure; preserving retry state instead of settling terminal-failed"
+            );
+            self.revert_failure_cleanup_start(material_id, resume_phase)
+                .await;
+            return Err(error);
         }
+        self.finalize_failed_material_claimed_checked(material_id, reason, resume_phase)
+            .await
+    }
+
+    /// Route a material failure to DLQ, then durably settle it as terminal-failed —
+    /// but only if the DLQ publish actually succeeded. This is the "unclaimed" variant
+    /// used by callers (maintenance sweeps, the per-frame consumer) that have not
+    /// pre-claimed `Finalizing` phase themselves; `finalize_failed_material` performs
+    /// its own atomic claim internally. On DLQ failure the material is left untouched
+    /// so the owning retry mechanism (next maintenance sweep, JetStream redelivery)
+    /// picks it up again instead of it vanishing with no durable trace (sinex-wb1).
+    pub(super) async fn route_material_error_then_finalize_failed(
+        &self,
+        material_id: Uuid,
+        reason: impl Into<String>,
+        context: JsonValue,
+    ) -> EventEngineResult<()> {
+        let reason = reason.into();
+        self.route_material_error(material_id, reason.clone(), context)
+            .await?;
+        self.finalize_failed_material(material_id, &reason).await;
+        Ok(())
     }
 
     /// Mark material as failed in the database to prevent reprocessing.
@@ -441,8 +498,16 @@ impl MaterialAssembler {
         state_handle: &Arc<Mutex<super::state::AssemblerState>>,
         end: MaterialEndMessage,
     ) -> EventEngineResult<()> {
-        self.route_material_error(material_id, reason, context)
-            .await;
+        if let Err(error) = self.route_material_error(material_id, reason, context).await {
+            warn!(
+                material_id = %material_id,
+                failure_reason = reason,
+                error = %error,
+                "DLQ publish failed for material failure; preserving retry state instead of settling terminal-failed"
+            );
+            Self::revert_finalization_start(state_handle, end).await;
+            return Err(error);
+        }
         if let Err(error) = self
             .finalize_failed_material_claimed_checked(
                 material_id,
@@ -554,15 +619,10 @@ impl MaterialAssembler {
                     let resume_phase = state.phase;
                     state.phase = AssemblyPhase::Finalizing;
                     drop(state);
-                    self.route_material_error(
+                    self.route_material_error_and_finalize_failed_claimed(
                         material_id,
                         "material_end_timestamp_invalid",
                         context,
-                    )
-                    .await;
-                    self.finalize_failed_material_claimed_checked(
-                        material_id,
-                        "material_end_timestamp_invalid",
                         resume_phase,
                     )
                     .await?;
@@ -633,15 +693,10 @@ impl MaterialAssembler {
                 let resume_phase = state.phase;
                 state.phase = AssemblyPhase::Finalizing;
                 drop(state);
-                self.route_material_error(
+                self.route_material_error_and_finalize_failed_claimed(
                     material_id,
                     "material assembly corruption detected",
                     ctx,
-                )
-                .await;
-                self.finalize_failed_material_claimed_checked(
-                    material_id,
-                    "material assembly corruption detected",
                     resume_phase,
                 )
                 .await?;
@@ -858,12 +913,20 @@ impl MaterialAssembler {
         ) {
             Ok(metadata) => metadata,
             Err(error) => {
-                self.route_material_error(
-                    material_id,
-                    "material_finalize_metadata_invalid",
-                    serde_json::json!({ "error": error.to_string() }),
-                )
-                .await;
+                if let Err(dlq_error) = self
+                    .route_material_error(
+                        material_id,
+                        "material_finalize_metadata_invalid",
+                        serde_json::json!({ "error": error.to_string() }),
+                    )
+                    .await
+                {
+                    warn!(
+                        material_id = %material_id,
+                        error = %dlq_error,
+                        "Failed to publish material DLQ entry for invalid finalize metadata; original error still preserves retry state"
+                    );
+                }
                 Self::revert_finalization_start(&state_handle, end).await;
                 return Err(error);
             }
@@ -877,12 +940,20 @@ impl MaterialAssembler {
                     super::redelivery_decision::REDELIVERY_ERROR_KIND_CONTEXT,
                     super::redelivery_decision::redelivery_error_class::CONTENT_STORE_TRANSIENT,
                 );
-                self.route_material_error(
-                    material_id,
-                    "content_store_import_failed",
-                    serde_json::json!({ "error": e.to_string() }),
-                )
-                .await;
+                if let Err(dlq_error) = self
+                    .route_material_error(
+                        material_id,
+                        "content_store_import_failed",
+                        serde_json::json!({ "error": e.to_string() }),
+                    )
+                    .await
+                {
+                    warn!(
+                        material_id = %material_id,
+                        error = %dlq_error,
+                        "Failed to publish material DLQ entry for content-store import failure; original error still preserves retry state"
+                    );
+                }
                 Self::revert_finalization_start(&state_handle, end).await;
                 return Err(e);
             }
@@ -930,13 +1001,19 @@ impl MaterialAssembler {
                         error = %e,
                         "Material finalization commit outcome is unknown; preserving retry state without routing a terminal failure"
                     );
-                } else {
-                    self.route_material_error(
+                } else if let Err(dlq_error) = self
+                    .route_material_error(
                         material_id,
                         "material_persist_failed",
                         serde_json::json!({ "error": e.to_string() }),
                     )
-                    .await;
+                    .await
+                {
+                    warn!(
+                        material_id = %material_id,
+                        error = %dlq_error,
+                        "Failed to publish material DLQ entry for persist failure; original error still preserves retry state"
+                    );
                 }
                 Self::revert_finalization_start(&state_handle, end).await;
                 return Err(e);

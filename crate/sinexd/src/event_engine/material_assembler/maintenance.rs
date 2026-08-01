@@ -381,18 +381,23 @@ impl MaterialAssembler {
             }
         }
 
-        self.route_material_error(
-            material_id,
-            "slice_arrival_timeout",
-            serde_json::json!({
-                "timeout_seconds": self.slice_arrival_timeout.as_secs(),
-                "elapsed_seconds": elapsed_secs,
-            }),
-        )
-        .await;
-
-        self.finalize_failed_material(material_id, "slice_arrival_timeout")
-            .await;
+        if let Err(error) = self
+            .route_material_error_then_finalize_failed(
+                material_id,
+                "slice_arrival_timeout",
+                serde_json::json!({
+                    "timeout_seconds": self.slice_arrival_timeout.as_secs(),
+                    "elapsed_seconds": elapsed_secs,
+                }),
+            )
+            .await
+        {
+            warn!(
+                material_id = %material_id,
+                error = %error,
+                "Failed to route timed-out material to DLQ; leaving it unmarked so the next stale sweep retries instead of settling terminal-failed with no durable trace"
+            );
+        }
     }
 
     pub(super) async fn reconcile_orphaned_sensing_materials(&self) -> EventEngineResult<()> {
@@ -453,20 +458,26 @@ impl MaterialAssembler {
                 .await?;
                 continue;
             }
-            self.route_material_error(
-                material_id,
-                ORPHANED_SENSING_REASON,
-                serde_json::json!({
-                    "timeout_seconds": self.slice_arrival_timeout.as_secs(),
-                    "elapsed_seconds": elapsed_secs,
-                    "source_identifier": row.source_identifier,
-                    "staged_at": row.staged_at.to_string(),
-                    "start_time": row.start_time.map(|ts| ts.to_string()),
-                }),
-            )
-            .await;
-            self.finalize_failed_material(material_id, ORPHANED_SENSING_REASON)
-                .await;
+            if let Err(error) = self
+                .route_material_error_then_finalize_failed(
+                    material_id,
+                    ORPHANED_SENSING_REASON,
+                    serde_json::json!({
+                        "timeout_seconds": self.slice_arrival_timeout.as_secs(),
+                        "elapsed_seconds": elapsed_secs,
+                        "source_identifier": row.source_identifier,
+                        "staged_at": row.staged_at.to_string(),
+                        "start_time": row.start_time.map(|ts| ts.to_string()),
+                    }),
+                )
+                .await
+            {
+                warn!(
+                    material_id = %material_id,
+                    error = %error,
+                    "Failed to route orphaned sensing material to DLQ; leaving it unmarked so the next reconcile pass retries instead of settling terminal-failed with no durable trace"
+                );
+            }
         }
 
         Ok(())

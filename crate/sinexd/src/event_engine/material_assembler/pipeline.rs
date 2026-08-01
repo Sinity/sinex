@@ -27,6 +27,10 @@ use crate::event_engine::{EventEngineResult, SinexError};
 
 const MATERIAL_CONSUMER_BATCH_SIZE: usize = 8;
 const MATERIAL_CONSUMER_PULL_TIMEOUT: std::time::Duration = std::time::Duration::from_millis(500);
+// Mirrors jetstream_consumer::dlq::DLQ_RETRY_DELAY: a fixed short backoff before the
+// raw material frame is redelivered when the DLQ publish itself fails.
+const MATERIAL_DLQ_PUBLISH_FAILURE_RETRY_DELAY: std::time::Duration =
+    std::time::Duration::from_secs(1);
 // Keep SOURCE_MATERIAL stream caps aligned with the Nix bootstrap path. The current
 // nats CLI rejects --max-bytes values above signed 32-bit range.
 const JETSTREAM_BOOTSTRAP_MAX_BYTES: i64 = 2_147_483_647;
@@ -108,13 +112,38 @@ async fn apply_redelivery_decision(
         }
         RedeliveryDecision::Dlq { reason } => {
             if let Some(material_id) = material_id {
-                assembler
+                match assembler
                     .route_material_error(material_id, reason.clone(), dlq_context)
-                    .await;
-                assembler
-                    .finalize_failed_material(material_id, &reason)
-                    .await;
-                ack_with_warning(message, "material_frame_routed_to_dlq", Some(&material_id)).await
+                    .await
+                {
+                    Ok(()) => {
+                        assembler
+                            .finalize_failed_material(material_id, &reason)
+                            .await;
+                        ack_with_warning(message, "material_frame_routed_to_dlq", Some(&material_id))
+                            .await
+                    }
+                    Err(error) => {
+                        // The DLQ publish itself failed: settling this material
+                        // Failed now would leave zero durable trace of why (sinex-wb1).
+                        // NAK for redelivery instead, mirroring the raw-event DLQ
+                        // discipline (route_to_dlq only ACKs after DLQ publish confirms).
+                        warn!(
+                            subject = %message.subject,
+                            material_id = %material_id,
+                            reason = %reason,
+                            error = %error,
+                            "DLQ publish failed for material frame; NAKing instead of settling terminal-failed without durable evidence"
+                        );
+                        nak_with_warning(
+                            message,
+                            Some(MATERIAL_DLQ_PUBLISH_FAILURE_RETRY_DELAY),
+                            "material_frame_dlq_publish_failed",
+                            Some(&material_id),
+                        )
+                        .await
+                    }
+                }
             } else {
                 warn!(
                     subject = %message.subject,
