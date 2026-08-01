@@ -132,15 +132,32 @@ impl SourceBindingsManifest {
 /// on startup so a malformed manifest cannot silently shrink the active
 /// capture surface.
 ///
-/// Also enforces the sinex-sn6s criticality declaration: every
+/// Also enforces the sinex-sn6s criticality declaration: every non-proposed
 /// [`SourceRuntimeBinding`](sinex_primitives::source_contracts::SourceRuntimeBinding)
 /// matching an enabled binding's `source_id` must declare
-/// `criticality` (`Reconstructable` or `NotReconstructable`). Sinex's dataset
-/// is only safe to wipe-and-reimport because every deployed source currently
-/// has a canonical copy elsewhere; this check is the enforced version of that
+/// `criticality` (`Reconstructable` or `NotReconstructable`), and at least
+/// one such binding must exist. Sinex's dataset is only safe to
+/// wipe-and-reimport because every deployed source currently has a
+/// canonical copy elsewhere; this check is the enforced version of that
 /// assumption so a newly-deployed ephemeral-upstream source cannot silently
 /// flip it. Startup refuses to enable a binding that omits the declaration —
-/// there is no default and no silent pass.
+/// there is no default and no silent pass. A source with a valid
+/// `SourceContract` and factory but *no* registered runtime binding at all
+/// (or only `proposed` placeholder ones) is exactly the "future source
+/// added without declaring criticality" scenario this exists to catch, so
+/// an empty match set is itself a hard error rather than a silent pass.
+///
+/// Known limitation: matching is by `source_id`, which is coarser than the
+/// specific runtime-binding subject the manifest entry deploys. A
+/// multi-mode source contract with several non-proposed
+/// `SourceRuntimeBinding`s sharing one `source_id` (none of the 12 sources
+/// currently deployed are multi-mode) requires *every* such binding to
+/// declare criticality before *any* of its modes can be enabled, which can
+/// over-block a fully-declared mode on an unrelated sibling mode's missing
+/// declaration. `SourceBinding` doesn't currently carry which runtime
+/// binding/subject it deploys, so per-mode scoping isn't expressible yet;
+/// tightening this to per-mode matching once the manifest schema can name a
+/// binding is left for a follow-up.
 pub fn validate_bindings(bindings: &[SourceBinding]) -> Result<()> {
     let registry = SourceContractRegistry::from_inventory();
     let mut errors = Vec::new();
@@ -162,9 +179,18 @@ pub fn validate_bindings(bindings: &[SourceBinding]) -> Result<()> {
                 binding.source_id
             ));
         }
-        for runtime_binding in
-            source_runtime_bindings().filter(|rb| rb.source_id == binding.source_id)
-        {
+        let deployed_runtime_bindings: Vec<_> = source_runtime_bindings()
+            .filter(|rb| rb.source_id == binding.source_id && !rb.proposed)
+            .collect();
+        if deployed_runtime_bindings.is_empty() {
+            errors.push(format!(
+                "{}: enabled source has no non-proposed SourceRuntimeBinding registered \
+                 (a source with no deployable runtime descriptor cannot declare \
+                 SourceCriticality and must not be enabled); see sinex-sn6s",
+                binding.source_id
+            ));
+        }
+        for runtime_binding in deployed_runtime_bindings {
             if runtime_binding.criticality.is_none() {
                 errors.push(format!(
                     "{}: runtime binding `{}` has no declared SourceCriticality \
