@@ -70,6 +70,46 @@ fn reflection_stream_row(
     })
 }
 
+/// Registers a `derivation.product_declarations` row for `test-source`/
+/// `test.type` so the lineage tests' derived-event chains (built via
+/// `.from_parents(..)`) satisfy the `events_derived_requires_product_class`
+/// CHECK constraint and the `enforce_event_product_declaration` trigger
+/// (sinex-0vx.4 / sinex-8cr.2 derivation control plane, landed after these
+/// fixtures were written — see sinex-94mh). Idempotent via `ON CONFLICT`.
+async fn ensure_lineage_test_declaration(pool: &sqlx::PgPool) -> color_eyre::Result<()> {
+    sqlx::query(
+        r#"
+        INSERT INTO derivation.product_declarations (
+            declaration_id, owner, product_class, write_surface,
+            output_source, output_event_type, semantics_version,
+            input_eligibility, default_claim_support, verification_command
+        )
+        VALUES (
+            'composable-query-test-lineage-decl', 'test-owner', 'canonical_derived_event',
+            'derived_output', 'test-source', 'test.type', 'v1',
+            'default_canonical_input', '{}'::jsonb, 'true'
+        )
+        ON CONFLICT (declaration_id) DO NOTHING
+        "#,
+    )
+    .execute(pool)
+    .await?;
+    Ok(())
+}
+
+/// Stamps a built derived event (`source_event_ids` set via `.from_parents`)
+/// with the product/claim metadata `events_derived_requires_product_class`
+/// and the product-declaration trigger require. Pairs with
+/// `ensure_lineage_test_declaration`.
+fn mark_derived_test_event(
+    mut event: sinex_primitives::Event<serde_json::Value>,
+) -> sinex_primitives::Event<serde_json::Value> {
+    event.product_class = Some(sinex_primitives::derivation::DerivedProductClass::CanonicalDerivedEvent);
+    event.claim_support = Some(sinex_primitives::derivation::ClaimSupport::unknown());
+    event.derivation_declaration_id = Some("composable-query-test-lineage-decl".to_string());
+    event
+}
+
 fn result_sources(result: EventQueryResult) -> Vec<String> {
     match result {
         EventQueryResult::Events { events, .. } => events
@@ -2015,6 +2055,7 @@ async fn test_lineage_ancestors(ctx: TestContext) -> TestResult<()> {
     let material_id = ctx
         .create_source_material(Some("lineage-ancestors"))
         .await?;
+    ensure_lineage_test_declaration(&ctx.pool).await?;
 
     // Create chain: A → B → C (B has parent A, C has parent B)
     let event_a = ctx
@@ -2030,21 +2071,21 @@ async fn test_lineage_ancestors(ctx: TestContext) -> TestResult<()> {
     let event_b = ctx
         .pool
         .events()
-        .insert(
+        .insert(mark_derived_test_event(
             DynamicPayload::new("test-source", "test.type", json!({"label": "B"}))
                 .from_parents(vec![event_a.id.unwrap()])?
                 .build()?,
-        )
+        ))
         .await?;
 
     let event_c = ctx
         .pool
         .events()
-        .insert(
+        .insert(mark_derived_test_event(
             DynamicPayload::new("test-source", "test.type", json!({"label": "C"}))
                 .from_parents(vec![event_b.id.unwrap()])?
                 .build()?,
-        )
+        ))
         .await?;
 
     // Query lineage for C (ancestors)
@@ -2084,6 +2125,7 @@ async fn test_lineage_descendants(ctx: TestContext) -> TestResult<()> {
     let material_id = ctx
         .create_source_material(Some("lineage-descendants"))
         .await?;
+    ensure_lineage_test_declaration(&ctx.pool).await?;
 
     // Create: A spawns B and C (both have parent A)
     let event_a = ctx
@@ -2099,21 +2141,21 @@ async fn test_lineage_descendants(ctx: TestContext) -> TestResult<()> {
     let _event_b = ctx
         .pool
         .events()
-        .insert(
+        .insert(mark_derived_test_event(
             DynamicPayload::new("test-source", "test.type", json!({"label": "B"}))
                 .from_parents(vec![event_a.id.unwrap()])?
                 .build()?,
-        )
+        ))
         .await?;
 
     let _event_c = ctx
         .pool
         .events()
-        .insert(
+        .insert(mark_derived_test_event(
             DynamicPayload::new("test-source", "test.type", json!({"label": "C"}))
                 .from_parents(vec![event_a.id.unwrap()])?
                 .build()?,
-        )
+        ))
         .await?;
 
     // Query lineage for A (descendants)
@@ -2194,6 +2236,7 @@ async fn test_lineage_includes_source_material_links(ctx: TestContext) -> TestRe
 #[sinex_test]
 async fn test_lineage_max_depth(ctx: TestContext) -> TestResult<()> {
     let material_id = ctx.create_source_material(Some("lineage-depth")).await?;
+    ensure_lineage_test_declaration(&ctx.pool).await?;
 
     // Create chain: A→B→C→D (4 deep)
     let event_a = ctx
@@ -2209,31 +2252,31 @@ async fn test_lineage_max_depth(ctx: TestContext) -> TestResult<()> {
     let event_b = ctx
         .pool
         .events()
-        .insert(
+        .insert(mark_derived_test_event(
             DynamicPayload::new("test-source", "test.type", json!({"label": "B"}))
                 .from_parents(vec![event_a.id.unwrap()])?
                 .build()?,
-        )
+        ))
         .await?;
 
     let event_c = ctx
         .pool
         .events()
-        .insert(
+        .insert(mark_derived_test_event(
             DynamicPayload::new("test-source", "test.type", json!({"label": "C"}))
                 .from_parents(vec![event_b.id.unwrap()])?
                 .build()?,
-        )
+        ))
         .await?;
 
     let event_d = ctx
         .pool
         .events()
-        .insert(
+        .insert(mark_derived_test_event(
             DynamicPayload::new("test-source", "test.type", json!({"label": "D"}))
                 .from_parents(vec![event_c.id.unwrap()])?
                 .build()?,
-        )
+        ))
         .await?;
 
     // Query with max_depth=2 (should only get B and C)
