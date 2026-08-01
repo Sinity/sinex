@@ -118,6 +118,231 @@ async fn event_card_preserves_refs_actions_and_payload_preview() -> xtask::TestR
     Ok(())
 }
 
+/// Baseline material-provenance event fixture used by the claim-support
+/// caveat tests below — every field is a harmless default, callers overwrite
+/// only `product_class` / `claim_support`.
+fn candidate_event_fixture(
+    product_class: Option<crate::derivation::DerivedProductClass>,
+    claim_support: Option<crate::derivation::ClaimSupport>,
+) -> Event<JsonValue> {
+    Event {
+        id: Some(Id::<Event<JsonValue>>::new()),
+        source: EventSource::new("relation-extractor").unwrap(),
+        event_type: EventType::new("entity.related").unwrap(),
+        payload: json!({ "subject": "a", "object": "b" }),
+        ts_orig: Some(Timestamp::now()),
+        ts_quality: None,
+        host: HostName::new("sinnix-prime").unwrap(),
+        module_run_id: None,
+        payload_schema_id: None,
+        provenance: Provenance::Derived {
+            source_event_ids: NonEmptyVec::single(Id::<Event<JsonValue>>::new()),
+            operation_id: None,
+        },
+        associated_blob_ids: None,
+        temporal_policy: None,
+        semantics_version: None,
+        scope_key: None,
+        equivalence_key: None,
+        created_by_operation_id: None,
+        automaton_model: None,
+        anchor_payload_hash: None,
+        product_class,
+        claim_support,
+        derivation_declaration_id: None,
+        derivation_epoch_id: None,
+        derivation_lane_id: None,
+        adjudication_event_id: None,
+    }
+}
+
+/// sinex-8cr AC ("no read surface renders `semantic_candidate` or
+/// `analysis_claim` rows without support-vector caveats"), refusal case: a
+/// `semantic_candidate` row written before `ClaimSupport` existed (`None`)
+/// must render an explicit unknown-support caveat — never a fabricated
+/// value that looks like real support.
+///
+/// Anti-vacuity: this exercises the real production rendering function
+/// (`EventCardView::from_query_event`, the same code path `events.cards`,
+/// `sinexctl show`/`query`/`timeline`/`context`/`tui`, and the
+/// `sinex_search_events` MCP tool all call) against the real
+/// `DerivedProductClass`/`ClaimSupport` types — not a test-only stand-in.
+/// Deleting the `claim_support_caveats` call from `from_query_event` (or the
+/// `None`-branch inside it) makes this test fail.
+#[sinex_test]
+async fn candidate_row_without_claim_support_renders_unknown_support_caveat()
+-> xtask::TestResult<()> {
+    let event = candidate_event_fixture(
+        Some(crate::derivation::DerivedProductClass::SemanticCandidate),
+        None,
+    );
+    let result = QueryResultEvent {
+        event,
+        relevance_score: None,
+        snippet: Some("alice co-occurs with bob".to_string()),
+    };
+
+    let card = EventCardView::from_query_event(&result);
+
+    let caveat = card
+        .caveats
+        .iter()
+        .find(|c| c.id == CLAIM_SUPPORT_UNKNOWN_CAVEAT_ID)
+        .expect("candidate row without claim_support must carry an unknown-support caveat");
+    assert!(caveat.message.contains("UNKNOWN"));
+    assert!(
+        card.projection_badges
+            .iter()
+            .any(|b| b == "semantic_candidate:unknown_support")
+    );
+    // No unadjudicated/accepted caveat should also be present — the row has
+    // no vector to summarize beyond "unknown".
+    assert!(
+        !card
+            .caveats
+            .iter()
+            .any(|c| c.id == CLAIM_UNADJUDICATED_CAVEAT_ID)
+    );
+    Ok(())
+}
+
+/// sinex-8cr AC, positive case: a `semantic_candidate` row that DOES carry a
+/// (real, unreviewed) `ClaimSupport` vector renders a distinct
+/// "unadjudicated" caveat describing the vector — never presented as fact,
+/// and never the same caveat id as the unknown-support refusal case above.
+/// The badge is computed live from the vector's fields, so it changes when
+/// the vector's `support_level`/`adjudication` change — proving it is not a
+/// cached/denormalized string.
+#[sinex_test]
+async fn candidate_row_with_unreviewed_claim_support_renders_distinct_caveat()
+-> xtask::TestResult<()> {
+    use crate::derivation::{ClaimSupport, ClaimTemporalQuality, SourceCoverage, SupportLevel};
+
+    let support = ClaimSupport::unreviewed(
+        SupportLevel::Heuristic,
+        SourceCoverage::Partial,
+        ClaimTemporalQuality::InferredMtime,
+        2,
+        1,
+        0,
+        0,
+    );
+    let event = candidate_event_fixture(
+        Some(crate::derivation::DerivedProductClass::SemanticCandidate),
+        Some(support),
+    );
+    let result = QueryResultEvent {
+        event,
+        relevance_score: None,
+        snippet: Some("alice co-occurs with bob".to_string()),
+    };
+
+    let card = EventCardView::from_query_event(&result);
+
+    let caveat = card
+        .caveats
+        .iter()
+        .find(|c| c.id == CLAIM_UNADJUDICATED_CAVEAT_ID)
+        .expect("candidate row with an unreviewed claim_support must carry an unadjudicated caveat");
+    assert!(caveat.message.contains("Heuristic"));
+    assert!(caveat.message.contains("unreviewed"));
+    assert!(
+        !card
+            .caveats
+            .iter()
+            .any(|c| c.id == CLAIM_SUPPORT_UNKNOWN_CAVEAT_ID),
+        "a row that carries a real claim_support must not also render the unknown-support refusal caveat"
+    );
+    assert!(
+        card.projection_badges
+            .iter()
+            .any(|b| b == "semantic_candidate:Heuristic:unreviewed")
+    );
+    Ok(())
+}
+
+/// sinex-8cr: `claim_support_list_caveats` backs the raw-`EventQueryResult`
+/// read surfaces (`curation.proposals.list` via `sinexctl semantic curation
+/// proposals` and the `sinex_curation_proposals` MCP tool) that render
+/// `curation.proposal` (`semantic_candidate`) rows without going through
+/// `EventCardView`. It must summarize unknown-support and
+/// unadjudicated-support rows into distinct, vector-derived caveats, and
+/// must NOT flag a `CanonicalDerivedEvent` row (this bead only gates
+/// `semantic_candidate`/`analysis_claim`).
+///
+/// Anti-vacuity: constructs three real `QueryResultEvent` fixtures (unknown
+/// support, unreviewed support, non-candidate-class) and asserts on the
+/// actual caveat ids/messages the production function returns — deleting
+/// either counting branch in `claim_support_list_caveats` makes this fail.
+#[sinex_test]
+async fn claim_support_list_caveats_summarizes_unknown_and_unadjudicated_rows()
+-> xtask::TestResult<()> {
+    use crate::derivation::{
+        ClaimSupport, ClaimTemporalQuality, DerivedProductClass, SourceCoverage, SupportLevel,
+    };
+
+    let unknown_support_row = QueryResultEvent {
+        event: candidate_event_fixture(Some(DerivedProductClass::SemanticCandidate), None),
+        relevance_score: None,
+        snippet: None,
+    };
+    let unreviewed_row = QueryResultEvent {
+        event: candidate_event_fixture(
+            Some(DerivedProductClass::AnalysisClaim),
+            Some(ClaimSupport::unreviewed(
+                SupportLevel::ModelInferred,
+                SourceCoverage::Unavailable,
+                ClaimTemporalQuality::Unknown,
+                0,
+                0,
+                0,
+                1,
+            )),
+        ),
+        relevance_score: None,
+        snippet: None,
+    };
+    // Not a candidate-grade product class — must not contribute any caveat.
+    let canonical_row = QueryResultEvent {
+        event: candidate_event_fixture(Some(DerivedProductClass::CanonicalDerivedEvent), None),
+        relevance_score: None,
+        snippet: None,
+    };
+
+    let caveats = claim_support_list_caveats(&[unknown_support_row, unreviewed_row, canonical_row]);
+
+    let unknown = caveats
+        .iter()
+        .find(|c| c.id == CLAIM_SUPPORT_UNKNOWN_CAVEAT_ID)
+        .expect("one unknown-support row must produce the unknown-support caveat");
+    assert!(unknown.message.contains('1'), "count must be reflected in the message");
+
+    let unadjudicated = caveats
+        .iter()
+        .find(|c| c.id == CLAIM_UNADJUDICATED_CAVEAT_ID)
+        .expect("one unreviewed row must produce the unadjudicated caveat");
+    assert!(unadjudicated.message.contains('1'));
+
+    assert!(
+        !caveats
+            .iter()
+            .any(|c| c.id == CLAIM_ADJUDICATED_ACCEPTED_CAVEAT_ID),
+        "no accepted rows were present — the accepted caveat must not appear"
+    );
+    assert_eq!(caveats.len(), 2, "canonical_derived_event row must not add a third caveat");
+
+    // An all-canonical (non-candidate-grade) list renders no claim-support
+    // caveats at all — this bead does not gate CanonicalDerivedEvent.
+    let none_candidate_grade = QueryResultEvent {
+        event: candidate_event_fixture(Some(DerivedProductClass::CanonicalDerivedEvent), None),
+        relevance_score: None,
+        snippet: None,
+    };
+    assert!(claim_support_list_caveats(&[none_candidate_grade]).is_empty());
+
+    Ok(())
+}
+
 #[sinex_test]
 async fn operation_control_card_replay_execute_keeps_dangerous_action_reason()
 -> xtask::TestResult<()> {

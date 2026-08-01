@@ -58,6 +58,7 @@ use sinex_primitives::temporal::Timestamp;
 use sinex_primitives::views::{
     ActionSideEffect, CaveatView, OperationJobListView, OperationView, PrivacyStateKind,
     PrivacyStateView, ReadinessCaveatId, SinexObjectKind, SinexObjectRef, ViewEnvelope,
+    claim_support_list_caveats,
 };
 use std::io::{BufRead, Write};
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -2529,19 +2530,27 @@ async fn llm_budget_report(client: &GatewayClient, arguments: Value) -> Result<V
 
 async fn curation_proposals(client: &GatewayClient, arguments: Value) -> Result<Value> {
     let args: CurationProposalsArgs = serde_json::from_value(arguments)?;
-    let mut response = serde_json::to_value(
-        client
-            .curation_proposals_list(CurationListProposalsRequest {
-                status: args.status.clone(),
-                limit: args.limit,
-            })
-            .await?,
-    )?;
+    let result = client
+        .curation_proposals_list(CurationListProposalsRequest {
+            status: args.status.clone(),
+            limit: args.limit,
+        })
+        .await?;
+    // sinex-8cr: `curation.proposal` events are `semantic_candidate`-classed
+    // rows — render their claim-support evidentiary status explicitly
+    // rather than letting `CurationProposalPayload.confidence` stand in as
+    // unqualified authority.
+    let caveats = match &result {
+        EventQueryResult::Events { events, .. } => claim_support_list_caveats(events),
+        _ => Vec::new(),
+    };
+    let mut response = serde_json::to_value(&result)?;
     redact_raw_samples(&mut response);
-    Ok(envelope(
+    Ok(envelope_with_caveats(
         "sinex_curation_proposals",
         &json!(args),
         &json!({ "result": response }),
+        caveats,
     ))
 }
 

@@ -2,6 +2,7 @@ use super::{
     ActionAvailability, ActionAvailabilityState, CaveatView, PrivacyStateView, SinexObjectKind,
     SinexObjectRef,
 };
+use crate::derivation::{AdjudicationStatus, ClaimSupport, DerivedProductClass};
 use crate::events::Event;
 use crate::query::{Cursor, QueryResultEvent};
 use crate::temporal::Timestamp;
@@ -11,6 +12,19 @@ use serde::{Deserialize, Serialize};
 use serde_json::json;
 
 use super::common::truncate_chars;
+
+/// Caveat id for a `semantic_candidate`/`analysis_claim` row written before
+/// the `ClaimSupport` vector existed — support is genuinely unknown, never
+/// backfilled with a synthesized value (sinex-8cr refusal case).
+pub const CLAIM_SUPPORT_UNKNOWN_CAVEAT_ID: &str = "claim.support_unknown";
+/// Caveat id for a `semantic_candidate`/`analysis_claim` row that carries a
+/// `ClaimSupport` vector but has not been adjudicated (or was rejected /
+/// superseded) — the row is a candidate, never presented as fact.
+pub const CLAIM_UNADJUDICATED_CAVEAT_ID: &str = "claim.unadjudicated";
+/// Caveat id for a `semantic_candidate`/`analysis_claim` row whose
+/// `ClaimSupport` was accepted through the authority seam — informational,
+/// still explicit about the judgment provenance rather than silent.
+pub const CLAIM_ADJUDICATED_ACCEPTED_CAVEAT_ID: &str = "claim.adjudicated_accepted";
 
 pub const CONTEXT_SUMMARY_SCHEMA_VERSION: &str = "sinex.context-summary/v1";
 pub const EVENT_CARD_LIST_SCHEMA_VERSION: &str = "sinex.event-card-list/v3";
@@ -118,6 +132,11 @@ impl EventCardView {
                 ref_: event_id.as_deref().map(|id| event_ref(Some(id))),
             });
         }
+        caveats.extend(claim_support_caveats(
+            event.product_class,
+            event.claim_support.as_ref(),
+            event_id.as_deref(),
+        ));
 
         Self {
             ref_,
@@ -531,7 +550,196 @@ fn projection_badges(event: &Event<JsonValue>) -> Vec<String> {
     if event.semantics_version.is_some() {
         badges.push("semantics_versioned".to_string());
     }
+    if let Some(badge) = claim_support_badge(event.product_class, event.claim_support.as_ref()) {
+        badges.push(badge);
+    }
     badges
+}
+
+/// Whether a [`DerivedProductClass`] is a candidate-grade product class that
+/// requires an explicit claim-support caveat on every read surface
+/// (sinex-8cr AC: "no read surface renders `semantic_candidate` or
+/// `analysis_claim` rows without support-vector caveats").
+fn is_candidate_grade(product_class: DerivedProductClass) -> bool {
+    matches!(
+        product_class,
+        DerivedProductClass::SemanticCandidate | DerivedProductClass::AnalysisClaim
+    )
+}
+
+/// Live badge string derived from the `ClaimSupport` vector — never a
+/// separate stored field, so it can never drift from the vector it
+/// summarizes. Returns `None` for product classes this bead does not gate
+/// (e.g. `CanonicalDerivedEvent`) and for rows without a candidate-grade
+/// `product_class` at all.
+fn claim_support_badge(
+    product_class: Option<DerivedProductClass>,
+    claim_support: Option<&ClaimSupport>,
+) -> Option<String> {
+    let product_class = product_class.filter(|class| is_candidate_grade(*class))?;
+    let Some(support) = claim_support else {
+        return Some(format!("{}:unknown_support", product_class.as_str()));
+    };
+    let adjudication = match support.adjudication() {
+        AdjudicationStatus::Unreviewed => "unreviewed",
+        AdjudicationStatus::Accepted => "accepted",
+        AdjudicationStatus::Rejected => "rejected",
+        AdjudicationStatus::Superseded => "superseded",
+    };
+    Some(format!(
+        "{}:{:?}:{adjudication}",
+        product_class.as_str(),
+        support.support_level()
+    ))
+}
+
+/// Render the mandatory caveat(s) for a `semantic_candidate`/`analysis_claim`
+/// row (sinex-8cr). Every consumer of [`EventCardView`] — the API
+/// `events.cards` handler, `sinexctl` query/show/timeline/context/tui
+/// commands, and the `sinex_search_events` MCP tool — goes through this
+/// function, so a candidate-grade row can never render without an explicit
+/// caveat naming its evidentiary status.
+///
+/// Refusal case: a row with a candidate-grade `product_class` but no
+/// `claim_support` predates the vector's existence. It renders as an
+/// explicit "unknown support" caveat — never backfilled with a synthesized
+/// value, which would fabricate exactly the epistemic authority this bead
+/// exists to prevent.
+fn claim_support_caveats(
+    product_class: Option<DerivedProductClass>,
+    claim_support: Option<&ClaimSupport>,
+    event_id: Option<&str>,
+) -> Vec<CaveatView> {
+    let Some(product_class) = product_class.filter(|class| is_candidate_grade(*class)) else {
+        return Vec::new();
+    };
+    let ref_ = event_id.map(|id| event_ref(Some(id)));
+
+    let Some(support) = claim_support else {
+        return vec![CaveatView {
+            id: CLAIM_SUPPORT_UNKNOWN_CAVEAT_ID.to_string(),
+            message: format!(
+                "{product_class} row predates the claim-support vector — support is \
+                 UNKNOWN, not verified. Do not treat as fact."
+            ),
+            ref_,
+        }];
+    };
+
+    match support.adjudication() {
+        AdjudicationStatus::Accepted => vec![CaveatView {
+            id: CLAIM_ADJUDICATED_ACCEPTED_CAVEAT_ID.to_string(),
+            message: format!(
+                "{product_class} accepted via authority seam: support={:?}, \
+                 coverage={:?}, temporal_quality={:?} ({} supporting event(s), \
+                 {} counterevidence).",
+                support.support_level(),
+                support.source_coverage(),
+                support.temporal_quality(),
+                support.evidence_event_count(),
+                support.counterevidence_count(),
+            ),
+            ref_: support
+                .adjudication_event_id()
+                .map(|id| SinexObjectRef::new(SinexObjectKind::Judgment, id.to_string())),
+        }],
+        status @ (AdjudicationStatus::Unreviewed
+        | AdjudicationStatus::Rejected
+        | AdjudicationStatus::Superseded) => {
+            let adjudication_label = match status {
+                AdjudicationStatus::Unreviewed => "unreviewed",
+                AdjudicationStatus::Rejected => "rejected",
+                AdjudicationStatus::Superseded => "superseded",
+                AdjudicationStatus::Accepted => unreachable!("handled above"),
+            };
+            vec![CaveatView {
+                id: CLAIM_UNADJUDICATED_CAVEAT_ID.to_string(),
+                message: format!(
+                    "{product_class}, not verified truth: support={:?}, coverage={:?}, \
+                     temporal_quality={:?}, adjudication={adjudication_label} \
+                     ({} supporting event(s), {} counterevidence).",
+                    support.support_level(),
+                    support.source_coverage(),
+                    support.temporal_quality(),
+                    support.evidence_event_count(),
+                    support.counterevidence_count(),
+                ),
+                ref_,
+            }]
+        }
+    }
+}
+
+/// Aggregate claim-support caveats for a raw event list (sinex-8cr): for
+/// read surfaces that return `QueryResultEvent` rows directly rather than
+/// through [`EventCardView`] (e.g. `curation.proposals.list`, which returns
+/// `curation.proposal` events — `semantic_candidate`-classed rows — as a raw
+/// `EventQueryResult`), this renders the same honesty-envelope caveats the
+/// per-card path renders, summarized across the whole response instead of
+/// duplicated per row.
+///
+/// Doctrine: `CurationProposalPayload.confidence` is informational only
+/// ("consumers must not treat confidence as authority" — see the payload's
+/// own doc comment); this is the vector-backed caveat that makes that
+/// doctrine visible to every consumer of the list, not just documented in
+/// source.
+#[must_use]
+pub fn claim_support_list_caveats(events: &[QueryResultEvent]) -> Vec<CaveatView> {
+    let mut unknown_count = 0usize;
+    let mut unadjudicated_count = 0usize;
+    let mut accepted_count = 0usize;
+
+    for result in events {
+        let is_candidate = result
+            .event
+            .product_class
+            .is_some_and(is_candidate_grade);
+        if !is_candidate {
+            continue;
+        }
+        match result.event.claim_support.as_ref() {
+            None => unknown_count += 1,
+            Some(support) => match support.adjudication() {
+                AdjudicationStatus::Accepted => accepted_count += 1,
+                AdjudicationStatus::Unreviewed
+                | AdjudicationStatus::Rejected
+                | AdjudicationStatus::Superseded => unadjudicated_count += 1,
+            },
+        }
+    }
+
+    let mut caveats = Vec::new();
+    if unknown_count > 0 {
+        caveats.push(CaveatView {
+            id: CLAIM_SUPPORT_UNKNOWN_CAVEAT_ID.to_string(),
+            message: format!(
+                "{unknown_count} row(s) predate the claim-support vector — support is \
+                 UNKNOWN, not verified. Do not treat as fact."
+            ),
+            ref_: None,
+        });
+    }
+    if unadjudicated_count > 0 {
+        caveats.push(CaveatView {
+            id: CLAIM_UNADJUDICATED_CAVEAT_ID.to_string(),
+            message: format!(
+                "{unadjudicated_count} row(s) carry an unreviewed, rejected, or superseded \
+                 claim-support vector — candidates, not verified truth."
+            ),
+            ref_: None,
+        });
+    }
+    if accepted_count > 0 {
+        caveats.push(CaveatView {
+            id: CLAIM_ADJUDICATED_ACCEPTED_CAVEAT_ID.to_string(),
+            message: format!(
+                "{accepted_count} row(s) carry a claim-support vector accepted via the \
+                 authority seam."
+            ),
+            ref_: None,
+        });
+    }
+    caveats
 }
 
 fn event_summary(event: &Event<JsonValue>, snippet: Option<&str>) -> String {

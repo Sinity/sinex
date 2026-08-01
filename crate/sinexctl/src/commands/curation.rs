@@ -13,6 +13,7 @@ use sinex_primitives::rpc::curation::{
 };
 use sinex_primitives::views::{
     CaveatView, ReadinessCaveatId, SinexObjectKind, SinexObjectRef, ViewEnvelope,
+    claim_support_list_caveats,
 };
 
 use crate::client::GatewayClient;
@@ -463,6 +464,13 @@ fn curation_proposal_caveats(response: &EventQueryResult, status: &str) -> Vec<C
                     "curation.proposals.list",
                 ));
             }
+            // sinex-8cr: `curation.proposal` events are `semantic_candidate`-
+            // classed rows — the exact product class this bead's AC gates.
+            // `CurationProposalPayload.confidence` is informational only
+            // ("consumers must not treat confidence as authority"); this
+            // renders the claim-support vector's actual evidentiary status
+            // instead, so the list never presents a proposal as fact.
+            caveats.extend(claim_support_list_caveats(events));
         }
         _ => caveats.push(curation_caveat(
             ReadinessCaveatId::CoverageUnmeasurable,
