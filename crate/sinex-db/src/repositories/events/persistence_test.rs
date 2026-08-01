@@ -37,6 +37,7 @@ fn base_stream_batch_row() -> Result<StreamBatchRow> {
         derivation_epoch_id: None,
         derivation_lane_id: None,
         adjudication_event_id: None,
+        content_hash: None,
     })
 }
 
@@ -76,6 +77,7 @@ fn base_record() -> EventRecord {
         derivation_epoch_id: None,
         derivation_lane_id: None,
         adjudication_event_id: None,
+        content_hash: None,
     }
 }
 
@@ -698,6 +700,7 @@ async fn batch_product_metadata(
             derivation_epoch_id: None,
             derivation_lane_id: None,
             adjudication_event_id: None,
+            content_hash: None,
         })
     };
 
