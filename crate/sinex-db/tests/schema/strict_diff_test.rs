@@ -333,14 +333,14 @@ async fn detects_changed_foreign_key_action(ctx: TestContext) -> TestResult<()> 
     // explicitly so this pool slot isn't left permanently drifted for
     // other tests sharing it (observed: check_strict_returns_empty_after_apply
     // failing on ForeignKeyAction for core.tagged_items, sinex-xjx8).
-    sqlx::query(&format!("ALTER TABLE core.tagged_items DROP CONSTRAINT {constraint_name}"))
+    sqlx::query("ALTER TABLE core.tagged_items DROP CONSTRAINT tagged_items_tag_id_drift_fkey")
         .execute(&ctx.pool)
         .await?;
-    sqlx::query(
+    sqlx::query(&format!(
         "ALTER TABLE core.tagged_items
-            ADD CONSTRAINT tagged_items_tag_id_drift_fkey
-            FOREIGN KEY (tag_id) REFERENCES core.tags(id) ON DELETE CASCADE",
-    )
+            ADD CONSTRAINT {constraint_name}
+            FOREIGN KEY (tag_id) REFERENCES core.tags(id) ON DELETE CASCADE"
+    ))
     .execute(&ctx.pool)
     .await?;
 
