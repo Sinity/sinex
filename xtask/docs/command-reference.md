@@ -356,6 +356,7 @@ Stop the infrastructure
 |---|---|---|---|
 | `--all-checkouts` | no | no | Stop/clean every checkout-local dev-state root under /var/cache/sinex/$USER |
 | `--stale-only` | no | no | Only remove stale/malformed lock and PID files; do not stop live processes |
+| `--orphaned-only` | no | no | Only stop instances whose owning checkout no longer exists on disk (sinex-grlv). Unconditionally safe: a deleted checkout can never be legitimately in use, so this needs no idle window and never touches a live checkout elsewhere |
 | `--dry-run` | no | no | Print planned actions without stopping processes or removing files |
 | `processes` | yes | no | Specific processes to stop |
 

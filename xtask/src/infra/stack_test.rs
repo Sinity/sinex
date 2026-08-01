@@ -1,8 +1,9 @@
 use super::{
-    AllCheckoutsCleanup, AllCheckoutsStatus, CleanupActionKind, GIT_REPOSITORY_ENV_KEYS,
-    collect_snapshot_names, dir_size, discover_nats_port, git_subprocess, list_snapshots,
-    parse_cmdline_bytes, parse_proc_stat_ppid, probe_annex_available, require_successful_command,
-    service_pid_state, stop_dev_sinexd_pid, sync_event_payload_schemas_for_database_url,
+    AllCheckoutsCleanup, AllCheckoutsStatus, CleanupActionKind, CleanupScope,
+    GIT_REPOSITORY_ENV_KEYS, collect_snapshot_names, dir_size, discover_nats_port,
+    git_subprocess, list_snapshots, parse_cmdline_bytes, parse_proc_stat_ppid,
+    probe_annex_available, require_successful_command, service_pid_state, stop_dev_sinexd_pid,
+    sync_event_payload_schemas_for_database_url,
 };
 use super::{StackConfig, StackStatus};
 use crate::infra::state::{CheckoutInventoryRoot, LockInfo, LockInspection};
@@ -119,7 +120,7 @@ async fn all_checkouts_cleanup_removes_stale_lock_and_pid_files() -> Result<()> 
             }),
         }],
         false,
-        true,
+        CleanupScope::StaleFilesOnly,
     )?;
 
     assert!(!pg_pid.exists());
@@ -153,7 +154,7 @@ async fn all_checkouts_cleanup_dry_run_leaves_stale_files() -> Result<()> {
             lock: LockInspection::Missing,
         }],
         true,
-        true,
+        CleanupScope::StaleFilesOnly,
     )?;
 
     assert!(nats_pid.exists());
@@ -209,7 +210,7 @@ async fn all_checkouts_cleanup_dry_run_reports_dev_local_sinexd() -> Result<()> 
                     lock: LockInspection::Missing,
                 }],
                 true,
-                false,
+                CleanupScope::AllRunning,
             )?;
             assert_eq!(cleanup.totals.stopped_sinexd, 1);
             assert!(
@@ -227,6 +228,200 @@ async fn all_checkouts_cleanup_dry_run_reports_dev_local_sinexd() -> Result<()> 
     stop_dev_sinexd_pid(pid, false).ok();
     child.wait().ok();
     bail!("fake dev-local sinexd pid {pid} was not detected");
+}
+
+#[sinex_test]
+async fn cleanup_scope_should_stop_running_matrix() -> ::xtask::sandbox::TestResult<()> {
+    // StaleFilesOnly never signals a running process, regardless of whether
+    // the checkout exists or is even knowable.
+    assert!(!CleanupScope::StaleFilesOnly.should_stop_running(Some(true)));
+    assert!(!CleanupScope::StaleFilesOnly.should_stop_running(Some(false)));
+    assert!(!CleanupScope::StaleFilesOnly.should_stop_running(None));
+
+    // AllRunning is the broad, human-invoked mode: stops regardless of
+    // checkout existence.
+    assert!(CleanupScope::AllRunning.should_stop_running(Some(true)));
+    assert!(CleanupScope::AllRunning.should_stop_running(Some(false)));
+    assert!(CleanupScope::AllRunning.should_stop_running(None));
+
+    // OrphanedCheckoutsOnly (sinex-grlv) is the automatic, unconditionally-
+    // safe mode: only when the checkout is provably gone. A live checkout, or
+    // one we could not determine, must never be touched — that is the
+    // never-reap invariant a fully-automatic sweep depends on.
+    assert!(!CleanupScope::OrphanedCheckoutsOnly.should_stop_running(Some(true)));
+    assert!(CleanupScope::OrphanedCheckoutsOnly.should_stop_running(Some(false)));
+    assert!(!CleanupScope::OrphanedCheckoutsOnly.should_stop_running(None));
+    Ok(())
+}
+
+/// A fake dev-owned process plus a background reaper thread that blocks on
+/// its `wait()` as soon as it exits.
+///
+/// Production dev-postgres is daemonized (`pg_ctl start` detaches, reparented
+/// to init), so nothing needs to reap it. A process spawned in-process via
+/// `std::process::Command` for a test is different: if it is SIGKILLed but
+/// never `wait()`-ed, it becomes a zombie that still answers `kill(pid, 0)
+/// == 0`, which would make `force_cleanup`'s "did SIGKILL actually work?"
+/// poll see a false "still alive" and fail the whole stop — an artifact of
+/// being a direct test-process child, not evidence against the production
+/// code. Reaping promptly in the background avoids that artifact while still
+/// asserting on the real OS process, not just a recorded `CleanupAction`.
+struct ReapedProcess {
+    pid: u32,
+    exited: std::sync::Arc<std::sync::atomic::AtomicBool>,
+}
+
+impl ReapedProcess {
+    fn is_alive(&self) -> bool {
+        !self.exited.load(std::sync::atomic::Ordering::SeqCst)
+    }
+}
+
+/// Spawn a fake `postgres -D <data_dir>` process — matching enough of
+/// `postgres_pid_is_dev_owned`'s /proc/pid/cmdline shape (argv0 ends with
+/// "postgres", an argument equal to `data_dir`) that the real ownership check
+/// treats it as a genuine dev-owned instance — and write a `postmaster.pid`
+/// pointing at it, matching what `PostgresManager` reads. On SIGTERM it
+/// removes its own `postmaster.pid`, mirroring a real postmaster's clean fast
+/// shutdown, so `pg_ctl stop -m fast -w` can actually observe the shutdown
+/// (rather than always falling through to the ~10s internal timeout) — the
+/// production `pg_stop` path terminates it for real either way.
+fn spawn_fake_dev_postgres(data_dir: &Path) -> Result<ReapedProcess> {
+    fs::create_dir_all(data_dir)?;
+    let bin_path = data_dir.join("postgres");
+    fs::write(
+        &bin_path,
+        "#!/usr/bin/env bash\n\
+         pidfile=\"$(dirname \"$0\")/postmaster.pid\"\n\
+         trap 'rm -f \"$pidfile\"; exit 0' TERM\n\
+         sleep 30 &\n\
+         wait \"$!\"\n",
+    )?;
+    let mut permissions = fs::metadata(&bin_path)?.permissions();
+    use std::os::unix::fs::PermissionsExt;
+    permissions.set_mode(0o755);
+    fs::set_permissions(&bin_path, permissions)?;
+    let child = StdCommand::new(&bin_path)
+        .arg("-D")
+        .arg(data_dir)
+        .spawn()
+        .wrap_err("failed to spawn fake dev-owned postgres")?;
+    let pid = child.id();
+    fs::write(data_dir.join("postmaster.pid"), format!("{pid}\n"))?;
+
+    let exited = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let exited_writer = exited.clone();
+    std::thread::spawn(move || {
+        let mut child = child;
+        let _ = child.wait();
+        exited_writer.store(true, std::sync::atomic::Ordering::SeqCst);
+    });
+
+    Ok(ReapedProcess { pid, exited })
+}
+
+#[sinex_test]
+async fn orphaned_only_sweep_stops_postgres_for_deleted_checkout_but_spares_live_one()
+-> Result<()> {
+    // Two checkouts: one whose directory still exists (must be left running
+    // even though nothing else distinguishes it), one whose directory has
+    // been removed (the sinex-grlv orphan class — must be reaped). Both
+    // dev-postgres data directories live under the cache base, matching
+    // production (`$SINEX_DEV_STATE_DIR/data/postgres` under
+    // `/var/cache/sinex/...`, never under the checkout itself) — so ownership
+    // proof via /proc/pid/cmdline stays valid even after the checkout is gone.
+    let base = tempfile::tempdir()?;
+    let live_checkout = tempfile::tempdir()?;
+    let gone_checkout = tempfile::tempdir()?;
+    let gone_checkout_path = gone_checkout.path().to_path_buf();
+
+    let live_cache_root = base.path().join("live-hash");
+    let live_dev_state = live_cache_root.join("dev-state");
+    let live_pg_data = live_dev_state.join("data/postgres");
+    let live_process = spawn_fake_dev_postgres(&live_pg_data)?;
+
+    let gone_cache_root = base.path().join("gone-hash");
+    let gone_dev_state = gone_cache_root.join("dev-state");
+    let gone_pg_data = gone_dev_state.join("data/postgres");
+    let gone_process = spawn_fake_dev_postgres(&gone_pg_data)?;
+
+    // Delete the "gone" checkout directory — mirrors a worktree removed after
+    // dispatch. The dev-postgres process and its data dir (under the cache
+    // base, not the checkout) are untouched by this.
+    drop(gone_checkout);
+    assert!(!gone_checkout_path.exists());
+
+    let roots = vec![
+        CheckoutInventoryRoot {
+            cache_root: live_cache_root,
+            dev_state_dir: live_dev_state,
+            checkout_path: Some(live_checkout.path().to_path_buf()),
+            lock: LockInspection::Missing,
+        },
+        CheckoutInventoryRoot {
+            cache_root: gone_cache_root,
+            dev_state_dir: gone_dev_state,
+            checkout_path: Some(gone_checkout_path.clone()),
+            lock: LockInspection::Missing,
+        },
+    ];
+
+    let cleanup = AllCheckoutsCleanup::run(
+        base.path().to_path_buf(),
+        roots,
+        false,
+        CleanupScope::OrphanedCheckoutsOnly,
+    )?;
+
+    assert_eq!(
+        cleanup.totals.stopped_postgres, 1,
+        "orphan-only sweep must stop exactly the deleted checkout's postgres"
+    );
+    // `AllCheckoutsCleanup::run` sorts checkouts by cache_root, so look each
+    // one up by name rather than assuming input order survived.
+    let live_result = cleanup
+        .checkouts
+        .iter()
+        .find(|c| c.cache_root.ends_with("live-hash"))
+        .expect("live-hash checkout present in cleanup result");
+    let gone_result = cleanup
+        .checkouts
+        .iter()
+        .find(|c| c.cache_root.ends_with("gone-hash"))
+        .expect("gone-hash checkout present in cleanup result");
+    assert!(
+        live_result.actions.is_empty(),
+        "the live checkout must never be touched by an orphan-only sweep: {live_result:?}",
+    );
+    assert!(
+        gone_result
+            .actions
+            .iter()
+            .any(|action| action.action == CleanupActionKind::StopPostgres),
+        "expected a StopPostgres action for the deleted checkout: {gone_result:?}",
+    );
+
+    // Real-process proof: the orphan's real OS process is actually gone
+    // (not merely a recorded CleanupAction) and the live one is untouched.
+    let stop_deadline = Instant::now() + Duration::from_secs(10);
+    while Instant::now() < stop_deadline && gone_process.is_alive() {
+        std::thread::sleep(Duration::from_millis(50));
+    }
+    assert!(
+        !gone_process.is_alive(),
+        "orphaned postgres for the deleted checkout must have actually exited"
+    );
+    assert!(
+        live_process.is_alive(),
+        "postgres for the live checkout must still be running"
+    );
+
+    unsafe { libc::kill(live_process.pid as i32, libc::SIGKILL) };
+    let live_stop_deadline = Instant::now() + Duration::from_secs(5);
+    while Instant::now() < live_stop_deadline && live_process.is_alive() {
+        std::thread::sleep(Duration::from_millis(25));
+    }
+    Ok(())
 }
 
 #[sinex_test]

@@ -321,11 +321,47 @@ pub struct AllCheckoutsTotals {
     pub state_bytes: u64,
 }
 
+/// How aggressively an all-checkouts cleanup pass is allowed to stop running
+/// dev-owned processes. See sinex-grlv: orphaned per-checkout dev-postgres
+/// instances survive their devshell/checkout and accumulate silently.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CleanupScope {
+    /// Only remove stale/malformed lock and PID files. Never signals a
+    /// running process, even one that proves ownership.
+    StaleFilesOnly,
+    /// Stop every running dev-owned instance, regardless of whether its
+    /// checkout still exists on disk. Broad and deliberate — reserved for an
+    /// operator's explicit, human-invoked `xtask infra stop --all-checkouts`.
+    AllRunning,
+    /// Stop only running dev-owned instances whose checkout path no longer
+    /// exists on disk. A deleted checkout can never legitimately be "in use"
+    /// again, so this needs no idle window and is safe to run often and
+    /// automatically (e.g. opportunistically before every `xtask infra
+    /// start`) without risking a live, in-use checkout elsewhere.
+    OrphanedCheckoutsOnly,
+}
+
+impl CleanupScope {
+    /// Whether a running, ownership-proven instance should be stopped for a
+    /// checkout with the given `checkout_path_exists` status.
+    fn should_stop_running(self, checkout_path_exists: Option<bool>) -> bool {
+        match self {
+            Self::StaleFilesOnly => false,
+            Self::AllRunning => true,
+            // `None` means we could not determine whether the checkout still
+            // exists (e.g. no lock was ever recorded) — fail safe and leave
+            // it running rather than guessing.
+            Self::OrphanedCheckoutsOnly => checkout_path_exists == Some(false),
+        }
+    }
+}
+
 #[derive(Debug, Serialize)]
 pub struct AllCheckoutsCleanup {
     pub base_dir: PathBuf,
     pub dry_run: bool,
-    pub stale_only: bool,
+    pub scope: CleanupScope,
     pub checkouts: Vec<CheckoutCleanup>,
     pub totals: CleanupTotals,
     pub warnings: Vec<String>,
@@ -486,7 +522,7 @@ impl AllCheckoutsCleanup {
         base_dir: PathBuf,
         roots: Vec<CheckoutInventoryRoot>,
         dry_run: bool,
-        stale_only: bool,
+        scope: CleanupScope,
     ) -> Result<Self> {
         let mut checkouts = Vec::new();
         let mut warnings = Vec::new();
@@ -496,7 +532,7 @@ impl AllCheckoutsCleanup {
         };
 
         for root in roots {
-            let cleanup = CheckoutCleanup::run(root, dry_run, stale_only)?;
+            let cleanup = CheckoutCleanup::run(root, dry_run, scope)?;
             totals.actions += cleanup.actions.len();
             totals.skipped += cleanup.skipped.len();
             for action in &cleanup.actions {
@@ -520,7 +556,7 @@ impl AllCheckoutsCleanup {
         Ok(Self {
             base_dir,
             dry_run,
-            stale_only,
+            scope,
             checkouts,
             totals,
             warnings,
@@ -528,8 +564,27 @@ impl AllCheckoutsCleanup {
     }
 }
 
+/// Opportunistic, best-effort sweep that stops dev-owned postgres/nats/sinexd
+/// instances belonging to checkouts that have provably been deleted (sinex-grlv).
+///
+/// This is the automatic complement to the devshell-tied owner-watcher: it does
+/// not require any devshell/direnv integration to have run for the orphaned
+/// checkout, so it also catches instances started via a bare `nix develop
+/// --command xtask ...` or a preflight auto-start — the actual dominant path
+/// for short-lived Agent-tool worktrees. Deliberately does not consult an idle
+/// window: a deleted checkout can never legitimately be in use again, so the
+/// orphan class is unconditionally safe to reap immediately.
+///
+/// Callers should treat failures as non-fatal — this is a courtesy cleanup
+/// riding along another checkout's own command, not the primary operation.
+pub fn sweep_orphaned_checkouts() -> Result<AllCheckoutsCleanup> {
+    let base_dir = CheckoutState::default_inventory_base_dir();
+    let roots = CheckoutState::inventory_roots_under(&base_dir)?;
+    AllCheckoutsCleanup::run(base_dir, roots, false, CleanupScope::OrphanedCheckoutsOnly)
+}
+
 impl CheckoutCleanup {
-    fn run(root: CheckoutInventoryRoot, dry_run: bool, stale_only: bool) -> Result<Self> {
+    fn run(root: CheckoutInventoryRoot, dry_run: bool, scope: CleanupScope) -> Result<Self> {
         let config = StackConfig::from_inventory_root(&root);
         let status = CheckoutInfraStatus::gather(root.clone());
         let mut actions = Vec::new();
@@ -558,7 +613,7 @@ impl CheckoutCleanup {
             &mut actions,
         )?;
 
-        if !stale_only {
+        if scope.should_stop_running(status.checkout_path_exists) {
             if let Some(pid) = status.postgres.pid
                 && status.postgres.pid_state == ServicePidState::Running
             {
@@ -1252,16 +1307,19 @@ fn remediation_for_checkout(
     nats: &ServiceStatus,
 ) -> Vec<String> {
     let mut commands = Vec::new();
-    if root
-        .checkout_path
-        .as_ref()
-        .is_some_and(|path| path.exists())
-    {
+    let checkout_exists = root.checkout_path.as_ref().map(|path| path.exists());
+    if checkout_exists == Some(true) {
         if postgres.running || nats.running {
             if let Some(path) = &root.checkout_path {
                 commands.push(format!("cd {} && xtask infra stop", path.display()));
             }
         }
+    } else if checkout_exists == Some(false) && (postgres.running || nats.running) {
+        // Owning checkout is gone (sinex-grlv): unconditionally safe to reap,
+        // no idle window needed. `xtask infra start` already does this
+        // opportunistically for other checkouts; surface the manual command
+        // too for an operator inspecting `infra status --all-checkouts`.
+        commands.push("xtask infra stop --all-checkouts --orphaned-only".to_string());
     }
     if matches!(
         postgres.pid_state,
