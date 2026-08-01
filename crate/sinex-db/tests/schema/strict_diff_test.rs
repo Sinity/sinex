@@ -248,6 +248,22 @@ async fn detects_dropped_inline_check_on_events(ctx: TestContext) -> TestResult<
         "expected exactly one inline_check_expr drift on xor_provenance, got: {drifts:?}"
     );
 
+    // This CHECK is declared inline in Events::create_table_statement(), so
+    // it is only ever applied via `CREATE TABLE IF NOT EXISTS` -- a no-op on
+    // an existing table -- and is not one of the NamedConstraint entries
+    // converge_tables() reconciles either. A plain apply() call cannot
+    // restore it once dropped, so restore it explicitly: leaving core.events
+    // without its provenance-XOR guard would let other tests sharing this
+    // pool slot insert material+derived (or neither) provenance without
+    // error (sinex-xjx8).
+    sqlx::query(
+        "ALTER TABLE core.events ADD CONSTRAINT events_provenance_xor_check
+            CHECK ((source_material_id IS NOT NULL AND source_event_ids IS NULL)
+                OR (source_material_id IS NULL AND source_event_ids IS NOT NULL))",
+    )
+    .execute(&ctx.pool)
+    .await?;
+
     Ok(())
 }
 
@@ -310,6 +326,23 @@ async fn detects_changed_foreign_key_action(ctx: TestContext) -> TestResult<()> 
         "observed summary should no longer contain CASCADE: {}",
         matched[0].observed_summary
     );
+
+    // core.tagged_items has no `foreign_keys` entries in
+    // crate/sinex-schema/src/converge.rs's convergible_tables(), so this FK
+    // action is NOT reconciled by a plain apply() call -- restore it
+    // explicitly so this pool slot isn't left permanently drifted for
+    // other tests sharing it (observed: check_strict_returns_empty_after_apply
+    // failing on ForeignKeyAction for core.tagged_items, sinex-xjx8).
+    sqlx::query(&format!("ALTER TABLE core.tagged_items DROP CONSTRAINT {constraint_name}"))
+        .execute(&ctx.pool)
+        .await?;
+    sqlx::query(
+        "ALTER TABLE core.tagged_items
+            ADD CONSTRAINT tagged_items_tag_id_drift_fkey
+            FOREIGN KEY (tag_id) REFERENCES core.tags(id) ON DELETE CASCADE",
+    )
+    .execute(&ctx.pool)
+    .await?;
 
     Ok(())
 }
@@ -421,6 +454,14 @@ async fn detects_orphan_column_in_convergible_table(ctx: TestContext) -> TestRes
         "observed summary should name the orphan column: {}",
         matched[0].observed_summary
     );
+
+    // Orphan columns are detected but never auto-dropped by apply()/converge
+    // (by design -- auto-dropping an undeclared column would be dangerous),
+    // so this stays a permanent orphan on this pool slot unless removed
+    // explicitly (sinex-xjx8).
+    sqlx::query("ALTER TABLE core.blobs DROP COLUMN IF EXISTS orphan_test_col")
+        .execute(&ctx.pool)
+        .await?;
 
     Ok(())
 }
@@ -579,6 +620,16 @@ async fn nullability_convergence_fails_loudly_on_null_rows(ctx: TestContext) -> 
         "error message should contain table/column context: {err_msg}"
     );
 
+    // The whole point of this test is that apply() CANNOT restore NOT NULL
+    // while the blocking row exists, so nothing above leaves core.blobs
+    // clean. Remove the blocking row and re-apply so this pool slot isn't
+    // left with a permanently-nullable original_filename (and a live NULL
+    // row) for other tests sharing it (sinex-xjx8).
+    sqlx::query("DELETE FROM core.blobs WHERE original_filename IS NULL")
+        .execute(&ctx.pool)
+        .await?;
+    sinex_db::schema::apply::apply(&ctx.pool).await?;
+
     Ok(())
 }
 
@@ -631,6 +682,14 @@ async fn column_rename_is_idempotent(ctx: TestContext) -> TestResult<()> {
     // core.converge::converge_column_renames skips if old is absent.
     // We verify this by calling apply() — no error should surface.
     sinex_db::schema::apply::apply(&ctx.pool).await?;
+
+    // rename_test_new is not a declared column, so it stays a permanent
+    // orphan on this pool slot (same reasoning as
+    // detects_orphan_column_in_convergible_table) unless removed here
+    // (sinex-xjx8).
+    sqlx::query("ALTER TABLE core.blobs DROP COLUMN IF EXISTS rename_test_new")
+        .execute(&ctx.pool)
+        .await?;
 
     Ok(())
 }
