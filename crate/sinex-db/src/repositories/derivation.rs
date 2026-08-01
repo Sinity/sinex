@@ -15,9 +15,13 @@ use crate::schema::records;
 use crate::{JsonValue, Timestamp};
 use sinex_primitives::derivation::{ClaimSupport, DerivationOutputDeclaration, LaneDiffReport};
 use sinex_primitives::error::SinexError;
+use sinex_primitives::events::payloads::{ActivitySessionBoundaryPayload, ActivityWindowSummaryPayload};
 use sinex_primitives::events::{EntityRelatedPayload, EntityResolvedPayload};
 use sinex_primitives::semantic::{
     EntityRelationLaneOutputs, SemanticEntityOutput, SemanticRelationOutput, SemanticScope,
+};
+use sinex_primitives::session_lane::{
+    SessionBoundaryOutput, SessionLaneOutputs, compute_session_boundaries,
 };
 use sinex_primitives::Uuid;
 use sqlx::PgPool;
@@ -1011,6 +1015,162 @@ impl DerivationRepository<'_> {
             }
         }
         Ok(outputs)
+    }
+
+    // ─── Session-boundary port (sinex-0vx.7) ───────────────────────────────
+    //
+    // Second `LaneOutputKind` instance after the entity/relation port above
+    // (sinex-0vx.6) — proves the generic `derivation.lane_outputs` table
+    // (`output_kind = "session_boundary"`) generalizes beyond entity/
+    // relation with no session-specific schema of its own, same as the
+    // entity/relation section's doc says about itself.
+
+    pub async fn write_session_lane_outputs(
+        &self,
+        lane_id: Uuid,
+        product_class: &str,
+        outputs: &SessionLaneOutputs,
+    ) -> DbResult<u64> {
+        let mut rows = Vec::with_capacity(outputs.boundaries.len());
+        for boundary in &outputs.boundaries {
+            rows.push(LaneOutputRow {
+                output_kind: "session_boundary".to_string(),
+                output_key: boundary.session_key.clone(),
+                payload: serde_json::to_value(boundary).map_err(|error| {
+                    SinexError::serialization("serialize session boundary lane output")
+                        .with_std_error(&error)
+                })?,
+                claim_support: claim_support_json(&ClaimSupport::unknown())?,
+                source_event_id: None,
+                source_material_id: None,
+                source_anchor: None,
+                metadata: serde_json::json!({}),
+            });
+        }
+        self.write_lane_outputs(lane_id, product_class, &rows).await
+    }
+
+    pub async fn read_session_lane_outputs(&self, lane_id: Uuid) -> DbResult<SessionLaneOutputs> {
+        let rows = self
+            .read_lane_outputs(lane_id, Some("session_boundary"))
+            .await?;
+        let mut outputs = SessionLaneOutputs::default();
+        for row in rows {
+            outputs.boundaries.push(parse_lane_output_payload(
+                "derivation session boundary lane output",
+                row.payload,
+            )?);
+        }
+        Ok(outputs)
+    }
+
+    /// Seed a lane from the CANONICAL `activity.session.boundary` events
+    /// already persisted in `core.events` — the baseline side of a
+    /// session-lane shadow diff, mirroring
+    /// `seed_entity_relation_outputs_from_canonical_graph`'s role (read the
+    /// existing canonical projection, not recompute it).
+    pub async fn seed_session_lane_outputs_from_canonical_events(
+        &self,
+        lane_id: Uuid,
+        product_class: &str,
+    ) -> DbResult<u64> {
+        let rows = sqlx::query!(
+            r#"
+            SELECT id as "id!: Uuid", payload
+            FROM core.events
+            WHERE source = 'derived.session-detector'
+              AND event_type = 'activity.session.boundary'
+            ORDER BY id
+            "#
+        )
+        .fetch_all(self.pool)
+        .await
+        .map_err(|error| {
+            db_error(error, "read canonical session boundaries for derivation lane")
+        })?;
+
+        let mut output_rows = Vec::with_capacity(rows.len());
+        for row in rows {
+            let payload: ActivitySessionBoundaryPayload = parse_lane_output_payload(
+                "activity.session.boundary event payload",
+                row.payload,
+            )?;
+            let boundary = SessionBoundaryOutput {
+                session_key: payload.session_id.clone(),
+                start_time: payload.start_time,
+                end_time: payload.end_time,
+                duration_secs: payload.duration_secs,
+                event_count: payload.event_count,
+                window_count: payload.window_count,
+                primary_source: payload.primary_source,
+                metadata: serde_json::json!({"source": "core.events"}),
+            };
+            output_rows.push(LaneOutputRow {
+                output_kind: "session_boundary".to_string(),
+                output_key: boundary.session_key.clone(),
+                payload: serde_json::to_value(&boundary).map_err(|error| {
+                    SinexError::serialization("serialize canonical session boundary lane output")
+                        .with_std_error(&error)
+                })?,
+                claim_support: claim_support_json(&ClaimSupport::unknown())?,
+                source_event_id: Some(row.id),
+                source_material_id: None,
+                source_anchor: None,
+                metadata: serde_json::json!({"producer": "activity.session.boundary"}),
+            });
+        }
+        self.write_lane_outputs(lane_id, product_class, &output_rows)
+            .await
+    }
+
+    /// Seed a lane by RECOMPUTING session boundaries from the lane's
+    /// `event_set` scope of `activity.window.summary` events — the
+    /// candidate/shadow side of a session-lane shadow diff. Uses
+    /// [`sinex_primitives::session_lane::compute_session_boundaries`], the
+    /// same gap-closure grouping policy `SessionDetector` uses in `sinexd`.
+    pub async fn seed_session_lane_outputs_from_window_scope(
+        &self,
+        lane_id: Uuid,
+        product_class: &str,
+    ) -> DbResult<u64> {
+        let lane = self.get_lane(lane_id).await?;
+        let scope = parse_scope_value(&lane.scope)?;
+        if scope.kind != "event_set" {
+            return Err(SinexError::validation(
+                "derivation lane session-window seeding requires an event_set scope",
+            )
+            .with_context("lane_id", lane_id.to_string())
+            .with_context("scope_kind", scope.kind));
+        }
+        let event_ids = parse_scope_event_ids(&scope)?;
+
+        let rows = sqlx::query!(
+            r#"
+            SELECT payload
+            FROM core.events
+            WHERE id = ANY($1)
+              AND event_type = 'activity.window.summary'
+            ORDER BY id
+            "#,
+            &event_ids,
+        )
+        .fetch_all(self.pool)
+        .await
+        .map_err(|error| db_error(error, "read window summary events for derivation lane"))?;
+
+        let mut windows = Vec::with_capacity(rows.len());
+        for row in rows {
+            let payload: ActivityWindowSummaryPayload = parse_lane_output_payload(
+                "activity.window.summary event payload",
+                row.payload,
+            )?;
+            windows.push(payload);
+        }
+
+        let boundaries = compute_session_boundaries(windows);
+        let outputs = SessionLaneOutputs { boundaries };
+        self.write_session_lane_outputs(lane_id, product_class, &outputs)
+            .await
     }
 }
 

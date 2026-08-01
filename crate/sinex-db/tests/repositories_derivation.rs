@@ -8,14 +8,20 @@ use sinex_db::repositories::{
     CreateDerivationEpoch, CreateDerivationLane, CreateEntity, CreateEntityRelation, DbPoolExt,
 };
 use sinex_db::{Event, Provenance};
+use sinex_primitives::activity::ActivitySourceKind;
 use sinex_primitives::derivation::{
     ClaimSupportTemplate, ClaimTemporalQuality, DerivationOutputDeclaration,
     DerivationWriteSurface, DerivedProductClass, InputEligibility, LaneDiffReport, SourceCoverage,
     SupportLevel,
 };
 use sinex_primitives::domain::{EntityTypeName, RelationType};
+use sinex_primitives::events::payloads::{
+    ActivitySessionBoundaryPayload, ActivityWindowCloseReason, ActivityWindowSummaryPayload,
+};
 use sinex_primitives::events::{EntityRelatedPayload, EntityResolvedPayload};
+use sinex_primitives::session_lane::SessionLaneOutputs;
 use sinex_primitives::{EntityRelationLaneOutputs, SemanticEntityOutput, SemanticRelationOutput, Uuid};
+use std::collections::BTreeMap;
 use xtask::sandbox::prelude::*;
 
 /// The same `declaration_id` sinexd's `SEMANTIC_ENTITY_RELATION_DECLARATION`
@@ -411,6 +417,337 @@ async fn derivation_lane_repository_seeds_lane_from_entity_event_scope(
         canonical_entities_after, canonical_entities_before,
         "event-scope lane seeding must not mutate canonical entity projections"
     );
+
+    Ok(())
+}
+
+fn window_summary(
+    window_id: &str,
+    start: sinex_primitives::Timestamp,
+    duration_secs: i64,
+    event_count: u64,
+    close_reason: ActivityWindowCloseReason,
+) -> ActivityWindowSummaryPayload {
+    let end = start + time::Duration::seconds(duration_secs.max(0));
+    let mut counts = BTreeMap::new();
+    counts.insert(ActivitySourceKind::Window, event_count);
+    ActivityWindowSummaryPayload {
+        window_id: window_id.to_string(),
+        window_start: start,
+        window_end: end,
+        duration_secs: duration_secs.max(0) as u64,
+        event_count,
+        source_count: 1,
+        sources: vec!["derivation-session-lane-test".to_string()],
+        activity_sources: vec![ActivitySourceKind::Window],
+        activity_source_counts: counts,
+        primary_source: ActivitySourceKind::Window,
+        close_reason,
+    }
+}
+
+/// Second `LaneOutputKind` port (sinex-0vx.7): seeding a session lane from a
+/// finite `event_set` scope of `activity.window.summary` events recomputes
+/// session boundaries via `compute_session_boundaries` -- the exact
+/// gap-closure grouping policy `SessionDetector` uses in `sinexd`, replayed
+/// as a pure batch function. Mutating that grouping logic (e.g. dropping the
+/// `Gap` check) makes this red.
+#[sinex_test]
+async fn derivation_lane_repository_seeds_session_lane_from_window_scope(
+    ctx: TestContext,
+) -> TestResult<()> {
+    seed_declaration(&ctx.pool).await?;
+    let repo = ctx.pool.derivation_lanes();
+    let product_class = DerivedProductClass::SemanticCandidate.as_str();
+
+    let material_record = ctx
+        .pool
+        .source_materials()
+        .register_in_flight(
+            sinex_db::repositories::source_materials::material_types::STREAM,
+            Some("derivation-session-lane-window-scope"),
+            serde_json::json!({ "test": true }),
+        )
+        .await?;
+    let material_id =
+        sinex_primitives::Id::<sinex_db::models::SourceMaterial>::from_uuid(material_record.id);
+
+    let start = sinex_primitives::Timestamp::now();
+    let first_window = ctx
+        .pool
+        .events()
+        .insert(
+            Event::builder(window_summary(
+                "session-lane-w1",
+                start,
+                60,
+                5,
+                ActivityWindowCloseReason::MaxDuration,
+            ))
+            .with_provenance(Provenance::from_material(material_id, 0, None, None))
+            .build()
+            .expect("valid window summary event"),
+        )
+        .await?;
+    let second_window = ctx
+        .pool
+        .events()
+        .insert(
+            Event::builder(window_summary(
+                "session-lane-w2",
+                start + time::Duration::seconds(60),
+                60,
+                3,
+                ActivityWindowCloseReason::Gap,
+            ))
+            .with_provenance(Provenance::from_material(material_id, 1, None, None))
+            .build()
+            .expect("valid window summary event"),
+        )
+        .await?;
+
+    let first_window_id = *first_window
+        .id
+        .as_ref()
+        .ok_or_else(|| color_eyre::eyre::eyre!("first window event should have id"))?
+        .as_uuid();
+    let second_window_id = *second_window
+        .id
+        .as_ref()
+        .ok_or_else(|| color_eyre::eyre::eyre!("second window event should have id"))?
+        .as_uuid();
+
+    let event_scope = serde_json::json!({
+        "kind": "event_set",
+        "input_ids": [
+            format!("event:{first_window_id}"),
+            format!("event:{second_window_id}"),
+        ],
+        "input_set_hash": "session-lane-window-scope",
+    });
+
+    let epoch_row = repo
+        .create_epoch(CreateDerivationEpoch {
+            scope: event_scope.clone(),
+            ..epoch(31, "session-window-scope", "session-window-scope-hash", None)
+        })
+        .await?;
+    let lane_row = repo
+        .create_lane(CreateDerivationLane {
+            scope: event_scope,
+            ..lane(32, "session-window-scope", "shadow", None, epoch_row.id)
+        })
+        .await?;
+
+    let written = repo
+        .seed_session_lane_outputs_from_window_scope(lane_row.id, product_class)
+        .await?;
+    assert_eq!(written, 1, "the two windows must collapse into exactly one session");
+
+    let outputs = repo.read_session_lane_outputs(lane_row.id).await?;
+    assert_eq!(outputs.boundaries.len(), 1);
+    let session = &outputs.boundaries[0];
+    assert_eq!(session.session_key, "activity-session:session-lane-w1");
+    assert_eq!(session.event_count, 8);
+    assert_eq!(session.window_count, 2);
+
+    Ok(())
+}
+
+/// Baseline half of the shadow diff: seeding from CANONICAL
+/// `activity.session.boundary` events already in `core.events` reads the
+/// existing projection rather than recomputing it (mirrors
+/// `seed_entity_relation_outputs_from_canonical_graph`'s role).
+#[sinex_test]
+async fn derivation_lane_repository_seeds_session_lane_from_canonical_events(
+    ctx: TestContext,
+) -> TestResult<()> {
+    seed_declaration(&ctx.pool).await?;
+    let repo = ctx.pool.derivation_lanes();
+    let product_class = DerivedProductClass::SemanticCandidate.as_str();
+
+    let material_record = ctx
+        .pool
+        .source_materials()
+        .register_in_flight(
+            sinex_db::repositories::source_materials::material_types::STREAM,
+            Some("derivation-session-lane-canonical"),
+            serde_json::json!({ "test": true }),
+        )
+        .await?;
+    let material_id =
+        sinex_primitives::Id::<sinex_db::models::SourceMaterial>::from_uuid(material_record.id);
+
+    let start = sinex_primitives::Timestamp::now();
+    let mut counts = BTreeMap::new();
+    counts.insert(ActivitySourceKind::Window, 4u64);
+    let canonical_payload = ActivitySessionBoundaryPayload {
+        session_id: "activity-session:canonical-w1".to_string(),
+        start_time: start,
+        end_time: start + time::Duration::seconds(90),
+        duration_secs: 90,
+        event_count: 4,
+        window_count: 1,
+        source_count: 1,
+        sources: vec!["derivation-session-lane-canonical".to_string()],
+        activity_sources: vec![ActivitySourceKind::Window],
+        activity_source_counts: counts,
+        primary_source: ActivitySourceKind::Window,
+    };
+    ctx.pool
+        .events()
+        .insert(
+            Event::builder(canonical_payload)
+                .with_provenance(Provenance::from_material(material_id, 0, None, None))
+                .build()
+                .expect("valid session boundary event"),
+        )
+        .await?;
+
+    let epoch_row = repo
+        .create_epoch(epoch(33, "session-canonical", "session-canonical-hash", None))
+        .await?;
+    let lane_row = repo
+        .create_lane(lane(34, "session-canonical", "canonical", None, epoch_row.id))
+        .await?;
+
+    let written = repo
+        .seed_session_lane_outputs_from_canonical_events(lane_row.id, product_class)
+        .await?;
+    assert_eq!(written, 1);
+
+    let outputs = repo.read_session_lane_outputs(lane_row.id).await?;
+    assert_eq!(outputs.boundaries.len(), 1);
+    assert_eq!(outputs.boundaries[0].session_key, "activity-session:canonical-w1");
+    assert_eq!(outputs.boundaries[0].duration_secs, 90);
+
+    Ok(())
+}
+
+/// End-to-end shadow diff over the session-boundary `LaneOutputKind`: a
+/// baseline lane seeded from a canonical session and a shadow lane seeded
+/// (recomputed) from raw windows covering the same occurrence but a
+/// DIFFERENT duration -- `LaneDiffReport::compute::<SessionLaneOutputs>`
+/// must classify it as `duration_changed`, not silently as unchanged/new.
+#[sinex_test]
+async fn derivation_lane_repository_diffs_session_lane_shadow_against_baseline(
+    ctx: TestContext,
+) -> TestResult<()> {
+    seed_declaration(&ctx.pool).await?;
+    let repo = ctx.pool.derivation_lanes();
+    let product_class = DerivedProductClass::SemanticCandidate.as_str();
+
+    let material_record = ctx
+        .pool
+        .source_materials()
+        .register_in_flight(
+            sinex_db::repositories::source_materials::material_types::STREAM,
+            Some("derivation-session-lane-diff"),
+            serde_json::json!({ "test": true }),
+        )
+        .await?;
+    let material_id =
+        sinex_primitives::Id::<sinex_db::models::SourceMaterial>::from_uuid(material_record.id);
+
+    let start = sinex_primitives::Timestamp::now();
+    let mut counts = BTreeMap::new();
+    counts.insert(ActivitySourceKind::Window, 4u64);
+    let canonical_payload = ActivitySessionBoundaryPayload {
+        session_id: "activity-session:diff-w1".to_string(),
+        start_time: start,
+        end_time: start + time::Duration::seconds(60),
+        duration_secs: 60,
+        event_count: 4,
+        window_count: 1,
+        source_count: 1,
+        sources: vec!["derivation-session-lane-diff".to_string()],
+        activity_sources: vec![ActivitySourceKind::Window],
+        activity_source_counts: counts,
+        primary_source: ActivitySourceKind::Window,
+    };
+    ctx.pool
+        .events()
+        .insert(
+            Event::builder(canonical_payload)
+                .with_provenance(Provenance::from_material(material_id, 0, None, None))
+                .build()
+                .expect("valid session boundary event"),
+        )
+        .await?;
+
+    let window_event = ctx
+        .pool
+        .events()
+        .insert(
+            Event::builder(window_summary(
+                "diff-w1",
+                start,
+                90,
+                4,
+                ActivityWindowCloseReason::Gap,
+            ))
+            .with_provenance(Provenance::from_material(material_id, 1, None, None))
+            .build()
+            .expect("valid window summary event"),
+        )
+        .await?;
+    let window_event_id = *window_event
+        .id
+        .as_ref()
+        .ok_or_else(|| color_eyre::eyre::eyre!("window event should have id"))?
+        .as_uuid();
+
+    let baseline_epoch = repo
+        .create_epoch(epoch(41, "session-diff-baseline", "session-diff-baseline-hash", None))
+        .await?;
+    let baseline_lane = repo
+        .create_lane(lane(42, "session-diff-baseline", "canonical", None, baseline_epoch.id))
+        .await?;
+    repo.seed_session_lane_outputs_from_canonical_events(baseline_lane.id, product_class)
+        .await?;
+
+    let shadow_scope = serde_json::json!({
+        "kind": "event_set",
+        "input_ids": [format!("event:{window_event_id}")],
+        "input_set_hash": "session-diff-shadow-scope",
+    });
+    let candidate_epoch = repo
+        .create_epoch(CreateDerivationEpoch {
+            scope: shadow_scope.clone(),
+            supersedes_epoch_id: Some(baseline_epoch.id),
+            ..epoch(43, "session-diff-shadow", "session-diff-shadow-hash", None)
+        })
+        .await?;
+    let shadow_lane = repo
+        .create_lane(CreateDerivationLane {
+            scope: shadow_scope,
+            base_epoch_id: Some(baseline_epoch.id),
+            ..lane(44, "session-diff-shadow", "shadow", None, candidate_epoch.id)
+        })
+        .await?;
+    repo.seed_session_lane_outputs_from_window_scope(shadow_lane.id, product_class)
+        .await?;
+
+    let baseline_outputs = repo.read_session_lane_outputs(baseline_lane.id).await?;
+    let candidate_outputs = repo.read_session_lane_outputs(shadow_lane.id).await?;
+    let report = LaneDiffReport::compute::<SessionLaneOutputs>(
+        baseline_lane.id,
+        shadow_lane.id,
+        DerivedProductClass::SemanticCandidate,
+        "session-diff-shadow-scope",
+        &baseline_outputs,
+        &candidate_outputs,
+        10,
+    )
+    .expect("compute session lane diff report");
+    assert_eq!(report.output_kind, "session_boundary");
+    assert_eq!(report.counts["duration_changed"], 1);
+    assert_eq!(report.summary.changed, 1);
+
+    let diff = repo.record_lane_diff(Uuid::from_u128(45), &report).await?;
+    assert_eq!(diff.diff_kind, "session_boundary");
+    assert_eq!(diff.baseline_lane_id, baseline_lane.id);
+    assert_eq!(diff.candidate_lane_id, shadow_lane.id);
 
     Ok(())
 }
