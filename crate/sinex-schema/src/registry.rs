@@ -43,11 +43,6 @@ pub const SINEX_SCHEMAS: &[SchemaInfo] = &[
         requires_grants: true,
     },
     SchemaInfo {
-        name: "semantic",
-        description: "Semantic epochs, shadow lanes, lane outputs, and diff reports",
-        requires_grants: true,
-    },
-    SchemaInfo {
         name: "derivation",
         description: "Derivation control plane: product declarations, epochs, lanes, lane outputs/diffs, projection registry (sinex-0vx)",
         requires_grants: true,

@@ -6,8 +6,8 @@ use crate::defs::{
     EmailMailboxProjection, EmailProviderState, EmbeddingCache, EmbeddingModels, Entities,
     EntityRelations, EventAnnotations, EventClusterMembers, EventClusters, EventEmbeddings,
     EventPayloadSchemas, EventReplacements, EventTombstones, Events, Manifests, ModelEffects,
-    OperationsLog, Runs, SemanticEpochs, SemanticLaneDiffs, SemanticLaneOutputs, SemanticLanes,
-    SourceMaterialLinks, SourceMaterialRegistry, SourceSessionState, TaggedItems, Tags,
+    OperationsLog, Runs, SourceMaterialLinks, SourceMaterialRegistry, SourceSessionState,
+    TaggedItems, Tags,
     TemporalLedger,
 };
 use crate::registry;
@@ -852,15 +852,10 @@ async fn create_tables(pool: &PgPool) -> Result<(), ApplyError> {
         render_table(&TemporalLedger::create_table_statement()),
         render_table(&Entities::create_table_statement()),
         render_table(&EntityRelations::create_table_statement()),
-        render_table(&SemanticEpochs::create_table_statement()),
-        render_table(&SemanticLanes::create_table_statement()),
-        render_table(&SemanticLaneOutputs::create_table_statement()),
-        render_table(&SemanticLaneDiffs::create_table_statement()),
         // Derivation control plane (sinex-0vx.4 / W1), continued — these
         // depend on tables created above (derivation.lanes, raw.source_
         // material_registry, derivation.product_declarations) but nothing
-        // depends on them, so ordering here (after the semantic block) is
-        // unconstrained.
+        // depends on them, so ordering here is otherwise unconstrained.
         render_table(&DerivationLaneOutputs::create_table_statement()),
         render_table(&DerivationLaneDiffs::create_table_statement()),
         render_table(&DerivationProjectionRegistry::create_table_statement()),
@@ -977,10 +972,6 @@ async fn create_indexes(pool: &PgPool) -> Result<(), ApplyError> {
     index_sql.extend(Entities::create_gin_indexes_sql());
     index_sql.extend(Entities::create_trigram_indexes_sql());
     index_sql.extend(render_indexes(EntityRelations::create_indexes()));
-    index_sql.extend(render_indexes(SemanticEpochs::create_indexes()));
-    index_sql.extend(render_indexes(SemanticLanes::create_indexes()));
-    index_sql.extend(render_indexes(SemanticLaneOutputs::create_indexes()));
-    index_sql.extend(render_indexes(SemanticLaneDiffs::create_indexes()));
     index_sql.extend(render_indexes(DerivationProductDeclarations::create_indexes()));
     index_sql.extend(render_indexes(DerivationEpochs::create_indexes()));
     index_sql.extend(render_indexes(DerivationLanes::create_indexes()));
@@ -1209,11 +1200,19 @@ async fn configure_timescaledb(pool: &PgPool) -> Result<(), ApplyError> {
         "ALTER TABLE core.event_cluster_members DROP CONSTRAINT IF EXISTS event_cluster_members_event_id_fkey",
     )
     .await?;
-    execute_sql(
-        pool,
-        "ALTER TABLE semantic.lane_outputs DROP CONSTRAINT IF EXISTS lane_outputs_source_event_id_fkey",
-    )
-    .await?;
+
+    // sinex-0vx.6: the semantic.* schema (epochs/lanes/lane_outputs/
+    // lane_diffs) is retired — entity/relation shadow-lane storage moved
+    // onto the generic derivation.epochs/lanes/lane_outputs/lane_diffs
+    // tables (sinex-0vx.4), output_kind IN ('entity', 'relation'). This is a
+    // PORT, not a wrapper: the table defs are removed from `crate::defs`
+    // above, so a fresh database never creates semantic.* at all; this DROP
+    // converges any existing database that still has it (fresh-rebuild
+    // campaign, no external backwards-compatibility obligation — see
+    // CLAUDE.md). CASCADE removes the schema's tables/indexes/constraints in
+    // one statement; there is no data worth preserving here (candidate lane
+    // output is evidence, not canonical state, by design).
+    execute_sql(pool, "DROP SCHEMA IF EXISTS semantic CASCADE").await?;
 
     // Enable native compression and install the automatic columnstore policy on
     // core.events. The remove-then-add pattern converges any pre-existing policy
