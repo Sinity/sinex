@@ -43,8 +43,14 @@ pub enum InfraSubcommand {
         #[arg(long)]
         all_checkouts: bool,
         /// Only remove stale/malformed lock and PID files; do not stop live processes
-        #[arg(long)]
+        #[arg(long, conflicts_with = "orphaned_only")]
         stale_only: bool,
+        /// Only stop instances whose owning checkout no longer exists on disk
+        /// (sinex-grlv). Unconditionally safe: a deleted checkout can never be
+        /// legitimately in use, so this needs no idle window and never touches
+        /// a live checkout elsewhere.
+        #[arg(long, conflicts_with = "stale_only")]
+        orphaned_only: bool,
         /// Print planned actions without stopping processes or removing files
         #[arg(long)]
         dry_run: bool,
@@ -178,6 +184,7 @@ impl XtaskCommand for InfraCommand {
             InfraSubcommand::Stop {
                 all_checkouts,
                 stale_only,
+                orphaned_only,
                 dry_run,
                 processes,
             } => {
@@ -186,6 +193,7 @@ impl XtaskCommand for InfraCommand {
                     config,
                     *all_checkouts,
                     *stale_only,
+                    *orphaned_only,
                     *dry_run,
                     processes,
                     ctx,
@@ -293,6 +301,33 @@ fn execute_start(
     ctx: &CommandContext,
 ) -> Result<CommandResult> {
     ctx.heading("infra start");
+
+    // Opportunistic orphan reap (sinex-grlv): before starting anything for
+    // *this* checkout, sweep away any OTHER checkout's dev-postgres/nats/
+    // sinexd whose owning checkout has provably been deleted from disk. This
+    // is the automatic complement to the devshell-tied owner-watcher — it
+    // fires on every `xtask infra start` (manual, preflight auto-start, and
+    // devshell SINEX_AUTO_INFRA), which is the actual dominant entrypoint for
+    // short-lived Agent-tool worktrees that never go through an interactive
+    // devshell at all. Best-effort and non-fatal: never block this checkout's
+    // own start on a sweep failure elsewhere.
+    if std::env::var("SINEX_SKIP_ORPHAN_SWEEP").as_deref() != Ok("1") {
+        match stack::sweep_orphaned_checkouts() {
+            Ok(cleanup) if cleanup.totals.actions > 0 => {
+                eprintln!(
+                    "🧹 Reaped {} orphaned dev-infra action(s) from deleted checkouts (postgres={} nats={} sinexd={})",
+                    cleanup.totals.actions,
+                    cleanup.totals.stopped_postgres,
+                    cleanup.totals.stopped_nats,
+                    cleanup.totals.stopped_sinexd
+                );
+            }
+            Ok(_) => {}
+            Err(error) => {
+                eprintln!("⚠️  orphaned dev-infra sweep failed (continuing): {error:#}");
+            }
+        }
+    }
 
     // Validate process names before starting anything
     for p in processes {
@@ -1018,6 +1053,7 @@ fn execute_stop(
     config: StackConfig,
     all_checkouts: bool,
     stale_only: bool,
+    orphaned_only: bool,
     dry_run: bool,
     processes: &[String],
     ctx: &CommandContext,
@@ -1039,10 +1075,20 @@ fn execute_stop(
         if !processes.is_empty() {
             bail!("infra stop --all-checkouts does not accept process names");
         }
-        return execute_all_checkouts_stop(stale_only, dry_run, ctx);
+        let scope = if stale_only {
+            stack::CleanupScope::StaleFilesOnly
+        } else if orphaned_only {
+            stack::CleanupScope::OrphanedCheckoutsOnly
+        } else {
+            stack::CleanupScope::AllRunning
+        };
+        return execute_all_checkouts_stop(scope, dry_run, ctx);
     }
     if stale_only {
         bail!("infra stop --stale-only requires --all-checkouts");
+    }
+    if orphaned_only {
+        bail!("infra stop --orphaned-only requires --all-checkouts");
     }
     if dry_run {
         bail!("infra stop --dry-run requires --all-checkouts");
@@ -1073,13 +1119,13 @@ fn execute_stop(
 }
 
 fn execute_all_checkouts_stop(
-    stale_only: bool,
+    scope: stack::CleanupScope,
     dry_run: bool,
     ctx: &CommandContext,
 ) -> Result<CommandResult> {
     let base_dir = CheckoutState::default_inventory_base_dir();
     let roots = CheckoutState::inventory_roots_under(&base_dir)?;
-    let cleanup = stack::AllCheckoutsCleanup::run(base_dir, roots, dry_run, stale_only)?;
+    let cleanup = stack::AllCheckoutsCleanup::run(base_dir, roots, dry_run, scope)?;
 
     if ctx.is_human() {
         println!("sinex-dev infra cleanup: all checkouts");
@@ -1095,13 +1141,9 @@ fn execute_all_checkouts_stop(
             cleanup.totals.stopped_sinexd
         );
         println!(
-            "Removed:   files={}{}{}",
+            "Removed:   files={} (scope: {:?}){}",
             cleanup.totals.removed_files,
-            if cleanup.stale_only {
-                " (stale-only)"
-            } else {
-                ""
-            },
+            cleanup.scope,
             if cleanup.dry_run { " (dry-run)" } else { "" }
         );
         for checkout in &cleanup.checkouts {

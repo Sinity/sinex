@@ -1364,6 +1364,19 @@ expression: json
             },
             {
               "global": false,
+              "help": "Only stop instances whose owning checkout no longer exists on disk (sinex-grlv). Unconditionally safe: a deleted checkout can never be legitimately in use, so this needs no idle window and never touches a live checkout elsewhere",
+              "long": "orphaned-only",
+              "name": "orphaned_only",
+              "possible_values": [
+                "true",
+                "false"
+              ],
+              "required": false,
+              "short": null,
+              "takes_value": false
+            },
+            {
+              "global": false,
               "help": "Print planned actions without stopping processes or removing files",
               "long": "dry-run",
               "name": "dry_run",
@@ -5201,6 +5214,23 @@ expression: json
       "name": "verify",
       "subcommands": [
         {
+          "about": "Compile a bounded proof-obligation manifest without executing its commands",
+          "args": [
+            {
+              "global": false,
+              "help": "Proof-obligation IR JSON manifest",
+              "long": null,
+              "name": "manifest",
+              "possible_values": [],
+              "required": true,
+              "short": null,
+              "takes_value": true
+            }
+          ],
+          "name": "obligations",
+          "subcommands": []
+        },
+        {
           "about": "Inspect and validate the phase verification manifest",
           "args": [
             {
@@ -5452,13 +5482,13 @@ expression: json
           "subcommands": []
         },
         {
-          "about": "Operationalize the 2026-05-11 closure-verification policy: fetch an issue body via `gh`, extract AC checkboxes and shell code blocks marked `verify`, and run each command, reporting pass/fail per command",
+          "about": "Verify a closed Bead's AC dispositions and execute its evidence commands",
           "args": [
             {
               "global": false,
-              "help": "GitHub issue number to verify",
+              "help": "Bead id to verify (for example, sinex-e7e9)",
               "long": null,
-              "name": "issue",
+              "name": "bead_id",
               "possible_values": [],
               "required": true,
               "short": null,
@@ -6351,7 +6381,7 @@ expression: json
         },
         {
           "global": false,
-          "help": "Background job ID to mark as killed on timeout",
+          "help": "Background job ID to mark as timed out",
           "long": "job-id",
           "name": "job_id",
           "possible_values": [],
