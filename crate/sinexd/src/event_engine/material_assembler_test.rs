@@ -18,6 +18,48 @@ async fn test_assembler(
     build_test_assembler(ctx, "orphan-cleanup-test").await
 }
 
+/// sinex-wb1: `route_material_error` must propagate a DLQ-publish failure
+/// instead of silently logging and returning `()`. Triggers a REAL failure
+/// (no mocking of the NATS client): a `context` payload large enough that
+/// the encoded `MaterialDlqPayload` exceeds `NATS_PUBLISH_PAYLOAD_HARD_LIMIT_BYTES`
+/// (900KB) is rejected by `ensure_nats_payload_fits` before any network call,
+/// deterministically and without depending on server/network state. Before
+/// this fix, `route_material_error` returned `()` unconditionally and this
+/// failure was only ever logged — callers had no way to know DLQ publication
+/// didn't happen and would proceed to settle the material Failed with zero
+/// durable trace. Reverting `route_material_error`'s signature to `()` (or
+/// swallowing this error internally again) makes this test fail to compile
+/// or fail its `expect_err`.
+#[sinex_test]
+async fn route_material_error_propagates_oversized_dlq_payload_failure(
+    ctx: TestContext,
+) -> TestResult<()> {
+    let ctx = ctx.with_nats().shared().await?;
+    let (assembler, _content_store_dir, _state_dir) = test_assembler(&ctx).await?;
+    let material_id = uuid::Uuid::now_v7();
+
+    // > 900KB NATS_PUBLISH_PAYLOAD_HARD_LIMIT_BYTES once serialized alongside
+    // the rest of MaterialDlqPayload's fields.
+    let oversized_context = serde_json::json!({
+        "padding": "x".repeat(1024 * 1024),
+    });
+
+    let error = assembler
+        .route_material_error(material_id, "test_oversized_dlq_payload", oversized_context)
+        .await
+        .expect_err(
+            "an oversized DLQ payload must be rejected and propagated, not silently \
+             swallowed (sinex-wb1)",
+        );
+    let message = error.to_string().to_lowercase();
+    assert!(
+        message.contains("oversiz") || message.contains("payload"),
+        "error should describe the payload-size rejection from ensure_nats_payload_fits, \
+         got: {error}"
+    );
+    Ok(())
+}
+
 #[sinex_test]
 async fn check_orphaned_folder_rejects_non_uuid_name(ctx: TestContext) -> TestResult<()> {
     let ctx = ctx.with_nats().shared().await?;
