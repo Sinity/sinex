@@ -23,7 +23,20 @@ fn pg_literal(value: &str) -> String {
 const MANAGED_CONFIG_BEGIN: &str = "# >>> sinex-dev managed configuration >>>";
 const MANAGED_CONFIG_END: &str = "# <<< sinex-dev managed configuration <<<";
 const LEGACY_CONFIG_MARKER: &str = "# sinex-dev configuration";
-const POSTGRES_MAX_CONNECTIONS: u16 = 64;
+// The sandbox test-DB pool (xtask/src/sandbox/db/pool/config.rs) targets
+// `MIN_POOL_SIZE` (48) slots at `SLOT_MAX_CONNECTIONS` (8) connections each,
+// but clamps itself down via `apply_connection_budget` to whatever this
+// server's live `max_connections` actually supports (effective budget =
+// max_connections - superuser_reserved_connections(3 default) - a 16-slot
+// safety margin, see `effective_connection_budget`). At the previous value
+// of 64 that budget was only 45, which floor-divides down to a 4-slot pool
+// (verified: `xtask test -p sinexd --lib` logged "Reducing pool size to 4
+// (from 48)") -- an 91% reduction that reproduces on every fresh checkout
+// regardless of host contention, and is the real root cause behind several
+// of sinex-amg2's "pool-exhaustion" test failures. 500 clears the ~411
+// connections `48 * 8 + 8 (admin) + 3 (reserved) + 16 (margin)` needed for
+// the pool to actually reach its 48-slot target, with headroom for growth.
+const POSTGRES_MAX_CONNECTIONS: u16 = 500;
 const POSTGRES_SHARED_BUFFERS: &str = "32MB";
 const TIMESCALEDB_MAX_BACKGROUND_WORKERS: u16 = 20;
 const POSTGRES_WORKER_PROCESS_HEADROOM: u16 = 8;
