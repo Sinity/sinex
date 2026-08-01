@@ -1,57 +1,101 @@
+//! Integration tests for `DerivationRepository` (sinex-0vx.6): the generic
+//! `derivation.epochs`/`derivation.lanes`/`derivation.lane_outputs`/
+//! `derivation.lane_diffs` control-plane repository that replaced the
+//! entity/relation-only `SemanticRepository` (`semantic.*` tables, retired
+//! in this same change).
+
 use sinex_db::repositories::{
-    CreateEntity, CreateEntityRelation, CreateSemanticEpoch, CreateSemanticLane, DbPoolExt,
+    CreateDerivationEpoch, CreateDerivationLane, CreateEntity, CreateEntityRelation, DbPoolExt,
 };
 use sinex_db::{Event, Provenance};
+use sinex_primitives::derivation::{
+    ClaimSupportTemplate, ClaimTemporalQuality, DerivationOutputDeclaration,
+    DerivationWriteSurface, DerivedProductClass, InputEligibility, LaneDiffReport, SourceCoverage,
+    SupportLevel,
+};
 use sinex_primitives::domain::{EntityTypeName, RelationType};
 use sinex_primitives::events::{EntityRelatedPayload, EntityResolvedPayload};
-use sinex_primitives::{
-    EntityRelationLaneOutputs, SemanticComponentVersion, SemanticEntityOutput, SemanticEpochRecord,
-    SemanticLaneKind, SemanticLaneRecord, SemanticLaneStatus, SemanticRelationOutput,
-    SemanticScope, Uuid, diff_entity_relation_lanes,
-};
+use sinex_primitives::{EntityRelationLaneOutputs, SemanticEntityOutput, SemanticRelationOutput, Uuid};
 use xtask::sandbox::prelude::*;
 
-fn scope() -> SemanticScope {
-    SemanticScope {
-        kind: "event_set".to_string(),
-        input_ids: vec!["event:1".to_string(), "event:2".to_string()],
-        input_set_hash: "input-hash".to_string(),
-    }
+/// The same `declaration_id` sinexd's `SEMANTIC_ENTITY_RELATION_DECLARATION`
+/// registers (`crate::api::handlers::semantic` there) -- duplicated here
+/// rather than depending on the `sinexd` binary crate from `sinex-db`'s test
+/// suite (this crate sits below `sinexd` in the dependency graph). Every
+/// epoch/lane created below foreign-keys `derivation.epochs.declaration_id`
+/// against this row.
+const TEST_DECLARATION_ID: &str = "semantic-rpc.entity_relation.semantic_candidate";
+
+async fn seed_declaration(pool: &sqlx::PgPool) -> TestResult<()> {
+    let declaration = DerivationOutputDeclaration {
+        declaration_id: TEST_DECLARATION_ID,
+        owner: "semantic-rpc",
+        product_class: DerivedProductClass::SemanticCandidate,
+        write_surface: DerivationWriteSurface::CurationWriter,
+        output_source: None,
+        output_event_type: None,
+        projection_kind: None,
+        artifact_kind: None,
+        proposal_kind: None,
+        semantics_version: "1.0.0",
+        input_eligibility: InputEligibility::ExplicitOnly,
+        default_support: ClaimSupportTemplate::new(
+            SupportLevel::Heuristic,
+            SourceCoverage::Partial,
+            ClaimTemporalQuality::Unknown,
+        ),
+        verification_command: "xtask test -p sinex-db -E 'test(derivation_lane_repository)'",
+    };
+    pool.product_declarations().insert(&declaration).await?;
+    Ok(())
 }
 
-fn epoch(id: u128, name: &str, config_hash: &str) -> SemanticEpochRecord {
-    SemanticEpochRecord {
-        epoch_id: Uuid::from_u128(id),
-        name: name.to_string(),
-        scope: scope(),
-        code_ref: Some("test@sha".to_string()),
-        config_hash: config_hash.to_string(),
-        components: vec![SemanticComponentVersion {
-            component: "entity-extractor".to_string(),
-            version: "1".to_string(),
-            config_hash: None,
-        }],
-        prompt_set_hash: None,
-        model_config_hash: None,
-    }
+fn scope_json() -> serde_json::Value {
+    serde_json::json!({
+        "kind": "event_set",
+        "input_ids": ["event:1", "event:2"],
+        "input_set_hash": "input-hash",
+    })
 }
 
-fn lane(
+fn epoch(
     id: u128,
     name: &str,
-    kind: SemanticLaneKind,
-    base_epoch_id: Option<Uuid>,
-    candidate_epoch_id: Uuid,
-) -> SemanticLaneRecord {
-    SemanticLaneRecord {
-        lane_id: Uuid::from_u128(id),
+    config_hash: &str,
+    supersedes_epoch_id: Option<Uuid>,
+) -> CreateDerivationEpoch {
+    CreateDerivationEpoch {
+        id: Some(Uuid::from_u128(id)),
+        declaration_id: TEST_DECLARATION_ID.to_string(),
         name: name.to_string(),
-        kind,
+        product_class: DerivedProductClass::SemanticCandidate.as_str().to_string(),
+        scope_model: "event_set".to_string(),
+        scope: scope_json(),
+        semantics_version: "1.0.0".to_string(),
+        code_ref: Some("test@sha".to_string()),
+        config_hash: config_hash.to_string(),
+        components: serde_json::json!([{"component": "entity-extractor", "version": "1"}]),
+        prompt_set_hash: None,
+        model_config_hash: None,
+        created_by: "test".to_string(),
+        operation_id: None,
+        supersedes_epoch_id,
+    }
+}
+
+fn lane(id: u128, name: &str, kind: &str, base_epoch_id: Option<Uuid>, candidate_epoch_id: Uuid) -> CreateDerivationLane {
+    CreateDerivationLane {
+        id: Some(Uuid::from_u128(id)),
+        declaration_id: TEST_DECLARATION_ID.to_string(),
+        name: name.to_string(),
+        kind: kind.to_string(),
+        product_class: DerivedProductClass::SemanticCandidate.as_str().to_string(),
         base_epoch_id,
         candidate_epoch_id,
-        scope: scope(),
-        status: SemanticLaneStatus::Planned,
-        purpose: "repository test".to_string(),
+        scope: scope_json(),
+        purpose: Some("repository test".to_string()),
+        operation_id: None,
+        expires_at: None,
     }
 }
 
@@ -68,10 +112,13 @@ fn outputs(entity_key: &str, relation_key: &str) -> EntityRelationLaneOutputs {
 }
 
 #[sinex_test]
-async fn semantic_repository_keeps_shadow_outputs_out_of_canonical_entities(
+async fn derivation_lane_repository_keeps_shadow_outputs_out_of_canonical_entities(
     ctx: TestContext,
 ) -> TestResult<()> {
-    let repo = ctx.pool.semantic();
+    seed_declaration(&ctx.pool).await?;
+    let repo = ctx.pool.derivation_lanes();
+    let product_class = DerivedProductClass::SemanticCandidate.as_str();
+
     let canonical_entities_before: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM core.entities")
         .fetch_one(&ctx.pool)
         .await?;
@@ -81,51 +128,27 @@ async fn semantic_repository_keeps_shadow_outputs_out_of_canonical_entities(
             .await?;
 
     let baseline_epoch = repo
-        .create_epoch(CreateSemanticEpoch {
-            epoch: epoch(1, "baseline", "baseline-hash"),
-            created_by: "test".to_string(),
-            operation_id: None,
-            supersedes_epoch_id: None,
-        })
+        .create_epoch(epoch(1, "baseline", "baseline-hash", None))
         .await?;
     let candidate_epoch = repo
-        .create_epoch(CreateSemanticEpoch {
-            epoch: epoch(2, "candidate", "candidate-hash"),
-            created_by: "test".to_string(),
-            operation_id: None,
-            supersedes_epoch_id: Some(baseline_epoch.id),
-        })
+        .create_epoch(epoch(2, "candidate", "candidate-hash", Some(baseline_epoch.id)))
         .await?;
     let baseline_lane = repo
-        .create_lane(CreateSemanticLane {
-            lane: lane(
-                3,
-                "canonical",
-                SemanticLaneKind::Canonical,
-                None,
-                baseline_epoch.id,
-            ),
-            operation_id: None,
-            expires_at: None,
-        })
+        .create_lane(lane(3, "canonical", "canonical", None, baseline_epoch.id))
         .await?;
     let candidate_lane = repo
-        .create_lane(CreateSemanticLane {
-            lane: lane(
-                4,
-                "shadow",
-                SemanticLaneKind::Shadow,
-                Some(baseline_epoch.id),
-                candidate_epoch.id,
-            ),
-            operation_id: None,
-            expires_at: None,
-        })
+        .create_lane(lane(
+            4,
+            "shadow",
+            "shadow",
+            Some(baseline_epoch.id),
+            candidate_epoch.id,
+        ))
         .await?;
 
     let candidate_outputs = outputs("entity-a", "relation-a");
     let written = repo
-        .write_entity_relation_outputs(candidate_lane.id, &candidate_outputs)
+        .write_entity_relation_outputs(candidate_lane.id, product_class, &candidate_outputs)
         .await?;
 
     assert_eq!(written, 2);
@@ -149,23 +172,22 @@ async fn semantic_repository_keeps_shadow_outputs_out_of_canonical_entities(
         "shadow lane writes must not mutate canonical relation projections"
     );
 
-    let report = diff_entity_relation_lanes(
-        baseline_epoch.id,
-        candidate_epoch.id,
+    let baseline_only = outputs("entity-b", "relation-b");
+    let report = LaneDiffReport::compute::<EntityRelationLaneOutputs>(
+        baseline_lane.id,
+        candidate_lane.id,
+        DerivedProductClass::SemanticCandidate,
         "input-hash",
-        &outputs("entity-b", "relation-b"),
+        &baseline_only,
         &candidate_outputs,
         10,
-    );
+    )
+    .expect("compute lane diff report");
     let diff = repo
-        .record_entity_relation_diff(
-            Uuid::from_u128(5),
-            baseline_lane.id,
-            candidate_lane.id,
-            &report,
-        )
+        .record_lane_diff(Uuid::from_u128(5), &report)
         .await?;
     assert_eq!(diff.diff_kind, "entity_relation");
+    assert_eq!(diff.product_class, product_class);
     assert_eq!(diff.baseline_lane_id, baseline_lane.id);
     assert_eq!(diff.candidate_lane_id, candidate_lane.id);
     assert_eq!(diff.counts["entity_new"], 1);
@@ -183,8 +205,13 @@ async fn semantic_repository_keeps_shadow_outputs_out_of_canonical_entities(
 }
 
 #[sinex_test]
-async fn semantic_repository_seeds_lane_from_canonical_graph(ctx: TestContext) -> TestResult<()> {
-    let repo = ctx.pool.semantic();
+async fn derivation_lane_repository_seeds_lane_from_canonical_graph(
+    ctx: TestContext,
+) -> TestResult<()> {
+    seed_declaration(&ctx.pool).await?;
+    let repo = ctx.pool.derivation_lanes();
+    let product_class = DerivedProductClass::SemanticCandidate.as_str();
+
     let source = ctx
         .pool
         .knowledge_graph()
@@ -200,28 +227,19 @@ async fn semantic_repository_seeds_lane_from_canonical_graph(ctx: TestContext) -
         .create_relation(CreateEntityRelation::new(source.id, target.id, "works_on"))
         .await?;
 
-    let epoch = repo
-        .create_epoch(CreateSemanticEpoch {
-            epoch: epoch(11, "canonical", "canonical-hash"),
-            created_by: "test".to_string(),
-            operation_id: None,
-            supersedes_epoch_id: None,
-        })
+    let epoch_row = repo
+        .create_epoch(epoch(11, "canonical", "canonical-hash", None))
         .await?;
-    let lane = repo
-        .create_lane(CreateSemanticLane {
-            lane: lane(12, "canonical", SemanticLaneKind::Canonical, None, epoch.id),
-            operation_id: None,
-            expires_at: None,
-        })
+    let lane_row = repo
+        .create_lane(lane(12, "canonical", "canonical", None, epoch_row.id))
         .await?;
 
     let written = repo
-        .seed_entity_relation_outputs_from_canonical_graph(lane.id)
+        .seed_entity_relation_outputs_from_canonical_graph(lane_row.id, product_class)
         .await?;
     assert_eq!(written, 3);
 
-    let outputs = repo.read_entity_relation_outputs(lane.id).await?;
+    let outputs = repo.read_entity_relation_outputs(lane_row.id).await?;
     assert_eq!(outputs.entities.len(), 2);
     assert_eq!(outputs.relations.len(), 1);
     assert!(
@@ -241,10 +259,13 @@ async fn semantic_repository_seeds_lane_from_canonical_graph(ctx: TestContext) -
 }
 
 #[sinex_test]
-async fn semantic_repository_seeds_lane_from_entity_event_scope(
+async fn derivation_lane_repository_seeds_lane_from_entity_event_scope(
     ctx: TestContext,
 ) -> TestResult<()> {
-    let repo = ctx.pool.semantic();
+    seed_declaration(&ctx.pool).await?;
+    let repo = ctx.pool.derivation_lanes();
+    let product_class = DerivedProductClass::SemanticCandidate.as_str();
+
     let source_entity_id = Uuid::from_u128(101);
     let target_entity_id = Uuid::from_u128(102);
     let material_record = ctx
@@ -252,7 +273,7 @@ async fn semantic_repository_seeds_lane_from_entity_event_scope(
         .source_materials()
         .register_in_flight(
             sinex_db::repositories::source_materials::material_types::STREAM,
-            Some("semantic-entity-event-scope"),
+            Some("derivation-entity-event-scope"),
             serde_json::json!({ "test": true }),
         )
         .await?;
@@ -271,7 +292,7 @@ async fn semantic_repository_seeds_lane_from_entity_event_scope(
             })
             .with_provenance(Provenance::from_material(material_id, 0, None, None))
             .build()
-            .expect("valid semantic entity event"),
+            .expect("valid derivation entity event"),
         )
         .await?;
     let target_event = ctx
@@ -286,7 +307,7 @@ async fn semantic_repository_seeds_lane_from_entity_event_scope(
             })
             .with_provenance(Provenance::from_material(material_id, 1, None, None))
             .build()
-            .expect("valid semantic entity event"),
+            .expect("valid derivation entity event"),
         )
         .await?;
     let relation_event = ctx
@@ -301,7 +322,7 @@ async fn semantic_repository_seeds_lane_from_entity_event_scope(
             })
             .with_provenance(Provenance::from_material(material_id, 2, None, None))
             .build()
-            .expect("valid semantic relation event"),
+            .expect("valid derivation relation event"),
         )
         .await?;
 
@@ -320,41 +341,27 @@ async fn semantic_repository_seeds_lane_from_entity_event_scope(
         .as_ref()
         .ok_or_else(|| color_eyre::eyre::eyre!("relation event should have id"))?
         .as_uuid();
-    let event_scope = SemanticScope {
-        kind: "event_set".to_string(),
-        input_ids: vec![
+
+    let event_scope = serde_json::json!({
+        "kind": "event_set",
+        "input_ids": [
             format!("event:{source_event_id}"),
             format!("event:{target_event_id}"),
             format!("event:{relation_event_id}"),
         ],
-        input_set_hash: "entity-event-scope".to_string(),
-    };
+        "input_set_hash": "entity-event-scope",
+    });
 
-    let epoch = repo
-        .create_epoch(CreateSemanticEpoch {
-            epoch: SemanticEpochRecord {
-                scope: event_scope.clone(),
-                ..epoch(21, "entity-events", "entity-events-hash")
-            },
-            created_by: "test".to_string(),
-            operation_id: None,
-            supersedes_epoch_id: None,
+    let epoch_row = repo
+        .create_epoch(CreateDerivationEpoch {
+            scope: event_scope.clone(),
+            ..epoch(21, "entity-events", "entity-events-hash", None)
         })
         .await?;
-    let lane = repo
-        .create_lane(CreateSemanticLane {
-            lane: SemanticLaneRecord {
-                scope: event_scope,
-                ..lane(
-                    22,
-                    "entity-events",
-                    SemanticLaneKind::Shadow,
-                    None,
-                    epoch.id,
-                )
-            },
-            operation_id: None,
-            expires_at: None,
+    let lane_row = repo
+        .create_lane(CreateDerivationLane {
+            scope: event_scope,
+            ..lane(22, "entity-events", "shadow", None, epoch_row.id)
         })
         .await?;
 
@@ -362,11 +369,11 @@ async fn semantic_repository_seeds_lane_from_entity_event_scope(
         .fetch_one(&ctx.pool)
         .await?;
     let written = repo
-        .seed_entity_relation_outputs_from_event_scope(lane.id)
+        .seed_entity_relation_outputs_from_event_scope(lane_row.id, product_class)
         .await?;
     assert_eq!(written, 3);
 
-    let outputs = repo.read_entity_relation_outputs(lane.id).await?;
+    let outputs = repo.read_entity_relation_outputs(lane_row.id).await?;
     assert_eq!(outputs.entities.len(), 2);
     assert_eq!(outputs.relations.len(), 1);
     assert!(
@@ -386,7 +393,7 @@ async fn semantic_repository_seeds_lane_from_entity_event_scope(
                     && relation.predicate == "works_on"
             )
     );
-    let persisted = repo.list_lane_outputs(lane.id, 10).await?;
+    let persisted = repo.list_lane_outputs(lane_row.id, 10).await?;
     assert!(
         persisted
             .iter()

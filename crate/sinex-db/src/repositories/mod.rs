@@ -20,7 +20,6 @@ pub mod projection_registry;
 pub mod replay;
 pub mod schema_cache;
 pub mod schema_management;
-pub mod semantic;
 pub mod source_materials;
 pub mod source_session_state;
 pub mod state;
@@ -31,7 +30,10 @@ pub use blobs::{BlobRepository, StorageStats};
 // pub use checkpoints::{Checkpoint, CheckpointExt, CheckpointRecord, CheckpointRepository}; // Removed
 pub use common::{DbResult, EnhancedRepository, Repository, TableDef, TransactionSupport};
 pub use continuity::ContinuityRepository;
-pub use derivation::{ExistingProductDeclaration, ProductDeclarationRepository};
+pub use derivation::{
+    CreateDerivationEpoch, CreateDerivationLane, DerivationRepository, ExistingProductDeclaration,
+    LaneOutputRow, ProductDeclarationRepository,
+};
 pub use document_search::{
     DEFAULT_PAGE_SIZE, DocumentSearchQuery, DocumentSearchRepository, DocumentSearchResult,
     DocumentSearchResults, MAX_PAGE_SIZE, SearchEmptyReason, SearchMode,
@@ -70,7 +72,6 @@ pub use schema_management::{
     EventPayloadRetention, NewEventSchema, SchemaManagementRepository, SchemaStatistics,
     ValidationError, ValidationResult,
 };
-pub use semantic::{CreateSemanticEpoch, CreateSemanticLane, SemanticRepository};
 pub use source_materials::{
     SourceMaterial, SourceMaterialExt, SourceMaterialLink, SourceMaterialLinkRecord,
     SourceMaterialRepository, TemporalLedgerEntry, material_kinds, material_types,
@@ -106,13 +107,13 @@ pub trait DbPoolExt {
     fn events(&self) -> events::EventRepository<'_>;
     fn source_materials(&self) -> source_materials::SourceMaterialRepository<'_>;
     fn product_declarations(&self) -> derivation::ProductDeclarationRepository<'_>;
+    fn derivation_lanes(&self) -> derivation::DerivationRepository<'_>;
     fn projection_registry(&self) -> projection_registry::ProjectionRegistryRepository<'_>;
     fn knowledge_graph(&self) -> knowledge_graph::KnowledgeGraphRepository<'_>;
     fn state(&self) -> state::StateRepository<'_>;
     fn schemas(&self) -> schema_management::SchemaManagementRepository<'_>;
     fn schema_cache(&self) -> schema_cache::SchemaCacheRepository<'_>;
     fn replay(&self) -> replay::ReplayRepository<'_>;
-    fn semantic(&self) -> semantic::SemanticRepository<'_>;
     fn integrity(&self) -> integrity::IntegrityRepository<'_>;
     fn continuity(&self) -> continuity::ContinuityRepository<'_>;
     fn model_effects(&self) -> model_effects::ModelEffectRepository<'_>;
@@ -162,6 +163,10 @@ impl DbPoolExt for PgPool {
         derivation::ProductDeclarationRepository::new(self)
     }
 
+    fn derivation_lanes(&self) -> derivation::DerivationRepository<'_> {
+        derivation::DerivationRepository::new(self)
+    }
+
     fn projection_registry(&self) -> projection_registry::ProjectionRegistryRepository<'_> {
         projection_registry::ProjectionRegistryRepository::new(self)
     }
@@ -184,10 +189,6 @@ impl DbPoolExt for PgPool {
 
     fn replay(&self) -> replay::ReplayRepository<'_> {
         replay::ReplayRepository::new(self)
-    }
-
-    fn semantic(&self) -> semantic::SemanticRepository<'_> {
-        semantic::SemanticRepository::new(self)
     }
 
     fn integrity(&self) -> integrity::IntegrityRepository<'_> {

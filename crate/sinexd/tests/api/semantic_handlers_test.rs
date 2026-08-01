@@ -28,10 +28,29 @@ fn semantic_scope() -> SemanticScope {
     }
 }
 
+/// Reconcile `SEMANTIC_LANE_OUTPUT_DECLARATIONS` into
+/// `derivation.product_declarations` via the real production reconciler
+/// (`sinexd::automata::product_declarations::reconcile_declarations`) --
+/// `derivation.epochs.declaration_id` foreign-keys into that table, so every
+/// test that creates a semantic epoch must seed this first. Same pattern as
+/// `common::seed_rpc_handler_product_declarations` for curation/instructions,
+/// kept separate here since those two writers' declarations are unrelated to
+/// the semantic-lane surface under test.
+async fn seed_semantic_product_declaration(pool: &sqlx::PgPool) -> TestResult<()> {
+    sinexd::automata::product_declarations::reconcile_declarations(
+        pool,
+        "semantic-rpc",
+        sinexd::api::handlers::semantic::SEMANTIC_LANE_OUTPUT_DECLARATIONS,
+    )
+    .await?;
+    Ok(())
+}
+
 #[sinex_test]
 async fn semantic_lane_seed_canonical_graph_writes_isolated_outputs(
     ctx: TestContext,
 ) -> TestResult<()> {
+    seed_semantic_product_declaration(ctx.pool()).await?;
     let auth = RpcAuthContext::system();
     let source = ctx
         .pool()
@@ -130,6 +149,7 @@ async fn semantic_lane_seed_canonical_graph_writes_isolated_outputs(
 async fn semantic_lane_seed_entity_events_writes_provenanced_outputs(
     ctx: TestContext,
 ) -> TestResult<()> {
+    seed_semantic_product_declaration(ctx.pool()).await?;
     let auth = RpcAuthContext::system();
     let source_entity_id = Uuid::from_u128(0x1346_0000_0000_0000_0000_0000_0000_0021);
     let target_entity_id = Uuid::from_u128(0x1346_0000_0000_0000_0000_0000_0000_0022);
@@ -305,10 +325,15 @@ fn lane_outputs(entity_key: &str, relation_key: &str) -> EntityRelationLaneOutpu
     }
 }
 
+/// Exercises the full sinex-0vx.6 port end to end through the generic
+/// `derivation.epochs`/`derivation.lanes`/`derivation.lane_outputs`/
+/// `derivation.lane_diffs` tables: two epochs, a canonical + shadow lane
+/// pair, writes, a diff, and a discard -- proving the semantic-lane RPC
+/// surface now round-trips through the generic storage layer with no
+/// `semantic.*`-table-specific code path left underneath it.
 #[sinex_test]
-async fn semantic_shadow_lane_handlers_do_not_mutate_canonical_graph(
-    ctx: TestContext,
-) -> TestResult<()> {
+async fn semantic_handlers_generic_lane_shadow_round_trip(ctx: TestContext) -> TestResult<()> {
+    seed_semantic_product_declaration(ctx.pool()).await?;
     let auth = RpcAuthContext::system();
     let canonical_entities_before: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM core.entities")
         .fetch_one(ctx.pool())
@@ -446,18 +471,22 @@ async fn semantic_shadow_lane_handlers_do_not_mutate_canonical_graph(
         diff.candidate_lane
             .as_ref()
             .and_then(|lane| lane["status"].as_str()),
-        Some("compared")
+        // derivation.lanes has no lane-diff-specific "compared" status (see
+        // the module doc on sinexd::api::handlers::semantic) -- it collapses
+        // to "completed".
+        Some("completed")
     );
 
-    let semantic_output_count: i64 =
-        sqlx::query_scalar("SELECT COUNT(*) FROM semantic.lane_outputs")
+    let derivation_output_count: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM derivation.lane_outputs")
             .fetch_one(ctx.pool())
             .await?;
-    let semantic_diff_count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM semantic.lane_diffs")
-        .fetch_one(ctx.pool())
-        .await?;
-    assert_eq!(semantic_output_count, 4);
-    assert_eq!(semantic_diff_count, 1);
+    let derivation_diff_count: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM derivation.lane_diffs")
+            .fetch_one(ctx.pool())
+            .await?;
+    assert_eq!(derivation_output_count, 4);
+    assert_eq!(derivation_diff_count, 1);
 
     let discard = handle_semantic_lane_discard(
         ctx.pool(),
@@ -481,12 +510,12 @@ async fn semantic_shadow_lane_handlers_do_not_mutate_canonical_graph(
         candidate_outputs.outputs.is_empty(),
         "discard must remove raw candidate lane outputs"
     );
-    let semantic_output_count_after_discard: i64 =
-        sqlx::query_scalar("SELECT COUNT(*) FROM semantic.lane_outputs")
+    let derivation_output_count_after_discard: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM derivation.lane_outputs")
             .fetch_one(ctx.pool())
             .await?;
     assert_eq!(
-        semantic_output_count_after_discard, 2,
+        derivation_output_count_after_discard, 2,
         "discard must leave unrelated baseline lane outputs intact"
     );
 

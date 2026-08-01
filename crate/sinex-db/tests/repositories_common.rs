@@ -91,23 +91,23 @@ async fn table_def_constants_match_expectations() -> TestResult<()> {
     assert_eq!(EntityRelations::schema_name(), "core");
     assert_eq!(EntityRelations::primary_key(), "id");
 
-    assert_eq!(SemanticEpochs::table_name(), "epochs");
-    assert_eq!(SemanticEpochs::schema_name(), "semantic");
-    assert_eq!(SemanticEpochs::primary_key(), "id");
+    assert_eq!(DerivationEpochs::table_name(), "epochs");
+    assert_eq!(DerivationEpochs::schema_name(), "derivation");
+    assert_eq!(DerivationEpochs::primary_key(), "id");
 
-    assert_eq!(SemanticLanes::table_name(), "lanes");
-    assert_eq!(SemanticLanes::schema_name(), "semantic");
-    assert_eq!(SemanticLanes::primary_key(), "id");
+    assert_eq!(DerivationLanes::table_name(), "lanes");
+    assert_eq!(DerivationLanes::schema_name(), "derivation");
+    assert_eq!(DerivationLanes::primary_key(), "id");
 
-    assert_eq!(SemanticLaneOutputs::table_name(), "lane_outputs");
-    assert_eq!(SemanticLaneOutputs::schema_name(), "semantic");
+    assert_eq!(DerivationLaneOutputs::table_name(), "lane_outputs");
+    assert_eq!(DerivationLaneOutputs::schema_name(), "derivation");
     assert_eq!(
-        SemanticLaneOutputs::primary_key(),
-        "(lane_id, output_kind, output_key)"
+        DerivationLaneOutputs::primary_key(),
+        "(lane_id, product_class, output_kind, output_key)"
     );
 
-    assert_eq!(SemanticLaneDiffs::table_name(), "lane_diffs");
-    assert_eq!(SemanticLaneDiffs::schema_name(), "semantic");
-    assert_eq!(SemanticLaneDiffs::primary_key(), "id");
+    assert_eq!(DerivationLaneDiffs::table_name(), "lane_diffs");
+    assert_eq!(DerivationLaneDiffs::schema_name(), "derivation");
+    assert_eq!(DerivationLaneDiffs::primary_key(), "id");
     Ok(())
 }
