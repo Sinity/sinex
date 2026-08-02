@@ -25,7 +25,9 @@ use std::time::Duration;
 
 use crate::Result;
 use crate::client::GatewayClient;
-use crate::fmt::{CommandOutput, print_finite_envelope, with_spinner_result};
+use crate::fmt::{
+    CommandOutput, print_finite_envelope, truncate_str_boundary_safe, with_spinner_result,
+};
 use crate::model::OutputFormat;
 
 /// Data lifecycle management
@@ -779,7 +781,7 @@ fn format_tombstone_list_table(response: &TombstoneListResponse) -> String {
     for op in &response.operations {
         let event_count = op.cascade_analysis.as_ref().map_or(0, |a| a.cascade_total);
         let reason = if op.reason.len() > 30 {
-            format!("{}...", &op.reason[..27])
+            format!("{}...", truncate_str_boundary_safe(&op.reason, 27))
         } else {
             op.reason.clone()
         };
@@ -788,7 +790,7 @@ fn format_tombstone_list_table(response: &TombstoneListResponse) -> String {
             op.operation_id,
             format!("{:?}", op.state),
             event_count,
-            &op.created_at[..19],
+            truncate_str_boundary_safe(&op.created_at, 19),
             reason
         ));
     }

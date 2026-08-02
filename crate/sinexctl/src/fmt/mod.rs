@@ -13,5 +13,6 @@ pub use progress::{ProgressReporter, Spinner, SpinnerGuard, with_spinner, with_s
 pub use table::{format_heartbeat_age, format_table_replay, format_table_runtime};
 pub use units::{
     format_bytes, format_duration_age, format_duration_compact_secs, format_timestamp_age,
+    truncate_str_boundary_safe,
 };
 pub use yaml::format_yaml;

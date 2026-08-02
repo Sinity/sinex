@@ -26,3 +26,16 @@ async fn format_duration_compact_secs_matches_report_shape() -> xtask::sandbox::
     assert_eq!(format_duration_compact_secs(198 * 60), "3h 18m");
     Ok(())
 }
+
+#[sinex_test]
+async fn truncate_str_boundary_safe_never_splits_a_codepoint() -> xtask::sandbox::TestResult<()> {
+    // Each emoji is 4 bytes; cutting at byte 5 must not panic and must land
+    // on the boundary before the split codepoint (byte 4), not after it.
+    let s = "😀😀😀"; // 12 bytes total
+    assert_eq!(truncate_str_boundary_safe(s, 5), "😀");
+    assert_eq!(truncate_str_boundary_safe(s, 12), s);
+    assert_eq!(truncate_str_boundary_safe(s, 100), s);
+    assert_eq!(truncate_str_boundary_safe(s, 0), "");
+    assert_eq!(truncate_str_boundary_safe("ascii text", 4), "asci");
+    Ok(())
+}

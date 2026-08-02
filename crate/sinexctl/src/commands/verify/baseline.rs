@@ -15,7 +15,7 @@ use serde::Serialize;
 use tokio::process::Command;
 use tokio::time::timeout;
 
-use crate::fmt::{format_json, format_yaml};
+use crate::fmt::{format_json, format_yaml, truncate_str_boundary_safe};
 use crate::model::OutputFormat;
 
 // ---------------------------------------------------------------------------
@@ -537,7 +537,7 @@ impl XtaskResult {
         if s.is_empty() {
             "no output".into()
         } else if s.len() > 500 {
-            format!("{}…", &s[..500])
+            format!("{}…", truncate_str_boundary_safe(s, 500))
         } else {
             s.to_string()
         }

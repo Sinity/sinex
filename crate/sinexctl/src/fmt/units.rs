@@ -51,6 +51,26 @@ pub fn format_timestamp_age(timestamp: &Timestamp) -> String {
     }
 }
 
+/// Truncate `s` to at most `max_bytes` bytes for display, cutting on a
+/// UTF-8 char boundary at or before the limit.
+///
+/// Plain byte-index slicing (`&s[..n]`) panics whenever `n` falls in the
+/// middle of a multi-byte codepoint. Any free-text operator field (tombstone
+/// reasons, window/browser titles, shell commands, subprocess stderr) can
+/// contain non-ASCII text, so every display-truncation site must go through
+/// this helper rather than slicing directly.
+#[must_use]
+pub fn truncate_str_boundary_safe(s: &str, max_bytes: usize) -> &str {
+    if s.len() <= max_bytes {
+        return s;
+    }
+    let mut end = max_bytes;
+    while end > 0 && !s.is_char_boundary(end) {
+        end -= 1;
+    }
+    &s[..end]
+}
+
 /// Format an elapsed duration as compact age text.
 #[must_use]
 pub fn format_duration_age(duration: time::Duration) -> String {
