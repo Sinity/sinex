@@ -862,6 +862,20 @@ pub async fn handle_tombstone_preview(
     Ok(TombstonePreviewResponse { operation })
 }
 
+/// Outcome of the per-blob check-then-delete transaction run for each orphan
+/// material in `handle_tombstone_approve` (sinex-audit-cas-refcheck-toctou).
+enum BlobTombstoneOutcome {
+    /// The `core.blobs` row was already gone before we could lock it.
+    AlreadyGone,
+    /// A live reference (sibling material or event `associated_blob_ids`)
+    /// survived the recheck taken under the row lock; content and row kept.
+    StillReferenced,
+    /// CAS content was dropped; `row_deleted` reports whether the
+    /// `core.blobs` row delete itself affected a row (it may already have
+    /// been removed by a concurrent caller that lost the row-lock race).
+    Dropped { row_deleted: bool },
+}
+
 /// Handle lifecycle.tombstone.approve
 ///
 /// Approves and immediately executes a tombstone operation. After the
@@ -1109,84 +1123,78 @@ pub async fn handle_tombstone_approve(
                 && let Some(blob_uuid) = record.optional_blob_id
             {
                 let content_store = services.content.content_store();
-                // Translate blob UUID to a content-store key by looking up core.blobs.
-                match pool
-                    .blobs()
-                    .get_by_id(sinex_primitives::Id::from_uuid(blob_uuid))
-                    .await
-                {
-                    Ok(Some(blob_row)) => {
-                        match pool
+                let blob_id = sinex_primitives::Id::from_uuid(blob_uuid);
+
+                // Check-then-delete, atomically with respect to concurrent new
+                // references (sinex-audit-cas-refcheck-toctou): lock the
+                // `core.blobs` row (`FOR UPDATE`), recheck references, drop the
+                // CAS content, and delete the row all inside ONE transaction.
+                // The row lock blocks a concurrent dedup insert into
+                // `raw.source_material_registry` (its `optional_blob_id` FK
+                // takes an implicit `FOR KEY SHARE` lock on this row) until this
+                // transaction resolves, so a racing dedup either sees the
+                // reference count recheck below (and we correctly keep the
+                // content) or blocks until after we delete and then fails with
+                // an explicit FK violation -- never a silent orphaned reference
+                // to already-deleted bytes. See `BlobRepository::lock_by_id_for_update`.
+                let outcome = pool
+                    .with_transaction(async |tx| {
+                        let Some(blob_row) = pool
                             .blobs()
-                            .is_referenced_excluding_material(
-                                sinex_primitives::Id::from_uuid(blob_uuid),
+                            .lock_by_id_for_update(&mut **tx, blob_id)
+                            .await?
+                        else {
+                            return Ok(BlobTombstoneOutcome::AlreadyGone);
+                        };
+
+                        if pool
+                            .blobs()
+                            .is_referenced_excluding_material_with_executor(
+                                &mut **tx,
+                                blob_id,
                                 *material_id,
                             )
-                            .await
+                            .await?
                         {
-                            Ok(true) => {
-                                // Still referenced elsewhere (sibling material or a
-                                // derived event's associated_blob_ids) -- keep the
-                                // content and the row alive.
-                                blobs_shared += 1;
-                            }
-                            Ok(false) => {
-                                if let Err(e) = content_store
-                                    .drop_content(&blob_row.content_key(), true)
-                                    .await
-                                {
-                                    warn!(
-                                        material_id = %material_id,
-                                        blob_id = %blob_uuid,
-                                        error = %e,
-                                        "Failed to drop CAS content for tombstoned material; \
-                                         GC sweeper will recover the orphan blob"
-                                    );
-                                } else {
-                                    blobs_dropped += 1;
-                                    // Zero remaining references: the core.blobs row is
-                                    // now dead too. Delete it in the same pass so it
-                                    // cannot survive as a zombie row that later fools
-                                    // dedup on re-ingestion (sinex-audit-cas-zombie-blob-rows).
-                                    match pool
-                                        .blobs()
-                                        .delete_by_id(sinex_primitives::Id::from_uuid(blob_uuid))
-                                        .await
-                                    {
-                                        Ok(true) => blob_rows_deleted += 1,
-                                        Ok(false) => {} // already gone
-                                        Err(e) => warn!(
-                                            material_id = %material_id,
-                                            blob_id = %blob_uuid,
-                                            error = %e,
-                                            "Failed to delete dereferenced blob row; \
-                                             fsck will report it as Missing"
-                                        ),
-                                    }
-                                }
-                            }
-                            Err(e) => {
-                                warn!(
-                                    material_id = %material_id,
-                                    blob_id = %blob_uuid,
-                                    error = %e,
-                                    "Failed to check blob reference count for delete-on-tombstone; \
-                                     leaving CAS content and row untouched to avoid over-deletion"
-                                );
-                            }
+                            // Still referenced elsewhere (sibling material or a
+                            // derived event's associated_blob_ids) -- keep the
+                            // content and the row alive.
+                            return Ok(BlobTombstoneOutcome::StillReferenced);
+                        }
+
+                        content_store
+                            .drop_content(&blob_row.content_key(), true)
+                            .await?;
+
+                        // Zero remaining references: the core.blobs row is now
+                        // dead too. Delete it in the same transaction so it
+                        // cannot survive as a zombie row that later fools dedup
+                        // on re-ingestion (sinex-audit-cas-zombie-blob-rows).
+                        let row_deleted = pool
+                            .blobs()
+                            .delete_by_id_with_executor(&mut **tx, blob_id)
+                            .await?;
+
+                        Ok(BlobTombstoneOutcome::Dropped { row_deleted })
+                    })
+                    .await;
+
+                match outcome {
+                    Ok(BlobTombstoneOutcome::AlreadyGone) => {}
+                    Ok(BlobTombstoneOutcome::StillReferenced) => blobs_shared += 1,
+                    Ok(BlobTombstoneOutcome::Dropped { row_deleted }) => {
+                        blobs_dropped += 1;
+                        if row_deleted {
+                            blob_rows_deleted += 1;
                         }
                     }
-                    Ok(None) => {
-                        // Blob row already gone; treat as success.
-                    }
-                    Err(e) => {
-                        warn!(
-                            material_id = %material_id,
-                            blob_id = %blob_uuid,
-                            error = %e,
-                            "Failed to look up blob for delete-on-tombstone"
-                        );
-                    }
+                    Err(e) => warn!(
+                        material_id = %material_id,
+                        blob_id = %blob_uuid,
+                        error = %e,
+                        "Failed delete-on-tombstone transaction for blob; \
+                         GC sweeper will recover the orphan blob/row"
+                    ),
                 }
             }
 
