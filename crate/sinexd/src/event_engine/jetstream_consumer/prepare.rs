@@ -517,7 +517,7 @@ impl JetStreamConsumer {
         let mut settled_count = 0u64;
         for prepared in &tombstoned_batch {
             self.settlement_registry.resolve(
-                prepared.parsed_id,
+                prepared.parsed_id.into(),
                 EmissionReceiptState::Suppressed {
                     reason: SuppressionReason::Tombstoned,
                     existing_event_id: None,
@@ -573,7 +573,7 @@ impl JetStreamConsumer {
                     "Re-published confirmed event for duplicate already admitted event"
                 );
                 self.settlement_registry.resolve(
-                    prepared.parsed_id,
+                    prepared.parsed_id.into(),
                     EmissionReceiptState::Suppressed {
                         reason: SuppressionReason::CachedDuplicate,
                         existing_event_id: None,

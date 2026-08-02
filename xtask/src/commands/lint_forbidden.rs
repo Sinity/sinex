@@ -66,12 +66,23 @@ impl XtaskCommand for LintForbiddenCommand {
             "xtask/src/commands/lint_forbidden.rs",
             // BINDING_ENV_LOCK concurrency tests need a real multi_thread runtime
             // (flavor = "multi_thread", worker_threads = 4) to exercise the env
-            // race; #[sinex_test] cannot express the flavor.
-            "crate/sinexd/src/sources/bindings.rs",
+            // race; #[sinex_test] cannot express the flavor. The real lines
+            // live in bindings_test.rs (pulled in via
+            // `#[path = "bindings_test.rs"] mod tests;`), not bindings.rs
+            // itself — this entry is now redundant with the `_test.rs`
+            // split-module carve-out in `is_dedicated_test_path`, but is kept
+            // so the intent stays documented next to its rationale.
+            "crate/sinexd/src/sources/bindings_test.rs",
         ];
         // #[test] allowlist — only for tests that genuinely cannot use
         // #[sinex_test]: proc-macro / trybuild fixtures, or tests requiring
-        // controlled process-global env mutation under a specific thread model.
+        // controlled process-global env mutation under a specific thread
+        // model, or genuinely synchronous unit tests. `#[sinex_test]` is
+        // hard-compile-error'd to async-fn-only (xtask/macros/src/lib.rs), so
+        // files with plain synchronous `#[test] fn ...()` tests (no `async`)
+        // have no valid alternative and would otherwise accumulate permanent,
+        // unfixable violations under this gate (sinex-audit-forbidden-pattern-
+        // blind-spots).
         let rust_test_allow = [
             // Proc-macro crate: self-tests parser/expansion helpers and cannot
             // depend on xtask's harness without creating a dependency cycle.
@@ -81,7 +92,31 @@ impl XtaskCommand for LintForbiddenCommand {
             // EnvGuard tests mutate process-global env vars under documented
             // SAFETY/threading invariants, paired with the multi_thread race
             // tests above in the same module.
-            "crate/sinexd/src/sources/bindings.rs",
+            "crate/sinexd/src/sources/bindings_test.rs",
+            // Pure sync algorithm (commit-frontier hole tracking): every test
+            // is a plain synchronous `fn`, nothing awaited.
+            "crate/sinex-primitives/src/commit_frontier.rs",
+            // Sync unit tests for receipt/registry primitives (SettlementRegistry
+            // register/resolve/cancel bookkeeping); only the async await_batch
+            // tests use #[sinex_test].
+            "crate/sinexd/src/runtime/durable_emission.rs",
+            // Sync unit tests for the process-global OnceLock install()/get()
+            // accessors — no async runtime involved.
+            "crate/sinexd/src/runtime/durable_emission_registry.rs",
+            // xtask's own proof-obligation compiler: sync unit tests over the
+            // obligation IR, no async runtime involved.
+            "xtask/src/commands/proof_obligations.rs",
+            // Sync source-name alias resolution tests (no DB/async involved).
+            "crate/sinex-db/src/replay/state_machine.rs",
+            // Sync civil-time floor/DST math tests (pure functions).
+            "crate/sinexd/src/automata/civil.rs",
+            // Sync watermark-classification tests (pure functions).
+            "crate/sinexd/src/runtime/automaton/adapter/watermark.rs",
+            // Sync tests over pure summary-classification logic (no I/O).
+            "xtask/src/commands/status/summary.rs",
+            // Sync fs::read_to_string-based compatibility-witness test — no
+            // async I/O used.
+            "xtask/src/commands/test/witnesses.rs",
         ];
         // Runtime sqlx::query() is allowed for:
         // - Session control (SET, ROLLBACK, RESET)
@@ -116,6 +151,13 @@ impl XtaskCommand for LintForbiddenCommand {
             "crate/sinexd/src/runtime/preflight/mod.rs",
             "crate/sinexd/src/runtime/preflight/database.rs",
             "crate/sinexd/src/runtime/preflight/verification.rs",
+            // Declarative-convergence backfill orchestration: DDL (`CREATE TABLE
+            // IF NOT EXISTS`) plus CRUD over `sinex_schemas.schema_backfill_runs`
+            // / `schema_backfill_material_counts`, tables this same module
+            // creates at runtime and that are not part of the xtask SQLx
+            // compile-time check database — same class as the already-allowed
+            // `model_effects.rs` (#1619).
+            "crate/sinex-schema/src/backfill.rs",
         ];
         let sqlx_query_as_allow = [
             // Dynamic ranking/filter SQL where the query string is assembled at runtime.
@@ -1118,7 +1160,14 @@ fn check_vm_suite_evidence_kind_contracts() -> Result<Vec<String>> {
         }
 
         let rel_path = ignored_test_contract_rel_path(path, &workspace);
-        if rel_path == "tests/vm-suite/src/runner.rs" {
+        // `runner_test.rs` is `runner.rs`'s `_test.rs` split-module companion
+        // (`#[path = "runner_test.rs"] mod tests;`) and legitimately
+        // constructs `TestOutcome::EvidenceMissing` directly as fixtures to
+        // test `TestRunner`'s own evidence-kind handling — the same reason
+        // `runner.rs` itself is exempt.
+        if rel_path == "tests/vm-suite/src/runner.rs"
+            || rel_path == "tests/vm-suite/src/runner_test.rs"
+        {
             continue;
         }
 
@@ -1202,7 +1251,13 @@ fn is_ignored_test_contract_scan_skip_dir(path: &str) -> bool {
 }
 
 fn is_ignored_test_contract_scan_skip_file(path: &str) -> bool {
-    is_ignored_test_contract_scan_skip_dir(path) || path == "xtask/src/commands/lint_forbidden.rs"
+    is_ignored_test_contract_scan_skip_dir(path)
+        || path == "xtask/src/commands/lint_forbidden.rs"
+        // This check's own unit tests: raw `#[ignore = "..."]`-shaped strings
+        // inside `r#"..."#` fixtures that exercise
+        // `ignored_test_contract_violations_for_file` directly, not real
+        // ignored tests in this file.
+        || path == "xtask/src/commands/lint_forbidden_test.rs"
 }
 
 fn ignored_test_contract_violations_for_file(file: &str, contents: &str) -> Vec<String> {
@@ -1331,16 +1386,28 @@ fn is_comment_match(line: &str) -> bool {
 /// This predicate is intentionally narrower than `is_tests_path`: it is used
 /// for test-attribute policy, where xtask source files are ordinary source and
 /// should use the project harness.
+///
+/// Recognizes the `#[path = "foo_test.rs"] mod tests;` split-module
+/// convention (same `_test.rs` suffix check the sinex-0vx.8 checks use, e.g.
+/// `check_derived_output_literal_construction`) — these files are pulled
+/// into their parent module via `#[path]` and are dedicated test code even
+/// though they live in `src/`, not under a `tests/` directory.
 fn is_dedicated_test_path(path: &str) -> bool {
-    path.contains("/tests/") || path.starts_with("tests/")
+    path.contains("/tests/") || path.starts_with("tests/") || path.ends_with("_test.rs")
 }
 
 /// Check if a path is a test directory or build tooling.
 ///
 /// Used by non-test-attribute scans where xtask and test infrastructure are not
 /// production/library code. Do not use this for `#[test]` policy.
+///
+/// Recognizes the `_test.rs` split-module convention — see
+/// `is_dedicated_test_path`.
 fn is_tests_path(path: &str) -> bool {
-    path.contains("/tests/") || path.starts_with("tests/") || path.starts_with("xtask/")
+    path.contains("/tests/")
+        || path.starts_with("tests/")
+        || path.starts_with("xtask/")
+        || path.ends_with("_test.rs")
 }
 
 /// Check for anyhow usage in library code (not xtask, not tests, not binaries)

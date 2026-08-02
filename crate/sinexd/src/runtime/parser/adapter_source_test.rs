@@ -540,7 +540,7 @@ fn auto_settle_events(
         while let Some(event) = raw.recv().await {
             if let Some(id) = event.id {
                 registry.resolve(
-                    *id.as_uuid(),
+                    id,
                     crate::runtime::durable_emission::EmissionReceiptState::PersistedConfirmed {
                         lane: sinex_db::repositories::EventStorageLane::Activity,
                         inserted: true,
@@ -1560,7 +1560,7 @@ async fn adapter_durable_emission_receipt_unlocks_cursor_once_settled(
             let Some(event) = event_receiver.recv().await else {
                 break;
             };
-            let id = *event.id.expect("emit() assigns an id").as_uuid();
+            let id = event.id.expect("emit() assigns an id");
             registry_for_settler.resolve(
                 id,
                 crate::runtime::durable_emission::EmissionReceiptState::PersistedConfirmed {
@@ -1628,7 +1628,7 @@ async fn adapter_durable_emission_receipt_partial_batch_settlement_blocks_only_t
             };
             seen += 1;
             if seen == 1 {
-                let id = *event.id.expect("emit() assigns an id").as_uuid();
+                let id = event.id.expect("emit() assigns an id");
                 registry_for_settler.resolve(
                     id,
                     crate::runtime::durable_emission::EmissionReceiptState::PersistedConfirmed {
