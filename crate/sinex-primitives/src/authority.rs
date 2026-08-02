@@ -326,8 +326,9 @@ pub fn judgment_actor_sufficient_for_acceptance(
         }
         CurationJudgmentActorKind::User
         | CurationJudgmentActorKind::Operator
-        | CurationJudgmentActorKind::DeterministicPolicy
-        | CurationJudgmentActorKind::TestFixture => true,
+        | CurationJudgmentActorKind::DeterministicPolicy => true,
+        #[cfg(any(test, feature = "testing"))]
+        CurationJudgmentActorKind::TestFixture => true,
     }
 }
 

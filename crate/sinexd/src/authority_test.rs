@@ -211,3 +211,39 @@ async fn authorize_finalization_permits_agent_with_explicit_grant(
 
     Ok(())
 }
+
+/// sinex-audit-actorkind: `clamp_judgment_actor_kind` is the pure decision
+/// function the record-judgment handlers apply to the client-supplied
+/// `actor_kind` before persisting a judgment. Below `Role::Admin`, whatever
+/// the caller requests must come back `Agent` -- there is no role tier
+/// between `Write` and `Admin` that legitimately asserts a trusted actor
+/// kind. Only `Role::Admin` passes the requested kind through unchanged.
+#[test]
+fn clamp_judgment_actor_kind_forces_agent_below_admin() {
+    use crate::api::auth::Role;
+
+    let requested_kinds = [
+        CurationJudgmentActorKind::User,
+        CurationJudgmentActorKind::Operator,
+        CurationJudgmentActorKind::DeterministicPolicy,
+        CurationJudgmentActorKind::Agent,
+    ];
+
+    for role in [Role::ReadOnly, Role::Write] {
+        for requested in requested_kinds {
+            assert_eq!(
+                clamp_judgment_actor_kind(role, requested),
+                CurationJudgmentActorKind::Agent,
+                "role {role:?} must never be able to assert {requested:?} directly"
+            );
+        }
+    }
+
+    for requested in requested_kinds {
+        assert_eq!(
+            clamp_judgment_actor_kind(Role::Admin, requested),
+            requested,
+            "Admin must be able to assert its requested actor_kind unchanged"
+        );
+    }
+}

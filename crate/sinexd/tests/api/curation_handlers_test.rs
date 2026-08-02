@@ -20,6 +20,7 @@ use sinexd::api::handlers::{
     handle_curation_list_proposals, handle_curation_record_duplicate_judgment,
     handle_curation_record_judgment,
 };
+use sinexd::api::auth::Role;
 use sinexd::api::rpc_server::RpcAuthContext;
 use xtask::sandbox::prelude::*;
 
@@ -99,6 +100,90 @@ async fn curation_record_judgment_persists_synthesis_event(ctx: TestContext) -> 
             .map(<[sinex_db::Id<sinex_db::Event>]>::len),
         Some(1)
     );
+    Ok(())
+}
+
+/// sinex-audit-actorkind: a plain `:write` token cannot self-authorize
+/// curation finalization by claiming `actor_kind: "operator"` in the
+/// request body. This reproduces the exploit the finding described --
+/// record a judgment as a self-claimed `Operator` over a `Role::Write`
+/// auth context, then attempt to finalize it -- and proves it now fails
+/// closed: the server clamps the persisted `actor_kind` down to `Agent`
+/// for anything below `Role::Admin`, and an `Agent`-kind judgment is never
+/// sufficient authority by itself under the default (no
+/// `auto_accept_policy`) finalizer posture.
+#[sinex_test]
+async fn curation_record_judgment_clamps_self_claimed_operator_actor_kind(
+    ctx: TestContext,
+) -> TestResult<()> {
+    common::seed_rpc_handler_product_declarations(ctx.pool()).await?;
+    let proposal_event = insert_fixture_proposal(&ctx).await?;
+    let proposal_event_id = proposal_event
+        .id
+        .as_ref()
+        .ok_or_else(|| color_eyre::eyre::eyre!("inserted proposal missing id"))?
+        .to_uuid()
+        .to_string();
+
+    // An ordinary `:write` token -- the same tier ordinary event ingestion
+    // uses, deliberately NOT the operator's elevated Admin token.
+    let write_auth = RpcAuthContext {
+        token_prefix: "test1234".to_string(),
+        actor_id: "token:test1234".to_string(),
+        authenticated_at: sinex_primitives::Timestamp::now(),
+        role: Role::Write,
+    };
+
+    // The exploit attempt: self-claim Operator authority in the request
+    // body, which pre-fix was copied verbatim into the persisted judgment.
+    let value = handle_curation_record_judgment(
+        ctx.pool(),
+        CurationRecordJudgmentRequest {
+            proposal_event_id,
+            actor_kind: CurationJudgmentActorKind::Operator,
+            actor_id: None,
+            decision: CurationJudgmentDecision::Accept,
+            corrected_payload: None,
+            comment: Some("self-claimed operator judgment".to_string()),
+            authorization_context: None,
+        },
+        &write_auth,
+    )
+    .await?;
+
+    // The server must clamp the persisted actor_kind down to Agent -- never
+    // trust the client-supplied claim above what the caller's role permits.
+    assert_eq!(value.judgment.actor_kind, CurationJudgmentActorKind::Agent);
+
+    let event_id = value
+        .event
+        .id
+        .ok_or_else(|| color_eyre::eyre::eyre!("judgment response event missing id"))?;
+
+    // Finalize must fail closed: an Agent-kind judgment is never sufficient
+    // authority by itself under the default finalizer policy
+    // (requires_human_judgment = true, no auto_accept_policy).
+    let error = handle_curation_finalize(
+        ctx.pool(),
+        CurationFinalizeRequest {
+            judgment_event_id: event_id.to_uuid().to_string(),
+        },
+    )
+    .await
+    .expect_err("self-claimed operator actor_kind must not authorize finalization");
+    assert!(
+        error
+            .to_string()
+            .contains("not sufficient authority to finalize"),
+        "unexpected error: {error}"
+    );
+
+    let operations = ctx
+        .pool()
+        .state()
+        .list_operations(Some("curation.finalize"), None, 10)
+        .await?;
+    assert!(operations.is_empty());
     Ok(())
 }
 

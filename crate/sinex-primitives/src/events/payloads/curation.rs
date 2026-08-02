@@ -51,6 +51,12 @@ pub enum CurationJudgmentActorKind {
     Operator,
     DeterministicPolicy,
     Agent,
+    /// Test-only actor kind (sinex-audit-actorkind). Gated behind
+    /// `cfg(any(test, feature = "testing"))` so it cannot be constructed
+    /// from ordinary JSON deserialization in a production binary — the doc
+    /// comment alone was not an enforced boundary (confirmed reachable via
+    /// `curation.judgments.record` before this fix).
+    #[cfg(any(test, feature = "testing"))]
     TestFixture,
 }
 

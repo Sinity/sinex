@@ -292,7 +292,10 @@ pub async fn handle_curation_record_judgment(
     let judgment = CurationJudgmentPayload {
         judgment_id: Uuid::now_v7(),
         proposal_id: proposal.proposal_id,
-        actor_kind: req.actor_kind,
+        // sinex-audit-actorkind: never trust the client-supplied actor_kind
+        // verbatim -- clamp it to what the authenticated caller's role may
+        // legitimately assert.
+        actor_kind: crate::authority::clamp_judgment_actor_kind(auth.role, req.actor_kind),
         actor_id,
         decision: req.decision,
         authority_judgment: None,
@@ -563,7 +566,9 @@ pub async fn handle_curation_record_duplicate_judgment(
     let judgment = CurationJudgmentPayload {
         judgment_id: Uuid::now_v7(),
         proposal_id: proposal.proposal_id,
-        actor_kind: req.actor_kind,
+        // sinex-audit-actorkind: same clamp as
+        // `handle_curation_record_judgment` -- see that call site's comment.
+        actor_kind: crate::authority::clamp_judgment_actor_kind(auth.role, req.actor_kind),
         actor_id,
         decision: duplicate_action_decision(req.action),
         authority_judgment: Some(

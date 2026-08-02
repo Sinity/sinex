@@ -30,6 +30,41 @@ use sinex_primitives::error::{Result, SinexError};
 use sinex_primitives::events::CurationJudgmentActorKind;
 use tracing::info;
 
+use crate::api::auth::Role;
+
+/// Server-side clamp for the `actor_kind` a curation judgment is persisted
+/// with (sinex-audit-actorkind).
+///
+/// `CurationRecordJudgmentRequest.actor_kind` is a plain client-supplied
+/// JSON field. Before this fix it was copied verbatim into the persisted
+/// `curation.judgment` event, and
+/// [`judgment_actor_sufficient_for_acceptance`] treats every actor kind
+/// except `Agent` as automatically sufficient authority to finalize — so a
+/// holder of an ordinary `Role::Write` token (the same tier as event
+/// ingestion) could self-assert `actor_kind: "operator"` and then finalize
+/// its own judgment, bypassing the sinex-0vx.5 authority gate entirely.
+///
+/// This is the derivation: `actor_kind` is trusted from the request body
+/// only up to what the AUTHENTICATED caller's role can legitimately assert.
+/// `Role::Admin` is the operator's own elevated token (or
+/// `RpcAuthContext::system()` for trusted internal/automaton callers) and
+/// may assert whatever kind it requests. Any lower role — `Role::Write` or
+/// `Role::ReadOnly` (the latter should never reach a judgment-recording
+/// handler at all, since those are `Role::Write`-gated RPCs, but is clamped
+/// too as defense in depth) — can only ever record a judgment as
+/// `Agent`-kind, which `judgment_actor_sufficient_for_acceptance` never
+/// treats as sufficient by itself.
+#[must_use]
+pub fn clamp_judgment_actor_kind(
+    role: Role,
+    requested: CurationJudgmentActorKind,
+) -> CurationJudgmentActorKind {
+    match role {
+        Role::Admin => requested,
+        Role::Write | Role::ReadOnly => CurationJudgmentActorKind::Agent,
+    }
+}
+
 /// A static finalizer registration a curation-domain writer declares, mapping
 /// one `proposal_kind` to the exact `(output_source, output_event_type)`
 /// finalized output it is permitted to emit, and the actor-kind policy
