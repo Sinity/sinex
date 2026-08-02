@@ -6,7 +6,7 @@ let
   systemdHardening = import ./lib/systemd-hardening.nix { inherit lib; };
   secretResolution = import ./lib/secret-resolution.nix { inherit lib; };
   inherit (systemdHardening) mkHelperServiceConfig;
-  inherit (secretResolution) resolveNamedSecretPath;
+  inherit (secretResolution) resolveNamedSecretPath restartTriggersForNames;
   cfg = config.services.sinex.nats;
   sinexCfg = config.services.sinex;
   stateRoot = config.services.sinex.stateRoot;
@@ -36,6 +36,21 @@ let
     "nats-server-key"
   ];
   effectiveClientCaFile = resolveSecretPath cfg.tls.caCertFile [
+    "sinex-nats-client-ca"
+    "nats-client-ca"
+  ];
+  # sinex-audit-secret-rotation-no-restart: the long-running `nats` daemon
+  # only reads these TLS files at process start (they're embedded as static
+  # paths in the generated server config). agenix re-decrypts rotated
+  # ciphertext to the same stable path, so a plain `nixos-rebuild switch`
+  # never restarts nats and it keeps serving with the OLD cert/key/CA.
+  # Trigger on the content-addressed SOURCE of exactly what this server
+  # config embeds (server cert/key + the client-verification CA).
+  natsServerTlsRestartTriggers = restartTriggersForNames (config.sinex.secrets.restartTriggers or { }) [
+    "sinex-nats-server-cert"
+    "nats-server-cert"
+    "sinex-nats-server-key"
+    "nats-server-key"
     "sinex-nats-client-ca"
     "nats-client-ca"
   ];
@@ -735,6 +750,7 @@ in
       KillSignal = lib.mkForce cfg.killPolicy.signal;
       TimeoutStopSec = lib.mkForce cfg.killPolicy.timeoutStopSec;
     };
+    systemd.services.nats.restartTriggers = mkIf cfg.tls.enable natsServerTlsRestartTriggers;
 
     systemd.services.sinex-nats-bootstrap = mkIf (cfg.bootstrapStreams.enable && natsCli != null) {
       description = "Sinex NATS JetStream bootstrap";

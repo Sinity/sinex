@@ -13,7 +13,7 @@ let
     mkDatabasePasswordExec
     renderDatabaseUrl
     ;
-  inherit (secretResolution) resolveNamedSecretPath;
+  inherit (secretResolution) resolveNamedSecretPath restartTriggersForNames;
   cfg = config.services.sinex;
   coreCfg = cfg.core;
   runtimeCfg = cfg.runtime;
@@ -156,6 +156,36 @@ let
       existingPaths = collectReadablePaths paths;
     in
     optionalAttrs (existingPaths != [ ]) { AssertPathExists = existingPaths; };
+
+  # sinex-audit-secret-rotation-no-restart: sinexd only re-reads these secret
+  # files at process start (mkDatabasePasswordExec, TLS/token file loading).
+  # agenix decrypts to a stable /run/agenix/<name> path, so `nixos-rebuild
+  # switch` alone never changes anything switch-to-configuration diffs on the
+  # unit -- a running sinexd silently keeps the old DB password / NATS TLS
+  # material / admin token until something restarts it by hand. Trigger on
+  # the content-addressed SOURCE of every secret sinexd actually consumes.
+  sinexdRestartTriggerNames =
+    optionals cfg.database.enable [ "sinex-local-db" "sinex-remote-db" ]
+    ++ [
+      "sinex-nats-ca"
+      "nats-ca"
+      "sinex-remote-nats-ca"
+      "sinex-nats-client-cert"
+      "nats-client-cert"
+      "sinex-remote-nats-cert"
+      "sinex-nats-client-key"
+      "nats-client-key"
+      "sinex-remote-nats-key"
+      "sinex-nats-token"
+      "nats-token"
+      "sinex-nats-client-creds"
+      "nats-client-creds"
+      "sinex-nats-client-nkey"
+      "nats-client-nkey"
+      "sinex-api-admin-token"
+    ];
+  sinexdRestartTriggers =
+    restartTriggersForNames (config.sinex.secrets.restartTriggers or { }) sinexdRestartTriggerNames;
 
   toEnvList = envAttrs: mapAttrsToList (name: value: "${name}=${value}") envAttrs;
   renderBindReadOnlyPaths = mounts:
@@ -569,6 +599,7 @@ let
         description = "Sinex daemon (event engine + API + automata + hosted source bindings)";
         wantedBy = lib.optional cfg.runtime.target.attachToMultiUser "multi-user.target";
         restartIfChanged = cfg.runtime.restartOnSwitch;
+        restartTriggers = sinexdRestartTriggers;
         after = apiAfter ++ (runtimeOverlay.afterUnits or [ ]);
         requires = coreRequires ++ optionals tlsAutoGenEnabled [ "sinex-tls-init.service" ];
         wants = coreWants ++ (runtimeOverlay.wantsUnits or [ ]);
