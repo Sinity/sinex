@@ -28,6 +28,7 @@ use sinex_primitives::domain::{RelationType, SyntheticTemporalPolicy};
 use sinex_primitives::events::EventPayload;
 use sinex_primitives::events::payloads::{EntityRelatedPayload, EntityResolvedPayload};
 use sinex_primitives::temporal::{Duration, Timestamp};
+use tracing::warn;
 
 /// Co-occurrence window configuration constants.
 ///
@@ -193,7 +194,25 @@ impl ScopeReconciler for RelationExtractor {
             arrived_at: now,
             trigger_uuid,
         });
-        state.last_seen = Some(now);
+
+        // sinex-audit-outoforder-pattern: `last_seen` is a watermark used to
+        // decide when the window has gone quiet (`gap_triggered`) -- it must
+        // never move backward, or a later out-of-order arrival's gap/age
+        // arithmetic is computed against a stale earlier time. Monotonic max,
+        // with a durable-debt warning on the out-of-order case (the entity is
+        // still added to the window above; only the watermark is guarded).
+        state.last_seen = Some(match state.last_seen {
+            Some(previous) if now < previous => {
+                warn!(
+                    module = "relation-extractor",
+                    event_ts = %now,
+                    last_seen = %previous,
+                    "relation extractor saw an out-of-order entity.resolved event (durable debt); window watermark not moved backward"
+                );
+                previous
+            }
+            _ => now,
+        });
 
         Ok(outputs)
     }
@@ -211,7 +230,11 @@ fn drain_and_emit_pairs(
 ) -> Vec<DerivedOutput<EntityRelatedPayload>> {
     let entries = std::mem::take(&mut state.window);
     state.window_started_at = None;
-    let ts_orig = entries.last().map_or(now, |e| e.arrived_at);
+    // sinex-audit-outoforder-pattern: the emitted relation's ts_orig must be the
+    // window's true latest arrival, not whichever entry happened to be pushed
+    // last -- an out-of-order arrival pushed last would otherwise backdate the
+    // emitted event below entries that actually arrived later.
+    let ts_orig = entries.iter().map(|e| e.arrived_at).max().unwrap_or(now);
 
     let mut outputs = Vec::with_capacity(entries.len() * (entries.len().saturating_sub(1)) / 2);
     for i in 0..entries.len() {
@@ -296,3 +319,7 @@ register_source_runtime_binding! {
     .build_impact(sinex_primitives::source_contracts::SourceBuildImpact::ZERO)
     .build()
 }
+
+#[cfg(test)]
+#[path = "relation_extractor_test.rs"]
+mod tests;
