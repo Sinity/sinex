@@ -172,6 +172,9 @@ impl XtaskCommand for LintForbiddenCommand {
         violations.extend(check_ignored_test_contracts()?);
         violations.extend(check_vm_suite_evidence_kind_contracts()?);
         violations.extend(check_property_strategy_domain_fallbacks()?);
+        violations.extend(check_derived_output_literal_construction()?);
+        violations.extend(check_evidence_tier_reintroduction()?);
+        violations.extend(check_claim_support_adjudicated_call_sites()?);
 
         // anyhow:: in library code is disallowed; libraries use the project error stack.
         let anyhow_allow: [&str; 0] = [];
@@ -878,6 +881,217 @@ fn property_strategy_domain_fallback_violations_for_file(
             "{file}:{}: property strategies must not turn invalid generated domain values into fixed fixtures via {pattern:?}; generate typed-valid values or assert constructor failure",
             idx + 1
         ));
+    }
+    violations
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Derivation control-plane guards (sinex-0vx.8: no anonymous derived outputs,
+// no scalar EvidenceTier vocabulary, no Accepted ClaimSupport minted outside
+// the finalizer seam)
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Files allowed to construct `DerivedOutput { .. }` as a raw struct literal.
+///
+/// Every other production call site must go through the typed constructors
+/// (`DerivedOutput::transduced`/`windowed`/`windowed_now`/`reconciled` +
+/// `.with_declaration_id(..)`), which is the only path
+/// `AutomatonRuntime::validate_output_declaration` (sinex-0vx.8) will admit.
+/// A raw struct literal can silently omit `declaration_id`/`product_class`/
+/// `claim_support` — this is the "anonymous derived output" parallel path
+/// the epic closes.
+const DERIVED_OUTPUT_LITERAL_ALLOWLIST: &[&str] = &[
+    // Defines the struct and its constructors/builders.
+    "crate/sinexd/src/runtime/automaton/output.rs",
+    // Destructures (not constructs) a caller-built `DerivedOutput` to
+    // validate it and turn it into an `Event`.
+    "crate/sinexd/src/runtime/automaton/adapter/output.rs",
+    // `Transducer`/`Windowed`/`ScopeReconciler` trait glue: rewraps an
+    // already-built typed `DerivedOutput<T>` into `DerivedOutput<JsonValue>`
+    // after serializing the payload, copying every other field (including
+    // `declaration_id`/`product_class`/`claim_support`) unchanged — not a
+    // fresh anonymous construction.
+    "crate/sinexd/src/runtime/automaton/traits.rs",
+];
+
+fn check_derived_output_literal_construction() -> Result<Vec<String>> {
+    let workspace = workspace_root();
+    let scan_root = workspace.join("crate/sinexd/src");
+    if !scan_root.exists() {
+        return Ok(Vec::new());
+    }
+
+    let mut violations = Vec::new();
+    for entry in WalkDir::new(&scan_root) {
+        let entry =
+            entry.with_context(|| "failed to walk crate/sinexd/src for DerivedOutput literals")?;
+        let path = entry.path();
+        if !entry.file_type().is_file()
+            || path.extension().and_then(|ext| ext.to_str()) != Some("rs")
+        {
+            continue;
+        }
+
+        let rel_path = ignored_test_contract_rel_path(path, &workspace);
+        if is_tests_path(&rel_path)
+            || rel_path.ends_with("_test.rs")
+            || DERIVED_OUTPUT_LITERAL_ALLOWLIST.contains(&rel_path.as_str())
+        {
+            continue;
+        }
+
+        let contents = fs::read_to_string(path)
+            .with_context(|| format!("failed to read {rel_path} for DerivedOutput literal scan"))?;
+        violations.extend(derived_output_literal_violations_for_file(
+            &rel_path, &contents,
+        ));
+    }
+    Ok(violations)
+}
+
+fn derived_output_literal_violations_for_file(file: &str, contents: &str) -> Vec<String> {
+    let mut violations = Vec::new();
+    for (idx, line) in contents.lines().enumerate() {
+        let trimmed = line.trim_start();
+        if trimmed.starts_with("//") {
+            continue;
+        }
+        let Some(pos) = line.find("DerivedOutput") else {
+            continue;
+        };
+        let rest = line[pos + "DerivedOutput".len()..].trim_start();
+        // `DerivedOutput {` / `DerivedOutput::<T> {` is a struct-literal
+        // construction. `DerivedOutput<T>` (a type annotation, e.g. a
+        // function return type immediately followed by a body `{`) is not —
+        // it never has a bare `{` directly after `DerivedOutput` with no
+        // intervening `<...>`.
+        if rest.starts_with('{') || rest.starts_with("::<") {
+            violations.push(format!(
+                "{file}:{}: raw `DerivedOutput` struct-literal construction bypasses the typed \
+                 constructors (transduced/windowed/windowed_now/reconciled) and their \
+                 declaration_id handshake (sinex-0vx.8) — build via a constructor + \
+                 .with_declaration_id(..) instead",
+                idx + 1
+            ));
+        }
+    }
+    violations
+}
+
+/// Scalar `EvidenceTier` was replaced by the `ClaimSupport` vector
+/// (sinex-8cr) — no type named `EvidenceTier` exists anywhere in the
+/// workspace today (verified: `rg -n 'EvidenceTier'` only matches a doc
+/// comment in `derivation.rs` explaining the replacement). This is a
+/// regression guard against reintroducing it, not a currently-active cleanup.
+fn check_evidence_tier_reintroduction() -> Result<Vec<String>> {
+    let workspace = workspace_root();
+    let mut violations = Vec::new();
+
+    for entry in WalkDir::new(&workspace).into_iter().filter_entry(|entry| {
+        let rel_path = ignored_test_contract_rel_path(entry.path(), &workspace);
+        !entry.file_type().is_dir() || !is_ignored_test_contract_scan_skip_dir(&rel_path)
+    }) {
+        let entry = entry.with_context(|| "failed to walk workspace for EvidenceTier scan")?;
+        let path = entry.path();
+        if !entry.file_type().is_file()
+            || path.extension().and_then(|ext| ext.to_str()) != Some("rs")
+        {
+            continue;
+        }
+        let rel_path = ignored_test_contract_rel_path(path, &workspace);
+        // `lint_forbidden_test.rs` deliberately embeds `EvidenceTier` struct/enum
+        // fixture strings to prove this scan fires (anti-vacuity) — same
+        // self-referential exemption pattern as `is_ignored_test_contract_scan_skip_file`.
+        if is_ignored_test_contract_scan_skip_file(&rel_path) || rel_path.ends_with("_test.rs") {
+            continue;
+        }
+        let contents = fs::read_to_string(path)
+            .with_context(|| format!("failed to read {rel_path} for EvidenceTier scan"))?;
+        violations.extend(evidence_tier_violations_for_file(&rel_path, &contents));
+    }
+    Ok(violations)
+}
+
+fn evidence_tier_violations_for_file(file: &str, contents: &str) -> Vec<String> {
+    let mut violations = Vec::new();
+    for (idx, line) in contents.lines().enumerate() {
+        let trimmed = line.trim_start();
+        if trimmed.starts_with("//") {
+            continue;
+        }
+        if trimmed.contains("struct EvidenceTier") || trimmed.contains("enum EvidenceTier") {
+            violations.push(format!(
+                "{file}:{}: scalar `EvidenceTier` was replaced by the `ClaimSupport` vector \
+                 (sinex-8cr) and must not be reintroduced (sinex-0vx.8)",
+                idx + 1
+            ));
+        }
+    }
+    violations
+}
+
+/// Files allowed to call `ClaimSupport::adjudicated(..)` — the only public
+/// constructor that can mint an `Accepted`/`Rejected`/`Superseded` claim.
+/// Every other production call site must instead go through a registered
+/// authority finalizer (currently just the curation-rpc `curation.finalized`
+/// write) so "confidence cannot become authority" without an explicit
+/// judgment event backing it.
+const CLAIM_SUPPORT_ADJUDICATED_ALLOWLIST: &[&str] = &[
+    // Defines the constructor itself (doc comments reference it by name).
+    "crate/sinex-primitives/src/derivation.rs",
+    // The one finalizer seam that promotes a proposal to an accepted claim
+    // (`apply_curation_finalized_declaration`, gated on an actual judgment
+    // event id — sinex-0vx.5).
+    "crate/sinexd/src/api/handlers/curation.rs",
+];
+
+fn check_claim_support_adjudicated_call_sites() -> Result<Vec<String>> {
+    let workspace = workspace_root();
+    let mut violations = Vec::new();
+
+    for entry in WalkDir::new(workspace.join("crate")) {
+        let entry =
+            entry.with_context(|| "failed to walk crate/ for ClaimSupport::adjudicated calls")?;
+        let path = entry.path();
+        if !entry.file_type().is_file()
+            || path.extension().and_then(|ext| ext.to_str()) != Some("rs")
+        {
+            continue;
+        }
+        let rel_path = ignored_test_contract_rel_path(path, &workspace);
+        if is_tests_path(&rel_path)
+            || rel_path.ends_with("_test.rs")
+            || CLAIM_SUPPORT_ADJUDICATED_ALLOWLIST.contains(&rel_path.as_str())
+        {
+            continue;
+        }
+        let contents = fs::read_to_string(path).with_context(|| {
+            format!("failed to read {rel_path} for ClaimSupport::adjudicated scan")
+        })?;
+        violations.extend(claim_support_adjudicated_violations_for_file(
+            &rel_path, &contents,
+        ));
+    }
+    Ok(violations)
+}
+
+fn claim_support_adjudicated_violations_for_file(file: &str, contents: &str) -> Vec<String> {
+    let mut violations = Vec::new();
+    for (idx, line) in contents.lines().enumerate() {
+        let trimmed = line.trim_start();
+        if trimmed.starts_with("//") {
+            continue;
+        }
+        if trimmed.contains("ClaimSupport::adjudicated(") {
+            violations.push(format!(
+                "{file}:{}: `ClaimSupport::adjudicated(..)` (an Accepted/Rejected/Superseded \
+                 claim) must only be called from a registered authority finalizer seam, not a \
+                 new production call site — route promotion through the curation finalizer \
+                 (sinex-0vx.5) or add this file to CLAIM_SUPPORT_ADJUDICATED_ALLOWLIST with a \
+                 finalizer-registration justification (sinex-0vx.8)",
+                idx + 1
+            ));
+        }
     }
     violations
 }

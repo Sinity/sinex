@@ -24,13 +24,17 @@ use camino::{Utf8Path, Utf8PathBuf};
 use mime_guess::MimeGuess;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
+use sinex_primitives::derivation::{
+    ClaimSupportTemplate, ClaimTemporalQuality, DerivationOutputDeclaration,
+    DerivationWriteSurface, DerivedProductClass, InputEligibility, SourceCoverage, SupportLevel,
+};
 use sinex_primitives::temporal::Timestamp;
 use sinex_primitives::validation::validate_path_within_root;
 use sinex_primitives::{
     Uuid,
     domain::SanitizedPath,
     events::{
-        EventId, EventPayload,
+        Event, EventId, EventPayload,
         payloads::{KnowledgeTagAppliedPayload, document::DocumentIngestedPayload},
     },
 };
@@ -45,6 +49,57 @@ use tracing::{error, info, warn};
 
 const ENCODING_SNIFF_BYTES: usize = 4096;
 const MATERIAL_REASON_INGEST: &str = "document-source:ingest";
+
+/// Derivation control-plane declarations for the document source runtime
+/// (sinex-0vx.8). `ingest_document` builds and inserts its own
+/// `knowledge.tag_applied` auto-tag events directly (MIME-based tagging on
+/// ingest) rather than through the `tag-applier` automaton adapter — before
+/// this declaration existed, that write never stamped `product_class`/
+/// `claim_support`/`derivation_declaration_id`, so it was an anonymous
+/// derived output that the `derivation.enforce_event_product_declaration()`
+/// trigger's `product_class IS NULL` short-circuit silently let through the
+/// gate while still violating the `source_event_ids IS NULL OR
+/// product_class IS NOT NULL` CHECK constraint (sinex-0vx.4) — i.e. this
+/// path would have failed at insert time the first time it was actually
+/// exercised against a schema-converged database. Reconciled at `sinexd`
+/// startup the same way as `curation::CURATION_OUTPUT_DECLARATIONS`.
+pub const DOCUMENT_SOURCE_OUTPUT_DECLARATIONS: &[DerivationOutputDeclaration] =
+    &[DOCUMENT_AUTO_TAG_DECLARATION];
+
+const DOCUMENT_AUTO_TAG_DECLARATION: DerivationOutputDeclaration = DerivationOutputDeclaration {
+    declaration_id: "document-source.knowledge.tag_applied",
+    owner: "document-source",
+    product_class: DerivedProductClass::SemanticCandidate,
+    write_surface: DerivationWriteSurface::DerivedOutput,
+    output_source: Some("knowledge-graph"),
+    output_event_type: Some("knowledge.tag_applied"),
+    projection_kind: None,
+    artifact_kind: None,
+    proposal_kind: None,
+    semantics_version: "1.0.0",
+    input_eligibility: InputEligibility::ExplicitOnly,
+    default_support: ClaimSupportTemplate::new(
+        SupportLevel::Direct,
+        SourceCoverage::Covered,
+        ClaimTemporalQuality::InheritParent,
+    ),
+    verification_command: "xtask test -p sinexd -E 'test(document_auto_tag_declares_product_class)'",
+};
+
+/// Stamp the derivation control-plane declaration (sinex-0vx.8) on a
+/// handler-built auto-tag event so it satisfies both the `source_event_ids
+/// IS NULL OR product_class IS NOT NULL` CHECK constraint and the
+/// `derivation.enforce_event_product_declaration()` trigger, the same way
+/// `curation`/`instructions`/`entity_chain_shadow`'s handler-built events do.
+/// Pulled out as its own function so the stamping contract is unit-testable
+/// without a database (see `document_auto_tag_declares_product_class` below).
+fn stamp_document_auto_tag_declaration(event: &mut Event<KnowledgeTagAppliedPayload>) {
+    event.product_class = Some(DOCUMENT_AUTO_TAG_DECLARATION.product_class);
+    event.claim_support =
+        Some(DOCUMENT_AUTO_TAG_DECLARATION.default_support.instantiate(1, 0, 1, 0));
+    event.derivation_declaration_id =
+        Some(DOCUMENT_AUTO_TAG_DECLARATION.declaration_id.to_string());
+}
 
 /// Configuration for the document source.
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -708,7 +763,7 @@ impl DocumentSourceDriver {
                 tag_name: tag_name.clone(),
                 tag_source: "auto.mime".into(),
             };
-            let tag_event = tag_payload
+            let mut tag_event = tag_payload
                 .from_parents([EventId::from_uuid(document_event_uuid)])
                 .map_err(|e| {
                     SinexError::processing("Failed to set auto-tag event provenance").with_source(e)
@@ -717,6 +772,7 @@ impl DocumentSourceDriver {
                 .map_err(|e| {
                     SinexError::processing("Failed to build auto-tag event").with_source(e)
                 })?;
+            stamp_document_auto_tag_declaration(&mut tag_event);
             let tag_json_event = tag_event.to_json_event().map_err(|e| {
                 SinexError::processing("Failed to serialize auto-tag event").with_source(e)
             })?;

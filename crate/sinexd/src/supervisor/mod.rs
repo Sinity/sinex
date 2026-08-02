@@ -468,6 +468,15 @@ async fn reconcile_product_declarations(event_engine_config: &EventEngineConfig)
             crate::automata::entity_chain_shadow::ENTITY_CHAIN_SHADOW_OUTPUT_DECLARATIONS,
         )
         .await?;
+        // sinex-0vx.8: document source's own MIME-based auto-tag write
+        // (builds `knowledge.tag_applied` events directly, outside the
+        // tag-applier automaton adapter).
+        inserted += crate::automata::product_declarations::reconcile_declarations(
+            &pool,
+            "document-source",
+            crate::sources::source_contracts::document::runtime::DOCUMENT_SOURCE_OUTPUT_DECLARATIONS,
+        )
+        .await?;
 
         // sinex-0vx.5: reconcile authority.finalizer_registry AFTER product
         // declarations — finalizer_registry.derivation_declaration_id

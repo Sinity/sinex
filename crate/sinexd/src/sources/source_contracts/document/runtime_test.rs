@@ -1,7 +1,9 @@
-use super::DocumentSourceDriver;
+use super::{DOCUMENT_AUTO_TAG_DECLARATION, DocumentSourceDriver, stamp_document_auto_tag_declaration};
 use crate::runtime::ExplorationProvider;
 use crate::runtime::stream::Checkpoint;
 use serde_json::json;
+use sinex_primitives::events::{EventId, EventPayload};
+use sinex_primitives::events::payloads::KnowledgeTagAppliedPayload;
 use sinex_primitives::temporal::Timestamp;
 use xtask::sandbox::sinex_test;
 
@@ -118,5 +120,44 @@ async fn document_source_reports_last_scan_as_activity_and_history()
     );
 
     assert!(source.get_ingestion_history(0)?.is_empty());
+    Ok(())
+}
+
+/// sinex-0vx.8: before `stamp_document_auto_tag_declaration` existed, the
+/// document source's MIME-based auto-tag write built a `knowledge.tag_applied`
+/// event via `from_parents(..).build()` and inserted it directly, with no
+/// `product_class`/`claim_support`/`derivation_declaration_id` set — an
+/// anonymous derived output that would fail the `source_event_ids IS NULL OR
+/// product_class IS NOT NULL` CHECK constraint the first time it hit a
+/// schema-converged database. This is the regression test for that fix,
+/// named in `DOCUMENT_AUTO_TAG_DECLARATION.verification_command`.
+#[sinex_test]
+async fn document_auto_tag_declares_product_class() -> ::xtask::sandbox::TestResult<()> {
+    let payload = KnowledgeTagAppliedPayload {
+        entity_id: uuid::Uuid::new_v4(),
+        tag_name: "mime.text/plain".to_string(),
+        tag_source: "auto.mime".to_string(),
+    };
+    let mut event = payload
+        .from_parents([EventId::new()])
+        .expect("from_parents with a non-empty parent set must succeed")
+        .build()
+        .expect("build with a valid provenance must succeed");
+
+    assert_eq!(event.product_class, None, "unstamped baseline must be anonymous");
+    assert_eq!(event.claim_support, None);
+    assert_eq!(event.derivation_declaration_id, None);
+
+    stamp_document_auto_tag_declaration(&mut event);
+
+    assert_eq!(
+        event.product_class,
+        Some(DOCUMENT_AUTO_TAG_DECLARATION.product_class)
+    );
+    assert!(event.claim_support.is_some());
+    assert_eq!(
+        event.derivation_declaration_id.as_deref(),
+        Some(DOCUMENT_AUTO_TAG_DECLARATION.declaration_id)
+    );
     Ok(())
 }
