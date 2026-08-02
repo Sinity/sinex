@@ -157,7 +157,7 @@ impl Transducer for EntityExtractor {
 
 // ── Entity extraction ──────────────────────────────────────────────────
 
-fn extract_text_fields(value: &serde_json::Value) -> String {
+pub(crate) fn extract_text_fields(value: &serde_json::Value) -> String {
     let mut text = String::new();
 
     // Recurse into objects and collect all string values.
@@ -204,7 +204,7 @@ fn extract_text_fields(value: &serde_json::Value) -> String {
     text
 }
 
-fn find_first_entity(text: &str) -> Option<EntityExtractedPayload> {
+pub(crate) fn find_first_entity(text: &str) -> Option<EntityExtractedPayload> {
     // Try patterns in priority order: URL > file path > email > command.
 
     if let Ok(pattern) = &*URL_PATTERN

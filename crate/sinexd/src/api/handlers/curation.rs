@@ -84,7 +84,7 @@ const CURATION_PROPOSAL_DECLARATION: DerivationOutputDeclaration = DerivationOut
 /// shared declaration). An authority decision over a proposal —
 /// `OperatorJudgment` per `DerivedProductClass::OperatorJudgment`'s doc
 /// ("only the curation/authority finalizer writer may emit this class").
-const CURATION_JUDGMENT_DECLARATION: DerivationOutputDeclaration = DerivationOutputDeclaration {
+pub(crate) const CURATION_JUDGMENT_DECLARATION: DerivationOutputDeclaration = DerivationOutputDeclaration {
     declaration_id: "curation-rpc.curation.judgment",
     owner: "curation-rpc",
     product_class: DerivedProductClass::OperatorJudgment,

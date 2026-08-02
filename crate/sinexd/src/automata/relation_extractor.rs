@@ -42,11 +42,11 @@ use sinex_primitives::temporal::{Duration, Timestamp};
 /// with the trimmed `source_event_ids` (only the 2 contributing entries
 /// per pair, not the whole window), per-close emission cost drops from
 /// ~64 GB to ~60 KB.
-const MAX_WINDOW_ENTITIES: usize = 50;
+pub(crate) const MAX_WINDOW_ENTITIES: usize = 50;
 
 /// Inter-event gap that triggers a window close. 300 s = "5 minutes of
 /// quiet" — natural-rest boundary in the user's activity stream.
-const WINDOW_GAP_SECS: i64 = 300;
+pub(crate) const WINDOW_GAP_SECS: i64 = 300;
 
 /// Force-emit interval. Even under continuous activity (no 300 s gap),
 /// the window closes periodically so accumulated co-occurrences flow
@@ -54,9 +54,9 @@ const WINDOW_GAP_SECS: i64 = 300;
 /// emission — works, but produces large bursts at irregular intervals.
 /// 60 s gives steady downstream pressure and bounds in-memory window
 /// growth to ~60 s of arrivals at typical activity rates.
-const WINDOW_FORCE_EMIT_SECS: i64 = 60;
+pub(crate) const WINDOW_FORCE_EMIT_SECS: i64 = 60;
 
-const CO_OCCURRENCE_CONFIDENCE: f64 = 0.5;
+pub(crate) const CO_OCCURRENCE_CONFIDENCE: f64 = 0.5;
 
 /// Persistent window state: the current co-occurrence window.
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]

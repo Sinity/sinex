@@ -260,7 +260,7 @@ fn hour_of_day(ts: Timestamp) -> u8 {
 }
 
 /// Map `entity_type` to a coarse `EntityCategory`.
-fn refine_category(entity_type: &str) -> EntityCategory {
+pub(crate) fn refine_category(entity_type: &str) -> EntityCategory {
     match entity_type {
         "tool" | "binary" | "cli" => EntityCategory::Tool,
         "project" | "repo" | "repository" => EntityCategory::Project,

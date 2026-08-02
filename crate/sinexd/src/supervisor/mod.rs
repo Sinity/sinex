@@ -457,6 +457,17 @@ async fn reconcile_product_declarations(event_engine_config: &EventEngineConfig)
             crate::session_lane::SESSION_LANE_OUTPUT_DECLARATIONS,
         )
         .await?;
+        // sinex-0vx.9: the entity-chain shadow lane's own declaration
+        // (StreamCheckpoint-scoped entity/relation candidates), separate
+        // from the per-automaton entity-chain declarations reconciled above
+        // via the AUTOMATA registry — this is the batched shadow-lane
+        // writer's own declaration_id, not the live automaton path's.
+        inserted += crate::automata::product_declarations::reconcile_declarations(
+            &pool,
+            "entity-chain-shadow",
+            crate::automata::entity_chain_shadow::ENTITY_CHAIN_SHADOW_OUTPUT_DECLARATIONS,
+        )
+        .await?;
 
         // sinex-0vx.5: reconcile authority.finalizer_registry AFTER product
         // declarations — finalizer_registry.derivation_declaration_id
@@ -472,6 +483,14 @@ async fn reconcile_product_declarations(event_engine_config: &EventEngineConfig)
         crate::authority::reconcile_finalizer_registrations(
             &pool,
             crate::session_lane::SESSION_LANE_FINALIZER_DECLARATIONS,
+        )
+        .await?;
+        // sinex-0vx.9: the entity-chain shadow lane's own finalizer
+        // registration -- promotion of an entity.related candidate is
+        // rejected (curation-bypass) until this row exists.
+        crate::authority::reconcile_finalizer_registrations(
+            &pool,
+            crate::automata::entity_chain_shadow::ENTITY_CHAIN_RELATION_FINALIZER_DECLARATIONS,
         )
         .await?;
 
