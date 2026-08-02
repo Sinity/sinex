@@ -2,6 +2,7 @@
 
 use serde_json::json;
 use sinex_db::DbPoolExt;
+use sinex_db::repositories::SourceMaterial as SourceMaterialRegistration;
 use sinex_primitives::events::DynamicPayload;
 use sinex_primitives::rpc::audit::AuditGetRequest;
 use sinex_primitives::rpc::audit::AuditGetResponse;
@@ -520,6 +521,256 @@ async fn tombstone_approve_preserves_material_with_other_references(
     assert!(
         row.is_some(),
         "material registry row must survive tombstone when other events still reference it"
+    );
+
+    Ok(())
+}
+
+/// Regression test for sinex-audit-cas-shared-blob-delete: content-addressed
+/// dedup means two DIFFERENT `raw.source_material_registry` rows can point at
+/// the same `core.blobs` row (no UNIQUE constraint on `optional_blob_id`; this
+/// is exactly what `sources.stage --with-bytes` produces when re-staging
+/// identical content -- a new material row every time, but one shared blob).
+///
+/// Tombstone material A's only event (orphaning material A) while material B
+/// -- sharing the same blob -- still has a live event. Before the fix,
+/// delete-on-tombstone dropped the CAS content unconditionally once it found
+/// ANY orphaned material pointing at the blob, destroying content material B
+/// still depends on. After the fix, the blob is only dropped once its
+/// reference count is genuinely zero.
+#[sinex_test]
+async fn tombstone_approve_preserves_shared_blob_content_for_live_sibling_material(
+    ctx: TestContext,
+) -> TestResult<()> {
+    let auth = RpcAuthContext::system();
+    let services = ServiceContainer::from_database_url(ctx.database_url().to_string()).await?;
+    let source = "test.lifecycle.tombstone.shared-blob-survives";
+
+    // Ingest once: this is the one core.blobs row two independently-staged
+    // materials will both reference (mirrors what content-addressed dedup
+    // does across two separate `sources.stage --with-bytes` calls).
+    let content_store = services.content.content_store();
+    let payload = b"shared-blob-survives-sibling regression payload";
+    let blob = content_store
+        .ingest_from_bytes(payload, "shared-blob.bin", "application/octet-stream")
+        .await?;
+    let content_key = blob.content_key();
+
+    let materials = ctx.pool().source_materials();
+    let material_a = materials
+        .register_material(
+            SourceMaterialRegistration::blob_binary("shared-blob-a.bin").with_blob_id(blob.id),
+        )
+        .await?;
+    let material_b = materials
+        .register_material(
+            SourceMaterialRegistration::blob_binary("shared-blob-b.bin").with_blob_id(blob.id),
+        )
+        .await?;
+    let material_a_id = sinex_primitives::Id::from_uuid(material_a.id);
+    let material_b_id = sinex_primitives::Id::from_uuid(material_b.id);
+
+    // A live event for each material -- both are legitimately reachable.
+    let event_a = ctx
+        .pool()
+        .events()
+        .insert(
+            DynamicPayload::new(source, "test.lifecycle.shared-blob.a", json!({ "which": "a" }))
+                .from_material(material_a_id)
+                .build()?,
+        )
+        .await?;
+    let event_a_id = event_a.id.expect("inserted event must have id").to_string();
+
+    let _event_b = ctx
+        .pool()
+        .events()
+        .insert(
+            DynamicPayload::new(source, "test.lifecycle.shared-blob.b", json!({ "which": "b" }))
+                .from_material(material_b_id)
+                .build()?,
+        )
+        .await?;
+
+    // Archive + tombstone ONLY event A, so material A (but not material B)
+    // becomes an orphan candidate.
+    let archive: LifecycleArchiveResponse = serde_json::from_value(
+        handle_lifecycle_archive(
+            ctx.pool(),
+            json!({
+                "event_ids": [event_a_id.clone()],
+                "dry_run": false,
+                "reason": "shared-blob test: archive A only",
+            }),
+            &auth,
+        )
+        .await?,
+    )?;
+    assert_eq!(archive.archived_count, 1);
+
+    let create: TombstoneCreateResponse = serde_json::from_value(
+        handle_tombstone_create(
+            ctx.pool(),
+            json!({
+                "source": source,
+                "limit": 1,
+                "reason": "shared-blob test: preview",
+            }),
+            &auth,
+        )
+        .await?,
+    )?;
+
+    let approve: TombstoneApproveResponse = serde_json::from_value(
+        handle_tombstone_approve(
+            json!({
+                "operation_id": create.operation.operation_id,
+                "yes_i_understand_data_is_gone": true,
+            }),
+            &services,
+            &auth,
+        )
+        .await?,
+    )?;
+    assert_eq!(approve.operation.tombstoned_count, Some(1));
+
+    // Material A is gone (delete-on-tombstone still fires for the genuinely
+    // orphaned material row).
+    let row_a_after = materials
+        .get_by_id(sinex_primitives::Id::from_uuid(material_a.id))
+        .await?;
+    assert!(
+        row_a_after.is_none(),
+        "orphaned material A's registry row must still be deleted"
+    );
+
+    // Material B is untouched -- its own event is still live.
+    let row_b_after = materials
+        .get_by_id(sinex_primitives::Id::from_uuid(material_b.id))
+        .await?;
+    assert!(
+        row_b_after.is_some(),
+        "material B must survive: its own event is still live"
+    );
+
+    // The shared blob row must survive -- material B still references it.
+    let blob_row_after = ctx.pool().blobs().get_by_id(blob.id).await?;
+    assert!(
+        blob_row_after.is_some(),
+        "shared blob row must NOT be deleted while material B still references it"
+    );
+
+    // And the CAS content itself must survive and remain retrievable --
+    // this is the actual data-loss surface: material B's future
+    // retrieve_content/replay must not fail with content missing.
+    let retrieved = content_store.retrieve_content(&content_key).await?;
+    assert_eq!(
+        retrieved, payload,
+        "shared CAS content must survive delete-on-tombstone while a live sibling references it"
+    );
+
+    Ok(())
+}
+
+/// Companion to the shared-blob-survives test above: once the LAST reference
+/// to a blob is genuinely gone (no sibling material, no live/archived event),
+/// delete-on-tombstone must actually remove both the CAS content and the
+/// `core.blobs` row -- otherwise the row survives forever as a zombie that
+/// later fools dedup on re-ingestion (sinex-audit-cas-zombie-blob-rows).
+#[sinex_test]
+async fn tombstone_approve_deletes_blob_row_once_last_reference_is_gone(
+    ctx: TestContext,
+) -> TestResult<()> {
+    let auth = RpcAuthContext::system();
+    let services = ServiceContainer::from_database_url(ctx.database_url().to_string()).await?;
+    let source = "test.lifecycle.tombstone.blob-row-cleanup";
+
+    let content_store = services.content.content_store();
+    let payload = b"blob-row-cleanup-on-last-reference regression payload";
+    let blob = content_store
+        .ingest_from_bytes(payload, "cleanup-blob.bin", "application/octet-stream")
+        .await?;
+    let content_key = blob.content_key();
+
+    let materials = ctx.pool().source_materials();
+    let material = materials
+        .register_material(
+            SourceMaterialRegistration::blob_binary("cleanup-blob.bin").with_blob_id(blob.id),
+        )
+        .await?;
+    let material_id = sinex_primitives::Id::from_uuid(material.id);
+
+    let event = ctx
+        .pool()
+        .events()
+        .insert(
+            DynamicPayload::new(source, "test.lifecycle.blob-cleanup", json!({ "n": 1 }))
+                .from_material(material_id)
+                .build()?,
+        )
+        .await?;
+    let event_id = event.id.expect("inserted event must have id").to_string();
+
+    let archive: LifecycleArchiveResponse = serde_json::from_value(
+        handle_lifecycle_archive(
+            ctx.pool(),
+            json!({
+                "event_ids": [event_id],
+                "dry_run": false,
+                "reason": "blob-row-cleanup test: archive",
+            }),
+            &auth,
+        )
+        .await?,
+    )?;
+    assert_eq!(archive.archived_count, 1);
+
+    let create: TombstoneCreateResponse = serde_json::from_value(
+        handle_tombstone_create(
+            ctx.pool(),
+            json!({
+                "source": source,
+                "limit": 1,
+                "reason": "blob-row-cleanup test: preview",
+            }),
+            &auth,
+        )
+        .await?,
+    )?;
+
+    let approve: TombstoneApproveResponse = serde_json::from_value(
+        handle_tombstone_approve(
+            json!({
+                "operation_id": create.operation.operation_id,
+                "yes_i_understand_data_is_gone": true,
+            }),
+            &services,
+            &auth,
+        )
+        .await?,
+    )?;
+    assert_eq!(approve.operation.tombstoned_count, Some(1));
+
+    // Material row is gone (unchanged behavior).
+    let row_after = materials
+        .get_by_id(sinex_primitives::Id::from_uuid(material.id))
+        .await?;
+    assert!(row_after.is_none(), "orphaned material row must be deleted");
+
+    // The blob row itself must ALSO be gone now — it has zero remaining
+    // references. Before the fix, core.blobs rows were never deleted
+    // anywhere, leaving a permanent zombie row behind.
+    let blob_row_after = ctx.pool().blobs().get_by_id(blob.id).await?;
+    assert!(
+        blob_row_after.is_none(),
+        "dereferenced blob row must be deleted, not left as a zombie"
+    );
+
+    // And the CAS content is actually gone from disk.
+    let retrieve_result = content_store.retrieve_content(&content_key).await;
+    assert!(
+        retrieve_result.is_err(),
+        "CAS content must be genuinely dropped once the last reference is gone"
     );
 
     Ok(())

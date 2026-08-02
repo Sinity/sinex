@@ -292,6 +292,77 @@ impl BlobRepository {
         Ok(())
     }
 
+    /// Check whether a blob still has any live reference other than the
+    /// given source material.
+    ///
+    /// Content-addressed dedup means a blob can be shared by multiple
+    /// `raw.source_material_registry` rows (no UNIQUE constraint on
+    /// `optional_blob_id`) and can also be referenced directly by
+    /// `core.events`/`audit.archived_events` via `associated_blob_ids`
+    /// (derived events that carry blob provenance without going through a
+    /// material). Delete-on-tombstone must only drop CAS content once the
+    /// reference count across ALL of these surfaces is genuinely zero --
+    /// see sinex-audit-cas-shared-blob-delete.
+    #[instrument(skip(self))]
+    pub async fn is_referenced_excluding_material(
+        &self,
+        blob_id: Id<Blob>,
+        excluding_material_id: uuid::Uuid,
+    ) -> DbResult<bool> {
+        let blob_uuid = blob_id.to_uuid();
+        let referenced = sqlx::query_scalar!(
+            r#"
+            SELECT (
+                EXISTS (
+                    SELECT 1 FROM raw.source_material_registry m
+                    WHERE m.optional_blob_id = $1 AND m.id <> $2
+                )
+                OR EXISTS (
+                    SELECT 1 FROM core.events e
+                    WHERE e.associated_blob_ids IS NOT NULL
+                      AND $1 = ANY(e.associated_blob_ids)
+                )
+                OR EXISTS (
+                    SELECT 1 FROM audit.archived_events ae
+                    WHERE ae.associated_blob_ids IS NOT NULL
+                      AND $1 = ANY(ae.associated_blob_ids)
+                )
+            ) AS "referenced!"
+            "#,
+            blob_uuid,
+            excluding_material_id
+        )
+        .fetch_one(&self.pool)
+        .await
+        .map_err(|e| db_error(e, "check blob reference count"))?;
+
+        Ok(referenced)
+    }
+
+    /// Delete a blob row by ID. Returns `true` if a row was actually removed.
+    ///
+    /// Caller is responsible for confirming the blob has zero remaining live
+    /// references (see [`Self::is_referenced_excluding_material`]) and for
+    /// dropping the associated CAS content separately -- this only removes
+    /// the `core.blobs` row. Without this, delete-on-tombstone drops the CAS
+    /// file but leaves a zombie row behind forever (sinex-audit-cas-zombie-blob-rows).
+    #[instrument(skip(self))]
+    pub async fn delete_by_id(&self, id: Id<Blob>) -> DbResult<bool> {
+        let id_uuid = id.to_uuid();
+        let result = sqlx::query!(
+            r#"
+            DELETE FROM core.blobs
+            WHERE id = $1
+            "#,
+            id_uuid
+        )
+        .execute(&self.pool)
+        .await
+        .map_err(|e| db_error(e, "delete blob by id"))?;
+
+        Ok(result.rows_affected() > 0)
+    }
+
     /// Get storage statistics
     #[instrument(skip(self))]
     pub async fn get_storage_stats(&self) -> DbResult<StorageStats> {
