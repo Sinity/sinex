@@ -632,6 +632,76 @@ async fn operator_telemetry_handlers_follow_read_model_schema(ctx: TestContext) 
     Ok(())
 }
 
+/// `sinex-audit-telemetry-health-view-staleorder`: `current_health` used to
+/// order its `DISTINCT ON (source, component)` tiebreak by `ts_coided`
+/// (insertion/arrival order) instead of `ts_orig` (occurrence time) -- the
+/// same bug PR #2556 fixed inside `HealthAggregator::reconcile`, just
+/// unpropagated to this downstream SQL view. Simulates an out-of-order
+/// arrival: a "degraded" event lands first with a recent `ts_orig`, then a
+/// stale "healthy" event with an OLDER `ts_orig` arrives late (inserted
+/// after, so it has a larger `ts_coided`/`id`). If the view still tiebreaks
+/// on `ts_coided`, it reports "healthy" (masking the real outage) -- this
+/// test fails if the `ORDER BY ... ts_orig DESC` guard is reverted back to
+/// `ts_coided DESC`.
+#[sinex_test]
+async fn current_health_view_does_not_revert_to_stale_status_on_out_of_order_arrival(
+    ctx: TestContext,
+) -> TestResult<()> {
+    sinex_db::schema::apply::apply(ctx.pool()).await?;
+
+    let recent_occurrence = time::OffsetDateTime::now_utc() - time::Duration::minutes(1);
+    let stale_occurrence = recent_occurrence - time::Duration::minutes(10);
+
+    // Genuine, recent occurrence: the gateway went degraded a minute ago.
+    insert_event(
+        &ctx,
+        "sinex",
+        "health.status",
+        json!({
+            "component": "gateway",
+            "current_status": "degraded",
+            "reason": "elevated latency"
+        }),
+        Some(recent_occurrence),
+    )
+    .await?;
+
+    // A late-arriving event reporting an OLDER occurrence (`ts_orig` well
+    // before the degraded transition above), inserted second so its
+    // `ts_coided`/`id` is larger. This must not win the tiebreak.
+    insert_event(
+        &ctx,
+        "sinex",
+        "health.status",
+        json!({
+            "component": "gateway",
+            "current_status": "healthy",
+            "reason": "steady"
+        }),
+        Some(stale_occurrence),
+    )
+    .await?;
+
+    let current_health: TelemetryCurrentHealthResponse =
+        handle_telemetry_current_health(ctx.pool(), TelemetryLimitRequest { limit: Some(10) })
+            .await?;
+
+    assert_eq!(current_health.entries.len(), 1);
+    assert_eq!(current_health.entries[0].source, "sinex");
+    assert_eq!(
+        current_health.entries[0].component.as_deref(),
+        Some("gateway")
+    );
+    assert_eq!(
+        current_health.entries[0].status.as_deref(),
+        Some("degraded"),
+        "out-of-order late arrival with an older ts_orig must not revert the \
+         reported status to a stale healthier value"
+    );
+
+    Ok(())
+}
+
 #[sinex_test]
 async fn telemetry_handlers_reject_non_positive_limits(ctx: TestContext) -> TestResult<()> {
     let error =

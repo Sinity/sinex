@@ -79,6 +79,14 @@ pub enum DriftCategory {
     /// without updating the source. Columns listed in the table's `pending_drop`
     /// allow-list are excluded from this check.
     OrphanColumn,
+    /// Body of a load-bearing view diverged from the declared snapshot.
+    /// Unlike trigger functions (always re-applied via `CREATE OR REPLACE
+    /// FUNCTION` inside `create_triggers_and_functions`), several telemetry
+    /// views are only re-created when `check_telemetry_drifts` reports an
+    /// existence/relkind drift -- a body-only change can silently never
+    /// reconcile onto an already-deployed database. See
+    /// `sinex-audit-telemetry-health-view-staleorder`.
+    ViewBody,
 }
 
 impl fmt::Display for DriftCategory {
@@ -91,6 +99,7 @@ impl fmt::Display for DriftCategory {
             Self::HypertableSetting => write!(f, "hypertable_setting"),
             Self::Comment => write!(f, "comment"),
             Self::OrphanColumn => write!(f, "orphan_column"),
+            Self::ViewBody => write!(f, "view_body"),
         }
     }
 }
@@ -134,6 +143,7 @@ pub async fn check_strict(pool: &PgPool) -> Result<Vec<StrictDrift>, ApplyError>
     drifts.extend(check_foreign_key_actions(pool).await?);
     drifts.extend(check_hypertable_settings(pool).await?);
     drifts.extend(check_orphan_columns(pool).await?);
+    drifts.extend(check_view_bodies(pool).await?);
     Ok(drifts)
 }
 
@@ -546,6 +556,96 @@ async fn check_trigger_function_bodies(pool: &PgPool) -> Result<Vec<StrictDrift>
         if !missing.is_empty() {
             drifts.push(StrictDrift {
                 category: DriftCategory::TriggerBody,
+                location,
+                declared_summary: format!("must contain markers {:?}", declared.expected_markers),
+                observed_summary: format!("body missing markers {missing:?}"),
+            });
+        }
+    }
+    Ok(drifts)
+}
+
+// ─── View bodies ────────────────────────────────────────────────────────────
+//
+// `sinex-audit-telemetry-health-view-staleorder`: unlike trigger functions
+// (unconditionally re-applied via `CREATE OR REPLACE FUNCTION` on every
+// `create_triggers_and_functions` call), several telemetry views under
+// `sinex_telemetry` are only recreated when `check_telemetry_drifts` reports
+// an existence/relkind drift -- so a body-only fix (e.g. changing an
+// `ORDER BY` tiebreak) can silently never reconcile onto an already-deployed
+// database. `sinex_telemetry.current_health` is now managed independently
+// via `ensure_view_sql` (hash-gated, the `sinex-o1mg`/#2571 pattern) so it
+// always reconciles; this strict-diff check is the second, orthogonal net
+// (catches manual prod edits between applies, same role
+// `DECLARED_FUNCTION_BODIES` plays for trigger functions).
+
+/// One declared expectation for a view body.
+struct DeclaredViewBody {
+    schema: &'static str,
+    view_name: &'static str,
+    /// Substrings that MUST appear in the live `pg_get_viewdef` output.
+    /// Markers, not a full-body hash, for the same reason as
+    /// `DeclaredFunctionBody`: Postgres reformats the query text.
+    expected_markers: &'static [&'static str],
+}
+
+const DECLARED_VIEW_BODIES: &[DeclaredViewBody] = &[DeclaredViewBody {
+    schema: "sinex_telemetry",
+    view_name: "current_health",
+    // The DISTINCT ON tiebreak must order by ts_orig (occurrence time) ahead
+    // of ts_coided (insertion/arrival order) -- an out-of-order
+    // `health.status` event must never win the tiebreak and revert the
+    // reported current status to a stale healthier value, masking a real
+    // outage (the exact bug PR #2556 fixed inside `HealthAggregator::reconcile`,
+    // unpropagated to this downstream view). `ts_orig DESC NULLS LAST` must
+    // appear before any `ts_coided`-only ordering.
+    expected_markers: &["ts_orig", "DESC NULLS LAST"],
+}];
+
+async fn check_view_bodies(pool: &PgPool) -> Result<Vec<StrictDrift>, ApplyError> {
+    let mut drifts = Vec::new();
+    for declared in DECLARED_VIEW_BODIES {
+        let observed: Option<String> = sqlx::query_scalar(
+            r"
+            SELECT pg_get_viewdef(c.oid)
+            FROM pg_class c
+            JOIN pg_namespace n ON n.oid = c.relnamespace
+            WHERE n.nspname = $1
+              AND c.relname = $2
+              AND c.relkind = 'v'
+            ",
+        )
+        .bind(declared.schema)
+        .bind(declared.view_name)
+        .fetch_optional(pool)
+        .await?;
+
+        let location = format!("{}.{}", declared.schema, declared.view_name);
+
+        let Some(body) = observed else {
+            drifts.push(StrictDrift {
+                category: DriftCategory::ViewBody,
+                location,
+                declared_summary: format!(
+                    "view exists with markers {:?}",
+                    declared.expected_markers
+                ),
+                observed_summary: "view not present in pg_class (or not a plain view)"
+                    .to_string(),
+            });
+            continue;
+        };
+
+        let missing: Vec<&str> = declared
+            .expected_markers
+            .iter()
+            .copied()
+            .filter(|marker| !body.contains(marker))
+            .collect();
+
+        if !missing.is_empty() {
+            drifts.push(StrictDrift {
+                category: DriftCategory::ViewBody,
                 location,
                 declared_summary: format!("must contain markers {:?}", declared.expected_markers),
                 observed_summary: format!("body missing markers {missing:?}"),

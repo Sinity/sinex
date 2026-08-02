@@ -1295,6 +1295,11 @@ async fn configure_timescaledb(pool: &PgPool) -> Result<(), ApplyError> {
         execute_sql(pool, TELEMETRY_SQL).await?;
         execute_sql(pool, RECENT_ACTIVITY_SUMMARY_SQL).await?;
     }
+    // Unconditional (hash-gated), unlike the cascade above: reconciles a
+    // body-only ORDER BY/column change even when the view already exists
+    // with the right relkind. See `ensure_view_sql` and
+    // `sinex-audit-telemetry-health-view-staleorder`.
+    ensure_view_sql(pool, "sinex_telemetry.current_health", CURRENT_HEALTH_SQL).await?;
     execute_sql(
         pool,
         "DROP VIEW IF EXISTS core.event_temporal_facts, core.derived_scope_summary",
@@ -1656,6 +1661,68 @@ async fn ensure_function_and_trigger_set_sql(
 
     execute_sql(pool, sql).await?;
     mark_function_set_applied(pool, representative, &expected_hash).await?;
+    Ok(())
+}
+
+/// Content hash of a declared view's SQL, same rationale as
+/// [`function_set_hash`]: comparing against Postgres's own `pg_get_viewdef`
+/// reformatting is fragile (whitespace/comment normalization), so we hash
+/// our own declared source text instead.
+fn view_sql_hash(sql: &str) -> String {
+    blake3::hash(sql.as_bytes()).to_hex().to_string()
+}
+
+/// `sinex-audit-telemetry-health-view-staleorder`: read back the hash
+/// stashed by the previous apply, if any. Uses `pg_class` (not `pg_proc`)
+/// since the commented object is a view/relation, not a function.
+async fn applied_view_hash(
+    pool: &PgPool,
+    qualified_name: &str,
+) -> Result<Option<String>, ApplyError> {
+    let hash: Option<String> =
+        sqlx::query_scalar("SELECT obj_description(to_regclass($1), 'pg_class')")
+            .bind(qualified_name)
+            .fetch_one(pool)
+            .await?;
+    Ok(hash)
+}
+
+async fn mark_view_applied(
+    pool: &PgPool,
+    qualified_name: &str,
+    hash: &str,
+) -> Result<(), ApplyError> {
+    // See `mark_function_set_applied` for why this is a trusted interpolation:
+    // `qualified_name` is always one of our own `&'static str` constants and
+    // `hash` is always our own blake3 hex digest.
+    let sql = format!("COMMENT ON VIEW {qualified_name} IS '{hash}'");
+    execute_sql(pool, &sql).await
+}
+
+/// `sinex-audit-telemetry-health-view-staleorder`: the `ensure_function_set_sql`
+/// (`sinex-o1mg`) hash-gated reconciliation pattern, applied to a single
+/// `CREATE OR REPLACE VIEW`. Existence-only gating (the `TELEMETRY_SQL`
+/// cascade this view used to live in, driven by `check_telemetry_drifts`)
+/// never reconciles a body-only view definition change onto an
+/// already-deployed database: once the relation exists with the right
+/// `relkind`, "already exists" was silently treated as "already correct".
+/// Skip only when the declared SQL hash matches what was last applied (the
+/// real no-op case); always apply -- and re-stamp the hash -- when the
+/// relation is missing or the declared SQL has changed.
+async fn ensure_view_sql(
+    pool: &PgPool,
+    qualified_name: &str,
+    sql: &str,
+) -> Result<(), ApplyError> {
+    let expected_hash = view_sql_hash(sql);
+    let exists = matches!(relation_kind(pool, qualified_name).await?, Some('v'));
+
+    if exists && applied_view_hash(pool, qualified_name).await? == Some(expected_hash.clone()) {
+        return Ok(());
+    }
+
+    execute_sql(pool, sql).await?;
+    mark_view_applied(pool, qualified_name, &expected_hash).await?;
     Ok(())
 }
 
@@ -2817,7 +2884,30 @@ END
 $$;
 ";
 
-const TELEMETRY_SQL: &str = r"
+// sinex-audit-telemetry-health-view-staleorder: `current_health` reimplemented
+// the out-of-order bug PR #2556 fixed inside `HealthAggregator::reconcile` --
+// it independently recomputes "latest status" straight over raw
+// `health.status` events, and was ordering the DISTINCT ON tiebreak by
+// `ts_coided` (insertion/arrival order) instead of `ts_orig` (occurrence
+// time). An out-of-order `health.status` event (older `ts_orig`, but a
+// later, larger `ts_coided`/`id` because it was processed/inserted after)
+// would win the tiebreak and silently revert the reported status to a stale
+// healthier value, masking a real ongoing outage -- exactly the failure mode
+// #2556 eliminated in the automaton, just not in this downstream SQL view.
+// Fix: order by `ts_orig DESC NULLS LAST` first (occurrence time), with
+// `ts_coided DESC, id DESC` only as the deterministic tiebreak for an exact
+// `ts_orig` tie -- matching #2556's semantics where the later-processed
+// observation supersedes on a genuine tie, never on a strictly older
+// `ts_orig`. `last_update` now reports `ts_orig` (when the transition truly
+// happened) rather than `ts_coided` (when sinex happened to learn about it),
+// consistent with the winning row's own ordering key.
+//
+// This view is managed independently via `ensure_view_sql` (hash-gated, the
+// `sinex-o1mg`/#2571 pattern) rather than through the existence-only
+// `TELEMETRY_SQL` cascade below: the old existence-only gating meant a
+// body-only ORDER BY fix like this one would never reconcile onto an
+// already-deployed database.
+const CURRENT_HEALTH_SQL: &str = r"
 CREATE OR REPLACE VIEW sinex_telemetry.current_health AS
 SELECT DISTINCT ON (e.source, e.payload->>'component')
     e.source,
@@ -2825,13 +2915,15 @@ SELECT DISTINCT ON (e.source, e.payload->>'component')
     e.payload->>'component' AS component,
     e.payload->>'current_status' AS status,
     e.payload->>'reason' AS reason,
-    e.ts_coided AS last_update
+    e.ts_orig AS last_update
 FROM reflection.events e
 WHERE e.source = 'sinex'
   AND e.event_type = 'health.status'
   AND e.ts_coided > NOW() - INTERVAL '1 hour'
-ORDER BY e.source, e.payload->>'component', e.ts_coided DESC, e.id DESC;
+ORDER BY e.source, e.payload->>'component', e.ts_orig DESC NULLS LAST, e.ts_coided DESC, e.id DESC;
+";
 
+const TELEMETRY_SQL: &str = r"
 CREATE MATERIALIZED VIEW IF NOT EXISTS sinex_telemetry.current_device_state AS
 SELECT DISTINCT ON (payload->>'unit_name')
     payload->>'unit_name' AS unit_name,
