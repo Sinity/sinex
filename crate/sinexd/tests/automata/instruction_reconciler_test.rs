@@ -212,6 +212,145 @@ async fn late_workspace_observation_times_out_instruction() -> TestResult<()> {
     Ok(())
 }
 
+/// sinex-audit-instructionreconciler: two concurrent pending instructions
+/// targeting DIFFERENT workspaces. Only the observation matching the FIRST
+/// instruction's target ever arrives. The bug drained and evaluated ALL
+/// pending instructions against whichever single observation arrived first,
+/// so the second (unrelated) instruction was falsely marked `Contradicted`.
+///
+/// Anti-vacuity: reverting the per-candidate correlation fix in
+/// `reconcile_workspace_observation` (back to unconditionally mapping every
+/// pending instruction against the arriving observation) makes this test
+/// fail — the second instruction would come back `Contradicted` in the same
+/// output batch instead of staying pending.
+#[sinex_test]
+async fn concurrent_pending_instructions_are_not_cross_contaminated() -> TestResult<()> {
+    let mut reconciler = InstructionExpectationReconciler;
+    let mut state = InstructionExpectationState::default();
+    let started_at = Timestamp::from_unix_timestamp(1_700_000_000).expect("valid timestamp");
+    let observed_at = started_at + Duration::seconds(2);
+
+    let first_instruction_ctx = context(
+        DesktopWorkspaceSwitchInstructionPayload::SOURCE.as_str(),
+        DesktopWorkspaceSwitchInstructionPayload::EVENT_TYPE.as_str(),
+        started_at,
+    );
+    reconciler
+        .reconcile(
+            &mut state,
+            "desktop.hyprland.workspace",
+            serde_json::to_value(instruction(4, None, false)?)?,
+            &first_instruction_ctx,
+        )
+        .await?;
+
+    let second_instruction_ctx = context(
+        DesktopWorkspaceSwitchInstructionPayload::SOURCE.as_str(),
+        DesktopWorkspaceSwitchInstructionPayload::EVENT_TYPE.as_str(),
+        started_at,
+    );
+    let second_outputs = reconciler
+        .reconcile(
+            &mut state,
+            "desktop.hyprland.workspace",
+            serde_json::to_value(instruction(7, None, false)?)?,
+            &second_instruction_ctx,
+        )
+        .await?;
+    assert!(second_outputs.is_empty());
+    assert_eq!(state.pending_hyprland_workspace_len(), 2);
+
+    // Only the observation matching the FIRST instruction's target (4) ever
+    // arrives. The second instruction (target 7) has no matching observation
+    // yet -- it must stay pending, not get resolved by this unrelated one.
+    let observation_ctx = context(
+        HyprlandWorkspaceSwitchedPayload::SOURCE.as_str(),
+        HyprlandWorkspaceSwitchedPayload::EVENT_TYPE.as_str(),
+        observed_at,
+    );
+    let outputs = reconciler
+        .reconcile(
+            &mut state,
+            "desktop.hyprland.workspace",
+            serde_json::to_value(observation(4))?,
+            &observation_ctx,
+        )
+        .await?;
+
+    assert_eq!(outputs.len(), 1);
+    assert_eq!(
+        outputs[0].payload.status,
+        InstructionExpectationStatus::Fulfilled
+    );
+
+    // The second instruction is still pending -- not falsely Contradicted.
+    assert_eq!(state.pending_hyprland_workspace_len(), 1);
+
+    // Now the second instruction's own matching observation arrives.
+    let second_observation_ctx = context(
+        HyprlandWorkspaceSwitchedPayload::SOURCE.as_str(),
+        HyprlandWorkspaceSwitchedPayload::EVENT_TYPE.as_str(),
+        observed_at + Duration::seconds(1),
+    );
+    let second_observation_outputs = reconciler
+        .reconcile(
+            &mut state,
+            "desktop.hyprland.workspace",
+            serde_json::to_value(observation(7))?,
+            &second_observation_ctx,
+        )
+        .await?;
+
+    assert_eq!(second_observation_outputs.len(), 1);
+    assert_eq!(
+        second_observation_outputs[0].payload.status,
+        InstructionExpectationStatus::Fulfilled
+    );
+    assert_eq!(state.pending_hyprland_workspace_len(), 0);
+    Ok(())
+}
+
+/// sinex-audit-instructionreconciler: a pending instruction whose deadline
+/// elapses with NO observation ever arriving (a stalled observation source)
+/// must resolve `TimedOut` via the idle-flush path, not accumulate forever.
+#[sinex_test]
+async fn idle_flush_times_out_pending_instruction_with_no_observation() -> TestResult<()> {
+    let mut reconciler = InstructionExpectationReconciler;
+    let mut state = InstructionExpectationState::default();
+    let started_at = Timestamp::from_unix_timestamp(1_700_000_000).expect("valid timestamp");
+    let deadline = started_at + Duration::seconds(1);
+    let flush_at = started_at + Duration::seconds(10);
+
+    let instruction_ctx = context(
+        DesktopWorkspaceSwitchInstructionPayload::SOURCE.as_str(),
+        DesktopWorkspaceSwitchInstructionPayload::EVENT_TYPE.as_str(),
+        started_at,
+    );
+    reconciler
+        .reconcile(
+            &mut state,
+            "desktop.hyprland.workspace",
+            serde_json::to_value(instruction(4, Some(deadline), false)?)?,
+            &instruction_ctx,
+        )
+        .await?;
+    assert_eq!(state.pending_hyprland_workspace_len(), 1);
+
+    // No observation arrives before the deadline: flush_due must go true, and
+    // flush() must resolve the instruction without needing a triggering
+    // observation event.
+    assert!(!reconciler.flush_due(&state, started_at));
+    assert!(reconciler.flush_due(&state, flush_at));
+
+    let outputs = reconciler.flush(&mut state, flush_at).await?;
+    assert_eq!(outputs.len(), 1);
+    assert_eq!(outputs[0].payload.status, InstructionExpectationStatus::TimedOut);
+    assert!(outputs[0].payload.matched_event_ids.is_empty());
+    assert_eq!(state.pending_hyprland_workspace_len(), 0);
+    assert!(!reconciler.flush_due(&state, flush_at));
+    Ok(())
+}
+
 #[sinex_test]
 async fn dry_run_instruction_does_not_wait_for_observation() -> TestResult<()> {
     let mut reconciler = InstructionExpectationReconciler;

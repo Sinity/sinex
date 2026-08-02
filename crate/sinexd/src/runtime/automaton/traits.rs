@@ -423,6 +423,39 @@ pub trait ScopeReconciler: Send + Sync + 'static {
     ) -> impl std::future::Future<Output = Result<(), AutomatonLogicError>> + Send {
         async { Ok(()) }
     }
+
+    /// Clock-driven idle-flush predicate for stalled observation sources.
+    ///
+    /// The runtime's periodic timer calls this with the current watermark
+    /// (see [`Windowed::flush_due`] for the watermark's Live/Catchup
+    /// semantics). Return `true` when `state` holds pending work that should
+    /// resolve on a timeout even though no new triggering event has arrived
+    /// — e.g. a pending instruction whose deadline has elapsed with no
+    /// corresponding observation ever arriving. Without this, a reconciler
+    /// that only resolves pending state from within `reconcile()` grows
+    /// pending state unboundedly if its observation source stalls.
+    ///
+    /// Default: `false` — no clock-driven flush.
+    fn flush_due(&self, _state: &Self::State, _now: Timestamp) -> bool {
+        false
+    }
+
+    /// Flush deadline-elapsed pending work into terminal outputs.
+    ///
+    /// Called by the runtime periodic timer when `flush_due` returns `true`.
+    /// Implementations must mutate `state` to remove/resolve the flushed
+    /// entries so they are not re-evaluated (and potentially re-emitted) by
+    /// a later `reconcile()` call.
+    ///
+    /// Default: no-op.
+    fn flush(
+        &mut self,
+        _state: &mut Self::State,
+        _now: Timestamp,
+    ) -> impl std::future::Future<Output = Result<Vec<DerivedOutput<Self::Output>>, AutomatonLogicError>>
+    + Send {
+        async { Ok(Vec::new()) }
+    }
 }
 
 // ── MultiOutputTransducer ───────────────────────────────────────────
@@ -922,6 +955,27 @@ where
         state: &Self::State,
     ) -> Result<(), AutomatonLogicError> {
         self.0.on_shutdown(state).await
+    }
+
+    /// Clock-driven idle flush for `ScopeReconciler` modules.
+    ///
+    /// Calls `flush_due(state, now)`. If true, calls `flush()` and returns the
+    /// serialized outputs. This lets a scope reconciler resolve deadline-elapsed
+    /// pending state (e.g. `TimedOut`) even when its observation source stalls
+    /// and no new triggering event ever arrives to drive resolution from
+    /// within `reconcile()`.
+    async fn timer_flush_derived(
+        &mut self,
+        state: &mut Self::State,
+        now: Timestamp,
+        _context: &AutomatonContext,
+    ) -> Result<Vec<DerivedOutput<JsonValue>>, AutomatonLogicError> {
+        if !self.0.flush_due(state, now) {
+            return Ok(Vec::new());
+        }
+
+        let outputs = self.0.flush(state, now).await?;
+        serialize_outputs(outputs)
     }
 }
 
