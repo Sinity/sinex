@@ -24,10 +24,7 @@ use camino::{Utf8Path, Utf8PathBuf};
 use mime_guess::MimeGuess;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
-use sinex_primitives::derivation::{
-    ClaimSupportTemplate, ClaimTemporalQuality, DerivationOutputDeclaration,
-    DerivationWriteSurface, DerivedProductClass, InputEligibility, SourceCoverage, SupportLevel,
-};
+use sinex_primitives::derivation::DerivationOutputDeclaration;
 use sinex_primitives::temporal::Timestamp;
 use sinex_primitives::validation::validate_path_within_root;
 use sinex_primitives::{
@@ -61,30 +58,30 @@ const MATERIAL_REASON_INGEST: &str = "document-source:ingest";
 /// gate while still violating the `source_event_ids IS NULL OR
 /// product_class IS NOT NULL` CHECK constraint (sinex-0vx.4) — i.e. this
 /// path would have failed at insert time the first time it was actually
-/// exercised against a schema-converged database. Reconciled at `sinexd`
-/// startup the same way as `curation::CURATION_OUTPUT_DECLARATIONS`.
+/// exercised against a schema-converged database.
+///
+/// This writer emits the exact same `(output_source, output_event_type,
+/// product_class, semantics_version)` identity as
+/// `tag_applier::TAG_APPLIER_OUTPUT_DECLARATIONS` — both ultimately produce
+/// `knowledge.tag_applied` candidates over the `knowledge-graph` source —
+/// so it MUST reuse that canonical declaration rather than mint a second one
+/// with a different `declaration_id`: `uk_derivation_product_event_output`
+/// enforces exactly one registered declaration per output identity (the
+/// same reasoning `CURATION_JUDGMENT_DECLARATION` already documents for two
+/// call sites sharing one declaration). A second, distinct `declaration_id`
+/// for the identical identity is a startup-time `23505` on
+/// `product_declarations` the moment both reconcile passes run against a
+/// fresh database (sinex-audit-svc-health-flake) — it is not a race and not
+/// test-infra leakage, it fires deterministically on every fresh schema.
+/// Reconciled at `sinexd` startup the same way as
+/// `curation::CURATION_OUTPUT_DECLARATIONS`; reconciling this alias again
+/// after `tag-applier`'s own pass is a harmless no-op (same `declaration_id`,
+/// identical fields, so `reconcile_one` takes the already-matches branch).
 pub const DOCUMENT_SOURCE_OUTPUT_DECLARATIONS: &[DerivationOutputDeclaration] =
     &[DOCUMENT_AUTO_TAG_DECLARATION];
 
-const DOCUMENT_AUTO_TAG_DECLARATION: DerivationOutputDeclaration = DerivationOutputDeclaration {
-    declaration_id: "document-source.knowledge.tag_applied",
-    owner: "document-source",
-    product_class: DerivedProductClass::SemanticCandidate,
-    write_surface: DerivationWriteSurface::DerivedOutput,
-    output_source: Some("knowledge-graph"),
-    output_event_type: Some("knowledge.tag_applied"),
-    projection_kind: None,
-    artifact_kind: None,
-    proposal_kind: None,
-    semantics_version: "1.0.0",
-    input_eligibility: InputEligibility::ExplicitOnly,
-    default_support: ClaimSupportTemplate::new(
-        SupportLevel::Direct,
-        SourceCoverage::Covered,
-        ClaimTemporalQuality::InheritParent,
-    ),
-    verification_command: "xtask test -p sinexd -E 'test(document_auto_tag_declares_product_class)'",
-};
+const DOCUMENT_AUTO_TAG_DECLARATION: DerivationOutputDeclaration =
+    crate::automata::tag_applier::TAG_APPLIER_OUTPUT_DECLARATIONS[0];
 
 /// Stamp the derivation control-plane declaration (sinex-0vx.8) on a
 /// handler-built auto-tag event so it satisfies both the `source_event_ids
