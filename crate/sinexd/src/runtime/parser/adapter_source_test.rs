@@ -2034,3 +2034,143 @@ async fn sqlite_snapshot_evidence_link_is_idempotent(ctx: TestContext) -> TestRe
     assert_eq!(links[0].metadata["size_bytes"], 123);
     Ok(())
 }
+
+// sinex-audit-anchor-byte-degenerate: DirectoryEntry/GitObject anchors must
+// derive genuinely-discriminating anchor_byte values instead of the
+// constant 0 that collapsed every fs/document.staging/system.systemd event
+// sharing a material into one replay-replacement bucket.
+#[test]
+fn directory_entry_anchors_hash_to_distinct_anchor_bytes() {
+    let one = MaterialAnchor::DirectoryEntry {
+        path: Utf8PathBuf::from("/tmp/replay/one.txt"),
+        content_hash: None,
+    };
+    let two = MaterialAnchor::DirectoryEntry {
+        path: Utf8PathBuf::from("/tmp/replay/two.txt"),
+        content_hash: None,
+    };
+
+    let (one_anchor_byte, one_start, one_end) = anchor_offsets_for_materialized_record(&one);
+    let (two_anchor_byte, two_start, two_end) = anchor_offsets_for_materialized_record(&two);
+
+    assert_ne!(
+        one_anchor_byte, 0,
+        "DirectoryEntry anchor must not collapse to the degenerate constant 0"
+    );
+    assert_ne!(
+        one_anchor_byte, two_anchor_byte,
+        "distinct DirectoryEntry paths must yield distinct anchor_byte values"
+    );
+    assert_eq!(one_start, None);
+    assert_eq!(one_end, None);
+    assert_eq!(two_start, None);
+    assert_eq!(two_end, None);
+}
+
+#[test]
+fn directory_entry_anchor_is_deterministic_for_the_same_occurrence() {
+    let anchor = |content_hash: Option<&str>| MaterialAnchor::DirectoryEntry {
+        path: Utf8PathBuf::from("/tmp/replay/stable.txt"),
+        content_hash: content_hash.map(str::to_string),
+    };
+
+    let (first, ..) = anchor_offsets_for_materialized_record(&anchor(None));
+    let (second, ..) = anchor_offsets_for_materialized_record(&anchor(None));
+    assert_eq!(
+        first, second,
+        "the same DirectoryEntry occurrence must derive the same anchor_byte every time \
+         (original capture and replay must agree)"
+    );
+
+    let (with_hash, ..) = anchor_offsets_for_materialized_record(&anchor(Some("abc123")));
+    assert_ne!(
+        first, with_hash,
+        "a different content_hash on the same path must not collide"
+    );
+}
+
+#[test]
+fn git_object_anchors_hash_to_distinct_anchor_bytes() {
+    let one = MaterialAnchor::GitObject {
+        oid: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa".to_string(),
+        path: Some(Utf8PathBuf::from("src/lib.rs")),
+    };
+    let two = MaterialAnchor::GitObject {
+        oid: "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb".to_string(),
+        path: Some(Utf8PathBuf::from("src/lib.rs")),
+    };
+
+    let (one_anchor_byte, ..) = anchor_offsets_for_materialized_record(&one);
+    let (two_anchor_byte, ..) = anchor_offsets_for_materialized_record(&two);
+
+    assert_ne!(one_anchor_byte, 0);
+    assert_ne!(one_anchor_byte, two_anchor_byte);
+}
+
+// sinex-audit-anchor-byte-degenerate: replay must reconstruct the SAME
+// MaterialAnchor variant the original capture used, so the two functions
+// together (file_drop_replay_anchor -> anchor_offsets_for_materialized_record)
+// reproduce the exact anchor_byte captured live. This is the direct
+// regression test for `replay_file_drop_materials`, exercised at the
+// pure-function level since the full replay dispatch requires a live
+// acquisition manager.
+#[test]
+fn file_drop_replay_reconstructs_distinguishable_anchors_for_multiple_events() {
+    // Two distinct non-content-materialized occurrences (e.g. two `Deleted`
+    // events for different paths) sharing one append-stream material at
+    // capture time, as `file_drop.rs::records_from_file_drop_event` emits.
+    let deleted_one_metadata = json!({
+        "event_kind": "Deleted",
+        "path": "/tmp/replay/deleted-one.txt",
+    });
+    let deleted_two_metadata = json!({
+        "event_kind": "Deleted",
+        "path": "/tmp/replay/deleted-two.txt",
+    });
+
+    let anchor_one = file_drop_replay_anchor(
+        &deleted_one_metadata,
+        Some(&Utf8PathBuf::from("/tmp/replay/deleted-one.txt")),
+        "/tmp/replay/deleted-one.txt".len() as u64,
+    );
+    let anchor_two = file_drop_replay_anchor(
+        &deleted_two_metadata,
+        Some(&Utf8PathBuf::from("/tmp/replay/deleted-two.txt")),
+        "/tmp/replay/deleted-two.txt".len() as u64,
+    );
+
+    assert!(matches!(anchor_one, MaterialAnchor::DirectoryEntry { .. }));
+    assert!(matches!(anchor_two, MaterialAnchor::DirectoryEntry { .. }));
+
+    let (anchor_byte_one, ..) = anchor_offsets_for_materialized_record(&anchor_one);
+    let (anchor_byte_two, ..) = anchor_offsets_for_materialized_record(&anchor_two);
+
+    assert_ne!(
+        anchor_byte_one, 0,
+        "replayed deleted-file occurrence must not collapse to the degenerate constant 0"
+    );
+    assert_ne!(
+        anchor_byte_one, anchor_byte_two,
+        "two distinct replayed fs occurrences sharing a material must not land in the \
+         same record_event_replacements bucket (the cross-product bug)"
+    );
+
+    // A content-materialized record (regular file bytes staged into its own
+    // dedicated material) must still reconstruct the original ByteRange{0, len}
+    // shape — this path was already correct and must not regress.
+    let content_metadata = json!({
+        "event_kind": "Created",
+        "path": "/tmp/replay/created.txt",
+        "content_materialized": true,
+        "content_size_bytes": 42,
+    });
+    let content_anchor = file_drop_replay_anchor(
+        &content_metadata,
+        Some(&Utf8PathBuf::from("/tmp/replay/created.txt")),
+        0,
+    );
+    assert_eq!(
+        content_anchor,
+        MaterialAnchor::ByteRange { start: 0, len: 42 }
+    );
+}

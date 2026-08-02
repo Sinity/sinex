@@ -132,6 +132,14 @@ impl InputShapeAdapter for JournalctlStreamAdapter {
 
         let stream = async_stream::stream! {
             let mut frame_index: u64 = 0;
+            // sinex-audit-anchor-byte-degenerate: track the cumulative byte
+            // position of this journalctl subprocess's own line stream (the
+            // unix_socket_stream.rs bytes_read pattern), rather than hardcoding
+            // material_offset to 0 for every line. anchor_offsets_for_materialized_record()
+            // keys replay-replacement matching on this value for any
+            // pre-materialized StreamFrame record, so a constant 0 collapsed
+            // every journald/systemd event sharing a material into one bucket.
+            let mut bytes_read: u64 = 0;
 
             // Keep child alive until this async block is dropped.
             let _child = child;
@@ -149,10 +157,14 @@ impl InputShapeAdapter for JournalctlStreamAdapter {
                         }
 
                         let bytes = line.as_bytes().to_vec();
+                        let len = bytes.len() as u64;
                         let anchor = MaterialAnchor::StreamFrame {
-                            material_offset: 0,
+                            material_offset: bytes_read,
                             frame_index,
                         };
+
+                        // +1 for the newline `.lines()` strips from each entry.
+                        bytes_read += len + 1;
 
                         let record = SourceRecord {
                             material_id,
@@ -455,15 +467,18 @@ pub fn records_from_journal_lines(
     material_id: Id<SourceMaterial>,
     lines: &[&str],
 ) -> Vec<ParserResult<SourceRecord>> {
+    let mut bytes_read: u64 = 0;
     lines
         .iter()
         .enumerate()
         .filter(|(_, l)| !l.is_empty())
         .map(|(i, line)| {
+            let material_offset = bytes_read;
+            bytes_read += line.len() as u64 + 1; // +1 for the stripped newline
             Ok(SourceRecord {
                 material_id,
                 anchor: MaterialAnchor::StreamFrame {
-                    material_offset: 0,
+                    material_offset,
                     frame_index: i as u64,
                 },
                 bytes: line.as_bytes().to_vec(),
