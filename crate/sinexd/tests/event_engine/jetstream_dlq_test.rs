@@ -187,7 +187,7 @@ async fn test_dlq_cases_table() -> TestResult<()> {
         Duration::from_secs(1),
     )
     .with_batch_fetch_config(10, Duration::from_millis(200));
-    let _consumer_handle = tokio::spawn(async move { consumer.run().await });
+    let consumer_handle = tokio::spawn(async move { consumer.run().await });
 
     wait_for_consumer(&js, &base_stream).await?;
 
@@ -262,6 +262,8 @@ async fn test_dlq_cases_table() -> TestResult<()> {
     expected_messages += 1;
     wait_for_dlq(expected_messages).await?;
 
+    consumer_handle.abort();
+    let _ = consumer_handle.await;
     Ok(())
 }
 
