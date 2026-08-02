@@ -6,6 +6,10 @@ surfaces.
 
 ## Understand the system
 
+- [Sinex Atlas](atlas.html) is the single-page current-state map: doctrine,
+  architecture, automata roster, capture census, deployment topology, and a
+  dated snapshot of the work frontier, with each figure carrying its
+  measurement query. Open it in a browser; it is self-contained.
 - [Architecture deep dive](architecture.md) explains provenance, time,
   identity, replay, topology, and persistence.
 - [Glossary](glossary.md) defines the project vocabulary.

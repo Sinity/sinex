@@ -1,0 +1,612 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Sinex Atlas — current-state map</title>
+<style>
+:root{
+  --bg:#f6f7f9; --panel:#ffffff; --ink:#1a2129; --muted:#5b6773;
+  --line:#dde3e9; --accent:#2563eb; --accent-ink:#ffffff;
+  --ok:#0f7b46; --ok-bg:#e2f5eb; --warn:#8a5a00; --warn-bg:#fdf0d3;
+  --bad:#a01c1c; --bad-bg:#fbe4e4; --info:#1d4ed8; --info-bg:#e3ebfd;
+  --todo:#6b21a8; --todo-bg:#f1e6fb; --code-bg:#eef1f4;
+}
+@media (prefers-color-scheme: dark){:root{
+  --bg:#12161b; --panel:#1a2027; --ink:#e6ebf0; --muted:#94a1ad;
+  --line:#2b333c; --accent:#5b8def; --accent-ink:#0d1117;
+  --ok:#4cc98a; --ok-bg:#12301f; --warn:#e2b93b; --warn-bg:#33290e;
+  --bad:#ef7070; --bad-bg:#391717; --info:#7ea6f4; --info-bg:#16223b;
+  --todo:#c793ef; --todo-bg:#2a1738; --code-bg:#232a32;
+}}
+:root[data-theme="light"]{color-scheme:light}
+:root[data-theme="dark"]{color-scheme:dark}
+:root[data-theme="dark"]{
+  --bg:#12161b; --panel:#1a2027; --ink:#e6ebf0; --muted:#94a1ad;
+  --line:#2b333c; --accent:#5b8def; --accent-ink:#0d1117;
+  --ok:#4cc98a; --ok-bg:#12301f; --warn:#e2b93b; --warn-bg:#33290e;
+  --bad:#ef7070; --bad-bg:#391717; --info:#7ea6f4; --info-bg:#16223b;
+  --todo:#c793ef; --todo-bg:#2a1738; --code-bg:#232a32;
+}
+:root[data-theme="light"]{
+  --bg:#f6f7f9; --panel:#ffffff; --ink:#1a2129; --muted:#5b6773;
+  --line:#dde3e9; --accent:#2563eb; --accent-ink:#ffffff;
+  --ok:#0f7b46; --ok-bg:#e2f5eb; --warn:#8a5a00; --warn-bg:#fdf0d3;
+  --bad:#a01c1c; --bad-bg:#fbe4e4; --info:#1d4ed8; --info-bg:#e3ebfd;
+  --todo:#6b21a8; --todo-bg:#f1e6fb; --code-bg:#eef1f4;
+}
+:root{--fs:17px}
+*{box-sizing:border-box}
+html{font-size:var(--fs)}
+body{margin:0;background:var(--bg);color:var(--ink);
+  font:1rem/1.62 system-ui,-apple-system,"Segoe UI",sans-serif}
+header.page{position:sticky;top:0;z-index:5;background:var(--panel);
+  border-bottom:1px solid var(--line);padding:.7rem 1.2rem;
+  display:flex;flex-wrap:wrap;align-items:baseline;gap:.6rem}
+header.page h1{font-size:1.3rem;margin:0}
+header.page .spacer{flex:1}
+.chip{display:inline-block;padding:.12rem .6rem;border:1px solid var(--line);
+  border-radius:99px;font-size:.85rem;color:var(--muted);background:var(--bg)}
+button.theme,button.fs{border:1px solid var(--line);background:var(--bg);color:var(--ink);
+  border-radius:.4rem;padding:.2rem .6rem;cursor:pointer;font-size:.85rem}
+.layout{display:grid;grid-template-columns:16rem minmax(0,1fr);
+  max-width:80rem;margin:0 auto;gap:1.2rem;padding:1.2rem}
+@media(max-width:62rem){.layout{grid-template-columns:minmax(0,1fr)}nav#toc{display:none}}
+nav#toc{position:sticky;top:3.8rem;align-self:start;font-size:.92rem;
+  border-right:1px solid var(--line);padding-right:.8rem;max-height:85vh;overflow:auto}
+nav#toc a{display:block;color:var(--muted);text-decoration:none;padding:.16rem 0}
+nav#toc a.h3{padding-left:.9rem;font-size:.87rem}
+nav#toc a:hover{color:var(--accent)}
+main{min-width:0}
+section{background:var(--panel);border:1px solid var(--line);border-radius:.6rem;
+  padding:1.1rem 1.3rem;margin-bottom:1.1rem}
+h2{font-size:1.28rem;margin:.1rem 0 .7rem;line-height:1.3}
+h3{font-size:1.07rem;margin:1.1rem 0 .45rem;line-height:1.35}
+p{margin:.5rem 0;max-width:76ch}
+ul{max-width:76ch}
+a{color:var(--accent)}
+code,kbd{background:var(--code-bg);border-radius:.3rem;padding:.08rem .35rem;
+  font:.9em ui-monospace,SFMono-Regular,Menlo,monospace}
+pre{background:var(--code-bg);padding:.75rem .9rem;border-radius:.5rem;
+  overflow-x:auto;font-size:.92rem;line-height:1.5}
+pre code{background:none;padding:0;font-size:1em}
+.tiles{display:grid;grid-template-columns:repeat(auto-fit,minmax(10.5rem,1fr));
+  gap:.7rem;margin:.4rem 0 .9rem}
+.tile{border:1px solid var(--line);border-radius:.55rem;padding:.6rem .85rem;background:var(--bg)}
+.tile .n{font-size:1.6rem;font-weight:650;display:block;line-height:1.2}
+.tile .l{font-size:.85rem;color:var(--muted)}
+.badge{display:inline-block;font-size:.8rem;font-weight:600;letter-spacing:.02em;
+  padding:.1rem .55rem;border-radius:99px;white-space:nowrap}
+.ok{color:var(--ok);background:var(--ok-bg)} .warn{color:var(--warn);background:var(--warn-bg)}
+.bad{color:var(--bad);background:var(--bad-bg)} .info{color:var(--info);background:var(--info-bg)}
+.todo{color:var(--todo);background:var(--todo-bg)}
+.tablewrap{overflow-x:auto}
+table{border-collapse:collapse;width:100%;font-size:.95rem}
+th,td{border-bottom:1px solid var(--line);text-align:left;padding:.42rem .6rem;vertical-align:top}
+th{color:var(--muted);font-size:.85rem;text-transform:uppercase;letter-spacing:.04em;
+  cursor:pointer;user-select:none;white-space:nowrap}
+th.nosort{cursor:default}
+tr:hover td{background:color-mix(in srgb, var(--accent) 6%, transparent)}
+details{border:1px solid var(--line);border-radius:.5rem;padding:.5rem .85rem;margin:.5rem 0;background:var(--bg)}
+summary{cursor:pointer;font-weight:600;font-size:1rem}
+details[open]{padding-bottom:.6rem}
+input.filter{width:100%;max-width:26rem;margin:.2rem 0 .55rem;padding:.35rem .65rem;
+  border:1px solid var(--line);border-radius:.4rem;background:var(--bg);color:var(--ink);
+  font-size:.95rem}
+footer{color:var(--muted);font-size:.88rem;text-align:center;padding:1rem}
+.meta{display:grid;grid-template-columns:auto 1fr;gap:.2rem .9rem;font-size:.9rem;
+  border-left:3px solid var(--line);padding:.1rem 0 .1rem .9rem;margin:.2rem 0 .9rem}
+.meta dt{color:var(--muted)}
+.meta dd{margin:0}
+.ev{display:inline-block;font-size:.72rem;font-weight:700;letter-spacing:.03em;
+  padding:0 .35rem;border-radius:.25rem;vertical-align:.1em;text-transform:uppercase}
+.ev-measured{color:var(--ok);background:var(--ok-bg)}
+.ev-derived{color:var(--info);background:var(--info-bg)}
+.ev-inferred{color:var(--warn);background:var(--warn-bg)}
+.ev-assumed{color:var(--bad);background:var(--bad-bg)}
+time.age{color:var(--muted);font-size:.85em;font-variant-numeric:tabular-nums}
+time.age.stale{color:var(--warn);font-weight:600}
+time.age.stale::after{content:" ⚠"}
+a.path{font:.9em ui-monospace,SFMono-Regular,Menlo,monospace;background:var(--code-bg);
+  border-radius:.3rem;padding:.08rem .35rem;text-decoration:none;
+  border-bottom:1px dotted var(--accent)}
+.pop{position:fixed;z-index:50;max-width:min(46rem,92vw);max-height:70vh;overflow:auto;
+  background:var(--panel);border:1px solid var(--line);border-radius:.5rem;
+  box-shadow:0 .6rem 2rem rgba(0,0,0,.28);padding:.7rem .9rem;font-size:.92rem}
+.pop h4{margin:0 0 .35rem;font-size:.92rem;font-family:ui-monospace,monospace;color:var(--muted)}
+.pop pre{margin:0;max-height:52vh;font-size:.86rem}
+.pop .pin{float:right;border:none;background:none;color:var(--muted);cursor:pointer}
+@media(hover:none){.pop{max-width:94vw}}
+blockquote.q{position:relative;margin:.55rem 0 .4rem;padding:.6rem 1.1rem .6rem 2.3rem;
+  background:var(--panel);border:1px solid var(--line);border-left:3px solid var(--accent);
+  border-radius:0 .45rem .45rem 0;max-width:70ch;
+  font:italic 1rem/1.55 Georgia,"Iowan Old Style","Palatino Linotype","Noto Serif",ui-serif,serif}
+blockquote.q::before{content:"\201C";position:absolute;left:.45rem;top:.15rem;
+  font:italic 2.2rem/1 Georgia,ui-serif,serif;color:var(--accent);opacity:.5}
+blockquote.q cite{display:block;margin-top:.4rem;font:600 .72rem/1 system-ui,sans-serif;
+  text-transform:uppercase;letter-spacing:.05em;color:var(--muted);font-style:normal}
+.iq{font-style:italic;background:color-mix(in srgb,var(--accent) 8%,transparent);
+  padding:.02rem .3rem;border-radius:.2rem;box-decoration-break:clone}
+svg text{font:0.72rem system-ui,sans-serif;fill:var(--ink)}
+svg .lbl{fill:var(--muted);font-size:.65rem}
+svg .box{fill:var(--bg);stroke:var(--line);stroke-width:1;rx:6}
+svg .hot{stroke:var(--accent)}
+svg .edge{stroke:var(--muted);stroke-width:1.2;fill:none;marker-end:url(#arr)}
+@media print{header.page,nav#toc,button,input.filter,.pop{display:none}
+  .layout{grid-template-columns:1fr;max-width:none}
+  section{break-inside:avoid;border:none;padding:0}
+  details{border:none}details:not([open])>*:not(summary){display:revert}}
+</style>
+</head>
+<body>
+<header class="page">
+  <h1>Sinex Atlas</h1>
+  <span class="chip">current-state map</span>
+  <span class="chip">master b659af12c</span>
+  <span class="spacer"></span>
+  <button class="fs" onclick="fs(-1)" title="smaller text">A−</button>
+  <button class="fs" onclick="fs(1)" title="larger text">A+</button>
+  <button class="theme" onclick="tgl()">◐ theme</button>
+</header>
+
+<div class="layout">
+<nav id="toc" aria-label="contents"></nav>
+<main>
+
+<section id="summary">
+  <h2>Summary</h2>
+  <dl class="meta">
+    <dt>generated</dt><dd><time class="age" datetime="2026-08-02T17:30:00Z"></time></dd>
+    <dt>data as of</dt><dd><time class="age" datetime="2026-08-02T17:10:00Z" data-stale-days="45"></time> — all counts below were measured against master <code>b659af12c</code> and the Beads database on that date</dd>
+    <dt>status</dt><dd><span class="badge ok">finished snapshot</span> of a <span class="badge info">living document</span> — regenerate per <a href="#maintaining-this-atlas">§Maintaining</a></dd>
+    <dt>basis</dt><dd><span class="ev ev-measured">measured</span> registry/catalog/beads counts · <span class="ev ev-derived">derived</span> doctrine summaries from committed docs · anything else is tagged inline</dd>
+    <dt>supersedes</dt><dd>the <code>report/</code> tier of the retired <code>sinex-target-vision</code> corpus (architecture, deployment, intelligence, data-landscape, work-ahead chapters)</dd>
+  </dl>
+  <div class="tiles">
+    <div class="tile"><span class="n">66</span><span class="l">source contracts <span class="ev ev-measured">measured</span><template class="pop"><pre><code>python3 -c "import json; print(len(json.load(open(
+ 'nixos/modules/source-catalog.generated.json'))['entries']))"
+# 66 — 2026-08-02</code></pre></template></span></div>
+    <div class="tile"><span class="n">16</span><span class="l">registered automata <span class="ev ev-measured">measured</span><template class="pop"><pre><code>crate/sinexd/src/automata/registry.rs
+pub const AUTOMATA: &amp;[AutomatonSpec]  — 16 entries</code></pre></template></span></div>
+    <div class="tile"><span class="n">478K</span><span class="l">lines of Rust <span class="ev ev-measured">measured</span><template class="pop"><pre><code>tokei crate/ xtask/  — Rust: 1,564 files, 477,778 code lines
+(2026-08-02)</code></pre></template></span></div>
+    <div class="tile"><span class="n">263</span><span class="l">open + in-progress beads <span class="ev ev-measured">measured</span><template class="pop"><pre><code>bd sql "SELECT status,COUNT(*) FROM issues GROUP BY status"
+open 251 · in_progress 12 · closed 157   (2026-08-02)</code></pre></template></span></div>
+    <div class="tile"><span class="n">6</span><span class="l">DB schemas</span></div>
+    <div class="tile"><span class="n">down</span><span class="l">prod runtime (rebuild campaign) <span class="ev ev-measured">measured</span><template class="pop"><pre><code>systemctl is-active sinexd postgresql nats
+→ inactive / inactive / inactive   (2026-08-02)
+Deliberate: fresh-rebuild campaign, bead sinex-poma (P0)</code></pre></template></span></div>
+  </div>
+  <p>Sinex is a local-first, single-operator event platform: one Rust workspace, one daemon
+  (<code>sinexd</code>), one CLI (<code>sinexctl</code>), one automation plane
+  (<code>xtask</code>), NATS JetStream transport, PostgreSQL (TimescaleDB + pgvector)
+  canonical store, deployed on one NixOS host. This atlas is the single orientation page:
+  why the system exists, how the architecture actually works, what it captures and derives
+  today, how it is deployed, and where the live frontier is. Every load-bearing number
+  carries its measurement query; doctrine summaries cite the owning committed doc. The
+  work-ahead section is a dated snapshot of the Beads graph, which remains the only live
+  backlog authority.</p>
+</section>
+
+<section id="why">
+  <h2>Why Sinex exists</h2>
+  <p>Sinex creates a structured, queryable record of one person's digital activity —
+  filesystem, terminal, desktop, browser, system, documents, exports — as an append-only
+  event log behind a single query surface. Its purpose is context recovery: reconstructing
+  what was happening before an interruption, correlating activity across sources, and
+  answering cross-source temporal questions that no individual tool can. It is built for an
+  operator who needs capture to be automatic and invisible, query to be structured and
+  precise, and engagement to be entirely optional:</p>
+  <blockquote class="q">A feature that requires energy to use fails when it matters most.
+  <cite>north-star doctrine, retained from the target-vision corpus</cite></blockquote>
+  <h3>Five identity principles</h3>
+  <ul>
+    <li><b>Raw source material outranks any interpretation.</b> Source bytes are ground
+      truth; events can be re-derived from them, never vice versa
+      (<code>raw.source_material_registry</code> + anchor pointers).</li>
+    <li><b>Interpretation is replayable and replaceable.</b> Fixes archive old events and
+      re-read the material through the normal pipeline with current rules.</li>
+    <li><b>Source interpreters are mechanical translators, not intelligence.</b> Parsers
+      translate bytes to typed intents; higher-order context comes from joins and derivation,
+      never hidden enrichment at capture time.</li>
+    <li><b>Intelligence is additive and provenance-tracked.</b> Automata emit synthesis
+      events with explicit parents, model, and semantics version.</li>
+    <li><b>One coherent query surface.</b> No per-source silos; everything is queryable
+      through the same engine.</li>
+  </ul>
+  <h3>What the system refuses</h3>
+  <p>Sinex is a witness, not a manager: no hidden AI mutations of the raw record, no
+  plaintext-notes-as-ontology, no streaks/scores/gamification, no push prescriptions.
+  Derived observations are emitted to be queried, never to nudge. The system must remain
+  correct when ignored for a month.</p>
+  <p class="lbl" style="color:var(--muted);font-size:.88rem">The long-form narrative
+  ("why" essay, research corroboration, ecosystem framing) lives in
+  <code>sinex-target-vision/report/vision.md</code>, the one chapter of that corpus kept
+  after this atlas retired the rest.</p>
+</section>
+
+<section id="architecture">
+  <h2>Architecture</h2>
+  <p>Authority: <a class="path" href="architecture.md">docs/architecture.md</a> (deep dive)
+  and <code>CLAUDE.md</code> (dense always-loaded summary). This section is the map, not a
+  replacement.</p>
+
+  <h3>Provenance: the one load-bearing idea</h3>
+  <p>Every event has exactly one provenance, enforced at four levels (builder typestate,
+  serde wire format, DB XOR CHECK, <code>NonEmptyVec</code>):</p>
+  <div class="tablewrap"><table>
+    <thead><tr><th class="nosort">Kind</th><th class="nosort">Fields</th><th class="nosort">Meaning</th><th class="nosort">Replay</th></tr></thead>
+    <tbody>
+      <tr><td><b>Material</b></td><td><code>source_material_id</code> set</td>
+        <td>"I interpreted this byte range of this registered source material"</td>
+        <td>re-read the material</td></tr>
+      <tr><td><b>Derived</b></td><td><code>source_event_ids</code> set</td>
+        <td>"I derived this from these parent events"</td>
+        <td>re-run the automaton on the parents</td></tr>
+    </tbody>
+  </table></div>
+  <p>Three clocks ride every event — and they are <em>supposed</em> to differ for imports;
+  falsifying any of them is a doctrine tripwire:</p>
+  <div class="tablewrap"><table>
+    <thead><tr><th class="nosort">Clock</th><th class="nosort">Meaning</th><th class="nosort">Across replay</th></tr></thead>
+    <tbody>
+      <tr><td><code>ts_orig</code></td><td>when it happened in the world (quality-ranked via <code>raw.temporal_ledger</code>)</td><td>stable</td></tr>
+      <tr><td><code>ts_coided</code></td><td>when sinex minted this interpretation (generated from the UUIDv7 <code>id</code>)</td><td>new</td></tr>
+      <tr><td><code>ts_persisted</code></td><td>row write time</td><td>new</td></tr>
+    </tbody>
+  </table></div>
+  <p><b>Identity:</b> the event <code>id</code> is <em>interpretation</em> identity — replay
+  mints new ids through the normal pipeline. <em>Occurrence</em> identity is the
+  <code>(source_material_id, anchor_byte)</code> columns, stable across replay and never the
+  PK. Occurrence dedup, where it exists, is the admission-time <code>equivalence_key</code>
+  check (fail-open, three distinct idempotence regimes — see architecture.md §dedup
+  contract). Replay is non-idempotent <em>by design</em>: archive cascade → scope
+  invalidation → re-read → fresh events with new ids and the same occurrence coordinates.</p>
+
+  <h3>Pipeline (source → query)</h3>
+  <svg viewBox="0 0 980 240" role="img" aria-label="Sinex event pipeline">
+    <defs><marker id="arr" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0L8 4L0 8z" fill="var(--muted)"/></marker></defs>
+    <rect class="box" x="8"   y="24" width="128" height="56" rx="6"/><text x="72" y="46" text-anchor="middle">source adapters</text><text class="lbl" x="72" y="62" text-anchor="middle">drain → materialize</text>
+    <rect class="box" x="168" y="24" width="128" height="56" rx="6"/><text x="232" y="46" text-anchor="middle">parse + build</text><text class="lbl" x="232" y="62" text-anchor="middle">typed event intents</text>
+    <rect class="box hot" x="328" y="24" width="128" height="56" rx="6"/><text x="392" y="46" text-anchor="middle">NATS JetStream</text><text class="lbl" x="392" y="62" text-anchor="middle">raw lanes: core / reflection</text>
+    <rect class="box" x="488" y="24" width="150" height="56" rx="6"/><text x="563" y="42" text-anchor="middle">admission</text><text class="lbl" x="563" y="57" text-anchor="middle">schema · plausibility</text><text class="lbl" x="563" y="70" text-anchor="middle">equivalence-key dedup</text>
+    <rect class="box" x="670" y="24" width="140" height="56" rx="6"/><text x="740" y="42" text-anchor="middle">resolve + redact</text><text class="lbl" x="740" y="57" text-anchor="middle">FK gate · ts_orig ledger</text><text class="lbl" x="740" y="70" text-anchor="middle">redact_batch chokepoint</text>
+    <rect class="box hot" x="842" y="24" width="128" height="56" rx="6"/><text x="906" y="46" text-anchor="middle">persist</text><text class="lbl" x="906" y="62" text-anchor="middle">COPY / QueryBuilder</text>
+    <rect class="box hot" x="670" y="150" width="140" height="52" rx="6"/><text x="740" y="171" text-anchor="middle">confirmed stream</text><text class="lbl" x="740" y="187" text-anchor="middle">publish gates the ack</text>
+    <rect class="box" x="440" y="150" width="180" height="52" rx="6"/><text x="530" y="171" text-anchor="middle">automata (durable consumers)</text><text class="lbl" x="530" y="187" text-anchor="middle">derived events re-enter ↺</text>
+    <rect class="box" x="180" y="150" width="200" height="52" rx="6"/><text x="280" y="171" text-anchor="middle">read surfaces</text><text class="lbl" x="280" y="187" text-anchor="middle">sinexctl · JSON-RPC · SSE · MCP</text>
+    <path class="edge" d="M136 52 H164"/><path class="edge" d="M296 52 H324"/><path class="edge" d="M456 52 H484"/><path class="edge" d="M638 52 H666"/><path class="edge" d="M810 52 H838"/>
+    <path class="edge" d="M906 80 C906 130 830 176 814 176"/>
+    <path class="edge" d="M666 176 H624"/>
+    <path class="edge" d="M436 176 H384"/>
+    <path class="edge" d="M440 168 C400 120 392 96 392 84"/>
+  </svg>
+  <p>Failure routing: JSON/schema failures → DLQ; FK-not-ready → NAK + delay; poison rows in
+  a COPY batch → bisect and isolate; terminal delivery count → DLQ. Two storage lanes
+  (<code>core.events</code> activity, <code>reflection.events</code> self-observation) keep
+  self-observation out of activity surfaces. Drift-proof anchors: stream/consumer shapes in
+  <code>event_engine/jetstream_consumer/bootstrap.rs</code> + <code>nixos/modules/nats.nix</code>.</p>
+
+  <h3>Schema map</h3>
+  <div class="tablewrap"><table>
+    <thead><tr><th class="nosort">Schema</th><th class="nosort">Holds</th></tr></thead>
+    <tbody>
+      <tr><td><code>core</code></td><td><code>events</code> (hypertable, partitioned by UUIDv7 id), blobs, entities/relations/tags, embeddings, tombstones, operations log, source session state, model effects</td></tr>
+      <tr><td><code>reflection</code></td><td><code>events</code> — self-observation lane with its own retention</td></tr>
+      <tr><td><code>raw</code></td><td><code>source_material_registry</code>, <code>temporal_ledger</code> — provenance roots</td></tr>
+      <tr><td><code>audit</code></td><td><code>archived_events</code> — replay target, immutable</td></tr>
+      <tr><td><code>sinex_schemas</code></td><td>payload schema registry, validation cache, DLQ, backfill runs</td></tr>
+      <tr><td><code>sinex_telemetry</code></td><td>continuous aggregates + operator views (constants in <code>sinex-schema/src/apply.rs</code>)</td></tr>
+    </tbody>
+  </table></div>
+  <p>Schema evolution is declarative convergence (<code>sinex-schema apply</code>), not
+  migrations; drift the engine cannot reconcile surfaces through
+  <code>xtask schema strict-diff</code>. sqlx compiles against the live dev database only —
+  no offline cache, by doctrine.</p>
+
+  <h3>Type-enforcement ladder</h3>
+  <p>Every invariant gets the strongest affordable level; a correctness invariant may never
+  stay at convention-only: <b>1</b> compile-time (typestate, <code>Id&lt;T&gt;</code>,
+  newtypes) · <b>2</b> lint / forbidden-pattern gates · <b>3</b> DB constraints ·
+  <b>4</b> runtime boundary validation · <b>5</b> startup/lazy contract checks ·
+  <b>6</b> convention (danger zone, documented). The full ladder with examples is
+  architecture.md §Type Enforcement Hierarchy.</p>
+
+  <h3>Storage / authority split</h3>
+  <p>Raw material and raw events are the durable witness layer; projection rows are
+  rebuildable read models; candidate claims carry evidence; operator judgments are explicit
+  promotion decisions; presentation packs are consumers, never authorities. Canonical
+  derived events and accepted claims are the only default inputs to further derivation.
+  A derivation that cannot name which layer it writes is not ready to implement.</p>
+
+  <h3>Workspace</h3>
+  <div class="tablewrap"><table>
+    <thead><tr><th class="nosort">Crate</th><th class="nosort">Role</th></tr></thead>
+    <tbody>
+      <tr><td><code>sinex-primitives</code></td><td>types, errors, <code>Id&lt;T&gt;</code>, timestamps, events + builder, privacy engine, domain enums, transport taxonomy</td></tr>
+      <tr><td><code>sinex-schema</code></td><td>schema definitions + declarative convergence (apply / converge / strict-diff)</td></tr>
+      <tr><td><code>sinex-db</code></td><td>pools, repositories (<code>DbPoolExt</code>), COPY protocol, PKM orchestration</td></tr>
+      <tr><td><code>sinex-macros</code></td><td><code>#[derive(EventPayload)]</code></td></tr>
+      <tr><td><code>sinexd</code></td><td>the daemon: event engine, API (JSON-RPC + SSE + MCP backing), sources, runtime, automata, supervisor</td></tr>
+      <tr><td><code>sinexctl</code></td><td>operator CLI: query, recall, sources, runtime, ops, privacy, semantic, TUI, MCP</td></tr>
+      <tr><td><code>xtask</code></td><td>the only cargo frontend: build/test/infra/schema/docs/history automation</td></tr>
+    </tbody>
+  </table></div>
+</section>
+
+<section id="intelligence">
+  <h2>Automata &amp; intelligence</h2>
+  <p>Authority: the <code>AutomatonSpec</code> registry at
+  <a class="path" href="../crate/sinexd/src/automata/registry.rs">crate/sinexd/src/automata/registry.rs</a>
+  — 16 entries <span class="ev ev-measured">measured</span>. Each automaton emits declared
+  outputs through the derivation control plane (product classes, epochs, lanes — landed as
+  the closed <code>sinex-0vx</code> epic), and enablement is a deployment decision
+  (<code>SINEX_AUTOMATA_ENABLED</code> / NixOS automata module). Which subset is
+  default-enabled is currently being ratified in bead <code>sinex-ijz6</code>
+  <span class="badge info">in&nbsp;progress</span>, so this table lists the registry, not a
+  claims about what runs in prod (prod is mid-rebuild, see <a href="#deployment">§Deployment</a>).</p>
+  <input class="filter" placeholder="filter automata…" oninput="flt(this,'ta')">
+  <div class="tablewrap"><table id="ta">
+    <thead><tr><th>Automaton</th><th class="nosort">Kind / notes</th></tr></thead>
+    <tbody>
+      <tr><td><code>canonicalizer</code></td><td>terminal command canonicalization (transducer)</td></tr>
+      <tr><td><code>analytics</code></td><td>windowed insight emission</td></tr>
+      <tr><td><code>attention-stream</code></td><td>attention interval stream from focus/AFK evidence</td></tr>
+      <tr><td><code>interval-lift</code></td><td>transition-to-interval lifting (boot/suspend fences)</td></tr>
+      <tr><td><code>health</code></td><td>health-status aggregation (scope reconciler)</td></tr>
+      <tr><td><code>session</code></td><td>activity session boundary detection (windowed)</td></tr>
+      <tr><td><code>hourly</code> / <code>daily</code></td><td>rollup summarizers</td></tr>
+      <tr><td><code>entity-extractor</code> / <code>entity-resolver</code> / <code>relation-extractor</code> / <code>entity-enricher</code></td><td>entity/relation family — code-complete, consumer-substrate activation staged via shadow lanes</td></tr>
+      <tr><td><code>tag-applier</code></td><td>rule-based tagging</td></tr>
+      <tr><td><code>embedding-producer</code></td><td>embedding worker; live activation over the local LLM gateway is bead <code>sinex-5v6</code> (P1, open)</td></tr>
+      <tr><td><code>document-parser</code></td><td>document layer: parse/chunk staged documents</td></tr>
+      <tr><td><code>instruction-reconciler</code></td><td>instruction/expectation reconciliation</td></tr>
+    </tbody>
+  </table></div>
+  <h3>What is real beyond the registry</h3>
+  <ul>
+    <li><b>Derivation control plane</b> <span class="ev ev-measured">measured</span> — every
+      registry entry carries static <code>DerivationOutputDeclaration</code>s validated
+      against runtime enforcement (<code>registry.rs</code> doc comment; epic
+      <code>sinex-0vx</code> closed).</li>
+    <li><b>Semantic lanes / epochs, LLM routing, curation</b> — live read surfaces exist
+      end-to-end: <code>sinexctl semantic</code> and MCP tools
+      (<code>sinex_semantic_lanes/epochs/lane_diffs</code>,
+      <code>sinex_llm_prompts/route_explain/budget_report</code>,
+      <code>sinex_curation_proposals</code>). The old vision-era claim "LLM integration:
+      zero" is dead; what remains open is <em>activation</em> (embedding worker
+      <code>sinex-5v6</code>, cost fuse <code>sinex-2k2</code>, budget automaton
+      <code>sinex-a4w.5</code>).</li>
+    <li><b>Proposal / judgment / finalizer</b> — the adjudication plane landed
+      (<code>sinex-0vx.5</code> finalizer registry closed; interactive judgment seat is
+      <code>sinex-7z0.4</code>, open P1).</li>
+    <li><b>Knowledge graph</b> — schema + repositories exist; population waits on the
+      entity-family consumer substrate; person-entity design is <code>sinex-a4w.3.13</code>.</li>
+  </ul>
+</section>
+
+<section id="capture">
+  <h2>Capture landscape</h2>
+  <p>Authority: the generated source catalog
+  <a class="path" href="../nixos/modules/source-catalog.generated.json">nixos/modules/source-catalog.generated.json</a>
+  (66 entries <span class="ev ev-measured">measured</span>) — one entry per source contract
+  with its adapter binding, privacy tier, horizons, occurrence identity, and resource
+  budget. The catalog is regenerated from the Rust contract registrations, so it cannot
+  drift from code.</p>
+  <div class="tiles">
+    <div class="tile"><span class="n">66</span><span class="l">contracts, 23 namespaces</span></div>
+    <div class="tile"><span class="n">44</span><span class="l">continuous-horizon</span></div>
+    <div class="tile"><span class="n">32</span><span class="l">historical-horizon</span></div>
+    <div class="tile"><span class="n">50/5/11</span><span class="l">sensitive / secret / public tiers</span></div>
+  </div>
+  <div class="tablewrap"><table>
+    <thead><tr><th class="nosort">Family</th><th class="nosort">Contracts (namespace count <span class="ev ev-measured">measured</span>)</th></tr></thead>
+    <tbody>
+      <tr><td>Derived / infra planes</td><td>derived 15 · infra 7 · sinex 1 · privacy-fixture 1 (automaton outputs and telemetry register as contracts too — the census is honest about self-observation)</td></tr>
+      <tr><td>Terminal</td><td>8 — atuin history, shell histories (bash/fish/zsh/text), asciinema, kitty OSC live, monitor</td></tr>
+      <tr><td>Desktop</td><td>6 — window manager, ActivityWatch, clipboard, notifications (3 contracts)</td></tr>
+      <tr><td>System</td><td>5 — journald, dbus, systemd, udev, monitor</td></tr>
+      <tr><td>Web / browser</td><td>2 — browser history (Chromium + qutebrowser snapshot legs); live-capture client is a filed gap (<code>sinex-vision-browser-live-client</code>)</td></tr>
+      <tr><td>Social / messaging / IRC</td><td>social 4 (reddit ×2, wykop ×2) · messaging 1 (messenger) · irc 2 (weechat)</td></tr>
+      <tr><td>AI sessions / integration</td><td>ai_session 2 (chatgpt, claude exports) · integration 1 (polylogue lane)</td></tr>
+      <tr><td>Documents / knowledge / library</td><td>document staging + parser, knowledgebase vault, docs-library index</td></tr>
+      <tr><td>Media / email / finance / health / music / vcs / fs</td><td>media 2 (audio transcript, screen OCR) · email 1 · finance 1 (hledger) · health 2 (sleep summary — slated for raw-data replacement per <code>sinex-rkv.6</code>) · music 1 (spotify) · vcs 1 (git) · filesystem 1</td></tr>
+    </tbody>
+  </table></div>
+  <h3>Deployment reality, not aspiration</h3>
+  <ul>
+    <li>Deployment wiring is the bottleneck, not contracts: a generic scheduled
+      static-import glue (<code>mkStaticImportGlue</code>, <code>nixos/modules/sources.nix</code>)
+      landed with git + raindrop as the first defaults; generalizing it to the remaining
+      "dark" contracts (~11 without runtime bindings <span class="ev ev-derived">derived</span>
+      from the <code>sinex-stm</code> 2026-07-06 census note) is open work
+      (<code>sinex-stm</code> P2, live-host proof <code>sinex-2bk</code> P1).</li>
+    <li>Portfolio governance is explicit: <code>sinex-5j8</code> (operator keep/prune/freeze
+      decision per capture domain), <code>sinex-rkv</code> (capture breadth epic: GitHub/CI,
+      nix generations, browser content, calendar, mobile bridges, physiological raw data,
+      satellite hosts), <code>sinex-44q</code>/<code>sinex-k4c</code> (Lynchpin source
+      subsumption with a promotion ledger), <code>sinex-xv1</code> (media runtime tier),
+      <code>sinex-di7</code> (email runtime tier).</li>
+    <li>Known untracked-until-recently gaps were beaded from the 2026-08-02 target-vision
+      triage: live browser capture client (<code>sinex-vision-browser-live-client</code>)
+      and the keylog source decision (<code>sinex-vision-scribetap-keylog-source</code>).</li>
+  </ul>
+</section>
+
+<section id="deployment">
+  <h2>Deployment</h2>
+  <p>Authority: <a class="path" href="../nixos/README.md">nixos/README.md</a> +
+  <a class="path" href="../nixos/modules/deployment-topology.md">nixos/modules/deployment-topology.md</a>.
+  Sinex deploys as NixOS modules from this repo, consumed by the operator's system flake;
+  deploying a new version means pinning the sinex rev there and switching.</p>
+  <div class="tablewrap"><table>
+    <thead><tr><th class="nosort">Module</th><th class="nosort">Owns</th></tr></thead>
+    <tbody>
+      <tr><td><code>default.nix</code> + <code>lib/</code></td><td>service composition; per-automaton and per-source <code>sinexd</code> systemd instances (<code>lib/automata.nix</code>, <code>lib/source-catalog.nix</code>)</td></tr>
+      <tr><td><code>database.nix</code></td><td>PostgreSQL (TimescaleDB + pgvector) provisioning, schema-apply ordering</td></tr>
+      <tr><td><code>nats.nix</code></td><td>canonical JetStream topology: streams, lanes, consumers, retention</td></tr>
+      <tr><td><code>sources.nix</code> + <code>source-bindings.nix</code></td><td>source deployment glue incl. scheduled static imports; bindings as Nix configuration</td></tr>
+      <tr><td><code>secrets.nix</code> / <code>secrets-management.md</code></td><td>secret material wiring (agenix on the operator host)</td></tr>
+      <tr><td><code>preflight-verification.nix</code>, <code>monitoring.nix</code>, <code>blob-storage.nix</code>, <code>kitty-shell-integration.nix</code></td><td>preflight probes, telemetry, CAS blob store, shell integration</td></tr>
+      <tr><td><code>security-threat-model.md</code>, <code>at-rest-encryption.md</code>, <code>resource-scoping.md</code></td><td>deployed security and resource doctrine</td></tr>
+    </tbody>
+  </table></div>
+  <h3>Live state (dated)</h3>
+  <p><span class="ev ev-measured">measured</span> 2026-08-02: <code>sinexd</code>,
+  <code>postgresql</code>, and <code>nats</code> are all <b>inactive</b> on the deployment
+  host. This is deliberate, not an outage: the operator-ratified <b>fresh-rebuild
+  campaign</b> (bead <code>sinex-poma</code>, the only P0) is wiping and re-importing the
+  polluted dataset after landing bake-in fixes, an explicit one-time override of the
+  "state is durable, never wipe" doctrine with a full snapshot taken first. Until the
+  rebuild completes, runtime-status surfaces (gateway, MCP status tools) report degraded.</p>
+  <p>Trust boundary summary: JSON-RPC + SSE behind TLS with token-suffix RBAC
+  (<code>:readonly</code> &lt; <code>:write</code> &lt; <code>:admin</code>; rotation, no
+  revocation); native-messaging surface with per-extension capability ACLs; MCP read tools
+  redact raw payload samples by default. Privacy/redaction is a presentation feature by
+  doctrine — source access and deployment isolation own confidentiality.</p>
+</section>
+
+<section id="work-ahead">
+  <h2>Work ahead — live snapshot, 2026-08-02</h2>
+  <p>The Beads graph is the only backlog authority (<code>bd ready</code>, or the
+  <a href="https://sinity.github.io/sinex/beads/">web board</a>). This section is a dated
+  orientation snapshot of it, and decays by design —
+  <time class="age" datetime="2026-08-02T17:10:00Z" data-stale-days="45"></time>.</p>
+  <div class="tiles">
+    <div class="tile"><span class="n">251</span><span class="l">open</span></div>
+    <div class="tile"><span class="n">12</span><span class="l">in progress</span></div>
+    <div class="tile"><span class="n">1 / 23</span><span class="l">P0 / P1 open</span></div>
+    <div class="tile"><span class="n">14</span><span class="l">open epics</span></div>
+  </div>
+  <input class="filter" placeholder="filter epics…" oninput="flt(this,'te')">
+  <div class="tablewrap"><table id="te">
+    <thead><tr><th>Epic</th><th class="nosort">Theme</th></tr></thead>
+    <tbody>
+      <tr><td><code>sinex-poma</code> <span class="badge bad">P0</span></td><td>Fresh-rebuild campaign: bake-in fixes, snapshot, wipe, clean re-import</td></tr>
+      <tr><td><code>sinex-r6d</code> <span class="badge warn">P1</span></td><td>Substrate honesty: no silent data loss, no false claims (durable-emission receipt family)</td></tr>
+      <tr><td><code>sinex-a4w</code> / <code>sinex-a4w.3</code> <span class="badge warn">P1</span></td><td>Consumption: recall and the derived plane pay rent; cross-source composite payoffs</td></tr>
+      <tr><td><code>sinex-7z0</code> <span class="badge warn">P1</span></td><td>Operator &amp; agent UX: daily surface, judgment seat, agent write posture</td></tr>
+      <tr><td><code>sinex-4j2</code> <span class="badge warn">P1</span></td><td>Polylogue on Sinex: evidential substrate, byte-backed lane</td></tr>
+      <tr><td><code>sinex-cem</code> <span class="badge warn">P1</span></td><td>Demo portfolio: retroactive privacy, capture-outage self-diagnosis, honest revision</td></tr>
+      <tr><td><code>sinex-n23</code> <span class="badge warn">P1</span></td><td>Pipeline robustness under load</td></tr>
+      <tr><td><code>sinex-rkv</code></td><td>Capture breadth and quality (new sources, static-import deployment, satellite hosts)</td></tr>
+      <tr><td><code>sinex-k4c</code></td><td>Lynchpin subsumption: higher-order layers with a purpose-coverage ledger</td></tr>
+      <tr><td><code>sinex-xv1</code> · <code>sinex-di7</code></td><td>Media (audio/screen-OCR) and email runtime tiers</td></tr>
+      <tr><td><code>sinex-nbi</code> · <code>sinex-1p2</code></td><td>Architecture/hygiene analysis backlog · devloop and meta plane</td></tr>
+    </tbody>
+  </table></div>
+  <h3>Known open correctness seams</h3>
+  <p>Verified, deliberately sequenced (not fix-ad-hoc): emission is an in-memory handoff
+  until NATS publish, so source cursors and automaton checkpoints can durably advance before
+  outputs are durable — the crash-loss window the <code>sinex-r6d</code> family
+  (<code>r6d.4</code>, <code>vxu</code>, <code>r6d.7</code>) closes with one shared durable-emission
+  receipt. Also: the recovery spool caps preserved lines; health defaults to healthy when a
+  reporter is missing. Source: <code>CLAUDE.md</code> §Known open correctness seams.</p>
+  <details><summary>Recent momentum (for orientation only)</summary>
+    <p><span class="ev ev-measured">measured</span> from <code>git log</code> on 2026-08-02:
+    the last week landed the derivation-control-plane wave (PRs #2502–#2509), an
+    equivalence-key admission race fix (#2568), CAS blob lifecycle fixes (#2570),
+    document-chunks replay self-heal (#2571), and multi-agent audit "wave" fix batches
+    coordinated through beads. Consult git history and <code>bd ready</code> for anything
+    current.</p>
+  </details>
+</section>
+
+<section id="maintaining-this-atlas">
+  <h2>Maintaining this atlas</h2>
+  <p>This file is committed at <code>docs/atlas.html</code> and is a <em>view</em>, not an
+  authority: architecture doctrine lives in <code>CLAUDE.md</code>/<code>docs/architecture.md</code>,
+  the source census in the generated catalog, the backlog in Beads. When those move, this
+  page's numbers age — the "data as of" stamp at the top ambers past its budget.</p>
+  <p>To refresh: re-run the measurement queries attached to each tile (hover them), update
+  the counts and the two datetime stamps, and re-verify the §Deployment live-state claim
+  (it will be the first thing to rot once the fresh-rebuild campaign completes). Mark
+  revised blocks with <code>data-changed</code> so returning readers see what moved.</p>
+  <p>Provenance of this document: written 2026-08-02 against master <code>b659af12c</code>,
+  as the replacement for the retired <code>report/</code> tier of the
+  <code>sinex-target-vision</code> corpus (its architecture / deployment / intelligence /
+  data-landscape / work-ahead chapters, last verified 2026-05-24 there, had drifted far
+  behind the codebase). The corpus keeps <code>report/vision.md</code> (long-form "why"),
+  <code>reference/</code> (frozen 2026-03 design rationale with status notes), and
+  <code>raw/</code>. Promotion history from that corpus is recorded in
+  <a class="path" href="../.github/target-vision-claim-ledger.md">.github/target-vision-claim-ledger.md</a>.</p>
+</section>
+
+</main>
+</div>
+<footer>Sinex Atlas — generated 2026-08-02 from master b659af12c, the generated source catalog, the automata registry, and the Beads database.</footer>
+
+<script>
+function tgl(){const r=document.documentElement,
+  d=(r.dataset.theme||(matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light'))==='dark';
+  r.dataset.theme=d?'light':'dark';try{localStorage.htmlreport_theme=r.dataset.theme}catch(e){}}
+function fs(d){const r=document.documentElement,
+  cur=parseFloat(getComputedStyle(r).getPropertyValue('--fs'))||17,
+  next=Math.min(24,Math.max(13,cur+d));
+  r.style.setProperty('--fs',next+'px');try{localStorage.htmlreport_fs=next}catch(e){}}
+try{if(localStorage.htmlreport_fs)document.documentElement.style.setProperty('--fs',localStorage.htmlreport_fs+'px');
+    if(localStorage.htmlreport_theme)document.documentElement.dataset.theme=localStorage.htmlreport_theme}catch(e){}
+(()=>{const t=document.getElementById('toc');if(!t)return;
+document.querySelectorAll('main h2, main h3').forEach(h=>{
+  const s=h.closest('section')||h;if(!h.id)h.id=(h.textContent||'').trim().toLowerCase()
+    .replace(/[^a-z0-9]+/g,'-').replace(/^-|-$/g,'');
+  const a=document.createElement('a');a.href='#'+(h.tagName==='H2'&&s.id?s.id:h.id);
+  a.textContent=h.textContent;if(h.tagName==='H3')a.className='h3';t.appendChild(a)})})();
+document.querySelectorAll('table').forEach(tb=>{
+  tb.querySelectorAll('th:not(.nosort)').forEach((th,i)=>th.addEventListener('click',()=>{
+    const dir=th.dataset.d=th.dataset.d==='a'?'d':'a';
+    const val=td=>td.dataset.v!==undefined?+td.dataset.v:td.textContent.trim();
+    [...tb.tBodies[0].rows].sort((r1,r2)=>{const a=val(r1.cells[i]),b=val(r2.cells[i]);
+      const c=(typeof a=='number'&&typeof b=='number')?a-b:String(a).localeCompare(String(b));
+      return dir==='a'?c:-c}).forEach(r=>tb.tBodies[0].appendChild(r))}))});
+function flt(inp,id){const q=inp.value.toLowerCase();
+  document.querySelectorAll('#'+id+' tbody tr').forEach(r=>
+    r.style.display=r.textContent.toLowerCase().includes(q)?'':'none')}
+(()=>{const U=[[31536e6,'y'],[2592e6,'mo'],[6048e5,'w'],[864e5,'d'],[36e5,'h'],[6e4,'m']];
+document.querySelectorAll('time.age').forEach(t=>{
+  const d=new Date(t.dateTime);if(isNaN(d))return;const ms=Date.now()-d;
+  let s='just now';for(const[u,n]of U){if(Math.abs(ms)>=u){s=Math.floor(Math.abs(ms)/u)+n+(ms<0?' ahead':' ago');break}}
+  const pad=n=>String(n).padStart(2,'0');
+  const iso=d.getFullYear()+'-'+pad(d.getMonth()+1)+'-'+pad(d.getDate())+' '+pad(d.getHours())+':'+pad(d.getMinutes());
+  if(!t.textContent.trim())t.textContent=iso+' ('+s+')';else t.textContent+=' ('+s+')';
+  t.title=d.toString();
+  const budget=+(t.dataset.staleDays||0);
+  if(budget&&ms>budget*864e5)t.classList.add('stale')})})();
+(()=>{let cur=null,pinned=false,timer=null;
+const kill=()=>{if(cur&&!pinned){cur.remove();cur=null}};
+const show=(host,html,title)=>{
+  if(cur)cur.remove();
+  const p=document.createElement('div');p.className='pop';
+  p.innerHTML='<button class="pin" title="pin">📌</button>'+
+    (title?'<h4>'+title+'</h4>':'')+html;
+  document.body.appendChild(p);
+  const r=host.getBoundingClientRect(),pr=p.getBoundingClientRect();
+  let top=r.bottom+8; if(top+pr.height>innerHeight-8)top=Math.max(8,r.top-pr.height-8);
+  let left=Math.min(r.left,innerWidth-pr.width-8);
+  p.style.top=top+'px';p.style.left=Math.max(8,left)+'px';
+  p.querySelector('.pin').onclick=()=>{pinned=false;kill()};
+  p.onmouseenter=()=>clearTimeout(timer);
+  p.onmouseleave=()=>{timer=setTimeout(kill,220)};
+  cur=p};
+const src=el=>{
+  const t=el.querySelector(':scope > template.pop');
+  if(t)return[t.innerHTML,el.dataset.popTitle||''];
+  if(el.dataset.pop)return['<pre><code>'+el.dataset.pop.replace(/[<&]/g,c=>c=='<'?'&lt;':'&amp;')+
+    '</code></pre>',el.dataset.popTitle||el.getAttribute('href')||''];
+  return null};
+document.querySelectorAll('[data-pop], :has(> template.pop)').forEach(el=>{
+  const s=src(el);if(!s)return;
+  if(el.tagName==='A')el.classList.add('haspop');
+  if(el.tabIndex<0)el.tabIndex=0;
+  const open=()=>{clearTimeout(timer);pinned=false;show(el,s[0],s[1])};
+  el.addEventListener('mouseenter',()=>{clearTimeout(timer);timer=setTimeout(open,180)});
+  el.addEventListener('mouseleave',()=>{clearTimeout(timer);timer=setTimeout(kill,220)});
+  el.addEventListener('focus',open);
+  el.addEventListener('click',e=>{
+    if(el.tagName==='A'&&(e.metaKey||e.ctrlKey))return;
+    e.preventDefault();if(!cur)open();pinned=!pinned});
+});
+addEventListener('keydown',e=>{if(e.key==='Escape'){pinned=false;kill()}});})();
+</script>
+</body>
+</html>
