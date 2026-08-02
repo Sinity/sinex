@@ -95,6 +95,41 @@ async fn test_multiple_lines_have_monotonic_frame_indices() -> xtask::sandbox::T
     Ok(())
 }
 
+// sinex-audit-anchor-byte-degenerate: material_offset was hardcoded to 0 for
+// every journalctl line, so every system.journald / system.systemd event
+// sharing a material landed in the same record_event_replacements bucket on
+// replay. Pin that distinct lines now get distinct, monotonically increasing
+// material_offset values (the unix_socket_stream.rs bytes_read pattern).
+#[sinex_test]
+async fn test_multiple_lines_have_distinct_monotonic_material_offsets()
+-> xtask::sandbox::TestResult<()> {
+    let mid = dummy_material_id();
+    let lines = [
+        JOURNAL_LINE_WITH_CURSOR,
+        JOURNAL_LINE_NO_CURSOR,
+        JOURNAL_LINE_WITH_CURSOR,
+    ];
+    let records = records_from_journal_lines(mid, &lines);
+    let offsets: Vec<u64> = records
+        .iter()
+        .map(|r| match &r.as_ref().unwrap().anchor {
+            MaterialAnchor::StreamFrame { material_offset, .. } => *material_offset,
+            _ => panic!("unexpected anchor"),
+        })
+        .collect();
+
+    assert_eq!(offsets[0], 0, "first record anchors at the start of the material");
+    for w in offsets.windows(2) {
+        assert!(
+            w[1] > w[0],
+            "material_offset must strictly increase per record, got {w:?}"
+        );
+    }
+    // Confirms the offsets are not all collapsed to the degenerate constant 0.
+    assert!(offsets.iter().skip(1).all(|&o| o != 0));
+    Ok(())
+}
+
 #[sinex_test]
 async fn test_cursor_serde_roundtrip() -> xtask::sandbox::TestResult<()> {
     let cursor = JournalctlCursor::new("s=abc;i=42;b=deadbeef");

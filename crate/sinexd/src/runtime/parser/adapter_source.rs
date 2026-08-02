@@ -698,16 +698,12 @@ where
             let bytes = logical_path
                 .as_ref()
                 .map_or_else(Vec::new, |path| path.as_str().as_bytes().to_vec());
-            let content_len = metadata
-                .get("content_size_bytes")
-                .and_then(JsonValue::as_u64)
-                .unwrap_or(bytes.len() as u64);
+            let anchor =
+                file_drop_replay_anchor(&metadata, logical_path.as_ref(), bytes.len() as u64);
+
             let record = SourceRecord {
                 material_id: Id::from_uuid(material.source_material_id),
-                anchor: MaterialAnchor::ByteRange {
-                    start: 0,
-                    len: content_len,
-                },
+                anchor,
                 bytes,
                 logical_path,
                 source_ts_hint: None,
@@ -2423,7 +2419,87 @@ fn anchor_offsets_for_materialized_record(
             (start, Some(start), None)
         }
         MaterialAnchor::SqliteRow { rowid, .. } => (*rowid, None, None),
-        MaterialAnchor::DirectoryEntry { .. } | MaterialAnchor::GitObject { .. } => (0, None, None),
+        // sinex-audit-anchor-byte-degenerate: DirectoryEntry/GitObject carry no
+        // natural byte offset (they anchor a logical object, not a position in
+        // a byte stream), but collapsing every occurrence to a constant 0 made
+        // every fs/document.staging/git event sharing a material land in the
+        // same replay-replacement bucket (record_event_replacements buckets by
+        // (source_material_id, anchor_byte, offset_start, offset_end)). Derive
+        // a deterministic, genuinely-discriminating anchor_byte from the
+        // anchor's own natural identity (path/content_hash, or oid/path) —
+        // the same Uuid5From-style "hash the natural key" approach used for
+        // occurrence identities elsewhere (see journald.rs), applied at the
+        // anchor_byte integer slot since that is what material replay lineage
+        // actually keys on (equivalence_key is a separate, derived-output
+        // concept — see replay_writer.rs).
+        MaterialAnchor::DirectoryEntry { path, content_hash } => {
+            let mut hasher = blake3::Hasher::new();
+            hasher.update(path.as_str().as_bytes());
+            if let Some(hash) = content_hash {
+                hasher.update(hash.as_bytes());
+            }
+            (hash_anchor_key_to_i64(&hasher.finalize()), None, None)
+        }
+        MaterialAnchor::GitObject { oid, path } => {
+            let mut hasher = blake3::Hasher::new();
+            hasher.update(oid.as_bytes());
+            if let Some(path) = path {
+                hasher.update(path.as_str().as_bytes());
+            }
+            (hash_anchor_key_to_i64(&hasher.finalize()), None, None)
+        }
+    }
+}
+
+/// Fold a blake3 digest down to a stable `i64` for the `anchor_byte` column.
+///
+/// Not a byte position — a deterministic discriminator so distinct logical
+/// anchors (paths, git OIDs) never collide on the constant `0` that a naive
+/// "no byte offset available" default would otherwise produce.
+fn hash_anchor_key_to_i64(digest: &blake3::Hash) -> i64 {
+    let mut buf = [0u8; 8];
+    buf.copy_from_slice(&digest.as_bytes()[..8]);
+    i64::from_le_bytes(buf)
+}
+
+/// Reconstruct the `MaterialAnchor` a file-drop record originally captured,
+/// from its persisted `raw.source_material_registry` metadata.
+///
+/// `sinex-audit-anchor-byte-degenerate`: replay must derive the SAME anchor
+/// (and therefore the same `anchor_byte`, via [`anchor_offsets_for_materialized_record`])
+/// that the original capture produced, or every replayed record collapses to
+/// a shared degenerate key. Content-materialized records (regular file bytes
+/// staged into their own dedicated material — see
+/// `materialize_file_content_record_with_cache`) captured `ByteRange { start: 0, .. }`.
+/// Everything else (deleted/moved/oversized-skipped files, which share one
+/// append-stream material across many occurrences) captured
+/// `DirectoryEntry { path, content_hash: None }`.
+fn file_drop_replay_anchor(
+    metadata: &JsonValue,
+    logical_path: Option<&Utf8PathBuf>,
+    bytes_len: u64,
+) -> MaterialAnchor {
+    let content_materialized = metadata
+        .get("content_materialized")
+        .and_then(JsonValue::as_bool)
+        .unwrap_or(false);
+
+    if !content_materialized
+        && let Some(path) = logical_path
+    {
+        return MaterialAnchor::DirectoryEntry {
+            path: path.clone(),
+            content_hash: None,
+        };
+    }
+
+    let content_len = metadata
+        .get("content_size_bytes")
+        .and_then(JsonValue::as_u64)
+        .unwrap_or(bytes_len);
+    MaterialAnchor::ByteRange {
+        start: 0,
+        len: content_len,
     }
 }
 
