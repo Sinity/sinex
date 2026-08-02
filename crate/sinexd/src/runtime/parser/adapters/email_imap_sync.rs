@@ -249,7 +249,11 @@ impl NativeImapTlsMode {
 }
 
 /// Network configuration for [`NativeImapSyncClient`].
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+///
+/// `password` and `access_token` are operator-owned secrets and must never
+/// appear in emitted records, logs, or errors; see the manual [`fmt::Debug`]
+/// impl below (mirrors [`super::email_oauth::GmailOAuthCredentials`]).
+#[derive(Clone, Serialize, Deserialize, JsonSchema)]
 pub struct NativeImapSyncClientConfig {
     pub host: String,
     pub port: u16,
@@ -267,6 +271,25 @@ pub struct NativeImapSyncClientConfig {
     pub tls_mode: NativeImapTlsMode,
     #[serde(default = "default_native_imap_idle_timeout_ms")]
     pub idle_timeout_ms: u64,
+}
+
+impl fmt::Debug for NativeImapSyncClientConfig {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        // Never leak the password or OAuth access token through Debug.
+        f.debug_struct("NativeImapSyncClientConfig")
+            .field("host", &self.host)
+            .field("port", &self.port)
+            .field("username", &self.username)
+            .field("password", &"<redacted>")
+            .field(
+                "access_token",
+                &self.access_token.as_ref().map(|_| "<redacted>"),
+            )
+            .field("mailbox", &self.mailbox)
+            .field("tls_mode", &self.tls_mode)
+            .field("idle_timeout_ms", &self.idle_timeout_ms)
+            .finish()
+    }
 }
 
 fn default_native_imap_mailbox() -> String {
@@ -807,3 +830,7 @@ fn build_imap_record(
         metadata: JsonValue::Object(metadata),
     })
 }
+
+#[cfg(test)]
+#[path = "email_imap_sync_test.rs"]
+mod tests;
