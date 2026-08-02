@@ -16,7 +16,7 @@ This crate provides:
 | [patterns.md](./patterns.md) | Repository trait, DbPoolExt, SQLX compile-time validation |
 | [diagrams.md](./diagrams.md) | Schema visualization, repository architecture diagrams |
 | [data_lifecycle.md](./data_lifecycle.md) | Live/archive/tombstone lifecycle and replay-facing retention rules |
-| [backup_restore.md](./backup_restore.md) | PostgreSQL basebackup/WAL archive setup and restore drill guidance |
+| [backup_restore.md](./backup_restore.md) | `pg_dump`-based DR snapshot mechanism (`sinex-postgres-dump.service`/`.timer`) and restore drill guidance |
 
 ## Quick Start
 

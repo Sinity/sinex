@@ -3,20 +3,43 @@
 Sinex's primary durability story is **replay from source materials**: every
 event traces to a `raw.source_material_registry` row, and the source files
 themselves live on disk. A full database loss is recoverable by re-ingesting
-those materials through the standard pipeline. PostgreSQL backups are a
-defense-in-depth measure, not the primary recovery path.
+those materials through the standard pipeline. The PostgreSQL dump described
+below is a defense-in-depth measure for state that does NOT come from source
+materials — schema, derived events, operator-only state — not the primary
+recovery path.
 
-This document covers two complementary mechanisms:
+## The actual mechanism: `sinex-postgres-dump`
 
-1. **Periodic full backups** via `pg_basebackup` — captures the database
-   plus the in-flight WAL needed to make it consistent at backup time.
-2. **Continuous WAL archiving** via `services.sinex.database.walArchiveCommand`
-   — ships completed WAL segments to a separate location, enabling
-   point-in-time recovery between full backups.
+Deployment wires a daily logical dump, not a physical/WAL mechanism. This is
+defined in the sinnix flake (`modules/services/sinex/bridge.nix`), not in
+this repo — sinex itself ships no backup automation.
 
-A trusted production deployment should have at least the periodic full
-backup wired with a documented restore drill. WAL archiving is optional
-and only useful if RPO < (full-backup interval) matters.
+- **`sinex-postgres-dump.service`** runs `pg_dump --format=custom` against
+  the live `sinex_prod` database as the `postgres` user, writing to a
+  temp file and atomically renaming it into place on success.
+- **`sinex-postgres-dump.timer`** fires daily at `03:12` local time
+  (`OnCalendar = "*-*-* 03:12:00"`), with a 20-minute randomized delay and
+  `Persistent = true` so a missed run (host asleep/down at 03:12) catches up
+  on next boot.
+- **Retention**: the service keeps the 14 most recent dumps and deletes
+  older ones on every successful run (sorted by mtime, oldest beyond the
+  14th trimmed).
+- **Staging path**: dumps land at `/realm/staging/sinex-postgres/` as
+  `sinex_prod-<UTC-timestamp>.dump` (e.g.
+  `sinex_prod-20260731T031200Z.dump`), mode `0600`, directory mode `0700`,
+  owned by `postgres`.
+- **Lifecycle wiring**: both the service and timer are `PartOf` and
+  `wantedBy` `sinex-runtime.target` — they follow the runtime target (not
+  the auto-start policy), so they run whenever sinex is up, whether started
+  manually or automatically. Neither unit is ever masked.
+
+### Inspecting backup state
+
+```bash
+systemctl status sinex-postgres-dump.service sinex-postgres-dump.timer
+systemctl list-timers sinex-postgres-dump.timer
+ls -lh /realm/staging/sinex-postgres/
+```
 
 ## When backups matter (and when they don't)
 
@@ -28,167 +51,38 @@ and only useful if RPO < (full-backup interval) matters.
 | Single-row corruption from a privacy-policy change | No | Replay the affected source-material slice with new privacy rules. |
 | Full host loss including the data volume | Yes, plus source materials | Both layers need restore. Source materials should already be on a separate filesystem or backed up via the operator's regular file-level backup. |
 
-## Periodic full backup
-
-`pg_basebackup` produces a consistent on-disk snapshot. Run it on a timer;
-verify restore at least once.
-
-### NixOS wiring (recommended)
-
-The sinex module does not ship a `pg_basebackup` timer. Add one to the host
-configuration:
-
-```nix
-{ config, pkgs, ... }:
-let
-  backupRoot = "/var/backup/sinex";
-in
-{
-  services.sinex.enable = true;
-
-  # Backup user with replication role.
-  services.postgresql.ensureUsers = [
-    {
-      name = "sinex_backup";
-      ensureClauses.replication = true;
-    }
-  ];
-
-  systemd.services.sinex-basebackup = {
-    description = "Sinex PostgreSQL base backup";
-    serviceConfig = {
-      Type = "oneshot";
-      User = "postgres";
-      Group = "postgres";
-      ExecStart = pkgs.writeShellScript "sinex-basebackup" ''
-        set -euo pipefail
-        target="${backupRoot}/$(date +%Y%m%d-%H%M%S)"
-        mkdir -p "$target"
-        ${config.services.postgresql.package}/bin/pg_basebackup \
-          --host=/run/postgresql \
-          --username=sinex_backup \
-          --pgdata="$target" \
-          --format=tar \
-          --gzip \
-          --progress \
-          --checkpoint=fast \
-          --wal-method=stream
-        # Retain the last 14 successful backups; delete older.
-        ls -1dt "${backupRoot}"/[0-9]* | tail -n +15 | xargs -r rm -rf
-      '';
-    };
-  };
-
-  systemd.timers.sinex-basebackup = {
-    description = "Sinex PostgreSQL base backup timer";
-    wantedBy = [ "timers.target" ];
-    timerConfig = {
-      OnCalendar = "daily";
-      Persistent = true;
-      RandomizedDelaySec = "1h";
-    };
-  };
-}
-```
-
-Per `services.sinex.users.runtime` defaults, the `sinex` service user does
-not have replication; `pg_basebackup` runs as `postgres` here. Adjust if
-your deployment uses a different DB role.
-
-### Inspecting backup state
-
-```bash
-systemctl status sinex-basebackup.service sinex-basebackup.timer
-systemctl list-timers sinex-basebackup.timer
-ls -lh /var/backup/sinex/
-```
-
-## Continuous WAL archiving (optional)
-
-When set, `services.sinex.database.walArchiveCommand` becomes PostgreSQL's
-`archive_command`. PostgreSQL calls it once per completed WAL segment.
-
-```nix
-services.sinex.database = {
-  walArchiveCommand =
-    "test ! -f /var/backup/sinex/wal/%f && cp %p /var/backup/sinex/wal/%f";
-};
-```
-
-A more durable option ships WAL to remote object storage. `wal-g` is the
-common choice:
-
-```nix
-services.sinex.database = {
-  walArchiveCommand = "${pkgs.wal-g}/bin/wal-g wal-push %p";
-};
-```
-
-WAL archiving combined with a recent base backup enables **point-in-time
-recovery** — restore the base, then replay WAL up to a chosen timestamp.
-
-PostgreSQL holds the archive_command exit code as gospel: if it returns
-non-zero, PG retries indefinitely and refuses to recycle the segment.
-A blocked archive_command will eventually fill the WAL directory.
-Monitor with:
-
-```bash
-sudo -u postgres psql -c "SELECT * FROM pg_stat_archiver;"
-```
-
-`failed_count` should be 0 or rising slowly. If it climbs fast,
-unblock the archive_command before the WAL volume fills.
-
 ## Restore drill (do this before relying on backups)
 
 A backup that has never been restored is a hope, not a backup. Run this
 drill against a non-production database after every change to the backup
 configuration.
 
-### 1. Stop sinex
+### 1. Pick the dump to restore
 
 ```bash
-systemctl stop sinexd 'sinex-*'
-# Stop everything in the unit list — see `xtask status` for the live set.
+dump="$(ls -1t /realm/staging/sinex-postgres/sinex_prod-*.dump | head -1)"
+echo "Restoring from $dump"
 ```
 
-### 2. Stage the restore target
+### 2. Create a scratch database and restore into it
+
+Never restore over the live database. `pg_restore` targets a fresh,
+separate database on the same (or a throwaway) PostgreSQL instance.
 
 ```bash
-backup_archive="$(ls -1dt /var/backup/sinex/[0-9]* | head -1)"
-echo "Restoring from $backup_archive"
-restore_root=/var/lib/postgresql.restore
-sudo rm -rf "$restore_root"
-sudo install -d -o postgres -g postgres -m 0700 "$restore_root"
-sudo -u postgres tar -xzf "$backup_archive/base.tar.gz" -C "$restore_root"
+sudo -u postgres createdb sinex_restore_drill
+sudo -u postgres pg_restore \
+  --dbname=sinex_restore_drill \
+  --format=custom \
+  --no-owner \
+  --jobs=4 \
+  "$dump"
 ```
 
-### 3. Replay WAL (if WAL archiving is configured)
+### 3. Verify parity
 
 ```bash
-sudo -u postgres tar -xzf "$backup_archive/pg_wal.tar.gz" -C "$restore_root/pg_wal"
-sudo -u postgres tee "$restore_root/recovery.signal" </dev/null
-# point recovery_target_time at the desired wall-clock instant in
-# postgresql.conf, or leave unset to replay through end of archive.
-```
-
-### 4. Start PostgreSQL against the restore target
-
-The cleanest pattern: a separate PostgreSQL instance pointed at
-`$restore_root`. Once it reaches the recovery target it converts to a
-normal primary; verify the event count there before touching the live
-data directory.
-
-```bash
-sudo -u postgres /run/current-system/sw/bin/postgres -D "$restore_root" \
-  --port=5433
-```
-
-### 5. Verify parity
-
-```bash
-# In another shell:
-psql "host=/var/run/postgresql port=5433 dbname=sinex_prod" <<'SQL'
+psql "host=/run/postgresql dbname=sinex_restore_drill" <<'SQL'
 SELECT
   date_trunc('day', ts_coided) AS day,
   COUNT(*) AS events,
@@ -200,52 +94,70 @@ LIMIT 7;
 SQL
 ```
 
-Compare this against the same query on the live DB (before the failure)
-or against a known checkpoint. The day counts should match within the
-RPO window. If they diverge wildly, the restore did not replay all
-needed WAL — investigate before treating the backup as good.
+Compare this against the same query on the live DB, or against a known
+checkpoint recorded at dump time. Because this is a logical dump (not
+WAL-continuous), the restore reflects the database exactly as of the dump's
+`03:12` run — there is no point-in-time recovery between dumps. Day counts
+should match through the dump time; anything after that is expected to be
+missing (and is recoverable via replay from source materials, per the
+primary durability story above).
 
-### 6. Tear down the verification instance
+### 4. Tear down the drill database
 
 ```bash
-sudo -u postgres pg_ctl stop -D "$restore_root"
-sudo rm -rf "$restore_root"
+sudo -u postgres dropdb sinex_restore_drill
 ```
 
 A passing drill leaves no production state mutated.
 
 ## Known limitations
 
-- **Source materials are not backed up by `pg_basebackup`.** They live on
-  the filesystem under `services.sinex.stateRoot` / wherever source contracts
-  store originals. Back those up with your usual file-level mechanism
-  (restic, borgbackup, rsync-to-remote).
+- **No point-in-time recovery.** `pg_dump` is a logical, point-in-time-of-run
+  snapshot — there is no WAL archiving, so recovery granularity is "as of
+  the most recent daily dump at 03:12", not a chosen timestamp.
+- **Source materials are not part of the dump.** They live on the
+  filesystem under `services.sinex.stateRoot` / wherever source contracts
+  store originals. Back those up with your usual file-level mechanism.
 - **The blob CAS at `services.sinex.storage.blob.repositoryPath` is not in
-  the DB backup.** Treat it like source materials.
+  the DB dump.** Treat it like source materials.
 - **NATS JetStream state lives outside PG.** Lost JetStream state is
   recoverable from `core.events` (already-persisted events) and replay,
   but consumers that were mid-flight will re-deliver from their
   checkpoints.
+- **Restore has not been drilled in production as a scheduled, automated
+  check** — only the dump side is automated. See `sinex-w98` for making the
+  "backups are restorable" claim continuously verified rather than assumed.
+
+## Off-host coverage
+
+`/realm/staging/sinex-postgres/` is on-host staging, not off-host backup by
+itself. Per the broader Sinity backup architecture, content under
+`/realm/staging/` is periodically drained to `/outer-realm` by borg jobs,
+which is what gives these dumps off-host durability against host/disk loss.
+This repo does not own or document that drain step; it is host/fleet backup
+policy, not a sinex mechanism.
 
 ## Acceptance signals
 
 A backup setup is operationally trusted when:
 
-- `systemctl list-timers sinex-basebackup.timer` shows a recent successful run.
-- At least one full restore drill has completed end-to-end with parity
-  verification, and the result was recorded in the operator's external
-  runbook.
-- `pg_stat_archiver.failed_count` is stable at 0 (if WAL archiving is
-  enabled).
-- Source-material and blob-CAS volumes are covered by a file-level
-  backup with their own restore drill.
+- `systemctl list-timers sinex-postgres-dump.timer` shows a recent
+  successful run.
+- `/realm/staging/sinex-postgres/` holds up to 14 recent dumps and old ones
+  are being pruned.
+- At least one full restore drill (`pg_restore` into a scratch database) has
+  completed end-to-end with parity verification, and the result was
+  recorded in the operator's external runbook.
+- The staging directory is confirmed reaching `/outer-realm` via the
+  regular borg drain, not just accumulating on-host.
+- Source-material and blob-CAS volumes are covered by a file-level backup
+  with their own restore drill.
 
-Until all four hold, treat the deployment as *durable via replay only*,
-which is the default sinex contract anyway.
+Until all hold, treat the deployment as *durable via replay only*, which is
+the default sinex contract anyway.
 
 ## See also
 
-- `services.sinex.database.walArchiveCommand` — option doc in `nixos/modules/default.nix`.
 - `crate/sinex-db/docs/data_lifecycle.md` — live → archive → tombstone semantics.
 - `README.md#the-provenance-model-read-this-first` — why replay is the
   primary durability path.
