@@ -208,15 +208,18 @@ impl DocumentParserAutomaton {
         let document_id = derive_document_id("dendron", &natural_key);
 
         // Extract frontmatter
-        let (frontmatter, body) = extract_frontmatter(&content);
+        let (frontmatter, body, body_offset) = extract_frontmatter(&content);
         let title = frontmatter.get("title").cloned();
         let wikilinks = extract_wikilinks(&body);
 
         // Chunk the body after frontmatter removal. Privacy policy is not
         // applied here; the event engine owns admission/redaction decisions.
-        let raw_chunks: Vec<String> = paragraph_split(&body);
+        // Each chunk carries its real byte span within `body` (see
+        // `paragraph_chunks`); `body_offset` translates that back into a span
+        // within the original `content` for the source-anchor columns.
+        let raw_chunks: Vec<ChunkSpan> = paragraph_chunks(&body);
         let chunk_count = raw_chunks.len() as u32;
-        let total_bytes: u64 = raw_chunks.iter().map(|c| c.len() as u64).sum();
+        let total_bytes: u64 = raw_chunks.iter().map(|c| c.text.len() as u64).sum();
 
         // Build side_data
         let mut side_data = serde_json::Map::new();
@@ -274,19 +277,21 @@ impl DocumentParserAutomaton {
         // projection writer normalizes the parent chain. This is correct per the
         // design doc's "inline chunks" Option 2 approach.
 
-        // Emit document.chunked for each chunk
-        let mut byte_offset: u64 = 0;
-        for (i, chunk_text) in raw_chunks.into_iter().enumerate() {
-            let chunk_len = chunk_text.len() as u64;
-
+        // Emit document.chunked for each chunk. `byte_offset_start/end` are the
+        // chunk's real byte span within `body`; `source_anchor_start/end` are
+        // the same span translated into the original `content` (i.e. offset
+        // by the stripped frontmatter's byte length), so both anchor into
+        // actual source-material positions rather than a sum of returned
+        // fragment lengths.
+        for (i, chunk) in raw_chunks.into_iter().enumerate() {
             let chunk_payload = serde_json::to_value(serde_json::json!({
                 "document_id": document_id,
                 "chunk_index": i as u32,
-                "text": chunk_text,
-                "byte_offset_start": byte_offset,
-                "byte_offset_end": byte_offset + chunk_len,
-                "source_anchor_start": byte_offset,
-                "source_anchor_end": byte_offset + chunk_len,
+                "text": chunk.text,
+                "byte_offset_start": chunk.start as u64,
+                "byte_offset_end": chunk.end as u64,
+                "source_anchor_start": (body_offset + chunk.start) as u64,
+                "source_anchor_end": (body_offset + chunk.end) as u64,
             }))
             .map_err(|e| {
                 AutomatonLogicError::Processing(format!("serialize document.chunked: {e}"))
@@ -305,7 +310,6 @@ impl DocumentParserAutomaton {
                 ));
 
             outputs.push(chunk_output);
-            byte_offset += chunk_len;
         }
 
         Ok(outputs)
@@ -340,9 +344,9 @@ impl DocumentParserAutomaton {
         }
 
         let document_id = derive_document_id("terminal", &natural_key);
-        let raw_chunks: Vec<String> = line_group_split(stdout);
+        let raw_chunks: Vec<ChunkSpan> = line_group_chunks(stdout);
         let chunk_count = raw_chunks.len() as u32;
-        let total_bytes: u64 = raw_chunks.iter().map(|c| c.len() as u64).sum();
+        let total_bytes: u64 = raw_chunks.iter().map(|c| c.text.len() as u64).sum();
         let ts_orig = context
             .ts_orig
             .unwrap_or_else(sinex_primitives::Timestamp::now);
@@ -378,16 +382,16 @@ impl DocumentParserAutomaton {
                 )),
         );
 
-        let mut byte_offset: u64 = 0;
-        for (i, chunk_text) in raw_chunks.into_iter().enumerate() {
-            let chunk_len = chunk_text.len() as u64;
-
+        // `byte_offset_start/end` are the chunk's real byte span within
+        // `stdout` (see `line_group_chunks`). There is no source material to
+        // anchor into for terminal output, so `source_anchor_*` stay null.
+        for (i, chunk) in raw_chunks.into_iter().enumerate() {
             let chunk_payload = serde_json::to_value(serde_json::json!({
                 "document_id": document_id,
                 "chunk_index": i as u32,
-                "text": chunk_text,
-                "byte_offset_start": byte_offset,
-                "byte_offset_end": byte_offset + chunk_len,
+                "text": chunk.text,
+                "byte_offset_start": chunk.start as u64,
+                "byte_offset_end": chunk.end as u64,
                 "source_anchor_start": null,
                 "source_anchor_end": null,
             }))
@@ -408,7 +412,6 @@ impl DocumentParserAutomaton {
                         0,
                     )),
             );
-            byte_offset += chunk_len;
         }
 
         Ok(outputs)
@@ -418,20 +421,27 @@ impl DocumentParserAutomaton {
 // ── Helpers ─────────────────────────────────────────────────────────────
 
 /// Extract YAML-like frontmatter between leading `---` delimiters.
-/// Returns `(frontmatter_map, body_without_frontmatter)`.
-fn extract_frontmatter(content: &str) -> (HashMap<String, String>, String) {
+/// Returns `(frontmatter_map, body_without_frontmatter, body_byte_offset)`,
+/// where `body_byte_offset` is the byte offset of `body`'s first byte within
+/// the original `content`. Callers need this offset to translate chunk spans
+/// computed against `body` back into real positions in the source material —
+/// without it, every offset downstream of a stripped frontmatter block would
+/// be short by the frontmatter's byte length.
+fn extract_frontmatter(content: &str) -> (HashMap<String, String>, String, usize) {
     let mut map = HashMap::new();
 
     let trimmed = content.trim_start();
+    let trim_prefix_len = content.len() - trimmed.len();
     if !trimmed.starts_with("---") {
-        return (map, content.to_string());
+        return (map, content.to_string(), 0);
     }
 
     // Find the closing `---`
     let after_first = &trimmed[3..];
     if let Some(end) = after_first.find("\n---") {
         let fm_block = &after_first[..end];
-        let body = after_first[end + 4..].to_string();
+        let body_start_in_trimmed = 3 + end + 4;
+        let body = trimmed[body_start_in_trimmed..].to_string();
 
         // Crude YAML-like parsing: `key: value` lines.
         for line in fm_block.lines() {
@@ -448,9 +458,9 @@ fn extract_frontmatter(content: &str) -> (HashMap<String, String>, String) {
             }
         }
 
-        (map, body)
+        (map, body, trim_prefix_len + body_start_in_trimmed)
     } else {
-        (map, content.to_string())
+        (map, content.to_string(), 0)
     }
 }
 
@@ -475,73 +485,166 @@ fn extract_wikilinks(text: &str) -> Vec<String> {
     links
 }
 
-/// Split text into paragraphs on `\n\n+`, dropping empty paragraphs.
-fn paragraph_split(text: &str) -> Vec<String> {
-    let mut chunks = Vec::new();
-    let mut current = String::new();
-    let mut blank_count = 0u32;
-
-    for line in text.lines() {
-        if line.trim().is_empty() {
-            blank_count += 1;
-        } else {
-            if blank_count >= 1 && !current.is_empty() {
-                chunks.push(std::mem::take(&mut current));
-            }
-            blank_count = 0;
-            if !current.is_empty() {
-                current.push('\n');
-            }
-            current.push_str(line);
-        }
-    }
-
-    if !current.is_empty() {
-        chunks.push(current);
-    }
-
-    // Enforce 64 KiB per-chunk cap: hard-split overlong paragraphs.
-    let mut capped = Vec::new();
-    for chunk in chunks {
-        if chunk.len() <= MAX_CHUNK_BYTES {
-            capped.push(chunk);
-        } else {
-            // Split on sentence boundaries or mid-chunk as fallback.
-            let mut pos = 0usize;
-            while pos < chunk.len() {
-                let end = (pos + MAX_CHUNK_BYTES).min(chunk.len());
-                let slice = if end < chunk.len() {
-                    // Try to split at a sentence boundary.
-                    let search_end = end.min(chunk.len());
-                    match chunk[search_end.saturating_sub(100)..search_end]
-                        .rfind(". ")
-                        .or_else(|| chunk[search_end.saturating_sub(100)..search_end].rfind('\n'))
-                    {
-                        Some(local) => &chunk[pos..=(search_end.saturating_sub(100) + local)],
-                        None => &chunk[pos..end],
-                    }
-                } else {
-                    &chunk[pos..end]
-                };
-                if !slice.trim().is_empty() {
-                    capped.push(slice.trim().to_string());
-                }
-                pos += slice.len();
-            }
-        }
-    }
-
-    if capped.is_empty() {
-        // Single empty paragraph for truly empty documents (avoids 0-chunk edge case).
-        capped.push(String::new());
-    }
-
-    capped
+/// A chunk of text together with its real byte span `[start, end)` within
+/// the `text` argument it was split from. `text` is `source[start..end]` —
+/// callers must not trust a running sum of chunk lengths as an offset
+/// substitute, since separator bytes between chunks (and any trimming inside
+/// an oversized paragraph split) are not part of any chunk's own length.
+struct ChunkSpan {
+    start: usize,
+    end: usize,
+    text: String,
 }
 
-/// Split terminal output into line groups on blank lines.
-fn line_group_split(text: &str) -> Vec<String> {
-    paragraph_split(text)
+/// Byte spans of each line in `text` (start, end-of-content — excluding the
+/// `\n` / `\r\n` terminator), mirroring `str::lines()` semantics but
+/// preserving absolute byte offsets into `text`.
+fn line_spans(text: &str) -> Vec<(usize, usize)> {
+    let mut spans = Vec::new();
+    let mut start = 0usize;
+    let bytes = text.as_bytes();
+    for (i, &b) in bytes.iter().enumerate() {
+        if b == b'\n' {
+            let mut end = i;
+            if end > start && bytes[end - 1] == b'\r' {
+                end -= 1;
+            }
+            spans.push((start, end));
+            start = i + 1;
+        }
+    }
+    if start < text.len() {
+        spans.push((start, text.len()));
+    }
+    spans
+}
+
+/// Byte spans of paragraphs in `text`, split on runs of one or more blank
+/// lines (mirroring the historical line-accumulation logic), but computed
+/// directly from `line_spans` so each paragraph's span is the real
+/// `[first_line_start, last_line_end)` range in `text` — not a
+/// reconstruction that drops the separator bytes between lines.
+fn paragraph_spans(text: &str) -> Vec<(usize, usize)> {
+    let mut spans = Vec::new();
+    let mut para_start: Option<usize> = None;
+    let mut para_end = 0usize;
+    let mut blank_run = 0u32;
+
+    for (start, end) in line_spans(text) {
+        if text[start..end].trim().is_empty() {
+            blank_run += 1;
+            continue;
+        }
+        if blank_run >= 1 {
+            if let Some(ps) = para_start.take() {
+                spans.push((ps, para_end));
+            }
+        }
+        blank_run = 0;
+        if para_start.is_none() {
+            para_start = Some(start);
+        }
+        para_end = end;
+    }
+    if let Some(ps) = para_start {
+        spans.push((ps, para_end));
+    }
+    spans
+}
+
+/// Trim leading/trailing whitespace from `text[start..end]`, returning the
+/// trimmed sub-span's real absolute bounds (not just the trimmed string).
+fn trim_span(text: &str, start: usize, end: usize) -> (usize, usize) {
+    let slice = &text[start..end];
+    let trimmed = slice.trim();
+    if trimmed.is_empty() {
+        return (start, start);
+    }
+    // Safe: `trimmed` is always a subslice of `slice` returned by `str::trim`.
+    let offset = trimmed.as_ptr() as usize - slice.as_ptr() as usize;
+    let new_start = start + offset;
+    (new_start, new_start + trimmed.len())
+}
+
+/// Hard-split an oversized paragraph span into sub-spans no larger than
+/// `MAX_CHUNK_BYTES`, preferring sentence/line boundaries near the cap —
+/// same policy as the historical implementation, but operating on absolute
+/// byte offsets into `text` so every emitted sub-span is still a real
+/// position in the source, not a reconstructed fragment.
+fn split_capped_span(text: &str, start: usize, end: usize) -> Vec<(usize, usize)> {
+    let mut out = Vec::new();
+    let mut pos = start;
+    while pos < end {
+        let want_end = (pos + MAX_CHUNK_BYTES).min(end);
+        let slice_end = if want_end < end {
+            let search_start = want_end.saturating_sub(100).max(pos);
+            let search_slice = &text[search_start..want_end];
+            match search_slice
+                .rfind(". ")
+                .or_else(|| search_slice.rfind('\n'))
+            {
+                Some(local) => search_start + local + 1,
+                None => want_end,
+            }
+        } else {
+            want_end
+        };
+        let actual_end = if slice_end > pos {
+            slice_end
+        } else {
+            want_end.max(pos + 1).min(end)
+        };
+        let (t_start, t_end) = trim_span(text, pos, actual_end);
+        if t_end > t_start {
+            out.push((t_start, t_end));
+        }
+        pos = actual_end;
+    }
+    out
+}
+
+/// Split `text` into paragraph chunks with real byte spans, dropping empty
+/// paragraphs and enforcing the 64 KiB per-chunk cap via `split_capped_span`.
+fn paragraph_chunks(text: &str) -> Vec<ChunkSpan> {
+    let mut spans = Vec::new();
+    for (start, end) in paragraph_spans(text) {
+        if end - start <= MAX_CHUNK_BYTES {
+            spans.push((start, end));
+        } else {
+            spans.extend(split_capped_span(text, start, end));
+        }
+    }
+
+    if spans.is_empty() {
+        // Single empty paragraph for truly empty documents (avoids 0-chunk edge case).
+        return vec![ChunkSpan {
+            start: 0,
+            end: 0,
+            text: String::new(),
+        }];
+    }
+
+    spans
+        .into_iter()
+        .map(|(start, end)| ChunkSpan {
+            start,
+            end,
+            text: text[start..end].to_string(),
+        })
+        .collect()
+}
+
+/// Split terminal output into line-group chunks with real byte spans, on
+/// blank lines.
+fn line_group_chunks(text: &str) -> Vec<ChunkSpan> {
+    paragraph_chunks(text)
+}
+
+/// Split text into paragraphs on `\n\n+`, dropping empty paragraphs. Thin
+/// wrapper over [`paragraph_chunks`] for callers that only need the text
+/// (e.g. tests exercising the split policy without offsets).
+fn paragraph_split(text: &str) -> Vec<String> {
+    paragraph_chunks(text).into_iter().map(|c| c.text).collect()
 }
 
 #[cfg(test)]

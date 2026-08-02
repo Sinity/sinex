@@ -24,7 +24,7 @@ async fn document_parser_filters_to_document_and_canonical_command_events() -> T
 #[sinex_test]
 async fn test_frontmatter_extraction() -> TestResult<()> {
     let input = "---\ntitle: My Note\ntags: rust\n---\n\nBody text here.";
-    let (fm, body) = extract_frontmatter(input);
+    let (fm, body, body_offset) = extract_frontmatter(input);
     assert_eq!(
         fm.get("title").map(std::string::String::as_str),
         Some("My Note")
@@ -34,6 +34,9 @@ async fn test_frontmatter_extraction() -> TestResult<()> {
         Some("rust")
     );
     assert!(body.contains("Body text here"));
+    // `body` must be the real suffix of `input` at `body_offset` — this is
+    // exactly what document.chunked source_anchor computation relies on.
+    assert_eq!(&input[body_offset..], body);
     Ok(())
 }
 
@@ -79,8 +82,12 @@ async fn test_document_id_determinism() -> TestResult<()> {
 #[sinex_test]
 async fn test_frontmatter_no_closing() -> TestResult<()> {
     let input = "---\ntitle: Unclosed\nBody here.";
-    let (fm, body) = extract_frontmatter(input);
+    let (fm, body, body_offset) = extract_frontmatter(input);
     assert!(fm.is_empty() || body.contains("Body"));
+    // No closing delimiter found — the whole input is treated as body at
+    // offset 0.
+    assert_eq!(body_offset, 0);
+    assert_eq!(body, input);
     Ok(())
 }
 
@@ -100,6 +107,118 @@ async fn test_overlong_chunk_split() -> TestResult<()> {
             MAX_CHUNK_BYTES
         );
     }
+    Ok(())
+}
+
+/// sinex-audit-docparser-offsets: paragraph spans must be real byte ranges
+/// into the source text, not a reconstruction that drops separator bytes.
+/// This is the core anti-vacuity check for the offset bug: reverting the fix
+/// (going back to a running sum of returned-chunk lengths) makes this fail
+/// because `text[start..end]` would stop lining up with `chunk` once
+/// separator bytes between paragraphs are unaccounted for.
+#[sinex_test]
+async fn test_paragraph_spans_round_trip_with_irregular_separators() -> TestResult<()> {
+    // Non-trivial separators: single blank line, then a 3-blank-line run,
+    // then a run with trailing whitespace on the "blank" line.
+    let text = "Para one.\n\nPara two, a bit\nlonger across two lines.\n\n\n\nPara three.\n   \nPara four.";
+    let chunks = paragraph_chunks(text);
+    assert_eq!(chunks.len(), 4);
+
+    for chunk in &chunks {
+        assert_eq!(
+            &text[chunk.start..chunk.end],
+            chunk.text,
+            "chunk span [{}, {}) must equal the chunk's own text",
+            chunk.start,
+            chunk.end
+        );
+    }
+
+    assert_eq!(chunks[0].text, "Para one.");
+    assert_eq!(chunks[1].text, "Para two, a bit\nlonger across two lines.");
+    assert_eq!(chunks[2].text, "Para three.");
+    assert_eq!(chunks[3].text, "Para four.");
+
+    // Spans must be strictly increasing and reflect the real gaps consumed
+    // by separators — not a tight running sum of chunk lengths.
+    assert!(chunks[0].end < chunks[1].start, "separator bytes must be skipped, not summed away");
+    assert!(chunks[1].end < chunks[2].start);
+    assert!(chunks[2].end < chunks[3].start);
+    Ok(())
+}
+
+/// End-to-end anti-vacuity test: run the real `process_dendron` path over a
+/// fixture with YAML frontmatter (so both frontmatter-prefix bytes and
+/// paragraph separator bytes are in play) and verify every emitted
+/// `document.chunked` event's `byte_offset_start/end` and
+/// `source_anchor_start/end` round-trip against the actual source bytes.
+/// Reverting the fix reintroduces the drift-by-running-sum bug and this
+/// assertion fails starting at the second chunk.
+#[sinex_test]
+async fn document_chunked_offsets_round_trip_against_source_bytes() -> TestResult<()> {
+    let content = "---\ntitle: Fixture Note\ntags: rust\n---\n\nFirst paragraph.\n\nSecond paragraph spans\nmultiple lines here.\n\n\n\nThird paragraph after a wide gap.";
+
+    let dir = std::env::temp_dir();
+    let unique = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .expect("system clock")
+        .as_nanos();
+    let file_path = dir.join(format!("sinex-docparser-offset-test-{unique}.md"));
+    std::fs::write(&file_path, content).expect("write fixture file");
+
+    let automaton = DocumentParserAutomaton::default();
+    let mut state = DocumentParserState::default();
+    let event_id = Id::new();
+    let context = AutomatonContext {
+        trigger_event_id: event_id,
+        source: "dendron".into(),
+        event_type: "document.ingested".into(),
+        ts_orig: Some(Timestamp::UNIX_EPOCH),
+        ts_coided: event_id.timestamp(),
+        processing_mode: ProcessingMode::Live,
+        trigger_kind: TriggerKind::NewEvent,
+        created_by_operation_id: None,
+        trigger_material_id: None,
+        trigger_anchor_byte: None,
+    };
+
+    let outputs = automaton.process_dendron(
+        &mut state,
+        serde_json::json!({
+            "file_path": file_path.to_string_lossy(),
+            "source_material_id": "test-material",
+        }),
+        &context,
+    );
+    std::fs::remove_file(&file_path).ok();
+    let outputs = outputs?;
+
+    let chunk_events: Vec<_> = outputs
+        .iter()
+        .filter(|o| o.event_type == Some("document.chunked"))
+        .collect();
+    assert!(
+        chunk_events.len() >= 3,
+        "fixture has 3 well-separated paragraphs, got {} chunk events",
+        chunk_events.len()
+    );
+
+    for event in &chunk_events {
+        let text = event.payload["text"].as_str().expect("chunk text");
+        let anchor_start = event.payload["source_anchor_start"]
+            .as_u64()
+            .expect("source_anchor_start") as usize;
+        let anchor_end = event.payload["source_anchor_end"]
+            .as_u64()
+            .expect("source_anchor_end") as usize;
+
+        assert_eq!(
+            &content[anchor_start..anchor_end],
+            text,
+            "source_anchor [{anchor_start}, {anchor_end}) must slice out exactly this chunk's text from the original source bytes"
+        );
+    }
+
     Ok(())
 }
 
