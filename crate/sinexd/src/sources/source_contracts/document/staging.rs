@@ -104,7 +104,7 @@ impl MaterialParser for DocumentStagingParser {
                     EventType::from_static("tag.applied"),
                 ),
             ],
-            privacy_contexts: vec![ProcessingContext::Metadata],
+            privacy_contexts: vec![ProcessingContext::Document],
             // Document titles/bodies are free-form text and the source path may
             // leak home structure; exported for policy tooling, never auto-acted (#1611).
             sensitivity_hints: vec![
@@ -162,7 +162,7 @@ impl MaterialParser for DocumentStagingParser {
             .ts_orig(Timestamp::now())
             .timing(TimingEvidence::StagedAtFallback)
             .anchor(record.anchor.clone())
-            .privacy_context(ProcessingContext::Metadata)
+            .privacy_context(ProcessingContext::Document)
             .build();
 
         let mut intents = vec![material_intent.clone()];
@@ -181,3 +181,7 @@ impl MaterialParser for DocumentStagingParser {
         Ok(intents)
     }
 }
+
+#[cfg(test)]
+#[path = "staging_test.rs"]
+mod tests;
