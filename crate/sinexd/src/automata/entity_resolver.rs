@@ -24,7 +24,36 @@ use sinex_primitives::derivation::{
 use sinex_primitives::domain::{EntityTypeName, SyntheticTemporalPolicy};
 use sinex_primitives::events::EventPayload;
 use sinex_primitives::events::payloads::{EntityExtractedPayload, EntityResolvedPayload};
+use sinex_primitives::temporal::Timestamp;
 use std::collections::HashMap;
+use tracing::warn;
+
+/// sinex-audit-entity-unbounded-maps: cap on the dedup cache. Unlike
+/// `interval_lift`'s `active_subject_states` (bounded to 1024 because that map
+/// tracks *concurrently open* states, a naturally small cardinality),
+/// `known_entities` is a cumulative "every entity ever resolved" cache whose
+/// key space is every distinct `(entity_type, canonical_name)` seen over the
+/// automaton's lifetime -- much larger cardinality is expected, especially
+/// while replaying a large historical backlog. 20_000 entries at roughly
+/// 100 bytes each (a short `String` key plus a `KnownEntity`) caps growth
+/// around ~2 MB while still giving the dedup cache room to be useful.
+/// Eviction is safe: a re-resolved entity gets the same deterministic
+/// `UUIDv5` id and the same `entity-resolver:{id}:{name}` equivalence key,
+/// so a duplicate `entity.resolved` re-emission is caught by the normal
+/// admission-time equivalence-key dedup rather than persisted twice.
+const MAX_KNOWN_ENTITIES: usize = 20_000;
+
+/// A dedup-cache entry: the deterministic entity id plus a staleness marker
+/// used by the bounded-map eviction guard.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct KnownEntity {
+    pub entity_id: Uuid,
+    /// Time this key was last resolved/touched. Falls back to the
+    /// automaton's processing time when the trigger event carries no
+    /// `ts_orig`, so eviction ordering never blocks on a required source
+    /// timestamp.
+    pub last_touched: Timestamp,
+}
 
 /// Persistent resolver state: the deduplication map of `canonical_key` → `entity_id`.
 ///
@@ -32,8 +61,10 @@ use std::collections::HashMap;
 /// identities from scratch.
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct ResolverState {
-    /// Map from `"{entity_type}:{canonical_name}"` to deterministic `UUIDv5` entity ID.
-    pub known_entities: HashMap<String, Uuid>,
+    /// Map from `"{entity_type}:{canonical_name}"` to a bounded dedup-cache
+    /// entry. Bounded to `MAX_KNOWN_ENTITIES` with stalest-eviction (see
+    /// `MAX_KNOWN_ENTITIES` doc) -- sinex-audit-entity-unbounded-maps.
+    pub known_entities: HashMap<String, KnownEntity>,
 
     /// Number of new candidates processed (for observability).
     pub candidates_processed: u64,
@@ -112,17 +143,46 @@ impl Windowed for EntityResolver {
     ) -> Result<(), AutomatonLogicError> {
         // ── Type-aware canonicalization ──────────────────────────────────
         let canonical_name = canonicalize_name(&input.entity_type, &input.raw_name);
+        let touch_time = context.ts_orig.unwrap_or_else(Timestamp::now);
 
         // ── Deduplication check ──────────────────────────────────────────
         let key = canonical_key(&input.entity_type, &canonical_name);
-        if state.known_entities.contains_key(&key) {
-            // Already resolved — skip.
+        if let Some(existing) = state.known_entities.get_mut(&key) {
+            // Already resolved — refresh staleness ordering, skip re-emission.
+            existing.last_touched = touch_time;
             return Ok(());
+        }
+
+        // sinex-audit-entity-unbounded-maps: bound the map — evict the
+        // stalest known entity (with a debt warning) before inserting a
+        // genuinely new one at capacity. See `MAX_KNOWN_ENTITIES` doc for why
+        // eviction here is safe (equivalence-key dedup catches re-emission).
+        if state.known_entities.len() >= MAX_KNOWN_ENTITIES {
+            if let Some(stalest) = state
+                .known_entities
+                .iter()
+                .min_by_key(|(_, v)| v.last_touched)
+                .map(|(k, _)| k.clone())
+            {
+                warn!(
+                    module = "entity-resolver",
+                    evicted = %stalest,
+                    cap = MAX_KNOWN_ENTITIES,
+                    "entity-resolver evicted stalest known entity (durable debt, unbounded-growth guard)"
+                );
+                state.known_entities.remove(&stalest);
+            }
         }
 
         // ── Deterministic identity ───────────────────────────────────────
         let entity_id = compute_entity_id(&input.entity_type, &canonical_name);
-        state.known_entities.insert(key, entity_id);
+        state.known_entities.insert(
+            key,
+            KnownEntity {
+                entity_id,
+                last_touched: touch_time,
+            },
+        );
         state.candidates_processed += 1;
 
         // ── Stage for emission ───────────────────────────────────────────
