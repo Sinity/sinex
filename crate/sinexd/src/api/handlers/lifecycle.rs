@@ -1095,33 +1095,52 @@ pub async fn handle_tombstone_approve(
         let mut blobs_shared = 0_usize;
         let mut blob_rows_deleted = 0_usize;
         let mut rows_deleted = 0_usize;
+        let mut rows_survived = 0_usize;
         for material_id in &orphan_material_ids {
-            // Resolve the material to find its blob_id (if any) before deleting the row.
-            let material_record = match materials_repo
-                .get_by_id(sinex_primitives::Id::from_uuid(*material_id))
+            // Delete the registry row FIRST, re-verifying orphan status atomically
+            // as part of the same DELETE statement (sinex-audit-tombstonerace).
+            // `find_orphan_materials` above is only a pre-filter -- by the time we
+            // reach this material, a new/redelivered event may have landed with
+            // `source_material_id` pointing at it (e.g. a slow-arriving multi-slice
+            // material event, or a JetStream redelivery that was still pending
+            // MaterialReadySet at scan time). `delete_material_if_orphan` bakes the
+            // same NOT EXISTS check into the DELETE so the row is only removed if it
+            // is STILL orphaned at delete time, and only then do we know it's safe
+            // to drop the CAS blob content below. If the row survives (still
+            // referenced, or already gone), we must never touch its blob.
+            let blob_uuid_if_deleted = match materials_repo
+                .delete_material_if_orphan(sinex_primitives::Id::from_uuid(*material_id))
                 .await
             {
-                Ok(Some(record)) => Some(record),
-                Ok(None) => None,
+                Ok(Some(blob_uuid)) => {
+                    rows_deleted += 1;
+                    blob_uuid
+                }
+                Ok(None) => {
+                    // Either already gone, or a live event now references it --
+                    // either way its content (if any) must survive untouched.
+                    rows_survived += 1;
+                    continue;
+                }
                 Err(e) => {
                     warn!(
                         material_id = %material_id,
                         error = %e,
-                        "Failed to read material before delete-on-tombstone"
+                        "Failed to delete orphan material registry row; \
+                         GC sweeper will recover"
                     );
-                    None
+                    continue;
                 }
             };
 
-            // Drop the CAS blob first (idempotent: drop_content tolerates missing files) --
-            // but ONLY when no other live material or event still references it.
-            // Content-addressed dedup means multiple source_material_registry rows (and
-            // derived events via associated_blob_ids) can legitimately share one blob;
-            // dropping unconditionally destroys content a still-live sibling depends on
+            // The registry row is confirmed gone. Drop the CAS blob (idempotent:
+            // drop_content tolerates missing files) -- but ONLY when no other live
+            // material or event still references it. Content-addressed dedup means
+            // multiple source_material_registry rows (and derived events via
+            // associated_blob_ids) can legitimately share one blob; dropping
+            // unconditionally destroys content a still-live sibling depends on
             // (sinex-audit-cas-shared-blob-delete).
-            if let Some(record) = &material_record
-                && let Some(blob_uuid) = record.optional_blob_id
-            {
+            if let Some(blob_uuid) = blob_uuid_if_deleted {
                 let content_store = services.content.content_store();
                 let blob_id = sinex_primitives::Id::from_uuid(blob_uuid);
 
@@ -1137,6 +1156,11 @@ pub async fn handle_tombstone_approve(
                 // content) or blocks until after we delete and then fails with
                 // an explicit FK violation -- never a silent orphaned reference
                 // to already-deleted bytes. See `BlobRepository::lock_by_id_for_update`.
+                //
+                // Note: `*material_id`'s own registry row is already deleted at
+                // this point, so it can no longer show up in
+                // `is_referenced_excluding_material_with_executor`'s own-row
+                // exclusion; excluding it here is now a no-op but harmless.
                 let outcome = pool
                     .with_transaction(async |tx| {
                         let Some(blob_row) = pool
@@ -1197,27 +1221,13 @@ pub async fn handle_tombstone_approve(
                     ),
                 }
             }
-
-            // Drop the registry row regardless of blob outcome — if the blob drop
-            // failed, GC will eventually catch up; what matters is the row goes.
-            match materials_repo
-                .delete_material(sinex_primitives::Id::from_uuid(*material_id))
-                .await
-            {
-                Ok(true) => rows_deleted += 1,
-                Ok(false) => {} // already gone
-                Err(e) => warn!(
-                    material_id = %material_id,
-                    error = %e,
-                    "Failed to delete orphan material registry row"
-                ),
-            }
         }
         info!(
             operation_id = %request.operation_id,
             materials_examined = candidate_material_ids.len(),
             orphans_found = orphan_material_ids.len(),
             rows_deleted = rows_deleted,
+            rows_survived = rows_survived,
             blobs_dropped = blobs_dropped,
             blobs_shared = blobs_shared,
             blob_rows_deleted = blob_rows_deleted,
