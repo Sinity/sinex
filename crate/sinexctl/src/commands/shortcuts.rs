@@ -1,4 +1,6 @@
-use crate::fmt::{format_yaml, print_finite_envelope, render_envelope};
+use crate::fmt::{
+    format_yaml, print_finite_envelope, render_envelope, truncate_str_boundary_safe,
+};
 use crate::model::OutputFormat;
 use crate::parse::parse_duration;
 use clap::Args;
@@ -984,11 +986,7 @@ impl WatchCommand {
                                     .and_then(|v| v.as_str())
                             })
                             .unwrap_or("");
-                        let summary_display = if summary.len() > 60 {
-                            format!("{}...", &summary[..57])
-                        } else {
-                            summary.to_string()
-                        };
+                        let summary_display = format_watch_summary(summary);
 
                         let privacy_marker = if privacy_caveats.is_empty() {
                             String::new()
@@ -1070,5 +1068,15 @@ impl WatchCommand {
             println!("{}", style("Event stream ended.").dim());
         }
         Ok(())
+    }
+}
+
+/// Truncate a live-event summary field (window/browser titles, shell
+/// commands — routinely non-ASCII) for the `watch` table view.
+fn format_watch_summary(summary: &str) -> String {
+    if summary.len() > 60 {
+        format!("{}...", truncate_str_boundary_safe(summary, 57))
+    } else {
+        summary.to_string()
     }
 }

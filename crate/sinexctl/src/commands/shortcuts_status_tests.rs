@@ -245,3 +245,25 @@ async fn source_readiness_status_is_healthy_when_available_or_disabled()
     );
     Ok(())
 }
+
+#[sinex_test]
+async fn watch_summary_truncation_is_utf8_boundary_safe() -> xtask::sandbox::TestResult<()> {
+    // 60 Cyrillic characters, each 2 bytes in UTF-8 = 120 bytes total. A
+    // naive `&summary[..57]` byte-index slice lands mid-codepoint (57 is
+    // odd) and panics. This must not panic and must produce a sensible
+    // truncated display.
+    let summary: String = "Пример события в системе мониторинга активности пользователя"
+        .chars()
+        .collect();
+    assert!(summary.len() > 60, "fixture must exceed the truncation threshold in bytes");
+
+    let display = format_watch_summary(&summary);
+
+    assert!(display.ends_with("..."));
+    assert!(display.is_char_boundary(display.len() - 3));
+    assert!(std::str::from_utf8(display.as_bytes()).is_ok());
+
+    // Short ASCII text passes through untouched.
+    assert_eq!(format_watch_summary("short"), "short");
+    Ok(())
+}

@@ -111,6 +111,31 @@ async fn tombstone_list_envelope_caveats_empty_operation_log() -> TestResult<()>
 }
 
 #[sinex_test]
+async fn tombstone_list_table_truncates_non_ascii_reason_without_panicking() -> TestResult<()> {
+    // 40 Japanese characters, 3 bytes each in UTF-8 = 120 bytes. A naive
+    // `&op.reason[..27]` byte-index slice lands mid-codepoint (27 is not a
+    // multiple of 3) and panics -- this is the tombstone (permanent
+    // deletion) audit list, so a crash here hides operation state entirely.
+    let mut op = fixture_tombstone_operation("op-utf8");
+    op.reason = "この理由のテキストは非ASCII文字を多数含んでいます".to_string();
+    assert!(op.reason.len() > 30, "fixture must exceed the truncation threshold in bytes");
+    op.created_at = "会議終了後のタイムスタンプ表記例".to_string();
+
+    let response = TombstoneListResponse {
+        operations: vec![op],
+    };
+
+    let table = format_tombstone_list_table(&response);
+
+    assert!(table.contains("op-utf8"));
+    assert!(table.contains("..."));
+    // The whole table must be valid, well-formed UTF-8 (guaranteed by type,
+    // but assert explicitly to document the property under test).
+    assert!(std::str::from_utf8(table.as_bytes()).is_ok());
+    Ok(())
+}
+
+#[sinex_test]
 async fn tombstone_list_envelope_renders_operations() -> TestResult<()> {
     let response = TombstoneListResponse {
         operations: vec![fixture_tombstone_operation("op-1")],
