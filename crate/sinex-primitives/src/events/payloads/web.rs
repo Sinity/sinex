@@ -5,8 +5,22 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use sinex_macros::EventPayload;
 
+/// Chromium finalizes `visits.visit_duration` via an UPDATE to the SAME row
+/// (`visits.id`) only once the next navigation happens in that tab, so a
+/// re-read of an already-cursored visit can carry a duration the first read
+/// never saw. `supersede_on_change` lets that re-read (see the
+/// `mutable_trailing_rows` mechanism on `browser.history`'s primary leg,
+/// `browser/history.rs`) archive the stale interpretation and admit the
+/// revision, keyed on the same `visit_id`-anchored occurrence (sinex-h3g,
+/// ruling sinex-y8v). qutebrowser visits have no equivalent mutated column;
+/// an unmodified re-read content-hashes identically and is suppressed, not
+/// duplicated.
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, EventPayload)]
-#[event_payload(source = "webhistory", event_type = "page.visited")]
+#[event_payload(
+    source = "webhistory",
+    event_type = "page.visited",
+    revision_policy = "supersede_on_change"
+)]
 pub struct PageVisitedPayload {
     pub browser: String,
     pub title: String,

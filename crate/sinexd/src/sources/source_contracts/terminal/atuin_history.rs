@@ -28,6 +28,28 @@
 //!     range check.
 //!   - `#[validate(i32)]` on `exit_code` recovers the exit-code narrowing
 //!     check.
+//!
+//! ## Mutability (sinex-h3g / sinex-audit-h3g-atuin-browser)
+//!
+//! Atuin inserts a `history` row at command START with `exit`/`duration`
+//! unset (this parser's `#[default = "0"]` on those columns), then UPDATEs
+//! the SAME row (same `rowid`) once the command finishes. A plain `WHERE
+//! rowid > cursor` scan therefore reads every command's row exactly once, at
+//! whatever `exit_code`/`duration_ns` it had at that moment — permanently
+//! wrong (frozen at the pre-completion default) for every captured command.
+//! This is the exact same `SqliteRowAdapter`/`MutableSnapshot` gap
+//! `desktop.activitywatch` had before sinex-h3g; see that module's docs for
+//! the full mechanism. The fix is the same: `mutable_trailing_rows` (set in
+//! `baseline_adapter_config` below) re-reads a trailing window of
+//! already-cursored rows on every poll, and `AtuinCommandExecutedPayload`
+//! opts into `RevisionPolicy::SupersedeOnChange` so a re-read carrying the
+//! finished exit code/duration archives the stale in-flight interpretation
+//! and admits the completed one as the sole live row. Occurrence identity
+//! here is already stable across the UPDATE — the `#[occurrence_key]` field
+//! is the SQLite `rowid`, which Atuin never changes when it finishes a
+//! command (unlike AW, which never set `occurrence_key` at all pre-h3g) — so
+//! no parser change was needed beyond the adapter knob and the payload's
+//! revision policy.
 
 use async_trait::async_trait;
 use sinex_macros::{SourceMeta, SourceRecord};
@@ -173,6 +195,15 @@ impl MaterialParser for AtuinHistoryParser {
         serde_json::json!({
             "query": "history",
             "table": "history",
+            // `mutable_trailing_rows` (sinex-h3g mechanism, see module docs):
+            // re-read the trailing rows below the cursor on every poll so a
+            // command's row is re-observed after Atuin's completion UPDATE.
+            // 32 comfortably covers concurrently open shell sessions with an
+            // in-flight (not-yet-completed) command — generous for even
+            // heavily multiplexed terminal setups — without materially
+            // widening each poll's row count against the 10_000-row default
+            // batch size.
+            "mutable_trailing_rows": 32
         })
     }
 

@@ -692,7 +692,7 @@
       "event_type": "command.executed",
       "version": "1.0.0",
       "path": "shell.atuin/command.executed.json",
-      "content_hash": "82376a92d8dc164da8cddb711c10711865c276c3feedf1709fbbe7dae01b3c83"
+      "content_hash": "c66f90014fd34bf4a2010cacc24cb237cde5607a707642661de89ca13ecb5d00"
     },
     {
       "source": "shell.history",
@@ -1021,7 +1021,7 @@
       "event_type": "page.visited",
       "version": "1.0.0",
       "path": "webhistory/page.visited.json",
-      "content_hash": "03f2ea980870dd4fcf938bbb7b7f2096507f87bcaafc569612aad458ce89861d"
+      "content_hash": "3a60875b17cf18dea802b915094a4e6de741c1a2033f9cfe682628c566290ec0"
     },
     {
       "source": "wm.hyprland",
