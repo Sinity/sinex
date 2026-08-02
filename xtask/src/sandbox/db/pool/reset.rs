@@ -443,10 +443,16 @@ async fn ensure_default_session_state_conn(conn: &mut PgConnection) -> TestResul
         if sync_commit != "off" {
             resets.push("SET synchronous_commit TO OFF");
         }
-        if !resets.is_empty() {
-            // Batch all SET statements into one round-trip
-            let batch = resets.join("; ");
-            sqlx::query(&batch)
+        // Issue each SET individually. sqlx::query() runs through the extended
+        // (prepared-statement) protocol, which rejects multi-statement strings
+        // ("cannot insert multiple commands into a prepared statement") — this
+        // path runs on every `before_acquire`, so joining 2+ dirty settings
+        // into one `"; "`-separated batch surfaced as an intermittent pool
+        // failure under contention whenever 2+ of the three settings were
+        // dirty at once (sinex-96fg). At most 3 tiny round-trips, and only
+        // when something is actually dirty.
+        for reset in &resets {
+            sqlx::query(reset)
                 .execute(&mut *conn)
                 .await
                 .map_err(|e| eyre!(e.to_string()))?;
