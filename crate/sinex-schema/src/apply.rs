@@ -73,6 +73,15 @@ const EVENTS_REQUIRED_INDEXES: &[&str] = &[
     // Derivation control plane (sinex-0vx.4 / W1).
     "ix_events_product_class",
     "ix_events_claim_adjudication",
+    // Expression index on the leading dotted component of `source` (the
+    // "source family" rollup axis). Without this, every
+    // `split_part(source, '.', 1) = $1` predicate — the continuity report
+    // repository's per-family lookups
+    // (`crate/sinex-db/src/repositories/continuity.rs`) and its unfiltered
+    // DISTINCT family scan — forces a chunk-by-chunk scan of the whole
+    // hypertable: none of the plain-column `source` indexes above match an
+    // expression predicate (sinex-audit-continuity-fullscan).
+    "ix_events_source_family",
 ];
 const REFLECTION_EVENTS_REQUIRED_TRIGGERS: &[&str] = &[
     "trg_events_no_update",
@@ -1252,6 +1261,17 @@ async fn configure_timescaledb(pool: &PgPool) -> Result<(), ApplyError> {
     execute_sql(
         pool,
         "CREATE INDEX IF NOT EXISTS ix_events_legacy_reflection_latest ON core.events (id DESC) WHERE source = 'sinex' OR source LIKE 'sinex.%' OR source LIKE 'sinexd.%'",
+    )
+    .await?;
+    // Expression index backing `split_part(source, '.', 1) = $1` predicates
+    // (source-family rollup). Without it, the continuity report repository's
+    // per-family lookups and DISTINCT family scan
+    // (`crate/sinex-db/src/repositories/continuity.rs`) force a chunk-by-chunk
+    // sequential scan of the whole hypertable, since none of the plain-column
+    // `source` indexes match an expression predicate (sinex-audit-continuity-fullscan).
+    execute_sql(
+        pool,
+        "CREATE INDEX IF NOT EXISTS ix_events_source_family ON core.events ((split_part(source, '.', 1)))",
     )
     .await?;
     configure_reflection_timescaledb(pool).await?;
