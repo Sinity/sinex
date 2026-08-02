@@ -4,6 +4,7 @@ use crate::sandbox::prelude::*;
 use crate::sandbox::slog::{Level, slog};
 use futures::future::BoxFuture;
 use sinex_db::DbPool;
+use sqlx::Executor;
 use sqlx::postgres::PgConnection;
 use std::sync::atomic::Ordering;
 use std::time::Duration;
@@ -363,12 +364,25 @@ async fn ensure_core_events_triggers(pool: &DbPool) -> TestResult<()> {
     // (sinex-xjx8). Delegating to `Events`/`ArchivedEvents`'s own trigger-SQL
     // constructors makes that class of drift impossible: there is only one
     // place these trigger bodies are declared.
-    sqlx::query(sinex_db::schema::defs::Events::create_no_update_trigger_sql())
-        .execute(&mut *conn)
+    // Each constructor returns a multi-statement string (CREATE OR REPLACE
+    // FUNCTION ...; DROP TRIGGER ...; CREATE TRIGGER ...;). sqlx::query()
+    // (extended/prepared-statement protocol) rejects multi-statement
+    // strings with "cannot insert multiple commands into a prepared
+    // statement" -- this runs on EVERY cleanup pass, so it was a major
+    // contributor to the sinex-96fg flake class, more frequent than the
+    // session-state reset path. `conn.execute(sql: &str)` (the `Executor`
+    // trait method on a bare `&str`, matching sinex-schema::apply.rs's own
+    // `execute_sql` helper) takes the simple-query/text protocol instead:
+    // `Execute::take_arguments()` for `&str` returns `None`, so sqlx skips
+    // the bind/prepare path entirely. `sqlx::raw_sql()` would also work
+    // (same protocol) but triggers a rustc "Send is not general enough"
+    // HRTB inference false-positive elsewhere in this crate.
+    conn.as_mut()
+        .execute(sinex_db::schema::defs::Events::create_no_update_trigger_sql())
         .await
         .map_err(|e| eyre!(e.to_string()))?;
-    sqlx::query(sinex_db::schema::defs::ArchivedEvents::create_archive_trigger_sql())
-        .execute(&mut *conn)
+    conn.as_mut()
+        .execute(sinex_db::schema::defs::ArchivedEvents::create_archive_trigger_sql())
         .await
         .map_err(|e| eyre!(e.to_string()))?;
 
