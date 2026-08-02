@@ -311,5 +311,5 @@ from a quiesced backup.
 
 ## See also
 
-- `crate/sinex-db/docs/backup_restore.md` — WAL archiving and `pg_basebackup` setup.
+- `crate/sinex-db/docs/backup_restore.md` — the `sinex-postgres-dump` daily `pg_dump` mechanism and restore drill.
 - `crate/sinex-db/docs/data_lifecycle.md` — event lifecycle semantics.
