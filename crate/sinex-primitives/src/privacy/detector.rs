@@ -95,28 +95,51 @@ pub fn find_emails(input: &str) -> Vec<(usize, usize)> {
 // ─── Phone number ────────────────────────────────────────────
 
 /// Pre-filter regex for phone numbers.
-/// Requires a `+` prefix, parens around area code, or at least 7 digits
-/// with separators.
+/// Matches a `+` international prefix, a parenthesized area code, a bare
+/// NANP-shaped group (`NNN-NNN-NNNN` / `NNN.NNN.NNNN` / `NNN NNN NNNN`), or
+/// an unseparated 10-digit run — all routed through `is_plausible_phone`
+/// for the actual validation.
 #[allow(clippy::expect_used)] // Compile-time constant regex
 static PHONE_RE: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(
         r"(?x)
         (?:
-            \+\d{1,3}[\s.-]?            # International prefix
+            \+\d{1,3}[\s.-]?[\d\s.\-()]{6,18}      # International prefix
             |
-            \(\d{2,4}\)[\s.-]?          # Area code in parens
+            \(\d{2,4}\)[\s.-]?[\d\s.\-()]{6,18}    # Area code in parens
+            |
+            \b\d{3}[\s.\-]\d{3}[\s.\-]\d{4}\b      # Bare NANP: 555-867-5309 / 555.867.5309
+            |
+            \b\d{10}\b                              # Bare unseparated 10-digit
         )
-        [\d\s.\-()]{6,18}              # Remaining digits with separators
         ",
     )
     .expect("phone regex")
 });
 
-/// Validate phone number candidate: must have enough actual digits.
+/// Validate phone number candidate: must have enough actual digits, and a
+/// bare 10-digit NANP-shaped candidate (no international `+` prefix) must
+/// have plausible area-code/exchange-code digits.
+///
+/// Widening the pre-filter to accept unseparated/bare-dash digit runs opens
+/// a much broader match surface than the previous `+`/`(...)`-anchored
+/// pattern (order IDs, timestamps, and other incidental 10-digit numbers
+/// all become candidates). The NANP structural rule — area code and
+/// exchange code may not start with 0 or 1 — gives back some of that
+/// precision without a real checksum, which plain phone numbers don't have.
 fn is_plausible_phone(candidate: &str) -> bool {
     let digit_count = candidate.chars().filter(char::is_ascii_digit).count();
     // Phone numbers have 7-15 digits (E.164 max is 15)
-    (7..=15).contains(&digit_count)
+    if !(7..=15).contains(&digit_count) {
+        return false;
+    }
+    if digit_count == 10 && !candidate.trim_start().starts_with('+') {
+        let digits: Vec<u32> = candidate.chars().filter_map(|c| c.to_digit(10)).collect();
+        if digits.len() == 10 && (digits[0] < 2 || digits[3] < 2) {
+            return false;
+        }
+    }
+    true
 }
 
 /// Find phone numbers in input.
@@ -405,11 +428,15 @@ pub fn find_hostnames(input: &str) -> Vec<(usize, usize)> {
 
 // ─── SSN ─────────────────────────────────────────────────────
 
-/// Pre-filter regex for US Social Security Numbers (NNN-NN-NNNN format).
-/// Does not use lookaheads — validation is done in `is_valid_ssn`.
+/// Pre-filter regex for US Social Security Numbers: `NNN-NN-NNNN`,
+/// `NNN NN NNNN`, or a bare unseparated 9-digit run (common from OCR/forms).
+/// Separators are optional per-group so partially-separated candidates also
+/// reach validation. Does not use lookaheads — validation is done in
+/// `is_valid_ssn`, whose area/group/serial range checks are the only
+/// plausibility filter available (SSNs have no real checksum digit).
 #[allow(clippy::expect_used)] // Compile-time constant regex
 static SSN_RE: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"\b\d{3}[-\s]\d{2}[-\s]\d{4}\b").expect("ssn regex"));
+    LazyLock::new(|| Regex::new(r"\b\d{3}[-\s]?\d{2}[-\s]?\d{4}\b").expect("ssn regex"));
 
 /// Validate a SSN candidate: reject area 000, 666, 900-999; group 00; serial 0000.
 fn is_valid_ssn(candidate: &str) -> bool {
