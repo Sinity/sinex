@@ -263,10 +263,8 @@ pub fn compute_session_boundaries(
         for (source, count) in window.activity_source_counts {
             *entry.activity_source_counts.entry(source).or_insert(0) += count;
         }
-        if gap_closed {
-            if let Some(finished) = accumulator.take() {
-                boundaries.push(finished.finish());
-            }
+        if gap_closed && let Some(finished) = accumulator.take() {
+            boundaries.push(finished.finish());
         }
     }
     if let Some(remaining) = accumulator {

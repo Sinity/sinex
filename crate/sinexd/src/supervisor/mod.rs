@@ -451,6 +451,12 @@ async fn reconcile_product_declarations(event_engine_config: &EventEngineConfig)
             crate::api::handlers::semantic::SEMANTIC_LANE_OUTPUT_DECLARATIONS,
         )
         .await?;
+        inserted += crate::automata::product_declarations::reconcile_declarations(
+            &pool,
+            "session-lane",
+            crate::session_lane::SESSION_LANE_OUTPUT_DECLARATIONS,
+        )
+        .await?;
 
         // sinex-0vx.5: reconcile authority.finalizer_registry AFTER product
         // declarations — finalizer_registry.derivation_declaration_id
@@ -460,6 +466,12 @@ async fn reconcile_product_declarations(event_engine_config: &EventEngineConfig)
         crate::authority::reconcile_finalizer_registrations(
             &pool,
             crate::api::handlers::curation::CURATION_FINALIZER_DECLARATIONS,
+        )
+        .await?;
+        // sinex-0vx.7: session-lane promotion finalizer, same posture.
+        crate::authority::reconcile_finalizer_registrations(
+            &pool,
+            crate::session_lane::SESSION_LANE_FINALIZER_DECLARATIONS,
         )
         .await?;
 

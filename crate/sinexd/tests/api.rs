@@ -51,6 +51,7 @@ mod api {
     mod runtime_registry_handlers_test;
     mod semantic_handlers_test;
     mod service_container_test;
+    mod session_lane_test;
     mod shadow_handlers_test;
     mod sources_handlers_test;
     mod sse_real_confirmations_test;
