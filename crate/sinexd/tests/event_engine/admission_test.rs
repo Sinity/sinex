@@ -3,8 +3,10 @@ use sinex_primitives::{
     AdmissionOutcome, AdmissionOutcomeRef, DynamicPayload, Id, JsonValue,
     STANDARD_EVENT_ADMISSION_POLICY_ID, SourceMaterial, Timestamp, Uuid,
     activity::ActivitySourceKind,
+    domain::HostName,
     event_contracts::SHELL_HISTORY_COMMAND_IMPORTED_CONTRACT_ID,
     events::Event,
+    events::admission::EventIntent,
     events::payloads::{ActivityDailySummaryPayload, ActivityHourlySummaryPayload, StateIntervalPayload},
 };
 use std::collections::BTreeMap;
@@ -1316,6 +1318,138 @@ async fn browser_history_page_visited_supersede_on_change_unmodified_reread_supp
             assert_eq!(rejection.kind, AdmissionRejectionKind::OccurrenceDuplicate);
         }
         other => panic!("unmodified browser-history re-read must suppress, not {other:?}"),
+    }
+
+    Ok(())
+}
+
+/// sinex-audit-intrabatchsuperseed: three revisions of the SAME occurrence
+/// key arriving in ONE `EventIntent` (the shape `EventBatcher` produces for
+/// occurrence-stable interval sources) must all classify correctly against
+/// each other, not just against the pre-batch DB snapshot. Before the fix,
+/// `live_by_key` was built once before the loop, so revisions 2 and 3 both
+/// classified against the ORIGINAL live row and both tried to archive it a
+/// second time -- which `execute_cascade_archive`'s existence pre-check
+/// rejects, so both were silently suppressed as an ordinary
+/// `OccurrenceDuplicate`, indistinguishable from a legitimate duplicate.
+///
+/// The fix must also avoid the opposite trap: naively pointing revision 2's
+/// archive target at revision 1's (not-yet-persisted) id would fail
+/// identically, since revision 1 never reaches `core.events` until after
+/// `prepare_events` returns. Only the FINAL revision in a same-key run may
+/// carry a real archive target -- the run's original pre-batch live row, if
+/// any -- and every earlier same-key sibling in the batch must be dropped
+/// under a distinct rejection kind rather than treated as a genuine
+/// duplicate.
+#[sinex_test]
+async fn supersede_on_change_intrabatch_multiple_revisions_only_final_applies(
+    ctx: TestContext,
+) -> TestResult<()> {
+    let material_id = ctx
+        .create_source_material(Some("audit-intrabatch-supersede"))
+        .await?;
+    let ts = Timestamp::now();
+    let key = "audit-intrabatch-supersede-key".to_string();
+    let service = admission_service(&ctx);
+
+    // Seed the live interpretation, exactly like the single-event supersede
+    // test above.
+    let live_id = Uuid::now_v7();
+    let mut live = material_event(
+        material_id,
+        live_id,
+        "derived.interval-lift",
+        "state.interval",
+        interval_payload(ts, 100),
+    )?;
+    live.equivalence_key = Some(key.clone());
+    let persisted_id = admit_and_persist(&service, live).await?;
+    assert_eq!(persisted_id, live_id);
+
+    // Three same-key revisions land in ONE intent, each a genuine content
+    // change from the last.
+    let revision_1_id = Uuid::now_v7();
+    let mut revision_1 = material_event(
+        material_id,
+        revision_1_id,
+        "derived.interval-lift",
+        "state.interval",
+        interval_payload(ts, 200),
+    )?;
+    revision_1.equivalence_key = Some(key.clone());
+
+    let revision_2_id = Uuid::now_v7();
+    let mut revision_2 = material_event(
+        material_id,
+        revision_2_id,
+        "derived.interval-lift",
+        "state.interval",
+        interval_payload(ts, 300),
+    )?;
+    revision_2.equivalence_key = Some(key.clone());
+
+    let revision_3_id = Uuid::now_v7();
+    let mut revision_3 = material_event(
+        material_id,
+        revision_3_id,
+        "derived.interval-lift",
+        "state.interval",
+        interval_payload(ts, 400),
+    )?;
+    revision_3.equivalence_key = Some(key.clone());
+
+    let intent = EventIntent::new(
+        "test-source",
+        "test-parser",
+        "1.0.0",
+        vec![revision_1, revision_2, revision_3],
+        HostName::from_static("test-host"),
+    );
+    let payload = serde_json::to_vec(&intent)?;
+
+    let decisions = service.admit_intent_bytes(&payload).await?;
+    assert_eq!(
+        decisions.len(),
+        3,
+        "all three intent events produce a decision"
+    );
+
+    for (idx, decision) in decisions.iter().take(2).enumerate() {
+        match decision {
+            AdmissionDecision::Suppressed(rejection) => {
+                assert_eq!(
+                    rejection.kind,
+                    AdmissionRejectionKind::SupersededWithinBatch,
+                    "revision {idx} loses to a later same-batch revision -- distinct from an \
+                     ordinary OccurrenceDuplicate re-emit"
+                );
+            }
+            other => panic!(
+                "expected same-key revision {idx} to be demoted within the batch, not persisted \
+                 and later fail an archive against an already-archived or not-yet-durable row: \
+                 {other:?}"
+            ),
+        }
+    }
+
+    match &decisions[2] {
+        AdmissionDecision::Superseded {
+            admitted,
+            superseded_event_id,
+        } => {
+            assert_eq!(
+                *superseded_event_id, live_id,
+                "the final revision must supersede the ORIGINAL pre-batch live row, not an \
+                 in-batch sibling that was never persisted"
+            );
+            assert_eq!(
+                admitted.event_id, revision_3_id,
+                "the final revision -- not the first -- is the one that goes live"
+            );
+        }
+        other => panic!(
+            "expected the final same-key revision to supersede the original live row: {other:?}"
+        ),
     }
 
     Ok(())

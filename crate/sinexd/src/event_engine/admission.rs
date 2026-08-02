@@ -271,6 +271,13 @@ pub enum AdmissionRejectionKind {
     /// emitted by deterministic-key (`Uuid5From`) sources. Sources that do not set
     /// `equivalence_key` are never suppressed by this path.
     OccurrenceDuplicate,
+    /// A later event in the SAME intent shares this candidate's `equivalence_key`
+    /// and revised it again before this interpretation was ever persisted
+    /// (sinex-audit-intrabatchsuperseed). Distinct from `OccurrenceDuplicate`
+    /// (which means "identical re-emit"): this candidate genuinely differed
+    /// from the prior live state but lost the race to a same-batch successor,
+    /// so it never went live and no archive was attempted against it.
+    SupersededWithinBatch,
 }
 
 impl AdmissionRejectionKind {
@@ -294,6 +301,7 @@ impl AdmissionRejectionKind {
             Self::MissingEventId => "missing_event_id",
             Self::InvalidEventId => "invalid_event_id",
             Self::OccurrenceDuplicate => "occurrence_duplicate",
+            Self::SupersededWithinBatch => "superseded_within_batch",
         }
     }
 }
@@ -965,7 +973,7 @@ impl AdmissionService {
             .iter()
             .filter_map(|e| e.equivalence_key.as_ref().map(|k| k.as_str().to_owned()))
             .collect();
-        let live_by_key: HashMap<String, LiveEquivalenceRow> = if equiv_keys.is_empty() {
+        let mut live_by_key: HashMap<String, LiveEquivalenceRow> = if equiv_keys.is_empty() {
             HashMap::new()
         } else {
             match self
@@ -989,20 +997,130 @@ impl AdmissionService {
             }
         };
 
+        // sinex-audit-intrabatchsuperseed: `live_by_key` used to be built ONCE
+        // before this loop, so a second (or third) same-equivalence-key event
+        // later in the SAME intent classified against the stale pre-batch
+        // live row instead of what an earlier sibling in this loop just
+        // decided. Two maps track intra-batch state as each event resolves:
+        //
+        // - `live_by_key` (mutated below) is the CLASSIFICATION snapshot:
+        //   what the next same-key event's content should be compared
+        //   against, updated to each event's own payload as it is admitted.
+        // - `key_archive_target` / `key_last_index` track the COLLAPSING of a
+        //   same-key run within this batch: only the run's original external
+        //   DB row (if any) is ever a valid `apply_supersession` archive
+        //   target, because every other same-batch member is still in-memory
+        //   (not yet persisted) when `prepare_events` would try to archive
+        //   it, and `execute_cascade_archive` pre-validates the target
+        //   exists in `core.events` before archiving. So each new same-key
+        //   revision demotes its immediate in-batch predecessor to
+        //   `SupersededWithinBatch` (never persisted, never archived) and
+        //   carries the run's original external target — established once,
+        //   by whichever event first collided with the pre-batch live row —
+        //   forward to itself. Only the LAST event of a same-key run within
+        //   an intent ends up live, superseding the external row (if any) at
+        //   most once.
+        let mut key_last_index: HashMap<String, usize> = HashMap::new();
+        let mut key_archive_target: HashMap<String, Option<Uuid>> = HashMap::new();
+
         for event in intent.events {
-            // Resolve this event's occurrence outcome from the pre-fetched map
-            // (borrow released before `event` is moved into admit).
-            let outcome = event
-                .equivalence_key
+            // Resolve this event's occurrence outcome from the classification
+            // map (borrow released before `event` is moved into admit).
+            let equiv_key = event.equivalence_key.clone();
+            let outcome = equiv_key
                 .as_deref()
                 .and_then(|key| live_by_key.get(key))
                 .map_or(EquivalenceOutcome::Fresh, |live| {
                     classify_live_match(&event, live)
                 });
-            decisions.push(
-                self.admit_event_with_metadata(event, None, Some(outcome))
-                    .await?,
+            let decision = self
+                .admit_event_with_metadata(event, None, Some(outcome))
+                .await?;
+
+            let Some(key) = equiv_key else {
+                decisions.push(decision);
+                continue;
+            };
+
+            let admitted = match &decision {
+                AdmissionDecision::Admitted(admitted)
+                | AdmissionDecision::Transformed(admitted)
+                | AdmissionDecision::Superseded { admitted, .. } => admitted,
+                AdmissionDecision::Suppressed(_)
+                | AdmissionDecision::QuarantineNeeded(_)
+                | AdmissionDecision::Rejected(_) => {
+                    // Identical re-emit or rejected candidate: the run's live
+                    // state (classification snapshot and archive target)
+                    // does not change.
+                    decisions.push(decision);
+                    continue;
+                }
+            };
+
+            // Refresh the classification snapshot to this event's own
+            // content so a following same-key event compares against it.
+            live_by_key.insert(
+                key.clone(),
+                LiveEquivalenceRow {
+                    equivalence_key: admitted
+                        .event
+                        .equivalence_key
+                        .clone()
+                        .unwrap_or_default(),
+                    id: admitted.event_id,
+                    payload: admitted.event.payload.clone(),
+                    content_hash: Some(payload_content_hash(&admitted.event.payload).to_vec()),
+                },
             );
+
+            let idx = decisions.len();
+            match decision {
+                AdmissionDecision::Superseded {
+                    superseded_event_id,
+                    admitted,
+                } if key_last_index.contains_key(&key) => {
+                    // The classified target was an in-batch predecessor, not
+                    // a genuine DB row — demote it (never persisted, so
+                    // never a valid `apply_supersession` target) and carry
+                    // forward whatever real external target the run
+                    // established, if any.
+                    let prev_idx = key_last_index[&key];
+                    let _ = superseded_event_id; // the in-batch predecessor's own id; not archived
+                    decisions[prev_idx] = AdmissionDecision::Suppressed(AdmissionRejection::new(
+                        AdmissionRejectionKind::SupersededWithinBatch,
+                        format!(
+                            "equivalence_key {key} was revised again later in the same intent \
+                             before this interpretation was ever persisted"
+                        ),
+                    ));
+                    let external_target = key_archive_target.get(&key).copied().flatten();
+                    key_last_index.insert(key.clone(), idx);
+                    key_archive_target.insert(key, external_target);
+                    decisions.push(match external_target {
+                        Some(target) => AdmissionDecision::Superseded {
+                            admitted,
+                            superseded_event_id: target,
+                        },
+                        None => AdmissionDecision::Admitted(admitted),
+                    });
+                }
+                AdmissionDecision::Superseded {
+                    superseded_event_id,
+                    ..
+                } => {
+                    // First supersession for this key in the batch: the
+                    // target is a genuine pre-batch live DB row.
+                    key_last_index.insert(key.clone(), idx);
+                    key_archive_target.insert(key, Some(superseded_event_id));
+                    decisions.push(decision);
+                }
+                AdmissionDecision::Admitted(_) | AdmissionDecision::Transformed(_) => {
+                    key_last_index.insert(key.clone(), idx);
+                    key_archive_target.insert(key, None);
+                    decisions.push(decision);
+                }
+                _ => unreachable!("filtered to Admitted/Transformed/Superseded above"),
+            }
         }
         Ok(decisions)
     }
