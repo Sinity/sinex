@@ -163,3 +163,135 @@ async fn projection_readiness_view_includes_read_time_email_mailbox_entry(
 
     Ok(())
 }
+
+fn registration_versioned<'a>(
+    kind: &'a str,
+    scope_key: &'a str,
+    semantics_version: &'a str,
+) -> ProjectionRegistrationInput<'a> {
+    let mut input = registration(kind, scope_key);
+    input.semantics_version = semantics_version;
+    input
+}
+
+/// Real behavior under test (sinex-68c.4, AC "Semantics-version bumps mark
+/// older projection rows stale before read surfaces claim readiness"):
+/// `ProjectionRegistryRepository::begin_build` stales the current row for a
+/// `(projection_kind, scope_key)` the moment a new build starts under a
+/// DIFFERENT `semantics_version` -- it does not wait for the new build to
+/// finish. Removing the `stale_superseded_semantics` call from
+/// `insert_row` makes this test fail: the v1 row would still read `ready`
+/// immediately after the v2 `begin_build`, so `ProjectionReadinessView`
+/// would keep serving output built under semantics that are already known
+/// to be superseded.
+#[sinex_test]
+async fn projection_registry_semantics_bump(ctx: TestContext) -> TestResult<()> {
+    let kind = format!("test_semantics_bump_{}", Uuid::now_v7());
+    let scope_key = "scope-a";
+    let repo = ctx.pool().projection_registry();
+
+    let v1_id = repo
+        .begin_build(&registration_versioned(&kind, scope_key, "v1"))
+        .await?;
+    repo.mark_ready(v1_id, serde_json::json!({"n": 1})).await?;
+
+    let v1_after_ready = repo
+        .find_latest(&kind, scope_key)
+        .await?
+        .expect("v1 row must exist after mark_ready");
+    assert_eq!(v1_after_ready.status, "ready");
+    assert_eq!(v1_after_ready.id, v1_id);
+
+    // Bump to v2. This must immediately stale the v1 row rather than leave
+    // it `ready` until the v2 build completes.
+    let v2_id = repo
+        .begin_build(&registration_versioned(&kind, scope_key, "v2"))
+        .await?;
+
+    let latest = repo
+        .find_latest(&kind, scope_key)
+        .await?
+        .expect("row must exist after v2 begin_build");
+    assert_eq!(latest.id, v2_id, "the v2 building row must be current");
+    assert_eq!(latest.status, "building");
+    assert_eq!(latest.semantics_version, "v2");
+
+    // `find_latest` only surfaces the current (most-recently-updated) row
+    // per scope, so read the v1 row directly by id to confirm it was
+    // actually transitioned rather than merely superseded in ordering.
+    let v1_row: (String, Option<String>) = sqlx::query_as(
+        "SELECT status, stale_reason FROM derivation.projection_registry WHERE id = $1",
+    )
+    .bind(v1_id)
+    .fetch_one(ctx.pool())
+    .await?;
+    assert_eq!(v1_row.0, "stale", "v1 row must be staled by the v2 bump");
+    let reason = v1_row.1.unwrap_or_default();
+    assert!(
+        reason.contains("semantics_version") && reason.contains("v2"),
+        "stale_reason should explain the semantics version bump, got: {reason:?}"
+    );
+
+    Ok(())
+}
+
+/// Real behavior under test (sinex-68c.4, AC "Redaction policy changes mark
+/// dependent projections stale or partial"): the real
+/// `handle_privacy_policy_rule_add` RPC handler -- the same handler
+/// `sinexctl privacy rule add` and the gateway RPC surface invoke -- stales
+/// every current `derivation.projection_registry` row after a policy
+/// mutation lands. Removing the `stale_projections_for_policy_change` call
+/// from the handler makes this test fail: the seeded `ready` row would
+/// stay `ready` after the rule is added, even though redaction behavior
+/// downstream of it just changed.
+#[sinex_test]
+async fn projection_registry_redaction_invalidation(ctx: TestContext) -> TestResult<()> {
+    let kind = format!("test_redaction_{}", Uuid::now_v7());
+    let scope_key = "scope-a";
+    let repo = ctx.pool().projection_registry();
+
+    let ready_id = repo.begin_build(&registration(&kind, scope_key)).await?;
+    repo.mark_ready(ready_id, serde_json::json!({})).await?;
+
+    let before = repo
+        .find_latest(&kind, scope_key)
+        .await?
+        .expect("row must exist before policy change");
+    assert_eq!(before.status, "ready");
+
+    let rule_name = format!("test-redaction-rule-{}", Uuid::now_v7());
+    crate::api::handlers::privacy::handle_privacy_policy_rule_add(
+        ctx.pool(),
+        sinex_primitives::rpc::privacy::PrivacyPolicyRuleAddRequest {
+            name: rule_name.clone(),
+            description: "sinex-68c.4 test rule".to_string(),
+            matcher_type: "literal".to_string(),
+            matcher_value: "sinex-68c-4-test-secret".to_string(),
+            matcher_config: serde_json::json!({}),
+            context_words: Vec::new(),
+            recognizer_backend_id: None,
+            recognizer_kind: "local_pattern".to_string(),
+            case_sensitive: false,
+            action: "redact".to_string(),
+            action_label: None,
+            key_namespace: "default".to_string(),
+        },
+    )
+    .await?;
+
+    let after = repo
+        .find_latest(&kind, scope_key)
+        .await?
+        .expect("row must still exist after policy change");
+    assert_eq!(
+        after.status, "stale",
+        "adding a privacy rule must stale existing ready projections"
+    );
+    let reason = after.stale_reason.unwrap_or_default();
+    assert!(
+        reason.contains(&rule_name),
+        "stale_reason should reference the added rule, got: {reason:?}"
+    );
+
+    Ok(())
+}

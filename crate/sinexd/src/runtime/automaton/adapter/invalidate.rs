@@ -301,6 +301,26 @@ where
                     archived_count = archived,
                     "Archived stale derived outputs after successful recomputation emission"
                 );
+
+                // sinex-68c.4: any projection instance keyed to this scope
+                // was built over the outputs just archived above; it can no
+                // longer be trusted as ready.
+                let reason = format!(
+                    "scope invalidation recompute by automaton '{}' (operation {operation_uuid})",
+                    self.automaton.name()
+                );
+                if let Err(error) = pool
+                    .projection_registry()
+                    .mark_stale_by_scope_key(&scope.scope_key, &reason)
+                    .await
+                {
+                    warn!(
+                        automaton = %self.automaton.name(),
+                        scope_key = scope.scope_key,
+                        error = %error,
+                        "Failed to stale projection registry rows after scope recomputation — outputs still correct"
+                    );
+                }
             }
 
             if !scope.stale_ids.is_empty() && !scope.new_event_ids.is_empty() {

@@ -335,6 +335,11 @@ impl ReplayExecutionEngine {
             "Archived replay cascade, dispatching scan to source"
         );
 
+        if !scope_metadata.is_empty() {
+            self.stale_projection_registry_for_scopes(pool, &scope_metadata, operation_id)
+                .await?;
+        }
+
         // The archive transaction records scope invalidations as pending in
         // operation metadata before committing archived rows. NATS publication
         // remains outside the DB transaction; a crash in that boundary leaves a
