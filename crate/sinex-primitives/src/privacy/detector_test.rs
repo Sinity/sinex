@@ -78,6 +78,41 @@ async fn phone_finds_parens() -> ::xtask::sandbox::TestResult<()> {
     Ok(())
 }
 
+#[sinex_test]
+async fn phone_finds_bare_dash_separated() -> ::xtask::sandbox::TestResult<()> {
+    // No `+` prefix, no parens — the common unstructured format.
+    let matches = find_phones("call 555-867-5309 now");
+    assert_eq!(matches.len(), 1);
+    Ok(())
+}
+
+#[sinex_test]
+async fn phone_finds_bare_dot_separated() -> ::xtask::sandbox::TestResult<()> {
+    let matches = find_phones("call 555.867.5309 now");
+    assert_eq!(matches.len(), 1);
+    Ok(())
+}
+
+#[sinex_test]
+async fn phone_finds_bare_unseparated() -> ::xtask::sandbox::TestResult<()> {
+    let matches = find_phones("call 5558675309 now");
+    assert_eq!(matches.len(), 1);
+    Ok(())
+}
+
+#[sinex_test]
+async fn phone_rejects_bare_unseparated_with_invalid_nanp_prefix()
+-> ::xtask::sandbox::TestResult<()> {
+    // 10 digits, unseparated, but the area code (1234...) and exchange code
+    // both start with a digit that's invalid under NANP (0/1) — this is the
+    // shape of an arbitrary numeric ID, not a real phone number. Without the
+    // NANP structural check this would now false-positive purely from digit
+    // count, since the pre-filter widening accepts bare 10-digit runs.
+    let matches = find_phones("order id 1234567890 confirmed");
+    assert!(matches.is_empty());
+    Ok(())
+}
+
 // ── IBAN ──
 
 #[sinex_test]
@@ -236,6 +271,25 @@ async fn ssn_finds_in_text() -> ::xtask::sandbox::TestResult<()> {
 #[sinex_test]
 async fn ssn_rejects_invalid_in_text() -> ::xtask::sandbox::TestResult<()> {
     let matches = find_ssns("invalid 000-45-6789");
+    assert!(matches.is_empty());
+    Ok(())
+}
+
+#[sinex_test]
+async fn ssn_finds_bare_unseparated() -> ::xtask::sandbox::TestResult<()> {
+    // Common from OCR/forms: no separators at all.
+    let matches = find_ssns("ssn: 123456789 on file");
+    assert_eq!(matches.len(), 1);
+    Ok(())
+}
+
+#[sinex_test]
+async fn ssn_rejects_bare_unseparated_invalid_area() -> ::xtask::sandbox::TestResult<()> {
+    // 9 digits, unseparated, area 999 — out of the valid SSA range. This is
+    // the shape of an arbitrary numeric ID, not a real SSN: without the
+    // existing area/group/serial range validation in `is_valid_ssn`, widening
+    // the pre-filter to bare digit runs would let any 9-digit number through.
+    let matches = find_ssns("tracking number 999123456 assigned");
     assert!(matches.is_empty());
     Ok(())
 }
