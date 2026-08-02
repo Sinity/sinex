@@ -109,7 +109,7 @@ const CURATION_JUDGMENT_DECLARATION: DerivationOutputDeclaration = DerivationOut
 /// deterministic receipt recording that an accepted/modified judgment was
 /// applied — `ReportArtifact` ("a persisted generated report, receipt,
 /// export, or artifact pointer"), `artifact_writer`.
-const CURATION_FINALIZED_DECLARATION: DerivationOutputDeclaration = DerivationOutputDeclaration {
+pub(crate) const CURATION_FINALIZED_DECLARATION: DerivationOutputDeclaration = DerivationOutputDeclaration {
     declaration_id: "curation-rpc.curation.finalized",
     owner: "curation-rpc",
     product_class: DerivedProductClass::ReportArtifact,
@@ -701,6 +701,21 @@ pub async fn handle_curation_finalize(
         .build()?;
     apply_curation_finalized_declaration(&mut event, judgment_parent, 2, 0)?;
     let inserted = pool.events().insert(event).await?;
+
+    // Generic lane-promotion bridge (sinex-0vx.7): ANY proposal whose
+    // candidate_payload carries a "lane_id" is understood as promoting a
+    // derivation.lanes row on successful finalize -- this file has no
+    // sessionization-specific knowledge, only that a finalized proposal
+    // referencing a lane_id promotes that lane. Session-lane promotion
+    // (this bead) is the first user; a later lane kind (e.g. sinex-0vx.9's
+    // entity-chain lane) reuses the same bridge rather than inventing a
+    // parallel per-kind finalize path.
+    if let Some(lane_id) = extract_lane_id(&proposal.candidate_payload)? {
+        pool.derivation_lanes()
+            .set_lane_status(lane_id, "promoted", Some(finalized_at))
+            .await?;
+    }
+
     let operation_record = pool
         .state()
         .log_operation(DbOperation {
@@ -730,6 +745,26 @@ pub async fn handle_curation_finalize(
         event: inserted,
         operation: operation_record_to_rpc(operation_record),
     })
+}
+
+/// Extract `candidate_payload.lane_id` if present -- the generic
+/// curation-to-lane-promotion bridge's input (see the call site in
+/// `handle_curation_finalize`). Fails closed on a present-but-malformed
+/// value rather than silently skipping promotion.
+fn extract_lane_id(candidate_payload: &JsonValue) -> Result<Option<Uuid>> {
+    let Some(value) = candidate_payload.get("lane_id") else {
+        return Ok(None);
+    };
+    let raw = value.as_str().ok_or_else(|| {
+        SinexError::validation("curation.finalize: candidate_payload.lane_id must be a string")
+            .with_context("lane_id", value.to_string())
+    })?;
+    let lane_id = Uuid::parse_str(raw).map_err(|error| {
+        SinexError::validation("curation.finalize: candidate_payload.lane_id is not a valid uuid")
+            .with_context("lane_id", raw)
+            .with_std_error(&error)
+    })?;
+    Ok(Some(lane_id))
 }
 
 fn cluster_row_error(error: sqlx::Error) -> SinexError {

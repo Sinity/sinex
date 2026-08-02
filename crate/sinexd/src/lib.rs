@@ -11,5 +11,6 @@ pub mod authority;
 pub mod automata;
 pub mod event_engine;
 pub mod runtime;
+pub mod session_lane;
 pub mod sources;
 pub mod supervisor;

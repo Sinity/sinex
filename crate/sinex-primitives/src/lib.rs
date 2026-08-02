@@ -42,6 +42,7 @@ pub mod runtime_pressure;
 pub mod runtime_target;
 pub mod schema_constraints;
 pub mod semantic;
+pub mod session_lane;
 pub mod source_contracts;
 pub mod views;
 
@@ -192,6 +193,7 @@ pub use runtime_target::{
 };
 pub use semantic::*;
 pub use serde_json::Value as JsonValue;
+pub use session_lane::*;
 pub use source_contracts::{SourceRuntimeBinding, SubjectQuery, SubjectRef};
 pub use task_domain::*;
 pub use temporal::{OffsetDateTime, now};
