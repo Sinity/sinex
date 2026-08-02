@@ -23,6 +23,7 @@ use sinex_primitives::rpc::curation::{
     CurationRecordDuplicateJudgmentRequest, CurationRecordDuplicateJudgmentResponse,
     CurationRecordJudgmentRequest, CurationRecordJudgmentResponse,
 };
+use sinex_primitives::rpc::lifecycle::LifecycleArchiveRequest;
 use sinex_primitives::rpc::ops::Operation;
 use sinex_primitives::views::{SinexObjectKind, SinexObjectRef};
 use sinex_primitives::{Id, JsonValue, Result, SinexError, Timestamp, Uuid};
@@ -707,6 +708,21 @@ pub async fn handle_curation_finalize(
     apply_curation_finalized_declaration(&mut event, judgment_parent, 2, 0)?;
     let inserted = pool.events().insert(event).await?;
 
+    // Duplicate-workbench archive bridge (sinex-audit-dupe-workbench-stale-
+    // cluster): a finalized `curation.duplicate_resolution` judgment
+    // previously had zero observable effect on `core.events` -- the same
+    // GROUP BY cluster in `handle_curation_list_duplicate_candidates` kept
+    // resurfacing forever because the losing candidate rows were never
+    // removed. Reuse the existing lifecycle archive-cascade mechanism
+    // (`handle_lifecycle_archive` / `execute_cascade_archive`) to physically
+    // archive the losing events out of the live table, the same path
+    // `lifecycle.archive` and TTL expiry already use -- no shadow status
+    // table, `core.events` stays the single source of truth for "is this
+    // cluster still live".
+    if proposal.proposal_kind == "curation.duplicate_resolution" {
+        archive_resolved_duplicate_losers(pool, &proposal, &judgment).await?;
+    }
+
     // Generic lane-promotion bridge (sinex-0vx.7): ANY proposal whose
     // candidate_payload carries a "lane_id" is understood as promoting a
     // derivation.lanes row on successful finalize -- this file has no
@@ -770,6 +786,111 @@ fn extract_lane_id(candidate_payload: &JsonValue) -> Result<Option<Uuid>> {
             .with_std_error(&error)
     })?;
     Ok(Some(lane_id))
+}
+
+/// Determine and archive the losing events of a finalized
+/// `curation.duplicate_resolution` cluster (see the call site in
+/// `handle_curation_finalize`).
+///
+/// `merge` keeps the candidate event with the smallest (earliest-minted)
+/// UUIDv7 id as canonical -- sinex ids are monotonic UUIDv7s (see
+/// `ts_coided = uuid_extract_timestamp(id)`), so the smallest id is the
+/// first interpretation recorded for the cluster. `prefer` keeps
+/// `preferred_event_id`. `ignore` (a Reject decision) never reaches this
+/// function: `CurationFinalizedPayload::from_judgment` only builds a
+/// payload for Accept/Modify decisions, so an ignored cluster fails
+/// finalize before this point -- "ignore" means "this is not actually a
+/// duplicate cluster" and correctly leaves `core.events` untouched.
+///
+/// Archival goes through the same `lifecycle.archive` cascade mechanism
+/// (`handle_lifecycle_archive` -> `execute_cascade_archive`) TTL expiry and
+/// the operator-facing archive RPC already use, so losing events (and
+/// anything derived from them) stop appearing in
+/// `handle_curation_list_duplicate_candidates`'s `GROUP BY` the moment this
+/// returns -- `core.events` stays the single source of truth for whether a
+/// cluster is still live, with no shadow "resolved" status table.
+async fn archive_resolved_duplicate_losers(
+    pool: &PgPool,
+    proposal: &CurationProposalPayload,
+    judgment: &CurationJudgmentPayload,
+) -> Result<()> {
+    let payload = &proposal.candidate_payload;
+    let candidate_event_ids: Vec<Uuid> = payload
+        .get("candidate_event_ids")
+        .cloned()
+        .map(serde_json::from_value)
+        .transpose()
+        .map_err(|error: serde_json::Error| {
+            SinexError::serialization("curation.finalize: invalid duplicate candidate_event_ids")
+                .with_std_error(&error)
+        })?
+        .unwrap_or_default();
+    if candidate_event_ids.len() < 2 {
+        return Ok(());
+    }
+
+    let action = payload
+        .get("action")
+        .and_then(JsonValue::as_str)
+        .unwrap_or_default();
+    let preferred_event_id: Option<Uuid> = match payload.get("preferred_event_id") {
+        None | Some(JsonValue::Null) => None,
+        Some(value) => Some(serde_json::from_value(value.clone()).map_err(|error| {
+            SinexError::serialization("curation.finalize: invalid duplicate preferred_event_id")
+                .with_std_error(&error)
+        })?),
+    };
+
+    let winner = match action {
+        "prefer" => preferred_event_id.ok_or_else(|| {
+            SinexError::invalid_state(
+                "curation.finalize: prefer duplicate resolution missing preferred_event_id",
+            )
+        })?,
+        "merge" => candidate_event_ids.iter().copied().min().ok_or_else(|| {
+            SinexError::invalid_state(
+                "curation.finalize: merge duplicate resolution has no candidate events",
+            )
+        })?,
+        // `ignore` (and any unrecognized future action) leaves core.events
+        // untouched -- nothing was judged a confirmed duplicate.
+        _ => return Ok(()),
+    };
+
+    let losers: Vec<String> = candidate_event_ids
+        .into_iter()
+        .filter(|id| *id != winner)
+        .map(|id| id.to_string())
+        .collect();
+    if losers.is_empty() {
+        return Ok(());
+    }
+    let losers_count = losers.len();
+
+    // System-attributed but actor-tagged: the archive is an automatic
+    // consequence of an already-authorized finalize (gated above by
+    // `authorize_finalization`), not a fresh operator action, so it runs
+    // with Admin authority while keeping the judging actor in the audit
+    // trail via `actor_id`.
+    let auth = RpcAuthContext {
+        token_prefix: "curation".to_string(),
+        actor_id: format!("curation-workbench:{}", judgment.actor_id),
+        authenticated_at: Timestamp::now(),
+        role: crate::api::auth::Role::Admin,
+    };
+    let request = LifecycleArchiveRequest {
+        before: None,
+        source: None,
+        event_ids: Some(losers),
+        limit: losers_count as i64,
+        reason: Some(format!(
+            "curation duplicate-resolution finalize (judgment {})",
+            judgment.judgment_id
+        )),
+        dry_run: false,
+    };
+    crate::api::handlers::lifecycle::handle_lifecycle_archive(pool, request, &auth).await?;
+    Ok(())
 }
 
 fn cluster_row_error(error: sqlx::Error) -> SinexError {
