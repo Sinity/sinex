@@ -323,6 +323,8 @@ async fn check_column_defaults(pool: &PgPool) -> Result<Vec<StrictDrift>, ApplyE
 //   - core.fn_archive_before_delete     — cascade-archive on DELETE
 //   - raw.fn_source_material_validate_event_bounds — shrink-prevention
 //   - raw.fn_temporal_ledger_append_only — append-only guard
+//   - core.fn_document_projection()     — document_chunks upsert must
+//     self-heal on replay (sinex-audit-docchunks-replay-redaction-bypass)
 //
 //   Operation management:
 //   - core.start_operation              — audit trail entry
@@ -368,7 +370,6 @@ async fn check_column_defaults(pool: &PgPool) -> Result<Vec<StrictDrift>, ApplyE
 //   - core.create_embedding_model_index  — idempotent DDL
 //   - core.drop_embedding_model_index    — idempotent DDL
 //   - core.hybrid_search()               — query-only (read path)
-//   - core.fn_document_projection()      — projection (non-critical)
 
 /// One declared expectation for a stored function body.
 struct DeclaredFunctionBody {
@@ -426,6 +427,19 @@ const DECLARED_FUNCTION_BODIES: &[DeclaredFunctionBody] = &[
         function_name: "fn_temporal_ledger_append_only",
         // Append-only invariant on temporal_ledger — prevents mutation of observation log.
         expected_markers: &["append-only", "is forbidden"],
+    },
+    DeclaredFunctionBody {
+        schema: "core",
+        function_name: "fn_document_projection",
+        // sinex-audit-docchunks-replay-redaction-bypass: the `document.chunked`
+        // branch must self-heal on replay (upsert), not `DO NOTHING` — a
+        // silent DO NOTHING here means a replayed re-redaction never
+        // overwrites `core.document_chunks.text`, so under-redacted text
+        // stays permanently searchable via FTS with no staleness signal.
+        expected_markers: &[
+            "ON CONFLICT (document_id, chunk_index) DO UPDATE SET",
+            "text = EXCLUDED.text",
+        ],
     },
     // ── Operation management (critical — audit trail integrity) ─────────────────
     DeclaredFunctionBody {

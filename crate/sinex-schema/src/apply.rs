@@ -1118,8 +1118,16 @@ async fn create_triggers_and_functions(pool: &PgPool) -> Result<(), ApplyError> 
         &SourceSessionState::create_updated_at_trigger_sql(),
     )
     .await?;
-    ensure_trigger_set_sql(
+    // sinex-audit-docchunks-replay-redaction-bypass: the function body was
+    // changed (document.chunked projection now upserts instead of
+    // insert-and-drop-on-conflict) without a name change, so this must go
+    // through the hash-based drift check like `ensure_function_set_sql`
+    // callers below -- `ensure_trigger_set_sql` is existence-only and would
+    // silently never reconcile the fix onto an already-deployed database
+    // (the same class of bug sinex-o1mg fixed for other functions).
+    ensure_function_and_trigger_set_sql(
         pool,
+        DOCUMENT_PROJECTION_FUNCTIONS,
         "core.events",
         &["trg_document_projection"],
         DocumentChunks::create_projection_trigger_sql(),
@@ -2464,6 +2472,8 @@ $$;
 ";
 
 const JSONB_MERGE_FUNCTIONS: &[&str] = &["core.jsonb_merge_deep(jsonb,jsonb)"];
+
+const DOCUMENT_PROJECTION_FUNCTIONS: &[&str] = &["core.fn_document_projection()"];
 
 const EMBEDDING_INDEX_MANAGEMENT_FUNCTIONS: &[&str] = &[
     "core.create_embedding_model_index(uuid,integer)",
