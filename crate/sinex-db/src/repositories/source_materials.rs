@@ -1665,6 +1665,51 @@ impl SourceMaterialRepository<'_> {
         .map_err(|e| db_error(e, "delete material"))?;
         Ok(result.rows_affected() > 0)
     }
+
+    /// Atomically delete a source material registry row, but ONLY if it is
+    /// still orphaned (no live `core.events` or `audit.archived_events` row
+    /// references it) at the moment of the delete.
+    ///
+    /// This closes the delete-on-tombstone TOCTOU race (sinex-audit-tombstonerace):
+    /// `find_orphan_materials` followed later by an unconditional `delete_material`
+    /// call and an unconditional `content_store.drop_content` call left a window
+    /// where a new/redelivered event landing between the two could reference a
+    /// material whose CAS content was already dropped. Baking the orphan recheck
+    /// into the same statement as the delete means a caller only needs to gate
+    /// `drop_content` on this method's return value: `None` (nothing deleted —
+    /// the material gained a live reference since the earlier orphan scan, or was
+    /// already gone) means the caller must NOT drop CAS content, because the
+    /// surviving row may still be reachable from a live event.
+    ///
+    /// Returns the material's `optional_blob_id` when the row was deleted (so the
+    /// caller can decide whether to drop the associated blob), or `None` when no
+    /// row was deleted.
+    pub async fn delete_material_if_orphan(
+        &self,
+        id: Id<SourceMaterialRecord>,
+    ) -> DbResult<Option<Option<uuid::Uuid>>> {
+        let id_uuid = id.to_uuid();
+        let deleted = sqlx::query!(
+            r#"
+            DELETE FROM raw.source_material_registry sm
+            WHERE sm.id = $1
+              AND NOT EXISTS (
+                SELECT 1 FROM core.events e
+                WHERE e.source_material_id = sm.id
+              )
+              AND NOT EXISTS (
+                SELECT 1 FROM audit.archived_events ae
+                WHERE ae.source_material_id = sm.id
+              )
+            RETURNING optional_blob_id as "optional_blob_id: uuid::Uuid"
+            "#,
+            id_uuid
+        )
+        .fetch_optional(self.pool)
+        .await
+        .map_err(|e| db_error(e, "delete material if orphan"))?;
+        Ok(deleted.map(|row| row.optional_blob_id))
+    }
 }
 
 /// Extension trait for `SourceMaterial` terminal methods
