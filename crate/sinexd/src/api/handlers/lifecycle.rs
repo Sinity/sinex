@@ -1078,6 +1078,8 @@ pub async fn handle_tombstone_approve(
 
     if !orphan_material_ids.is_empty() {
         let mut blobs_dropped = 0_usize;
+        let mut blobs_shared = 0_usize;
+        let mut blob_rows_deleted = 0_usize;
         let mut rows_deleted = 0_usize;
         for material_id in &orphan_material_ids {
             // Resolve the material to find its blob_id (if any) before deleting the row.
@@ -1097,7 +1099,12 @@ pub async fn handle_tombstone_approve(
                 }
             };
 
-            // Drop the CAS blob first (idempotent: drop_content tolerates missing files).
+            // Drop the CAS blob first (idempotent: drop_content tolerates missing files) --
+            // but ONLY when no other live material or event still references it.
+            // Content-addressed dedup means multiple source_material_registry rows (and
+            // derived events via associated_blob_ids) can legitimately share one blob;
+            // dropping unconditionally destroys content a still-live sibling depends on
+            // (sinex-audit-cas-shared-blob-delete).
             if let Some(record) = &material_record
                 && let Some(blob_uuid) = record.optional_blob_id
             {
@@ -1109,19 +1116,64 @@ pub async fn handle_tombstone_approve(
                     .await
                 {
                     Ok(Some(blob_row)) => {
-                        if let Err(e) = content_store
-                            .drop_content(&blob_row.content_key(), true)
+                        match pool
+                            .blobs()
+                            .is_referenced_excluding_material(
+                                sinex_primitives::Id::from_uuid(blob_uuid),
+                                *material_id,
+                            )
                             .await
                         {
-                            warn!(
-                                material_id = %material_id,
-                                blob_id = %blob_uuid,
-                                error = %e,
-                                "Failed to drop CAS content for tombstoned material; \
-                                 GC sweeper will recover the orphan blob"
-                            );
-                        } else {
-                            blobs_dropped += 1;
+                            Ok(true) => {
+                                // Still referenced elsewhere (sibling material or a
+                                // derived event's associated_blob_ids) -- keep the
+                                // content and the row alive.
+                                blobs_shared += 1;
+                            }
+                            Ok(false) => {
+                                if let Err(e) = content_store
+                                    .drop_content(&blob_row.content_key(), true)
+                                    .await
+                                {
+                                    warn!(
+                                        material_id = %material_id,
+                                        blob_id = %blob_uuid,
+                                        error = %e,
+                                        "Failed to drop CAS content for tombstoned material; \
+                                         GC sweeper will recover the orphan blob"
+                                    );
+                                } else {
+                                    blobs_dropped += 1;
+                                    // Zero remaining references: the core.blobs row is
+                                    // now dead too. Delete it in the same pass so it
+                                    // cannot survive as a zombie row that later fools
+                                    // dedup on re-ingestion (sinex-audit-cas-zombie-blob-rows).
+                                    match pool
+                                        .blobs()
+                                        .delete_by_id(sinex_primitives::Id::from_uuid(blob_uuid))
+                                        .await
+                                    {
+                                        Ok(true) => blob_rows_deleted += 1,
+                                        Ok(false) => {} // already gone
+                                        Err(e) => warn!(
+                                            material_id = %material_id,
+                                            blob_id = %blob_uuid,
+                                            error = %e,
+                                            "Failed to delete dereferenced blob row; \
+                                             fsck will report it as Missing"
+                                        ),
+                                    }
+                                }
+                            }
+                            Err(e) => {
+                                warn!(
+                                    material_id = %material_id,
+                                    blob_id = %blob_uuid,
+                                    error = %e,
+                                    "Failed to check blob reference count for delete-on-tombstone; \
+                                     leaving CAS content and row untouched to avoid over-deletion"
+                                );
+                            }
                         }
                     }
                     Ok(None) => {
@@ -1159,6 +1211,8 @@ pub async fn handle_tombstone_approve(
             orphans_found = orphan_material_ids.len(),
             rows_deleted = rows_deleted,
             blobs_dropped = blobs_dropped,
+            blobs_shared = blobs_shared,
+            blob_rows_deleted = blob_rows_deleted,
             "Delete-on-tombstone for orphan source materials"
         );
     }

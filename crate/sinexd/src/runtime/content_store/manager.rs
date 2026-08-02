@@ -222,6 +222,28 @@ impl ContentStoreManager {
         };
 
         let existing_key = existing.content_key().clone();
+
+        // Defense-in-depth against zombie core.blobs rows
+        // (sinex-audit-cas-zombie-blob-rows): a row can outlive its CAS file
+        // (e.g. dropped by delete-on-tombstone once dereferenced). Trusting
+        // such a row as a dedup hit would silently skip re-writing content
+        // that is actually absent from disk -- the caller would believe the
+        // blob is present when it permanently is not. Verify the local file
+        // still exists before short-circuiting; if it's gone, fall through
+        // so the caller re-stores the content and self-heals the row via the
+        // ON CONFLICT (checksum_blake3) upsert in `register_new_blob`.
+        if let Ok(Some(local_path)) = self.content_store.path_if_local(&existing_key)
+            && !local_path.exists()
+        {
+            warn!(
+                content_key = %existing_key,
+                path = %local_path,
+                "core.blobs row references a missing CAS file (zombie row); \
+                 re-writing content instead of trusting the stale dedup hit"
+            );
+            return Ok(None);
+        }
+
         info!("Content already exists in blob store with key: {existing_key}");
 
         self.add_original_filename(&existing_key, filename).await?;
