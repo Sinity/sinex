@@ -23,10 +23,26 @@ use sinex_primitives::events::payloads::{
     EntityCategory, EntityEnrichedPayload, EntityResolvedPayload,
 };
 use sinex_primitives::temporal::{Duration, Timestamp};
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, HashMap, HashSet};
+use tracing::warn;
 
 /// Default reconciliation interval: emit enriched snapshots every 5 minutes.
 const DEFAULT_RECONCILE_INTERVAL_SECS: i64 = 300;
+
+/// sinex-audit-entity-unbounded-maps: cap on per-entity tracking. Like
+/// `entity_resolver`'s `known_entities`, this is a cumulative "every entity
+/// ever observed" map (keyed by `entity_id`), not a small concurrently-open
+/// set like `interval_lift`'s `active_subject_states` (1024) -- so a larger
+/// bound is appropriate. 20_000 entries at roughly the same order of
+/// magnitude as `entity_resolver`'s cache keeps worst-case memory (each
+/// `EntityStats` carries an `active_hours` histogram plus a few strings) in
+/// the tens of MB rather than unbounded. Eviction prefers a non-dirty entity
+/// (no pending sweep obligation) so evicting never silently drops an
+/// enrichment snapshot that was about to be emitted; if every tracked entity
+/// is currently dirty, the globally stalest one is evicted anyway and the
+/// warning documents the durable debt (its accumulated stats, e.g.
+/// `first_seen`, reset on the entity's next observation).
+const MAX_TRACKED_ENTITIES: usize = 20_000;
 
 /// Persistent enricher state: per-entity tracking plus global sweep timer.
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -152,6 +168,29 @@ impl ScopeReconciler for EntityEnricher {
 
         // ── Update per-entity statistics ─────────────────────────────────
         let hour = hour_of_day(now);
+
+        // sinex-audit-entity-unbounded-maps: bound the map before inserting
+        // a genuinely new entity at capacity. See `MAX_TRACKED_ENTITIES` doc.
+        if !state.entities.contains_key(&entity_key) && state.entities.len() >= MAX_TRACKED_ENTITIES
+        {
+            let dirty: HashSet<Uuid> = state.dirty_entities.iter().copied().collect();
+            let evict_key = state
+                .entities
+                .iter()
+                .filter(|(_, stats)| !dirty.contains(&stats.entity_id))
+                .min_by_key(|(_, stats)| stats.last_seen)
+                .or_else(|| state.entities.iter().min_by_key(|(_, stats)| stats.last_seen))
+                .map(|(k, _)| k.clone());
+            if let Some(evicted_key) = evict_key {
+                warn!(
+                    module = "entity-enricher",
+                    evicted = %evicted_key,
+                    cap = MAX_TRACKED_ENTITIES,
+                    "entity-enricher evicted stalest entity stats (durable debt, unbounded-growth guard)"
+                );
+                state.entities.remove(&evicted_key);
+            }
+        }
 
         let stats = state
             .entities
