@@ -219,6 +219,24 @@ pub struct SourceScanProgress {
     pub final_report: Option<ScanReport>,
     /// Terminal error when the scan could not complete.
     pub error: Option<String>,
+    /// Set when this terminal update reflects a scan that was interrupted by
+    /// a `SourceScanCancel` command rather than a normal failure. Lets the
+    /// replay-control layer distinguish "cancelled" from "failed" without
+    /// string-matching `error`, so it can always restore the archived
+    /// cascade for an abandoned operation regardless of partial emission.
+    #[serde(default)]
+    pub cancelled: bool,
+}
+
+/// Fire-and-forget command requesting that an in-flight dispatched scan stop.
+/// Published to `sinex.control.sources.<name>.cancel`; the source's command
+/// listener signals the running scan worker (if `operation_id` matches the
+/// scan currently in flight) to stop as soon as possible. No reply is sent:
+/// the caller observes the outcome via the terminal `SourceScanProgress`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SourceScanCancel {
+    /// Correlates with the `SourceScanCommand.operation_id` of the scan to stop.
+    pub operation_id: Uuid,
 }
 
 /// Report from a completed scan operation

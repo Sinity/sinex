@@ -358,6 +358,7 @@ pub async fn spawn_fake_replay_scan_source(
                 warnings: Vec::new(),
             }),
             error: None,
+            cancelled: false,
         };
         let bytes = serde_json::to_vec(&progress).map_err(|error| {
             color_eyre::eyre::eyre!(

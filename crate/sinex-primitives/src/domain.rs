@@ -878,6 +878,18 @@ impl ControlSubject {
     pub fn source_scan(source_name: impl fmt::Display) -> String {
         format!("sinex.control.sources.{source_name}.scan")
     }
+
+    /// `sinex.control.sources.<source_name>.cancel`
+    ///
+    /// Fire-and-forget subject used by the gateway to request that an
+    /// in-flight dispatched scan stop; the source's command listener signals
+    /// the running scan worker if its `operation_id` matches. No reply is
+    /// published — the caller observes the outcome via the terminal
+    /// `SourceScanProgress` on `replay_progress`.
+    #[must_use]
+    pub fn source_cancel(source_name: impl fmt::Display) -> String {
+        format!("sinex.control.sources.{source_name}.cancel")
+    }
 }
 
 /// The hostname where an event occurred.

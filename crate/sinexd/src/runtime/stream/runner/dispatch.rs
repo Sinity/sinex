@@ -9,7 +9,7 @@ use super::{
     Arc, AtomicU64, CheckpointManager, DEFAULT_EVENT_CHANNEL_SIZE, DispatchedScanOutcome,
     ErasedInitContext, ErasedSourceFactory, Event, FailedDispatchedScanOutcome, HashMap, JsonValue,
     Ordering, RuntimeHandles, RuntimeResult, RuntimeRunner, ServiceInfo, SinexError,
-    SourceScanCommand, Utf8PathBuf, Uuid, create_checkpoint_kv, mpsc,
+    SourceScanCommand, Utf8PathBuf, Uuid, create_checkpoint_kv, mpsc, watch,
 };
 
 impl RuntimeRunner {
@@ -21,6 +21,7 @@ impl RuntimeRunner {
         raw_config: HashMap<String, serde_json::Value>,
         work_dir_utf8: Utf8PathBuf,
         command: SourceScanCommand,
+        mut cancel_rx: watch::Receiver<bool>,
     ) -> Result<DispatchedScanOutcome, FailedDispatchedScanOutcome> {
         let replay_service_name = format!(
             "{}.replay.{}",
@@ -69,9 +70,20 @@ impl RuntimeRunner {
             });
         }
 
-        let scan_result = worker
-            .scan(command.from.clone(), command.until.clone(), command.args)
-            .await;
+        // sinex-audit-replay-cancel-orphan: race the scan future against the
+        // per-operation cancel signal so a `SourceScanCancel` actually stops
+        // emission instead of merely flipping replay-operation state while
+        // the scan keeps running to completion in the background. Dropping
+        // the losing `worker.scan(..)` future here stops it at its next
+        // await point; `shutdown()` still runs afterward so the worker gets
+        // a chance to release its resources cleanly.
+        let operation_id = command.operation_id;
+        let scan_result = tokio::select! {
+            result = worker.scan(command.from.clone(), command.until.clone(), command.args) => result,
+            _ = cancel_rx.changed() => Err(SinexError::cancelled(format!(
+                "Replay scan for operation {operation_id} was cancelled before completion"
+            ))),
+        };
         let shutdown_result = worker.shutdown().await;
         drop(worker);
 

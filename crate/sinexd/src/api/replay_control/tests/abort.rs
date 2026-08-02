@@ -664,3 +664,216 @@ async fn replay_execution_returns_cancelled_operation_when_cancelled_midflight(
 
     Ok(())
 }
+
+/// sinex-audit-replay-cancel-orphan: cancelling a replay operation must
+/// actually stop the source-side scan and restore the archived cascade even
+/// when the scan had already emitted some replacement events before the
+/// cancel signal was observed. This is the mid-flight-with-real-emission
+/// case the previous cancellation test (above, using
+/// `spawn_fake_scan_source_runtime_ack_only`) could not cover: that fake
+/// source acks and then never emits, so it could never distinguish "cancel
+/// propagated and stopped emission" from "cancel was never sent at all".
+///
+/// Anti-vacuity: before this fix, `ReplayExecutionEngine` never published a
+/// `SourceScanCancel`, so the fake source below would keep emitting on its
+/// own schedule regardless of cancellation, `restore_archived_cascade` was
+/// `false` whenever any event had already landed, and the archived original
+/// would be left stranded in `audit.archived_events` forever.
+#[sinex_test]
+async fn replay_execution_cancel_midflight_stops_emission_and_restores_cascade(
+    ctx: TestContext,
+) -> Result<()> {
+    let ctx = ctx.with_nats().dedicated().await?;
+    let nats_url = ctx.nats_handle()?.client_url().to_string();
+
+    let material_id = ctx
+        .create_source_material(Some("replay-cancel-midflight-emitting"))
+        .await?;
+    let event = DynamicPayload::new(
+        "cancel-emit-test",
+        FileCreatedPayload::EVENT_TYPE.as_static_str(),
+        json!({ "path": "/tmp/replay-cancel-emitting-original.txt" }),
+    )
+    .from_material(material_id)
+    .build()?;
+    let inserted = ctx.pool.events().insert(event).await?;
+    let target_id = inserted
+        .id
+        .expect("inserted replay target must have id")
+        .to_uuid();
+    let target_ts = inserted
+        .id
+        .expect("inserted replay target must have id")
+        .timestamp();
+
+    let replay = Arc::new(ReplayStateMachine::new(ctx.pool.clone()));
+    let nats_client = ctx.nats_client();
+    let env = sinex_primitives::environment::environment();
+
+    // Emits up to 6 events, one every 150ms (~900ms uninterrupted); the test
+    // cancels after ~2 iterations, so it must observe a partial count.
+    const MAX_EVENTS: u64 = 6;
+    let emit_delay = Duration::from_millis(150);
+    let (_scan_command_rx, scan_handle) = spawn_fake_scan_source_runtime_emitting_with_cancel(
+        ctx.pool.clone(),
+        nats_client.clone(),
+        env.clone(),
+        "cancel-emit-test",
+        "cancel-emit-test",
+        FileCreatedPayload::EVENT_TYPE.as_static_str(),
+        MAX_EVENTS,
+        emit_delay,
+    )
+    .await?;
+
+    let executor = ReplayExecutionEngine::new(replay.clone(), nats_client.clone())
+        .with_scan_completion_timeout(Duration::from_secs(10));
+    let health = Arc::new(Mutex::new(ReplayControlHealthState::default()));
+    ReplayControlServer::new(
+        &env,
+        nats_client.clone(),
+        replay.clone(),
+        executor,
+        Arc::clone(&health),
+    )
+    .spawn()
+    .await?;
+
+    let execute_client = ReplayControlClient::new(
+        &env,
+        async_nats::connect(&nats_url).await?,
+        Duration::from_secs(30),
+        Arc::clone(&health),
+    );
+    let control_client = ReplayControlClient::new(
+        &env,
+        async_nats::connect(&nats_url).await?,
+        Duration::from_secs(30),
+        health,
+    );
+
+    let mut scope = sample_scope();
+    scope.source_name = "cancel-emit-test".to_string();
+    scope.time_window = Some((
+        target_ts - time::Duration::milliseconds(1),
+        target_ts + time::Duration::milliseconds(1),
+    ));
+
+    let planned = control_client
+        .plan("test:replay-user".into(), scope)
+        .await?;
+    let (previewed, _) = control_client.preview(planned.operation_id).await?;
+    let approved = control_client
+        .approve(previewed.operation_id, "admin:approver".into())
+        .await?;
+
+    let operation_id = approved.operation_id;
+    let execute_task = tokio::spawn(async move {
+        execute_client
+            .execute(operation_id, "service:executor-runtime".into(), false)
+            .await
+    });
+
+    let mut saw_executing = false;
+    for _ in 0..40 {
+        let operation = replay.load_operation(operation_id).await?;
+        if operation.state == ReplayState::Executing {
+            saw_executing = true;
+            break;
+        }
+        sleep(Duration::from_millis(25)).await;
+    }
+    assert!(
+        saw_executing,
+        "replay operation should enter Executing before cancellation"
+    );
+
+    // Let a couple of emit cycles land before cancelling.
+    sleep(emit_delay * 2).await;
+
+    let cancellation_requested = control_client
+        .cancel(
+            operation_id,
+            "admin:approver".into(),
+            Some("operator requested stop mid-emission".to_string()),
+        )
+        .await?;
+    assert_eq!(cancellation_requested.state, ReplayState::Cancelling);
+
+    let executed = execute_task
+        .await
+        .map_err(|e| test_error(format!("execute task failed: {e}")))??;
+    assert_eq!(executed.state, ReplayState::Cancelled);
+    assert_eq!(
+        executed.outcome,
+        Some(sinex_primitives::domain::ReplayOutcome::Cancelled)
+    );
+
+    let emitted_by_fake_source = scan_handle
+        .await
+        .map_err(|e| test_error(format!("fake emitting source runtime panicked: {e}")))??;
+
+    // The archived original must be restored to live regardless of the
+    // partial emission that happened before cancellation was observed.
+    let live_count: i64 =
+        sqlx::query_scalar("SELECT COUNT(*)::bigint FROM core.events WHERE id = $1::uuid")
+            .bind(target_id)
+            .fetch_one(&ctx.pool)
+            .await?;
+    let archived_count: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*)::bigint FROM audit.archived_events WHERE id = $1::uuid",
+    )
+    .bind(target_id)
+    .fetch_one(&ctx.pool)
+    .await?;
+    assert_eq!(
+        live_count, 1,
+        "cancelled replay must restore the archived original to live even though \
+         some replacement events were already emitted before cancellation"
+    );
+    assert_eq!(
+        archived_count, 0,
+        "cancelled replay must not leave the archived original stranded"
+    );
+
+    // The fake source stopped emitting as soon as it observed the cancel
+    // signal, so the number of replacement events landed is strictly less
+    // than the full uninterrupted count -- proving the scan was actually
+    // interrupted, not merely reported cancelled after running to completion.
+    let replacement_count: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*)::bigint FROM core.events WHERE created_by_operation_id = $1::uuid",
+    )
+    .bind(operation_id)
+    .fetch_one(&ctx.pool)
+    .await?;
+    assert!(
+        replacement_count > 0,
+        "at least one replacement event should have landed before cancel was observed"
+    );
+    assert!(
+        (replacement_count as u64) < MAX_EVENTS,
+        "cancellation should have stopped emission before all {MAX_EVENTS} replacement events \
+         landed, got {replacement_count}"
+    );
+    assert_eq!(
+        replacement_count as u64, emitted_by_fake_source,
+        "the fake source's own emitted count must match what actually landed in core.events"
+    );
+
+    // No further replacement events land after the scan has reported its
+    // cancelled terminal state -- the source has genuinely stopped, not just
+    // been reported as stopped while it keeps running in the background.
+    sleep(emit_delay * 2).await;
+    let replacement_count_after_wait: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*)::bigint FROM core.events WHERE created_by_operation_id = $1::uuid",
+    )
+    .bind(operation_id)
+    .fetch_one(&ctx.pool)
+    .await?;
+    assert_eq!(
+        replacement_count_after_wait, replacement_count,
+        "no further replacement events should land after the cancelled scan's terminal report"
+    );
+
+    Ok(())
+}

@@ -8,7 +8,7 @@ use super::{
 };
 use crate::runtime::stream::{
     Checkpoint, MaterialReplayContext, ReplayScopeFilters as SourceReplayScopeFilters, ScanArgs,
-    SourceScanAck, SourceScanCommand, SourceScanProgress, TimeHorizon,
+    SourceScanAck, SourceScanCancel, SourceScanCommand, SourceScanProgress, TimeHorizon,
 };
 use sinex_db::repositories::DbPoolExt;
 use sinex_primitives::ControlSubject;
@@ -45,6 +45,41 @@ fn replacement_relation_kind(
 }
 
 impl ReplayExecutionEngine {
+    /// Best-effort request that the source runtime stop an in-flight
+    /// dispatched scan (sinex-audit-replay-cancel-orphan).
+    ///
+    /// Publishes `SourceScanCancel` to `sinex.control.sources.<name>.cancel`.
+    /// Fire-and-forget: failures are logged, never propagated, because the
+    /// caller's own polling loop already treats `Cancelling`/`Cancelled`
+    /// operation state as terminal regardless of whether the runtime ever
+    /// receives this signal (e.g. it may not be running, or the message may
+    /// be dropped) — this is the propagation half of the fix, not the sole
+    /// safety net.
+    pub(crate) async fn publish_scan_cancel(&self, control_source_name: &str, operation_id: Uuid) {
+        let subject = self
+            .env
+            .nats_subject(&ControlSubject::source_cancel(control_source_name));
+        let payload = match serde_json::to_vec(&SourceScanCancel { operation_id }) {
+            Ok(payload) => payload,
+            Err(error) => {
+                warn!(
+                    operation_id = %operation_id,
+                    error = %error,
+                    "Failed to encode scan cancel command"
+                );
+                return;
+            }
+        };
+        if let Err(error) = self.nats_client.publish(subject.clone(), payload.into()).await {
+            warn!(
+                operation_id = %operation_id,
+                subject = %subject,
+                error = %error,
+                "Failed to publish scan cancel command"
+            );
+        }
+    }
+
     /// Record replacement relations between archived material events and newly-created events.
     ///
     /// After a successful replay scan, this queries for:
@@ -577,14 +612,32 @@ impl ReplayExecutionEngine {
                                 events_processed = progress.events_processed;
                                 events_emitted = progress.events_emitted;
                                 if let Some(error) = progress.error {
-                                    return Err::<u64, ReplayScanFailure>(ReplayScanFailure {
-                                        error: SinexError::processing(format!(
+                                    // sinex-audit-replay-cancel-orphan: a cancelled
+                                    // operation never completed successfully, so the
+                                    // archived cascade is always restored regardless
+                                    // of how many replacement events the interrupted
+                                    // scan managed to emit before it stopped —
+                                    // conditioning restoration on `emitted_count == 0`
+                                    // left archived originals stranded whenever any
+                                    // partial emission happened before cancellation.
+                                    let cancelled = progress.cancelled;
+                                    let scan_error = if cancelled {
+                                        SinexError::cancelled(format!(
+                                            "RuntimeModule '{}' scan for operation {operation_id} was cancelled: {error}",
+                                            progress.module_name
+                                        ))
+                                    } else {
+                                        SinexError::processing(format!(
                                             "RuntimeModule '{}' failed replay scan: {}",
                                             progress.module_name,
                                             error
-                                        )),
+                                        ))
+                                    };
+                                    return Err::<u64, ReplayScanFailure>(ReplayScanFailure {
+                                        error: scan_error,
                                         emitted_count: progress.events_emitted,
-                                        restore_archived_cascade: progress.events_emitted == 0,
+                                        restore_archived_cascade: cancelled
+                                            || progress.events_emitted == 0,
                                     });
                                 }
 
@@ -637,12 +690,22 @@ impl ReplayExecutionEngine {
                                     ReplayState::Cancelling | ReplayState::Cancelled
                                 ) =>
                             {
+                                // sinex-audit-replay-cancel-orphan: propagate the
+                                // cancellation to the source runtime so it actually
+                                // stops the in-flight scan instead of letting it run
+                                // to completion in the background while we walk away
+                                // and report Cancelled locally. Best-effort: the
+                                // caller treats the operation as cancelled either way.
+                                self.publish_scan_cancel(&control_source_name, operation_id)
+                                    .await;
                                 return Err::<u64, ReplayScanFailure>(ReplayScanFailure {
                                     error: SinexError::cancelled(format!(
                                         "Replay operation {operation_id} was cancelled during execution"
                                     )),
                                     emitted_count: events_emitted,
-                                    restore_archived_cascade: events_emitted == 0,
+                                    // Always restore: the operation never completed
+                                    // successfully, regardless of partial emission.
+                                    restore_archived_cascade: true,
                                 });
                             }
                             Ok(operation) => {
@@ -717,6 +780,26 @@ impl ReplayExecutionEngine {
                         ))
                     .with_source(failure.error)
                     .with_source(restore_error));
+                }
+                // sinex-audit-replay-cancel-orphan: `restore_cascade` only
+                // restores archived rows whose occurrence has no live
+                // replacement yet (see `core.execute_cascade_restore`'s
+                // occurrence-safety check) -- any archived row that DID
+                // already get superseded by a replacement event before
+                // cancellation stays archived. Link those to their
+                // replacements now instead of leaving them dangling in
+                // `audit.archived_events` forever, unlinked and unreachable
+                // from the events they were actually replaced by.
+                if failure.emitted_count > 0
+                    && let Err(link_error) = self
+                        .record_event_replacements(pool, operation_id, &cascade_ids)
+                        .await
+                {
+                    return Err(SinexError::service(format!(
+                            "Replay scan failed after partial event emission, and linking the emitted replacements also failed: {link_error}"
+                        ))
+                    .with_source(failure.error)
+                    .with_source(link_error));
                 }
                 // Publish compensating scope invalidations when either:
                 // - we restored the cascade (so automata reconcile against restored events)

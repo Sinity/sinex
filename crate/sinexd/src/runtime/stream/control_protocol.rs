@@ -20,6 +20,10 @@ pub(super) enum ControlCommandKind {
     /// (`sources::parse_listener`). Routing it here lets the command listener
     /// recognize and skip it deliberately instead of logging it as unsupported.
     Parse,
+    /// Request to stop an in-flight dispatched scan (sinex-audit-replay-cancel-orphan).
+    /// Carries a `SourceScanCancel { operation_id }`; the command listener
+    /// signals the running scan worker if the operation matches. No reply.
+    Cancel,
 }
 
 #[cfg(feature = "messaging")]
@@ -32,6 +36,8 @@ pub(super) fn control_command_kind(subject: &str) -> Option<ControlCommandKind> 
         Some(ControlCommandKind::Resume)
     } else if subject.ends_with(".parse") {
         Some(ControlCommandKind::Parse)
+    } else if subject.ends_with(".cancel") {
+        Some(ControlCommandKind::Cancel)
     } else {
         None
     }

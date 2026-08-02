@@ -5,7 +5,8 @@ use super::*;
 use crate::runtime::automaton::invalidation::INVALIDATION_SUBJECT;
 use crate::runtime::stream::ScanReport;
 use crate::runtime::stream::{
-    Checkpoint, ResolvedReplayMaterial, SourceScanAck, SourceScanCommand, SourceScanProgress,
+    Checkpoint, ResolvedReplayMaterial, SourceScanAck, SourceScanCancel, SourceScanCommand,
+    SourceScanProgress,
 };
 use async_nats::Client;
 use futures::StreamExt;
@@ -278,6 +279,7 @@ async fn spawn_fake_scan_source_runtime(
             events_emitted: events_processed,
             final_report: Some(report),
             error: None,
+            cancelled: false,
         };
         let payload = serde_json::to_vec(&progress).map_err(|error| {
             test_error(format!(
@@ -375,6 +377,7 @@ async fn spawn_fake_scan_source_runtime_with_progress(
             events_emitted,
             final_report: Some(report),
             error: None,
+            cancelled: false,
         };
         let payload = serde_json::to_vec(&progress).map_err(|error| {
             test_error(format!(
@@ -450,6 +453,192 @@ async fn spawn_fake_scan_source_runtime_ack_only(
         }
 
         Ok(())
+    });
+
+    Ok((command_rx, handle))
+}
+
+/// A fake source runtime that ACTUALLY emits real events (unlike the
+/// ack-only / emit-once-at-the-end fakes above) across several delayed
+/// iterations, and reacts to a `SourceScanCancel` on
+/// `sinex.control.sources.<name>.cancel` by stopping early -- exactly the
+/// contract `RuntimeRunner::execute_dispatched_scan` implements in
+/// production (sinex-audit-replay-cancel-orphan). Used to prove
+/// `ReplayExecutionEngine` actually publishes a cancel signal (not just
+/// local operation-state bookkeeping) and that the downstream
+/// restore/no-further-events invariants hold when some events already
+/// landed before cancellation was observed.
+#[allow(clippy::too_many_arguments)]
+async fn spawn_fake_scan_source_runtime_emitting_with_cancel(
+    pool: DbPool,
+    nats: Client,
+    env: SinexEnvironment,
+    module_name: &str,
+    source: &'static str,
+    event_type: &'static str,
+    max_events: u64,
+    emit_delay: Duration,
+) -> Result<(
+    tokio::sync::oneshot::Receiver<SourceScanCommand>,
+    tokio::task::JoinHandle<Result<u64>>,
+)> {
+    let module_name = module_name.to_string();
+    let scan_subject = env.nats_subject(&format!("sinex.control.sources.{module_name}.scan"));
+    let mut scan_sub = nats.subscribe(scan_subject).await.map_err(|e| {
+        test_error(format!(
+            "failed to subscribe fake emitting source runtime dispatcher: {e}"
+        ))
+    })?;
+    let (command_tx, command_rx) = tokio::sync::oneshot::channel();
+
+    let handle = tokio::spawn(async move {
+        let Some(msg) = scan_sub.next().await else {
+            return Err(test_error(format!(
+                "fake {module_name} emitting source runtime dispatcher ended before receiving a scan command"
+            )));
+        };
+
+        let command: SourceScanCommand = serde_json::from_slice(&msg.payload).map_err(|error| {
+            test_error(format!(
+                "fake {module_name} emitting source runtime received an invalid scan command: {error}"
+            ))
+        })?;
+        let operation_id = command.operation_id;
+        let cancel_subject =
+            env.nats_subject(&format!("sinex.control.sources.{module_name}.cancel"));
+        let mut cancel_sub = nats.subscribe(cancel_subject).await.map_err(|e| {
+            test_error(format!(
+                "failed to subscribe fake emitting source runtime cancel listener: {e}"
+            ))
+        })?;
+        let progress_subject =
+            env.nats_subject(&format!("sinex.control.replay.progress.{operation_id}"));
+
+        command_tx.send(command.clone()).map_err(|_| {
+            test_error(format!(
+                "fake {module_name} emitting source runtime could not hand scan command to test harness"
+            ))
+        })?;
+
+        if let Some(reply) = msg.reply {
+            let ack = SourceScanAck {
+                operation_id,
+                module_name: module_name.clone(),
+                accepted: true,
+                error: None,
+            };
+            let payload = serde_json::to_vec(&ack).map_err(|error| {
+                test_error(format!(
+                    "fake {module_name} emitting source runtime could not encode ack: {error}"
+                ))
+            })?;
+            nats.publish(reply, payload.into()).await.map_err(|error| {
+                test_error(format!(
+                    "fake {module_name} emitting source runtime could not publish ack: {error}"
+                ))
+            })?;
+        }
+
+        let material_id = command
+            .args
+            .replay
+            .as_ref()
+            .and_then(|replay| replay.materials.first())
+            .map(|material| material.source_material_id)
+            .ok_or_else(|| {
+                test_error("fake emitting source runtime requires a replay source material")
+            })?;
+
+        let mut emitted = 0u64;
+        let mut cancelled = false;
+        'emit: for i in 0..max_events {
+            tokio::select! {
+                () = tokio::time::sleep(emit_delay) => {
+                    let mut event = DynamicPayload::new(
+                        source,
+                        event_type,
+                        json!({ "path": format!("/tmp/{module_name}-cancel-mid-emit-{operation_id}-{i}.txt") }),
+                    )
+                    // Distinct, non-zero anchor bytes: each emitted event is a
+                    // DIFFERENT occurrence from the seeded original (which
+                    // defaults to anchor_byte 0 via `.from_material`). A real
+                    // scan replaying N records would anchor each at its own
+                    // byte offset; colliding them onto one occurrence would
+                    // make `core.execute_cascade_restore`'s occurrence-safety
+                    // check (never restore an archived row whose occurrence
+                    // already has a live replacement) trigger for the ORIGINAL
+                    // seeded event too, which is not the scenario under test.
+                    .from_material_at(Id::from_uuid(material_id), i as i64 + 1)
+                    .build()
+                    .map_err(|error| {
+                        test_error(format!(
+                            "fake {module_name} emitting source runtime failed to build event {i}: {error}"
+                        ))
+                    })?;
+                    event.created_by_operation_id = Some(operation_id);
+                    pool.events().insert(event).await.map_err(|error| {
+                        test_error(format!(
+                            "fake {module_name} emitting source runtime failed to insert event {i}: {error}"
+                        ))
+                    })?;
+                    emitted += 1;
+                }
+                maybe_cancel = cancel_sub.next() => {
+                    let Some(cancel_msg) = maybe_cancel else {
+                        break 'emit;
+                    };
+                    if let Ok(cancel) = serde_json::from_slice::<SourceScanCancel>(&cancel_msg.payload)
+                        && cancel.operation_id == operation_id
+                    {
+                        cancelled = true;
+                        break 'emit;
+                    }
+                }
+            }
+        }
+
+        let progress = SourceScanProgress {
+            operation_id,
+            module_name: module_name.clone(),
+            events_processed: emitted,
+            events_emitted: emitted,
+            final_report: if cancelled {
+                None
+            } else {
+                Some(ScanReport {
+                    events_processed: emitted,
+                    duration: emit_delay * emitted as u32,
+                    final_checkpoint: Checkpoint::None,
+                    time_range: None,
+                    runtime_stats: HashMap::from([("events_emitted".to_string(), emitted)]),
+                    successful_targets: vec![module_name.clone()],
+                    failed_targets: Vec::new(),
+                    warnings: Vec::new(),
+                })
+            },
+            error: if cancelled {
+                Some(format!(
+                    "fake {module_name} emitting source runtime stopped: operation {operation_id} was cancelled"
+                ))
+            } else {
+                None
+            },
+            cancelled,
+        };
+        let payload = serde_json::to_vec(&progress).map_err(|error| {
+            test_error(format!(
+                "fake {module_name} emitting source runtime could not encode progress: {error}"
+            ))
+        })?;
+        nats.publish(progress_subject, payload.into())
+            .await
+            .map_err(|error| {
+                test_error(format!(
+                    "fake {module_name} emitting source runtime could not publish progress: {error}"
+                ))
+            })?;
+
+        Ok(emitted)
     });
 
     Ok((command_rx, handle))

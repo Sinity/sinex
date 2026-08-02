@@ -6,9 +6,15 @@
 
 use super::{
     Arc, AtomicBool, ControlCommandKind, LISTENER_RETRY_DELAY, ModuleKind, Ordering, RuntimeRunner,
-    SourceScanAck, SourceScanCommand, SourceScanProgress, StreamExt, Uuid, control_command_kind,
-    debug, error, info, run_resubscribing_listener, warn, watch,
+    SinexError, SourceScanAck, SourceScanCancel, SourceScanCommand, SourceScanProgress, StreamExt,
+    Uuid, control_command_kind, debug, error, info, run_resubscribing_listener, warn, watch,
 };
+
+/// Shared per-runner state tracking the cancel channel for whatever scan is
+/// currently in flight (there is at most one, gated by `active_scan`).
+/// `None` when no scan is running. Guarded by a plain `std::sync::Mutex`
+/// since it is only ever held briefly, synchronously, inside async code.
+type ActiveScanCancel = Arc<std::sync::Mutex<Option<(Uuid, watch::Sender<bool>)>>>;
 
 impl RuntimeRunner {
     /// Start the NATS command listener for source-dispatch replay.
@@ -65,6 +71,7 @@ impl RuntimeRunner {
         let handle = tokio::spawn(async move {
             let subject = env.nats_subject(&format!("sinex.control.sources.{module_name}.*"));
             let active_scan = Arc::new(AtomicBool::new(false));
+            let active_scan_cancel: ActiveScanCancel = Arc::new(std::sync::Mutex::new(None));
             let subscribe_client = nats_client.clone();
             let subscribe_subject = subject.clone();
             let helper_shutdown_rx = shutdown_rx.clone();
@@ -90,6 +97,7 @@ impl RuntimeRunner {
                     let loop_work_dir_utf8 = work_dir_utf8.clone();
                     let loop_source_factory = source_factory.clone();
                     let loop_active_scan = active_scan.clone();
+                    let loop_active_scan_cancel = active_scan_cancel.clone();
                     let loop_drain_controller = drain_controller.clone();
                     #[cfg(feature = "db")]
                     let loop_db_pool = db_pool.clone();
@@ -329,22 +337,39 @@ impl RuntimeRunner {
                                     let scan_env = loop_env.clone();
                                     let scan_module_name = loop_module_name.clone();
                                     let scan_active = loop_active_scan.clone();
+                                    let scan_active_cancel = loop_active_scan_cancel.clone();
                                     let scan_handles = loop_handles.clone();
                                     let scan_service_info = loop_service_info.clone();
                                     let scan_raw_config = loop_raw_config.clone();
                                     let scan_work_dir_utf8 = loop_work_dir_utf8.clone();
                                     let scan_command = command.clone();
 
+                                    // sinex-audit-replay-cancel-orphan: register a
+                                    // per-operation cancel channel BEFORE spawning the
+                                    // scan task so a `.cancel` arriving on this same
+                                    // command-listener loop (it runs concurrently with
+                                    // the spawned scan) can always find it.
+                                    let (scan_cancel_tx, scan_cancel_rx) = watch::channel(false);
+                                    *scan_active_cancel
+                                        .lock()
+                                        .unwrap_or_else(std::sync::PoisonError::into_inner) =
+                                        Some((operation_id, scan_cancel_tx));
+
                                     tokio::spawn(async move {
-                                        struct ActiveScanGuard(Arc<AtomicBool>);
+                                        struct ActiveScanGuard(Arc<AtomicBool>, ActiveScanCancel);
 
                                         impl Drop for ActiveScanGuard {
                                             fn drop(&mut self) {
                                                 self.0.store(false, Ordering::SeqCst);
+                                                *self
+                                                    .1
+                                                    .lock()
+                                                    .unwrap_or_else(std::sync::PoisonError::into_inner) = None;
                                             }
                                         }
 
-                                        let _active_scan_guard = ActiveScanGuard(scan_active.clone());
+                                        let _active_scan_guard =
+                                            ActiveScanGuard(scan_active.clone(), scan_active_cancel.clone());
                                         let progress_subject = scan_env
                                             .nats_subject(&sinex_primitives::ControlSubject::replay_progress(operation_id));
 
@@ -355,6 +380,7 @@ impl RuntimeRunner {
                                             events_emitted: 0,
                                             final_report: None,
                                             error: None,
+                                            cancelled: false,
                                         };
                                         if let Err(error) = Self::publish_scan_progress(
                                             &scan_client,
@@ -381,6 +407,7 @@ impl RuntimeRunner {
                                             scan_raw_config,
                                             scan_work_dir_utf8,
                                             scan_command,
+                                            scan_cancel_rx,
                                         )
                                         .await;
 
@@ -398,9 +425,12 @@ impl RuntimeRunner {
                                                     events_emitted: outcome.events_emitted,
                                                     final_report: Some(report),
                                                     error: None,
+                                                    cancelled: false,
                                                 }
                                             }
                                             Err(outcome) => {
+                                                let cancelled =
+                                                    matches!(outcome.error, SinexError::Cancelled(_));
                                                 warn!(
                                                     target: "sinex_metrics",
                                                     metric = "runtime.dispatched_scan_failures_total",
@@ -408,6 +438,7 @@ impl RuntimeRunner {
                                                     module = %scan_module_name,
                                                     error = %outcome.error,
                                                     events_emitted = outcome.events_emitted,
+                                                    cancelled,
                                                     "Dispatched scan failed"
                                                 );
                                                 SourceScanProgress {
@@ -417,6 +448,7 @@ impl RuntimeRunner {
                                                     events_emitted: outcome.events_emitted,
                                                     final_report: None,
                                                     error: Some(outcome.error.to_string()),
+                                                    cancelled,
                                                 }
                                             }
                                         };
@@ -449,6 +481,54 @@ impl RuntimeRunner {
                                         module = %loop_module_name,
                                         "Parse command observed by command listener; handled by dedicated parse listener"
                                     );
+                                }
+                                Some(ControlCommandKind::Cancel) => {
+                                    // sinex-audit-replay-cancel-orphan: fire-and-forget
+                                    // request to stop the scan currently in flight, if
+                                    // any. No reply subject; the caller observes the
+                                    // outcome via the terminal SourceScanProgress.
+                                    let cancel: SourceScanCancel =
+                                        match serde_json::from_slice(&msg.payload) {
+                                            Ok(cancel) => cancel,
+                                            Err(err) => {
+                                                warn!(
+                                                    module = %loop_module_name,
+                                                    error = %err,
+                                                    "Failed to deserialize SourceScanCancel"
+                                                );
+                                                continue;
+                                            }
+                                        };
+                                    let guard = loop_active_scan_cancel
+                                        .lock()
+                                        .unwrap_or_else(std::sync::PoisonError::into_inner);
+                                    match guard.as_ref() {
+                                        Some((active_operation_id, cancel_tx))
+                                            if *active_operation_id == cancel.operation_id =>
+                                        {
+                                            info!(
+                                                operation_id = %cancel.operation_id,
+                                                module = %loop_module_name,
+                                                "Signaling in-flight dispatched scan to cancel"
+                                            );
+                                            cancel_tx.send_replace(true);
+                                        }
+                                        Some((active_operation_id, _)) => {
+                                            debug!(
+                                                operation_id = %cancel.operation_id,
+                                                active_operation_id = %active_operation_id,
+                                                module = %loop_module_name,
+                                                "Ignoring cancel for an operation that is not the active scan"
+                                            );
+                                        }
+                                        None => {
+                                            debug!(
+                                                operation_id = %cancel.operation_id,
+                                                module = %loop_module_name,
+                                                "Ignoring cancel; no scan is currently in flight"
+                                            );
+                                        }
+                                    }
                                 }
                                 None => {
                                     warn!(
