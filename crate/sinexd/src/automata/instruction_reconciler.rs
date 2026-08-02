@@ -38,6 +38,15 @@ pub struct InstructionExpectationState {
     pending_hyprland_workspace: Vec<PendingWorkspaceInstruction>,
 }
 
+impl InstructionExpectationState {
+    /// Number of pending Hyprland workspace instructions awaiting a matching
+    /// observation or idle-flush timeout. Test/observability accessor.
+    #[must_use]
+    pub fn pending_hyprland_workspace_len(&self) -> usize {
+        self.pending_hyprland_workspace.len()
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct PendingWorkspaceInstruction {
     instruction_event_id: Uuid,
@@ -139,6 +148,27 @@ impl ScopeReconciler for InstructionExpectationReconciler {
 
         Ok(Vec::new())
     }
+
+    /// A stalled `wm.hyprland/workspace.switched` observation source must not
+    /// let pending instructions accumulate forever with no terminal status.
+    /// Flush is due whenever any pending instruction's deadline has already
+    /// elapsed as of `now` — mirroring the deadline check `reconcile()` itself
+    /// applies to observations, but without needing an observation to trigger
+    /// it.
+    fn flush_due(&self, state: &Self::State, now: Timestamp) -> bool {
+        state
+            .pending_hyprland_workspace
+            .iter()
+            .any(|pending| pending.instruction.deadline.is_some_and(|deadline| now > deadline))
+    }
+
+    async fn flush(
+        &mut self,
+        state: &mut Self::State,
+        now: Timestamp,
+    ) -> Result<Vec<DerivedOutput<Self::Output>>, AutomatonLogicError> {
+        Ok(flush_timed_out_workspace_instructions(state, now))
+    }
 }
 
 fn is_hyprland_workspace_instruction(context: &AutomatonContext) -> bool {
@@ -176,6 +206,28 @@ fn record_pending_instruction(
     Ok(Vec::new())
 }
 
+/// Reconcile pending instructions against ONE arriving workspace observation.
+///
+/// A `wm.hyprland/workspace.switched` observation does not carry any
+/// dispatch-correlation id back to the instruction that produced it — the
+/// only correlating data available is `desired_workspace_id` vs.
+/// `to_workspace_id`. With multiple concurrent pending instructions targeting
+/// *different* workspaces, an observation whose workspace doesn't match a
+/// given pending instruction is not evidence about that instruction at all;
+/// resolving it anyway (the original bug) falsely marks unrelated pending
+/// instructions `Contradicted`.
+///
+/// A pending instruction is resolved against this observation only when:
+/// - its deadline has already elapsed (deadline-elapsed is decided from
+///   `observed_at` alone, independent of which workspace was observed), or
+/// - its `desired_workspace_id` matches the observed workspace (direct
+///   evidence of fulfillment), or
+/// - it is the SOLE pending instruction for this scope, in which case the
+///   observation is the only causal candidate and a workspace mismatch is
+///   unambiguous evidence of contradiction.
+///
+/// Anything else is left untouched in `state` — it stays `Pending` until its
+/// own matching observation arrives or `flush_due`/`flush` times it out.
 fn reconcile_workspace_observation(
     state: &mut InstructionExpectationState,
     input: JsonValue,
@@ -195,26 +247,45 @@ fn reconcile_workspace_observation(
 
     let observation_event_id = context.trigger_uuid();
     let pending = std::mem::take(&mut state.pending_hyprland_workspace);
-    let outputs = pending
-        .into_iter()
-        .map(|pending| {
-            let payload = evaluate_pending_workspace_instruction(
-                &pending.instruction,
-                observation.to_workspace_id,
-                observation_event_id,
-                observed_at,
-            );
+    let sole_candidate = pending.len() == 1;
+
+    let mut outputs = Vec::new();
+    let mut still_pending = Vec::new();
+
+    for candidate in pending {
+        let deadline_elapsed = candidate
+            .instruction
+            .deadline
+            .is_some_and(|deadline| observed_at > deadline);
+        let target_matches = candidate.instruction.desired_workspace_id == observation.to_workspace_id;
+
+        if !deadline_elapsed && !target_matches && !sole_candidate {
+            // This observation doesn't correspond to `candidate`, and there is
+            // at least one other pending instruction it could plausibly belong
+            // to instead. Leave it pending for its own observation or an
+            // eventual idle-flush timeout.
+            still_pending.push(candidate);
+            continue;
+        }
+
+        let payload = evaluate_pending_workspace_instruction(
+            &candidate.instruction,
+            observation.to_workspace_id,
+            observation_event_id,
+            observed_at,
+        );
+        outputs.push(
             DerivedOutput::reconciled(
                 payload,
                 observed_at,
-                vec![pending.instruction_event_id, observation_event_id],
+                vec![candidate.instruction_event_id, observation_event_id],
                 HYPRLAND_WORKSPACE_SCOPE.to_string(),
             )
             .with_temporal_policy(SyntheticTemporalPolicy::DeclaredEffective)
             .with_semantics_version(SEMANTICS_VERSION)
             .with_equivalence_key(format!(
                 "hyprland-workspace-expectation:{}",
-                pending.instruction.instruction_id
+                candidate.instruction.instruction_id
             ))
             .with_declaration_id(INSTRUCTION_RECONCILER_OUTPUT_DECLARATIONS[0].declaration_id)
             .with_product_class(INSTRUCTION_RECONCILER_OUTPUT_DECLARATIONS[0].product_class)
@@ -222,11 +293,77 @@ fn reconcile_workspace_observation(
                 INSTRUCTION_RECONCILER_OUTPUT_DECLARATIONS[0]
                     .default_support
                     .instantiate(2, 0, 1, 0),
-            )
-        })
-        .collect();
+            ),
+        );
+    }
 
+    state.pending_hyprland_workspace = still_pending;
     Ok(outputs)
+}
+
+/// Idle-flush path: resolve pending instructions whose deadline has elapsed
+/// even though no (matching or unrelated) observation ever arrived to drive
+/// resolution via `reconcile_workspace_observation`. Instructions without a
+/// `deadline` are left pending indefinitely by design — there is nothing to
+/// flush them against.
+fn flush_timed_out_workspace_instructions(
+    state: &mut InstructionExpectationState,
+    now: Timestamp,
+) -> Vec<DerivedOutput<InstructionExpectationStatusPayload>> {
+    let pending = std::mem::take(&mut state.pending_hyprland_workspace);
+    let mut outputs = Vec::new();
+    let mut still_pending = Vec::new();
+
+    for candidate in pending {
+        let Some(deadline) = candidate.instruction.deadline else {
+            still_pending.push(candidate);
+            continue;
+        };
+
+        if now <= deadline {
+            still_pending.push(candidate);
+            continue;
+        }
+
+        let payload = InstructionExpectationStatusPayload {
+            instruction_id: candidate.instruction.instruction_id,
+            desired_event_source: candidate.instruction.desired_event_source.clone(),
+            desired_event_type: candidate.instruction.desired_event_type.clone(),
+            status: InstructionExpectationStatus::TimedOut,
+            matched_event_ids: Vec::new(),
+            caveat: Some(
+                "no matching workspace observation arrived before instruction deadline \
+                 (idle flush)"
+                    .to_string(),
+            ),
+            evaluated_at: now,
+        };
+
+        outputs.push(
+            DerivedOutput::reconciled(
+                payload,
+                now,
+                vec![candidate.instruction_event_id],
+                HYPRLAND_WORKSPACE_SCOPE.to_string(),
+            )
+            .with_temporal_policy(SyntheticTemporalPolicy::DeclaredEffective)
+            .with_semantics_version(SEMANTICS_VERSION)
+            .with_equivalence_key(format!(
+                "hyprland-workspace-expectation:{}",
+                candidate.instruction.instruction_id
+            ))
+            .with_declaration_id(INSTRUCTION_RECONCILER_OUTPUT_DECLARATIONS[0].declaration_id)
+            .with_product_class(INSTRUCTION_RECONCILER_OUTPUT_DECLARATIONS[0].product_class)
+            .with_claim_support(
+                INSTRUCTION_RECONCILER_OUTPUT_DECLARATIONS[0]
+                    .default_support
+                    .instantiate(2, 0, 1, 0),
+            ),
+        );
+    }
+
+    state.pending_hyprland_workspace = still_pending;
+    outputs
 }
 
 fn evaluate_pending_workspace_instruction(
