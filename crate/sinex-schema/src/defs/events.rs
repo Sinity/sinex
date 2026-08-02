@@ -520,6 +520,11 @@ impl Events {
     ///   accelerate query/replay/archive selection paths
     /// - **Payload search**: GIN indexes (see `create_gin_indexes_sql()`) enable fast
     ///   JSON path queries, text search, and full-text search
+    /// - **Source family rollup**: `ix_events_source_family` (raw SQL, created in
+    ///   `apply::configure_timescaledb`) is an expression index on
+    ///   `split_part(source, '.', 1)` — the only index that supports the
+    ///   continuity report repository's per-family predicates
+    ///   (`crate/sinex-db/src/repositories/continuity.rs`)
     ///
     #[must_use]
     pub fn create_indexes() -> Vec<IndexCreateStatement> {
