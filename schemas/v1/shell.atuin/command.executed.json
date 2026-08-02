@@ -29,7 +29,7 @@
     }
   },
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "description": "Atuin command execution captured from history ingestion.",
+  "description": "Atuin extends the SAME `history` row (`rowid` unchanged) in place: it\ninserts at command START with `exit`/`duration` unset, then UPDATEs once\nthe command finishes. `supersede_on_change` lets a later re-read of the\nsame rowid-anchored occurrence (see `AtuinHistoryRecord`'s\n`#[occurrence_key]` field, `terminal/atuin_history.rs`) archive the stale\nin-flight interpretation and admit the completed one instead of\nduplicating or silently dropping it (sinex-h3g, ruling sinex-y8v).",
   "properties": {
     "atuin_history_id": {
       "type": "string"

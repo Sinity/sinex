@@ -9,6 +9,26 @@
 //!
 //! Privacy tier: `Secret` — URLs carry auth tokens. The parser emits privacy
 //! context metadata; DB admission policy owns payload redaction/suppression.
+//!
+//! ## Mutability (sinex-h3g / sinex-audit-h3g-atuin-browser, Chromium leg)
+//!
+//! Chromium's `visits.visit_duration` column is finalized via an UPDATE to
+//! the SAME row (`visits.id`) only once the NEXT navigation happens in that
+//! tab, so a plain `WHERE rowid > cursor` scan permanently freezes
+//! `visit_duration_ms` at `0`/absent for chromium-sourced visits. qutebrowser
+//! has no equivalent in-place-mutated column and is unaffected. This is the
+//! same `SqliteRowAdapter`/`MutableSnapshot` gap `desktop.activitywatch` had
+//! before sinex-h3g (see that module's docs for the mechanism): the primary
+//! leg's `mutable_trailing_rows` (set in `baseline_adapter_config` below)
+//! re-reads a trailing window of already-cursored rows on every poll, and
+//! `PageVisitedPayload` opts into `RevisionPolicy::SupersedeOnChange` so a
+//! re-read carrying the finalized duration archives the stale interpretation
+//! and admits the revision as the sole live row. Occurrence identity
+//! (`visit_id`, from `visits.id`/`History.rowid`) is already stable across
+//! the UPDATE, so no occurrence-key change was needed. The knob applies to
+//! both legs (it's the shared primary-leg baseline) — qutebrowser rows are
+//! never mutated in place, so a re-read there simply content-hashes
+//! identically and is suppressed as a harmless duplicate.
 
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
@@ -244,7 +264,18 @@ impl MaterialParser for BrowserHistoryParser {
         // either way it gets the data it needs. Secondary leg defaults are
         // empty — `path` must come from Nix binding (the JSONL dump file).
         serde_json::json!({
-            "primary": { "query": "SELECT rowid, * FROM History", "table": "History" },
+            "primary": {
+                "query": "SELECT rowid, * FROM History",
+                "table": "History",
+                // `mutable_trailing_rows` (sinex-h3g mechanism, see module
+                // docs): re-reads a trailing window of already-cursored rows
+                // on every poll so a visit's row is re-observed after
+                // Chromium finalizes `visit_duration` on the next
+                // navigation. 64 generously covers concurrently open tabs
+                // across windows whose most recent visit hasn't yet been
+                // superseded by a same-tab navigation.
+                "mutable_trailing_rows": 64
+            },
             "secondary": { "skip_empty": true }
         })
     }

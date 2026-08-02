@@ -26,21 +26,31 @@ define_event_payload! {
 
 // Atuin history payloads
 
-define_event_payload! {
-    /// Atuin command execution captured from history ingestion.
-    pub struct AtuinCommandExecutedPayload {
-        command_string: CommandText,
-        cwd: RecordedPath,
-        exit_code: ExitCode,
-        duration_ns: Nanoseconds,
-        atuin_history_id: String,
-        atuin_session_id: String,
-        timestamp: i64,
-        ts_start_orig: Timestamp,
-        ts_end_orig: Timestamp,
-        hostname: HostName,
-        terminal_session_uuid: Option<String>,
-    } => ("shell.atuin", "command.executed");
+/// Atuin extends the SAME `history` row (`rowid` unchanged) in place: it
+/// inserts at command START with `exit`/`duration` unset, then UPDATEs once
+/// the command finishes. `supersede_on_change` lets a later re-read of the
+/// same rowid-anchored occurrence (see `AtuinHistoryRecord`'s
+/// `#[occurrence_key]` field, `terminal/atuin_history.rs`) archive the stale
+/// in-flight interpretation and admit the completed one instead of
+/// duplicating or silently dropping it (sinex-h3g, ruling sinex-y8v).
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, EventPayload)]
+#[event_payload(
+    source = "shell.atuin",
+    event_type = "command.executed",
+    revision_policy = "supersede_on_change"
+)]
+pub struct AtuinCommandExecutedPayload {
+    pub command_string: CommandText,
+    pub cwd: RecordedPath,
+    pub exit_code: ExitCode,
+    pub duration_ns: Nanoseconds,
+    pub atuin_history_id: String,
+    pub atuin_session_id: String,
+    pub timestamp: i64,
+    pub ts_start_orig: Timestamp,
+    pub ts_end_orig: Timestamp,
+    pub hostname: HostName,
+    pub terminal_session_uuid: Option<String>,
 }
 
 // Test helpers for external tests

@@ -7,6 +7,7 @@
     }
   },
   "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "Chromium finalizes `visits.visit_duration` via an UPDATE to the SAME row\n(`visits.id`) only once the next navigation happens in that tab, so a\nre-read of an already-cursored visit can carry a duration the first read\nnever saw. `supersede_on_change` lets that re-read (see the\n`mutable_trailing_rows` mechanism on `browser.history`'s primary leg,\n`browser/history.rs`) archive the stale interpretation and admit the\nrevision, keyed on the same `visit_id`-anchored occurrence (sinex-h3g,\nruling sinex-y8v). qutebrowser visits have no equivalent mutated column;\nan unmodified re-read content-hashes identically and is suppressed, not\nduplicated.",
   "properties": {
     "browser": {
       "type": "string"

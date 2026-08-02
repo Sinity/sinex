@@ -1044,3 +1044,279 @@ async fn activitywatch_window_active_supersede_on_change_unmodified_reread_suppr
 
     Ok(())
 }
+
+// ---------------------------------------------------------------------------
+// sinex-audit-h3g-atuin-browser: the same settling-window bug in
+// terminal.atuin-history and browser.history (Chromium leg). Atuin/Chromium
+// mutate the SAME row (`rowid`) in place after this parser's first read
+// (Atuin: exit/duration filled in on command completion; Chromium:
+// visit_duration filled in on the next same-tab navigation) instead of
+// inserting a new row, so the occurrence key never changes across the
+// mutation. `AtuinCommandExecutedPayload` / `PageVisitedPayload` opt into
+// `RevisionPolicy::SupersedeOnChange` for exactly the same reason
+// `ActivityWatchWindowActivePayload` does above.
+// ---------------------------------------------------------------------------
+
+fn atuin_command_payload(exit_code: i64, duration_ns: i64) -> JsonValue {
+    serde_json::to_value(
+        sinex_primitives::events::payloads::AtuinCommandExecutedPayload::from_raw_history(
+            "echo sinex-audit-h3g-atuin-browser",
+            sinex_primitives::domain::RecordedPath::from_observed("/home/test").unwrap(),
+            exit_code,
+            duration_ns,
+            "atuin-history-1",
+            "atuin-session-1",
+            1_772_000_000_000_000_000,
+            "test-host",
+        )
+        .expect("atuin payload constructs"),
+    )
+    .expect("command.executed payload serializes")
+}
+
+/// Reproduces the bead for Atuin: an initial in-flight read (Atuin's
+/// `#[default = "0"]` exit/duration, since the row was inserted at command
+/// START before Atuin knows either) followed by a re-read of the SAME
+/// `rowid`-anchored occurrence after Atuin's completion UPDATE filled in the
+/// real exit code and duration. Must supersede, leaving exactly the
+/// completed values live.
+#[sinex_test]
+async fn atuin_command_executed_supersede_on_change_completion_returns_superseded(
+    ctx: TestContext,
+) -> TestResult<()> {
+    let material_id = ctx
+        .create_source_material(Some("h3g-atuin-supersede-completion"))
+        .await?;
+    let key = "terminal.atuin-history|rowid=42".to_string();
+    let service = admission_service(&ctx);
+
+    // Initial scan: row read the instant it was inserted, before Atuin's
+    // completion UPDATE — exit/duration at their pre-completion defaults.
+    let live_id = Uuid::now_v7();
+    let mut live = material_event(
+        material_id,
+        live_id,
+        "shell.atuin",
+        "command.executed",
+        atuin_command_payload(0, 0),
+    )?;
+    live.equivalence_key = Some(key.clone());
+    let persisted_id = admit_and_persist(&service, live).await?;
+    assert_eq!(persisted_id, live_id);
+
+    // Re-scan after Atuin's completion UPDATE: SAME rowid-anchored
+    // occurrence, real exit code and duration now present.
+    let revision_id = Uuid::now_v7();
+    let mut revision = material_event(
+        material_id,
+        revision_id,
+        "shell.atuin",
+        "command.executed",
+        atuin_command_payload(1, 250_000_000),
+    )?;
+    revision.equivalence_key = Some(key.clone());
+
+    match service.admit_event(revision).await? {
+        AdmissionDecision::Superseded {
+            admitted,
+            superseded_event_id,
+        } => {
+            assert_eq!(
+                superseded_event_id, live_id,
+                "the pre-completion read is the supersession target"
+            );
+            assert_eq!(
+                admitted.event_id, revision_id,
+                "the completed exit_code/duration_ns revision is admitted"
+            );
+        }
+        other => panic!(
+            "a post-completion re-read of the same Atuin occurrence must supersede, not \
+             {other:?} (command.executed is expected to opt into SupersedeOnChange, \
+             sinex-audit-h3g-atuin-browser)"
+        ),
+    }
+
+    Ok(())
+}
+
+/// An unmodified re-read of the same Atuin row (e.g. a poll cycle landing
+/// before the command finished) must suppress, not supersede.
+#[sinex_test]
+async fn atuin_command_executed_supersede_on_change_unmodified_reread_suppresses(
+    ctx: TestContext,
+) -> TestResult<()> {
+    let material_id = ctx
+        .create_source_material(Some("h3g-atuin-supersede-identical"))
+        .await?;
+    let key = "terminal.atuin-history|rowid=43".to_string();
+    let service = admission_service(&ctx);
+
+    let live_id = Uuid::now_v7();
+    let mut live = material_event(
+        material_id,
+        live_id,
+        "shell.atuin",
+        "command.executed",
+        atuin_command_payload(0, 0),
+    )?;
+    live.equivalence_key = Some(key.clone());
+    admit_and_persist(&service, live).await?;
+
+    let repeat_id = Uuid::now_v7();
+    let mut repeat = material_event(
+        material_id,
+        repeat_id,
+        "shell.atuin",
+        "command.executed",
+        atuin_command_payload(0, 0),
+    )?;
+    repeat.equivalence_key = Some(key.clone());
+
+    match service.admit_event(repeat).await? {
+        AdmissionDecision::Suppressed(rejection) => {
+            assert_eq!(rejection.kind, AdmissionRejectionKind::OccurrenceDuplicate);
+        }
+        other => panic!("unmodified Atuin re-read must suppress, not {other:?}"),
+    }
+
+    Ok(())
+}
+
+/// Fixed content-hash-relevant `visit_time` — the two reads of the same
+/// visit row share the same Chromium `visits.visit_time`, so this must stay
+/// constant across a test's initial + re-read payloads. Using
+/// `Timestamp::now()` per call would make every call site differ in
+/// `visit_time` alone, spuriously changing content hash regardless of
+/// `visit_duration_ms`.
+fn fixed_visit_time() -> Timestamp {
+    Timestamp::from_unix_timestamp_nanos(1_772_000_000_000_000_000).expect("valid timestamp")
+}
+
+fn page_visited_payload(visit_duration_ms: Option<u64>) -> JsonValue {
+    serde_json::to_value(sinex_primitives::events::payloads::PageVisitedPayload {
+        browser: "chromium".to_string(),
+        title: "sinex-audit-h3g-atuin-browser".to_string(),
+        url: "https://example.invalid/".to_string(),
+        normalized_url: None,
+        visit_time: fixed_visit_time(),
+        referrer: None,
+        transition: Some("0".to_string()),
+        visit_id: Some("7".to_string()),
+        visit_duration_ms,
+        source_file: "browser.history.sqlite-1".to_string(),
+        line_number: None,
+        db_row_id: Some(7),
+    })
+    .expect("page.visited payload serializes")
+}
+
+/// Reproduces the bead for Chromium browser history: an initial read with no
+/// `visit_duration` (Chromium hasn't navigated away from the tab yet)
+/// followed by a re-read of the SAME `visit_id`-anchored occurrence after
+/// Chromium's next-navigation UPDATE filled it in. Must supersede, leaving
+/// exactly the finalized duration live.
+#[sinex_test]
+async fn browser_history_page_visited_supersede_on_change_finalized_duration_returns_superseded(
+    ctx: TestContext,
+) -> TestResult<()> {
+    let material_id = ctx
+        .create_source_material(Some("h3g-browser-supersede-finalized"))
+        .await?;
+    let key = "browser.history|browser=chromium|source_file=browser.history.sqlite-1|visit_id=7"
+        .to_string();
+    let service = admission_service(&ctx);
+
+    // Initial scan: visit row read before the tab navigated away, so
+    // Chromium has not yet finalized `visit_duration`.
+    let live_id = Uuid::now_v7();
+    let mut live = material_event(
+        material_id,
+        live_id,
+        "webhistory",
+        "page.visited",
+        page_visited_payload(None),
+    )?;
+    live.equivalence_key = Some(key.clone());
+    let persisted_id = admit_and_persist(&service, live).await?;
+    assert_eq!(persisted_id, live_id);
+
+    // Re-scan after the next same-tab navigation finalized the row's
+    // `visit_duration`: SAME visit_id-anchored occurrence.
+    let revision_id = Uuid::now_v7();
+    let mut revision = material_event(
+        material_id,
+        revision_id,
+        "webhistory",
+        "page.visited",
+        page_visited_payload(Some(45_000)),
+    )?;
+    revision.equivalence_key = Some(key.clone());
+
+    match service.admit_event(revision).await? {
+        AdmissionDecision::Superseded {
+            admitted,
+            superseded_event_id,
+        } => {
+            assert_eq!(
+                superseded_event_id, live_id,
+                "the pre-finalization read is the supersession target"
+            );
+            assert_eq!(
+                admitted.event_id, revision_id,
+                "the finalized visit_duration_ms revision is admitted"
+            );
+        }
+        other => panic!(
+            "a post-finalization re-read of the same Chromium visit must supersede, not \
+             {other:?} (page.visited is expected to opt into SupersedeOnChange, \
+             sinex-audit-h3g-atuin-browser)"
+        ),
+    }
+
+    Ok(())
+}
+
+/// An unmodified re-read of the same visit row (e.g. a poll cycle landing
+/// before the next navigation) must suppress, not supersede.
+#[sinex_test]
+async fn browser_history_page_visited_supersede_on_change_unmodified_reread_suppresses(
+    ctx: TestContext,
+) -> TestResult<()> {
+    let material_id = ctx
+        .create_source_material(Some("h3g-browser-supersede-identical"))
+        .await?;
+    let key = "browser.history|browser=chromium|source_file=browser.history.sqlite-1|visit_id=8"
+        .to_string();
+    let service = admission_service(&ctx);
+
+    let live_id = Uuid::now_v7();
+    let mut live = material_event(
+        material_id,
+        live_id,
+        "webhistory",
+        "page.visited",
+        page_visited_payload(None),
+    )?;
+    live.equivalence_key = Some(key.clone());
+    admit_and_persist(&service, live).await?;
+
+    let repeat_id = Uuid::now_v7();
+    let mut repeat = material_event(
+        material_id,
+        repeat_id,
+        "webhistory",
+        "page.visited",
+        page_visited_payload(None),
+    )?;
+    repeat.equivalence_key = Some(key.clone());
+
+    match service.admit_event(repeat).await? {
+        AdmissionDecision::Suppressed(rejection) => {
+            assert_eq!(rejection.kind, AdmissionRejectionKind::OccurrenceDuplicate);
+        }
+        other => panic!("unmodified browser-history re-read must suppress, not {other:?}"),
+    }
+
+    Ok(())
+}
