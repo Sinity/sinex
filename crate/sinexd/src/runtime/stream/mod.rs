@@ -31,5 +31,5 @@ pub use time_horizon::TimeHorizon;
 pub use wire_types::{
     ContinuousStart, MaterialReplayContext, ModuleKind, ReplayScopeFilters, ResolvedReplayMaterial,
     RunnerLifecycle, RuntimeCapabilities, ScanArgs, ScanEstimate, ScanReport, SchemaBroadcastCache,
-    SchemaBroadcastEntry, SourceScanAck, SourceScanCommand, SourceScanProgress,
+    SchemaBroadcastEntry, SourceScanAck, SourceScanCancel, SourceScanCommand, SourceScanProgress,
 };

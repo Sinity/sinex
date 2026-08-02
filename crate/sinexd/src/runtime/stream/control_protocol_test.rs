@@ -23,6 +23,10 @@ async fn classifies_known_control_subjects() -> xtask::sandbox::TestResult<()> {
         Some(ControlCommandKind::Parse)
     );
     assert_eq!(
+        control_command_kind("sinex.control.sources.weechat.cancel"),
+        Some(ControlCommandKind::Cancel)
+    );
+    assert_eq!(
         control_command_kind("sinex.control.sources.weechat.unknown"),
         None
     );

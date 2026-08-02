@@ -178,6 +178,7 @@ async fn publish_scan_progress_reports_nats_failures(ctx: TestContext) -> TestRe
         events_emitted: 2,
         final_report: None,
         error: Some("x".repeat(2_000_000)),
+        cancelled: false,
     };
 
     let error =

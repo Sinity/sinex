@@ -15,8 +15,8 @@ use super::listener::{
 use super::{
     Checkpoint, ErasedInitContext, ErasedRuntimeModule, EventEmitter, ModuleKind, RunnerLifecycle,
     RuntimeCapabilities, RuntimeContext, RuntimeDrainController, RuntimeHandles, RuntimeModule,
-    ScanArgs, ScanEstimate, ScanReport, ServiceInfo, SourceScanAck, SourceScanCommand,
-    SourceScanProgress, TimeHorizon,
+    ScanArgs, ScanEstimate, ScanReport, ServiceInfo, SourceScanAck, SourceScanCancel,
+    SourceScanCommand, SourceScanProgress, TimeHorizon,
 };
 use crate::runtime::{
     RuntimeResult, SinexError,
