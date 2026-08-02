@@ -149,8 +149,7 @@ impl Windowed for SessionDetector {
         InputProvenanceFilter::SynthesizedOnly
     }
 
-    const OUTPUT_DECLARATIONS: &'static [DerivationOutputDeclaration] =
-        SESSION_OUTPUT_DECLARATIONS;
+    const OUTPUT_DECLARATIONS: &'static [DerivationOutputDeclaration] = SESSION_OUTPUT_DECLARATIONS;
 
     async fn accumulate(
         &mut self,
@@ -163,7 +162,23 @@ impl Windowed for SessionDetector {
             state.first_window_id = Some(input.window_id.clone());
         }
 
-        state.last_window_end = Some(input.window_end);
+        // sinex-audit-outoforder-pattern: `last_window_end` anchors the session's
+        // end time (duration_secs, sinex-5s6 flush-gap detection) -- it must never
+        // move backward, or a late/out-of-order window corrupts both. Monotonic
+        // max, with a durable-debt warning on the out-of-order case (the window's
+        // event/source/id accounting below still applies -- it genuinely belongs
+        // to this session; only the end-time watermark is guarded).
+        match state.last_window_end {
+            Some(previous) if input.window_end < previous => {
+                warn!(
+                    module = "session-detector",
+                    window_end = %input.window_end,
+                    last_window_end = %previous,
+                    "session detector saw an out-of-order window (durable debt); session end watermark not moved backward"
+                );
+            }
+            _ => state.last_window_end = Some(input.window_end),
+        }
         state.event_count += input.event_count;
         state.window_count += 1;
         state.sources.extend(input.sources);
@@ -227,10 +242,27 @@ impl Windowed for SessionDetector {
         };
 
         let end_time = state.last_window_end.unwrap_or(start_time);
-        let duration_secs = (end_time - start_time).whole_seconds().max(0) as u64;
-
         state.session_counter += 1;
         let session_id = session_occurrence_key(state.first_window_id.as_deref());
+
+        // sinex-audit-outoforder-pattern: with the monotonic `last_window_end`
+        // guard above, end_time < start_time can now only happen from malformed
+        // per-window data (not out-of-order arrival) -- flag it instead of
+        // silently clamping, so the anomaly is visible rather than erased.
+        let duration_signed = (end_time - start_time).whole_seconds();
+        let duration_secs = if duration_signed < 0 {
+            warn!(
+                module = "session-detector",
+                session_id = %session_id,
+                start_time = %start_time,
+                end_time = %end_time,
+                duration_signed,
+                "session detector computed a negative duration (clamped to 0); indicates malformed window start/end input"
+            );
+            0
+        } else {
+            duration_signed as u64
+        };
 
         let sources: Vec<String> = state.sources.iter().cloned().collect();
         let activity_sources: Vec<ActivitySourceKind> =
@@ -329,3 +361,7 @@ register_source_runtime_binding! {
     .build_impact(sinex_primitives::source_contracts::SourceBuildImpact::ZERO)
     .build()
 }
+
+#[cfg(test)]
+#[path = "session_test.rs"]
+mod tests;

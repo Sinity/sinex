@@ -20,7 +20,7 @@ use sinex_primitives::events::{
 };
 use sinex_primitives::temporal::Timestamp;
 use std::collections::{BTreeMap, BTreeSet};
-use tracing::debug;
+use tracing::{debug, warn};
 
 fn floor_to_day(timestamp: Timestamp) -> Timestamp {
     // sinex-2ged: bucket on the operator-local civil day (DST-aware 23h/25h days),
@@ -176,7 +176,27 @@ impl Windowed for DailySummarizer {
 
         if let Some(current_bucket) = state.day_start
             && state.hour_count > 0
-            && current_bucket != bucket_start
+            && bucket_start < current_bucket
+        {
+            // sinex-audit-outoforder-pattern: a late hourly summary whose bucket is
+            // BEFORE the currently-open day must never be treated as a forward
+            // bucket transition -- that would reopen an already-elapsed (possibly
+            // already-emitted) day and truncate the genuinely current one via a
+            // premature flush. Record durable debt and drop it from this
+            // accumulation instead (never silently folded into the wrong bucket).
+            warn!(
+                module = "daily-summarizer",
+                current_bucket = %current_bucket,
+                late_bucket = %bucket_start,
+                hour_start = %input.hour_start,
+                "daily summarizer dropped a late hourly summary whose bucket precedes the currently-open day (durable debt)"
+            );
+            return Ok(());
+        }
+
+        if let Some(current_bucket) = state.day_start
+            && state.hour_count > 0
+            && bucket_start > current_bucket
         {
             state.pending_hour = Some(PendingHourlySummary {
                 bucket_start,
@@ -347,3 +367,7 @@ register_source_runtime_binding! {
     .build_impact(sinex_primitives::source_contracts::SourceBuildImpact::ZERO)
     .build()
 }
+
+#[cfg(test)]
+#[path = "daily_test.rs"]
+mod tests;

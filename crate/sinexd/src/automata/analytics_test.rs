@@ -27,15 +27,16 @@ async fn analytics_filters_to_trusted_activity_event_types() -> xtask::sandbox::
 }
 
 #[sinex_test]
-async fn analytics_default_window_budget_bounds_parent_fan_in(
-) -> xtask::sandbox::TestResult<()> {
+async fn analytics_default_window_budget_bounds_parent_fan_in() -> xtask::sandbox::TestResult<()> {
     let mut automaton = AnalyticsAutomaton::default();
     let mut state = AnalyticsState::default();
     let event_time = Timestamp::now();
 
     for _ in 0..DEFAULT_WINDOW_MAX_EVENTS {
         let context = trusted_window_context(event_time);
-        automaton.accumulate(&mut state, JsonValue::Null, &context).await?;
+        automaton
+            .accumulate(&mut state, JsonValue::Null, &context)
+            .await?;
         assert!(
             !automaton.window_complete(&state),
             "window should accept exactly the default budget before closing"
@@ -116,7 +117,9 @@ async fn analytics_window_closes_on_quiet_via_flush() -> xtask::sandbox::TestRes
     // A short bout of three events, one minute apart.
     for i in 0..3 {
         let ctx = trusted_window_context(start + time::Duration::seconds(i * 60));
-        automaton.accumulate(&mut state, JsonValue::Null, &ctx).await?;
+        automaton
+            .accumulate(&mut state, JsonValue::Null, &ctx)
+            .await?;
     }
     assert!(
         !automaton.window_complete(&state),
@@ -176,8 +179,8 @@ fn trusted_window_context_with_material(
 /// drives the automaton twice against fresh state (counter reset) and asserts the
 /// key is stable AND specific to the first event's material occurrence.
 #[sinex_test]
-async fn window_equivalence_key_is_occurrence_stable_across_counter_reset(
-) -> xtask::sandbox::TestResult<()> {
+async fn window_equivalence_key_is_occurrence_stable_across_counter_reset()
+-> xtask::sandbox::TestResult<()> {
     async fn emit_window_for(material: Uuid, anchor: i64) -> xtask::sandbox::TestResult<String> {
         let mut automaton = AnalyticsAutomaton::default();
         let mut state = AnalyticsState::default();
@@ -230,6 +233,48 @@ async fn window_equivalence_key_is_occurrence_stable_across_counter_reset(
     assert_ne!(
         k1, k3,
         "distinct occurrences must not share an equivalence key"
+    );
+    Ok(())
+}
+
+/// sinex-audit-outoforder-pattern: `last_event_time` must track the window's
+/// true max-seen `ts_orig`, not the last-processed event's `ts_orig`.
+/// Reverting the monotonic guard in `analytics.rs` makes this test fail: `t3`
+/// would compute its gap-close check against the out-of-order `t2` (700)
+/// instead of the true watermark (`t1` = 1000), spuriously triggering a
+/// gap-close only 1 second after the real last activity.
+#[sinex_test]
+async fn analytics_out_of_order_event_does_not_corrupt_gap_watermark()
+-> xtask::sandbox::TestResult<()> {
+    let mut automaton = AnalyticsAutomaton::default();
+    let mut state = AnalyticsState::default();
+
+    let t1 = Timestamp::from_unix_timestamp(1_700_001_000).expect("valid ts");
+    let t2 = Timestamp::from_unix_timestamp(1_700_000_700).expect("valid ts"); // out-of-order, before t1
+    let t3 = Timestamp::from_unix_timestamp(1_700_001_001).expect("valid ts"); // 1s after t1, 301s after t2
+
+    automaton
+        .accumulate(&mut state, JsonValue::Null, &trusted_window_context(t1))
+        .await?;
+    automaton
+        .accumulate(&mut state, JsonValue::Null, &trusted_window_context(t2))
+        .await?;
+    assert_eq!(
+        state.last_event_time,
+        Some(t1),
+        "out-of-order event must not move the watermark backward"
+    );
+
+    automaton
+        .accumulate(&mut state, JsonValue::Null, &trusted_window_context(t3))
+        .await?;
+    assert!(
+        !automaton.window_complete(&state),
+        "t3 is only 1s after the true last activity (t1); it must not spuriously gap-close"
+    );
+    assert_eq!(
+        state.event_count, 3,
+        "all three events belong to the same window"
     );
     Ok(())
 }

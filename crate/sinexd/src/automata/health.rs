@@ -304,17 +304,36 @@ impl ScopeReconciler for HealthAggregator {
                     events: Vec::new(),
                 });
 
-            // Track status transition
-            let status_changed = component_health.current_status != current_status;
-            if status_changed {
-                component_health.current_status = current_status;
-                component_health.status_since = now;
-                component_health.transition_count += 1;
-            }
+            // sinex-audit-outoforder-pattern: `current_status`/`status_since` must
+            // reflect the LATEST-BY-TIME observation, never arrival order. An
+            // out-of-order `health.status` event (ts_orig older than what we've
+            // already recorded) must never revert a real transition -- that would
+            // silently suppress an actual outage. A tie (now == last_seen) follows
+            // the same deterministic tiebreak as interval_lift (sinex-uzc): the
+            // later-processed observation supersedes.
+            let out_of_order = now < component_health.last_seen;
+            let status_changed = if out_of_order {
+                warn!(
+                    module = "health-aggregator",
+                    component = %component,
+                    event_ts = %now,
+                    last_seen = %component_health.last_seen,
+                    "health aggregator skipped an out-of-order status transition (durable debt); current status preserved"
+                );
+                false
+            } else {
+                let changed = component_health.current_status != current_status;
+                if changed {
+                    component_health.current_status = current_status;
+                    component_health.status_since = now;
+                    component_health.transition_count += 1;
+                }
+                component_health.last_seen = now;
+                changed
+            };
 
-            component_health.last_seen = now;
-
-            // Add event to sliding window
+            // Add event to sliding window -- kept even when out-of-order, it is
+            // still evidence within the window and is pruned below like any other.
             component_health.events.push(HealthEvent {
                 timestamp: now,
                 previous_status,
@@ -322,9 +341,10 @@ impl ScopeReconciler for HealthAggregator {
                 event_id: context.trigger_uuid().to_string(),
             });
 
-            // Prune events outside aggregation window
-            let window_start =
-                now - Duration::seconds(state.config.aggregation_window_seconds as i64);
+            // Prune events outside aggregation window, anchored on the component's
+            // true last-seen watermark -- never a possibly-stale/out-of-order `now`.
+            let window_start = component_health.last_seen
+                - Duration::seconds(state.config.aggregation_window_seconds as i64);
             component_health
                 .events
                 .retain(|e| e.timestamp >= window_start);
@@ -352,12 +372,11 @@ impl ScopeReconciler for HealthAggregator {
                     .with_equivalence_key(format!("alert:{component}:{}", now.format_rfc3339()))
                     .with_declaration_id(declaration.declaration_id)
                     .with_product_class(declaration.product_class)
-                    .with_claim_support(declaration.default_support.instantiate(
-                        evidence_event_count,
-                        0,
-                        1,
-                        0,
-                    )),
+                    .with_claim_support(
+                        declaration
+                            .default_support
+                            .instantiate(evidence_event_count, 0, 1, 0),
+                    ),
                 );
             }
 
@@ -388,12 +407,11 @@ impl ScopeReconciler for HealthAggregator {
                     .with_temporal_policy(SyntheticTemporalPolicy::DeclaredEffective)
                     .with_declaration_id(declaration.declaration_id)
                     .with_product_class(declaration.product_class)
-                    .with_claim_support(declaration.default_support.instantiate(
-                        evidence_event_count,
-                        0,
-                        1,
-                        0,
-                    )),
+                    .with_claim_support(
+                        declaration
+                            .default_support
+                            .instantiate(evidence_event_count, 0, 1, 0),
+                    ),
                 );
                 component_health.last_check_emission = Some(now);
             }
@@ -672,3 +690,7 @@ register_source_runtime_binding! {
     .build_impact(sinex_primitives::source_contracts::SourceBuildImpact::ZERO)
     .build()
 }
+
+#[cfg(test)]
+#[path = "health_test.rs"]
+mod tests;
