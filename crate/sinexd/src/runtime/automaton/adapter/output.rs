@@ -242,14 +242,21 @@ where
     }
 
     /// Enforce the derivation control-plane contract for one output
-    /// (sinex-0vx.2). `declaration_id: None` (with no `product_class` set
-    /// either) passes unconditionally — this is the transition-period shape
-    /// every automaton emits until sinex-0vx.3 stamps its call sites.
+    /// (sinex-0vx.2 / sinex-0vx.8).
     ///
-    /// When a declaration is claimed, it must exist on
-    /// `N::OUTPUT_DECLARATIONS` and agree with the output on product class
-    /// and the resolved `(output_source, output_event_type)`. A claim-support
-    /// vector with an adjudicated status must carry an
+    /// `declaration_id: None` used to pass unconditionally — the
+    /// sinex-0vx.3 transition period, during which automata were migrated
+    /// one at a time onto `.with_declaration_id(..)`. That migration is
+    /// complete (verified sinex-0vx.8: every `AUTOMATA` registry entry and
+    /// non-automaton RPC-handler writer now stamps a declaration), so a
+    /// missing `declaration_id` here is no longer a transitional shape — it
+    /// is an anonymous derived output that bypassed the constructors'
+    /// declaration handshake, and is rejected.
+    ///
+    /// A claimed declaration must exist on `N::OUTPUT_DECLARATIONS` and
+    /// agree with the output on `product_class` (also now required, not
+    /// optional) and the resolved `(output_source, output_event_type)`. A
+    /// claim-support vector with an adjudicated status must carry an
     /// `adjudication_event_id` — re-asserting `ClaimSupport::is_shape_valid()`
     /// at the emission boundary defends against any construction path that
     /// bypasses `ClaimSupport`'s compile-time constructors (e.g. a
@@ -272,14 +279,13 @@ where
         }
 
         let Some(declaration_id) = declaration_id else {
-            if product_class.is_some() {
-                return Err(SinexError::validation(
-                    "derived output set product_class without a declaration_id",
-                )
-                .with_context("automaton", self.automaton.name())
-                .with_context("output_event_type", resolved_event_type));
-            }
-            return Ok(());
+            return Err(SinexError::validation(
+                "derived output has no declaration_id — anonymous derived outputs are \
+                 forbidden (sinex-0vx.8); call .with_declaration_id(..) naming a \
+                 DerivationOutputDeclaration registered on N::OUTPUT_DECLARATIONS",
+            )
+            .with_context("automaton", self.automaton.name())
+            .with_context("output_event_type", resolved_event_type));
         };
 
         let declaration = N::OUTPUT_DECLARATIONS
@@ -292,9 +298,17 @@ where
                     .with_context("declaration_id", declaration_id)
             })?;
 
-        if let Some(product_class) = product_class
-            && product_class != declaration.product_class
-        {
+        let Some(product_class) = product_class else {
+            return Err(SinexError::validation(
+                "derived output claims a declaration_id but has no product_class \
+                 (sinex-0vx.8: every declared output must carry the product/support \
+                 metadata its declaration promises)",
+            )
+            .with_context("automaton", self.automaton.name())
+            .with_context("declaration_id", declaration_id)
+            .with_context("output_event_type", resolved_event_type));
+        };
+        if product_class != declaration.product_class {
             return Err(SinexError::validation(
                 "derived output product_class disagrees with its declaration",
             )
@@ -302,6 +316,17 @@ where
             .with_context("declaration_id", declaration_id)
             .with_context("declared_product_class", declaration.product_class.as_str())
             .with_context("output_product_class", product_class.as_str()));
+        }
+
+        if claim_support.is_none() {
+            return Err(SinexError::validation(
+                "derived output claims a declaration_id but has no claim_support \
+                 (sinex-0vx.8: every declared output must carry the product/support \
+                 metadata its declaration promises)",
+            )
+            .with_context("automaton", self.automaton.name())
+            .with_context("declaration_id", declaration_id)
+            .with_context("output_event_type", resolved_event_type));
         }
 
         let source_matches = declaration

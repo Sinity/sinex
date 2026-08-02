@@ -67,14 +67,21 @@ fn declaration_gate_runtime() -> AutomatonRuntime<TransducerWrapper<DeclarationG
     AutomatonRuntime::new(TransducerWrapper(DeclarationGateTestAutomaton))
 }
 
+/// sinex-0vx.8: the sinex-0vx.3 transition period (where a missing
+/// `declaration_id` passed unconditionally while automata were migrated
+/// one at a time) is over — every `AUTOMATA` registry entry and
+/// non-automaton RPC-handler writer now stamps a declaration, so a
+/// `DerivedOutput` with no `declaration_id` is an anonymous derived output
+/// and must be rejected at the adapter boundary, not silently persisted.
+/// This is the `no_anonymous_derived_outputs` regression test named in
+/// sinex-0vx.8's VERIFY line.
 #[test]
-fn derived_output_declaration_gate_accepts_transition_shape_with_no_declaration() {
+fn no_anonymous_derived_outputs() {
     let runtime = declaration_gate_runtime();
-    assert!(
-        runtime
-            .validate_output_declaration(None, None, None, "test.output")
-            .is_ok()
-    );
+    let error = runtime
+        .validate_output_declaration(None, None, None, "test.output")
+        .expect_err("a DerivedOutput with no declaration_id must be rejected");
+    assert!(error.to_string().contains("anonymous derived outputs are forbidden"));
 }
 
 #[test]
@@ -88,7 +95,35 @@ fn derived_output_declaration_gate_rejects_product_class_without_declaration_id(
             "test.output",
         )
         .expect_err("product_class without declaration_id must be rejected");
-    assert!(error.to_string().contains("without a declaration_id"));
+    assert!(error.to_string().contains("anonymous derived outputs are forbidden"));
+}
+
+#[test]
+fn derived_output_declaration_gate_rejects_declared_output_missing_product_class() {
+    let runtime = declaration_gate_runtime();
+    let error = runtime
+        .validate_output_declaration(
+            Some("declaration-gate-test.test.output"),
+            None,
+            Some(&ClaimSupport::unknown()),
+            "test.output",
+        )
+        .expect_err("a declared output with no product_class must be rejected");
+    assert!(error.to_string().contains("has no product_class"));
+}
+
+#[test]
+fn derived_output_declaration_gate_rejects_declared_output_missing_claim_support() {
+    let runtime = declaration_gate_runtime();
+    let error = runtime
+        .validate_output_declaration(
+            Some("declaration-gate-test.test.output"),
+            Some(DerivedProductClass::CanonicalDerivedEvent),
+            None,
+            "test.output",
+        )
+        .expect_err("a declared output with no claim_support must be rejected");
+    assert!(error.to_string().contains("has no claim_support"));
 }
 
 #[test]
@@ -125,8 +160,8 @@ fn derived_output_declaration_gate_rejects_event_type_mismatch() {
     let error = runtime
         .validate_output_declaration(
             Some("declaration-gate-test.test.output"),
-            None,
-            None,
+            Some(DerivedProductClass::CanonicalDerivedEvent),
+            Some(&ClaimSupport::unknown()),
             "some.other.type",
         )
         .expect_err("an event_type disagreeing with the declaration must be rejected");
@@ -141,7 +176,7 @@ fn derived_output_declaration_gate_accepts_matching_declaration() {
             .validate_output_declaration(
                 Some("declaration-gate-test.test.output"),
                 Some(DerivedProductClass::CanonicalDerivedEvent),
-                None,
+                Some(&ClaimSupport::unknown()),
                 "test.output",
             )
             .is_ok()
@@ -162,7 +197,12 @@ fn claim_support_adapter_accepts_unreviewed_vector() {
     );
     assert!(
         runtime
-            .validate_output_declaration(None, None, Some(&claim_support), "test.output")
+            .validate_output_declaration(
+                Some("declaration-gate-test.test.output"),
+                Some(DerivedProductClass::CanonicalDerivedEvent),
+                Some(&claim_support),
+                "test.output",
+            )
             .is_ok()
     );
 }

@@ -590,3 +590,134 @@ async fn provider_secret_literal_live_workspace_has_no_violations()
     );
     Ok(())
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// sinex-0vx.8: derivation control-plane guards
+// ─────────────────────────────────────────────────────────────────────────────
+
+#[sinex_test]
+async fn derived_output_literal_construction_rejects_struct_literal()
+-> ::xtask::sandbox::TestResult<()> {
+    let fixture = r#"
+        fn build() -> DerivedOutput<JsonValue> {
+            DerivedOutput {
+                payload: value,
+                declaration_id: None,
+            }
+        }
+    "#;
+    let violations = derived_output_literal_violations_for_file("fixture.rs", fixture);
+    assert_eq!(violations.len(), 1, "{violations:?}");
+    assert!(violations[0].contains("bypasses the typed constructors"));
+    Ok(())
+}
+
+#[sinex_test]
+async fn derived_output_literal_construction_accepts_type_annotation_and_constructors()
+-> ::xtask::sandbox::TestResult<()> {
+    let fixture = r#"
+        fn build(&self) -> DerivedOutput<StateIntervalPayload> {
+            DerivedOutput::transduced(declaration.declaration_id, payload, ts_orig, source_id)
+                .with_product_class(declaration.product_class)
+        }
+
+        impl<T> DerivedOutput<T> {
+            pub fn transduced() -> Self {
+                Self { payload }
+            }
+        }
+    "#;
+    let violations = derived_output_literal_violations_for_file("fixture.rs", fixture);
+    assert!(
+        violations.is_empty(),
+        "type annotations, typed constructors, and Self{{..}} inside the owning impl must not \
+         be flagged: {violations:?}"
+    );
+    Ok(())
+}
+
+#[sinex_test]
+async fn derived_output_literal_construction_live_workspace_has_no_violations()
+-> ::xtask::sandbox::TestResult<()> {
+    let violations = check_derived_output_literal_construction()?;
+    assert!(
+        violations.is_empty(),
+        "raw DerivedOutput struct-literal construction found outside the allowlisted owner \
+         files: {violations:#?}"
+    );
+    Ok(())
+}
+
+#[sinex_test]
+async fn evidence_tier_reintroduction_rejects_struct_and_enum() -> ::xtask::sandbox::TestResult<()>
+{
+    let struct_fixture = "pub struct EvidenceTier { level: u8 }";
+    let struct_violations = evidence_tier_violations_for_file("fixture.rs", struct_fixture);
+    assert_eq!(struct_violations.len(), 1, "{struct_violations:?}");
+
+    let enum_fixture = "pub enum EvidenceTier { High, Low }";
+    let enum_violations = evidence_tier_violations_for_file("fixture.rs", enum_fixture);
+    assert_eq!(enum_violations.len(), 1, "{enum_violations:?}");
+    Ok(())
+}
+
+#[sinex_test]
+async fn evidence_tier_reintroduction_ignores_prose_mentions() -> ::xtask::sandbox::TestResult<()>
+{
+    let fixture = "// ClaimSupport replaces the old scalar-EvidenceTier idea: see derivation.rs";
+    let violations = evidence_tier_violations_for_file("fixture.rs", fixture);
+    assert!(violations.is_empty(), "{violations:?}");
+    Ok(())
+}
+
+#[sinex_test]
+async fn evidence_tier_reintroduction_live_workspace_has_no_violations()
+-> ::xtask::sandbox::TestResult<()> {
+    let violations = check_evidence_tier_reintroduction()?;
+    assert!(
+        violations.is_empty(),
+        "scalar EvidenceTier vocabulary (replaced by ClaimSupport in sinex-8cr) was \
+         reintroduced: {violations:#?}"
+    );
+    Ok(())
+}
+
+#[sinex_test]
+async fn claim_support_adjudicated_violations_flags_call_site() -> ::xtask::sandbox::TestResult<()>
+{
+    let fixture = r#"
+        let claim_support = ClaimSupport::adjudicated(
+            support_level,
+            source_coverage,
+            temporal_quality,
+            AdjudicationStatus::Accepted,
+            judgment_event_id,
+            1, 0, 1, 0,
+        )?;
+    "#;
+    let violations = claim_support_adjudicated_violations_for_file("fixture.rs", fixture);
+    assert_eq!(violations.len(), 1, "{violations:?}");
+    assert!(violations[0].contains("registered authority finalizer seam"));
+    Ok(())
+}
+
+#[sinex_test]
+async fn claim_support_adjudicated_violations_ignores_doc_comment_mentions()
+-> ::xtask::sandbox::TestResult<()> {
+    let fixture = "/// See `ClaimSupport::adjudicated` for the adjudicated constructor.";
+    let violations = claim_support_adjudicated_violations_for_file("fixture.rs", fixture);
+    assert!(violations.is_empty(), "{violations:?}");
+    Ok(())
+}
+
+#[sinex_test]
+async fn claim_support_adjudicated_call_sites_live_workspace_has_no_violations()
+-> ::xtask::sandbox::TestResult<()> {
+    let violations = check_claim_support_adjudicated_call_sites()?;
+    assert!(
+        violations.is_empty(),
+        "ClaimSupport::adjudicated(..) called outside the authority/finalizer allowlist: \
+         {violations:#?}"
+    );
+    Ok(())
+}
