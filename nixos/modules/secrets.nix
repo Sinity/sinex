@@ -137,6 +137,19 @@ let
   agenixPaths = if shouldConfigureAgenix then mapAttrs (_: spec: spec.path) specs else {};
   resolvedSecretPaths = conventionalEtcPaths // agenixPaths;
 
+  # Content-addressed SOURCE paths per secret name, suitable for systemd
+  # `restartTriggers` (never for reading at runtime -- these are the
+  # age-encrypted ciphertext / declarative environment.etc source, not the
+  # decrypted plaintext). agenix always decrypts to the same stable
+  # /run/agenix/<name> path regardless of content, so referencing that
+  # decrypted path in restartTriggers would never change hash on rotation.
+  # The Nix store path of the SOURCE file does change hash when an operator
+  # edits+re-encrypts the .age file (or edits a conventional environment.etc
+  # source), which is exactly the "rotated for real" signal a consuming unit
+  # needs to pick up a genuine content change and ignore no-op re-decryption.
+  agenixTriggerSources = if shouldConfigureAgenix then mapAttrs (_: spec: spec.file) specs else {};
+  restartTriggerSources = conventionalEtcPaths // agenixTriggerSources;
+
 in
 {
   options.sinex.secrets = {
@@ -150,6 +163,20 @@ in
       description = "Shell snippet exporting decrypted secrets.";
       default = "";
     };
+    restartTriggers = mkOption {
+      type = types.attrsOf types.path;
+      description = ''
+        Content-addressed SOURCE paths per secret name (the age-encrypted
+        `.age` file or the declarative `environment.etc` source), keyed the
+        same as `sinex.secrets.paths`. Consuming units should add the
+        relevant entries to their own `systemd.services.<name>.restartTriggers`
+        so a genuine secret rotation (new ciphertext/source content) forces a
+        restart, while a no-op re-decryption to the same plaintext at
+        rebuild time does not. Never use these paths to read secret content --
+        they are pre-decryption sources, not the runtime plaintext.
+      '';
+      default = {};
+    };
   };
 
   # optionalAttrs agenixAvailable guards age.* options existing at all (safe: checks options, not config).
@@ -158,6 +185,7 @@ in
     {
       sinex.secrets.paths = resolvedSecretPaths;
       sinex.secrets.exportScript = if shouldConfigureAgenix then exportScript else "";
+      sinex.secrets.restartTriggers = restartTriggerSources;
     }
     (optionalAttrs agenixAvailable (mkIf shouldConfigureAgenix {
       age.identityPaths = mkDefault defaultIdentities;

@@ -11,10 +11,23 @@ let
   cfg = config.services.sinex;
   secretResolution = import ./lib/secret-resolution.nix { inherit lib; };
   automataLib = import ./lib/automata.nix { inherit lib; };
-  inherit (secretResolution) resolveNamedSecretPath;
+  inherit (secretResolution) resolveNamedSecretPath restartTriggersForNames;
   db = cfg.database;
   secretPaths = config.sinex.secrets.paths or { };
   effectiveDatabasePasswordFile = resolveNamedSecretPath secretPaths db.passwordFile [
+    "sinex-local-db"
+    "sinex-remote-db"
+  ];
+  # sinex-audit-secret-rotation-no-restart: `postgresql-setup` is
+  # Type=oneshot + RemainAfterExit=true (nixpkgs' postgresql module), so it
+  # only runs `sync_role_password` once and then sits "done" across every
+  # later switch unless something changes what it hashes. The role's actual
+  # password in postgres would otherwise silently keep the OLD value after a
+  # db-password rotation even though the file on disk (and everything that
+  # reads it fresh, like sinexd on its next start) has the NEW one --
+  # producing an auth failure instead of a clean rotation. Trigger a rerun on
+  # the content-addressed SOURCE of the resolved db-password secret.
+  databaseRestartTriggers = restartTriggersForNames (config.sinex.secrets.restartTriggers or { }) [
     "sinex-local-db"
     "sinex-remote-db"
   ];
@@ -546,6 +559,11 @@ SQL
 
                 sync_role_password ${escapeShellArg db.user} ${escapeShellArg effectiveDatabasePasswordFile}
       '';
+      # postgresql-setup is Type=oneshot + RemainAfterExit=true: without a
+      # trigger it runs sync_role_password exactly once, ever. Force a rerun
+      # when the db-password secret's content genuinely rotates so the role's
+      # live password in postgres tracks the file every consumer re-reads.
+      systemd.services.postgresql-setup.restartTriggers = databaseRestartTriggers;
     })
   ];
 }

@@ -123,6 +123,54 @@ For secrets requiring periodic rotation:
 4. Application logic handles transition (try new, fallback to old)
 5. Remove old secret file after transition period
 
+### `nixos-rebuild switch` alone does not restart consuming services
+
+**Status (2026-08-02, sinex-audit-secret-rotation-no-restart)**: rotating a
+secret's plaintext content and re-running `agenix -e` produces a NEW
+encrypted `.age` file, but agenix always decrypts it to the SAME stable
+runtime path (`/run/agenix/<name>`). `switch-to-configuration` restarts a
+systemd unit only when something it diffs about that unit's *generated
+definition* changes; a unit that references a secret purely by its stable
+runtime path shows no diff, so a running process that already read the OLD
+plaintext at its last start keeps using it indefinitely, even after a
+successful rebuild. This is not hypothetical: `postgresql-setup` runs the
+DB-role password sync exactly once (`Type=oneshot`, `RemainAfterExit=true`)
+and would otherwise never re-run, so the role's live password in postgres
+would silently diverge from the rotated password file every other consumer
+reads fresh.
+
+`config.sinex.secrets.restartTriggers` (a name-keyed attrset of
+content-addressed SOURCE paths — the `.age` ciphertext or the declarative
+`environment.etc` source, never the decrypted runtime path) closes this gap.
+Every unit that reads a named secret only at process start wires the
+relevant entries into its own `systemd.services.<name>.restartTriggers`, so
+`switch-to-configuration` sees a real hash change exactly when the secret's
+content genuinely rotates (and no change on an inert re-decrypt), and
+restarts/reruns the unit automatically:
+
+| Unit | Secrets it embeds/reads at start | Mechanism |
+|---|---|---|
+| `sinexd.service` | DB password, all NATS TLS/token/creds/nkey material, API admin token | `restartTriggers` (gated by the existing `services.sinex.runtime.restartOnSwitch` / `restartIfChanged` toggle — a deployment that has turned that off, e.g. to avoid activation-time stop timeouts, must restart `sinexd` manually after a genuine secret rotation; see below) |
+| `postgresql-setup.service` | DB password (writes it into postgres via `ALTER ROLE`) | `restartTriggers` reruns the oneshot's `sync_role_password` step |
+| `nats.service` | Server TLS cert/key + client-verification CA (embedded in the generated server config) | `restartTriggers` |
+| `sinex-blob-cas-sweep.service` / `sinex-blob-cas-fsck.service` | DB password | No trigger needed — these are `OnCalendar` timer-triggered oneshots (`mkDatabasePasswordExec`) that already read the password file fresh on every scheduled run; the next scheduled invocation self-heals without any restart machinery |
+
+**Known gap — `sinnix` deployment routing.** `config.sinex.secrets.restartTriggers`
+is computed from this module's OWN `age.secrets`/`environment.etc` sources
+(`config.sinex.secrets.enableAgenix = true`, the default declarative story).
+The sinnix flake's `modules/services/sinex/bridge.nix` sets
+`services.sinex.secrets.enableAgenix = false` and instead force-overrides
+`sinex.secrets.paths` from sinnix's own top-level `config.sinnix.secrets.paths`
+registry, entirely bypassing this module's secret resolution. On that
+deployment `config.sinex.secrets.restartTriggers` evaluates to `{}` and the
+`restartTriggers` wired above have no effect until sinnix's bridge similarly
+overrides `sinex.secrets.restartTriggers` from its own registry's
+content-addressed sources. Until that companion change lands, treat a real
+production rotation on `sinnix-prime` as still requiring a manual
+`systemctl restart nats postgresql-setup sinexd` (in that order, so the DB
+role password is synced before sinexd reconnects) after the rebuild that
+carries the new secret content.
+
 ## Current Implementation Status
 
 ✅ Implemented:
@@ -133,11 +181,12 @@ For secrets requiring periodic rotation:
 - Database password consumers resolve `sinex-local-db` / `sinex-remote-db` automatically and also honor `/etc/sinex/db-password` / `/etc/sinex/remote-db-password`.
 - Managed local and remote NATS TLS/auth surfaces resolve the conventional `sinex-nats-*` and `sinex-remote-nats-*` secret names automatically.
 - Grafana resolves `sinex-grafana-secret-key.age` or `/etc/sinex/grafana-secret-key` automatically when present, otherwise it uses the module-derived stable default.
+- `config.sinex.secrets.restartTriggers` + per-unit `restartTriggers` wiring on `sinexd`, `postgresql-setup`, and `nats` so a genuine secret-content rotation forces the affected unit to restart/rerun on the next `nixos-rebuild switch`, instead of silently keeping stale in-memory secret material (see "`nixos-rebuild switch` alone does not restart consuming services" above).
 
 ⚠️ Operator tasks (per deployment):
 - Generate age keys for host/user and encrypt secrets.
 - Place encrypted `.age` files under `nixos/secret/`, declare conventional `environment.etc."sinex/..."` files, or set explicit secret file paths.
-- Rotate secrets by updating the encrypted file and rebuilding.
+- Rotate secrets by updating the encrypted file and rebuilding; `nixos-rebuild switch` now restarts the affected consuming units automatically on deployments that resolve secrets through this module's own `age.secrets`/`environment.etc` sources (see the sinnix routing caveat above for deployments that override `sinex.secrets.paths` from an external registry).
 
 ## Related Documentation
 - ADR-006: NixOS Secrets Management Tool Decision
