@@ -17,6 +17,7 @@ use sinex_primitives::events::payloads::{
     CurationJudgmentActorKind, CurationJudgmentDecision, CurationProposalPayload,
     CurationProposalStatus,
 };
+use sinex_primitives::events::EventPayload;
 use sinex_primitives::rpc::curation::{CurationFinalizeRequest, CurationRecordJudgmentRequest};
 use sinex_primitives::session_lane::SessionLaneOutputs;
 use sinex_primitives::{Id, Timestamp, Uuid};
@@ -297,7 +298,9 @@ async fn session_lane_shadow_diff_promotion(ctx: TestContext) -> TestResult<()> 
     };
     let mut proposal_event = proposal
         .clone()
-        .from_parents([window_event_id])?
+        .from_parents([Id::<sinex_db::Event<sinex_primitives::JsonValue>>::from_uuid(
+            window_event_id,
+        )])?
         .build()?;
     // Same declaration_id `common::seed_rpc_handler_product_declarations`
     // reconciles for `curation.proposal` writes (`curation-rpc.curation.
