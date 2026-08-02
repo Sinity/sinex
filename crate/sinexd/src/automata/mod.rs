@@ -12,6 +12,7 @@ pub mod canonicalizer;
 pub mod daily;
 pub mod document_parser;
 pub mod embedding_producer;
+pub mod entity_chain_shadow;
 pub mod entity_enricher;
 pub mod entity_extractor;
 pub mod entity_resolver;

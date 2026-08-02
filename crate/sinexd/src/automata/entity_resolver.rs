@@ -176,7 +176,7 @@ pub type EntityResolverRuntime = WindowedAdapter<EntityResolver>;
 // ── Canonicalization logic ──────────────────────────────────────────────────
 
 /// Compute the canonical form of an entity name, based on its type.
-fn canonicalize_name(entity_type: &EntityTypeName, raw_name: &str) -> String {
+pub(crate) fn canonicalize_name(entity_type: &EntityTypeName, raw_name: &str) -> String {
     match entity_type.as_str() {
         "tool" => raw_name.trim().to_lowercase(),
         "url" => normalize_url_host(raw_name),
@@ -186,12 +186,12 @@ fn canonicalize_name(entity_type: &EntityTypeName, raw_name: &str) -> String {
 }
 
 /// Build the stable lookup key: `"{entity_type}:{canonical_name}"`.
-fn canonical_key(entity_type: &EntityTypeName, canonical_name: &str) -> String {
+pub(crate) fn canonical_key(entity_type: &EntityTypeName, canonical_name: &str) -> String {
     format!("{}:{}", entity_type.as_str(), canonical_name)
 }
 
 /// Deterministic `UUIDv5` from `(entity_type, canonical_name)`.
-fn compute_entity_id(entity_type: &EntityTypeName, canonical_name: &str) -> Uuid {
+pub(crate) fn compute_entity_id(entity_type: &EntityTypeName, canonical_name: &str) -> Uuid {
     let input = format!("{}:{}", entity_type.as_str(), canonical_name);
     Uuid::new_v5(&Uuid::NAMESPACE_OID, input.as_bytes())
 }
