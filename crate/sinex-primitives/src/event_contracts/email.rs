@@ -10,6 +10,8 @@ pub const EMAIL_MESSAGE_RECEIVED_CONTRACT_ID: EventContractId =
 pub const EMAIL_MESSAGE_SENT_CONTRACT_ID: EventContractId = "event-contract:email/message.sent@v1";
 pub const EMAIL_ATTACHMENT_OBSERVED_CONTRACT_ID: EventContractId =
     "event-contract:email/attachment.observed@v1";
+pub const EMAIL_MESSAGE_DELETED_CONTRACT_ID: EventContractId =
+    "event-contract:email/message.deleted@v1";
 pub const EMAIL_THREAD_OBSERVED_CONTRACT_ID: EventContractId =
     "event-contract:email/thread.observed@v1";
 pub const EMAIL_SYNC_CURSOR_OBSERVED_CONTRACT_ID: EventContractId =
@@ -22,6 +24,10 @@ const EMAIL_MAILBOX_SOURCE_OCCURRENCES: &[OccurrenceIdentity] =
 const EMAIL_ATTACHMENT_SOURCE_OCCURRENCES: &[OccurrenceIdentity] =
     &[OccurrenceIdentity::Uuid5From(
         "(message_occurrence, attachment_index, filename, content_id)",
+    )];
+const EMAIL_MESSAGE_DELETED_SOURCE_OCCURRENCES: &[OccurrenceIdentity] =
+    &[OccurrenceIdentity::Uuid5From(
+        "(event_kind=deleted, message_id_or_material, mailbox_format, source_file)",
     )];
 const EMAIL_THREAD_SOURCE_OCCURRENCES: &[OccurrenceIdentity] = &[OccurrenceIdentity::Uuid5From(
     "(thread_key, message_id_or_material)",
@@ -86,6 +92,26 @@ inventory::submit! {
         },
         occurrence: EventOccurrenceContract::SourceDeclared,
         source_occurrences: EMAIL_ATTACHMENT_SOURCE_OCCURRENCES,
+        temporal: EventTemporalContract::IntrinsicOrMaterial,
+        provenance: EventProvenanceRequirement::Material,
+        disclosure_policy_ref: Some("operator.email-mailbox.default"),
+        admission_policy_ref: Some(crate::admission_policy::STANDARD_EVENT_ADMISSION_POLICY_ID),
+        package_refs: EMAIL_MAILBOX_PACKAGES,
+        output_kind: OutputKind::CanonicalEvent,
+    }
+}
+inventory::submit! {
+    EventContract {
+        id: EMAIL_MESSAGE_DELETED_CONTRACT_ID,
+        event_source: "email",
+        event_type: "email.message.deleted",
+        payload_schema: PayloadSchemaContract::PayloadInventory {
+            source: "email",
+            event_type: "email.message.deleted",
+            version: "1.0.0",
+        },
+        occurrence: EventOccurrenceContract::SourceDeclared,
+        source_occurrences: EMAIL_MESSAGE_DELETED_SOURCE_OCCURRENCES,
         temporal: EventTemporalContract::IntrinsicOrMaterial,
         provenance: EventProvenanceRequirement::Material,
         disclosure_policy_ref: Some("operator.email-mailbox.default"),

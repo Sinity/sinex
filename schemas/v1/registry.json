@@ -290,6 +290,13 @@
     },
     {
       "source": "email",
+      "event_type": "email.message.deleted",
+      "version": "1.0.0",
+      "path": "email/email.message.deleted.json",
+      "content_hash": "706321aeffa96dbc8b4d664ba43307f27937e1cf4fbab4a8c4b53e94f519cfdd"
+    },
+    {
+      "source": "email",
       "event_type": "email.message.received",
       "version": "1.0.0",
       "path": "email/email.message.received.json",

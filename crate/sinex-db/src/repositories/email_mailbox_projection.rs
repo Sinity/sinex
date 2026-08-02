@@ -212,6 +212,46 @@ impl EmailMailboxProjectionRepository<'_> {
         .map_err(|error| db_error(error, "upsert email mailbox projection"))
     }
 
+    /// Apply an `email.message.deleted` event by deleting the matching
+    /// projection row, rather than the accumulate-only upsert every other
+    /// email event type uses (sinex-audit-gmail-delete-fabrication /
+    /// sinex-audit-imap-expunge-unobserved). GREATEST/COALESCE/jsonb_agg
+    /// upsert semantics can never make a projection row shrink or
+    /// disappear — a real deletion signal has to bypass that path entirely.
+    ///
+    /// Returns `Ok(None)` for any event that is not an `email.message.deleted`
+    /// event, or whose payload carries no resolvable `message_key` (see
+    /// [`message_key`]) — the same "nothing to project" contract
+    /// [`Self::upsert_event`] uses. Returns `Ok(Some(message_key))` when a
+    /// delete was issued (even if zero rows matched: the message_key may
+    /// legitimately have no live row, e.g. a projection rebuild replaying a
+    /// deletion after the corresponding received event was excluded from
+    /// this mode's scope).
+    pub async fn apply_deletion_event(
+        &self,
+        event: &EmailMailboxProjectionEvent,
+    ) -> DbResult<Option<String>> {
+        if event.event_type != "email.message.deleted" {
+            return Ok(None);
+        }
+        let Some(message_key) = message_key(&event.payload) else {
+            return Ok(None);
+        };
+        sqlx::query!(
+            r#"
+            DELETE FROM core.email_mailbox_projection
+            WHERE source_id = $1 AND mode_id = $2 AND message_key = $3
+            "#,
+            event.source_id,
+            event.mode_id,
+            message_key,
+        )
+        .execute(self.pool)
+        .await
+        .map_err(|error| db_error(error, "delete email mailbox projection"))?;
+        Ok(Some(message_key))
+    }
+
     pub async fn list_current_by_source(
         &self,
         source_id: &str,

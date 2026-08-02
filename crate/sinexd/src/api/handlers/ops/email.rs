@@ -848,6 +848,7 @@ async fn execute_email_projection_rebuild(
     let event_types = [
         "email.message.received",
         "email.message.sent",
+        "email.message.deleted",
         "email.thread.observed",
         "email.attachment.observed",
     ]
@@ -885,18 +886,29 @@ async fn execute_email_projection_rebuild(
     })?;
     let mut projected_count = 0usize;
     for row in &rows {
-        if pool
-            .email_mailbox_projections()
-            .upsert_event(EmailMailboxProjectionEvent {
-                source_id: spec.source_id.to_string(),
-                mode_id: mode_id.to_string(),
-                observed_event_id: row.event_id,
-                event_type: row.event_type.clone(),
-                payload: row.payload.clone(),
-            })
-            .await?
-            .is_some()
-        {
+        let event = EmailMailboxProjectionEvent {
+            source_id: spec.source_id.to_string(),
+            mode_id: mode_id.to_string(),
+            observed_event_id: row.event_id,
+            event_type: row.event_type.clone(),
+            payload: row.payload.clone(),
+        };
+        // `email.message.deleted` reflects an actual removal (sinex-audit-
+        // gmail-delete-fabrication): it must delete the projected row, not
+        // grow it via the accumulate-only upsert every other email event
+        // type uses.
+        let applied = if row.event_type == "email.message.deleted" {
+            pool.email_mailbox_projections()
+                .apply_deletion_event(&event)
+                .await?
+                .is_some()
+        } else {
+            pool.email_mailbox_projections()
+                .upsert_event(event)
+                .await?
+                .is_some()
+        };
+        if applied {
             projected_count += 1;
         }
     }
