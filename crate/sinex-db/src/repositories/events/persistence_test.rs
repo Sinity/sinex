@@ -3,7 +3,8 @@ use crate::repositories::DbPoolExt;
 use serde_json::json;
 use sinex_primitives::Result;
 use sinex_primitives::domain::{EventType, HostName};
-use sinex_primitives::events::EventId;
+use sinex_primitives::events::{EquivalenceKey, EventId};
+use std::sync::Arc;
 use xtask::sandbox::sinex_test;
 
 fn base_stream_batch_row() -> Result<StreamBatchRow> {
@@ -743,6 +744,100 @@ async fn batch_product_metadata(
             "persisted product_class mismatch for stream batch event {uuid}"
         );
     }
+
+    Ok(())
+}
+
+/// Reproduces sinex-audit-equivrace: two writers admitting the same
+/// occurrence (shared `equivalence_key`) concurrently, neither having
+/// observed the other's live row yet, both calling `insert_stream_batch_into`
+/// at (as close as `tokio::sync::Barrier` can force) the same instant.
+///
+/// This is the actual physical conflict point, not a simulation of it:
+/// admission's `resolve_equivalence` check (`sinexd::event_engine::admission`)
+/// runs well before a batch reaches this function, so two concurrent
+/// admissions racing the same key both legitimately observe "no live row"
+/// upstream and both arrive here believing they are `Fresh` — exactly what
+/// this test drives directly, skipping the upstream admission layer
+/// entirely so the test exercises the real DB-level race deterministically
+/// rather than depending on scheduling luck across the whole pipeline.
+///
+/// Before `lock_and_filter_equivalence_conflicts` (added by this bead), both
+/// inserts would land: `core.events` is a `TimescaleDB` hypertable and
+/// cannot carry a unique index on `equivalence_key` alone (only indexes that
+/// include the partition key `id` are permitted, and `id` differs by
+/// definition between the two racers), so nothing at the DB layer rejected
+/// the second writer. This test asserts the invariant directly: exactly one
+/// of the two racing rows ends up live, never two, never zero.
+#[sinex_test]
+async fn concurrent_equivalence_key_race_yields_exactly_one_live_row(
+    ctx: xtask::sandbox::TestContext,
+) -> xtask::sandbox::TestResult<()> {
+    let material_id = ctx
+        .create_source_material(Some("equivrace-race-test"))
+        .await?;
+    let key = format!("equivrace-{}", Uuid::now_v7());
+
+    let mut row_a = base_stream_batch_row()?;
+    row_a.source_material_id = Some(material_id);
+    row_a.anchor_byte = Some(0);
+    row_a.equivalence_key = Some(EquivalenceKey::new(key.clone()));
+
+    let mut row_b = base_stream_batch_row()?;
+    row_b.source_material_id = Some(material_id);
+    row_b.anchor_byte = Some(1);
+    row_b.equivalence_key = Some(EquivalenceKey::new(key.clone()));
+
+    let barrier = Arc::new(tokio::sync::Barrier::new(2));
+
+    let pool_a = ctx.pool.clone();
+    let barrier_a = Arc::clone(&barrier);
+    let handle_a = tokio::spawn(async move {
+        barrier_a.wait().await;
+        pool_a
+            .events()
+            .insert_stream_batch_into(EventStorageLane::Activity, std::slice::from_ref(&row_a))
+            .await
+    });
+
+    let pool_b = ctx.pool.clone();
+    let barrier_b = Arc::clone(&barrier);
+    let handle_b = tokio::spawn(async move {
+        barrier_b.wait().await;
+        pool_b
+            .events()
+            .insert_stream_batch_into(EventStorageLane::Activity, std::slice::from_ref(&row_b))
+            .await
+    });
+
+    let result_a = handle_a
+        .await
+        .map_err(|e| SinexError::unknown(format!("racer A task panicked: {e}")))??;
+    let result_b = handle_b
+        .await
+        .map_err(|e| SinexError::unknown(format!("racer B task panicked: {e}")))??;
+
+    let total_inserted = result_a.inserted_count + result_b.inserted_count;
+    assert_eq!(
+        total_inserted, 1,
+        "exactly one of the two racing writers should win the equivalence_key \
+         occurrence; got {total_inserted} inserted (result_a={result_a:?}, \
+         result_b={result_b:?})"
+    );
+
+    let live_count = sqlx::query_scalar!(
+        "SELECT COUNT(*) FROM core.events WHERE equivalence_key = $1",
+        key
+    )
+    .fetch_one(ctx.pool())
+    .await
+    .map_err(|e| SinexError::database("count live rows for equivalence_key").with_source(e))?
+    .unwrap_or(0);
+
+    assert_eq!(
+        live_count, 1,
+        "expected exactly one live core.events row for the raced equivalence_key, found {live_count}"
+    );
 
     Ok(())
 }

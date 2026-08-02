@@ -10,11 +10,11 @@ use crate::{EventRecord, SinexError};
 use sinex_primitives::domain::{DataTier, EventSource};
 use sinex_primitives::sources::{SourceRole, source_role};
 use sinex_primitives::{Id, Timestamp};
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use uuid::Uuid;
 
-use sqlx::{Executor, PgPool, Postgres, QueryBuilder, Row, Transaction};
-use tracing::instrument;
+use sqlx::{Executor, PgConnection, PgPool, Postgres, QueryBuilder, Row, Transaction};
+use tracing::{instrument, warn};
 
 mod replacements;
 mod types;
@@ -1338,7 +1338,21 @@ impl<'a> EventRepository<'a> {
                         .await?;
                     }
 
-                    let result = Self::execute_batch_insert(&mut *tx, lane, chunk).await?;
+                    let filtered_chunk =
+                        Self::lock_and_filter_equivalence_conflicts(&mut tx, lane, chunk).await?;
+                    // An empty filtered chunk (every row lost its
+                    // equivalence-key race) has nothing to insert —
+                    // `QueryBuilder::push_values` panics on a zero-row
+                    // range, so skip straight to committing (releasing the
+                    // advisory locks) with a zero result.
+                    let result = if filtered_chunk.is_empty() {
+                        StreamBatchInsertResult {
+                            inserted_count: 0,
+                            inserted_ids: Some(Vec::new()),
+                        }
+                    } else {
+                        Self::execute_batch_insert(&mut *tx, lane, &filtered_chunk).await?
+                    };
                     tx.commit()
                         .await
                         .map_err(|e| db_error(e, "commit stream batch"))?;
@@ -1359,7 +1373,37 @@ impl<'a> EventRepository<'a> {
             // Small material-only batch: QueryBuilder is faster (no staging
             // table overhead).
             Some(StreamBatchInsertStrategy::QueryBuilder) => {
-                Self::execute_batch_insert(self.pool, lane, batch).await
+                // Only wrap in an explicit transaction when equivalence-key
+                // admission locking is actually needed (see
+                // `lock_and_filter_equivalence_conflicts`) — the common case
+                // (material events, no equivalence_key) keeps the original
+                // single-statement implicit-transaction INSERT with zero
+                // added round trips.
+                if batch.iter().any(|row| row.equivalence_key.is_some()) {
+                    let mut tx = self
+                        .pool
+                        .begin()
+                        .await
+                        .map_err(|e| db_error(e, "begin stream batch transaction"))?;
+                    let filtered =
+                        Self::lock_and_filter_equivalence_conflicts(&mut tx, lane, batch).await?;
+                    // See the Derived-path comment above: an empty filtered
+                    // batch has nothing to insert.
+                    let result = if filtered.is_empty() {
+                        StreamBatchInsertResult {
+                            inserted_count: 0,
+                            inserted_ids: Some(Vec::new()),
+                        }
+                    } else {
+                        Self::execute_batch_insert(&mut *tx, lane, &filtered).await?
+                    };
+                    tx.commit()
+                        .await
+                        .map_err(|e| db_error(e, "commit stream batch"))?;
+                    Ok(result)
+                } else {
+                    Self::execute_batch_insert(self.pool, lane, batch).await
+                }
             }
         }
     }
@@ -1560,15 +1604,6 @@ impl<'a> EventRepository<'a> {
         lane: EventStorageLane,
         batch: &[StreamBatchRow],
     ) -> DbResult<StreamBatchInsertResult> {
-        use sqlx::postgres::PgConnection;
-
-        // Serialise all rows first — no DB round-trips yet.
-        let mut buf: Vec<u8> = Vec::with_capacity(batch.len() * 512);
-        for row in batch {
-            crate::postgres_copy::ToPostgresCopy::write_copy_row(row, &mut buf)
-                .map_err(|e| db_error(e, "serialise batch row for COPY insert"))?;
-        }
-
         let staging_columns_sql = event_copy_staging_columns_sql();
         let copy_columns_sql = event_copy_column_list_sql();
         let insert_select_sql = event_copy_insert_select_sql();
@@ -1577,6 +1612,19 @@ impl<'a> EventRepository<'a> {
             .begin()
             .await
             .map_err(|e| db_error(e, "begin transaction for COPY batch insert"))?;
+
+        // Admission equivalence-key race guard (sinex-audit-equivrace): no-op
+        // (zero extra queries) unless this batch actually carries a row with
+        // an equivalence_key. See `lock_and_filter_equivalence_conflicts`.
+        let filtered_batch =
+            Self::lock_and_filter_equivalence_conflicts(&mut tx, lane, batch).await?;
+
+        // Serialise the surviving rows — no DB round-trips yet.
+        let mut buf: Vec<u8> = Vec::with_capacity(filtered_batch.len() * 512);
+        for row in &filtered_batch {
+            crate::postgres_copy::ToPostgresCopy::write_copy_row(row, &mut buf)
+                .map_err(|e| db_error(e, "serialise batch row for COPY insert"))?;
+        }
 
         // Create staging table once per connection, reuse on subsequent calls via TRUNCATE.
         // Column types are plain SQL types (UUID, TEXT, JSONB …) so COPY text format
@@ -1654,6 +1702,128 @@ impl<'a> EventRepository<'a> {
             inserted_count: inserted_ids.len(),
             inserted_ids: Some(inserted_ids),
         })
+    }
+
+    /// Closes the admission check-then-insert race for `equivalence_key`
+    /// occurrences (sinex-audit-equivrace).
+    ///
+    /// `resolve_equivalence` at admission time (`sinexd::event_engine::admission`)
+    /// runs a plain `SELECT` against the live table well before this batch
+    /// physically reaches the DB — admission and persist are decoupled
+    /// pipeline stages. Two concurrent admissions sharing an
+    /// `equivalence_key` can therefore both observe "no live row" and both
+    /// arrive here believing they are `Fresh`, which without this guard
+    /// would insert two live rows for one occurrence.
+    ///
+    /// `core.events`/`reflection.events` are `TimescaleDB` hypertables and
+    /// cannot carry a unique index on `equivalence_key` alone — only indexes
+    /// that include the partition key `id` are permitted, and `id` differs
+    /// by definition between the two racing rows, so a DB constraint cannot
+    /// arbitrate this directly. Instead, a per-key
+    /// transaction-scoped advisory lock (`pg_advisory_xact_lock`) serializes
+    /// the recheck-and-insert critical section: a second racer blocks on the
+    /// same key until the first transaction commits, then its recheck (run
+    /// under the very same lock, in this function) observes the just-landed
+    /// live row and drops its own now-redundant copy before the caller's
+    /// `INSERT`/`COPY` ever sees it.
+    ///
+    /// The loser is simply omitted from what gets inserted — callers already
+    /// treat an attempted id absent from `StreamBatchInsertResult::inserted_ids`
+    /// as a duplicate (`AdmissionPersistResult::persisted_plan` in
+    /// `sinexd::event_engine::admission`), the same handling already applied
+    /// to `ON CONFLICT (id) DO NOTHING` redelivery duplicates. The occurrence
+    /// is not lost: occurrence-stable keyed sources re-emit on their next
+    /// cycle, and replay reproduces it — the same self-healing property
+    /// already documented for `JetStreamConsumer::apply_supersession`'s
+    /// archive-then-insert window.
+    ///
+    /// No-op — zero additional queries — when `batch` carries no
+    /// `equivalence_key` at all, which is true for the overwhelming majority
+    /// of (material) event batches. Only occurrence-stable interval/synthetic
+    /// sources ever pay the lock+recheck cost, and only when their batch
+    /// actually contains a keyed row.
+    async fn lock_and_filter_equivalence_conflicts(
+        tx: &mut PgConnection,
+        lane: EventStorageLane,
+        batch: &[StreamBatchRow],
+    ) -> DbResult<Vec<StreamBatchRow>> {
+        let mut keys: Vec<&str> = batch
+            .iter()
+            .filter_map(|row| row.equivalence_key.as_ref().map(|k| k.as_str()))
+            .collect();
+        if keys.is_empty() {
+            return Ok(batch.to_vec());
+        }
+
+        // Sorted + deduplicated lock acquisition order: two concurrent
+        // batches that both carry keys A and B (in different orders) must
+        // never be able to deadlock against each other.
+        keys.sort_unstable();
+        keys.dedup();
+
+        for key in &keys {
+            sqlx::query!("SELECT pg_advisory_xact_lock(hashtext($1))", key)
+                .execute(&mut *tx)
+                .await
+                .map_err(|e| db_error(e, "acquire equivalence-key admission lock"))?;
+        }
+
+        // Authoritative recheck, taken under the lock(s) just acquired: any
+        // live row found here for one of our keys was committed by whichever
+        // writer won the race (including, potentially, a writer that
+        // committed and released its lock between our batch's admission-time
+        // resolution and this recheck).
+        let keys_owned: Vec<String> = keys.iter().map(|k| (*k).to_string()).collect();
+        let live_sql = format!(
+            r"SELECT DISTINCT ON (equivalence_key) equivalence_key, id::uuid AS id
+              FROM {}
+              WHERE equivalence_key = ANY($1::text[])
+              ORDER BY equivalence_key, id DESC",
+            lane.table_name()
+        );
+        let live_rows: Vec<(String, Uuid)> = sqlx::query_as(&live_sql)
+            .bind(&keys_owned)
+            .fetch_all(&mut *tx)
+            .await
+            .map_err(|e| db_error(e, "recheck live equivalence-key rows under admission lock"))?;
+        let live_by_key: HashMap<&str, Uuid> =
+            live_rows.iter().map(|(k, id)| (k.as_str(), *id)).collect();
+
+        let mut dropped = 0usize;
+        let filtered: Vec<StreamBatchRow> = batch
+            .iter()
+            .filter(|row| {
+                let Some(key) = row.equivalence_key.as_ref().map(|k| k.as_str()) else {
+                    return true;
+                };
+                match live_by_key.get(key) {
+                    // A live row already exists for this key under a
+                    // different id: another writer won the race. Drop this
+                    // row rather than insert a second live interpretation.
+                    Some(&live_id) if live_id != row.id => {
+                        dropped += 1;
+                        false
+                    }
+                    // No live row, or the live row IS this exact id (this
+                    // batch is itself a redelivery retry): proceed to insert
+                    // as normal — `ON CONFLICT (id) DO NOTHING` already
+                    // handles the latter case idempotently.
+                    _ => true,
+                }
+            })
+            .cloned()
+            .collect();
+
+        if dropped > 0 {
+            warn!(
+                dropped,
+                lane = ?lane,
+                "equivalence-key admission race: dropped row(s) whose occurrence \
+                 was made live by a concurrent writer between admission and persist"
+            );
+        }
+
+        Ok(filtered)
     }
 
     fn copy_staging_exists_sql() -> &'static str {
