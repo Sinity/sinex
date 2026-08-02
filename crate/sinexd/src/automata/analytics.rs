@@ -330,7 +330,25 @@ impl Windowed for AnalyticsAutomaton {
             state.start_material_id = seed.material_id;
             state.start_anchor_byte = seed.anchor_byte;
         }
-        state.last_event_time = Some(event_time);
+        // sinex-audit-outoforder-pattern: `last_event_time` is the watermark used
+        // by both the next event's gap-close check above and the flush-due clock
+        // backstop -- it must never move backward, or a later out-of-order event
+        // is measured against a stale earlier watermark, corrupting gap-close
+        // classification. Monotonic max, with a durable-debt warning on the
+        // out-of-order case (the event still counts toward the window below --
+        // it genuinely belongs to it; only the watermark is guarded).
+        state.last_event_time = Some(match state.last_event_time {
+            Some(previous) if event_time < previous => {
+                warn!(
+                    module = "analytics-automaton",
+                    event_time = %event_time,
+                    last_event_time = %previous,
+                    "analytics automaton saw an out-of-order event within the current window (durable debt); watermark not moved backward"
+                );
+                previous
+            }
+            _ => event_time,
+        });
         state.event_count += 1;
         state.sources.insert(seed.raw_source);
         *state
