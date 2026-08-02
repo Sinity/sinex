@@ -287,7 +287,12 @@ impl DocumentChunks {
     /// and `document.chunked` events into the relational projection tables.
     ///
     /// `document.parsed` → `core.documents` (upsert by `id`)
-    /// `document.chunked` → `core.document_chunks` (insert, FK to `core.documents`)
+    /// `document.chunked` → `core.document_chunks` (upsert by
+    /// `(document_id, chunk_index)`, FK to `core.documents`) — self-heals on
+    /// replay just like the `documents` upsert above, so a re-emitted
+    /// `document.chunked` (e.g. after tightening a privacy/redaction rule
+    /// and replaying affected source material) overwrites the stale
+    /// `text`/offsets instead of being silently dropped.
     #[must_use]
     pub fn create_projection_trigger_sql() -> &'static str {
         r"
@@ -331,7 +336,13 @@ impl DocumentChunks {
               (NEW.payload->>'source_anchor_end')::bigint,
               NEW.id
             )
-            ON CONFLICT (document_id, chunk_index) DO NOTHING;
+            ON CONFLICT (document_id, chunk_index) DO UPDATE SET
+              text = EXCLUDED.text,
+              byte_offset_start = EXCLUDED.byte_offset_start,
+              byte_offset_end = EXCLUDED.byte_offset_end,
+              source_anchor_start = EXCLUDED.source_anchor_start,
+              source_anchor_end = EXCLUDED.source_anchor_end,
+              chunked_event_id = EXCLUDED.chunked_event_id;
           END IF;
 
           RETURN NEW;

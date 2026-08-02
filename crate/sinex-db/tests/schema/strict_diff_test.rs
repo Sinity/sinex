@@ -744,6 +744,71 @@ async fn detects_manual_edit_to_fn_archive_before_delete(ctx: TestContext) -> Te
     Ok(())
 }
 
+/// sinex-audit-docchunks-replay-redaction-bypass: regression guard for the
+/// exact bug this bead fixed. If someone manually (or via a bad merge)
+/// reverts `core.fn_document_projection`'s `document.chunked` branch back to
+/// `ON CONFLICT (document_id, chunk_index) DO NOTHING`, a replayed
+/// re-redaction would once again silently fail to overwrite stale
+/// `core.document_chunks.text` -- exactly the audit finding. Strict diff
+/// must catch that regression.
+#[sinex_test]
+async fn detects_manual_edit_to_fn_document_projection(ctx: TestContext) -> TestResult<()> {
+    sinex_db::schema::apply::apply(&ctx.pool).await?;
+
+    // Revert to the pre-fix DO NOTHING behavior.
+    sqlx::query(
+        r"
+        CREATE OR REPLACE FUNCTION core.fn_document_projection()
+        RETURNS trigger LANGUAGE plpgsql AS $$
+        BEGIN
+          IF NEW.event_type = 'document.chunked' THEN
+            INSERT INTO core.document_chunks (
+              document_id, chunk_index, text, byte_offset_start, byte_offset_end,
+              source_anchor_start, source_anchor_end, chunked_event_id
+            ) VALUES (
+              (NEW.payload->>'document_id')::uuid,
+              COALESCE((NEW.payload->>'chunk_index')::int, 0),
+              COALESCE(NEW.payload->>'text', ''),
+              COALESCE((NEW.payload->>'byte_offset_start')::bigint, 0),
+              COALESCE((NEW.payload->>'byte_offset_end')::bigint, 0),
+              (NEW.payload->>'source_anchor_start')::bigint,
+              (NEW.payload->>'source_anchor_end')::bigint,
+              NEW.id
+            )
+            ON CONFLICT (document_id, chunk_index) DO NOTHING;
+          END IF;
+          RETURN NEW;
+        END $$;
+        ",
+    )
+    .execute(&ctx.pool)
+    .await?;
+
+    let drifts = check_strict(&ctx.pool).await?;
+    let matched: Vec<_> = drifts
+        .iter()
+        .filter(|d| d.category == DriftCategory::TriggerBody && d.location == "core.fn_document_projection")
+        .collect();
+
+    assert_eq!(
+        matched.len(),
+        1,
+        "expected exactly one trigger_body drift on fn_document_projection, got: {drifts:?}"
+    );
+    assert!(
+        matched[0]
+            .observed_summary
+            .contains("ON CONFLICT (document_id, chunk_index) DO UPDATE SET")
+            || matched[0].observed_summary.contains("text = EXCLUDED.text"),
+        "observed summary should name the missing self-heal markers: {}",
+        matched[0].observed_summary
+    );
+
+    restore_function_set(&ctx.pool, "core.fn_document_projection()").await?;
+
+    Ok(())
+}
+
 #[sinex_test]
 async fn detects_manual_edit_to_fn_events_validate_material_bounds(
     ctx: TestContext,
