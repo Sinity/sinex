@@ -164,6 +164,30 @@ pub async fn handle_privacy_policy_list(
     })
 }
 
+/// Stale every current `derivation.projection_registry` row after a privacy
+/// policy mutation (sinex-68c.4).
+///
+/// Redaction is applied at the central persistence chokepoint
+/// (`event_engine::policy::PolicyEngine::redact_batch`) — a rule/scope/
+/// backend change means content the policy engine already redacted (or
+/// left unredacted) under the OLD policy may render differently under the
+/// new one. There is no per-projection dependency table tracking which
+/// projections read which redacted fields yet, so this conservatively
+/// invalidates every tracked projection rather than risk one continuing to
+/// serve pre-change content as ready. Best-effort: a failure here must not
+/// fail the policy mutation itself (the policy change is the source of
+/// truth; a missed stale flag degrades to a manual `xtask`/operator rebuild
+/// rather than data loss).
+async fn stale_projections_for_policy_change(pool: &PgPool, reason: &str) {
+    if let Err(error) = pool.projection_registry().mark_all_stale(reason).await {
+        tracing::warn!(
+            error = %error,
+            reason,
+            "Failed to stale projection registry after privacy policy change"
+        );
+    }
+}
+
 pub async fn handle_privacy_policy_rule_add(
     pool: &PgPool,
     request: PrivacyPolicyRuleAddRequest,
@@ -185,6 +209,11 @@ pub async fn handle_privacy_policy_rule_add(
             &request.key_namespace,
         )
         .await?;
+    stale_projections_for_policy_change(
+        pool,
+        &format!("privacy policy rule '{}' added", request.name),
+    )
+    .await;
     Ok(PrivacyPolicyMutationResponse {
         id,
         kind: "rule".to_string(),
@@ -206,6 +235,11 @@ pub async fn handle_privacy_policy_backend_add(
             request.enabled,
         )
         .await?;
+    stale_projections_for_policy_change(
+        pool,
+        &format!("privacy recognizer backend '{}' added", request.name),
+    )
+    .await;
     Ok(PrivacyPolicyMutationResponse {
         id,
         kind: "recognizer_backend".to_string(),
@@ -262,6 +296,16 @@ pub async fn handle_privacy_policy_seed_builtin(
 ) -> Result<PrivacyPolicySeedBuiltinResponse> {
     let rules = builtin_policy_seed_rules(request.enabled);
     let summary = pool.privacy_policy().seed_rules(&rules).await?;
+    if summary.inserted > 0 || summary.updated > 0 {
+        stale_projections_for_policy_change(
+            pool,
+            &format!(
+                "privacy policy builtin seed applied ({} inserted, {} updated)",
+                summary.inserted, summary.updated
+            ),
+        )
+        .await;
+    }
     Ok(PrivacyPolicySeedBuiltinResponse {
         inserted: summary.inserted,
         updated: summary.updated,
@@ -501,6 +545,8 @@ pub async fn handle_privacy_policy_rule_remove(
             "privacy policy rule not found: {name}"
         )));
     }
+    stale_projections_for_policy_change(pool, &format!("privacy policy rule '{name}' removed"))
+        .await;
     Ok(PrivacyPolicyRuleRemoveResponse {
         name,
         removed: true,
@@ -521,6 +567,14 @@ pub async fn handle_privacy_policy_rule_set_enabled(
             "privacy policy rule not found: {name}"
         )));
     }
+    stale_projections_for_policy_change(
+        pool,
+        &format!(
+            "privacy policy rule '{name}' set enabled={}",
+            request.enabled
+        ),
+    )
+    .await;
     Ok(PrivacyPolicyRuleSetEnabledResponse {
         name,
         enabled: request.enabled,
@@ -562,6 +616,11 @@ pub async fn handle_privacy_policy_field_bind(
             SinexError::database("privacy policy field scope was inserted but not readable")
                 .with_context("scope_id", id.to_string())
         })?;
+    stale_projections_for_policy_change(
+        pool,
+        &format!("privacy policy field scope bound to rule '{rule_name}'"),
+    )
+    .await;
     Ok(PrivacyPolicyFieldBindResponse {
         scope: PrivacyPolicyFieldScope {
             id: scope.id,
@@ -588,6 +647,11 @@ pub async fn handle_privacy_policy_field_unbind(
             request.scope_id
         )));
     }
+    stale_projections_for_policy_change(
+        pool,
+        &format!("privacy policy field scope '{}' unbound", request.scope_id),
+    )
+    .await;
     Ok(PrivacyPolicyFieldUnbindResponse {
         scope_id: request.scope_id,
         removed: true,

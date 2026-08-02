@@ -90,6 +90,16 @@ impl ProjectionRegistryRepository<'_> {
         input: &ProjectionRegistrationInput<'_>,
         status: ProjectionStatus,
     ) -> DbResult<Uuid> {
+        // sinex-68c.4: a semantics-version bump is itself an invalidation
+        // trigger. If the current row for this (projection_kind, scope_key)
+        // was built under a different semantics_version, it must stop being
+        // served as ready the moment we know a new build is expected under
+        // the bumped version — not only once that new build completes. Do
+        // this before inserting the new row so the window where both an
+        // old-semantics "ready" row and a new "building" row could coexist
+        // as ambiguous "current state" never opens.
+        self.stale_superseded_semantics(input).await?;
+
         let row = sqlx::query!(
             r#"
             INSERT INTO derivation.projection_registry (
@@ -119,6 +129,110 @@ impl ProjectionRegistryRepository<'_> {
         .map_err(|e| db_error(e, "insert projection registry row"))?;
 
         Ok(row.id)
+    }
+
+    /// Stale the current row for `(projection_kind, scope_key)` if its
+    /// `semantics_version` differs from `input.semantics_version` and it is
+    /// still in a status a read surface could mistake for current
+    /// (`ready`/`partial`/`building`). No-op if there is no current row or
+    /// the semantics version has not changed. See `insert_row`'s call site
+    /// for why this runs before the new row is inserted.
+    async fn stale_superseded_semantics(&self, input: &ProjectionRegistrationInput<'_>) -> DbResult<u64> {
+        let result = sqlx::query!(
+            r#"
+            WITH latest AS (
+                SELECT id, semantics_version, status
+                FROM derivation.projection_registry
+                WHERE projection_kind = $1 AND scope_key = $2
+                ORDER BY updated_at DESC
+                LIMIT 1
+            )
+            UPDATE derivation.projection_registry r
+            SET status = 'stale',
+                stale_reason = 'semantics_version bumped from ' || latest.semantics_version
+                    || ' to ' || $3,
+                updated_at = now()
+            FROM latest
+            WHERE r.id = latest.id
+              AND latest.semantics_version <> $3
+              AND latest.status IN ('ready', 'partial', 'building')
+            "#,
+            input.projection_kind,
+            input.scope_key,
+            input.semantics_version,
+        )
+        .execute(self.pool)
+        .await
+        .map_err(|e| db_error(e, "stale projection registry row on semantics version bump"))?;
+        Ok(result.rows_affected())
+    }
+
+    /// Stale every current (`ready`/`partial`/`building`) registry row whose
+    /// `scope_key` matches, across all `projection_kind`s.
+    ///
+    /// Used by replay/archive scope invalidation (sinex-68c.4): once the
+    /// events a scope was built from have been archived and are being
+    /// recomputed, any projection instance keyed to that scope can no
+    /// longer be trusted at its current `built_at` — mark it stale so
+    /// `ProjectionReadinessView` stops claiming readiness for it until a
+    /// fresh build lands. "Current" here means the most-recently-updated
+    /// row per `(projection_kind, scope_key)` — the same row
+    /// `find_latest`/`list_all_latest` treat as authoritative; older
+    /// superseded rows for the same scope are left untouched since they are
+    /// not surfaced as current state anyway.
+    pub async fn mark_stale_by_scope_key(&self, scope_key: &str, reason: &str) -> DbResult<u64> {
+        let result = sqlx::query!(
+            r#"
+            WITH latest AS (
+                SELECT DISTINCT ON (projection_kind, scope_key) id
+                FROM derivation.projection_registry
+                WHERE scope_key = $1
+                ORDER BY projection_kind, scope_key, updated_at DESC
+            )
+            UPDATE derivation.projection_registry r
+            SET status = 'stale', stale_reason = $2, updated_at = now()
+            FROM latest
+            WHERE r.id = latest.id AND r.status IN ('ready', 'partial', 'building')
+            "#,
+            scope_key,
+            reason,
+        )
+        .execute(self.pool)
+        .await
+        .map_err(|e| db_error(e, "mark projection registry rows stale by scope key"))?;
+        Ok(result.rows_affected())
+    }
+
+    /// Stale every current (`ready`/`partial`/`building`) registry row,
+    /// across every `projection_kind` and `scope_key`.
+    ///
+    /// Used by redaction/privacy policy changes (sinex-68c.4): there is no
+    /// per-projection dependency table yet tracking which projections read
+    /// which fields, so a policy mutation (a new/removed/toggled rule, a
+    /// changed field scope, a swapped recognizer backend) conservatively
+    /// invalidates every tracked projection rather than silently continuing
+    /// to serve pre-change content as ready. See the module doc for the
+    /// `projection_dependencies` follow-up that would let this narrow to
+    /// only the projections actually reading redacted fields.
+    pub async fn mark_all_stale(&self, reason: &str) -> DbResult<u64> {
+        let result = sqlx::query!(
+            r#"
+            WITH latest AS (
+                SELECT DISTINCT ON (projection_kind, scope_key) id
+                FROM derivation.projection_registry
+                ORDER BY projection_kind, scope_key, updated_at DESC
+            )
+            UPDATE derivation.projection_registry r
+            SET status = 'stale', stale_reason = $1, updated_at = now()
+            FROM latest
+            WHERE r.id = latest.id AND r.status IN ('ready', 'partial', 'building')
+            "#,
+            reason,
+        )
+        .execute(self.pool)
+        .await
+        .map_err(|e| db_error(e, "mark all projection registry rows stale"))?;
+        Ok(result.rows_affected())
     }
 
     /// Transition `id` to `ready`: sets `built_at = now()`, clears

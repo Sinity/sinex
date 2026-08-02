@@ -26,6 +26,54 @@ pub(crate) struct ArchivedReplayCascade {
 }
 
 impl ReplayExecutionEngine {
+    /// Stale any `derivation.projection_registry` row keyed to a scope whose
+    /// events were just archived (sinex-68c.4).
+    ///
+    /// Runs unconditionally once the archive itself has committed —
+    /// deliberately before the invalidation-signal publish step and its
+    /// possible compensating restore, so a publish failure (which restores
+    /// the archived cascade) can at worst leave a projection spuriously
+    /// stale rather than risk one silently staying `ready` over data that
+    /// really was archived and recomputed.
+    pub(super) async fn stale_projection_registry_for_scopes(
+        &self,
+        pool: &sqlx::PgPool,
+        scope_metadata: &[ScopeInvalidationBucket],
+        operation_id: Uuid,
+    ) -> Result<()> {
+        let mut scope_keys: Vec<&str> = scope_metadata
+            .iter()
+            .flat_map(|bucket| bucket.scope_keys.iter().map(String::as_str))
+            .collect();
+        scope_keys.sort_unstable();
+        scope_keys.dedup();
+
+        let reason = format!("replay scope invalidation (operation {operation_id})");
+        for scope_key in scope_keys {
+            let staled = pool
+                .projection_registry()
+                .mark_stale_by_scope_key(scope_key, &reason)
+                .await
+                .map_err(|error| {
+                    SinexError::database(
+                        "Failed to stale projection registry rows after replay archive",
+                    )
+                    .with_context("scope_key", scope_key)
+                    .with_context("operation_id", operation_id.to_string())
+                    .with_source(error)
+                })?;
+            if staled > 0 {
+                debug!(
+                    operation_id = %operation_id,
+                    scope_key,
+                    staled_rows = staled,
+                    "Staled projection registry rows for archived replay scope"
+                );
+            }
+        }
+        Ok(())
+    }
+
     pub(crate) async fn collect_scope_events(
         &self,
         scope: &ReplayScope,

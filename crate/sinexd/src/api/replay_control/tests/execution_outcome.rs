@@ -894,3 +894,119 @@ async fn replay_anchor_payload_hash_match_is_silent(ctx: TestContext) -> Result<
 
     Ok(())
 }
+
+/// Real behavior under test (sinex-68c.4, AC "Replay/archive scope
+/// invalidation marks matching projection_registry rows stale"): running a
+/// full replay operation through the real client (`plan` -> `preview` ->
+/// `approve` -> `execute`, the same path `sinexctl replay execute` drives)
+/// archives the target scope's cascade and, via
+/// `ReplayExecutionEngine::stale_projection_registry_for_scopes`, stales any
+/// `derivation.projection_registry` row keyed to that scope. Removing the
+/// `stale_projection_registry_for_scopes` call from `replay_writer.rs`
+/// makes this test fail: the seeded `ready` row would stay `ready` even
+/// though the events it was built from were just archived out from under
+/// it.
+#[sinex_test]
+async fn projection_registry_replay_invalidation(ctx: TestContext) -> Result<()> {
+    let ctx = ctx.with_nats().dedicated().await?;
+
+    let material_id = ctx
+        .create_source_material(Some("replay-projection-invalidation"))
+        .await?;
+    let mut event = DynamicPayload::new(
+        "fs-test",
+        FileCreatedPayload::EVENT_TYPE.as_static_str(),
+        json!({ "path": "/tmp/replay-projection-invalidation.txt" }),
+    )
+    .from_material(material_id)
+    .build()?;
+    let scope_key = format!("test-projection-scope-{}", Uuid::now_v7());
+    event.scope_key = Some(scope_key.clone());
+    let inserted = ctx.pool.events().insert(event).await?;
+    let replay_target_event_id = inserted.id.expect("inserted replay target must have id");
+    let target_window_end = replay_target_event_id.timestamp();
+    let target_window_start = target_window_end - time::Duration::milliseconds(1);
+
+    let projection_kind = "test.projection_registry_replay_invalidation";
+    let registry = ctx.pool.projection_registry();
+    let build_id = registry
+        .begin_build(&sinex_db::repositories::ProjectionRegistrationInput {
+            projection_kind,
+            scope_key: &scope_key,
+            semantics_version: "v1",
+            input_fingerprint: "fp-test",
+            coverage_window: sinex_db::repositories::ProjectionCoverageWindow {
+                start: time::OffsetDateTime::now_utc() - time::Duration::hours(1),
+                end: None,
+            },
+            freshness_class: sinex_primitives::derivation::ProjectionFreshnessClass::Hours,
+            acceptable_staleness_secs: 3600,
+            verification_command: "true",
+        })
+        .await?;
+    registry.mark_ready(build_id, json!({})).await?;
+
+    let before = registry
+        .find_latest(projection_kind, &scope_key)
+        .await?
+        .expect("projection row must exist before replay");
+    assert_eq!(before.status, "ready");
+
+    let replay = Arc::new(ReplayStateMachine::new(ctx.pool.clone()));
+    let nats_client = ctx.nats_client();
+    let (scan_command_rx, _scan_handle) =
+        spawn_fake_scan_source_runtime(nats_client.clone(), environment(), "fs-test", 1).await?;
+    let replay_output_handle = spawn_replay_output_inserter(
+        ctx.pool.clone(),
+        scan_command_rx,
+        "fs-test",
+        FileCreatedPayload::EVENT_TYPE.as_static_str(),
+        "/tmp/replay-projection-invalidation-out.txt",
+    );
+
+    let client = spawn_replay_control(replay, nats_client, Duration::from_secs(30)).await?;
+
+    let mut scope = sample_scope();
+    scope.time_window = Some((target_window_start, target_window_end));
+    scope.material_filter = Some(vec![*material_id.as_uuid()]);
+    scope.filters.insert(
+        "event_types".to_string(),
+        json!([FileCreatedPayload::EVENT_TYPE.as_static_str()]),
+    );
+
+    let planned = client
+        .plan("test:replay-projection-invalidation".into(), scope.clone())
+        .await?;
+    let (_previewed, _preview) = client.preview(planned.operation_id).await?;
+    let _approved = client
+        .approve(planned.operation_id, "admin:approver".into())
+        .await?;
+    let executed = client
+        .execute(
+            planned.operation_id,
+            "service:executor-runtime".into(),
+            false,
+        )
+        .await?;
+    assert_eq!(executed.state, ReplayState::Completed);
+
+    replay_output_handle
+        .await
+        .map_err(|e| test_error(format!("fake replay output task failed: {e}")))??;
+
+    let after = registry
+        .find_latest(projection_kind, &scope_key)
+        .await?
+        .expect("projection row must still exist after replay");
+    assert_eq!(
+        after.status, "stale",
+        "replay archiving the scope's events must stale the projection registry row"
+    );
+    let reason = after.stale_reason.unwrap_or_default();
+    assert!(
+        reason.contains("replay") && reason.contains(&planned.operation_id.to_string()),
+        "stale_reason should reference the replay operation, got: {reason:?}"
+    );
+
+    Ok(())
+}
