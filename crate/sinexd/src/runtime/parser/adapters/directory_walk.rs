@@ -288,7 +288,6 @@ impl InputShapeAdapter for DirectoryWalkAdapter {
         // Reading is deferred to the stream so we don't buffer everything.
         struct PendingEntry {
             path: Utf8PathBuf,
-            #[allow(dead_code)] // Used by callers consuming the cursor sidechannel
             fingerprint: FileFingerprint,
         }
 
@@ -321,6 +320,13 @@ impl InputShapeAdapter for DirectoryWalkAdapter {
                     ))
                 })?;
 
+                // Thread the fingerprint observed during the scan through to
+                // `cursor_after()` via `metadata`. `cursor_after()` only sees
+                // the emitted `SourceRecord`, not the filesystem, so the real
+                // `modified_ms` has to travel with the record — recovering it
+                // from `bytes` alone is impossible, and re-`stat`-ing the path
+                // at cursor-write time would race the file being modified
+                // between the scan and the checkpoint write.
                 let record = SourceRecord {
                     material_id,
                     anchor: MaterialAnchor::DirectoryEntry {
@@ -330,7 +336,8 @@ impl InputShapeAdapter for DirectoryWalkAdapter {
                     bytes,
                     logical_path: Some(entry.path),
                     source_ts_hint: None,
-                    metadata: serde_json::Value::Null,
+                    metadata: serde_json::to_value(entry.fingerprint)
+                        .unwrap_or(serde_json::Value::Null),
                 };
 
                 Ok::<SourceRecord, ParserError>(record)
@@ -370,7 +377,7 @@ impl InputShapeAdapter for DirectoryWalkAdapter {
     }
 
     fn cursor_after(&self, record: &SourceRecord) -> ParserResult<Self::Cursor> {
-        // Extract path and fingerprint from the record's anchor + bytes.
+        // Extract the path from the record's anchor.
         let path = match &record.anchor {
             MaterialAnchor::DirectoryEntry { path, .. } => path.clone(),
             _ => {
@@ -379,15 +386,19 @@ impl InputShapeAdapter for DirectoryWalkAdapter {
                 ));
             }
         };
-        let size_bytes = record.bytes.len() as u64;
-        // We can't recover modified_ms from bytes alone; use 0 as sentinel
-        // so a subsequent walk (which re-reads metadata) will compare correctly.
-        // In practice cursor_after is called once per record and the runtime
-        // merges cursors; the metadata comparison uses the live FS value.
-        let fp = FileFingerprint {
-            size_bytes,
-            modified_ms: 0,
-        };
+        // The real fingerprint (including `modified_ms`) was observed during
+        // `open()`'s scan and threaded through via `record.metadata` — it
+        // cannot be recovered from `bytes` or the anchor alone. Persisting a
+        // `modified_ms: 0` sentinel here would make every previously-seen
+        // file's checkpoint permanently disagree with its live mtime, so
+        // every file would be re-read/re-parsed on every subsequent poll.
+        let fp: FileFingerprint = serde_json::from_value(record.metadata.clone())
+            .map_err(|e| {
+                ParserError::Cursor(format!(
+                    "DirectoryWalkAdapter: record metadata does not carry a \
+                     FileFingerprint ({e}); cursor_after cannot be computed for {path}"
+                ))
+            })?;
         let mut cursor = DirectoryWalkCursor::default();
         cursor.insert(path, fp);
         Ok(cursor)

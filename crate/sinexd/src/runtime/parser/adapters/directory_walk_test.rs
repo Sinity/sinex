@@ -121,6 +121,75 @@ async fn test_cursor_based_dedup_skips_unchanged_files() -> xtask::sandbox::Test
     Ok(())
 }
 
+/// Exercises the actual runtime cursor path: `open()` a directory, run every
+/// emitted record's anchor through `cursor_after()` (as the runtime does per
+/// record), persist and merge those per-file cursors exactly like
+/// `merge_cursor_update` does, then `open()` again with the persisted
+/// checkpoint.
+///
+/// This is the path `test_cursor_based_dedup_skips_unchanged_files` above
+/// does NOT cover: that test hand-builds a cursor via
+/// `DirectoryWalkAdapter::fingerprint()` on live metadata, never via
+/// `cursor_after()`. Reverting the `cursor_after()` fix (persisting a
+/// `modified_ms: 0` sentinel again) makes this test fail: the persisted
+/// cursor would never match the live fingerprint, so the second `open()`
+/// would re-emit every unchanged file instead of skipping it.
+#[sinex_test]
+async fn test_persisted_cursor_after_skips_unchanged_files_on_reopen()
+-> xtask::sandbox::TestResult<()> {
+    let dir = TempDir::new().unwrap();
+    let root = Utf8PathBuf::from_path_buf(dir.path().to_path_buf()).unwrap();
+
+    for name in &["a.txt", "b.txt"] {
+        let mut f = std::fs::File::create(dir.path().join(name)).unwrap();
+        write!(f, "content of {name}").unwrap();
+    }
+
+    let adapter = DirectoryWalkAdapter;
+    let config = simple_config(vec![root]);
+
+    // First open(): both files are new, both are emitted. Build the
+    // persisted checkpoint the way the runtime does: fold each record's
+    // `cursor_after()` output into the accumulated cursor (per-path merge,
+    // matching `merge_cursor_json_update`'s object-key overlay).
+    let stream = adapter.open(dummy_material_id(), &config, None).await?;
+    let records: Vec<SourceRecord> = stream.collect::<Vec<_>>().await.into_iter().collect::<Result<_, _>>()?;
+    assert_eq!(records.len(), 2, "both files are new on the first walk");
+
+    let mut persisted = DirectoryWalkCursor::default();
+    for record in &records {
+        let per_file_cursor = adapter.cursor_after(record)?;
+        for (path, fp) in per_file_cursor.0 {
+            persisted.insert(path, fp);
+        }
+    }
+
+    // Second open() with the persisted checkpoint: nothing changed on disk,
+    // so both files must be skipped.
+    let records2 = collect_records(&adapter, &config, Some(persisted.clone())).await;
+    assert_eq!(
+        records2.len(),
+        0,
+        "unchanged files must be skipped when reopened with a cursor built \
+         from cursor_after() — a modified_ms:0 sentinel would make every \
+         fingerprint disagree with the live mtime and defeat dedup"
+    );
+
+    // Sanity: a genuinely modified file is still re-emitted through the same
+    // persisted-cursor path.
+    let mut f = std::fs::File::create(dir.path().join("a.txt")).unwrap();
+    write!(f, "modified content that is longer than before").unwrap();
+    drop(f);
+
+    let records3 = collect_records(&adapter, &config, Some(persisted)).await;
+    assert_eq!(
+        records3.len(),
+        1,
+        "modified file should be re-emitted even via the persisted-cursor path"
+    );
+    Ok(())
+}
+
 #[sinex_test]
 async fn test_glob_filter_restricts_emission() -> xtask::sandbox::TestResult<()> {
     let dir = TempDir::new().unwrap();
