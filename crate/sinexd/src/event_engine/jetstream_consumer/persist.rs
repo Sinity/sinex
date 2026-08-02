@@ -194,7 +194,7 @@ impl JetStreamConsumer {
                     let mut settled_count = 0u64;
                     for prepared in &tombstoned_batch {
                         self.settlement_registry.resolve(
-                            prepared.parsed_id,
+                            prepared.parsed_id.into(),
                             EmissionReceiptState::Suppressed {
                                 reason: SuppressionReason::Tombstoned,
                                 existing_event_id: None,
@@ -238,7 +238,7 @@ impl JetStreamConsumer {
                         // `PublishAck` it awaits (confirmation.rs) rather than
                         // surfacing its sequence number.
                         self.settlement_registry.resolve(
-                            prepared.parsed_id,
+                            prepared.parsed_id.into(),
                             EmissionReceiptState::PersistedConfirmed {
                                 lane: self.admission.storage_lane(),
                                 inserted,
@@ -387,7 +387,7 @@ impl JetStreamConsumer {
                                 // (it's also what `route_to_dlq` stamps into the
                                 // `Event-Id` header).
                                 self.settlement_registry.resolve(
-                                    prepared.parsed_id,
+                                    prepared.parsed_id.into(),
                                     EmissionReceiptState::DurableDebt {
                                         debt_id: prepared.parsed_id,
                                         reason: format!(
@@ -458,7 +458,7 @@ impl JetStreamConsumer {
                                         // event's own id is what identifies this DLQ
                                         // entry.
                                         self.settlement_registry.resolve(
-                                            prepared.parsed_id,
+                                            prepared.parsed_id.into(),
                                             EmissionReceiptState::DurableDebt {
                                                 debt_id: prepared.parsed_id,
                                                 reason: format!("Persistence error: {e}"),
@@ -767,7 +767,7 @@ impl JetStreamConsumer {
                 Ok(()) => {
                     self.stats.dlq_routed.fetch_add(1, Ordering::Relaxed);
                     self.settlement_registry.resolve(
-                        prepared.parsed_id,
+                        prepared.parsed_id.into(),
                         EmissionReceiptState::DurableDebt {
                             debt_id: prepared.parsed_id,
                             reason: dlq_reason,

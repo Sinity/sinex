@@ -93,7 +93,7 @@ use std::time::Duration;
 use dashmap::DashMap;
 use sinex_db::repositories::EventStorageLane;
 use sinex_primitives::events::Event;
-use sinex_primitives::{JsonValue, Uuid};
+use sinex_primitives::{Id, JsonValue, Uuid};
 use tokio::sync::oneshot;
 
 /// A caller's request to durably emit a batch of events as a single
@@ -229,7 +229,7 @@ impl DurableEmissionReceipt {
 /// [`DurableEmissionReceipt`].
 #[derive(Debug, Clone)]
 pub struct EmissionItemReceipt {
-    pub event_id: Option<Uuid>,
+    pub event_id: Option<Id<Event>>,
     pub state: EmissionReceiptState,
 }
 
@@ -315,7 +315,7 @@ impl EmissionReceiptState {
 /// `Arc<Self>`-wrapped constructor.
 #[derive(Debug, Clone, Default)]
 pub struct SettlementRegistry {
-    waiters: std::sync::Arc<DashMap<Uuid, oneshot::Sender<EmissionReceiptState>>>,
+    waiters: std::sync::Arc<DashMap<Id<Event>, oneshot::Sender<EmissionReceiptState>>>,
 }
 
 impl SettlementRegistry {
@@ -336,7 +336,7 @@ impl SettlementRegistry {
     /// No caller in this codebase does this today; documented rather than
     /// guarded against, since guarding would require an error return for a
     /// case with no real caller yet.
-    pub fn register(&self, event_id: Uuid) -> oneshot::Receiver<EmissionReceiptState> {
+    pub fn register(&self, event_id: Id<Event>) -> oneshot::Receiver<EmissionReceiptState> {
         let (tx, rx) = oneshot::channel();
         self.waiters.insert(event_id, tx);
         rx
@@ -349,7 +349,7 @@ impl SettlementRegistry {
     /// Never treats "the receiver was already dropped" (nobody is awaiting
     /// it anymore) as an error — [`oneshot::Sender::send`]'s `Err` in that
     /// case is intentionally discarded.
-    pub fn resolve(&self, event_id: Uuid, state: EmissionReceiptState) -> bool {
+    pub fn resolve(&self, event_id: Id<Event>, state: EmissionReceiptState) -> bool {
         match self.waiters.remove(&event_id) {
             Some((_, tx)) => {
                 let _ = tx.send(state);
@@ -365,7 +365,7 @@ impl SettlementRegistry {
     /// cleanup path outside [`Self::await_batch`]; `await_batch` itself
     /// calls this internally on timeout/drop, so callers that always go
     /// through it never need to call this directly.
-    pub fn cancel(&self, event_id: Uuid) {
+    pub fn cancel(&self, event_id: Id<Event>) {
         self.waiters.remove(&event_id);
     }
 
@@ -404,7 +404,7 @@ impl SettlementRegistry {
     /// completely independently.
     pub async fn await_batch(
         &self,
-        waiters: Vec<(Uuid, oneshot::Receiver<EmissionReceiptState>)>,
+        waiters: Vec<(Id<Event>, oneshot::Receiver<EmissionReceiptState>)>,
         per_item_timeout: Duration,
     ) -> Vec<EmissionItemReceipt> {
         let pending = waiters.into_iter().map(|(event_id, rx)| async move {
@@ -446,7 +446,7 @@ mod tests {
 
     fn item(state: EmissionReceiptState) -> EmissionItemReceipt {
         EmissionItemReceipt {
-            event_id: Some(Uuid::now_v7()),
+            event_id: Some(Id::new()),
             state,
         }
     }
@@ -569,7 +569,7 @@ mod settlement_registry_tests {
     #[test]
     fn register_then_resolve_delivers_exact_state_to_the_receiver() {
         let registry = SettlementRegistry::new();
-        let event_id = Uuid::now_v7();
+        let event_id = Id::new();
         let mut rx = registry.register(event_id);
 
         assert!(registry.resolve(event_id, EmissionReceiptState::NoOutputSettled));
@@ -583,14 +583,14 @@ mod settlement_registry_tests {
     #[test]
     fn resolve_with_no_matching_registration_returns_false_without_panicking() {
         let registry = SettlementRegistry::new();
-        assert!(!registry.resolve(Uuid::now_v7(), EmissionReceiptState::NoOutputSettled));
+        assert!(!registry.resolve(Id::new(), EmissionReceiptState::NoOutputSettled));
     }
 
     #[test]
     fn two_in_flight_event_ids_resolve_independently_with_no_cross_talk() {
         let registry = SettlementRegistry::new();
-        let id_a = Uuid::now_v7();
-        let id_b = Uuid::now_v7();
+        let id_a = Id::new();
+        let id_b = Id::new();
         let mut rx_a = registry.register(id_a);
         let mut rx_b = registry.register(id_b);
 
@@ -610,7 +610,7 @@ mod settlement_registry_tests {
     #[test]
     fn duplicate_resolve_for_the_same_id_is_a_no_op_second_time() {
         let registry = SettlementRegistry::new();
-        let event_id = Uuid::now_v7();
+        let event_id = Id::new();
         let _rx = registry.register(event_id);
 
         assert!(registry.resolve(event_id, EmissionReceiptState::NoOutputSettled));
@@ -621,7 +621,7 @@ mod settlement_registry_tests {
     #[test]
     fn resolving_after_the_receiver_was_dropped_directly_does_not_panic() {
         let registry = SettlementRegistry::new();
-        let event_id = Uuid::now_v7();
+        let event_id = Id::new();
         let rx = registry.register(event_id);
         drop(rx);
 
@@ -635,8 +635,8 @@ mod settlement_registry_tests {
     #[sinex_test]
     async fn await_batch_all_resolve_before_timeout_collects_every_state() -> TestResult<()> {
         let registry = SettlementRegistry::new();
-        let id_a = Uuid::now_v7();
-        let id_b = Uuid::now_v7();
+        let id_a = Id::new();
+        let id_b = Id::new();
         let rx_a = registry.register(id_a);
         let rx_b = registry.register(id_b);
 
@@ -672,8 +672,8 @@ mod settlement_registry_tests {
     async fn await_batch_one_timeout_does_not_corrupt_sibling_results_and_blocks_unlocks_progress()
     -> TestResult<()> {
         let registry = SettlementRegistry::new();
-        let resolved_id = Uuid::now_v7();
-        let stuck_id = Uuid::now_v7();
+        let resolved_id = Id::new();
+        let stuck_id = Id::new();
         let rx_resolved = registry.register(resolved_id);
         let rx_stuck = registry.register(stuck_id);
 
@@ -709,7 +709,7 @@ mod settlement_registry_tests {
             request_id: Uuid::now_v7(),
             atom: ProgressAtom::AutomatonInputBatch {
                 automaton: "test-automaton".to_string(),
-                input_event_ids: vec![resolved_id, stuck_id],
+                input_event_ids: vec![resolved_id.to_uuid(), stuck_id.to_uuid()],
             },
             items,
             backend: ReceiptBackend::Direct,
@@ -729,7 +729,7 @@ mod settlement_registry_tests {
     async fn resolve_after_await_batch_timeout_is_a_noop_because_the_entry_is_already_gone()
     -> TestResult<()> {
         let registry = SettlementRegistry::new();
-        let event_id = Uuid::now_v7();
+        let event_id = Id::new();
         let rx = registry.register(event_id);
 
         let items = registry

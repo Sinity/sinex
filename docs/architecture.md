@@ -554,7 +554,7 @@ The primitive engine is the rule compiler/catalog behind that policy:
 ```rust
 use sinex_primitives::privacy::{self, ProcessingContext};
 
-let result = privacy::engine().process("export TOKEN=ghp_abc123", ProcessingContext::Command);
+let result = privacy::engine().process("export TOKEN=<a-provider-token-would-be-here>", ProcessingContext::Command);
 if result.any_matched() { /* use result.text (Cow<str>) */ }
 if result.suppressed { /* drop the field */ }
 // Contexts: Command, Clipboard, WindowTitle, Journal, Dbus, Notification, Document, Metadata

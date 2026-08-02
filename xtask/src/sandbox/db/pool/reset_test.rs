@@ -79,3 +79,43 @@ async fn force_event_material_cleanup_surfaces_delete_failures(
     );
     Ok(())
 }
+
+#[sinex_test]
+async fn ensure_default_session_state_conn_resets_multiple_dirty_settings(
+    ctx: crate::sandbox::Sandbox,
+) -> ::xtask::sandbox::TestResult<()> {
+    let mut conn = ctx.pool().acquire().await?;
+
+    // Dirty all three settings at once so the reset path must issue more
+    // than one SET statement in a single pass.
+    sqlx::query("SET session_replication_role = 'replica'")
+        .execute(conn.as_mut())
+        .await?;
+    sqlx::query("SET row_security = off")
+        .execute(conn.as_mut())
+        .await?;
+    sqlx::query("SET synchronous_commit = on")
+        .execute(conn.as_mut())
+        .await?;
+
+    // Regression test for sinex-96fg: the reset path used to join every
+    // dirty SET into one "; "-separated string and run it through
+    // sqlx::query(), which uses the extended (prepared-statement) protocol
+    // and rejects multi-statement strings ("cannot insert multiple commands
+    // into a prepared statement"). This runs on every pool `before_acquire`,
+    // so dirtying 2+ settings at once reliably triggered it.
+    super::ensure_default_session_state_conn(conn.as_mut()).await?;
+
+    let (role, row_sec, sync_commit): (String, String, String) = sqlx::query_as(
+        "SELECT current_setting('session_replication_role'),
+                current_setting('row_security'),
+                current_setting('synchronous_commit')",
+    )
+    .fetch_one(conn.as_mut())
+    .await?;
+
+    assert_eq!(role, "origin");
+    assert_eq!(row_sec.to_lowercase(), "on");
+    assert_eq!(sync_commit, "off");
+    Ok(())
+}

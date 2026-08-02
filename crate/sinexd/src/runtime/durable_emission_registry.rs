@@ -84,7 +84,7 @@ mod tests {
         // Prove the retrieved handle is a live, working registry (shares
         // state with whatever was installed process-wide, though not
         // necessarily THIS call's registry if another test won the race).
-        let event_id = sinex_primitives::Uuid::now_v7();
+        let event_id = sinex_primitives::Id::<sinex_primitives::events::Event>::new();
         let rx = retrieved.register(event_id);
         assert!(retrieved.resolve(
             event_id,

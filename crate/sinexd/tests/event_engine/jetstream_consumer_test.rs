@@ -2109,7 +2109,7 @@ async fn settlement_registry_resolves_persisted_confirmed_for_a_real_event(
     let event_id = Uuid::now_v7();
     // Register interest BEFORE the event is even published — the exact
     // ordering contract emit_batch_durable's callers must follow.
-    let rx = registry.register(event_id);
+    let rx = registry.register(event_id.into());
 
     publish_event(
         &ctx.pool,
@@ -2202,7 +2202,7 @@ async fn settlement_registry_resolves_suppressed_for_a_tombstoned_event(
     .execute(&ctx.pool)
     .await?;
 
-    let rx = registry.register(event_id);
+    let rx = registry.register(event_id.into());
 
     publish_event(
         &ctx.pool,
@@ -2292,7 +2292,7 @@ async fn settlement_registry_resolves_durable_debt_for_a_dlqd_event(
 
     let bogus_material_id = Uuid::now_v7();
     let event_id = Uuid::now_v7();
-    let rx = registry.register(event_id);
+    let rx = registry.register(event_id.into());
 
     let event = json!({
         "id": event_id.to_string(),

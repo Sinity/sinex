@@ -32,6 +32,7 @@
 use std::collections::HashMap;
 use std::time::Duration;
 
+use sinex_primitives::events::Event;
 use sinex_primitives::{Id, Uuid};
 
 use crate::runtime::durable_emission::{
@@ -99,11 +100,11 @@ pub async fn emit_batch_durable(
     // settlement BEFORE any event is emitted (see the ordering contract
     // above). `event_ids` preserves the request's original event order so
     // the final receipt's `items` can be reassembled in that same order.
-    let mut event_ids: Vec<Uuid> = Vec::with_capacity(request.events.len());
-    let mut waiters: Vec<(Uuid, tokio::sync::oneshot::Receiver<EmissionReceiptState>)> =
+    let mut event_ids: Vec<Id<Event>> = Vec::with_capacity(request.events.len());
+    let mut waiters: Vec<(Id<Event>, tokio::sync::oneshot::Receiver<EmissionReceiptState>)> =
         Vec::with_capacity(request.events.len());
     for event in &mut request.events {
-        let id = *event.id.get_or_insert_with(Id::new).as_uuid();
+        let id = *event.id.get_or_insert_with(Id::new);
         event_ids.push(id);
         waiters.push((id, registry.register(id)));
     }
@@ -111,7 +112,7 @@ pub async fn emit_batch_durable(
     // Emit every event concurrently. This borrows `emitter` for the
     // duration of the join rather than spawning tasks, so no `'static`
     // bound or extra clone is needed.
-    let emit_results: Vec<(Uuid, Result<(), sinex_primitives::SinexError>)> =
+    let emit_results: Vec<(Id<Event>, Result<(), sinex_primitives::SinexError>)> =
         futures::future::join_all(request.events.into_iter().zip(event_ids.iter().copied()).map(
             |(event, event_id)| async move { (event_id, emitter.emit(event).await) },
         ))
@@ -121,7 +122,7 @@ pub async fn emit_batch_durable(
     // so nothing will ever call registry.resolve() for them — cancel the
     // registration immediately instead of waiting out the full timeout, and
     // record their outcome directly.
-    let mut immediate: HashMap<Uuid, EmissionItemReceipt> = HashMap::new();
+    let mut immediate: HashMap<Id<Event>, EmissionItemReceipt> = HashMap::new();
     for (event_id, result) in emit_results {
         if let Err(error) = result {
             registry.cancel(event_id);
@@ -142,7 +143,7 @@ pub async fn emit_batch_durable(
         .filter(|(event_id, _)| !immediate.contains_key(event_id))
         .collect();
     let awaited = registry.await_batch(awaited_waiters, per_item_timeout).await;
-    let mut awaited_by_id: HashMap<Uuid, EmissionItemReceipt> = awaited
+    let mut awaited_by_id: HashMap<Id<Event>, EmissionItemReceipt> = awaited
         .into_iter()
         .filter_map(|item| item.event_id.map(|id| (id, item)))
         .collect();
@@ -235,7 +236,7 @@ mod tests {
         let settler = tokio::spawn(async move {
             let mut settled = 0;
             while let Some(event) = rx.recv().await {
-                let id = *event.id.expect("emit() assigns an id").as_uuid();
+                let id = event.id.expect("emit() assigns an id");
                 registry_for_settler.resolve(id, EmissionReceiptState::NoOutputSettled);
                 settled += 1;
                 if settled == 3 {
@@ -271,7 +272,7 @@ mod tests {
         let settler = tokio::spawn(async move {
             let mut ids = Vec::new();
             while let Some(event) = rx.recv().await {
-                ids.push(*event.id.expect("emit() assigns an id").as_uuid());
+                ids.push(event.id.expect("emit() assigns an id"));
                 if ids.len() == 2 {
                     break;
                 }
