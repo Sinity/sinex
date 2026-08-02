@@ -170,6 +170,20 @@ pub struct EmailMessageReceivedPayload {
     pub provider_material: Option<EmailProviderMaterialEvidence>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, EventPayload)]
+#[event_payload(source = "email", event_type = "email.message.deleted")]
+pub struct EmailMessageDeletedPayload {
+    pub message_id: Option<String>,
+    pub thread_key: Option<String>,
+    pub folder: Option<String>,
+    pub source_file: String,
+    pub raw_material_id: String,
+    pub mailbox_format: EmailMailboxFormat,
+    pub deleted_at: Timestamp,
+    pub provider: EmailProviderKind,
+    pub account_binding_ref: String,
+}
+
 /// Provider-held or provider-fetched raw message evidence for mailbox rows.
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 pub struct EmailProviderMaterialEvidence {

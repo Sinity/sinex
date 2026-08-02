@@ -1,0 +1,80 @@
+{
+  "$defs": {
+    "DateTime": {
+      "description": "RFC 3339 formatted date-time string",
+      "format": "date-time",
+      "type": "string"
+    },
+    "EmailMailboxFormat": {
+      "description": "Staged mailbox acquisition shape for email message/attachment/thread events.",
+      "enum": [
+        "rfc822-drop-staged",
+        "maildir-staged",
+        "mbox-staged",
+        "gmail-api",
+        "imap-provider"
+      ],
+      "type": "string"
+    },
+    "EmailProviderKind": {
+      "description": "Provider family behind an email live/scheduled acquisition mode.",
+      "enum": [
+        "gmail",
+        "imap"
+      ],
+      "type": "string"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "properties": {
+    "account_binding_ref": {
+      "type": "string"
+    },
+    "deleted_at": {
+      "$ref": "#/$defs/DateTime"
+    },
+    "folder": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "mailbox_format": {
+      "$ref": "#/$defs/EmailMailboxFormat"
+    },
+    "message_id": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "provider": {
+      "$ref": "#/$defs/EmailProviderKind"
+    },
+    "raw_material_id": {
+      "type": "string"
+    },
+    "source_file": {
+      "type": "string"
+    },
+    "thread_key": {
+      "type": [
+        "string",
+        "null"
+      ]
+    }
+  },
+  "required": [
+    "source_file",
+    "raw_material_id",
+    "mailbox_format",
+    "deleted_at",
+    "provider",
+    "account_binding_ref"
+  ],
+  "title": "EmailMessageDeletedPayload",
+  "type": "object",
+  "x-sinex-event-type": "email.message.deleted",
+  "x-sinex-source": "email",
+  "x-sinex-version": "1.0.0"
+}

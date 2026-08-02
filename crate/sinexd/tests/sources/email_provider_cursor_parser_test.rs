@@ -3,8 +3,8 @@ use sinex_primitives::{
     Uuid,
     events::payloads::email::{
         EMAIL_REQUIRED_ACTION_RESYNC_MAILBOX, EmailAttachmentObservedPayload, EmailContinuityState,
-        EmailMessageReceivedPayload, EmailProviderKind, EmailSyncCursorKind,
-        EmailSyncCursorObservedPayload,
+        EmailMessageDeletedPayload, EmailMessageReceivedPayload, EmailProviderKind,
+        EmailSyncCursorKind, EmailSyncCursorObservedPayload,
     },
     ids::Id,
     parser::{MaterialAnchor, OccurrenceKey, ParserContext, SourceId, SourceRecord},
@@ -134,6 +134,87 @@ async fn gmail_provider_record_emits_sync_cursor_observation() -> xtask::sandbox
     let message_payload: EmailMessageReceivedPayload =
         serde_json::from_value(message.payload.clone())?;
     assert_eq!(message_payload.mailbox_format.as_str(), "gmail-api");
+    Ok(())
+}
+
+#[sinex_test]
+async fn gmail_history_deleted_message_emits_deletion_not_received()
+-> xtask::sandbox::TestResult<()> {
+    let mut parser = EmailMailboxParser;
+    // Real Gmail `history.messagesDeleted[]` entries carry only `id`/
+    // `threadId`/`labelIds` for the removed message — no `payload`/
+    // `snippet`/headers, unlike `messagesAdded`.
+    let record = GmailApiRecord {
+        kind: GmailApiRecordKind::History,
+        message_id: Some("gmail-msg-deleted".to_string()),
+        thread_id: Some("thread-9".to_string()),
+        history_id: Some("205".to_string()),
+        label_ids: vec!["INBOX".to_string()],
+        payload: serde_json::json!({
+            "message": {
+                "id": "gmail-msg-deleted",
+                "threadId": "thread-9",
+                "labelIds": ["INBOX"]
+            },
+            "history_change_kind": "message-deleted"
+        }),
+    };
+    let source_record = provider_record(
+        serde_json::to_vec(&record)?,
+        "gmail/operator-mailbox:primary/1",
+        serde_json::json!({
+            "provider": "gmail",
+            "account_binding_ref": "operator-mailbox:primary",
+            "mailbox_scope": "INBOX",
+            "gmail_record_kind": "history",
+            "gmail_history_id": "205",
+        }),
+    );
+
+    let intents = parser.parse_record(source_record, &test_ctx()).await?;
+    // Cursor observation + deletion signal only: no received/thread/attachment
+    // fan-out for a deletion (sinex-audit-gmail-delete-fabrication).
+    assert_eq!(intents.len(), 2);
+    assert!(
+        intents
+            .iter()
+            .all(|intent| intent.event_type.as_str() != "email.message.received"),
+        "a deleted Gmail history entry must never fabricate email.message.received, got: {:?}",
+        intents
+            .iter()
+            .map(|intent| intent.event_type.as_str())
+            .collect::<Vec<_>>()
+    );
+    let deletion = intents
+        .iter()
+        .find(|intent| intent.event_type.as_str() == "email.message.deleted")
+        .expect("deleted Gmail history entry should emit an email.message.deleted signal");
+    assert_eq!(deletion.payload["message_id"], "gmail-msg-deleted");
+    assert_eq!(deletion.payload["mailbox_format"], "gmail-api");
+    assert_eq!(deletion.payload["provider"], "gmail");
+    assert_eq!(
+        deletion.payload["account_binding_ref"],
+        "operator-mailbox:primary"
+    );
+    let deleted_payload: EmailMessageDeletedPayload =
+        serde_json::from_value(deletion.payload.clone())?;
+    assert_eq!(deleted_payload.mailbox_format.as_str(), "gmail-api");
+    assert_eq!(
+        deleted_payload.message_id.as_deref(),
+        Some("gmail-msg-deleted")
+    );
+    assert_eq!(deleted_payload.provider, EmailProviderKind::Gmail);
+
+    // The deletion occurrence key must NOT collide with the "received"
+    // occurrence key for the same message: reusing it would make admission's
+    // equivalence_key dedup (SuppressDuplicate default) silently drop the
+    // deletion event outright, since a live "received" row for this message
+    // may already share that key.
+    assert_eq!(occurrence_field(deletion, "event_kind"), Some("deleted"));
+    assert_eq!(
+        occurrence_field(deletion, "message_id_or_material"),
+        Some("gmail-msg-deleted")
+    );
     Ok(())
 }
 

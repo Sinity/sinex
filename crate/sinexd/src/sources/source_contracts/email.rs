@@ -16,9 +16,9 @@ use sinex_primitives::{
         EventPayload,
         payloads::email::{
             EmailAttachmentObservedPayload, EmailContinuityState, EmailMailboxFormat,
-            EmailMessageReceivedPayload, EmailMessageSentPayload, EmailProviderKind,
-            EmailProviderMaterialEvidence, EmailSyncCursorKind, EmailSyncCursorObservedPayload,
-            EmailThreadObservedPayload,
+            EmailMessageDeletedPayload, EmailMessageReceivedPayload, EmailMessageSentPayload,
+            EmailProviderKind, EmailProviderMaterialEvidence, EmailSyncCursorKind,
+            EmailSyncCursorObservedPayload, EmailThreadObservedPayload,
         },
     },
     parser::{
@@ -48,7 +48,7 @@ pub struct EmailMailboxParserConfig;
     namespace = "email",
     event_source = "email",
     event_type = "email.message.received",
-    event_types = "email.message.sent, email.attachment.observed, email.thread.observed, email.sync_cursor.observed, email.capture_runtime.observed",
+    event_types = "email.message.sent, email.message.deleted, email.attachment.observed, email.thread.observed, email.sync_cursor.observed, email.capture_runtime.observed",
     adapter = "FileContentDropAdapter",
     implementation = "staged-parser",
     privacy_tier = PrivacyTier::Sensitive,
@@ -155,6 +155,10 @@ impl MaterialParser for EmailMailboxParser {
                 (
                     EventSource::from_static("email"),
                     EventType::from_static("email.message.sent"),
+                ),
+                (
+                    EventSource::from_static("email"),
+                    EventType::from_static("email.message.deleted"),
                 ),
                 (
                     EventSource::from_static("email"),
@@ -278,7 +282,35 @@ fn parse_gmail_provider_record(
             None,
         ),
     )];
-    if matches!(
+    // Gmail history entries are tagged with `history_change_kind` by
+    // `gmail_history_record` (email_gmail_api.rs) — `message-added`,
+    // `message-deleted`, `labels-added`, or `labels-removed`. A deleted
+    // history entry must never be fabricated into `email.message.received`
+    // (sinex-audit-gmail-delete-fabrication): it carries a distinct deletion
+    // signal instead, so the mailbox projection can actually reflect removal.
+    let history_change_kind = provider_record
+        .payload
+        .get("history_change_kind")
+        .and_then(serde_json::Value::as_str);
+    if history_change_kind == Some("message-deleted") {
+        let deleted_message_id = provider_record.message_id.clone().or_else(|| {
+            gmail_provider_message(&provider_record.payload)
+                .and_then(|message| gmail_json_string(message, "id"))
+                .map(|id| format!("{id}@gmail.provider"))
+        });
+        intents.push(provider_message_deleted_intent(
+            &record,
+            ctx,
+            ProviderDeletedMessageSource {
+                provider: EmailProviderKind::Gmail,
+                account_binding_ref,
+                mailbox_scope,
+                mailbox_format: EmailMailboxFormat::GmailApi,
+                message_id: deleted_message_id,
+                thread_key: provider_record.thread_id.clone(),
+            },
+        )?);
+    } else if matches!(
         provider_record.kind,
         GmailApiRecordKind::Message | GmailApiRecordKind::History
     ) && let Some(message) = gmail_provider_message(&provider_record.payload)
@@ -499,6 +531,93 @@ struct ProviderMessageSource {
     body_bytes: u64,
     size_bytes: u64,
     attachment_count: u32,
+}
+
+struct ProviderDeletedMessageSource {
+    provider: EmailProviderKind,
+    account_binding_ref: String,
+    mailbox_scope: Option<String>,
+    mailbox_format: EmailMailboxFormat,
+    message_id: Option<String>,
+    thread_key: Option<String>,
+}
+
+/// Emit the deletion signal for a provider-observed message removal
+/// (sinex-audit-gmail-delete-fabrication). This is a single event, not the
+/// received/thread/attachment fan-out `provider_observation_intents`
+/// produces — a deletion carries no new content to thread or attach.
+fn provider_message_deleted_intent(
+    record: &SourceRecord,
+    ctx: &ParserContext,
+    source: ProviderDeletedMessageSource,
+) -> ParserResult<ParsedEventIntent> {
+    let raw_material_id = record.material_id.to_uuid().to_string();
+    let source_file = record
+        .logical_path
+        .as_ref()
+        .map(ToString::to_string)
+        .unwrap_or_default();
+    let payload = EmailMessageDeletedPayload {
+        message_id: source.message_id.clone(),
+        thread_key: source.thread_key,
+        folder: source.mailbox_scope,
+        source_file: source_file.clone(),
+        raw_material_id,
+        mailbox_format: source.mailbox_format,
+        deleted_at: ctx.acquisition_time,
+        provider: source.provider,
+        account_binding_ref: source.account_binding_ref,
+    };
+    Ok(ParsedEventIntent::builder()
+        .source_id(SourceId::from_static("email.mailbox"))
+        .parser_id(ParserId::from_static("email-mailbox-rfc822"))
+        .parser_version("1.0.0")
+        .event_source(EventSource::from_static("email"))
+        .event_type(payload.event_type())
+        .payload(serde_json::to_value(&payload).map_err(|error| {
+            ParserError::Parse(format!(
+                "failed to serialize provider deleted-message payload: {error}"
+            ))
+        })?)
+        .ts_orig(ctx.acquisition_time)
+        .timing(TimingEvidence::StagedAtFallback)
+        .anchor(record.anchor.clone())
+        .occurrence_key(provider_message_deleted_occurrence_key(
+            source.mailbox_format,
+            source.message_id.as_deref(),
+            &source_file,
+        ))
+        .privacy_context(ProcessingContext::Document)
+        .build())
+}
+
+/// Deliberately DISJOINT from [`provider_message_occurrence_key`]: reusing
+/// the same key would make this deletion event collide, at admission, with
+/// the live `email.message.received` row's `equivalence_key` — and
+/// `EmailMessageReceivedPayload` defaults to `RevisionPolicy::SuppressDuplicate`,
+/// which would silently suppress the deletion event outright (never
+/// persisted at all). The `event_kind=deleted` field guarantees a distinct
+/// escaped key string (see `occurrence_key_string`) for the same message.
+fn provider_message_deleted_occurrence_key(
+    mailbox_format: EmailMailboxFormat,
+    message_id: Option<&str>,
+    source_file: &str,
+) -> OccurrenceKey {
+    OccurrenceKey {
+        source_id: SourceId::from_static("email.mailbox"),
+        fields: vec![
+            ("event_kind".to_string(), "deleted".to_string()),
+            (
+                "message_id_or_material".to_string(),
+                message_id.unwrap_or(source_file).to_string(),
+            ),
+            (
+                "mailbox_format".to_string(),
+                mailbox_format.as_str().to_string(),
+            ),
+            ("source_file".to_string(), source_file.to_string()),
+        ],
+    }
 }
 
 struct ProviderParsedMessageSource {

@@ -121,3 +121,78 @@ async fn email_mailbox_projection_merges_message_thread_and_attachment_events(
     assert_eq!(summaries[0].attachment_observed_count, 2);
     Ok(())
 }
+
+/// `email.message.deleted` must delete the projection row, not grow it
+/// (sinex-audit-gmail-delete-fabrication / sinex-audit-imap-expunge-unobserved):
+/// the accumulate-only GREATEST/COALESCE/jsonb_agg upsert every other email
+/// event type uses can never make a projection row shrink or disappear.
+#[sinex_test]
+async fn email_mailbox_projection_deletion_event_removes_row(ctx: TestContext) -> TestResult<()> {
+    let repo = ctx.pool().email_mailbox_projections();
+    let source_id = "email.mailbox".to_string();
+    let mode_id = "source:email.mailbox.gmail-api-scheduled-sync".to_string();
+    let message_id = "<deletion-fixture@example.com>";
+
+    repo.upsert_event(EmailMailboxProjectionEvent {
+        source_id: source_id.clone(),
+        mode_id: mode_id.clone(),
+        observed_event_id: Uuid::now_v7(),
+        event_type: "email.message.received".to_string(),
+        payload: json!({
+            "message_id": message_id,
+            "folder": "INBOX",
+            "source_file": "gmail/operator-mailbox:primary/0",
+            "raw_material_id": Uuid::now_v7().to_string(),
+            "mailbox_format": "gmail-api",
+            "subject": "Deletion fixture",
+            "from": ["Sender <sender@example.com>"],
+            "to": ["Receiver <receiver@example.com>"],
+            "body_bytes": 10,
+            "attachment_count": 0
+        }),
+    })
+    .await?;
+
+    let rows = repo.list_current_by_source(&source_id).await?;
+    assert_eq!(rows.len(), 1, "received event should have projected a row");
+
+    let applied = repo
+        .apply_deletion_event(&EmailMailboxProjectionEvent {
+            source_id: source_id.clone(),
+            mode_id: mode_id.clone(),
+            observed_event_id: Uuid::now_v7(),
+            event_type: "email.message.deleted".to_string(),
+            payload: json!({
+                "message_id": message_id,
+                "folder": "INBOX",
+                "source_file": "gmail/operator-mailbox:primary/1",
+                "raw_material_id": Uuid::now_v7().to_string(),
+                "mailbox_format": "gmail-api",
+                "deleted_at": "2026-08-02T00:00:00Z",
+                "provider": "gmail",
+                "account_binding_ref": "operator-mailbox:primary"
+            }),
+        })
+        .await?;
+    assert_eq!(applied.as_deref(), Some(message_id));
+
+    let rows_after = repo.list_current_by_source(&source_id).await?;
+    assert!(
+        rows_after.is_empty(),
+        "the deletion event should have removed the projected row, found: {rows_after:?}"
+    );
+
+    // Non-deletion event types are a no-op for apply_deletion_event, matching
+    // upsert_event's "nothing to project" contract for unrecognized types.
+    let ignored = repo
+        .apply_deletion_event(&EmailMailboxProjectionEvent {
+            source_id: source_id.clone(),
+            mode_id: mode_id.clone(),
+            observed_event_id: Uuid::now_v7(),
+            event_type: "email.message.received".to_string(),
+            payload: json!({ "message_id": message_id }),
+        })
+        .await?;
+    assert!(ignored.is_none());
+    Ok(())
+}
