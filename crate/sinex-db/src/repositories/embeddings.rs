@@ -14,6 +14,22 @@ impl<'a> EmbeddingRepository<'a> {
         Self { pool }
     }
 
+    /// Register (or re-register) an embedding model.
+    ///
+    /// `dimensions` is immutable once a `(provider, model_name)` pair is
+    /// first registered (sinex-audit-embedding-dim-change): the partial HNSW
+    /// index for a model is keyed only on its `model_id` and bakes the
+    /// dimension into a `vector(N)` cast expression. A dimension change
+    /// cannot be rebuilt in place -- `CREATE INDEX` (non-`CONCURRENTLY`)
+    /// scans with `SnapshotAny`, so even a same-transaction `DELETE` of
+    /// every embedding row under the old dimension does not make those rows
+    /// invisible to the index rebuild (they are still physically present
+    /// until `VACUUM`, which cannot run inside the ambient transaction
+    /// either), so purge-then-rebuild always hard-fails with a pgvector
+    /// dimension-mismatch error the moment any embedding was ever stored
+    /// under the model's original dimension. Treat a model whose output
+    /// shape changed as a genuinely different model: register it under a
+    /// new `(provider, model_name)` pair instead.
     pub async fn register_model(
         &self,
         provider: &str,
@@ -25,12 +41,32 @@ impl<'a> EmbeddingRepository<'a> {
         self.validate_declared_embedding_dimension(dimensions)
             .await?;
 
+        if let Some(existing_dimensions) = sqlx::query_scalar!(
+            r#"SELECT dimensions FROM core.embedding_models WHERE provider = $1 AND model_name = $2"#,
+            provider,
+            model_name,
+        )
+        .fetch_optional(self.pool)
+        .await?
+            && existing_dimensions != dimensions
+        {
+            return Err(SinexError::validation(format!(
+                "model '{provider}/{model_name}' is already registered with {existing_dimensions} \
+                 dimensions; a model's embedding dimensionality is immutable once registered \
+                 (see sinex-audit-embedding-dim-change). Register a new (provider, model_name) \
+                 pair if the model's output shape genuinely changed."
+            )));
+        }
+
+        // dimensions is intentionally excluded from the UPDATE SET clause --
+        // it can only ever be set on the initial INSERT, never mutated by a
+        // later conflict, so the invariant above holds even under a
+        // check-then-write race between two concurrent registrations.
         let row = sqlx::query_scalar!(
             r#"
             INSERT INTO core.embedding_models (provider, model_name, dimensions, metadata)
             VALUES ($1, $2, $3, $4)
             ON CONFLICT (provider, model_name) DO UPDATE SET
-                dimensions = EXCLUDED.dimensions,
                 is_active = true,
                 metadata = EXCLUDED.metadata
             RETURNING id as "id!"
