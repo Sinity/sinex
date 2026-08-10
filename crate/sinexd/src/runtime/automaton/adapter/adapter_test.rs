@@ -1428,3 +1428,108 @@ async fn r6d9_invalidation_ack_fail_point_fires(ctx: TestContext) -> TestResult<
 
     Ok(())
 }
+
+/// sinex-r6d.7: closes the one gap `r6d9_invalidation_ack_fail_point_fires`
+/// leaves open — that harness's consumer omits `deliver_group`, but
+/// `run_continuous`'s real production config
+/// (`adapter/run.rs::run_continuous`) sets `deliver_group:
+/// Some(format!("derived.invalidation.{automaton_name}"))` on every
+/// `create_consumer` call, with no `durable_name`. If a *shared* group name
+/// caused the JetStream server to hand back the SAME underlying consumer
+/// (and therefore the same ack floor) across restarts instead of a fresh
+/// ephemeral one, the self-healing conclusion above would not actually hold
+/// for production. This test creates two push consumers against the same
+/// stream with the EXACT same `deliver_group` string (simulating a crash +
+/// restart of `run_continuous` for one automaton), acks a message on the
+/// first, and asserts the second still receives it — proving `deliver_group`
+/// does not carry ack state across separate `create_consumer` calls.
+#[sinex_test]
+async fn r6d9_invalidation_deliver_group_does_not_share_ack_state(ctx: TestContext) -> TestResult<()> {
+    let ctx = ctx.with_nats().shared().await?;
+    let js = ctx.jetstream().await?;
+    let nats_client = ctx.nats_client();
+
+    let (stream, invalidation_subject) = r6d9_invalidation_stream(&js).await?;
+
+    let invalidation = DerivedScopeInvalidation::archived(
+        vec![Uuid::now_v7()],
+        sinex_primitives::domain::EventSource::from_static(
+            "test.r6d9-invalidation-deliver-group",
+        ),
+        sinex_primitives::domain::EventType::new("test.r6d9_invalidation_deliver_group")
+            .expect("valid event type"),
+    );
+    let payload = serde_json::to_vec(&invalidation)?;
+    js.publish(invalidation_subject, payload.clone().into())
+        .await?
+        .await?;
+
+    // Exact production config shape from `run_continuous`: a fresh
+    // `deliver_subject` inbox per call, but the SAME `deliver_group` string
+    // both times — no `durable_name`, matching `async_nats::jetstream::
+    // consumer::push::Config { deliver_subject, deliver_group, ..Default::default() }`.
+    let queue_group = "derived.invalidation.r6d9-deliver-group-test".to_string();
+
+    use futures::StreamExt;
+
+    let first_deliver_subject = nats_client.new_inbox();
+    let first_consumer = stream
+        .create_consumer(async_nats::jetstream::consumer::push::Config {
+            deliver_subject: first_deliver_subject,
+            deliver_group: Some(queue_group.clone()),
+            ..Default::default()
+        })
+        .await?;
+    let mut first = first_consumer.messages().await?;
+    let first_msg = tokio::time::timeout(Duration::from_secs(10), first.next())
+        .await
+        .map_err(|_| {
+            color_eyre::eyre::eyre!(
+                "first deliver_group consumer never received the published invalidation"
+            )
+        })?
+        .ok_or_else(|| color_eyre::eyre::eyre!("first consumer message stream ended"))?
+        .map_err(|e| color_eyre::eyre::eyre!("error receiving on first consumer: {e}"))?;
+    assert_eq!(first_msg.payload.to_vec(), payload);
+    first_msg
+        .ack()
+        .await
+        .map_err(|e| color_eyre::eyre::eyre!("failed to ack on first consumer: {e}"))?;
+    // Drop the first consumer's message stream — simulates the process
+    // exiting after ack, before the payload is handled (the sinex-r6d.7
+    // window), then restarting.
+    drop(first);
+
+    let second_deliver_subject = nats_client.new_inbox();
+    let second_consumer = stream
+        .create_consumer(async_nats::jetstream::consumer::push::Config {
+            deliver_subject: second_deliver_subject,
+            deliver_group: Some(queue_group.clone()),
+            ..Default::default()
+        })
+        .await?;
+    let mut second = second_consumer.messages().await?;
+    let second_msg = tokio::time::timeout(Duration::from_secs(10), second.next())
+        .await
+        .map_err(|_| {
+            color_eyre::eyre::eyre!(
+                "sinex-r6d.7: a second consumer created with the SAME deliver_group as an \
+                 already-acked consumer did NOT see the invalidation again — deliver_group \
+                 shares ack state across create_consumer calls in this async-nats/server \
+                 version, so production's run_continuous restart would NOT self-heal an \
+                 ack-before-recompute crash"
+            )
+        })?
+        .ok_or_else(|| color_eyre::eyre::eyre!("second consumer message stream ended"))?
+        .map_err(|e| color_eyre::eyre::eyre!("error receiving on second consumer: {e}"))?;
+    assert_eq!(
+        second_msg.payload.to_vec(),
+        payload,
+        "the second deliver_group consumer must see the SAME invalidation payload"
+    );
+    second_msg.ack().await.map_err(|e| {
+        color_eyre::eyre::eyre!("failed to ack on second deliver_group consumer: {e}")
+    })?;
+
+    Ok(())
+}

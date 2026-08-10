@@ -17,7 +17,7 @@ Closes: #326, #327, #338, #693.
 | `Derived` | Derived events from automata | `{env}.events.raw.{src}.{type}` | JetStream, idempotency header, semaphore 100 | processing-failure stream | wait for ACKs + save checkpoint |
 | `SourceMaterial` | Ordered material begin/slice/end frames | `{env}.source_material.frames.*` | JetStream, ordered stream, ACK required | material acquisition fails before event publish | wait for ACKs before anchor use |
 | `Confirmation` | Full post-redaction events after persistence | `{env}.events.confirmed.{provenance}.{source}.{event_type}` | JetStream, bounded delivery bus | raw message left unacked on publish failure | publish before raw ACK |
-| `Invalidation` | Scope fan-out to automatons | `{env}.sinex.derived.invalidation` | JetStream, durable consumers | error propagated to caller | no special drain (JetStream holds) |
+| `Invalidation` | Scope fan-out to automatons | `{env}.sinex.derived.invalidation` | JetStream, ephemeral push consumers, Limits retention (24h) | error propagated to caller | no special drain (JetStream holds) |
 | `Control` | Lifecycle and coordination traffic | `{env}.sinex.control.>` / request-reply | Core NATS, request-reply + timeout | error returned (`SinexError::network`) | drop pending |
 | `Telemetry` | Self-observation metrics and health | `{env}.events.reflection.raw.sinex.*` | JetStream, semaphore 16 | drop with warn log | best-effort flush |
 
@@ -172,9 +172,49 @@ deduplicates via equivalence key or scope reconciliation.
 
 ### `Invalidation` — scope fan-out
 
-No special drain needed. JetStream holds undelivered invalidations for all
-durable consumers. Automata that restart will receive queued
-invalidations and recompute affected scopes.
+No special drain needed. `recv_invalidation` (`crate/sinexd/src/runtime/
+automaton/adapter/mod.rs`) acks each invalidation message immediately on
+receipt, before debounce/recompute/checkpoint ever run — a crash in that
+window (sinex-r6d.7) does not durably lose the invalidation. The
+`SINEX_RAW_EVENTS_DERIVED_INVALIDATIONS` stream uses Limits retention (24h
+`maxAge`), not WorkQueue: acking a message only advances the acking
+consumer's own delivery/ack floor, it does not remove the message from the
+stream. `run_continuous` subscribes with a fresh, unnamed (ephemeral) push
+consumer every time an automaton starts — no `durable_name`, so a restart
+after a crash creates a brand-new consumer with `DeliverPolicy::All` and no
+inherited ack state, and therefore redelivers every invalidation still
+inside the 24h retention window, including ones already acked by a
+now-dead consumer. Setting `deliver_group` (queue-grouping the automaton's
+own subscribers) does not change this — a fresh `create_consumer` call
+with the same group string still gets its own independent ack floor.
+Proven empirically, not just by reading `async-nats`/JetStream semantics,
+by the sinex-r6d.9 crash-injection harness
+(`r6d9_invalidation_ack_fail_point_fires` and
+`r6d9_invalidation_deliver_group_does_not_share_ack_state` in
+`adapter_test.rs`): the harness genuinely crashes the process
+(`std::process::exit(98)`) at the ack-succeeded/payload-not-yet-returned
+boundary and asserts a fresh consumer still receives the same message.
+
+This means the window sinex-r6d.7 investigated (JetStream-level invalidation
+ack-before-recompute) is bounded and self-healing, contingent on: (1) the
+crashed process actually restarts within the 24h retention window (ordinary
+systemd auto-restart), and (2) the crash happens before any DB work — the
+fail point sits inside `recv_invalidation` itself, strictly before the ack'd
+payload is even returned to `handle_invalidation_message`, so redelivery
+always replays from a clean slate for this specific window. A **different**,
+still-open risk lives one layer deeper: if a crash instead happens *during*
+recompute, after `invalidate.rs`'s deliberate emit-outputs-before-archive-
+stale-outputs ordering has already emitted replacement events but before the
+stale originals are archived, redelivery of the same invalidation can
+recompute and emit a second time before archiving catches up — a
+duplicate/stale window the invalidation AC also flags, needing
+operation-scoped dedup or a durable pending-operation id to close (tracked
+separately; out of scope for the ack-ordering window this section
+describes). Malformed invalidation payloads are also out of scope here: a
+deserialize failure in `handle_invalidation_message` is logged and dropped
+(`Ok(None)`) without creating durable invalidation debt — low-severity today
+because only sinexd itself publishes this subject, but not the "durable
+debt before ack/term" contract invalidation's own design intent describes.
 
 ### `Control` — coordination traffic
 
