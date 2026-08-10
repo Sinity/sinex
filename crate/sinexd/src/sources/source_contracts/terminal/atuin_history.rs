@@ -50,6 +50,51 @@
 //! command (unlike AW, which never set `occurrence_key` at all pre-h3g) — so
 //! no parser change was needed beyond the adapter knob and the payload's
 //! revision policy.
+//!
+//! ## Soft-delete admission gap (sinex-a8r8)
+//!
+//! Atuin's `history` table carries a `deleted_at` column (`atuin history
+//! delete` soft-deletes rather than removing the row). The query in
+//! [`AtuinHistoryParser::baseline_adapter_config`] filters `WHERE deleted_at
+//! IS NULL` so a row the operator has already deleted in Atuin is never
+//! admitted into sinex at all — this is option (a) from the two admission
+//! shapes the bead considered.
+//!
+//! Option (b) — detecting a row transition to `deleted_at IS NOT NULL`
+//! *after* sinex has already captured and persisted it, and emitting a
+//! tombstone/retraction for that already-live event — is NOT implemented
+//! here, and is a real residual gap: an operator who runs `atuin history
+//! delete` on a command sinex captured before the delete keeps that event
+//! live in sinex indefinitely. Two things make (a) alone the right scope for
+//! this bead rather than a half-implemented (b):
+//!
+//! - Detecting the transition requires re-observing a row *after* the
+//!   cursor has moved past it. The only existing general mechanism for that
+//!   is `mutable_trailing_rows` (see above), which only re-reads the last 32
+//!   rows below the cursor — it was sized for same-session UPDATE-on-finish
+//!   completion, not for catching a delete that can happen arbitrarily long
+//!   after capture (the bead's own audit found deletes are "almost always"
+//!   outside that window in practice). A real (b) needs a periodic full
+//!   re-scan for deleted_at transitions across the whole table, which is new
+//!   general infrastructure this bead does not build.
+//! - sinex's own doctrine draws this exact line: "privacy/redaction is a
+//!   presentation feature, not a security boundary; source access and
+//!   deployment isolation own confidentiality." The already-captured row is
+//!   not a security defect (source/deployment access control still gates
+//!   who can read it) — it is an operator-intent-versus-persisted-history
+//!   mismatch. sinex already has an operator-facing mechanism for exactly
+//!   that: the approval-gated `TombstoneOperation` workflow
+//!   (`sinex-db::repositories::state::tombstone`, `sinexctl ops tombstone`)
+//!   that archives specific events on explicit operator request. That is the
+//!   deliberate, general tool for "I want this specific already-captured
+//!   event gone" — not a new automatic per-source retraction pipeline
+//!   triggered by a best-effort, window-limited upstream poll.
+//!
+//! Net: (a) prevents the gap from getting WORSE (no new secrets survive a
+//! deletion the operator made before sinex ever saw the row); the residual
+//! already-captured-then-deleted case is a known gap, closable today via
+//! `sinexctl ops tombstone` on request, and a candidate for a future bead if
+//! automatic detection across the full re-scan window is wanted.
 
 use async_trait::async_trait;
 use sinex_macros::{SourceMeta, SourceRecord};
@@ -78,7 +123,7 @@ use sinex_primitives::source_contracts::{
     event_type = "command.executed",
     input_shape = "sqlite_row",
     default_privacy_context = "Command",
-    baseline_adapter_config = r#"{"query":"history","table":"history"}"#
+    baseline_adapter_config = r#"{"query":"SELECT rowid, * FROM history WHERE deleted_at IS NULL","table":"history"}"#
 )]
 pub struct AtuinHistoryRecord {
     /// `SQLite` rowid — occurrence anchor (excluded from the emitted payload).
@@ -193,7 +238,16 @@ impl MaterialParser for AtuinHistoryParser {
         Self: Sized,
     {
         serde_json::json!({
-            "query": "history",
+            // sinex-a8r8: filter soft-deleted rows out of admission entirely.
+            // Atuin's `history` table carries a `deleted_at` column set by
+            // `atuin history delete` (the operator's own mechanism for
+            // purging a secret-bearing command from their history). Without
+            // this filter sinex admits and durably persists a row the
+            // operator has explicitly asked Atuin to forget, defeating that
+            // intent. See module docs for the residual gap this filter does
+            // NOT close (a row deleted upstream *after* sinex has already
+            // captured it stays live).
+            "query": "SELECT rowid, * FROM history WHERE deleted_at IS NULL",
             "table": "history",
             // `mutable_trailing_rows` (sinex-h3g mechanism, see module docs):
             // re-read the trailing rows below the cursor on every poll so a

@@ -810,7 +810,12 @@ let
         in
         if shell == "atuin" then {
           path = source.path;
-          query = "history";
+          # sinex-a8r8: exclude soft-deleted rows (Atuin's `deleted_at`
+          # column, set by `atuin history delete`) from admission so a
+          # command the operator has already purged from Atuin never enters
+          # sinex. See crate/sinexd atuin_history.rs module docs for the
+          # residual gap this does not close.
+          query = "SELECT rowid, * FROM history WHERE deleted_at IS NULL";
           table = "history";
           immutable = false;
           read_only = false;
