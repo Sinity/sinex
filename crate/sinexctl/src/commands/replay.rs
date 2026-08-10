@@ -112,6 +112,21 @@ pub enum ReplayCommands {
         /// Permit replay across a payload-schema boundary
         #[arg(long)]
         force_schema_mismatch: bool,
+
+        /// Disable historical-import pacing for this replay (sinex-2n9).
+        /// Replay re-ingest is paced by default; this is the explicit opt-out.
+        #[arg(long)]
+        unlimited: bool,
+
+        /// Override the paced events/sec budget for this replay
+        /// (ignored with `--unlimited`).
+        #[arg(long)]
+        rate_events_per_sec: Option<f64>,
+
+        /// Override the paced bytes/sec budget for this replay
+        /// (ignored with `--unlimited`).
+        #[arg(long)]
+        rate_bytes_per_sec: Option<f64>,
     },
 
     /// Approve and execute in one step (convenience)
@@ -134,6 +149,21 @@ pub enum ReplayCommands {
         /// Permit replay across a payload-schema boundary
         #[arg(long)]
         force_schema_mismatch: bool,
+
+        /// Disable historical-import pacing for this replay (sinex-2n9).
+        /// Replay re-ingest is paced by default; this is the explicit opt-out.
+        #[arg(long)]
+        unlimited: bool,
+
+        /// Override the paced events/sec budget for this replay
+        /// (ignored with `--unlimited`).
+        #[arg(long)]
+        rate_events_per_sec: Option<f64>,
+
+        /// Override the paced bytes/sec budget for this replay
+        /// (ignored with `--unlimited`).
+        #[arg(long)]
+        rate_bytes_per_sec: Option<f64>,
     },
 
     /// Cancel a replay operation
@@ -219,7 +249,47 @@ pub enum ReplayCommands {
         /// Permit replay across a payload-schema boundary
         #[arg(long)]
         force_schema_mismatch: bool,
+
+        /// Disable historical-import pacing for this replay (sinex-2n9).
+        /// Replay re-ingest is paced by default; this is the explicit opt-out.
+        #[arg(long)]
+        unlimited: bool,
+
+        /// Override the paced events/sec budget for this replay
+        /// (ignored with `--unlimited`).
+        #[arg(long)]
+        rate_events_per_sec: Option<f64>,
+
+        /// Override the paced bytes/sec budget for this replay
+        /// (ignored with `--unlimited`).
+        #[arg(long)]
+        rate_bytes_per_sec: Option<f64>,
     },
+}
+
+/// Build a `RateBudget` override from `--unlimited`/`--rate-*` CLI flags
+/// (sinex-2n9). Returns `None` when neither is set, meaning "use the
+/// source's binding-config/default paced budget" — never an implicit
+/// unpaced fallback.
+fn rate_budget_from_cli(
+    unlimited: bool,
+    rate_events_per_sec: Option<f64>,
+    rate_bytes_per_sec: Option<f64>,
+) -> Option<sinex_primitives::pacing::RateBudget> {
+    use sinex_primitives::pacing::RateBudget;
+
+    if unlimited {
+        return Some(RateBudget::unlimited());
+    }
+    if rate_events_per_sec.is_none() && rate_bytes_per_sec.is_none() {
+        return None;
+    }
+    let defaults = RateBudget::default_paced();
+    Some(RateBudget {
+        events_per_sec: rate_events_per_sec.or(defaults.events_per_sec),
+        bytes_per_sec: rate_bytes_per_sec.or(defaults.bytes_per_sec),
+        ..defaults
+    })
 }
 
 /// CLI filter for replay states (maps to `ReplayState`)
@@ -308,6 +378,9 @@ impl ReplayCommands {
                 allow_time_quality_flips,
                 allow_deep_cascade,
                 force_schema_mismatch,
+                unlimited,
+                rate_events_per_sec,
+                rate_bytes_per_sec,
             } => {
                 let operation = client
                     .replay_execute_with_overrides(
@@ -317,6 +390,11 @@ impl ReplayCommands {
                             allow_time_quality_flips: *allow_time_quality_flips,
                             allow_deep_cascade: *allow_deep_cascade,
                             force_schema_mismatch: *force_schema_mismatch,
+                            rate_budget: rate_budget_from_cli(
+                                *unlimited,
+                                *rate_events_per_sec,
+                                *rate_bytes_per_sec,
+                            ),
                         },
                     )
                     .await?;
@@ -329,6 +407,9 @@ impl ReplayCommands {
                 allow_time_quality_flips,
                 allow_deep_cascade,
                 force_schema_mismatch,
+                unlimited,
+                rate_events_per_sec,
+                rate_bytes_per_sec,
             } => {
                 let operation = client
                     .replay_submit_with_overrides(
@@ -338,6 +419,11 @@ impl ReplayCommands {
                             allow_time_quality_flips: *allow_time_quality_flips,
                             allow_deep_cascade: *allow_deep_cascade,
                             force_schema_mismatch: *force_schema_mismatch,
+                            rate_budget: rate_budget_from_cli(
+                                *unlimited,
+                                *rate_events_per_sec,
+                                *rate_bytes_per_sec,
+                            ),
                         },
                     )
                     .await?;
@@ -416,6 +502,9 @@ impl ReplayCommands {
                 allow_time_quality_flips,
                 allow_deep_cascade,
                 force_schema_mismatch,
+                unlimited,
+                rate_events_per_sec,
+                rate_bytes_per_sec,
             } => {
                 execute_run(
                     client,
@@ -430,6 +519,11 @@ impl ReplayCommands {
                         allow_time_quality_flips: *allow_time_quality_flips,
                         allow_deep_cascade: *allow_deep_cascade,
                         force_schema_mismatch: *force_schema_mismatch,
+                        rate_budget: rate_budget_from_cli(
+                            *unlimited,
+                            *rate_events_per_sec,
+                            *rate_bytes_per_sec,
+                        ),
                     },
                     &format,
                 )

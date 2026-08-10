@@ -74,8 +74,9 @@ use sinex_primitives::rpc::{
         SOURCES_BINDINGS_LIST_METHOD, SOURCES_BINDINGS_RESOLVE_METHOD,
         SOURCES_CONTINUITY_EXPLAIN_GAP_METHOD, SOURCES_CONTINUITY_GET_METHOD,
         SOURCES_CONTINUITY_LIST_METHOD, SOURCES_CONTINUITY_METHOD, SOURCES_COVERAGE_METHOD,
-        SOURCES_DRIFT_LIST_METHOD, SOURCES_LIST_METHOD, SOURCES_PACKAGE_COMPLETENESS_METHOD,
-        SOURCES_PRESETS_LIST_METHOD, SOURCES_READINESS_GET_METHOD, SOURCES_READINESS_LIST_METHOD,
+        SOURCES_DRIFT_LIST_METHOD, SOURCES_IMPORT_PROGRESS_METHOD, SOURCES_LIST_METHOD,
+        SOURCES_PACKAGE_COMPLETENESS_METHOD, SOURCES_PRESETS_LIST_METHOD,
+        SOURCES_READINESS_GET_METHOD, SOURCES_READINESS_LIST_METHOD,
         SOURCES_REMEDIATION_PLAN_METHOD, SOURCES_SHOW_METHOD, SOURCES_STAGE_METHOD,
     },
     system::{SYSTEM_HEALTH_METHOD, SYSTEM_PING_METHOD, SYSTEM_VERSION_METHOD},
@@ -549,7 +550,8 @@ fn build_registry_impl() -> RpcRegistry {
         handle_sources_bindings_resolve, handle_sources_continuity,
         handle_sources_continuity_explain_gap, handle_sources_continuity_get,
         handle_sources_continuity_list, handle_sources_coverage, handle_sources_drift_list,
-        handle_sources_list, handle_sources_package_completeness, handle_sources_presets_list,
+        handle_sources_import_progress, handle_sources_list, handle_sources_package_completeness,
+        handle_sources_presets_list,
         handle_sources_readiness_get, handle_sources_readiness_list,
         handle_sources_remediation_plan, handle_sources_show, handle_sources_stage,
         handle_sources_status, handle_sources_status_view, handle_store_blob, handle_system_health,
@@ -669,6 +671,10 @@ fn build_registry_impl() -> RpcRegistry {
         )
         .pool_typed_rpc(SOURCES_SHOW_METHOD, boxed!(handle_sources_show))
         .pool_typed_rpc(SOURCES_COVERAGE_METHOD, boxed!(handle_sources_coverage))
+        .service_typed_rpc(
+            SOURCES_IMPORT_PROGRESS_METHOD,
+            boxed!(handle_sources_import_progress),
+        )
         .service_typed_rpc(
             SOURCES_PACKAGE_COMPLETENESS_METHOD,
             boxed!(handle_sources_package_completeness),

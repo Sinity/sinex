@@ -126,6 +126,19 @@ pub struct ScanArgs {
     /// `None` for normal (non-replay) scans.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub replay: Option<MaterialReplayContext>,
+
+    /// Per-operation historical-import pacing override (sinex-2n9).
+    ///
+    /// `None` (the default — including `ScanArgs::default()`, which is what
+    /// the startup gap-fill phase uses) means "resolve to the source's
+    /// binding-config rate budget, or `RateBudget::default_paced()` if
+    /// unset" — historical scans are paced by default and CANNOT become
+    /// unpaced through this field being merely absent. `Some(..)` is an
+    /// explicit per-operation override (e.g. `RateBudget::unlimited()` for
+    /// `sinexctl replay execute --unlimited`). Only consumed by
+    /// `scan_historical`; continuous/snapshot scans ignore it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rate_budget: Option<crate::runtime::pacing::RateBudget>,
 }
 
 impl Default for ScanArgs {
@@ -138,6 +151,7 @@ impl Default for ScanArgs {
             skip_duplicates: true,
             config: HashMap::new(),
             replay: None,
+            rate_budget: None,
         }
     }
 }

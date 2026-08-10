@@ -289,6 +289,16 @@ pub struct ReplayGateOverrides {
     /// Permit replay across a payload-schema boundary.
     #[serde(default)]
     pub force_schema_mismatch: bool,
+    /// Per-operation historical-import pacing override (sinex-2n9). Not a
+    /// warning-threshold "gate" like the fields above, but bundled here
+    /// because `ReplayGateOverrides` is already the one struct threaded
+    /// end-to-end from `replay.execute_operation`/`replay.submit_operation`
+    /// down to the dispatched `SourceScanCommand`. `None` means "use the
+    /// source's binding-config/default paced budget" — replay re-ingest is
+    /// paced by default; `Some(RateBudget::unlimited())` is the explicit
+    /// `--unlimited` opt-out.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rate_budget: Option<crate::pacing::RateBudget>,
 }
 
 // ─────────────────────────────────────────────────────────────

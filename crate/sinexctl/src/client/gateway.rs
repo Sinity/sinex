@@ -1295,6 +1295,18 @@ impl GatewayClient {
         self.call_typed(SOURCES_COVERAGE_METHOD, &request).await
     }
 
+    /// Live rate/position/ETA/backlog for in-flight paced historical imports
+    /// (sinex-2n9).
+    pub async fn sources_import_progress(
+        &self,
+    ) -> Result<sinex_primitives::rpc::sources::SourcesImportProgressResponse> {
+        self.call_typed(
+            sinex_primitives::rpc::sources::SOURCES_IMPORT_PROGRESS_METHOD,
+            &sinex_primitives::rpc::sources::SourcesImportProgressRequest {},
+        )
+        .await
+    }
+
     pub async fn sources_remediation_plan(
         &self,
         request: SourcesRemediationPlanRequest,

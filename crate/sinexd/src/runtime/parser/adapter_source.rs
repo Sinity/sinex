@@ -228,6 +228,16 @@ pub struct AdapterSourceConfig {
     /// `private_mode_state_unavailable`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub private_mode_fail_closed: Option<bool>,
+
+    /// Operator-set historical-import pacing default for this source
+    /// (sinex-2n9). Applies to `scan_historical` only (gap-fill, replay
+    /// re-ingest dispatched to this source, staged/batch historical imports)
+    /// — never to `run_continuous`. `None` means "use
+    /// `RateBudget::default_paced()`" — historical scans are paced by
+    /// default even when this is unset. A per-operation `ScanArgs.rate_budget`
+    /// (e.g. from `sinexctl replay execute --unlimited`) overrides this.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rate_budget: Option<crate::runtime::pacing::RateBudget>,
 }
 
 impl AdapterSourceConfig {
@@ -1201,11 +1211,17 @@ where
     /// error.
     ///
     /// Returns total events emitted.
+    ///
+    /// `pacing` (sinex-2n9): `Some` only for historical/catch-up scans
+    /// (`scan_historical` builds a `ScanPacer` from the resolved
+    /// `RateBudget`); `None` for snapshot and continuous scans, which must
+    /// never be throttled by catch-up pacing.
     async fn drain_adapter(
         &mut self,
         cursor: Option<A::Cursor>,
         state: &mut AdapterModuleState<A::Cursor>,
         initial_position: Option<InitialStreamPosition>,
+        mut pacing: Option<&mut crate::runtime::pacing::ScanPacer>,
     ) -> RuntimeResult<u64> {
         self.refresh_binding_config()?;
         if self.binding_config.is_truthy("private_mode_active") {
@@ -1501,6 +1517,11 @@ where
             }
             let mut batch_events: Vec<Event<JsonValue>> = Vec::new();
             let mut record_plan: Vec<PendingRecordEmission<A::Cursor>> = Vec::new();
+            // sinex-2n9: last-observed record timestamp in this batch, fed
+            // to `ScanPacer::after_batch` as the position signal for live
+            // ETA reporting. Best-effort — not every adapter/record carries
+            // a timing hint.
+            let mut batch_position: Option<Timestamp> = None;
 
             for (materialized, next_cursor) in materialized_batch {
                 let material_id = materialized.material_id;
@@ -1519,6 +1540,9 @@ where
 
                 let parser_checkpoint_before = self.snapshot_parser_checkpoint_state();
                 let record_timing_hint = materialized.record.source_ts_hint.clone();
+                if let Some(ts) = record_timing_hint.as_ref().and_then(TimingEvidence::timestamp_value) {
+                    batch_position = Some(ts);
+                }
                 let intents = match self
                     .parser
                     .parse_record_with_binding(materialized.record, &ctx, &self.binding_config)
@@ -1662,6 +1686,7 @@ where
             // `holes()` bookkeeping), but never affect the rollback target.
             let mut receipt_offset = 0usize;
             let mut first_hole_rollback: Option<Option<JsonValue>> = None;
+            let mut batch_emitted: u64 = 0;
             for entry in record_plan {
                 let unlocked = if entry.event_count == 0 {
                     true
@@ -1676,6 +1701,7 @@ where
 
                 if unlocked {
                     emitted = emitted.saturating_add(entry.event_count as u64);
+                    batch_emitted = batch_emitted.saturating_add(entry.event_count as u64);
                     state.total_events_emitted =
                         state.total_events_emitted.saturating_add(entry.event_count as u64);
                     cursor_frontier.complete(
@@ -1706,6 +1732,16 @@ where
             if let Some(checkpoint) = committed_checkpoint {
                 state.cursor = Some(checkpoint.clone());
                 self.persist_stream_checkpoint_if_due(state, false).await;
+            }
+
+            // sinex-2n9: pace catch-up work between batches (events/sec,
+            // bytes/sec, raw-stream backlog). `pacing` is only `Some` for
+            // historical scans (see `scan_historical`) — continuous/snapshot
+            // callers pass `None` and this is a no-op.
+            if let Some(pacer) = pacing.as_deref_mut() {
+                pacer
+                    .after_batch(batch_emitted, batch_bytes as u64, batch_position)
+                    .await?;
             }
 
             if stream_exhausted {
@@ -1806,6 +1842,24 @@ where
                 );
             }
         }
+    }
+
+    /// Resolve the effective `RateBudget` for a historical scan (sinex-2n9):
+    /// per-operation `ScanArgs.rate_budget` override wins outright; falls
+    /// through to the source's binding-config `AdapterSourceConfig.rate_budget`;
+    /// falls through to `RateBudget::default_paced()`. Never resolves to
+    /// unlimited unless one of those two layers explicitly asked for it —
+    /// unpaced historical scans are impossible by omission.
+    fn resolve_rate_budget(
+        &self,
+        args_override: Option<crate::runtime::pacing::RateBudget>,
+    ) -> crate::runtime::pacing::RateBudget {
+        let config_default = self
+            .runtime_config
+            .as_ref()
+            .and_then(|config| config.rate_budget)
+            .unwrap_or_default();
+        config_default.merged_with_override(args_override)
     }
 }
 
@@ -2006,8 +2060,9 @@ where
     ) -> RuntimeResult<ScanReport> {
         let start = Instant::now();
         // Snapshot: drain from cursor (resume after last known position).
+        // Not gated by historical-import pacing (sinex-2n9) — see module docs.
         let cursor = state.cursor.clone();
-        let emitted = self.drain_adapter(cursor, state, None).await?;
+        let emitted = self.drain_adapter(cursor, state, None, None).await?;
         self.finalize_finite_drain_material("adapter-snapshot-complete")
             .await?;
         let checkpoint = cursor_to_checkpoint(state);
@@ -2028,7 +2083,7 @@ where
         &mut self,
         state: &mut Self::State,
         _from: Checkpoint,
-        _until: TimeHorizon,
+        until: TimeHorizon,
         args: ScanArgs,
     ) -> RuntimeResult<ScanReport> {
         let start = Instant::now();
@@ -2038,11 +2093,50 @@ where
             return self.replay_file_drop_materials(replay).await;
         }
 
+        // sinex-2n9: historical/catch-up scans are paced by default. See
+        // `resolve_rate_budget` for the precedence (operation override >
+        // binding config > default_paced).
+        let rate_budget = self.resolve_rate_budget(args.rate_budget);
+        let nats_client = self.runtime.as_ref().and_then(RuntimeContext::nats_client);
+        // Matches how `RuntimeCli`/`NatsPublisher` resolve namespace elsewhere
+        // in the runtime (`--namespace` / `SINEX_NAMESPACE`); `RuntimeContext`
+        // does not currently expose the resolved namespace to source drivers.
+        let namespace = std::env::var("SINEX_NAMESPACE").ok();
+        let horizon = match &until {
+            TimeHorizon::Historical { end_time } => Some(*end_time),
+            TimeHorizon::Snapshot | TimeHorizon::Continuous => None,
+        };
+        let mut pacer = crate::runtime::pacing::ScanPacer::new(
+            rate_budget,
+            nats_client,
+            namespace,
+            self.source_id,
+            horizon,
+        );
+        if pacer.is_paced() {
+            info!(
+                source = self.source_id,
+                events_per_sec = ?rate_budget.events_per_sec,
+                bytes_per_sec = ?rate_budget.bytes_per_sec,
+                backlog_pause_threshold = ?rate_budget.backlog_pause_threshold,
+                "Historical scan paced (sinex-2n9)"
+            );
+        } else {
+            warn!(
+                source = self.source_id,
+                "Historical scan running UNLIMITED (sinex-2n9 pacing explicitly disabled for this operation)"
+            );
+        }
+
         // Historical: re-open from persisted cursor (may be behind `from` if
         // the source was offline). The adapter's cursor is the authoritative
         // resume position.
         let cursor = state.cursor.clone();
-        let emitted = self.drain_adapter(cursor, state, None).await?;
+        let drain_result = self
+            .drain_adapter(cursor, state, None, Some(&mut pacer))
+            .await;
+        pacer.finish().await;
+        let emitted = drain_result?;
         self.finalize_finite_drain_material("adapter-historical-complete")
             .await?;
         let checkpoint = cursor_to_checkpoint(state);
@@ -2105,7 +2199,7 @@ where
             // return normally fall through to the poll-interval wait as before.
             let source_id = self.source_id;
             tokio::select! {
-                drained = self.drain_adapter(cursor, state, initial_position) => {
+                drained = self.drain_adapter(cursor, state, initial_position, None) => {
                     match drained {
                         Ok(n) => {
                             total_emitted += n;
