@@ -307,10 +307,21 @@ impl AdmissionRejectionKind {
 }
 
 /// A rejected candidate event with a stable kind and operator-facing reason.
+///
+/// `event_id` is the candidate's own id when a parsed candidate was known at
+/// the point of rejection (sinex-r6d.4: it is the key
+/// `settlement_registry.resolve()` needs so a `Suppressed` outcome can
+/// unlock a source's cursor/checkpoint the same way `PersistedConfirmed`
+/// does — without it, a legitimately-suppressed retry after a crash-before-
+/// durable-settlement window is indistinguishable from "never settled" and
+/// the source's progress frontier stalls on it forever). `None` for
+/// rejection kinds that fire before any candidate id could be parsed (e.g.
+/// `EnvelopeDeserialization`, `StructuralJson`, `MissingEventId`).
 #[derive(Debug)]
 pub struct AdmissionRejection {
     pub kind: AdmissionRejectionKind,
     pub reason: String,
+    pub event_id: Option<Uuid>,
 }
 
 impl AdmissionRejection {
@@ -318,7 +329,14 @@ impl AdmissionRejection {
         Self {
             kind,
             reason: reason.into(),
+            event_id: None,
         }
+    }
+
+    #[must_use]
+    pub fn with_event_id(mut self, event_id: Uuid) -> Self {
+        self.event_id = Some(event_id);
+        self
     }
 
     #[must_use]
@@ -649,13 +667,17 @@ impl AdmissionService {
         let supersede_target = match equivalence {
             EquivalenceOutcome::Fresh => None,
             EquivalenceOutcome::Suppress => {
-                return Ok(AdmissionDecision::Suppressed(AdmissionRejection::new(
+                let mut rejection = AdmissionRejection::new(
                     AdmissionRejectionKind::OccurrenceDuplicate,
                     match &event.equivalence_key {
                         Some(key) => format!("live event with equivalence_key {key} already exists"),
                         None => "live event with equivalence_key already exists".to_string(),
                     },
-                )));
+                );
+                if let Some(id) = event.id {
+                    rejection = rejection.with_event_id(id.to_uuid());
+                }
+                return Ok(AdmissionDecision::Suppressed(rejection));
             }
             EquivalenceOutcome::Supersede {
                 superseded_event_id,
@@ -1086,13 +1108,31 @@ impl AdmissionService {
                     // established, if any.
                     let prev_idx = key_last_index[&key];
                     let _ = superseded_event_id; // the in-batch predecessor's own id; not archived
-                    decisions[prev_idx] = AdmissionDecision::Suppressed(AdmissionRejection::new(
+                    // sinex-r6d.4: capture the demoted predecessor's own
+                    // event id BEFORE it is overwritten below, so
+                    // `settlement_registry.resolve()` has a key to unlock
+                    // that predecessor's caller-side commit frontier — a
+                    // demotion to `Suppressed` is still a durable, terminal
+                    // "this candidate never goes live" decision.
+                    let demoted_event_id = match &decisions[prev_idx] {
+                        AdmissionDecision::Admitted(admitted)
+                        | AdmissionDecision::Transformed(admitted)
+                        | AdmissionDecision::Superseded { admitted, .. } => Some(admitted.event_id),
+                        AdmissionDecision::Suppressed(_)
+                        | AdmissionDecision::QuarantineNeeded(_)
+                        | AdmissionDecision::Rejected(_) => None,
+                    };
+                    let mut demotion = AdmissionRejection::new(
                         AdmissionRejectionKind::SupersededWithinBatch,
                         format!(
                             "equivalence_key {key} was revised again later in the same intent \
                              before this interpretation was ever persisted"
                         ),
-                    ));
+                    );
+                    if let Some(id) = demoted_event_id {
+                        demotion = demotion.with_event_id(id);
+                    }
+                    decisions[prev_idx] = AdmissionDecision::Suppressed(demotion);
                     let external_target = key_archive_target.get(&key).copied().flatten();
                     key_last_index.insert(key.clone(), idx);
                     key_archive_target.insert(key, external_target);

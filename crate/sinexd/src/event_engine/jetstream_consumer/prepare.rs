@@ -94,23 +94,51 @@ impl JetStreamConsumer {
                                 "supersession archive of {superseded_event_id} failed; \
                                  kept existing live interpretation and suppressed this revision"
                             ),
+                            event_id: Some(admitted.event_id),
                         };
                         self.record_admission_suppression(&rejection).await;
+                        self.settlement_registry.resolve(
+                            admitted.event_id.into(),
+                            EmissionReceiptState::Suppressed {
+                                reason: SuppressionReason::EquivalenceKeyDuplicate,
+                                existing_event_id: Some(superseded_event_id),
+                            },
+                        );
                         settlement.settle_child(ChildOutcome::Safe).await?;
                     }
                 }
                 AdmissionDecision::Suppressed(rejection) => {
                     self.record_admission_suppression(&rejection).await;
-                    // TODO(sinex-r6d.11): no settlement_registry.resolve() call here.
-                    // AdmissionRejection carries only `kind`/`reason` (admission.rs:218-221),
-                    // never an event_id — most rejection sites in admit_event_with_metadata
-                    // construct it before or without a parsed candidate id, so there is no
-                    // reliable key to resolve against here. Threading an `Option<Uuid>`
-                    // through AdmissionRejection's ~20 construction sites to recover it for
-                    // the few paths (e.g. OccurrenceDuplicate) where an id happens to be in
-                    // scope is a wider change to admission.rs's own shape than this bead's
-                    // settle_child-site wiring scope; left as a documented gap rather than
-                    // guessed at.
+                    // sinex-r6d.4: a Suppressed decision is a durable,
+                    // terminal "this candidate never goes live" outcome —
+                    // AC requires it to unlock a source's cursor/checkpoint
+                    // the same way PersistedConfirmed does (this is exactly
+                    // the retry-after-crash path: the candidate reached the
+                    // mpsc handoff before an earlier crash, the source
+                    // retried it after restart because its cursor never
+                    // advanced past the unsettled record, and admission
+                    // correctly recognizes the retry as a live-row-already-
+                    // exists duplicate). Only resolve when the rejection
+                    // carries the candidate's own id — some
+                    // `AdmissionRejectionKind`s can never carry one (rejected
+                    // before any candidate could be parsed), for which
+                    // `resolve()` on a never-registered id is already a safe
+                    // no-op.
+                    if let Some(event_id) = rejection.event_id {
+                        let reason = match rejection.kind {
+                            AdmissionRejectionKind::SupersededWithinBatch => {
+                                SuppressionReason::BatchDuplicate
+                            }
+                            _ => SuppressionReason::EquivalenceKeyDuplicate,
+                        };
+                        self.settlement_registry.resolve(
+                            event_id.into(),
+                            EmissionReceiptState::Suppressed {
+                                reason,
+                                existing_event_id: None,
+                            },
+                        );
+                    }
                     settlement.settle_child(ChildOutcome::Safe).await?;
                 }
                 AdmissionDecision::Rejected(rejection)

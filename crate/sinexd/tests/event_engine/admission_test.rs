@@ -161,6 +161,7 @@ async fn admission_decision_outcome_maps_occurrence_duplicate_to_deduplicated() 
     let decision = AdmissionDecision::Suppressed(AdmissionRejection {
         kind: AdmissionRejectionKind::OccurrenceDuplicate,
         reason: "live event with equivalence_key test-key already exists".to_string(),
+        event_id: None,
     });
 
     match decision.to_admission_outcome() {

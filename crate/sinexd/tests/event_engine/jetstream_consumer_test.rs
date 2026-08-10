@@ -2244,6 +2244,116 @@ async fn settlement_registry_resolves_suppressed_for_a_tombstoned_event(
     Ok(())
 }
 
+/// A duplicate event sharing an already-live `equivalence_key` must resolve
+/// `Suppressed { reason: EquivalenceKeyDuplicate, .. }` — never hang past the
+/// registered receiver. This is the exact sinex-r6d.4 retry-after-crash
+/// scenario the whole durable-emission-receipt mechanism exists for: a
+/// source crashes after `EventEmitter::emit()` succeeds (mpsc handoff) but
+/// before its cursor checkpoint durably settles, so on restart it re-drains
+/// and re-emits the SAME record (a fresh event id, same occurrence
+/// `equivalence_key`) because its persisted cursor never advanced past it.
+/// Admission correctly recognizes the retry as a live-row-already-exists
+/// duplicate and returns `AdmissionDecision::Suppressed`. Before this fix,
+/// that arm never called `settlement_registry.resolve()` (see the removed
+/// TODO(sinex-r6d.11) in `prepare.rs`), so `emit_batch_durable`'s registered
+/// receiver always timed out instead of observing `Suppressed` — which
+/// `CommitFrontier`/`is_progress_unlocking()` correctly treat as NOT
+/// progress-unlocking, so the source's cursor would never advance past this
+/// record and it would retry (and get suppressed, and time out) forever.
+#[sinex_test]
+async fn settlement_registry_resolves_suppressed_for_an_occurrence_duplicate_event(
+    ctx: TestContext,
+) -> TestResult<()> {
+    let ctx = ctx.with_nats().shared().await?;
+    let nats_client = ctx.nats_client();
+    let pool = ctx.pool.clone();
+    ensure_fixture_source_material(&pool).await?;
+    let validator = IngestEventValidator::new(false);
+
+    let js = ctx.jetstream().await?;
+    let env = ctx.env();
+    let namespace = ctx.pipeline_namespace().prefix().to_string();
+    let topology = JetStreamTopology::new(
+        env,
+        ctx.pipeline_namespace().stream("SINEX_RAW_EVENTS_R6D4_OD"),
+        ctx.pipeline_namespace()
+            .consumer_name("event-engine-r6d4-od"),
+        Some(&namespace),
+    );
+    let ready_topology = topology.clone();
+    let consumer = JetStreamConsumer::new(
+        nats_client.clone(),
+        pool.clone(),
+        Arc::new(RwLock::new(validator)),
+        topology,
+    );
+    let registry = consumer.settlement_registry();
+    let consumer_handle =
+        spawn_consumer_and_wait_ready(&ctx, &js, &ready_topology, consumer).await?;
+
+    let equivalence_key = "r6d4-occurrence-duplicate-key".to_string();
+
+    let first_id = publish_event(
+        &ctx.pool,
+        &nats_client,
+        &namespace,
+        "r6d4od",
+        "r6d4od.event",
+        json!({"sequence": 1}),
+        EventOverrides {
+            equivalence_key: Some(equivalence_key.clone()),
+            ..Default::default()
+        },
+    )
+    .await?;
+    WaitHelpers::wait_for_event_id(&ctx.pool, first_id.into(), Timeouts::SHORT).await?;
+
+    // The retried event: same equivalence_key, a fresh id, standing in for a
+    // source's crash-recovery re-emit of the same occurrence.
+    let duplicate_id = Uuid::now_v7();
+    let rx = registry.register(duplicate_id.into());
+
+    publish_event(
+        &ctx.pool,
+        &nats_client,
+        &namespace,
+        "r6d4od",
+        "r6d4od.event",
+        json!({"sequence": 2}),
+        EventOverrides {
+            id: Some(duplicate_id),
+            equivalence_key: Some(equivalence_key.clone()),
+            ..Default::default()
+        },
+    )
+    .await?;
+
+    let state = tokio::time::timeout(Duration::from_secs(Timeouts::SHORT), rx).await??;
+    assert!(
+        matches!(
+            state,
+            EmissionReceiptState::Suppressed {
+                reason: SuppressionReason::EquivalenceKeyDuplicate,
+                ..
+            }
+        ),
+        "expected Suppressed{{reason: EquivalenceKeyDuplicate, ..}}, got {state:?}"
+    );
+
+    assert!(
+        ctx.pool
+            .events()
+            .get_by_id(duplicate_id.into())
+            .await?
+            .is_none(),
+        "duplicate equivalence-key event must not be persisted"
+    );
+
+    consumer_handle.abort();
+    let _ = consumer_handle.await;
+    Ok(())
+}
+
 /// An event whose source material never registers must eventually resolve
 /// `DurableDebt { .. }` once the DLQ retry budget is exhausted — the
 /// `settle_unready_source_material_event` DLQ path wired in persist.rs.
