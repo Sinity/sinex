@@ -14,12 +14,14 @@
 //!
 //! # Design
 //!
-//! - [`RateBudget`] is the operator-facing config: events/sec, bytes/sec, and
-//!   the raw-stream backlog pause/resume thresholds. It is set via source
-//!   binding config (operator default) and overridable per replay/import
-//!   operation (`ScanArgs::rate_budget`). [`RateBudget::default_paced`] is a
-//!   real, non-zero default — historical scans are paced *by default*.
-//!   [`RateBudget::unlimited`] is the explicit opt-out (`--unlimited`).
+//! - [`RateBudget`] (re-exported from `sinex_primitives::pacing`, where it
+//!   lives because it is also a wire type on `ReplayGateOverrides`) is the
+//!   operator-facing config: events/sec, bytes/sec, and the raw-stream
+//!   backlog pause/resume thresholds. It is set via source binding config
+//!   (operator default) and overridable per replay/import operation
+//!   (`ScanArgs::rate_budget`). `RateBudget::default_paced` is a real,
+//!   non-zero default — historical scans are paced *by default*.
+//!   `RateBudget::unlimited` is the explicit opt-out (`--unlimited`).
 //! - [`PacingController`] enforces the events/sec and bytes/sec budget
 //!   between batches with a simple "average rate since start" throttle.
 //! - [`BacklogGate`] pauses the scan loop (with hysteresis) when the raw
@@ -37,146 +39,11 @@
 use std::future::Future;
 use std::time::{Duration, Instant};
 
-use serde::{Deserialize, Serialize};
-use sinex_primitives::env as shared_env;
+pub use sinex_primitives::pacing::RateBudget;
 
 use crate::runtime::RuntimeResult;
 
-/// Default target event rate for historical/catch-up scans, in events/sec.
-///
-/// Chosen so a large historical import stays comfortably under the
-/// publish-side hard backpressure gate
-/// (`RAW_STREAM_BACKPRESSURE_HIGH_PENDING` = 10,000 pending in
-/// `nats_publisher.rs`): at 500 events/sec the raw stream would need >20s of
-/// total consumer stall before it even approaches that ceiling, which gives
-/// operators visible, gradual pressure (via [`BacklogGate`]) instead of a
-/// silent hard stop. This is a starting point, not a value tuned from
-/// incident anecdotes alone (sinex-2n9 notes) — operators should override it
-/// per source/operation once they have real throughput data.
-pub const DEFAULT_EVENTS_PER_SEC: f64 = 500.0;
-
-/// Default target byte rate for historical/catch-up scans, in bytes/sec (5 MB/s).
-pub const DEFAULT_BYTES_PER_SEC: f64 = 5.0 * 1024.0 * 1024.0;
-
-/// Default raw-stream backlog depth above which the scan loop pauses.
-///
-/// Deliberately below the publish-side hard gate (10,000) so this proactive,
-/// visible pause acts first; the publish-side gate remains a backstop.
-pub const DEFAULT_BACKLOG_PAUSE_THRESHOLD: u64 = 8_000;
-
-/// Backlog depth the scan loop waits to drain back down to before resuming,
-/// once paused (hysteresis, mirrors the publish-side gate's low watermark).
-pub const DEFAULT_BACKLOG_RESUME_THRESHOLD: u64 = 2_000;
-
 const BACKLOG_POLL_INTERVAL: Duration = Duration::from_millis(250);
-
-/// Operator-configurable rate budget for a historical/catch-up scan.
-///
-/// `None` fields mean "unbounded on this dimension". [`RateBudget::default`]
-/// (and [`RateBudget::default_paced`]) are paced; [`RateBudget::unlimited`]
-/// is the only way to get fully unpaced behavior, and callers must request
-/// it explicitly (e.g. `--unlimited` on `sinexctl replay execute/submit`).
-#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
-pub struct RateBudget {
-    /// Maximum sustained events/sec. `None` = unbounded.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub events_per_sec: Option<f64>,
-
-    /// Maximum sustained bytes/sec. `None` = unbounded.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub bytes_per_sec: Option<f64>,
-
-    /// Raw-stream consumer backlog depth above which the scan loop pauses.
-    /// `None` = no backlog-based pausing (rate budget still applies).
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub backlog_pause_threshold: Option<u64>,
-
-    /// Backlog depth to wait for before resuming after a pause.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub backlog_resume_threshold: Option<u64>,
-}
-
-impl Default for RateBudget {
-    fn default() -> Self {
-        Self::default_paced()
-    }
-}
-
-impl RateBudget {
-    /// The default paced budget applied whenever an operator has not set an
-    /// explicit override. This is what makes unpaced historical scans
-    /// impossible without an explicit `--unlimited`.
-    #[must_use]
-    pub const fn default_paced() -> Self {
-        Self {
-            events_per_sec: Some(DEFAULT_EVENTS_PER_SEC),
-            bytes_per_sec: Some(DEFAULT_BYTES_PER_SEC),
-            backlog_pause_threshold: Some(DEFAULT_BACKLOG_PAUSE_THRESHOLD),
-            backlog_resume_threshold: Some(DEFAULT_BACKLOG_RESUME_THRESHOLD),
-        }
-    }
-
-    /// Fully unpaced: no rate limit, no backlog-based pausing. Only reachable
-    /// via an explicit operator override (`--unlimited`), never a default.
-    #[must_use]
-    pub const fn unlimited() -> Self {
-        Self {
-            events_per_sec: None,
-            bytes_per_sec: None,
-            backlog_pause_threshold: None,
-            backlog_resume_threshold: None,
-        }
-    }
-
-    #[must_use]
-    pub fn is_unlimited(&self) -> bool {
-        self.events_per_sec.is_none()
-            && self.bytes_per_sec.is_none()
-            && self.backlog_pause_threshold.is_none()
-    }
-
-    /// Load operator overrides from environment variables, falling back to
-    /// [`RateBudget::default_paced`] for any unset field. `prefix` is the
-    /// service env prefix (e.g. `"SINEXD"`), matching the
-    /// `service_or_global_env_*` convention used elsewhere in `runtime::config`.
-    #[must_use]
-    pub fn from_env() -> Self {
-        let defaults = Self::default_paced();
-        Self {
-            events_per_sec: shared_env::parse_optional(
-                "SINEX_HISTORICAL_IMPORT_RATE_EVENTS_PER_SEC",
-                "historical import pacing",
-            )
-            .or(defaults.events_per_sec),
-            bytes_per_sec: shared_env::parse_optional(
-                "SINEX_HISTORICAL_IMPORT_RATE_BYTES_PER_SEC",
-                "historical import pacing",
-            )
-            .or(defaults.bytes_per_sec),
-            backlog_pause_threshold: shared_env::parse_optional(
-                "SINEX_HISTORICAL_IMPORT_BACKLOG_PAUSE_THRESHOLD",
-                "historical import pacing",
-            )
-            .or(defaults.backlog_pause_threshold),
-            backlog_resume_threshold: shared_env::parse_optional(
-                "SINEX_HISTORICAL_IMPORT_BACKLOG_RESUME_THRESHOLD",
-                "historical import pacing",
-            )
-            .or(defaults.backlog_resume_threshold),
-        }
-    }
-
-    /// Merge a per-operation override on top of this budget: any field the
-    /// override sets wins; unset fields fall through to `self`. Used to
-    /// implement "operator-set via binding config, overridable per
-    /// operation" — `self` is the binding-config/env default,
-    /// `override_budget` is what a replay/import operation explicitly asked
-    /// for (e.g. `RateBudget::unlimited()` for `--unlimited`).
-    #[must_use]
-    pub fn merged_with_override(self, override_budget: Option<RateBudget>) -> Self {
-        override_budget.unwrap_or(self)
-    }
-}
 
 /// Enforces a [`RateBudget`]'s events/sec and bytes/sec limits between scan
 /// batches using a simple "average rate since start" throttle: after each
@@ -364,6 +231,77 @@ impl BacklogGate {
             );
             tokio::time::sleep(self.poll_interval).await;
         }
+    }
+}
+
+/// Orchestrates a [`PacingController`] plus an optional [`BacklogGate`] for
+/// one historical/catch-up scan call. Built once per `scan_historical` (or
+/// equivalent) invocation; [`ScanPacer::after_batch`] is the single call a
+/// scan loop needs to make after each materialized/durably-emitted batch —
+/// this is the "enforcement function other code can call" the pacing
+/// mechanism exists to provide (sinex-2n9).
+pub struct ScanPacer {
+    controller: PacingController,
+    backlog_gate: Option<BacklogGate>,
+    nats_client: Option<async_nats::Client>,
+    env: sinex_primitives::environment::SinexEnvironment,
+    namespace: Option<String>,
+}
+
+impl ScanPacer {
+    #[must_use]
+    pub fn new(
+        budget: RateBudget,
+        nats_client: Option<async_nats::Client>,
+        namespace: Option<String>,
+    ) -> Self {
+        Self {
+            backlog_gate: BacklogGate::from_budget(&budget),
+            controller: PacingController::new(budget),
+            nats_client,
+            env: sinex_primitives::environment::environment(),
+            namespace,
+        }
+    }
+
+    #[must_use]
+    pub fn budget(&self) -> RateBudget {
+        self.controller.budget()
+    }
+
+    #[must_use]
+    pub fn is_paced(&self) -> bool {
+        !self.controller.budget().is_unlimited()
+    }
+
+    #[must_use]
+    pub fn controller(&self) -> &PacingController {
+        &self.controller
+    }
+
+    /// Record a processed batch: throttle to the events/sec and bytes/sec
+    /// budget, then (if a backlog threshold is configured and a NATS client
+    /// is available) wait for the raw-events consumer backlog to drain back
+    /// under threshold before returning. No-ops entirely when unlimited.
+    pub async fn after_batch(&mut self, events: u64, bytes: u64) -> RuntimeResult<()> {
+        self.controller.record_and_throttle(events, bytes).await;
+
+        let Some(gate) = &self.backlog_gate else {
+            return Ok(());
+        };
+        let Some(client) = &self.nats_client else {
+            return Ok(());
+        };
+        let js = async_nats::jetstream::new(client.clone());
+        let env = &self.env;
+        let namespace = self.namespace.as_deref();
+
+        gate.wait_for_capacity(|| async {
+            crate::runtime::backlog::raw_events_consumer_pending(&js, env, namespace)
+                .await
+                .map(|maybe_info| maybe_info.map(|info| info.num_pending))
+        })
+        .await
     }
 }
 

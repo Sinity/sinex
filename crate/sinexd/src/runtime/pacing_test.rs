@@ -1,36 +1,10 @@
+// RateBudget's own construction/merge/env-loading behavior is tested where
+// the type lives (`sinex_primitives::pacing`, which is also its wire-shape
+// authority for `ReplayGateOverrides`). This file tests the sinexd-specific
+// enforcement primitives that consume a `RateBudget`: `PacingController`
+// (throttle timing) and `BacklogGate` (backlog-aware pause/resume).
 use super::*;
 use xtask::sandbox::sinex_test;
-
-#[sinex_test]
-async fn default_budget_is_paced_not_unlimited() -> TestResult<()> {
-    let budget = RateBudget::default();
-    assert!(!budget.is_unlimited());
-    assert_eq!(budget.events_per_sec, Some(DEFAULT_EVENTS_PER_SEC));
-    assert_eq!(budget.bytes_per_sec, Some(DEFAULT_BYTES_PER_SEC));
-    Ok(())
-}
-
-#[sinex_test]
-async fn unlimited_budget_is_unlimited() -> TestResult<()> {
-    assert!(RateBudget::unlimited().is_unlimited());
-    Ok(())
-}
-
-#[sinex_test]
-async fn merged_override_wins_when_present() -> TestResult<()> {
-    let base = RateBudget::default_paced();
-    let merged = base.merged_with_override(Some(RateBudget::unlimited()));
-    assert!(merged.is_unlimited());
-    Ok(())
-}
-
-#[sinex_test]
-async fn merged_override_falls_through_when_absent() -> TestResult<()> {
-    let base = RateBudget::default_paced();
-    let merged = base.merged_with_override(None);
-    assert_eq!(merged.events_per_sec, base.events_per_sec);
-    Ok(())
-}
 
 #[sinex_test]
 async fn required_sleep_is_zero_when_unlimited() -> TestResult<()> {

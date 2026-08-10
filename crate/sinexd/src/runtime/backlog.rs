@@ -36,7 +36,7 @@ pub async fn raw_events_consumer_pending(
     let stream_name = env.nats_stream_name_with_namespace(namespace, "SINEX_RAW_EVENTS");
     let consumer_name = event_engine_raw_consumer_name(env);
 
-    let mut stream = js.get_stream(&stream_name).await.map_err(|error| {
+    let stream = js.get_stream(&stream_name).await.map_err(|error| {
         sinex_primitives::SinexError::network("Failed to inspect raw-events stream")
             .with_std_error(&error)
     })?;

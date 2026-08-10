@@ -173,6 +173,7 @@ async fn replay_gates_accept_matching_overrides() -> Result<()> {
         allow_time_quality_flips: true,
         allow_deep_cascade: true,
         force_schema_mismatch: true,
+        rate_budget: None,
     };
 
     ensure_replay_gates_pass(Uuid::now_v7(), &preview, &overrides)?;

@@ -122,7 +122,7 @@ pub use material::{
     TransientErrorPredicate,
 };
 pub use nats_publisher::NatsPublisher;
-pub use pacing::{BacklogGate, PacingController, RateBudget};
+pub use pacing::{BacklogGate, PacingController, RateBudget, ScanPacer};
 pub use pressure::PressureMonitor;
 pub use processing::AutomatonLogicError;
 pub use runtime_cli::{

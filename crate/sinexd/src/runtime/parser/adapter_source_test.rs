@@ -900,7 +900,7 @@ async fn adapter_oversized_record_is_chunked_and_emitted(ctx: TestContext) -> Te
     source
         .initialize(AdapterSourceConfig::default(), &runtime, &mut state)
         .await?;
-    let emitted = source.drain_adapter(None, &mut state, None).await?;
+    let emitted = source.drain_adapter(None, &mut state, None, None).await?;
 
     assert_eq!(emitted, 1);
     assert_eq!(state.cursor, Some(1));
@@ -938,7 +938,7 @@ async fn adapter_logical_path_record_materializes_descriptor_bytes(
     source
         .initialize(AdapterSourceConfig::default(), &runtime, &mut state)
         .await?;
-    let emitted = source.drain_adapter(None, &mut state, None).await?;
+    let emitted = source.drain_adapter(None, &mut state, None, None).await?;
     let event = event_receiver
         .recv()
         .await
@@ -1080,7 +1080,7 @@ async fn adapter_nil_material_records_are_batched_into_few_material_frames(
         .initialize(AdapterSourceConfig::default(), &runtime, &mut state)
         .await?;
 
-    let emitted = source.drain_adapter(None, &mut state, None).await?;
+    let emitted = source.drain_adapter(None, &mut state, None, None).await?;
 
     let mut stream = js.get_stream(&stream_name).await?;
     let material_frame_messages = stream.info().await?.state.messages;
@@ -1115,7 +1115,7 @@ async fn adapter_stream_finalizes_idle_material_before_stale_timeout(
 
     let drain_result = tokio::time::timeout(
         Duration::from_millis(2500),
-        source.drain_adapter(None, &mut state, None),
+        source.drain_adapter(None, &mut state, None, None),
     )
     .await;
 
@@ -1248,7 +1248,7 @@ async fn adapter_backed_source_preserves_already_materialized_record_provenance(
     source
         .initialize(AdapterSourceConfig::default(), &runtime, &mut state)
         .await?;
-    let emitted = source.drain_adapter(None, &mut state, None).await?;
+    let emitted = source.drain_adapter(None, &mut state, None, None).await?;
     let event = event_receiver
         .recv()
         .await
@@ -1394,7 +1394,7 @@ async fn adapter_source_updates_parser_checkpoint_after_successful_parse(
     source
         .initialize(AdapterSourceConfig::default(), &runtime, &mut state)
         .await?;
-    let emitted = source.drain_adapter(None, &mut state, None).await?;
+    let emitted = source.drain_adapter(None, &mut state, None, None).await?;
 
     assert_eq!(emitted, 2);
     assert_eq!(state.cursor, Some(2));
@@ -1506,7 +1506,7 @@ async fn adapter_durable_emission_receipt_blocks_cursor_when_never_settled(
         received
     });
 
-    let emitted = source.drain_adapter(None, &mut state, None).await?;
+    let emitted = source.drain_adapter(None, &mut state, None, None).await?;
     let received = drainer.await.expect("drainer task did not panic");
 
     assert_eq!(received, 2, "both records must reach the mpsc handoff");
@@ -1574,7 +1574,7 @@ async fn adapter_durable_emission_receipt_unlocks_cursor_once_settled(
         settled
     });
 
-    let emitted = source.drain_adapter(None, &mut state, None).await?;
+    let emitted = source.drain_adapter(None, &mut state, None, None).await?;
     let settled = settler.await.expect("settler task did not panic");
 
     assert_eq!(settled, 2);
@@ -1643,7 +1643,7 @@ async fn adapter_durable_emission_receipt_partial_batch_settlement_blocks_only_t
         seen
     });
 
-    let emitted = source.drain_adapter(None, &mut state, None).await?;
+    let emitted = source.drain_adapter(None, &mut state, None, None).await?;
     let seen = settler.await.expect("settler task did not panic");
 
     assert_eq!(seen, 2, "both records reach the mpsc handoff");

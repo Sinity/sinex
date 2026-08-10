@@ -215,6 +215,21 @@ pub enum RuntimeCommand {
         /// Show estimation before execution
         #[arg(long)]
         estimate: bool,
+
+        /// Disable historical-import pacing entirely (sinex-2n9). Historical
+        /// scans are paced by default; this is the explicit opt-out.
+        #[arg(long)]
+        unlimited: bool,
+
+        /// Override the paced events/sec budget for this scan
+        /// (ignored with `--unlimited`).
+        #[arg(long)]
+        rate_events_per_sec: Option<f64>,
+
+        /// Override the paced bytes/sec budget for this scan
+        /// (ignored with `--unlimited`).
+        #[arg(long)]
+        rate_bytes_per_sec: Option<f64>,
     },
 
     /// Interactive exploration and diagnostics
@@ -531,6 +546,9 @@ impl<T: crate::runtime::stream::RuntimeModule + ExplorationProvider + Default + 
                 max_events,
                 no_skip_duplicates,
                 estimate,
+                unlimited,
+                rate_events_per_sec,
+                rate_bytes_per_sec,
             } => {
                 self.handle_scan_command(
                     module,
@@ -543,6 +561,9 @@ impl<T: crate::runtime::stream::RuntimeModule + ExplorationProvider + Default + 
                     max_events,
                     no_skip_duplicates,
                     estimate,
+                    unlimited,
+                    rate_events_per_sec,
+                    rate_bytes_per_sec,
                     &args,
                 )
                 .await
@@ -632,8 +653,12 @@ impl<T: crate::runtime::stream::RuntimeModule + ExplorationProvider + Default + 
         max_events: u64,
         no_skip_duplicates: bool,
         estimate: bool,
+        unlimited: bool,
+        rate_events_per_sec: Option<f64>,
+        rate_bytes_per_sec: Option<f64>,
         args: &RuntimeCli,
     ) -> RuntimeResult<()> {
+        use crate::runtime::pacing::RateBudget;
         use crate::runtime::stream::ScanArgs;
 
         info!("Running scan operation");
@@ -676,6 +701,23 @@ impl<T: crate::runtime::stream::RuntimeModule + ExplorationProvider + Default + 
             )
             .await?;
 
+        // Historical-import pacing override (sinex-2n9): `--unlimited` wins
+        // outright; individual rate overrides layer on top of the default
+        // paced budget; absent any override, `rate_budget` stays `None` and
+        // resolves to the source's binding-config/default paced budget.
+        let rate_budget = if unlimited {
+            Some(RateBudget::unlimited())
+        } else if rate_events_per_sec.is_some() || rate_bytes_per_sec.is_some() {
+            let defaults = RateBudget::default_paced();
+            Some(RateBudget {
+                events_per_sec: rate_events_per_sec.or(defaults.events_per_sec),
+                bytes_per_sec: rate_bytes_per_sec.or(defaults.bytes_per_sec),
+                ..defaults
+            })
+        } else {
+            None
+        };
+
         // Create scan args
         let scan_args = ScanArgs {
             targets: targets.iter().map(ToString::to_string).collect(),
@@ -685,6 +727,7 @@ impl<T: crate::runtime::stream::RuntimeModule + ExplorationProvider + Default + 
             skip_duplicates: !no_skip_duplicates,
             config: HashMap::new(),
             replay: None,
+            rate_budget,
         };
 
         let workflow_result: RuntimeResult<Option<crate::runtime::stream::ScanReport>> = async {

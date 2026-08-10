@@ -390,6 +390,7 @@ impl ReplayExecutionEngine {
                 self.replay.pool(),
                 &mut checkpoint,
                 executor_name,
+                gate_overrides.rate_budget,
             )
             .await;
 
@@ -426,6 +427,7 @@ impl ReplayExecutionEngine {
                 self.replay.pool(),
                 &mut checkpoint,
                 submitter,
+                gate_overrides.rate_budget,
             )
             .await;
 

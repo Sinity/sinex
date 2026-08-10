@@ -291,6 +291,7 @@ impl ReplayExecutionEngine {
     /// transaction. Failures after the archive commit are handled by the replay
     /// saga (`abort_before_scan_ack`) rather than holding database locks across
     /// request-reply messaging.
+    #[allow(clippy::too_many_arguments)]
     pub(crate) async fn replay_events(
         &self,
         operation_id: Uuid,
@@ -301,6 +302,7 @@ impl ReplayExecutionEngine {
         pool: &sqlx::PgPool,
         checkpoint: &mut ReplayCheckpoint,
         executor_name: &str,
+        rate_budget: Option<sinex_primitives::pacing::RateBudget>,
     ) -> Result<u64> {
         let material_roots = self
             .collect_scope_events(scope, execution_window, pool)
@@ -499,6 +501,7 @@ impl ReplayExecutionEngine {
                 skip_duplicates: true,
                 config: HashMap::new(),
                 replay: Some(replay_context),
+                rate_budget,
             },
         };
 

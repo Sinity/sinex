@@ -30,6 +30,7 @@ pub mod nats;
 pub mod non_empty;
 pub mod otel_projection;
 pub mod output_kind;
+pub mod pacing;
 pub mod parser;
 pub mod primitives;
 pub mod privacy;
