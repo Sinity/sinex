@@ -326,7 +326,7 @@ impl MaterialParser for ActivityWatchParser {
             "buckets.id",
             "buckets.name",
             "events.bucketrow",
-            "events.datastr",
+            "events.data",
             "events.endtime",
             "events.id",
             "events.starttime",
@@ -357,7 +357,7 @@ impl MaterialParser for ActivityWatchParser {
         // without materially widening each poll's row count against the
         // 10_000-row default batch size.
         serde_json::json!({
-            "query": "SELECT events.id AS rowid, buckets.name AS bucket_id, events.starttime AS started_at, ((events.endtime - events.starttime) / 1000000000.0) AS duration, events.datastr AS data FROM events JOIN buckets ON events.bucketrow = buckets.id ORDER BY events.id",
+            "query": "SELECT events.id AS rowid, buckets.name AS bucket_id, events.starttime AS started_at, ((events.endtime - events.starttime) / 1000000000.0) AS duration, events.data AS data FROM events JOIN buckets ON events.bucketrow = buckets.id ORDER BY events.id",
             "table": "events",
             "mutable_trailing_rows": 32
         })
