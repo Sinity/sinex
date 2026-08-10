@@ -9,19 +9,60 @@ use sinex_primitives::temporal::Timestamp;
 
 use crate::runtime::automaton::context::AutomatonContext;
 use crate::runtime::automaton::traits::Automaton;
+use crate::runtime::durable_emission::{
+    DurableEmissionRequest, EmissionOrigin, ProgressAtom, ReceiptLevel,
+};
+use crate::runtime::durable_emission_backend::emit_batch_durable;
+use crate::runtime::stream::RuntimeContext;
 use crate::runtime::{RuntimeResult, SinexError};
 
 use sinex_primitives::JsonValue;
+use sinex_primitives::commit_frontier::{CommitFrontier, TerminalOutcome};
 use sinex_primitives::events::Event;
 #[cfg(feature = "db")]
 use sinex_primitives::query::{EventQuery, EventQueryResult, QueryResultEvent};
 use sinex_primitives::settlement::{
     DefaultFailurePolicy, FailureContext, FailurePolicy, RuntimeOperation, RuntimePhase, Settlement,
 };
+use sinex_primitives::Id;
 
 #[cfg(feature = "db")]
 use tracing::info;
 use tracing::{error, warn};
+
+/// One event's automaton-logic outcome, computed by [`AutomatonRuntime::prepare_one`]
+/// but not yet committed to persisted state (sinex-vxu: `process_one`/
+/// `process_batch` split into a prepare phase and a
+/// [`AutomatonRuntime::commit_prepared_inputs`] phase so a checkpoint can
+/// never durably advance past an input whose output is not itself durably
+/// confirmed).
+struct PreparedInput {
+    source_event_id: Id<Event<JsonValue>>,
+    input_ts_orig: Option<Timestamp>,
+    settlement: PreparedSettlement,
+}
+
+/// What still needs to happen (if anything) before a [`PreparedInput`] may
+/// be marked processed.
+enum PreparedSettlement {
+    /// The automaton produced no output (`Ok(vec![])`), or the failure
+    /// policy settled the automaton's error as a benign commit — nothing to
+    /// durably confirm; safe to mark processed immediately.
+    NoOutput,
+    /// Non-empty output events exist and must be durably emitted (and
+    /// settle to a progress-unlocking [`crate::runtime::durable_emission::EmissionReceiptState`])
+    /// before this input may be marked processed.
+    PendingEmission(Vec<Event<JsonValue>>),
+    /// Routed to the processing-failure queue over a transport that itself
+    /// durably persisted the routing (`EventTransport::Nats`) — already
+    /// safe to mark processed.
+    DurableFailureRouted,
+    /// Routed to the processing-failure queue, but the transport could not
+    /// prove the routing itself was durable (`EventTransport::Direct`,
+    /// warning-only — sinex-vxu AC explicitly excludes this from counting
+    /// as durable evidence). Must NOT be marked processed.
+    UnprovenFailureRouted,
+}
 
 impl<N> AutomatonRuntime<N>
 where
@@ -126,6 +167,19 @@ where
             })
     }
 
+    /// Whether a successful `send_to_processing_failure_queue_or_fail` call
+    /// just now actually durably recorded the routing — see
+    /// `EventTransport::processing_failure_routing_is_durable`. `false`
+    /// (never durable) when no runtime/transport is available at all.
+    pub(super) fn processing_failure_routing_is_durable(&self) -> bool {
+        self.runtime.as_ref().is_some_and(|runtime| {
+            runtime
+                .handles()
+                .transport()
+                .processing_failure_routing_is_durable()
+        })
+    }
+
     pub(super) async fn emit_output_events(
         &self,
         outputs: Vec<Event<JsonValue>>,
@@ -163,13 +217,46 @@ where
         Ok(count)
     }
 
-    /// Process a single event through the automaton's logic.
+    /// Process a single event through the automaton's logic and commit it
+    /// immediately (synchronous "just do it" contract — a low-level helper
+    /// used directly by unit tests that exercise automaton logic in
+    /// isolation). Production live-bridge processing goes through
+    /// `process_batch`, which routes through `prepare_one` +
+    /// `commit_prepared_inputs` instead so a checkpoint can never durably
+    /// outrun the outputs it implies (sinex-vxu) — `process_one` itself
+    /// intentionally keeps its long-standing immediate-commit behavior so
+    /// its existing test surface is unaffected by that reorder.
     pub async fn process_one(
         &mut self,
         event: Event<JsonValue>,
     ) -> RuntimeResult<Vec<Event<JsonValue>>> {
+        let prepared = self.prepare_one(event).await?;
+        let PreparedInput {
+            source_event_id,
+            input_ts_orig,
+            settlement,
+        } = prepared;
+        let outputs = match settlement {
+            PreparedSettlement::PendingEmission(outputs) => outputs,
+            PreparedSettlement::NoOutput
+            | PreparedSettlement::DurableFailureRouted
+            | PreparedSettlement::UnprovenFailureRouted => Vec::new(),
+        };
+        self.record_processed_input(source_event_id, input_ts_orig);
+        self.observe_runtime_snapshot().await;
+        Ok(outputs)
+    }
+
+    /// Run the automaton's logic for a single event and report the outcome
+    /// WITHOUT mutating persisted state — see `PreparedInput`/
+    /// `PreparedSettlement`. All side effects that are themselves already
+    /// durable when they happen (processing-failure routing) still execute
+    /// here; only `record_processed_input`/checkpoint advancement is
+    /// deferred to the caller's commit phase.
+    async fn prepare_one(&mut self, event: Event<JsonValue>) -> RuntimeResult<PreparedInput> {
         let context = AutomatonContext::live(&event)?;
         let source_event_id = context.trigger_event_id;
+        let input_ts_orig = event.ts_orig;
 
         // Lag = wall time between the upstream event's `ts_orig` and the
         // moment we start processing it. Negative values (clock skew /
@@ -228,9 +315,16 @@ where
                 self.observe_output_batch(&outputs, "live").await;
                 let output_events =
                     self.build_output_events(outputs, Some(source_event_id), &context)?;
-                self.record_processed_input(source_event_id, event.ts_orig);
-                self.observe_runtime_snapshot().await;
-                Ok(output_events)
+                let settlement = if output_events.is_empty() {
+                    PreparedSettlement::NoOutput
+                } else {
+                    PreparedSettlement::PendingEmission(output_events)
+                };
+                Ok(PreparedInput {
+                    source_event_id,
+                    input_ts_orig,
+                    settlement,
+                })
             }
             Err(e) => {
                 // Use FailurePolicy::settle() which maps ErrorClass
@@ -250,9 +344,11 @@ where
                 match settlement {
                     Settlement::Commit => {
                         warn!(automaton = %self.automaton.name(), error = %e, "Committing (settled as benign)");
-                        self.record_processed_input(source_event_id, event.ts_orig);
-                        self.observe_runtime_snapshot().await;
-                        Ok(Vec::new())
+                        Ok(PreparedInput {
+                            source_event_id,
+                            input_ts_orig,
+                            settlement: PreparedSettlement::NoOutput,
+                        })
                     }
                     Settlement::SendToProcessingFailure
                     | Settlement::Park { .. }
@@ -260,9 +356,16 @@ where
                         warn!(automaton = %self.automaton.name(), error = %e, "Routing to processing-failure queue");
                         self.send_to_processing_failure_queue_or_fail(&event, &e)
                             .await?;
-                        self.record_processed_input(source_event_id, event.ts_orig);
-                        self.observe_runtime_snapshot().await;
-                        Ok(Vec::new())
+                        let settlement = if self.processing_failure_routing_is_durable() {
+                            PreparedSettlement::DurableFailureRouted
+                        } else {
+                            PreparedSettlement::UnprovenFailureRouted
+                        };
+                        Ok(PreparedInput {
+                            source_event_id,
+                            input_ts_orig,
+                            settlement,
+                        })
                     }
                     Settlement::Retry { .. } => {
                         error!(
@@ -371,6 +474,135 @@ where
         Ok(count)
     }
 
+    /// Durably emit every `PendingEmission` output collected from a batch of
+    /// `prepare_one` calls, then mark inputs processed ONLY for the
+    /// contiguous prefix whose settlement (immediate no-output/durable-debt,
+    /// or a durable-emission receipt) unlocked progress (sinex-vxu). This is
+    /// the actual fix: `record_processed_input` (and therefore the
+    /// checkpoint) can never advance past an input whose output has not
+    /// itself been durably confirmed — a hole (unresolved/timed-out
+    /// receipt, or an unproven processing-failure routing) blocks every
+    /// input submitted after it in this same call from being marked
+    /// processed, exactly like the sinex-r6d.11 reference caller
+    /// (`adapter_source.rs::drain_adapter`).
+    async fn commit_prepared_inputs(
+        &mut self,
+        prepared_inputs: Vec<PreparedInput>,
+        context: &'static str,
+    ) -> RuntimeResult<Vec<Event<JsonValue>>> {
+        if prepared_inputs.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        struct PlanEntry {
+            source_event_id: Id<Event<JsonValue>>,
+            input_ts_orig: Option<Timestamp>,
+            outputs: Vec<Event<JsonValue>>,
+            /// Only meaningful when `outputs` is empty — whether this entry
+            /// is already durably settled (`NoOutput`/`DurableFailureRouted`)
+            /// or a permanent hole for this call (`UnprovenFailureRouted`).
+            immediately_unlocked: bool,
+        }
+
+        let mut plan: Vec<PlanEntry> = Vec::with_capacity(prepared_inputs.len());
+        let mut batch_events: Vec<Event<JsonValue>> = Vec::new();
+
+        for prepared in prepared_inputs {
+            let (outputs, immediately_unlocked) = match prepared.settlement {
+                PreparedSettlement::NoOutput | PreparedSettlement::DurableFailureRouted => {
+                    (Vec::new(), true)
+                }
+                PreparedSettlement::UnprovenFailureRouted => (Vec::new(), false),
+                PreparedSettlement::PendingEmission(outputs) => {
+                    batch_events.extend(outputs.iter().cloned());
+                    (outputs, false)
+                }
+            };
+            plan.push(PlanEntry {
+                source_event_id: prepared.source_event_id,
+                input_ts_orig: prepared.input_ts_orig,
+                outputs,
+                immediately_unlocked,
+            });
+        }
+
+        let receipt = if batch_events.is_empty() {
+            None
+        } else if let Some(emitter) = self.event_emitter.as_ref() {
+            let registry = self
+                .runtime
+                .as_ref()
+                .map(RuntimeContext::settlement_registry)
+                .unwrap_or_default();
+            let input_event_ids = plan
+                .iter()
+                .filter(|entry| !entry.outputs.is_empty())
+                .map(|entry| *entry.source_event_id.as_uuid())
+                .collect();
+            let request = DurableEmissionRequest {
+                origin: EmissionOrigin::AutomatonBridge,
+                required_level: ReceiptLevel::AdmissionSettled,
+                progress_atom: ProgressAtom::AutomatonInputBatch {
+                    automaton: self.automaton.name().to_string(),
+                    input_event_ids,
+                },
+                events: batch_events,
+                allow_spool_backend: false,
+            };
+            Some(emit_batch_durable(&registry, emitter, request, self.durable_emission_timeout).await)
+        } else {
+            warn!(
+                automaton = %self.automaton.name(),
+                context,
+                "automaton output channel is not initialized — cannot durably emit outputs \
+                 this batch; none of the inputs that produced output events will be marked \
+                 processed"
+            );
+            None
+        };
+
+        let mut frontier: CommitFrontier<()> = CommitFrontier::new();
+        let mut receipt_offset = 0usize;
+
+        for entry in &plan {
+            let ticket = frontier.submit();
+            let unlocked = if entry.outputs.is_empty() {
+                entry.immediately_unlocked
+            } else if let Some(receipt) = &receipt {
+                let event_count = entry.outputs.len();
+                let span_end = (receipt_offset + event_count).min(receipt.items.len());
+                let span = &receipt.items[receipt_offset.min(receipt.items.len())..span_end];
+                receipt_offset += event_count;
+                !span.is_empty() && span.iter().all(|item| item.state.is_progress_unlocking())
+            } else {
+                false
+            };
+
+            if unlocked {
+                frontier.complete(ticket, TerminalOutcome::PersistedConfirmed, ());
+            } else {
+                warn!(
+                    automaton = %self.automaton.name(),
+                    event_id = %entry.source_event_id,
+                    context,
+                    "input's durable-emission receipt did not fully unlock progress — not \
+                     marking processed so the checkpoint does not outrun this output \
+                     (sinex-vxu)"
+                );
+            }
+        }
+
+        let committed_prefix = frontier.frontier().0 as usize;
+        let mut committed_outputs = Vec::new();
+        for entry in plan.into_iter().take(committed_prefix) {
+            self.record_processed_input(entry.source_event_id, entry.input_ts_orig);
+            self.observe_runtime_snapshot().await;
+            committed_outputs.extend(entry.outputs);
+        }
+
+        Ok(committed_outputs)
+    }
+
     /// Process a batch of events.
     ///
     /// Events that fail with `Settlement::Retry` halt the batch — the checkpoint
@@ -379,12 +611,12 @@ where
         &mut self,
         events: Vec<Event<JsonValue>>,
     ) -> RuntimeResult<Vec<Event<JsonValue>>> {
-        let mut outputs = Vec::new();
+        let mut prepared_inputs = Vec::with_capacity(events.len());
         let mut retry_error: Option<SinexError> = None;
 
         for event in events {
-            match self.process_one(event).await {
-                Ok(mut output_events) => outputs.append(&mut output_events),
+            match self.prepare_one(event).await {
+                Ok(prepared) => prepared_inputs.push(prepared),
                 Err(e) => {
                     error!(
                         target: "sinex_metrics",
@@ -399,6 +631,10 @@ where
             }
         }
 
+        let outputs = self
+            .commit_prepared_inputs(prepared_inputs, "event bridge batch")
+            .await?;
+
         if self.should_checkpoint() {
             match self
                 .save_state_with_file_fallback("event bridge batch checkpoint")
@@ -406,12 +642,15 @@ where
             {
                 Ok(()) => {
                     self.consecutive_checkpoint_failures = 0;
-                    // sinex-r6d.9 crash-window harness: the checkpoint just
-                    // saved durably above is exactly the sinex-vxu window —
-                    // `outputs` has not been returned to the caller for
-                    // emission yet. Exit here (not a catchable panic) so a
-                    // harness can prove restart+catch-up does NOT repair
-                    // this gap on pre-fix code.
+                    // sinex-r6d.9 crash-window harness: by this point, every
+                    // input reflected in the checkpoint just saved above has
+                    // ALREADY had its output(s) durably confirmed by
+                    // `commit_prepared_inputs` (sinex-vxu fix) — the
+                    // checkpoint-before-output window this fail point
+                    // targets is structurally unreachable now. The fail
+                    // point stays wired at this same position so the harness
+                    // continues to prove that fact directly: an armed flag
+                    // only fires here once it is actually safe to.
                     #[cfg(any(test, feature = "testing"))]
                     if let Some(flag) = &self.fail_point_after_checkpoint
                         && flag.load(std::sync::atomic::Ordering::SeqCst)

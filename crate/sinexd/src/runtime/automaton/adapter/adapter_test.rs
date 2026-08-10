@@ -438,6 +438,56 @@ async fn make_runtime_state(
     ))
 }
 
+/// Like `make_runtime_state`, but wires an explicit `SettlementRegistry`
+/// into the returned `RuntimeContext` (sinex-vxu) instead of the default
+/// disconnected one, so a caller-side `emit_batch_durable` can actually
+/// observe settlement. The context's own internal emitter/channel is
+/// unused by callers that install their own `adapter.event_emitter`
+/// (matching `make_runtime_state`'s existing `_event_receiver` pattern).
+async fn make_runtime_state_with_registry(
+    ctx: &TestContext,
+    module_name: &str,
+    registry: crate::runtime::durable_emission::SettlementRegistry,
+) -> TestResult<RuntimeContext> {
+    let kv = ctx.checkpoint_kv().await?;
+    let checkpoint_manager = Arc::new(CheckpointManager::new(
+        kv,
+        module_name.to_string(),
+        "test-group".to_string(),
+        format!("test-consumer-{}", Uuid::now_v7().simple()),
+    ));
+    let (event_sender, _event_receiver) = mpsc::channel::<Event<JsonValue>>(32);
+    let emitter = EventEmitter::new(event_sender, false);
+    let publisher = Arc::new(NatsPublisher::new(ctx.nats_client()));
+    let handles = RuntimeHandles::new_edge(
+        checkpoint_manager,
+        emitter,
+        EventTransport::Nats(publisher),
+        None,
+    )
+    .with_settlement_registry(registry);
+    let work_dir = tempdir()?;
+    let work_dir_path = work_dir.keep();
+    let work_dir_utf8 = Utf8PathBuf::from_path_buf(work_dir_path.clone()).map_err(|path| {
+        color_eyre::eyre::eyre!("temporary work dir should be utf-8: {}", path.display())
+    })?;
+    Ok(RuntimeContext::new(
+        ServiceInfo::new(
+            module_name.to_string(),
+            module_name.to_string(),
+            HostName::from_static("test-host"),
+            work_dir_path,
+            false,
+            format!("instance-{}", Uuid::now_v7().simple()),
+            env!("CARGO_PKG_VERSION").to_string(),
+            None,
+        ),
+        handles,
+        HashMap::new(),
+        work_dir_utf8,
+    ))
+}
+
 async fn make_runtime_state_with_db(
     ctx: &TestContext,
     module_name: &str,
@@ -936,24 +986,39 @@ async fn r6d9_fixed_checkpoint_manager(
     ))
 }
 
-/// sinex-r6d.9 crash-window harness, first scenario: proves BOTH halves of
-/// the sinex-vxu checkpoint-before-output data-loss contract using a real
-/// NATS KV `CheckpointManager` shared (by fixed bucket/key, not the usual
-/// per-test-random namespace — see `r6d9_fixed_checkpoint_manager`) between
-/// a child process and its parent:
+/// sinex-r6d.9 crash-window harness, first scenario — FLIPPED (sinex-vxu
+/// fix): this test used to prove the checkpoint-before-output data-loss
+/// window was reachable (child exits(97) after a checkpoint save that
+/// preceded output durability, and a fresh `CheckpointManager` then showed
+/// `processed_count == 1` even though the output was never captured
+/// anywhere). After the sinex-vxu reorder (`process_batch` now routes every
+/// input through `prepare_one` + `commit_prepared_inputs`, which durably
+/// emits outputs via `emit_batch_durable` and only calls
+/// `record_processed_input` for inputs whose receipt actually unlocked
+/// progress — see `process.rs`), that window is no longer reachable at all:
 ///
-/// 1. INJECTION: the `fail_point_after_checkpoint` hook fires exactly at the
-///    boundary sinex-vxu describes — checkpoint durably saved,
-///    `process_batch` about to return outputs to its caller for emission
-///    but hasn't yet — proven by the child process exiting(97) instead of
-///    returning.
-/// 2. IRREPARABILITY: after the crash, a fresh `CheckpointManager` pointed
-///    at the SAME durable checkpoint (simulating what a restarted process's
-///    catch-up would read) shows the input as already processed
-///    (`processed_count == 1`) — proving this is not just "the process
-///    crashed once" but the exact silent-loss shape sinex-vxu names: a
-///    restart's catch-up would skip this input as already-done, yet its
-///    derived output was never captured anywhere.
+/// 1. SAFETY: with no event emitter wired (deliberately reproducing the
+///    OLD test's exact setup — nothing this automaton could possibly emit
+///    through), `process_batch` can never durably confirm
+///    `EmittingAutomaton`'s output, so it must never call
+///    `record_processed_input` for it either. `should_checkpoint()` then
+///    never sees a dirty counter to save, so the checkpoint save the fail
+///    point is armed on top of is never reached — the fail point does NOT
+///    fire, and the child exits normally (not via `std::process::exit(97)`).
+/// 2. NO FALSE ADVANCEMENT: a fresh `CheckpointManager` pointed at the SAME
+///    durable checkpoint (simulating what a restarted process's catch-up
+///    would read) shows `processed_count == 0` — proving the checkpoint was
+///    never falsely advanced past an input whose output could not be
+///    durably confirmed. The crash window sinex-vxu described (checkpoint
+///    durably advanced while its output was never captured anywhere) is now
+///    structurally impossible: a checkpoint save can only be reached once
+///    every input it reflects has an already-durable outcome.
+///
+/// See `process_batch_advances_checkpoint_only_after_durable_emission_settles`
+/// below for the complementary POSITIVE-path proof (with a properly wired,
+/// auto-settling registry, the checkpoint DOES advance correctly) — that
+/// test exercises the exact same `commit_prepared_inputs` code path
+/// in-process, without needing a second child-process scenario here.
 #[sinex_test]
 async fn r6d9_checkpoint_before_output_fail_point_fires(ctx: TestContext) -> TestResult<()> {
     if let Ok(nats_url) = std::env::var(R6D9_NATS_URL_ENV) {
@@ -977,14 +1042,27 @@ async fn r6d9_checkpoint_before_output_fail_point_fires(ctx: TestContext) -> Tes
         .with_fail_point_after_checkpoint(Arc::new(std::sync::atomic::AtomicBool::new(true)));
         adapter.checkpoint_manager = Some(checkpoint_manager);
 
-        // The fail point exits the process inside this call, after the
-        // checkpoint save succeeds and before outputs are returned. This
-        // line intentionally never returns on a correctly-armed fail point.
-        let _ = adapter.process_batch(vec![make_input_event("r6d9")?]).await;
-        panic!(
-            "fail point did not fire: process_batch returned instead of exiting the process \
-             after the checkpoint save"
+        // sinex-vxu fix: no event_emitter/settlement registry is wired here
+        // — deliberately reproducing the OLD test's exact setup. Under the
+        // FIXED code, `process_batch` has no way to durably confirm
+        // `EmittingAutomaton`'s output at all, so it must never mark the
+        // input processed either — the checkpoint-before-output window the
+        // fail point targets must be structurally unreachable, not merely
+        // empirically avoided. A clean, non-crashing return (with nothing
+        // committed) is therefore the CORRECT outcome now.
+        let committed = adapter
+            .process_batch(vec![make_input_event("r6d9")?])
+            .await
+            .expect(
+                "process_batch must not error merely because durable emission cannot be \
+                 attempted (no event emitter wired) — it should simply commit nothing",
+            );
+        assert!(
+            committed.is_empty(),
+            "sinex-vxu fix: with no event emitter wired, nothing can be durably confirmed, so \
+             no input may be marked processed — got {committed:?}"
         );
+        return Ok(());
     }
 
     let ctx = ctx.with_nats().shared().await?;
@@ -992,7 +1070,7 @@ async fn r6d9_checkpoint_before_output_fail_point_fires(ctx: TestContext) -> Tes
     let nats_url = ctx.nats_handle()?.client_url().to_string();
 
     // Defensive: purge any stale checkpoint state a prior run of this fixed
-    // bucket/key may have left behind, so the post-crash assertion below
+    // bucket/key may have left behind, so the post-run assertion below
     // reflects only THIS run's child.
     let pre_manager = r6d9_fixed_checkpoint_manager(&js).await?;
     let _ = pre_manager.reset_checkpoint().await;
@@ -1020,35 +1098,136 @@ async fn r6d9_checkpoint_before_output_fail_point_fires(ctx: TestContext) -> Tes
         .await
         .map_err(|e| color_eyre::eyre::eyre!("failed to spawn r6d9 inner-scenario child: {e}"))?;
 
-    assert_eq!(
-        output.status.code(),
-        Some(97),
-        "sinex-r6d.9 fail point must fire exactly at the checkpoint-saved/outputs-not-yet-\
-         returned boundary in process_batch (process.rs) — got exit status {:?} instead of the \
-         expected exit(97).\n--- child stdout ---\n{}\n--- child stderr ---\n{}",
+    assert!(
+        output.status.success(),
+        "sinex-vxu fix: the checkpoint-before-output crash window must no longer be reachable \
+         — the child should return normally (having committed nothing) instead of the fail \
+         point ever firing. Got exit status {:?}.\n--- child stdout ---\n{}\n--- child stderr ---\n{}",
         output.status,
         String::from_utf8_lossy(&output.stdout),
         String::from_utf8_lossy(&output.stderr),
     );
 
-    // IRREPARABILITY: the crashed child's checkpoint write is durable and
-    // visible to a fresh manager over the same bucket/key/NATS server —
-    // exactly what a restarted process's catch-up would read. This is the
-    // proof that the window is real data loss, not just a crashed process:
-    // catch-up would see this input as done and skip it, yet
-    // EmittingAutomaton's output for it was never returned to any emission
-    // path.
+    // NO FALSE ADVANCEMENT: the checkpoint this fixed bucket/key points at
+    // must still be exactly what `reset_checkpoint` left it as — the
+    // crashed-and-lost-output shape sinex-vxu described (checkpoint
+    // durably advanced, output never captured anywhere) is now provably
+    // impossible: `processed_count` never moved off zero because
+    // `commit_prepared_inputs` never had a durable outcome to commit.
     let post_manager = r6d9_fixed_checkpoint_manager(&js).await?;
     let restored = post_manager.load_checkpoint().await?;
     assert_eq!(
-        restored.processed_count, 1,
-        "the crashed child's checkpoint must durably record the input as processed \
-         (processed_count == 1) even though its output was never returned for emission — \
-         this is the silent-loss shape sinex-vxu describes: a restart's catch-up would skip \
-         this input as already-done. Got: {restored:?}"
+        restored.processed_count, 0,
+        "sinex-vxu fix: the checkpoint must NOT have advanced — no input's output was ever \
+         durably confirmed, so none should be marked processed. Got: {restored:?}"
     );
 
     Ok(())
+}
+
+/// Complementary POSITIVE-path proof for the sinex-vxu fix, exercised
+/// entirely in-process (no cross-process fail point needed): with a
+/// properly wired, auto-settling `SettlementRegistry` — the same pattern
+/// `adapter_source_test.rs::auto_settle_events` uses for the sinex-r6d.11
+/// reference caller — `process_batch` DOES durably emit the output and DOES
+/// advance the checkpoint, and it does so only AFTER the durable-emission
+/// receipt actually unlocked progress (proven directly: withholding
+/// settlement entirely, with a short timeout, leaves the checkpoint
+/// untouched; wiring the auto-resolver lets it advance).
+#[sinex_test]
+async fn process_batch_advances_checkpoint_only_after_durable_emission_settles(
+    ctx: TestContext,
+) -> TestResult<()> {
+    let ctx = ctx.with_nats().shared().await?;
+
+    // Negative half: an emitter IS wired, but nothing ever resolves the
+    // registry — settlement must time out, and the checkpoint must stay
+    // untouched (mirrors the r6d9 harness's safety property, but as a fast
+    // in-process assertion instead of a cross-process crash).
+    {
+        let (event_sender, _event_receiver) = mpsc::channel::<Event<JsonValue>>(8);
+        let emitter = EventEmitter::new(event_sender, false);
+        let mut adapter = AutomatonRuntime::new(TransducerWrapper(EmittingAutomaton))
+            .with_durable_emission_timeout(std::time::Duration::from_millis(100));
+        adapter.event_emitter = Some(emitter);
+
+        let committed = adapter
+            .process_batch(vec![make_input_event("unsettled")?])
+            .await?;
+        assert!(
+            committed.is_empty(),
+            "an unresolved durable-emission receipt must not be treated as processed"
+        );
+        assert_eq!(
+            adapter.persisted_state.events_processed, 0,
+            "the checkpoint must not advance while durable emission is still unresolved"
+        );
+        assert_eq!(adapter.current_checkpoint_internal(), Checkpoint::None);
+    }
+
+    // Positive half: an auto-settling registry resolves every emitted event
+    // as PersistedConfirmed the moment it's observed on the channel — the
+    // checkpoint must then advance to reflect exactly that input.
+    {
+        let (event_sender, event_receiver) = mpsc::channel::<Event<JsonValue>>(8);
+        let emitter = EventEmitter::new(event_sender, false);
+        let registry = crate::runtime::durable_emission::SettlementRegistry::new();
+        let _forwarder = auto_settle_events(event_receiver, registry.clone());
+        let runtime =
+            make_runtime_state_with_registry(&ctx, "derived-adapter-emitting-test", registry)
+                .await?;
+
+        let mut adapter = AutomatonRuntime::new(TransducerWrapper(EmittingAutomaton));
+        adapter.event_emitter = Some(emitter);
+        adapter.runtime = Some(runtime);
+
+        let input = make_input_event("settled")?;
+        let input_id = input.id.expect("test input must have an id");
+        let committed = adapter.process_batch(vec![input]).await?;
+
+        assert_eq!(
+            committed.len(),
+            1,
+            "the input's output settled durably and must be reported as committed"
+        );
+        assert_eq!(
+            adapter.persisted_state.events_processed, 1,
+            "the checkpoint must advance once durable emission actually settles"
+        );
+        assert_eq!(
+            adapter.current_checkpoint_internal(),
+            Checkpoint::internal(*input_id.as_uuid(), 1)
+        );
+    }
+
+    Ok(())
+}
+
+/// Drain `raw`, resolving every emitted event's id as `PersistedConfirmed`
+/// in `registry` before forwarding it — a minimal stand-in for the real
+/// event-engine's settlement call sites (`jetstream_consumer/persist.rs`),
+/// matching `adapter_source_test.rs::auto_settle_events`'s pattern. Spawned
+/// as a background task; returns the join handle purely so callers can keep
+/// it alive for the scope that needs it (dropping the handle does not abort
+/// the task).
+fn auto_settle_events(
+    mut raw: mpsc::Receiver<Event<JsonValue>>,
+    registry: crate::runtime::durable_emission::SettlementRegistry,
+) -> tokio::task::JoinHandle<()> {
+    tokio::spawn(async move {
+        while let Some(event) = raw.recv().await {
+            if let Some(id) = event.id {
+                registry.resolve(
+                    id,
+                    crate::runtime::durable_emission::EmissionReceiptState::PersistedConfirmed {
+                        lane: sinex_db::repositories::EventStorageLane::Activity,
+                        inserted: true,
+                        confirmed_sequence: None,
+                    },
+                );
+            }
+        }
+    })
 }
 
 // -------------------------------------------------------------------------
