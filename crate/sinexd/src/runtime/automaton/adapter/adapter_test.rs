@@ -150,6 +150,34 @@ impl Transducer for RetryAutomaton {
 
 struct EmittingAutomaton;
 
+/// Derivation control-plane declaration for the `EmittingAutomaton` test
+/// fixture (sinex-0vx.8: anonymous `declaration_id: None` derived outputs
+/// have been rejected since PR #2552 — this fixture predates that gate and
+/// needs its own declaration like every real automaton in
+/// `automata/registry.rs`). `output_source: None` matches any source so
+/// this doesn't need to track `Transducer`'s default
+/// `output_event_source()`.
+const EMITTING_AUTOMATON_OUTPUT_DECLARATIONS: &[sinex_primitives::derivation::DerivationOutputDeclaration] =
+    &[sinex_primitives::derivation::DerivationOutputDeclaration {
+        declaration_id: "test.derived-adapter-emitting-test.test.output",
+        owner: "test",
+        product_class: sinex_primitives::derivation::DerivedProductClass::CanonicalDerivedEvent,
+        write_surface: sinex_primitives::derivation::DerivationWriteSurface::DerivedOutput,
+        output_source: None,
+        output_event_type: Some("test.output"),
+        projection_kind: None,
+        artifact_kind: None,
+        proposal_kind: None,
+        semantics_version: "1.0.0",
+        input_eligibility: sinex_primitives::derivation::InputEligibility::ExplicitOnly,
+        default_support: sinex_primitives::derivation::ClaimSupportTemplate::new(
+            sinex_primitives::derivation::SupportLevel::Convergent,
+            sinex_primitives::derivation::SourceCoverage::Partial,
+            sinex_primitives::derivation::ClaimTemporalQuality::DeclaredEffective,
+        ),
+        verification_command: "xtask test -p sinexd -E 'test(process_one) or test(r6d9)'",
+    }];
+
 impl Transducer for EmittingAutomaton {
     type State = TestDerivedState;
     type Input = JsonValue;
@@ -166,17 +194,26 @@ impl Transducer for EmittingAutomaton {
     fn output_event_type(&self) -> &'static str {
         "test.output"
     }
+
+    const OUTPUT_DECLARATIONS: &'static [sinex_primitives::derivation::DerivationOutputDeclaration] =
+        EMITTING_AUTOMATON_OUTPUT_DECLARATIONS;
+
     async fn process(
         &mut self,
         _state: &mut Self::State,
         _input: Self::Input,
         context: &AutomatonContext,
     ) -> std::result::Result<Option<DerivedOutput<Self::Output>>, AutomatonLogicError> {
-        Ok(Some(DerivedOutput::transduced(
-            json!({"ok": true}),
-            context.ts_orig.unwrap_or_else(Timestamp::now),
-            context.trigger_uuid(),
-        )))
+        Ok(Some(
+            DerivedOutput::transduced(
+                json!({"ok": true}),
+                context.ts_orig.unwrap_or_else(Timestamp::now),
+                context.trigger_uuid(),
+            )
+            .with_declaration_id(EMITTING_AUTOMATON_OUTPUT_DECLARATIONS[0].declaration_id)
+            .with_product_class(EMITTING_AUTOMATON_OUTPUT_DECLARATIONS[0].product_class)
+            .with_claim_support(sinex_primitives::derivation::ClaimSupport::unknown()),
+        ))
     }
 }
 
