@@ -22,6 +22,7 @@
 
 pub mod acquisition_manager;
 pub mod automaton_base;
+pub mod backlog;
 pub mod batch_importer;
 pub mod checkpoint;
 pub mod config;
@@ -51,6 +52,7 @@ pub mod jetstream_streams;
 pub mod material;
 pub mod nats_payload;
 pub mod nats_publisher;
+pub mod pacing;
 pub mod parser;
 pub mod preflight;
 pub mod prelude;
@@ -120,6 +122,7 @@ pub use material::{
     TransientErrorPredicate,
 };
 pub use nats_publisher::NatsPublisher;
+pub use pacing::{BacklogGate, PacingController, RateBudget};
 pub use pressure::PressureMonitor;
 pub use processing::AutomatonLogicError;
 pub use runtime_cli::{
