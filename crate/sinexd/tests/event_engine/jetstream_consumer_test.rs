@@ -443,6 +443,191 @@ async fn confirmation_publishes_redacted_persisted_image() -> color_eyre::Result
     Ok(())
 }
 
+/// sinex-z9vt (mirrors sinex-z8p / #2421): the confirmed-events stream must
+/// publish the FINAL redacted image on the `settle_admission_skips` path too.
+/// When a batch containing an already-cached duplicate event fails to
+/// persist (its non-duplicate batch-mate hits a genuine DB error), the
+/// duplicate's re-published confirmation must carry the redacted image, not
+/// the pre-redaction `PreparedEvent.event` parsed off the wire. #2421 fixed
+/// this for `persist_batch_optimized`'s success path but never covered this
+/// failure-path re-publish in `settle_admission_skips`.
+#[sinex_test]
+async fn duplicate_confirmation_republish_on_skip_uses_redacted_image() -> color_eyre::Result<()> {
+    let ctx = TestContext::new().await?;
+    let ctx = ctx.with_nats().shared().await?;
+    let nats = ctx.nats_handle()?;
+    let nats_client = ctx.nats_client();
+    let pool = ctx.pool.clone();
+    ensure_fixture_source_material(&pool).await?;
+
+    let repo = pool.privacy_policy();
+    repo.add_rule(
+        "z9vt-regression-secret",
+        "test rule",
+        "literal",
+        "PLAINTEXT_SECRET_VALUE_Z9VT",
+        false,
+        "redact",
+        Some("<REDACTED>"),
+        "default",
+    )
+    .await?;
+    repo.bind_field_rule("z9vt-regression-secret", None, None, None, 0)
+        .await?;
+
+    let validator = IngestEventValidator::new(false);
+    let js = nats.jetstream_with_client(nats_client.clone());
+    let env = ctx.env();
+    let namespace = ctx.pipeline_namespace().prefix().to_string();
+    let topology = JetStreamTopology::new(
+        env,
+        ctx.pipeline_namespace().stream("SINEX_RAW_EVENTS"),
+        ctx.pipeline_namespace()
+            .consumer_name("event-engine-z9vt-skip-redact"),
+        Some(&namespace),
+    );
+    let ready_topology = topology.clone();
+    // JetStreamConsumer::new() defaults to a noop policy engine, and
+    // with_test_hooks() doesn't load one either -- opt in explicitly, same
+    // reasoning as the z8p regression test above.
+    let fail_once_flag = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let consumer = JetStreamConsumer::with_test_hooks(
+        nats_client.clone(),
+        pool.clone(),
+        Arc::new(RwLock::new(validator)),
+        topology,
+        Duration::from_secs(Timeouts::STANDARD),
+        Some(fail_once_flag.clone()),
+        None,
+        None,
+        None,
+        false,
+        None,
+        None,
+        None,
+    )
+    .with_policy_engine()
+    .await?;
+    let consumer_handle =
+        spawn_consumer_and_wait_ready(&ctx, &js, &ready_topology, consumer).await?;
+
+    let source = "z9vtskip";
+    let dup_id = Uuid::now_v7();
+    let dup_event = json!({
+        "id": dup_id.to_string(),
+        "source": source,
+        "event_type": "z9vtskip.dup",
+        "payload": {"secret": "PLAINTEXT_SECRET_VALUE_Z9VT"},
+        "ts_orig": temporal::now().format_rfc3339(),
+        "host": "test-host",
+        "source_material_id": FIXTURE_SOURCE_MATERIAL_ID,
+        "anchor_byte": 0,
+    });
+    let first_subject =
+        env.nats_subject_with_namespace(Some(&namespace), "events.raw.z9vtskip.first");
+    nats_client
+        .publish(
+            first_subject,
+            serde_json::to_vec(&admission_envelope_multi(source, vec![dup_event.clone()]))?
+                .into(),
+        )
+        .await?;
+    nats_client.flush().await?;
+
+    // First delivery must persist cleanly (fail_once is not yet armed) so
+    // `dup_id` becomes a recognized cached duplicate for the next batch.
+    WaitHelpers::wait_for_event_id(&ctx.pool, dup_id.into(), Timeouts::SHORT).await?;
+
+    let confirmation_subject = confirmation_subject_for(
+        &ready_topology.confirmed_events_prefix,
+        source,
+        "z9vtskip.dup",
+    );
+    let first_confirmation = wait_for_last_stream_message_by_subject(
+        &js,
+        &ready_topology.confirmed_events_stream,
+        &confirmation_subject,
+    )
+    .await?;
+    let first_sequence = first_confirmation.sequence;
+
+    // Arm the one-shot forced DB failure, then resend `dup_id` (now a cached
+    // duplicate) alongside a genuinely new sibling `new_id` in the SAME
+    // physical raw message (sinex-r6d.12 envelope), so both are prepared
+    // into ONE persist_batch_optimized batch. persist_plan's non-duplicate
+    // insert (new_id only -- dup_id is filtered into
+    // cached_duplicate_event_ids before persist_plan even runs) hits the
+    // forced failure, driving the whole batch through settle_admission_skips.
+    fail_once_flag.store(true, std::sync::atomic::Ordering::SeqCst);
+
+    let new_id = Uuid::now_v7();
+    let new_event = json!({
+        "id": new_id.to_string(),
+        "source": source,
+        "event_type": "z9vtskip.new",
+        "payload": {"ok": true},
+        "ts_orig": temporal::now().format_rfc3339(),
+        "host": "test-host",
+        "source_material_id": FIXTURE_SOURCE_MATERIAL_ID,
+        "anchor_byte": 1,
+    });
+    let second_subject =
+        env.nats_subject_with_namespace(Some(&namespace), "events.raw.z9vtskip.second");
+    nats_client
+        .publish(
+            second_subject,
+            serde_json::to_vec(&admission_envelope_multi(
+                source,
+                vec![dup_event, new_event],
+            ))?
+            .into(),
+        )
+        .await?;
+    nats_client.flush().await?;
+
+    // settle_admission_skips must re-publish dup_id's confirmation even
+    // though persist_batch_optimized failed for the batch overall -- and it
+    // must be the REDACTED image, never the pre-redaction plaintext.
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(Timeouts::SHORT);
+    let second_confirmation = loop {
+        let confirmation = wait_for_last_stream_message_by_subject(
+            &js,
+            &ready_topology.confirmed_events_stream,
+            &confirmation_subject,
+        )
+        .await?;
+        if confirmation.sequence > first_sequence {
+            break confirmation;
+        }
+        if tokio::time::Instant::now() >= deadline {
+            return Err(color_eyre::eyre::eyre!(
+                "timed out waiting for settle_admission_skips to re-publish dup_id's confirmation"
+            ));
+        }
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    };
+    let confirm_payload: serde_json::Value = serde_json::from_slice(&second_confirmation.payload)?;
+    assert_eq!(confirm_payload["id"], dup_id.to_string());
+    let confirmed_secret_field = confirm_payload["payload"]["secret"]
+        .as_str()
+        .expect("re-published confirmed payload should carry the secret field");
+    assert_eq!(
+        confirmed_secret_field, "<REDACTED>",
+        "settle_admission_skips must re-publish the redacted image on the duplicate-skip path, not the pre-redaction one; got: {confirm_payload}"
+    );
+    assert!(
+        !confirmed_secret_field.contains("PLAINTEXT_SECRET_VALUE_Z9VT"),
+        "settle_admission_skips leaked the pre-redaction plaintext on the duplicate-skip path: {confirm_payload}"
+    );
+
+    // The new sibling must still land durably once fail_once's one-shot
+    // failure is consumed and the forced NAK redelivers the shared envelope.
+    WaitHelpers::wait_for_event_id(&ctx.pool, new_id.into(), Timeouts::SHORT).await?;
+
+    consumer_handle.abort();
+    Ok(())
+}
+
 /// Tests that offset_kind provenance field is correctly persisted through the pipeline.
 /// Uses the Event provenance API (DynamicPayload with `.from_material_at()`, `.with_offset_kind()`)
 /// to set offset fields which should be preserved when ingested.
