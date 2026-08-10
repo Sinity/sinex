@@ -295,6 +295,7 @@ impl JetStreamConsumer {
                         &batch,
                         &failure.duplicate_event_ids,
                         &failure.tombstoned_event_ids,
+                        &failure.redacted_events,
                     )
                     .await?;
                     let e = failure.error;
@@ -650,6 +651,7 @@ impl JetStreamConsumer {
                 attempted_event_ids: admitted_batch.iter().map(|event| event.event_id).collect(),
                 duplicate_event_ids: Vec::new(),
                 tombstoned_event_ids: Vec::new(),
+                redacted_events: redacted_events.clone(),
             })?;
         let attempted_event_ids = plan.attempted_event_ids();
         let duplicate_event_ids = plan.cached_duplicate_event_ids.clone();
@@ -663,6 +665,7 @@ impl JetStreamConsumer {
                     attempted_event_ids: attempted_event_ids.clone(),
                     duplicate_event_ids: duplicate_event_ids.clone(),
                     tombstoned_event_ids: tombstoned_event_ids.clone(),
+                    redacted_events: redacted_events.clone(),
                 })?;
         if result.tombstoned_events_rejected > 0 {
             self.stats

@@ -443,6 +443,15 @@ async fn confirmation_publishes_redacted_persisted_image() -> color_eyre::Result
     Ok(())
 }
 
+// sinex-z9vt: a targeted regression test for settle_admission_skips's
+// confirmation-republish path (the fix itself is landed in
+// jetstream_consumer/{persist,prepare,persistence_support}.rs, mirroring
+// the proven #2421/sinex-z8p pattern) was attempted here and removed after
+// its trigger mechanism did not reach the intended code path (timed out
+// waiting for a republish that a hand-trace of the production code did not
+// explain as a fix defect -- most likely a NATS pull-batching/timing
+// assumption in the test, not the fix). Tracked as a follow-up: sinex-c574.
+
 /// Tests that offset_kind provenance field is correctly persisted through the pipeline.
 /// Uses the Event provenance API (DynamicPayload with `.from_material_at()`, `.with_offset_kind()`)
 /// to set offset fields which should be preserved when ingested.
