@@ -524,6 +524,7 @@ impl JetStreamConsumer {
         batch: &[&PreparedEvent],
         duplicate_event_ids: &[Uuid],
         tombstoned_event_ids: &[Uuid],
+        redacted_events: &HashMap<Uuid, Event<JsonValue>>,
     ) -> EventEngineResult<()> {
         if duplicate_event_ids.is_empty() && tombstoned_event_ids.is_empty() {
             return Ok(());
@@ -559,10 +560,20 @@ impl JetStreamConsumer {
         }
 
         let mut confirmation_durability_gaps = Vec::new();
+        // sinex-z9vt (mirrors sinex-z8p, #2421): publish `redacted_events`,
+        // NOT `prepared.event`. The latter is the pre-redaction image parsed
+        // off the raw message; the former is exactly what
+        // `persist_batch_optimized` redacted before this duplicate was cached.
+        // `redacted_events` covers every event_id in the attempted batch — a
+        // miss means that invariant broke, so it panics loudly rather than
+        // silently falling back to the unredacted image.
         let confirmation_futs: Vec<_> = duplicate_batch
             .iter()
             .map(|prepared| {
                 let sem = Arc::clone(&self.confirmation_semaphore);
+                let confirmed_event = redacted_events
+                    .get(&prepared.parsed_id)
+                    .expect("redacted_events is built 1:1 from this same batch");
                 async move {
                     let _permit = match sem.acquire().await {
                         Ok(permit) => permit,
@@ -575,7 +586,7 @@ impl JetStreamConsumer {
                         }
                     };
                     let result = self
-                        .publish_confirmed_event_with_retry(&prepared.event)
+                        .publish_confirmed_event_with_retry(confirmed_event)
                         .await;
                     (prepared.parsed_id, result)
                 }

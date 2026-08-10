@@ -124,6 +124,12 @@ pub(super) struct PersistBatchFailure {
     pub(super) attempted_event_ids: Vec<Uuid>,
     pub(super) duplicate_event_ids: Vec<Uuid>,
     pub(super) tombstoned_event_ids: Vec<Uuid>,
+    /// The FINAL redacted event image for every event_id in the attempted
+    /// batch (sinex-z9vt, mirroring sinex-z8p). `settle_admission_skips`
+    /// re-publishes confirmation for cached duplicates on this failure path
+    /// and must publish exactly this, never the pre-redaction
+    /// `PreparedEvent.event` parsed off the wire.
+    pub(super) redacted_events: HashMap<Uuid, Event<JsonValue>>,
 }
 
 pub(super) struct PreparedEvent {
