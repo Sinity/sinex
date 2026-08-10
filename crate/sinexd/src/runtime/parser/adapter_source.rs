@@ -1517,6 +1517,11 @@ where
             }
             let mut batch_events: Vec<Event<JsonValue>> = Vec::new();
             let mut record_plan: Vec<PendingRecordEmission<A::Cursor>> = Vec::new();
+            // sinex-2n9: last-observed record timestamp in this batch, fed
+            // to `ScanPacer::after_batch` as the position signal for live
+            // ETA reporting. Best-effort — not every adapter/record carries
+            // a timing hint.
+            let mut batch_position: Option<Timestamp> = None;
 
             for (materialized, next_cursor) in materialized_batch {
                 let material_id = materialized.material_id;
@@ -1535,6 +1540,9 @@ where
 
                 let parser_checkpoint_before = self.snapshot_parser_checkpoint_state();
                 let record_timing_hint = materialized.record.source_ts_hint.clone();
+                if let Some(ts) = record_timing_hint.as_ref().and_then(TimingEvidence::timestamp_value) {
+                    batch_position = Some(ts);
+                }
                 let intents = match self
                     .parser
                     .parse_record_with_binding(materialized.record, &ctx, &self.binding_config)
@@ -1731,7 +1739,9 @@ where
             // historical scans (see `scan_historical`) — continuous/snapshot
             // callers pass `None` and this is a no-op.
             if let Some(pacer) = pacing.as_deref_mut() {
-                pacer.after_batch(batch_emitted, batch_bytes as u64).await?;
+                pacer
+                    .after_batch(batch_emitted, batch_bytes as u64, batch_position)
+                    .await?;
             }
 
             if stream_exhausted {
@@ -2073,7 +2083,7 @@ where
         &mut self,
         state: &mut Self::State,
         _from: Checkpoint,
-        _until: TimeHorizon,
+        until: TimeHorizon,
         args: ScanArgs,
     ) -> RuntimeResult<ScanReport> {
         let start = Instant::now();
@@ -2092,7 +2102,17 @@ where
         // in the runtime (`--namespace` / `SINEX_NAMESPACE`); `RuntimeContext`
         // does not currently expose the resolved namespace to source drivers.
         let namespace = std::env::var("SINEX_NAMESPACE").ok();
-        let mut pacer = crate::runtime::pacing::ScanPacer::new(rate_budget, nats_client, namespace);
+        let horizon = match &until {
+            TimeHorizon::Historical { end_time } => Some(*end_time),
+            TimeHorizon::Snapshot | TimeHorizon::Continuous => None,
+        };
+        let mut pacer = crate::runtime::pacing::ScanPacer::new(
+            rate_budget,
+            nats_client,
+            namespace,
+            self.source_id,
+            horizon,
+        );
         if pacer.is_paced() {
             info!(
                 source = self.source_id,
@@ -2112,9 +2132,11 @@ where
         // the source was offline). The adapter's cursor is the authoritative
         // resume position.
         let cursor = state.cursor.clone();
-        let emitted = self
+        let drain_result = self
             .drain_adapter(cursor, state, None, Some(&mut pacer))
-            .await?;
+            .await;
+        pacer.finish().await;
+        let emitted = drain_result?;
         self.finalize_finite_drain_material("adapter-historical-complete")
             .await?;
         let checkpoint = cursor_to_checkpoint(state);

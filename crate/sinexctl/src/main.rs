@@ -605,6 +605,9 @@ fn command_path(cmd: &Commands) -> String {
                     "ops catchup status".to_string()
                 }
             },
+            OpsCommands::Import(import_cmd) => match import_cmd {
+                sinexctl::commands::ops::ImportCommands::List => "ops import list".to_string(),
+            },
             OpsCommands::Evidence(evidence_cmd) => match evidence_cmd {
                 sinexctl::commands::ops::EvidenceCommands::Compile { .. } => {
                     "ops evidence compile".to_string()

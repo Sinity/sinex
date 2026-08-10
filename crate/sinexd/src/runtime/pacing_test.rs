@@ -112,7 +112,7 @@ async fn record_and_throttle_is_instant_when_unlimited() -> TestResult<()> {
 async fn backlog_gate_returns_immediately_when_no_signal() -> TestResult<()> {
     let gate = BacklogGate::new(100, 10);
     let result = gate.wait_for_capacity(|| async { Ok(None) }).await;
-    assert!(result.is_ok());
+    assert_eq!(result.unwrap(), None);
     Ok(())
 }
 
@@ -120,7 +120,7 @@ async fn backlog_gate_returns_immediately_when_no_signal() -> TestResult<()> {
 async fn backlog_gate_returns_immediately_under_threshold() -> TestResult<()> {
     let gate = BacklogGate::new(100, 10);
     let result = gate.wait_for_capacity(|| async { Ok(Some(5)) }).await;
-    assert!(result.is_ok());
+    assert_eq!(result.unwrap(), Some(5));
     Ok(())
 }
 
@@ -146,7 +146,7 @@ async fn backlog_gate_waits_out_pressure_with_hysteresis() -> TestResult<()> {
         })
         .await;
 
-    assert!(result.is_ok());
+    assert_eq!(result.unwrap(), Some(5));
     assert!(idx.load(Ordering::SeqCst) >= 3);
     Ok(())
 }

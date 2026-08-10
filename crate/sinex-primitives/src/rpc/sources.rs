@@ -139,6 +139,22 @@ pub const SOURCES_COVERAGE_METHOD: RpcMethod<SourcesCoverageRequest, SourcesCove
         RpcMutability::ReadOnly,
     );
 
+/// `sources.import_progress` — live rate/position/ETA/backlog for in-flight
+/// paced historical imports (sinex-2n9). Read-only; backed by an in-memory
+/// KV snapshot published by the scan loop, not a DB table — entries are
+/// transient and disappear when the import completes or the entry goes
+/// stale (see `ImportProgressEntry::updated_at`).
+pub const SOURCES_IMPORT_PROGRESS_METHOD: RpcMethod<
+    SourcesImportProgressRequest,
+    SourcesImportProgressResponse,
+> = RpcMethod::new(
+    methods::SOURCES_IMPORT_PROGRESS,
+    RpcRole::ReadOnly,
+    RpcDomain::Sources,
+    RpcStability::Experimental,
+    RpcMutability::ReadOnly,
+);
+
 pub const SOURCES_REMEDIATION_PLAN_METHOD: RpcMethod<
     SourcesRemediationPlanRequest,
     SourcesRemediationPlanResponse,
@@ -570,6 +586,56 @@ pub struct SourceMaterialDetail {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SourcesShowResponse {
     pub material: SourceMaterialDetail,
+}
+
+// ─────────────────────────────────────────────────────────────
+// sources.import_progress (sinex-2n9)
+// ─────────────────────────────────────────────────────────────
+
+/// Request: `sources.import_progress` (no required params)
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct SourcesImportProgressRequest {}
+
+/// Live progress snapshot for one in-flight paced historical/catch-up scan.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ImportProgressEntry {
+    /// Runtime module name (source id) performing the scan.
+    pub module_name: String,
+    /// RFC3339 timestamp the scan started.
+    pub started_at: String,
+    /// RFC3339 timestamp of the most recent progress publish.
+    pub updated_at: String,
+    /// Total events processed so far in this scan.
+    pub events_processed: u64,
+    /// Total bytes processed so far in this scan.
+    pub bytes_processed: u64,
+    /// Observed average events/sec since the scan started.
+    pub rate_events_per_sec: f64,
+    /// Observed average bytes/sec since the scan started.
+    pub rate_bytes_per_sec: f64,
+    /// Configured rate budget, or `None` if running `--unlimited`.
+    pub events_per_sec_budget: Option<f64>,
+    pub bytes_per_sec_budget: Option<f64>,
+    /// Most recent record's `ts_orig`-quality timestamp position, if the
+    /// adapter reported one (RFC3339).
+    pub position: Option<String>,
+    /// Scan horizon end time for `TimeHorizon::Historical` scans (RFC3339).
+    pub horizon: Option<String>,
+    /// Estimated seconds remaining, derived from how fast `position` is
+    /// advancing toward `horizon`. `None` until enough progress has been
+    /// observed to estimate a rate.
+    pub eta_seconds: Option<f64>,
+    /// Last observed raw-events consumer backlog depth, if a backlog gate is
+    /// configured.
+    pub backlog_pending: Option<u64>,
+    /// Whether this scan is running under a rate budget at all.
+    pub paced: bool,
+}
+
+/// Response: `sources.import_progress`
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct SourcesImportProgressResponse {
+    pub imports: Vec<ImportProgressEntry>,
 }
 
 // ─────────────────────────────────────────────────────────────

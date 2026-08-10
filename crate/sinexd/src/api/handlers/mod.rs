@@ -10,6 +10,7 @@ pub mod curation;
 pub mod dlq;
 pub mod documents;
 pub mod health;
+pub mod import_progress;
 pub mod instructions;
 pub mod lifecycle;
 pub mod llm;
@@ -77,6 +78,7 @@ pub use semantic::{
     handle_semantic_lane_outputs_seed_entity_events, handle_semantic_lane_outputs_write,
     handle_semantic_lane_set_status, handle_semantic_lanes_list,
 };
+pub use import_progress::handle_sources_import_progress;
 pub use shadow::{handle_shadow_create, handle_shadow_delete, handle_shadow_list};
 pub use source_status::{handle_sources_status, handle_sources_status_view};
 

@@ -198,7 +198,11 @@ impl BacklogGate {
     /// the publish-side gate's behavior. `fetch_pending` returning `Ok(None)`
     /// (no pressure signal available, e.g. consumer not created yet) is
     /// treated as "no pressure" and returns immediately.
-    pub async fn wait_for_capacity<F, Fut>(&self, mut fetch_pending: F) -> RuntimeResult<()>
+    /// Returns the last observed pending depth on success (`None` if
+    /// `fetch_pending` never reported a signal, e.g. the consumer doesn't
+    /// exist yet) — callers that want to surface backlog depth (progress
+    /// reporting) get it for free instead of needing a second query.
+    pub async fn wait_for_capacity<F, Fut>(&self, mut fetch_pending: F) -> RuntimeResult<Option<u64>>
     where
         F: FnMut() -> Fut,
         Fut: Future<Output = RuntimeResult<Option<u64>>>,
@@ -207,7 +211,7 @@ impl BacklogGate {
         loop {
             let pending = fetch_pending().await?;
             let Some(pending) = pending else {
-                return Ok(());
+                return Ok(None);
             };
 
             let target = if paused {
@@ -217,7 +221,7 @@ impl BacklogGate {
             };
 
             if pending <= target {
-                return Ok(());
+                return Ok(Some(pending));
             }
 
             paused = true;
@@ -246,6 +250,17 @@ pub struct ScanPacer {
     nats_client: Option<async_nats::Client>,
     env: sinex_primitives::environment::SinexEnvironment,
     namespace: Option<String>,
+    module_name: String,
+    started_at: sinex_primitives::temporal::Timestamp,
+    tracker: crate::runtime::scan_progress::ScanProgressTracker,
+    /// Lazily opened on first `after_batch` call. `None` means either "not
+    /// attempted yet" or "attempted and unavailable" — either way, progress
+    /// publishing degrades to a no-op rather than failing the scan; pacing
+    /// enforcement never depends on progress observability succeeding.
+    progress_store: Option<crate::runtime::scan_progress::ScanProgressStore>,
+    progress_store_attempted: bool,
+    last_progress_publish: Option<Instant>,
+    last_backlog_pending: Option<u64>,
 }
 
 impl ScanPacer {
@@ -254,6 +269,8 @@ impl ScanPacer {
         budget: RateBudget,
         nats_client: Option<async_nats::Client>,
         namespace: Option<String>,
+        module_name: impl Into<String>,
+        horizon: Option<sinex_primitives::temporal::Timestamp>,
     ) -> Self {
         Self {
             backlog_gate: BacklogGate::from_budget(&budget),
@@ -261,6 +278,13 @@ impl ScanPacer {
             nats_client,
             env: sinex_primitives::environment::environment(),
             namespace,
+            module_name: module_name.into(),
+            started_at: sinex_primitives::temporal::Timestamp::now(),
+            tracker: crate::runtime::scan_progress::ScanProgressTracker::new(horizon),
+            progress_store: None,
+            progress_store_attempted: false,
+            last_progress_publish: None,
+            last_backlog_pending: None,
         }
     }
 
@@ -279,29 +303,125 @@ impl ScanPacer {
         &self.controller
     }
 
+    async fn ensure_progress_store(&mut self) {
+        if self.progress_store.is_some() || self.progress_store_attempted {
+            return;
+        }
+        self.progress_store_attempted = true;
+        let Some(client) = &self.nats_client else {
+            return;
+        };
+        match crate::runtime::scan_progress::ScanProgressStore::open(
+            client,
+            &self.env,
+            self.namespace.as_deref(),
+        )
+        .await
+        {
+            Ok(store) => self.progress_store = Some(store),
+            Err(error) => {
+                tracing::debug!(
+                    module = %self.module_name,
+                    error = %error,
+                    "sinex-2n9 scan progress KV unavailable; live progress reporting disabled for this scan"
+                );
+            }
+        }
+    }
+
+    async fn publish_progress_if_due(&mut self, force: bool) {
+        let due = force
+            || self
+                .last_progress_publish
+                .is_none_or(|last| last.elapsed() >= crate::runtime::scan_progress::PUBLISH_INTERVAL);
+        if !due {
+            return;
+        }
+        self.ensure_progress_store().await;
+        let Some(store) = &self.progress_store else {
+            return;
+        };
+        let snapshot = crate::runtime::scan_progress::ScanProgressSnapshot::from_controller(
+            &self.module_name,
+            self.started_at,
+            &self.controller,
+            &self.tracker,
+            self.last_backlog_pending,
+        );
+        if let Err(error) = store.publish(&snapshot).await {
+            tracing::debug!(
+                module = %self.module_name,
+                error = %error,
+                "sinex-2n9 scan progress publish failed"
+            );
+        }
+        self.last_progress_publish = Some(Instant::now());
+    }
+
+    /// Clear this scan's live-progress entry. Call on scan completion
+    /// (success or error) so `sinexctl ops import list` only ever shows
+    /// genuinely in-flight scans. Best-effort.
+    pub async fn finish(&mut self) {
+        self.ensure_progress_store().await;
+        if let Some(store) = &self.progress_store
+            && let Err(error) = store.clear(&self.module_name).await
+        {
+            tracing::debug!(
+                module = %self.module_name,
+                error = %error,
+                "sinex-2n9 scan progress clear-on-finish failed"
+            );
+        }
+    }
+
     /// Record a processed batch: throttle to the events/sec and bytes/sec
-    /// budget, then (if a backlog threshold is configured and a NATS client
-    /// is available) wait for the raw-events consumer backlog to drain back
-    /// under threshold before returning. No-ops entirely when unlimited.
-    pub async fn after_batch(&mut self, events: u64, bytes: u64) -> RuntimeResult<()> {
+    /// budget, observe `position` for ETA estimation, publish a live
+    /// progress snapshot (throttled to `scan_progress::PUBLISH_INTERVAL`),
+    /// then (if a backlog threshold is configured and a NATS client is
+    /// available) wait for the raw-events consumer backlog to drain back
+    /// under threshold before returning. Rate/backlog enforcement still
+    /// applies even when progress publishing is unavailable.
+    pub async fn after_batch(
+        &mut self,
+        events: u64,
+        bytes: u64,
+        position: Option<sinex_primitives::temporal::Timestamp>,
+    ) -> RuntimeResult<()> {
         self.controller.record_and_throttle(events, bytes).await;
+        self.tracker.observe(position);
 
         let Some(gate) = &self.backlog_gate else {
+            self.publish_progress_if_due(false).await;
             return Ok(());
         };
         let Some(client) = &self.nats_client else {
+            self.publish_progress_if_due(false).await;
             return Ok(());
         };
         let js = async_nats::jetstream::new(client.clone());
         let env = &self.env;
         let namespace = self.namespace.as_deref();
 
-        gate.wait_for_capacity(|| async {
-            crate::runtime::backlog::raw_events_consumer_pending(&js, env, namespace)
-                .await
-                .map(|maybe_info| maybe_info.map(|info| info.num_pending))
-        })
-        .await
+        let result = gate
+            .wait_for_capacity(|| async {
+                Ok(
+                    crate::runtime::backlog::raw_events_consumer_pending(&js, env, namespace)
+                        .await?
+                        .map(|info| info.num_pending),
+                )
+            })
+            .await;
+        match result {
+            Ok(pending) => {
+                self.last_backlog_pending = pending;
+                self.publish_progress_if_due(false).await;
+                Ok(())
+            }
+            Err(error) => {
+                self.publish_progress_if_due(false).await;
+                Err(error)
+            }
+        }
     }
 }
 

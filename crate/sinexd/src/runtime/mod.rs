@@ -59,6 +59,7 @@ pub mod prelude;
 pub mod pressure;
 pub mod processing;
 pub mod runtime_cli;
+pub mod scan_progress;
 pub mod schema_validator;
 pub mod self_observation;
 pub mod service_runtime;

@@ -115,6 +115,10 @@ pub enum OpsCommands {
     #[command(subcommand)]
     Catchup(CatchupCommands),
 
+    /// Live rate/position/ETA/backlog for in-flight paced historical imports (sinex-2n9)
+    #[command(subcommand)]
+    Import(ImportCommands),
+
     /// Compile a finite evidence bundle from existing Sinex read surfaces
     #[command(subcommand)]
     Evidence(EvidenceCommands),
@@ -155,6 +159,7 @@ pub enum OpsCommands {
 mod debt;
 mod catchup;
 mod evidence;
+mod import;
 mod jobs;
 
 pub use catchup::CatchupCommands;
@@ -165,6 +170,7 @@ pub(crate) use debt::{
     projection_trigger_name,
 };
 pub use evidence::EvidenceCommands;
+pub use import::ImportCommands;
 pub use jobs::JobsCommands;
 
 
@@ -250,6 +256,7 @@ impl OpsCommands {
             }
             Self::Debt(debt_cmd) => debt_cmd.execute(client, format).await?,
             Self::Catchup(catchup_cmd) => catchup_cmd.execute(client, format).await?,
+            Self::Import(import_cmd) => import_cmd.execute(client, format).await?,
             Self::Evidence(evidence_cmd) => evidence_cmd.execute(client, format).await?,
             Self::Dlq(cmd) => cmd.execute(client, format).await?,
             Self::Replay(cmd) => cmd.execute(client, format).await?,
