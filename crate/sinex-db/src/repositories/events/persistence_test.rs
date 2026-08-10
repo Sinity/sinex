@@ -841,3 +841,210 @@ async fn concurrent_equivalence_key_race_yields_exactly_one_live_row(
 
     Ok(())
 }
+
+/// sinex-f8v: equivalence-key dedupe must resolve against the SAME physical
+/// lane the candidate event belongs to. Before the fix,
+/// `find_live_by_equivalence_key`/`find_live_by_equivalence_keys` were
+/// hardcoded to `core.events`, so a reflection-lane occurrence's live row
+/// (in `reflection.events`) was invisible to the lookup and every replayed
+/// reflection event resolved `Fresh` forever, duplicating without bound.
+///
+/// This test inserts a reflection-lane row carrying an `equivalence_key` and
+/// proves the repository lookup — called with `EventStorageLane::Reflection`
+/// — actually finds it. Changing `find_live_by_equivalence_key`'s hardcoded
+/// table back to `core.events` (or removing the `lane` parameter) makes this
+/// assertion fail with `None` instead of `Some`.
+#[sinex_test]
+async fn reflection_lane_equivalence_key_dedupe_is_scoped_to_reflection_events(
+    ctx: xtask::sandbox::TestContext,
+) -> xtask::sandbox::TestResult<()> {
+    let material_id = ctx
+        .create_source_material(Some("f8v-reflection-equiv-test"))
+        .await?;
+    let key = format!("f8v-reflection-{}", Uuid::now_v7());
+
+    let mut row = base_stream_batch_row()?;
+    row.source_material_id = Some(material_id);
+    row.anchor_byte = Some(0);
+    row.equivalence_key = Some(EquivalenceKey::new(key.clone()));
+
+    let inserted = ctx
+        .pool()
+        .events()
+        .insert_stream_batch_into(EventStorageLane::Reflection, std::slice::from_ref(&row))
+        .await?;
+    assert_eq!(inserted.inserted_count, 1);
+
+    let found = ctx
+        .pool()
+        .events()
+        .find_live_by_equivalence_key(&key, EventStorageLane::Reflection)
+        .await?;
+    assert_eq!(
+        found.map(|r| r.id),
+        Some(row.id),
+        "reflection-lane equivalence_key lookup must find the reflection.events \
+         row, not report it missing"
+    );
+
+    let found_via_batch = ctx
+        .pool()
+        .events()
+        .find_live_by_equivalence_keys(&[key.clone()], EventStorageLane::Reflection)
+        .await?;
+    assert_eq!(
+        found_via_batch.into_iter().map(|r| r.id).collect::<Vec<_>>(),
+        vec![row.id],
+        "batch form must likewise resolve against reflection.events"
+    );
+
+    // A same-keyed lookup scoped to the WRONG lane must not see this row —
+    // dedup is a same-lane concept (sinex-f8v cross-lane policy).
+    let found_wrong_lane = ctx
+        .pool()
+        .events()
+        .find_live_by_equivalence_key(&key, EventStorageLane::Activity)
+        .await?;
+    assert!(
+        found_wrong_lane.is_none(),
+        "activity-lane lookup must not see a reflection-lane row sharing the same key"
+    );
+
+    Ok(())
+}
+
+/// sinex-f8v: activity-lane equivalence-key dedupe behavior is unchanged by
+/// threading `lane` through — this is the AC's explicit "activity-lane
+/// behavior unchanged" requirement, proven directly rather than assumed.
+#[sinex_test]
+async fn activity_lane_equivalence_key_dedupe_still_works(
+    ctx: xtask::sandbox::TestContext,
+) -> xtask::sandbox::TestResult<()> {
+    let material_id = ctx
+        .create_source_material(Some("f8v-activity-equiv-test"))
+        .await?;
+    let key = format!("f8v-activity-{}", Uuid::now_v7());
+
+    let mut row = base_stream_batch_row()?;
+    row.source_material_id = Some(material_id);
+    row.anchor_byte = Some(0);
+    row.equivalence_key = Some(EquivalenceKey::new(key.clone()));
+
+    ctx.pool()
+        .events()
+        .insert_stream_batch_into(EventStorageLane::Activity, std::slice::from_ref(&row))
+        .await?;
+
+    let found = ctx
+        .pool()
+        .events()
+        .find_live_by_equivalence_key(&key, EventStorageLane::Activity)
+        .await?;
+    assert_eq!(found.map(|r| r.id), Some(row.id));
+
+    Ok(())
+}
+
+/// sinex-f8v cross-lane parent policy, positive case: a reflection-derived
+/// event may reference a LIVE REFLECTION-LANE parent. Before the fix,
+/// `ensure_source_event_ids_are_live` always checked `core.events`, so this
+/// legitimate same-lane reference was falsely rejected as "non-live" for
+/// every reflection-derived event with reflection-lane parents.
+#[sinex_test]
+async fn reflection_derived_insert_accepts_live_reflection_parent(
+    ctx: xtask::sandbox::TestContext,
+) -> xtask::sandbox::TestResult<()> {
+    let material_id = ctx
+        .create_source_material(Some("f8v-reflection-parent-test"))
+        .await?;
+
+    let mut parent_row = base_stream_batch_row()?;
+    parent_row.source_material_id = Some(material_id);
+    parent_row.anchor_byte = Some(0);
+    let parent_id = parent_row.id;
+
+    ctx.pool()
+        .events()
+        .insert_stream_batch_into(EventStorageLane::Reflection, std::slice::from_ref(&parent_row))
+        .await?;
+
+    // Every derived event (source_event_ids set) must declare a
+    // product_class backed by a registered `derivation.product_declarations`
+    // row, and a declared product_class requires claim_support — unrelated
+    // to sinex-f8v, but required by the schema's derivation control-plane
+    // enforcement for ANY derived insert to succeed.
+    let declaration_id = "sinex-f8v-test.reflection_derived_insert_accepts_live_reflection_parent";
+    seed_product_declaration(
+        ctx.pool(),
+        declaration_id,
+        sinex_primitives::derivation::DerivedProductClass::CanonicalDerivedEvent,
+        "test.source",
+        "test.event",
+    )
+    .await?;
+
+    let mut derived_row = base_stream_batch_row()?;
+    derived_row.source_event_ids = Some(vec![EventId::from_uuid(parent_id)]);
+    derived_row.product_class = Some("canonical_derived_event".to_string());
+    derived_row.claim_support = Some(json!({}));
+    derived_row.derivation_declaration_id = Some(declaration_id.to_string());
+
+    let result = ctx
+        .pool()
+        .events()
+        .insert_stream_batch_into(EventStorageLane::Reflection, std::slice::from_ref(&derived_row))
+        .await?;
+    assert_eq!(
+        result.inserted_count, 1,
+        "reflection-derived event must accept its live reflection-lane parent"
+    );
+
+    Ok(())
+}
+
+/// sinex-f8v cross-lane parent policy, negative case: a reflection-derived
+/// event referencing a parent that only exists in `core.events` (the
+/// activity lane) must be explicitly rejected, not accidentally
+/// misclassified as live via the wrong table. This is the "cross-lane
+/// parent policy is explicit, tested, and documented" half of the AC — the
+/// chosen policy is same-lane-only parents.
+#[sinex_test]
+async fn reflection_derived_insert_rejects_core_lane_parent(
+    ctx: xtask::sandbox::TestContext,
+) -> xtask::sandbox::TestResult<()> {
+    let material_id = ctx
+        .create_source_material(Some("f8v-cross-lane-parent-test"))
+        .await?;
+
+    let mut activity_parent_row = base_stream_batch_row()?;
+    activity_parent_row.source_material_id = Some(material_id);
+    activity_parent_row.anchor_byte = Some(0);
+    let activity_parent_id = activity_parent_row.id;
+
+    ctx.pool()
+        .events()
+        .insert_stream_batch_into(
+            EventStorageLane::Activity,
+            std::slice::from_ref(&activity_parent_row),
+        )
+        .await?;
+
+    let mut derived_row = base_stream_batch_row()?;
+    derived_row.source_event_ids = Some(vec![EventId::from_uuid(activity_parent_id)]);
+
+    let error = ctx
+        .pool()
+        .events()
+        .insert_stream_batch_into(EventStorageLane::Reflection, std::slice::from_ref(&derived_row))
+        .await
+        .expect_err(
+            "reflection-derived event referencing an activity-lane-only parent must be rejected",
+        );
+
+    assert!(
+        format!("{error}").contains("non-live source_event_ids"),
+        "unexpected error: {error}"
+    );
+
+    Ok(())
+}
