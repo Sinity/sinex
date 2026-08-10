@@ -47,6 +47,15 @@ impl JetStreamConsumer {
             SinexError::network("Failed to reconcile raw stream consumers").with_source(e)
         })?;
         let mut lag_consumer = consumer.clone();
+        // Queried unconditionally (not just when an observer is attached):
+        // sinex-ddy uses the initial backlog depth to decide whether this
+        // startup is a genuine large-backlog restart drain worth pacing, as
+        // opposed to an ordinary near-empty catch-up where PacingController
+        // throttling would just add latency for no benefit.
+        let initial_consumer_info = consumer.info().await.ok();
+        let initial_pending = initial_consumer_info
+            .as_ref()
+            .map_or(0, |ci| ci.num_pending);
         // Emit startup snapshot before READY so operators can distinguish
         // normal resume from cold-start full replay from catch-up runs.
         if let Some(ref observer) = self.observer {
@@ -85,8 +94,7 @@ impl JetStreamConsumer {
                     (0, 0, 0, 0, 0, 0, 0)
                 }
             };
-            let consumer_info = consumer.info().await.ok();
-            let consumer_existed = consumer_info.as_ref().is_some_and(|ci| ci.num_pending > 0);
+            let consumer_existed = initial_pending > 0;
             let deliver_policy = format!("{:?}", consumer_spec.deliver_policy);
             let initial_replay_risk = !consumer_existed
                 && matches!(
@@ -108,8 +116,10 @@ impl JetStreamConsumer {
                     stream_max_msgs,
                     stream_max_bytes,
                     stream_max_age_secs,
-                    consumer_info.as_ref().map_or(0, |ci| ci.num_pending),
-                    consumer_info.as_ref().map_or(0, |ci| ci.num_ack_pending),
+                    initial_pending,
+                    initial_consumer_info
+                        .as_ref()
+                        .map_or(0, |ci| ci.num_ack_pending),
                     0,
                     consumer_spec.max_ack_pending,
                     consumer_spec.max_deliver,
@@ -145,9 +155,44 @@ impl JetStreamConsumer {
             ))
         });
         let mut catching_up = catch_up_semaphore.is_some();
-        let mut batch_future: BoxFuture<'_, EventEngineResult<()>> = Box::pin(
-            Self::process_batch_with_semaphore(&self, &consumer, &catch_up_semaphore, catching_up),
-        );
+        // sinex-ddy: only pace the drain when the backlog observed at
+        // startup is actually large -- an ordinary near-empty catch-up
+        // (the overwhelmingly common case: every routine restart) should not
+        // pay PacingController latency for no benefit. Reuses the SAME
+        // `RateBudget.backlog_pause_threshold` field sinex-2n9 already
+        // defaults to a real value (`DEFAULT_BACKLOG_PAUSE_THRESHOLD`) as the
+        // "this counts as a large backlog" gate, so a caller who wants
+        // restart-drain pacing gets it via the same operator-facing budget
+        // shape, not a second config surface.
+        let restart_drain_budget = self.restart_drain_pacer.lock().await.budget();
+        let restart_drain_active = catching_up
+            && !restart_drain_budget.is_unlimited()
+            && restart_drain_budget
+                .backlog_pause_threshold
+                .is_some_and(|threshold| initial_pending >= threshold);
+        if restart_drain_active {
+            info!(
+                consumer = %self.topology.consumer_durable,
+                initial_pending,
+                events_per_sec = ?restart_drain_budget.events_per_sec,
+                bytes_per_sec = ?restart_drain_budget.bytes_per_sec,
+                "Restart catch-up drain paced (sinex-ddy, shares sinex-2n9 PacingController)"
+            );
+        } else if catching_up && restart_drain_budget.is_unlimited() {
+            warn!(
+                consumer = %self.topology.consumer_durable,
+                initial_pending,
+                "Restart catch-up drain running UNLIMITED (sinex-ddy pacing explicitly disabled)"
+            );
+        }
+        let mut batch_future: BoxFuture<'_, EventEngineResult<()>> =
+            Box::pin(Self::process_batch_with_semaphore(
+                &self,
+                &consumer,
+                &catch_up_semaphore,
+                catching_up,
+                restart_drain_active,
+            ));
 
         loop {
             tokio::select! {
@@ -241,6 +286,7 @@ impl JetStreamConsumer {
                         &consumer,
                         &catch_up_semaphore,
                         catching_up,
+                        restart_drain_active && catching_up,
                     ));
                 }
             }
@@ -258,12 +304,13 @@ impl JetStreamConsumer {
         consumer: &jetstream::consumer::Consumer<jetstream::consumer::pull::Config>,
         catch_up_semaphore: &Option<Arc<tokio::sync::Semaphore>>,
         catching_up: bool,
+        restart_drain_active: bool,
     ) -> EventEngineResult<()> {
         if let (true, Some(sem)) = (catching_up, catch_up_semaphore.as_ref()) {
             let _permit = sem.acquire().await;
-            this.process_batch(consumer).await?;
+            this.process_batch(consumer, restart_drain_active).await?;
         } else {
-            this.process_batch(consumer).await?;
+            this.process_batch(consumer, restart_drain_active).await?;
         }
         Ok(())
     }
@@ -272,6 +319,7 @@ impl JetStreamConsumer {
     pub(super) async fn process_batch(
         &self,
         consumer: &jetstream::consumer::Consumer<jetstream::consumer::pull::Config>,
+        restart_drain_active: bool,
     ) -> EventEngineResult<()> {
         let batch_start = std::time::Instant::now();
         let mut batch = Vec::new();
@@ -283,7 +331,9 @@ impl JetStreamConsumer {
         )
         .await
         .map_err(|e| SinexError::network("Failed to fetch messages").with_source(e))?;
+        let mut fetched_bytes: u64 = 0;
         for msg in messages {
+            fetched_bytes += msg.payload.len() as u64;
             #[cfg(any(test, feature = "testing"))]
             if let Some(counter) = &self.delivery_observer {
                 counter.fetch_add(1, Ordering::Relaxed);
@@ -356,6 +406,19 @@ impl JetStreamConsumer {
             {
                 Self::log_observer_error(&self.stats, "event_engine.batch", &error);
             }
+        }
+
+        // sinex-ddy: pace the startup catch-up drain with the same
+        // PacingController mechanism sinex-2n9 uses for historical scans.
+        // Only applied during catch-up — once the consumer is caught up on a
+        // pre-existing backlog, ordinary continuous delivery is never
+        // rate-limited (matches the scan-side doctrine).
+        if restart_drain_active {
+            self.restart_drain_pacer
+                .lock()
+                .await
+                .record_and_throttle(u64::from(batch_size), fetched_bytes)
+                .await;
         }
 
         result

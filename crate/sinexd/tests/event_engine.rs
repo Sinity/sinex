@@ -31,6 +31,7 @@ mod event_engine {
     mod pipeline_integration_test;
     mod pipeline_resilience_test;
     mod privacy_policy_test;
+    mod restart_drain_pacing_test;
     mod schema_sync_test;
     mod telemetry_persistence_test;
     mod tls_integration_test;
