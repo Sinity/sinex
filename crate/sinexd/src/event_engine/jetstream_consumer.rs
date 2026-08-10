@@ -160,6 +160,23 @@ pub struct JetStreamConsumer {
     /// capacity samples from becoming their own journald feedback stream.
     stream_pressure_warning_state:
         Arc<tokio::sync::Mutex<HashMap<String, StreamPressureWarningState>>>,
+    /// sinex-ddy: paces the startup catch-up drain (a durable consumer
+    /// resuming against a raw-stream backlog seeded before this process
+    /// started, e.g. from a prior crash mid-import) using the SAME
+    /// `PacingController` mechanism `ScanPacer` uses to pace historical
+    /// scans (sinex-2n9) — one pacing primitive, two call sites (producer
+    /// scan loop, consumer drain loop). Only consulted while
+    /// `restart_drain_active` is true in the run loop: computed once at
+    /// startup from the initial backlog depth vs.
+    /// `RateBudget.backlog_pause_threshold`, so an ordinary near-empty
+    /// catch-up (every routine restart) is never throttled -- only a
+    /// genuinely large seeded backlog is. Continuous (already-caught-up)
+    /// delivery is never rate-limited either way, matching the scan-side
+    /// doctrine that live-tail capture is never gated by this budget.
+    /// Defaults to `RateBudget::from_env()` (== `default_paced()` unless
+    /// overridden), so restart-drain pacing is on by default for large
+    /// backlogs; `RateBudget::unlimited()` or a `None` threshold opts out.
+    restart_drain_pacer: Arc<tokio::sync::Mutex<crate::runtime::pacing::PacingController>>,
 }
 
 #[cfg(test)]

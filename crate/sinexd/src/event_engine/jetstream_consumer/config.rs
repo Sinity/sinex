@@ -56,6 +56,11 @@ impl JetStreamConsumer {
             startup_catch_up_max_concurrent: 4,
             reject_initial_replay: true,
             stream_pressure_warning_state: Arc::new(tokio::sync::Mutex::new(HashMap::new())),
+            restart_drain_pacer: Arc::new(tokio::sync::Mutex::new(
+                crate::runtime::pacing::PacingController::new(
+                    crate::runtime::pacing::RateBudget::from_env(),
+                ),
+            )),
         }
     }
 
@@ -110,6 +115,28 @@ impl JetStreamConsumer {
     #[must_use]
     pub fn with_reject_initial_replay(mut self, reject: bool) -> Self {
         self.reject_initial_replay = reject;
+        self
+    }
+
+    /// Override the [`RateBudget`](crate::runtime::pacing::RateBudget) used to
+    /// pace the startup catch-up drain (sinex-ddy). Defaults to
+    /// `RateBudget::from_env()` (operator-configurable via the same
+    /// `SINEX_HISTORICAL_IMPORT_RATE_*` env vars sinex-2n9 uses for scan
+    /// pacing — one operator-facing budget for catch-up work on both the
+    /// producer and consumer side). Pacing only activates when the raw-stream
+    /// backlog observed at startup meets or exceeds `backlog_pause_threshold`
+    /// (an ordinary near-empty catch-up is never throttled); a `None`
+    /// threshold or [`RateBudget::unlimited`](crate::runtime::pacing::RateBudget::unlimited)
+    /// disables restart-drain pacing entirely. Primarily for tests that need
+    /// a deterministic, low budget/threshold.
+    #[must_use]
+    pub fn with_restart_drain_rate_budget(
+        mut self,
+        budget: crate::runtime::pacing::RateBudget,
+    ) -> Self {
+        self.restart_drain_pacer = Arc::new(tokio::sync::Mutex::new(
+            crate::runtime::pacing::PacingController::new(budget),
+        ));
         self
     }
 
