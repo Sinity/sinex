@@ -31,6 +31,25 @@ fn journal_field<'a>(json: &'a serde_json::Value, key: &str) -> Option<&'a str> 
     json.get(key).and_then(|v| v.as_str())
 }
 
+/// Decode a journald field value that is either a JSON string or, per
+/// `journalctl -o json`'s own format, a JSON array of byte values (used
+/// whenever the field's raw bytes aren't valid printable UTF-8 text, which
+/// includes any line containing ANSI escape codes). Array values are decoded
+/// lossily since journald itself makes no UTF-8 guarantee for these fields.
+fn decode_journald_field(v: &serde_json::Value) -> Option<String> {
+    match v {
+        serde_json::Value::String(s) => Some(s.clone()),
+        serde_json::Value::Array(items) => {
+            let bytes: Vec<u8> = items
+                .iter()
+                .map(|item| item.as_u64().and_then(|n| u8::try_from(n).ok()))
+                .collect::<Option<_>>()?;
+            Some(String::from_utf8_lossy(&bytes).into_owned())
+        }
+        _ => None,
+    }
+}
+
 fn is_sinexd_journal_entry(json: &serde_json::Value) -> bool {
     journal_field(json, "_SYSTEMD_UNIT") == Some("sinexd.service")
         || journal_field(json, "SYSLOG_IDENTIFIER") == Some("sinexd")
@@ -159,7 +178,8 @@ impl MaterialParser for JournaldParser {
             .unwrap_or(0);
 
         let timestamp = if timestamp_us > 0 {
-            Timestamp::from_unix_timestamp(timestamp_us / 1_000_000).unwrap_or_else(Timestamp::now)
+            Timestamp::from_unix_timestamp_nanos(i128::from(timestamp_us) * 1_000)
+                .unwrap_or_else(Timestamp::now)
         } else {
             Timestamp::now()
         };
@@ -177,9 +197,8 @@ impl MaterialParser for JournaldParser {
 
         let message = json
             .get("MESSAGE")
-            .and_then(|v| v.as_str())
-            .unwrap_or("")
-            .to_string();
+            .and_then(decode_journald_field)
+            .unwrap_or_default();
 
         let cmdline = json
             .get("_CMDLINE")
@@ -194,8 +213,8 @@ impl MaterialParser for JournaldParser {
         let mut fields: HashMap<String, String> = HashMap::new();
         if let Some(obj) = json.as_object() {
             for (k, v) in obj {
-                if let Some(s) = v.as_str() {
-                    fields.insert(k.clone(), s.to_string());
+                if let Some(s) = decode_journald_field(v) {
+                    fields.insert(k.clone(), s);
                 }
             }
         }
