@@ -1,7 +1,7 @@
 use super::conversions::records_to_events;
 use super::persistence::{
-    BatchViolation, EventAnnotation, EventRepository, InvalidPayloadEvent, InvalidTimestamp,
-    SuspiciousEvent,
+    BatchViolation, EventAnnotation, EventRepository, EventStorageLane, InvalidPayloadEvent,
+    InvalidTimestamp, SuspiciousEvent,
 };
 use crate::EventRecord;
 use crate::JsonValue;
@@ -646,6 +646,20 @@ impl EventRepository<'_> {
     ///
     /// Returns the set of event IDs that exist in `core.event_tombstones`.
     /// Used by the ingestion pipeline to reject re-ingestion of tombstoned events.
+    ///
+    /// Deliberately NOT lane-parameterized (sinex-f8v audit): `event_tombstones`
+    /// is keyed only by the globally-unique event `id` (UUIDv7), not by lane —
+    /// there is exactly one tombstones table for the whole system, mirroring
+    /// `audit.archived_events` and the cascade-archive machinery
+    /// (`CascadeSource::Live` / `EventTombstones::table_name`), which are
+    /// likewise `core.events`-only today: no archive/tombstone pathway exists
+    /// yet for `reflection.events` rows. Because ids never collide across
+    /// lanes, checking this single table is already correct for both lanes —
+    /// a reflection-lane id can only ever appear here if reflection gains its
+    /// own archive-cascade pathway, at which point it would still land in
+    /// this same id-keyed table rather than needing a second one. Threading a
+    /// no-op `EventStorageLane` through this call would document nothing that
+    /// isn't already true structurally, so it is omitted.
     pub async fn filter_tombstoned(
         &self,
         event_ids: &[Id<Event<JsonValue>>],
@@ -679,33 +693,64 @@ impl EventRepository<'_> {
     /// DESC`): the single-live-interpretation invariant means there is
     /// normally exactly one, but hypertables cannot enforce it, so "newest
     /// UUIDv7 wins" is the deterministic tie-break.
+    ///
+    /// `lane` selects which physical table (`core.events` /
+    /// `reflection.events`) the occurrence lookup runs against (sinex-f8v):
+    /// dedup is a same-lane concept — a reflection event replaying its
+    /// `equivalence_key` must collide against the reflection-lane live row,
+    /// never a same-keyed activity-lane row (and vice versa). `sqlx::query!`
+    /// needs a literal table name for compile-time checking, so the query is
+    /// duplicated per lane rather than interpolating the table name — same
+    /// pattern as `EventRepository::insert`'s lane split.
     pub async fn find_live_by_equivalence_key(
         &self,
         key: &str,
+        lane: EventStorageLane,
     ) -> DbResult<Option<LiveEquivalenceRow>> {
-        let row = sqlx::query!(
-            r#"
-            SELECT
-                id::uuid as "id!",
-                payload as "payload!",
-                content_hash
-            FROM core.events
-            WHERE equivalence_key = $1
-            ORDER BY id DESC
-            LIMIT 1
-            "#,
-            key
-        )
-        .fetch_optional(self.pool)
-        .await
+        // `query_as!` targets the shared, named `LiveEquivalenceRow` struct
+        // (rather than plain `query!`, whose anonymous per-call-site record
+        // type would make the two match arms' result types fail to unify —
+        // each `query!` invocation generates its own distinct struct even
+        // when the selected columns are identical).
+        let row = match lane {
+            EventStorageLane::Activity => sqlx::query_as!(
+                LiveEquivalenceRow,
+                r#"
+                SELECT
+                    $1::text as "equivalence_key!",
+                    id::uuid as "id!",
+                    payload as "payload!",
+                    content_hash
+                FROM core.events
+                WHERE equivalence_key = $1
+                ORDER BY id DESC
+                LIMIT 1
+                "#,
+                key
+            )
+            .fetch_optional(self.pool)
+            .await,
+            EventStorageLane::Reflection => sqlx::query_as!(
+                LiveEquivalenceRow,
+                r#"
+                SELECT
+                    $1::text as "equivalence_key!",
+                    id::uuid as "id!",
+                    payload as "payload!",
+                    content_hash
+                FROM reflection.events
+                WHERE equivalence_key = $1
+                ORDER BY id DESC
+                LIMIT 1
+                "#,
+                key
+            )
+            .fetch_optional(self.pool)
+            .await,
+        }
         .map_err(|e| db_error(e, "find live event by equivalence_key"))?;
 
-        Ok(row.map(|row| LiveEquivalenceRow {
-            equivalence_key: key.to_string(),
-            id: row.id,
-            payload: row.payload,
-            content_hash: row.content_hash,
-        }))
+        Ok(row)
     }
 
     /// Batch form of [`Self::find_live_by_equivalence_key`]: the newest live
@@ -717,40 +762,58 @@ impl EventRepository<'_> {
     /// lookups. Keys with no live row are simply absent from the result.
     /// Propagates DB errors to the caller, which falls back to per-event
     /// resolution on error.
+    ///
+    /// See [`Self::find_live_by_equivalence_key`] for why `lane` matters and
+    /// why the query is duplicated per lane rather than interpolated.
     pub async fn find_live_by_equivalence_keys(
         &self,
         keys: &[String],
+        lane: EventStorageLane,
     ) -> DbResult<Vec<LiveEquivalenceRow>> {
         if keys.is_empty() {
             return Ok(Vec::new());
         }
         let keys_vec = keys.to_vec();
-        let rows = sqlx::query!(
-            r#"
-            SELECT DISTINCT ON (equivalence_key)
-                equivalence_key as "equivalence_key!",
-                id::uuid as "id!",
-                payload as "payload!",
-                content_hash
-            FROM core.events
-            WHERE equivalence_key = ANY($1::text[])
-            ORDER BY equivalence_key, id DESC
-            "#,
-            &keys_vec
-        )
-        .fetch_all(self.pool)
-        .await
+        // See `find_live_by_equivalence_key` for why `query_as!` against the
+        // shared `LiveEquivalenceRow` type is required here (anonymous
+        // `query!` record types wouldn't unify across the match arms).
+        let rows = match lane {
+            EventStorageLane::Activity => sqlx::query_as!(
+                LiveEquivalenceRow,
+                r#"
+                SELECT DISTINCT ON (equivalence_key)
+                    equivalence_key as "equivalence_key!",
+                    id::uuid as "id!",
+                    payload as "payload!",
+                    content_hash
+                FROM core.events
+                WHERE equivalence_key = ANY($1::text[])
+                ORDER BY equivalence_key, id DESC
+                "#,
+                &keys_vec
+            )
+            .fetch_all(self.pool)
+            .await,
+            EventStorageLane::Reflection => sqlx::query_as!(
+                LiveEquivalenceRow,
+                r#"
+                SELECT DISTINCT ON (equivalence_key)
+                    equivalence_key as "equivalence_key!",
+                    id::uuid as "id!",
+                    payload as "payload!",
+                    content_hash
+                FROM reflection.events
+                WHERE equivalence_key = ANY($1::text[])
+                ORDER BY equivalence_key, id DESC
+                "#,
+                &keys_vec
+            )
+            .fetch_all(self.pool)
+            .await,
+        }
         .map_err(|e| db_error(e, "find live events by equivalence_keys"))?;
 
-        Ok(rows
-            .into_iter()
-            .map(|row| LiveEquivalenceRow {
-                equivalence_key: row.equivalence_key,
-                id: row.id,
-                payload: row.payload,
-                content_hash: row.content_hash,
-            })
-            .collect())
+        Ok(rows)
     }
 }
 
