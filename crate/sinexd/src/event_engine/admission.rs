@@ -633,7 +633,12 @@ impl AdmissionService {
         let Some(key) = event.equivalence_key.as_ref() else {
             return EquivalenceOutcome::Fresh;
         };
-        match self.pool.events().find_live_by_equivalence_key(key).await {
+        match self
+            .pool
+            .events()
+            .find_live_by_equivalence_key(key, self.storage_lane)
+            .await
+        {
             Ok(Some(live)) => classify_live_match(event, &live),
             Ok(None) => EquivalenceOutcome::Fresh,
             Err(e) => {
@@ -1001,7 +1006,7 @@ impl AdmissionService {
             match self
                 .pool
                 .events()
-                .find_live_by_equivalence_keys(&equiv_keys)
+                .find_live_by_equivalence_keys(&equiv_keys, self.storage_lane)
                 .await
             {
                 Ok(rows) => rows

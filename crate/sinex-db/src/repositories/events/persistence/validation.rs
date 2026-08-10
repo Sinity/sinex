@@ -1,4 +1,5 @@
 use super::super::conversions::extract_provenance;
+use super::types::EventStorageLane;
 use crate::JsonValue;
 use crate::SinexError;
 use crate::models::Event;
@@ -82,11 +83,31 @@ where
     Ok(())
 }
 
+/// Verify that a derived event's parents are live rows in the SAME physical
+/// storage lane the derived event itself is about to be persisted into
+/// (sinex-f8v).
+///
+/// # Cross-lane parent policy
+///
+/// Parents must be same-lane: a reflection-derived event may only reference
+/// reflection-lane parents, and an activity-derived event may only
+/// reference activity-lane parents. This is deliberate, not an oversight —
+/// automaton fan-out subscribes exactly one lane's confirmed stream per
+/// consumer (`JetStreamConsumer::with_event_lane`; reflection-consuming
+/// automata opt in explicitly, see `docs/architecture.md`), so a
+/// correctly-behaving automaton never produces a derived event whose
+/// parents live in the other lane. A `source_event_ids` entry that only
+/// exists in the other lane is therefore treated exactly like any other
+/// non-live parent: rejected here with the same "non-live source_event_ids"
+/// error, rather than silently accepted or silently miscategorized. If a
+/// genuine cross-lane derivation need ever arises, it must add an explicit
+/// union lookup here — not fall through unnoticed.
 pub(super) async fn ensure_source_event_ids_are_live<'e, E>(
     executor: E,
     event_id: &Id<Event<JsonValue>>,
     source_event_ids: &[EventId],
     batch_event_ids: Option<&HashSet<Uuid>>,
+    lane: EventStorageLane,
 ) -> DbResult<()>
 where
     E: Executor<'e, Database = Postgres>,
@@ -110,22 +131,31 @@ where
     if let Some(invalid_source_id) = source_uuids.iter().find(|source_id| !is_uuid_v7(source_id)) {
         return Err(SinexError::validation(format!(
             "derived event {event_id} references non-UUIDv7 source_event_id {invalid_source_id}; \
-             source_event_ids must reference live core.events IDs"
+             source_event_ids must reference live {} IDs",
+            lane.table_name()
         )));
     }
 
-    let live_ids = sqlx::query_scalar::<_, Uuid>(
+    // `lane.table_name()` is one of two hardcoded literals ("core.events" /
+    // "reflection.events"), never externally-controlled input, so
+    // interpolating it is safe — mirrors the same pattern already used by
+    // `lock_and_filter_equivalence_conflicts` for the identical reason
+    // (`sqlx::query!` requires a literal table name for compile-time
+    // checking, which a lane-parameterized table name cannot provide).
+    let live_sql = format!(
         r"
         SELECT id::uuid
-        FROM core.events
+        FROM {}
         WHERE id = ANY($1::uuid[])
         FOR KEY SHARE
         ",
-    )
-    .bind(&source_uuids)
-    .fetch_all(executor)
-    .await
-    .map_err(|e| db_error(e, "validate live derived event parents"))?;
+        lane.table_name()
+    );
+    let live_ids = sqlx::query_scalar::<_, Uuid>(&live_sql)
+        .bind(&source_uuids)
+        .fetch_all(executor)
+        .await
+        .map_err(|e| db_error(e, "validate live derived event parents"))?;
 
     let live_set = live_ids.into_iter().collect::<HashSet<_>>();
     let missing_ids = source_uuids
@@ -136,8 +166,9 @@ where
 
     if !missing_ids.is_empty() {
         return Err(SinexError::validation(format!(
-            "derived event {event_id} references {} non-live source_event_ids: {}",
+            "derived event {event_id} references {} non-live source_event_ids in {}: {}",
             missing_ids.len(),
+            lane.table_name(),
             missing_ids
                 .iter()
                 .map(Uuid::to_string)

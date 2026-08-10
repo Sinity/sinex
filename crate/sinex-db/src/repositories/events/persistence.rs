@@ -377,8 +377,14 @@ impl<'a> EventRepository<'a> {
                         // row inside the same snapshot window — see sinex-94mh.
                         set_repeatable_read(tx).await?;
                         ensure_no_synthesis_cycles(&mut **tx, &id, source_event_ids)?;
-                        ensure_source_event_ids_are_live(&mut **tx, &id, source_event_ids, None)
-                            .await?;
+                        ensure_source_event_ids_are_live(
+                            &mut **tx,
+                            &id,
+                            source_event_ids,
+                            None,
+                            lane,
+                        )
+                        .await?;
                     }
 
                     // sqlx::query_as! needs a literal table name for compile-time
@@ -631,9 +637,19 @@ impl<'a> EventRepository<'a> {
             anchor_byte,
         ) = extract_provenance(&event)?;
 
+        // Route via the same activity/reflection lane split as `insert` above
+        // (see sinex-4k4b) — self-observation events must land in
+        // `reflection.events`, never `core.events`. Computed here (ahead of
+        // the insert statement below) so the parent-liveness check can also
+        // use it (sinex-f8v).
+        let lane = match source_role(event.source.as_str()) {
+            SourceRole::Activity => EventStorageLane::Activity,
+            SourceRole::Reflection => EventStorageLane::Reflection,
+        };
+
         if let Some(source_event_ids) = source_event_ids.as_ref() {
             ensure_no_synthesis_cycles(&mut **tx, &id, source_event_ids)?;
-            ensure_source_event_ids_are_live(&mut **tx, &id, source_event_ids, None).await?;
+            ensure_source_event_ids_are_live(&mut **tx, &id, source_event_ids, None, lane).await?;
         }
 
         // Convert IDs to UUIDs before the query to avoid temporary value issues
@@ -673,13 +689,6 @@ impl<'a> EventRepository<'a> {
                 SinexError::database("Failed to serialize event claim_support").with_source(e)
             })?;
 
-        // Route via the same activity/reflection lane split as `insert` above
-        // (see sinex-4k4b) — self-observation events must land in
-        // `reflection.events`, never `core.events`.
-        let lane = match source_role(event.source.as_str()) {
-            SourceRole::Activity => EventStorageLane::Activity,
-            SourceRole::Reflection => EventStorageLane::Reflection,
-        };
         // Admission-time content hash (sinex-w1w7) — see the matching
         // comment in `insert` above; this direct path has no separate
         // admission stage, so hashing `event.payload` here is self-consistent.
@@ -1131,7 +1140,9 @@ impl<'a> EventRepository<'a> {
         ensure_no_intra_batch_synthesis_cycles(&synthesis_checks)?;
         let batch_event_ids = ids.iter().copied().collect::<HashSet<_>>();
 
-        // Enforce derived cycle detection (parity with insert/insert_stream_batch)
+        // Enforce derived cycle detection (parity with insert/insert_stream_batch).
+        // This UNNEST batch path always inserts into `core.events` (below), so
+        // the parent-liveness check is pinned to the Activity lane to match.
         for (event_id, source_ids) in &synthesis_checks {
             ensure_no_synthesis_cycles(&mut **tx, event_id, source_ids)?;
             ensure_source_event_ids_are_live(
@@ -1139,6 +1150,7 @@ impl<'a> EventRepository<'a> {
                 event_id,
                 source_ids,
                 Some(&batch_event_ids),
+                EventStorageLane::Activity,
             )
             .await?;
         }
@@ -1334,6 +1346,7 @@ impl<'a> EventRepository<'a> {
                             event_id,
                             source_ids,
                             Some(&batch_event_ids),
+                            lane,
                         )
                         .await?;
                     }
