@@ -163,11 +163,12 @@ relations = `TELEMETRY_*` constants in `crate/sinex-schema/src/apply.rs`.
 
 ### Known open correctness seams (verified; tracked in bd epic r6d)
 
-- Emission is an in-memory handoff end-to-end until NATS publish: source cursors and
-  automaton checkpoints can durably advance before outputs are durable (loss window on
-  crash). Repair frame = one shared durable-emission receipt (beads r6d.4, vxu, r6d.7, w4i).
-- Recovery spool caps preserved lines and permanently discards the rest.
-- Health defaults to Healthy (missing reporter counts as healthy).
+- Emission-before-durability windows are mostly closed (r6d.4, r6d.7 both closed; vxu closed
+  for the live-bridge path, historical replay/timer_flush/shutdown still open) via the
+  durable-emission-receipt primitive. w4i (multi-intent partial-record re-emit duplicates) is
+  still open. DLQ requeue can silently destroy the only surviving copy of a message when it
+  collides with the DLQ stream's dupeWindow (sinex-3kqx); the material-assembler's own DLQ
+  publish is unconfirmed core-NATS, not JetStream-acked (sinex-wb1, reopened 2026-08-10).
 - Do not "fix" these ad-hoc in passing — they are sequenced campaign work with a shared
   primitive; check bd state first.
 
