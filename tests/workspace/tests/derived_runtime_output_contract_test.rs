@@ -249,8 +249,18 @@ where
         "{service_name} did not process any inputs"
     );
 
+    // sinex-vxu: `process_event_batch` now durably emits (and awaits
+    // settlement for) every output before it returns at all, so every
+    // output this call is going to produce has already been sent on
+    // `event_rx` by this point — but `TestRuntimeBuilder` relays events
+    // through an auto-settling forwarder task (see its doc) that resolves
+    // each event's settlement THEN forwards it, so a tight `try_recv` loop
+    // right here could race a forward that hasn't landed yet. Drain with a
+    // short per-recv timeout instead of a single non-blocking pass.
     let mut outputs = Vec::new();
-    while let Ok(event) = runtime.event_rx.try_recv() {
+    while let Ok(Some(event)) =
+        tokio::time::timeout(std::time::Duration::from_millis(500), runtime.event_rx.recv()).await
+    {
         outputs.push(event);
     }
     adapter.shutdown().await?;
@@ -418,12 +428,48 @@ mod test_runtime {
     use sinexd::runtime::{
         EventTransport,
         checkpoint::CheckpointManager,
+        durable_emission::{EmissionReceiptState, SettlementRegistry},
         nats_publisher::NatsPublisher,
         stream::{EventEmitter, RuntimeContext, RuntimeHandles, ServiceInfo},
     };
     use tokio::sync::mpsc;
     use xtask::sandbox::nats::create_or_open_kv_store;
     use xtask::sandbox::{EphemeralNats, Sandbox};
+
+    /// Drain `raw`, resolving every emitted event's id as `PersistedConfirmed`
+    /// in `registry` before forwarding it on — a minimal stand-in for the
+    /// real event-engine's settlement call sites
+    /// (`event_engine::jetstream_consumer::persist`), matching
+    /// `adapter_source_test.rs::auto_settle_events`'s established pattern.
+    /// sinex-vxu: `AutomatonRuntime::process_event_batch` now durably emits
+    /// via `emit_batch_durable` and awaits settlement before returning, so
+    /// this test runtime needs a real (if trivial) settler or every
+    /// automaton batch this scaffold drives would time out waiting for a
+    /// registration nobody ever resolves.
+    fn auto_settle_events(
+        mut raw: mpsc::Receiver<Event<JsonValue>>,
+        registry: SettlementRegistry,
+    ) -> mpsc::Receiver<Event<JsonValue>> {
+        let (forward_tx, forward_rx) = mpsc::channel::<Event<JsonValue>>(DEFAULT_EVENT_CHANNEL_SIZE);
+        tokio::spawn(async move {
+            while let Some(event) = raw.recv().await {
+                if let Some(id) = event.id {
+                    registry.resolve(
+                        id,
+                        EmissionReceiptState::PersistedConfirmed {
+                            lane: sinex_db::repositories::EventStorageLane::Activity,
+                            inserted: true,
+                            confirmed_sequence: None,
+                        },
+                    );
+                }
+                if forward_tx.send(event).await.is_err() {
+                    break;
+                }
+            }
+        });
+        forward_rx
+    }
 
     /// Fully wired runtime scaffold for automaton integration tests.
     pub struct TestRuntime {
@@ -464,8 +510,10 @@ mod test_runtime {
             let nats = ctx.nats_handle()?;
             let publisher = Arc::new(NatsPublisher::new(nats_client.clone()));
 
-            let (event_tx, event_rx) = mpsc::channel(DEFAULT_EVENT_CHANNEL_SIZE);
+            let (event_tx, event_rx_raw) = mpsc::channel(DEFAULT_EVENT_CHANNEL_SIZE);
             let emitter = EventEmitter::new(event_tx, dry_run);
+            let settlement_registry = SettlementRegistry::new();
+            let event_rx = auto_settle_events(event_rx_raw, settlement_registry.clone());
 
             let js = async_nats::jetstream::new(nats_client);
             let kv = create_or_open_kv_store(
@@ -498,7 +546,8 @@ mod test_runtime {
                 emitter.clone(),
                 EventTransport::Nats(publisher),
                 None,
-            );
+            )
+            .with_settlement_registry(settlement_registry);
 
             let temp_dir = sinex_primitives::environment().temp_dir();
             let work_dir = Utf8PathBuf::from_path_buf(temp_dir).map_err(|path| {

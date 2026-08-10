@@ -151,6 +151,7 @@ async fn spawn_fake_scan_source_runtime(
             events_emitted: events_processed,
             final_report: Some(report),
             error: None,
+            cancelled: false,
         };
         let bytes = serde_json::to_vec(&progress).map_err(|error| {
             color_eyre::eyre::eyre!(

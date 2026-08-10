@@ -31,12 +31,19 @@ use sinex_primitives::{Id, JsonValue, Pagination, Uuid};
 
 use std::path::PathBuf;
 use std::sync::Arc;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 use tracing::{debug, error, info, warn};
 
 const INVALIDATION_QUERY_PAGE_SIZE: i64 = Pagination::MAX_LIMIT;
 const DERIVED_OUTPUT_PARENT_WARN_THRESHOLD: usize = 100;
 const DERIVED_OUTPUT_PARENT_HARD_LIMIT: usize = 1000;
+/// Default per-item timeout `commit_prepared_inputs` (sinex-vxu) waits for a
+/// durable-emission receipt to settle before treating that item as a
+/// permanent hole for the current batch. Same value as
+/// `adapter_source.rs::ADAPTER_DURABLE_EMISSION_PER_ITEM_TIMEOUT` — both are
+/// bounding the same underlying `SettlementRegistry::await_batch` wait.
+/// Overridable via `AutomatonRuntime::with_durable_emission_timeout` (tests).
+const AUTOMATON_DURABLE_EMISSION_PER_ITEM_TIMEOUT: Duration = Duration::from_secs(30);
 
 fn stale_output_ids_or_fail_scope(
     module_name: &str,
@@ -126,6 +133,10 @@ where
     health_reporter: Option<Arc<crate::runtime::health_reporter::HealthReporter>>,
     #[cfg(feature = "messaging")]
     self_observer: Option<Arc<crate::runtime::self_observation::SelfObserver>>,
+    /// Per-item timeout `commit_prepared_inputs` (sinex-vxu) waits for a
+    /// durable-emission receipt before treating an item as an unresolved
+    /// hole. See `AUTOMATON_DURABLE_EMISSION_PER_ITEM_TIMEOUT`.
+    durable_emission_timeout: Duration,
     /// sinex-r6d.9 crash-window harness hook: when armed, `process_batch`
     /// deliberately exits the process (`std::process::exit`, not a
     /// catchable panic) immediately after the durable checkpoint save
@@ -184,6 +195,7 @@ where
             health_reporter: None,
             #[cfg(feature = "messaging")]
             self_observer: None,
+            durable_emission_timeout: AUTOMATON_DURABLE_EMISSION_PER_ITEM_TIMEOUT,
             #[cfg(any(test, feature = "testing"))]
             fail_point_after_checkpoint: None,
             #[cfg(any(test, feature = "testing"))]
@@ -247,6 +259,15 @@ where
         let mut adapter = Self::with_automaton(automaton);
         adapter.shutdown_config = shutdown_config;
         adapter
+    }
+
+    /// Override the per-item durable-emission settlement timeout (sinex-vxu).
+    /// Tests use this to prove settlement/timeout behavior deterministically
+    /// without waiting out the production default.
+    #[must_use]
+    pub fn with_durable_emission_timeout(mut self, timeout: std::time::Duration) -> Self {
+        self.durable_emission_timeout = timeout;
+        self
     }
 }
 
@@ -608,6 +629,15 @@ where
         // care about the worst-case backlog, not the average.
         let max_lag_ms = matching.iter().map(event_lag_ms).fold(0.0_f64, f64::max);
         let start = std::time::Instant::now();
+        let events_processed_before = self.persisted_state.events_processed;
+        // sinex-vxu: `process_batch` now durably emits every output itself
+        // (via `commit_prepared_inputs`) before this returns — no separate
+        // `emit_output_events` call here, that would double-emit. `outputs`
+        // is exactly the set of output events whose input was ACTUALLY
+        // marked processed this call, which may be fewer than `batch_size`
+        // when a durable-emission receipt didn't unlock progress for one or
+        // more inputs (they remain unprocessed holes, not silently
+        // committed).
         let outputs = self.process_batch(matching).await?;
         let batch_runtime_ms = start.elapsed().as_secs_f64() * 1000.0;
         // Use a distinct metric name (`derived.batch_runtime_ms`) for the whole-batch
@@ -616,21 +646,18 @@ where
         self.observe_batch_processing_latency(max_lag_ms, batch_runtime_ms, batch_size)
             .await;
         let output_count = outputs.len();
-
-        if !outputs.is_empty() {
-            self.emit_output_events(outputs, "event bridge batch")
-                .await?;
-        }
+        let processed = (self.persisted_state.events_processed - events_processed_before) as usize;
 
         debug!(
             automaton = %self.automaton.name(),
             input_count = batch_size,
+            processed,
             output_count,
             "Processed event batch via bridge"
         );
 
         Ok(ProcessingStats {
-            processed: batch_size,
+            processed,
             duration: std::time::Duration::from_secs_f64(batch_runtime_ms / 1000.0),
             ..ProcessingStats::default()
         })

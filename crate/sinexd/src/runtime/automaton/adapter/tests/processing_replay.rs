@@ -237,6 +237,28 @@ async fn scope_invalidation_outputs_preserve_payload_for_policy_admission() -> T
         fn output_event_type(&self) -> &'static str {
             "test.output"
         }
+
+        const OUTPUT_DECLARATIONS: &'static [sinex_primitives::derivation::DerivationOutputDeclaration] =
+            &[sinex_primitives::derivation::DerivationOutputDeclaration {
+                declaration_id: "test.derived-adapter-invalidation-policy-admission-test.test.output",
+                owner: "test",
+                product_class: sinex_primitives::derivation::DerivedProductClass::CanonicalDerivedEvent,
+                write_surface: sinex_primitives::derivation::DerivationWriteSurface::DerivedOutput,
+                output_source: None,
+                output_event_type: Some("test.output"),
+                projection_kind: None,
+                artifact_kind: None,
+                proposal_kind: None,
+                semantics_version: "1.0.0",
+                input_eligibility: sinex_primitives::derivation::InputEligibility::ExplicitOnly,
+                default_support: sinex_primitives::derivation::ClaimSupportTemplate::new(
+                    sinex_primitives::derivation::SupportLevel::Convergent,
+                    sinex_primitives::derivation::SourceCoverage::Partial,
+                    sinex_primitives::derivation::ClaimTemporalQuality::DeclaredEffective,
+                ),
+                verification_command: "xtask test -p sinexd -E 'test(scope_invalidation_outputs_preserve_payload)'",
+            }];
+
         async fn process(
             &mut self,
             _state: &mut Self::State,
@@ -249,12 +271,16 @@ async fn scope_invalidation_outputs_preserve_payload_for_policy_admission() -> T
 
     let adapter = AutomatonRuntime::new(TransducerWrapper(PolicyAdmissionInvalidationNode));
     let token = ["ghp_", "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghij"].concat();
+    let declaration = &PolicyAdmissionInvalidationNode::OUTPUT_DECLARATIONS[0];
     let output = DerivedOutput::reconciled(
         json!({ "value": token }),
         Timestamp::now(),
         vec![Uuid::now_v7()],
         "scope-a".to_string(),
-    );
+    )
+    .with_declaration_id(declaration.declaration_id)
+    .with_product_class(declaration.product_class)
+    .with_claim_support(sinex_primitives::derivation::ClaimSupport::unknown());
     let context = AutomatonContext {
         trigger_event_id: Id::new(),
         source: EventSource::new("test.source")?,

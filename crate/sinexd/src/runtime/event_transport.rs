@@ -103,12 +103,31 @@ impl EventTransport {
         }
     }
 
+    /// Whether [`Self::send_to_processing_failure_queue`] returning `Ok(())`
+    /// on this transport means the routing was actually durably persisted.
+    ///
+    /// `Nats` publishes to a real JetStream processing-failure stream and
+    /// awaits the publish ack — a genuine durable record. `Direct` has no
+    /// failure stream at all: it logs a warning and returns `Ok(())` purely
+    /// so callers do not abort on a secondary concern (see the doc on
+    /// [`Self::send_to_processing_failure_queue`]) — that `Ok(())` must
+    /// never be read as "this failure is now durably recorded" (sinex-vxu
+    /// AC: "direct-transport warning-only failure routing does not count").
+    /// Callers that gate progress advancement (checkpoints, cursors, acks)
+    /// on durable failure/debt evidence must check this before treating a
+    /// successful `send_to_processing_failure_queue` call as sufficient.
+    #[must_use]
+    pub fn processing_failure_routing_is_durable(&self) -> bool {
+        matches!(self, EventTransport::Nats(_))
+    }
+
     /// Send a failed event to the processing-failure stream.
     ///
     /// This is for derived/runtime processing failures, not the raw-ingest DLQ.
     /// Direct transport does not have a processing-failure stream; a warning is
     /// logged and the method returns `Ok(())` so callers do not abort on a
-    /// secondary concern.
+    /// secondary concern. See [`Self::processing_failure_routing_is_durable`]
+    /// before treating that `Ok(())` as durable evidence.
     pub async fn send_to_processing_failure_queue(
         &self,
         event: &Event<JsonValue>,
