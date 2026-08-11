@@ -90,6 +90,29 @@ async fn jobs_output_accepts_explicit_stdout_selector() -> ::xtask::sandbox::Tes
     Ok(())
 }
 
+/// sinex-3sv: `stop`/`kill` are visible clap aliases for `cancel` (jobs.rs
+/// `#[command(visible_aliases = ["stop", "kill"])]` on `JobsSubcommand::Cancel`).
+/// The bug was pure verb discoverability — `JobManager::cancel` already had
+/// correct tree-kill semantics — so the regression that matters here is CLI
+/// parsing, not job lifecycle behavior (already covered by
+/// `test_cancel_terminates_nested_process_group` et al. in `jobs_test.rs`).
+/// Table-driven over all three spellings so a future rename/typo in the
+/// alias list fails this test regardless of which spelling regresses.
+#[sinex_test]
+async fn jobs_cancel_accepts_stop_and_kill_aliases() -> ::xtask::sandbox::TestResult<()> {
+    for verb in ["cancel", "stop", "kill"] {
+        let cli = crate::Cli::try_parse_from(["xtask", "jobs", verb, "42"])?;
+        let Some(crate::Commands::Jobs(JobsCommand {
+            subcommand: JobsSubcommand::Cancel { id },
+        })) = cli.command
+        else {
+            panic!("expected 'jobs {verb}' to parse as JobsSubcommand::Cancel");
+        };
+        assert_eq!(id, 42, "'jobs {verb}' did not carry the job id through");
+    }
+    Ok(())
+}
+
 #[sinex_test]
 async fn jobs_output_accepts_stream_stderr_alias() -> ::xtask::sandbox::TestResult<()> {
     let cli = crate::Cli::try_parse_from(["xtask", "jobs", "output", "42", "--stream", "stderr"])?;
