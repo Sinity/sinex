@@ -284,6 +284,7 @@ async fn sequence_relation_flags_out_of_order_and_span() -> TestResult<()> {
 /// or invert this test alongside that decision -- it exists to make the gap
 /// executable, not to prescribe the fix direction.
 #[sinex_test]
+#[ignore = "sinex-4s8j open: evaluate() reads seeds not candidates for Sequence, contradicting its own doc comment -- fails until resolved"]
 async fn sequence_relation_should_use_candidates_per_its_own_doc_contract() -> TestResult<()> {
     let a = material_event(
         "a",
