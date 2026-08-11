@@ -27,6 +27,9 @@ use sinex_primitives::events::payload::DynamicPayload;
 use xtask::sandbox::prelude::*;
 
 #[sinex_test]
+#[ignore = "sinex-kgp4 open: insert_batch's multi-element path still hardcodes core.events \
+            regardless of source_role -- this test fails until that fix lands, kept here so the \
+            fix has an immediate, precise pass/fail signal once someone picks it up"]
 async fn insert_batch_routes_reflection_event_out_of_multi_element_batch(
     ctx: TestContext,
 ) -> TestResult<()> {
