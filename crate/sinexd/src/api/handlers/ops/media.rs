@@ -395,7 +395,7 @@ pub(super) async fn execute_worker_output(
     // raw UPDATE left the material permanently at status='sensing' with no
     // Completed transition/end_time.
     pool.source_materials()
-        .finalize_in_flight(material_record.id, None, None, None, Some(total_bytes))
+        .finalize_in_flight(material_record.id.into(), None, None, None, Some(total_bytes))
         .await
         .map_err(|error| {
             SinexError::database("Failed to finalize media worker output material")

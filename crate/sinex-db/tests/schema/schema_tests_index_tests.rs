@@ -77,6 +77,49 @@ async fn test_events_text_search_index_is_used_by_production_query_shape()
         .await
         .unwrap();
 
+    // A genuinely empty/near-empty table doesn't exercise the real choice at
+    // all: with 1 row, a seq scan's cost is so close to zero that even
+    // enable_seqscan=off's cost penalty doesn't reliably tip the planner
+    // toward the index (the GUC penalizes seq scan, it doesn't forbid it,
+    // and for a single-row table it's often still cheaper on paper).
+    // Insert enough rows that a real cost-based choice is being exercised --
+    // this is what actually happened in production before this fix landed.
+    // Material-provenance shape (source_material_id + anchor_byte), matching
+    // the XOR provenance constraint on core.events.
+    let material_id = ctx.create_source_material(Some("fts-index-plan-test")).await?;
+    for i in 0..200i64 {
+        sqlx::query!(
+            r#"
+            INSERT INTO core.events (
+                id, source, event_type, host, payload, ts_orig, ts_orig_subnano,
+                source_material_id, anchor_byte
+            )
+            VALUES ($1, 'test', 'fixture.event', 'test-host', $2::jsonb, NOW(), 0, $3, $4)
+            "#,
+            uuid::Uuid::now_v7(),
+            serde_json::json!({"k": format!("filler content number {i}")}),
+            material_id.to_uuid(),
+            i,
+        )
+        .execute(pool)
+        .await?;
+    }
+    sqlx::query!(
+        r#"
+        INSERT INTO core.events (
+            id, source, event_type, host, payload, ts_orig, ts_orig_subnano,
+            source_material_id, anchor_byte
+        )
+        VALUES ($1, 'test', 'fixture.event', 'test-host', $2::jsonb, NOW(), 0, $3, 200)
+        "#,
+        uuid::Uuid::now_v7(),
+        serde_json::json!({"k": "anything to search"}),
+        material_id.to_uuid(),
+    )
+    .execute(pool)
+    .await?;
+    sqlx::query("ANALYZE core.events").execute(pool).await?;
+
     sqlx::query("SET enable_seqscan = OFF")
         .execute(pool)
         .await?;

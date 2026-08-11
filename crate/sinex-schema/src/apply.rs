@@ -2436,32 +2436,60 @@ BEGIN
                     AND le.anchor_byte IS NOT DISTINCT FROM ae.anchor_byte
               )
           )
-          -- Parent-liveness safety (sinex-79is): never restore a derived
-          -- event whose parent(s) are not ALL live in core.events. A
-          -- material row's own occurrence-safety check above can block a
-          -- material restore (a fresher re-emitted material now occupies
-          -- the occurrence); if a derived child of the un-restored material
-          -- got restored anyway, it would carry a stale equivalence_key
-          -- pointing at nothing live, permanently winning the
-          -- OccurrenceDuplicate admission check over the automaton's
-          -- correct fresh recomputation from the new material. Only derived
-          -- rows are subject to this check (source_material_id IS NULL);
-          -- material rows pass through unaffected.
-          AND (
-              ae.source_material_id IS NOT NULL
-              OR ae.source_event_ids IS NULL
-              OR NOT EXISTS (
-                  SELECT 1
-                  FROM unnest(ae.source_event_ids) AS parent_id
-                  WHERE NOT EXISTS (
-                      SELECT 1 FROM core.events le2 WHERE le2.id = parent_id
-                  )
-              )
-          )
         ON CONFLICT (id) DO NOTHING
         RETURNING id
     )
     INSERT INTO _restored_ids SELECT id FROM inserted;
+
+    -- Parent-liveness safety (sinex-79is): never leave restored a derived
+    -- event whose parent(s) are not ALL live in core.events. A material
+    -- row's own occurrence-safety check above can block a material restore
+    -- (a fresher re-emitted material now occupies the occurrence); if a
+    -- derived child of the un-restored material got restored anyway, it
+    -- would carry a stale equivalence_key pointing at nothing live,
+    -- permanently winning the OccurrenceDuplicate admission check over the
+    -- automaton's correct fresh recomputation from the new material. Only
+    -- derived rows are subject to this check (source_material_id IS NULL);
+    -- material rows pass through unaffected.
+    --
+    -- Deliberately a SEPARATE statement, evaluated AFTER the insert above
+    -- commits within this transaction: a single self-referential INSERT...
+    -- SELECT checks its WHERE clause against the table's pre-statement
+    -- snapshot, so two rows restored in the SAME call (e.g. a material and
+    -- its derived child) would see each other as not-yet-live even though
+    -- both are legitimately being restored together -- checking here, after
+    -- the whole batch has landed, correctly treats same-batch siblings as
+    -- live.
+    DROP TABLE IF EXISTS _parent_dead_ids;
+    CREATE TEMP TABLE _parent_dead_ids (id UUID PRIMARY KEY) ON COMMIT DROP;
+
+    INSERT INTO _parent_dead_ids
+    SELECT r.id
+    FROM _restored_ids r
+    JOIN core.events e ON e.id = r.id
+    WHERE e.source_event_ids IS NOT NULL
+      AND EXISTS (
+          SELECT 1
+          FROM unnest(e.source_event_ids) AS parent_id
+          WHERE NOT EXISTS (
+              SELECT 1 FROM core.events le2 WHERE le2.id = parent_id
+          )
+      );
+
+    -- Pre-empt the archive-before-delete trigger's raw INSERT (no ON
+    -- CONFLICT) from colliding with the original archived row for any
+    -- parent-dead id, which is still present -- it was never deleted
+    -- since these ids were excluded from the archive-cleanup step below.
+    DELETE FROM audit.archived_events
+    WHERE id IN (SELECT id FROM _parent_dead_ids);
+
+    DELETE FROM core.events
+    WHERE id IN (SELECT id FROM _parent_dead_ids);
+
+    DELETE FROM _restored_ids
+    WHERE id IN (SELECT id FROM _parent_dead_ids);
+
+    DROP TABLE _parent_dead_ids;
 
     SELECT count(*)::bigint INTO v_restored_count FROM _restored_ids;
 

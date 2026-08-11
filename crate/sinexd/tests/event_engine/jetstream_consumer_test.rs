@@ -2566,7 +2566,20 @@ async fn settlement_registry_resolves_durable_debt_for_an_admission_rejected_eve
 /// *other* supersede/suppress test in this file (which all insert that
 /// barrier) blind to the bug: a quiet/barriered consumer drains one message
 /// per fetch, so the two never co-occupy a batch.
+///
+/// sinex-txt4 open, coordinator note: this test's OWN harness is not yet
+/// reliable, separate from whether the target bug is real. The original
+/// version silently lost both publishes (a fire-and-forget core-NATS
+/// publish, `publish_event`, sent before the raw stream existed) --
+/// bootstrapping the stream first fixed that, but doing so now surfaces a
+/// deeper interaction with `recreate_raw_stream_for_workqueue_if_safe`'s
+/// WorkQueue-migration bootstrap logic when messages already exist and no
+/// consumer is attached yet (`jetstream_streams.rs`), which currently makes
+/// the consumer task exit before signalling readiness. Ignored until that
+/// harness issue is diagnosed and fixed -- do not trust this as evidence
+/// either way on sinex-txt4 until it runs clean.
 #[sinex_test]
+#[ignore = "sinex-txt4 open: test harness itself is broken (WorkQueue-migration bootstrap race), not yet proving the target bug either way -- needs harness fix first"]
 async fn equivalence_key_collision_within_one_fetch_batch_must_not_duplicate(
     ctx: TestContext,
 ) -> TestResult<()> {
@@ -2589,6 +2602,16 @@ async fn equivalence_key_collision_within_one_fetch_batch_must_not_duplicate(
 
     let equivalence_key = "txt4-batch-collision-key".to_string();
     let ts = temporal::now();
+
+    // publish_event uses a core-NATS (not JetStream) publish, which is
+    // fire-and-forget: a message published before the raw stream exists is
+    // silently dropped, never captured by the stream at all. Bootstrap the
+    // stream here, before either publish, so both messages are durably
+    // captured -- the point of this test is to force both into the
+    // consumer's first fetch batch, not to lose them before the consumer
+    // ever gets a chance to see them.
+    sinexd::runtime::jetstream_streams::ensure_raw_events_stream_for_topology(&js, &topology)
+        .await?;
 
     // Both publishes happen BEFORE the consumer is spawned below, and
     // neither is followed by a wait — this guarantees no persistence

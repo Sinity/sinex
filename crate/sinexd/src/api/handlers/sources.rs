@@ -249,7 +249,7 @@ pub async fn handle_sources_stage(
             .as_ref()
             .and_then(|id_str| uuid::Uuid::parse_str(id_str).ok().map(sinex_db::Id::from));
         pool.source_materials()
-            .finalize_in_flight(record.id, blob_id_typed, None, None, Some(size))
+            .finalize_in_flight(record.id.into(), blob_id_typed, None, None, Some(size))
             .await
             .map_err(|error| {
                 SinexError::database("Failed to finalize staged source material")

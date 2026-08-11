@@ -92,6 +92,11 @@
                 .with_context("path", path.display().to_string())
         })?;
         let mut cache = FileContentMaterializationCache::default();
+        let watch_root = Utf8PathBuf::from_path_buf(dir.path().to_path_buf()).map_err(|path| {
+            SinexError::validation("test dir path is not valid UTF-8")
+                .with_context("path", path.display().to_string())
+        })?;
+        let watch_paths = [watch_root];
 
         let first = SourceRecord {
             material_id: dummy_material_id(),
@@ -123,6 +128,7 @@
             Arc::clone(&acquisition),
             1024 * 1024,
             &mut cache,
+            &watch_paths,
         )
         .await?;
         let second_materialized = materialize_file_content_record_with_cache(
@@ -130,6 +136,7 @@
             acquisition,
             1024 * 1024,
             &mut cache,
+            &watch_paths,
         )
         .await?;
 
@@ -289,8 +296,18 @@
             .into_json(),
         };
 
-        let materialized =
-            materialize_file_content_record(record, acquisition, 1024 * 1024).await?;
+        let watch_root =
+            Utf8PathBuf::from_path_buf(watched_dir.path().to_path_buf()).map_err(|path| {
+                SinexError::validation("test dir path is not valid UTF-8")
+                    .with_context("path", path.display().to_string())
+            })?;
+        let materialized = materialize_file_content_record(
+            record,
+            acquisition,
+            1024 * 1024,
+            &[watch_root],
+        )
+        .await?;
 
         let materialized_content_captured = materialized
             .metadata

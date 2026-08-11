@@ -716,7 +716,7 @@ impl AdmissionService {
                     AdmissionRejectionKind::MissingTimestamp,
                     "Validation failed: missing ts_orig",
                 )
-                .with_event_id(event.id),
+                .with_event_id(event.id.map(|id| id.to_uuid()).unwrap_or_default()),
             ));
         }
 
@@ -742,7 +742,7 @@ impl AdmissionService {
                             self.ts_orig_lower_bound
                         ),
                     )
-                    .with_event_id(event.id),
+                    .with_event_id(event.id.map(|id| id.to_uuid()).unwrap_or_default()),
                 ));
             }
             if ts_orig > now + self.future_ts_skew {
@@ -767,7 +767,7 @@ impl AdmissionService {
                             (ts_orig - now).whole_seconds()
                         ),
                     )
-                    .with_event_id(event.id),
+                    .with_event_id(event.id.map(|id| id.to_uuid()).unwrap_or_default()),
                 ));
             }
         }
@@ -790,7 +790,7 @@ impl AdmissionService {
                     AdmissionRejectionKind::NegativeAnchor,
                     format!("Invalid anchor_byte: {anchor_byte} (must be >= 0)"),
                 )
-                .with_event_id(event.id),
+                .with_event_id(event.id.map(|id| id.to_uuid()).unwrap_or_default()),
             ));
         }
 
@@ -803,7 +803,7 @@ impl AdmissionService {
                         AdmissionRejectionKind::SchemaValidation,
                         format!("Validation failed: {error}"),
                     )
-                    .with_event_id(event.id),
+                    .with_event_id(event.id.map(|id| id.to_uuid()).unwrap_or_default()),
                 ));
             }
         };

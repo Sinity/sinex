@@ -291,10 +291,16 @@ async fn staged_replay_cancel_reaches_cancelled_and_restores_cascade(
             )
         })?
         .map_err(|error| test_error(format!("execute task panicked: {error}")))?;
-    let err = outcome.expect_err("cancelled staged-source replay must return an error");
-    assert!(
-        error_contains(&err, "cancel"),
-        "expected a cancellation-shaped error, got: {err}"
+    // execute_with_overrides() deliberately converts a confirmed-cancelled
+    // internal error into Ok(operation) with state=Cancelled (sinex-2vve/
+    // xixl) once it verifies the operation genuinely started before being
+    // cancelled -- this hands the caller the full ReplayOperation (state,
+    // checkpoint, preview) instead of an opaque error that discards it.
+    let cancelled = outcome.expect("cancelled staged-source replay must still return Ok with a confirmed Cancelled operation");
+    assert_eq!(
+        cancelled.state,
+        ReplayState::Cancelled,
+        "expected the returned operation to report Cancelled, got: {cancelled:?}"
     );
 
     let live_target_count: i64 =

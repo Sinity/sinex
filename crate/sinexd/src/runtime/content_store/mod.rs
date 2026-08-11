@@ -412,12 +412,12 @@ impl MaterialContentStore {
     pub fn new(config: ContentStoreConfig) -> RuntimeResult<Self> {
         // Ensure the content-store root directory exists.
         std::fs::create_dir_all(&config.root_path).map_err(SinexError::io)?;
-        restrict_permissions(&config.root_path, CONTENT_STORE_DIR_MODE);
+        restrict_permissions(config.root_path.as_std_path(), CONTENT_STORE_DIR_MODE);
 
         // Always ensure the local CAS directory structure exists.
         let cas_dir = config.root_path.join(LOCAL_BLAKE3_CAS_DIR);
         std::fs::create_dir_all(&cas_dir).map_err(SinexError::io)?;
-        restrict_permissions(&cas_dir, CONTENT_STORE_DIR_MODE);
+        restrict_permissions(cas_dir.as_std_path(), CONTENT_STORE_DIR_MODE);
 
         if config.legacy_annex_enabled {
             // Verify git-annex is available
