@@ -89,6 +89,82 @@ async fn session_out_of_order_window_does_not_move_end_time_backward()
     Ok(())
 }
 
+/// sinex-5s6: clock-driven closure backstop. A session whose final
+/// contributing window closed for a reason OTHER than `Gap` (e.g.
+/// `MaxDuration`) never sets `session_complete`, so without a wall-clock
+/// backstop it would sit open forever waiting for an activity event that
+/// silence never delivers (interval ends must not require future activity).
+/// `flush_due` closes the gap: it must stay false before the watermark
+/// crosses `last_window_end + window_gap_threshold()`, flip true exactly at
+/// and beyond that boundary, and stay false once the session already
+/// completed normally (avoiding a redundant double-flush) or has no windows
+/// at all (nothing to flush).
+#[sinex_test]
+async fn session_flush_due_backstops_non_gap_trailing_close() -> xtask::sandbox::TestResult<()> {
+    let mut detector = SessionDetector;
+    let mut state = SessionState::default();
+
+    let t0 = Timestamp::from_unix_timestamp(1_700_000_000).expect("valid ts");
+    let window_end = t0 + time::Duration::seconds(60);
+    let threshold = crate::automata::analytics::window_gap_threshold();
+
+    // No windows accumulated yet: never due, regardless of watermark.
+    assert!(
+        !detector.flush_due(&state, window_end + threshold + time::Duration::seconds(3600)),
+        "an empty session must never be flush-due"
+    );
+
+    let ctx = AutomatonContext::timer_flush(window_end)?;
+    detector
+        .accumulate(
+            &mut state,
+            activity_window(t0, window_end, ActivityWindowCloseReason::MaxDuration),
+            &ctx,
+        )
+        .await?;
+    assert!(
+        !detector.window_complete(&state),
+        "a MaxDuration close (not Gap) must not mark the session complete on its own"
+    );
+
+    // Strictly before the gap threshold: not due yet.
+    let just_before = window_end + threshold - time::Duration::seconds(1);
+    assert!(
+        !detector.flush_due(&state, just_before),
+        "flush_due must not fire before the gap threshold has fully elapsed"
+    );
+
+    // Exactly at the threshold: due (the boundary is inclusive, `>=`).
+    let at_threshold = window_end + threshold;
+    assert!(
+        detector.flush_due(&state, at_threshold),
+        "flush_due must fire at the exact gap-threshold boundary, not only strictly after it"
+    );
+
+    // Well past the threshold: still due.
+    let well_after = window_end + threshold + time::Duration::seconds(3600);
+    assert!(detector.flush_due(&state, well_after));
+
+    // A session that already completed normally (Gap close) must not also
+    // report flush-due -- that would be a redundant second flush path for
+    // the same closed session.
+    let mut gap_state = SessionState::default();
+    let gap_ctx = AutomatonContext::timer_flush(window_end)?;
+    detector
+        .accumulate(
+            &mut gap_state,
+            activity_window(t0, window_end, ActivityWindowCloseReason::Gap),
+            &gap_ctx,
+        )
+        .await?;
+    assert!(detector.window_complete(&gap_state));
+    assert!(
+        !detector.flush_due(&gap_state, well_after),
+        "an already-Gap-completed session must not also be reported as flush-due"
+    );
+    Ok(())
+}
+
 /// A genuinely negative duration (malformed window_start/window_end, not
 /// out-of-order arrival) is flagged via clamp-to-zero rather than silently
 /// producing an unnoticed negative value.
