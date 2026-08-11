@@ -1,7 +1,7 @@
 // Inline because this covers local checkpoint env/default semantics.
 use super::{
     CheckpointCleanupConfig, CheckpointManager, CheckpointState, checkpoint_cleanup_cutoff,
-    cleanup_stale_checkpoints, ensure_checkpoint_kv_payload_fits,
+    checkpoint_conflict_would_regress, cleanup_stale_checkpoints, ensure_checkpoint_kv_payload_fits,
 };
 use crate::runtime::stream::Checkpoint;
 use crate::runtime::nats_payload::NATS_PUBLISH_PAYLOAD_HARD_LIMIT_BYTES;
@@ -27,6 +27,51 @@ async fn checkpoint_cleanup_from_env_defaults_invalid_overrides()
     assert!(!config.enabled);
     assert_eq!(config.max_age.as_secs(), 30 * 24 * 60 * 60);
     assert_eq!(config.interval.as_secs(), 24 * 60 * 60);
+    Ok(())
+}
+
+/// `sinex-q5sd`: `checkpoint_conflict_would_regress` classifies "regression"
+/// solely by `processed_count`, ignoring the checkpoint cursor itself. A
+/// heavily-filtering source (journald with a filter, fs-watcher skipping temp
+/// files) can advance its cursor (`Checkpoint::Internal.event_id`) on a batch
+/// where `processed_count` doesn't move, because filtered-out records aren't
+/// counted. The predicate then misclassifies that forward-moving save as a
+/// same-or-behind regression and the caller silently skips persisting it —
+/// this must become false once cursor advancement is taken into account, not
+/// just the count.
+#[sinex_serial_test]
+#[ignore = "sinex-q5sd open: regress predicate ignores cursor advancement at equal processed_count -- fails until fixed"]
+async fn checkpoint_conflict_would_regress_ignores_cursor_advancement_at_equal_processed_count()
+-> xtask::sandbox::TestResult<()> {
+    let existing = CheckpointState {
+        checkpoint: Checkpoint::internal(Uuid::now_v7(), 10),
+        processed_count: 10,
+        last_activity: Timestamp::now(),
+        data: None,
+        version: 1,
+        revision: 5,
+    };
+    // Same processed_count (all newly-scanned records were filtered out and
+    // not counted), but the cursor's event_id genuinely advanced past the
+    // existing one — this is real forward progress, not a stale/regressing
+    // write, and must not be classified as a conflict-regression.
+    let candidate = CheckpointState {
+        checkpoint: Checkpoint::internal(Uuid::now_v7(), 10),
+        processed_count: 10,
+        last_activity: Timestamp::now(),
+        data: None,
+        version: 1,
+        revision: 5,
+    };
+
+    assert!(
+        !checkpoint_conflict_would_regress(&existing, &candidate),
+        "a candidate whose cursor advanced past `existing` must not be treated as a \
+         regression merely because processed_count is unchanged -- this currently fails \
+         because the predicate only compares processed_count, silently dropping the \
+         cursor's forward progress"
+    );
+
     Ok(())
 }
 

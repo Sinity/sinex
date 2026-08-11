@@ -414,6 +414,69 @@ async fn collapse_shutdown_errors_preserves_additional_failures() -> TestResult<
     Ok(())
 }
 
+/// `sinex-q102`: the schema listener and checkpoint-cleanup background
+/// tasks are started BEFORE `module.initialize()` runs inside
+/// `initialize_with_transport`. On a failed module init, the function
+/// returns early without shutting either down -- dropping the `JoinHandle`
+/// values doesn't cancel the detached tokio tasks, so a malformed module
+/// config or init panic leaves stale NATS subscriptions/KV cleanup loops
+/// running indefinitely.
+#[cfg(feature = "messaging")]
+#[sinex_test]
+#[ignore = "sinex-q102 open: checkpoint-cleanup/schema-listener tasks leak on failed module init -- fails until fixed"]
+async fn initialize_with_transport_shuts_down_background_tasks_on_failed_module_init(
+    ctx: TestContext,
+) -> TestResult<()> {
+    let ctx = ctx.with_nats().dedicated().await?;
+    let client = ctx.nats_client();
+    ensure_default_bridge_streams(&client).await?;
+
+    let mut env_guard = EnvGuard::with_keys(&["SINEX_CHECKPOINT_CLEANUP_ENABLED"]);
+    env_guard.set("SINEX_CHECKPOINT_CLEANUP_ENABLED", "true");
+
+    let transport = EventTransport::Nats(Arc::new(NatsPublisher::new(client.clone())));
+    let work_dir = tempdir()?;
+
+    let mut runner = RuntimeRunner::new(FailingInitModule);
+    let init_result = runner
+        .initialize_with_transport(
+            "runtime-failing-init-service".to_string(),
+            HashMap::new(),
+            None,
+            transport,
+            work_dir.path().to_path_buf(),
+            false,
+        )
+        .await;
+
+    assert!(
+        init_result.is_err(),
+        "FailingInitModule::initialize must fail for this test to be meaningful"
+    );
+
+    let schema_listener_leaked = runner
+        .schema_listener_handle
+        .as_ref()
+        .is_some_and(|handle| !handle.is_finished());
+    let checkpoint_cleanup_leaked = runner
+        .checkpoint_cleanup_handle
+        .as_ref()
+        .is_some_and(|handle| !handle.is_finished());
+
+    assert!(
+        !schema_listener_leaked,
+        "schema listener task must be shut down when module.initialize() fails, not left \
+         running detached from the runner that spawned it"
+    );
+    assert!(
+        !checkpoint_cleanup_leaked,
+        "checkpoint-cleanup task must be shut down when module.initialize() fails, not left \
+         running detached from the runner that spawned it"
+    );
+
+    Ok(())
+}
+
 #[sinex_test]
 async fn shutdown_marks_runner_failed_when_cleanup_errors() -> TestResult<()> {
     let mut runner = RuntimeRunner::new(FailingShutdownModule);
