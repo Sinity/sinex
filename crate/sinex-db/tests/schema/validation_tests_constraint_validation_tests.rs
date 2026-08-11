@@ -865,3 +865,86 @@ async fn test_array_constraints() -> TestResult<()> {
     finalize_constraint_context(&ctx).await?;
     Ok(())
 }
+
+/// sinex-sbyc finding 1, CORRECTED (was filed as a bug; empirically it is
+/// not): `events_source_event_ids_no_nulls`
+/// (`array_position(source_event_ids, NULL) IS NULL`) was reported as a
+/// no-op on the theory that Postgres's `array_position(arr, target)` always
+/// returns NULL when `target` is NULL, regardless of array content. That is
+/// wrong -- `array_position` is explicitly NULL-aware (documented example:
+/// `array_position(ARRAY[1,2,NULL,3], NULL) -> 3`), so it correctly returns
+/// the NULL element's subscript when one is present and only returns NULL
+/// (no match) when the array has no NULL element. This test proves the
+/// constraint DOES reject a NULL parent id today, empirically, against a
+/// real Postgres instance -- the original wave128 finding was a false
+/// positive from reasoning about `array_position` by analogy to ordinary
+/// `=`-based lookups instead of checking its documented NULL semantics.
+#[sinex_serial_test]
+async fn test_source_event_ids_null_element_is_rejected() -> TestResult<()> {
+    let ctx = prepare_constraint_context().await?;
+    let pool = &ctx.pool;
+    setup_test_tables(pool).await;
+
+    let material = insert_sample_material(&ctx).await?;
+    let source_event_id = Uuid::now_v7();
+    sqlx::query!(
+        "INSERT INTO core.events (id, source, event_type, host, payload, ts_orig, source_material_id, anchor_byte) VALUES ($1::uuid, $2, $3, $4, $5, $6, $7::uuid, $8)",
+        source_event_id,
+        "source-event-null-elem",
+        "original",
+        "test-host",
+        serde_json::json!({}),
+        *Timestamp::now(),
+        material.id,
+        0i64
+    )
+    .execute(pool)
+    .await
+    .unwrap();
+
+    ensure_product_declaration_for(pool, "null-parent", "null-parent-event").await?;
+    let claim_support: serde_json::Value =
+        serde_json::from_str(UNREVIEWED_CLAIM_SUPPORT_JSON).unwrap();
+
+    // A real (non-NULL) parent alongside a NULL element -- the array is
+    // non-empty and non-self-referencing, so `events_no_self_parent` and
+    // `events_source_event_ids_non_empty` both pass; only
+    // `events_source_event_ids_no_nulls` should be able to catch this.
+    let event_id = Uuid::now_v7();
+    let source_event_ids: Vec<Option<Uuid>> = vec![Some(source_event_id), None];
+    let result = sqlx::query!(
+        "INSERT INTO core.events (id, source, event_type, host, payload, ts_orig, source_event_ids, product_class, claim_support, derivation_declaration_id) VALUES ($1::uuid, $2, $3, $4, $5, $6, $7::uuid[], $8, $9::jsonb, $10)",
+        event_id,
+        "null-parent",
+        "null-parent-event",
+        "test-host",
+        serde_json::json!({}),
+        *Timestamp::now(),
+        &source_event_ids[..] as &[Option<Uuid>],
+        "canonical_derived_event",
+        claim_support,
+        "test-decl-null-parent-null-parent-event",
+    )
+    .execute(pool)
+    .await;
+    let err = result.expect_err(
+        "sinex-sbyc: a source_event_ids array containing a NULL element must be rejected by \
+         events_source_event_ids_no_nulls. array_position is NULL-aware (it finds the \
+         subscript of a NULL element rather than always returning NULL), so this should be \
+         rejected today; if this insert now succeeds, the constraint has regressed.",
+    );
+    assert!(
+        err.to_string().contains("events_source_event_ids_no_nulls"),
+        "expected events_source_event_ids_no_nulls constraint violation, got: {err}"
+    );
+
+    // Clean up to avoid leaking rows into other constraint tests.
+    sqlx::query("TRUNCATE core.events CASCADE")
+        .execute(pool)
+        .await?;
+    sqlx::query("TRUNCATE raw.source_material_registry CASCADE")
+        .execute(pool)
+        .await?;
+    finalize_constraint_context(&ctx).await?;
+    Ok(())
+}

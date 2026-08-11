@@ -146,3 +146,72 @@ fn supersede_on_change_falls_back_when_stored_hash_is_malformed() {
          not silently mismatch every candidate"
     );
 }
+
+/// sinex-naw9: `ValidationResult::SchemaNotFound` is the arm reached when a
+/// schema failed to compile (`compile_schemas` in `sinex-db/src/
+/// validation.rs` drops it from both cache and lookup, so a corrupt
+/// registered schema silently downgrades to `NoSchema`... but the SEPARATE,
+/// more direct `SchemaNotFound` path -- reached whenever `schema_lookup` has
+/// an entry but `schema_cache` doesn't, e.g. a schema deleted between lookup
+/// and fetch -- unconditionally accepts with only a warning, never
+/// consulting `strict_mode` the way every other arm here does. This is the
+/// REAL production `resolve_validation_result` in this module (not the
+/// `#[cfg(test)]`-only duplicate in `jetstream_consumer/prepare.rs`, which
+/// has the identical bug and its own non-strict-only coverage in
+/// `jetstream_consumer_test.rs::schema_not_found_is_accepted_leniently`).
+///
+/// Expected to fail today: strict mode must reject an event whose schema
+/// went missing after being matched, exactly as it already does for
+/// `NoSchema` (see `strict_mode_rejects_missing_schema` below, which passes).
+#[test]
+fn strict_mode_rejects_schema_not_found() {
+    let err = resolve_validation_result(
+        ValidationResult::SchemaNotFound {
+            schema_id: Uuid::now_v7(),
+        },
+        true,
+        &sinex_primitives::domain::EventSource::from_static("test"),
+        &sinex_primitives::domain::EventType::from_static("schema.vanished"),
+    )
+    .expect_err(
+        "sinex-naw9: strict mode must reject an event whose matched schema is missing from \
+         the cache, not silently accept it with payload_schema_id=NULL -- \
+         ValidationResult::SchemaNotFound currently ignores strict_mode entirely, unlike \
+         every other ValidationResult arm in this function",
+    );
+    assert!(
+        err.to_string().contains("Strict validation enabled"),
+        "unexpected error: {err}"
+    );
+}
+
+/// Companion passing test: `NoSchema` already does the right thing under
+/// strict mode -- this is the behavior `SchemaNotFound` above is missing.
+#[test]
+fn strict_mode_rejects_missing_schema() {
+    let err = resolve_validation_result(
+        ValidationResult::NoSchema,
+        true,
+        &sinex_primitives::domain::EventSource::from_static("test"),
+        &sinex_primitives::domain::EventType::from_static("schema.missing"),
+    )
+    .expect_err("strict mode must reject events without a registered schema");
+    assert!(err.to_string().contains("Strict validation enabled"));
+}
+
+/// Non-strict mode: `SchemaNotFound` should still (correctly, both today and
+/// after naw9 is fixed) accept leniently -- naw9 only requires strict mode
+/// to close the hole, not that SchemaNotFound become universally rejected.
+#[test]
+fn non_strict_mode_still_accepts_schema_not_found() {
+    let accepted = resolve_validation_result(
+        ValidationResult::SchemaNotFound {
+            schema_id: Uuid::now_v7(),
+        },
+        false,
+        &sinex_primitives::domain::EventSource::from_static("test"),
+        &sinex_primitives::domain::EventType::from_static("schema.vanished"),
+    )
+    .expect("non-strict mode must not reject a missing-schema-cache-entry event");
+    assert!(accepted.is_none());
+}

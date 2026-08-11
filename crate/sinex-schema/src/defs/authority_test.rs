@@ -157,3 +157,58 @@ async fn authority_finalizer_registry_rejects_duplicate_active_route(
     );
     Ok(())
 }
+
+/// sinex-sbyc (finding 2): this file's own module doc (line 13, "operator
+/// judgment... `product_class = 'operator_judgment'`") and `authority.rs`'s
+/// doctrine comment both describe `operator_judgment` as the product class
+/// authority finalizers exist to emit -- but the `output_product_class`
+/// CHECK on `authority.finalizer_registry` (`crate/sinex-
+/// schema/src/defs/authority.rs`) excludes it, allowing only
+/// `canonical_derived_event`/`analysis_claim`/`semantic_candidate`/
+/// `report_artifact`. This test characterizes CURRENT behavior (rejected) so
+/// the mismatch is executable, not just prose -- it is deliberately NOT
+/// asserting which resolution is correct (sbyc's AC allows either widening
+/// the allowlist or recording an explicit decision that operator_judgment
+/// finalizers route elsewhere). Whichever way sbyc is resolved, this test's
+/// expectation flips and must be updated in the same change -- it must not
+/// be left silently describing pre-decision behavior.
+#[sinex_test]
+async fn authority_finalizer_registry_operator_judgment_output_class_currently_rejected(
+    ctx: TestContext,
+) -> TestResult<()> {
+    insert_declaration(
+        ctx.pool(),
+        "test.authority_finalizer_registry.operator_judgment_output_class",
+    )
+    .await?;
+
+    let error = sqlx::query(
+        r#"
+        INSERT INTO authority.finalizer_registry (
+            finalizer_id, proposal_kind, output_source, output_event_type,
+            output_product_class, derivation_declaration_id, registered_by
+        )
+        VALUES (
+            'test.finalizer.operator_judgment_output_class', 'test.proposal.opj',
+            'test.authority.opj', 'test.judgment.opj', 'operator_judgment',
+            'test.authority_finalizer_registry.operator_judgment_output_class', 'test-owner'
+        )
+        "#,
+    )
+    .execute(ctx.pool())
+    .await
+    .expect_err(
+        "sinex-sbyc: output_product_class='operator_judgment' is currently rejected by the \
+         output_product_class CHECK despite this module's own doctrine describing it as a \
+         legitimate authority-finalizer output -- if this insert now succeeds, sbyc has been \
+         resolved by widening the allowlist and this test's expectation must be updated to \
+         assert success instead (or removed with a link to whichever alternative resolution \
+         was chosen).",
+    );
+    assert!(
+        error.to_string().to_lowercase().contains("check")
+            || error.to_string().to_lowercase().contains("constraint"),
+        "expected a CHECK constraint violation on output_product_class, got: {error}"
+    );
+    Ok(())
+}
