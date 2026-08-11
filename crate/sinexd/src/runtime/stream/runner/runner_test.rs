@@ -21,6 +21,13 @@ struct RuntimeTestModule;
 #[derive(Default)]
 struct FailingShutdownModule;
 
+/// `sinex-q102`: a module whose own `initialize()` fails AFTER
+/// `initialize_with_transport` has already started the schema listener and
+/// checkpoint-cleanup background tasks — used to prove those tasks are not
+/// shut down on this early-return error path.
+#[derive(Default)]
+struct FailingInitModule;
+
 #[derive(Default)]
 struct FailingBatchModule;
 
@@ -413,6 +420,44 @@ async fn configured_checkpoint_consumer_name_overrides_source_default() -> TestR
 
     assert_eq!(consumer_name, "stable-consumer");
     Ok(())
+}
+
+impl RuntimeModule for FailingInitModule {
+    type Config = ();
+
+    async fn initialize(&mut self, _init: RuntimeInitContext<Self::Config>) -> RuntimeResult<()> {
+        Err(SinexError::processing("deliberate module init failure (sinex-q102 test)"))
+    }
+
+    async fn scan(
+        &mut self,
+        _from: Checkpoint,
+        _until: TimeHorizon,
+        _args: ScanArgs,
+    ) -> RuntimeResult<ScanReport> {
+        Ok(ScanReport {
+            events_processed: 0,
+            duration: std::time::Duration::ZERO,
+            final_checkpoint: Checkpoint::None,
+            time_range: None,
+            runtime_stats: HashMap::new(),
+            successful_targets: Vec::new(),
+            failed_targets: Vec::new(),
+            warnings: Vec::new(),
+        })
+    }
+
+    fn module_name(&self) -> &'static str {
+        "failing-init-module"
+    }
+
+    fn module_kind(&self) -> ModuleKind {
+        ModuleKind::Automaton
+    }
+
+    async fn current_checkpoint(&self) -> RuntimeResult<Checkpoint> {
+        Ok(Checkpoint::None)
+    }
 }
 
 impl RuntimeModule for FailingShutdownModule {
