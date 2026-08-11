@@ -926,6 +926,144 @@ async fn tombstone_expiry_persists_terminal_metadata(ctx: TestContext) -> TestRe
     Ok(())
 }
 
+/// sinex-9djc: `handle_tombstone_approve`'s completion write (step 3) is a
+/// separate DB write made AFTER the irreversible deletion (step 2, inside
+/// `execute_cascade_tombstone`) has already committed. If step 3 never lands
+/// (crash, pool exhaustion, network blip between steps 2 and 3), the
+/// operation is stuck at `Executing` forever -- `is_terminal()` is false and
+/// there is no retry/cancel path for that state. Once the fixed 1-hour TTL
+/// set at preview time elapses, `reconcile_tombstone_expiry` silently
+/// relabels the stuck row `Expired` with `error_details: "Expired before
+/// approval"` -- a factually false statement, since the deletion already
+/// happened.
+///
+/// This test reproduces the stuck end-state directly: it runs the real
+/// approve flow to a genuine, verified completion (so the deletion is real,
+/// not simulated), then rewrites the persisted operation back to the
+/// `Executing`/lapsed-TTL shape step 3's failure would have left behind --
+/// the same "rewrite `operations_log.scope` via SQL to force a lapsed TTL"
+/// technique `tombstone_expiry_persists_terminal_metadata` above uses for
+/// the "never approved" case.
+///
+/// Expected to FAIL against current code: `reconcile_tombstone_expiry` has
+/// no way to distinguish "never started" from "deletion committed,
+/// completion write lost" and unconditionally relabels any lapsed-TTL
+/// non-terminal operation as Expired/"Expired before approval".
+#[sinex_test]
+#[ignore = "sinex-9djc open: reconcile_tombstone_expiry has no way to distinguish \
+'never started' from 'deletion committed, completion write lost' -- fails until fixed"]
+async fn tombstone_status_does_not_mislabel_completed_deletion_as_expired(
+    ctx: TestContext,
+) -> TestResult<()> {
+    let auth = RpcAuthContext::system();
+    let services = ServiceContainer::from_database_url(ctx.database_url().to_string()).await?;
+    let source = "test.lifecycle.tombstone.stuck-executing";
+    let event = publish_event(&ctx, source, 1).await?;
+    let event_id = event
+        .id
+        .expect("published event should have an id")
+        .to_string();
+
+    let archive: LifecycleArchiveResponse = serde_json::from_value(
+        handle_lifecycle_archive(
+            ctx.pool(),
+            json!({
+                "event_ids": [event_id],
+                "dry_run": false,
+                "reason": "prepare stuck-executing repro",
+            }),
+            &auth,
+        )
+        .await?,
+    )?;
+    assert_eq!(archive.archived_count, 1);
+
+    let created: TombstoneCreateResponse = serde_json::from_value(
+        handle_tombstone_create(
+            ctx.pool(),
+            json!({
+                "source": source,
+                "reason": "stuck-executing repro",
+            }),
+            &auth,
+        )
+        .await?,
+    )?;
+
+    // Run the real approve flow to genuine completion: step 2
+    // (execute_cascade_tombstone) truly commits the deletion here, exactly
+    // as it would in the production failure this bead describes.
+    let approved: TombstoneApproveResponse = serde_json::from_value(
+        handle_tombstone_approve(
+            json!({
+                "operation_id": created.operation.operation_id,
+                "yes_i_understand_data_is_gone": true,
+            }),
+            &services,
+            &auth,
+        )
+        .await?,
+    )?;
+    assert_eq!(approved.operation.tombstoned_count, Some(1));
+    assert_eq!(
+        tombstone_count(&ctx, &event_id).await?,
+        1,
+        "deletion (step 2) must have genuinely committed for this repro to be meaningful"
+    );
+
+    // Rewrite the persisted operation back to the stuck-Executing shape
+    // step 3's failure would have left behind: phase=executing, no
+    // finished_at/error_details, TTL lapsed.
+    //
+    // operation_record_to_tombstone() treats `phase` as the canonical
+    // field and overwrites `state` from it on every read
+    // (`operation.state = operation.phase.into()`), so mutating `state`
+    // alone is a no-op against the real read path -- `phase` is what
+    // must be rewritten to reach reconcile_tombstone_expiry's
+    // `!operation.state.is_terminal()` guard with Executing.
+    sqlx::query!(
+        r#"
+        UPDATE core.operations_log
+        SET scope = jsonb_set(
+            jsonb_set(
+                jsonb_set(
+                    jsonb_set(scope, '{phase}', to_jsonb('executing'::text), false),
+                    '{state}', to_jsonb('executing'::text), false
+                ),
+                '{expires_at}', to_jsonb($2::text), false
+            ),
+            '{finished_at}', 'null'::jsonb, false
+        )
+        WHERE id = $1::uuid
+        "#,
+        created.operation.operation_id.parse::<uuid::Uuid>()?,
+        "2000-01-01T00:00:00Z"
+    )
+    .execute(ctx.pool())
+    .await?;
+
+    let status: TombstoneStatusResponse = serde_json::from_value(
+        handle_tombstone_status(
+            ctx.pool(),
+            json!({ "operation_id": created.operation.operation_id }),
+            &auth,
+        )
+        .await?,
+    )?;
+
+    // The deletion already happened -- status must not claim it "expired
+    // before approval". This is the single most destructive path in the
+    // system; telling an operator the destructive op never went through
+    // when it actually did is worse than saying nothing.
+    assert_ne!(
+        status.operation.error_details.as_deref(),
+        Some("Expired before approval"),
+        "deletion already committed; status must not claim the operation never happened"
+    );
+
+    Ok(())
+}
+
 #[sinex_test]
 async fn tombstone_cancel_rejects_expired_operation_and_keeps_expired_state(
     ctx: TestContext,
