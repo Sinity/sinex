@@ -134,3 +134,7 @@ pub struct OpsCancelResponse {
     pub operation: Operation,
     pub cancelled: bool,
 }
+
+#[cfg(test)]
+#[path = "ops_test.rs"]
+mod tests;
