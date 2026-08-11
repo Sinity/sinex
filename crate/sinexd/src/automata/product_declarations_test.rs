@@ -1,7 +1,9 @@
 use super::reconcile_product_declarations;
 use crate::automata::canonicalizer::CANONICALIZER_OUTPUT_DECLARATIONS;
 use crate::automata::registry::AUTOMATA;
-use sinex_primitives::derivation::DerivedProductClass;
+use sinex_primitives::derivation::{
+    ClaimSupportTemplate, ClaimTemporalQuality, DerivedProductClass, SourceCoverage, SupportLevel,
+};
 use xtask::sandbox::prelude::*;
 
 /// End-to-end proof of the gap sinex-x79t closes: against a database that
@@ -203,6 +205,77 @@ async fn reconcile_rejects_conflicting_existing_row(ctx: TestContext) -> TestRes
         message.contains("product_class"),
         "error should name the specific field that disagreed, got: {message}"
     );
+
+    Ok(())
+}
+
+/// `declaration_matches` compares 12 fields through the same `check!` macro,
+/// but every existing mismatch test above only ever varies `product_class`
+/// (a plain `&str` enum spelling). That leaves two structurally different
+/// comparison mechanisms in the same function completely unexercised on
+/// their failure path: `output_source`'s `Option<&str>` vs `Option<String>`
+/// comparison via `.as_deref()`, and `default_support`'s comparison via a
+/// live `serde_json::to_value()` re-serialization rather than a stored
+/// field. A bug in either comparison shape (e.g. an `as_deref()` typo, or a
+/// `ClaimSupport`/`ClaimSupportTemplate` `Serialize` impl change that
+/// silently changes the JSON shape) would pass every test above undetected.
+/// One table-driven test proving both fail closed, rather than two more
+/// near-duplicate copy-pasted tests of the `product_class` shape.
+#[sinex_test]
+async fn reconcile_rejects_conflicting_existing_row_across_field_kinds(
+    ctx: TestContext,
+) -> TestResult<()> {
+    let declaration = &CANONICALIZER_OUTPUT_DECLARATIONS[0];
+
+    let differing_output_source = sinex_primitives::derivation::DerivationOutputDeclaration {
+        output_source: Some("sinex-tdd-lane-i-different-source"),
+        ..*declaration
+    };
+    let differing_default_support = sinex_primitives::derivation::DerivationOutputDeclaration {
+        default_support: ClaimSupportTemplate::new(
+            SupportLevel::Direct,
+            SourceCoverage::Covered,
+            ClaimTemporalQuality::RealtimeCapture,
+        ),
+        ..*declaration
+    };
+
+    for (conflicting, expected_field) in [
+        (differing_output_source, "output_source"),
+        (differing_default_support, "default_claim_support"),
+    ] {
+        // Fresh sandbox context per case would be cleaner but this repo's
+        // sandbox template is schema-applied-once-per-test; reuse ctx and
+        // scope each case to a distinct declaration_id-free assertion by
+        // deleting the seeded row before the next case.
+        ctx.pool()
+            .product_declarations()
+            .insert(&conflicting)
+            .await?;
+
+        let error = reconcile_product_declarations(ctx.pool(), AUTOMATA)
+            .await
+            .expect_err(&format!(
+                "reconciler must refuse to start on a conflicting {expected_field} row"
+            ));
+        let message = error.to_string();
+        assert!(
+            message.contains(declaration.declaration_id),
+            "error should name the conflicting declaration_id for {expected_field}, got: {message}"
+        );
+        assert!(
+            message.contains(expected_field),
+            "error should name '{expected_field}' as the disagreeing field, got: {message}"
+        );
+
+        sqlx::query!(
+            "DELETE FROM derivation.product_declarations WHERE declaration_id = $1",
+            declaration.declaration_id,
+        )
+        .execute(ctx.pool())
+        .await
+        .map_err(|error| color_eyre::eyre::eyre!("reset seeded row between cases: {error}"))?;
+    }
 
     Ok(())
 }

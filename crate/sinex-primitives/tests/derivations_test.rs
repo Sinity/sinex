@@ -1,13 +1,125 @@
 use sinex_primitives::{
-    DerivationInputScope, DerivationOperationHook, EMAIL_ATTACHMENT_INDEX_DERIVATION_ID,
-    EMAIL_BODY_TEXT_PROJECTION_DERIVATION_ID, EMAIL_THREAD_PROJECTION_DERIVATION_ID,
-    FreshnessPolicy, InvalidationTrigger, MEDIA_AUDIO_TRANSCRIPT_ARTIFACT_DERIVATION_ID,
-    MEDIA_SCREEN_OCR_ARTIFACT_DERIVATION_ID, MEDIA_TEXT_INDEX_PROJECTION_DERIVATION_ID, OutputKind,
-    TASK_CURRENT_OBJECTS_DERIVATION_ID, affected_derivations, derivations_for_output,
-    find_derivation_spec,
+    DESKTOP_CONTEXT_CURRENT_VIEW_DERIVATION_ID, DESKTOP_FOCUS_SESSION_DERIVATION_ID,
+    DESKTOP_NOTIFICATION_PRESSURE_DERIVATION_ID, DESKTOP_PROJECT_CONTEXT_DERIVATION_ID,
+    DERIVATION_SPECS, DerivationInputScope, DerivationOperationHook,
+    EMAIL_ATTACHMENT_INDEX_DERIVATION_ID, EMAIL_BODY_TEXT_PROJECTION_DERIVATION_ID,
+    EMAIL_THREAD_PROJECTION_DERIVATION_ID, FreshnessPolicy, InvalidationTrigger,
+    MEDIA_AUDIO_TRANSCRIPT_ARTIFACT_DERIVATION_ID, MEDIA_SCREEN_OCR_ARTIFACT_DERIVATION_ID,
+    MEDIA_TEXT_INDEX_PROJECTION_DERIVATION_ID, OutputKind, TASK_CURRENT_OBJECTS_DERIVATION_ID,
+    affected_derivations, derivations_for_output, find_derivation_spec,
     task_domain::{TASK_REDUCER_INPUT_EVENT_TYPES, TASK_REDUCER_SPEC},
 };
+use std::collections::BTreeSet;
 use xtask::sandbox::prelude::*;
+
+/// Registry-wide invariants that hold across EVERY `DerivationSpec`,
+/// regardless of family — proving these once here (rather than re-asserting
+/// per-family below) is what keeps the per-family tests focused on what's
+/// actually distinct about each family (event types, output kind,
+/// disclosure refs) instead of re-checking the same cross-cutting shape N
+/// times.
+#[sinex_test]
+async fn derivation_registry_invariants_hold_across_all_specs() -> TestResult<()> {
+    // No two specs share a declaration id — the registry is the source of
+    // truth `find_derivation_spec` linearly searches, so a duplicate id
+    // would make lookup silently return the wrong spec.
+    let ids: Vec<_> = DERIVATION_SPECS.iter().map(|spec| spec.id).collect();
+    let unique_ids: BTreeSet<_> = ids.iter().copied().collect();
+    assert_eq!(
+        ids.len(),
+        unique_ids.len(),
+        "duplicate DerivationSpec.id in DERIVATION_SPECS: {ids:?}"
+    );
+
+    // Every registered derivation must be able to say what happens to it on
+    // replay and on redaction — these are the two invalidation triggers the
+    // architecture treats as universal (CLAUDE.md: "Replay is not
+    // idempotent by design"; "Privacy/redaction is a presentation feature"
+    // still requires every derived output to know it must be rebuilt). A
+    // spec missing either is a silent invalidation-planning gap.
+    for spec in DERIVATION_SPECS {
+        assert!(
+            spec.invalidates_on(InvalidationTrigger::Replay),
+            "{} does not invalidate on Replay",
+            spec.id
+        );
+        assert!(
+            spec.invalidates_on(InvalidationTrigger::Redaction),
+            "{} does not invalidate on Redaction",
+            spec.id
+        );
+        // Every spec must document what happens to it under an
+        // invalidation-planning query, i.e. it must find itself.
+        assert_eq!(
+            find_derivation_spec(spec.id).map(|found| found.id),
+            Some(spec.id)
+        );
+    }
+
+    // Negative paths: unknown id/output must not panic or silently match
+    // an unrelated spec.
+    assert!(find_derivation_spec("derivation:does.not.exist@v1").is_none());
+    assert_eq!(
+        derivations_for_output("does.not.exist").collect::<Vec<_>>().len(),
+        0
+    );
+    Ok(())
+}
+
+/// The `desktop.*` family (context/focus-session/project-context/
+/// notification-pressure) had zero coverage before this lane — a real gap,
+/// not a redundant re-check of the task/email/media families above.
+#[sinex_test]
+async fn desktop_derivations_declare_ephemeral_and_projection_outputs() -> TestResult<()> {
+    let ephemeral = find_derivation_spec(DESKTOP_CONTEXT_CURRENT_VIEW_DERIVATION_ID)
+        .ok_or_else(|| color_eyre::eyre::eyre!("missing desktop context-view derivation spec"))?;
+    assert_eq!(ephemeral.output_kind, OutputKind::EphemeralView);
+    assert_eq!(ephemeral.freshness_policy, FreshnessPolicy::RefreshOnRead);
+    assert!(
+        !ephemeral.invalidates_on(InvalidationTrigger::Archive),
+        "an ephemeral view has nothing durable for Archive to invalidate"
+    );
+
+    let projection_specs = [
+        (
+            DESKTOP_FOCUS_SESSION_DERIVATION_ID,
+            "desktop.focus_session",
+        ),
+        (
+            DESKTOP_PROJECT_CONTEXT_DERIVATION_ID,
+            "desktop.project_context",
+        ),
+    ];
+    for (id, output_id) in projection_specs {
+        let spec = find_derivation_spec(id)
+            .ok_or_else(|| color_eyre::eyre::eyre!("missing desktop derivation spec: {id}"))?;
+        assert_eq!(spec.output_id, output_id);
+        assert_eq!(spec.output_kind, OutputKind::ProjectionRow);
+        assert_eq!(spec.freshness_policy, FreshnessPolicy::RebuildOnInputChange);
+        assert!(spec.invalidates_on(InvalidationTrigger::Archive));
+    }
+
+    let pressure = find_derivation_spec(DESKTOP_NOTIFICATION_PRESSURE_DERIVATION_ID)
+        .ok_or_else(|| color_eyre::eyre::eyre!("missing notification-pressure derivation spec"))?;
+    assert_eq!(pressure.output_kind, OutputKind::ProjectionRow);
+    match pressure.input_scope {
+        DerivationInputScope::EventTypes {
+            domain_id,
+            event_types,
+        } => {
+            assert_eq!(domain_id, "desktop.notification");
+            assert!(event_types.contains(&"notification.sent"));
+            assert!(event_types.contains(&"notification.closed"));
+        }
+        other => panic!("notification pressure should use EventTypes scope, got {other:?}"),
+    }
+    // Unlike the other desktop specs, notification-pressure does NOT
+    // invalidate on Archive (verified against the live const above) —
+    // pinned here so a future edit to that const is caught either way.
+    assert!(!pressure.invalidates_on(InvalidationTrigger::Archive));
+
+    Ok(())
+}
 
 #[sinex_test]
 async fn task_projection_declares_derivation_contract() -> TestResult<()> {
