@@ -268,3 +268,38 @@ async fn invalid_utf8_returns_parser_error() -> TestResult<()> {
     assert!(result.is_err(), "invalid UTF-8 must surface as ParserError");
     Ok(())
 }
+
+// -----------------------------------------------------------------------
+// 10. sinex-xtmp bug 1: CRLF front-matter offset drift contaminates body
+// -----------------------------------------------------------------------
+
+/// `find_closing_fence` walks `s.lines()` (which strips `\r\n`) but only
+/// adds 1 byte per line to the running position, not 2 -- on CRLF files the
+/// reported closing-fence offset drifts short of the real position, so
+/// `body_start` lands inside the closing `---` fence and the parsed body
+/// gets contaminated with fence/front-matter remnants. Fails until the
+/// offset accounts for the actual line-terminator width.
+#[sinex_test]
+#[ignore = "sinex-xtmp open (knowledgebase CRLF): front-matter split leaves CRLF remnants in body -- fails until fixed"]
+async fn split_front_matter_handles_crlf_without_body_contamination() -> TestResult<()> {
+    let crlf_note = "---\r\nid: crlf.test\r\ncreated: 2025-03-15\r\n---\r\nThe real body starts here.\r\n";
+    let (fm, body) = split_front_matter(crlf_note);
+
+    assert!(
+        fm.contains("id: crlf.test"),
+        "front matter must contain the declared id field, got: {fm:?}"
+    );
+    assert!(
+        !body.contains("---"),
+        "body must not contain any part of the closing fence delimiter, got: {body:?}"
+    );
+    assert!(
+        !body.contains("created:"),
+        "body must not contain front-matter content leaked past a mis-anchored fence, got: {body:?}"
+    );
+    assert!(
+        body.trim_start().starts_with("The real body starts here."),
+        "body must start with the real content, got: {body:?}"
+    );
+    Ok(())
+}
