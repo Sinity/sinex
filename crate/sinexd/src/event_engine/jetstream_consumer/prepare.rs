@@ -144,7 +144,7 @@ impl JetStreamConsumer {
                 AdmissionDecision::Rejected(rejection)
                 | AdmissionDecision::QuarantineNeeded(rejection) => {
                     self.record_admission_rejection(&rejection).await;
-                    self.route_validation_failure(&msg, rejection.reason, &settlement)
+                    self.route_validation_failure(&msg, rejection, &settlement)
                         .await?;
                 }
             }
@@ -272,25 +272,41 @@ impl JetStreamConsumer {
     /// outcome to the shared envelope settlement instead of ACKing/NAKing
     /// the raw message directly — a rejected child must never unilaterally
     /// settle a message that admitted siblings still need.
+    ///
+    /// sinex-iq4f: `AdmissionRejection` has carried `event_id: Option<Uuid>`
+    /// since sinex-r6d.4 for exactly this purpose — most rejection kinds
+    /// (PastTimestamp, FutureTimestamp, NegativeAnchor, SchemaValidation,
+    /// MissingTimestamp) fire well after a candidate id was parsed, so the
+    /// id is available. Only the kinds that reject before any id could be
+    /// parsed (EnvelopeDeserialization, StructuralJson, MissingEventId,
+    /// InvalidEventId) legitimately have no key to resolve against. When an
+    /// id IS available, a successful DLQ write resolves the settlement
+    /// registry to `DurableDebt` — matching the persist-time DLQ path in
+    /// `persist.rs` — so the source's cursor unlocks past the rejected
+    /// record instead of stalling on it forever (pre-r6d.11 behavior).
     pub(super) async fn route_validation_failure(
         &self,
         msg: &jetstream::Message,
-        error: String,
+        rejection: AdmissionRejection,
         settlement: &Arc<RawEnvelopeSettlement>,
     ) -> EventEngineResult<()> {
         self.stats
             .validation_failures
             .fetch_add(1, Ordering::Relaxed);
-        // TODO(sinex-r6d.11): no settlement_registry.resolve() calls in this function.
-        // This runs for AdmissionDecision::Rejected/QuarantineNeeded, both carrying only
-        // an AdmissionRejection (kind + reason string, admission.rs:218-221) with no
-        // event_id — several rejection kinds (MissingEventId, InvalidEventId,
-        // EnvelopeDeserialization, StructuralJson...) are rejected precisely because no
-        // valid id could be parsed, so there is no trustworthy key to resolve against
-        // even in principle. Same documented gap as the Suppressed arm above.
-        match self.route_to_dlq(msg, error).await {
+        let event_id = rejection.event_id;
+        let reason = rejection.reason;
+        match self.route_to_dlq(msg, reason.clone()).await {
             Ok(()) => {
                 self.stats.dlq_routed.fetch_add(1, Ordering::Relaxed);
+                if let Some(event_id) = event_id {
+                    self.settlement_registry.resolve(
+                        event_id.into(),
+                        EmissionReceiptState::DurableDebt {
+                            debt_id: event_id,
+                            reason: format!("admission rejection DLQ'd: {reason}"),
+                        },
+                    );
+                }
                 settlement.settle_child(ChildOutcome::Safe).await
             }
             Err(e) => {
