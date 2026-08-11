@@ -94,3 +94,69 @@ async fn entities_map_is_bounded_under_high_cardinality() -> TestResult<()> {
 
     Ok(())
 }
+
+/// sinex-nbi.5: `hour_of_day` buckets `active_hours` from the raw UTC
+/// epoch second (`ts.unix_timestamp() / 3600 % 24`), never consulting the
+/// operator-local civil-time module (`automata::civil`, sinex-2ged) that
+/// the rest of the codebase already uses for exactly this purpose. Any
+/// timestamp near a UTC/local day boundary buckets into the wrong hour
+/// for an operator-local "when am I active" surface.
+///
+/// This test derives the expected local hour from `civil::floor_to_civil_hour`
+/// / `civil::floor_to_civil_day` (the canonical mechanism), rather than
+/// hardcoding an assumed timezone offset, so it holds under whatever
+/// `SINEX_LOCAL_TZ` the environment has configured (default `Europe/Warsaw`,
+/// never UTC).
+#[sinex_test]
+#[ignore = "sinex-nbi.5 open: entity_enricher's active_hours buckets by raw UTC hour instead of operator-local civil hour"]
+async fn active_hours_buckets_by_operator_local_hour_not_utc_sinex_nbi_5() -> TestResult<()> {
+    use crate::automata::civil::{floor_to_civil_day, floor_to_civil_hour};
+    use sinex_primitives::temporal::parse_rfc3339;
+
+    // 23:30 UTC -- chosen so it sits close to a civil-day boundary in every
+    // real-world non-UTC operator timezone.
+    let now = parse_rfc3339("2026-01-15T23:30:00Z").expect("valid timestamp");
+
+    let local_hour_start = floor_to_civil_hour(now);
+    let local_day_start = floor_to_civil_day(now);
+    let expected_local_hour =
+        ((local_hour_start.unix_timestamp() - local_day_start.unix_timestamp()) / 3600) as u8;
+    let utc_hour = ((now.unix_timestamp() / 3600) % 24) as u8;
+    assert_ne!(
+        expected_local_hour, utc_hour,
+        "test fixture must pick a timestamp where local and UTC hour diverge"
+    );
+
+    let mut enricher = EntityEnricher::default();
+    let mut state = EnricherState::default();
+    let context = AutomatonContext::timer_flush(now)?;
+    let entity_id = Uuid::new_v5(&Uuid::NAMESPACE_OID, b"tool:nbi5-fixture");
+
+    enricher
+        .reconcile(
+            &mut state,
+            &entity_id.to_string(),
+            EntityResolvedPayload {
+                entity_id,
+                canonical_name: "nbi5-fixture".to_string(),
+                entity_type: EntityTypeName::new("tool"),
+                original_name: "nbi5-fixture".to_string(),
+            },
+            &context,
+        )
+        .await?;
+
+    let stats = state
+        .entities
+        .get(&entity_id.to_string())
+        .expect("entity must be tracked after reconcile");
+
+    assert!(
+        stats.active_hours.contains_key(&expected_local_hour),
+        "sinex-nbi.5: expected the operator-local hour {expected_local_hour} to be bucketed, \
+         got buckets {:?} (raw UTC hour {utc_hour} was bucketed instead)",
+        stats.active_hours.keys().collect::<Vec<_>>()
+    );
+
+    Ok(())
+}

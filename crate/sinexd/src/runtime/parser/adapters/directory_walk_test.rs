@@ -441,3 +441,34 @@ async fn test_symlink_cycle_does_not_over_collect_the_same_file() -> xtask::sand
     );
     Ok(())
 }
+
+/// sinex-6qef: `MaterialAnchor::DirectoryEntry.content_hash` is hardcoded
+/// `None` at emission time (see the `open()` record-construction site), even
+/// though `library.rs`'s `docs-library-index` source contract declares
+/// `occurrence_identity = Uuid5From("(source, path, content_hash)")` for
+/// exactly this anchor -- change detection via content hash is fiction, the
+/// field is always empty.
+#[sinex_test]
+#[ignore = "sinex-6qef open: DirectoryWalkAdapter hardcodes content_hash: None, declared change-detection is fiction"]
+async fn walked_records_carry_a_real_content_hash_sinex_6qef() -> xtask::sandbox::TestResult<()> {
+    let dir = TempDir::new().unwrap();
+    let root = Utf8PathBuf::from_path_buf(dir.path().to_path_buf()).unwrap();
+    let mut file = std::fs::File::create(dir.path().join("doc.txt")).unwrap();
+    file.write_all(b"hello content hash").unwrap();
+
+    let adapter = DirectoryWalkAdapter;
+    let config = simple_config(vec![root]);
+    let records = collect_records(&adapter, &config, None).await;
+    assert_eq!(records.len(), 1);
+
+    let MaterialAnchor::DirectoryEntry { content_hash, .. } = &records[0].anchor else {
+        panic!("expected a DirectoryEntry anchor");
+    };
+    assert!(
+        content_hash.is_some(),
+        "sinex-6qef: DirectoryWalkAdapter emits content_hash: None unconditionally, even though \
+         docs-library-index declares occurrence_identity = (source, path, content_hash) -- the \
+         declared change-detection field is never populated"
+    );
+    Ok(())
+}

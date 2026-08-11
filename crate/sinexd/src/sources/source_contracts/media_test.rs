@@ -684,3 +684,70 @@ async fn invalid_media_utf8_is_rejected() -> TestResult<()> {
     assert!(err.to_string().contains("not UTF-8"));
     Ok(())
 }
+
+/// sinex-5mkw: `media.audio-transcript`'s `#[source_meta]` declares
+/// `occurrence_identity = Uuid5From("(material_id, segment_index, start_ms,
+/// end_ms)")`, but `audio_recording_intent`'s actual `OccurrenceKey.fields`
+/// is `["material_id", "duration_ms"]` -- entirely different fields
+/// (segment_index/start_ms/end_ms declared-but-unused, duration_ms
+/// used-but-undeclared). Two recordings that differ only in an undeclared
+/// field (or share the same duration but different segment boundaries)
+/// silently collide or silently diverge from the declared identity
+/// contract.
+#[sinex_test]
+#[ignore = "sinex-5mkw open: recording_observed's OccurrenceKey fields don't match its declared occurrence_identity"]
+async fn recording_observed_occurrence_key_matches_declared_identity_sinex_5mkw() -> TestResult<()>
+{
+    let mut parser = MediaAudioTranscriptParser;
+    let record = record_for(
+        br#"{
+              "recording": {
+                "format": "wav",
+                "codec": "pcm_s16le",
+                "duration_ms": 3200,
+                "channels": 1,
+                "sample_rate_hz": 16000,
+                "capture_session_id": "session-5mkw",
+                "source_file": "audio/session-5mkw.wav",
+                "policy_posture": "explicit-raw-material-policy"
+              },
+              "segments": [
+                {"text":"segment","start_ms":0,"end_ms":3200,"model_id":"local-whisper"}
+              ]
+            }"#,
+        "audio/session-5mkw/manifest.json",
+    );
+
+    let intents = parser
+        .parse_record(record, &test_ctx("media.audio-transcript"))
+        .await?;
+    let recording_key = intents[0]
+        .occurrence_key
+        .clone()
+        .expect("recording_observed must carry an occurrence key");
+
+    let field_names: Vec<&str> = recording_key
+        .fields
+        .iter()
+        .map(|(name, _)| name.as_str())
+        .collect();
+
+    // The #[source_meta] contract for this binding is:
+    // Uuid5From("(material_id, segment_index, start_ms, end_ms)").
+    assert!(
+        field_names.contains(&"segment_index"),
+        "sinex-5mkw: declared occurrence_identity includes segment_index but the actual \
+         OccurrenceKey fields are {field_names:?}"
+    );
+    assert!(
+        field_names.contains(&"start_ms"),
+        "sinex-5mkw: declared occurrence_identity includes start_ms but the actual \
+         OccurrenceKey fields are {field_names:?}"
+    );
+    assert!(
+        field_names.contains(&"end_ms"),
+        "sinex-5mkw: declared occurrence_identity includes end_ms but the actual \
+         OccurrenceKey fields are {field_names:?}"
+    );
+    Ok(())
+}
