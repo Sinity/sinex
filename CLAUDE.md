@@ -324,6 +324,17 @@ disposable, relocated to `/var/cache/sinex/<user>/<hash>/` by the devshell.
 - **Prod**: sinexd is a SYSTEM service (`sudo systemctl stop/start sinexd`); prod DB is the
   system PostgreSQL on TCP 5432 (`sinex_prod`), not the dev socket. Deploy = pin sinex rev
   in the sinnix flake, then `nix develop --command switch` from `/realm/project/sinnix`.
+  **`switch` alone does NOT restart sinexd on this host** — sinnix's
+  `bridge.nix` sets `runtime.restartOnSwitch = false` (workstations avoid
+  activation-triggered restart I/O pressure), so the new NixOS generation's
+  binary/config sits inactive until an explicit `sudo systemctl restart
+  sinexd`, which is also when `SINEX_SCHEMA_APPLY_ON_STARTUP=1`-driven schema
+  convergence actually runs. A `switch` with no follow-up restart leaves the
+  old binary running against the old schema indefinitely — verify with
+  `systemctl status sinexd` (check the active binary's start time / unit
+  generation) whenever a deploy is expected to take effect immediately, and
+  restart explicitly rather than assuming `switch` did it (confirmed via
+  audit 2026-08-11, see `sinex-*` beads on schema-apply DDL safety).
 - **git**: `git branch --show-current` before committing (sessions have committed to the
   wrong branch). Stage by path. Agent-authored text never puts resolver keywords next to
   issue numbers.
