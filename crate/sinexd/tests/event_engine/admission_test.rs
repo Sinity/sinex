@@ -261,9 +261,65 @@ async fn admission_service_rejects_direct_negative_anchor(ctx: TestContext) -> T
     match service.admit_event(event).await? {
         AdmissionDecision::Rejected(rejection) => {
             assert_eq!(rejection.kind, AdmissionRejectionKind::NegativeAnchor);
+            // sinex-tpv9: the id is genuinely known at this point (the caller
+            // already stamped it above); the rejection must carry it so
+            // operators can trace which event was dropped, instead of
+            // rejecting silently with event_id: None.
+            assert_eq!(
+                rejection.event_id,
+                Some(event_id),
+                "negative-anchor rejection must carry the known event_id (sinex-tpv9)"
+            );
         }
         AdmissionDecision::Admitted(_) => panic!("negative anchor should be rejected"),
         other => panic!("unexpected negative-anchor admission decision: {other:?}"),
+    }
+
+    let persisted = ctx
+        .pool
+        .events()
+        .get_by_id(Id::<Event>::from_uuid(event_id))
+        .await?;
+    assert!(persisted.is_none());
+
+    Ok(())
+}
+
+#[sinex_test]
+async fn admission_service_rejects_future_timestamp_with_event_id(
+    ctx: TestContext,
+) -> TestResult<()> {
+    let material_id = ctx
+        .create_source_material(Some("admission-future-timestamp"))
+        .await?;
+    let event_id = Uuid::now_v7();
+    let mut event = DynamicPayload::new(
+        "admission-test",
+        "future.timestamp",
+        serde_json::json!({ "ok": false }),
+    )
+    .from_material_at(material_id, 0)
+    .build()?
+    .to_json_event()?;
+    event.id = Some(Id::from_uuid(event_id));
+    event.ts_orig = Some(Timestamp::now() + time::Duration::days(3650));
+
+    let service = admission_service(&ctx);
+
+    match service.admit_event(event).await? {
+        AdmissionDecision::Rejected(rejection) => {
+            assert_eq!(rejection.kind, AdmissionRejectionKind::FutureTimestamp);
+            // sinex-tpv9: the id is genuinely known at this point; the
+            // rejection must carry it so operators can trace which event was
+            // dropped, instead of rejecting silently with event_id: None.
+            assert_eq!(
+                rejection.event_id,
+                Some(event_id),
+                "future-timestamp rejection must carry the known event_id (sinex-tpv9)"
+            );
+        }
+        AdmissionDecision::Admitted(_) => panic!("implausibly future ts_orig should be rejected"),
+        other => panic!("unexpected future-timestamp admission decision: {other:?}"),
     }
 
     let persisted = ctx

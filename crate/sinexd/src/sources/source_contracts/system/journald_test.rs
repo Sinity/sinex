@@ -208,3 +208,37 @@ async fn test_journald_parser_preserves_microsecond_precision() -> TestResult<()
     );
     Ok(())
 }
+
+/// sinex-10ef open: when `__REALTIME_TIMESTAMP` is missing or malformed,
+/// `timestamp_us` falls back to 0 and `timestamp` falls back to
+/// `Timestamp::now()` -- a fabricated wall-clock value -- but the intent is
+/// still unconditionally tagged `TimingEvidence::Intrinsic`, the same tag
+/// used for a genuinely parsed, trustworthy timestamp. Admission trusts
+/// `Intrinsic` and persists it verbatim, bypassing the
+/// `raw.temporal_ledger`-based deferred-resolution path that
+/// `TimingEvidence::Atemporal` would correctly route through (matching the
+/// sibling handling in udev.rs/dbus.rs in the same directory).
+#[sinex_test]
+#[ignore = "sinex-10ef open: journald.rs tags a fabricated Timestamp::now() fallback as \
+            TimingEvidence::Intrinsic instead of Atemporal when __REALTIME_TIMESTAMP is \
+            missing/malformed, bypassing temporal_ledger-based deferred resolution"]
+async fn test_journald_missing_realtime_timestamp_is_tagged_atemporal_not_intrinsic() -> TestResult<()> {
+    let mid = Id::<SourceMaterial>::new();
+    // No __REALTIME_TIMESTAMP field at all.
+    let line = r#"{"__CURSOR":"s=abc;i=1","MESSAGE":"entry missing its realtime timestamp"}"#;
+    let records = records_from_journal_lines(mid, &[line]);
+    let record = records[0].as_ref().unwrap().clone();
+
+    let mut parser = JournaldParser;
+    let ctx = make_ctx(mid);
+    let intents = parser.parse_record(record, &ctx).await?;
+
+    assert_eq!(intents.len(), 1);
+    assert_eq!(
+        intents[0].timing,
+        TimingEvidence::Atemporal,
+        "a fabricated Timestamp::now() fallback must be tagged Atemporal (deferred \
+         resolution via raw.temporal_ledger), not Intrinsic (trusted verbatim)"
+    );
+    Ok(())
+}
