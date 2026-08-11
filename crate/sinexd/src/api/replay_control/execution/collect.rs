@@ -328,19 +328,28 @@ impl ReplayExecutionEngine {
         match wait_result {
             Ok(result) => result,
             Err(_timeout) => {
-                let visible_count = self
+                // sinex-xixl: a genuine DB failure on this final probe must not
+                // be collapsed into a synthetic "-1 visible" timeout message —
+                // that misclassifies a persistence/availability outage as mere
+                // visibility lag and discards the real error entirely.
+                match self
                     .count_visible_replay_outputs(pool, operation_id, expected)
                     .await
-                    .unwrap_or(-1);
-                Err(SinexError::timeout(format!(
-                    "Replay outputs were not query-visible after successful scan within {:?} (visible={}, minimum_visible={}, sources={}, event_types={}, logical_sources={})",
-                    timeout,
-                    visible_count,
-                    expected.minimum_visible_count,
-                    expected.sources.join(","),
-                    expected.event_types.join(","),
-                    expected.logical_source_identifiers.join(","),
-                )))
+                {
+                    Ok(visible_count) => Err(SinexError::timeout(format!(
+                        "Replay outputs were not query-visible after successful scan within {:?} (visible={}, minimum_visible={}, sources={}, event_types={}, logical_sources={})",
+                        timeout,
+                        visible_count,
+                        expected.minimum_visible_count,
+                        expected.sources.join(","),
+                        expected.event_types.join(","),
+                        expected.logical_source_identifiers.join(","),
+                    ))),
+                    Err(probe_error) => Err(SinexError::database(format!(
+                        "Replay outputs were not query-visible after successful scan within {timeout:?}, and the final visibility probe itself failed"
+                    ))
+                    .with_source(probe_error)),
+                }
             }
         }
     }
