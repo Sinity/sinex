@@ -445,3 +445,42 @@ async fn entity_related_direct_canonical_rejected(ctx: TestContext) -> TestResul
 
     Ok(())
 }
+
+/// sinex-ee7p (sub-issue 1 of 3, entity_chain_shadow.rs's own slice only):
+/// `drain_relation_pairs` hardcodes `SourceCoverage::Covered` on every
+/// co_occurs_with relation, regardless of whether the underlying co-occurring
+/// events actually had material grounding -- even though
+/// `StreamCheckpointEventRow.source_material_id` is captured right there.
+/// A relation built entirely from events with `source_material_id: None`
+/// (e.g. shell-derived synthetic events) is emitted as fully covered
+/// evidence, overstating evidence quality to curation/analytics consumers
+/// that trust `source_coverage`. Failing by design until the coverage is
+/// computed from the pair's actual `source_material_id` presence.
+#[sinex_test]
+async fn shadow_lane_relation_coverage_reflects_actual_material_grounding_sinex_ee7p()
+-> TestResult<()> {
+    // Both co-occurring events lack material grounding entirely.
+    let events = vec![
+        shadow_event("check out https://tool-a.example.com", 0),
+        shadow_event("check out https://tool-b.example.com", 1),
+    ];
+    assert!(events.iter().all(|e| e.source_material_id.is_none()));
+
+    let (_, rows) = run_entity_chain(&events);
+    let relation_row = rows
+        .iter()
+        .find(|r| r.output_kind == "relation")
+        .expect("A and B are within the co-occurrence window and should produce a relation");
+
+    let coverage = relation_row.claim_support["source_coverage"]
+        .as_str()
+        .expect("claim_support.source_coverage should be a string");
+
+    assert_ne!(
+        coverage, "covered",
+        "sinex-ee7p: a relation whose evidence events both have source_material_id: None \
+         has no actual material grounding and should not be marked source_coverage: covered \
+         -- got 'covered' unconditionally regardless of the pair's real grounding",
+    );
+    Ok(())
+}
