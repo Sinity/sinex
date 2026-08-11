@@ -59,6 +59,17 @@ pub struct AdmittedEvent {
     pub event: Event<JsonValue>,
     pub event_id: Uuid,
     pub metadata: Option<CandidateEventMetadata>,
+    /// sinex-w1w7 / sinex-tgjw: the payload's content hash AS IT ARRIVED AT
+    /// ADMISSION -- computed once, at construction, before the redact_batch
+    /// chokepoint or NUL-stripping can mutate `event.payload`. Persisted
+    /// verbatim by `admitted_to_stream_rows` rather than recomputed from the
+    /// (possibly-since-mutated) payload, so it stays comparable against
+    /// `classify_live_match`'s candidate-side hash, which is computed at the
+    /// same pre-redaction point in the pipeline (`prepare_events`, before
+    /// `persist_batch_optimized` ever runs). Do not recompute this from
+    /// `event.payload` downstream of construction -- that reintroduces the
+    /// exact divergence this field exists to prevent.
+    pub content_hash: [u8; 32],
 }
 
 impl AdmittedEvent {
@@ -850,6 +861,7 @@ impl AdmissionService {
         }
 
         let admitted = AdmittedEvent {
+            content_hash: sinex_primitives::events::payload_content_hash(&event.payload),
             event,
             event_id,
             metadata,
@@ -1462,16 +1474,18 @@ fn admitted_to_stream_rows(batch: &[&AdmittedEvent]) -> EventEngineResult<Vec<St
                 anchor_byte,
             ) = sinex_db::repositories::events::conversions::extract_provenance(event)?;
 
-            // sinex-w1w7: hash the candidate payload exactly as it arrived at
-            // admission, BEFORE strip_postgres_jsonb_nul_chars (below) or the
-            // downstream redact_batch chokepoint can mutate it. SupersedeOnChange's
-            // live-match comparison (`classify_live_match`) compares this stored
-            // hash against a future candidate's own admission-time hash — never
-            // against a hash recomputed from the (possibly mutated) persisted
-            // payload — so an unchanged re-emission whose payload happens to
-            // contain NUL bytes or get redacted no longer misclassifies as
-            // "changed content" and churns archive/re-insert forever.
-            let content_hash = sinex_primitives::events::payload_content_hash(&event.payload);
+            // sinex-w1w7 / sinex-tgjw: use the hash captured AT ADMISSION
+            // (AdmittedEvent::content_hash, set when this AdmittedEvent was
+            // constructed) rather than recomputing from `event.payload` here.
+            // By this point `event.payload` may already have been mutated by
+            // the redact_batch chokepoint (persist.rs calls redact_batch
+            // before plan_persistence_batch_refs/persist_plan, which is what
+            // eventually calls this function) — recomputing here would hash
+            // the POST-redaction payload while `classify_live_match` hashes
+            // the PRE-redaction candidate, causing every re-emit of a
+            // SupersedeOnChange type touched by a privacy rule to spuriously
+            // "change" and churn archive+re-insert forever. See sinex-tgjw.
+            let content_hash = admitted.content_hash;
 
             let mut payload = event.payload.clone();
             let stripped_nul_bytes = strip_postgres_jsonb_nul_chars(&mut payload);

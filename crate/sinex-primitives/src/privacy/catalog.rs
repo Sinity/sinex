@@ -429,7 +429,13 @@ fn pii_rules() -> Vec<PatternRule> {
                 detector: StructuralDetector::PhoneNumber,
             },
             strategy: Strategy::Hash,
+            // sinex-h3gy: Command was missing here, so phone numbers typed or
+            // pasted into shell commands (e.g. a curl invocation, an SMS CLI
+            // tool) were never redacted despite Forever retention on terminal
+            // capture -- the one context class most likely to carry a real,
+            // dialable number verbatim.
             contexts: vec![
+                ProcessingContext::Command,
                 ProcessingContext::Clipboard,
                 ProcessingContext::Document,
                 ProcessingContext::Notification,

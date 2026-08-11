@@ -63,11 +63,44 @@ pub fn hash_token(input: &str, key: &[u8; 32]) -> String {
     format!("{TOKEN_OPEN}hash:{}{TOKEN_CLOSE}", &hex[..32])
 }
 
-/// Check if a string contains one or more encrypted tokens.
+/// Check if a string contains one or more WELL-FORMED encrypted tokens.
 ///
-/// Used by the engine to detect already-processed text and avoid double-encryption.
+/// Used by the engine to detect already-processed text and avoid double-
+/// encryption -- `PrivacyEngine::process` skips ALL redaction rules for the
+/// WHOLE payload when this returns true, so it must not be spoofable.
+///
+/// sinex-24es: the previous implementation was a plain substring test for
+/// `"⌜enc:v1:"`. Any captured text containing those 8 characters -- a pasted
+/// example of the token format, a chat log discussing it, unrelated content
+/// that happens to include the marker -- would skip every redaction rule for
+/// the entire payload, a forgeable bypass. This version requires the marker
+/// to be followed (eventually) by a closing delimiter with a non-empty,
+/// base64url-decodable payload of at least 40 bytes between them --
+/// `nonce(24) || ciphertext || tag(16)` is the minimum real `enc:v1` payload
+/// size (XChaCha20-Poly1305, even for an empty plaintext) -- so arbitrary
+/// unrelated text containing the marker substring cannot satisfy this by
+/// coincidence.
 pub(crate) fn contains_encrypted_token(input: &str) -> bool {
-    input.contains("\u{231c}enc:v1:")
+    let open_prefix = format!("{TOKEN_OPEN}enc:v1:");
+    let mut search_from = 0;
+    while let Some(rel) = input[search_from..].find(open_prefix.as_str()) {
+        let payload_start = search_from + rel + open_prefix.len();
+        let Some(close_rel) = input[payload_start..].find(TOKEN_CLOSE) else {
+            // No closing delimiter anywhere after this open marker -- not a
+            // well-formed token, and none can start later either.
+            break;
+        };
+        let payload = &input[payload_start..payload_start + close_rel];
+        if !payload.is_empty()
+            && URL_SAFE_NO_PAD
+                .decode(payload)
+                .is_ok_and(|bytes| bytes.len() >= 40)
+        {
+            return true;
+        }
+        search_from = payload_start + close_rel + TOKEN_CLOSE.len();
+    }
+    false
 }
 
 /// Find and decrypt all `⌜enc:v1:...⌝` tokens in a string.

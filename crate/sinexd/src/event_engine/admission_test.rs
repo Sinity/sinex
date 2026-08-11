@@ -146,3 +146,56 @@ fn supersede_on_change_falls_back_when_stored_hash_is_malformed() {
          not silently mismatch every candidate"
     );
 }
+
+/// sinex-tgjw: proves the WRITE side of the fix, through the real
+/// `admitted_to_stream_rows` (exercised via the production `AdmittedEvent`
+/// type, not a hand-built `StreamBatchRow`). Simulates exactly what
+/// `persist_batch_optimized` does in production: construct `AdmittedEvent`
+/// (capturing `content_hash` from the payload as it stood at admission --
+/// matching the real construction site in
+/// `jetstream_consumer/persist.rs::persist_batch_optimized`), THEN mutate
+/// `event.payload` in place (simulating the `redact_batch` chokepoint, which
+/// runs between `AdmittedEvent` construction and `admitted_to_stream_rows`
+/// in the real pipeline). The persisted `content_hash` on the resulting
+/// `StreamBatchRow` must equal the hash of the ORIGINAL, pre-mutation
+/// payload -- not a hash recomputed from the now-mutated `event.payload`.
+///
+/// Before the fix, `admitted_to_stream_rows` recomputed
+/// `payload_content_hash(&event.payload)` directly, which would hash the
+/// MUTATED payload here and diverge from `classify_live_match`'s candidate-
+/// side hash (computed earlier in the pipeline, before mutation) -- this
+/// test fails under that recompute-here behavior and passes under the fix
+/// (reading the hash captured at `AdmittedEvent` construction time).
+#[test]
+fn admitted_to_stream_rows_persists_the_pre_redaction_hash_not_a_post_mutation_recompute() {
+    let original_payload = serde_json::json!({ "value": "hello\u{0}world" });
+    let event = DynamicPayload::new("test.source", SUPERSEDE_ON_CHANGE_EVENT_TYPE, original_payload.clone())
+        .from_material(Id::new())
+        .at_time(sinex_primitives::Timestamp::now())
+        .build()
+        .expect("test event should build");
+
+    // Mirrors the real construction site in persist.rs::persist_batch_optimized:
+    // content_hash is captured from the payload AS IT STOOD at this exact point.
+    let original_hash = sinex_primitives::events::payload_content_hash(&event.payload);
+    let mut admitted = AdmittedEvent {
+        content_hash: original_hash,
+        event,
+        event_id: Uuid::now_v7(),
+        metadata: None,
+    };
+
+    // Simulate redact_batch mutating the payload in place, AFTER AdmittedEvent
+    // construction -- exactly the real ordering in persist_batch_optimized.
+    admitted.event.payload = serde_json::json!({ "value": "[REDACTED]" });
+
+    let rows = admitted_to_stream_rows(&[&admitted]).expect("stream row conversion should succeed");
+    assert_eq!(rows.len(), 1);
+    assert_eq!(
+        rows[0].content_hash.as_deref(),
+        Some(original_hash.as_slice()),
+        "the persisted content_hash must be the PRE-redaction hash captured at \
+         AdmittedEvent construction, not a hash recomputed from the (now-mutated) \
+         event.payload"
+    );
+}
