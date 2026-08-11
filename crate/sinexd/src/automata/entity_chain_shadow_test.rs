@@ -10,8 +10,71 @@ use sinex_primitives::derivation::{AdjudicationStatus, SupportLevel};
 use sinex_primitives::domain::RelationType;
 use sinex_primitives::events::payloads::{CanonicalCommandPayload, CurationJudgmentActorKind};
 use sinex_primitives::events::{EntityRelatedPayload, EventPayload};
+use sinex_primitives::temporal::Duration;
 use sinex_primitives::Id;
 use xtask::sandbox::prelude::*;
+use xtask::sandbox::sinex_test;
+
+fn shadow_event(text: &str, ts_secs: i64) -> StreamCheckpointEventRow {
+    StreamCheckpointEventRow {
+        event_id: uuid::Uuid::new_v4(),
+        payload: json!({"text": text}),
+        ts_orig: Timestamp::now() - Duration::seconds(1_000_000) + Duration::seconds(ts_secs),
+        source_material_id: None,
+    }
+}
+
+/// sinex-z3a7 (sub-issue 2): `entity_chain_shadow.rs`'s co-occurrence window
+/// tracks `last_seen = Some(now)` unconditionally (line ~378), the exact
+/// pattern `sinex-audit-outoforder-pattern` already fixed in the LIVE
+/// `relation_extractor.rs` (which tracks max-arrived-at, never regressing on
+/// an out-of-order entry) -- just never ported here. It matters more in this
+/// lane because events are read `ORDER BY id ASC` (interpretation-time
+/// order) while all window arithmetic uses `ts_orig`, so a historical import
+/// (exactly what the imminent wipe-and-reimport will do) routinely delivers
+/// events out of `ts_orig` order.
+///
+/// This test constructs exactly that shape: four events processed in
+/// interpretation order, where the third (`C`) has a `ts_orig` earlier than
+/// the second (`B`)'s. Under the current last-pushed watermark, processing
+/// `C` regresses `last_seen` from `B`'s 1000s down to `C`'s 1s, so the
+/// legitimately-close-in-time fourth event `D` (1050s, only 50s after `B`'s
+/// true 1000s) sees a spurious ~1049s "gap" and force-closes the window
+/// early -- splitting `[A,B,C,D]` into `[A,B,C]` + `[D]` instead of keeping
+/// them one co-occurrence group. A final, much-later event `E` (5000s)
+/// should legitimately start a new window either way.
+///
+/// Expected (max-arrived-at, not yet implemented): A,B,C,D co-occur as one
+/// group (6 pairs; C(1)r's 5001, E gets no pair (window len 1 at freeze).
+/// Actual (current last-pushed bug): A,B,C close early (3 pairs) + D,E
+/// close together as their own pair (1 pair) = 4 pairs total, with no
+/// pairing that includes D and any of A/B/C -- proving D was wrongly
+/// evicted from the group it chronologically belongs to.
+#[sinex_test]
+#[ignore = "sinex-z3a7 open: shadow-lane watermark uses last-pushed not max-arrived-at -- fails until fixed"]
+async fn shadow_lane_window_watermark_should_not_regress_on_out_of_order_arrival() -> TestResult<()>
+{
+    let events = vec![
+        shadow_event("check out https://tool-a.example.com", 0),
+        shadow_event("check out https://tool-b.example.com", 1000),
+        shadow_event("check out https://tool-c.example.com", 1), // out of order vs B
+        shadow_event("check out https://tool-d.example.com", 1050),
+        shadow_event("check out https://tool-e.example.com", 5000),
+    ];
+
+    let (_, rows) = run_entity_chain(&events);
+    let relation_pair_count = rows.iter().filter(|r| r.output_kind == "relation").count();
+
+    assert_eq!(
+        relation_pair_count, 6,
+        "sinex-z3a7: with a correct max-arrived-at watermark, D (1050s) is within \
+         WINDOW_GAP_SECS of B's true latest arrival (1000s) and should stay grouped with \
+         A/B/C as one 4-member co-occurrence window (6 pairs). Got {relation_pair_count} \
+         pairs -- the current last-pushed watermark regresses on the out-of-order C (1s) \
+         entry, making D's gap look larger than it is and force-closing the window early.",
+    );
+    Ok(())
+}
 
 /// Seed every `derivation.product_declarations` row this module's writes
 /// (and the live entity-chain automata's own declarations, needed by the
@@ -381,5 +444,45 @@ async fn entity_related_direct_canonical_rejected(ctx: TestContext) -> TestResul
         "expected the curation-bypass rejection, got: {bypass_error}"
     );
 
+    Ok(())
+}
+
+/// sinex-ee7p (sub-issue 1 of 3, entity_chain_shadow.rs's own slice only):
+/// `drain_relation_pairs` hardcodes `SourceCoverage::Covered` on every
+/// co_occurs_with relation, regardless of whether the underlying co-occurring
+/// events actually had material grounding -- even though
+/// `StreamCheckpointEventRow.source_material_id` is captured right there.
+/// A relation built entirely from events with `source_material_id: None`
+/// (e.g. shell-derived synthetic events) is emitted as fully covered
+/// evidence, overstating evidence quality to curation/analytics consumers
+/// that trust `source_coverage`. Failing by design until the coverage is
+/// computed from the pair's actual `source_material_id` presence.
+#[sinex_test]
+#[ignore = "sinex-ee7p open: shadow-lane relations claim source_coverage: Covered unconditionally -- fails until fixed"]
+async fn shadow_lane_relation_coverage_reflects_actual_material_grounding_sinex_ee7p()
+-> TestResult<()> {
+    // Both co-occurring events lack material grounding entirely.
+    let events = vec![
+        shadow_event("check out https://tool-a.example.com", 0),
+        shadow_event("check out https://tool-b.example.com", 1),
+    ];
+    assert!(events.iter().all(|e| e.source_material_id.is_none()));
+
+    let (_, rows) = run_entity_chain(&events);
+    let relation_row = rows
+        .iter()
+        .find(|r| r.output_kind == "relation")
+        .expect("A and B are within the co-occurrence window and should produce a relation");
+
+    let coverage = relation_row.claim_support["source_coverage"]
+        .as_str()
+        .expect("claim_support.source_coverage should be a string");
+
+    assert_ne!(
+        coverage, "covered",
+        "sinex-ee7p: a relation whose evidence events both have source_material_id: None \
+         has no actual material grounding and should not be marked source_coverage: covered \
+         -- got 'covered' unconditionally regardless of the pair's real grounding",
+    );
     Ok(())
 }

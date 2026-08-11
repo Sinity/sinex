@@ -271,6 +271,60 @@ async fn sequence_relation_flags_out_of_order_and_span() -> TestResult<()> {
     Ok(())
 }
 
+/// sinex-4s8j (needs-a-decision bug, not presupposing the resolution): the
+/// doc comment on `EventRelationExpr::Sequence` states "the candidates
+/// themselves form a time-ordered chain ... seeds are ignored for this
+/// relation" -- but `evaluate()` passes `seeds` into `evaluate_sequence`,
+/// never touching `candidates`. `sequence_relation_flags_out_of_order_and_span`
+/// above encodes the IMPLEMENTATION (chain passed as seeds, candidates always
+/// `&[]`) rather than the documented CONTRACT, so it passes under either
+/// reading and can't catch this. This test operationalizes the doc contract
+/// directly and is expected to FAIL against the current implementation. If
+/// the eventual decision is "seeds are correct, fix the doc instead", delete
+/// or invert this test alongside that decision -- it exists to make the gap
+/// executable, not to prescribe the fix direction.
+#[sinex_test]
+#[ignore = "sinex-4s8j open: evaluate() reads seeds not candidates for Sequence, contradicting its own doc comment -- fails until resolved"]
+async fn sequence_relation_should_use_candidates_per_its_own_doc_contract() -> TestResult<()> {
+    let a = material_event(
+        "a",
+        "a.evt",
+        Some(at(0)),
+        Some(TemporalSourceType::RealtimeCapture),
+        json!({}),
+    );
+    let b = material_event(
+        "b",
+        "b.evt",
+        Some(at(60)),
+        Some(TemporalSourceType::RealtimeCapture),
+        json!({}),
+    );
+    let c = material_event(
+        "c",
+        "c.evt",
+        Some(at(120)),
+        Some(TemporalSourceType::RealtimeCapture),
+        json!({}),
+    );
+
+    // Per the doc: a well-ordered chain passed as CANDIDATES with empty
+    // seeds should produce a 3-member support chain (mirroring what
+    // `sequence_relation_flags_out_of_order_and_span` proves for the same
+    // chain passed as seeds with empty candidates).
+    let result = EventRelationExpr::Sequence { within_secs: 300 }.evaluate(&[], &[a, b, c]);
+
+    assert_eq!(
+        result.support_refs.len(),
+        3,
+        "sinex-4s8j: per its own doc comment, Sequence should build the chain from candidates \
+         (seeds ignored) -- got {} support refs from a 3-event candidate-only chain, meaning \
+         candidates are being silently ignored in favor of seeds",
+        result.support_refs.len(),
+    );
+    Ok(())
+}
+
 #[sinex_test]
 async fn evidence_window_renders_as_view_envelope_with_caveats() -> TestResult<()> {
     let seed = material_event(
