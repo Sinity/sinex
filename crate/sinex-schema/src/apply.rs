@@ -82,6 +82,10 @@ const EVENTS_REQUIRED_INDEXES: &[&str] = &[
     // hypertable: none of the plain-column `source` indexes above match an
     // expression predicate (sinex-audit-continuity-fullscan).
     "ix_events_source_family",
+    // Full-text-search expression index (sinex-1l52). Without it, every
+    // PayloadFilter::TextSearch / relevance-ranking / hybrid_search FTS query
+    // is a full per-row tsvector-build sequential scan on the hypertable.
+    "ix_events_payload_text_fts",
 ];
 const REFLECTION_EVENTS_REQUIRED_TRIGGERS: &[&str] = &[
     "trg_events_no_update",
@@ -937,6 +941,7 @@ async fn create_indexes(pool: &PgPool) -> Result<(), ApplyError> {
     index_sql.extend(render_indexes(Events::create_indexes()));
     index_sql.extend(Events::create_gin_indexes_sql());
     index_sql.push(Events::create_claim_adjudication_index_sql());
+    index_sql.push(Events::create_text_search_index_sql());
     // Derivation control plane (sinex-0vx.4 / W1): reflection.events needs the
     // same two indexes as core.events. reflection.events is not in the
     // ConvergibleTable/MirrorSpec engine (it converges via the hand-rolled
@@ -950,6 +955,13 @@ async fn create_indexes(pool: &PgPool) -> Result<(), ApplyError> {
     );
     index_sql.push(
         "CREATE INDEX IF NOT EXISTS ix_events_claim_adjudication ON reflection.events ((claim_support->>'adjudication')) WHERE claim_support IS NOT NULL"
+            .to_string(),
+    );
+    // sinex-1l52: reflection.events needs the same text-search index as
+    // core.events, for the same LIKE-doesn't-inherit-post-creation-indexes
+    // reason as the two indexes above.
+    index_sql.push(
+        "CREATE INDEX IF NOT EXISTS ix_events_payload_text_fts ON reflection.events USING GIN (to_tsvector('simple', payload::text))"
             .to_string(),
     );
     index_sql.extend(ArchivedEvents::create_indexes_sql());

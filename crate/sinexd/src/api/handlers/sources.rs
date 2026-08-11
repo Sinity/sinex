@@ -239,20 +239,23 @@ pub async fn handle_sources_stage(
                 .with_std_error(&error)
         })?;
 
-    // Persist file size if we have it (registration doesn't set total_bytes).
+    // Finalize the material now if we already know its full size (registration
+    // doesn't set total_bytes) -- via finalize_in_flight, not a bare
+    // total_bytes-only UPDATE (sinex-k22c). The bypassed raw UPDATE left the
+    // material permanently at status='sensing' (never Completed, no end_time),
+    // so it was forever flagged by list_stale_sensing.
     if let Some(size) = file_size {
-        sqlx::query!(
-            "UPDATE raw.source_material_registry SET total_bytes = $1 WHERE id = $2",
-            size,
-            record.id
-        )
-        .execute(pool)
-        .await
-        .map_err(|error| {
-            SinexError::database("Failed to persist staged source material size")
-                .with_context("material_id", record.id.to_string())
-                .with_std_error(&error)
-        })?;
+        let blob_id_typed = blob_id
+            .as_ref()
+            .and_then(|id_str| uuid::Uuid::parse_str(id_str).ok().map(sinex_db::Id::from));
+        pool.source_materials()
+            .finalize_in_flight(record.id, blob_id_typed, None, None, Some(size))
+            .await
+            .map_err(|error| {
+                SinexError::database("Failed to finalize staged source material")
+                    .with_context("material_id", record.id.to_string())
+                    .with_std_error(&error)
+            })?;
         record.total_bytes = Some(size);
     }
 
@@ -1039,29 +1042,18 @@ pub async fn handle_sources_annotate(
 
     contract.annotations = Some(annotations.clone());
 
-    // Persist updated metadata.
-    let mut updated_meta = record.metadata.clone();
-    if let serde_json::Value::Object(ref mut map) = updated_meta {
-        let patch = contract.metadata_patch();
-        if let serde_json::Value::Object(patch_map) = patch {
-            for (k, v) in patch_map {
-                map.insert(k, v);
-            }
-        }
-    } else {
-        updated_meta = contract.metadata_patch();
-    }
-
-    sqlx::query!(
-        "UPDATE raw.source_material_registry SET metadata = $1 WHERE id = $2",
-        &updated_meta as &serde_json::Value,
-        material_id
-    )
-    .execute(pool)
-    .await
-    .map_err(|error| {
-        SinexError::database("Failed to persist source material annotations").with_std_error(&error)
-    })?;
+    // Persist updated metadata via the repository chokepoint, which strips
+    // any reserved system keys the annotation patch might collide with and
+    // re-applies the existing reserved values on top (sinex-k22c) -- a raw
+    // whole-object SET here bypassed that protection and lost updates
+    // against any concurrent assembler write.
+    pool.source_materials()
+        .update_metadata(material_id.into(), contract.metadata_patch())
+        .await
+        .map_err(|error| {
+            SinexError::database("Failed to persist source material annotations")
+                .with_std_error(&error)
+        })?;
 
     let response = SourcesAnnotateResponse {
         material_id: req.material_id,

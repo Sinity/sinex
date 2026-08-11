@@ -388,18 +388,17 @@ pub(super) async fn execute_worker_output(
             .with_std_error(&error)
             .with_operation("ops.start")
     })?;
-    sqlx::query!(
-        "UPDATE raw.source_material_registry SET total_bytes = $1 WHERE id = $2",
-        total_bytes,
-        material_record.id
-    )
-    .execute(pool)
-    .await
-    .map_err(|error| {
-        SinexError::database("Failed to persist media worker output material size")
-            .with_context("material_id", material_record.id.to_string())
-            .with_std_error(&error)
-    })?;
+    // finalize_in_flight, not a bare total_bytes-only UPDATE (sinex-k22c): the
+    // raw UPDATE left the material permanently at status='sensing' with no
+    // Completed transition/end_time.
+    pool.source_materials()
+        .finalize_in_flight(material_record.id, None, None, None, Some(total_bytes))
+        .await
+        .map_err(|error| {
+            SinexError::database("Failed to finalize media worker output material")
+                .with_context("material_id", material_record.id.to_string())
+                .with_std_error(&error)
+        })?;
     material_record.total_bytes = Some(total_bytes);
 
     let dispatch = crate::sources::dispatch::default_parser_dispatch();

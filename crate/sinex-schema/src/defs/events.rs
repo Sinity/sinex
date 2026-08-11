@@ -684,6 +684,23 @@ impl Events {
         )
     }
 
+    /// Full-text-search expression index (sinex-1l52) — every text-search
+    /// query path (`PayloadFilter::TextSearch`, the relevance/`ts_headline`
+    /// ranking path, and `hybrid_search`'s FTS branch) queries
+    /// `to_tsvector('simple', payload::text)`. Without a matching expression
+    /// index, every one of those queries is a full per-row tsvector-build
+    /// sequential scan of the hypertable. The expression here must stay
+    /// byte-for-byte identical to the query-side expression or the planner
+    /// will not use the index.
+    #[must_use]
+    pub fn create_text_search_index_sql() -> String {
+        format!(
+            "CREATE INDEX IF NOT EXISTS ix_events_payload_text_fts ON {}.{} USING GIN (to_tsvector('simple', payload::text))",
+            Self::schema_name(),
+            Self::table_name()
+        )
+    }
+
     /// Generates the trigger enforcing append-only semantics for `core.events`.
     #[must_use]
     pub fn create_no_update_trigger_sql() -> &'static str {

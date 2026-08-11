@@ -1947,18 +1947,18 @@ async fn update_material_total_bytes(
             .with_std_error(&error)
             .with_operation("ops.start")
     })?;
-    sqlx::query!(
-        "UPDATE raw.source_material_registry SET total_bytes = $1 WHERE id = $2",
-        total_bytes,
-        material_id
-    )
-    .execute(pool)
-    .await
-    .map_err(|error| {
-        SinexError::database("Failed to persist staged email material size")
-            .with_context("material_id", material_id.to_string())
-            .with_std_error(&error)
-    })?;
+    // finalize_in_flight, not a bare total_bytes-only UPDATE (sinex-k22c): the
+    // raw UPDATE left the material permanently at status='sensing' (no
+    // Completed transition, no end_time), so it was forever flagged by
+    // list_stale_sensing even though its capture had actually finished.
+    pool.source_materials()
+        .finalize_in_flight(material_id.into(), None, None, None, Some(total_bytes))
+        .await
+        .map_err(|error| {
+            SinexError::database("Failed to finalize staged email material")
+                .with_context("material_id", material_id.to_string())
+                .with_std_error(&error)
+        })?;
     Ok(())
 }
 
