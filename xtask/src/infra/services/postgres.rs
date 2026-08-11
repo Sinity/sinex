@@ -16,7 +16,7 @@ fn pg_identifier(ident: &str, kind: &str) -> Result<String> {
     Ok(format!("\"{ident}\""))
 }
 
-fn pg_literal(value: &str) -> String {
+pub(crate) fn pg_literal(value: &str) -> String {
     format!("'{}'", value.replace('\'', "''"))
 }
 

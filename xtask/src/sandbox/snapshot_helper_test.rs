@@ -42,3 +42,22 @@ async fn persist_failure_writes_evidence_bundle_and_summary() -> TestResult<()> 
     assert!(summary.contains("assertion exploded"));
     Ok(())
 }
+
+#[sinex_test]
+#[ignore = "sinex-gp25 open: to_json() silently collapses non-serializable evidence to Null instead of surfacing the serialization error"]
+async fn to_json_surfaces_non_serializable_values_instead_of_silent_null() -> TestResult<()> {
+    // f64::NAN is one of the few values serde_json genuinely refuses to
+    // serialize (JSON has no representation for NaN/Infinity) -- a
+    // realistic stand-in for "non-serializable evidence payload" that a
+    // postmortem snapshot could plausibly carry (e.g. a computed
+    // percentage/ratio that divided by zero).
+    let value = to_json(&f64::NAN);
+    assert_ne!(
+        value,
+        JsonValue::Null,
+        "to_json() must not silently collapse a non-serializable value (NaN) to Null -- \
+         doing so obscures the exact failure mode during postmortem analysis, which is \
+         the entire point of capturing this evidence in the first place"
+    );
+    Ok(())
+}

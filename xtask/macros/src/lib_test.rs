@@ -131,3 +131,36 @@ fn simple_async_expansion_keeps_single_serial_guard_inside_timed_future() {
     );
     assert!(rendered.contains("timeout"), "rendered tokens: {rendered}");
 }
+
+// sinex-mqe3: `sinex_proptest!`'s per-attribute loop (lib.rs ~836-850) calls
+// `attr.parse_args::<TS>().unwrap()` for `#[cases(..)]`/`#[timeout(..)]`/
+// `#[seed(..)]` attributes instead of propagating a `syn::Error` into a
+// `compile_error!` like the rest of this crate's parsing does. This proves
+// the exact panicking API call pattern at that call site with realistic
+// malformed attribute syntax, without invoking the outer `proc_macro`
+// entry point directly (constructing `proc_macro::TokenStream` outside of
+// an active macro expansion is not supported by this crate's toolchain, so
+// no existing test in this file does that either -- see the other tests
+// here, which all exercise `proc_macro2`-based internals instead).
+#[test]
+#[ignore = "sinex-mqe3 open: attr.parse_args().unwrap() panics instead of compile-erroring on malformed #[cases(..)] input"]
+fn cases_attr_with_malformed_args_panics_instead_of_compile_erroring() {
+    // Malformed args body -- the exact class of typo `sinex_proptest!`'s
+    // loop can receive from a mistyped test declaration. The outer
+    // `#[cases(...)]` attribute syntax is well-formed; it's the inner
+    // token stream that fails to parse as an expression when `parse_args`
+    // is later called against it.
+    let attr: syn::Attribute =
+        syn::parse_str("#[cases(,,)]").expect("outer attribute syntax alone is well-formed");
+    let result = std::panic::catch_unwind(|| {
+        let _: proc_macro2::TokenStream = attr.parse_args().unwrap();
+    });
+    assert!(
+        result.is_err(),
+        "expected attr.parse_args().unwrap() to panic on malformed args, matching the real bug \
+         at xtask/macros/src/lib.rs:840 -- if this now passes, the panic has already been fixed \
+         (e.g. by switching to `?` and a compile_error!) and this test should be un-ignored and \
+         rewritten to assert the graceful-error behavior instead"
+    );
+    let _ = attr;
+}
