@@ -327,16 +327,12 @@ impl<T> ViewEnvelope<T> {
 #[derive(Debug)]
 pub struct ViewEnvelopeMarker;
 
+/// Compatibility shim over [`crate::text::truncate_chars`] for existing
+/// internal callers that expect an owned `String`. New code should call
+/// `crate::text::truncate_chars` directly (it returns `Cow` to avoid
+/// allocating when no truncation is needed).
 pub(crate) fn truncate_chars(input: &str, max_chars: usize) -> String {
-    if input.chars().count() <= max_chars {
-        return input.to_string();
-    }
-    let keep = max_chars.saturating_sub(3);
-    let end = input
-        .char_indices()
-        .nth(keep)
-        .map_or(input.len(), |(index, _)| index);
-    format!("{}...", &input[..end])
+    crate::text::truncate_chars(input, max_chars).into_owned()
 }
 
 fn is_false(value: &bool) -> bool {
