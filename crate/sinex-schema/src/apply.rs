@@ -2425,7 +2425,8 @@ BEGIN
           -- (id) is occurrence-blind, new id != old id) would leave two live
           -- interpretations for one occurrence, violating the single-live
           -- invariant. Derived rows (source_material_id IS NULL) have no
-          -- material occurrence and stay governed by ON CONFLICT (id).
+          -- material occurrence and are covered by the parent-liveness
+          -- guard below instead.
           AND NOT (
               ae.source_material_id IS NOT NULL
               AND EXISTS (
@@ -2433,6 +2434,28 @@ BEGIN
                   FROM core.events le
                   WHERE le.source_material_id = ae.source_material_id
                     AND le.anchor_byte IS NOT DISTINCT FROM ae.anchor_byte
+              )
+          )
+          -- Parent-liveness safety (sinex-79is): never restore a derived
+          -- event whose parent(s) are not ALL live in core.events. A
+          -- material row's own occurrence-safety check above can block a
+          -- material restore (a fresher re-emitted material now occupies
+          -- the occurrence); if a derived child of the un-restored material
+          -- got restored anyway, it would carry a stale equivalence_key
+          -- pointing at nothing live, permanently winning the
+          -- OccurrenceDuplicate admission check over the automaton's
+          -- correct fresh recomputation from the new material. Only derived
+          -- rows are subject to this check (source_material_id IS NULL);
+          -- material rows pass through unaffected.
+          AND (
+              ae.source_material_id IS NOT NULL
+              OR ae.source_event_ids IS NULL
+              OR NOT EXISTS (
+                  SELECT 1
+                  FROM unnest(ae.source_event_ids) AS parent_id
+                  WHERE NOT EXISTS (
+                      SELECT 1 FROM core.events le2 WHERE le2.id = parent_id
+                  )
               )
           )
         ON CONFLICT (id) DO NOTHING

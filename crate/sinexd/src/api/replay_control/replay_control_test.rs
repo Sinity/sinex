@@ -1046,3 +1046,7 @@ mod bookkeeping;
 mod execution_failures;
 #[path = "tests/execution_outcome.rs"]
 mod execution_outcome;
+#[path = "tests/staged_replay.rs"]
+mod staged_replay;
+#[path = "tests/cascade_restore_parent_liveness.rs"]
+mod cascade_restore_parent_liveness;
