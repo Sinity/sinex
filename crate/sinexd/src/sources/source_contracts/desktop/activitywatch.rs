@@ -220,11 +220,13 @@ impl MaterialParser for ActivityWatchParser {
             return Ok(vec![]);
         }
 
-        // Extract common fields.
-        let ts_orig = row
-            .get("started_at")
-            .and_then(parse_aw_timestamp)
-            .unwrap_or_else(Timestamp::now);
+        // Extract common fields. `parsed_started_at` tracks whether the row
+        // actually carried a usable timestamp; `ts_orig` always holds a
+        // concrete value (needed for the occurrence key below) but is only
+        // trusted downstream when `parsed_started_at` is `Some` — see the
+        // `TimingEvidence` branch below.
+        let parsed_started_at = row.get("started_at").and_then(parse_aw_timestamp);
+        let ts_orig = parsed_started_at.unwrap_or_else(Timestamp::now);
 
         let data = activitywatch_data_object(&row);
 
@@ -309,9 +311,20 @@ impl MaterialParser for ActivityWatchParser {
             .event_source(EventSource::from_static("activitywatch"))
             .payload(payload)
             .ts_orig(ts_orig)
-            .timing(TimingEvidence::Intrinsic {
-                field: "started_at".into(),
-                confidence: TimingConfidence::Intrinsic,
+            .timing(if parsed_started_at.is_some() {
+                TimingEvidence::Intrinsic {
+                    field: "started_at".into(),
+                    confidence: TimingConfidence::Intrinsic,
+                }
+            } else {
+                // `started_at` was missing/unparseable: `ts_orig` above is a
+                // wall-clock placeholder used only for occurrence-key
+                // uniqueness. `Atemporal` tells `intent_to_event_with_anchor`
+                // (via `TimingEvidence::resolved_quality() == None`) to leave
+                // the event's real ts_orig unresolved, so persistence derives
+                // it from the source material's own timing tier instead of
+                // trusting this placeholder (sinex-dmz9).
+                TimingEvidence::Atemporal
             })
             .anchor(record.anchor.clone())
             .occurrence_key(occurrence_key)
