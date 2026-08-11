@@ -2449,3 +2449,205 @@ async fn settlement_registry_resolves_durable_debt_for_a_dlqd_event(
     let _ = consumer_handle.await;
     Ok(())
 }
+
+/// sinex-iq4f regression test: a deterministically-rejected event (here, an
+/// implausibly-future `ts_orig`, well outside the default 1h skew) must
+/// resolve the settlement registry to `DurableDebt` after its DLQ write,
+/// not strand the caller forever. Before the fix, `AdmissionRejection`'s
+/// `event_id` was never attached at the `FutureTimestamp` (or
+/// `PastTimestamp`/`NegativeAnchor`/`SchemaValidation`/`MissingTimestamp`)
+/// rejection sites in `admission.rs`, and `route_validation_failure` only
+/// received `rejection.reason` — so even a successful DLQ write never
+/// resolved the registry, and the source's progress frontier (which awaits
+/// this exact resolution — see `adapter_source.rs`'s durable-emission
+/// receipt wait) would time out and treat the record as a hole forever,
+/// permanently wedging the source's cursor on redelivery (the r6d.11
+/// livelock this bead fixes).
+#[sinex_test]
+async fn settlement_registry_resolves_durable_debt_for_an_admission_rejected_event(
+    ctx: TestContext,
+) -> TestResult<()> {
+    let ctx = ctx.with_nats().shared().await?;
+    let nats_client = ctx.nats_client();
+    let pool = ctx.pool.clone();
+    ensure_fixture_source_material(&pool).await?;
+    let validator = IngestEventValidator::new(false);
+
+    let js = ctx.jetstream().await?;
+    let env = ctx.env();
+    let namespace = ctx.pipeline_namespace().prefix().to_string();
+    let topology = JetStreamTopology::new(
+        env,
+        ctx.pipeline_namespace().stream("SINEX_RAW_EVENTS_IQ4F"),
+        ctx.pipeline_namespace().consumer_name("event-engine-iq4f"),
+        Some(&namespace),
+    );
+    let ready_topology = topology.clone();
+    let consumer = JetStreamConsumer::new(
+        nats_client.clone(),
+        pool.clone(),
+        Arc::new(RwLock::new(validator)),
+        topology,
+    );
+    let registry = consumer.settlement_registry();
+    let consumer_handle =
+        spawn_consumer_and_wait_ready(&ctx, &js, &ready_topology, consumer).await?;
+
+    let event_id = Uuid::now_v7();
+    let rx = registry.register(event_id.into());
+
+    // Default future-ts skew is 1h (admission.rs); 6h is comfortably beyond
+    // it and deterministically hits AdmissionRejectionKind::FutureTimestamp
+    // before schema validation or the material-readiness gate ever run.
+    let implausible_future = temporal::now() + time::Duration::hours(6);
+    let event = json!({
+        "id": event_id.to_string(),
+        "source": "iq4f",
+        "event_type": "iq4f.event",
+        "payload": {"data": "deterministically-rejected"},
+        "ts_orig": implausible_future.format_rfc3339(),
+        "host": "test-host",
+        "source_material_id": FIXTURE_SOURCE_MATERIAL_ID.to_string(),
+        "anchor_byte": 0,
+    });
+    let subject = env.nats_subject_with_namespace(Some(&namespace), "events.raw.iq4f.event");
+    nats_client
+        .publish(
+            subject,
+            serde_json::to_vec(&admission_envelope("iq4f", event))?.into(),
+        )
+        .await?;
+    nats_client.flush().await?;
+
+    let state = tokio::time::timeout(Duration::from_secs(Timeouts::STANDARD), rx).await??;
+    match state {
+        EmissionReceiptState::DurableDebt { debt_id, reason } => {
+            assert_eq!(
+                debt_id, event_id,
+                "debt_id has no dedicated DB row here, so it must be the rejected event's own id"
+            );
+            assert!(
+                reason.contains("admission rejection"),
+                "reason should identify this as an admission-rejection DLQ, got: {reason}"
+            );
+        }
+        other => panic!(
+            "expected DurableDebt{{..}} (admission-rejected event must resolve the \
+             settlement registry so the source cursor unlocks past it), got {other:?}"
+        ),
+    }
+
+    // The rejected event must never reach core.events.
+    assert!(
+        ctx.pool.events().get_by_id(event_id.into()).await?.is_none(),
+        "admission-rejected event must not be persisted"
+    );
+
+    consumer_handle.abort();
+    let _ = consumer_handle.await;
+    Ok(())
+}
+
+/// sinex-txt4 regression test (CRITICAL, currently EXPECTED TO FAIL — no fix
+/// has landed for this bead yet). Reproduces the bead's own named repro
+/// recipe exactly: two events sharing an `equivalence_key`, published as two
+/// separate NATS messages with NO persistence barrier between them, so both
+/// land in the SAME fetch batch. Admission's equivalence-key pre-pass only
+/// resolves against already-committed `core.events` rows (admission.rs
+/// intra-batch collapse maps are `admit_intent_bytes`-local and dropped at
+/// return) — so message 2's pre-pass cannot see message 1's still-in-flight
+/// event, both classify as Fresh, and both persist as live rows sharing one
+/// equivalence_key, silently violating the single-live-interpretation
+/// invariant.
+///
+/// Deliberately does NOT call `wait_for_event_id` between the two
+/// `publish_event` calls, and publishes both BEFORE the consumer is spawned
+/// — this is the exact condition the bead identifies as what makes every
+/// *other* supersede/suppress test in this file (which all insert that
+/// barrier) blind to the bug: a quiet/barriered consumer drains one message
+/// per fetch, so the two never co-occupy a batch.
+#[sinex_test]
+async fn equivalence_key_collision_within_one_fetch_batch_must_not_duplicate(
+    ctx: TestContext,
+) -> TestResult<()> {
+    let ctx = ctx.with_nats().shared().await?;
+    let nats = ctx.nats_handle()?;
+    let nats_client = ctx.nats_client();
+    let pool = ctx.pool.clone();
+    ensure_fixture_source_material(&pool).await?;
+
+    let js = nats.jetstream_with_client(nats_client.clone());
+    let env = ctx.env().clone();
+    let namespace = ctx.pipeline_namespace().prefix().to_string();
+    let stream = ctx.pipeline_namespace().stream("SINEX_RAW_EVENTS_TXT4");
+    let topology = JetStreamTopology::new(
+        &env,
+        stream,
+        ctx.pipeline_namespace().consumer_name("event-engine-txt4"),
+        Some(&namespace),
+    );
+
+    let equivalence_key = "txt4-batch-collision-key".to_string();
+    let ts = temporal::now();
+
+    // Both publishes happen BEFORE the consumer is spawned below, and
+    // neither is followed by a wait — this guarantees no persistence
+    // barrier and forces both messages into the consumer's first fetch.
+    let first_id = publish_event(
+        &pool,
+        &nats_client,
+        &namespace,
+        "txt4-source",
+        "state.interval",
+        n9a_interval_payload(ts, 100),
+        EventOverrides {
+            equivalence_key: Some(equivalence_key.clone()),
+            ..Default::default()
+        },
+    )
+    .await?;
+    let second_id = publish_event(
+        &pool,
+        &nats_client,
+        &namespace,
+        "txt4-source",
+        "state.interval",
+        n9a_interval_payload(ts, 200),
+        EventOverrides {
+            equivalence_key: Some(equivalence_key.clone()),
+            ..Default::default()
+        },
+    )
+    .await?;
+    assert_ne!(first_id, second_id, "test sanity: two distinct event ids");
+
+    let validator = IngestEventValidator::new(false);
+    let consumer = JetStreamConsumer::new(
+        nats_client.clone(),
+        pool.clone(),
+        Arc::new(RwLock::new(validator)),
+        topology.clone(),
+    );
+    let consumer_handle = spawn_consumer_and_wait_ready(&ctx, &js, &topology, consumer).await?;
+
+    WaitHelpers::wait_for_source_events(&pool, "txt4-source", 1, Timeouts::STANDARD).await?;
+    // Give the second message a full drain cycle to also land (or collide)
+    // before asserting -- the bug's failure mode is a SECOND live row, not
+    // absence, so we must not race the assertion against in-flight work.
+    tokio::time::sleep(Duration::from_millis(500)).await;
+
+    let live_count: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM core.events WHERE equivalence_key = $1")
+            .bind(&equivalence_key)
+            .fetch_one(&ctx.pool)
+            .await?;
+    assert_eq!(
+        live_count, 1,
+        "exactly one live row must exist per equivalence_key even when both revisions land in \
+         the same fetch batch with no persistence barrier between them (sinex-txt4)"
+    );
+
+    consumer_handle.abort();
+    let _ = consumer_handle.await;
+    Ok(())
+}

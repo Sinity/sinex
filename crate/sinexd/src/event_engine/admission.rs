@@ -711,10 +711,13 @@ impl AdmissionService {
         // bug, so reject it.
         if event.ts_orig.is_none() && !matches!(event.provenance, Provenance::Material { .. }) {
             warn!(event_id = ?event.id, "Event validation failed: missing ts_orig on derived event");
-            return Ok(AdmissionDecision::Rejected(AdmissionRejection::new(
-                AdmissionRejectionKind::MissingTimestamp,
-                "Validation failed: missing ts_orig",
-            )));
+            return Ok(AdmissionDecision::Rejected(
+                AdmissionRejection::new(
+                    AdmissionRejectionKind::MissingTimestamp,
+                    "Validation failed: missing ts_orig",
+                )
+                .with_event_id(event.id),
+            ));
         }
 
         if let Some(ts_orig) = event.ts_orig {
@@ -731,13 +734,16 @@ impl AdmissionService {
                     lower_bound = %self.ts_orig_lower_bound,
                     "Event ts_orig predates lower bound"
                 );
-                return Ok(AdmissionDecision::Rejected(AdmissionRejection::new(
-                    AdmissionRejectionKind::PastTimestamp,
-                    format!(
-                        "ts_orig {ts_orig} predates lower bound {} (implausibly old)",
-                        self.ts_orig_lower_bound
-                    ),
-                )));
+                return Ok(AdmissionDecision::Rejected(
+                    AdmissionRejection::new(
+                        AdmissionRejectionKind::PastTimestamp,
+                        format!(
+                            "ts_orig {ts_orig} predates lower bound {} (implausibly old)",
+                            self.ts_orig_lower_bound
+                        ),
+                    )
+                    .with_event_id(event.id),
+                ));
             }
             if ts_orig > now + self.future_ts_skew {
                 let latest_expected = now + self.future_ts_skew;
@@ -753,13 +759,16 @@ impl AdmissionService {
                     skew_seconds = (ts_orig - now).whole_seconds(),
                     "Event ts_orig is implausibly far in the future"
                 );
-                return Ok(AdmissionDecision::Rejected(AdmissionRejection::new(
-                    AdmissionRejectionKind::FutureTimestamp,
-                    format!(
-                        "ts_orig {ts_orig} exceeds latest expected {latest_expected} by {} seconds (implausibly future)",
-                        (ts_orig - now).whole_seconds()
-                    ),
-                )));
+                return Ok(AdmissionDecision::Rejected(
+                    AdmissionRejection::new(
+                        AdmissionRejectionKind::FutureTimestamp,
+                        format!(
+                            "ts_orig {ts_orig} exceeds latest expected {latest_expected} by {} seconds (implausibly future)",
+                            (ts_orig - now).whole_seconds()
+                        ),
+                    )
+                    .with_event_id(event.id),
+                ));
             }
         }
 
@@ -776,20 +785,26 @@ impl AdmissionService {
                 anchor_byte,
                 "Event has negative anchor_byte"
             );
-            return Ok(AdmissionDecision::Rejected(AdmissionRejection::new(
-                AdmissionRejectionKind::NegativeAnchor,
-                format!("Invalid anchor_byte: {anchor_byte} (must be >= 0)"),
-            )));
+            return Ok(AdmissionDecision::Rejected(
+                AdmissionRejection::new(
+                    AdmissionRejectionKind::NegativeAnchor,
+                    format!("Invalid anchor_byte: {anchor_byte} (must be >= 0)"),
+                )
+                .with_event_id(event.id),
+            ));
         }
 
         let validated_schema_id = match self.validate_event(&event).await {
             Ok(schema_id) => schema_id,
             Err(error) => {
                 warn!(event_id = ?event.id, "Event validation failed: {}", error);
-                return Ok(AdmissionDecision::Rejected(AdmissionRejection::new(
-                    AdmissionRejectionKind::SchemaValidation,
-                    format!("Validation failed: {error}"),
-                )));
+                return Ok(AdmissionDecision::Rejected(
+                    AdmissionRejection::new(
+                        AdmissionRejectionKind::SchemaValidation,
+                        format!("Validation failed: {error}"),
+                    )
+                    .with_event_id(event.id),
+                ));
             }
         };
 
