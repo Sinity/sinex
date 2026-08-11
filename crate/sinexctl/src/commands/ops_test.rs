@@ -1077,6 +1077,13 @@
             action.id == "source_material.remediation_plan"
                 && action.command_hint.as_deref()
                     == Some("sinexctl sources remediation-plan --source browser.history")
+                // sinex-irs6: this action previously wired the wrong RPC
+                // method (sources.list, copy-pasted from a sibling ref),
+                // silently sending callers to the wrong view. The sibling
+                // debt_row_from_source_material_candidate test below already
+                // asserted this for its own constructor -- this one didn't,
+                // which is exactly how the bug shipped undetected.
+                && action.rpc_method.as_deref() == Some("sources.remediation_plan")
         }));
         Ok(())
     }

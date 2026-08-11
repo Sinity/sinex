@@ -517,6 +517,76 @@ fn event_card_fixture(
     }
 }
 
+fn fixture_query_result_event(payload: serde_json::Value) -> QueryResultEvent {
+    let mut event = sinex_primitives::events::DynamicPayload::new(
+        "ux-mk3.fixture",
+        "ux.fixture",
+        payload,
+    )
+    .from_material(sinex_primitives::ids::Id::<sinex_primitives::events::SourceMaterial>::new())
+    .build()
+    .expect("fixture event should build");
+    event.id = Some(sinex_primitives::ids::Id::new());
+    QueryResultEvent {
+        event,
+        relevance_score: None,
+        snippet: None,
+    }
+}
+
+/// sinex-eisk: the raw/pretty payload toggle and event/payload-JSON copy
+/// actions have been permanently dead since #1923 replaced the raw-row
+/// data source (`recent_event_rows`) with `.clear()` -- `selected_event_row()`
+/// always returns `None`, so `payload_lines()`/`event_copy_actions()` never
+/// take their real-data branch. This is a regression guard for the eventual
+/// fix (repopulating `recent_event_rows` from a privacy-safe raw-row fetch):
+/// it proves the `Some(row)` branch of both functions behaves correctly
+/// (real raw JSON, enabled copy actions) so a future regression back to the
+/// always-None state is caught by CI, not just discovered by an operator
+/// pressing 'p' and getting nothing.
+#[test]
+fn event_consumers_use_real_row_when_present_not_just_the_truncated_card_preview() {
+    let card = event_card_fixture(
+        "019f0000-0000-7000-8000-000000000001",
+        PrivacyStateKind::RawVisible,
+        Vec::new(),
+        Vec::new(),
+    );
+    let row = fixture_query_result_event(serde_json::json!({
+        "full_body": "this is the real untruncated payload, not card.payload_preview",
+        "field_only_in_raw_row": true,
+    }));
+
+    let raw_lines = payload_lines(&card, Some(&row), true);
+    let rendered: String = raw_lines
+        .iter()
+        .flat_map(|line| line.iter())
+        .map(|span| span.content.to_string())
+        .collect::<Vec<_>>()
+        .join("\n");
+    assert!(
+        rendered.contains("field_only_in_raw_row"),
+        "with a real row present, payload_lines(raw=true) must render the \
+         actual event payload, not fall back to card.payload_preview"
+    );
+
+    let actions = event_copy_actions(&card, Some(&row));
+    assert!(
+        actions
+            .iter()
+            .any(|action| action.label.contains("event") && action.disabled_reason.is_none()),
+        "with a real row present, the event-JSON copy action must be \
+         enabled, not disabled with 'raw query event is unavailable'"
+    );
+    assert!(
+        actions
+            .iter()
+            .any(|action| action.label.contains("payload") && action.disabled_reason.is_none()),
+        "with a real row present, the payload-JSON copy action must be \
+         enabled, not disabled with 'raw query event is unavailable'"
+    );
+}
+
 fn buffer_to_text(buffer: &ratatui::buffer::Buffer) -> String {
     let width = usize::from(buffer.area.width);
     buffer

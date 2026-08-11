@@ -369,7 +369,7 @@ pub(super) fn debt_row_from_source_material_detail(
                 ActionAvailabilityState::Enabled,
             )
             .with_command_hint(remediation_command)
-            .with_rpc_method("sources.list"),
+            .with_rpc_method("sources.remediation_plan"),
             ActionAvailability::read(
                 "source_material.inspect",
                 "Inspect Material",

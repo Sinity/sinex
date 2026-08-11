@@ -1837,3 +1837,7 @@ pub fn format_snapshot_restore_plan_result(result: &SnapshotRestorePlanResult) -
 
     out
 }
+
+#[cfg(test)]
+#[path = "snapshot_test.rs"]
+mod tests;

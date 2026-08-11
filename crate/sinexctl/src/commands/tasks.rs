@@ -99,20 +99,7 @@ impl TaskImportCommand {
                 continue;
             }
             // Taskwarrior export → sinex task.created event
-            let title = task["description"].as_str().unwrap_or("").to_string();
-            let project = task["project"].as_str().map(String::from);
-
-            use sinex_primitives::rpc::tasks::TaskCreateRequest;
-            let request = TaskCreateRequest {
-                task_id: None,
-                title,
-                body: None,
-                project_id: project,
-                tags: vec![],
-                due_at: None,
-                priority: task["priority"].as_str().map(String::from),
-                external_refs: vec![],
-            };
+            let request = build_task_create_request(task);
             match client.tasks_create(request).await {
                 Ok(_) => imported += 1,
                 Err(e) => {
@@ -123,6 +110,28 @@ impl TaskImportCommand {
         }
         println!("imported: {imported}, skipped: {skipped}");
         Ok(())
+    }
+}
+
+/// Build a `TaskCreateRequest` from one Taskwarrior export JSON object.
+///
+/// sinex-3z2t: this currently drops `tags`/`due` (lossy) and never
+/// populates `external_refs` with the Taskwarrior UUID, so the server's
+/// `reject_duplicate_external_refs` dedup guard never fires on re-import
+/// (non-idempotent).
+fn build_task_create_request(task: &serde_json::Value) -> sinex_primitives::rpc::tasks::TaskCreateRequest {
+    let title = task["description"].as_str().unwrap_or("").to_string();
+    let project = task["project"].as_str().map(String::from);
+
+    sinex_primitives::rpc::tasks::TaskCreateRequest {
+        task_id: None,
+        title,
+        body: None,
+        project_id: project,
+        tags: vec![],
+        due_at: None,
+        priority: task["priority"].as_str().map(String::from),
+        external_refs: vec![],
     }
 }
 

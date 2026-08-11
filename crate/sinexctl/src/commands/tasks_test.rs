@@ -115,3 +115,46 @@ async fn task_state_present_envelope_renders_without_caveats() -> xtask::TestRes
     );
     Ok(())
 }
+
+/// sinex-3z2t: Taskwarrior import must not drop tags/due_at (lossy) and must
+/// populate external_refs with the Taskwarrior UUID so the server's
+/// reject_duplicate_external_refs guard actually fires on re-import
+/// (idempotency). Exercises the real build_task_create_request() used by
+/// TaskImportCommand::execute(), not a reimplementation.
+#[sinex_test]
+#[ignore = "sinex-3z2t open: import drops tags/due_at and never populates external_refs -- fails until fixed"]
+async fn task_import_preserves_tags_due_at_and_external_refs_for_idempotency()
+-> xtask::TestResult<()> {
+    let taskwarrior_export = serde_json::json!({
+        "uuid": "8b3f1c9e-4a2d-4e7f-9c1a-2d3e4f5a6b7c",
+        "description": "Renew SSL certificate",
+        "project": "infra",
+        "priority": "H",
+        "tags": ["ops", "ssl"],
+        "due": "20260901T000000Z",
+    });
+
+    let request = build_task_create_request(&taskwarrior_export);
+
+    assert_eq!(
+        request.tags,
+        vec!["ops".to_string(), "ssl".to_string()],
+        "Taskwarrior tags must be preserved, not silently dropped"
+    );
+    assert!(
+        request.due_at.is_some(),
+        "Taskwarrior due date must be preserved, not silently dropped"
+    );
+    assert!(
+        !request.external_refs.is_empty(),
+        "external_refs must carry the Taskwarrior UUID so \
+         reject_duplicate_external_refs can detect re-import and prevent \
+         silent task duplication"
+    );
+    assert_eq!(
+        request.external_refs[0].external_id,
+        "8b3f1c9e-4a2d-4e7f-9c1a-2d3e4f5a6b7c",
+        "external ref must key on the actual Taskwarrior UUID"
+    );
+    Ok(())
+}

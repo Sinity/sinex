@@ -308,10 +308,30 @@ async fn check_closure_health(check_timeout: Duration, _strict: bool) -> CheckRe
     result
 }
 
+/// Parse `bd list --status closed --closed-after <cutoff> --json` output
+/// into bead string ids, capped to the most recently closed 20 (matching
+/// the original issue-list window size, so the caller's verify loop stays
+/// fast and doesn't re-verify the entire backlog every run).
+///
+/// Split out from `discover_and_verify_recent_closures` so the
+/// bd-substrate/id-shape half of sinex-recr's fix (previously: `gh issue
+/// list` + numeric ids, both wrong since the beads migration) is testable
+/// without spawning the slow per-bead `xtask verify closure` loop.
+fn parse_recently_closed_bead_ids(stdout: &[u8]) -> Result<Vec<String>, String> {
+    let mut bead_ids: Vec<String> = serde_json::from_slice::<Vec<serde_json::Value>>(stdout)
+        .map_err(|e| format!("failed to parse bd output: {e}"))?
+        .into_iter()
+        .filter_map(|v| v["id"].as_str().map(str::to_string))
+        .collect();
+    bead_ids.truncate(20);
+    Ok(bead_ids)
+}
+
 async fn discover_and_verify_recent_closures() -> Result<(usize, usize), String> {
-    // Discover issues closed in the last 30 days. The cutoff is computed at
+    // Discover beads closed in the last 30 days. The cutoff is computed at
     // call time so the window slides with the calendar instead of drifting
-    // past a hardcoded date.
+    // past a hardcoded date. Beads (bd) is the task substrate -- GitHub
+    // Issues were retired as the task substrate on 2026-07-10 (sinex-recr).
     let cutoff = {
         let now = time::OffsetDateTime::now_utc();
         let then = now - time::Duration::days(30);
@@ -323,51 +343,40 @@ async fn discover_and_verify_recent_closures() -> Result<(usize, usize), String>
             date.day()
         )
     };
-    let search = format!("closed:>={cutoff}");
-    let output = Command::new("gh")
+    let output = Command::new("bd")
         .args([
-            "issue",
             "list",
-            "--state",
+            "--status",
             "closed",
-            "--limit",
-            "20",
-            "--search",
-            &search,
+            "--closed-after",
+            &cutoff,
             "--json",
-            "number",
-            "-R",
-            "sinity/sinex",
         ])
         .output()
         .await
-        .map_err(|e| format!("gh not available: {e}"))?;
+        .map_err(|e| format!("bd not available: {e}"))?;
 
     if !output.status.success() {
         return Err(format!(
-            "gh issue list failed: {}",
+            "bd list failed: {}",
             String::from_utf8_lossy(&output.stderr).trim()
         ));
     }
 
-    let numbers: Vec<u64> = serde_json::from_slice::<Vec<serde_json::Value>>(&output.stdout)
-        .map_err(|e| format!("failed to parse gh output: {e}"))?
-        .into_iter()
-        .filter_map(|v| v["number"].as_u64())
-        .collect();
+    let bead_ids = parse_recently_closed_bead_ids(&output.stdout)?;
 
-    if numbers.is_empty() {
+    if bead_ids.is_empty() {
         return Ok((0, 0));
     }
 
-    let total = numbers.len();
+    let total = bead_ids.len();
     let mut verified = 0usize;
 
-    for issue in &numbers {
-        // Run `xtask verify closure <N>` on each. We can't call xtask directly
-        // from sinexctl, so shell out.
+    for bead_id in &bead_ids {
+        // Run `xtask verify closure <bead-id>` on each. We can't call xtask
+        // directly from sinexctl, so shell out.
         let cmd_out = Command::new("xtask")
-            .args(["verify", "closure", &issue.to_string()])
+            .args(["verify", "closure", bead_id])
             .output()
             .await;
 
