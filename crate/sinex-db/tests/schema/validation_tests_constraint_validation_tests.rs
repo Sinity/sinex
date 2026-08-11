@@ -866,16 +866,19 @@ async fn test_array_constraints() -> TestResult<()> {
     Ok(())
 }
 
-/// sinex-sbyc: `events_source_event_ids_no_nulls`
-/// (`array_position(source_event_ids, NULL) IS NULL`) is meant to reject a
-/// `source_event_ids` array containing a NULL parent id. It does not:
-/// Postgres's `array_position(arr, target)` returns NULL whenever `target`
-/// is NULL, for *any* array content, so the `IS NULL` check on the right of
-/// the `OR` is vacuously true regardless of whether the array actually
-/// contains a NULL element -- the constraint can never fire. Expected to
-/// fail today; strengthen once sbyc lands a real unnest-based check
-/// (`NOT EXISTS (SELECT 1 FROM unnest(source_event_ids) x WHERE x IS NULL)`
-/// or equivalent) and the insert below correctly gets rejected instead.
+/// sinex-sbyc finding 1, CORRECTED (was filed as a bug; empirically it is
+/// not): `events_source_event_ids_no_nulls`
+/// (`array_position(source_event_ids, NULL) IS NULL`) was reported as a
+/// no-op on the theory that Postgres's `array_position(arr, target)` always
+/// returns NULL when `target` is NULL, regardless of array content. That is
+/// wrong -- `array_position` is explicitly NULL-aware (documented example:
+/// `array_position(ARRAY[1,2,NULL,3], NULL) -> 3`), so it correctly returns
+/// the NULL element's subscript when one is present and only returns NULL
+/// (no match) when the array has no NULL element. This test proves the
+/// constraint DOES reject a NULL parent id today, empirically, against a
+/// real Postgres instance -- the original wave128 finding was a false
+/// positive from reasoning about `array_position` by analogy to ordinary
+/// `=`-based lookups instead of checking its documented NULL semantics.
 #[sinex_serial_test]
 async fn test_source_event_ids_null_element_is_rejected() -> TestResult<()> {
     let ctx = prepare_constraint_context().await?;
@@ -925,12 +928,10 @@ async fn test_source_event_ids_null_element_is_rejected() -> TestResult<()> {
     .execute(pool)
     .await;
     let err = result.expect_err(
-        "sinex-sbyc: a source_event_ids array containing a NULL element must be rejected \
-         by events_source_event_ids_no_nulls -- the current array_position-based expression \
-         is a no-op (array_position(arr, NULL) is always NULL in Postgres, for any arr), so \
-         this insert wrongly succeeds today. Once fixed, this should fail with a CHECK \
-         violation naming events_source_event_ids_no_nulls; if the insert now succeeds, the \
-         constraint is still not doing its job.",
+        "sinex-sbyc: a source_event_ids array containing a NULL element must be rejected by \
+         events_source_event_ids_no_nulls. array_position is NULL-aware (it finds the \
+         subscript of a NULL element rather than always returning NULL), so this should be \
+         rejected today; if this insert now succeeds, the constraint has regressed.",
     );
     assert!(
         err.to_string().contains("events_source_event_ids_no_nulls"),
