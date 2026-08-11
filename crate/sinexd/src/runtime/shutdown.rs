@@ -140,3 +140,7 @@ pub async fn wait_for_shutdown_signal(
         }
     }
 }
+
+#[cfg(test)]
+#[path = "shutdown_test.rs"]
+mod tests;

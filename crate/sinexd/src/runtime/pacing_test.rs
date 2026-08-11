@@ -70,6 +70,40 @@ async fn required_sleep_takes_the_binding_constraint() -> TestResult<()> {
 }
 
 #[sinex_test]
+async fn required_sleep_bounds_burst_size_after_a_long_pause() -> TestResult<()> {
+    // sinex-eha0: PacingController computes sleep from the LIFETIME average
+    // rate, so after any long pause (a BacklogGate wait, a slow batch, a
+    // restart) `elapsed` grows while `events_total` doesn't -- the very next
+    // batch can burst arbitrarily far ahead of budget before `required_sleep`
+    // ever returns non-zero again. Worked example from the bug report:
+    // budget 100 ev/s, 600s elapsed with zero events processed, then a burst
+    // of 59_000 events lands with ZERO throttle -- ~590x the per-second
+    // budget in one shot. A token-bucket/windowed-rate model (the AC's
+    // required design) would cap this to a small, bounded multiple of the
+    // per-second budget regardless of how long the controller was idle;
+    // this test's exact threshold is a defensible placeholder for "bounded
+    // at all", not the real design's chosen window.
+    let mut controller = PacingController::new(RateBudget {
+        events_per_sec: Some(100.0),
+        bytes_per_sec: None,
+        backlog_pause_threshold: None,
+        backlog_resume_threshold: None,
+    });
+    controller.events_total = 59_000;
+    let sleep_after_long_idle = controller.required_sleep(Duration::from_secs(600));
+
+    assert!(
+        sleep_after_long_idle > Duration::ZERO,
+        "a burst of 59_000 events (590x the 100 ev/s budget) landing in one \
+         batch after a 600s idle period must still be throttled -- the \
+         lifetime-average model currently lets it through with zero sleep \
+         because 59_000/100=590s < 600s elapsed, defeating the module's \
+         stated purpose of preventing instantaneous-burst boot flaps"
+    );
+    Ok(())
+}
+
+#[sinex_test]
 async fn record_and_throttle_holds_average_rate_within_budget() -> TestResult<()> {
     let mut controller = PacingController::new(RateBudget {
         events_per_sec: Some(200.0),
