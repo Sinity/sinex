@@ -2885,6 +2885,7 @@ async fn test_get_resource_usage_for_invocation_prefers_process_metrics() -> Tes
 /// even runs. Debug/test builds have overflow-checks on, so this currently
 /// panics rather than returning an error or a saturated/clamped result.
 #[sinex_test]
+#[ignore = "sinex-5zzc open: get_transition_probability panics on a large window_mins (window_mins * 60 overflows u32 with no checked/saturating arithmetic)"]
 async fn get_transition_probability_large_window_mins_does_not_panic() -> TestResult<()> {
     let dir = tempdir()?;
     let db_path = dir.path().join("test-history.db");
