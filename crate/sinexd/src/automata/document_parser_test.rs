@@ -173,7 +173,7 @@ async fn test_overlong_chunk_split_respects_utf8_char_boundaries() -> TestResult
             chunk.start,
             chunk.end
         );
-        reconstructed.push_str(chunk.text);
+        reconstructed.push_str(&chunk.text);
     }
     assert_eq!(
         reconstructed, text,
