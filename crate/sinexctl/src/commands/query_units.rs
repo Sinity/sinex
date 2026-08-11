@@ -545,6 +545,11 @@ fn format_query_rows_table(view: &SinexQueryResultListView) -> String {
     out
 }
 
+/// Not consolidated into `sinex_primitives::text`: already char-boundary
+/// safe (iterates `.chars()`, never byte-slices), and uses a single-char
+/// `…` ellipsis for fixed-width table column alignment rather than the
+/// shared helpers' `"..."` convention — a genuinely different operation,
+/// not a duplicate.
 fn truncate(value: &str, width: usize) -> String {
     let mut chars = value.chars();
     let mut out = String::new();

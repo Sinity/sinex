@@ -1090,11 +1090,7 @@ fn kill_process_for_reset(_pid: u32) -> Result<()> {
 }
 
 fn truncate_command_for_reset(command: &str, max: usize) -> String {
-    if command.len() <= max {
-        command.to_string()
-    } else {
-        format!("{}...", &command[..max])
-    }
+    sinex_primitives::text::truncate_cols(command, max).into_owned()
 }
 
 fn target_dirs_for_reset(

@@ -1569,3 +1569,19 @@ async fn desktop_context_output_rejects_streaming_formats() -> xtask::sandbox::T
     assert!(result.is_err(), "desktop context must remain a finite view");
     Ok(())
 }
+
+#[test]
+fn truncate_gates_on_char_count_not_byte_length() {
+    // Regression test: the previous local implementation gated on
+    // `s.len()` (bytes) but cut at a char index. A string whose byte
+    // length was already >= max but whose char count was under max would
+    // sail through unbudgeted (or worse, mis-measure the cut point). Each
+    // 'é' here is 2 bytes / 1 char: 10 chars, 15 bytes.
+    let s = "aéaéaéaéaé";
+    assert_eq!(s.chars().count(), 10);
+    assert!(s.len() > 10);
+
+    let truncated = truncate(s, 6);
+    assert!(truncated.chars().count() <= 6, "must respect the char budget");
+    assert!(truncated.ends_with("..."));
+}

@@ -2114,16 +2114,13 @@ fn render_help_overlay(f: &mut Frame, area: Rect) {
     );
 }
 
+/// Compatibility shim over `sinex_primitives::text::truncate_chars` — kept
+/// as a thin `String`-returning wrapper (rather than importing the shared
+/// `Cow`-returning function directly at every call site) so this file's
+/// numerous ratatui `Line`/`ListItem`/`format!` call sites don't need
+/// individual `Cow`-compatibility verification.
 fn truncate_chars(input: &str, max_chars: usize) -> String {
-    if input.chars().count() <= max_chars {
-        return input.to_string();
-    }
-    let keep = max_chars.saturating_sub(3);
-    let end = input
-        .char_indices()
-        .nth(keep)
-        .map_or(input.len(), |(index, _)| index);
-    format!("{}...", &input[..end])
+    sinex_primitives::text::truncate_chars(input, max_chars).into_owned()
 }
 
 fn render_dlq(f: &mut Frame, area: Rect, app: &App) {

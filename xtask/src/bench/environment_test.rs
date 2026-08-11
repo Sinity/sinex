@@ -1,4 +1,6 @@
-use super::{Environment, command_stdout, database_url_masked, format_probe_issues};
+use super::{
+    Environment, command_stdout, database_url_masked, format_probe_issues, truncate_process_line,
+};
 use crate::sandbox::sinex_test;
 
 #[sinex_test]
@@ -70,4 +72,15 @@ async fn database_url_masked_redacts_credentials() -> crate::sandbox::TestResult
         "\n## Probe issues\n- boom\n"
     );
     Ok(())
+}
+
+#[test]
+fn truncate_process_line_does_not_panic_on_multibyte_command() {
+    // /proc/<pid>/cmdline can contain arbitrary argv bytes, including
+    // multi-byte UTF-8 well before the byte-length budget. The previous
+    // implementation sliced `&command[..max]` directly and panicked when
+    // `max` landed inside a multi-byte codepoint.
+    let command = "проверка ".repeat(20);
+    let truncated = truncate_process_line(&command, 15);
+    assert!(truncated.chars().all(|c| c != '\u{FFFD}'));
 }

@@ -310,11 +310,7 @@ fn is_heavy_command(command: &str) -> bool {
 }
 
 fn truncate_process_line(command: &str, max: usize) -> String {
-    if command.len() <= max {
-        command.to_string()
-    } else {
-        format!("{}...", &command[..max])
-    }
+    sinex_primitives::text::truncate_cols(command, max).into_owned()
 }
 
 fn command_stdout(program: &str, args: &[&str]) -> Result<String, String> {
