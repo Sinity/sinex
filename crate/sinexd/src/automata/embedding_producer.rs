@@ -119,3 +119,7 @@ impl Transducer for EmbeddingProducer {
 }
 
 pub type EmbeddingProducerRuntime = TransducerAdapter<EmbeddingProducer>;
+
+#[cfg(test)]
+#[path = "embedding_producer_test.rs"]
+mod tests;

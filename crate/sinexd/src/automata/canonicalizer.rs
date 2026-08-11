@@ -131,6 +131,10 @@ fn is_accepted_source(source: &str) -> bool {
         || source == FishCommandExecutedPayload::SOURCE.as_static_str()
 }
 
+#[cfg(test)]
+#[path = "canonicalizer_test.rs"]
+mod tests;
+
 fn canonicalize_payload(
     source: &str,
     input: JsonValue,
