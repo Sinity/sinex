@@ -2449,3 +2449,101 @@ async fn settlement_registry_resolves_durable_debt_for_a_dlqd_event(
     let _ = consumer_handle.await;
     Ok(())
 }
+
+/// sinex-iq4f regression test: a deterministically-rejected event (here, an
+/// implausibly-future `ts_orig`, well outside the default 1h skew) must
+/// resolve the settlement registry to `DurableDebt` after its DLQ write,
+/// not strand the caller forever. Before the fix, `AdmissionRejection`'s
+/// `event_id` was never attached at the `FutureTimestamp` (or
+/// `PastTimestamp`/`NegativeAnchor`/`SchemaValidation`/`MissingTimestamp`)
+/// rejection sites in `admission.rs`, and `route_validation_failure` only
+/// received `rejection.reason` — so even a successful DLQ write never
+/// resolved the registry, and the source's progress frontier (which awaits
+/// this exact resolution — see `adapter_source.rs`'s durable-emission
+/// receipt wait) would time out and treat the record as a hole forever,
+/// permanently wedging the source's cursor on redelivery (the r6d.11
+/// livelock this bead fixes).
+#[sinex_test]
+async fn settlement_registry_resolves_durable_debt_for_an_admission_rejected_event(
+    ctx: TestContext,
+) -> TestResult<()> {
+    let ctx = ctx.with_nats().shared().await?;
+    let nats_client = ctx.nats_client();
+    let pool = ctx.pool.clone();
+    ensure_fixture_source_material(&pool).await?;
+    let validator = IngestEventValidator::new(false);
+
+    let js = ctx.jetstream().await?;
+    let env = ctx.env();
+    let namespace = ctx.pipeline_namespace().prefix().to_string();
+    let topology = JetStreamTopology::new(
+        env,
+        ctx.pipeline_namespace().stream("SINEX_RAW_EVENTS_IQ4F"),
+        ctx.pipeline_namespace().consumer_name("event-engine-iq4f"),
+        Some(&namespace),
+    );
+    let ready_topology = topology.clone();
+    let consumer = JetStreamConsumer::new(
+        nats_client.clone(),
+        pool.clone(),
+        Arc::new(RwLock::new(validator)),
+        topology,
+    );
+    let registry = consumer.settlement_registry();
+    let consumer_handle =
+        spawn_consumer_and_wait_ready(&ctx, &js, &ready_topology, consumer).await?;
+
+    let event_id = Uuid::now_v7();
+    let rx = registry.register(event_id.into());
+
+    // Default future-ts skew is 1h (admission.rs); 6h is comfortably beyond
+    // it and deterministically hits AdmissionRejectionKind::FutureTimestamp
+    // before schema validation or the material-readiness gate ever run.
+    let implausible_future = temporal::now() + time::Duration::hours(6);
+    let event = json!({
+        "id": event_id.to_string(),
+        "source": "iq4f",
+        "event_type": "iq4f.event",
+        "payload": {"data": "deterministically-rejected"},
+        "ts_orig": implausible_future.format_rfc3339(),
+        "host": "test-host",
+        "source_material_id": FIXTURE_SOURCE_MATERIAL_ID.to_string(),
+        "anchor_byte": 0,
+    });
+    let subject = env.nats_subject_with_namespace(Some(&namespace), "events.raw.iq4f.event");
+    nats_client
+        .publish(
+            subject,
+            serde_json::to_vec(&admission_envelope("iq4f", event))?.into(),
+        )
+        .await?;
+    nats_client.flush().await?;
+
+    let state = tokio::time::timeout(Duration::from_secs(Timeouts::STANDARD), rx).await??;
+    match state {
+        EmissionReceiptState::DurableDebt { debt_id, reason } => {
+            assert_eq!(
+                debt_id, event_id,
+                "debt_id has no dedicated DB row here, so it must be the rejected event's own id"
+            );
+            assert!(
+                reason.contains("admission rejection"),
+                "reason should identify this as an admission-rejection DLQ, got: {reason}"
+            );
+        }
+        other => panic!(
+            "expected DurableDebt{{..}} (admission-rejected event must resolve the \
+             settlement registry so the source cursor unlocks past it), got {other:?}"
+        ),
+    }
+
+    // The rejected event must never reach core.events.
+    assert!(
+        ctx.pool.events().get_by_id(event_id.into()).await?.is_none(),
+        "admission-rejected event must not be persisted"
+    );
+
+    consumer_handle.abort();
+    let _ = consumer_handle.await;
+    Ok(())
+}
