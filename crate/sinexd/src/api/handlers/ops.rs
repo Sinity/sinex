@@ -95,10 +95,19 @@ pub async fn handle_ops_start(
     let scope_jsonb = request.scope.unwrap_or(serde_json::json!({}));
     let actor = auth.actor_id();
 
+    // sinex-pzo9: media-capture package operations can execute an arbitrary
+    // local worker command or read an arbitrary local file as worker output --
+    // both bypass the normal capture pipeline and are equivalent in privilege
+    // to Admin-tier actions elsewhere on this surface (ops.cancel,
+    // sources.archive, lifecycle.*). Gate on the caller's actual role, not the
+    // method-wide RpcRole::Write ceiling that admits ordinary package ops.
+    let is_admin = auth.has_permission(crate::api::auth::Role::Admin);
+
     let record = if request.operation_type == PROJECTION_REBUILD_OPERATION_TYPE {
         start_projection_rebuild_operation(pool, actor, scope_jsonb).await?
     } else if package_operation_spec(&request.operation_type).is_some() {
-        start_package_operation(pool, actor, &request.operation_type, scope_jsonb).await?
+        start_package_operation(pool, actor, &request.operation_type, scope_jsonb, is_admin)
+            .await?
     } else {
         pool.state()
             .start_operation(&request.operation_type, actor, scope_jsonb)
@@ -124,6 +133,7 @@ async fn start_package_operation(
     actor: &str,
     operation_type: &str,
     scope: serde_json::Value,
+    is_admin: bool,
 ) -> Result<sinex_db::repositories::OperationRecord> {
     let spec = package_operation_spec(operation_type).ok_or_else(|| {
         SinexError::validation(format!(
@@ -252,6 +262,7 @@ async fn start_package_operation(
             actor,
             &mut scope,
             &mut preview_summary,
+            is_admin,
         )
         .await?
     {
