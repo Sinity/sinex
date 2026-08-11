@@ -224,6 +224,87 @@
         Ok(())
     }
 
+    /// sinex-kv6l: a symlink inside a watched directory pointing at a file
+    /// OUTSIDE it must never have its target content read/hashed/staged.
+    /// Regression for the fs-watcher content-materialization path following
+    /// symlinks with no containment check (tokio::fs::metadata/File::open
+    /// both dereference symlinks transparently). This asserts the AC's
+    /// simpler stated remediation option -- refuse to materialize content
+    /// for a symlinked path at all -- since the vulnerable code path
+    /// (materialize_file_content_record) has no configured-root parameter
+    /// to validate containment against; a root-aware fix would also need to
+    /// satisfy this (a contained symlink is still a symlink).
+    #[cfg(feature = "messaging")]
+    #[sinex_test]
+    async fn content_drop_refuses_to_materialize_symlink_target_content(
+        ctx: xtask::sandbox::prelude::TestContext,
+    ) -> xtask::sandbox::prelude::TestResult<()> {
+        let ctx = ctx.with_nats().shared().await?;
+        let acquisition = Arc::new(AcquisitionManager::with_defaults(
+            ctx.nats_client(),
+            "file-content-drop-symlink-containment-test",
+        ));
+
+        // Secret file OUTSIDE the watched root.
+        let secret_dir = TempDir::new()?;
+        let secret_path = secret_dir.path().join("secret.txt");
+        const SECRET_CONTENT: &[u8] = b"TOP SECRET CONTENT OUTSIDE THE WATCH ROOT";
+        tokio::fs::write(&secret_path, SECRET_CONTENT).await?;
+
+        // Watched root containing only a symlink to the secret file.
+        let watched_dir = TempDir::new()?;
+        let symlink_path = watched_dir.path().join("innocent.txt");
+        std::os::unix::fs::symlink(&secret_path, &symlink_path)?;
+
+        let utf8_symlink_path =
+            Utf8PathBuf::from_path_buf(symlink_path.clone()).map_err(|path| {
+                SinexError::validation("test path is not valid UTF-8")
+                    .with_context("path", path.display().to_string())
+            })?;
+        let record = SourceRecord {
+            material_id: dummy_material_id(),
+            anchor: MaterialAnchor::DirectoryEntry {
+                path: utf8_symlink_path.clone(),
+                content_hash: None,
+            },
+            bytes: utf8_symlink_path.as_str().as_bytes().to_vec(),
+            logical_path: Some(utf8_symlink_path.clone()),
+            source_ts_hint: None,
+            metadata: FileDropRecordMetadata::new(
+                FileDropEventKind::Created,
+                &utf8_symlink_path,
+            )
+            .into_json(),
+        };
+
+        let materialized =
+            materialize_file_content_record(record, acquisition, 1024 * 1024).await?;
+
+        let materialized_content_captured = materialized
+            .metadata
+            .get("content_materialized")
+            .and_then(serde_json::Value::as_bool)
+            == Some(true);
+        let captured_hash = materialized
+            .metadata
+            .get("content_hash")
+            .and_then(serde_json::Value::as_str)
+            .map(str::to_owned);
+        let secret_hash = blake3::hash(SECRET_CONTENT).to_hex().to_string();
+
+        assert!(
+            !materialized_content_captured || captured_hash.as_deref() != Some(secret_hash.as_str()),
+            "fs-watcher content materialization followed a symlink and captured the \
+             target's content outside the watched root (content_materialized={:?}, \
+             captured_hash={:?} matches secret_hash={secret_hash}) -- \
+             materialize_file_content_record has no configured-root parameter to \
+             validate containment against and does not refuse symlinks either",
+            materialized_content_captured,
+            captured_hash,
+        );
+        Ok(())
+    }
+
     #[sinex_test]
     async fn test_file_drop_created_event() -> xtask::sandbox::TestResult<()> {
         let dir = TempDir::new().unwrap();
