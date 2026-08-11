@@ -87,8 +87,8 @@ async fn test_file_extension_rust() -> TestResult<()> {
     let context = browser_source_context();
     let tags = super::evaluate_rules(&json!({"path": "/home/user/main.rs"}), &context);
     assert!(
-        tags.contains(&"sys.inferred.file-type.rust".to_string()),
-        "a .rs path should apply the sys.inferred.file-type.rust tag, got {tags:?}"
+        tags.contains(&"inferred.file-type.rust".to_string()),
+        "a .rs path should apply the inferred.file-type.rust tag, got {tags:?}"
     );
     Ok(())
 }
@@ -98,7 +98,7 @@ async fn test_file_extension_unknown() -> TestResult<()> {
     let context = browser_source_context();
     let tags = super::evaluate_rules(&json!({"path": "/tmp/file.xyz"}), &context);
     assert!(
-        !tags.iter().any(|t| t.starts_with("sys.inferred.file-type.")),
+        !tags.iter().any(|t| t.starts_with("inferred.file-type.")),
         "an unrecognized extension should not apply any file-type tag, got {tags:?}"
     );
     Ok(())
