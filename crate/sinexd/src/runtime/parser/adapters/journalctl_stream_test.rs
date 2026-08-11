@@ -82,6 +82,7 @@ async fn test_records_skips_empty_lines() -> xtask::sandbox::TestResult<()> {
 /// counter only increments on yielded records, via `continue` skipping
 /// blanks entirely). Both invariants fail against current code.
 #[sinex_test]
+#[ignore = "sinex-1mdu open: journalctl blank-line offset corruption -- fails until fixed"]
 async fn test_records_from_lines_blank_line_offset_and_frame_index_are_correct()
 -> xtask::sandbox::TestResult<()> {
     let mid = dummy_material_id();

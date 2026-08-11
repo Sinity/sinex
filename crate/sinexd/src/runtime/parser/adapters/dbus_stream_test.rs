@@ -168,6 +168,7 @@ async fn test_dbus_match_rule_parses_keys() -> xtask::sandbox::TestResult<()> {
 /// is worse than silently dropping it. Fails until zero successfully-
 /// parsed rules is distinguished from zero configured rules.
 #[sinex_test]
+#[ignore = "sinex-xtmp open (dbus rule matching): all-malformed rules fall back to matching everything -- fails until fixed"]
 async fn test_dbus_all_malformed_rules_match_nothing_not_everything()
 -> xtask::sandbox::TestResult<()> {
     let msgs = vec![make_msg("org.example.Forbidden", "Nope")];

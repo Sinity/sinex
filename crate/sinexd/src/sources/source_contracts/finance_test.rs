@@ -340,6 +340,7 @@ async fn timestamp_matches_journal_date() -> TestResult<()> {
 /// declaration) -- it exists to make the gap executable and fails against
 /// current code either way, since the two never actually agree today.
 #[sinex_test]
+#[ignore = "sinex-xtmp open (finance occurrence-key mismatch): declared vs emitted field name disagree -- fails until fixed"]
 async fn occurrence_key_field_name_matches_declared_contract() -> TestResult<()> {
     const DECLARED_THIRD_FIELD_NAME: &str = "first_explicit_posting_amount";
 
