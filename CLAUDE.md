@@ -314,7 +314,23 @@ disposable, relocated to `/var/cache/sinex/<user>/<hash>/` by the devshell.
   wear-limited disk). An inherited `CARGO_TARGET_DIR` pointing at the main checkout makes
   worktree checks false-pass in <1s; xtask self-corrects with a WARNING — a real check takes
   minutes. Worktree devshells inherit a broken `DATABASE_URL`; read the real one from the
-  main checkout's devshell and `env DATABASE_URL=... ` explicitly (also for `git push`).
+  main checkout's devshell and `env DATABASE_URL=... ` explicitly (also for `git push` —
+  the pre-push drift guard inherits the same broken URL, so sqlx compile errors masquerade
+  as drift-guard rejections). The exact recipe (moved here from the global agent contract):
+
+  ```bash
+  SINEX_MAIN_DATABASE_URL="$(
+    git -C /realm/project/sinex status --short >/dev/null &&
+    nix develop /realm/project/sinex --command sh -c 'printf %s "$DATABASE_URL"'
+  )"
+
+  env DATABASE_URL="$SINEX_MAIN_DATABASE_URL" \
+    nix develop --command cargo test -p <crate> --lib <filter>
+  ```
+
+  Plain `nix develop` relocates each checkout's dev database under
+  `/var/cache/sinex/$USER/<checkout-hash>/dev-state`, which is why a worktree's own
+  devshell URL points at an empty database.
 - **Memory pressure**: earlyoom SIGTERMs rustc when free <15% (exit 144 ≠ code error). One
   heavy compile at a time; don't run two heavy `xtask test --bg` (target-lock collision).
   Clippy on the full workspace can exceed the 600s cargo timeout under load —
