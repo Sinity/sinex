@@ -314,3 +314,87 @@ async fn merge_entities_idempotent(ctx: TestContext) -> TestResult<()> {
     );
     Ok(())
 }
+
+/// sinex-6t5h: `ix_entities_merged` is a UNIQUE index on `merged_into_id`
+/// (WHERE is_merged) -- see crate/sinex-schema/src/defs/entities.rs:215.
+/// That means at most ONE entity can ever be merged into a given target.
+/// Merging a second, DIFFERENT duplicate entity into the same already-live
+/// target must be a normal, expected operation (deduping 3+ occurrences of
+/// the same real-world entity down to one canonical row) but the unique
+/// index blocks it with a constraint violation, aborting the transaction.
+#[sinex_test]
+#[ignore = "sinex-6t5h open: a second distinct source merged into an already-used target hits the ix_entities_merged unique-index violation and aborts"]
+async fn merge_entities_allows_a_second_distinct_source_into_the_same_target(
+    ctx: TestContext,
+) -> TestResult<()> {
+    let repo = ctx.pool.knowledge_graph();
+    let source_a = repo
+        .create_entity(CreateEntity::person("dup-a"))
+        .await?;
+    let source_b = repo
+        .create_entity(CreateEntity::person("dup-b"))
+        .await?;
+    let target = repo
+        .create_entity(CreateEntity::person("canonical"))
+        .await?;
+
+    repo.merge_entities(source_a.id, target.id).await?;
+
+    let second_merge = repo.merge_entities(source_b.id, target.id).await;
+    assert!(
+        second_merge.is_ok(),
+        "sinex-6t5h: merging a second distinct duplicate entity into an already-used target \
+         must succeed (real-world dedup routinely collapses 3+ occurrences into one canonical \
+         entity) -- got {second_merge:?}"
+    );
+    Ok(())
+}
+
+/// sinex-pift: `find_paths`'s recursive CTE guards against reusing the same
+/// relation *id* (`NOT rel.id::uuid = ANY(path.relation_ids)`) but never
+/// against revisiting the same *node*. On a graph with a 2-cycle backed by
+/// two distinct forward edges (B->C twice) and one back edge (C->B), a path
+/// from A to C can legally re-enter B via distinct edge ids, producing a
+/// second, longer path that revisits B -- something a normal "paths between
+/// two entities" query should treat as non-simple and exclude.
+#[sinex_test]
+#[ignore = "sinex-pift open: find_paths guards edge-id reuse only, not node revisits, so cyclic distinct-edge graphs surface non-simple paths"]
+async fn find_paths_excludes_paths_that_revisit_a_node(ctx: TestContext) -> TestResult<()> {
+    let repo = ctx.pool.knowledge_graph();
+
+    let a = repo.create_entity(CreateEntity::person("pift-a")).await?;
+    let b = repo.create_entity(CreateEntity::person("pift-b")).await?;
+    let c = repo.create_entity(CreateEntity::person("pift-c")).await?;
+
+    repo.create_relation(CreateEntityRelation::new(a.id, b.id, "knows"))
+        .await?;
+    // Two DISTINCT edges B->C (different relation_type, since (from, to,
+    // relation_type) is unique) plus a back edge C->B, forming a cycle with
+    // no repeated edge id.
+    repo.create_relation(CreateEntityRelation::new(b.id, c.id, "knows"))
+        .await?;
+    repo.create_relation(CreateEntityRelation::new(c.id, b.id, "knows"))
+        .await?;
+    repo.create_relation(CreateEntityRelation::new(b.id, c.id, "collaborated_with"))
+        .await?;
+
+    let paths = repo.find_paths(a.id, c.id, 5).await?;
+
+    for path in &paths {
+        let mut visited = vec![a.id];
+        for hop in path {
+            visited.push(hop.to_entity_id);
+        }
+        let mut sorted = visited.clone();
+        sorted.sort_by_key(|id| *id.as_uuid());
+        sorted.dedup();
+        assert_eq!(
+            sorted.len(),
+            visited.len(),
+            "sinex-pift: found a non-simple path (length {}) that revisits a node between A and \
+             C -- find_paths must only return simple (node-disjoint) paths",
+            path.len()
+        );
+    }
+    Ok(())
+}
