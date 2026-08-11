@@ -65,6 +65,12 @@ pub(crate) struct DoctorReport {
     pub postgres_extensions: Option<Vec<String>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub postgres_extensions_error: Option<String>,
+    /// Row count of `privacy.rules` -- sinex-t5sr: a fresh/wiped DB with zero
+    /// rows here means redact_batch runs its empty-ruleset no-op path forever
+    /// with no other signal. `None` when Postgres wasn't reachable to check.
+    pub privacy_rules_count: Option<i64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub privacy_rules_error: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub pipeline_smoke: Option<DoctorServiceCheck>,
     pub overall: bool,
@@ -293,6 +299,75 @@ fn detect_tls_check() -> Option<TlsCheck> {
 struct PostgresExtensionsProbe {
     extensions: Option<Vec<String>>,
     error: Option<String>,
+}
+
+struct PrivacyRulesProbe {
+    count: Option<i64>,
+    error: Option<String>,
+}
+
+fn probe_privacy_rules_count<T, RunPsql>(
+    pg_ready: bool,
+    stack_config: std::result::Result<T, String>,
+    mut run_psql: RunPsql,
+) -> PrivacyRulesProbe
+where
+    RunPsql: FnMut(&T) -> std::io::Result<std::process::Output>,
+{
+    if !pg_ready {
+        return PrivacyRulesProbe {
+            count: None,
+            error: None,
+        };
+    }
+
+    let cfg = match stack_config {
+        Ok(cfg) => cfg,
+        Err(error) => {
+            return PrivacyRulesProbe {
+                count: None,
+                error: Some(format!(
+                    "Postgres is reachable, but doctor could not load stack config to probe privacy.rules: {error}"
+                )),
+            };
+        }
+    };
+
+    let output = match run_psql(&cfg) {
+        Ok(output) => output,
+        Err(error) => {
+            return PrivacyRulesProbe {
+                count: None,
+                error: Some(format!(
+                    "Postgres is reachable, but doctor failed to run privacy.rules probe via psql: {error}"
+                )),
+            };
+        }
+    };
+
+    if !output.status.success() {
+        return PrivacyRulesProbe {
+            count: None,
+            error: Some(format!(
+                "Postgres is reachable, but doctor failed to probe privacy.rules: {}",
+                summarize_command_probe_output(&output)
+            )),
+        };
+    }
+
+    let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    match stdout.parse::<i64>() {
+        Ok(count) => PrivacyRulesProbe {
+            count: Some(count),
+            error: None,
+        },
+        Err(_) => PrivacyRulesProbe {
+            count: None,
+            error: Some(format!(
+                "Postgres is reachable, but doctor got an unparseable privacy.rules count: {stdout:?}"
+            )),
+        },
+    }
 }
 
 fn summarize_command_probe_output(output: &std::process::Output) -> String {
@@ -1330,6 +1405,29 @@ fn execute_doctor(pipelines: bool, ctx: &CommandContext) -> Result<CommandResult
         all_ok = false;
     }
 
+    // Check privacy.rules is non-empty (sinex-t5sr): an empty catalog means
+    // redact_batch's empty-ruleset short-circuit runs forever with zero
+    // redaction and zero other signal. Schema apply now converges the
+    // built-in catalog automatically, but this stays a real, independent
+    // check for deployments that skip apply-on-startup, opt out via
+    // SINEX_PRIVACY_SEED_BUILTIN, or have DB state older than that fix.
+    let privacy_rules_probe = probe_privacy_rules_count(
+        pg_probe.ready(),
+        crate::infra::stack::StackConfig::for_current_checkout().map_err(|error| error.to_string()),
+        |cfg| {
+            std::process::Command::new("psql")
+                .env("PGHOST", cfg.run_dir())
+                .env("PGPORT", cfg.postgres.port.to_string())
+                .args(["-tAc", "SELECT count(*) FROM privacy.rules"])
+                .output()
+        },
+    );
+    if privacy_rules_probe.error.is_some()
+        || privacy_rules_probe.count.is_some_and(|count| count == 0)
+    {
+        all_ok = false;
+    }
+
     // Check TLS certificates from env vars or .sinex/tls/
     let tls_check = detect_tls_check();
     if tls_check.as_ref().is_some_and(|check| !check.is_healthy()) {
@@ -1370,6 +1468,8 @@ fn execute_doctor(pipelines: bool, ctx: &CommandContext) -> Result<CommandResult
         tls: tls_check,
         postgres_extensions: postgres_extensions_probe.extensions,
         postgres_extensions_error: postgres_extensions_probe.error,
+        privacy_rules_count: privacy_rules_probe.count,
+        privacy_rules_error: privacy_rules_probe.error,
         pipeline_smoke,
         overall: all_ok,
     };
@@ -1395,6 +1495,18 @@ fn execute_doctor(pipelines: bool, ctx: &CommandContext) -> Result<CommandResult
             report.private_mode.available,
             report.private_mode.message.as_deref(),
         );
+        match (report.privacy_rules_count, &report.privacy_rules_error) {
+            (_, Some(error)) => print_check("Privacy rules", false, Some(error.as_str())),
+            (Some(0), None) => print_check(
+                "Privacy rules",
+                false,
+                Some("privacy.rules is empty -- redaction is fully disabled (sinex-t5sr)"),
+            ),
+            (Some(count), None) => {
+                print_check("Privacy rules", true, Some(&format!("{count} rule(s)")))
+            }
+            (None, None) => {} // Postgres not reachable; already reflected in the Postgres check above.
+        }
 
         // Tools
         println!("\n{}", style("Required Tools:").bold());

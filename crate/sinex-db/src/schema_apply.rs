@@ -1,8 +1,10 @@
 use crate::advisory_lock::AdvisoryLock;
+use crate::repositories::DbPoolExt;
 use crate::{DbPool, PoolConfig};
 use sinex_primitives::error::{Result, SinexError};
+use sinex_primitives::privacy::builtin_policy_seed_rules;
 use sinex_primitives::units::Seconds;
-use tracing::info;
+use tracing::{info, warn};
 
 const SQLSTATE_UNDEFINED_FILE: &str = "58P01";
 const ERROR_CLASS_TIMESCALEDB_MISSING_LIBRARY: &str = "timescaledb_missing_library";
@@ -57,6 +59,16 @@ fn map_apply_error(err: crate::schema::apply::ApplyError) -> SinexError {
 /// `sinexd serve` for debugging while the systemd unit is also up -- fail
 /// fast with a clear error instead of racing the two-phase
 /// `NOT VALID -> VALIDATE CONSTRAINT` convergence step.
+///
+/// Also converges the built-in privacy-catalog rules (sinex-t5sr / sinex-4kbm
+/// point 1): the catalog is the one piece of declared desired-state that
+/// historically opted out of this same convergence path, requiring a manual
+/// `sinexctl privacy policy seed-builtin` call that nothing invoked
+/// automatically. `seed_rules` is idempotent (`ON CONFLICT ... DO UPDATE ...
+/// WHERE ... IS DISTINCT FROM`), matching the DDL convergence semantics above,
+/// so calling it on every apply is safe and cheap when nothing changed.
+/// `SINEX_PRIVACY_SEED_BUILTIN=0/false/no/off` opts out (e.g. for a deployment
+/// that wants to curate `privacy.rules` by hand); default is seed-on.
 pub async fn apply_schema(pool: &DbPool) -> Result<()> {
     let _lock = match AdvisoryLock::try_acquire(pool, SCHEMA_DDL_APPLY_LOCK_KEY).await {
         Ok(Some(guard)) => guard,
@@ -79,7 +91,40 @@ pub async fn apply_schema(pool: &DbPool) -> Result<()> {
         .await
         .map_err(map_apply_error)?;
     info!("Database schema apply completed");
+
+    if privacy_seed_builtin_enabled() {
+        let rules = builtin_policy_seed_rules(true);
+        match pool.privacy_policy().seed_rules(&rules).await {
+            Ok(summary) => {
+                info!(
+                    inserted = summary.inserted,
+                    updated = summary.updated,
+                    unchanged = summary.unchanged,
+                    "Converged built-in privacy catalog"
+                );
+            }
+            Err(err) => {
+                // Non-fatal: schema DDL already converged successfully. A
+                // failed catalog seed should not block startup, but must be
+                // loud -- silent catalog emptiness is exactly sinex-t5sr.
+                warn!(error = %err, "Failed to converge built-in privacy catalog; redaction rules may be stale or absent");
+            }
+        }
+    } else {
+        info!("SINEX_PRIVACY_SEED_BUILTIN disabled -- skipping built-in privacy catalog convergence");
+    }
+
     Ok(())
+}
+
+fn privacy_seed_builtin_enabled() -> bool {
+    match std::env::var("SINEX_PRIVACY_SEED_BUILTIN") {
+        Ok(v) => !matches!(
+            v.trim().to_ascii_lowercase().as_str(),
+            "0" | "false" | "no" | "off"
+        ),
+        Err(_) => true,
+    }
 }
 
 /// Apply declarative schema for a given database URL by creating a temporary connection.
