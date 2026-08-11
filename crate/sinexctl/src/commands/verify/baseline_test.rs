@@ -99,6 +99,52 @@ async fn xtask_stderr_summary_passes_through_short_ascii() -> xtask::sandbox::Te
     Ok(())
 }
 
+/// sinex-recr: the closure-health discovery step used to shell out to
+/// `gh issue list` (a substrate retired on 2026-07-10) and pass numeric
+/// issue ids to a verifier that hard-requires bead string ids like
+/// "sinex-e7e9" -- guaranteeing either a permanent Skipped or a guaranteed
+/// false Fail. This exercises the real `bd list --json` output shape
+/// against the actual production parser, proving it extracts bead string
+/// ids (not numbers) and respects the 20-item cap.
+#[sinex_test]
+async fn recent_closures_parses_bead_string_ids_not_numeric_issue_ids()
+-> xtask::sandbox::TestResult<()> {
+    let bd_json = serde_json::to_vec(&serde_json::json!([
+        {"id": "sinex-e7e9", "title": "retire verify-closure.yml", "issue_type": "task"},
+        {"id": "sinex-x79t", "title": "derivation reconciler", "issue_type": "task"},
+    ]))?;
+
+    let ids = parse_recently_closed_bead_ids(&bd_json)?;
+
+    assert_eq!(
+        ids,
+        vec!["sinex-e7e9".to_string(), "sinex-x79t".to_string()],
+        "must extract bead string ids from bd's own JSON shape, not attempt \
+         to parse a numeric GitHub issue `number` field that doesn't exist \
+         in bd output"
+    );
+    Ok(())
+}
+
+#[sinex_test]
+async fn recent_closures_caps_at_twenty_beads() -> xtask::sandbox::TestResult<()> {
+    let many: Vec<serde_json::Value> = (0..35)
+        .map(|i| serde_json::json!({"id": format!("sinex-fixture{i}"), "issue_type": "task"}))
+        .collect();
+    let bd_json = serde_json::to_vec(&many)?;
+
+    let ids = parse_recently_closed_bead_ids(&bd_json)?;
+
+    assert_eq!(
+        ids.len(),
+        20,
+        "must cap to the most recently closed 20 beads, matching the \
+         original issue-list window size, so the per-bead xtask verify \
+         closure loop stays fast"
+    );
+    Ok(())
+}
+
 fn make_check(id: &'static str, status: CheckStatus, weight: CheckWeight) -> CheckResult {
     CheckResult {
         id,
