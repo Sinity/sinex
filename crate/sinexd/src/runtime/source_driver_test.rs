@@ -623,6 +623,7 @@ async fn load_state_adopts_latest_peer_checkpoint_for_non_concurrent_source(
 use crate::runtime::health_reporter::{HealthReporter, HealthThresholds};
 use crate::runtime::self_observation::SelfObserver;
 use sinex_primitives::settlement::Settlement;
+use std::sync::atomic::Ordering;
 
 fn test_health_reporter() -> HealthReporter {
     HealthReporter::new(
