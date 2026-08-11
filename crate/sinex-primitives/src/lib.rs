@@ -45,6 +45,7 @@ pub mod schema_constraints;
 pub mod semantic;
 pub mod session_lane;
 pub mod source_contracts;
+pub mod text;
 pub mod views;
 
 /// Re-exports used by macros generated from `sinex-macros`.

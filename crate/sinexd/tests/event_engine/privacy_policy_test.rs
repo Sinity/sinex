@@ -50,6 +50,7 @@ fn make_material_event(
 
 fn admit(event: Event<serde_json::Value>) -> AdmittedEvent {
     AdmittedEvent {
+        content_hash: sinex_primitives::events::payload_content_hash(&event.payload),
         event_id: Uuid::now_v7(),
         event,
         metadata: None,

@@ -108,19 +108,20 @@ async fn get_table_indexes(
     schema: &str,
     table: &str,
 ) -> color_eyre::Result<Vec<IndexInfo>> {
+    // DISTINCT over pg_class/pg_index/pg_namespace only -- deliberately does
+    // NOT join pg_attribute at all. An INNER join there silently excludes
+    // pure-expression/functional indexes (e.g. `USING GIN (to_tsvector(...))`,
+    // whose indkey entry is 0 for the expression "column", matching no real
+    // pg_attribute row), and this helper only ever needs the index name, not
+    // its columns.
     let rows = sqlx::query!(
         r#"
-        SELECT
-            i.relname as index_name,
-            ix.indisunique as is_unique,
-            array_agg(a.attname ORDER BY a.attnum) as column_names
+        SELECT DISTINCT i.relname as "index_name!"
         FROM pg_class t
         JOIN pg_index ix ON t.oid = ix.indrelid
         JOIN pg_class i ON i.oid = ix.indexrelid
-        JOIN pg_attribute a ON a.attrelid = t.oid AND a.attnum = ANY(ix.indkey)
         JOIN pg_namespace n ON n.oid = t.relnamespace
         WHERE n.nspname = $1 AND t.relname = $2
-        GROUP BY i.relname, ix.indisunique
         ORDER BY i.relname
         "#,
         schema,

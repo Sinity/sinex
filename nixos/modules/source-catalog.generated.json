@@ -59,7 +59,8 @@
           "replayable": true,
           "dlq": false,
           "backpressure": false
-        }
+        },
+        "criticality": null
       },
       "resource_limits": {
         "memory_max_mib": 256,
@@ -145,7 +146,8 @@
           "replayable": true,
           "dlq": false,
           "backpressure": false
-        }
+        },
+        "criticality": null
       },
       "resource_limits": {
         "memory_max_mib": 256,
@@ -192,7 +194,7 @@
         },
         "occurrence_identity": {
           "kind": "uuid5_from",
-          "key": "(source, parent_event_ids)"
+          "key": "(first_contributing_event_material_id, first_contributing_event_anchor_byte)"
         },
         "access_scope": {
           "scope": "internal"
@@ -231,7 +233,8 @@
           "replayable": true,
           "dlq": false,
           "backpressure": false
-        }
+        },
+        "criticality": null
       },
       "resource_limits": {
         "memory_max_mib": 512,
@@ -279,7 +282,7 @@
         },
         "occurrence_identity": {
           "kind": "uuid5_from",
-          "key": "(source, parent_event_id)"
+          "key": "(source_window_occurrence_key)"
         },
         "access_scope": {
           "scope": "internal"
@@ -318,7 +321,8 @@
           "replayable": true,
           "dlq": false,
           "backpressure": false
-        }
+        },
+        "criticality": null
       },
       "resource_limits": {
         "memory_max_mib": 512,
@@ -416,7 +420,8 @@
           "replayable": true,
           "dlq": false,
           "backpressure": false
-        }
+        },
+        "criticality": null
       },
       "resource_limits": {
         "memory_max_mib": 128,
@@ -516,7 +521,8 @@
           "replayable": true,
           "dlq": true,
           "backpressure": true
-        }
+        },
+        "criticality": "reconstructable"
       },
       "resource_limits": {
         "memory_max_mib": 512,
@@ -603,7 +609,8 @@
           "replayable": true,
           "dlq": false,
           "backpressure": false
-        }
+        },
+        "criticality": null
       },
       "resource_limits": {
         "memory_max_mib": 512,
@@ -701,7 +708,8 @@
           "replayable": true,
           "dlq": true,
           "backpressure": true
-        }
+        },
+        "criticality": "reconstructable"
       },
       "resource_limits": {
         "memory_max_mib": 512,
@@ -792,7 +800,8 @@
           "replayable": false,
           "dlq": true,
           "backpressure": true
-        }
+        },
+        "criticality": null
       },
       "resource_limits": {
         "memory_max_mib": 128,
@@ -879,7 +888,8 @@
           "replayable": false,
           "dlq": true,
           "backpressure": true
-        }
+        },
+        "criticality": null
       },
       "resource_limits": {
         "memory_max_mib": 128,
@@ -966,7 +976,8 @@
           "replayable": false,
           "dlq": true,
           "backpressure": true
-        }
+        },
+        "criticality": null
       },
       "resource_limits": {
         "memory_max_mib": 128,
@@ -1053,7 +1064,8 @@
           "replayable": false,
           "dlq": true,
           "backpressure": true
-        }
+        },
+        "criticality": null
       },
       "resource_limits": {
         "memory_max_mib": 128,
@@ -1172,7 +1184,8 @@
           "replayable": false,
           "dlq": true,
           "backpressure": true
-        }
+        },
+        "criticality": "not_reconstructable"
       },
       "resource_limits": {
         "memory_max_mib": 128,
@@ -1259,7 +1272,8 @@
           "replayable": true,
           "dlq": false,
           "backpressure": false
-        }
+        },
+        "criticality": null
       },
       "resource_limits": {
         "memory_max_mib": 256,
@@ -1349,7 +1363,8 @@
           "replayable": true,
           "dlq": false,
           "backpressure": false
-        }
+        },
+        "criticality": null
       },
       "resource_limits": {
         "memory_max_mib": 512,
@@ -1436,7 +1451,8 @@
           "replayable": true,
           "dlq": false,
           "backpressure": false
-        }
+        },
+        "criticality": null
       },
       "resource_limits": {
         "memory_max_mib": 256,
@@ -1476,6 +1492,10 @@
           [
             "email",
             "email.message.sent"
+          ],
+          [
+            "email",
+            "email.message.deleted"
           ],
           [
             "email",
@@ -1552,7 +1572,8 @@
           "replayable": true,
           "dlq": false,
           "backpressure": false
-        }
+        },
+        "criticality": null
       },
       "runtime_bindings": [
         {
@@ -1598,7 +1619,8 @@
             "replayable": true,
             "dlq": false,
             "backpressure": false
-          }
+          },
+          "criticality": null
         },
         {
           "subject": "source:email.mailbox.gmail-api-scheduled-sync",
@@ -1646,7 +1668,8 @@
             "replayable": true,
             "dlq": true,
             "backpressure": true
-          }
+          },
+          "criticality": null
         },
         {
           "subject": "source:email.mailbox.imap-idle-live",
@@ -1662,6 +1685,7 @@
             "debt:unified-debt-view",
             "operation:email.mailbox.authorize",
             "operation:email.mailbox.check",
+            "operation:email.mailbox.sync",
             "operation:email.mailbox.pause",
             "operation:email.mailbox.resume",
             "operation:email.mailbox.inspect",
@@ -1692,7 +1716,8 @@
             "replayable": true,
             "dlq": true,
             "backpressure": true
-          }
+          },
+          "criticality": null
         },
         {
           "subject": "source:email.mailbox.imap-scheduled-sync",
@@ -1740,7 +1765,8 @@
             "replayable": true,
             "dlq": true,
             "backpressure": true
-          }
+          },
+          "criticality": null
         },
         {
           "subject": "source:email.mailbox.maildir-staged",
@@ -1784,7 +1810,8 @@
             "replayable": true,
             "dlq": false,
             "backpressure": false
-          }
+          },
+          "criticality": null
         },
         {
           "subject": "source:email.mailbox.mbox-staged",
@@ -1828,7 +1855,8 @@
             "replayable": true,
             "dlq": false,
             "backpressure": false
-          }
+          },
+          "criticality": null
         },
         {
           "subject": "source:email.mailbox.sent",
@@ -1873,7 +1901,8 @@
             "replayable": true,
             "dlq": false,
             "backpressure": false
-          }
+          },
+          "criticality": null
         }
       ],
       "resource_limits": {
@@ -1960,7 +1989,8 @@
           "replayable": true,
           "dlq": false,
           "backpressure": false
-        }
+        },
+        "criticality": null
       },
       "resource_limits": {
         "memory_max_mib": 512,
@@ -2047,7 +2077,8 @@
           "replayable": true,
           "dlq": false,
           "backpressure": false
-        }
+        },
+        "criticality": null
       },
       "resource_limits": {
         "memory_max_mib": 512,
@@ -2134,7 +2165,8 @@
           "replayable": true,
           "dlq": false,
           "backpressure": false
-        }
+        },
+        "criticality": null
       },
       "resource_limits": {
         "memory_max_mib": 512,
@@ -2221,7 +2253,8 @@
           "replayable": true,
           "dlq": false,
           "backpressure": false
-        }
+        },
+        "criticality": null
       },
       "resource_limits": {
         "memory_max_mib": 256,
@@ -2319,7 +2352,8 @@
           "replayable": true,
           "dlq": true,
           "backpressure": true
-        }
+        },
+        "criticality": "not_reconstructable"
       },
       "resource_limits": {
         "memory_max_mib": 128,
@@ -2406,7 +2440,8 @@
           "replayable": true,
           "dlq": false,
           "backpressure": false
-        }
+        },
+        "criticality": "reconstructable"
       },
       "resource_limits": {
         "memory_max_mib": 256,
@@ -2492,7 +2527,8 @@
           "replayable": true,
           "dlq": false,
           "backpressure": false
-        }
+        },
+        "criticality": null
       },
       "resource_limits": {
         "memory_max_mib": 512,
@@ -2579,7 +2615,8 @@
           "replayable": true,
           "dlq": false,
           "backpressure": false
-        }
+        },
+        "criticality": null
       },
       "resource_limits": {
         "memory_max_mib": 256,
@@ -2665,7 +2702,8 @@
           "replayable": true,
           "dlq": false,
           "backpressure": false
-        }
+        },
+        "criticality": null
       },
       "resource_limits": {
         "memory_max_mib": 512,
@@ -2752,7 +2790,8 @@
           "replayable": true,
           "dlq": false,
           "backpressure": false
-        }
+        },
+        "criticality": null
       },
       "resource_limits": {
         "memory_max_mib": 512,
@@ -2840,7 +2879,8 @@
           "replayable": false,
           "dlq": true,
           "backpressure": true
-        }
+        },
+        "criticality": null
       },
       "resource_limits": {
         "memory_max_mib": 128,
@@ -2888,7 +2928,7 @@
         },
         "occurrence_identity": {
           "kind": "uuid5_from",
-          "key": "(source, state_kind, subject_id, start_parent_event_id, end_parent_event_id)"
+          "key": "(state_kind, subject_id, start_material_id, start_anchor_byte)"
         },
         "access_scope": {
           "scope": "internal"
@@ -2927,7 +2967,8 @@
           "replayable": true,
           "dlq": false,
           "backpressure": false
-        }
+        },
+        "criticality": null
       },
       "resource_limits": {
         "memory_max_mib": 512,
@@ -3014,7 +3055,8 @@
           "replayable": true,
           "dlq": false,
           "backpressure": false
-        }
+        },
+        "criticality": null
       },
       "resource_limits": {
         "memory_max_mib": 256,
@@ -3124,7 +3166,8 @@
           "replayable": true,
           "dlq": false,
           "backpressure": false
-        }
+        },
+        "criticality": null
       },
       "runtime_bindings": [
         {
@@ -3168,7 +3211,8 @@
             "replayable": true,
             "dlq": false,
             "backpressure": false
-          }
+          },
+          "criticality": null
         },
         {
           "subject": "source:media.audio-transcript.audio-bundle-staged",
@@ -3210,7 +3254,8 @@
             "replayable": true,
             "dlq": false,
             "backpressure": false
-          }
+          },
+          "criticality": null
         },
         {
           "subject": "source:media.audio-transcript.live-session",
@@ -3254,14 +3299,15 @@
             "replayable": false,
             "dlq": true,
             "backpressure": true
-          }
+          },
+          "criticality": null
         },
         {
           "subject": "source:media.audio-transcript.local-model-batch",
           "id": "media.audio-transcript",
           "domain": "media",
           "implementation": "local-transcription-worker",
-          "adapter": "LocalProcessWorker",
+          "adapter": "MediaWorkerCommandExecutor",
           "output_event_type": "media.audio.transcription_run_observed",
           "privacy_context": "document",
           "resource_profile": "oneshot",
@@ -3296,7 +3342,8 @@
             "replayable": true,
             "dlq": false,
             "backpressure": false
-          }
+          },
+          "criticality": null
         },
         {
           "subject": "source:media.audio-transcript.on-demand-session",
@@ -3339,7 +3386,8 @@
             "replayable": false,
             "dlq": true,
             "backpressure": true
-          }
+          },
+          "criticality": null
         }
       ],
       "resource_limits": {
@@ -3454,7 +3502,8 @@
           "replayable": true,
           "dlq": false,
           "backpressure": false
-        }
+        },
+        "criticality": null
       },
       "runtime_bindings": [
         {
@@ -3498,7 +3547,8 @@
             "replayable": true,
             "dlq": false,
             "backpressure": false
-          }
+          },
+          "criticality": null
         },
         {
           "subject": "source:media.screen-ocr.live-session",
@@ -3542,14 +3592,15 @@
             "replayable": false,
             "dlq": true,
             "backpressure": true
-          }
+          },
+          "criticality": null
         },
         {
           "subject": "source:media.screen-ocr.local-model-batch",
           "id": "media.screen-ocr",
           "domain": "media",
           "implementation": "local-ocr-worker",
-          "adapter": "LocalProcessWorker",
+          "adapter": "MediaWorkerCommandExecutor",
           "output_event_type": "media.screen.ocr_run_observed",
           "privacy_context": "document",
           "resource_profile": "oneshot",
@@ -3584,7 +3635,8 @@
             "replayable": true,
             "dlq": false,
             "backpressure": false
-          }
+          },
+          "criticality": null
         },
         {
           "subject": "source:media.screen-ocr.on-demand-region",
@@ -3626,7 +3678,8 @@
             "replayable": false,
             "dlq": true,
             "backpressure": true
-          }
+          },
+          "criticality": null
         },
         {
           "subject": "source:media.screen-ocr.on-demand-video",
@@ -3646,7 +3699,7 @@
             "operation:media.screen-ocr.inspect"
           ],
           "source_id": "media.screen-ocr",
-          "proposed": false,
+          "proposed": true,
           "runner_pack": "live",
           "checkpoint_family": {
             "kind": "live_observation"
@@ -3668,7 +3721,8 @@
             "replayable": false,
             "dlq": true,
             "backpressure": true
-          }
+          },
+          "criticality": null
         },
         {
           "subject": "source:media.screen-ocr.screenshot-ocr-staged",
@@ -3710,7 +3764,8 @@
             "replayable": true,
             "dlq": false,
             "backpressure": false
-          }
+          },
+          "criticality": null
         },
         {
           "subject": "source:media.screen-ocr.video-staged",
@@ -3752,7 +3807,8 @@
             "replayable": true,
             "dlq": false,
             "backpressure": false
-          }
+          },
+          "criticality": null
         }
       ],
       "resource_limits": {
@@ -3834,7 +3890,8 @@
           "replayable": true,
           "dlq": false,
           "backpressure": false
-        }
+        },
+        "criticality": null
       },
       "resource_limits": {
         "memory_max_mib": 128,
@@ -3921,7 +3978,8 @@
           "replayable": true,
           "dlq": false,
           "backpressure": false
-        }
+        },
+        "criticality": null
       },
       "resource_limits": {
         "memory_max_mib": 256,
@@ -4007,7 +4065,8 @@
           "replayable": true,
           "dlq": false,
           "backpressure": false
-        }
+        },
+        "criticality": "reconstructable"
       },
       "resource_limits": {
         "memory_max_mib": 256,
@@ -4093,7 +4152,8 @@
           "replayable": true,
           "dlq": false,
           "backpressure": false
-        }
+        },
+        "criticality": null
       },
       "resource_limits": {
         "memory_max_mib": 256,
@@ -4179,7 +4239,8 @@
           "replayable": true,
           "dlq": false,
           "backpressure": false
-        }
+        },
+        "criticality": null
       },
       "resource_limits": {
         "memory_max_mib": 256,
@@ -4265,7 +4326,8 @@
           "replayable": true,
           "dlq": false,
           "backpressure": false
-        }
+        },
+        "criticality": null
       },
       "resource_limits": {
         "memory_max_mib": 512,
@@ -4313,7 +4375,7 @@
         },
         "occurrence_identity": {
           "kind": "uuid5_from",
-          "key": "(source, parent_event_ids)"
+          "key": "(first_contributing_window_occurrence_key)"
         },
         "access_scope": {
           "scope": "internal"
@@ -4352,7 +4414,8 @@
           "replayable": true,
           "dlq": false,
           "backpressure": false
-        }
+        },
+        "criticality": null
       },
       "resource_limits": {
         "memory_max_mib": 512,
@@ -4438,7 +4501,8 @@
           "replayable": true,
           "dlq": false,
           "backpressure": false
-        }
+        },
+        "criticality": null
       },
       "resource_limits": {
         "memory_max_mib": 128,
@@ -4536,7 +4600,8 @@
           "replayable": true,
           "dlq": false,
           "backpressure": false
-        }
+        },
+        "criticality": null
       },
       "resource_limits": {
         "memory_max_mib": 128,
@@ -4622,7 +4687,8 @@
           "replayable": true,
           "dlq": false,
           "backpressure": false
-        }
+        },
+        "criticality": null
       },
       "resource_limits": {
         "memory_max_mib": 128,
@@ -4724,7 +4790,8 @@
           "replayable": true,
           "dlq": false,
           "backpressure": false
-        }
+        },
+        "criticality": null
       },
       "resource_limits": {
         "memory_max_mib": 128,
@@ -4826,7 +4893,8 @@
           "replayable": true,
           "dlq": false,
           "backpressure": false
-        }
+        },
+        "criticality": null
       },
       "resource_limits": {
         "memory_max_mib": 128,
@@ -4924,7 +4992,8 @@
           "replayable": true,
           "dlq": false,
           "backpressure": false
-        }
+        },
+        "criticality": null
       },
       "resource_limits": {
         "memory_max_mib": 128,
@@ -5011,7 +5080,8 @@
           "replayable": true,
           "dlq": false,
           "backpressure": false
-        }
+        },
+        "criticality": null
       },
       "resource_limits": {
         "memory_max_mib": 256,
@@ -5097,7 +5167,8 @@
           "replayable": true,
           "dlq": false,
           "backpressure": false
-        }
+        },
+        "criticality": null
       },
       "resource_limits": {
         "memory_max_mib": 256,
@@ -5214,7 +5285,8 @@
           "replayable": false,
           "dlq": true,
           "backpressure": true
-        }
+        },
+        "criticality": "not_reconstructable"
       },
       "resource_limits": {
         "memory_max_mib": 128,
@@ -5306,7 +5378,8 @@
           "replayable": true,
           "dlq": true,
           "backpressure": true
-        }
+        },
+        "criticality": "not_reconstructable"
       },
       "resource_limits": {
         "memory_max_mib": 128,
@@ -5392,7 +5465,8 @@
           "replayable": false,
           "dlq": false,
           "backpressure": false
-        }
+        },
+        "criticality": "reconstructable"
       },
       "resource_limits": {
         "memory_max_mib": 256,
@@ -5493,7 +5567,8 @@
           "replayable": true,
           "dlq": true,
           "backpressure": true
-        }
+        },
+        "criticality": "not_reconstructable"
       },
       "resource_limits": {
         "memory_max_mib": 128,
@@ -5595,7 +5670,8 @@
           "replayable": false,
           "dlq": true,
           "backpressure": true
-        }
+        },
+        "criticality": "not_reconstructable"
       },
       "resource_limits": {
         "memory_max_mib": 128,
@@ -5682,7 +5758,8 @@
           "replayable": true,
           "dlq": false,
           "backpressure": false
-        }
+        },
+        "criticality": null
       },
       "resource_limits": {
         "memory_max_mib": 512,
@@ -5769,7 +5846,8 @@
           "replayable": true,
           "dlq": false,
           "backpressure": false
-        }
+        },
+        "criticality": null
       },
       "resource_limits": {
         "memory_max_mib": 512,
@@ -5863,7 +5941,8 @@
           "replayable": true,
           "dlq": true,
           "backpressure": true
-        }
+        },
+        "criticality": null
       },
       "resource_limits": {
         "memory_max_mib": 1024,
@@ -5952,7 +6031,8 @@
           "replayable": true,
           "dlq": true,
           "backpressure": true
-        }
+        },
+        "criticality": "reconstructable"
       },
       "resource_limits": {
         "memory_max_mib": 512,
@@ -6040,7 +6120,8 @@
           "replayable": true,
           "dlq": true,
           "backpressure": true
-        }
+        },
+        "criticality": null
       },
       "resource_limits": {
         "memory_max_mib": 512,
@@ -6130,7 +6211,8 @@
           "replayable": true,
           "dlq": true,
           "backpressure": true
-        }
+        },
+        "criticality": null
       },
       "resource_limits": {
         "memory_max_mib": 512,
@@ -6227,7 +6309,8 @@
           "replayable": false,
           "dlq": true,
           "backpressure": true
-        }
+        },
+        "criticality": null
       },
       "resource_limits": {
         "memory_max_mib": 128,
@@ -6313,7 +6396,8 @@
           "replayable": false,
           "dlq": false,
           "backpressure": false
-        }
+        },
+        "criticality": "not_reconstructable"
       },
       "resource_limits": {
         "memory_max_mib": 256,
@@ -6400,7 +6484,8 @@
           "replayable": true,
           "dlq": true,
           "backpressure": true
-        }
+        },
+        "criticality": null
       },
       "resource_limits": {
         "memory_max_mib": 512,
@@ -6488,7 +6573,8 @@
           "replayable": true,
           "dlq": true,
           "backpressure": true
-        }
+        },
+        "criticality": null
       },
       "resource_limits": {
         "memory_max_mib": 512,
@@ -6586,7 +6672,8 @@
           "replayable": true,
           "dlq": false,
           "backpressure": false
-        }
+        },
+        "criticality": null
       },
       "resource_limits": {
         "memory_max_mib": 128,
@@ -6672,7 +6759,8 @@
           "replayable": true,
           "dlq": false,
           "backpressure": false
-        }
+        },
+        "criticality": null
       },
       "resource_limits": {
         "memory_max_mib": 128,
@@ -6759,7 +6847,8 @@
           "replayable": true,
           "dlq": false,
           "backpressure": false
-        }
+        },
+        "criticality": null
       },
       "resource_limits": {
         "memory_max_mib": 256,
@@ -6845,7 +6934,8 @@
           "replayable": true,
           "dlq": false,
           "backpressure": false
-        }
+        },
+        "criticality": null
       },
       "resource_limits": {
         "memory_max_mib": 256,

@@ -287,3 +287,14 @@ async fn test_reset_target_removes_configured_and_historical_dirs() -> TestResul
     assert!(!historical.exists());
     Ok(())
 }
+
+#[test]
+fn truncate_command_for_reset_does_not_panic_on_multibyte_command() {
+    // Stale-process cmdlines come from arbitrary host processes and can
+    // contain multi-byte UTF-8 before the byte-length budget. The previous
+    // implementation sliced `&command[..max]` directly and panicked when
+    // `max` landed inside a multi-byte codepoint.
+    let command = "проверка ".repeat(20);
+    let truncated = truncate_command_for_reset(&command, 15);
+    assert!(truncated.chars().all(|c| c != '\u{FFFD}'));
+}

@@ -263,7 +263,9 @@ impl DocumentParserAutomaton {
                 1,
                 1,
                 0,
-            ));
+            ))
+            .with_semantics_version(parsed_declaration.semantics_version)
+            .with_equivalence_key(format!("document-parser:parsed:{document_id}"));
 
         outputs.push(parsed_output);
 
@@ -307,7 +309,9 @@ impl DocumentParserAutomaton {
                     1,
                     1,
                     0,
-                ));
+                ))
+                .with_semantics_version(chunk_declaration.semantics_version)
+                .with_equivalence_key(format!("document-parser:chunk:{document_id}:{i}"));
 
             outputs.push(chunk_output);
         }
@@ -379,7 +383,9 @@ impl DocumentParserAutomaton {
                     1,
                     1,
                     0,
-                )),
+                ))
+                .with_semantics_version(parsed_declaration.semantics_version)
+                .with_equivalence_key(format!("document-parser:parsed:{document_id}")),
         );
 
         // `byte_offset_start/end` are the chunk's real byte span within
@@ -410,7 +416,9 @@ impl DocumentParserAutomaton {
                         1,
                         1,
                         0,
-                    )),
+                    ))
+                    .with_semantics_version(chunk_declaration.semantics_version)
+                    .with_equivalence_key(format!("document-parser:chunk:{document_id}:{i}")),
             );
         }
 

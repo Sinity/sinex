@@ -699,7 +699,12 @@ fn format_card_table_results(results: &[EventCardView]) -> String {
 }
 
 /// Truncate string to max length with ellipsis, stopping at character boundaries.
+///
+/// sinex-e0qo: sanitize control/format characters (ANSI/OSC escape sequences,
+/// bidi overrides, zero-width markers) before this cell content reaches
+/// sinexctl's default table renderer, which writes bytes verbatim to stdout.
 fn truncate_string(s: &str, max_len: usize) -> String {
+    let s = &sinex_primitives::views::strip_unsafe_display_chars(s);
     // Reserve 3 characters for "..." in the truncated case.
     let cutoff = max_len.saturating_sub(3);
     match s.char_indices().nth(max_len) {

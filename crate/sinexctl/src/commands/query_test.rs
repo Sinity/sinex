@@ -96,8 +96,13 @@ sinex_proptest! {
 
     fn prop_truncate_preserves_short_strings(s in ".{0,10}") {
         let result = truncate_string(&s, 10);
-        if s.chars().count() <= 10 {
-            prop_assert_eq!(result, s);
+        // sinex-e0qo: truncate_string strips unsafe display characters (BOM,
+        // bidi overrides, zero-width marks) before truncating, so a short
+        // string is preserved up to that stripping, not byte-for-byte --
+        // e.g. a lone BOM (`\u{feff}`) is short but correctly becomes "".
+        let expected = sinex_primitives::views::strip_unsafe_display_chars(&s);
+        if expected.chars().count() <= 10 {
+            prop_assert_eq!(result, expected);
         }
         Ok(())
     }

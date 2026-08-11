@@ -613,9 +613,17 @@ impl JetStreamConsumer {
             });
         }
 
+        // sinex-tgjw: capture each event's content_hash HERE, before the
+        // redact_batch chokepoint below mutates event.payload -- AdmittedEvent
+        // carries this hash forward untouched so admitted_to_stream_rows
+        // persists the pre-redaction hash instead of recomputing from the
+        // (by-then redacted) payload.
         let admitted_batch: Vec<AdmittedEvent> = batch
             .iter()
             .map(|prepared| AdmittedEvent {
+                content_hash: sinex_primitives::events::payload_content_hash(
+                    &prepared.event.payload,
+                ),
                 event: prepared.event.clone(),
                 event_id: prepared.parsed_id,
                 metadata: None,

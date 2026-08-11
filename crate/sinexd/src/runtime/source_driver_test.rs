@@ -600,3 +600,115 @@ async fn load_state_adopts_latest_peer_checkpoint_for_non_concurrent_source(
     );
     Ok(())
 }
+
+// ---------------------------------------------------------------------------
+// sinex-hdnv (finding #2): a scan error settled as Settlement::Commit must
+// still be recorded on the health reporter, not silently swallowed.
+//
+// IMPORTANT CONTEXT: as of this commit, `DefaultFailurePolicy::settle` (the
+// only `FailurePolicy` implementor in the workspace,
+// sinex-primitives/src/settlement.rs) NEVER returns `Settlement::Commit` for
+// any `ErrorClass` -- this branch is currently unreachable via the real
+// settlement policy. `apply_scan_settlement` was split out from
+// `settle_scan_error` specifically so this arm's behavior can be verified
+// directly (by constructing `Settlement::Commit` ourselves, since it's a
+// plain public unit variant) even though production code can't currently
+// reach it. This test verifies the WIRING IS CORRECT IF THE BRANCH IS EVER
+// REACHED -- it does not mean sinex-hdnv's original AW-incident hypothesis is
+// confirmed live; see the bead's corrected description for the more likely
+// real mechanism (a scan returning Ok with zero events, never entering this
+// function at all).
+// ---------------------------------------------------------------------------
+
+use crate::runtime::health_reporter::{HealthReporter, HealthThresholds};
+use crate::runtime::self_observation::SelfObserver;
+use sinex_primitives::settlement::Settlement;
+use std::sync::atomic::Ordering;
+
+fn test_health_reporter() -> HealthReporter {
+    HealthReporter::new(
+        "source-driver-test".to_string(),
+        Arc::new(SelfObserver::disabled()),
+        HealthThresholds {
+            error_rate_degraded: 0.05,
+            error_rate_failed: 0.20,
+            window_seconds: 60,
+            emit_stall_seconds: 0,
+            refresh_seconds: 10,
+        },
+    )
+}
+
+#[sinex_test]
+async fn commit_settlement_records_health_error_and_returns_empty_report() -> TestResult<()> {
+    let mut adapter = SourceDriverRuntime::new(TestSource);
+    let reporter = Arc::new(test_health_reporter());
+    adapter.health_reporter = Some(Arc::clone(&reporter));
+
+    assert_eq!(reporter.metrics().errors.load(Ordering::Relaxed), 0);
+
+    let error = SinexError::processing("synthetic benign scan error for testing");
+    let report =
+        adapter.apply_scan_settlement(Settlement::Commit, error, "test-phase", &Checkpoint::None)?;
+
+    assert_eq!(report.events_processed, 0);
+    assert!(report.failed_targets.is_empty());
+    assert_eq!(
+        reporter.metrics().errors.load(Ordering::Relaxed),
+        1,
+        "Settlement::Commit must record the swallowed error on the health reporter"
+    );
+    Ok(())
+}
+
+#[sinex_test]
+async fn commit_settlement_without_health_reporter_still_returns_empty_report() -> TestResult<()> {
+    // No health_reporter attached (the common case for a driver that hasn't
+    // called with_health_monitoring/initialize yet) -- the Commit arm must
+    // not panic or error just because there's nowhere to record health.
+    let adapter = SourceDriverRuntime::new(TestSource);
+    let error = SinexError::processing("synthetic benign scan error for testing");
+    let report =
+        adapter.apply_scan_settlement(Settlement::Commit, error, "test-phase", &Checkpoint::None)?;
+    assert_eq!(report.events_processed, 0);
+    Ok(())
+}
+
+#[sinex_test]
+async fn default_failure_policy_never_produces_commit_settlement() -> TestResult<()> {
+    // Reachability canary for the context note above: if this ever starts
+    // failing, Settlement::Commit has become reachable in production and the
+    // corrected sinex-hdnv bead description (which says it currently isn't)
+    // needs updating, and the "real AW incident mechanism" hypothesis in this
+    // file's doc comment should be re-examined.
+    use sinex_primitives::settlement::{
+        DefaultFailurePolicy, FailureContext, FailurePolicy, RuntimeOperation, RuntimePhase,
+    };
+    let ctx = FailureContext {
+        unit_id: "canary".to_string(),
+        operation: RuntimeOperation::ProcessBatch,
+        phase: RuntimePhase::ProcessInput,
+        input_scope: None,
+        effect_kind: None,
+        delivery_count: None,
+        attempts: 0,
+    };
+    let sample_errors = vec![
+        SinexError::processing("sample"),
+        SinexError::validation("sample"),
+        SinexError::parse("sample"),
+        SinexError::network("sample"),
+        SinexError::timeout("sample"),
+        SinexError::configuration("sample"),
+        SinexError::not_found("sample"),
+    ];
+    for error in sample_errors {
+        let settlement = DefaultFailurePolicy.settle(&error, &ctx);
+        assert!(
+            !matches!(settlement, Settlement::Commit),
+            "DefaultFailurePolicy produced Settlement::Commit for {error:?} -- \
+             this was believed unreachable; sinex-hdnv's corrected description needs revisiting"
+        );
+    }
+    Ok(())
+}

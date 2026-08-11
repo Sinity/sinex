@@ -283,21 +283,35 @@ impl<I: SourceDriver> SourceDriverRuntime<I> {
         phase: &str,
         from: &Checkpoint,
     ) -> RuntimeResult<ScanReport> {
-        use sinex_primitives::settlement::{
-            DefaultFailurePolicy, FailureContext, FailurePolicy, RuntimeOperation, RuntimePhase,
-            Settlement,
-        };
+        use sinex_primitives::settlement::{DefaultFailurePolicy, FailureContext, FailurePolicy};
 
         let failure_ctx = FailureContext {
             unit_id: self.source.name().to_string(),
-            operation: RuntimeOperation::ProcessBatch,
-            phase: RuntimePhase::ProcessInput,
+            operation: sinex_primitives::settlement::RuntimeOperation::ProcessBatch,
+            phase: sinex_primitives::settlement::RuntimePhase::ProcessInput,
             input_scope: None,
             effect_kind: None,
             delivery_count: None,
             attempts: 0,
         };
         let settlement = DefaultFailurePolicy.settle(&error, &failure_ctx);
+        self.apply_scan_settlement(settlement, error, phase, from)
+    }
+
+    /// Handle an already-computed [`Settlement`] for a scan error. Split out
+    /// from `settle_scan_error` so tests can exercise every match arm
+    /// directly, including `Settlement::Commit` -- which `DefaultFailurePolicy`
+    /// (the only production `FailurePolicy` implementor as of sinex-hdnv)
+    /// never actually returns, but the arm's behavior must still be correct
+    /// if a future policy does produce it.
+    fn apply_scan_settlement(
+        &self,
+        settlement: sinex_primitives::settlement::Settlement,
+        error: crate::runtime::SinexError,
+        phase: &str,
+        from: &Checkpoint,
+    ) -> RuntimeResult<ScanReport> {
+        use sinex_primitives::settlement::Settlement;
 
         match settlement {
             Settlement::Commit => {
@@ -307,6 +321,18 @@ impl<I: SourceDriver> SourceDriverRuntime<I> {
                     error = %error,
                     "Source scan error settled as benign; returning empty report"
                 );
+                // sinex-hdnv: a settlement of Commit means the scan-level error
+                // is treated as non-fatal control flow (the caller gets an
+                // empty-but-Ok report), but that must not mean the error goes
+                // unrecorded for health/observability purposes. Without this,
+                // a source that fails on every scan (e.g. a query bug that
+                // always errors before producing rows) never updates
+                // last_output_at/current_health, so readiness/continuity
+                // surfaces see it as indistinguishable from a source that is
+                // simply idle -- the exact AW-datastr-bug blind spot.
+                if let Some(reporter) = self.health_reporter() {
+                    reporter.record_error(&error);
+                }
                 Ok(ScanReport {
                     events_processed: 0,
                     duration: std::time::Duration::ZERO,

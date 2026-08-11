@@ -411,6 +411,12 @@ let
       # dedicated std::thread (not a tokio task), so heavy COPY batches
       # on the async runtime can't starve the ping.
       WatchdogSec = "60s";
+      # sinex-vyi3: without this, systemd's compiled-in default UMask=0022
+      # applies, so every file the daemon creates (material.bin, state.wal,
+      # etc. under the ingest spool) is world-readable by default. Matches
+      # the UMask already correctly applied to one-shot maintenance units
+      # via mkHelperServiceConfig -- the main daemon unit had no equivalent.
+      UMask = "0077";
       Environment = env;
       ProtectSystem = "strict";
       ProtectHome = true;

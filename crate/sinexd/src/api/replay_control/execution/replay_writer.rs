@@ -2,14 +2,15 @@
 //! `ReplayExecutionEngine`. See `execution/mod.rs` for the engine type.
 
 use super::{
-    ExtendedMaterialOccurrenceKey, OperationOutputEvent, ReplayExecutionEngine,
-    ScopeInvalidationBucket, StreamExt, replay_scope_drift_error,
-    stale_preview_missing_root_ids_error,
+    ExpectedReplayOutputs, ExtendedMaterialOccurrenceKey, OperationOutputEvent,
+    REPLAY_OUTPUT_VISIBILITY_TIMEOUT, ReplayExecutionEngine, ScopeInvalidationBucket, StreamExt,
+    replay_scope_drift_error, stale_preview_missing_root_ids_error,
 };
 use crate::runtime::stream::{
     Checkpoint, MaterialReplayContext, ReplayScopeFilters as SourceReplayScopeFilters, ScanArgs,
     SourceScanAck, SourceScanCancel, SourceScanCommand, SourceScanProgress, TimeHorizon,
 };
+use crate::sources::parse_listener::SourceParseAck;
 use sinex_db::repositories::DbPoolExt;
 use sinex_primitives::ControlSubject;
 use sinex_primitives::events::{Provenance, ScopeKey};
@@ -28,6 +29,14 @@ fn material_occurrence_key(event: &OperationOutputEvent) -> Option<ExtendedMater
         offset_end: event.offset_end,
         offset_kind: event.offset_kind.clone(),
     })
+}
+
+/// Outcome of waiting for a staged-source replay's parsed outputs to become
+/// query-visible (see [`ReplayExecutionEngine::wait_for_staged_replay_outputs_or_cancel`]).
+enum StagedReplayWait {
+    Visible,
+    Cancelled,
+    Error(String),
 }
 
 fn replacement_relation_kind(
@@ -441,6 +450,7 @@ impl ReplayExecutionEngine {
                     &cascade_ids,
                     &scope_metadata,
                     executor_name,
+                    &expected_replay_outputs,
                 )
                 .await;
         }
@@ -835,9 +845,19 @@ impl ReplayExecutionEngine {
 
     /// Dispatches a staged-source replay through the source host.
     ///
-    /// Publishes a parse command to the source NATS control subject
-    /// and polls for operation completion. The source is responsible for
-    /// invoking the parser capability and publishing admitted event intents.
+    /// Publishes a parse command to the source NATS control subject and
+    /// waits for the parsed events to become durably query-visible. The
+    /// source's parse listener (`crate::sources::parse_listener`) is a
+    /// single synchronous request/reply: by the time the ack arrives, every
+    /// parsed record has already been dispatched into admission. There is no
+    /// live task left to poll for a `ReplayState` transition, and
+    /// `ReplayState::Completed`/`Failed` can only ever be set by
+    /// `finalize_operation` (execution/mod.rs), which our own caller invokes
+    /// *after* this function returns (sinex-2vve) — waiting for that state
+    /// here would be a structural deadlock, not a race. This mirrors the
+    /// non-staged scan path's success handling instead: wait for outputs to
+    /// become visible (bounded, cancel-aware), record replacements, and let
+    /// the caller's normal completion/compensation machinery run.
     async fn dispatch_staged_source_replay(
         &self,
         operation_id: Uuid,
@@ -846,6 +866,7 @@ impl ReplayExecutionEngine {
         cascade_ids: &[Uuid],
         scope_metadata: &[ScopeInvalidationBucket],
         executor_name: &str,
+        expected_replay_outputs: &ExpectedReplayOutputs,
     ) -> Result<u64> {
         let source_id = scope.source_id.as_deref().unwrap_or("unknown");
         let parse_subject = self
@@ -908,15 +929,11 @@ impl ReplayExecutionEngine {
             }
         };
 
-        let ack: serde_json::Value = serde_json::from_slice(&ack_msg.payload).map_err(|err| {
+        let ack: SourceParseAck = serde_json::from_slice(&ack_msg.payload).map_err(|err| {
             SinexError::serialization("Failed to deserialize source parse ack").with_std_error(&err)
         })?;
 
-        if ack.get("accepted").and_then(serde_json::Value::as_bool) != Some(true) {
-            let error_msg = ack
-                .get("error")
-                .and_then(|v| v.as_str())
-                .unwrap_or("unknown reason");
+        if !ack.accepted {
             return self
                 .abort_before_scan_ack(
                     pool,
@@ -924,7 +941,8 @@ impl ReplayExecutionEngine {
                     scope_metadata,
                     operation_id,
                     SinexError::invalid_state(format!(
-                        "Source '{source_id}' rejected parse command: {error_msg}"
+                        "Source '{source_id}' rejected parse command: {}",
+                        ack.error.as_deref().unwrap_or("unknown reason")
                     )),
                 )
                 .await;
@@ -933,53 +951,154 @@ impl ReplayExecutionEngine {
         info!(
             operation_id = %operation_id,
             source_id = source_id,
-            "Source accepted parse command, waiting for completion"
+            parsed_event_count = ?ack.event_count,
+            "Source accepted parse command, waiting for outputs to become visible"
         );
 
-        // Poll replay operation state for terminal status. The source
-        // processes the parse, publishes event intents through NATS → event_engine,
-        // and the operation state machine transitions to Completed/Failed/Cancelled.
-        let replay = self.replay.clone();
-        loop {
-            tokio::time::sleep(Duration::from_millis(250)).await;
-
-            let operation = replay.load_operation(operation_id).await.map_err(|err| {
-                SinexError::service(format!(
-                    "Failed to load replay operation {operation_id} during source parse"
-                ))
-                .with_source(err)
-            })?;
-
-            match operation.state {
-                ReplayState::Completed => {
-                    info!(
-                        operation_id = %operation_id,
-                        "Staged-source replay completed"
-                    );
-                    let count = 0u64; // output_event_count removed in #1160
-                    return Ok(count);
-                }
-                ReplayState::Failed => {
-                    return Err(SinexError::processing(format!(
-                        "Staged-source replay failed for operation {operation_id}: {}",
-                        operation
-                            .error_details
-                            .unwrap_or_else(|| "unknown error".to_string())
+        match self
+            .wait_for_staged_replay_outputs_or_cancel(pool, operation_id, expected_replay_outputs)
+            .await
+        {
+            StagedReplayWait::Visible => {
+                if let Err(link_error) = self
+                    .record_event_replacements(pool, operation_id, cascade_ids)
+                    .await
+                {
+                    return Err(SinexError::service(format!(
+                        "Staged-source replay parse succeeded and outputs became visible, but linking replacement events failed: {link_error}"
                     )));
                 }
-                ReplayState::Cancelled => {
-                    return Err(SinexError::cancelled(format!(
-                        "Staged-source replay cancelled for operation {operation_id}",
-                    )));
-                }
-                _ => {
-                    debug!(
-                        operation_id = %operation_id,
-                        state = ?operation.state,
-                        "Waiting for staged-source replay to complete"
-                    );
-                }
+                Ok(u64::try_from(ack.event_count.unwrap_or(0)).unwrap_or(u64::MAX))
             }
+            StagedReplayWait::Cancelled => {
+                self.compensate_staged_replay_failure(
+                    pool,
+                    cascade_ids,
+                    scope_metadata,
+                    operation_id,
+                )
+                .await;
+                Err(SinexError::cancelled(format!(
+                    "Staged-source replay {operation_id} was cancelled while waiting for parsed outputs to become visible"
+                )))
+            }
+            StagedReplayWait::Error(wait_error) => {
+                self.compensate_staged_replay_failure(
+                    pool,
+                    cascade_ids,
+                    scope_metadata,
+                    operation_id,
+                )
+                .await;
+                Err(SinexError::service(format!(
+                    "Staged-source replay for operation {operation_id} failed waiting for parsed outputs to become visible: {wait_error}"
+                )))
+            }
+        }
+    }
+
+    /// Bounded, cancel-aware wait for a staged-source replay's parsed
+    /// outputs to become query-visible.
+    ///
+    /// Unlike [`super::collect::ReplayExecutionEngine::wait_for_replay_outputs_visible`]
+    /// (used by the non-staged scan path, which has its own independent
+    /// progress-subscription loop to observe operator cancellation), this is
+    /// the *only* place a staged-source replay can ever notice a Cancel
+    /// request — the parse itself is a single synchronous request/reply with
+    /// nothing left in flight to interrupt once accepted.
+    async fn wait_for_staged_replay_outputs_or_cancel(
+        &self,
+        pool: &sqlx::PgPool,
+        operation_id: Uuid,
+        expected: &ExpectedReplayOutputs,
+    ) -> StagedReplayWait {
+        let timeout = self.scan_completion_timeout.min(REPLAY_OUTPUT_VISIBILITY_TIMEOUT);
+        let replay = self.replay.clone();
+
+        let wait_result = tokio::time::timeout(timeout, async {
+            loop {
+                let visible_count = match self
+                    .count_visible_replay_outputs(pool, operation_id, expected)
+                    .await
+                {
+                    Ok(count) => count,
+                    Err(error) => return StagedReplayWait::Error(error.to_string()),
+                };
+                if visible_count >= expected.minimum_visible_count as i64 {
+                    return StagedReplayWait::Visible;
+                }
+
+                match replay.load_operation(operation_id).await {
+                    Ok(operation)
+                        if matches!(
+                            operation.state,
+                            ReplayState::Cancelling | ReplayState::Cancelled
+                        ) =>
+                    {
+                        return StagedReplayWait::Cancelled;
+                    }
+                    Ok(_) => {}
+                    Err(error) => {
+                        return StagedReplayWait::Error(format!(
+                            "failed to reload replay operation while waiting for visibility: {error}"
+                        ));
+                    }
+                }
+
+                tokio::time::sleep(Self::EXECUTION_STATE_POLL_INTERVAL).await;
+            }
+        })
+        .await;
+
+        match wait_result {
+            Ok(outcome) => outcome,
+            Err(_timeout_elapsed) => StagedReplayWait::Error(format!(
+                "parsed outputs were not query-visible within {timeout:?}"
+            )),
+        }
+    }
+
+    /// Best-effort compensation for a staged-source replay that failed or
+    /// was cancelled after the parse was accepted (sinex-xixl): restore the
+    /// archived cascade, link whatever replacements did become visible
+    /// before giving up, and publish compensating scope invalidations so
+    /// automata reconcile against the resulting mixed/restored state.
+    /// Failures here are logged, not propagated — the caller already has a
+    /// real error to report and swallowing a secondary compensation failure
+    /// into that error would obscure the original cause.
+    async fn compensate_staged_replay_failure(
+        &self,
+        pool: &sqlx::PgPool,
+        cascade_ids: &[Uuid],
+        scope_metadata: &[ScopeInvalidationBucket],
+        operation_id: Uuid,
+    ) {
+        if let Err(link_error) = self
+            .record_event_replacements(pool, operation_id, cascade_ids)
+            .await
+        {
+            warn!(
+                operation_id = %operation_id,
+                error = %link_error,
+                "Failed to link partial replacement events during staged-replay failure compensation"
+            );
+        }
+        if let Err(restore_error) = self.restore_cascade(pool, cascade_ids, operation_id).await {
+            warn!(
+                operation_id = %operation_id,
+                error = %restore_error,
+                "Failed to restore archived cascade during staged-replay failure compensation"
+            );
+        }
+        if let Err(invalidation_error) = self
+            .publish_scope_invalidations(scope_metadata, operation_id)
+            .await
+        {
+            warn!(
+                operation_id = %operation_id,
+                error = %invalidation_error,
+                "Failed to publish compensating scope invalidations during staged-replay failure compensation"
+            );
         }
     }
 }

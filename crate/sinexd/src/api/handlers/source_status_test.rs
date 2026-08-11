@@ -183,6 +183,182 @@ async fn source_coverage_view_marks_ready_when_catalog_material_and_events_exist
     Ok(())
 }
 
+// ---------------------------------------------------------------------------
+// sinex-hdnv finding #1 (CRITICAL, still open): readiness/continuity gap
+// detection is lifetime-count>0, never time-bounded. `source_coverage_view`
+// takes a `now: Timestamp` parameter, but tracing every use of `now` in the
+// function shows it is consulted ONLY inside `classify_emit_stall` (which
+// requires a live `runtime_observations` entry to exist at all) -- it is
+// NEVER compared against `last_event_at`/`last_material_at` in the
+// readiness/continuity/gap computation. A source with real historical
+// material and events from months/years ago, and zero current runtime
+// observation, is indistinguishable from a healthy currently-active source.
+//
+// This test is a CHARACTERIZATION test: it pins the CURRENT (buggy) behavior
+// so the bug is documented and won't regress silently, and so a future fix
+// has a concrete assertion to flip. It is not asserting desired behavior.
+// ---------------------------------------------------------------------------
+
+#[sinex_test]
+async fn source_coverage_view_reports_ready_for_stale_year_old_events_bug_pinned()
+-> xtask::sandbox::TestResult<()> {
+    let long_ago = OffsetDateTime::now_utc() - time::Duration::days(400);
+    let mut events = HashMap::new();
+    events.insert(
+        ("fixture".to_string(), "fixture.event".to_string()),
+        SourceEventAggregateRow {
+            source: "fixture".to_string(),
+            event_type: "fixture.event".to_string(),
+            event_count: 3,
+            last_event_at: Some(long_ago),
+        },
+    );
+    let mut materials = HashMap::new();
+    materials.insert(
+        "fixture.source".to_string(),
+        SourceMaterialAggregateRow {
+            source_identifier: "fixture.source".to_string(),
+            material_count: 2,
+            last_material_at: Some(long_ago),
+        },
+    );
+
+    let view = source_coverage_view(
+        &CONTRACT,
+        &[&BINDING],
+        &events,
+        &materials,
+        &HashMap::new(), // no runtime observation -- source is not currently running
+        &HashMap::new(),
+        &HashMap::new(),
+        &HashMap::new(),
+        Timestamp::now(),
+    );
+
+    // BUG (sinex-hdnv #1): a source dead for 400+ days, with no current
+    // runtime observation, is reported identically to a healthy active one --
+    // Ready/Active with zero gaps. Once #1 is fixed (e.g. by comparing
+    // last_event_at/last_material_at against `now` with a staleness
+    // threshold), this test's assertions should be INVERTED to expect
+    // Stale/Gapped with a real gap entry, not Ready/Active/empty-gaps.
+    assert_eq!(
+        view.readiness,
+        SourceCoverageReadiness::Ready,
+        "documents sinex-hdnv #1: stale-but-historically-present source reports Ready"
+    );
+    assert_eq!(
+        view.continuity,
+        SourceCoverageContinuity::Active,
+        "documents sinex-hdnv #1: stale-but-historically-present source reports Active"
+    );
+    assert!(
+        view.gaps.is_empty(),
+        "documents sinex-hdnv #1: no trailing-gap is raised for a 400-day-dead source"
+    );
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// The remaining sinex-hdnv findings (#3, #4, #5, #6, #7) are drafted as
+// scoped-but-not-implemented test shapes below, per the same
+// characterization-test approach as #1 above. Each names the exact function
+// to target and what fixture setup would prove/disprove the finding. Left
+// as #[ignore] rather than deleted, so a future pass can un-ignore and fill
+// in the body without re-deriving the investigation from scratch.
+// ---------------------------------------------------------------------------
+
+#[sinex_test]
+#[ignore = "sinex-hdnv #3: draft shape, not implemented -- see body for what's needed"]
+async fn gap_explain_false_all_clear_for_zero_material_family() -> xtask::sandbox::TestResult<()> {
+    // Target: sinex_source_gap_explain (crate/sinexd/src/api/handlers/sources.rs
+    // per the bead's citation -- confirm exact fn name/location first, this
+    // file only covers source_status.rs's own surface).
+    // Setup needed: a source FAMILY (per split_part(source,'.',1), e.g.
+    // "activitywatch") with literally zero materials and zero events -- no
+    // row at all in either aggregate, not just an old one.
+    // Assertion to characterize the bug: the explain response claims
+    // "coverage was present (no gap to explain)" for that family, i.e. total
+    // absence produces the strongest possible false all-clear.
+    // Also worth a second case: querying a namespace that's never existed
+    // (e.g. "desktop.activitywatch" vs the family-derived "activitywatch")
+    // per the bead's note that families are derived from split_part rather
+    // than contract namespaces.
+    unimplemented!("draft shape only -- see comment above for required setup")
+}
+
+#[sinex_test]
+#[ignore = "sinex-hdnv #4: draft shape, not implemented -- see body for what's needed"]
+async fn trailing_gap_after_last_material_chunk_is_not_detected() -> xtask::sandbox::TestResult<()>
+{
+    // Target: continuity.rs's gap/seam detection (build_report /
+    // classify_seam per CLAUDE.md's continuity.rs summary -- this file does
+    // not cover continuity.rs directly, a sibling continuity_test.rs would
+    // need to be created, none currently exists in this crate).
+    // Setup needed: two or more historical material chunks with a real
+    // internal seam BETWEEN them (already covered by existing gap logic per
+    // the bead), PLUS the last chunk's end-time set far in the past relative
+    // to "now" with nothing after it.
+    // Assertion to characterize the bug: gaps list only contains the
+    // between-chunk seam, nothing flags the trailing period from the last
+    // chunk's end to "now" as a gap, even though the source has clearly been
+    // silent for a long time since.
+    unimplemented!("draft shape only -- see comment above for required setup")
+}
+
+#[sinex_test]
+#[ignore = "sinex-hdnv #5: draft shape, not implemented -- see body for what's needed"]
+async fn periodic_dump_classification_explains_away_real_outage() -> xtask::sandbox::TestResult<()>
+{
+    // Target: continuity.rs's classify_seam/attribute_gap (per bead citation).
+    // Setup needed: a source family name starting with "browser" or
+    // "integration" (auto-classified PeriodicDump per the bead) with a gap
+    // duration far exceeding any plausible periodic-dump cadence (e.g. a
+    // month-long silence for a source that in reality dumps daily).
+    // Assertion to characterize the bug: the gap is attributed
+    // ExpectedDownTime / "matches expected periodic-dump cadence" without
+    // any real cadence having been computed from the source's own history --
+    // i.e. the classification is name-pattern-only, not evidence-based.
+    unimplemented!("draft shape only -- see comment above for required setup")
+}
+
+#[sinex_test]
+#[ignore = "sinex-hdnv #6: draft shape, not implemented -- see body for what's needed"]
+async fn continuous_capturer_reads_available_for_a_week_after_death() -> xtask::sandbox::TestResult<()>
+{
+    // Target: source_materials.rs's readiness computation (the "only real
+    // recency check in the whole surface", per the bead -- a 7-day default
+    // staleness window). Two related bugs to characterize in one test:
+    // (a) a continuous capturer (runtime_shape = Continuous) that died N
+    //     days ago, N < 7, still reads Available -- the 7-day window is too
+    //     coarse for a source whose contract implies near-continuous output.
+    // (b) a source that has NEVER staged any material produces NO row at
+    //     all in the readiness surface (invisible), rather than an explicit
+    //     "never captured" / broken signal.
+    // Setup needed: source_materials repository fixtures (this file's
+    // existing helpers operate on in-memory aggregates, not the DB-backed
+    // readiness path -- may need a #[sinex_test] with a real DB fixture via
+    // ctx.publish(...), per this crate's test conventions, rather than the
+    // pure-function style used elsewhere in this file).
+    unimplemented!("draft shape only -- see comment above for required setup")
+}
+
+#[sinex_test]
+#[ignore = "sinex-hdnv #7: draft shape, not implemented -- see body for what's needed"]
+async fn live_status_has_no_recency_bound_after_single_emit() -> xtask::sandbox::TestResult<()> {
+    // Target: wherever "live" status is computed for a runtime module (the
+    // bead says "a run that emitted exactly once and then died reads
+    // live=true forever" -- likely in this file's runtime_observations
+    // handling, or list_live_runtime_presence in sinex-db's state.rs per
+    // CLAUDE.md's summary of that file).
+    // Setup needed: a SourceStatus/runtime observation row with exactly one
+    // historical emit and no subsequent heartbeat, evaluated against a "now"
+    // far past any reasonable liveness window.
+    // Assertion to characterize the bug: the computed live/status field
+    // still reports live=true (or equivalent "currently active") with no
+    // time-based demotion.
+    unimplemented!("draft shape only -- see comment above for required setup")
+}
+
 #[sinex_test]
 async fn material_aggregates_roll_up_material_scoped_source_identifiers() -> xtask::TestResult<()> {
     let older = OffsetDateTime::UNIX_EPOCH;

@@ -289,13 +289,14 @@ pub(super) async fn execute_media_operation(
     actor: &str,
     scope: &mut serde_json::Map<String, serde_json::Value>,
     preview_summary: &mut serde_json::Value,
+    is_admin: bool,
 ) -> Result<Option<MediaWorkerOutputResult>> {
     match spec.action {
         "enable_session" | "disable_session" | "pause" | "resume" => {
             execute_session_control(pool, spec, mode_id, actor, scope, preview_summary).await
         }
         "inspect" => execute_session_inspect(pool, spec, mode_id, scope, preview_summary).await,
-        _ => execute_worker_output(pool, spec, mode_id, scope, preview_summary).await,
+        _ => execute_worker_output(pool, spec, mode_id, scope, preview_summary, is_admin).await,
     }
 }
 
@@ -305,8 +306,10 @@ pub(super) async fn execute_worker_output(
     mode_id: &str,
     scope: &mut serde_json::Map<String, serde_json::Value>,
     preview_summary: &mut serde_json::Value,
+    is_admin: bool,
 ) -> Result<Option<MediaWorkerOutputResult>> {
-    let Some(worker_output) = resolve_media_worker_output(scope, preview_summary).await? else {
+    let Some(worker_output) = resolve_media_worker_output(scope, preview_summary, is_admin).await?
+    else {
         return Ok(None);
     };
     let package = MediaCapturePackage::from_source_id(spec.source_id).ok_or_else(|| {
@@ -388,18 +391,17 @@ pub(super) async fn execute_worker_output(
             .with_std_error(&error)
             .with_operation("ops.start")
     })?;
-    sqlx::query!(
-        "UPDATE raw.source_material_registry SET total_bytes = $1 WHERE id = $2",
-        total_bytes,
-        material_record.id
-    )
-    .execute(pool)
-    .await
-    .map_err(|error| {
-        SinexError::database("Failed to persist media worker output material size")
-            .with_context("material_id", material_record.id.to_string())
-            .with_std_error(&error)
-    })?;
+    // finalize_in_flight, not a bare total_bytes-only UPDATE (sinex-k22c): the
+    // raw UPDATE left the material permanently at status='sensing' with no
+    // Completed transition/end_time.
+    pool.source_materials()
+        .finalize_in_flight(material_record.id.into(), None, None, None, Some(total_bytes))
+        .await
+        .map_err(|error| {
+            SinexError::database("Failed to finalize media worker output material")
+                .with_context("material_id", material_record.id.to_string())
+                .with_std_error(&error)
+        })?;
     material_record.total_bytes = Some(total_bytes);
 
     let dispatch = crate::sources::dispatch::default_parser_dispatch();
@@ -486,6 +488,7 @@ pub(super) async fn execute_worker_output(
 async fn resolve_media_worker_output(
     scope: &mut serde_json::Map<String, serde_json::Value>,
     preview_summary: &mut serde_json::Value,
+    is_admin: bool,
 ) -> Result<Option<MediaWorkerCommandOutcome>> {
     let has_direct_output = scope.contains_key(MEDIA_WORKER_OUTPUT_KEY)
         || scope.contains_key(MEDIA_WORKER_OUTPUT_PATH_KEY);
@@ -493,6 +496,21 @@ async fn resolve_media_worker_output(
     if has_direct_output && has_command {
         return Err(SinexError::validation(
             "media operation accepts either worker_output/worker_output_path or worker_command, not both",
+        )
+        .with_operation("ops.start"));
+    }
+
+    // sinex-pzo9: both branches below let the caller cause sinexd to execute
+    // an arbitrary local program (worker_command) or read an arbitrary local
+    // file (worker_output_path) as the sinexd process user. OPS_START_METHOD
+    // is RpcRole::Write, a lower tier than Admin -- without this check a
+    // :write-scoped token gets local code execution / arbitrary file read,
+    // a privilege equivalent to every OTHER consequential mutation on this
+    // surface (ops.cancel, sources.archive, lifecycle.*), all of which
+    // already require Admin.
+    if (has_command || has_direct_output) && !is_admin {
+        return Err(SinexError::permission_denied(
+            "media worker command/output execution requires Admin scope",
         )
         .with_operation("ops.start"));
     }
@@ -761,6 +779,12 @@ async fn read_media_worker_output(
         .get(MEDIA_WORKER_OUTPUT_PATH_KEY)
         .and_then(serde_json::Value::as_str)
     {
+        // sinex-pzo9: defense-in-depth path validation (null bytes,
+        // backslashes, `..` traversal). The primary closure for this vector
+        // is the Admin-scope gate in resolve_media_worker_output -- this call
+        // does not add root-containment (no fixed "worker output directory"
+        // invariant exists to check against), just basic shape hygiene.
+        sinex_primitives::validation::validate_path(path)?;
         let bytes = tokio::fs::read(path).await.map_err(|error| {
             SinexError::io("Failed to read media worker output file")
                 .with_context(MEDIA_WORKER_OUTPUT_PATH_KEY, path)

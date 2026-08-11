@@ -82,6 +82,10 @@ const EVENTS_REQUIRED_INDEXES: &[&str] = &[
     // hypertable: none of the plain-column `source` indexes above match an
     // expression predicate (sinex-audit-continuity-fullscan).
     "ix_events_source_family",
+    // Full-text-search expression index (sinex-1l52). Without it, every
+    // PayloadFilter::TextSearch / relevance-ranking / hybrid_search FTS query
+    // is a full per-row tsvector-build sequential scan on the hypertable.
+    "ix_events_payload_text_fts",
 ];
 const REFLECTION_EVENTS_REQUIRED_TRIGGERS: &[&str] = &[
     "trg_events_no_update",
@@ -937,6 +941,7 @@ async fn create_indexes(pool: &PgPool) -> Result<(), ApplyError> {
     index_sql.extend(render_indexes(Events::create_indexes()));
     index_sql.extend(Events::create_gin_indexes_sql());
     index_sql.push(Events::create_claim_adjudication_index_sql());
+    index_sql.push(Events::create_text_search_index_sql());
     // Derivation control plane (sinex-0vx.4 / W1): reflection.events needs the
     // same two indexes as core.events. reflection.events is not in the
     // ConvergibleTable/MirrorSpec engine (it converges via the hand-rolled
@@ -950,6 +955,13 @@ async fn create_indexes(pool: &PgPool) -> Result<(), ApplyError> {
     );
     index_sql.push(
         "CREATE INDEX IF NOT EXISTS ix_events_claim_adjudication ON reflection.events ((claim_support->>'adjudication')) WHERE claim_support IS NOT NULL"
+            .to_string(),
+    );
+    // sinex-1l52: reflection.events needs the same text-search index as
+    // core.events, for the same LIKE-doesn't-inherit-post-creation-indexes
+    // reason as the two indexes above.
+    index_sql.push(
+        "CREATE INDEX IF NOT EXISTS ix_events_payload_text_fts ON reflection.events USING GIN (to_tsvector('simple', payload::text))"
             .to_string(),
     );
     index_sql.extend(ArchivedEvents::create_indexes_sql());
@@ -2413,7 +2425,8 @@ BEGIN
           -- (id) is occurrence-blind, new id != old id) would leave two live
           -- interpretations for one occurrence, violating the single-live
           -- invariant. Derived rows (source_material_id IS NULL) have no
-          -- material occurrence and stay governed by ON CONFLICT (id).
+          -- material occurrence and are covered by the parent-liveness
+          -- guard below instead.
           AND NOT (
               ae.source_material_id IS NOT NULL
               AND EXISTS (
@@ -2427,6 +2440,56 @@ BEGIN
         RETURNING id
     )
     INSERT INTO _restored_ids SELECT id FROM inserted;
+
+    -- Parent-liveness safety (sinex-79is): never leave restored a derived
+    -- event whose parent(s) are not ALL live in core.events. A material
+    -- row's own occurrence-safety check above can block a material restore
+    -- (a fresher re-emitted material now occupies the occurrence); if a
+    -- derived child of the un-restored material got restored anyway, it
+    -- would carry a stale equivalence_key pointing at nothing live,
+    -- permanently winning the OccurrenceDuplicate admission check over the
+    -- automaton's correct fresh recomputation from the new material. Only
+    -- derived rows are subject to this check (source_material_id IS NULL);
+    -- material rows pass through unaffected.
+    --
+    -- Deliberately a SEPARATE statement, evaluated AFTER the insert above
+    -- commits within this transaction: a single self-referential INSERT...
+    -- SELECT checks its WHERE clause against the table's pre-statement
+    -- snapshot, so two rows restored in the SAME call (e.g. a material and
+    -- its derived child) would see each other as not-yet-live even though
+    -- both are legitimately being restored together -- checking here, after
+    -- the whole batch has landed, correctly treats same-batch siblings as
+    -- live.
+    DROP TABLE IF EXISTS _parent_dead_ids;
+    CREATE TEMP TABLE _parent_dead_ids (id UUID PRIMARY KEY) ON COMMIT DROP;
+
+    INSERT INTO _parent_dead_ids
+    SELECT r.id
+    FROM _restored_ids r
+    JOIN core.events e ON e.id = r.id
+    WHERE e.source_event_ids IS NOT NULL
+      AND EXISTS (
+          SELECT 1
+          FROM unnest(e.source_event_ids) AS parent_id
+          WHERE NOT EXISTS (
+              SELECT 1 FROM core.events le2 WHERE le2.id = parent_id
+          )
+      );
+
+    -- Pre-empt the archive-before-delete trigger's raw INSERT (no ON
+    -- CONFLICT) from colliding with the original archived row for any
+    -- parent-dead id, which is still present -- it was never deleted
+    -- since these ids were excluded from the archive-cleanup step below.
+    DELETE FROM audit.archived_events
+    WHERE id IN (SELECT id FROM _parent_dead_ids);
+
+    DELETE FROM core.events
+    WHERE id IN (SELECT id FROM _parent_dead_ids);
+
+    DELETE FROM _restored_ids
+    WHERE id IN (SELECT id FROM _parent_dead_ids);
+
+    DROP TABLE _parent_dead_ids;
 
     SELECT count(*)::bigint INTO v_restored_count FROM _restored_ids;
 

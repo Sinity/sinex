@@ -2778,16 +2778,24 @@ in
           # ownership (service-account homes, postgres data dirs, NATS state)
           # can coexist without a single uid dominating the namespace.
           { path = stateRoot; mode = "0755"; user = "root"; group = "root"; }
-          { path = runtimeDir; mode = "0755"; }
-          { path = spoolBase; mode = "0755"; }
-          { path = runtimeSpool; mode = "0755"; }
-          { path = ingestSpool; mode = "0755"; }
+          # sinex-vyi3: these hold staged ingest materials (raw captured
+          # content, pre-redaction) and runtime/log state -- tightened from
+          # 0755 to 0750 (owner+group only, matching blobDir's already-correct
+          # precedent below) so they are not world-readable. UMask=0077 on the
+          # main sinexd unit (see mkBaseServiceConfig) provides the same
+          # protection for files created directly under these directories;
+          # this rule protects the directories themselves and any file that
+          # predates or bypasses that UMask.
+          { path = runtimeDir; mode = "0750"; }
+          { path = spoolBase; mode = "0750"; }
+          { path = runtimeSpool; mode = "0750"; }
+          { path = ingestSpool; mode = "0750"; }
           # event_engine writes its working directory under ${stateRoot}/event_engine/work
           # (see SINEX_EVENT_ENGINE_WORK_DIR). Pre-create so event_engine does not need
           # write access to stateRoot itself.
           { path = "${stateRoot}/event_engine"; mode = "0750"; }
           { path = "${stateRoot}/event_engine/work"; mode = "0750"; }
-          { path = logDir; mode = "0755"; }
+          { path = logDir; mode = "0750"; }
         ]
         ++ optionals (cfg.storage.blob.enable) [{ path = blobDir; mode = "0750"; }]
         ++ optionals (cfg.core.enable && cfg.core.api.autoGenerateTls) [{ path = "${stateRoot}/tls"; mode = "0750"; }]

@@ -64,6 +64,51 @@ fn apply_mask(matched: &str, mask_ch: char, keep_prefix: usize, keep_suffix: usi
     result
 }
 
+/// sinex-24es: find case-insensitive match spans of `original` (whose
+/// lowercased form is `lower`) in `input`, WITHOUT ever slicing `input` by a
+/// byte offset computed against a separately lowercased copy.
+/// `str::to_lowercase()` is not byte-length-preserving for all Unicode (e.g.
+/// U+0130 'İ' lowercases to a 3-byte "i" + combining-dot-above sequence, vs
+/// its own 2-byte encoding) -- reusing offsets from `input.to_lowercase()`
+/// against `input` itself can land mid-codepoint (a panic) or silently
+/// extract/redact the wrong byte span (the actual secret survives).
+///
+/// This only ever slices `input` at char-boundary positions belonging to
+/// `input` itself: it slides a window of `original.chars().count()` chars
+/// across `input`'s own char boundaries and compares `window.to_lowercase()
+/// == lower` as whole strings (matching how `lower` was originally derived).
+/// Fixed-window-by-char-count does not perfectly recover every match whose
+/// case-folding changes the char count between the window and the needle
+/// (a real but narrow residual gap, documented rather than silently
+/// mismatched) -- it never panics and never returns a wrong span; a window
+/// that doesn't line up simply isn't reported as a match.
+fn find_case_insensitive_spans(input: &str, original: &str, lower: &str) -> Vec<(usize, usize)> {
+    let needle_char_count = original.chars().count();
+    if needle_char_count == 0 {
+        return Vec::new();
+    }
+
+    let mut boundaries: Vec<usize> = input.char_indices().map(|(i, _)| i).collect();
+    boundaries.push(input.len());
+    let total_chars = boundaries.len().saturating_sub(1);
+
+    let mut spans = Vec::new();
+    let mut i = 0;
+    while i + needle_char_count <= total_chars {
+        let start = boundaries[i];
+        let end = boundaries[i + needle_char_count];
+        // Always a valid char-boundary slice of `input`, by construction.
+        let window = &input[start..end];
+        if window.to_lowercase() == lower {
+            spans.push((start, end));
+            i += needle_char_count; // non-overlapping matches, like match_indices
+        } else {
+            i += 1;
+        }
+    }
+    spans
+}
+
 /// Recursively compile a `Matcher` into a `CompiledMatcher`.
 fn compile_matcher(matcher: &Matcher, _rule_name: &str) -> Result<CompiledMatcher, regex::Error> {
     match matcher {
@@ -428,13 +473,22 @@ impl PrivacyEngine {
                 if any_changed { Some(current) } else { None }
             }
             CompiledMatcher::Any(sub_matchers) => {
-                // Apply the first sub-matcher that produces a replacement.
+                // sinex-24es: apply EVERY matching sub-matcher, not just the
+                // first. `Any` compiles DB dictionary rules (event_engine/
+                // policy.rs) -- a dictionary of N terms must redact every
+                // term present, not just whichever term happens to be first
+                // in the list. Chain replacements sequentially, same pattern
+                // as `All` above, so a later sub-matcher still sees (and can
+                // redact) content the earlier ones didn't touch.
+                let mut current = input.to_string();
+                let mut any_changed = false;
                 for sub in sub_matchers {
-                    if let Some(replaced) = self.apply_matcher(sub, strategy, rule_name, input) {
-                        return Some(replaced);
+                    if let Some(replaced) = self.apply_matcher(sub, strategy, rule_name, &current) {
+                        current = replaced;
+                        any_changed = true;
                     }
                 }
-                None
+                if any_changed { Some(current) } else { None }
             }
         }
     }
@@ -553,16 +607,31 @@ impl PrivacyEngine {
             let replacement = self.apply_strategy_to_match(original, strategy, rule_name);
             Some(input.replace(original, &replacement))
         } else {
-            // Simple approach: find case-insensitive matches
-            let input_lower = input.to_lowercase();
+            // sinex-24es: find case-insensitive match spans WITHOUT indexing
+            // `input` using byte offsets computed against a separately
+            // lowercased copy. `str::to_lowercase()` is not byte-length-
+            // preserving for all Unicode (e.g. U+0130 'İ', 2 bytes, lowercases
+            // to "i" + combining-dot-above, 3 bytes) -- reusing `input_lower`'s
+            // offsets against `input` can land mid-codepoint (panic:
+            // "byte index N is not a char boundary") or silently redact the
+            // wrong byte span (data still leaks). `find_case_insensitive_spans`
+            // only ever slices `input` at its own real char boundaries.
+            let spans = find_case_insensitive_spans(input, original, lower);
+            if spans.is_empty() {
+                // `has_match` above (input.to_lowercase().contains(lower)) can
+                // be true on a substring match that doesn't align with any
+                // char-count-preserving window here -- treat as no textual
+                // match found rather than fabricating a wrong span.
+                return None;
+            }
             let mut result = String::with_capacity(input.len());
             let mut last_end = 0;
-            for (pos, _) in input_lower.match_indices(lower) {
-                result.push_str(&input[last_end..pos]);
-                let matched = &input[pos..pos + lower.len()];
+            for (start, end) in spans {
+                result.push_str(&input[last_end..start]);
+                let matched = &input[start..end];
                 let replacement = self.apply_strategy_to_match(matched, strategy, rule_name);
                 result.push_str(&replacement);
-                last_end = pos + lower.len();
+                last_end = end;
             }
             result.push_str(&input[last_end..]);
             Some(result)

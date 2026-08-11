@@ -330,6 +330,7 @@ impl MaterialAssembler {
             ))
             .with_source(e));
         }
+        io::restrict_permissions(&state_root, io::ASSEMBLER_DIR_MODE);
 
         let js = jetstream::new(nats_client.clone());
         let env = sinex_primitives::environment();
@@ -691,6 +692,7 @@ impl MaterialAssembler {
         fs::create_dir_all(&state_dir)
             .await
             .map_err(|e| SinexError::io("Failed to create assembler state dir").with_source(e))?;
+        io::restrict_permissions(&state_dir, io::ASSEMBLER_DIR_MODE);
 
         let temp_path = state_dir.join(TEMP_FILE_NAME);
         // Important: placeholder creation can race across async tasks (e.g. slices + end arriving
@@ -702,6 +704,7 @@ impl MaterialAssembler {
             .open(&temp_path)
             .await
             .map_err(|e| SinexError::io("Failed to open temp file").with_source(e))?;
+        io::restrict_permissions(&temp_path, io::ASSEMBLER_FILE_MODE);
 
         Ok(AssemblerState {
             material_id,

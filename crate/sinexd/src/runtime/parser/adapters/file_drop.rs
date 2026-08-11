@@ -846,6 +846,7 @@ impl InputShapeAdapterExt for FileContentDropAdapter {
             .open(material_id, &config.file_drop, cursor)
             .await?;
         let max_capture_bytes = config.max_capture_bytes;
+        let watch_paths = config.file_drop.watch_paths.clone();
         let mut materialization_cache = FileContentMaterializationCache::default();
         let stream = async_stream::stream! {
             while let Some(record_result) = stream.next().await {
@@ -856,6 +857,7 @@ impl InputShapeAdapterExt for FileContentDropAdapter {
                             Arc::clone(&acquisition),
                             max_capture_bytes,
                             &mut materialization_cache,
+                            &watch_paths,
                         ).await;
                     }
                     Err(error) => yield Err(error),
@@ -1012,10 +1014,45 @@ async fn materialize_file_content_record(
     record: SourceRecord,
     acquisition: Arc<AcquisitionManager>,
     max_capture_bytes: u64,
+    watch_paths: &[Utf8PathBuf],
 ) -> ParserResult<SourceRecord> {
     let mut cache = FileContentMaterializationCache::default();
-    materialize_file_content_record_with_cache(record, acquisition, max_capture_bytes, &mut cache)
-        .await
+    materialize_file_content_record_with_cache(
+        record,
+        acquisition,
+        max_capture_bytes,
+        &mut cache,
+        watch_paths,
+    )
+    .await
+}
+
+/// Resolve `path` through the filesystem (following any symlinks) and confirm
+/// the resulting canonical path is still contained within at least one of the
+/// configured watch roots. This is the containment check content
+/// materialization depends on: `tokio::fs::metadata`/`File::open` transparently
+/// follow symlinks, so without this a symlink placed inside a watched
+/// directory can point anywhere the sinexd process user can read (e.g.
+/// `~/.ssh/id_rsa`) and have its target's bytes durably staged as if it were
+/// ordinary watched content (sinex-kv6l).
+///
+/// Returns `None` if the path cannot be canonicalized (e.g. it no longer
+/// exists) or does not resolve inside any watch root -- both cases should be
+/// treated as "do not materialize this content."
+async fn canonical_path_within_watch_roots(
+    path: &Utf8PathBuf,
+    watch_paths: &[Utf8PathBuf],
+) -> Option<PathBuf> {
+    let canonical = tokio::fs::canonicalize(path.as_std_path()).await.ok()?;
+    for root in watch_paths {
+        let Ok(canonical_root) = tokio::fs::canonicalize(root.as_std_path()).await else {
+            continue;
+        };
+        if canonical.starts_with(&canonical_root) {
+            return Some(canonical);
+        }
+    }
+    None
 }
 
 #[cfg(feature = "messaging")]
@@ -1065,6 +1102,7 @@ async fn materialize_file_content_record_with_cache(
     acquisition: Arc<AcquisitionManager>,
     max_capture_bytes: u64,
     cache: &mut FileContentMaterializationCache,
+    watch_paths: &[Utf8PathBuf],
 ) -> ParserResult<SourceRecord> {
     let Ok(metadata) = FileDropRecordMetadata::from_value(&record.metadata) else {
         return Ok(record);
@@ -1079,6 +1117,22 @@ async fn materialize_file_content_record_with_cache(
     let Some(path) = record.logical_path.clone() else {
         return Ok(record);
     };
+
+    // sinex-kv6l: refuse to read through a symlink that escapes the watched
+    // roots. Must happen BEFORE any metadata/open call on `path`, since those
+    // calls follow symlinks transparently.
+    if canonical_path_within_watch_roots(&path, watch_paths)
+        .await
+        .is_none()
+    {
+        return Ok(SourceRecord {
+            metadata: metadata
+                .with_skipped_content(0, "outside-watch-root")
+                .into_json(),
+            ..record
+        });
+    }
+
     let Ok(file_metadata) = tokio::fs::metadata(path.as_std_path()).await else {
         return Ok(record);
     };

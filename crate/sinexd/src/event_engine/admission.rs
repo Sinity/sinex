@@ -59,6 +59,17 @@ pub struct AdmittedEvent {
     pub event: Event<JsonValue>,
     pub event_id: Uuid,
     pub metadata: Option<CandidateEventMetadata>,
+    /// sinex-w1w7 / sinex-tgjw: the payload's content hash AS IT ARRIVED AT
+    /// ADMISSION -- computed once, at construction, before the redact_batch
+    /// chokepoint or NUL-stripping can mutate `event.payload`. Persisted
+    /// verbatim by `admitted_to_stream_rows` rather than recomputed from the
+    /// (possibly-since-mutated) payload, so it stays comparable against
+    /// `classify_live_match`'s candidate-side hash, which is computed at the
+    /// same pre-redaction point in the pipeline (`prepare_events`, before
+    /// `persist_batch_optimized` ever runs). Do not recompute this from
+    /// `event.payload` downstream of construction -- that reintroduces the
+    /// exact divergence this field exists to prevent.
+    pub content_hash: [u8; 32],
 }
 
 impl AdmittedEvent {
@@ -700,10 +711,13 @@ impl AdmissionService {
         // bug, so reject it.
         if event.ts_orig.is_none() && !matches!(event.provenance, Provenance::Material { .. }) {
             warn!(event_id = ?event.id, "Event validation failed: missing ts_orig on derived event");
-            return Ok(AdmissionDecision::Rejected(AdmissionRejection::new(
-                AdmissionRejectionKind::MissingTimestamp,
-                "Validation failed: missing ts_orig",
-            )));
+            return Ok(AdmissionDecision::Rejected(
+                AdmissionRejection::new(
+                    AdmissionRejectionKind::MissingTimestamp,
+                    "Validation failed: missing ts_orig",
+                )
+                .with_event_id(event.id.map(|id| id.to_uuid()).unwrap_or_default()),
+            ));
         }
 
         if let Some(ts_orig) = event.ts_orig {
@@ -720,13 +734,16 @@ impl AdmissionService {
                     lower_bound = %self.ts_orig_lower_bound,
                     "Event ts_orig predates lower bound"
                 );
-                return Ok(AdmissionDecision::Rejected(AdmissionRejection::new(
-                    AdmissionRejectionKind::PastTimestamp,
-                    format!(
-                        "ts_orig {ts_orig} predates lower bound {} (implausibly old)",
-                        self.ts_orig_lower_bound
-                    ),
-                )));
+                return Ok(AdmissionDecision::Rejected(
+                    AdmissionRejection::new(
+                        AdmissionRejectionKind::PastTimestamp,
+                        format!(
+                            "ts_orig {ts_orig} predates lower bound {} (implausibly old)",
+                            self.ts_orig_lower_bound
+                        ),
+                    )
+                    .with_event_id(event.id.map(|id| id.to_uuid()).unwrap_or_default()),
+                ));
             }
             if ts_orig > now + self.future_ts_skew {
                 let latest_expected = now + self.future_ts_skew;
@@ -742,13 +759,16 @@ impl AdmissionService {
                     skew_seconds = (ts_orig - now).whole_seconds(),
                     "Event ts_orig is implausibly far in the future"
                 );
-                return Ok(AdmissionDecision::Rejected(AdmissionRejection::new(
-                    AdmissionRejectionKind::FutureTimestamp,
-                    format!(
-                        "ts_orig {ts_orig} exceeds latest expected {latest_expected} by {} seconds (implausibly future)",
-                        (ts_orig - now).whole_seconds()
-                    ),
-                )));
+                return Ok(AdmissionDecision::Rejected(
+                    AdmissionRejection::new(
+                        AdmissionRejectionKind::FutureTimestamp,
+                        format!(
+                            "ts_orig {ts_orig} exceeds latest expected {latest_expected} by {} seconds (implausibly future)",
+                            (ts_orig - now).whole_seconds()
+                        ),
+                    )
+                    .with_event_id(event.id.map(|id| id.to_uuid()).unwrap_or_default()),
+                ));
             }
         }
 
@@ -765,20 +785,26 @@ impl AdmissionService {
                 anchor_byte,
                 "Event has negative anchor_byte"
             );
-            return Ok(AdmissionDecision::Rejected(AdmissionRejection::new(
-                AdmissionRejectionKind::NegativeAnchor,
-                format!("Invalid anchor_byte: {anchor_byte} (must be >= 0)"),
-            )));
+            return Ok(AdmissionDecision::Rejected(
+                AdmissionRejection::new(
+                    AdmissionRejectionKind::NegativeAnchor,
+                    format!("Invalid anchor_byte: {anchor_byte} (must be >= 0)"),
+                )
+                .with_event_id(event.id.map(|id| id.to_uuid()).unwrap_or_default()),
+            ));
         }
 
         let validated_schema_id = match self.validate_event(&event).await {
             Ok(schema_id) => schema_id,
             Err(error) => {
                 warn!(event_id = ?event.id, "Event validation failed: {}", error);
-                return Ok(AdmissionDecision::Rejected(AdmissionRejection::new(
-                    AdmissionRejectionKind::SchemaValidation,
-                    format!("Validation failed: {error}"),
-                )));
+                return Ok(AdmissionDecision::Rejected(
+                    AdmissionRejection::new(
+                        AdmissionRejectionKind::SchemaValidation,
+                        format!("Validation failed: {error}"),
+                    )
+                    .with_event_id(event.id.map(|id| id.to_uuid()).unwrap_or_default()),
+                ));
             }
         };
 
@@ -850,6 +876,7 @@ impl AdmissionService {
         }
 
         let admitted = AdmittedEvent {
+            content_hash: sinex_primitives::events::payload_content_hash(&event.payload),
             event,
             event_id,
             metadata,
@@ -1462,16 +1489,18 @@ fn admitted_to_stream_rows(batch: &[&AdmittedEvent]) -> EventEngineResult<Vec<St
                 anchor_byte,
             ) = sinex_db::repositories::events::conversions::extract_provenance(event)?;
 
-            // sinex-w1w7: hash the candidate payload exactly as it arrived at
-            // admission, BEFORE strip_postgres_jsonb_nul_chars (below) or the
-            // downstream redact_batch chokepoint can mutate it. SupersedeOnChange's
-            // live-match comparison (`classify_live_match`) compares this stored
-            // hash against a future candidate's own admission-time hash — never
-            // against a hash recomputed from the (possibly mutated) persisted
-            // payload — so an unchanged re-emission whose payload happens to
-            // contain NUL bytes or get redacted no longer misclassifies as
-            // "changed content" and churns archive/re-insert forever.
-            let content_hash = sinex_primitives::events::payload_content_hash(&event.payload);
+            // sinex-w1w7 / sinex-tgjw: use the hash captured AT ADMISSION
+            // (AdmittedEvent::content_hash, set when this AdmittedEvent was
+            // constructed) rather than recomputing from `event.payload` here.
+            // By this point `event.payload` may already have been mutated by
+            // the redact_batch chokepoint (persist.rs calls redact_batch
+            // before plan_persistence_batch_refs/persist_plan, which is what
+            // eventually calls this function) — recomputing here would hash
+            // the POST-redaction payload while `classify_live_match` hashes
+            // the PRE-redaction candidate, causing every re-emit of a
+            // SupersedeOnChange type touched by a privacy rule to spuriously
+            // "change" and churn archive+re-insert forever. See sinex-tgjw.
+            let content_hash = admitted.content_hash;
 
             let mut payload = event.payload.clone();
             let stripped_nul_bytes = strip_postgres_jsonb_nul_chars(&mut payload);
