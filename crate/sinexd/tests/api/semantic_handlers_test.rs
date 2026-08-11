@@ -20,6 +20,183 @@ use sinexd::api::handlers::{
 use sinexd::api::rpc_server::RpcAuthContext;
 use xtask::sandbox::prelude::*;
 
+#[cfg(test)]
+mod lane_attribution {
+    use super::semantic_scope;
+    use sinex_primitives::rpc::semantic::{
+        SEMANTIC_EPOCHS_CREATE_METHOD, SEMANTIC_LANES_CREATE_METHOD,
+        SEMANTIC_LANES_DISCARD_METHOD, SEMANTIC_LANES_SET_STATUS_METHOD,
+        SemanticEpochCreateRequest, SemanticLaneCreateRequest, SemanticLaneDiscardRequest,
+        SemanticLaneSetStatusRequest,
+    };
+    use sinex_primitives::temporal::Timestamp;
+    use sinex_primitives::{SemanticLaneKind, SemanticLaneStatus, Uuid};
+    use sinexd::api::{ServiceContainer, auth::Role, rpc_registry};
+    use sinexd::api::rpc_server::RpcAuthContext;
+    use xtask::sandbox::prelude::*;
+
+    fn auth_as(actor_id: &str) -> RpcAuthContext {
+        RpcAuthContext {
+            token_prefix: "lane-attr".to_string(),
+            actor_id: actor_id.to_string(),
+            authenticated_at: Timestamp::now(),
+            role: Role::Admin,
+        }
+    }
+
+    async fn operations_log_count_for_actor(pool: &sqlx::PgPool, actor_id: &str) -> TestResult<i64> {
+        let count: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM core.operations_log WHERE operator = $1",
+        )
+        .bind(actor_id)
+        .fetch_one(pool)
+        .await?;
+        Ok(count)
+    }
+
+    /// sinex-xq44 / sinex-bksb item 3: `handle_semantic_lane_create` /
+    /// `_set_status` / `_discard` take no `&RpcAuthContext` at all (unlike
+    /// their sibling `handle_semantic_epoch_create`, which does and is
+    /// dispatched via `pool_auth_typed_rpc`) -- both `pool_typed_rpc` and
+    /// `pool_auth_typed_rpc` enforce the SAME role check at the registry
+    /// dispatch layer (see `rpc_registry.rs`'s `required_role:
+    /// method.role.into()` in both macros), so access control is not the
+    /// gap; role-boundary coverage already exists in `auth_boundary_test.rs`.
+    /// The actual gap is attribution: nothing records WHO created/transitioned/
+    /// discarded a lane. This test dispatches through the REAL RpcRegistry
+    /// (not the bare handler) with a distinct actor_id per call, using
+    /// `handle_semantic_epoch_create`'s known-good `operations_log`
+    /// attribution as a positive control to validate the test methodology
+    /// itself, then applies the identical check to the three lane handlers.
+    #[sinex_test]
+    #[ignore = "sinex-xq44 open: semantic lane create/set_status/discard leave no attribution record anywhere -- fails until fixed"]
+    async fn semantic_lane_lifecycle_handlers_attribute_the_calling_actor(
+        ctx: TestContext,
+    ) -> TestResult<()> {
+        let ctx = ctx.with_nats().shared().await?;
+        let nats_url = ctx.nats_handle()?.client_url().to_string();
+        let mut env_guard = EnvGuard::new();
+        env_guard.set("SINEX_NATS_URL", &nats_url);
+
+        sinexd::automata::product_declarations::reconcile_declarations(
+            ctx.pool(),
+            "semantic-rpc",
+            sinexd::api::handlers::semantic::SEMANTIC_LANE_OUTPUT_DECLARATIONS,
+        )
+        .await?;
+
+        let services = ServiceContainer::from_database_url(ctx.database_url().to_string()).await?;
+        let registry = rpc_registry::build_registry();
+
+        // Positive control: the sibling epoch-create handler DOES thread auth
+        // through to `log_operation`-backed attribution. If this assertion
+        // ever fails, the methodology (not the lane handlers) is broken.
+        let epoch_actor = "test-actor-epoch-control";
+        let epoch_id = Uuid::new_v4();
+        registry
+            .dispatch(
+                SEMANTIC_EPOCHS_CREATE_METHOD.name,
+                serde_json::to_value(SemanticEpochCreateRequest {
+                    epoch_id: Some(epoch_id),
+                    name: "attribution-control-epoch".to_string(),
+                    scope: semantic_scope(),
+                    code_ref: None,
+                    config_hash: "attribution-control-hash".to_string(),
+                    components: vec![],
+                    prompt_set_hash: None,
+                    model_config_hash: None,
+                    created_by: None,
+                    operation_id: None,
+                    supersedes_epoch_id: None,
+                })?,
+                &services,
+                &auth_as(epoch_actor),
+            )
+            .await?;
+        // NB: the epoch handler's attribution lands in `derivation.epochs
+        // .created_by`, not `operations_log` -- this is a methodology
+        // sanity check on `created_by`, distinct from the operations_log
+        // check applied to lanes below (lanes have no equivalent column).
+        let epoch_created_by: Option<String> =
+            sqlx::query_scalar("SELECT created_by FROM derivation.epochs WHERE id = $1")
+                .bind(epoch_id)
+                .fetch_one(ctx.pool())
+                .await?;
+        assert_eq!(
+            epoch_created_by.as_deref(),
+            Some(epoch_actor),
+            "positive control failed: handle_semantic_epoch_create should attribute its caller"
+        );
+
+        // The finding: lane create/set_status/discard leave no attribution
+        // anywhere -- neither a `created_by`-style column (derivation.lanes
+        // has none) nor an operations_log row for the calling actor.
+        let create_actor = "test-actor-lane-create";
+        let lane_id = Uuid::new_v4();
+        registry
+            .dispatch(
+                SEMANTIC_LANES_CREATE_METHOD.name,
+                serde_json::to_value(SemanticLaneCreateRequest {
+                    lane_id: Some(lane_id),
+                    name: "attribution-gap-lane".to_string(),
+                    kind: SemanticLaneKind::Shadow,
+                    base_epoch_id: None,
+                    candidate_epoch_id: epoch_id,
+                    scope: semantic_scope(),
+                    purpose: "attribution gap regression".to_string(),
+                    operation_id: None,
+                    expires_at: None,
+                })?,
+                &services,
+                &auth_as(create_actor),
+            )
+            .await?;
+        assert!(
+            operations_log_count_for_actor(ctx.pool(), create_actor).await? > 0,
+            "handle_semantic_lane_create leaves NO attribution record anywhere for actor \
+             '{create_actor}' -- neither derivation.lanes (no actor column) nor \
+             operations_log (never called) -- sinex-xq44"
+        );
+
+        let set_status_actor = "test-actor-lane-set-status";
+        registry
+            .dispatch(
+                SEMANTIC_LANES_SET_STATUS_METHOD.name,
+                serde_json::to_value(SemanticLaneSetStatusRequest {
+                    lane_id,
+                    status: SemanticLaneStatus::Completed,
+                    completed_at: None,
+                })?,
+                &services,
+                &auth_as(set_status_actor),
+            )
+            .await?;
+        assert!(
+            operations_log_count_for_actor(ctx.pool(), set_status_actor).await? > 0,
+            "handle_semantic_lane_set_status leaves NO attribution record for actor \
+             '{set_status_actor}' -- every status transition (running->completed-> \
+             discarded/promoted) is unattributed -- sinex-xq44 / sinex-bksb item 3"
+        );
+
+        let discard_actor = "test-actor-lane-discard";
+        registry
+            .dispatch(
+                SEMANTIC_LANES_DISCARD_METHOD.name,
+                serde_json::to_value(SemanticLaneDiscardRequest { lane_id })?,
+                &services,
+                &auth_as(discard_actor),
+            )
+            .await?;
+        assert!(
+            operations_log_count_for_actor(ctx.pool(), discard_actor).await? > 0,
+            "handle_semantic_lane_discard leaves NO attribution record for actor \
+             '{discard_actor}' -- sinex-xq44 / sinex-bksb item 3"
+        );
+
+        Ok(())
+    }
+}
+
 fn semantic_scope() -> SemanticScope {
     SemanticScope {
         kind: "event_set".to_string(),
