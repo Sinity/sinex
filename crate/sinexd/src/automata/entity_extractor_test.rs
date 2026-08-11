@@ -1,5 +1,9 @@
 use super::*;
 use serde_json::json;
+use sinex_primitives::domain::{EventSource, EventType, ProcessingMode, TriggerKind};
+use sinex_primitives::events::Event;
+use sinex_primitives::temporal::Timestamp;
+use sinex_primitives::{Id, JsonValue};
 use xtask::sandbox::sinex_test;
 
 #[sinex_test]
@@ -83,5 +87,85 @@ async fn test_extract_text_fields() -> TestResult<()> {
     assert!(text.contains("https://example.com"));
     assert!(text.contains("another text"));
     assert!(!text.contains("should-be-skipped"));
+    Ok(())
+}
+
+/// sinex-g0ve (closed invalid): `context.ts_orig.unwrap_or_else(Timestamp::now)`
+/// in `process()` is the deliberate Derived-provenance wall-clock fallback
+/// documented in `EventBuilder::build()` ("#1570 Prong B") -- `entity.extracted`
+/// has no material to resolve a missing timestamp against, so it synthesizes
+/// one at emission time. Positive characterization, not a regression test: it
+/// exists so a future audit doesn't re-flag the same `unwrap_or_else` as a
+/// doctrine violation against "never falsify provenance clocks" (that doctrine
+/// governs Material-provenance events, which resolve ts_orig from the source
+/// material's temporal ledger instead of fabricating one).
+#[sinex_test]
+async fn extraction_falls_back_to_wall_clock_ts_orig_when_context_lacks_one() -> TestResult<()> {
+    let mut extractor = EntityExtractor;
+    let context = AutomatonContext {
+        trigger_event_id: Id::<Event<JsonValue>>::new(),
+        source: EventSource::from_static("test.source"),
+        event_type: EventType::from_static("test.type"),
+        ts_orig: None,
+        ts_coided: Timestamp::now(),
+        processing_mode: ProcessingMode::Live,
+        trigger_kind: TriggerKind::NewEvent,
+        created_by_operation_id: None,
+        trigger_material_id: None,
+        trigger_anchor_byte: None,
+    };
+    let input = json!({"text": "Check out https://example.com for more info."});
+    let before = Timestamp::now();
+
+    let output = extractor
+        .process(&mut (), input, &context)
+        .await?
+        .expect("URL entity should be extracted");
+
+    let after = Timestamp::now();
+    assert!(
+        output.ts_orig >= before && output.ts_orig <= after,
+        "ts_orig should fall back to a wall-clock synthesis time (between {before:?} and \
+         {after:?}) when context.ts_orig is None, got {:?}",
+        output.ts_orig
+    );
+    Ok(())
+}
+
+/// sinex-im80 (entity_extractor's slice): `entity.extracted` is never stamped
+/// with `equivalence_key` or `semantics_version` -- `equivalence_key` is the
+/// SOLE occurrence-dedup mechanism (per output.rs docs), so its absence makes
+/// every `entity.extracted` structurally un-dedupable, minting duplicates on
+/// any restart-during-catchup. Failing by design until entity_extractor.rs
+/// calls `.with_equivalence_key(...)` (and ideally `.with_semantics_version`)
+/// on its `DerivedOutput::transduced(...)` output.
+#[sinex_test]
+async fn extraction_output_is_missing_equivalence_key_sinex_im80() -> TestResult<()> {
+    let mut extractor = EntityExtractor;
+    let context = AutomatonContext {
+        trigger_event_id: Id::<Event<JsonValue>>::new(),
+        source: EventSource::from_static("test.source"),
+        event_type: EventType::from_static("test.type"),
+        ts_orig: Some(Timestamp::now()),
+        ts_coided: Timestamp::now(),
+        processing_mode: ProcessingMode::Live,
+        trigger_kind: TriggerKind::NewEvent,
+        created_by_operation_id: None,
+        trigger_material_id: None,
+        trigger_anchor_byte: None,
+    };
+    let input = json!({"text": "Check out https://example.com for more info."});
+
+    let output = extractor
+        .process(&mut (), input, &context)
+        .await?
+        .expect("URL entity should be extracted");
+
+    assert!(
+        output.equivalence_key.is_some(),
+        "sinex-im80: entity.extracted must carry an equivalence_key -- it is the sole \
+         occurrence-dedup mechanism; without it a restart-during-catchup mints duplicate \
+         entity.extracted events for the same source occurrence"
+    );
     Ok(())
 }
