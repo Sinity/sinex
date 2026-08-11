@@ -47,7 +47,13 @@
         };
 
         let materialized =
-            materialize_file_content_record(record, acquisition, 1024 * 1024).await?;
+            materialize_file_content_record(
+                record,
+                acquisition,
+                1024 * 1024,
+                std::slice::from_ref(&Utf8PathBuf::from_path_buf(dir.path().to_path_buf()).unwrap()),
+            )
+            .await?;
 
         assert_ne!(materialized.material_id, original_material_id);
         assert_eq!(
@@ -190,7 +196,13 @@
                 .into_json(),
         };
 
-        let materialized = materialize_file_content_record(record, acquisition, 4).await?;
+        let materialized = materialize_file_content_record(
+            record,
+            acquisition,
+            4,
+            std::slice::from_ref(&Utf8PathBuf::from_path_buf(dir.path().to_path_buf()).unwrap()),
+        )
+        .await?;
 
         assert_eq!(materialized.material_id, original_material_id);
         assert_eq!(
@@ -1361,5 +1373,86 @@
         assert!(message.contains("kernel_max_user_watches=4"));
         assert!(message.contains("effective_max_watches=4"));
         assert!(message.contains("filtered_watch_count=5"));
+        Ok(())
+    }
+
+    #[cfg(feature = "messaging")]
+    #[sinex_test]
+    async fn content_drop_refuses_to_materialize_through_a_symlink_outside_the_watch_root(
+        ctx: xtask::sandbox::prelude::TestContext,
+    ) -> xtask::sandbox::prelude::TestResult<()> {
+        // sinex-kv6l: a symlink inside a watched directory pointing outside it
+        // must not have its target's bytes staged as watched content.
+        let ctx = ctx.with_nats().shared().await?;
+        let acquisition = Arc::new(AcquisitionManager::with_defaults(
+            ctx.nats_client(),
+            "file-content-drop-symlink-escape-test",
+        ));
+
+        let watch_dir = TempDir::new()?;
+        let outside_dir = TempDir::new()?;
+        let secret_path = outside_dir.path().join("id_rsa");
+        tokio::fs::write(&secret_path, b"-----BEGIN PRIVATE KEY-----").await?;
+
+        let symlink_path = watch_dir.path().join("innocuous.txt");
+        std::os::unix::fs::symlink(&secret_path, &symlink_path)?;
+
+        let utf8_path = Utf8PathBuf::from_path_buf(symlink_path.clone()).map_err(|path| {
+            SinexError::validation("test path is not valid UTF-8")
+                .with_context("path", path.display().to_string())
+        })?;
+        let original_material_id = dummy_material_id();
+        let record = SourceRecord {
+            material_id: original_material_id,
+            anchor: MaterialAnchor::DirectoryEntry {
+                path: utf8_path.clone(),
+                content_hash: None,
+            },
+            bytes: utf8_path.as_str().as_bytes().to_vec(),
+            logical_path: Some(utf8_path.clone()),
+            source_ts_hint: None,
+            metadata: FileDropRecordMetadata::new(FileDropEventKind::Created, &utf8_path)
+                .into_json(),
+        };
+
+        let watch_root =
+            Utf8PathBuf::from_path_buf(watch_dir.path().to_path_buf()).map_err(|path| {
+                SinexError::validation("watch root is not valid UTF-8")
+                    .with_context("path", path.display().to_string())
+            })?;
+
+        let materialized = materialize_file_content_record(
+            record,
+            acquisition,
+            1024 * 1024,
+            std::slice::from_ref(&watch_root),
+        )
+        .await?;
+
+        // Content must NOT have been materialized -- the symlink escapes the
+        // watch root, so no bytes from `secret_path` should ever have been
+        // read/hashed/staged.
+        assert_eq!(materialized.material_id, original_material_id);
+        assert_eq!(
+            materialized.anchor,
+            MaterialAnchor::DirectoryEntry {
+                path: utf8_path,
+                content_hash: None,
+            }
+        );
+        assert_eq!(
+            materialized
+                .metadata
+                .get("content_materialized")
+                .and_then(serde_json::Value::as_bool),
+            Some(false)
+        );
+        assert_eq!(
+            materialized
+                .metadata
+                .get("content_skipped_reason")
+                .and_then(serde_json::Value::as_str),
+            Some("outside-watch-root")
+        );
         Ok(())
     }

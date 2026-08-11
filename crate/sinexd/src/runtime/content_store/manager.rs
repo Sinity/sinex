@@ -408,6 +408,11 @@ impl ContentStoreManager {
         let mut temp_file = tokio::fs::File::create(&temp_file_path)
             .await
             .map_err(SinexError::io)?;
+        // sinex-vyi3: this transient file (holding the full content bytes
+        // about to be staged into CAS) lives in the SYSTEM temp directory,
+        // not under any of the ingest-spool paths the NixOS directoryRules
+        // fix tightens -- restrict it explicitly.
+        super::restrict_permissions(temp_file_path.as_std_path(), super::CONTENT_STORE_FILE_MODE);
         temp_file.write_all(content).await.map_err(SinexError::io)?;
         temp_file.sync_all().await.map_err(SinexError::io)?;
         drop(temp_file);

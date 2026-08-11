@@ -17,7 +17,7 @@ use sinex_db::repositories::Operation;
 use sinex_primitives::domain::OperationStatus;
 use sinex_primitives::runtime_pressure::{RuntimePressureAction, RuntimePressureLevel};
 use sinex_primitives::validation::normalize_unicode;
-use sinex_primitives::views::{CaveatView, SinexObjectKind, SinexObjectRef};
+use sinex_primitives::views::{CaveatView, SinexObjectKind, SinexObjectRef, strip_unsafe_display_chars};
 use sinex_primitives::{Result, SinexError};
 use tracing::warn;
 
@@ -132,6 +132,11 @@ async fn log_dlq_operation(
 }
 
 fn truncate_preview(payload: &str, max_chars: usize) -> String {
+    // sinex-e0qo: a DLQ message is by definition one that failed parsing, so
+    // "not valid JSON, render as raw string" is the common case here -- up to
+    // TRIAGE_DLQ_PREVIEW_CHARS of arbitrary failed-payload bytes reaching the
+    // operator's terminal unsanitized otherwise.
+    let payload = &strip_unsafe_display_chars(payload);
     let preview: String = payload.chars().take(max_chars).collect();
     if payload.chars().count() > max_chars {
         format!("{preview}...")
@@ -142,7 +147,7 @@ fn truncate_preview(payload: &str, max_chars: usize) -> String {
 
 fn render_preview_value(value: &JsonValue) -> String {
     match value {
-        JsonValue::String(text) => text.clone(),
+        JsonValue::String(text) => strip_unsafe_display_chars(text),
         JsonValue::Object(object) => {
             let mut prioritized = Vec::new();
             for key in [

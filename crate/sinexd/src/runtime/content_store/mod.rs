@@ -18,6 +18,28 @@ use tokio::sync::Mutex as AsyncMutex;
 use tracing::{debug, info, warn};
 use uuid::Uuid;
 
+/// Directory mode for content-store-owned directories: owner+group only.
+pub(super) const CONTENT_STORE_DIR_MODE: u32 = 0o750;
+/// File mode for content-store-owned files: owner+group read/write, no
+/// other-permission bits.
+pub(super) const CONTENT_STORE_FILE_MODE: u32 = 0o640;
+
+/// Explicitly restrict permissions on a content-store-owned path (sinex-vyi3).
+/// See the identical helper in `event_engine::material_assembler::io` for the
+/// full rationale -- same defense-in-depth pattern, duplicated here rather
+/// than shared across modules to avoid a cross-cutting dependency for a
+/// single small utility.
+pub(super) fn restrict_permissions(path: &Path, mode: u32) {
+    use std::os::unix::fs::PermissionsExt;
+    if let Err(error) = std::fs::set_permissions(path, std::fs::Permissions::from_mode(mode)) {
+        warn!(
+            path = %path.display(),
+            %error,
+            "failed to restrict permissions on content-store-owned path"
+        );
+    }
+}
+
 pub mod cas_fsck;
 pub mod gc;
 pub mod manager;
@@ -390,10 +412,12 @@ impl MaterialContentStore {
     pub fn new(config: ContentStoreConfig) -> RuntimeResult<Self> {
         // Ensure the content-store root directory exists.
         std::fs::create_dir_all(&config.root_path).map_err(SinexError::io)?;
+        restrict_permissions(&config.root_path, CONTENT_STORE_DIR_MODE);
 
         // Always ensure the local CAS directory structure exists.
         let cas_dir = config.root_path.join(LOCAL_BLAKE3_CAS_DIR);
         std::fs::create_dir_all(&cas_dir).map_err(SinexError::io)?;
+        restrict_permissions(&cas_dir, CONTENT_STORE_DIR_MODE);
 
         if config.legacy_annex_enabled {
             // Verify git-annex is available
@@ -466,12 +490,14 @@ impl MaterialContentStore {
         tokio::fs::create_dir_all(repo_path)
             .await
             .map_err(SinexError::io)?;
+        restrict_permissions(repo_path.as_std_path(), CONTENT_STORE_DIR_MODE);
 
         // Always create the local CAS directory structure
         let cas_dir = repo_path.join(LOCAL_BLAKE3_CAS_DIR);
         tokio::fs::create_dir_all(&cas_dir)
             .await
             .map_err(SinexError::io)?;
+        restrict_permissions(cas_dir.as_std_path(), CONTENT_STORE_DIR_MODE);
 
         if legacy_annex_enabled {
             // Initialize git repository if needed
@@ -564,11 +590,18 @@ impl MaterialContentStore {
             tokio::fs::create_dir_all(parent)
                 .await
                 .map_err(SinexError::io)?;
+            restrict_permissions(parent.as_std_path(), CONTENT_STORE_DIR_MODE);
 
             let tmp = parent.join(format!("{hash}.tmp-{}", Uuid::now_v7()));
             tokio::fs::copy(resolved_path, &tmp)
                 .await
                 .map_err(SinexError::io)?;
+            // tokio::fs::copy (like std::fs::copy) preserves the SOURCE file's
+            // permission bits -- if resolved_path was ever more permissive
+            // than CAS content should be, that permissiveness would otherwise
+            // carry into the durable CAS store. Force the correct mode
+            // regardless of the source's permissions (sinex-vyi3).
+            restrict_permissions(tmp.as_std_path(), CONTENT_STORE_FILE_MODE);
             let file = tokio::fs::File::open(&tmp).await.map_err(SinexError::io)?;
             file.sync_all().await.map_err(SinexError::io)?;
             if target.exists() {

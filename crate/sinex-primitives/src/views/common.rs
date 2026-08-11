@@ -327,7 +327,54 @@ impl<T> ViewEnvelope<T> {
 #[derive(Debug)]
 pub struct ViewEnvelopeMarker;
 
+/// Strip characters unsafe to hand to a terminal/table renderer verbatim.
+///
+/// sinex-e0qo: captured content (D-Bus notification summaries, journald
+/// MESSAGE fields, and anything else that reaches this crate's view/summary
+/// constructors) can carry raw ANSI/OSC escape sequences from the source it
+/// was captured from -- and sinexctl's default table/text output writes cell
+/// content straight to stdout with no escape awareness. An ESC byte
+/// (U+001B, C0) followed by attacker-chosen bytes can trigger OSC 52
+/// clipboard writes, terminal-title spoofing, or cursor manipulation on the
+/// operator's terminal. Removing every C0/C1 control character (which
+/// includes ESC/CSI lead-in bytes) neuters any such sequence structurally --
+/// there is no escape sequence without its lead-in byte.
+///
+/// This also strips a small set of Unicode "format" (Cf) characters --
+/// bidi-override control points (LRE/RLE/PDF/LRO/RLO, LRI/RLI/FSI/PDI) and
+/// zero-width/BOM markers -- which `char::is_control()` does NOT cover
+/// (Cf is a distinct Unicode general category from Cc) but which enable a
+/// related attack: filename/extension spoofing via right-to-left overrides
+/// (e.g. a stored "invoicegnp.exe" rendering as "invoicexe.png"), with zero
+/// visible cue since these characters measure as zero display width.
+///
+/// Deliberately a RENDER-time primitive, not an ingest-time one: the raw
+/// captured bytes remain faithfully persisted in `core.events`; only the
+/// outward-facing view/summary text constructed by this module is
+/// sanitized, matching this project's "presentation is a consumer, never an
+/// authority over ingest" doctrine.
+pub fn strip_unsafe_display_chars(input: &str) -> String {
+    input
+        .chars()
+        .filter(|ch| {
+            if ch.is_control() {
+                return false;
+            }
+            !matches!(
+                *ch,
+                '\u{200B}' // ZERO WIDTH SPACE
+                | '\u{200E}' // LEFT-TO-RIGHT MARK
+                | '\u{200F}' // RIGHT-TO-LEFT MARK
+                | '\u{202A}'..='\u{202E}' // LRE, RLE, PDF, LRO, RLO
+                | '\u{2066}'..='\u{2069}' // LRI, RLI, FSI, PDI
+                | '\u{FEFF}' // ZERO WIDTH NO-BREAK SPACE / BOM
+            )
+        })
+        .collect()
+}
+
 pub(crate) fn truncate_chars(input: &str, max_chars: usize) -> String {
+    let input = &strip_unsafe_display_chars(input);
     if input.chars().count() <= max_chars {
         return input.to_string();
     }

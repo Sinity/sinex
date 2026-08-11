@@ -33,6 +33,36 @@ use tokio::{fs, fs::File, io::AsyncReadExt, io::AsyncWriteExt};
 use tracing::{debug, info, warn};
 use uuid::Uuid;
 
+/// Directory mode for assembler-owned state directories: owner+group only.
+pub(super) const ASSEMBLER_DIR_MODE: u32 = 0o750;
+/// File mode for assembler-owned staged material/WAL files: owner+group
+/// read/write, no other-permission bits.
+pub(super) const ASSEMBLER_FILE_MODE: u32 = 0o640;
+
+/// Explicitly restrict permissions on an assembler-owned path (sinex-vyi3).
+///
+/// Defense-in-depth: the PRIMARY containment is the parent directory's own
+/// tightened mode (0750, set via the NixOS `directoryRules` for
+/// ingestSpool/spoolBase/runtimeSpool) plus `UMask=0077` on the sinexd unit.
+/// Neither of those is enforced by this Rust code -- a future loosening of
+/// either would silently re-expose these paths with zero warning from here.
+/// This call makes the containment explicit at the point staged material is
+/// actually written, independent of deployment configuration.
+///
+/// Best-effort: a failure to chmod (e.g. an exotic filesystem without POSIX
+/// permission bits) must not fail the write itself, since the parent
+/// directory's mode is still the primary defense.
+pub(super) fn restrict_permissions(path: &std::path::Path, mode: u32) {
+    use std::os::unix::fs::PermissionsExt;
+    if let Err(error) = std::fs::set_permissions(path, std::fs::Permissions::from_mode(mode)) {
+        warn!(
+            path = %path.display(),
+            %error,
+            "failed to restrict permissions on assembler-owned path"
+        );
+    }
+}
+
 #[cfg(test)]
 struct SliceStagingIoHook {
     entered: tokio::sync::Notify,
@@ -379,6 +409,7 @@ async fn restore_state_params(
         .map_err(|e| {
             SinexError::io(format!("Failed to open WAL for appending {material_id}")).with_source(e)
         })?;
+    restrict_permissions(&wal_path, ASSEMBLER_FILE_MODE);
 
     // Rebuild Hasher & Temp File handle
     let temp_file = if temp_path.exists() {
@@ -393,6 +424,9 @@ async fn restore_state_params(
     } else {
         None
     };
+    if temp_file.is_some() {
+        restrict_permissions(&temp_path, ASSEMBLER_FILE_MODE);
+    }
 
     let hasher = rebuild_hasher(&temp_path).await?;
     let mut buffered_slices = load_buffered_slices(&state_dir.join(BUFFER_DIR_NAME)).await?;
@@ -885,14 +919,17 @@ pub(super) async fn append_wal_entry(
         fs::create_dir_all(&state.state_dir)
             .await
             .map_err(|e| SinexError::io("Failed to ensure assembler state dir").with_source(e))?;
+        restrict_permissions(&state.state_dir, ASSEMBLER_DIR_MODE);
 
         let mut opts = fs::OpenOptions::new();
         opts.create(true).append(true).write(true);
 
+        let wal_path = state.state_dir.join(WAL_FILE_NAME);
         let file = opts
-            .open(&state.state_dir.join(WAL_FILE_NAME))
+            .open(&wal_path)
             .await
             .map_err(|e| SinexError::io("Failed to open WAL file").with_source(e))?;
+        restrict_permissions(&wal_path, ASSEMBLER_FILE_MODE);
         state.wal_file = Some(file);
     }
 
@@ -1450,6 +1487,7 @@ async fn stage_slice_for_locked_state(
                             .with_source(e)
                         })?,
                 );
+                restrict_permissions(&state.temp_path, ASSEMBLER_FILE_MODE);
             }
             if let Some(file) = state.temp_file.as_mut() {
                 file.write_all(data).await.map_err(|e| {
@@ -1504,6 +1542,7 @@ async fn stage_slice_file(
                     SinexError::io(format!("Failed to reopen staging file for {material_id}"))
                         .with_source(e)
                 })?;
+            restrict_permissions(temp_path, ASSEMBLER_FILE_MODE);
             file.write_all(data).await.map_err(|e| {
                 SinexError::io(format!("Failed to write slice for {material_id}")).with_source(e)
             })?;
@@ -1673,6 +1712,7 @@ async fn persist_buffered_slice_to_path(
     fs::create_dir_all(buffers_dir)
         .await
         .map_err(|e| SinexError::io("Failed to create buffer dir").with_source(e))?;
+    restrict_permissions(buffers_dir, ASSEMBLER_DIR_MODE);
 
     let temp_path = buffers_dir.join(format!("{}.{}.tmp", offset, Uuid::now_v7()));
     let mut file = fs::OpenOptions::new()
@@ -1681,6 +1721,7 @@ async fn persist_buffered_slice_to_path(
         .open(&temp_path)
         .await
         .map_err(|e| SinexError::io("Failed to persist buffered slice").with_source(e))?;
+    restrict_permissions(&temp_path, ASSEMBLER_FILE_MODE);
     file.write_all(data)
         .await
         .map_err(|e| SinexError::io("Failed to persist buffered slice").with_source(e))?;

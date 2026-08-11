@@ -2105,8 +2105,15 @@ fn format_age(d: time::Duration) -> String {
 }
 
 /// Truncate a string with ellipsis if over `max` chars.
+///
+/// sinex-e0qo: sanitize control/format characters before this cell content
+/// reaches sinexctl's default table/text renderer. Also corrects a pre-existing
+/// byte-length-vs-char-count comparison (`s.len() <= max` compared bytes
+/// against a char-count budget, causing slight over-truncation on multi-byte
+/// UTF-8 input) while touching this function for the sanitization fix.
 fn truncate(s: &str, max: usize) -> String {
-    if s.len() <= max {
+    let s = &sinex_primitives::views::strip_unsafe_display_chars(s);
+    if s.chars().count() <= max {
         s.to_string()
     } else {
         // Truncate at char boundary
