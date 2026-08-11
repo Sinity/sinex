@@ -153,3 +153,7 @@ impl MaterialParser for ClipboardParser {
         Ok(vec![intent])
     }
 }
+
+#[cfg(test)]
+#[path = "clipboard_test.rs"]
+mod clipboard_test;

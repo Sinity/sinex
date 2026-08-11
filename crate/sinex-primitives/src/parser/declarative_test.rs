@@ -954,6 +954,53 @@
         Ok(())
     }
 
+    /// sinex-6516: an integer-valued JSON float outside i64 range (zero
+    /// fractional part, so `f.fract() == 0.0` passes) currently saturates
+    /// silently through `f as i64` instead of being rejected like the
+    /// non-integer-string and has-a-fraction cases just above are. This can
+    /// corrupt parsed payloads, occurrence-key fields, or any integer field
+    /// used in routing/validation.
+    #[sinex_test]
+    #[ignore = "sinex-6516 open: coerce_field silently saturates an \
+                out-of-i64-range integer-valued JSON float (e.g. 9.22e18) \
+                to i64::MAX instead of returning ParserError::Field"]
+    async fn coerce_out_of_range_integer_float_errors_instead_of_saturating()
+    -> xtask::sandbox::TestResult<()> {
+        let mut spec = minimal_spec();
+        spec.fields.push(FieldSpec {
+            name: "n".into(),
+            source: FieldSource::JsonPointer {
+                pointer: "/n".into(),
+            },
+            field_type: FieldType::Integer,
+            required: true,
+            default: None,
+            skip_payload: false,
+            privacy_context: None,
+            sensitivity: Vec::new(),
+            occurrence_key: false,
+            timestamp: None,
+            suppress_if: None,
+            carry: None,
+            transform: None,
+            validate: None,
+        });
+        // 9.22e18 is integer-valued (fract() == 0.0) but exceeds i64::MAX
+        // (~9.223372036854776e18) once rounding is accounted for -- it must
+        // be rejected, not silently truncated/saturated to a wrong i64.
+        let result = DeclarativeParser::evaluate(
+            &spec,
+            &json_record(r#"{"n": 1.0e19}"#),
+            &test_ctx(),
+            &BindingConfig::default(),
+        );
+        assert!(
+            matches!(result, Err(ParserError::Field(_))),
+            "1.0e19 is far outside i64 range and must error, not silently saturate: got {result:?}"
+        );
+        Ok(())
+    }
+
     #[sinex_test]
     async fn invalid_utf8_record_errors_with_decode_variant() -> xtask::sandbox::TestResult<()> {
         let spec = minimal_spec();
