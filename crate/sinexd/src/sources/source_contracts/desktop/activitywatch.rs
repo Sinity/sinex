@@ -376,3 +376,7 @@ impl MaterialParser for ActivityWatchParser {
         })
     }
 }
+
+#[cfg(test)]
+#[path = "activitywatch_test.rs"]
+mod tests;
