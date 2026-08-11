@@ -263,3 +263,83 @@ async fn terminal_chunks_are_not_parser_redacted() -> TestResult<()> {
     );
     Ok(())
 }
+
+// Regression test for sinex-im80: document_parser's process_terminal and
+// process_dendron previously constructed both the document.parsed and
+// document.chunked DerivedOutputs without equivalence_key/semantics_version.
+// See entity_extractor_test.rs's identical regression test for the full
+// rationale. Covers process_terminal here (no filesystem dependency); the
+// process_dendron sites share the same declaration/key-construction pattern.
+#[sinex_test]
+async fn document_parser_terminal_outputs_stamp_equivalence_key_and_semantics_version()
+-> TestResult<()> {
+    let automaton = DocumentParserAutomaton::default();
+    let mut state = DocumentParserState::default();
+    let event_id = Id::new();
+    let context = AutomatonContext {
+        trigger_event_id: event_id,
+        source: "terminal".into(),
+        event_type: "command.canonical".into(),
+        ts_orig: Some(Timestamp::UNIX_EPOCH),
+        ts_coided: event_id.timestamp(),
+        processing_mode: ProcessingMode::Live,
+        trigger_kind: TriggerKind::NewEvent,
+        created_by_operation_id: None,
+        trigger_material_id: None,
+        trigger_anchor_byte: None,
+    };
+
+    let outputs = automaton.process_terminal(
+        &mut state,
+        serde_json::json!({
+            "command": "echo hello",
+            "output": "hello\nworld\n",
+        }),
+        &context,
+    )?;
+
+    let parsed = outputs
+        .iter()
+        .find(|output| output.event_type == Some("document.parsed"))
+        .expect("document.parsed output");
+    assert_eq!(
+        parsed.semantics_version.as_deref(),
+        Some("1.0.0"),
+        "document.parsed semantics_version must match the declared value"
+    );
+    let parsed_key = parsed
+        .equivalence_key
+        .as_deref()
+        .expect("document.parsed equivalence_key must be set");
+    assert!(
+        parsed_key.starts_with("document-parser:parsed:"),
+        "unexpected document.parsed equivalence_key shape: {parsed_key:?}"
+    );
+
+    let chunk = outputs
+        .iter()
+        .find(|output| output.event_type == Some("document.chunked"))
+        .expect("document.chunked output");
+    assert_eq!(
+        chunk.semantics_version.as_deref(),
+        Some("1.0.0"),
+        "document.chunked semantics_version must match the declared value"
+    );
+    let chunk_key = chunk
+        .equivalence_key
+        .as_deref()
+        .expect("document.chunked equivalence_key must be set");
+    assert!(
+        chunk_key.starts_with("document-parser:chunk:") && chunk_key.ends_with(":0"),
+        "unexpected document.chunked equivalence_key shape: {chunk_key:?}"
+    );
+    // Both outputs derive their key from the same document_id, keeping the
+    // parsed event and its chunks correlated under restart/replay.
+    let document_id_from_parsed = parsed_key.trim_start_matches("document-parser:parsed:");
+    assert!(
+        chunk_key.contains(document_id_from_parsed),
+        "chunk equivalence_key {chunk_key:?} should embed the same document_id as \
+         the parsed event's key {parsed_key:?}"
+    );
+    Ok(())
+}
