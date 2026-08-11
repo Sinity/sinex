@@ -58,3 +58,29 @@ async fn rate_limiting_disabled_short_circuits() -> TestResult<()> {
     }
     Ok(())
 }
+
+/// sinex-u269: `rpc_rate_limit_requests_per_sec` / `SINEX_API_RATE_LIMIT_REQUESTS_PER_SEC`
+/// is fully wired through NixOS deployment and documented as "the in-memory
+/// token bucket refill rate", but `RateLimitConfig::from_gateway_config`
+/// never calls `rate_limit_requests_per_second()` -- only the per-role
+/// (readonly/write/admin) fields are read. Changing the master knob has
+/// zero effect on the derived limiter.
+#[sinex_test]
+#[ignore = "sinex-u269 open: rpc_rate_limit_requests_per_sec is never read by RateLimitConfig::from_gateway_config"]
+async fn from_gateway_config_reflects_master_requests_per_sec() -> TestResult<()> {
+    let mut low = GatewayConfig::default();
+    low.rpc_rate_limit_requests_per_sec = 5;
+    let mut high = GatewayConfig::default();
+    high.rpc_rate_limit_requests_per_sec = 5_000;
+    // Per-role fields identical in both configs -- only the master knob differs.
+
+    let low_derived = RateLimitConfig::from_gateway_config(&low);
+    let high_derived = RateLimitConfig::from_gateway_config(&high);
+
+    assert_ne!(
+        low_derived.readonly_rps, high_derived.readonly_rps,
+        "sinex-u269: rpc_rate_limit_requests_per_sec has no effect on the derived \
+         per-role rate limits -- the master knob is never read"
+    );
+    Ok(())
+}

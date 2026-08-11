@@ -133,6 +133,104 @@ async fn hyprland_workspace_switch_dispatches_typed_command_when_observation_rea
     Ok(())
 }
 
+/// sinex-audit-hyprland-retry-idempotency-gap: the active-instruction guard
+/// explicitly excludes rows whose `instruction_id` matches the current
+/// request (`AND i.payload->>'instruction_id' <> $2`). A client retry using
+/// the SAME instruction_id after an already-attempted dispatch -- the
+/// natural way to retry idempotently, since instruction_id is
+/// client-suppliable -- is invisible to its own already-pending guard and
+/// re-dispatches a second time instead of being recognized as a retry.
+#[sinex_test]
+#[ignore = "sinex-audit-hyprland-retry-idempotency-gap open: a client retry with the same instruction_id re-dispatches instead of being recognized as a duplicate"]
+async fn hyprland_workspace_switch_same_instruction_id_retry_redispatches(
+    ctx: TestContext,
+) -> TestResult<()> {
+    common::seed_rpc_handler_product_declarations(ctx.pool()).await?;
+    let material_id = ctx
+        .create_source_material(Some("hyprland-workspace-observation-retry"))
+        .await?;
+    let observed = HyprlandWorkspaceSwitchedPayload {
+        from_workspace_id: Some(1),
+        to_workspace_id: 2,
+        workspace_name: None,
+        monitor_id: Some(0),
+        active_window_id: None,
+    }
+    .from_material(material_id)
+    .build()?;
+    ctx.pool().events().insert(observed).await?;
+
+    let retry_instruction_id = sinex_primitives::Uuid::now_v7();
+
+    let temp = tempfile::Builder::new()
+        .prefix("sinex-hypr-retry-")
+        .tempdir_in("/tmp")?;
+    let socket_path = temp.path().join("hyprland-command.sock");
+    let listener = UnixListener::bind(&socket_path)?;
+    let server = tokio::spawn(async move {
+        let (_probe_stream, _) = listener.accept().await?;
+        let (mut stream, _) = listener.accept().await?;
+        let mut request = String::new();
+        stream.read_to_string(&mut request).await?;
+        stream.write_all(b"ok").await?;
+        Ok::<_, std::io::Error>(request)
+    });
+
+    let first = handle_hyprland_workspace_switch(
+        ctx.pool(),
+        HyprlandWorkspaceSwitchRequest {
+            instruction_id: Some(retry_instruction_id),
+            desired_workspace_id: 4,
+            deadline: None,
+            dry_run: false,
+            command_socket_path: Some(socket_path.display().to_string()),
+        },
+        &RpcAuthContext::system(),
+    )
+    .await?;
+    server.await??;
+    assert_eq!(first.attempt.status, ActuationStatus::Attempted);
+
+    // A second call reusing the SAME instruction_id (a client retry, e.g.
+    // after an RPC timeout) should be recognized as a duplicate of the
+    // already-attempted first call and rejected without dispatching again.
+    let retry_temp = tempfile::Builder::new()
+        .prefix("sinex-hypr-retry2-")
+        .tempdir_in("/tmp")?;
+    let retry_socket_path = retry_temp.path().join("hyprland-command.sock");
+    let retry_listener = UnixListener::bind(&retry_socket_path)?;
+    let retry_server = tokio::spawn(async move {
+        let (_probe_stream, _) = retry_listener.accept().await?;
+        let (mut stream, _) = retry_listener.accept().await?;
+        let mut request = String::new();
+        stream.read_to_string(&mut request).await?;
+        stream.write_all(b"ok").await?;
+        Ok::<_, std::io::Error>(request)
+    });
+
+    let second = handle_hyprland_workspace_switch(
+        ctx.pool(),
+        HyprlandWorkspaceSwitchRequest {
+            instruction_id: Some(retry_instruction_id),
+            desired_workspace_id: 4,
+            deadline: None,
+            dry_run: false,
+            command_socket_path: Some(retry_socket_path.display().to_string()),
+        },
+        &RpcAuthContext::system(),
+    )
+    .await?;
+
+    assert_eq!(
+        second.attempt.status,
+        ActuationStatus::Rejected,
+        "retrying with the same instruction_id must not re-dispatch"
+    );
+    drop(retry_server);
+
+    Ok(())
+}
+
 #[sinex_test]
 async fn hyprland_workspace_switch_rejects_duplicate_active_idempotency_key(
     ctx: TestContext,
