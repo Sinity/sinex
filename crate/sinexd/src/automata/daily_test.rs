@@ -74,8 +74,8 @@ async fn daily_flush_due_respects_dst_shortened_day() -> xtask::sandbox::TestRes
 
     // 2024-03-31 10:00 UTC == local noon (CEST, after the 02:00->03:00 jump).
     let noon = Timestamp::from_unix_timestamp(1_711_879_200).expect("valid ts");
-    let day_start = super::civil::floor_to_civil_day(noon);
-    let true_day_end = super::civil::civil_day_end(day_start); // 23h after day_start
+    let day_start = crate::automata::civil::floor_to_civil_day(noon);
+    let true_day_end = crate::automata::civil::civil_day_end(day_start); // 23h after day_start
 
     let ctx = AutomatonContext::timer_flush(noon)?;
     summarizer.accumulate(&mut state, hourly(noon), &ctx).await?;
