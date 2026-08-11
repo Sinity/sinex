@@ -200,3 +200,37 @@ async fn parser_lowers_order_by_ts_orig_for_event_windows() -> xtask::sandbox::T
     assert_eq!(request.limit, 25);
     Ok(())
 }
+
+/// sinex-882's landed fix required the `or` boolean connector to be
+/// token-boundary-checked so `order by` is never misread as an `or`
+/// connector plus a stray `der by` fragment. The prior positive-only test
+/// covered `ts_orig asc`; this covers the other sort key/direction pair and
+/// the exact ambiguity the fix was written for: a query DSL predicate using
+/// a real `or` connector immediately adjacent to an `order by` clause.
+#[sinex_test]
+async fn parser_lowers_order_by_ts_coided_desc_and_disambiguates_or_connector_from_order_by()
+-> xtask::sandbox::TestResult<()> {
+    // `event_query_from_sinex_query` cannot lower an `or`-joined predicate
+    // at all (a separate, pre-existing limitation unrelated to this bead's
+    // tokenization fix) -- assert purely at the parser level, which is
+    // where the `or`/`order by` token-boundary ambiguity actually lives.
+    let query = parse_sinex_query(
+        "events where lane = activity or lane = reflection order by ts_coided desc limit 10",
+    )?;
+
+    assert_eq!(query.sort.len(), 1);
+    assert_eq!(query.sort[0].key, "ts_coided");
+    assert!(query.sort[0].descending);
+
+    // Confirm ts_coided+desc also lowers correctly on its own (the other
+    // half of this test's coverage gap), using an `and`-joined predicate
+    // that the lowering path actually supports.
+    let and_query = parse_sinex_query(
+        "events where ts_orig >= '2026-07-02T12:00:00Z' order by ts_coided desc limit 10",
+    )?;
+    let request = event_query_from_sinex_query(&and_query)?;
+    assert_eq!(request.order, EventOrdering::TsCoided);
+    assert_eq!(request.direction, SortDirection::Desc);
+    assert_eq!(request.limit, 10);
+    Ok(())
+}
