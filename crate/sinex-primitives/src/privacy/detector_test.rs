@@ -222,6 +222,34 @@ async fn mac_rejects_too_short() -> ::xtask::sandbox::TestResult<()> {
     Ok(())
 }
 
+#[sinex_test]
+async fn mac_finds_uppercase_colon_separated() -> ::xtask::sandbox::TestResult<()> {
+    // sinex-cj1b's uppercase-MAC claim was FALSE: MAC_RE is compiled with the
+    // (?xi) flag (detector.rs), so [0-9a-f] already matches uppercase hex too.
+    // Kept as a real (non-ignored) regression test, not the red test originally
+    // planned for this bead.
+    let matches = find_mac_addresses("eth0: AA:BB:CC:DD:EE:FF");
+    assert_eq!(matches.len(), 1);
+    Ok(())
+}
+
+#[sinex_test]
+#[ignore = "sinex-cj1b open: IPv6 detector docstring claims IPv4-mapped notation coverage it doesn't implement (::ffff:192.168.1.1 unmatched)"]
+async fn ipv6_finds_ipv4_mapped_notation() -> ::xtask::sandbox::TestResult<()> {
+    let input = "addr: ::ffff:192.168.1.1";
+    let matches = find_ipv6(input);
+    assert_eq!(matches.len(), 1, "expected exactly one match in {input:?}, got {matches:?}");
+    let (start, end) = matches[0];
+    assert_eq!(
+        &input[start..end],
+        "::ffff:192.168.1.1",
+        "regex has no dotted-decimal tail in its alternatives, so it matches only the truncated \
+         hex prefix (e.g. '::ffff:192') rather than the full IPv4-mapped address -- got {:?}",
+        &input[start..end]
+    );
+    Ok(())
+}
+
 // ── SSN ──
 
 #[sinex_test]
