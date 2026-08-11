@@ -2105,18 +2105,14 @@ fn format_age(d: time::Duration) -> String {
 }
 
 /// Truncate a string with ellipsis if over `max` chars.
+///
+/// Compatibility shim over `sinex_primitives::text::truncate_chars`. The
+/// previous local implementation gated on `s.len()` (bytes) but cut at a
+/// char index, so multi-byte input just under the byte length but over the
+/// char count sailed through unbudgeted, and input over both bounds could
+/// mis-measure the budget.
 fn truncate(s: &str, max: usize) -> String {
-    if s.len() <= max {
-        s.to_string()
-    } else {
-        // Truncate at char boundary
-        let end = s
-            .char_indices()
-            .map(|(i, _)| i)
-            .nth(max.saturating_sub(3))
-            .unwrap_or(s.len());
-        format!("{}...", &s[..end])
-    }
+    sinex_primitives::text::truncate_chars(s, max).into_owned()
 }
 
 #[cfg(test)]

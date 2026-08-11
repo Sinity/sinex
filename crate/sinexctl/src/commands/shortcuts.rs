@@ -754,16 +754,11 @@ fn format_event_card_line(card: &EventCardView) -> String {
     )
 }
 
+/// Compatibility shim over `sinex_primitives::text::truncate_chars` — see
+/// the identical shim in `tui.rs` for why this stays a thin wrapper rather
+/// than switching call sites to the `Cow`-returning function directly.
 fn truncate_chars(input: &str, max_chars: usize) -> String {
-    if input.chars().count() <= max_chars {
-        return input.to_string();
-    }
-    let keep = max_chars.saturating_sub(3);
-    let end = input
-        .char_indices()
-        .nth(keep)
-        .map_or(input.len(), |(index, _)| index);
-    format!("{}...", &input[..end])
+    sinex_primitives::text::truncate_chars(input, max_chars).into_owned()
 }
 
 /// Show recent errors only
