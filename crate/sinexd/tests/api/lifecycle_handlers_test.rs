@@ -1010,14 +1010,24 @@ async fn tombstone_status_does_not_mislabel_completed_deletion_as_expired(
     );
 
     // Rewrite the persisted operation back to the stuck-Executing shape
-    // step 3's failure would have left behind: state=executing, no
+    // step 3's failure would have left behind: phase=executing, no
     // finished_at/error_details, TTL lapsed.
+    //
+    // operation_record_to_tombstone() treats `phase` as the canonical
+    // field and overwrites `state` from it on every read
+    // (`operation.state = operation.phase.into()`), so mutating `state`
+    // alone is a no-op against the real read path -- `phase` is what
+    // must be rewritten to reach reconcile_tombstone_expiry's
+    // `!operation.state.is_terminal()` guard with Executing.
     sqlx::query!(
         r#"
         UPDATE core.operations_log
         SET scope = jsonb_set(
             jsonb_set(
-                jsonb_set(scope, '{state}', to_jsonb('executing'::text), false),
+                jsonb_set(
+                    jsonb_set(scope, '{phase}', to_jsonb('executing'::text), false),
+                    '{state}', to_jsonb('executing'::text), false
+                ),
                 '{expires_at}', to_jsonb($2::text), false
             ),
             '{finished_at}', 'null'::jsonb, false
