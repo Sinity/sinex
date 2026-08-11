@@ -320,3 +320,43 @@ async fn timestamp_matches_journal_date() -> TestResult<()> {
     assert_eq!(ts.day(), 5);
     Ok(())
 }
+
+// ---------------------------------------------------------------------------
+// sinex-xtmp bug 2: declared vs. emitted occurrence-identity field name
+// ---------------------------------------------------------------------------
+
+/// `HledgerJournalParser`'s `#[source_meta(occurrence_identity =
+/// OccurrenceIdentity::Uuid5From("(date, description,
+/// first_explicit_posting_amount)"))]` declaration names the third
+/// occurrence-key field `first_explicit_posting_amount`, but the emitted
+/// `OccurrenceKey.fields` (see `occurrence_key_fields_and_order` above,
+/// which pins the CURRENT emitted name as its expectation) actually uses
+/// `first_amount`. This is a real declared-vs-emitted contract mismatch,
+/// not just a naming nit -- anything that resolves occurrence identity
+/// against the declared contract string (rather than the parser's actual
+/// runtime output) would look for a field that doesn't exist. This test
+/// operationalizes the mismatch without presupposing which side the
+/// eventual fix keeps (rename the emitted field, or update the
+/// declaration) -- it exists to make the gap executable and fails against
+/// current code either way, since the two never actually agree today.
+#[sinex_test]
+async fn occurrence_key_field_name_matches_declared_contract() -> TestResult<()> {
+    const DECLARED_THIRD_FIELD_NAME: &str = "first_explicit_posting_amount";
+
+    let mut parser = HledgerJournalParser;
+    let intents = parser
+        .parse_record(record_for(SAMPLE_JOURNAL.as_bytes()), &test_ctx())
+        .await
+        .unwrap();
+    let key = intents[0].occurrence_key.as_ref().unwrap();
+    assert_eq!(
+        key.fields[2].0, DECLARED_THIRD_FIELD_NAME,
+        "the #[source_meta(occurrence_identity = ...)] declaration on \
+         HledgerJournalParser (finance.rs) names this field \
+         `first_explicit_posting_amount`, but the parser actually emits it \
+         as `{}` -- the declared contract and the real implementation \
+         disagree",
+        key.fields[2].0
+    );
+    Ok(())
+}

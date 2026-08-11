@@ -271,3 +271,51 @@ async fn test_append_only_empty_file_yields_no_records() -> xtask::sandbox::Test
     assert!(records.is_empty());
     Ok(())
 }
+
+/// sinex-9h8q: `content.lines()` strips a trailing `\r` in addition to `\n`,
+/// but `byte_offset += line_len + 1` only ever accounts for the `\n` byte.
+/// On CRLF-terminated files this under-counts the true on-disk offset by 1
+/// per line, so `MaterialAnchor::Line{byte_start}` -- part of the
+/// occurrence-identity tuple -- no longer matches the file's real byte
+/// position past the first line. Fails until byte_offset accounts for the
+/// actual terminator width (1 for LF, 2 for CRLF).
+#[sinex_test]
+async fn test_append_only_crlf_byte_offset_matches_real_file_position()
+-> xtask::sandbox::TestResult<()> {
+    let mut f = NamedTempFile::new().unwrap();
+    // Each line is 5 bytes ("line1".."line3") + 2-byte CRLF terminator.
+    f.write_all(b"line1\r\nline2\r\nline3\r\n").unwrap();
+    let path = f.path().to_str().unwrap().to_string();
+
+    let adapter = AppendOnlyFileAdapter;
+    let config = AppendOnlyFileConfig {
+        path,
+        skip_empty: false,
+    };
+    let stream = adapter
+        .open(dummy_material_id(), &config, None)
+        .await
+        .unwrap();
+    let records: Vec<_> = stream.collect().await;
+    assert_eq!(records.len(), 3);
+
+    let byte_start_of = |i: usize| -> u64 {
+        let MaterialAnchor::Line { byte_start, .. } = records[i].as_ref().unwrap().anchor else {
+            panic!("expected Line anchor");
+        };
+        byte_start
+    };
+
+    assert_eq!(byte_start_of(0), 0, "first line always starts at offset 0");
+    assert_eq!(
+        byte_start_of(1),
+        7,
+        "second line must start at the true on-disk offset (5 bytes + 2-byte CRLF), not 6 (LF-width assumption)"
+    );
+    assert_eq!(
+        byte_start_of(2),
+        14,
+        "third line's offset compounds the per-line 1-byte drift if uncorrected"
+    );
+    Ok(())
+}

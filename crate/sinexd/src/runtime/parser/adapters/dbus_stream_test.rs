@@ -158,6 +158,43 @@ async fn test_dbus_match_rule_parses_keys() -> xtask::sandbox::TestResult<()> {
     Ok(())
 }
 
+/// sinex-xtmp bug 5: `open_with_backend` filter_maps away any match-rule
+/// string that fails to parse (`ParsedMatchRule::from_str(r).ok()`). If
+/// EVERY configured rule is malformed, `parsed_rules` ends up empty, and
+/// `matches_any_rule` treats an empty list as "match everything" -- the
+/// same code path used for a genuinely unconfigured (no rules at all)
+/// operator setup. A restrictive-looking but malformed rule should result
+/// in matching NOTHING, not everything -- silently leaking broad traffic
+/// is worse than silently dropping it. Fails until zero successfully-
+/// parsed rules is distinguished from zero configured rules.
+#[sinex_test]
+async fn test_dbus_all_malformed_rules_match_nothing_not_everything()
+-> xtask::sandbox::TestResult<()> {
+    let msgs = vec![make_msg("org.example.Forbidden", "Nope")];
+    let config = DbusStreamConfig {
+        bus: DbusBus::Session,
+        // No `=` in this clause -- ParsedMatchRule::from_str returns Err,
+        // so this is the only configured rule and it fails to parse.
+        match_rules: vec!["totallynotarule".into()],
+    };
+
+    let stream = DbusStreamAdapter::open_with_backend(
+        Box::new(MockDbusBackend::new(msgs)),
+        dummy_material_id(),
+        &config,
+    );
+
+    let records: Vec<_> = stream.collect().await;
+    assert_eq!(
+        records.len(),
+        0,
+        "an all-malformed rule set must match nothing, not fall back to \
+         matching everything (that's the empty-config behavior, and this \
+         config is not empty -- it just failed to parse)"
+    );
+    Ok(())
+}
+
 #[sinex_test]
 async fn test_dbus_real_backend_open_path() -> xtask::sandbox::TestResult<()> {
     // The default-constructed adapter has no injected backend, so

@@ -394,3 +394,49 @@ async fn test_non_existent_root_is_silently_skipped() -> xtask::sandbox::TestRes
     assert_eq!(records.len(), 0);
     Ok(())
 }
+
+/// sinex-xtmp bug 4: `collect_paths` has no visited-node guard for symlink
+/// cycles when `follow_symlinks=true` -- a cyclic symlink tree causes the
+/// same real directory to be re-entered at every depth level, silently
+/// over-collecting the same file once per cycle traversal rather than once.
+/// Bounded with `max_depth` here (a genuinely unbounded cycle would hang
+/// the test runner) -- even bounded, cycle-safe traversal should still find
+/// `target.txt` exactly once, not once per depth level.
+#[sinex_test]
+async fn test_symlink_cycle_does_not_over_collect_the_same_file() -> xtask::sandbox::TestResult<()>
+{
+    let dir = TempDir::new().unwrap();
+    let loop_dir = dir.path().join("loop");
+    std::fs::create_dir(&loop_dir).unwrap();
+    std::fs::write(loop_dir.join("target.txt"), b"content").unwrap();
+    // A symlink inside `loop/` pointing back at `loop/` itself -- following
+    // it re-enters the same directory contents indefinitely.
+    std::os::unix::fs::symlink(&loop_dir, loop_dir.join("self")).unwrap();
+
+    let root = Utf8PathBuf::from_path_buf(dir.path().to_path_buf()).unwrap();
+    let adapter = DirectoryWalkAdapter;
+    let config = DirectoryWalkConfig {
+        roots: vec![root],
+        globs: vec![],
+        follow_symlinks: true,
+        max_depth: Some(5),
+    };
+    let records = collect_records(&adapter, &config, None).await;
+
+    let target_hits = records
+        .iter()
+        .filter(|r| {
+            r.logical_path
+                .as_ref()
+                .is_some_and(|p| p.file_name() == Some("target.txt"))
+        })
+        .count();
+
+    assert_eq!(
+        target_hits, 1,
+        "a cycle-safe walk must find target.txt exactly once regardless of \
+         max_depth; found it {target_hits} times, meaning the symlink cycle \
+         caused the same file to be rediscovered once per depth level"
+    );
+    Ok(())
+}
