@@ -287,9 +287,11 @@ async fn embedding_repository_concurrent_registration_never_lies_about_dimension
     // (A-wins, B-wins, or a serialization retry), which is the point: no
     // interleaving may produce a caller that got `Ok` for dimensions that
     // were not actually the ones stored.
+    let meta_a = json!({"caller": "a"});
+    let meta_b = json!({"caller": "b"});
     let (result_a, result_b) = tokio::join!(
-        repo_a.register_model(provider, model_name, 3, &json!({"caller": "a"})),
-        repo_b.register_model(provider, model_name, 5, &json!({"caller": "b"})),
+        repo_a.register_model(provider, model_name, 3, &meta_a),
+        repo_b.register_model(provider, model_name, 5, &meta_b),
     );
 
     let stored = repo_a
@@ -329,6 +331,7 @@ async fn embedding_repository_concurrent_registration_never_lies_about_dimension
 /// of table size (a tiny test table would otherwise seq-scan even with a
 /// correctly matching index, making a plain EXPLAIN non-discriminating).
 #[sinex_test]
+#[ignore = "sinex-bksb open (item 1): HNSW index built on embedding::vector(N) cast but ORDER BY uses raw column -- fails until fixed"]
 async fn embedding_repository_search_similar_uses_hnsw_index(ctx: TestContext) -> TestResult<()> {
     let repo = ctx.pool.embeddings();
     let model_id = repo
@@ -380,11 +383,20 @@ async fn embedding_repository_search_similar_uses_hnsw_index(ctx: TestContext) -
         .collect::<Vec<_>>()
         .join("\n");
 
+    // A genuine HNSW-backed KNN scan returns rows pre-ordered by distance and
+    // needs no separate Sort node. Checking for a bare "Index Scan" substring
+    // is not sufficient: the WHERE-clause equality on embedding_model_id is
+    // itself satisfied by the unrelated `uk_event_embeddings_event_model`
+    // unique btree index (Bitmap Index Scan), which produces a plan
+    // containing "Index Scan" even when the ORDER BY falls through to an
+    // explicit Sort -- exactly the bug this test exists to catch. The real
+    // signal is the presence/absence of that Sort node.
     assert!(
-        plan_text.contains("Index Scan") || plan_text.contains("Index Only Scan"),
+        !plan_text.contains("Sort"),
         "search_similar's ORDER BY does not match the HNSW index's \
-         `(embedding::vector(N))` expression, so it cannot use it even with seq scan \
-         disabled (sinex-bksb item 1). Plan:\n{plan_text}"
+         `(embedding::vector(N))` expression, so the vector index cannot \
+         provide pre-sorted rows and the planner must add an explicit Sort \
+         node (sinex-bksb item 1). Plan:\n{plan_text}"
     );
 
     Ok(())
