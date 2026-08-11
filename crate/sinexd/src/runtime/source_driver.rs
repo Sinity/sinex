@@ -283,21 +283,35 @@ impl<I: SourceDriver> SourceDriverRuntime<I> {
         phase: &str,
         from: &Checkpoint,
     ) -> RuntimeResult<ScanReport> {
-        use sinex_primitives::settlement::{
-            DefaultFailurePolicy, FailureContext, FailurePolicy, RuntimeOperation, RuntimePhase,
-            Settlement,
-        };
+        use sinex_primitives::settlement::{DefaultFailurePolicy, FailureContext, FailurePolicy};
 
         let failure_ctx = FailureContext {
             unit_id: self.source.name().to_string(),
-            operation: RuntimeOperation::ProcessBatch,
-            phase: RuntimePhase::ProcessInput,
+            operation: sinex_primitives::settlement::RuntimeOperation::ProcessBatch,
+            phase: sinex_primitives::settlement::RuntimePhase::ProcessInput,
             input_scope: None,
             effect_kind: None,
             delivery_count: None,
             attempts: 0,
         };
         let settlement = DefaultFailurePolicy.settle(&error, &failure_ctx);
+        self.apply_scan_settlement(settlement, error, phase, from)
+    }
+
+    /// Handle an already-computed [`Settlement`] for a scan error. Split out
+    /// from `settle_scan_error` so tests can exercise every match arm
+    /// directly, including `Settlement::Commit` -- which `DefaultFailurePolicy`
+    /// (the only production `FailurePolicy` implementor as of sinex-hdnv)
+    /// never actually returns, but the arm's behavior must still be correct
+    /// if a future policy does produce it.
+    fn apply_scan_settlement(
+        &self,
+        settlement: sinex_primitives::settlement::Settlement,
+        error: crate::runtime::SinexError,
+        phase: &str,
+        from: &Checkpoint,
+    ) -> RuntimeResult<ScanReport> {
+        use sinex_primitives::settlement::Settlement;
 
         match settlement {
             Settlement::Commit => {
