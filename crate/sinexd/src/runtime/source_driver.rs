@@ -307,6 +307,18 @@ impl<I: SourceDriver> SourceDriverRuntime<I> {
                     error = %error,
                     "Source scan error settled as benign; returning empty report"
                 );
+                // sinex-hdnv: a settlement of Commit means the scan-level error
+                // is treated as non-fatal control flow (the caller gets an
+                // empty-but-Ok report), but that must not mean the error goes
+                // unrecorded for health/observability purposes. Without this,
+                // a source that fails on every scan (e.g. a query bug that
+                // always errors before producing rows) never updates
+                // last_output_at/current_health, so readiness/continuity
+                // surfaces see it as indistinguishable from a source that is
+                // simply idle -- the exact AW-datastr-bug blind spot.
+                if let Some(reporter) = self.health_reporter() {
+                    reporter.record_error(&error);
+                }
                 Ok(ScanReport {
                     events_processed: 0,
                     duration: std::time::Duration::ZERO,
