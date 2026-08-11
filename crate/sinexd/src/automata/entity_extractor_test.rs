@@ -1,10 +1,62 @@
 use super::*;
+use crate::runtime::Transducer;
+use crate::runtime::automaton::AutomatonContext;
 use serde_json::json;
 use sinex_primitives::domain::{EventSource, EventType, ProcessingMode, TriggerKind};
 use sinex_primitives::events::Event;
 use sinex_primitives::temporal::Timestamp;
 use sinex_primitives::{Id, JsonValue};
 use xtask::sandbox::sinex_test;
+
+fn material_context() -> AutomatonContext {
+    let trigger_event_id: Id<Event<JsonValue>> = Id::new();
+    AutomatonContext {
+        trigger_event_id,
+        source: EventSource::from_static("command.canonical"),
+        event_type: EventType::from_static("command.canonical"),
+        ts_orig: Some(Timestamp::now()),
+        ts_coided: trigger_event_id.timestamp(),
+        processing_mode: ProcessingMode::Live,
+        trigger_kind: TriggerKind::NewEvent,
+        created_by_operation_id: None,
+        trigger_material_id: None,
+        trigger_anchor_byte: None,
+    }
+}
+
+// Regression test for sinex-im80: entity_extractor previously constructed
+// DerivedOutput without equivalence_key/semantics_version, leaving both None
+// on every persisted event. equivalence_key is the SOLE occurrence-dedup
+// mechanism (event_engine admission returns early on None), so a restart
+// during catch-up would reprocess and re-emit permanent duplicates with no
+// dedup safety net. Mutating either `.with_equivalence_key(...)` or
+// `.with_semantics_version(...)` call site in entity_extractor.rs back out
+// (or reverting to the pre-fix construction with neither call) makes this
+// test fail.
+#[sinex_test]
+async fn entity_extractor_stamps_equivalence_key_and_semantics_version() -> TestResult<()> {
+    let context = material_context();
+    let trigger_id = context.trigger_uuid();
+    let input = json!({ "text": "Check https://example.com/path for details." });
+
+    let output = EntityExtractor
+        .process(&mut (), input, &context)
+        .await?
+        .expect("URL in input text should produce an entity.extracted output");
+
+    assert_eq!(
+        output.semantics_version.as_deref(),
+        Some("1.0.0"),
+        "semantics_version must match the declared DerivationOutputDeclaration value"
+    );
+    assert_eq!(
+        output.equivalence_key.as_deref(),
+        Some(format!("entity-extractor:{trigger_id}").as_str()),
+        "equivalence_key must be deterministic per trigger event so a restart-during-catchup \
+         reprocess of the same input dedupes instead of minting a permanent duplicate"
+    );
+    Ok(())
+}
 
 #[sinex_test]
 async fn test_url_extraction() -> TestResult<()> {
