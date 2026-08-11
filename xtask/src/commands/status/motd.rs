@@ -91,11 +91,7 @@ impl<'a> MotdRenderer<'a> {
 
         let branch_raw = self.data.git.branch.as_deref().unwrap_or("-");
         let max_branch = 20;
-        let branch_name = if branch_raw.len() > max_branch {
-            format!("{}…", &branch_raw[..max_branch - 1])
-        } else {
-            branch_raw.to_string()
-        };
+        let branch_name = sinex_primitives::text::truncate_cols(branch_raw, max_branch).into_owned();
         let branch_part = if self.data.git.dirty {
             style(&branch_name).bold().to_string()
         } else {
@@ -630,11 +626,7 @@ impl<'a> MotdRenderer<'a> {
             // Available space: width - label(LABEL_COL) - hash(7) - separators(6) - age
             let overhead = LABEL_COL + hash.len() + age.len() + 6;
             let max_msg = self.width.saturating_sub(overhead).max(10);
-            let truncated_msg = if msg.len() > max_msg {
-                format!("{}…", &msg[..max_msg - 1])
-            } else {
-                msg.clone()
-            };
+            let truncated_msg = sinex_primitives::text::truncate_cols(msg, max_msg).into_owned();
             println!(
                 "{label}      {} {}   {}",
                 style(hash).dim(),

@@ -40,6 +40,13 @@ dbg_macro = "deny"
 unwrap_used = "deny"
 expect_used = "deny"
 panic = "warn"
+# Restriction lint, allow-by-default upstream. Warn (not deny): flags every
+# `&s[a..b]` byte-index slice regardless of whether the bounds are provably
+# char-boundary-safe, so a workspace-wide deny would be ~90% false positives
+# against code that already validates boundaries. Kept as a backstop against
+# the exact class of bug this crate has repeatedly hit (raw byte slicing on
+# untrusted/multi-byte text) — see crate::text in sinex-primitives.
+string_slice = "warn"
 cognitive_complexity = "allow"
 type_complexity = "allow"
 

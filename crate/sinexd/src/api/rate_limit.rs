@@ -138,7 +138,7 @@ impl TokenRateLimiter {
             Ok(())
         } else {
             debug!(
-                token_prefix = &token[..8.min(token.len())],
+                token_prefix = sinex_primitives::text::prefix_chars(token, 8),
                 role = %role,
                 "Rate limit exceeded"
             );
