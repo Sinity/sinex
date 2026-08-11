@@ -275,57 +275,29 @@ async fn execute_ttl_archive(
         return Ok(0);
     }
 
-    let mut tx = pool.begin().await.map_err(|error| {
-        SinexError::database("Failed to begin TTL archive transaction")
-            .with_source(error.to_string())
-    })?;
-
-    // Set session vars consumed by the archive trigger.
-    let operation_id = operation_id.to_string();
+    // Route through the repository's cascade-archive chokepoint (sinex-k22c)
+    // instead of a raw `DELETE FROM core.events`: that path also removes
+    // dangling `core.tagged_items` rows (which have no FK to events and so
+    // are NOT cleaned up by the `core.fn_archive_before_delete` trigger) and
+    // writes their `audit.archived_tagged_items` copy, which
+    // `core.execute_cascade_restore` reads on restore. It also asserts
+    // `archived_count == requested_count` rather than silently accepting a
+    // partial delete.
     let archive_reason = format!("TTL session {session_id}");
-    sqlx::query_scalar!(
-        "SELECT pg_catalog.set_config('sinex.operation_id', $1, true)",
-        operation_id,
-    )
-    .fetch_optional(&mut *tx)
-    .await
-    .map_err(|error| {
-        SinexError::database("Failed to set operation_id for TTL archive")
-            .with_source(error.to_string())
-    })?;
-    sqlx::query_scalar!(
-        "SELECT pg_catalog.set_config('sinex.archived_by', $1, true)",
-        actor,
-    )
-    .fetch_optional(&mut *tx)
-    .await
-    .map_err(|error| {
-        SinexError::database("Failed to set archived_by for TTL archive")
-            .with_source(error.to_string())
-    })?;
-    sqlx::query_scalar!(
-        "SELECT pg_catalog.set_config('sinex.archive_reason', $1, true)",
-        archive_reason,
-    )
-    .fetch_optional(&mut *tx)
-    .await
-    .map_err(|error| {
-        SinexError::database("Failed to set archive_reason for TTL archive")
-            .with_source(error.to_string())
-    })?;
-
-    let result = sqlx::query!("DELETE FROM core.events WHERE id = ANY($1)", cascade_ids)
-        .execute(&mut *tx)
+    let archived_count = pool
+        .events()
+        .execute_cascade_archive(
+            cascade_ids,
+            &archive_reason,
+            &operation_id.to_string(),
+            actor,
+        )
         .await
         .map_err(|error| {
-            SinexError::database("TTL archive DELETE failed").with_source(error.to_string())
+            SinexError::database("TTL cascade archive failed").with_source(error.to_string())
         })?;
 
-    tx.commit().await.map_err(|error| {
-        SinexError::database("Failed to commit TTL archive").with_source(error.to_string())
-    })?;
-
-    Ok(result.rows_affected() as usize)
+    Ok(archived_count as usize)
 }
 
 async fn collect_cascade_ids(

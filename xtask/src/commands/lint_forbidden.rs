@@ -194,6 +194,7 @@ impl XtaskCommand for LintForbiddenCommand {
             r"sqlx::query_as\(",
             &sqlx_query_as_allow,
         )?);
+        violations.extend(check_sqlx_write_macro_forms_outside_repositories()?);
         let raw_event_subject_allow = [
             "crate/sinex-primitives/src/domain.rs",
             "crate/sinex-primitives/src/environment.rs",
@@ -921,6 +922,109 @@ fn property_strategy_domain_fallback_violations_for_file(
         };
         violations.push(format!(
             "{file}:{}: property strategies must not turn invalid generated domain values into fixed fixtures via {pattern:?}; generate typed-valid values or assert constructor failure",
+            idx + 1
+        ));
+    }
+    violations
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// sinex-k22c (second half of the AC): write-shaped sqlx::query!/query_as!
+// outside crate/sinex-db/src/repositories/. The runtime sqlx::query()/
+// query_as() checks earlier in this file only forbid the non-compile-checked
+// call forms; the compile-time-checked macro forms were entirely unpoliced
+// for the actual chokepoint concern (DB *writes* outside the repository layer,
+// which owns exclusive write access per DbPoolExt) -- three concrete
+// production sites bypassed it silently before this check existed.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Known, already-triaged write-shaped `sqlx::query!`/`query_as!` call sites
+/// outside `crate/sinex-db/src/repositories/`. Every entry here is a file
+/// with a one-line reason -- this is NOT a blanket exemption list, it exists
+/// so genuinely reviewed exceptions don't re-trip the check, while anything
+/// new still fails loudly.
+const SQLX_WRITE_MACRO_OUTSIDE_REPOSITORIES_ALLOWLIST: &[(&str, &str)] = &[
+    (
+        "crate/sinexctl/src/commands/blob.rs",
+        "BlobMigrateCommand::migrate_single_blob's legacy-git-annex-to-CAS \
+         migration UPDATE (core.blobs). Discovered while landing sinex-k22c's \
+         3 named bypass sites and this lint extension itself; not yet \
+         triaged/migrated to a repository method -- tracked as a follow-up, \
+         not silently accepted. Remove this entry once fixed.",
+    ),
+];
+
+/// Scans for write-verb-shaped `sqlx::query!`/`query_as!` macro calls (SQL
+/// text starting with `INSERT`/`UPDATE`/`DELETE`) outside the repository
+/// layer. Read-only `SELECT`s outside the repository layer are common and not
+/// the concern this bead tracks, so they are intentionally not flagged.
+fn check_sqlx_write_macro_forms_outside_repositories() -> Result<Vec<String>> {
+    let workspace = workspace_root();
+    let mut violations = Vec::new();
+
+    for root in ["crate/sinexd/src", "crate/sinexctl/src", "crate/sinex-primitives/src"] {
+        let scan_root = workspace.join(root);
+        if !scan_root.exists() {
+            continue;
+        }
+        for entry in WalkDir::new(&scan_root) {
+            let entry = entry
+                .with_context(|| format!("failed to walk {root} for write-shaped sqlx macros"))?;
+            let path = entry.path();
+            if !entry.file_type().is_file()
+                || path.extension().and_then(|ext| ext.to_str()) != Some("rs")
+            {
+                continue;
+            }
+            let rel_path = ignored_test_contract_rel_path(path, &workspace);
+            if is_tests_path(&rel_path) || rel_path.starts_with("crate/sinex-db/") {
+                continue;
+            }
+            let contents = fs::read_to_string(path).with_context(|| {
+                format!("failed to read {rel_path} for write-shaped sqlx macro scan")
+            })?;
+            violations.extend(sqlx_write_macro_violations_for_file(&rel_path, &contents));
+        }
+    }
+    Ok(violations)
+}
+
+fn sqlx_write_macro_violations_for_file(file: &str, contents: &str) -> Vec<String> {
+    let lines: Vec<&str> = contents.lines().collect();
+    let mut violations = Vec::new();
+    let allowed_line = SQLX_WRITE_MACRO_OUTSIDE_REPOSITORIES_ALLOWLIST
+        .iter()
+        .any(|(allowed_file, _)| *allowed_file == file);
+
+    for (idx, line) in lines.iter().enumerate() {
+        let trimmed = line.trim_start();
+        if trimmed.starts_with("//") {
+            continue;
+        }
+        if !line.contains("sqlx::query!(") && !line.contains("sqlx::query_as!(") {
+            continue;
+        }
+        // The SQL string literal usually starts a few lines below the macro
+        // call (struct name / raw-string opener in between). Look at a
+        // bounded window rather than the whole rest of the file.
+        let window_end = (idx + 8).min(lines.len());
+        let has_write_verb = lines[idx..window_end].iter().any(|window_line| {
+            let w = window_line.trim_start();
+            w.starts_with("INSERT INTO ")
+                || w.starts_with("UPDATE ")
+                || w.starts_with("DELETE FROM ")
+        });
+        if !has_write_verb {
+            continue;
+        }
+        if allowed_line {
+            continue;
+        }
+        violations.push(format!(
+            "{file}:{}: write-shaped sqlx::query!/query_as! outside crate/sinex-db/src/repositories/ \
+             bypasses the DB write chokepoint (DbPoolExt) -- route this write through a repository \
+             method instead, or add a reviewed entry to SQLX_WRITE_MACRO_OUTSIDE_REPOSITORIES_ALLOWLIST \
+             in xtask/src/commands/lint_forbidden.rs with a one-line reason if it's a deliberate exception",
             idx + 1
         ));
     }
