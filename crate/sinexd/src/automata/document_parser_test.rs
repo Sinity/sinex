@@ -147,6 +147,42 @@ async fn test_paragraph_spans_round_trip_with_irregular_separators() -> TestResu
     Ok(())
 }
 
+/// sinex-x6kp: `split_capped_span`'s cut point (`pos + MAX_CHUNK_BYTES`) is
+/// raw byte arithmetic with no UTF-8 char-boundary check, unlike every other
+/// offset in this file (all `.find()`-derived). A single paragraph over
+/// 64 KiB with a multi-byte character straddling the cut point panics the
+/// live document-ingestion automaton instead of producing a valid split.
+/// This fixture places a 4-byte emoji across bytes [65534, 65538) so the
+/// want_end=65536 cut lands on its third byte -- not a char boundary.
+#[sinex_test]
+async fn test_overlong_chunk_split_respects_utf8_char_boundaries() -> TestResult<()> {
+    let mut text = String::with_capacity(65738);
+    text.push_str(&"a".repeat(65534));
+    text.push('😀'); // 4-byte UTF-8 char occupying bytes [65534, 65538)
+    text.push_str(&"a".repeat(200));
+    assert!(text.len() > MAX_CHUNK_BYTES, "fixture must exceed the cap to exercise the split");
+
+    let chunks = paragraph_chunks(&text);
+
+    let mut reconstructed = String::with_capacity(text.len());
+    for chunk in &chunks {
+        assert_eq!(
+            &text[chunk.start..chunk.end],
+            chunk.text,
+            "chunk span [{}, {}) must be a valid, real slice of the source text",
+            chunk.start,
+            chunk.end
+        );
+        reconstructed.push_str(chunk.text);
+    }
+    assert_eq!(
+        reconstructed, text,
+        "splitting an overlong paragraph must not lose or corrupt any source bytes, \
+         including the multi-byte character straddling the chunk-size cap"
+    );
+    Ok(())
+}
+
 /// End-to-end anti-vacuity test: run the real `process_dendron` path over a
 /// fixture with YAML frontmatter (so both frontmatter-prefix bytes and
 /// paragraph separator bytes are in play) and verify every emitted
