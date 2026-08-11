@@ -200,3 +200,26 @@ async fn parser_lowers_order_by_ts_orig_for_event_windows() -> xtask::sandbox::T
     assert_eq!(request.limit, 25);
     Ok(())
 }
+
+/// sinex-882's landed fix required the `or` boolean connector to be
+/// token-boundary-checked so `order by` is never misread as an `or`
+/// connector plus a stray `der by` fragment. The prior positive-only test
+/// covered `ts_orig asc`; this covers the other sort key/direction pair and
+/// the exact ambiguity the fix was written for: a query DSL predicate using
+/// a real `or` connector immediately adjacent to an `order by` clause.
+#[sinex_test]
+async fn parser_lowers_order_by_ts_coided_desc_and_disambiguates_or_connector_from_order_by()
+-> xtask::sandbox::TestResult<()> {
+    let query = parse_sinex_query(
+        "events where lane = core or lane = reflection order by ts_coided desc limit 10",
+    )?;
+    let request = event_query_from_sinex_query(&query)?;
+
+    assert_eq!(query.sort.len(), 1);
+    assert_eq!(query.sort[0].key, "ts_coided");
+    assert!(query.sort[0].descending);
+    assert_eq!(request.order, EventOrdering::TsCoided);
+    assert_eq!(request.direction, SortDirection::Desc);
+    assert_eq!(request.limit, 10);
+    Ok(())
+}
