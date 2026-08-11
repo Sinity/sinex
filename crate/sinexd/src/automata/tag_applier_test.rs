@@ -64,23 +64,42 @@ async fn tag_applier_consumes_material_events_only() -> TestResult<()> {
     Ok(())
 }
 
+// These three tests previously built an `input` value and immediately
+// discarded it (`let _ = input; Ok(())`), asserting nothing about
+// `evaluate_rules`'s actual behavior despite their names claiming to test
+// source-based and file-extension tagging. Fixed to call `evaluate_rules`
+// directly and assert against the exact tag values documented in this
+// module's own doc comment table (lines 6-11).
+
 #[sinex_test]
 async fn test_source_based_tagging() -> TestResult<()> {
-    let input = json!({});
-    let _ = input;
+    let context = browser_source_context();
+    let tags = super::evaluate_rules(&json!({}), &context);
+    assert!(
+        tags.contains(&"sys.source.browser".to_string()),
+        "browser.history source should apply the sys.source.browser tag, got {tags:?}"
+    );
     Ok(())
 }
 
 #[sinex_test]
 async fn test_file_extension_rust() -> TestResult<()> {
-    let input = json!({"path": "/home/user/main.rs"});
-    let _ = input;
+    let context = browser_source_context();
+    let tags = super::evaluate_rules(&json!({"path": "/home/user/main.rs"}), &context);
+    assert!(
+        tags.contains(&"sys.inferred.file-type.rust".to_string()),
+        "a .rs path should apply the sys.inferred.file-type.rust tag, got {tags:?}"
+    );
     Ok(())
 }
 
 #[sinex_test]
 async fn test_file_extension_unknown() -> TestResult<()> {
-    let input = json!({"path": "/tmp/file.xyz"});
-    let _ = input;
+    let context = browser_source_context();
+    let tags = super::evaluate_rules(&json!({"path": "/tmp/file.xyz"}), &context);
+    assert!(
+        !tags.iter().any(|t| t.starts_with("sys.inferred.file-type.")),
+        "an unrecognized extension should not apply any file-type tag, got {tags:?}"
+    );
     Ok(())
 }
