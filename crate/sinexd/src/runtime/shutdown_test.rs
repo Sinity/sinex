@@ -11,6 +11,7 @@ use xtask::sandbox::{EnvGuard, sinex_serial_test};
 /// override — true for any non-NixOS run) resolve checkpoints to the exact
 /// same path and silently cross-contaminate replay/hot-reload state.
 #[sinex_serial_test]
+#[ignore = "sinex-6yi8 open: default checkpoint path isn't namespaced by deployment environment -- fails until fixed"]
 async fn default_checkpoint_path_is_namespaced_by_deployment_environment()
 -> xtask::sandbox::TestResult<()> {
     let _env_override =

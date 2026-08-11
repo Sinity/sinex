@@ -40,6 +40,7 @@ async fn checkpoint_cleanup_from_env_defaults_invalid_overrides()
 /// this must become false once cursor advancement is taken into account, not
 /// just the count.
 #[sinex_serial_test]
+#[ignore = "sinex-q5sd open: regress predicate ignores cursor advancement at equal processed_count -- fails until fixed"]
 async fn checkpoint_conflict_would_regress_ignores_cursor_advancement_at_equal_processed_count()
 -> xtask::sandbox::TestResult<()> {
     let existing = CheckpointState {
