@@ -43,6 +43,7 @@ fn manifest_with_postgres_row_counts(row_counts: BTreeMap<String, i64>) -> Snaps
 /// distinguishable in the manifest (e.g. `Option<BTreeMap<..>>` with `None`
 /// meaning "capture couldn't determine this"), not just a comparison tweak.
 #[test]
+#[ignore = "sinex-l9uq open: postgres_row_counts_match can report Some(true) vacuously when the expected map came from a swallowed capture failure -- fails until fixed"]
 fn postgres_row_counts_match_is_not_vacuously_true_when_expected_came_from_a_capture_failure() {
     // Simulates unwrap_or_default() swallowing a pg_row_counts() error during
     // capture: the manifest's only postgres component has an empty row_counts

@@ -114,7 +114,7 @@ async fn recent_closures_parses_bead_string_ids_not_numeric_issue_ids()
         {"id": "sinex-x79t", "title": "derivation reconciler", "issue_type": "task"},
     ]))?;
 
-    let ids = parse_recently_closed_bead_ids(&bd_json)?;
+    let ids = parse_recently_closed_bead_ids(&bd_json).map_err(|e| color_eyre::eyre::eyre!(e))?;
 
     assert_eq!(
         ids,
@@ -133,7 +133,7 @@ async fn recent_closures_caps_at_twenty_beads() -> xtask::sandbox::TestResult<()
         .collect();
     let bd_json = serde_json::to_vec(&many)?;
 
-    let ids = parse_recently_closed_bead_ids(&bd_json)?;
+    let ids = parse_recently_closed_bead_ids(&bd_json).map_err(|e| color_eyre::eyre::eyre!(e))?;
 
     assert_eq!(
         ids.len(),

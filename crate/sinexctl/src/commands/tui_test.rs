@@ -548,7 +548,7 @@ fn fixture_query_result_event(payload: serde_json::Value) -> QueryResultEvent {
 fn event_consumers_use_real_row_when_present_not_just_the_truncated_card_preview() {
     let card = event_card_fixture(
         "019f0000-0000-7000-8000-000000000001",
-        PrivacyStateKind::Disclosed,
+        PrivacyStateKind::RawVisible,
         Vec::new(),
         Vec::new(),
     );
