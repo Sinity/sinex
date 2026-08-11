@@ -298,7 +298,7 @@ async fn handle_rpc(
                 None,
                 Some(&detail),
             );
-            let token_prefix = sinex_primitives::text::prefix_chars(token, 8);
+            let token_prefix = sinex_primitives::text::prefix_chars(&token, 8);
             state.metrics.record_rpc_call(
                 &request.method,
                 "unknown",
@@ -319,7 +319,7 @@ async fn handle_rpc(
 
     // Issue 143: Per-token rate limiting
     if !state.rate_limiter.check(&token, auth_context.role).await {
-        let token_prefix = sinex_primitives::text::prefix_chars(token, 8);
+        let token_prefix = sinex_primitives::text::prefix_chars(&token, 8);
         warn!(token_prefix, "Request rejected: rate limit exceeded");
         state.metrics.record_rate_limited();
         log_access_audit(
@@ -573,7 +573,7 @@ async fn handle_rpc_batch(
 
         // Rate limit each request individually
         if !state.rate_limiter.check(&token, auth_context.role).await {
-            let token_prefix = sinex_primitives::text::prefix_chars(token, 8);
+            let token_prefix = sinex_primitives::text::prefix_chars(&token, 8);
             warn!(token_prefix, "Batch request rejected: rate limit exceeded");
             state.metrics.record_rate_limited();
             log_access_audit(
