@@ -233,3 +233,7 @@ pub fn derive_document_id(source: &str, natural_key: &str) -> ::uuid::Uuid {
     let canonical = format!("sinex.documents.v1/{source}/{natural_key}");
     ::uuid::Uuid::new_v5(&::uuid::Uuid::NAMESPACE_OID, canonical.as_bytes())
 }
+
+#[cfg(test)]
+#[path = "ids_test.rs"]
+mod tests;

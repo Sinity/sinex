@@ -36,7 +36,7 @@ pub use derivation::{
 };
 pub use document_search::{
     DEFAULT_PAGE_SIZE, DocumentSearchQuery, DocumentSearchRepository, DocumentSearchResult,
-    DocumentSearchResults, MAX_PAGE_SIZE, SearchEmptyReason, SearchMode,
+    DocumentSearchResults, MAX_PAGE_SIZE, SearchEmptyReason, SearchMode, VectorSearchParams,
 };
 pub use email_mailbox_projection::{
     EmailMailboxProjectionEvent, EmailMailboxProjectionRecord, EmailMailboxProjectionRepository,

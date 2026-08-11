@@ -326,3 +326,7 @@ where
 
     Ok(validated_paths)
 }
+
+#[cfg(test)]
+#[path = "config_validation_test.rs"]
+mod tests;
