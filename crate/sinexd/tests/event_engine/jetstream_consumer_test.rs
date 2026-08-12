@@ -2753,6 +2753,122 @@ async fn settlement_registry_resolves_durable_debt_for_an_admission_rejected_eve
     Ok(())
 }
 
+/// sinex-sbue: structural and plausibility failures from the full ingest
+/// validator must use the real admission settlement path.
+#[sinex_test]
+async fn full_validator_rejections_route_through_real_admission_dlq_settlement(
+    ctx: TestContext,
+) -> TestResult<()> {
+    let ctx = ctx.with_nats().shared().await?;
+    let nats_client = ctx.nats_client();
+    let pool = ctx.pool.clone();
+    ensure_fixture_source_material(&pool).await?;
+
+    let js = ctx.jetstream().await?;
+    let env = ctx.env();
+    let namespace = ctx.pipeline_namespace().prefix().to_string();
+    let topology = JetStreamTopology::new(
+        env,
+        ctx.pipeline_namespace().stream("SINEX_RAW_EVENTS_SBUE"),
+        ctx.pipeline_namespace().consumer_name("event-engine-sbue"),
+        Some(&namespace),
+    );
+    let ready_topology = topology.clone();
+    let consumer = JetStreamConsumer::new(
+        nats_client.clone(),
+        pool.clone(),
+        Arc::new(RwLock::new(IngestEventValidator::new(true))),
+        topology,
+    );
+    let registry = consumer.settlement_registry();
+    let consumer_handle =
+        spawn_consumer_and_wait_ready(&ctx, &js, &ready_topology, consumer).await?;
+
+    let structural_id = Uuid::now_v7();
+    let plausibility_id = Uuid::now_v7();
+    let structural_rx = registry.register(structural_id.into());
+    let plausibility_rx = registry.register(plausibility_id.into());
+    let stale_timestamp = Timestamp::from_const(time::macros::datetime!(1970-01-01 00:00:00 UTC));
+    let cases = [
+        (
+            structural_id,
+            "structural.invalid",
+            json!("payload must be an object"),
+            temporal::now().format_rfc3339(),
+            "expected object",
+        ),
+        (
+            plausibility_id,
+            "plausibility.invalid",
+            json!({"ok": true}),
+            stale_timestamp.format_rfc3339(),
+            "ID timestamp drift",
+        ),
+    ];
+    for (event_id, event_type, payload, ts_orig, _) in &cases {
+        let event = json!({
+            "id": event_id.to_string(),
+            "source": "sbue",
+            "event_type": event_type,
+            "payload": payload,
+            "ts_orig": ts_orig,
+            "host": "test-host",
+            "source_material_id": FIXTURE_SOURCE_MATERIAL_ID,
+            "anchor_byte": 0,
+        });
+        let subject = env.nats_subject_with_namespace(
+            Some(&namespace),
+            &format!("events.raw.sbue.{event_type}"),
+        );
+        nats_client
+            .publish(
+                subject,
+                serde_json::to_vec(&admission_envelope("sbue", event))?.into(),
+            )
+            .await?;
+    }
+    nats_client.flush().await?;
+
+    for (event_id, receiver, expected_reason) in [
+        (structural_id, structural_rx, cases[0].4),
+        (plausibility_id, plausibility_rx, cases[1].4),
+    ] {
+        let state = tokio::time::timeout(Duration::from_secs(Timeouts::STANDARD), receiver).await??;
+        let EmissionReceiptState::DurableDebt { debt_id, reason } = state else {
+            panic!("validator rejection for {event_id} must settle as durable debt: {state:?}");
+        };
+        assert!(
+            reason.contains("admission rejection"),
+            "settlement must identify the admission DLQ route: {reason}"
+        );
+
+        let evidence = sqlx::query(
+            "SELECT failed_event_id, failure_reason, error_category FROM sinex_schemas.dlq_events \
+             WHERE dlq_id = $1::uuid",
+        )
+        .bind(debt_id)
+        .fetch_one(&ctx.pool)
+        .await?;
+        let failed_event_id: Uuid = evidence.try_get("failed_event_id")?;
+        let failure_reason: String = evidence.try_get("failure_reason")?;
+        let error_category: String = evidence.try_get("error_category")?;
+        assert_eq!(failed_event_id, event_id);
+        assert_eq!(error_category, "permanent");
+        assert!(
+            failure_reason.contains(expected_reason),
+            "DLQ evidence must retain the validator failure ({expected_reason}), got: {failure_reason}"
+        );
+        assert!(
+            ctx.pool.events().get_by_id(event_id.into()).await?.is_none(),
+            "validator-rejected event must not reach core.events"
+        );
+    }
+
+    consumer_handle.abort();
+    let _ = consumer_handle.await;
+    Ok(())
+}
+
 /// sinex-7s0: material events legitimately arrive without `ts_orig`, so their
 /// source-material start time is resolved only after the readiness FK gate. The
 /// resolved value must then pass the same plausibility checks as an explicit
