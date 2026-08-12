@@ -14,6 +14,9 @@ fn sweep_summary(orphaned_entries: usize) -> BlobSweepSummary {
         staged_entries: 0,
         protected_recent_entries: 0,
         recheck_protected_entries: 0,
+        quarantined_entries: 0,
+        pending_delete_entries: 0,
+        restored_entries: 0,
         orphaned_keys: Vec::new(),
     }
 }
@@ -32,6 +35,9 @@ fn fsck_summary() -> BlobFsckSummary {
         protected_recent: 0,
         staged: 0,
         recheck_protected: 0,
+        quarantined: 0,
+        pending_deletes: 0,
+        restored: 0,
         entries_scanned: 0,
         bytes_verified: 0,
         incomplete: false,

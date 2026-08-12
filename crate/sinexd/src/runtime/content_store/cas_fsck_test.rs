@@ -127,7 +127,7 @@ async fn referenced_cas_quarantine_is_restored_by_apply_reconciliation(
 
     let report = sweep_orphans(ctx.pool(), &content_store, true).await?;
     assert_eq!(report.restored, 1);
-    assert_eq!(report.removed, 0);
+    assert_eq!(report.dropped, 0);
     assert!(original_path.exists());
     assert!(!pending.quarantine_path.exists());
     assert!(content_store.list_pending_deletions().await?.is_empty());
