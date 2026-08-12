@@ -630,6 +630,14 @@ impl MaterialContentStore {
                 tokio::fs::rename(&tmp, &target)
                     .await
                     .map_err(SinexError::io)?;
+                // The file fsync makes the object durable, while the parent
+                // directory fsync makes the atomic name publication durable.
+                // Without the latter, a power loss can lose the directory
+                // entry after callers have acknowledged the material.
+                std::fs::File::open(parent.as_std_path())
+                    .map_err(SinexError::io)?
+                    .sync_all()
+                    .map_err(SinexError::io)?;
             }
         }
 
