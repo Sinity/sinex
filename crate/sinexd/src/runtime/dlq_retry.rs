@@ -14,6 +14,7 @@ use sinex_primitives::{
     utils::wait_helpers::RetryConfig,
 };
 use std::time::Duration;
+use tokio::sync::mpsc::UnboundedSender;
 use tracing::{error, info, warn};
 
 // Default DLQ retry configuration values
@@ -82,11 +83,26 @@ pub struct DlqRetryResult {
     pub transient_failures: usize,
 }
 
+/// Durable progress emitted after each bulk DLQ settlement attempt.
+///
+/// The API layer persists these snapshots in the operation record so a
+/// request timeout or operator disconnect cannot erase the already-settled
+/// prefix of a bulk requeue.
+#[derive(Debug, Clone)]
+pub struct DlqRetryProgress {
+    pub processed: u64,
+    pub retried: usize,
+    pub permanently_failed: usize,
+    pub transient_failures: usize,
+    pub last_sequence: Option<u64>,
+}
+
 /// DLQ retry handler
 pub struct DlqRetryHandler {
     nats_client: async_nats::Client,
     env: SinexEnvironment,
     config: DlqRetryConfig,
+    progress_sender: Option<UnboundedSender<DlqRetryProgress>>,
 }
 
 impl DlqRetryHandler {
@@ -101,6 +117,20 @@ impl DlqRetryHandler {
             nats_client,
             env,
             config,
+            progress_sender: None,
+        }
+    }
+
+    /// Attach a best-effort progress channel for a bulk operation.
+    #[must_use]
+    pub fn with_progress_sender(mut self, sender: UnboundedSender<DlqRetryProgress>) -> Self {
+        self.progress_sender = Some(sender);
+        self
+    }
+
+    fn report_progress(&self, progress: DlqRetryProgress) {
+        if let Some(sender) = &self.progress_sender {
+            let _ = sender.send(progress);
         }
     }
 
@@ -161,14 +191,21 @@ impl DlqRetryHandler {
             let next = tokio::time::timeout(Duration::from_secs(5), messages.next()).await;
             match next {
                 Ok(Some(Ok(msg))) => {
-                    if self.handle_dlq_message(&js, &msg).await? {
+                    if self.handle_dlq_message(&js, &stream, &msg).await? {
                         result.retried = result.retried.saturating_add(1);
                     } else if dlq_retry_attempts(&msg)? >= self.config.max_retries() {
                         result.permanently_failed = result.permanently_failed.saturating_add(1);
                     } else {
                         result.transient_failures = result.transient_failures.saturating_add(1);
-                    }
+                }
                     processed = processed.saturating_add(1);
+                    self.report_progress(DlqRetryProgress {
+                        processed,
+                        retried: result.retried,
+                        permanently_failed: result.permanently_failed,
+                        transient_failures: result.transient_failures,
+                        last_sequence: msg.info().ok().map(|info| info.stream_sequence),
+                    });
 
                     // Per-message delay: smooth burst republishing within a batch
                     if self.config.per_message_delay_ms > 0 {
@@ -330,6 +367,7 @@ impl DlqRetryHandler {
             .map_err(|e| SinexError::processing("Failed to get DLQ stream").with_source(e))?;
 
         let mut result = DlqRetryResult::default();
+        let mut processed = 0u64;
         for sequence in start_sequence..=end_sequence {
             let message = match stream.direct_get(sequence).await {
                 Ok(message) => message,
@@ -361,11 +399,27 @@ impl DlqRetryHandler {
                 self.permanently_fail_stream_message(&stream, &message)
                     .await?;
                 result.permanently_failed = result.permanently_failed.saturating_add(1);
+                processed = processed.saturating_add(1);
+                self.report_progress(DlqRetryProgress {
+                    processed,
+                    retried: result.retried,
+                    permanently_failed: result.permanently_failed,
+                    transient_failures: result.transient_failures,
+                    last_sequence: Some(sequence),
+                });
                 continue;
             }
 
             self.retry_stream_message(&js, &stream, &message).await?;
             result.retried = result.retried.saturating_add(1);
+            processed = processed.saturating_add(1);
+            self.report_progress(DlqRetryProgress {
+                processed,
+                retried: result.retried,
+                permanently_failed: result.permanently_failed,
+                transient_failures: result.transient_failures,
+                last_sequence: Some(sequence),
+            });
 
             if self.config.per_message_delay_ms > 0 {
                 tokio::time::sleep(Duration::from_millis(self.config.per_message_delay_ms)).await;
@@ -380,6 +434,7 @@ impl DlqRetryHandler {
     async fn handle_dlq_message(
         &self,
         js: &jetstream::Context,
+        stream: &jetstream::stream::Stream,
         msg: &jetstream::Message,
     ) -> RuntimeResult<bool> {
         let retry_count = dlq_retry_attempts(msg)?;
@@ -400,6 +455,7 @@ impl DlqRetryHandler {
                     error,
                 )
             })?;
+            self.delete_consumer_message(stream, msg).await?;
             return Ok(false);
         }
 
@@ -412,6 +468,7 @@ impl DlqRetryHandler {
                         error,
                     )
                 })?;
+                self.delete_consumer_message(stream, msg).await?;
                 Ok(true)
             }
             Err(e) => {
@@ -438,6 +495,29 @@ impl DlqRetryHandler {
         }
     }
 
+    async fn delete_consumer_message(
+        &self,
+        stream: &jetstream::stream::Stream,
+        msg: &jetstream::Message,
+    ) -> RuntimeResult<()> {
+        let sequence = msg
+            .info()
+            .map_err(|error| SinexError::processing("failed to inspect settled DLQ message")
+                .with_source(error))?
+            .stream_sequence;
+        let deleted = stream
+            .delete_message(sequence)
+            .await
+            .map_err(|error| SinexError::processing("failed to delete settled DLQ message")
+                .with_source(error))?;
+        if !deleted {
+            return Err(SinexError::processing(format!(
+                "DLQ stream refused to delete settled message sequence {sequence}"
+            )));
+        }
+        Ok(())
+    }
+
     fn message_settlement_error(
         operation: &'static str,
         subject: &str,
@@ -455,16 +535,19 @@ impl DlqRetryHandler {
         let headers_ref = msg.headers.as_ref().ok_or_else(|| {
             SinexError::processing("DLQ message is missing retry metadata headers".to_string())
         })?;
+        let source_sequence = msg
+            .info()
+            .map(|info| info.stream_sequence)
+            .map_err(|error| {
+                SinexError::processing("Failed to inspect DLQ stream sequence")
+                    .with_source(error.to_string())
+            })?;
         let target = dlq_requeue_target(headers_ref, msg.subject.as_str(), &msg.payload)?;
         let mut headers = async_nats::HeaderMap::new();
         let retry_count_str = next_retry_count(retry_count)?.to_string();
         let requeue_generation = next_requeue_generation(target.dlq_requeue_generation)?;
         let requeue_generation_str = requeue_generation.to_string();
-        let requeue_msg_id = format!(
-            "dlq-requeue.{}.{}",
-            target.original_nats_msg_id.as_deref().unwrap_or("unknown"),
-            requeue_generation
-        );
+        let requeue_msg_id = Self::requeue_msg_id(source_sequence, requeue_generation);
         let retried_at_str = temporal::format_rfc3339(temporal::now());
         headers.insert("Retry-Count", retry_count_str.as_str());
         headers.insert(
@@ -498,9 +581,11 @@ impl DlqRetryHandler {
             .await
             .map_err(|e| SinexError::processing("Failed to await publish ack").with_source(e))?;
         if publish_ack.duplicate {
-            return Err(SinexError::processing(
-                "DLQ retry publish was deduplicated; retaining the original DLQ message",
-            ));
+            warn!(
+                source_sequence,
+                requeue_generation,
+                "DLQ retry publish was already durable; acknowledging the original DLQ message idempotently"
+            );
         }
 
         Ok(())
@@ -520,11 +605,7 @@ impl DlqRetryHandler {
         let retry_count_str = next_retry_count(retry_count)?.to_string();
         let requeue_generation = next_requeue_generation(target.dlq_requeue_generation)?;
         let requeue_generation_str = requeue_generation.to_string();
-        let requeue_msg_id = format!(
-            "dlq-requeue.{}.{}",
-            target.original_nats_msg_id.as_deref().unwrap_or("unknown"),
-            requeue_generation
-        );
+        let requeue_msg_id = Self::requeue_msg_id(message.sequence, requeue_generation);
         let retried_at_str = temporal::format_rfc3339(temporal::now());
         headers.insert("Retry-Count", retry_count_str.as_str());
         headers.insert(
@@ -558,15 +639,25 @@ impl DlqRetryHandler {
             .await
             .map_err(|e| SinexError::processing("Failed to await publish ack").with_source(e))?;
         if publish_ack.duplicate {
-            return Err(SinexError::processing(
-                "DLQ retry publish was deduplicated; retaining the original DLQ message",
-            ));
+            warn!(
+                source_sequence = message.sequence,
+                requeue_generation,
+                "DLQ retry publish was already durable; deleting the original DLQ message idempotently"
+            );
         }
 
         self.permanently_fail_stream_message(stream, message)
             .await?;
 
         Ok(())
+    }
+
+    /// Build the stable raw-stream deduplication identity for one retained
+    /// DLQ entry. The DLQ stream sequence is the durable occurrence identity
+    /// for this recovery action; unlike an optional event/NATS id it remains
+    /// unique for malformed and multi-event entries too.
+    fn requeue_msg_id(source_sequence: u64, generation: u32) -> String {
+        format!("dlq-requeue.sequence.{source_sequence}.{generation}")
     }
 
     async fn permanently_fail_stream_message(

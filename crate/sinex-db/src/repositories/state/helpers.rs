@@ -13,6 +13,7 @@ pub(super) const MANAGED_OPERATION_TYPES: &[&str] = &[
     "restore",
     "purge",
     "tombstone",
+    "dlq.requeue",
     PROJECTION_REBUILD_OPERATION_TYPE,
 ];
 

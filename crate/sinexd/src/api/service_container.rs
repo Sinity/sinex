@@ -2,6 +2,7 @@
 
 use crate::api::config::GatewayConfig;
 use crate::api::content_service::ContentService;
+use crate::api::handlers::dlq::recover_stale_dlq_requeue_operations;
 use crate::api::replay_control::{ReplayControlClient, ReplayControlError, spawn_replay_control};
 use crate::event_engine::policy::PolicyEngine;
 use crate::runtime::content_store::{ContentStoreConfig, ContentStoreManager};
@@ -195,7 +196,7 @@ impl ServiceContainer {
         // Get environment for handler operations
         let env = sinex_environment::environment();
 
-        Ok(Self {
+        let services = Self {
             config: Arc::new(config.clone()),
             pool_max_connections: [
                 content_pool.options().get_max_connections(),
@@ -212,7 +213,10 @@ impl ServiceContainer {
             nats_client,
             env,
             sse_bus: Arc::new(OnceLock::new()),
-        })
+        };
+
+        recover_stale_dlq_requeue_operations(&services).await?;
+        Ok(services)
     }
 
     /// Get NATS client if available

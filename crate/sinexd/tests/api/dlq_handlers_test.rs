@@ -10,14 +10,17 @@ use common::{NatsHarness, admin_auth, ensure_dlq_stream};
 use futures::StreamExt;
 use serde_json::json;
 use sinex_db::DbPoolExt;
+use sinex_db::repositories::Operation as DbOperation;
 use sinex_primitives::Timestamp;
 use sinex_primitives::domain::OperationStatus;
 use sinex_primitives::error::{ErrorClass, SinexError};
+use sinex_primitives::Id;
 use sinex_primitives::rpc::dlq::{
     DlqListRequest, DlqPeekRequest, DlqPurgeRequest, DlqRequeueRequest,
 };
 use sinexd::api::handlers::dlq::{
     handle_dlq_list, handle_dlq_peek, handle_dlq_purge, handle_dlq_requeue,
+    recover_stale_dlq_requeue_operations,
 };
 use std::time::Duration;
 use xtask::sandbox::prelude::*;
@@ -35,6 +38,7 @@ async fn publish_dlq_message(
     headers.insert("Retry-Count", retry_count.to_string().as_str());
     headers.insert("Original-Subject", original_subject.as_str());
     headers.insert("Event-Id", event_id);
+    headers.insert("Nats-Msg-Id", event_id);
 
     let subject = env.nats_subject(&format!("events.dlq.test-component.{event_id}"));
     client
@@ -43,6 +47,96 @@ async fn publish_dlq_message(
     client.flush().await?;
 
     Ok(())
+}
+
+async fn ensure_raw_events_stream(
+    client: &async_nats::Client,
+    env: &sinex_primitives::environment::SinexEnvironment,
+) -> TestResult<jetstream::stream::Stream> {
+    let js = jetstream::new(client.clone());
+    js.create_or_update_stream(jetstream::stream::Config {
+        name: env.nats_stream_name("EVENTS"),
+        subjects: vec![env.nats_subject("events.raw.>")],
+        retention: jetstream::stream::RetentionPolicy::WorkQueue,
+        storage: jetstream::stream::StorageType::Memory,
+        duplicate_window: Duration::from_secs(3600),
+        discard: jetstream::stream::DiscardPolicy::Old,
+        allow_direct: true,
+        ..Default::default()
+    })
+    .await?;
+    Ok(js
+        .get_stream(&env.nats_stream_name("EVENTS"))
+        .await?)
+}
+
+async fn publish_requeueable_dlq_message(
+    client: &async_nats::Client,
+    env: &sinex_primitives::environment::SinexEnvironment,
+    event_id: &str,
+) -> TestResult<()> {
+    let original_subject = env.nats_subject("events.raw.test-source");
+    let mut headers = async_nats::HeaderMap::new();
+    headers.insert("Retry-Count", "0");
+    headers.insert("Original-Subject", original_subject.as_str());
+    headers.insert("Event-Id", event_id);
+    headers.insert("Nats-Msg-Id", format!("dlq.{event_id}").as_str());
+    let envelope = json!({
+        "nats_msg_id": format!("raw.{event_id}"),
+        "event_id": event_id,
+        "original_payload": {"id": event_id, "value": "requeueable"},
+        "error": "test failure"
+    });
+    client
+        .publish_with_headers(
+            env.nats_subject(&format!("events.dlq.test-component.{event_id}")),
+            headers,
+            serde_json::to_vec(&envelope)?.into(),
+        )
+        .await?;
+    client.flush().await?;
+    Ok(())
+}
+
+async fn wait_for_dlq_operation(
+    harness: &NatsHarness,
+    operation_id: &str,
+    expected_processed: u64,
+) -> TestResult<sinex_db::repositories::OperationRecord> {
+    let id = operation_id.parse::<Id<DbOperation>>()?;
+    let pool = harness.services.pool().clone();
+    let wait_id = id.clone();
+    WaitHelpers::wait_for_condition(
+        || {
+            let pool = pool.clone();
+            let wait_id = wait_id.clone();
+            async move {
+                let operation = pool
+                    .state()
+                    .get_operation(&wait_id)
+                    .await
+                    .map_err(|error| SinexError::database(error.to_string()))?;
+                Ok::<bool, SinexError>(operation.is_some_and(|operation| {
+                    operation.result_status == OperationStatus::Success
+                        && operation
+                            .preview_summary
+                            .as_ref()
+                            .and_then(|summary| summary["processed"].as_u64())
+                            .is_some_and(|processed| processed >= expected_processed)
+                }))
+            }
+        },
+        Timeouts::MEDIUM,
+    )
+    .await?;
+
+    harness
+        .services
+        .pool()
+        .state()
+        .get_operation(&id)
+        .await?
+        .ok_or_else(|| SinexError::database("DLQ operation disappeared after completion").into())
 }
 
 /// Wait for the DLQ `JetStream` stream to contain at least `expected` messages.
@@ -72,6 +166,34 @@ async fn wait_for_dlq_stream_messages(
         Timeouts::QUICK,
     )
     .await
+}
+
+async fn wait_for_dlq_empty(
+    client: &async_nats::Client,
+    env: &sinex_primitives::environment::SinexEnvironment,
+) -> TestResult<()> {
+    let js = jetstream::new(client.clone());
+    let stream_name = env.nats_stream_name("SINEX_RAW_EVENTS_DLQ");
+    WaitHelpers::wait_for_condition(
+        || {
+            let js = js.clone();
+            let stream_name = stream_name.clone();
+            async move {
+                let mut stream = js
+                    .get_stream(&stream_name)
+                    .await
+                    .map_err(|e| SinexError::network(e.to_string()))?;
+                let info = stream
+                    .info()
+                    .await
+                    .map_err(|e| SinexError::network(e.to_string()))?;
+                Ok::<bool, SinexError>(info.state.messages == 0)
+            }
+        },
+        Timeouts::SHORT,
+    )
+    .await?;
+    Ok(())
 }
 
 #[sinex_test]
@@ -715,5 +837,138 @@ async fn dlq_requeue_by_id_requeues_event_engine_style_entry(ctx: TestContext) -
     let after = handle_dlq_list(&harness.services, DlqListRequest {}).await?;
     assert_eq!(after.total_messages, 0);
 
+    Ok(())
+}
+
+/// Bulk requeue is accepted before the paced drain completes. This is the
+/// production handler route that prevents the gateway request timeout from
+/// cancelling the worker and losing its operation/progress record.
+#[sinex_test]
+async fn dlq_bulk_requeue_is_pollable_before_paced_work_completes(
+    ctx: TestContext,
+) -> TestResult<()> {
+    let harness = NatsHarness::start(ctx).await?;
+    ensure_dlq_stream(
+        &harness.client,
+        &harness.env,
+        jetstream::stream::StorageType::Memory,
+    )
+    .await?;
+    let mut raw_stream = ensure_raw_events_stream(&harness.client, &harness.env).await?;
+
+    for index in 0..20 {
+        publish_requeueable_dlq_message(
+            &harness.client,
+            &harness.env,
+            &format!("bulk-{index}"),
+        )
+        .await?;
+    }
+    wait_for_dlq_stream_messages(&harness.client, &harness.env, 20).await?;
+
+    let response = tokio::time::timeout(
+        Duration::from_secs(2),
+        handle_dlq_requeue(
+            &harness.services,
+            DlqRequeueRequest {
+                event_id: None,
+                start_sequence: None,
+                end_sequence: None,
+                all: true,
+            },
+            &admin_auth(),
+        ),
+    )
+    .await
+    .map_err(|_| SinexError::processing("bulk DLQ requeue handler did not return promptly"))??;
+    assert_eq!(response.status, "accepted");
+    assert_eq!(response.requeued_count, 0);
+
+    let operation = wait_for_dlq_operation(&harness, &response.operation_id, 20).await?;
+    assert_eq!(operation.result_status, OperationStatus::Success);
+    wait_for_dlq_empty(&harness.client, &harness.env).await?;
+    assert_eq!(
+        handle_dlq_list(&harness.services, DlqListRequest {}).await?.total_messages,
+        0
+    );
+    assert_eq!(raw_stream.info().await?.state.messages, 20);
+    Ok(())
+}
+
+/// Startup recovery resumes a running range operation and treats a raw
+/// publish that already landed before interruption as an idempotent success.
+/// The DLQ entry is deleted only after the duplicate publish acknowledgement,
+/// so the recovery route proves both restart progress and ack safety.
+#[sinex_test]
+async fn dlq_startup_recovery_resumes_interrupted_range_idempotently(
+    ctx: TestContext,
+) -> TestResult<()> {
+    let harness = NatsHarness::start(ctx).await?;
+    ensure_dlq_stream(
+        &harness.client,
+        &harness.env,
+        jetstream::stream::StorageType::Memory,
+    )
+    .await?;
+    let mut raw_stream = ensure_raw_events_stream(&harness.client, &harness.env).await?;
+    publish_requeueable_dlq_message(&harness.client, &harness.env, "restart-recovery").await?;
+    wait_for_dlq_stream_messages(&harness.client, &harness.env, 1).await?;
+
+    let js = jetstream::new(harness.client.clone());
+    let mut dlq_stream = js
+        .get_stream(&harness.env.nats_stream_name("SINEX_RAW_EVENTS_DLQ"))
+        .await?;
+    let sequence = dlq_stream.info().await?.state.first_sequence;
+    let raw_subject = harness.env.nats_subject("events.raw.test-source");
+    let mut raw_headers = async_nats::HeaderMap::new();
+    raw_headers.insert(
+        "Nats-Msg-Id",
+        format!("dlq-requeue.sequence.{sequence}.1").as_str(),
+    );
+    js.publish_with_headers(
+        raw_subject,
+        raw_headers,
+        json!({"id": "restart-recovery", "value": "already-published"})
+            .to_string()
+            .into(),
+    )
+    .await?
+    .await?;
+
+    let operation = harness
+        .services
+        .pool()
+        .state()
+        .start_operation(
+            "dlq.requeue",
+            "test:restart-recovery",
+            json!({
+                "surface": "raw_ingest_dlq",
+                "action": "requeue",
+                "selector": "sequence_range",
+                "start_sequence": sequence,
+                "end_sequence": sequence,
+            }),
+        )
+        .await?;
+
+    let resumed = recover_stale_dlq_requeue_operations(&harness.services).await?;
+    assert_eq!(resumed, 1);
+    let recovered = wait_for_dlq_operation(
+        &harness,
+        &operation.id.to_uuid().to_string(),
+        1,
+    )
+    .await?;
+    assert_eq!(recovered.result_status, OperationStatus::Success);
+    assert_eq!(
+        recovered
+            .preview_summary
+            .as_ref()
+            .and_then(|summary| summary["requeued_count"].as_u64()),
+        Some(1)
+    );
+    assert_eq!(handle_dlq_list(&harness.services, DlqListRequest {}).await?.total_messages, 0);
+    assert_eq!(raw_stream.info().await?.state.messages, 1);
     Ok(())
 }

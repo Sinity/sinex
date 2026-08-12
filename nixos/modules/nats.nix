@@ -191,6 +191,10 @@ let
       maxAge = "72h"; # matches Duration::from_secs(72 * 60 * 60) for the Activity lane
       maxMsgs = 2000000;
       maxBytes = natsCliMaxBytes;
+      # Requeue republishes use a stable generation-scoped Nats-Msg-Id. Keep
+      # a bounded dedup window on the target so a request timeout between
+      # publish and DLQ settlement cannot inject the same raw message twice.
+      dupeWindow = "1h";
       discard = "old";
     };
     SINEX_RAW_EVENTS_CONFIRMED = {

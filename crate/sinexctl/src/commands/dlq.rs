@@ -207,10 +207,17 @@ impl DlqCommands {
                 )
                 .await?;
 
-                println!(
-                    "{}: {} messages requeued (operation {})",
-                    response.status, response.requeued_count, response.operation_id
-                );
+                if response.status == "accepted" {
+                    println!(
+                        "DLQ requeue accepted; operation {} is running. Poll with `sinexctl ops get --operation-id {}`.",
+                        response.operation_id, response.operation_id
+                    );
+                } else {
+                    println!(
+                        "{}: {} messages requeued (operation {})",
+                        response.status, response.requeued_count, response.operation_id
+                    );
+                }
             }
             Self::Purge {
                 start_sequence,
