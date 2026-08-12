@@ -224,3 +224,49 @@ async fn annex_path_arguments_reject_traversal() -> ::xtask::sandbox::TestResult
     assert!(error.to_string().contains("root-contained"));
     Ok(())
 }
+
+#[sinex_test]
+async fn cas_walker_batches_and_resumes_at_completed_prefixes()
+-> ::xtask::sandbox::TestResult<()> {
+    let repo_dir = tempfile::tempdir()?;
+    let repo_path = Utf8PathBuf::from_path_buf(repo_dir.path().to_path_buf())
+        .expect("temporary path should be valid utf-8");
+    let content_store = MaterialContentStore::new(ContentStoreConfig {
+        root_path: repo_path.clone(),
+        ..Default::default()
+    })?;
+    let first_dir = repo_path.join(LOCAL_BLAKE3_CAS_DIR).join("aa").join("bb");
+    let second_dir = repo_path.join(LOCAL_BLAKE3_CAS_DIR).join("cc").join("dd");
+    tokio::fs::create_dir_all(&first_dir).await?;
+    tokio::fs::create_dir_all(&second_dir).await?;
+    tokio::fs::write(first_dir.join("first"), b"first").await?;
+    tokio::fs::write(second_dir.join("second"), b"second").await?;
+
+    let mut walker = content_store.cas_walker(None).await?;
+    let first_batch = walker.next_batch(1).await?;
+    assert_eq!(first_batch.entries.len(), 1);
+    assert_eq!(first_batch.entries[0].0, "first");
+    assert_eq!(first_batch.checkpoint, CasWalkCheckpoint::default());
+    assert!(!first_batch.complete);
+
+    let second_batch = walker.next_batch(1).await?;
+    assert_eq!(second_batch.entries[0].0, "second");
+    assert_eq!(
+        second_batch.checkpoint,
+        CasWalkCheckpoint {
+            prefix_a: Some("aa".to_owned()),
+            prefix_b: Some("bb".to_owned()),
+            complete: false,
+        }
+    );
+
+    let mut resumed = content_store
+        .cas_walker(Some(second_batch.checkpoint))
+        .await?;
+    let resumed_batch = resumed.next_batch(1).await?;
+    assert_eq!(resumed_batch.entries[0].0, "second");
+    let completion = resumed.next_batch(1).await?;
+    assert!(completion.complete);
+    assert!(completion.entries.is_empty());
+    Ok(())
+}

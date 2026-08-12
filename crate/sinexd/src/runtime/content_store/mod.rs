@@ -446,6 +446,169 @@ pub struct MaterialContentStore {
     pub config: ContentStoreConfig,
 }
 
+/// A restart-safe cursor for the local CAS prefix tree.
+///
+/// The cursor advances only after an entire `XX/YY` directory has been
+/// drained. If a pass stops inside that directory, resuming replays that
+/// directory rather than risking a skipped entry from an unspecified
+/// filesystem enumeration order.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+pub struct CasWalkCheckpoint {
+    pub prefix_a: Option<String>,
+    pub prefix_b: Option<String>,
+    pub complete: bool,
+}
+
+#[derive(Debug)]
+pub struct CasWalkBatch {
+    pub entries: Vec<(String, Utf8PathBuf, u64)>,
+    pub checkpoint: CasWalkCheckpoint,
+    pub complete: bool,
+}
+
+#[derive(Debug)]
+pub struct CasWalker {
+    prefix_dirs: Vec<Utf8PathBuf>,
+    prefix_index: usize,
+    hash_dirs: Vec<Utf8PathBuf>,
+    hash_index: usize,
+    hash_entries: Option<tokio::fs::ReadDir>,
+    checkpoint: CasWalkCheckpoint,
+}
+
+async fn read_sorted_cas_directories(path: &Utf8Path) -> RuntimeResult<Vec<Utf8PathBuf>> {
+    let mut read_dir = tokio::fs::read_dir(path).await.map_err(SinexError::io)?;
+    let mut directories = Vec::new();
+    while let Some(entry) = read_dir.next_entry().await.map_err(SinexError::io)? {
+        if !entry.file_type().await.map_err(SinexError::io)?.is_dir() {
+            continue;
+        }
+        let path = Utf8PathBuf::from_path_buf(entry.path()).map_err(|path| {
+            SinexError::processing(format!(
+                "non-UTF-8 path in CAS directory tree: {}",
+                path.display()
+            ))
+        })?;
+        directories.push(path);
+    }
+    directories.sort_unstable();
+    Ok(directories)
+}
+
+fn cas_path_name(path: &Utf8Path) -> RuntimeResult<String> {
+    path.file_name().map(str::to_owned).ok_or_else(|| {
+        SinexError::processing(format!("CAS directory path has no filename: {path}"))
+    })
+}
+
+impl CasWalker {
+    async fn new(
+        cas_root: Utf8PathBuf,
+        checkpoint: CasWalkCheckpoint,
+    ) -> RuntimeResult<Self> {
+        let mut prefix_dirs = if checkpoint.complete {
+            Vec::new()
+        } else {
+            read_sorted_cas_directories(&cas_root).await?
+        };
+        if let Some(prefix_a) = checkpoint.prefix_a.as_deref() {
+            prefix_dirs.retain(|path| cas_path_name(path).is_ok_and(|name| name.as_str() >= prefix_a));
+        }
+        Ok(Self {
+            prefix_dirs,
+            prefix_index: 0,
+            hash_dirs: Vec::new(),
+            hash_index: 0,
+            hash_entries: None,
+            checkpoint,
+        })
+    }
+
+    /// Read at most `batch_size` CAS files while retaining only one open
+    /// directory and the bounded two-level prefix lists.
+    pub async fn next_batch(&mut self, batch_size: usize) -> RuntimeResult<CasWalkBatch> {
+        let batch_size = batch_size.max(1);
+        let mut entries = Vec::with_capacity(batch_size);
+
+        while entries.len() < batch_size {
+            if let Some(hash_entries) = &mut self.hash_entries {
+                match hash_entries.next_entry().await.map_err(SinexError::io)? {
+                    Some(entry) => {
+                        if !entry.file_type().await.map_err(SinexError::io)?.is_file() {
+                            continue;
+                        }
+                        let path = Utf8PathBuf::from_path_buf(entry.path()).map_err(|path| {
+                            SinexError::processing(format!(
+                                "non-UTF-8 path in CAS tree: {}",
+                                path.display()
+                            ))
+                        })?;
+                        let hash = cas_path_name(&path)?;
+                        let size = tokio::fs::metadata(&path)
+                            .await
+                            .map_err(SinexError::io)?
+                            .len();
+                        entries.push((hash, path, size));
+                    }
+                    None => {
+                        self.hash_entries = None;
+                        let prefix_a = cas_path_name(&self.prefix_dirs[self.prefix_index])?;
+                        let prefix_b = cas_path_name(&self.hash_dirs[self.hash_index])?;
+                        self.checkpoint = CasWalkCheckpoint {
+                            prefix_a: Some(prefix_a),
+                            prefix_b: Some(prefix_b),
+                            complete: false,
+                        };
+                        self.hash_index += 1;
+                    }
+                }
+                continue;
+            }
+
+            if self.prefix_index >= self.prefix_dirs.len() {
+                self.checkpoint.complete = true;
+                return Ok(CasWalkBatch {
+                    entries,
+                    checkpoint: self.checkpoint.clone(),
+                    complete: true,
+                });
+            }
+
+            if self.hash_index >= self.hash_dirs.len() {
+                if !self.hash_dirs.is_empty() {
+                    self.prefix_index += 1;
+                    self.hash_dirs.clear();
+                    self.hash_index = 0;
+                    continue;
+                }
+                let prefix_path = &self.prefix_dirs[self.prefix_index];
+                self.hash_dirs = read_sorted_cas_directories(prefix_path).await?;
+                let prefix_a = cas_path_name(prefix_path)?;
+                if self.checkpoint.prefix_a.as_deref() == Some(prefix_a.as_str()) {
+                    if let Some(prefix_b) = self.checkpoint.prefix_b.as_deref() {
+                        self.hash_dirs
+                            .retain(|path| cas_path_name(path).is_ok_and(|name| name.as_str() > prefix_b));
+                    }
+                }
+                self.hash_index = 0;
+                if self.hash_dirs.is_empty() {
+                    self.prefix_index += 1;
+                    continue;
+                }
+            }
+
+            let hash_path = self.hash_dirs[self.hash_index].clone();
+            self.hash_entries = Some(tokio::fs::read_dir(hash_path).await.map_err(SinexError::io)?);
+        }
+
+        Ok(CasWalkBatch {
+            entries,
+            checkpoint: self.checkpoint.clone(),
+            complete: false,
+        })
+    }
+}
+
 impl MaterialContentStore {
     pub fn new(config: ContentStoreConfig) -> RuntimeResult<Self> {
         // Ensure the content-store root directory exists.
@@ -1201,61 +1364,36 @@ impl MaterialContentStore {
     /// Walk the local CAS directory structure and yield all discovered hash paths.
     ///
     /// Returns a list of `(hash_hex, full_path, file_size)` tuples.
-    /// The `sinex-cas/XX/YY/` prefix layout is traversed recursively.
+    /// The `sinex-cas/XX/YY/` prefix layout is traversed recursively. This
+    /// compatibility collector is intentionally separate from fsck, which
+    /// consumes `cas_walker()` in bounded batches.
     pub async fn walk_cas(&self) -> RuntimeResult<Vec<(String, Utf8PathBuf, u64)>> {
         let cas_root = self.config.root_path.join(LOCAL_BLAKE3_CAS_DIR);
         if !cas_root.exists() {
             return Ok(Vec::new());
         }
+        let mut walker = self.cas_walker(None).await?;
         let mut entries = Vec::new();
-        let mut read_dir = tokio::fs::read_dir(&cas_root)
-            .await
-            .map_err(SinexError::io)?;
-        while let Some(entry) = read_dir.next_entry().await.map_err(SinexError::io)? {
-            let prefix_a = entry.path();
-            if !entry.file_type().await.map_err(SinexError::io)?.is_dir() {
-                continue;
-            }
-            let mut inner = tokio::fs::read_dir(&prefix_a)
-                .await
-                .map_err(SinexError::io)?;
-            while let Some(sub_entry) = inner.next_entry().await.map_err(SinexError::io)? {
-                if !sub_entry
-                    .file_type()
-                    .await
-                    .map_err(SinexError::io)?
-                    .is_dir()
-                {
-                    continue;
-                }
-                let mut hash_dir = tokio::fs::read_dir(sub_entry.path())
-                    .await
-                    .map_err(SinexError::io)?;
-                while let Some(hash_entry) = hash_dir.next_entry().await.map_err(SinexError::io)? {
-                    let path = hash_entry.path();
-                    if !hash_entry
-                        .file_type()
-                        .await
-                        .map_err(SinexError::io)?
-                        .is_file()
-                    {
-                        continue;
-                    }
-                    let metadata = tokio::fs::metadata(&path).await.map_err(SinexError::io)?;
-                    let path_utf8 = Utf8PathBuf::from_path_buf(path.clone()).map_err(|p| {
-                        SinexError::processing(format!(
-                            "non-UTF-8 path in CAS tree: {}",
-                            p.display()
-                        ))
-                    })?;
-                    let hash_str = path_utf8.file_name().ok_or_else(|| {
-                        SinexError::processing(format!("CAS path has no filename: {path_utf8}"))
-                    })?;
-                    entries.push((hash_str.to_string(), path_utf8, metadata.len()));
-                }
+        loop {
+            let batch = walker.next_batch(256).await?;
+            entries.extend(batch.entries);
+            if batch.complete {
+                break;
             }
         }
         Ok(entries)
+    }
+
+    /// Create a resumable, bounded-state walker over the local CAS tree.
+    pub async fn cas_walker(
+        &self,
+        checkpoint: Option<CasWalkCheckpoint>,
+    ) -> RuntimeResult<CasWalker> {
+        CasWalker::new(
+            self.config.root_path.join(LOCAL_BLAKE3_CAS_DIR),
+            checkpoint.unwrap_or_default(),
+        )
+        .await
     }
 
     /// Produce a human-readable summary of the local CAS directory.
