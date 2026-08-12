@@ -277,3 +277,22 @@ async fn completion_cursor_mid_multibyte_char_does_not_panic() -> TestResult<()>
     let _response = cmd.complete(None).await;
     Ok(())
 }
+
+// sinex-e6sc: `sinexctl _complete` panics on non-ASCII input at a
+// non-char-boundary cursor offset. `active_token` (and the 3 other sites at
+// completion_endpoint.rs:347,636,756) clamp `cursor` to `line.len()` (a
+// *byte* length) but never check that the clamped value actually falls on a
+// UTF-8 char boundary before slicing `&line[..cursor]` -- a raw --cursor
+// byte offset from shell/picker frontends that lands mid-codepoint panics
+// instead of completing.
+#[test]
+#[ignore = "sinex-e6sc open: active_token panics when `cursor` lands mid- \
+            UTF-8-codepoint (completion_endpoint.rs:158-163, unguarded \
+            &line[..cursor] slice after only byte-length clamping)"]
+fn active_token_does_not_panic_on_non_char_boundary_cursor() {
+    // "тест" is 4 chars, each 2 bytes (8 bytes total). cursor=3 lands inside
+    // the 2nd character's encoding -- a plausible raw byte offset a
+    // shell/picker frontend could pass for a multi-byte-containing line.
+    let line = "тест";
+    let _ = active_token(line, 3);
+}

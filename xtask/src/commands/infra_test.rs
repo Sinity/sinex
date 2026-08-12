@@ -449,3 +449,117 @@ async fn dev_bindings_manifest_uses_stable_service_names()
     }
     Ok(())
 }
+
+// Regression coverage for sinex-vpn: `xtask infra smoke --allow-running`
+// must observe an already-running dogfood stack (Postgres/NATS/sinexd)
+// without stopping it. The stop/continue decision in `run_infra_smoke`
+// (infra.rs) hinges entirely on `services_running(&current) && !allow_running`
+// -- this exercises that exact predicate against every service-running
+// combination so the `--allow-running` gate can't silently regress into
+// always failing (or always passing) regardless of the flag.
+fn empty_service_status() -> stack::ServiceStatus {
+    stack::ServiceStatus {
+        running: false,
+        pid: None,
+        pid_state: stack::ServicePidState::Missing,
+        rss_bytes: None,
+        port: 0,
+    }
+}
+
+fn running_service_status() -> stack::ServiceStatus {
+    stack::ServiceStatus {
+        running: true,
+        ..empty_service_status()
+    }
+}
+
+fn stack_status_with(postgres_running: bool, nats_running: bool, sinexd_running: bool) -> StackStatus {
+    StackStatus {
+        checkout_root: PathBuf::from("/tmp/does-not-exist"),
+        dev_state_dir: PathBuf::from("/tmp/does-not-exist/state"),
+        logs_dir: PathBuf::from("/tmp/does-not-exist/logs"),
+        initialized: true,
+        postgres: if postgres_running {
+            running_service_status()
+        } else {
+            empty_service_status()
+        },
+        nats: if nats_running {
+            running_service_status()
+        } else {
+            empty_service_status()
+        },
+        sinexd: stack::RuntimeProcessStatus {
+            running: sinexd_running,
+            pids: Vec::new(),
+            rss_bytes: 0,
+            issue: None,
+        },
+        annex: stack::AnnexStatus {
+            initialized: false,
+            path: PathBuf::from("/tmp/does-not-exist/annex"),
+        },
+        data_sizes: stack::DataSizes {
+            postgres_bytes: 0,
+            nats_bytes: 0,
+            annex_bytes: 0,
+        },
+        data_size_issues: Vec::new(),
+        snapshots: Vec::new(),
+        snapshot_issue: None,
+    }
+}
+
+#[test]
+fn services_running_is_false_when_nothing_is_up() {
+    let status = stack_status_with(false, false, false);
+    assert!(!services_running(&status));
+}
+
+#[test]
+fn services_running_is_true_if_any_single_service_is_up() {
+    assert!(services_running(&stack_status_with(true, false, false)));
+    assert!(services_running(&stack_status_with(false, true, false)));
+    assert!(services_running(&stack_status_with(false, false, true)));
+}
+
+#[test]
+fn services_running_is_true_when_all_are_up() {
+    assert!(services_running(&stack_status_with(true, true, true)));
+}
+
+#[test]
+fn allow_running_smoke_guard_only_bypasses_the_stop_requirement_when_true() {
+    // This is the exact condition `run_infra_smoke` uses to decide whether
+    // to return the INFRA_SMOKE_NOT_STOPPED error: services running AND
+    // allow_running is false. If `--allow-running` is set, the guard must
+    // never fire regardless of which services are up; if it's unset, the
+    // guard must fire whenever anything is running.
+    for (pg, nats, sinexd) in [
+        (true, false, false),
+        (false, true, false),
+        (false, false, true),
+        (true, true, true),
+    ] {
+        let status = stack_status_with(pg, nats, sinexd);
+        let allow_running = true;
+        assert!(
+            !(services_running(&status) && !allow_running),
+            "--allow-running=true must never trigger INFRA_SMOKE_NOT_STOPPED \
+             for postgres={pg} nats={nats} sinexd={sinexd}"
+        );
+        let allow_running = false;
+        assert!(
+            services_running(&status) && !allow_running,
+            "--allow-running=false (the default) must trigger \
+             INFRA_SMOKE_NOT_STOPPED for postgres={pg} nats={nats} sinexd={sinexd}"
+        );
+    }
+
+    let idle = stack_status_with(false, false, false);
+    assert!(
+        !(services_running(&idle) && !false),
+        "with nothing running, the guard must not fire even without --allow-running"
+    );
+}

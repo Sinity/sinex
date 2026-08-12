@@ -2243,3 +2243,7 @@ mod build_cache_policy_tests;
 #[cfg(test)]
 #[path = "doctor_postgres_extensions_tests.rs"]
 mod postgres_extensions_tests;
+
+#[cfg(test)]
+#[path = "doctor_tls_check_tests.rs"]
+mod tls_check_tests;
