@@ -111,6 +111,12 @@ impl DlqRetryHandler {
     pub async fn retry_all(&self) -> RuntimeResult<DlqRetryResult> {
         info!("Starting DLQ retry operation");
 
+        let batch_size = self.config.batch_size.max(1);
+        let max_ack_pending = i64::try_from(batch_size).map_err(|error| {
+            SinexError::validation("DLQ batch size exceeds the JetStream limit").with_source(error)
+        })?;
+        let batch_size_u64 = u64::try_from(batch_size).unwrap_or(u64::MAX);
+
         let js = jetstream::new(self.nats_client.clone());
         let dlq_stream = self.env.nats_stream_name("SINEX_RAW_EVENTS_DLQ");
 
@@ -135,7 +141,7 @@ impl DlqRetryHandler {
                 filter_subject: self.env.nats_subject("events.dlq.>"),
                 ack_policy: jetstream::consumer::AckPolicy::Explicit,
                 ack_wait: Duration::from_secs(DEFAULT_DLQ_ACK_WAIT.as_secs()),
-                max_ack_pending: self.config.batch_size as i64,
+                max_ack_pending,
                 ..Default::default()
             })
             .await
@@ -156,13 +162,13 @@ impl DlqRetryHandler {
             match next {
                 Ok(Some(Ok(msg))) => {
                     if self.handle_dlq_message(&js, &msg).await? {
-                        result.retried += 1;
+                        result.retried = result.retried.saturating_add(1);
                     } else if dlq_retry_attempts(&msg)? >= self.config.max_retries() {
-                        result.permanently_failed += 1;
+                        result.permanently_failed = result.permanently_failed.saturating_add(1);
                     } else {
-                        result.transient_failures += 1;
+                        result.transient_failures = result.transient_failures.saturating_add(1);
                     }
-                    processed += 1;
+                    processed = processed.saturating_add(1);
 
                     // Per-message delay: smooth burst republishing within a batch
                     if self.config.per_message_delay_ms > 0 {
@@ -171,7 +177,7 @@ impl DlqRetryHandler {
                     }
 
                     // Additional inter-batch pause to avoid overwhelming downstream
-                    if processed.is_multiple_of(self.config.batch_size as u64) {
+                    if processed.is_multiple_of(batch_size_u64) {
                         tokio::time::sleep(Duration::from_millis(DEFAULT_DLQ_INTER_BATCH_DELAY_MS))
                             .await;
                     }
@@ -354,12 +360,12 @@ impl DlqRetryHandler {
                 );
                 self.permanently_fail_stream_message(&stream, &message)
                     .await?;
-                result.permanently_failed += 1;
+                result.permanently_failed = result.permanently_failed.saturating_add(1);
                 continue;
             }
 
             self.retry_stream_message(&js, &stream, &message).await?;
-            result.retried += 1;
+            result.retried = result.retried.saturating_add(1);
 
             if self.config.per_message_delay_ms > 0 {
                 tokio::time::sleep(Duration::from_millis(self.config.per_message_delay_ms)).await;
@@ -451,16 +457,8 @@ impl DlqRetryHandler {
         })?;
         let target = dlq_requeue_target(headers_ref, msg.subject.as_str(), &msg.payload)?;
         let mut headers = async_nats::HeaderMap::new();
-        let retry_count_str = retry_count
-            .checked_add(1)
-            .ok_or_else(|| SinexError::processing("DLQ retry count exceeds supported range"))?
-            .to_string();
-        let requeue_generation = target
-            .dlq_requeue_generation
-            .checked_add(1)
-            .ok_or_else(|| {
-                SinexError::processing("DLQ requeue generation exceeds supported range")
-            })?;
+        let retry_count_str = next_retry_count(retry_count)?.to_string();
+        let requeue_generation = next_requeue_generation(target.dlq_requeue_generation)?;
         let requeue_generation_str = requeue_generation.to_string();
         let requeue_msg_id = format!(
             "dlq-requeue.{}.{}",
@@ -519,16 +517,8 @@ impl DlqRetryHandler {
             dlq_requeue_target(&message.headers, message.subject.as_str(), &message.payload)?;
 
         let mut headers = async_nats::HeaderMap::new();
-        let retry_count_str = retry_count
-            .checked_add(1)
-            .ok_or_else(|| SinexError::processing("DLQ retry count exceeds supported range"))?
-            .to_string();
-        let requeue_generation = target
-            .dlq_requeue_generation
-            .checked_add(1)
-            .ok_or_else(|| {
-                SinexError::processing("DLQ requeue generation exceeds supported range")
-            })?;
+        let retry_count_str = next_retry_count(retry_count)?.to_string();
+        let requeue_generation = next_requeue_generation(target.dlq_requeue_generation)?;
         let requeue_generation_str = requeue_generation.to_string();
         let requeue_msg_id = format!(
             "dlq-requeue.{}.{}",
@@ -639,6 +629,18 @@ struct DlqRequeueTarget {
     event_id: Option<String>,
     dlq_requeue_generation: u32,
     durable_failure_id: Option<String>,
+}
+
+fn next_retry_count(retry_count: u32) -> RuntimeResult<u32> {
+    retry_count
+        .checked_add(1)
+        .ok_or_else(|| SinexError::processing("DLQ retry count exceeds supported range"))
+}
+
+fn next_requeue_generation(generation: u32) -> RuntimeResult<u32> {
+    generation
+        .checked_add(1)
+        .ok_or_else(|| SinexError::processing("DLQ requeue generation exceeds supported range"))
 }
 
 fn dlq_stored_retry_count(headers: &async_nats::HeaderMap) -> RuntimeResult<u32> {

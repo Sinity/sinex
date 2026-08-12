@@ -1,6 +1,6 @@
 use super::{
-    DlqRetryHandler, combine_retry_counts, dlq_event_id, dlq_payload_event_id,
-    dlq_requeue_target, ensure_durable_failure_evidence,
+    DlqRetryHandler, combine_retry_counts, dlq_event_id, dlq_payload_event_id, dlq_requeue_target,
+    ensure_durable_failure_evidence, next_requeue_generation, next_retry_count,
 };
 use xtask::sandbox::sinex_test;
 
@@ -20,8 +20,7 @@ async fn combine_retry_counts_uses_stored_header_when_delivery_metadata_is_missi
 }
 
 #[sinex_test]
-async fn combine_retry_counts_rejects_missing_delivery_metadata_without_header()
--> TestResult<()> {
+async fn combine_retry_counts_rejects_missing_delivery_metadata_without_header() -> TestResult<()> {
     let error = combine_retry_counts(0, Err("metadata unavailable".to_string()))
         .expect_err("missing delivery metadata without stored retries must fail honestly");
     assert!(
@@ -38,6 +37,25 @@ async fn combine_retry_counts_rejects_delivery_count_overflow() -> TestResult<()
     let error = combine_retry_counts(0, Ok(i64::from(u32::MAX) + 1))
         .expect_err("overflowing delivery count must fail honestly");
     assert!(error.to_string().contains("exceeds supported range"));
+    Ok(())
+}
+
+#[sinex_test]
+async fn retry_arithmetic_rejects_counter_overflow() -> TestResult<()> {
+    assert!(
+        next_retry_count(u32::MAX)
+            .expect_err("retry count overflow must fail closed")
+            .to_string()
+            .contains("exceeds supported range")
+    );
+    assert!(
+        next_requeue_generation(u32::MAX)
+            .expect_err("requeue generation overflow must fail closed")
+            .to_string()
+            .contains("exceeds supported range")
+    );
+    assert_eq!(next_retry_count(4)?, 5);
+    assert_eq!(next_requeue_generation(4)?, 5);
     Ok(())
 }
 
@@ -69,8 +87,7 @@ async fn dlq_event_id_falls_back_to_subject_when_payload_parse_fails() -> TestRe
 }
 
 #[sinex_test]
-async fn dlq_event_id_rejects_payload_parse_failure_without_subject_fallback() -> TestResult<()>
-{
+async fn dlq_event_id_rejects_payload_parse_failure_without_subject_fallback() -> TestResult<()> {
     let headers = async_nats::HeaderMap::new();
     let error = dlq_event_id("events.dlq", &headers, br#"{"event_id":"oops""#)
         .expect_err("payload parse failure without subject fallback must fail honestly");
