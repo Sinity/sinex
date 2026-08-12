@@ -3,6 +3,7 @@ use super::test_support::{build_test_assembler, build_test_content_store};
 use super::{
     MaterialAssembler, disk_usage_allows_assembly, maintenance::MaterialTaskOutcome, signal_ready,
 };
+use crate::event_engine::durable_failure::DURABLE_FAILURE_ID_HEADER;
 use crate::event_engine::MaterialReadySet;
 use sinex_db::DbPoolExt;
 use sinex_primitives::{Id, domain::MaterialStatus};
@@ -106,7 +107,81 @@ async fn material_dlq_requires_and_records_durable_evidence(ctx: TestContext) ->
     let mut stream = async_nats::jetstream::new(ctx.nats_client())
         .get_stream(&dlq_stream_name)
         .await?;
-    assert_eq!(stream.info().await?.state.messages, 1);
+    let state = stream.info().await?.state;
+    assert_eq!(state.messages, 1);
+    let entry = stream.direct_get(state.first_sequence).await?;
+    let expected_failure_id = durable_failure_id.to_string();
+    assert_eq!(
+        entry
+            .headers
+            .get(DURABLE_FAILURE_ID_HEADER)
+            .map(|value| value.as_str()),
+        Some(expected_failure_id.as_str()),
+        "the confirmed DLQ message must carry the Postgres witness identity"
+    );
+    Ok(())
+}
+
+#[sinex_test]
+async fn material_dlq_publish_failure_preserves_retryable_material_state(
+    ctx: TestContext,
+) -> TestResult<()> {
+    let ctx = ctx.with_nats().shared().await?;
+    let (mut assembler, _content_store_dir, _state_dir) = test_assembler(&ctx).await?;
+    let material_id = uuid::Uuid::now_v7();
+
+    ctx.pool
+        .source_materials()
+        .register_external_in_flight(
+            material_id,
+            "test",
+            Some("test://material-dlq-publish-failure"),
+            json!({}),
+            sinex_primitives::Timestamp::now(),
+        )
+        .await?;
+
+    // No JetStream stream owns this unique subject. The production publish
+    // path therefore fails at confirmation after the Postgres witness is
+    // written, exercising the same error boundary as an unavailable DLQ.
+    assembler.dlq_subject = format!(
+        "{}.missing.{}",
+        ctx.pipeline_namespace().subject("events.dlq.event_engine"),
+        material_id
+    );
+    let error = assembler
+        .route_material_error_then_finalize_failed(
+            material_id,
+            "material_dlq_publish_failure",
+            json!({"fixture": true}),
+        )
+        .await
+        .expect_err("a missing DLQ stream must not settle the material terminally");
+    assert!(
+        error.to_string().contains("DLQ") || error.to_string().contains("publish"),
+        "unexpected DLQ publish error: {error}"
+    );
+
+    let material = ctx
+        .pool
+        .source_materials()
+        .get_by_id(sinex_primitives::Id::from_uuid(material_id))
+        .await?
+        .expect("material should remain registered");
+    assert_eq!(
+        material.status,
+        MaterialStatus::Sensing,
+        "failed DLQ publication must preserve a retryable nonterminal material"
+    );
+    let evidence = sqlx::query_scalar!(
+        r#"SELECT count(*)::bigint AS "count!: i64"
+           FROM sinex_schemas.dlq_events
+           WHERE failed_event_id = $1"#,
+        material_id,
+    )
+    .fetch_one(ctx.pool())
+    .await?;
+    assert_eq!(evidence, 1, "the failure still has a durable witness");
     Ok(())
 }
 
