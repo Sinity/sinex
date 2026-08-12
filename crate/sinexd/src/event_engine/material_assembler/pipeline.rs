@@ -116,7 +116,7 @@ async fn apply_redelivery_decision(
                     .route_material_error(material_id, reason.clone(), dlq_context)
                     .await
                 {
-                    Ok(()) => {
+                    Ok(_durable_failure_id) => {
                         match assembler
                             .finalize_failed_material(material_id, &reason)
                             .await

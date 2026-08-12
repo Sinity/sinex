@@ -5,6 +5,7 @@
 //! source-material/blob/ledger commit boundary lives in `finalization_transaction`.
 
 use serde::Serialize;
+use futures::FutureExt as _;
 use sinex_db::repositories::DbPoolExt;
 use sinex_db::schema::defs::records::SourceMaterialRecord;
 use sinex_primitives::Timestamp;
@@ -14,7 +15,6 @@ use sinex_primitives::{
     Id, JsonValue, MaterialStatus, Uuid, sources::is_self_observation_material_source,
 };
 use tokio::sync::Mutex;
-use tokio::task::JoinHandle;
 use tokio::task::JoinHandle;
 use tracing::{debug, error, info, warn};
 
@@ -640,11 +640,28 @@ impl MaterialAssembler {
                         PendingEndBehavior::Ignore,
                     )
                     .await
-            });
+                {
+                    warn!(
+                        material_id = %material_id,
+                        error = %error,
+                        "Decoupled material finalize failed; retry state preserved for maintenance re-drive"
+                    );
+                }
+            })
+            .catch_unwind()
+            .await;
 
-            recovery_assembler
-                .observe_finalize_worker(material_id, state_handle, worker)
-                .await;
+            if outcome.is_err() {
+                error!(
+                    target: "sinex_metrics",
+                    metric = "assembly_finalization_worker_panics_total",
+                    material_id = %material_id,
+                    "Detached material finalization worker panicked; restoring retry state"
+                );
+                assembler
+                    .recover_panicked_finalize(material_id, recovery_state_handle)
+                    .await;
+            }
         });
     }
 
