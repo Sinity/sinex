@@ -57,6 +57,7 @@ async fn test_jetstream_e2e_event_flow(ctx: TestContext) -> Result<()> {
     let automaton_config = JetStreamEventConsumerConfig {
         batch_size: 100,
         consumer_name: format!("test-automaton-{namespace}"),
+        liveness_observer: None,
         ..Default::default()
     };
     // Wait for the confirmed-events stream to exist before starting the automaton consumer.

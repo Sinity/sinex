@@ -30,12 +30,11 @@ impl RuntimeRunner {
         if capabilities.supports_continuous {
             info!("Starting continuous event processing for automaton");
 
-            // A standby automaton is still a healthy, ready service. Satisfy
-            // the systemd notify contract before waiting on lease handoff or
-            // expiry so host activation does not fail on a legitimate standby.
-            systemd_notify::notify_ready("sinex-runtime");
-
             if capabilities.manages_own_continuous_loop {
+                // A standby automaton is still a healthy, ready service. Satisfy
+                // the systemd notify contract before waiting on lease handoff or
+                // expiry so host activation does not fail on a legitimate standby.
+                systemd_notify::notify_ready("sinex-runtime");
                 let _continuous_report = self
                     .module
                     .scan(
@@ -134,6 +133,15 @@ impl RuntimeRunner {
             self.module.confirmed_event_provenance_filter(),
             self.module.event_type_filters(),
         );
+        let liveness_observer = Arc::new(crate::runtime::SelfObserver::new(
+            nats_client.clone(),
+            crate::runtime::SelfObserverConfig::from_env(&format!(
+                "{}.confirmed-stream",
+                service_name
+            )),
+        ));
+        let mut consumer_config = consumer_config;
+        consumer_config.liveness_observer = Some(liveness_observer);
 
         let consumer = Arc::new(JetStreamEventConsumer::new(
             nats_client,
@@ -187,6 +195,12 @@ impl RuntimeRunner {
         });
         drain_controller.register_runtime_abort(consumer_handle.abort_handle());
         self.consumer_handle = Some(consumer_handle);
+
+        // A bridge-backed automaton is not warmed until its historical scan
+        // completed and the live durable consumer is bound. Readiness before
+        // this point lets re-import health checks mistake a catch-up storm for
+        // a serving automaton.
+        systemd_notify::notify_ready("sinex-runtime");
 
         if drain_controller.is_requested() {
             let _ = drain_controller.abort_runtime_work();
@@ -434,6 +448,7 @@ impl RuntimeRunner {
             // delivery therefore only needs new confirmed events and does not
             // re-deliver the whole retained confirmed stream on startup.
             deliver_policy: async_nats::jetstream::consumer::DeliverPolicy::New,
+            ..Default::default()
         }
     }
 }

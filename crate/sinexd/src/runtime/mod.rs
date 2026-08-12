@@ -28,6 +28,7 @@ pub mod checkpoint;
 pub mod config;
 pub mod confirmation_handler;
 pub mod content_store;
+pub mod confirmed_stream_liveness;
 pub mod diagnostics {
     pub mod regression;
 }

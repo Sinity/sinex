@@ -564,6 +564,10 @@ fn spawn_automaton(
     shutdown_rx: watch::Receiver<bool>,
 ) -> JoinHandle<()> {
     tokio::spawn(async move {
+        let startup_delay = automaton_startup_delay(random_jitter_entropy());
+        if !startup_delay.is_zero() {
+            tokio::time::sleep(startup_delay).await;
+        }
         let mut backoff = Duration::from_secs(1);
         const MAX_BACKOFF: Duration = Duration::from_secs(30);
         // Reset backoff to 1 s if the automaton ran for at least this long
@@ -591,15 +595,16 @@ fn spawn_automaton(
                     if started.elapsed() >= STABLE_THRESHOLD {
                         backoff = Duration::from_secs(1);
                     }
+                    let retry_delay = jittered_automaton_backoff(backoff, random_jitter_entropy());
                     warn!(
                         automaton = %spec.name,
-                        backoff_ms = backoff.as_millis(),
+                        backoff_ms = retry_delay.as_millis(),
                         ?error,
                         "automaton exited with error; restarting after backoff"
                     );
                     // Wait for backoff, but abort early if shutdown is signaled.
                     tokio::select! {
-                        () = tokio::time::sleep(backoff) => {}
+                        () = tokio::time::sleep(retry_delay) => {}
                         _ = {
                             let mut rx = shutdown_rx.clone();
                             async move { let _ = rx.wait_for(|&v| v).await; }
@@ -610,6 +615,23 @@ fn spawn_automaton(
             }
         }
     })
+}
+
+const AUTOMATON_STARTUP_STAGGER_MAX: Duration = Duration::from_secs(2);
+
+fn random_jitter_entropy() -> u64 {
+    sinex_primitives::Uuid::now_v7().as_u128() as u64
+}
+
+fn automaton_startup_delay(entropy: u64) -> Duration {
+    Duration::from_millis(entropy % AUTOMATON_STARTUP_STAGGER_MAX.as_millis() as u64)
+}
+
+fn jittered_automaton_backoff(base: Duration, entropy: u64) -> Duration {
+    let base_ms = base.as_millis() as u64;
+    let jitter_ms = (base_ms / 2).max(1);
+    let jitter = entropy % (jitter_ms + 1);
+    (base + Duration::from_millis(jitter)).min(Duration::from_secs(30))
 }
 
 /// Load `SINEX_SOURCE_BINDINGS_PATH` and spawn one supervisor task per

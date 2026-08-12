@@ -35,6 +35,9 @@ use crate::runtime::acquisition_manager::{
     AcquisitionManager, BufferedAppendStreamWriter, BufferedAppendStreamWriterConfig,
     RotationPolicy,
 };
+use crate::runtime::confirmed_stream_liveness::{
+    ConfirmedStreamLivenessAssessment, ConfirmedStreamLivenessStatus,
+};
 use crate::runtime::error_helpers::env_nonempty_string_optional;
 use async_nats::Client as NatsClient;
 use sinex_primitives::domain::HealthStatus;
@@ -575,6 +578,96 @@ impl SelfObserver {
     // =========================================================================
     // Specialized Metrics
     // =========================================================================
+
+    /// Emit the canonical operator evidence for a confirmed-stream liveness
+    /// sample. Gap detection callers use this one method so gauges, warning
+    /// counters, and health transitions cannot drift apart.
+    pub async fn emit_confirmed_stream_liveness(
+        &self,
+        assessment: &ConfirmedStreamLivenessAssessment,
+        previous_status: Option<ConfirmedStreamLivenessStatus>,
+    ) -> Result<(), SelfObservationError> {
+        let mut labels = HashMap::new();
+        labels.insert("stream".to_string(), assessment.stream_name.clone());
+        labels.insert("consumer".to_string(), assessment.consumer_name.clone());
+        labels.insert("status".to_string(), assessment.status.as_str().to_string());
+
+        let mut first_error = None;
+        for (name, value) in [
+            (
+                "runtime.confirmed_stream.sequence_lag",
+                assessment.sequence_lag.unwrap_or_default() as f64,
+            ),
+            (
+                "runtime.confirmed_stream.retained_messages",
+                assessment.retained_messages as f64,
+            ),
+            (
+                "runtime.confirmed_stream.consumer_pending",
+                assessment.consumer_pending as f64,
+            ),
+            (
+                "runtime.confirmed_stream.retained_age_secs",
+                assessment.retained_age_secs as f64,
+            ),
+        ] {
+            if let Err(error) = self.emit_gauge(name, value, Some(labels.clone())).await
+                && first_error.is_none()
+            {
+                first_error = Some(error);
+            }
+        }
+
+        if previous_status != Some(assessment.status) {
+            let counter = match assessment.status {
+                ConfirmedStreamLivenessStatus::Nominal => None,
+                ConfirmedStreamLivenessStatus::ApproachingEviction => {
+                    Some("runtime.confirmed_stream.eviction_warnings_total")
+                }
+                ConfirmedStreamLivenessStatus::GapDetected => {
+                    Some("runtime.confirmed_stream.gaps_detected_total")
+                }
+            };
+            if let Some(counter) = counter
+                && let Err(error) = self.emit_counter(counter, 1, Some(labels.clone())).await
+                && first_error.is_none()
+            {
+                first_error = Some(error);
+            }
+
+            if assessment.status == ConfirmedStreamLivenessStatus::GapDetected
+                && let Err(error) = self
+                    .emit_counter(
+                        "runtime.confirmed_stream.recovery_requested_total",
+                        1,
+                        Some(labels.clone()),
+                    )
+                    .await
+                && first_error.is_none()
+            {
+                first_error = Some(error);
+            }
+
+            let previous_health = previous_status.map_or(
+                sinex_primitives::domain::HealthStatus::Unknown,
+                ConfirmedStreamLivenessStatus::health_status,
+            );
+            if let Err(error) = self
+                .emit_health_status(
+                    &assessment.consumer_name,
+                    previous_health,
+                    assessment.status.health_status(),
+                    Some(&assessment.describe()),
+                )
+                .await
+                && first_error.is_none()
+            {
+                first_error = Some(error);
+            }
+        }
+
+        first_error.map_or(Ok(()), Err)
+    }
 
     /// Emit NATS stream statistics.
     pub async fn emit_stream_stats(

@@ -1,4 +1,5 @@
-use super::automata_enabled_arg;
+use super::{automata_enabled_arg, automaton_startup_delay, jittered_automaton_backoff};
+use std::time::Duration;
 use xtask::sandbox::prelude::sinex_test;
 
 #[sinex_test]
@@ -11,6 +12,29 @@ async fn automata_enabled_arg_distinguishes_unset_from_empty() -> xtask::sandbox
         Some("interval-lift")
     );
     assert_eq!(automata_enabled_arg(Some("all")), Some("all"));
+    Ok(())
+}
+
+#[sinex_test]
+async fn automaton_startup_stagger_is_bounded_and_seeded() -> xtask::sandbox::TestResult<()> {
+    let first = automaton_startup_delay(1);
+    let second = automaton_startup_delay(2);
+    assert!(first < Duration::from_secs(2));
+    assert!(second < Duration::from_secs(2));
+    assert_ne!(first, second);
+    Ok(())
+}
+
+#[sinex_test]
+async fn automaton_retry_backoff_has_bounded_jitter() -> xtask::sandbox::TestResult<()> {
+    let base = Duration::from_secs(8);
+    let first = jittered_automaton_backoff(base, 1);
+    let second = jittered_automaton_backoff(base, u64::MAX);
+    assert!(first >= base);
+    assert!(second >= base);
+    assert!(first <= Duration::from_secs(12));
+    assert!(second <= Duration::from_secs(12));
+    assert_ne!(first, second);
     Ok(())
 }
 
