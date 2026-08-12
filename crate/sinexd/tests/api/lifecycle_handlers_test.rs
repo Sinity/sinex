@@ -167,9 +167,6 @@ async fn archived_annotation_count(ctx: &TestContext, event_id: &str) -> TestRes
 /// operator-authored annotation content behind forever, orphaned and
 /// unreachable by any later purge attempt.
 #[sinex_test]
-#[ignore = "sinex-kwwt open: execute_cascade_tombstone leaks audit.archived_annotations rows (and \
-            archived_embeddings/archived_tagged_items) for any tombstoned event that had one; \
-            un-ignore once the tombstone path cleans up all archive side-tables like restore does"]
 async fn tombstone_approve_purges_archived_annotation_content(ctx: TestContext) -> TestResult<()> {
     let auth = RpcAuthContext::system();
     let services = ServiceContainer::from_database_url(ctx.database_url().to_string()).await?;

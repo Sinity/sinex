@@ -2368,6 +2368,20 @@ BEGIN
 
     GET DIAGNOSTICS v_count = ROW_COUNT;
 
+    -- Permanent deletion must remove every archive-side row carrying event
+    -- content before deleting the archive root.  These tables intentionally
+    -- do not have foreign keys back to audit.archived_events (LIKE does not
+    -- copy them), so leaving them behind would strand sensitive annotations,
+    -- embedded text, or tags with no later purge path.
+    DELETE FROM audit.archived_annotations
+    WHERE event_id = ANY(p_archived_ids);
+
+    DELETE FROM audit.archived_embeddings
+    WHERE event_id = ANY(p_archived_ids);
+
+    DELETE FROM audit.archived_tagged_items
+    WHERE item_id = ANY(p_archived_ids) AND item_type = 'event';
+
     DELETE FROM audit.archived_events
     WHERE id = ANY(p_archived_ids);
 
