@@ -144,3 +144,46 @@ async fn test_invocation_query_filters_zombie_cancellations_by_default() -> Test
 
     Ok(())
 }
+
+#[sinex_test]
+#[ignore = "sinex-i2r1 open: DiagnosticQuery::count() is implemented as \
+            run_diagnostic_query(q)?.len(), which is capped by the query's LIMIT \
+            (default 200) instead of reporting the true matching-row cardinality"]
+async fn diagnostic_query_count_is_not_capped_by_limit() -> TestResult<()> {
+    let dir = tempdir()?;
+    let db_path = dir.path().join("test-diagnostic-count-limit.db");
+    let db = HistoryDb::open(&db_path)?;
+
+    let id = db.start_invocation("check", None, None, None)?;
+    db.finish_invocation(id, InvocationStatus::Success, Some(0), 0.1)?;
+
+    let true_total = 250usize;
+    let diagnostics: Vec<crate::cargo_diagnostics::CompilerDiagnostic> = (0..true_total)
+        .map(|i| crate::cargo_diagnostics::CompilerDiagnostic {
+            level: "warning".to_string(),
+            code: Some("unused".to_string()),
+            message: format!("unused variable #{i}"),
+            file_path: Some("crate/xtask/src/lib.rs".to_string()),
+            line: Some(i as u32),
+            column: Some(1),
+            rendered: None,
+            suggestion: None,
+            package: Some("xtask".to_string()),
+            fix_replacement: None,
+            fix_applicability: None,
+            fix_byte_start: None,
+            fix_byte_end: None,
+        })
+        .collect();
+    db.record_diagnostics_batch(id, &diagnostics)?;
+
+    // Default DiagnosticQuery limit is 200 — well under the 250 real rows.
+    let counted = DiagnosticQuery::new().for_invocation(id).count(&db)?;
+    assert_eq!(
+        counted, true_total,
+        "count() returned {counted}, capped at the query's default limit instead of the \
+         true {true_total} matching diagnostics"
+    );
+
+    Ok(())
+}

@@ -41,3 +41,22 @@ async fn test_chaos_scenarios_partition_flag() -> ::xtask::sandbox::TestResult<(
     assert!(scenarios.is_partition_active());
     Ok(())
 }
+
+#[sinex_test]
+#[ignore = "sinex-agdr open: apply_latency computes \
+            fastrand::u64(0..self.latency_jitter.as_millis() as u64), which panics on an \
+            empty range whenever latency_jitter is non-zero but rounds to 0ms \
+            (e.g. Duration::from_micros(500))"]
+async fn apply_latency_does_not_panic_on_sub_millisecond_jitter() -> ::xtask::sandbox::TestResult<()>
+{
+    let ctx = ChaosTestBuilder::new()
+        .with_latency_jitter(Duration::from_micros(500))
+        .build();
+
+    let result = tokio::spawn(async move { ctx.apply_latency().await }).await;
+    assert!(
+        result.is_ok(),
+        "apply_latency panicked on a sub-millisecond (non-zero) jitter value: {result:?}"
+    );
+    Ok(())
+}

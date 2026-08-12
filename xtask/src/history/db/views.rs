@@ -562,3 +562,7 @@ impl HistoryDb {
         Ok(id)
     }
 }
+
+#[cfg(test)]
+#[path = "views_test.rs"]
+mod tests;

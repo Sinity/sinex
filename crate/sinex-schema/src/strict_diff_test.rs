@@ -280,3 +280,22 @@ async fn hypertable_setting_drift_reports_retention_policy() -> xtask::sandbox::
     assert_eq!(drift.observed_summary, "2 retention policy job(s) present");
     Ok(())
 }
+
+#[sinex_test]
+#[ignore = "sinex-3p1l open: DECLARED_INLINE_CHECKS only declares expectations for \
+            core.events -- reflection.events inherits the same LIKE-created CHECK \
+            constraints (including xor_provenance) but strict_diff never verifies them, \
+            so drift there is invisible to `xtask schema strict-diff`"]
+async fn declared_inline_checks_cover_reflection_events() -> xtask::sandbox::TestResult<()> {
+    let covers_reflection_xor_provenance = DECLARED_INLINE_CHECKS
+        .iter()
+        .any(|check| check.schema == "reflection" && check.table == "events" && check.label == "xor_provenance");
+
+    assert!(
+        covers_reflection_xor_provenance,
+        "DECLARED_INLINE_CHECKS has no reflection.events entry for xor_provenance -- \
+         strict_diff only ever checks core.events, so a dropped/rewritten CHECK on \
+         reflection.events (self-observation lane) goes completely undetected"
+    );
+    Ok(())
+}
