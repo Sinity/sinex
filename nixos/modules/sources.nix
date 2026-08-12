@@ -305,6 +305,8 @@ let
     # so all core services share a consistent path without per-service repetition.
     "SINEX_CONTENT_STORE_PATH=${blobDir}"
     "SINEX_CONTENT_STORE_MAX_BLOB_SIZE=${toString cfg.storage.blob.maxBlobSize}"
+    # Material assembly and CAS retrieval must share one write/read ceiling.
+    "SINEX_EVENT_ENGINE_MAX_MATERIAL_SIZE_BYTES=${toString cfg.storage.blob.maxBlobSize}"
     # Return freed heap to the OS eagerly. sinexd uses mimalloc (main.rs); by
     # default it retains freed segments in its arenas, so a burst of large
     # short-lived allocations during a backlog drain (512 KiB frame payloads ×

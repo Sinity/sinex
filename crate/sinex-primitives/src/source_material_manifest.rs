@@ -15,6 +15,62 @@ use uuid::Uuid;
 /// The canonical manifest discriminator.  It is part of the serialized object,
 /// not inferred from the database row or the filename.
 pub const MATERIAL_MANIFEST_V1: &str = "MaterialManifestV1";
+pub const LEGACY_MANIFEST_V0: &str = "LegacyManifestV0";
+
+/// The manifest discriminator is a closed set with an explicit forward-
+/// compatibility bucket.  Unknown values must survive a read so operators can
+/// distinguish an unsupported manifest from a missing one.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum MaterialManifestType {
+    V1,
+    LegacyV0,
+    Unknown(String),
+}
+
+impl MaterialManifestType {
+    #[must_use]
+    pub fn as_str(&self) -> &str {
+        match self {
+            Self::V1 => MATERIAL_MANIFEST_V1,
+            Self::LegacyV0 => LEGACY_MANIFEST_V0,
+            Self::Unknown(value) => value,
+        }
+    }
+}
+
+impl Serialize for MaterialManifestType {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        serializer.serialize_str(self.as_str())
+    }
+}
+
+impl<'de> Deserialize<'de> for MaterialManifestType {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let value = String::deserialize(deserializer)?;
+        Ok(match value.as_str() {
+            MATERIAL_MANIFEST_V1 => Self::V1,
+            LEGACY_MANIFEST_V0 => Self::LegacyV0,
+            _ => Self::Unknown(value),
+        })
+    }
+}
+
+/// Fidelity is a claim about what the acquisition route actually observed.
+/// It is never inferred from a source identifier or an event timestamp.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ManifestFidelity {
+    Exact,
+    Partial,
+    Legacy,
+    Unknown,
+}
 
 /// Whether a metadata value was actually observed by the acquisition route.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -169,7 +225,8 @@ pub struct ProvenanceEnvelope {
 /// Canonical metadata envelope for one registered source material.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct MaterialManifestV1 {
-    pub manifest_type: String,
+    pub manifest_type: MaterialManifestType,
+    pub fidelity: ManifestFidelity,
     pub source_material_id: Uuid,
     pub source_identifier: String,
     pub material_kind: String,
@@ -189,6 +246,38 @@ pub struct MaterialManifestV1 {
     /// unknown fields remain recoverable rather than being dropped.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub extensions: BTreeMap<String, JsonValue>,
+    /// Forward-compatible top-level fields.  They are retained verbatim and
+    /// included in canonical bytes instead of being silently discarded by
+    /// serde when a newer producer adds a field.
+    #[serde(flatten)]
+    pub unknown_fields: BTreeMap<String, JsonValue>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct LegacyManifestV0 {
+    pub manifest_type: MaterialManifestType,
+    #[serde(default)]
+    pub source_material_id: Option<Uuid>,
+    #[serde(default)]
+    pub source_identifier: Option<String>,
+    #[serde(default)]
+    pub material_kind: Option<String>,
+    #[serde(flatten)]
+    pub fields: BTreeMap<String, JsonValue>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct UnknownMaterialManifest {
+    pub manifest_type: MaterialManifestType,
+    #[serde(flatten)]
+    pub fields: BTreeMap<String, JsonValue>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub enum DecodedMaterialManifest {
+    V1(MaterialManifestV1),
+    Legacy(LegacyManifestV0),
+    Unknown(UnknownMaterialManifest),
 }
 
 fn captured_string_field(
@@ -265,7 +354,8 @@ impl MaterialManifestV1 {
         extensions.insert("capture_metadata".to_string(), metadata);
 
         Self {
-            manifest_type: MATERIAL_MANIFEST_V1.to_string(),
+            manifest_type: MaterialManifestType::V1,
+            fidelity: ManifestFidelity::Partial,
             source_material_id,
             source_identifier,
             material_kind,
@@ -352,7 +442,62 @@ impl MaterialManifestV1 {
             temporal_evidence,
             privacy_classification: BTreeMap::from([("*".to_string(), privacy_class)]),
             extensions,
+            unknown_fields: BTreeMap::new(),
         }
+    }
+
+    /// Decode a manifest without conflating legacy, unknown, and malformed
+    /// inputs.  Legacy and unknown payloads remain available to migration and
+    /// inventory tooling, while replay can fail closed on them.
+    pub fn decode(bytes: &[u8]) -> Result<DecodedMaterialManifest, String> {
+        let value: JsonValue = serde_json::from_slice(bytes)
+            .map_err(|error| format!("invalid material manifest JSON: {error}"))?;
+        let Some(manifest_type) = value.get("manifest_type").and_then(JsonValue::as_str) else {
+            return Ok(DecodedMaterialManifest::Unknown(UnknownMaterialManifest {
+                manifest_type: MaterialManifestType::Unknown("<missing>".to_string()),
+                fields: value
+                    .as_object()
+                    .cloned()
+                    .unwrap_or_default()
+                    .into_iter()
+                    .collect(),
+            }));
+        };
+        match manifest_type {
+            MATERIAL_MANIFEST_V1 => serde_json::from_value(value)
+                .map(DecodedMaterialManifest::V1)
+                .map_err(|error| format!("invalid MaterialManifestV1: {error}")),
+            LEGACY_MANIFEST_V0 => serde_json::from_value(value)
+                .map(DecodedMaterialManifest::Legacy)
+                .map_err(|error| format!("invalid LegacyManifestV0: {error}")),
+            _ => {
+                let fields = value
+                    .as_object()
+                    .cloned()
+                    .unwrap_or_default()
+                    .into_iter()
+                    .collect();
+                Ok(DecodedMaterialManifest::Unknown(UnknownMaterialManifest {
+                    manifest_type: MaterialManifestType::Unknown(manifest_type.to_string()),
+                    fields,
+                }))
+            }
+        }
+    }
+
+    /// Validate and convert an inclusive-exclusive byte range for replay.
+    pub fn exact_range(
+        &self,
+        range: ByteRange,
+    ) -> Result<std::ops::Range<usize>, &'static str> {
+        if range.start >= range.end || range.end > self.bytes.encoded_size {
+            return Err("material replay range is outside encoded material");
+        }
+        let start = usize::try_from(range.start)
+            .map_err(|_| "material replay range does not fit host index")?;
+        let end = usize::try_from(range.end)
+            .map_err(|_| "material replay range does not fit host index")?;
+        Ok(start..end)
     }
 
     /// Return the deterministic JSON representation used as the CAS object.
@@ -375,7 +520,7 @@ impl MaterialManifestV1 {
 
     /// Reject discriminator drift before a manifest is persisted or replayed.
     pub fn validate(&self) -> Result<(), &'static str> {
-        if self.manifest_type != MATERIAL_MANIFEST_V1 {
+        if self.manifest_type != MaterialManifestType::V1 {
             return Err("unsupported material manifest discriminator");
         }
         if self.bytes.encoded.algorithm.is_empty() || self.bytes.encoded.value_hex.is_empty() {
@@ -486,11 +631,53 @@ mod tests {
     #[test]
     fn discriminator_is_not_inferred() {
         let mut manifest = minimal_manifest();
-        manifest.manifest_type = "LegacyManifestV0".to_string();
+        manifest.manifest_type = MaterialManifestType::LegacyV0;
         assert_eq!(
             manifest.validate(),
             Err("unsupported material manifest discriminator")
         );
+    }
+
+    #[test]
+    fn legacy_and_unknown_manifests_are_explicitly_classified() {
+        let legacy = MaterialManifestV1::decode(
+            br#"{"manifest_type":"LegacyManifestV0","source_identifier":"old.log"}"#,
+        )
+        .expect("legacy manifest should decode");
+        assert!(matches!(legacy, DecodedMaterialManifest::Legacy(_)));
+
+        let unknown = MaterialManifestV1::decode(
+            br#"{"manifest_type":"MaterialManifestV9","future_field":{"kept":true}}"#,
+        )
+        .expect("unknown manifest should decode");
+        let DecodedMaterialManifest::Unknown(unknown) = unknown else {
+            panic!("unknown manifest must remain unknown");
+        };
+        assert_eq!(unknown.manifest_type.as_str(), "MaterialManifestV9");
+        assert_eq!(unknown.fields["future_field"]["kept"], true);
+    }
+
+    #[test]
+    fn unknown_v1_fields_survive_canonical_round_trip() {
+        let mut value = serde_json::to_value(minimal_manifest()).expect("serialize fixture");
+        value["future_field"] = serde_json::json!({"b": 1, "a": 2});
+        let manifest: MaterialManifestV1 = serde_json::from_value(value).expect("decode v1");
+        let canonical = manifest.canonical_bytes().expect("canonical bytes");
+        assert!(String::from_utf8(canonical).expect("utf8").contains("future_field"));
+    }
+
+    #[test]
+    fn exact_replay_ranges_are_bounded_by_manifest_size() {
+        let manifest = minimal_manifest();
+        assert_eq!(
+            manifest
+                .exact_range(ByteRange { start: 0, end: 1 })
+                .expect("bounded range"),
+            0..1
+        );
+        assert!(manifest
+            .exact_range(ByteRange { start: 0, end: 2 })
+            .is_err());
     }
 
     #[test]
@@ -505,7 +692,8 @@ mod tests {
 
     fn minimal_manifest() -> MaterialManifestV1 {
         MaterialManifestV1 {
-            manifest_type: MATERIAL_MANIFEST_V1.to_string(),
+            manifest_type: MaterialManifestType::V1,
+            fidelity: ManifestFidelity::Exact,
             source_material_id: Uuid::nil(),
             source_identifier: "fixture/source".to_string(),
             material_kind: "local_cas".to_string(),
@@ -573,6 +761,7 @@ mod tests {
                 ManifestPrivacyClass::Unknown,
             )]),
             extensions: BTreeMap::new(),
+            unknown_fields: BTreeMap::new(),
         }
     }
 }

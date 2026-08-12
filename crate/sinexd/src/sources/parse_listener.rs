@@ -14,7 +14,7 @@ use async_nats::Client;
 use futures::StreamExt;
 use serde::{Deserialize, Serialize};
 use sinex_db::{Blob, DbPoolExt, SourceMaterialRecord};
-use sinex_primitives::{ControlSubject, Id, MaterialManifestV1, Uuid};
+use sinex_primitives::{ControlSubject, DecodedMaterialManifest, Id, MaterialManifestV1, Uuid};
 use sqlx::PgPool;
 use std::sync::Arc;
 use tracing::{error, info, warn};
@@ -127,6 +127,45 @@ pub(crate) async fn load_material_bytes(
     content_store: &ContentStoreManager,
     material_id: Uuid,
 ) -> Result<Vec<u8>, String> {
+    let (_, bytes) = load_material_authority(pool, content_store, material_id).await?;
+    Ok(bytes)
+}
+
+/// Load one exact material range from the authoritative CAS object.  The
+/// manifest bounds the range and the returned bytes are never read from the
+/// original source path, which is essential after source removal or mutation.
+pub(crate) async fn load_material_range(
+    pool: &PgPool,
+    content_store: &ContentStoreManager,
+    material_id: Uuid,
+    range: sinex_primitives::ByteRange,
+) -> Result<Vec<u8>, String> {
+    let (manifest, bytes) = load_material_authority(pool, content_store, material_id).await?;
+    let selected = if let Some(manifest) = manifest {
+        manifest
+            .exact_range(range)
+            .map_err(|error| format!("manifest range validation failed for material {material_id}: {error}"))?
+    } else {
+        let start = usize::try_from(range.start)
+            .map_err(|_| format!("material range start does not fit host index for {material_id}"))?;
+        let end = usize::try_from(range.end)
+            .map_err(|_| format!("material range end does not fit host index for {material_id}"))?;
+        if start >= end || end > bytes.len() {
+            return Err(format!("material range is outside legacy bytes for {material_id}"));
+        }
+        start..end
+    };
+    bytes
+        .get(selected)
+        .map(ToOwned::to_owned)
+        .ok_or_else(|| format!("material range is outside authoritative bytes for {material_id}"))
+}
+
+async fn load_material_authority(
+    pool: &PgPool,
+    content_store: &ContentStoreManager,
+    material_id: Uuid,
+) -> Result<(Option<MaterialManifestV1>, Vec<u8>), String> {
     let material = pool
         .source_materials()
         .get_by_id(Id::<SourceMaterialRecord>::from_uuid(material_id))
@@ -145,7 +184,7 @@ pub(crate) async fn load_material_bytes(
         .map_err(|e| format!("failed to load blob {blob_id} for material {material_id}: {e}"))?
         .ok_or_else(|| format!("blob {blob_id} for material {material_id} not found"))?;
 
-    let manifest_content_key = if let Some(manifest_reference) = material
+    let manifest = if let Some(manifest_reference) = material
         .metadata
         .get("material_manifest")
         .and_then(serde_json::Value::as_object)
@@ -160,8 +199,21 @@ pub(crate) async fn load_material_bytes(
             .retrieve_cas_object(manifest_key)
             .await
             .map_err(|e| format!("failed to retrieve manifest for material {material_id}: {e}"))?;
-        let manifest: MaterialManifestV1 = serde_json::from_slice(&manifest_bytes)
-            .map_err(|e| format!("failed to decode manifest for material {material_id}: {e}"))?;
+        let manifest = match MaterialManifestV1::decode(&manifest_bytes)? {
+            DecodedMaterialManifest::V1(manifest) => manifest,
+            DecodedMaterialManifest::Legacy(legacy) => {
+                return Err(format!(
+                    "material {material_id} has unsupported legacy manifest {}",
+                    legacy.manifest_type.as_str()
+                ));
+            }
+            DecodedMaterialManifest::Unknown(unknown) => {
+                return Err(format!(
+                    "material {material_id} has unsupported manifest {}",
+                    unknown.manifest_type.as_str()
+                ));
+            }
+        };
         manifest
             .validate()
             .map_err(|e| format!("manifest validation failed for material {material_id}: {e}"))?;
@@ -184,29 +236,39 @@ pub(crate) async fn load_material_bytes(
                 "manifest byte identity mismatch for material {material_id}"
             ));
         }
-        Some(format!(
-            "SINEXBLAKE3-s{}--{}",
-            manifest.bytes.encoded_size, manifest.bytes.encoded.value_hex
-        ))
+        Some(manifest)
     } else {
         None
     };
 
-    if let Some(manifest_content_key) = manifest_content_key {
-        return content_store
-            .retrieve_cas_object(&manifest_content_key)
+    if let Some(manifest) = manifest.as_ref() {
+        let content_key = format!(
+            "SINEXBLAKE3-s{}--{}",
+            manifest.bytes.encoded_size, manifest.bytes.encoded.value_hex
+        );
+        let bytes = content_store
+            .retrieve_cas_object(&content_key)
             .await
             .map_err(|e| {
                 format!(
                     "failed to retrieve manifest-authoritative bytes for material {material_id}: {e}"
                 )
-            });
+            })?;
+        if bytes.len() as u64 != manifest.bytes.encoded_size
+            || blake3::hash(&bytes).to_hex().to_string() != manifest.bytes.encoded.value_hex
+        {
+            return Err(format!(
+                "manifest-authoritative CAS bytes failed digest or size validation for material {material_id}"
+            ));
+        }
+        return Ok((Some(manifest.clone()), bytes));
     }
 
-    content_store
+    let bytes = content_store
         .retrieve_content(&blob.content_key())
         .await
-        .map_err(|e| format!("failed to retrieve content for material {material_id}: {e}"))
+        .map_err(|e| format!("failed to retrieve content for material {material_id}: {e}"))?;
+    Ok((None, bytes))
 }
 
 /// Resolve a parse command into an ack: validate the source id, load real

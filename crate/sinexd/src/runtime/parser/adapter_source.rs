@@ -691,7 +691,7 @@ where
         Ok(true)
     }
 
-    async fn replay_file_drop_materials(
+    async fn replay_materials_from_cas(
         &mut self,
         replay: MaterialReplayContext,
     ) -> RuntimeResult<ScanReport> {
@@ -703,7 +703,7 @@ where
                 .and_then(|runtime| runtime.handles().db_pool().cloned())
                 .ok_or_else(|| {
                     crate::runtime::SinexError::configuration(
-                        "FileDrop replay requires a database-backed source-material CAS route",
+                        "material replay requires a database-backed source-material CAS route",
                     )
                 })?;
             Arc::new(
@@ -717,7 +717,7 @@ where
                 )
                 .map_err(|error| {
                     crate::runtime::SinexError::configuration(
-                        "FileDrop replay could not initialize the shared source-material CAS",
+                        "material replay could not initialize the shared source-material CAS",
                     )
                     .with_source(error.to_string())
                 })?,
@@ -725,7 +725,7 @@ where
         };
         #[cfg(not(feature = "db"))]
         return Err(crate::runtime::SinexError::configuration(
-            "FileDrop replay requires the database-backed source-material CAS route",
+            "material replay requires the database-backed source-material CAS route",
         ));
 
         let start = Instant::now();
@@ -742,7 +742,7 @@ where
                         .and_then(|runtime| runtime.handles().db_pool())
                         .ok_or_else(|| {
                             crate::runtime::SinexError::configuration(
-                                "FileDrop replay requires a database-backed source-material CAS route",
+                                "material replay requires a database-backed source-material CAS route",
                             )
                         })?;
                     crate::sources::parse_listener::load_material_bytes(
@@ -753,7 +753,7 @@ where
                     .await
                     .map_err(|reason| {
                         crate::runtime::SinexError::processing(
-                            "FileDrop replay could not load authoritative source-material bytes",
+                            "material replay could not load authoritative source-material bytes",
                         )
                         .with_context(
                             "source_material_id",
@@ -792,31 +792,75 @@ where
                     material_bytes.len() as u64,
                     occurrence,
                 )?;
-                let bytes = material_bytes
-                    .get(range)
-                    .ok_or_else(|| {
-                        crate::runtime::SinexError::invalid_state(
-                            "FileDrop replay occurrence range falls outside authoritative source-material bytes",
+                let bytes = {
+                    #[cfg(feature = "db")]
+                    {
+                        let pool = self
+                            .runtime
+                            .as_ref()
+                            .and_then(|runtime| runtime.handles().db_pool())
+                            .ok_or_else(|| {
+                                crate::runtime::SinexError::configuration(
+                                    "material replay requires a database-backed source-material CAS route",
+                                )
+                            })?;
+                        crate::sources::parse_listener::load_material_range(
+                            pool,
+                            &content_store,
+                            material.source_material_id,
+                            sinex_primitives::ByteRange {
+                                start: range.start as u64,
+                                end: range.end as u64,
+                            },
                         )
-                        .with_context(
-                            "source_material_id",
-                            material.source_material_id.to_string(),
-                        )
-                        .with_context("anchor_byte", occurrence.anchor_byte.to_string())
-                        .with_context(
-                            "offset_start",
-                            occurrence
-                                .offset_start
-                                .map_or_else(|| "missing".to_string(), |value| value.to_string()),
-                        )
-                        .with_context(
-                            "offset_end",
-                            occurrence
-                                .offset_end
-                                .map_or_else(|| "missing".to_string(), |value| value.to_string()),
-                        )
-                    })?
-                    .to_vec();
+                        .await
+                        .map_err(|reason| {
+                            crate::runtime::SinexError::processing(
+                                "material replay could not load the exact authoritative CAS range",
+                            )
+                            .with_context(
+                                "source_material_id",
+                                material.source_material_id.to_string(),
+                            )
+                            .with_context("reason", reason)
+                        })?
+                    }
+                    #[cfg(not(feature = "db"))]
+                    {
+                        material_bytes.get(range).map(ToOwned::to_owned).ok_or_else(|| {
+                            crate::runtime::SinexError::invalid_state(
+                                "material replay occurrence range falls outside authoritative source-material bytes",
+                            )
+                        })?
+                    }
+                };
+                if bytes.is_empty() {
+                    return Err(crate::runtime::SinexError::invalid_state(
+                        "material replay occurrence range must not be empty",
+                    ));
+                }
+                /*
+                 * Keep the original range check in the route even though the
+                 * CAS helper validates it against the manifest.  This catches
+                 * a stale occurrence envelope before a DB-backed range read
+                 * and makes the anti-vacuity contract visible at the caller.
+                 */
+                if material_bytes.get(range.clone()).is_none() {
+                    return Err(crate::runtime::SinexError::invalid_state(
+                        "material replay occurrence range falls outside authoritative source-material bytes",
+                    )
+                    .with_context(
+                        "source_material_id",
+                        material.source_material_id.to_string(),
+                    )
+                    .with_context("anchor_byte", occurrence.anchor_byte.to_string()));
+                }
+                /*
+                 * The bytes above are intentionally sourced from CAS.  The
+                 * in-memory slice is only a bounds witness, never the replay
+                 * payload.
+                 */
+                let _ = &bytes;
                 let logical_path = metadata
                     .get("path")
                     .and_then(JsonValue::as_str)
@@ -839,7 +883,7 @@ where
 
             if !found_occurrence {
                 return Err(crate::runtime::SinexError::invalid_state(
-                    "FileDrop replay context is missing the original material occurrence coordinates",
+                    "material replay context is missing the original material occurrence coordinates",
                 )
                 .with_context("source_material_id", material.source_material_id.to_string()));
             }
@@ -2210,22 +2254,11 @@ where
         args: ScanArgs,
     ) -> RuntimeResult<ScanReport> {
         let start = Instant::now();
-        if A::KIND == InputShapeKind::FileDrop
-            && let Some(replay) = args.replay.clone()
-        {
-            return self.replay_file_drop_materials(replay).await;
-        }
-        if args.replay.is_some() {
-            // Never silently widen a scoped replay into a whole-source scan.
-            // Until this adapter has a durable material-backed replay route,
-            // failing closed is safer than archiving a narrow scope and
-            // emitting duplicate interpretations for every out-of-scope
-            // occurrence from the fresh cursor.
-            return Err(crate::runtime::SinexError::configuration(
-                "replay is not supported for this adapter until durable source-material replay is available",
-            )
-            .with_context("source_id", self.source_id)
-            .with_context("adapter_kind", A::KIND.as_str()));
+        if let Some(replay) = args.replay.clone() {
+            // Never silently widen a scoped replay into a fresh-source scan.
+            // Every adapter now enters the CAS-backed route; adapters whose
+            // occurrence coordinates are not byte ranges fail closed there.
+            return self.replay_materials_from_cas(replay).await;
         }
 
         // sinex-2n9: historical/catch-up scans are paced by default. See

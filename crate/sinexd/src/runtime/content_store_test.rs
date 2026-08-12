@@ -15,6 +15,19 @@ async fn default_blob_retrieval_cap_matches_default_material_assembly_cap()
 }
 
 #[sinex_test]
+async fn content_store_default_honors_deployment_size_override()
+-> ::xtask::sandbox::TestResult<()> {
+    let mut env = xtask::sandbox::EnvGuard::new();
+    env.set("SINEX_CONTENT_STORE_MAX_BLOB_SIZE", "123456");
+    assert_eq!(
+        configured_max_blob_size(),
+        123456,
+        "the Nix-exported retrieval cap must reach default content-store clients"
+    );
+    Ok(())
+}
+
+#[sinex_test]
 async fn parse_unused_output_extracts_numbered_unused_entries() -> ::xtask::sandbox::TestResult<()>
 {
     let entries = parse_unused_output(

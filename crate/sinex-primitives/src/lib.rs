@@ -209,10 +209,12 @@ pub use serde_json::Value as JsonValue;
 pub use session_lane::*;
 pub use source_contracts::{SourceRuntimeBinding, SubjectQuery, SubjectRef};
 pub use source_material_manifest::{
-    ByteRange as MaterialByteRange, Captured as CapturedMetadata, ContainerEnvelope, ContentDigest,
-    ContinuityEnvelope, FilesystemEnvelope, InterpretationEnvelope, MATERIAL_MANIFEST_V1,
-    ManifestPrivacyClass, MaterialBytes, MaterialManifestV1, MetadataAvailability,
-    ProvenanceEnvelope, TransportEnvelope,
+    ByteRange, ByteRange as MaterialByteRange, Captured as CapturedMetadata, ContainerEnvelope,
+    ContentDigest, ContinuityEnvelope, DecodedMaterialManifest, FilesystemEnvelope,
+    InterpretationEnvelope, LEGACY_MANIFEST_V0, MATERIAL_MANIFEST_V1, LegacyManifestV0,
+    ManifestFidelity, ManifestPrivacyClass, MaterialBytes, MaterialManifestType,
+    MaterialManifestV1, MetadataAvailability, ProvenanceEnvelope, TransportEnvelope,
+    UnknownMaterialManifest,
 };
 pub use task_domain::*;
 pub use temporal::{OffsetDateTime, now};

@@ -144,7 +144,7 @@ async fn load_material_bytes_rejects_manifest_with_invalid_discriminator(
         "2026-08-12T00:00:00Z",
         "2026-08-12T00:00:01Z",
     );
-    manifest.manifest_type = "LegacyManifestV0".to_string();
+    manifest.manifest_type = sinex_primitives::MaterialManifestType::LegacyV0;
     let manifest_blob = content_store
         .ingest_from_bytes(
             &manifest.canonical_bytes()?,

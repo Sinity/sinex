@@ -271,6 +271,14 @@ const fn default_max_blob_size() -> usize {
     sinex_primitives::constants::limits::DEFAULT_SOURCE_MATERIAL_MAX_BYTES
 }
 
+fn configured_max_blob_size() -> usize {
+    sinex_primitives::env::parse_or(
+        "SINEX_CONTENT_STORE_MAX_BLOB_SIZE",
+        default_max_blob_size(),
+        "content-store maximum blob size",
+    )
+}
+
 impl Default for ContentStoreConfig {
     fn default() -> Self {
         Self {
@@ -278,7 +286,7 @@ impl Default for ContentStoreConfig {
             num_copies: None,
             large_files: None,
             legacy_annex_enabled: false,
-            max_blob_size: default_max_blob_size(),
+            max_blob_size: configured_max_blob_size(),
         }
     }
 }
