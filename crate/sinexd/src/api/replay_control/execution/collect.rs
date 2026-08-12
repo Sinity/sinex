@@ -308,18 +308,9 @@ impl ReplayExecutionEngine {
         operation_id: Uuid,
         expected: &ExpectedReplayOutputs,
     ) -> Result<i64> {
-        // NOTE: SQL-level `split_part(…, '#material=', 1)` decomposes the
-        // wire format that `SourceIdentifier::to_wire()` produces.  The
-        // canonical parser/formatter for this encoding is
-        // `sinex_primitives::domain::SourceIdentifier`.  Long-term the
-        // source_identifier column should carry separate logical_id /
-        // material_id columns so SQL callers can avoid string parsing.
         sqlx::query_scalar::<_, i64>(
             r"
-            SELECT COUNT(DISTINCT COALESCE(
-                    smr.metadata->>'logical_source_identifier',
-                    split_part(smr.source_identifier, '#material=', 1)
-                  ))::bigint
+            SELECT COUNT(*)::bigint
             FROM core.events
             INNER JOIN raw.source_material_registry smr
                 ON smr.id = core.events.source_material_id

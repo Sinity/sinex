@@ -367,6 +367,10 @@ impl ReplayExecutionEngine {
             Self::expected_replay_outputs(&material_roots)?,
             &replay_materials,
         )?;
+        let expected_replay_outputs = ExpectedReplayOutputs {
+            minimum_visible_count: replay_occurrences.len() as u64,
+            ..expected_replay_outputs
+        };
 
         // Step 1: Archive the affected cascade
         let archived_cascade = self
@@ -383,8 +387,20 @@ impl ReplayExecutionEngine {
         );
 
         if !scope_metadata.is_empty() {
-            self.stale_projection_registry_for_scopes(pool, &scope_metadata, operation_id)
-                .await?;
+            if let Err(error) = self
+                .stale_projection_registry_for_scopes(pool, &scope_metadata, operation_id)
+                .await
+            {
+                return self
+                    .compensate_after_archive_failure(
+                        pool,
+                        &cascade_ids,
+                        &scope_metadata,
+                        operation_id,
+                        error,
+                    )
+                    .await;
+            }
         }
 
         // The archive transaction records scope invalidations as pending in
@@ -464,7 +480,20 @@ impl ReplayExecutionEngine {
         // by the acquisition layer carry the runtime identity in
         // `logical_source_identifier`; use that for control-plane dispatch while
         // keeping event-source filters for output validation.
-        let control_source_name = Self::scan_control_source_name(scope, &replay_materials)?;
+        let control_source_name = match Self::scan_control_source_name(scope, &replay_materials) {
+            Ok(source) => source,
+            Err(error) => {
+                return self
+                    .compensate_after_archive_failure(
+                        pool,
+                        &cascade_ids,
+                        &scope_metadata,
+                        operation_id,
+                        error,
+                    )
+                    .await;
+            }
+        };
         let scan_subject = self
             .env
             .nats_subject(&ControlSubject::source_scan(&control_source_name));
@@ -517,9 +546,21 @@ impl ReplayExecutionEngine {
             },
         };
 
-        let command_payload = serde_json::to_vec(&scan_command).map_err(|err| {
-            SinexError::serialization("Failed to serialize SourceScanCommand").with_std_error(&err)
-        })?;
+        let command_payload = match serde_json::to_vec(&scan_command) {
+            Ok(payload) => payload,
+            Err(err) => {
+                return self
+                    .compensate_after_archive_failure(
+                        pool,
+                        &cascade_ids,
+                        &scope_metadata,
+                        operation_id,
+                        SinexError::serialization("Failed to serialize SourceScanCommand")
+                            .with_std_error(&err),
+                    )
+                    .await;
+            }
+        };
 
         // Step 3: Send via NATS request-reply and wait for acknowledgement
         let ack_msg = match tokio::time::timeout(
@@ -731,7 +772,7 @@ impl ReplayExecutionEngine {
                                         operation.state
                                     )),
                                     emitted_count: events_emitted,
-                                    restore_archived_cascade: false,
+                                    restore_archived_cascade: true,
                                 });
                             }
                             Err(error) => {
@@ -741,7 +782,7 @@ impl ReplayExecutionEngine {
                                     ))
                                     .with_source(error),
                                     emitted_count: events_emitted,
-                                    restore_archived_cascade: false,
+                                    restore_archived_cascade: true,
                                 });
                             }
                         }
@@ -759,7 +800,7 @@ impl ReplayExecutionEngine {
                     self.scan_completion_timeout
                 )),
                 emitted_count: events_emitted,
-                restore_archived_cascade: false,
+                restore_archived_cascade: true,
             }),
         };
 
@@ -768,12 +809,36 @@ impl ReplayExecutionEngine {
                 checkpoint.processed_events = count;
                 checkpoint.updated_at = sinex_primitives::temporal::now();
 
-                self.wait_for_replay_outputs_visible(pool, operation_id, &expected_replay_outputs)
-                    .await?;
+                if let Err(error) = self
+                    .wait_for_replay_outputs_visible(pool, operation_id, &expected_replay_outputs)
+                    .await
+                {
+                    return self
+                        .compensate_after_archive_failure(
+                            pool,
+                            &cascade_ids,
+                            &scope_metadata,
+                            operation_id,
+                            error,
+                        )
+                        .await;
+                }
 
                 // Record replacement relations between archived and newly-created events
-                self.record_event_replacements(pool, operation_id, &cascade_ids)
-                    .await?;
+                if let Err(error) = self
+                    .record_event_replacements(pool, operation_id, &cascade_ids)
+                    .await
+                {
+                    return self
+                        .compensate_after_archive_failure(
+                            pool,
+                            &cascade_ids,
+                            &scope_metadata,
+                            operation_id,
+                            error,
+                        )
+                        .await;
+                }
 
                 Ok(count)
             }
@@ -931,9 +996,21 @@ impl ReplayExecutionEngine {
             }
         };
 
-        let ack: SourceParseAck = serde_json::from_slice(&ack_msg.payload).map_err(|err| {
-            SinexError::serialization("Failed to deserialize source parse ack").with_std_error(&err)
-        })?;
+        let ack: SourceParseAck = match serde_json::from_slice(&ack_msg.payload) {
+            Ok(ack) => ack,
+            Err(err) => {
+                return self
+                    .abort_before_scan_ack(
+                        pool,
+                        cascade_ids,
+                        scope_metadata,
+                        operation_id,
+                        SinexError::serialization("Failed to deserialize source parse ack")
+                            .with_std_error(&err),
+                    )
+                    .await;
+            }
+        };
 
         if !ack.accepted {
             return self
@@ -966,9 +1043,17 @@ impl ReplayExecutionEngine {
                     .record_event_replacements(pool, operation_id, cascade_ids)
                     .await
                 {
-                    return Err(SinexError::service(format!(
-                        "Staged-source replay parse succeeded and outputs became visible, but linking replacement events failed: {link_error}"
-                    )));
+                    return self
+                        .compensate_after_archive_failure(
+                            pool,
+                            cascade_ids,
+                            scope_metadata,
+                            operation_id,
+                            SinexError::service(format!(
+                                "Staged-source replay parse succeeded and outputs became visible, but linking replacement events failed: {link_error}"
+                            )),
+                        )
+                        .await;
                 }
                 Ok(u64::try_from(ack.event_count.unwrap_or(0)).unwrap_or(u64::MAX))
             }
@@ -985,16 +1070,16 @@ impl ReplayExecutionEngine {
                 )))
             }
             StagedReplayWait::Error(wait_error) => {
-                self.compensate_staged_replay_failure(
+                self.compensate_after_archive_failure(
                     pool,
                     cascade_ids,
                     scope_metadata,
                     operation_id,
+                    SinexError::service(format!(
+                        "Staged-source replay for operation {operation_id} failed waiting for parsed outputs to become visible: {wait_error}"
+                    )),
                 )
-                .await;
-                Err(SinexError::service(format!(
-                    "Staged-source replay for operation {operation_id} failed waiting for parsed outputs to become visible: {wait_error}"
-                )))
+                .await
             }
         }
     }
@@ -1102,5 +1187,54 @@ impl ReplayExecutionEngine {
                 "Failed to publish compensating scope invalidations during staged-replay failure compensation"
             );
         }
+    }
+
+    /// Restore the archived cascade for any failure after the archive
+    /// transaction committed. This shared path prevents clean failures from
+    /// stranding the same durable journal that crash recovery uses.
+    async fn compensate_after_archive_failure(
+        &self,
+        pool: &sqlx::PgPool,
+        cascade_ids: &[Uuid],
+        scope_metadata: &[ScopeInvalidationBucket],
+        operation_id: Uuid,
+        error: SinexError,
+    ) -> Result<u64> {
+        let link_error = self
+            .record_event_replacements(pool, operation_id, cascade_ids)
+            .await
+            .err();
+
+        if let Err(restore_error) = self.restore_cascade(pool, cascade_ids, operation_id).await {
+            return Err(SinexError::service(format!(
+                "Replay failed after archive, and restoring the archived cascade also failed: {restore_error}; operator recovery is required for operation {operation_id}"
+            ))
+            .with_source(error)
+            .with_source(restore_error));
+        }
+
+        if let Err(invalidation_error) = self
+            .publish_scope_invalidations(scope_metadata, operation_id)
+            .await
+        {
+            return Err(SinexError::service(format!(
+                "Replay failed after archive and the cascade was restored, but compensating scope invalidation failed: {invalidation_error}"
+            ))
+            .with_source(error)
+            .with_source(invalidation_error));
+        }
+
+        if let Some(link_error) = link_error {
+            return Err(SinexError::service(format!(
+                "Replay failed after archive; restored archived cascade and published compensating scope invalidations, but linking partial replacements failed: {link_error}"
+            ))
+            .with_source(error)
+            .with_source(link_error));
+        }
+
+        Err(SinexError::service(
+            "Replay failed after archive; restored archived cascade and published compensating scope invalidations",
+        )
+        .with_source(error))
     }
 }

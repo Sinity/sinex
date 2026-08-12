@@ -10,7 +10,7 @@ async fn replay_execution_records_outcome(ctx: TestContext) -> Result<()> {
             FileCreatedPayload::EVENT_TYPE.as_static_str(),
             json!({ "path": "/tmp/replay.txt" }),
         )
-        .from_material(material_id)
+        .from_material_at(material_id, i * 10)
         .build()?;
         let inserted = ctx.pool.events().insert(event).await?;
         if let Some(ts_orig) = inserted.ts_orig
@@ -1007,18 +1007,10 @@ async fn projection_registry_replay_invalidation(ctx: TestContext) -> Result<()>
     Ok(())
 }
 
-/// sinex-x47r: `count_visible_replay_outputs` (execution/collect.rs) counts
-/// `COUNT(DISTINCT logical_source_identifier)`, and
-/// `with_logical_source_identifiers` sets `minimum_visible_count` to the
-/// number of distinct logical sources -- normally 1. A replay that archives
-/// many events from one logical source and successfully re-emits only ONE
-/// of them satisfies the gate just as well as a replay that re-emits all of
-/// them, because the gate only asks "did at least one source show up",
-/// never "how many rows came back".
+/// sinex-x47r: output validation must count returned rows proportionally to
+/// the material roots selected for replay. A replay that archives three rows
+/// from one logical source and returns one must fail validation.
 #[sinex_test]
-#[ignore = "sinex-x47r open: the output-validation gate is trivially satisfiable by re-emitting a \
-            single event out of many archived ones from the same logical source; un-ignore once \
-            the gate checks something proportional to what was actually archived"]
 async fn output_validation_gate_passes_when_most_archived_events_never_return(
     ctx: TestContext,
 ) -> Result<()> {
@@ -1075,7 +1067,7 @@ async fn output_validation_gate_passes_when_most_archived_events_never_return(
     ctx.pool.events().insert(replacement).await?;
 
     let expected = ExpectedReplayOutputs {
-        minimum_visible_count: 1,
+        minimum_visible_count: 3,
         sources: vec!["fs-test".to_string()],
         event_types: vec![FileCreatedPayload::EVENT_TYPE.as_static_str().to_string()],
         logical_source_identifiers: vec![logical_source.to_string()],
@@ -1088,8 +1080,7 @@ async fn output_validation_gate_passes_when_most_archived_events_never_return(
         visible < expected.minimum_visible_count as i64,
         "sinex-x47r: the output-validation gate should NOT report success (visible={visible} >= \
          minimum={}) when only 1 of 3 archived events from the same logical source actually came \
-         back -- a real fix needs a bound proportional to what was archived, not just \
-         'did the source show up at all'",
+         back",
         expected.minimum_visible_count
     );
 

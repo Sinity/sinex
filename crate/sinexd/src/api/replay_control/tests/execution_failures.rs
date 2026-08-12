@@ -83,8 +83,8 @@ async fn replay_execution_fails_when_outputs_never_become_query_visible(
     .bind(target_id)
     .fetch_one(&ctx.pool)
     .await?;
-    assert_eq!(live_target_count, 0);
-    assert_eq!(archived_target_count, 1);
+    assert_eq!(live_target_count, 1);
+    assert_eq!(archived_target_count, 0);
 
     let dispatched_command = scan_command_rx.await.map_err(|_| {
         test_error("fake visibility-timeout-test source runtime did not receive a scan command")

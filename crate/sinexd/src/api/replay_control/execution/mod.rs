@@ -763,6 +763,9 @@ pub(super) struct ReplayPreviewTimeWindow {
 
 #[derive(Debug, Clone)]
 pub(super) struct ExpectedReplayOutputs {
+    /// Minimum number of material-root output rows that must return from the
+    /// source scan. This is proportional to the archived replay roots, not a
+    /// distinct logical-source label.
     pub(super) minimum_visible_count: u64,
     pub(super) sources: Vec<String>,
     pub(super) event_types: Vec<String>,

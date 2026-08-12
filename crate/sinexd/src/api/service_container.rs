@@ -64,10 +64,13 @@ const REPLAY_CONTROL_CONNECT_BACKOFF_BASE: Duration = Duration::from_millis(100)
 const REPLAY_CONTROL_CONNECT_BACKOFF_MAX: Duration = Duration::from_secs(1);
 
 async fn recover_stale_replay_operations(replay: &ReplayStateMachine) -> SinexResult<()> {
-    const STALE_EXECUTING_THRESHOLD: Duration = Duration::from_mins(10);
+    // ServiceContainer is constructed once per process start, before any
+    // replay can be executing in this process. A restart immediately after a
+    // committed archive must therefore recover every running replay journal.
+    const STARTUP_RECOVERY_THRESHOLD: Duration = Duration::ZERO;
 
     match replay
-        .recover_stale_executing(STALE_EXECUTING_THRESHOLD)
+        .recover_stale_executing(STARTUP_RECOVERY_THRESHOLD)
         .await
     {
         Ok(0) => Ok(()),
