@@ -1,8 +1,8 @@
 use super::{
     MaterialReplayabilityScorecard, Replayability, execute_watch, format_per_material_scorecard_table,
     format_replay_preview_table, preview_total_events, replay_list_envelope,
-    replay_preview_envelope, replay_status_envelope, truncate_head_chars, truncate_tail_chars,
-    weakness_dimensions,
+    replay_operation_caveats, replay_preview_envelope, replay_status_envelope, truncate_head_chars,
+    truncate_tail_chars, weakness_dimensions,
 };
 use crate::client::{ClientConfig, GatewayClient};
 use crate::fmt::render_finite_envelope;
@@ -386,6 +386,47 @@ async fn execute_watch_json_format_errors_on_replay_failed() -> TestResult<()> {
         result.is_err(),
         "execute_watch with --format json must return Err on ReplayState::Failed, \
          matching the Table format's behavior (sinex-2bti)"
+    );
+    Ok(())
+}
+
+#[sinex_test]
+#[ignore = "sinex-2bti open: Dot watch format doesn't check ReplayState::Failed; \
+            un-ignore once the bead is fixed"]
+async fn execute_watch_dot_format_errors_on_replay_failed() -> TestResult<()> {
+    let mut operation = fixture_replay_operation("op-failed-dot", ReplayState::Failed, 0);
+    operation.error_details = Some("source adapter failed".to_string());
+    let server = mount_failed_replay_status_fixture(&operation).await;
+    let client = fixture_gateway_client(&server)?;
+
+    let result = execute_watch(&client, "op-failed-dot", 0, &OutputFormat::Dot).await;
+
+    assert!(
+        result.is_err(),
+        "execute_watch with --format dot must return Err on ReplayState::Failed, matching the \
+         Table format's behavior (sinex-2bti) -- Dot shares the exact same match arm as JSON/Ndjson \
+         (replay.rs:575) so it has the identical bug, it was just untested"
+    );
+    Ok(())
+}
+
+#[sinex_test]
+#[ignore = "sinex-pfsm open: no replay caveat discloses replay's non-idempotent-by-design \
+            semantics; un-ignore once a caveat is added for at least the Completed state"]
+async fn completed_replay_operation_caveats_never_disclose_non_idempotence() -> TestResult<()> {
+    let operation = fixture_replay_operation("op-completed-pfsm", ReplayState::Completed, 5);
+
+    let caveats = replay_operation_caveats(&operation);
+
+    assert!(
+        caveats.iter().any(|c| {
+            let detail = format!("{c:?}").to_lowercase();
+            detail.contains("idempot") || detail.contains("re-run") || detail.contains("rerun")
+        }),
+        "sinex-pfsm: none of sinexctl's replay-command caveat/table-formatting code discloses \
+         that replay is non-idempotent by design (re-derives under CURRENT rules, mints new ids) \
+         -- an operator reading a Completed operation's caveats has no way to learn this from the \
+         CLI, only from source or docs"
     );
     Ok(())
 }
