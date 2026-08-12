@@ -65,6 +65,26 @@ pub struct WorkProgress {
     pub blocked_on: Option<String>,
 }
 
+impl WorkProgress {
+    /// Construct a resumable progress cursor. Callers may persist this value
+    /// in their operation record and pass it back to `WorkController::resume`.
+    #[must_use]
+    pub fn at(
+        phase: impl Into<String>,
+        items_done: u64,
+        bytes_done: u64,
+        checkpoint: Option<String>,
+    ) -> Self {
+        Self {
+            phase: phase.into(),
+            items_done,
+            bytes_done,
+            checkpoint,
+            blocked_on: None,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum WorkStopReason {
     Cancelled,
@@ -78,6 +98,7 @@ pub enum WorkOutcome {
     Completed,
     Partial(WorkStopReason),
     Cancelled,
+    Failed,
 }
 
 #[derive(Debug, Clone)]
@@ -157,27 +178,39 @@ pub struct WorkController {
     cancellation: WorkCancellation,
     started: Instant,
     progress: WorkProgress,
+    terminal: Option<WorkOutcome>,
+    stop_reason: Option<WorkStopReason>,
 }
 
 impl WorkController {
     #[must_use]
-    pub fn new(
+    pub fn new(identity: WorkIdentity, budget: WorkBudget, cancellation: WorkCancellation) -> Self {
+        Self::resume(
+            identity,
+            budget,
+            cancellation,
+            WorkProgress::at("starting", 0, 0, None),
+        )
+    }
+
+    /// Resume work from a caller-owned durable cursor. The controller keeps
+    /// only the latest cursor, never a history of batches, so a large scan
+    /// cannot grow memory merely because it reports progress.
+    #[must_use]
+    pub fn resume(
         identity: WorkIdentity,
         budget: WorkBudget,
         cancellation: WorkCancellation,
+        progress: WorkProgress,
     ) -> Self {
         Self {
             identity,
             budget,
             cancellation,
             started: Instant::now(),
-            progress: WorkProgress {
-                phase: "starting".to_owned(),
-                items_done: 0,
-                bytes_done: 0,
-                checkpoint: None,
-                blocked_on: None,
-            },
+            progress,
+            terminal: None,
+            stop_reason: None,
         }
     }
 
@@ -192,11 +225,34 @@ impl WorkController {
     }
 
     #[must_use]
+    pub fn outcome(&self) -> WorkOutcome {
+        if let Some(outcome) = self.terminal {
+            return outcome;
+        }
+        if self.cancellation.is_cancelled() {
+            return WorkOutcome::Cancelled;
+        }
+        self.stop_reason()
+            .map_or(WorkOutcome::Completed, WorkOutcome::Partial)
+    }
+
+    /// Mark a caller-observed, non-budget failure. Keeping this explicit
+    /// prevents an operation from reporting `Completed` after it has caught a
+    /// database, filesystem, or parser error.
+    pub fn mark_failed(&mut self) {
+        self.terminal = Some(WorkOutcome::Failed);
+    }
+
+    fn stop_reason(&self) -> Option<WorkStopReason> {
+        self.stop_reason
+    }
+
+    #[must_use]
     pub fn cancellation(&self) -> WorkCancellation {
         self.cancellation.clone()
     }
 
-    pub fn check(&self, items: u64, bytes: u64) -> RuntimeResult<()> {
+    pub fn check(&mut self, items: u64, bytes: u64) -> RuntimeResult<()> {
         if self.cancellation.is_cancelled() {
             return Err(SinexError::validation("work cancelled"));
         }
@@ -205,6 +261,8 @@ impl WorkController {
             .max_runtime
             .is_some_and(|limit| self.started.elapsed() >= limit)
         {
+            self.stop_reason = Some(WorkStopReason::RuntimeBudget);
+            self.progress.blocked_on = Some("runtime_budget".to_owned());
             return Err(SinexError::validation("work runtime budget exhausted"));
         }
         if self
@@ -212,6 +270,8 @@ impl WorkController {
             .max_items
             .is_some_and(|limit| self.progress.items_done.saturating_add(items) > limit)
         {
+            self.stop_reason = Some(WorkStopReason::ItemBudget);
+            self.progress.blocked_on = Some("item_budget".to_owned());
             return Err(SinexError::validation("work item budget exhausted"));
         }
         if self
@@ -219,8 +279,37 @@ impl WorkController {
             .max_bytes
             .is_some_and(|limit| self.progress.bytes_done.saturating_add(bytes) > limit)
         {
+            self.stop_reason = Some(WorkStopReason::ByteBudget);
+            self.progress.blocked_on = Some("byte_budget".to_owned());
             return Err(SinexError::validation("work byte budget exhausted"));
         }
+        Ok(())
+    }
+
+    /// Cooperatively pause behind an external pressure signal (PSI, a
+    /// database-pool gate, a stream backlog, or a caller-defined policy).
+    /// Pressure is a scheduling condition, not a correctness limit: once the
+    /// signal clears, the same operation continues from its latest cursor.
+    pub async fn wait_for_pressure<F>(
+        &mut self,
+        is_pressured: F,
+        poll_interval: Duration,
+    ) -> RuntimeResult<()>
+    where
+        F: Fn() -> bool,
+    {
+        let poll_interval = poll_interval.max(Duration::from_millis(1));
+        while is_pressured() {
+            self.check(0, 0)?;
+            self.progress.blocked_on = Some("pressure".to_owned());
+            tokio::select! {
+                () = tokio::time::sleep(poll_interval) => {}
+                () = self.cancellation.wake.notified() => {
+                    return Err(SinexError::validation("work cancelled while pressure limited"));
+                }
+            }
+        }
+        self.progress.blocked_on = None;
         Ok(())
     }
 
@@ -267,7 +356,7 @@ impl WorkController {
         }
     }
 
-    pub fn destructive_boundary_check(&self) -> RuntimeResult<()> {
+    pub fn destructive_boundary_check(&mut self) -> RuntimeResult<()> {
         self.check(0, 0)
     }
 }
