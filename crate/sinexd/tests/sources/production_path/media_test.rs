@@ -1,3 +1,5 @@
+use xtask::sandbox::prelude::*;
+
 const AUDIO_TRANSCRIPT_MANIFEST: &[u8] = br#"{
   "recording": {
     "format": "flac",
@@ -72,6 +74,25 @@ const SCREEN_OCR_MANIFEST: &[u8] = br#"{
     {"text":"run-backed OCR","bbox":[4,8,160,24],"confidence":0.95}
   ]
 }"#;
+
+#[sinex_test]
+async fn media_audio_production_path_keeps_arrow_text_out_of_timed_parser()
+-> TestResult<()> {
+    let bytes = b"handoff A --> B\n";
+    let dispatch = sinexd::sources::dispatch::default_parser_dispatch();
+    let outcome = dispatch("media.audio-transcript", bytes, None)
+        .map_err(|error| color_eyre::eyre::eyre!(error))?;
+
+    assert_eq!(outcome.events.len(), 1);
+    assert_eq!(
+        outcome.events[0].event_type.as_str(),
+        "media.audio.transcript_segment_observed"
+    );
+    assert_eq!(outcome.events[0].payload["text"], "handoff A --> B");
+    assert!(outcome.events[0].payload["start_ms"].is_null());
+    assert!(outcome.events[0].payload["end_ms"].is_null());
+    Ok(())
+}
 
 const AUDIO_TRANSCRIPT_CASE: crate::ProductionPathCase = crate::ProductionPathCase::new(
     "media.audio-transcript",
