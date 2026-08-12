@@ -564,7 +564,7 @@ fn spawn_automaton(
     shutdown_rx: watch::Receiver<bool>,
 ) -> JoinHandle<()> {
     tokio::spawn(async move {
-        let startup_delay = automaton_startup_delay(random_jitter_entropy());
+        let startup_delay = runtime_startup_delay(random_jitter_entropy());
         if !startup_delay.is_zero() {
             tokio::time::sleep(startup_delay).await;
         }
@@ -595,7 +595,7 @@ fn spawn_automaton(
                     if started.elapsed() >= STABLE_THRESHOLD {
                         backoff = Duration::from_secs(1);
                     }
-                    let retry_delay = jittered_automaton_backoff(backoff, random_jitter_entropy());
+                    let retry_delay = jittered_runtime_backoff(backoff, random_jitter_entropy());
                     warn!(
                         automaton = %spec.name,
                         backoff_ms = retry_delay.as_millis(),
@@ -617,17 +617,17 @@ fn spawn_automaton(
     })
 }
 
-const AUTOMATON_STARTUP_STAGGER_MAX: Duration = Duration::from_secs(2);
+const RUNTIME_STARTUP_STAGGER_MAX: Duration = Duration::from_secs(2);
 
 fn random_jitter_entropy() -> u64 {
     sinex_primitives::Uuid::now_v7().as_u128() as u64
 }
 
-fn automaton_startup_delay(entropy: u64) -> Duration {
-    Duration::from_millis(entropy % AUTOMATON_STARTUP_STAGGER_MAX.as_millis() as u64)
+fn runtime_startup_delay(entropy: u64) -> Duration {
+    Duration::from_millis(entropy % RUNTIME_STARTUP_STAGGER_MAX.as_millis() as u64)
 }
 
-fn jittered_automaton_backoff(base: Duration, entropy: u64) -> Duration {
+fn jittered_runtime_backoff(base: Duration, entropy: u64) -> Duration {
     let base_ms = base.as_millis() as u64;
     let jitter_ms = (base_ms / 2).max(1);
     let jitter = entropy % (jitter_ms + 1);
@@ -673,6 +673,10 @@ fn spawn_source_binding(
 ) -> JoinHandle<()> {
     let label = format!("{}-{}", binding.source_id, binding.instance_idx);
     tokio::spawn(async move {
+        let startup_delay = runtime_startup_delay(random_jitter_entropy());
+        if !startup_delay.is_zero() {
+            tokio::time::sleep(startup_delay).await;
+        }
         let mut backoff = Duration::from_secs(1);
         const MAX_BACKOFF: Duration = Duration::from_secs(30);
         const STABLE_THRESHOLD: Duration = Duration::from_secs(60);
@@ -700,14 +704,15 @@ fn spawn_source_binding(
                     if started.elapsed() >= STABLE_THRESHOLD {
                         backoff = Duration::from_secs(1);
                     }
+                    let retry_delay = jittered_runtime_backoff(backoff, random_jitter_entropy());
                     warn!(
                         source_binding = %label,
-                        backoff_ms = backoff.as_millis(),
+                        backoff_ms = retry_delay.as_millis(),
                         ?error,
                         "source host exited with error; restarting after backoff"
                     );
                     tokio::select! {
-                        () = tokio::time::sleep(backoff) => {}
+                        () = tokio::time::sleep(retry_delay) => {}
                         _ = {
                             let mut rx = shutdown_rx.clone();
                             async move { let _ = rx.wait_for(|&v| v).await; }

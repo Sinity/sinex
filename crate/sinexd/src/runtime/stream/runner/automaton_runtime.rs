@@ -1,7 +1,6 @@
 //! Automaton runtime loop for `RuntimeRunner`.
 //!
-//! Runs the automaton continuous mode entry point, drives leader-standby
-//! coordination over the NATS coordination KV, and operates the
+//! Runs the automaton continuous mode entry point and operates the
 //! confirmation-event bridge that resolves provisional events to fully
 //! materialized inputs and feeds them into the module implementation.
 
@@ -31,9 +30,8 @@ impl RuntimeRunner {
             info!("Starting continuous event processing for automaton");
 
             if capabilities.manages_own_continuous_loop {
-                // A standby automaton is still a healthy, ready service. Satisfy
-                // the systemd notify contract before waiting on lease handoff or
-                // expiry so host activation does not fail on a legitimate standby.
+                // This path owns its continuous loop; advertise readiness
+                // before entering the long-running scan.
                 systemd_notify::notify_ready("sinex-runtime");
                 let _continuous_report = self
                     .module
