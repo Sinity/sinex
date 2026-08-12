@@ -251,6 +251,10 @@ impl Publishable for DynamicPayload {
     }
 }
 
+#[cfg(test)]
+#[path = "payload_test.rs"]
+mod tests;
+
 // Helper macro for creating wrapper payloads with custom source/event_type
 #[macro_export]
 macro_rules! wrapped_payload {

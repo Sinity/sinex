@@ -612,3 +612,66 @@ async fn tasks_update_rejects_duplicate_external_ref(ctx: TestContext) -> TestRe
 
     Ok(())
 }
+
+/// sinex-1w9e: `reject_duplicate_external_refs` trims the NEW ref before
+/// comparing, but stored/existing refs are compared as-received. A task
+/// stored with untrimmed whitespace should still be caught as a duplicate
+/// when a later task supplies the trimmed equivalent -- currently it is not.
+#[sinex_test]
+#[ignore = "sinex-1w9e open: existing untrimmed external_ref not detected as a duplicate of a new trimmed external_ref"]
+async fn tasks_create_rejects_duplicate_external_ref_across_untrimmed_existing(
+    ctx: TestContext,
+) -> TestResult<()> {
+    let auth = RpcAuthContext::system();
+    handle_tasks_create(
+        ctx.pool(),
+        TaskCreateRequest {
+            task_id: None,
+            title: "Untrimmed original external task fixture".to_string(),
+            body: None,
+            external_refs: vec![TaskExternalRef {
+                system: " jira ".to_string(),
+                external_id: " 123 ".to_string(),
+                version: None,
+            }],
+            project_id: None,
+            tags: Vec::new(),
+            due_at: None,
+            priority: None,
+        },
+        &auth,
+    )
+    .await?;
+
+    let duplicate = handle_tasks_create(
+        ctx.pool(),
+        TaskCreateRequest {
+            task_id: None,
+            title: "Trimmed duplicate external task fixture".to_string(),
+            body: None,
+            external_refs: vec![TaskExternalRef {
+                system: "jira".to_string(),
+                external_id: "123".to_string(),
+                version: None,
+            }],
+            project_id: None,
+            tags: Vec::new(),
+            due_at: None,
+            priority: None,
+        },
+        &auth,
+    )
+    .await;
+
+    let error = duplicate.expect_err(
+        "trimmed external ref should be detected as a duplicate of the untrimmed existing ref",
+    );
+    assert!(
+        error
+            .to_string()
+            .contains("external ref already belongs to another task"),
+        "{error}"
+    );
+
+    Ok(())
+}

@@ -425,3 +425,40 @@ async fn stale_zero_event_source_material_timeout_recovers_partial_without_dlq(
     );
     Ok(())
 }
+
+/// sinex-ijps (finding 1): a single unexpected entry under the assembler
+/// state root (an operator artifact, a corrupted folder -- anything not a
+/// valid material-id-named directory) makes `check_orphaned_folder` return
+/// `Err`, which propagates through `cleanup_orphaned_temp_files`'s `?` and
+/// aborts the WHOLE cleanup pass. Every other genuinely orphaned folder in
+/// that run is skipped until the bad entry is manually removed.
+#[sinex_test]
+#[ignore = "sinex-ijps open: one non-UUID-named directory under state_root aborts the entire orphan-cleanup pass instead of being skipped"]
+async fn cleanup_orphaned_temp_files_one_bad_entry_does_not_abort_whole_pass(
+    ctx: TestContext,
+) -> TestResult<()> {
+    let ctx = ctx.with_nats().shared().await?;
+    let (assembler, _content_store_dir, state_dir) =
+        super::super::test_support::TestAssemblerBuilder::new("ijps-orphan-cleanup-test")
+            .slice_timeout_secs(3_600)
+            .build(&ctx)
+            .await?;
+
+    // An unrelated, non-UUID-named directory under state_root -- an
+    // operator artifact or corrupted entry, not a material folder.
+    std::fs::create_dir_all(state_dir.path().join("not-a-material-id"))?;
+
+    // A genuinely orphaned material folder that IS a valid UUID and has no
+    // corresponding live assembler state -- this should be cleanable.
+    let orphan_material_id = Uuid::now_v7();
+    std::fs::create_dir_all(state_dir.path().join(orphan_material_id.to_string()))?;
+
+    let result = assembler.cleanup_orphaned_temp_files().await;
+
+    assert!(
+        result.is_ok(),
+        "sinex-ijps: one malformed entry under state_root must not abort the whole \
+         orphan-cleanup pass; got {result:?}"
+    );
+    Ok(())
+}
