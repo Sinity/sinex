@@ -129,4 +129,4 @@ impl MaterialParser for NotificationParser {
 
 #[cfg(test)]
 #[path = "notifications_test.rs"]
-mod tests;
+mod notifications_test;

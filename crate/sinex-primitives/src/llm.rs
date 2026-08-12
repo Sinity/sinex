@@ -396,3 +396,46 @@ fn decision_from_route(
         decision_reason,
     }
 }
+
+#[cfg(test)]
+mod llm_test {
+    use super::*;
+
+    /// sinex-6516: `composite_key()` joins fields with an unescaped `|`
+    /// delimiter. Two logically distinct `(provider, model)` tuples can
+    /// collapse to the identical joined string if either field itself
+    /// contains `|` -- e.g. `("a", "b|c")` and `("a|b", "c")` both produce
+    /// the material string `"a|b|c|...|..."`. Once the model-effects
+    /// subsystem is wired up (currently inert per sinex-330i), this would
+    /// let two distinct requests share a replay key and incorrectly reuse
+    /// each other's recorded output.
+    #[test]
+    #[ignore = "sinex-6516 open: ModelEffectRequest::composite_key joins \
+                fields with an unescaped '|' delimiter, so provider/model \
+                values containing '|' can produce colliding composite keys \
+                for logically distinct requests"]
+    fn composite_key_does_not_collide_when_a_field_contains_the_delimiter() {
+        let a = ModelEffectRequest {
+            provider: "a".to_string(),
+            model: "b|c".to_string(),
+            prompt_hash: "hash".to_string(),
+            schema_hash: None,
+            input_hash: "input".to_string(),
+        };
+        let b = ModelEffectRequest {
+            provider: "a|b".to_string(),
+            model: "c".to_string(),
+            prompt_hash: "hash".to_string(),
+            schema_hash: None,
+            input_hash: "input".to_string(),
+        };
+
+        assert_ne!(
+            a.composite_key(),
+            b.composite_key(),
+            "distinct (provider, model) tuples must never collapse to the same \
+             composite_key just because one field's value contains the '|' delimiter \
+             the other field boundary uses"
+        );
+    }
+}

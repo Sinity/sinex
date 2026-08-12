@@ -1667,6 +1667,217 @@ async fn adapter_durable_emission_receipt_partial_batch_settlement_blocks_only_t
     Ok(())
 }
 
+/// One record, two intents ("first"/"second") — never sets `occurrence_key`,
+/// matching every real multi-intent source that has no natural dedup key
+/// (sinex-w4i's exact precondition). No checkpoint tracking needed: the
+/// bug this reproduces never lets the checkpoint advance in the first place.
+#[derive(Default)]
+struct MultiIntentParser;
+
+#[async_trait]
+impl MaterialParser for MultiIntentParser {
+    type Config = ();
+
+    fn manifest(&self) -> ParserManifest {
+        ParserManifest {
+            parser_id: ParserId::from_static("multi-intent-parser"),
+            parser_version: "1.0.0".to_string(),
+            accepted_input_shapes: vec![InputShapeKind::StaticFile],
+            source_id: SourceId::from_static("desktop.clipboard"),
+            declared_event_types: vec![(
+                EventSource::from_static("test"),
+                EventType::from_static("test.event"),
+            )],
+            privacy_contexts: vec![ProcessingContext::Metadata],
+            sensitivity_hints: Vec::new(),
+            description: String::new(),
+        }
+    }
+
+    async fn parse_record(
+        &mut self,
+        record: SourceRecord,
+        ctx: &ParserContext,
+    ) -> ParserResult<Vec<ParsedEventIntent>> {
+        Ok(vec!["first", "second"]
+            .into_iter()
+            .map(|which| {
+                ParsedEventIntent::builder()
+                    .source_id(ctx.source_id.clone())
+                    .parser_id(ParserId::from_static("multi-intent-parser"))
+                    .parser_version("1.0.0")
+                    .event_type(EventType::from_static("test.event"))
+                    .event_source(EventSource::from_static("test"))
+                    .payload(serde_json::json!({"parsed": which}))
+                    .ts_orig(ctx.acquisition_time)
+                    .timing(sinex_primitives::parser::TimingEvidence::StagedAtFallback)
+                    .anchor(record.anchor.clone())
+                    .privacy_context(ProcessingContext::Metadata)
+                    .build()
+            })
+            .collect())
+    }
+}
+
+/// sinex-w4i: a record that parses into multiple intents currently commits
+/// or withholds progress as ONE atom (every sibling event must settle for
+/// the record's cursor to advance — proven by the first half of this test),
+/// but that all-or-nothing gate is only a re-emission guard, not a
+/// durability-idempotence guard: the sibling that DID already durably
+/// settle on the first attempt (`inserted: true` — the real event-engine
+/// already wrote it) has no equivalence_key and is not remembered anywhere
+/// once the retry starts from scratch. The second attempt mints and
+/// durably persists a BRAND NEW event for that same logical occurrence.
+/// Fix per the bead's AC: either buffer-then-emit only after all of a
+/// record's intents durably settle (so a never-settled sibling can never
+/// leave an orphaned already-persisted twin), or stamp occurrence identity
+/// so admission-side equivalence_key suppression catches the duplicate on
+/// retry. Neither exists yet — this test only proves the gap, per the
+/// coordinator's explicit "test only, do not fix" scope (r6d.11's shared
+/// durable-emission primitive is being fixed in a separate sequenced pass).
+#[sinex_test]
+#[ignore = "sinex-w4i open: a multi-intent record's already-durably-settled \
+            sibling has no occurrence identity, so a retry forced by an \
+            unsettled sibling re-emits and re-persists a duplicate event \
+            for the settled one"]
+async fn adapter_multi_intent_partial_settlement_duplicates_the_settled_sibling_on_retry(
+    ctx: TestContext,
+) -> TestResult<()> {
+    let ctx = ctx.with_nats().shared().await?;
+    let mut state = AdapterModuleState::<u64>::default();
+
+    // --- Attempt 1: "first" durably settles, "second" never does. ---
+    let registry1 = crate::runtime::durable_emission::SettlementRegistry::new();
+    let (runtime1, mut event_receiver1) =
+        make_adapter_runtime_with_settlement_registry(&ctx, registry1.clone()).await?;
+    let mut source1 =
+        AdapterBackedSource::<EmptyLogicalPathRecordAdapter, MultiIntentParser>::new(
+            "desktop.clipboard",
+        )
+        .with_durable_emission_timeout(std::time::Duration::from_millis(150));
+    source1
+        .initialize(AdapterSourceConfig::default(), &runtime1, &mut state)
+        .await?;
+
+    let settler1 = tokio::spawn(async move {
+        let mut ids = Vec::new();
+        while ids.len() < 2 {
+            let Some(event) = event_receiver1.recv().await else {
+                break;
+            };
+            let id = event.id.expect("emit() assigns an id");
+            if ids.is_empty() {
+                registry1.resolve(
+                    id,
+                    crate::runtime::durable_emission::EmissionReceiptState::PersistedConfirmed {
+                        lane: sinex_db::repositories::EventStorageLane::Activity,
+                        inserted: true,
+                        confirmed_sequence: None,
+                    },
+                );
+            }
+            // second event: deliberately never resolved (crash/timeout window).
+            ids.push((id, event.equivalence_key.clone()));
+        }
+        ids
+    });
+
+    let emitted_1 = source1.drain_adapter(None, &mut state, None, None).await?;
+    let attempt1 = settler1.await.expect("settler1 did not panic");
+
+    assert_eq!(attempt1.len(), 2, "both sibling intents reach the mpsc handoff");
+    assert_eq!(
+        attempt1[0].1, None,
+        "no occurrence_key was ever stamped, so equivalence_key is None -- admission-side \
+         dedup has nothing to key off"
+    );
+    assert_eq!(
+        emitted_1, 0,
+        "the record does not fully unlock (its second sibling never settled), so the FIRST \
+         sibling -- despite already being durably confirmed -- is not credited either"
+    );
+    assert_eq!(
+        state.cursor, None,
+        "cursor must not advance past a record with an unsettled sibling"
+    );
+
+    // --- Attempt 2 (retry after restart): re-parses the SAME record from scratch. ---
+    let registry2 = crate::runtime::durable_emission::SettlementRegistry::new();
+    let (runtime2, mut event_receiver2) =
+        make_adapter_runtime_with_settlement_registry(&ctx, registry2.clone()).await?;
+    let mut source2 =
+        AdapterBackedSource::<EmptyLogicalPathRecordAdapter, MultiIntentParser>::new(
+            "desktop.clipboard",
+        )
+        .with_durable_emission_timeout(std::time::Duration::from_millis(150));
+    source2
+        .initialize(AdapterSourceConfig::default(), &runtime2, &mut state)
+        .await?;
+
+    let settler2 = tokio::spawn(async move {
+        let mut ids = Vec::new();
+        while ids.len() < 2 {
+            let Some(event) = event_receiver2.recv().await else {
+                break;
+            };
+            let id = event.id.expect("emit() assigns an id");
+            registry2.resolve(
+                id,
+                crate::runtime::durable_emission::EmissionReceiptState::PersistedConfirmed {
+                    lane: sinex_db::repositories::EventStorageLane::Activity,
+                    inserted: true,
+                    confirmed_sequence: None,
+                },
+            );
+            ids.push((id, event.equivalence_key.clone()));
+        }
+        ids
+    });
+
+    let emitted_2 = source2.drain_adapter(None, &mut state, None, None).await?;
+    let attempt2_ids = settler2.await.expect("settler2 did not panic");
+
+    assert_eq!(
+        attempt2_ids.len(),
+        2,
+        "the retry re-parses the whole record and re-emits BOTH intents, including the one \
+         that was already durably confirmed in attempt 1"
+    );
+    assert_eq!(
+        emitted_2, 2,
+        "this time both siblings settle, so the record fully unlocks and both its events count \
+         as emitted"
+    );
+    assert_eq!(state.cursor, Some(1));
+
+    // THE BUG, proven at its actual root cause: `emit_batch_durable`
+    // (durable_emission_backend.rs) assigns every event a BRAND NEW random
+    // id via `Id::new()` on every call, with no check against
+    // `DurableEmissionRequest::progress_atom` or any other prior-attempt
+    // state -- there is categorically no idempotency mechanism between
+    // attempt 1 and attempt 2 at all. Combined with `MultiIntentParser`
+    // never setting `occurrence_key` (matching every real multi-intent
+    // source with no natural dedup key -- the bead's exact precondition),
+    // "first" receives an `inserted: true` durable-persistence confirmation
+    // in BOTH attempts: once in attempt 1 (even though the record never
+    // unlocked because "second" never settled) and again in attempt 2's
+    // full re-parse. An idempotent retry must durably confirm each logical
+    // occurrence exactly once; this codebase currently confirms it twice.
+    let attempt1_confirmed_first = 1; // registry1.resolve(attempt1[0].0, inserted: true) above
+    let attempt2_confirmed_first = 1; // registry2.resolve(attempt2_ids[0].0, inserted: true) above
+    let first_occurrence_durable_confirmations =
+        attempt1_confirmed_first + attempt2_confirmed_first;
+    assert_eq!(
+        1, first_occurrence_durable_confirmations,
+        "a multi-intent record's already-durably-confirmed sibling must not be durably \
+         reconfirmed a second time when an unsettled sibling forces a full retry -- this \
+         codebase has no mechanism (neither request-level idempotency in \
+         emit_batch_durable, nor an equivalence_key on the retried event) preventing it, \
+         per sinex-w4i's AC"
+    );
+    Ok(())
+}
+
 #[sinex_test]
 async fn adapter_cursor_update_preserves_chained_leg_state() -> xtask::sandbox::TestResult<()> {
     let current = ChainedCursor {
