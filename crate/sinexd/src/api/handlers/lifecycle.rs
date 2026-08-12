@@ -1134,7 +1134,7 @@ pub async fn handle_tombstone_approve(
         })?;
 
     // Execute tombstone
-    let tombstoned_count = match repo
+    let cascade_tombstoned_count = match repo
         .execute_cascade_tombstone(&previewed_event_uuids, &operation.reason, operation_uuid)
         .await
     {
@@ -1198,6 +1198,19 @@ pub async fn handle_tombstone_approve(
         return Err(SinexError::invalid_state(
             "Tombstone deletion completed without a durable deletion-boundary receipt",
         ));
+    }
+    let tombstoned_count = boundary_operation.tombstoned_count.ok_or_else(|| {
+        SinexError::invalid_state(
+            "Tombstone deletion completed without an authoritative tombstone count",
+        )
+    })?;
+    if tombstoned_count != cascade_tombstoned_count {
+        warn!(
+            operation_id = %request.operation_id,
+            returned_count = cascade_tombstoned_count,
+            receipt_count = tombstoned_count,
+            "Using persisted tombstone receipt count over cascade return value"
+        );
     }
 
     // Delete-on-tombstone for source materials whose only references were the

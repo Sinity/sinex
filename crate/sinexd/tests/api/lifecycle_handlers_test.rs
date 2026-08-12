@@ -1152,6 +1152,36 @@ async fn tombstone_completion_failure_is_recoverable_after_deletion_boundary(
         .execute(ctx.pool())
         .await?;
 
+    sqlx::query!(
+        r#"
+        UPDATE core.operations_log
+        SET scope = jsonb_set(scope, '{expires_at}', to_jsonb($2::text), false)
+        WHERE id = $1::uuid
+        "#,
+        created.operation.operation_id.parse::<uuid::Uuid>()?,
+        "2000-01-01T00:00:00Z"
+    )
+    .execute(ctx.pool())
+    .await?;
+
+    let recovered_status: TombstoneStatusResponse = serde_json::from_value(
+        handle_tombstone_status(
+            ctx.pool(),
+            json!({ "operation_id": created.operation.operation_id }),
+            &auth,
+        )
+        .await?,
+    )?;
+    assert_eq!(
+        recovered_status.operation.state,
+        TombstoneOperationState::Completed,
+        "expiry reconciliation must recover a committed deletion before expiry"
+    );
+    assert_eq!(
+        recovered_status.operation.error_details.as_deref(),
+        Some("Deletion committed; lifecycle completion state recovered")
+    );
+
     let resumed: TombstoneApproveResponse = serde_json::from_value(
         handle_tombstone_approve(
             json!({
@@ -1169,6 +1199,77 @@ async fn tombstone_completion_failure_is_recoverable_after_deletion_boundary(
         resumed.operation.error_details.as_deref(),
         Some("Deletion committed; lifecycle completion state recovered")
     );
+
+    Ok(())
+}
+
+#[sinex_test]
+async fn tombstone_cascade_reuses_committed_receipt(ctx: TestContext) -> TestResult<()> {
+    let auth = RpcAuthContext::system();
+    let services = ServiceContainer::from_database_url(ctx.database_url().to_string()).await?;
+    let source = "test.lifecycle.tombstone.receipt-retry";
+    let event = publish_event(&ctx, source, 1).await?;
+    let event_id = event.id.expect("published event should have an id");
+
+    let archive: LifecycleArchiveResponse = serde_json::from_value(
+        handle_lifecycle_archive(
+            ctx.pool(),
+            json!({
+                "event_ids": [event_id.to_string()],
+                "dry_run": false,
+                "reason": "prepare receipt retry",
+            }),
+            &auth,
+        )
+        .await?,
+    )?;
+    assert_eq!(archive.archived_count, 1);
+
+    let created: TombstoneCreateResponse = serde_json::from_value(
+        handle_tombstone_create(
+            ctx.pool(),
+            json!({
+                "source": source,
+                "reason": "receipt retry",
+            }),
+            &auth,
+        )
+        .await?,
+    )?;
+    let approved: TombstoneApproveResponse = serde_json::from_value(
+        handle_tombstone_approve(
+            json!({
+                "operation_id": created.operation.operation_id,
+                "yes_i_understand_data_is_gone": true,
+            }),
+            &services,
+            &auth,
+        )
+        .await?,
+    )?;
+    let operation_id = created.operation.operation_id.parse::<uuid::Uuid>()?;
+
+    let repeated_count = ctx
+        .pool()
+        .events()
+        .execute_cascade_tombstone(&[*event_id.as_uuid()], "receipt retry", operation_id)
+        .await?;
+    assert_eq!(repeated_count, 1);
+
+    let persisted = ctx
+        .pool()
+        .state()
+        .get_tombstone_operation(&created.operation.operation_id)
+        .await?
+        .expect("tombstone operation must remain persisted");
+    let persisted_operation: sinex_primitives::rpc::lifecycle::TombstoneOperation =
+        serde_json::from_value(persisted.scope.expect("tombstone scope must remain"))?;
+    assert_eq!(persisted_operation.tombstoned_count, Some(1));
+    assert_eq!(
+        persisted_operation.deletion_committed_at,
+        approved.operation.deletion_committed_at
+    );
+    assert_eq!(tombstone_count(&ctx, &event_id.to_string()).await?, 1);
 
     Ok(())
 }

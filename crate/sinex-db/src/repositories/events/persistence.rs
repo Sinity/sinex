@@ -2056,10 +2056,6 @@ impl<'a> EventRepository<'a> {
         reason: &str,
         operation_id: Uuid,
     ) -> DbResult<u64> {
-        if archived_ids.is_empty() {
-            return Ok(0);
-        }
-
         let ids: Vec<Uuid> = archived_ids.to_vec();
         // Use runtime query since the function is created by declarative apply SQL
         let count: i64 =

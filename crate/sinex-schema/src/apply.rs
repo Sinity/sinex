@@ -2423,46 +2423,74 @@ LANGUAGE plpgsql
 AS $$
 DECLARE
     v_count BIGINT;
+    v_existing_receipt TEXT;
+    v_existing_count BIGINT;
 BEGIN
-    IF p_archived_ids IS NULL OR array_length(p_archived_ids, 1) IS NULL THEN
-        RETURN 0;
+    -- Serialize every invocation for this operation and make a previously
+    -- committed boundary authoritative. This covers concurrent approval
+    -- retries, which may arrive after the first invocation has removed the
+    -- archive rows and would otherwise overwrite the receipt with zero.
+    SELECT
+        scope->>'deletion_committed_at',
+        NULLIF(scope->>'tombstoned_count', '')::BIGINT
+    INTO v_existing_receipt, v_existing_count
+    FROM core.operations_log
+    WHERE id = p_operation_id
+      AND operation_type = 'tombstone'
+    FOR UPDATE;
+
+    IF NOT FOUND THEN
+        RAISE EXCEPTION 'tombstone operation % not found while recording deletion boundary',
+            p_operation_id;
     END IF;
 
-    INSERT INTO core.event_tombstones (
-        id, source, event_type, ts_orig, ts_purged,
-        purge_reason, purge_operation_id, archived_at
-    )
-    SELECT
-        ae.id,
-        ae.source,
-        ae.event_type,
-        ae.ts_orig,
-        now(),
-        p_reason,
-        p_operation_id,
-        ae.archived_at
-    FROM audit.archived_events ae
-    WHERE ae.id = ANY(p_archived_ids)
-    ON CONFLICT (id) DO NOTHING;
+    IF v_existing_receipt IS NOT NULL THEN
+        IF v_existing_count IS NULL THEN
+            RAISE EXCEPTION 'tombstone operation % has an incomplete deletion boundary receipt',
+                p_operation_id;
+        END IF;
+        RETURN v_existing_count;
+    END IF;
 
-    GET DIAGNOSTICS v_count = ROW_COUNT;
+    IF p_archived_ids IS NOT NULL AND array_length(p_archived_ids, 1) IS NOT NULL THEN
+        INSERT INTO core.event_tombstones (
+            id, source, event_type, ts_orig, ts_purged,
+            purge_reason, purge_operation_id, archived_at
+        )
+        SELECT
+            ae.id,
+            ae.source,
+            ae.event_type,
+            ae.ts_orig,
+            now(),
+            p_reason,
+            p_operation_id,
+            ae.archived_at
+        FROM audit.archived_events ae
+        WHERE ae.id = ANY(p_archived_ids)
+        ON CONFLICT (id) DO NOTHING;
 
-    -- Permanent deletion must remove every archive-side row carrying event
-    -- content before deleting the archive root.  These tables intentionally
-    -- do not have foreign keys back to audit.archived_events (LIKE does not
-    -- copy them), so leaving them behind would strand sensitive annotations,
-    -- embedded text, or tags with no later purge path.
-    DELETE FROM audit.archived_annotations
-    WHERE event_id = ANY(p_archived_ids);
+        GET DIAGNOSTICS v_count = ROW_COUNT;
 
-    DELETE FROM audit.archived_embeddings
-    WHERE event_id = ANY(p_archived_ids);
+        -- Permanent deletion must remove every archive-side row carrying event
+        -- content before deleting the archive root.  These tables intentionally
+        -- do not have foreign keys back to audit.archived_events (LIKE does not
+        -- copy them), so leaving them behind would strand sensitive annotations,
+        -- embedded text, or tags with no later purge path.
+        DELETE FROM audit.archived_annotations
+        WHERE event_id = ANY(p_archived_ids);
 
-    DELETE FROM audit.archived_tagged_items
-    WHERE item_id = ANY(p_archived_ids) AND item_type = 'event';
+        DELETE FROM audit.archived_embeddings
+        WHERE event_id = ANY(p_archived_ids);
 
-    DELETE FROM audit.archived_events
-    WHERE id = ANY(p_archived_ids);
+        DELETE FROM audit.archived_tagged_items
+        WHERE item_id = ANY(p_archived_ids) AND item_type = 'event';
+
+        DELETE FROM audit.archived_events
+        WHERE id = ANY(p_archived_ids);
+    ELSE
+        v_count := 0;
+    END IF;
 
     -- Record the irreversible deletion boundary in the operation row before
     -- this transaction can commit. A later completion update may be lost, but
@@ -2480,11 +2508,6 @@ BEGIN
         '{tombstoned_count}', to_jsonb(v_count), true)
     WHERE id = p_operation_id
       AND operation_type = 'tombstone';
-
-    IF NOT FOUND THEN
-        RAISE EXCEPTION 'tombstone operation % not found while recording deletion boundary',
-            p_operation_id;
-    END IF;
 
     RETURN v_count;
 END;
