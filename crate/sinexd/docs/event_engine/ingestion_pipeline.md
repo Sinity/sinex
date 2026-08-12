@@ -55,6 +55,15 @@ The complete path of a single event through the system:
 22. Derived event re-enters pipeline at step 10 (back to NATS).
 23. Event queryable via gateway RPC.
 
+### DLQ Evidence Authority
+
+Terminal validation, material, and persistence failures write a row to
+`sinex_schemas.dlq_events` before the raw JetStream message is settled. The
+returned `dlq_id` is the `DurableDebt` receipt identifier and is carried on the
+NATS DLQ message in `Sinex-Durable-Failure-Id`. NATS retention bounds delivery
+and replay availability only. Reimport completeness review must use the
+Postgres rows because they survive DLQ stream expiry.
+
 ### Batch Insert Routing
 
 ```

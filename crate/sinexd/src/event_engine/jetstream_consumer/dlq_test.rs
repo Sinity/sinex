@@ -108,6 +108,7 @@ async fn dlq_route_keeps_multi_child_intents_with_same_leading_event_recoverable
         .await?;
     }
 
+    let mut durable_failure_ids = Vec::new();
     for _ in 0..2 {
         let message = tokio::time::timeout(Duration::from_secs(2), messages.next())
             .await?
@@ -118,6 +119,7 @@ async fn dlq_route_keeps_multi_child_intents_with_same_leading_event_recoverable
                 "adversarial multi-child admission failure".to_string(),
             )
             .await?;
+        durable_failure_ids.push(durable_failure_id);
         let evidence = sqlx::query!(
             "SELECT failed_event_id, error_category FROM sinex_schemas.dlq_events WHERE dlq_id = $1",
             durable_failure_id,
@@ -143,6 +145,24 @@ async fn dlq_route_keeps_multi_child_intents_with_same_leading_event_recoverable
         dlq_state.messages, 2,
         "both [X, Y] and [X, Z] must survive the DLQ stream dupeWindow"
     );
+
+    // Explicitly remove the bounded NATS copy to model max_age expiry without
+    // making the test wait. The Postgres witnesses must remain queryable.
+    let dlq_stream = js.get_stream(&topology.dlq_stream).await?;
+    dlq_stream.purge().await?;
+    for durable_failure_id in durable_failure_ids {
+        let evidence = sqlx::query!(
+            "SELECT dlq_id FROM sinex_schemas.dlq_events WHERE dlq_id = $1",
+            durable_failure_id,
+        )
+        .fetch_optional(ctx.pool())
+        .await?;
+        assert_eq!(
+            evidence.map(|row| row.dlq_id),
+            Some(durable_failure_id),
+            "Postgres DLQ evidence must outlive bounded NATS retention"
+        );
+    }
     Ok(())
 }
 

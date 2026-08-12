@@ -1090,9 +1090,11 @@ impl AdmissionService {
         // sharing an equivalence_key present in this fetch with a single
         // round-trip. The in-memory maps below then extend that snapshot over
         // all messages in the same fetch before persistence begins.
+        let mut seen_equiv_keys = HashSet::new();
         let equiv_keys: Vec<String> = events
             .iter()
             .filter_map(|(_, e)| e.equivalence_key.as_ref().map(|k| k.as_str().to_owned()))
+            .filter(|key| seen_equiv_keys.insert(key.clone()))
             .collect();
         let mut live_by_key: HashMap<String, LiveEquivalenceRow> = if equiv_keys.is_empty() {
             HashMap::new()

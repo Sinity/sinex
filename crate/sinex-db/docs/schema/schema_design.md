@@ -26,7 +26,7 @@ Sinex partitions its relational surface across seven namespaces, each with a dis
 | `core` | `events`, `blobs`, `manifests`, `runs`, `entities`, `entity_relations`, `event_annotations`, `tags` | Primary storage + knowledge graph |
 | `raw` | `source_material_registry`, `temporal_ledger` | Provenance roots + observation timestamps |
 | `audit` | `archived_events` | Immutable archive (replay target) |
-| `sinex_schemas` | `event_payload_schemas`, `validation_cache`, `dlq_events` | Schema registry + DLQ |
+| `sinex_schemas` | `event_payload_schemas`, `validation_cache`, `dlq_events` | Schema registry + Postgres DLQ evidence authority |
 | `sinex_telemetry` | hourly operator views, activity/status views, one materialized device-state view | Self-observation |
 | `metrics` | via schema registry | Operational metrics |
 | `public` | default | `PostgreSQL` default schema |
@@ -62,6 +62,11 @@ Event provenance is explicit and enforced.
 - append-only guarantees are enforced by trigger/constraint logic
 - destructive operations are limited to explicit retention/archive workflows
 - declarative schema changes are validated through repository tooling before deploy
+
+`sinex_schemas.dlq_events` is the durable authority for terminal DLQ and
+`DurableDebt` evidence. The NATS DLQ stream is a bounded delivery and operator
+replay surface, so its retention expiry must not remove the corresponding
+Postgres witness. Event-engine writes go through `DlqEventRepository`.
 
 ### Operations Log
 

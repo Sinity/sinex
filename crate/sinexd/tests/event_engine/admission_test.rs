@@ -1625,3 +1625,133 @@ async fn supersede_on_change_intrabatch_multiple_revisions_only_final_applies(
 
     Ok(())
 }
+
+#[sinex_test]
+async fn supersede_on_change_across_fetch_messages_archives_original_live_row(
+    ctx: TestContext,
+) -> TestResult<()> {
+    let material_id = ctx
+        .create_source_material(Some("admission-fetch-batch-supersede"))
+        .await?;
+    let ts = Timestamp::now();
+    let key = "admission-fetch-batch-supersede-key".to_string();
+    let service = admission_service(&ctx);
+
+    let live_id = Uuid::now_v7();
+    let mut live = material_event(
+        material_id,
+        live_id,
+        "derived.interval-lift",
+        "state.interval",
+        interval_payload(ts, 100),
+    )?;
+    live.equivalence_key = Some(key.clone());
+    assert_eq!(admit_and_persist(&service, live).await?, live_id);
+
+    let first_id = Uuid::now_v7();
+    let mut first = material_event(
+        material_id,
+        first_id,
+        "derived.interval-lift",
+        "state.interval",
+        interval_payload(ts, 200),
+    )?;
+    first.equivalence_key = Some(key.clone());
+    let second_id = Uuid::now_v7();
+    let mut second = material_event(
+        material_id,
+        second_id,
+        "derived.interval-lift",
+        "state.interval",
+        interval_payload(ts, 300),
+    )?;
+    second.equivalence_key = Some(key);
+
+    let first_payload = serde_json::to_vec(&EventIntent::new(
+        "test-source",
+        "test-parser",
+        "1.0.0",
+        vec![first],
+        HostName::from_static("test-host"),
+    ))?;
+    let second_payload = serde_json::to_vec(&EventIntent::new(
+        "test-source",
+        "test-parser",
+        "1.0.0",
+        vec![second],
+        HostName::from_static("test-host"),
+    ))?;
+
+    let decisions = service
+        .admit_intent_bytes_batch(&[first_payload.as_slice(), second_payload.as_slice()])
+        .await?;
+    assert_eq!(decisions.len(), 2);
+    assert!(matches!(
+        decisions[0].as_slice(),
+        [AdmissionDecision::Suppressed(rejection)]
+            if rejection.kind == AdmissionRejectionKind::SupersededWithinBatch
+                && rejection.event_id == Some(first_id)
+    ));
+    assert!(matches!(
+        decisions[1].as_slice(),
+        [AdmissionDecision::Superseded { admitted, superseded_event_id }]
+            if admitted.event_id == second_id && *superseded_event_id == live_id
+    ));
+
+    Ok(())
+}
+
+#[sinex_test]
+async fn distinct_equivalence_keys_in_one_fetch_batch_are_both_admitted(
+    ctx: TestContext,
+) -> TestResult<()> {
+    let material_id = ctx
+        .create_source_material(Some("admission-fetch-batch-distinct"))
+        .await?;
+    let ts = Timestamp::now();
+    let service = admission_service(&ctx);
+
+    let mut first = material_event(
+        material_id,
+        Uuid::now_v7(),
+        "derived.interval-lift",
+        "state.interval",
+        interval_payload(ts, 100),
+    )?;
+    first.equivalence_key = Some("admission-fetch-batch-distinct-a".to_string());
+    let mut second = material_event(
+        material_id,
+        Uuid::now_v7(),
+        "derived.interval-lift",
+        "state.interval",
+        interval_payload(ts, 100),
+    )?;
+    second.equivalence_key = Some("admission-fetch-batch-distinct-b".to_string());
+
+    let first_payload = serde_json::to_vec(&EventIntent::new(
+        "test-source",
+        "test-parser",
+        "1.0.0",
+        vec![first],
+        HostName::from_static("test-host"),
+    ))?;
+    let second_payload = serde_json::to_vec(&EventIntent::new(
+        "test-source",
+        "test-parser",
+        "1.0.0",
+        vec![second],
+        HostName::from_static("test-host"),
+    ))?;
+
+    let decisions = service
+        .admit_intent_bytes_batch(&[first_payload.as_slice(), second_payload.as_slice()])
+        .await?;
+    assert_eq!(decisions.len(), 2);
+    assert!(
+        decisions
+            .iter()
+            .all(|decisions| matches!(decisions.as_slice(), [AdmissionDecision::Admitted(_)]))
+    );
+
+    Ok(())
+}

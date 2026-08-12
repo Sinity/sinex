@@ -6,6 +6,7 @@ pub mod blobs;
 pub mod common;
 pub mod continuity;
 pub mod derivation;
+pub mod dlq;
 pub mod document_search;
 pub mod email_mailbox_projection;
 pub mod email_provider_state;
@@ -35,6 +36,7 @@ pub use derivation::{
     CreateDerivationEpoch, CreateDerivationLane, DerivationRepository, ExistingProductDeclaration,
     LaneOutputRow, ProductDeclarationRepository,
 };
+pub use dlq::DlqEventRepository;
 pub use document_search::{
     DEFAULT_PAGE_SIZE, DocumentSearchQuery, DocumentSearchRepository, DocumentSearchResult,
     DocumentSearchResults, MAX_PAGE_SIZE, SearchEmptyReason, SearchMode, VectorSearchParams,
@@ -112,6 +114,7 @@ pub trait DbPoolExt {
     fn source_materials(&self) -> source_materials::SourceMaterialRepository<'_>;
     fn product_declarations(&self) -> derivation::ProductDeclarationRepository<'_>;
     fn derivation_lanes(&self) -> derivation::DerivationRepository<'_>;
+    fn dlq_events(&self) -> dlq::DlqEventRepository<'_>;
     fn projection_registry(&self) -> projection_registry::ProjectionRegistryRepository<'_>;
     fn knowledge_graph(&self) -> knowledge_graph::KnowledgeGraphRepository<'_>;
     fn state(&self) -> state::StateRepository<'_>;
@@ -170,6 +173,10 @@ impl DbPoolExt for PgPool {
 
     fn derivation_lanes(&self) -> derivation::DerivationRepository<'_> {
         derivation::DerivationRepository::new(self)
+    }
+
+    fn dlq_events(&self) -> dlq::DlqEventRepository<'_> {
+        dlq::DlqEventRepository::new(self)
     }
 
     fn projection_registry(&self) -> projection_registry::ProjectionRegistryRepository<'_> {
