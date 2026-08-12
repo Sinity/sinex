@@ -249,9 +249,21 @@ pub async fn check_cas(
     for (hash, blob_id) in &known_blake3_hashes {
         if !matched_blob_ids.contains(blob_id) {
             report.missing += 1;
+            let path = content_store
+                .local_blake3_cas_path_for_hash(hash)
+                .map_or_else(
+                    |_| {
+                        content_store
+                            .root_path()
+                            .join(LOCAL_BLAKE3_CAS_DIR)
+                            .join("<invalid-hash>")
+                            .join(hash)
+                    },
+                    |path| path,
+                );
             file_statuses.push(CasFileStatus {
                 hash: hash.clone(),
-                path: format!("{LOCAL_BLAKE3_CAS_DIR}/XX/YY/{hash}"),
+                path: path.to_string(),
                 size_bytes: 0,
                 status: CasStatus::Missing,
                 blob_id: Some(blob_id.clone()),

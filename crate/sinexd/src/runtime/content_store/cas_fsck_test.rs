@@ -1,9 +1,10 @@
-use super::{CasStatus, check_cas};
+use super::{CasStatus, LOCAL_BLAKE3_CAS_BACKEND, check_cas};
 use crate::runtime::content_store::{
     ContentStoreConfig, MaterialContentStore, gc::sweep_orphans,
 };
 use camino::Utf8PathBuf;
 use serde_json::json;
+use sinex_db::models::Blob;
 use sinex_db::repositories::DbPoolExt;
 use sinex_primitives::{Timestamp, Uuid};
 use std::time::{Duration, SystemTime};
@@ -117,6 +118,47 @@ async fn in_flight_cas_staging_file_survives_apply_fsck(ctx: TestContext) -> Tes
         statuses
             .iter()
             .any(|status| status.status == CasStatus::Staged)
+    );
+    Ok(())
+}
+
+#[sinex_test]
+async fn missing_cas_report_uses_configured_hash_path(ctx: TestContext) -> TestResult<()> {
+    let store_dir = tempfile::tempdir()?;
+    let root_path = Utf8PathBuf::from_path_buf(store_dir.path().to_path_buf())
+        .expect("temporary content-store path must be UTF-8");
+    let content_store = MaterialContentStore::new(ContentStoreConfig {
+        root_path: root_path.clone(),
+        ..Default::default()
+    })?;
+    let hash = blake3::hash(Uuid::now_v7().as_bytes()).to_hex().to_string();
+    let blob = ctx
+        .pool()
+        .blobs()
+        .insert(
+            Blob::builder()
+                .storage_backend(LOCAL_BLAKE3_CAS_BACKEND.to_string())
+                .content_hash(hash.clone())
+                .size_bytes(42)
+                .checksum_blake3(hash.clone())
+                .build(),
+        )
+        .await?;
+
+    let (report, statuses) = check_cas(ctx.pool(), &content_store, false).await?;
+    assert_eq!(report.missing, 1);
+    let status = statuses
+        .iter()
+        .find(|status| status.blob_id.as_deref() == Some(blob.id.to_string().as_str()))
+        .expect("missing blob must be reported");
+    let expected_path = content_store
+        .path_if_local(&format!("{LOCAL_BLAKE3_CAS_BACKEND}-s42--{hash}"))?
+        .expect("valid local CAS key must resolve to a path");
+    assert_eq!(status.status, CasStatus::Missing);
+    assert_eq!(status.path, expected_path.as_str());
+    assert!(
+        !status.path.contains("XX/YY"),
+        "anti-vacuity: missing-CAS diagnostics must identify the actual configured path"
     );
     Ok(())
 }
