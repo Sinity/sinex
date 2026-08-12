@@ -1,7 +1,7 @@
 // Small inline tests are used here because the parser helper is private
 // and tightly coupled to git-annex output semantics.
 use super::*;
-use xtask::sandbox::sinex_test;
+use xtask::sandbox::{sinex_test, timing::WaitHelpers};
 
 #[sinex_test]
 async fn default_blob_retrieval_cap_matches_default_material_assembly_cap()
@@ -172,6 +172,104 @@ async fn bounded_content_store_reads_reject_oversized_files_before_buffering()
         .await
         .expect_err("bounded reads must reject content beyond the configured limit");
     assert!(error.to_string().contains("exceeds limit"));
+    Ok(())
+}
+
+#[sinex_test]
+async fn direct_content_store_inputs_must_remain_under_configured_root()
+-> ::xtask::sandbox::TestResult<()> {
+    let parent_dir = tempfile::tempdir()?;
+    let root_path = Utf8PathBuf::from_path_buf(parent_dir.path().join("content-store"))
+        .expect("temporary content-store path should be UTF-8");
+    let outside_path = Utf8PathBuf::from_path_buf(parent_dir.path().join("outside.bin"))
+        .expect("temporary outside path should be UTF-8");
+    tokio::fs::write(&outside_path, b"outside content").await?;
+    let content_store = MaterialContentStore::new(ContentStoreConfig {
+        root_path: root_path.clone(),
+        ..Default::default()
+    })?;
+
+    for input in [Utf8PathBuf::from("../outside.bin"), outside_path.clone()] {
+        let store_error = content_store
+            .store_file(&input)
+            .await
+            .expect_err("store_file must reject an input outside the configured root");
+        assert!(
+            store_error.to_string().contains("escapes configured root"),
+            "unexpected store_file error: {store_error}"
+        );
+
+        let lookup_error = content_store
+            .lookup_content_key(&input)
+            .await
+            .expect_err("lookup_content_key must reject an input outside the configured root");
+        assert!(
+            lookup_error.to_string().contains("escapes configured root"),
+            "unexpected lookup_content_key error: {lookup_error}"
+        );
+    }
+
+    #[cfg(unix)]
+    {
+        let symlink_path = root_path.join("linked-outside.bin");
+        std::os::unix::fs::symlink(&outside_path, &symlink_path)?;
+        let error = content_store
+            .store_file(&symlink_path)
+            .await
+            .expect_err("symlinked inputs must not bypass root containment");
+        assert!(
+            error.to_string().contains("escapes configured root"),
+            "unexpected symlink error: {error}"
+        );
+    }
+
+    Ok(())
+}
+
+#[sinex_test]
+async fn async_content_store_commands_are_serialized_through_process_exit()
+-> ::xtask::sandbox::TestResult<()> {
+    let temp_dir = tempfile::tempdir()?;
+    let marker = Utf8PathBuf::from_path_buf(temp_dir.path().join("command-order.log"))
+        .expect("temporary marker path should be UTF-8");
+
+    let first_marker = marker.clone();
+    let first = tokio::spawn(async move {
+        let mut command = AsyncCommand::new("sh");
+        command.args([
+            "-c",
+            "printf 'first-start\\n' > \"$1\"; sleep 0.2; printf 'first-end\\n' >> \"$1\"",
+            "content-store-test",
+            first_marker.as_str(),
+        ]);
+        run_command_async(command, "first serialization probe").await
+    });
+
+    WaitHelpers::wait_for_condition(
+        || {
+            let marker = marker.clone();
+            async move { Ok::<_, std::io::Error>(marker.exists()) }
+        },
+        2,
+    )
+    .await?;
+
+    let second_marker = marker.clone();
+    let second = tokio::spawn(async move {
+        let mut command = AsyncCommand::new("sh");
+        command.args([
+            "-c",
+            "printf 'second\\n' >> \"$1\"",
+            "content-store-test",
+            second_marker.as_str(),
+        ]);
+        run_command_async(command, "second serialization probe").await
+    });
+
+    first.await??;
+    second.await??;
+    let order = tokio::fs::read_to_string(&marker).await?;
+    assert_eq!(order, "first-start\nfirst-end\nsecond\n", "anti-vacuity: the process lock must cover subprocess execution, not only invocation counting");
     Ok(())
 }
 

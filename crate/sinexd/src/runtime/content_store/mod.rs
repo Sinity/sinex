@@ -749,26 +749,27 @@ impl MaterialContentStore {
         })
     }
 
+    async fn resolve_root_contained_file_path(
+        &self,
+        file_path: Utf8PathBuf,
+    ) -> RuntimeResult<Utf8PathBuf> {
+        let candidate = if file_path.is_absolute() {
+            file_path
+        } else {
+            self.config.root_path.join(file_path)
+        };
+        self.canonicalize_root_contained_path(&candidate).await
+    }
+
     /// Store a file and return the backend-neutral content-store key.
     pub async fn store_file(&self, file_path: impl AsRef<Path>) -> RuntimeResult<ContentStoreKey> {
         let file_path = Self::require_utf8_path(file_path)?;
         debug!("Storing file in content store: {:?}", file_path);
 
-        // Allow callers to pass either absolute paths or paths relative to the
-        // content-store root. Resolve to an absolute path for validation so
-        // we don't accidentally check the process CWD (which may differ from
-        // the repo path for systemd services).
-        let resolved_path = if file_path.is_absolute() {
-            file_path
-        } else {
-            self.config.root_path.join(&file_path)
-        };
-
-        if !resolved_path.exists() {
-            return Err(SinexError::processing(format!(
-                "File does not exist: {resolved_path:?}"
-            )));
-        }
+        // Resolve and contain the path before metadata, hashing, or copying.
+        // This protects both absolute inputs and root-relative traversal from
+        // escaping through a symlink or parent component.
+        let resolved_path = self.resolve_root_contained_file_path(file_path).await?;
 
         let file_size = tokio::fs::metadata(&resolved_path)
             .await
@@ -997,11 +998,7 @@ impl MaterialContentStore {
     ) -> RuntimeResult<ContentStoreKey> {
         let file_path = Self::require_utf8_path(file_path)?;
         if !self.config.legacy_annex_enabled {
-            let resolved_path = if file_path.is_absolute() {
-                file_path
-            } else {
-                self.config.root_path.join(&file_path)
-            };
+            let resolved_path = self.resolve_root_contained_file_path(file_path).await?;
             let file_size = tokio::fs::metadata(&resolved_path)
                 .await
                 .map_err(SinexError::io)?
