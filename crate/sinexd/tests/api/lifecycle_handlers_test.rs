@@ -1032,20 +1032,12 @@ async fn tombstone_expiry_persists_terminal_metadata(ctx: TestContext) -> TestRe
 /// approval"` -- a factually false statement, since the deletion already
 /// happened.
 ///
-/// This test reproduces the stuck end-state directly: it runs the real
-/// approve flow to a genuine, verified completion (so the deletion is real,
-/// not simulated), then rewrites the persisted operation back to the
-/// `Executing`/lapsed-TTL shape step 3's failure would have left behind --
-/// the same "rewrite `operations_log.scope` via SQL to force a lapsed TTL"
-/// technique `tombstone_expiry_persists_terminal_metadata` above uses for
-/// the "never approved" case.
-///
-/// Expected to FAIL against current code: `reconcile_tombstone_expiry` has
-/// no way to distinguish "never started" from "deletion committed,
-/// completion write lost" and unconditionally relabels any lapsed-TTL
-/// non-terminal operation as Expired/"Expired before approval".
+/// This test injects a real database failure into the terminal completion
+/// update, after `execute_cascade_tombstone` has committed its deletion and
+/// boundary receipt. The same operation must then be recoverable through the
+/// normal approve route after the injected failure is removed.
 #[sinex_test]
-async fn tombstone_status_does_not_mislabel_completed_deletion_as_expired(
+async fn tombstone_completion_failure_is_recoverable_after_deletion_boundary(
     ctx: TestContext,
 ) -> TestResult<()> {
     let auth = RpcAuthContext::system();
@@ -1083,10 +1075,84 @@ async fn tombstone_status_does_not_mislabel_completed_deletion_as_expired(
         .await?,
     )?;
 
-    // Run the real approve flow to genuine completion: step 2
-    // (execute_cascade_tombstone) truly commits the deletion here, exactly
-    // as it would in the production failure this bead describes.
-    let approved: TombstoneApproveResponse = serde_json::from_value(
+    // Fail only the separate terminal completion write. The deletion-boundary
+    // update inside execute_cascade_tombstone is still allowed to commit.
+    sqlx::query(
+        r#"
+        CREATE OR REPLACE FUNCTION public.test_fail_tombstone_completion()
+        RETURNS trigger
+        LANGUAGE plpgsql
+        AS $$
+        BEGIN
+            IF NEW.operation_type = 'tombstone'
+               AND NEW.scope->>'phase' = 'completed' THEN
+                RAISE EXCEPTION 'injected tombstone completion-write failure';
+            END IF;
+            RETURN NEW;
+        END;
+        $$;
+        "#,
+    )
+    .execute(ctx.pool())
+    .await?;
+    sqlx::query(
+        r#"
+        CREATE TRIGGER test_fail_tombstone_completion
+        BEFORE UPDATE ON core.operations_log
+        FOR EACH ROW
+        EXECUTE FUNCTION public.test_fail_tombstone_completion();
+        "#,
+    )
+    .execute(ctx.pool())
+    .await?;
+
+    let error = handle_tombstone_approve(
+        json!({
+            "operation_id": created.operation.operation_id,
+            "yes_i_understand_data_is_gone": true,
+        }),
+        &services,
+        &auth,
+    )
+    .await
+    .expect_err("injected completion write must fail the approve request");
+    assert!(
+        error.to_string().contains("Failed to finalize tombstone operation"),
+        "unexpected completion-write error: {error}"
+    );
+
+    let persisted = ctx
+        .pool()
+        .state()
+        .get_tombstone_operation(&created.operation.operation_id)
+        .await?
+        .expect("operation must remain after completion-write failure");
+    let persisted_operation: sinex_primitives::rpc::lifecycle::TombstoneOperation =
+        serde_json::from_value(persisted.scope.expect("tombstone scope must remain"))?;
+    assert_eq!(
+        persisted_operation.state,
+        TombstoneOperationState::Executing,
+        "lost completion must leave an explicitly recoverable execution state"
+    );
+    assert!(
+        persisted_operation.deletion_committed_at.is_some(),
+        "deletion boundary receipt must survive the failed completion update"
+    );
+    assert_eq!(persisted_operation.tombstoned_count, Some(1));
+    assert_eq!(
+        tombstone_count(&ctx, &event_id).await?,
+        1,
+        "deletion must have genuinely committed before the injected failure"
+    );
+
+    sqlx::query("DROP TRIGGER test_fail_tombstone_completion ON core.operations_log")
+        .execute(ctx.pool())
+        .await?;
+    sqlx::query("DROP FUNCTION public.test_fail_tombstone_completion()")
+        .execute(ctx.pool())
+        .await?;
+
+    let resumed: TombstoneApproveResponse = serde_json::from_value(
         handle_tombstone_approve(
             json!({
                 "operation_id": created.operation.operation_id,
@@ -1097,61 +1163,11 @@ async fn tombstone_status_does_not_mislabel_completed_deletion_as_expired(
         )
         .await?,
     )?;
-    assert_eq!(approved.operation.tombstoned_count, Some(1));
+    assert_eq!(resumed.operation.state, TombstoneOperationState::Completed);
+    assert_eq!(resumed.operation.tombstoned_count, Some(1));
     assert_eq!(
-        tombstone_count(&ctx, &event_id).await?,
-        1,
-        "deletion (step 2) must have genuinely committed for this repro to be meaningful"
-    );
-
-    // Rewrite the persisted operation back to the stuck-Executing shape
-    // step 3's failure would have left behind: phase=executing, no
-    // finished_at/error_details, TTL lapsed.
-    //
-    // operation_record_to_tombstone() treats `phase` as the canonical
-    // field and overwrites `state` from it on every read
-    // (`operation.state = operation.phase.into()`), so mutating `state`
-    // alone is a no-op against the real read path -- `phase` is what
-    // must be rewritten to reach reconcile_tombstone_expiry's
-    // `!operation.state.is_terminal()` guard with Executing.
-    sqlx::query!(
-        r#"
-        UPDATE core.operations_log
-        SET scope = jsonb_set(
-            jsonb_set(
-                jsonb_set(
-                    jsonb_set(scope, '{phase}', to_jsonb('executing'::text), false),
-                    '{state}', to_jsonb('executing'::text), false
-                ),
-                '{expires_at}', to_jsonb($2::text), false
-            ),
-            '{finished_at}', 'null'::jsonb, false
-        )
-        WHERE id = $1::uuid
-        "#,
-        created.operation.operation_id.parse::<uuid::Uuid>()?,
-        "2000-01-01T00:00:00Z"
-    )
-    .execute(ctx.pool())
-    .await?;
-
-    let status: TombstoneStatusResponse = serde_json::from_value(
-        handle_tombstone_status(
-            ctx.pool(),
-            json!({ "operation_id": created.operation.operation_id }),
-            &auth,
-        )
-        .await?,
-    )?;
-
-    // The deletion already happened -- status must not claim it "expired
-    // before approval". This is the single most destructive path in the
-    // system; telling an operator the destructive op never went through
-    // when it actually did is worse than saying nothing.
-    assert_ne!(
-        status.operation.error_details.as_deref(),
-        Some("Expired before approval"),
-        "deletion already committed; status must not claim the operation never happened"
+        resumed.operation.error_details.as_deref(),
+        Some("Deletion committed; lifecycle completion state recovered")
     );
 
     Ok(())

@@ -660,6 +660,57 @@ fn parse_previewed_event_ids(
         .collect()
 }
 
+async fn persist_tombstone_completion(
+    pool: &PgPool,
+    operation_id: &str,
+    operation: &mut TombstoneOperation,
+    preview_summary: Option<Value>,
+    recovery: Option<(&str, &str)>,
+) -> Result<()> {
+    let tombstoned_count = operation.tombstoned_count.ok_or_else(|| {
+        SinexError::invalid_state(
+            "Tombstone deletion boundary is missing its authoritative tombstone count",
+        )
+    })?;
+    let finished_at = Timestamp::now();
+    operation.state = TombstoneOperationState::Completed;
+    operation.finished_at = Some(finished_at.format_rfc3339());
+    if let Some((message, _)) = recovery {
+        operation.error_details = Some(message.to_string());
+    }
+    sync_tombstone_phase(operation);
+
+    let message = recovery
+        .map_or("Tombstone operation completed", |(message, _)| message);
+    let mut completion_summary = json!({
+        "message": message,
+        "tombstoned_count": tombstoned_count,
+    });
+    if let Some((_, recovery_source)) = recovery
+        && let Value::Object(fields) = &mut completion_summary
+    {
+        fields.insert(
+            "recovery".to_string(),
+            Value::String(recovery_source.to_string()),
+        );
+    }
+
+    pool.state()
+        .update_tombstone_operation(
+            operation_id,
+            phase_to_result_status(operation.phase),
+            serde_json::to_value(&*operation)?,
+            Some(merge_preview_summary(preview_summary, completion_summary)),
+            Some(message),
+            tombstone_duration_ms(operation, finished_at)?,
+        )
+        .await
+        .map_err(|e| {
+            SinexError::database("Failed to finalize tombstone operation")
+                .with_source(e.to_string())
+        })
+}
+
 async fn reconcile_tombstone_expiry(
     pool: &PgPool,
     operation_id: &str,
@@ -667,70 +718,56 @@ async fn reconcile_tombstone_expiry(
     preview_summary: Option<Value>,
 ) -> Result<bool> {
     let now = Timestamp::now();
-    if !operation.state.is_terminal()
-        && let Ok(expires_at) = Timestamp::parse_rfc3339(&operation.expires_at)
-        && now > expires_at
-    {
-        // A completion-write failure can leave the operation in Executing
-        // after execute_cascade_tombstone has already committed.  The
-        // immutable event_tombstones witnesses are the authority for that
-        // case; never relabel a completed destructive operation as "expired
-        // before approval" merely because its pre-approval TTL elapsed.
-        if operation.state == TombstoneOperationState::Executing {
+
+    // The cascade function writes this receipt in the same transaction as the
+    // tombstone rows and archive deletion. It is therefore safe to complete
+    // from it even when the separate terminal completion write was lost.
+    if operation.state == TombstoneOperationState::Executing {
+        let recovery_count = if operation.deletion_committed_at.is_some() {
+            Some(operation.tombstoned_count.ok_or_else(|| {
+                SinexError::invalid_state(
+                    "Tombstone deletion receipt is missing its tombstone count",
+                )
+            })?)
+        } else {
             let operation_uuid = parse_operation_uuid(operation_id)?;
-            let tombstoned_count = pool
+            let count = pool
                 .events()
                 .count_tombstones_for_operation(operation_uuid)
                 .await
                 .map_err(|e| {
-                    SinexError::database(
-                        "Failed to inspect tombstone witnesses during expiry reconciliation",
-                    )
-                    .with_source(e.to_string())
-                })?;
-            if tombstoned_count > 0 {
-                operation.state = TombstoneOperationState::Completed;
-                operation.finished_at = Some(now.format_rfc3339());
-                operation.tombstoned_count = Some(
-                    u64::try_from(tombstoned_count).map_err(|_| {
-                        SinexError::invalid_state(
-                            "Tombstone witness count cannot be represented as u64",
-                        )
-                    })?,
-                );
-                operation.error_details = Some(
-                    "Deletion committed; lifecycle completion state recovered from tombstone witnesses"
-                        .to_string(),
-                );
-                sync_tombstone_phase(operation);
-                let scope = serde_json::to_value(&*operation)?;
-                pool.state()
-                    .update_tombstone_operation(
-                        operation_id,
-                        phase_to_result_status(operation.phase),
-                        scope,
-                        Some(merge_preview_summary(
-                            preview_summary,
-                            json!({
-                                "message": "Tombstone completion recovered from immutable deletion witnesses",
-                                "recovery": "tombstone_witnesses",
-                                "tombstoned_count": tombstoned_count,
-                            }),
-                        )),
-                        Some("Tombstone operation completion recovered after deletion committed"),
-                        tombstone_duration_ms(operation, now)?,
-                    )
-                    .await
-                    .map_err(|e| {
-                        SinexError::database(
-                            "Failed to persist recovered tombstone completion",
-                        )
+                    SinexError::database("Failed to inspect tombstone witnesses during recovery")
                         .with_source(e.to_string())
-                    })?;
-                return Ok(false);
-            }
-        }
+                })?;
+            u64::try_from(count).ok().filter(|count| *count > 0)
+        };
 
+        if let Some(tombstoned_count) = recovery_count {
+            operation.tombstoned_count = Some(tombstoned_count);
+            let recovery_source = if operation.deletion_committed_at.is_some() {
+                "deletion_boundary"
+            } else {
+                "tombstone_witnesses"
+            };
+            persist_tombstone_completion(
+                pool,
+                operation_id,
+                operation,
+                preview_summary,
+                Some((
+                    "Deletion committed; lifecycle completion state recovered",
+                    recovery_source,
+                )),
+            )
+            .await?;
+            return Ok(false);
+        }
+    }
+
+    if !operation.state.is_terminal()
+        && let Ok(expires_at) = Timestamp::parse_rfc3339(&operation.expires_at)
+        && now > expires_at
+    {
         operation.state = TombstoneOperationState::Expired;
         operation.finished_at = Some(now.format_rfc3339());
         operation.error_details = Some("Expired before approval".to_string());
@@ -851,6 +888,7 @@ pub async fn handle_tombstone_create(
         started_at: None,
         finished_at: None,
         tombstoned_count: None,
+        deletion_committed_at: None,
         error_details: None,
     };
 
@@ -988,6 +1026,13 @@ pub async fn handle_tombstone_approve(
             "Tombstone operation {} has expired. Create a new operation.",
             request.operation_id
         )));
+    }
+
+    // A prior approval may have crossed the deletion boundary but lost its
+    // terminal completion write. Reconciliation above persists the recovered
+    // terminal state; return it as a successful, resumable approval retry.
+    if operation.state == TombstoneOperationState::Completed {
+        return Ok(TombstoneApproveResponse { operation });
     }
 
     if !operation.state.can_approve() {
@@ -1130,6 +1175,30 @@ pub async fn handle_tombstone_approve(
             );
         }
     };
+
+    // The cascade transaction committed a deletion-boundary receipt before
+    // returning. Carry the exact persisted receipt into the later completion
+    // scope so a successful completion cannot erase the recovery authority.
+    let boundary_record = pool
+        .state()
+        .get_tombstone_operation(&request.operation_id)
+        .await
+        .map_err(|e| {
+            SinexError::database("Failed to read tombstone deletion receipt")
+                .with_source(e.to_string())
+        })?
+        .ok_or_else(|| {
+            SinexError::invalid_state(
+                "Tombstone operation disappeared after its deletion boundary committed",
+            )
+        })?;
+    let boundary_operation = operation_record_to_tombstone(&boundary_record)?;
+    operation.deletion_committed_at = boundary_operation.deletion_committed_at;
+    if operation.deletion_committed_at.is_none() {
+        return Err(SinexError::invalid_state(
+            "Tombstone deletion completed without a durable deletion-boundary receipt",
+        ));
+    }
 
     // Delete-on-tombstone for source materials whose only references were the
     // events we just tombstoned. (#987.) Failures here are logged but do not
@@ -1297,40 +1366,20 @@ pub async fn handle_tombstone_approve(
         );
     }
 
-    // Mark as completed and persist
-    let finished_at = Timestamp::now();
-    let duration_ms = tombstone_duration_ms(&operation, finished_at)?.unwrap_or(0);
-    operation.state = TombstoneOperationState::Completed;
-    operation.finished_at = Some(finished_at.format_rfc3339());
     operation.tombstoned_count = Some(tombstoned_count);
-    sync_tombstone_phase(&mut operation);
 
-    let scope = serde_json::to_value(&operation)?;
-    pool.state()
-        .update_tombstone_operation(
-            &request.operation_id,
-            phase_to_result_status(operation.phase),
-            scope,
-            Some(merge_preview_summary(
-                preview_summary,
-                json!({
-                    "message": "Tombstone operation completed",
-                    "tombstoned_count": tombstoned_count,
-                }),
-            )),
-            Some("Tombstone operation completed"),
-            Some(duration_ms),
-        )
-        .await
-        .map_err(|e| {
-            SinexError::database("Failed to finalize tombstone operation")
-                .with_source(e.to_string())
-        })?;
+    persist_tombstone_completion(
+        pool,
+        &request.operation_id,
+        &mut operation,
+        preview_summary,
+        None,
+    )
+    .await?;
 
     info!(
         operation_id = %request.operation_id,
         tombstoned_count = tombstoned_count,
-        duration_ms = duration_ms,
         "💀 Tombstone operation completed (PERMANENT)"
     );
 
