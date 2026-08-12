@@ -11,7 +11,7 @@ use sinex_primitives::views::{
 };
 use sinexd::runtime::content_store::{
     CasFsckReport, ContentStoreConfig, MaterialContentStore, UnusedContentEntry,
-    cas_fsck::check_cas,
+    cas_fsck::{CasFsckOptions, check_cas_with_options},
     gc::{BlobGcReport, sweep_orphans_detailed},
 };
 
@@ -212,6 +212,14 @@ pub struct BlobFsckCommand {
     /// Remove orphaned CAS files instead of only reporting them.
     #[arg(long)]
     pub apply: bool,
+
+    /// Maximum wall-clock duration for one pass. Apply mode refuses a partial pass.
+    #[arg(long, default_value_t = 55 * 60)]
+    pub max_seconds: u64,
+
+    /// Maximum aggregate bytes/sec read for cryptographic verification.
+    #[arg(long, default_value_t = 64 * 1024 * 1024)]
+    pub verify_bytes_per_second: u64,
 }
 
 #[derive(Debug, Serialize)]
@@ -228,6 +236,10 @@ struct BlobFsckSummary {
     protected_recent: usize,
     staged: usize,
     recheck_protected: usize,
+    entries_scanned: usize,
+    bytes_verified: u64,
+    incomplete: bool,
+    stop_reason: Option<String>,
     details: Vec<CasFileDetail>,
 }
 
@@ -255,9 +267,18 @@ impl BlobFsckCommand {
         })
         .wrap_err_with(|| format!("open content-store root {}", self.content_store_path))?;
 
-        let (report, file_statuses) = check_cas(&pool, &content_store, self.apply)
-            .await
-            .wrap_err("CAS filesystem check")?;
+        let (report, file_statuses) = check_cas_with_options(
+            &pool,
+            &content_store,
+            self.apply,
+            CasFsckOptions {
+                max_runtime: Some(std::time::Duration::from_secs(self.max_seconds.max(1))),
+                max_entries: None,
+                verify_bytes_per_sec: Some(self.verify_bytes_per_second.max(1) as f64),
+            },
+        )
+        .await
+        .wrap_err("CAS filesystem check")?;
 
         let CasFsckReport {
             referenced,
@@ -270,6 +291,10 @@ impl BlobFsckCommand {
             protected_recent,
             staged,
             recheck_protected,
+            entries_scanned,
+            bytes_verified,
+            incomplete,
+            stop_reason,
         } = report;
 
         let details: Vec<CasFileDetail> = file_statuses
@@ -296,6 +321,10 @@ impl BlobFsckCommand {
             protected_recent,
             staged,
             recheck_protected,
+            entries_scanned,
+            bytes_verified,
+            incomplete,
+            stop_reason: stop_reason.map(|reason| format!("{reason:?}")),
             details,
         };
 
@@ -334,6 +363,15 @@ fn format_blob_fsck_summary(summary: &BlobFsckSummary) -> String {
     output.push_str(&format!("  Malformed: {}\n", summary.malformed));
     output.push_str(&format!("  Missing (DB, not disk): {}\n", summary.missing));
     output.push_str(&format!("  Removed: {}\n", summary.removed));
+    output.push_str(&format!("  Entries scanned: {}\n", summary.entries_scanned));
+    output.push_str(&format!(
+        "  Bytes verified: {}\n",
+        format_bytes(summary.bytes_verified)
+    ));
+    output.push_str(&format!("  Incomplete: {}\n", summary.incomplete));
+    if let Some(reason) = &summary.stop_reason {
+        output.push_str(&format!("  Stop reason: {reason}\n"));
+    }
     for d in &summary.details {
         output.push_str(&format!(
             "    [{}] {}  {}  ({})\n",

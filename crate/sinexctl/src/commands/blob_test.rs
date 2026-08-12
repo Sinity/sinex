@@ -32,6 +32,10 @@ fn fsck_summary() -> BlobFsckSummary {
         protected_recent: 0,
         staged: 0,
         recheck_protected: 0,
+        entries_scanned: 0,
+        bytes_verified: 0,
+        incomplete: false,
+        stop_reason: None,
         details: Vec::new(),
     }
 }
@@ -62,8 +66,12 @@ async fn blob_sweep_envelope_caveats_empty_and_orphaned_scans() -> TestResult<()
     assert_eq!(empty.query_echo.as_ref().unwrap()["mode"], "dry-run");
 
     let orphaned = blob_sweep_envelope(sweep_summary(2));
-    assert!(orphaned.caveats.iter().any(|caveat| caveat.id
-        == ReadinessCaveatId::SourceAbsent.as_str()));
+    assert!(
+        orphaned
+            .caveats
+            .iter()
+            .any(|caveat| caveat.id == ReadinessCaveatId::SourceAbsent.as_str())
+    );
     Ok(())
 }
 
@@ -91,8 +99,12 @@ async fn blob_migrate_envelope_caveats_empty_and_failed_migration() -> TestResul
     );
 
     let failed = blob_migrate_envelope(migrate_summary(3, 1));
-    assert!(failed.caveats.iter().any(|caveat| caveat.id
-        == ReadinessCaveatId::WindowPartial.as_str()));
+    assert!(
+        failed
+            .caveats
+            .iter()
+            .any(|caveat| caveat.id == ReadinessCaveatId::WindowPartial.as_str())
+    );
     assert_eq!(failed.query_echo.as_ref().unwrap()["from"], "git-annex");
     Ok(())
 }

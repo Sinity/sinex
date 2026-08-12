@@ -1,7 +1,7 @@
-use super::{CasStatus, LOCAL_BLAKE3_CAS_BACKEND, check_cas};
-use crate::runtime::content_store::{
-    ContentStoreConfig, MaterialContentStore, gc::sweep_orphans,
+use super::{
+    CasFsckOptions, CasStatus, LOCAL_BLAKE3_CAS_BACKEND, check_cas, check_cas_with_options,
 };
+use crate::runtime::content_store::{ContentStoreConfig, MaterialContentStore, gc::sweep_orphans};
 use camino::Utf8PathBuf;
 use serde_json::json;
 use sinex_db::models::Blob;
@@ -54,6 +54,7 @@ async fn live_source_material_manifest_cas_reference_survives_apply_orphan_sweep
     assert_eq!(fsck_report.referenced, 1);
     assert_eq!(fsck_report.orphaned, 0);
     assert_eq!(fsck_report.missing, 0);
+    assert!(fsck_report.bytes_verified > 0);
     let manifest_status = statuses
         .iter()
         .find(|status| status.hash == manifest_key.digest)
@@ -74,6 +75,59 @@ async fn live_source_material_manifest_cas_reference_survives_apply_orphan_sweep
         "anti-vacuity: removing raw.source_material_registry material_manifest content_key references from load_sinexblake3_hashes makes this stale CAS file orphaned and the apply-mode sweep deletes it"
     );
 
+    Ok(())
+}
+
+#[sinex_test]
+async fn apply_fsck_refuses_to_delete_after_a_partial_budgeted_pass(
+    ctx: TestContext,
+) -> TestResult<()> {
+    let store_dir = tempfile::tempdir()?;
+    let root_path = Utf8PathBuf::from_path_buf(store_dir.path().to_path_buf())
+        .expect("temporary content-store path must be UTF-8");
+    let content_store = MaterialContentStore::new(ContentStoreConfig {
+        root_path: root_path.clone(),
+        ..Default::default()
+    })?;
+    let source = root_path.join("orphan.txt");
+    tokio::fs::write(&source, b"orphan").await?;
+    let key = content_store.store_file(&source).await?;
+    let path = content_store
+        .path_if_local(&key.key)?
+        .expect("fixture must use local CAS");
+    std::fs::File::open(path.as_std_path())?.set_times(
+        std::fs::FileTimes::new().set_modified(
+            SystemTime::now()
+                .checked_sub(Duration::from_secs(11 * 60))
+                .expect("fixture timestamp must be representable"),
+        ),
+    )?;
+    let authority_hash = blake3::hash(b"database-authority").to_hex().to_string();
+    ctx.pool
+        .blobs()
+        .insert(
+            Blob::builder()
+                .storage_backend(LOCAL_BLAKE3_CAS_BACKEND.to_string())
+                .content_hash(authority_hash.clone())
+                .size_bytes(18)
+                .checksum_blake3(authority_hash)
+                .build(),
+        )
+        .await?;
+
+    let result = check_cas_with_options(
+        ctx.pool(),
+        &content_store,
+        true,
+        CasFsckOptions {
+            max_runtime: None,
+            max_entries: Some(0),
+            verify_bytes_per_sec: Some(1024.0),
+        },
+    )
+    .await;
+    assert!(result.is_err(), "apply must fail closed on a partial pass");
+    assert!(path.exists(), "partial fsck must not delete any candidate");
     Ok(())
 }
 

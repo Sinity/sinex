@@ -16,11 +16,13 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value as JsonValue;
 use sqlx::PgPool;
 use std::collections::HashSet;
-use std::time::{Duration as StdDuration, SystemTime};
+use std::time::{Duration as StdDuration, Instant, SystemTime};
+use tokio::io::AsyncReadExt;
 
 use super::{
     ContentStoreKey, LOCAL_BLAKE3_CAS_BACKEND, LOCAL_BLAKE3_CAS_DIR, MaterialContentStore,
 };
+use crate::runtime::pacing::{PacingController, RateBudget};
 
 /// Result of a single CAS file check.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -79,9 +81,47 @@ pub struct CasFsckReport {
     pub staged: usize,
     /// Orphans that became DB-referenced during the scan/apply race.
     pub recheck_protected: usize,
+    /// Number of filesystem entries inspected before completion or a budget stop.
+    pub entries_scanned: usize,
+    /// Bytes read for cryptographic verification.
+    pub bytes_verified: u64,
+    /// Whether the report is incomplete because a bounded-work limit fired.
+    pub incomplete: bool,
+    /// Why the bounded scan stopped, when it did.
+    pub stop_reason: Option<CasFsckStopReason>,
 }
 
 const CAS_ORPHAN_GRACE: StdDuration = StdDuration::from_secs(10 * 60);
+
+/// Why a CAS fsck stopped before reaching the end of its snapshot.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum CasFsckStopReason {
+    RuntimeBudget,
+    EntryBudget,
+}
+
+/// Resource limits for one fsck pass.
+///
+/// The defaults deliberately make a pass cooperative and bounded. A large
+/// store must be handled by a resumable/quarantine lifecycle, not by silently
+/// allowing one maintenance invocation to monopolize the host indefinitely.
+#[derive(Debug, Clone, Copy)]
+pub struct CasFsckOptions {
+    pub max_runtime: Option<StdDuration>,
+    pub max_entries: Option<usize>,
+    pub verify_bytes_per_sec: Option<f64>,
+}
+
+impl Default for CasFsckOptions {
+    fn default() -> Self {
+        Self {
+            max_runtime: Some(StdDuration::from_secs(55 * 60)),
+            max_entries: None,
+            verify_bytes_per_sec: Some(64.0 * 1024.0 * 1024.0),
+        }
+    }
+}
 
 /// Run a CAS filesystem check.
 ///
@@ -92,9 +132,28 @@ pub async fn check_cas(
     content_store: &MaterialContentStore,
     apply: bool,
 ) -> RuntimeResult<(CasFsckReport, Vec<CasFileStatus>)> {
+    check_cas_with_options(pool, content_store, apply, CasFsckOptions::default()).await
+}
+
+/// Run a bounded CAS fsck pass with explicit work limits.
+pub async fn check_cas_with_options(
+    pool: &PgPool,
+    content_store: &MaterialContentStore,
+    apply: bool,
+    options: CasFsckOptions,
+) -> RuntimeResult<(CasFsckReport, Vec<CasFileStatus>)> {
+    let started = Instant::now();
     let entries = content_store.walk_cas().await?;
     let mut file_statuses: Vec<CasFileStatus> = Vec::new();
     let mut report = CasFsckReport::default();
+    let mut orphan_candidates = Vec::new();
+    let mut present_hashes: HashSet<String> = HashSet::new();
+    let mut pacer = PacingController::new(RateBudget {
+        events_per_sec: None,
+        bytes_per_sec: options.verify_bytes_per_sec,
+        backlog_pause_threshold: None,
+        backlog_resume_threshold: None,
+    });
 
     // Build a set of known hashes from core.blobs for SINEXBLAKE3 entries
     let known_blake3_hashes = load_sinexblake3_hashes(pool).await?;
@@ -117,9 +176,21 @@ pub async fn check_cas(
     for (hash, _blob_id) in &known_blake3_hashes {
         known_hash_set.insert(hash.clone());
     }
-    let mut matched_blob_ids: HashSet<String> = HashSet::new();
-
-    for (hash, path, size) in entries {
+    for (index, (hash, path, size)) in entries.into_iter().enumerate() {
+        if options
+            .max_runtime
+            .is_some_and(|limit| started.elapsed() >= limit)
+        {
+            report.incomplete = true;
+            report.stop_reason = Some(CasFsckStopReason::RuntimeBudget);
+            break;
+        }
+        if options.max_entries.is_some_and(|limit| index >= limit) {
+            report.incomplete = true;
+            report.stop_reason = Some(CasFsckStopReason::EntryBudget);
+            break;
+        }
+        report.entries_scanned += 1;
         if hash.contains(".tmp-") {
             report.staged += 1;
             file_statuses.push(CasFileStatus {
@@ -134,34 +205,36 @@ pub async fn check_cas(
 
         // Check if hash is in the DB
         if known_hash_set.contains(&hash) {
+            present_hashes.insert(hash.clone());
             let blob_id = known_blake3_hashes
                 .iter()
                 .find(|(h, _)| h == &hash)
                 .map(|(_, id)| id.clone())
                 .unwrap_or_default();
-            matched_blob_ids.insert(blob_id.clone());
-
             // Verify the file content matches the hash
             match verify_cas_file_content(&path, &hash).await {
-                Ok(true) => {
-                    report.referenced += 1;
-                    file_statuses.push(CasFileStatus {
-                        hash,
-                        path: path.to_string(),
-                        size_bytes: size,
-                        status: CasStatus::Referenced,
-                        blob_id: Some(blob_id),
-                    });
-                }
-                Ok(false) => {
-                    report.corrupt += 1;
-                    file_statuses.push(CasFileStatus {
-                        hash,
-                        path: path.to_string(),
-                        size_bytes: size,
-                        status: CasStatus::Corrupt,
-                        blob_id: Some(blob_id),
-                    });
+                Ok((matches, bytes_read)) => {
+                    report.bytes_verified = report.bytes_verified.saturating_add(bytes_read);
+                    pacer.record_and_throttle(1, bytes_read).await;
+                    if matches {
+                        report.referenced += 1;
+                        file_statuses.push(CasFileStatus {
+                            hash,
+                            path: path.to_string(),
+                            size_bytes: size,
+                            status: CasStatus::Referenced,
+                            blob_id: Some(blob_id),
+                        });
+                    } else {
+                        report.corrupt += 1;
+                        file_statuses.push(CasFileStatus {
+                            hash,
+                            path: path.to_string(),
+                            size_bytes: size,
+                            status: CasStatus::Corrupt,
+                            blob_id: Some(blob_id),
+                        });
+                    }
                 }
                 Err(error) => {
                     report.malformed += 1;
@@ -195,79 +268,73 @@ pub async fn check_cas(
             if is_recent {
                 report.protected_recent += 1;
             }
-            if apply && !is_recent {
-                if cas_hash_is_referenced(pool, &hash).await?.is_some() {
-                    report.recheck_protected += 1;
-                    file_statuses.push(CasFileStatus {
-                        hash,
-                        path: path.to_string(),
-                        size_bytes: size,
-                        status: CasStatus::Orphaned,
-                        blob_id: None,
-                    });
-                    continue;
-                }
-                match tokio::fs::remove_file(path.as_str()).await {
-                    Ok(()) => {
-                        report.removed += 1;
-                        file_statuses.push(CasFileStatus {
-                            hash: hash.clone(),
-                            path: path.to_string(),
-                            size_bytes: size,
-                            status: CasStatus::Orphaned,
-                            blob_id: None,
-                        });
-                    }
-                    Err(error) => {
-                        tracing::warn!(
-                            error = %error,
-                            path = %path,
-                            "Failed to remove orphaned CAS file"
-                        );
-                        file_statuses.push(CasFileStatus {
-                            hash,
-                            path: path.to_string(),
-                            size_bytes: size,
-                            status: CasStatus::Orphaned,
-                            blob_id: None,
-                        });
-                    }
-                }
-            } else {
+            orphan_candidates.push((hash.clone(), path.clone(), size, is_recent));
+            file_statuses.push(CasFileStatus {
+                hash,
+                path: path.to_string(),
+                size_bytes: size,
+                status: CasStatus::Orphaned,
+                blob_id: None,
+            });
+        }
+    }
+
+    // Detect missing: SINEXBLAKE3 blobs in DB but not on disk
+    if !report.incomplete {
+        for (hash, blob_id) in &known_blake3_hashes {
+            if !present_hashes.contains(hash) {
+                report.missing += 1;
+                let path = content_store
+                    .local_blake3_cas_path_for_hash(hash)
+                    .map_or_else(
+                        |_| {
+                            content_store
+                                .root_path()
+                                .join(LOCAL_BLAKE3_CAS_DIR)
+                                .join("<invalid-hash>")
+                                .join(hash)
+                        },
+                        |path| path,
+                    );
                 file_statuses.push(CasFileStatus {
-                    hash,
+                    hash: hash.clone(),
                     path: path.to_string(),
-                    size_bytes: size,
-                    status: CasStatus::Orphaned,
-                    blob_id: None,
+                    size_bytes: 0,
+                    status: CasStatus::Missing,
+                    blob_id: Some(blob_id.clone()),
                 });
             }
         }
     }
 
-    // Detect missing: SINEXBLAKE3 blobs in DB but not on disk
-    for (hash, blob_id) in &known_blake3_hashes {
-        if !matched_blob_ids.contains(blob_id) {
-            report.missing += 1;
-            let path = content_store
-                .local_blake3_cas_path_for_hash(hash)
-                .map_or_else(
-                    |_| {
-                        content_store
-                            .root_path()
-                            .join(LOCAL_BLAKE3_CAS_DIR)
-                            .join("<invalid-hash>")
-                            .join(hash)
-                    },
-                    |path| path,
-                );
-            file_statuses.push(CasFileStatus {
-                hash: hash.clone(),
-                path: path.to_string(),
-                size_bytes: 0,
-                status: CasStatus::Missing,
-                blob_id: Some(blob_id.clone()),
-            });
+    if apply && report.incomplete {
+        return Err(SinexError::validation(format!(
+            "refusing CAS orphan deletion because fsck stopped before scanning the complete store ({:?})",
+            report.stop_reason
+        )));
+    }
+
+    // Apply deletion only after the complete, read-only classification pass.
+    // This prevents a late budget stop from leaving an apparently successful
+    // partial destructive run.
+    if apply {
+        for (hash, path, size, is_recent) in orphan_candidates {
+            if is_recent {
+                continue;
+            }
+            if cas_hash_is_referenced(pool, &hash).await?.is_some() {
+                report.recheck_protected += 1;
+                continue;
+            }
+            match tokio::fs::remove_file(path.as_str()).await {
+                Ok(()) => report.removed += 1,
+                Err(error) => tracing::warn!(
+                    error = %error,
+                    path = %path,
+                    size_bytes = size,
+                    "Failed to remove orphaned CAS file"
+                ),
+            }
         }
     }
 
@@ -288,11 +355,16 @@ async fn cas_hash_is_referenced(pool: &PgPool, hash: &str) -> RuntimeResult<Opti
         SELECT id::text
         FROM core.blobs
         WHERE annex_backend = $1 AND checksum_blake3 = $2
+        UNION ALL
+        SELECT 'material-manifest:' || id::text
+        FROM raw.source_material_registry
+        WHERE metadata->'material_manifest'->>'content_key' LIKE $3
         LIMIT 1
         ",
     )
     .bind(LOCAL_BLAKE3_CAS_BACKEND)
     .bind(hash)
+    .bind(format!("%--{hash}"))
     .fetch_optional(pool)
     .await
     .map_err(|error| {
@@ -329,7 +401,9 @@ async fn load_sinexblake3_hashes(pool: &PgPool) -> RuntimeResult<Vec<(String, St
     )
     .fetch_all(pool)
     .await
-    .map_err(|e| SinexError::database(format!("failed to load material manifest references: {e}")))?;
+    .map_err(|e| {
+        SinexError::database(format!("failed to load material manifest references: {e}"))
+    })?;
     for (material_id, metadata) in material_rows {
         let Some(content_key) = metadata
             .get("material_manifest")
@@ -343,10 +417,7 @@ async fn load_sinexblake3_hashes(pool: &PgPool) -> RuntimeResult<Vec<(String, St
             continue;
         };
         if parsed.is_local_blake3_cas() {
-            references.push((
-                parsed.digest,
-                format!("material-manifest:{material_id}"),
-            ));
+            references.push((parsed.digest, format!("material-manifest:{material_id}")));
         }
     }
     Ok(references)
@@ -356,10 +427,23 @@ async fn load_sinexblake3_hashes(pool: &PgPool) -> RuntimeResult<Vec<(String, St
 async fn verify_cas_file_content(
     path: &camino::Utf8Path,
     expected_hash: &str,
-) -> RuntimeResult<bool> {
-    let content = tokio::fs::read(path).await.map_err(SinexError::io)?;
-    let computed = blake3::hash(&content).to_hex();
-    Ok(computed.as_str() == expected_hash)
+) -> RuntimeResult<(bool, u64)> {
+    const BUFFER_SIZE: usize = 1024 * 1024;
+    let mut file = tokio::fs::File::open(path).await.map_err(SinexError::io)?;
+    let mut hasher = blake3::Hasher::new();
+    let mut buffer = vec![0_u8; BUFFER_SIZE];
+    let mut bytes_read = 0_u64;
+    loop {
+        let read = file.read(&mut buffer).await.map_err(SinexError::io)?;
+        if read == 0 {
+            break;
+        }
+        hasher.update(&buffer[..read]);
+        bytes_read = bytes_read.saturating_add(read as u64);
+        tokio::task::yield_now().await;
+    }
+    let computed = hasher.finalize().to_hex();
+    Ok((computed.as_str() == expected_hash, bytes_read))
 }
 
 /// Remove empty prefix directories under `sinex-cas/` after orphan cleanup.
