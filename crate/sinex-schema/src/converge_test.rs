@@ -1,6 +1,9 @@
 // Exception to per-crate tests/: this exercises private registry lookup helpers
 // without widening the convergence API.
-use super::{convergible_tables, find_meta_in};
+use super::{
+    DESTRUCTIVE_SCHEMA_CONTRACT, DESTRUCTIVE_SCHEMA_VERSION, convergible_tables,
+    destructive_schema_contract, find_meta_in,
+};
 use crate::apply::ApplyError;
 use crate::defs::TableMeta;
 use xtask::sandbox::prelude::*;
@@ -37,4 +40,18 @@ async fn convergible_tables_resolve_known_metadata() -> TestResult<()> {
     names.dedup();
     assert_eq!(names.len(), total, "convergible registry has duplicate tables");
     Ok(())
+}
+
+#[test]
+fn destructive_schema_contract_tracks_registry_and_binary_epoch() {
+    let contract = destructive_schema_contract().expect("convergence registry must resolve");
+    assert_eq!(
+        contract, DESTRUCTIVE_SCHEMA_CONTRACT,
+        "columns_to_drop changed: update the destructive schema contract and review the epoch bump"
+    );
+    assert_eq!(
+        DESTRUCTIVE_SCHEMA_VERSION,
+        sinex_primitives::EXPECTED_BINARY_SCHEMA_VERSION,
+        "destructive convergence and runtime binary guard must share one compatibility epoch"
+    );
 }

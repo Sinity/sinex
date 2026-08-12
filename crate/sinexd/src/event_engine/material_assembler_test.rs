@@ -107,7 +107,7 @@ async fn material_dlq_requires_and_records_durable_evidence(ctx: TestContext) ->
     let mut stream = async_nats::jetstream::new(ctx.nats_client())
         .get_stream(&dlq_stream_name)
         .await?;
-    let state = stream.info().await?.state;
+    let state = stream.info().await?.state.clone();
     assert_eq!(state.messages, 1);
     let entry = stream.direct_get(state.first_sequence).await?;
     let expected_failure_id = durable_failure_id.to_string();

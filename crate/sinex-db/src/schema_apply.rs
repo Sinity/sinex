@@ -88,6 +88,19 @@ pub async fn apply_schema(pool: &DbPool) -> Result<()> {
         }
     };
 
+    let destructive_contract = crate::schema::converge::destructive_schema_contract()
+        .map_err(map_apply_error)?;
+    if destructive_contract
+        .split('|')
+        .nth(1)
+        .is_some_and(|changes| !changes.is_empty())
+    {
+        warn!(
+            compatibility_epoch = sinex_primitives::EXPECTED_BINARY_SCHEMA_VERSION,
+            destructive_contract,
+            "startup schema apply includes destructive column drops; rollback to an older binary is refused"
+        );
+    }
     info!("Applying declarative database schema...");
     crate::schema::apply::apply(pool)
         .await

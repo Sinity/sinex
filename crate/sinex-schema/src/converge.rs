@@ -150,6 +150,23 @@ pub struct ConvergibleTable {
     pub mirror: Option<MirrorSpec>,
 }
 
+/// Compatibility epoch for declarative changes that permanently remove data.
+///
+/// This is deliberately separate from ordinary additive schema convergence:
+/// an older binary must refuse to start after a column drop, because its
+/// declarative view could otherwise add the dropped column back as an empty
+/// relation.  Update this epoch whenever the canonical destructive inventory
+/// below changes, and keep it equal to
+/// `sinex_primitives::EXPECTED_BINARY_SCHEMA_VERSION`.
+pub const DESTRUCTIVE_SCHEMA_VERSION: &str = "2";
+
+/// Stable, reviewable representation of the destructive convergence contract.
+/// The test in `converge_test.rs` compares this against the live registry, so
+/// changing `columns_to_drop` without updating this contract fails locally.
+pub const DESTRUCTIVE_SCHEMA_CONTRACT: &str = concat!(
+    "2|audit.archived_events:node_version|audit.archived_events:occurrence_id|audit.archived_events:superseded_by_event_id|core.events:node_version|core.events:occurrence_id"
+);
+
 // ─── Column helpers ──────────────────────────────────────────────────────────
 
 /// Returns true when a column uses either the sea-query `Generated` spec or
@@ -1243,6 +1260,29 @@ pub fn convergible_tables() -> Result<Vec<ConvergibleTable>, ApplyError> {
             mirror: None,
         },
     ])
+}
+
+/// Return the canonical destructive convergence inventory in stable order.
+///
+/// This inventory is used for startup warnings and the compatibility contract;
+/// callers must not infer it from log text or from a hand-maintained list.
+pub fn destructive_schema_contract() -> Result<String, ApplyError> {
+    let mut changes = Vec::new();
+    for table in convergible_tables()? {
+        for column in table.columns_to_drop {
+            changes.push(format!(
+                "{}:{}",
+                table.meta.qualified_name, column
+            ));
+        }
+        if let Some(mirror) = table.mirror {
+            for column in mirror.columns_to_drop {
+                changes.push(format!("{}.{}:{}", mirror.schema, mirror.table, column));
+            }
+        }
+    }
+    changes.sort_unstable();
+    Ok(format!("{DESTRUCTIVE_SCHEMA_VERSION}|{}", changes.join("|")))
 }
 
 /// Converges each registered table against the live database.
