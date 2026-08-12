@@ -133,11 +133,17 @@ impl WorkAdmission {
         &self,
         cancellation: &WorkCancellation,
     ) -> RuntimeResult<OwnedSemaphorePermit> {
+        // Register before checking the sticky flag so a cancellation between
+        // the check and the select cannot be lost by notify_waiters().
+        let cancellation_wake = cancellation.wake.notified();
+        if cancellation.is_cancelled() {
+            return Err(SinexError::validation("work admission cancelled"));
+        }
         tokio::select! {
             permit = self.permits.clone().acquire_owned() => {
                 permit.map_err(|error| SinexError::validation(format!("work admission closed: {error}")))
             }
-            () = cancellation.wake.notified() => {
+            () = cancellation_wake => {
                 Err(SinexError::validation("work admission cancelled"))
             }
         }

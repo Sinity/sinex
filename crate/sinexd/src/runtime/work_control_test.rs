@@ -36,6 +36,31 @@ async fn admission_is_bounded_and_cancellation_aware() {
 }
 
 #[tokio::test]
+async fn admission_rejects_cancellation_before_waiter_registration() {
+    let admission = WorkAdmission::new(1);
+    let first_cancel = WorkCancellation::new();
+    let _first = admission.acquire(&first_cancel).await.unwrap();
+
+    let already_cancelled = WorkCancellation::new();
+    already_cancelled.cancel();
+    let result = tokio::time::timeout(
+        std::time::Duration::from_secs(1),
+        admission.acquire(&already_cancelled),
+    )
+    .await
+    .expect("already-cancelled admission must not wait");
+    assert!(result.is_err());
+
+    let cancelled_before_wait = WorkCancellation::new();
+    let acquire = admission.acquire(&cancelled_before_wait);
+    cancelled_before_wait.cancel();
+    let result = tokio::time::timeout(std::time::Duration::from_secs(1), acquire)
+        .await
+        .expect("cancellation before waiter registration must not wait");
+    assert!(result.is_err());
+}
+
+#[tokio::test]
 async fn budget_rejects_a_batch_before_accounting_it() {
     let cancellation = WorkCancellation::new();
     let mut controller = WorkController::new(
