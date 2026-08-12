@@ -283,7 +283,12 @@ impl JetStreamConsumer {
                 Provenance::Material {
                     id, anchor_byte, ..
                 } => (*id.as_uuid(), *anchor_byte),
-                Provenance::Derived { .. } => continue,
+                Provenance::Derived { .. } => {
+                    // Preserve the pre-existing persistence path for derived
+                    // events; this resolver only owns material timestamps.
+                    valid_indices.push(idx);
+                    continue;
+                }
             };
             if let Some((timing, reader)) = cache.get(&material_id) {
                 let (ts_orig, rung) = reader.derive_ts_orig(anchor_byte, timing);
@@ -294,6 +299,12 @@ impl JetStreamConsumer {
                 } else {
                     valid_indices.push(idx);
                 }
+            } else {
+                // Readiness guarantees this should be unreachable. Keep the
+                // event in the existing persistence path if the guarantee is
+                // violated, so the normal missing-timestamp/error handling
+                // settles the source message instead of dropping the child.
+                valid_indices.push(idx);
             }
         }
 
