@@ -1,15 +1,11 @@
 use super::{
-    CasFsckOptions, CasStatus, LOCAL_BLAKE3_CAS_BACKEND, check_cas, check_cas_with_options,
+    CasFsckOptions, CasFsckStopReason, CasStatus, LOCAL_BLAKE3_CAS_BACKEND, check_cas,
+    check_cas_with_options, check_cas_with_options_and_control,
 };
-
-#[test]
-fn default_fsck_options_do_not_impose_arbitrary_limits() {
-    let options = CasFsckOptions::default();
-    assert_eq!(options.max_runtime, None);
-    assert_eq!(options.max_entries, None);
-    assert_eq!(options.verify_bytes_per_sec, None);
-}
-use crate::runtime::content_store::{ContentStoreConfig, MaterialContentStore, gc::sweep_orphans};
+use crate::runtime::content_store::{
+    CasWalkCheckpoint, ContentStoreConfig, MaterialContentStore, gc::sweep_orphans,
+};
+use crate::runtime::work_control::WorkCancellation;
 use camino::Utf8PathBuf;
 use serde_json::json;
 use sinex_db::models::Blob;
@@ -18,6 +14,43 @@ use sinex_primitives::{Timestamp, Uuid};
 use std::time::{Duration, SystemTime};
 use xtask::sandbox::prelude::*;
 
+#[test]
+fn default_fsck_options_do_not_impose_arbitrary_limits() {
+    let options = CasFsckOptions::default();
+    assert_eq!(options.max_runtime, None);
+    assert_eq!(options.max_entries, None);
+    assert_eq!(options.verify_bytes_per_sec, None);
+}
+
+#[sinex_test]
+async fn cancelled_fsck_reports_incomplete_without_scanning(
+    ctx: TestContext,
+) -> TestResult<()> {
+    let store_dir = tempfile::tempdir()?;
+    let root_path = Utf8PathBuf::from_path_buf(store_dir.path().to_path_buf())
+        .expect("temporary content-store path must be UTF-8");
+    let content_store = MaterialContentStore::new(ContentStoreConfig {
+        root_path,
+        ..Default::default()
+    })?;
+    let cancellation = WorkCancellation::new();
+    cancellation.cancel();
+
+    let (report, statuses, checkpoint) = check_cas_with_options_and_control(
+        ctx.pool(),
+        &content_store,
+        false,
+        CasFsckOptions::default(),
+        None,
+        cancellation,
+    )
+    .await?;
+    assert!(report.incomplete);
+    assert_eq!(report.stop_reason, Some(CasFsckStopReason::Cancelled));
+    assert!(statuses.is_empty());
+    assert_eq!(checkpoint, CasWalkCheckpoint::default());
+    Ok(())
+}
 #[sinex_test]
 async fn live_source_material_manifest_cas_reference_survives_apply_orphan_sweep(
     ctx: TestContext,

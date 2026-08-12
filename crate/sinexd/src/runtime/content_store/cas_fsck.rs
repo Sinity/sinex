@@ -12,17 +12,21 @@
 //! By default runs in dry-run mode. `--apply` removes orphaned files.
 
 use crate::runtime::{RuntimeResult, SinexError};
+use futures::StreamExt;
 use serde::{Deserialize, Serialize};
 use serde_json::Value as JsonValue;
 use sqlx::PgPool;
-use std::collections::HashSet;
-use std::time::{Duration as StdDuration, Instant, SystemTime};
+use std::collections::{HashMap, HashSet};
+use std::time::{Duration as StdDuration, SystemTime};
 use tokio::io::AsyncReadExt;
 
 use super::{
-    ContentStoreKey, LOCAL_BLAKE3_CAS_BACKEND, LOCAL_BLAKE3_CAS_DIR, MaterialContentStore,
+    CasWalkCheckpoint, ContentStoreKey, LOCAL_BLAKE3_CAS_BACKEND, LOCAL_BLAKE3_CAS_DIR,
+    MaterialContentStore,
 };
-use crate::runtime::work_control::{WorkBudget, WorkCancellation, WorkController, WorkIdentity};
+use crate::runtime::work_control::{
+    WorkBudget, WorkCancellation, WorkController, WorkIdentity, WorkOutcome, WorkStopReason,
+};
 
 /// Result of a single CAS file check.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -97,6 +101,7 @@ const CAS_ORPHAN_GRACE: StdDuration = StdDuration::from_secs(10 * 60);
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum CasFsckStopReason {
+    Cancelled,
     RuntimeBudget,
     EntryBudget,
 }
@@ -143,128 +148,259 @@ pub async fn check_cas_with_options(
     apply: bool,
     options: CasFsckOptions,
 ) -> RuntimeResult<(CasFsckReport, Vec<CasFileStatus>)> {
-    let started = Instant::now();
-    let entries = content_store.walk_cas().await?;
+    let (report, statuses, _) = check_cas_with_options_and_control(
+        pool,
+        content_store,
+        apply,
+        options,
+        None,
+        WorkCancellation::new(),
+    )
+    .await?;
+    Ok((report, statuses))
+}
+
+/// Run fsck with an externally owned cancellation token and resumable CAS
+/// cursor. The returned cursor is safe to persist and pass back after a
+/// partial dry-run. It advances only at completed prefix directories.
+pub async fn check_cas_with_options_and_control(
+    pool: &PgPool,
+    content_store: &MaterialContentStore,
+    apply: bool,
+    options: CasFsckOptions,
+    checkpoint: Option<CasWalkCheckpoint>,
+    cancellation: WorkCancellation,
+) -> RuntimeResult<(CasFsckReport, Vec<CasFileStatus>, CasWalkCheckpoint)> {
+    let initial_checkpoint = checkpoint.unwrap_or_default();
+    let mut walker = content_store.cas_walker(Some(initial_checkpoint.clone())).await?;
     let mut file_statuses: Vec<CasFileStatus> = Vec::new();
     let mut report = CasFsckReport::default();
-    let mut orphan_candidates = Vec::new();
     let mut present_hashes: HashSet<String> = HashSet::new();
     let mut work = WorkController::new(
         WorkIdentity::ephemeral("cas-fsck", content_store.root_path().as_str()),
         WorkBudget {
-            // The scan-level deadline below turns this into an incomplete,
-            // reportable pass; the controller owns rate/cancellation waits.
-            max_runtime: None,
+            max_runtime: options.max_runtime,
             bytes_per_sec: options.verify_bytes_per_sec,
             ..WorkBudget::default()
         },
-        WorkCancellation::new(),
+        cancellation,
     );
+    let mut progress_checkpoint = initial_checkpoint;
+    let mut scan_complete = false;
+
+    if work.cancellation().is_cancelled() {
+        report.incomplete = true;
+        report.stop_reason = Some(CasFsckStopReason::Cancelled);
+        if apply {
+            return Err(SinexError::validation(
+                "refusing CAS orphan deletion because fsck was cancelled before scanning",
+            ));
+        }
+        return Ok((report, file_statuses, progress_checkpoint));
+    }
 
     // Build a set of known hashes from core.blobs for SINEXBLAKE3 entries
-    let known_blake3_hashes = load_sinexblake3_hashes(pool).await?;
-    if apply && !entries.is_empty() && known_blake3_hashes.is_empty() {
+    let known_blake3_hashes: HashMap<_, _> = load_sinexblake3_hashes(pool)
+        .await?
+        .into_iter()
+        .collect();
+    let known_hash_set: HashSet<String> = known_blake3_hashes.keys().cloned().collect();
+
+    'scan: loop {
+        let batch = walker.next_batch(256).await?;
+        progress_checkpoint = batch.checkpoint.clone();
+        for (hash, path, size) in batch.entries {
+            if options
+                .max_entries
+                .is_some_and(|limit| report.entries_scanned >= limit)
+            {
+                report.incomplete = true;
+                report.stop_reason = Some(CasFsckStopReason::EntryBudget);
+                break 'scan;
+            }
+            if let Err(error) = work.check(0, 0) {
+                if let Some(reason) = fsck_stop_reason(&work) {
+                    report.incomplete = true;
+                    report.stop_reason = Some(reason);
+                    break 'scan;
+                }
+                return Err(error);
+            }
+            report.entries_scanned += 1;
+            if hash.contains(".tmp-") {
+                report.staged += 1;
+                file_statuses.push(CasFileStatus {
+                    hash,
+                    path: path.to_string(),
+                    size_bytes: size,
+                    status: CasStatus::Staged,
+                    blob_id: None,
+                });
+                continue;
+            }
+
+            // Check if hash is in the DB
+            if known_hash_set.contains(&hash) {
+                present_hashes.insert(hash.clone());
+                let blob_id = known_blake3_hashes.get(&hash).cloned().unwrap_or_default();
+                // Verify the file content matches the hash.
+                let cancellation = work.cancellation();
+                match verify_cas_file_content(&path, &hash, &cancellation).await {
+                    Ok((matches, bytes_read)) => {
+                        report.bytes_verified = report.bytes_verified.saturating_add(bytes_read);
+                        if let Err(error) = work
+                            .record_batch("verify", 1, bytes_read, Some(path.to_string()))
+                            .await
+                        {
+                            if let Some(reason) = fsck_stop_reason(&work) {
+                                report.incomplete = true;
+                                report.stop_reason = Some(reason);
+                                break 'scan;
+                            }
+                            return Err(error);
+                        }
+                        if matches {
+                            report.referenced += 1;
+                            file_statuses.push(CasFileStatus {
+                                hash,
+                                path: path.to_string(),
+                                size_bytes: size,
+                                status: CasStatus::Referenced,
+                                blob_id: Some(blob_id),
+                            });
+                        } else {
+                            report.corrupt += 1;
+                            file_statuses.push(CasFileStatus {
+                                hash,
+                                path: path.to_string(),
+                                size_bytes: size,
+                                status: CasStatus::Corrupt,
+                                blob_id: Some(blob_id),
+                            });
+                        }
+                    }
+                    Err(error) => {
+                        if let Some(reason) = fsck_stop_reason(&work) {
+                            report.incomplete = true;
+                            report.stop_reason = Some(reason);
+                            break 'scan;
+                        }
+                        report.malformed += 1;
+                        tracing::warn!(
+                            error = %error,
+                            hash = %hash,
+                            "Failed to verify CAS file content"
+                        );
+                        file_statuses.push(CasFileStatus {
+                            hash: hash.clone(),
+                            path: path.to_string(),
+                            size_bytes: size,
+                            status: CasStatus::Malformed,
+                            blob_id: Some(blob_id),
+                        });
+                    }
+                }
+            } else {
+                // Orphaned: on disk, not in DB.
+                report.orphaned += 1;
+                report.orphaned_bytes += size;
+                let is_recent = tokio::fs::metadata(path.as_std_path())
+                    .await
+                    .ok()
+                    .and_then(|metadata| metadata.modified().ok())
+                    .is_some_and(|modified| {
+                        SystemTime::now()
+                            .duration_since(modified)
+                            .is_ok_and(|age| age < CAS_ORPHAN_GRACE)
+                    });
+                if is_recent {
+                    report.protected_recent += 1;
+                }
+                file_statuses.push(CasFileStatus {
+                    hash,
+                    path: path.to_string(),
+                    size_bytes: size,
+                    status: CasStatus::Orphaned,
+                    blob_id: None,
+                });
+            }
+        }
+        if batch.complete {
+            scan_complete = true;
+            break;
+        }
+    }
+
+    if !scan_complete && !report.incomplete {
+        report.incomplete = true;
+        report.stop_reason = Some(CasFsckStopReason::RuntimeBudget);
+    }
+
+    if report.incomplete {
+        if apply {
+            return Err(SinexError::validation(format!(
+                "refusing CAS orphan deletion because fsck stopped before scanning the complete store ({:?})",
+                report.stop_reason
+            )));
+        }
+        return Ok((report, file_statuses, progress_checkpoint));
+    }
+
+    if apply && report.entries_scanned > 0 && known_blake3_hashes.is_empty() {
         return Err(SinexError::validation(
             "refusing CAS orphan deletion because the paired database has no SINEXBLAKE3 rows",
         ));
     }
     if apply
         && !known_blake3_hashes.is_empty()
-        && entries.len() > known_blake3_hashes.len().saturating_mul(2)
+        && report.entries_scanned > known_blake3_hashes.len().saturating_mul(2)
     {
         return Err(SinexError::validation(format!(
             "refusing CAS orphan deletion because the scanned store has an implausibly high orphan ratio ({} files vs {} DB rows)",
-            entries.len(),
+            report.entries_scanned,
             known_blake3_hashes.len()
         )));
     }
-    let mut known_hash_set: HashSet<String> = HashSet::new();
-    for (hash, _blob_id) in &known_blake3_hashes {
-        known_hash_set.insert(hash.clone());
-    }
-    for (index, (hash, path, size)) in entries.into_iter().enumerate() {
-        if options
-            .max_runtime
-            .is_some_and(|limit| started.elapsed() >= limit)
-        {
-            report.incomplete = true;
-            report.stop_reason = Some(CasFsckStopReason::RuntimeBudget);
-            break;
-        }
-        if options.max_entries.is_some_and(|limit| index >= limit) {
-            report.incomplete = true;
-            report.stop_reason = Some(CasFsckStopReason::EntryBudget);
-            break;
-        }
-        report.entries_scanned += 1;
-        if hash.contains(".tmp-") {
-            report.staged += 1;
-            file_statuses.push(CasFileStatus {
-                hash,
-                path: path.to_string(),
-                size_bytes: size,
-                status: CasStatus::Staged,
-                blob_id: None,
-            });
-            continue;
-        }
 
-        // Check if hash is in the DB
-        if known_hash_set.contains(&hash) {
-            present_hashes.insert(hash.clone());
-            let blob_id = known_blake3_hashes
-                .iter()
-                .find(|(h, _)| h == &hash)
-                .map(|(_, id)| id.clone())
-                .unwrap_or_default();
-            // Verify the file content matches the hash
-            match verify_cas_file_content(&path, &hash).await {
-                Ok((matches, bytes_read)) => {
-                    report.bytes_verified = report.bytes_verified.saturating_add(bytes_read);
-                    work
-                        .record_batch("verify", 1, bytes_read, Some(path.to_string()))
-                        .await?;
-                    if matches {
-                        report.referenced += 1;
-                        file_statuses.push(CasFileStatus {
-                            hash,
-                            path: path.to_string(),
-                            size_bytes: size,
-                            status: CasStatus::Referenced,
-                            blob_id: Some(blob_id),
-                        });
-                    } else {
-                        report.corrupt += 1;
-                        file_statuses.push(CasFileStatus {
-                            hash,
-                            path: path.to_string(),
-                            size_bytes: size,
-                            status: CasStatus::Corrupt,
-                            blob_id: Some(blob_id),
-                        });
-                    }
-                }
-                Err(error) => {
-                    report.malformed += 1;
-                    tracing::warn!(
-                        error = %error,
-                        hash = %hash,
-                        "Failed to verify CAS file content"
-                    );
-                    file_statuses.push(CasFileStatus {
-                        hash: hash.clone(),
-                        path: path.to_string(),
-                        size_bytes: size,
-                        status: CasStatus::Malformed,
-                        blob_id: Some(blob_id),
-                    });
-                }
-            }
-        } else {
-            // Orphaned: on disk, not in DB
-            report.orphaned += 1;
-            report.orphaned_bytes += size;
-            let is_recent = tokio::fs::metadata(path.as_std_path())
+    // Detect missing: SINEXBLAKE3 blobs in DB but not on disk
+    for (hash, blob_id) in &known_blake3_hashes {
+        if !present_hashes.contains(hash) {
+            report.missing += 1;
+            let path = content_store
+                .local_blake3_cas_path_for_hash(hash)
+                .map_or_else(
+                    |_| {
+                        content_store
+                            .root_path()
+                            .join(LOCAL_BLAKE3_CAS_DIR)
+                            .join("<invalid-hash>")
+                            .join(hash)
+                    },
+                    |path| path,
+                );
+            file_statuses.push(CasFileStatus {
+                hash: hash.clone(),
+                path: path.to_string(),
+                size_bytes: 0,
+                status: CasStatus::Missing,
+                blob_id: Some(blob_id.clone()),
+            });
+        }
+    }
+
+    // Apply deletion only after the complete, read-only classification pass.
+    // The returned statuses are also the bounded walk's classification output,
+    // so no separate orphan-candidate list is retained.
+    if apply {
+        work.destructive_boundary_check()?;
+        for status in file_statuses
+            .iter()
+            .filter(|status| status.status == CasStatus::Orphaned)
+        {
+            let hash = &status.hash;
+            let path = &status.path;
+            let size = status.size_bytes;
+            let is_recent = tokio::fs::metadata(path)
                 .await
                 .ok()
                 .and_then(|metadata| metadata.modified().ok())
@@ -274,63 +410,9 @@ pub async fn check_cas_with_options(
                         .is_ok_and(|age| age < CAS_ORPHAN_GRACE)
                 });
             if is_recent {
-                report.protected_recent += 1;
-            }
-            orphan_candidates.push((hash.clone(), path.clone(), size, is_recent));
-            file_statuses.push(CasFileStatus {
-                hash,
-                path: path.to_string(),
-                size_bytes: size,
-                status: CasStatus::Orphaned,
-                blob_id: None,
-            });
-        }
-    }
-
-    // Detect missing: SINEXBLAKE3 blobs in DB but not on disk
-    if !report.incomplete {
-        for (hash, blob_id) in &known_blake3_hashes {
-            if !present_hashes.contains(hash) {
-                report.missing += 1;
-                let path = content_store
-                    .local_blake3_cas_path_for_hash(hash)
-                    .map_or_else(
-                        |_| {
-                            content_store
-                                .root_path()
-                                .join(LOCAL_BLAKE3_CAS_DIR)
-                                .join("<invalid-hash>")
-                                .join(hash)
-                        },
-                        |path| path,
-                    );
-                file_statuses.push(CasFileStatus {
-                    hash: hash.clone(),
-                    path: path.to_string(),
-                    size_bytes: 0,
-                    status: CasStatus::Missing,
-                    blob_id: Some(blob_id.clone()),
-                });
-            }
-        }
-    }
-
-    if apply && report.incomplete {
-        return Err(SinexError::validation(format!(
-            "refusing CAS orphan deletion because fsck stopped before scanning the complete store ({:?})",
-            report.stop_reason
-        )));
-    }
-
-    // Apply deletion only after the complete, read-only classification pass.
-    // This prevents a late budget stop from leaving an apparently successful
-    // partial destructive run.
-    if apply {
-        for (hash, path, size, is_recent) in orphan_candidates {
-            if is_recent {
                 continue;
             }
-            if cas_hash_is_referenced(pool, &hash).await?.is_some() {
+            if cas_hash_is_referenced(pool, hash).await?.is_some() {
                 report.recheck_protected += 1;
                 continue;
             }
@@ -351,7 +433,296 @@ pub async fn check_cas_with_options(
         clean_empty_cas_dirs(content_store).await;
     }
 
-    Ok((report, file_statuses))
+    Ok((report, file_statuses, progress_checkpoint))
+}
+
+/// Run a dry-run fsck with bounded CAS-sized memory.
+///
+/// Unlike `check_cas_with_options`, this API does not retain the returned
+/// status list or the complete database authority set. It emits each status
+/// to `on_status`, checks authority per file, and streams missing-authority
+/// rows from PostgreSQL. The callback must provide any durable/reporting
+/// sink the caller needs. Apply mode is intentionally unsupported because a
+/// destructive pass needs a stable candidate set or an external snapshot.
+pub async fn check_cas_bounded_with_control<F>(
+    pool: &PgPool,
+    content_store: &MaterialContentStore,
+    apply: bool,
+    options: CasFsckOptions,
+    checkpoint: Option<CasWalkCheckpoint>,
+    cancellation: WorkCancellation,
+    mut on_status: F,
+) -> RuntimeResult<(CasFsckReport, CasWalkCheckpoint)>
+where
+    F: FnMut(CasFileStatus),
+{
+    if apply {
+        return Err(SinexError::validation(
+            "bounded CAS fsck reporting does not support apply mode",
+        ));
+    }
+
+    let initial_checkpoint = checkpoint.unwrap_or_default();
+    let mut walker = content_store.cas_walker(Some(initial_checkpoint.clone())).await?;
+    let mut report = CasFsckReport::default();
+    let mut work = WorkController::new(
+        WorkIdentity::ephemeral("cas-fsck-bounded", content_store.root_path().as_str()),
+        WorkBudget {
+            max_runtime: options.max_runtime,
+            bytes_per_sec: options.verify_bytes_per_sec,
+            ..WorkBudget::default()
+        },
+        cancellation,
+    );
+    let mut progress_checkpoint = initial_checkpoint;
+    let mut scan_complete = false;
+
+    if work.cancellation().is_cancelled() {
+        report.incomplete = true;
+        report.stop_reason = Some(CasFsckStopReason::Cancelled);
+        return Ok((report, progress_checkpoint));
+    }
+
+    'scan: loop {
+        let batch = walker.next_batch(256).await?;
+        progress_checkpoint = batch.checkpoint.clone();
+        for (hash, path, size) in batch.entries {
+            if options
+                .max_entries
+                .is_some_and(|limit| report.entries_scanned >= limit)
+            {
+                report.incomplete = true;
+                report.stop_reason = Some(CasFsckStopReason::EntryBudget);
+                break 'scan;
+            }
+            if let Err(error) = work.check(0, 0) {
+                if let Some(reason) = fsck_stop_reason(&work) {
+                    report.incomplete = true;
+                    report.stop_reason = Some(reason);
+                    break 'scan;
+                }
+                return Err(error);
+            }
+            report.entries_scanned += 1;
+            if hash.contains(".tmp-") {
+                report.staged += 1;
+                on_status(CasFileStatus {
+                    hash,
+                    path: path.to_string(),
+                    size_bytes: size,
+                    status: CasStatus::Staged,
+                    blob_id: None,
+                });
+                continue;
+            }
+
+            let blob_id = cas_hash_is_referenced(pool, &hash).await?;
+            if let Some(blob_id) = blob_id {
+                let cancellation = work.cancellation();
+                match verify_cas_file_content(&path, &hash, &cancellation).await {
+                    Ok((matches, bytes_read)) => {
+                        report.bytes_verified = report.bytes_verified.saturating_add(bytes_read);
+                        if let Err(error) = work
+                            .record_batch("verify", 1, bytes_read, Some(path.to_string()))
+                            .await
+                        {
+                            if let Some(reason) = fsck_stop_reason(&work) {
+                                report.incomplete = true;
+                                report.stop_reason = Some(reason);
+                                break 'scan;
+                            }
+                            return Err(error);
+                        }
+                        if matches {
+                            report.referenced += 1;
+                            on_status(CasFileStatus {
+                                hash,
+                                path: path.to_string(),
+                                size_bytes: size,
+                                status: CasStatus::Referenced,
+                                blob_id: Some(blob_id),
+                            });
+                        } else {
+                            report.corrupt += 1;
+                            on_status(CasFileStatus {
+                                hash,
+                                path: path.to_string(),
+                                size_bytes: size,
+                                status: CasStatus::Corrupt,
+                                blob_id: Some(blob_id),
+                            });
+                        }
+                    }
+                    Err(error) => {
+                        if let Some(reason) = fsck_stop_reason(&work) {
+                            report.incomplete = true;
+                            report.stop_reason = Some(reason);
+                            break 'scan;
+                        }
+                        report.malformed += 1;
+                        tracing::warn!(
+                            error = %error,
+                            hash = %hash,
+                            "Failed to verify CAS file content"
+                        );
+                        on_status(CasFileStatus {
+                            hash,
+                            path: path.to_string(),
+                            size_bytes: size,
+                            status: CasStatus::Malformed,
+                            blob_id: Some(blob_id),
+                        });
+                    }
+                }
+            } else {
+                report.orphaned += 1;
+                report.orphaned_bytes = report.orphaned_bytes.saturating_add(size);
+                let is_recent = tokio::fs::metadata(path.as_std_path())
+                    .await
+                    .ok()
+                    .and_then(|metadata| metadata.modified().ok())
+                    .is_some_and(|modified| {
+                        SystemTime::now()
+                            .duration_since(modified)
+                            .is_ok_and(|age| age < CAS_ORPHAN_GRACE)
+                    });
+                if is_recent {
+                    report.protected_recent += 1;
+                }
+                on_status(CasFileStatus {
+                    hash,
+                    path: path.to_string(),
+                    size_bytes: size,
+                    status: CasStatus::Orphaned,
+                    blob_id: None,
+                });
+            }
+        }
+        if batch.complete {
+            scan_complete = true;
+            break;
+        }
+    }
+
+    if !scan_complete && !report.incomplete {
+        report.incomplete = true;
+        report.stop_reason = Some(CasFsckStopReason::RuntimeBudget);
+    }
+    if report.incomplete {
+        return Ok((report, progress_checkpoint));
+    }
+
+    let mut authority_count = 0_usize;
+    let mut blob_rows = sqlx::query_as::<_, (String, String)>(
+        r"
+        SELECT content_hash, id::text
+        FROM core.blobs
+        WHERE annex_backend = $1
+        ",
+    )
+    .bind(LOCAL_BLAKE3_CAS_BACKEND)
+    .fetch(pool);
+    while let Some(row) = blob_rows.next().await {
+        let (hash, blob_id) = row.map_err(|error| {
+            SinexError::database("stream SINEXBLAKE3 hashes for bounded CAS fsck")
+                .with_source(error)
+        })?;
+        authority_count += 1;
+        if content_store
+            .local_blake3_cas_path_for_hash(&hash)
+            .is_ok_and(|path| !path.exists())
+        {
+            report.missing += 1;
+            on_status(CasFileStatus {
+                hash: hash.clone(),
+                path: missing_cas_path(content_store, &hash).to_string(),
+                size_bytes: 0,
+                status: CasStatus::Missing,
+                blob_id: Some(blob_id),
+            });
+        }
+    }
+
+    let mut material_rows = sqlx::query_as::<_, (String, JsonValue)>(
+        r"
+        SELECT id::text, metadata
+        FROM raw.source_material_registry
+        WHERE metadata->'material_manifest'->>'content_key' IS NOT NULL
+        ",
+    )
+    .fetch(pool);
+    while let Some(row) = material_rows.next().await {
+        let (material_id, metadata) = row.map_err(|error| {
+            SinexError::database("stream material manifest hashes for bounded CAS fsck")
+                .with_source(error)
+        })?;
+        let Some(content_key) = metadata
+            .get("material_manifest")
+            .and_then(JsonValue::as_object)
+            .and_then(|manifest| manifest.get("content_key"))
+            .and_then(JsonValue::as_str)
+        else {
+            continue;
+        };
+        let Ok(parsed) = ContentStoreKey::parse(content_key) else {
+            continue;
+        };
+        if !parsed.is_local_blake3_cas() {
+            continue;
+        }
+        authority_count += 1;
+        if content_store
+            .local_blake3_cas_path_for_hash(&parsed.digest)
+            .is_ok_and(|path| !path.exists())
+        {
+            report.missing += 1;
+            on_status(CasFileStatus {
+                hash: parsed.digest.clone(),
+                path: missing_cas_path(content_store, &parsed.digest).to_string(),
+                size_bytes: 0,
+                status: CasStatus::Missing,
+                blob_id: Some(format!("material-manifest:{material_id}")),
+            });
+        }
+    }
+
+    if report.entries_scanned > authority_count.saturating_mul(2) {
+        tracing::warn!(
+            entries_scanned = report.entries_scanned,
+            authority_count,
+            "bounded CAS fsck observed a high orphan ratio"
+        );
+    }
+    Ok((report, progress_checkpoint))
+}
+
+fn missing_cas_path(content_store: &MaterialContentStore, hash: &str) -> camino::Utf8PathBuf {
+    content_store.local_blake3_cas_path_for_hash(hash).map_or_else(
+        |_| {
+            content_store
+                .root_path()
+                .join(LOCAL_BLAKE3_CAS_DIR)
+                .join("<invalid-hash>")
+                .join(hash)
+        },
+        |path| path,
+    )
+}
+
+fn fsck_stop_reason(work: &WorkController) -> Option<CasFsckStopReason> {
+    match work.outcome() {
+        WorkOutcome::Cancelled => Some(CasFsckStopReason::Cancelled),
+        WorkOutcome::Partial(WorkStopReason::Cancelled) => Some(CasFsckStopReason::Cancelled),
+        WorkOutcome::Partial(WorkStopReason::RuntimeBudget) => {
+            Some(CasFsckStopReason::RuntimeBudget)
+        }
+        WorkOutcome::Partial(WorkStopReason::ItemBudget) => {
+            Some(CasFsckStopReason::EntryBudget)
+        }
+        WorkOutcome::Partial(WorkStopReason::ByteBudget)
+        | WorkOutcome::Completed
+        | WorkOutcome::Failed => None,
+    }
 }
 
 /// Re-check DB authority immediately before destructive filesystem mutation.
@@ -435,13 +806,20 @@ async fn load_sinexblake3_hashes(pool: &PgPool) -> RuntimeResult<Vec<(String, St
 async fn verify_cas_file_content(
     path: &camino::Utf8Path,
     expected_hash: &str,
+    cancellation: &WorkCancellation,
 ) -> RuntimeResult<(bool, u64)> {
     const BUFFER_SIZE: usize = 1024 * 1024;
+    if cancellation.is_cancelled() {
+        return Err(SinexError::validation("CAS verification cancelled"));
+    }
     let mut file = tokio::fs::File::open(path).await.map_err(SinexError::io)?;
     let mut hasher = blake3::Hasher::new();
     let mut buffer = vec![0_u8; BUFFER_SIZE];
     let mut bytes_read = 0_u64;
     loop {
+        if cancellation.is_cancelled() {
+            return Err(SinexError::validation("CAS verification cancelled"));
+        }
         let read = file.read(&mut buffer).await.map_err(SinexError::io)?;
         if read == 0 {
             break;
