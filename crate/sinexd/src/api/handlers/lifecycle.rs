@@ -13,6 +13,9 @@ use sinex_primitives::rpc::lifecycle::{
     TombstoneOperationPhase, TombstoneOperationState, TombstonePreviewRequest,
     TombstonePreviewResponse, TombstoneStatusRequest, TombstoneStatusResponse,
 };
+use sinex_primitives::rpc::privacy::{
+    PrivacyInvalidationReport, PrivacyInvalidationStatus, PrivacyInvalidationSurface,
+};
 use sinex_primitives::temporal::parse_duration;
 use sinex_primitives::{Id, SinexError, Timestamp, Uuid};
 use sqlx::PgPool;
@@ -1382,6 +1385,83 @@ pub async fn handle_tombstone_approve(
 
     operation.tombstoned_count = Some(tombstoned_count);
 
+    let projection_stale = pool
+        .projection_registry()
+        .mark_all_stale(&format!("tombstone operation {}", request.operation_id))
+        .await;
+    let (projection_status, projection_count, projection_detail) = match projection_stale {
+        Ok(count) => (
+            PrivacyInvalidationStatus::StaleMarked,
+            count,
+            Some("all current rebuildable projection registrations marked stale".to_string()),
+        ),
+        Err(error) => (
+            PrivacyInvalidationStatus::Failed,
+            0,
+            Some(format!("projection stale marking failed: {error}")),
+        ),
+    };
+    operation.invalidation_report = Some(PrivacyInvalidationReport {
+        schema_version: "sinex.privacy-invalidation/v1".to_string(),
+        operation_id: Some(request.operation_id.clone()),
+        generated_at: Timestamp::now().format_rfc3339(),
+        surfaces: vec![
+            purged_surface("core.event_tombstones", tombstoned_count),
+            purged_surface("audit.archived_events", tombstoned_count),
+            purged_surface("audit.archived_annotations", tombstoned_count),
+            purged_surface("audit.archived_embeddings", tombstoned_count),
+            purged_surface("audit.archived_tagged_items", tombstoned_count),
+            purged_surface("core.document_chunks", tombstoned_count),
+            purged_surface("core.documents", tombstoned_count),
+            purged_surface("core.email_mailbox_projection", tombstoned_count),
+            purged_surface("derivation.lane_outputs", tombstoned_count),
+            purged_surface("core.entities", tombstoned_count),
+            purged_surface("core.entity_relations", tombstoned_count),
+            purged_surface("core.event_temporal_facts", tombstoned_count),
+            purged_surface("core.model_effects", tombstoned_count),
+            purged_surface("sinex_schemas.dlq_events", tombstoned_count),
+            PrivacyInvalidationSurface {
+                surface: "raw.source_material_registry".to_string(),
+                status: if orphan_material_ids.len() == candidate_material_ids.len() {
+                    PrivacyInvalidationStatus::Purged
+                } else {
+                    PrivacyInvalidationStatus::RetainedByDesign
+                },
+                before_count: candidate_material_ids.len() as u64,
+                after_count: candidate_material_ids.len().saturating_sub(orphan_material_ids.len())
+                    as u64,
+                affected_count: orphan_material_ids.len() as u64,
+                residual_horizon: Some("shared-material references are retained".to_string()),
+                detail: Some("orphan-only material deletion route applied".to_string()),
+            },
+            PrivacyInvalidationSurface {
+                surface: "derivation.projection_registry".to_string(),
+                status: projection_status,
+                before_count: projection_count,
+                after_count: projection_count,
+                affected_count: projection_count,
+                residual_horizon: Some("rebuild required before ready state".to_string()),
+                detail: projection_detail,
+            },
+            PrivacyInvalidationSurface {
+                surface: "core.embedding_cache".to_string(),
+                status: PrivacyInvalidationStatus::RetainedByDesign,
+                before_count: 0,
+                after_count: 0,
+                affected_count: 0,
+                residual_horizon: Some("cache eviction policy".to_string()),
+                detail: Some(
+                    "cache rows are content-addressed and require independent reference-aware eviction"
+                        .to_string(),
+                ),
+            },
+        ],
+        caveats: vec![
+            "NATS retained frames, recovery spool, journald, xtask history, exports, backups, WAL, and physical database remnants are outside this transaction".to_string(),
+            "A retained shared source material or embedding cache row is reported rather than deleted without an ownership proof".to_string(),
+        ],
+    });
+
     persist_tombstone_completion(
         pool,
         &request.operation_id,
@@ -1398,6 +1478,18 @@ pub async fn handle_tombstone_approve(
     );
 
     Ok(TombstoneApproveResponse { operation })
+}
+
+fn purged_surface(surface: &str, affected_count: u64) -> PrivacyInvalidationSurface {
+    PrivacyInvalidationSurface {
+        surface: surface.to_string(),
+        status: PrivacyInvalidationStatus::Purged,
+        before_count: affected_count,
+        after_count: 0,
+        affected_count,
+        residual_horizon: None,
+        detail: Some("event-linked rows removed by the tombstone transaction".to_string()),
+    }
 }
 
 /// Handle lifecycle.tombstone.cancel
