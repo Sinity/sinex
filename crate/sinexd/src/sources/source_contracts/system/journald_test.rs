@@ -186,6 +186,37 @@ async fn test_journald_parser_decodes_array_valued_generic_fields() -> TestResul
 }
 
 #[sinex_test]
+async fn oversized_journal_record_returns_visible_parse_error() -> TestResult<()> {
+    let mid = Id::<SourceMaterial>::new();
+    let record = SourceRecord {
+        material_id: mid,
+        anchor: MaterialAnchor::ByteRange {
+            start: 0,
+            len: (MAX_JOURNAL_LINE_BYTES + 1) as u64,
+        },
+        bytes: vec![b'x'; MAX_JOURNAL_LINE_BYTES + 1],
+        logical_path: None,
+        source_ts_hint: None,
+        metadata: serde_json::Value::Null,
+    };
+
+    let mut parser = JournaldParser;
+    let error = parser
+        .parse_record(record, &make_ctx(mid))
+        .await
+        .expect_err("oversized journal input must not be silently dropped");
+    let ParserError::Parse(message) = error else {
+        panic!("size-cap rejection must be a parse error, got {error:?}");
+    };
+    assert!(
+        message.contains("journal line exceeds")
+            && message.contains(&MAX_JOURNAL_LINE_BYTES.to_string()),
+        "size-cap error must name the rejected input and configured limit: {message}"
+    );
+    Ok(())
+}
+
+#[sinex_test]
 async fn test_journald_parser_preserves_microsecond_precision() -> TestResult<()> {
     // __REALTIME_TIMESTAMP carries microsecond precision and TimingConfidence::Intrinsic
     // claims full precision -- truncating to whole seconds silently discards it.
