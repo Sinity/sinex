@@ -119,6 +119,60 @@ async fn load_material_bytes_uses_and_validates_manifest_authority(
 }
 
 #[sinex_test]
+async fn load_material_bytes_rejects_manifest_with_invalid_discriminator(
+    ctx: TestContext,
+) -> TestResult<()> {
+    let (content_store, _tmp) = test_content_store(&ctx)?;
+    let payload = b"manifest validation bytes";
+    let blob = content_store
+        .ingest_from_bytes(payload, "invalid-manifest.log", "text/plain")
+        .await?;
+    let material = ctx
+        .pool()
+        .source_materials()
+        .register_material(
+            SourceMaterialRegistration::blob_text("invalid-manifest.log").with_blob_id(blob.id),
+        )
+        .await?;
+    let mut manifest = MaterialManifestV1::from_capture(
+        material.id,
+        "invalid-manifest.log",
+        "local_cas",
+        blake3::hash(payload).to_hex().to_string(),
+        payload.len() as u64,
+        json!({}),
+        "2026-08-12T00:00:00Z",
+        "2026-08-12T00:00:01Z",
+    );
+    manifest.manifest_type = "LegacyManifestV0".to_string();
+    let manifest_blob = content_store
+        .ingest_from_bytes(
+            &manifest.canonical_bytes()?,
+            "invalid-material-manifest.json",
+            "application/json",
+        )
+        .await?;
+    ctx.pool()
+        .source_materials()
+        .update_metadata(
+            Id::from_uuid(material.id),
+            json!({
+                "material_manifest": {
+                    "manifest_type": sinex_primitives::MATERIAL_MANIFEST_V1,
+                    "content_key": manifest_blob.content_key(),
+                }
+            }),
+        )
+        .await?;
+
+    let err = load_material_bytes(ctx.pool(), &content_store, material.id)
+        .await
+        .expect_err("loader must validate the manifest discriminator before reading bytes");
+    assert!(err.contains("manifest validation failed"), "got: {err}");
+    Ok(())
+}
+
+#[sinex_test]
 async fn load_material_bytes_fails_closed_on_missing_material(ctx: TestContext) -> TestResult<()> {
     let (content_store, _tmp) = test_content_store(&ctx)?;
     let err = load_material_bytes(ctx.pool(), &content_store, Uuid::now_v7())

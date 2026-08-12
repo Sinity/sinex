@@ -10,7 +10,7 @@ use sinex_db::{
     models::blob::Blob,
     repositories::{DbPoolExt, TemporalLedgerEntry},
 };
-use sinex_primitives::MaterialStatus;
+use sinex_primitives::{MaterialManifestV1, MaterialStatus, MetadataAvailability};
 use tokio::time::timeout;
 use tokio_stream::StreamExt;
 use xtask::sandbox::prelude::*;
@@ -716,6 +716,96 @@ async fn pending_end_ignores_late_slice_beyond_contract_before_completion(
         .expect("material should exist");
     assert_eq!(material.status, MaterialStatus::Completed);
     assert_eq!(material.total_bytes, Some(payload.len() as i64));
+
+    Ok(())
+}
+
+#[sinex_test]
+async fn finalization_persists_canonical_manifest_and_registry_reference(
+    ctx: TestContext,
+) -> TestResult<()> {
+    let ctx = ctx.with_nats().shared().await?;
+    let (assembler, _content_store_dir, _state_dir) = test_assembler(&ctx).await?;
+    let material_id = Uuid::now_v7();
+    let material_id_typed = Id::from_uuid(material_id);
+    let started_at = Timestamp::now();
+    let ended_at = Timestamp::now();
+    let payload = b"finalizer manifest route".to_vec();
+
+    state::handle_begin(
+        &assembler,
+        material_id,
+        state::MaterialBeginMessage {
+            material_id: material_id.to_string(),
+            material_kind: "test-material".to_string(),
+            source_identifier: "test://manifest-route".to_string(),
+            metadata: json!({
+                "mime_type": "text/plain",
+                "charset": null,
+                "explicit_unknown": { "availability": "unknown" }
+            }),
+            started_at: sinex_primitives::temporal::format_rfc3339(started_at),
+        },
+    )
+    .await?;
+    io::handle_slice(&assembler, material_id, 0, payload.clone()).await?;
+
+    let state_handle = assembler
+        .get_state_handle(&material_id)
+        .ok_or_else(|| SinexError::invalid_state("missing assembler state"))?;
+    {
+        let mut state = state_handle.lock().await;
+        state.pending_end = Some(MaterialEndMessage {
+            material_id: material_id.to_string(),
+            ended_at: sinex_primitives::temporal::format_rfc3339(ended_at),
+            content_hash: blake3::hash(&payload).to_hex().to_string(),
+            total_slices: 1,
+            total_size_bytes: payload.len() as i64,
+            metadata: json!({}),
+        });
+    }
+
+    assembler
+        .try_finalize_pending_end(material_id, state_handle, PendingEndBehavior::Error)
+        .await?;
+
+    let material = ctx
+        .pool
+        .source_materials()
+        .get_by_id(material_id_typed)
+        .await?
+        .expect("finalized material should exist");
+    let manifest_reference = material.metadata["material_manifest"]["content_key"]
+        .as_str()
+        .expect("finalization must attach a manifest CAS key");
+    let manifest_key = ContentStoreKey::parse(manifest_reference)?;
+    assert!(
+        manifest_key.is_local_blake3_cas(),
+        "manifest must be stored in the local BLAKE3 CAS"
+    );
+    let manifest_path = assembler
+        .content_store
+        .path_if_local(manifest_reference)?
+        .expect("manifest CAS key must resolve to a local path");
+    let manifest_bytes = tokio::fs::read(manifest_path).await?;
+    let manifest: MaterialManifestV1 = serde_json::from_slice(&manifest_bytes)?;
+    manifest
+        .validate()
+        .expect("finalizer must emit a valid manifest");
+    assert_eq!(manifest.source_material_id, material_id);
+    assert_eq!(manifest.bytes.encoded_size, payload.len() as u64);
+    assert_eq!(
+        manifest.bytes.encoded.value_hex,
+        blake3::hash(&payload).to_hex().to_string()
+    );
+    assert_eq!(
+        manifest.interpretation.charset.availability,
+        MetadataAvailability::Unknown
+    );
+    assert_eq!(
+        manifest.extensions["capture_metadata"]["explicit_unknown"]["availability"],
+        json!("unknown")
+    );
 
     Ok(())
 }

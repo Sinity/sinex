@@ -4,6 +4,7 @@
 //! logic that executes when a material assembly completes or fails. The durable
 //! source-material/blob/ledger commit boundary lives in `finalization_transaction`.
 
+use camino::Utf8PathBuf;
 use serde::Serialize;
 use futures::FutureExt as _;
 use sinex_db::repositories::DbPoolExt;
@@ -12,8 +13,10 @@ use sinex_primitives::Timestamp;
 use sinex_primitives::nats::{NatsTrafficClass, insert_traffic_class_header};
 use sinex_primitives::transport;
 use sinex_primitives::{
-    Id, JsonValue, MaterialStatus, Uuid, sources::is_self_observation_material_source,
+    Id, JsonValue, MaterialManifestV1, MaterialStatus, Uuid,
+    sources::is_self_observation_material_source,
 };
+use tokio::io::AsyncWriteExt;
 use tokio::sync::Mutex;
 use tokio::task::JoinHandle;
 use tracing::{debug, error, info, warn};
@@ -1032,7 +1035,7 @@ impl MaterialAssembler {
             return Ok(());
         }
 
-        let finalize_metadata = match build_finalize_metadata(
+        let mut finalize_metadata = match build_finalize_metadata(
             &final_state,
             &end.metadata,
             ended_at,
@@ -1086,6 +1089,51 @@ impl MaterialAssembler {
                 return Err(e);
             }
         };
+
+        // Persist a canonical manifest beside the exact material bytes before the
+        // registry transaction. The registry reference is committed atomically
+        // with the blob/material rows below; an interrupted transaction leaves a
+        // recoverable CAS object for the lifecycle reconciler rather than losing
+        // the only copy of its metadata.
+        let manifest_key = match self
+            .persist_material_manifest(
+                &final_state,
+                &end.content_hash,
+                end.total_size_bytes,
+                &finalize_metadata,
+                ended_at,
+            )
+            .await
+        {
+            Ok(key) => key,
+            Err(error) => {
+                if let Err(dlq_error) = self
+                    .route_material_error(
+                        material_id,
+                        "material_manifest_store_failed",
+                        serde_json::json!({ "error": error.to_string() }),
+                    )
+                    .await
+                {
+                    warn!(
+                        material_id = %material_id,
+                        error = %dlq_error,
+                        "Failed to publish manifest-store DLQ entry; preserving retry state"
+                    );
+                }
+                Self::revert_finalization_start(&state_handle, end).await;
+                return Err(error);
+            }
+        };
+        if let Some(object) = finalize_metadata.as_object_mut() {
+            object.insert(
+                "material_manifest".to_string(),
+                serde_json::json!({
+                    "manifest_type": sinex_primitives::MATERIAL_MANIFEST_V1,
+                    "content_key": manifest_key.key,
+                }),
+            );
+        }
 
         let finalized = match tokio::time::timeout(
             self.finalize_timeout,
@@ -1211,6 +1259,77 @@ impl MaterialAssembler {
         }
 
         Ok(())
+    }
+
+    async fn persist_material_manifest(
+        &self,
+        final_state: &super::state::FinalizationState,
+        content_hash: &str,
+        total_size_bytes: i64,
+        metadata: &JsonValue,
+        ended_at: Timestamp,
+    ) -> EventEngineResult<crate::runtime::content_store::ContentStoreKey> {
+        let total_size_bytes = u64::try_from(total_size_bytes).map_err(|error| {
+            SinexError::validation("material size cannot be represented in a manifest")
+                .with_std_error(&error)
+        })?;
+        let manifest = MaterialManifestV1::from_capture(
+            final_state.material_id,
+            final_state.source_identifier.clone(),
+            final_state.material_kind.clone(),
+            content_hash,
+            total_size_bytes,
+            metadata.clone(),
+            final_state.started_at.format_rfc3339(),
+            ended_at.format_rfc3339(),
+        );
+        manifest.validate().map_err(|error| {
+            SinexError::validation("generated material manifest failed validation")
+                .with_context("reason", error)
+        })?;
+        let bytes = manifest.canonical_bytes().map_err(|error| {
+            SinexError::serialization("failed to encode material manifest")
+                .with_std_error(&error)
+        })?;
+
+        let parent = final_state.temp_path.parent().ok_or_else(|| {
+            SinexError::io("material staging path has no parent for manifest staging")
+        })?;
+        let manifest_path = parent.join(format!(
+            "material-manifest-{}.json",
+            final_state.material_id
+        ));
+        let result = async {
+            let mut file = tokio::fs::OpenOptions::new()
+                .write(true)
+                .create(true)
+                .truncate(true)
+                .open(&manifest_path)
+                .await
+                .map_err(SinexError::io)?;
+            file.write_all(&bytes).await.map_err(SinexError::io)?;
+            file.sync_all().await.map_err(SinexError::io)?;
+            drop(file);
+
+            let utf8_path = Utf8PathBuf::from_path_buf(manifest_path.clone()).map_err(|path| {
+                SinexError::io(format!(
+                    "manifest staging path is not valid UTF-8: {}",
+                    path.display()
+                ))
+            })?;
+            self.content_store.store_file(&utf8_path).await
+        }
+        .await;
+        if let Err(error) = tokio::fs::remove_file(&manifest_path).await {
+            warn!(
+                path = %manifest_path.display(),
+                error = %error,
+                "Failed to remove temporary material manifest after CAS import"
+            );
+        }
+        result.map_err(|error| {
+            SinexError::io("material manifest CAS import failed").with_source(error)
+        })
     }
 
     /// Handle material finalization (end message)
