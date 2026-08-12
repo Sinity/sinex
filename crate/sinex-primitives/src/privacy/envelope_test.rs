@@ -65,3 +65,16 @@ async fn forged_shape_valid_marker_is_not_trusted_without_authentication()
     assert!(find_encrypted_token_spans(forged, Some(&test_key())).is_empty());
     Ok(())
 }
+
+#[sinex_test]
+async fn malformed_marker_does_not_hide_later_authenticated_token()
+-> ::xtask::sandbox::TestResult<()> {
+    let key = test_key();
+    let authenticated = encrypt_token("secret", &key).unwrap();
+    let input = format!("prefix ⌜enc:v1:forged {authenticated} suffix");
+    let spans = find_encrypted_token_spans(&input, Some(&key));
+
+    assert_eq!(spans.len(), 1);
+    assert_eq!(&input[spans[0].0..spans[0].1], authenticated);
+    Ok(())
+}

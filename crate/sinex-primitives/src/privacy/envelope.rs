@@ -80,14 +80,24 @@ pub(crate) fn find_encrypted_token_spans(
         let token_start = search_from + rel;
         let payload_start = search_from + rel + open_prefix.len();
         let Some(close_rel) = input[payload_start..].find(TOKEN_CLOSE) else {
-            break;
+            // An unterminated/forged marker is ordinary user content. Keep
+            // scanning after its prefix so a later authenticated token is
+            // still protected rather than letting the malformed candidate
+            // hide it from the redaction engine.
+            search_from = payload_start;
+            continue;
         };
         let token_end = payload_start + close_rel + TOKEN_CLOSE.len();
         let token = &input[token_start..token_end];
         if decrypt_token(token, key).is_ok() {
             spans.push((token_start, token_end));
+            search_from = token_end;
+        } else {
+            // Do not skip possible nested or adjacent candidates after an
+            // unauthenticated marker. Only an authenticated envelope owns
+            // its span and may advance the scan past its closing delimiter.
+            search_from = token_start + TOKEN_OPEN.len();
         }
-        search_from = token_end;
     }
     spans
 }

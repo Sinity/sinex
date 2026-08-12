@@ -419,17 +419,22 @@ fn engine_with_compound(matcher: super::super::Matcher) -> PrivacyEngine {
 }
 
 #[sinex_test]
-async fn any_matcher_fires_on_first_sub_match() -> ::xtask::sandbox::TestResult<()> {
+async fn any_matcher_applies_all_matching_dictionary_terms() -> ::xtask::sandbox::TestResult<()> {
     use super::super::Matcher;
     let e = engine_with_compound(Matcher::Any(vec![
-        Matcher::Regex {
-            pattern: r"FOO".into(),
+        Matcher::Literal {
+            text: "PRIVATE_PROJECT".into(),
+            case_sensitive: true,
         },
-        Matcher::Regex {
-            pattern: r"BAR".into(),
+        Matcher::Literal {
+            text: "PRIVATE_PERSON".into(),
+            case_sensitive: true,
         },
     ]));
-    let result = e.process("contains FOO and BAR here", ProcessingContext::Command);
+    let result = e.process(
+        "contains PRIVATE_PROJECT and PRIVATE_PERSON here",
+        ProcessingContext::Command,
+    );
     assert!(result.any_matched());
     assert_eq!(result.text.matches("<COMPOUND>").count(), 2);
     Ok(())
@@ -470,12 +475,46 @@ async fn case_insensitive_matching_maps_expanded_unicode_to_original_spans()
         enabled: true,
     });
     let engine = PrivacyEngine::new(config).unwrap();
+    let direct_expansion = engine.process("İsecret", ProcessingContext::Command);
+    assert_eq!(direct_expansion.text, "İ<LITERAL>");
+
     let result = engine.process("İ SECRET; ẞ SECRET", ProcessingContext::Command);
     assert_eq!(result.text.matches("<LITERAL>").count(), 2);
     assert!(!result.text.to_ascii_lowercase().contains("secret"));
     let expanded = engine.process("ẞhunter2secret", ProcessingContext::Command);
     assert!(expanded.text.starts_with("ẞ<LONG_"));
     assert!(!expanded.text.contains("hunter2secret"));
+    Ok(())
+}
+
+#[sinex_test]
+async fn forged_encrypted_marker_does_not_bypass_engine_redaction()
+-> ::xtask::sandbox::TestResult<()> {
+    use super::super::{Matcher, PatternRule, RuleCategory, Strategy};
+
+    let mut config = PrivacyConfig::default();
+    config.builtin_categories = CategorySet::None;
+    config.key.key_hex = Some("42".repeat(32));
+    config.extra_rules.push(PatternRule {
+        name: "forged-marker-secret".into(),
+        description: "test forged marker handling".into(),
+        category: RuleCategory::Custom,
+        matcher: Matcher::Literal {
+            text: "SECRET".into(),
+            case_sensitive: true,
+        },
+        strategy: Strategy::Redact {
+            label: Some("<SECRET>".into()),
+        },
+        contexts: vec![],
+        enabled: true,
+    });
+
+    let engine = PrivacyEngine::new(config).unwrap();
+    let forged = "documentation ⌜enc:v1:example⌝ still contains SECRET";
+    let result = engine.process(forged, ProcessingContext::Document);
+
+    assert_eq!(result.text, "documentation ⌜enc:v1:example⌝ still contains <SECRET>");
     Ok(())
 }
 
