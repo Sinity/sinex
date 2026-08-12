@@ -37,7 +37,7 @@ sinexctl ops state snapshot --output <path>
   [--mode quiesce|live]            # quiesce default; live does not stop services
   [--dry-run]                      # estimate sizes, no archive
   [--database-url <url>]           # override DATABASE_URL
-  [--state-dir <path>]             # override SINEX_STATE_DIR (default /var/lib/sinex)
+  [--state-dir <path>]             # override the deployed SINEX_STATE_DIR
   [--auto-stop]                    # stop sinex-* services automatically
   [--components postgres,nats,cas,state]  # subset, default all
 
@@ -57,6 +57,12 @@ sinexctl ops state restore --archive <path> --target-dir <empty-dir>
 | `nats`     | The `jetstream.store_dir` from the deployed `nats.service` config |
 | `cas`      | `$STATE_DIR/blob-repository/` directory tree        |
 | `state`    | Everything else under `$STATE_DIR` (spool, WALs, …) |
+
+These paths are deployment-specific. Derive `SINEX_STATE_DIR` and
+`SINEX_CONTENT_STORE_PATH` from the active `sinexd.service` environment before
+restoring, rather than assuming a host-global default. On the current NixOS
+deployment they resolve to `/var/lib/sinex/state` and
+`/var/lib/sinex/state/blob-repository`.
 
 ## Archive layout
 
@@ -227,17 +233,17 @@ sudo systemctl start nats
 ### 6. Restore CAS blob repository
 
 ```bash
-sudo mkdir -p /var/lib/sinex/blob-repository
-sudo cp -a "$RESTORE_DIR/cas/blob-repository/." /var/lib/sinex/blob-repository/
-sudo chown -R sinex:sinex /var/lib/sinex/blob-repository/
+sudo mkdir -p /var/lib/sinex/state/blob-repository
+sudo cp -a "$RESTORE_DIR/cas/blob-repository/." /var/lib/sinex/state/blob-repository/
+sudo chown -R sinex:sinex /var/lib/sinex/state/blob-repository/
 ```
 
 ### 7. Restore remaining state
 
 ```bash
 # Merge remaining state files (spool, etc.)
-sudo cp -a "$RESTORE_DIR/state/." /var/lib/sinex/
-sudo chown -R sinex:sinex /var/lib/sinex/
+sudo cp -a "$RESTORE_DIR/state/." /var/lib/sinex/state/
+sudo chown -R sinex:sinex /var/lib/sinex/state/
 ```
 
 ### 8. Apply schema

@@ -379,32 +379,40 @@ pub fn tar_extract_zstd(archive_path: &Path, target_dir: &Path) -> Result<()> {
     Ok(())
 }
 
-const QUIESCE_UNITS: &[&str] = &["sinexd.service", "nats.service"];
-
-/// Check which deployed services can mutate the snapshot components.
+/// Check which deployed services and timers can mutate snapshot components.
 ///
 /// The runtime target is intentionally excluded. Its `PartOf` relationship
-/// also stops PostgreSQL, which must remain available for the dump.
-#[must_use]
-pub fn active_sinex_services() -> Vec<String> {
-    QUIESCE_UNITS
-        .iter()
-        .filter_map(|unit| {
-            let output = Command::new("systemctl")
-                .args(["is-active", "--quiet", unit])
-                .stdin(Stdio::null())
-                .stdout(Stdio::null())
-                .stderr(Stdio::null())
-                .status()
-                .ok()?;
-            output.success().then(|| (*unit).to_string())
-        })
-        .collect()
+/// also stops PostgreSQL, which must remain available for the dump. Discovery
+/// is based on the active systemd inventory so newly generated source workers
+/// are not silently missed.
+pub fn active_sinex_services() -> Result<Vec<String>> {
+    let output = Command::new("systemctl")
+        .args(["list-units", "--state=active", "--plain", "--no-legend"])
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .output()
+        .context("inspect active systemd units for snapshot quiesce")?;
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        bail!(
+            "systemctl active-unit inspection failed (exit {}): {}",
+            output.status.code().unwrap_or(-1),
+            stderr.trim()
+        );
+    }
+
+    Ok(String::from_utf8_lossy(&output.stdout)
+        .lines()
+        .filter_map(|line| line.split_whitespace().next())
+        .filter(|unit| is_snapshot_writer_unit(unit))
+        .map(str::to_string)
+        .collect())
 }
 
 /// Stop the active writer services without stopping PostgreSQL via a target.
 pub fn stop_sinex_services() -> Result<()> {
-    let active = active_sinex_services();
+    let active = active_sinex_services()?;
     if active.is_empty() {
         return Ok(());
     }
@@ -425,7 +433,58 @@ pub fn stop_sinex_services() -> Result<()> {
             stderr.trim()
         );
     }
+    let remaining = active_sinex_services()?;
+    if !remaining.is_empty() {
+        bail!(
+            "snapshot writer units remain active after stop: {}",
+            remaining.join(", ")
+        );
+    }
     Ok(())
+}
+
+fn is_snapshot_writer_unit(unit: &str) -> bool {
+    if unit == "nats.service" || unit == "sinexd.service" {
+        return true;
+    }
+    if !unit.starts_with("sinex-") {
+        return false;
+    }
+    let is_service_or_timer = unit.ends_with(".service") || unit.ends_with(".timer");
+    let is_target_access = unit.contains("-target-access.service");
+    let is_desktop_setup = unit.starts_with("sinex-kitty-")
+        || unit.starts_with("sinex-terminal-target-access")
+        || unit.starts_with("sinex-browser-target-access")
+        || unit.starts_with("sinex-desktop-target-access")
+        || unit.starts_with("sinex-document-target-access");
+    is_service_or_timer && !is_target_access && !is_desktop_setup
+}
+
+/// Read a path-valued environment variable from the deployed `sinexd.service`.
+pub fn sinex_service_path(variable: &str) -> Result<PathBuf> {
+    let output = Command::new("systemctl")
+        .args([
+            "show",
+            "sinexd.service",
+            "--property=Environment",
+            "--value",
+        ])
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .output()
+        .context("inspect sinexd deployment environment")?;
+    if !output.status.success() {
+        bail!("systemctl could not inspect sinexd.service environment");
+    }
+    let prefix = format!("{variable}=");
+    let environment = String::from_utf8_lossy(&output.stdout);
+    let value = environment
+        .split_whitespace()
+        .find_map(|entry| entry.strip_prefix(&prefix))
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| eyre!("sinexd.service has no non-empty {variable}"))?;
+    Ok(PathBuf::from(value))
 }
 
 /// Discover the JetStream store directory from the running NATS unit's

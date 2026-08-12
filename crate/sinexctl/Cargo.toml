@@ -94,11 +94,13 @@ features = ["env-filter"]
 [dependencies.time]
 workspace = true
 
+[dependencies.tempfile]
+workspace = true
+
 [dev-dependencies]
 wiremock    = "0.6"
 assert_cmd  = "2"
 predicates  = "3"
-tempfile    = { workspace = true }
 toml        = { workspace = true }
 serial_test = "3"
 
