@@ -57,3 +57,11 @@ async fn decrypt_all_multiple_tokens() -> ::xtask::sandbox::TestResult<()> {
     assert_eq!(decrypted, "before secret1 middle secret2 after");
     Ok(())
 }
+
+#[sinex_test]
+async fn forged_shape_valid_marker_is_not_trusted_without_authentication()
+-> ::xtask::sandbox::TestResult<()> {
+    let forged = "prefix ⌜enc:v1:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA⌝ suffix";
+    assert!(find_encrypted_token_spans(forged, Some(&test_key())).is_empty());
+    Ok(())
+}

@@ -64,49 +64,58 @@ fn apply_mask(matched: &str, mask_ch: char, keep_prefix: usize, keep_suffix: usi
     result
 }
 
-/// sinex-24es: find case-insensitive match spans of `original` (whose
-/// lowercased form is `lower`) in `input`, WITHOUT ever slicing `input` by a
-/// byte offset computed against a separately lowercased copy.
-/// `str::to_lowercase()` is not byte-length-preserving for all Unicode (e.g.
-/// U+0130 'İ' lowercases to a 3-byte "i" + combining-dot-above sequence, vs
-/// its own 2-byte encoding) -- reusing offsets from `input.to_lowercase()`
-/// against `input` itself can land mid-codepoint (a panic) or silently
-/// extract/redact the wrong byte span (the actual secret survives).
-///
-/// This only ever slices `input` at char-boundary positions belonging to
-/// `input` itself: it slides a window of `original.chars().count()` chars
-/// across `input`'s own char boundaries and compares `window.to_lowercase()
-/// == lower` as whole strings (matching how `lower` was originally derived).
-/// Fixed-window-by-char-count does not perfectly recover every match whose
-/// case-folding changes the char count between the window and the needle
-/// (a real but narrow residual gap, documented rather than silently
-/// mismatched) -- it never panics and never returns a wrong span; a window
-/// that doesn't line up simply isn't reported as a match.
-fn find_case_insensitive_spans(input: &str, original: &str, lower: &str) -> Vec<(usize, usize)> {
-    let needle_char_count = original.chars().count();
-    if needle_char_count == 0 {
+/// Find case-insensitive match spans without applying offsets from a folded
+/// string to the original input. Each folded character retains the byte span
+/// of the original character that produced it, so case mappings that expand
+/// (`İ` → `i` + combining dot) still redact the complete original character.
+fn find_case_insensitive_spans(input: &str, lower: &str) -> Vec<(usize, usize)> {
+    if lower.is_empty() {
         return Vec::new();
     }
 
-    let mut boundaries: Vec<usize> = input.char_indices().map(|(i, _)| i).collect();
-    boundaries.push(input.len());
-    let total_chars = boundaries.len().saturating_sub(1);
-
-    let mut spans = Vec::new();
-    let mut i = 0;
-    while i + needle_char_count <= total_chars {
-        let start = boundaries[i];
-        let end = boundaries[i + needle_char_count];
-        // Always a valid char-boundary slice of `input`, by construction.
-        let window = &input[start..end];
-        if window.to_lowercase() == lower {
-            spans.push((start, end));
-            i += needle_char_count; // non-overlapping matches, like match_indices
-        } else {
-            i += 1;
+    let mut folded = String::with_capacity(input.len());
+    let mut folded_spans = Vec::new();
+    for (original_start, ch) in input.char_indices() {
+        let original_end = original_start + ch.len_utf8();
+        for folded_ch in ch.to_lowercase() {
+            let folded_start = folded.len();
+            folded.push(folded_ch);
+            folded_spans.push((folded_start, folded.len(), original_start, original_end));
         }
     }
-    spans
+
+    let mut spans = Vec::new();
+    for (folded_start, _) in folded.match_indices(lower) {
+        let folded_end = folded_start + lower.len();
+        let Some((_, _, original_start, _)) = folded_spans
+            .iter()
+            .find(|(_, folded_end_for_char, _, _)| *folded_end_for_char > folded_start)
+        else {
+            continue;
+        };
+        let Some((_, _, _, original_end)) = folded_spans
+            .iter()
+            .rev()
+            .find(|(folded_start_for_char, _, _, _)| *folded_start_for_char < folded_end)
+        else {
+            continue;
+        };
+        spans.push((*original_start, *original_end));
+    }
+
+    // A case expansion can make two folded matches refer to the same
+    // original character. Coalesce those spans before slicing the input.
+    let mut merged = Vec::with_capacity(spans.len());
+    for (start, end) in spans {
+        if let Some((_, previous_end)) = merged.last_mut()
+            && start < *previous_end
+        {
+            *previous_end = (*previous_end).max(end);
+        } else {
+            merged.push((start, end));
+        }
+    }
+    merged
 }
 
 /// Recursively compile a `Matcher` into a `CompiledMatcher`.
@@ -283,11 +292,6 @@ impl PrivacyEngine {
         if !self.enabled || input.is_empty() {
             return Processed::unchanged(input);
         }
-        // Skip strings that already contain encrypted tokens to avoid double-encryption.
-        if envelope::contains_encrypted_token(input) {
-            return Processed::unchanged(input);
-        }
-
         // Check suppress rules first
         for (i, rule) in self.rules.iter().enumerate() {
             if !matches!(rule.strategy, Strategy::Suppress) {
@@ -296,7 +300,7 @@ impl PrivacyEngine {
             if !rule.matches_context(ctx) {
                 continue;
             }
-            if self.matcher_hits(&rule.matcher, input) {
+            if self.matcher_hits_unencrypted(&rule.matcher, input) {
                 if self.stats_enabled {
                     self.stats[i].fetch_add(1, Ordering::Relaxed);
                 }
@@ -371,7 +375,7 @@ impl PrivacyEngine {
         self.rules.iter().any(|rule| {
             matches!(rule.strategy, Strategy::Suppress)
                 && rule.matches_context(ctx)
-                && self.matcher_hits(&rule.matcher, input)
+                && self.matcher_hits_unencrypted(&rule.matcher, input)
         })
     }
 
@@ -422,7 +426,7 @@ impl PrivacyEngine {
                 if *case_sensitive {
                     input.contains(original.as_str())
                 } else {
-                    input.to_lowercase().contains(lower.as_str())
+                    !find_case_insensitive_spans(input, lower).is_empty()
                 }
             }
             CompiledMatcher::All(sub_matchers) => {
@@ -434,9 +438,56 @@ impl PrivacyEngine {
         }
     }
 
+    fn matcher_hits_unencrypted(&self, matcher: &CompiledMatcher, input: &str) -> bool {
+        let token_spans = envelope::find_encrypted_token_spans(input, self.key.as_ref());
+        if token_spans.is_empty() {
+            return self.matcher_hits(matcher, input);
+        }
+
+        let mut segment_start = 0;
+        for (token_start, token_end) in token_spans {
+            if self.matcher_hits(matcher, &input[segment_start..token_start]) {
+                return true;
+            }
+            segment_start = token_end;
+        }
+        self.matcher_hits(matcher, &input[segment_start..])
+    }
+
     /// Apply a rule's strategy to the input, returning Some(replaced) if modified.
     fn apply_rule(&self, rule: &CompiledRule, input: &str) -> Option<String> {
-        self.apply_matcher(&rule.matcher, &rule.strategy, &rule.name, input)
+        let token_spans = envelope::find_encrypted_token_spans(input, self.key.as_ref());
+        if token_spans.is_empty() {
+            return self.apply_matcher(&rule.matcher, &rule.strategy, &rule.name, input);
+        }
+
+        let mut result = String::with_capacity(input.len());
+        let mut segment_start = 0;
+        let mut changed = false;
+        for (token_start, token_end) in token_spans {
+            let segment = &input[segment_start..token_start];
+            if let Some(replaced) =
+                self.apply_matcher(&rule.matcher, &rule.strategy, &rule.name, segment)
+            {
+                result.push_str(&replaced);
+                changed = true;
+            } else {
+                result.push_str(segment);
+            }
+            result.push_str(&input[token_start..token_end]);
+            segment_start = token_end;
+        }
+        let segment = &input[segment_start..];
+        if let Some(replaced) =
+            self.apply_matcher(&rule.matcher, &rule.strategy, &rule.name, segment)
+        {
+            result.push_str(&replaced);
+            changed = true;
+        } else {
+            result.push_str(segment);
+        }
+
+        changed.then_some(result)
     }
 
     fn apply_matcher(
@@ -593,17 +644,11 @@ impl PrivacyEngine {
         rule_name: &str,
         input: &str,
     ) -> Option<String> {
-        let has_match = if case_sensitive {
-            input.contains(original)
-        } else {
-            input.to_lowercase().contains(lower)
-        };
-        if !has_match {
-            return None;
-        }
-
         // For case-insensitive, we need to find actual match positions
         if case_sensitive {
+            if !input.contains(original) {
+                return None;
+            }
             let replacement = self.apply_strategy_to_match(original, strategy, rule_name);
             Some(input.replace(original, &replacement))
         } else {
@@ -616,12 +661,10 @@ impl PrivacyEngine {
             // "byte index N is not a char boundary") or silently redact the
             // wrong byte span (data still leaks). `find_case_insensitive_spans`
             // only ever slices `input` at its own real char boundaries.
-            let spans = find_case_insensitive_spans(input, original, lower);
+            let spans = find_case_insensitive_spans(input, lower);
             if spans.is_empty() {
-                // `has_match` above (input.to_lowercase().contains(lower)) can
-                // be true on a substring match that doesn't align with any
-                // char-count-preserving window here -- treat as no textual
-                // match found rather than fabricating a wrong span.
+                // No match in the folded-to-original span map means there is
+                // no safe original span to replace.
                 return None;
             }
             let mut result = String::with_capacity(input.len());
