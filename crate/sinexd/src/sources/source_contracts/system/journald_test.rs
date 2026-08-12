@@ -222,7 +222,8 @@ async fn test_journald_parser_preserves_microsecond_precision() -> TestResult<()
 #[ignore = "sinex-10ef open: journald.rs tags a fabricated Timestamp::now() fallback as \
             TimingEvidence::Intrinsic instead of Atemporal when __REALTIME_TIMESTAMP is \
             missing/malformed, bypassing temporal_ledger-based deferred resolution"]
-async fn test_journald_missing_realtime_timestamp_is_tagged_atemporal_not_intrinsic() -> TestResult<()> {
+async fn test_journald_missing_realtime_timestamp_is_tagged_atemporal_not_intrinsic()
+-> TestResult<()> {
     let mid = Id::<SourceMaterial>::new();
     // No __REALTIME_TIMESTAMP field at all.
     let line = r#"{"__CURSOR":"s=abc;i=1","MESSAGE":"entry missing its realtime timestamp"}"#;

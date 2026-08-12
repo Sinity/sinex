@@ -1,3 +1,5 @@
+#![allow(clippy::expect_used, clippy::unwrap_used)] // integration test binary, not covered by the lib crate's test-cfg lint relaxation
+
 //! Regression coverage for sinex-732: pushing a branch that does not touch
 //! xtask build inputs used to always rebuild xtask through the pre-push
 //! `changed-strict` guard (opaque and expensive). The fix made the guard
@@ -56,14 +58,7 @@ fn dry_run_reports_xtask_build_input_change_when_xtask_src_differs() {
     // step before an actual xtask source change, without mutating the
     // worktree (read-only `git log`, no commits created by this test).
     let log = Command::new("git")
-        .args([
-            "log",
-            "-n",
-            "1",
-            "--format=%H^",
-            "--",
-            "xtask/src",
-        ])
+        .args(["log", "-n", "1", "--format=%H^", "--", "xtask/src"])
         .current_dir(&root)
         .output()
         .expect("git log must run");
@@ -75,7 +70,9 @@ fn dry_run_reports_xtask_build_input_change_when_xtask_src_differs() {
 
     let (_stdout, stderr) = run_pre_push_dry_run(&base_ref);
     assert!(
-        stderr.contains("[pre-push] Branch changes xtask build inputs; selected binary must be fresh."),
+        stderr.contains(
+            "[pre-push] Branch changes xtask build inputs; selected binary must be fresh."
+        ),
         "expected the 'changes xtask build inputs' message when BASE_REF predates a real xtask/src change ({base_ref}), got stderr:\n{stderr}"
     );
 }

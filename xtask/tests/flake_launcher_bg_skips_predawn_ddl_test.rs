@@ -94,7 +94,12 @@ _sinex_xtask_is_read_only_subcommand() { return "${STUB_RO_RC:-1}"; }
 
 /// Run `bash -c '<extracted functions>; env...; <fn> "$@"'` and return
 /// whether it exited zero.
-fn call_with_env(function_source: &str, function: &str, args: &[&str], env: &[(&str, &str)]) -> bool {
+fn call_with_env(
+    function_source: &str,
+    function: &str,
+    args: &[&str],
+    env: &[(&str, &str)],
+) -> bool {
     let mut script = function_source.to_string();
     script.push_str(function);
     script.push_str(" \"$@\"\n");
@@ -132,9 +137,17 @@ fn call(function_source: &str, function: &str, args: &[&str]) -> bool {
 #[test]
 fn test_bare_bg_without_worker_env_is_launcher_only() {
     let functions = extract_flake_functions();
-    for &args in &[&["test", "--bg"][..], &["check", "--bg"][..], &["build", "--bg"][..]] {
+    for &args in &[
+        &["test", "--bg"][..],
+        &["check", "--bg"][..],
+        &["build", "--bg"][..],
+    ] {
         assert!(
-            call(&functions, "_sinex_xtask_is_launcher_only_background_request", args),
+            call(
+                &functions,
+                "_sinex_xtask_is_launcher_only_background_request",
+                args
+            ),
             "{args:?} with no XTASK_BG_JOB_ID/XTASK_BG_INVOCATION_ID must be \
              judged launcher-only -- this is exactly the unqueued frontend \
              invocation that raced on the pre-exec SQLx bootstrap in the \
@@ -211,7 +224,11 @@ fn test_requires_sqlx_database_skips_bootstrap_for_launcher_only_bg() {
     let functions = extract_flake_functions();
     for &cmd in &["test", "check", "build", "deps", "fix"] {
         assert!(
-            !call(&functions, "_sinex_xtask_requires_sqlx_database", &[cmd, "--bg"]),
+            !call(
+                &functions,
+                "_sinex_xtask_requires_sqlx_database",
+                &[cmd, "--bg"]
+            ),
             "'{cmd} --bg' from a bare launcher invocation must skip the \
              pre-exec SQLx bootstrap -- this is the sinex-sbm fix. If this \
              regresses, two concurrent 'xtask ... --bg' launches can both \

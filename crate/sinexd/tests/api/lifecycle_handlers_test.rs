@@ -665,9 +665,13 @@ async fn tombstone_approve_preserves_shared_blob_content_for_live_sibling_materi
         .pool()
         .events()
         .insert(
-            DynamicPayload::new(source, "test.lifecycle.shared-blob.a", json!({ "which": "a" }))
-                .from_material(material_a_id)
-                .build()?,
+            DynamicPayload::new(
+                source,
+                "test.lifecycle.shared-blob.a",
+                json!({ "which": "a" }),
+            )
+            .from_material(material_a_id)
+            .build()?,
         )
         .await?;
     let event_a_id = event_a.id.expect("inserted event must have id").to_string();
@@ -676,9 +680,13 @@ async fn tombstone_approve_preserves_shared_blob_content_for_live_sibling_materi
         .pool()
         .events()
         .insert(
-            DynamicPayload::new(source, "test.lifecycle.shared-blob.b", json!({ "which": "b" }))
-                .from_material(material_b_id)
-                .build()?,
+            DynamicPayload::new(
+                source,
+                "test.lifecycle.shared-blob.b",
+                json!({ "which": "b" }),
+            )
+            .from_material(material_b_id)
+            .build()?,
         )
         .await?;
 

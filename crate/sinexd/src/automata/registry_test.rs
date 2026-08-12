@@ -299,7 +299,8 @@ async fn registered_automata_are_bridge_repairable() -> TestResult<()> {
 #[ignore = "sinex-r6d.6 open: registered automata all set manages_own_checkpoints=true, \
             so the bridge-checkpoint-preload mechanism this bead's original closure \
             regression proves is never exercised in production"]
-async fn registered_automata_use_the_bridge_checkpoint_mechanism_their_closure_claims() -> TestResult<()> {
+async fn registered_automata_use_the_bridge_checkpoint_mechanism_their_closure_claims()
+-> TestResult<()> {
     for spec in AUTOMATA {
         let contract = (spec.contract)();
         assert!(

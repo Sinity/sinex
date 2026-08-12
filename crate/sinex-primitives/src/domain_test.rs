@@ -17,8 +17,8 @@ fn event_name_from_str_is_not_a_true_inverse_of_display_for_dotted_sources() {
     let wire = original.to_string();
     assert_eq!(wire, "wm.hyprland.window.focused");
 
-    let roundtripped = EventName::from_str(&wire)
-        .expect("a Display'd EventName must always re-parse via FromStr");
+    let roundtripped =
+        EventName::from_str(&wire).expect("a Display'd EventName must always re-parse via FromStr");
 
     // This is the actual bug: round-tripping silently produces a DIFFERENT
     // EventName instead of failing or matching the original.

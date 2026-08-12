@@ -13,14 +13,15 @@
 
 use std::sync::LazyLock;
 
-use jiff::{ToSpan, Timestamp as JiffTimestamp, Zoned};
+use jiff::{Timestamp as JiffTimestamp, ToSpan, Zoned};
 use sinex_primitives::temporal::Timestamp;
 use time::OffsetDateTime;
 
 /// The single declared operator timezone (IANA name). One source of truth for
 /// every civil bucket.
-static OPERATOR_TZ: LazyLock<String> =
-    LazyLock::new(|| std::env::var("SINEX_LOCAL_TZ").unwrap_or_else(|_| "Europe/Warsaw".to_string()));
+static OPERATOR_TZ: LazyLock<String> = LazyLock::new(|| {
+    std::env::var("SINEX_LOCAL_TZ").unwrap_or_else(|_| "Europe/Warsaw".to_string())
+});
 
 /// Operator timezone IANA name (e.g. `Europe/Warsaw`).
 #[must_use]

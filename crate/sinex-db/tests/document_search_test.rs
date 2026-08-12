@@ -618,7 +618,13 @@ async fn document_search_natural_key_prefix_does_not_collide_with_limit_offset_b
 ) -> TestResult<()> {
     let doc_id = Uuid::now_v7();
     seed_document(&ctx, doc_id, "dendron_markdown", "notes/rust-async").await?;
-    seed_chunk(&ctx, doc_id, 0, "Rust async programming with tokio and futures").await?;
+    seed_chunk(
+        &ctx,
+        doc_id,
+        0,
+        "Rust async programming with tokio and futures",
+    )
+    .await?;
 
     let repo = ctx.pool.documents();
     let results = repo
@@ -655,7 +661,13 @@ async fn document_search_with_vector_params_does_not_silently_fall_back_to_fts(
 ) -> TestResult<()> {
     let doc_id = Uuid::now_v7();
     seed_document(&ctx, doc_id, "dendron_markdown", "notes/rust-async").await?;
-    seed_chunk(&ctx, doc_id, 0, "Rust async programming with tokio and futures").await?;
+    seed_chunk(
+        &ctx,
+        doc_id,
+        0,
+        "Rust async programming with tokio and futures",
+    )
+    .await?;
 
     let repo = ctx.pool.documents();
     let results = repo

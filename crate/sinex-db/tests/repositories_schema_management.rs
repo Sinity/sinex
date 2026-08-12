@@ -497,12 +497,14 @@ async fn sync_schema_bundle_detects_content_hash_drift_from_schema_content(
     // this as unchanged and never reconciles schema_content back to what the
     // bundle actually declares.
     let sync_result = repo
-        .sync_schema_bundle([sinex_primitives::events::schema_registry::SchemaBundleEntry::new(
-            original.source.to_string(),
-            original.event_type.to_string(),
-            original.schema_version.clone(),
-            original.schema_content.clone(),
-        )?])
+        .sync_schema_bundle([
+            sinex_primitives::events::schema_registry::SchemaBundleEntry::new(
+                original.source.to_string(),
+                original.event_type.to_string(),
+                original.schema_version.clone(),
+                original.schema_content.clone(),
+            )?,
+        ])
         .await?;
 
     let active = repo

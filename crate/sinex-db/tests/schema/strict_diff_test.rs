@@ -45,7 +45,10 @@ async fn restore_trigger(pool: &sqlx::PgPool, table: &str, trigger_name: &str) -
 /// the comment forces a hash mismatch, which forces `apply()` to re-run the
 /// whole function-set SQL and restore every function in the set (including
 /// the one this test corrupted) to its canonical body.
-async fn restore_function_set(pool: &sqlx::PgPool, representative_signature: &str) -> TestResult<()> {
+async fn restore_function_set(
+    pool: &sqlx::PgPool,
+    representative_signature: &str,
+) -> TestResult<()> {
     sqlx::query(&format!(
         "COMMENT ON FUNCTION {representative_signature} IS NULL"
     ))
@@ -787,7 +790,9 @@ async fn detects_manual_edit_to_fn_document_projection(ctx: TestContext) -> Test
     let drifts = check_strict(&ctx.pool).await?;
     let matched: Vec<_> = drifts
         .iter()
-        .filter(|d| d.category == DriftCategory::TriggerBody && d.location == "core.fn_document_projection")
+        .filter(|d| {
+            d.category == DriftCategory::TriggerBody && d.location == "core.fn_document_projection"
+        })
         .collect();
 
     assert_eq!(
@@ -846,7 +851,12 @@ async fn detects_manual_edit_to_fn_events_validate_material_bounds(
         "expected exactly one trigger_body drift on fn_events_validate_material_bounds, got: {drifts:?}"
     );
 
-    restore_trigger(&ctx.pool, "core.events", "trg_events_validate_material_bounds").await?;
+    restore_trigger(
+        &ctx.pool,
+        "core.events",
+        "trg_events_validate_material_bounds",
+    )
+    .await?;
 
     Ok(())
 }
@@ -996,12 +1006,7 @@ async fn detects_manual_edit_to_fn_temporal_ledger_append_only(ctx: TestContext)
         "expected exactly one trigger_body drift on fn_temporal_ledger_append_only, got: {drifts:?}"
     );
 
-    restore_trigger(
-        &ctx.pool,
-        "raw.temporal_ledger",
-        "trg_tl_no_update_delete",
-    )
-    .await?;
+    restore_trigger(&ctx.pool, "raw.temporal_ledger", "trg_tl_no_update_delete").await?;
 
     Ok(())
 }
@@ -1077,7 +1082,11 @@ async fn detects_manual_edit_to_execute_cascade_tombstone(ctx: TestContext) -> T
         "expected exactly one trigger_body drift on execute_cascade_tombstone, got: {drifts:?}"
     );
 
-    restore_function_set(&ctx.pool, "core.execute_cascade_tombstone(uuid[],text,uuid)").await?;
+    restore_function_set(
+        &ctx.pool,
+        "core.execute_cascade_tombstone(uuid[],text,uuid)",
+    )
+    .await?;
 
     Ok(())
 }
@@ -1114,7 +1123,11 @@ async fn detects_manual_edit_to_execute_cascade_restore(ctx: TestContext) -> Tes
         "expected exactly one trigger_body drift on execute_cascade_restore, got: {drifts:?}"
     );
 
-    restore_function_set(&ctx.pool, "core.execute_cascade_tombstone(uuid[],text,uuid)").await?;
+    restore_function_set(
+        &ctx.pool,
+        "core.execute_cascade_tombstone(uuid[],text,uuid)",
+    )
+    .await?;
 
     Ok(())
 }
@@ -1255,10 +1268,7 @@ async fn apply_replaces_legacy_unversioned_check_constraint(ctx: TestContext) ->
     )
     .fetch_one(&ctx.pool)
     .await?;
-    assert!(
-        def.contains("'source'"),
-        "renamed back to 'source': {def}"
-    );
+    assert!(def.contains("'source'"), "renamed back to 'source': {def}");
     assert!(
         !def.contains("'node'"),
         "stale 'node' value must be gone: {def}"

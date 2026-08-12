@@ -238,11 +238,15 @@ fn non_strict_mode_still_accepts_schema_not_found() {
 #[test]
 fn admitted_to_stream_rows_persists_the_pre_redaction_hash_not_a_post_mutation_recompute() {
     let original_payload = serde_json::json!({ "value": "hello\u{0}world" });
-    let event = DynamicPayload::new("test.source", SUPERSEDE_ON_CHANGE_EVENT_TYPE, original_payload.clone())
-        .from_material(Id::new())
-        .at_time(sinex_primitives::Timestamp::now())
-        .build()
-        .expect("test event should build");
+    let event = DynamicPayload::new(
+        "test.source",
+        SUPERSEDE_ON_CHANGE_EVENT_TYPE,
+        original_payload.clone(),
+    )
+    .from_material(Id::new())
+    .at_time(sinex_primitives::Timestamp::now())
+    .build()
+    .expect("test event should build");
 
     // Mirrors the real construction site in persist.rs::persist_batch_optimized:
     // content_hash is captured from the payload AS IT STOOD at this exact point.
@@ -281,8 +285,7 @@ fn admitted_to_stream_rows_persists_the_pre_redaction_hash_not_a_post_mutation_r
             SQLSTATE_PROGRAM_LIMIT_EXCEEDED_CLASS (\"54\") that the jetstream_consumer::\
             persistence_support copy already isolates on -- the two copies have drifted"]
 fn is_isolatable_batch_persistence_failure_covers_program_limit_exceeded_class() {
-    let err = SinexError::database("test: statement too complex")
-        .with_context("sqlstate", "54001");
+    let err = SinexError::database("test: statement too complex").with_context("sqlstate", "54001");
     assert!(
         is_isolatable_batch_persistence_failure(&err),
         "a program-limit-exceeded (class 54) error should isolate its batch, \

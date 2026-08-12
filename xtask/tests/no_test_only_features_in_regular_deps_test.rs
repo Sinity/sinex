@@ -1,3 +1,5 @@
+#![allow(clippy::expect_used, clippy::unwrap_used)] // integration test binary, not covered by the lib crate's test-cfg lint relaxation
+
 //! Regression coverage for sinex-5xm8: xtask is simultaneously the schema
 //! bundle generator, the drift checker, and the dev-stack seeder for the
 //! checked-in PUBLIC schema files -- so any regular (non-dev) build of xtask
@@ -20,8 +22,7 @@ const TEST_ONLY_FEATURE_NAMES: &[&str] = &["testing"];
 #[ignore = "sinex-5xm8 open: sinex-primitives is declared in [dependencies] (not [dev-dependencies]) with the test-only \"testing\" feature enabled"]
 fn regular_dependencies_do_not_request_test_only_features() {
     let manifest_path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("Cargo.toml");
-    let raw = std::fs::read_to_string(&manifest_path)
-        .expect("xtask/Cargo.toml must be readable");
+    let raw = std::fs::read_to_string(&manifest_path).expect("xtask/Cargo.toml must be readable");
     let doc: toml::Value = raw.parse().expect("xtask/Cargo.toml must be valid TOML");
 
     let Some(deps) = doc.get("dependencies").and_then(|d| d.as_table()) else {
@@ -38,7 +39,9 @@ fn regular_dependencies_do_not_request_test_only_features() {
                 continue;
             };
             if TEST_ONLY_FEATURE_NAMES.contains(&feature_name) {
-                offenders.push(format!("{dep_name} requests test-only feature \"{feature_name}\""));
+                offenders.push(format!(
+                    "{dep_name} requests test-only feature \"{feature_name}\""
+                ));
             }
         }
     }

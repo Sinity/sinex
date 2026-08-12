@@ -117,7 +117,11 @@ async fn hourly_pending_window_overwrite_does_not_drop_boundary_crossing_events(
 
     // Open hour H.
     summarizer
-        .accumulate(&mut state, window(base, base), &AutomatonContext::timer_flush(base)?)
+        .accumulate(
+            &mut state,
+            window(base, base),
+            &AutomatonContext::timer_flush(base)?,
+        )
         .await?;
     assert_eq!(state.window_count, 1);
 
@@ -146,7 +150,10 @@ async fn hourly_pending_window_overwrite_does_not_drop_boundary_crossing_events(
         .emit(&mut state, &AutomatonContext::timer_flush(next_b)?)
         .await?
         .expect("closed hour H should emit a summary");
-    assert_eq!(output.payload.window_count, 1, "only hour H's own window contributes to H's summary");
+    assert_eq!(
+        output.payload.window_count, 1,
+        "only hour H's own window contributes to H's summary"
+    );
 
     assert_eq!(
         state.window_count, 2,

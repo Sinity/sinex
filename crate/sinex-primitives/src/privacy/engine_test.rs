@@ -340,8 +340,7 @@ async fn mask_strategy_redacts_middle_of_card_number() -> ::xtask::sandbox::Test
 }
 
 #[sinex_test]
-async fn mask_strategy_leaves_non_matching_text_unchanged() -> ::xtask::sandbox::TestResult<()>
-{
+async fn mask_strategy_leaves_non_matching_text_unchanged() -> ::xtask::sandbox::TestResult<()> {
     let e = engine_with_mask_rule(4, 4);
     let result = e.process("no card here", ProcessingContext::Command);
     assert!(!result.any_matched());
@@ -405,8 +404,7 @@ async fn any_matcher_fires_on_either_branch() -> ::xtask::sandbox::TestResult<()
 }
 
 #[sinex_test]
-async fn any_matcher_does_not_fire_when_no_branch_matches() -> ::xtask::sandbox::TestResult<()>
-{
+async fn any_matcher_does_not_fire_when_no_branch_matches() -> ::xtask::sandbox::TestResult<()> {
     use super::super::Matcher;
     let e = engine_with_compound(Matcher::Any(vec![
         Matcher::Regex {
@@ -422,8 +420,7 @@ async fn any_matcher_does_not_fire_when_no_branch_matches() -> ::xtask::sandbox:
 }
 
 #[sinex_test]
-async fn all_matcher_fires_only_when_both_sub_matchers_match()
--> ::xtask::sandbox::TestResult<()> {
+async fn all_matcher_fires_only_when_both_sub_matchers_match() -> ::xtask::sandbox::TestResult<()> {
     use super::super::Matcher;
     let e = engine_with_compound(Matcher::All(vec![
         Matcher::Regex {
@@ -451,8 +448,7 @@ async fn all_matcher_fires_only_when_both_sub_matchers_match()
 }
 
 #[sinex_test]
-async fn all_matcher_does_not_fire_when_one_branch_missing() -> ::xtask::sandbox::TestResult<()>
-{
+async fn all_matcher_does_not_fire_when_one_branch_missing() -> ::xtask::sandbox::TestResult<()> {
     use super::super::Matcher;
     let e = engine_with_compound(Matcher::All(vec![
         Matcher::Regex {

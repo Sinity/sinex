@@ -79,9 +79,8 @@ async fn parse_checkpoint_rejects_malformed_json_input() -> TestResult<()> {
 
 #[sinex_test]
 async fn parse_checkpoint_rejects_invalid_timestamp_like_input() -> TestResult<()> {
-    let error = parse_checkpoint("2026-03-28T25:61:61Z").expect_err(
-        "timestamp-like checkpoint input must not silently fall back to a stream id",
-    );
+    let error = parse_checkpoint("2026-03-28T25:61:61Z")
+        .expect_err("timestamp-like checkpoint input must not silently fall back to a stream id");
 
     assert!(format!("{error:#}").contains("Invalid timestamp format"));
     Ok(())

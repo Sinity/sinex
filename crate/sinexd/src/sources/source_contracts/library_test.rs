@@ -325,8 +325,8 @@ async fn extract_author_title_preserves_inner_dashes() -> xtask::sandbox::TestRe
             TimingEvidence::InferredMtime (resolved quality) when metadata.modified() \
             succeeds but the SystemTime->Timestamp conversion fails (e.g. a pre-epoch \
             mtime), instead of Atemporal like the adjacent Err(_) branch"]
-async fn read_mtime_tags_pre_epoch_metadata_as_atemporal_not_inferred() -> xtask::sandbox::TestResult<()>
-{
+async fn read_mtime_tags_pre_epoch_metadata_as_atemporal_not_inferred()
+-> xtask::sandbox::TestResult<()> {
     let dir = TempDir::new()?;
     let path = dir.path().join("pre-epoch.txt");
     std::fs::write(&path, b"content")?;
@@ -348,7 +348,10 @@ async fn read_mtime_tags_pre_epoch_metadata_as_atemporal_not_inferred() -> xtask
     // resolved-quality InferredMtime -- it must defer to raw.temporal_ledger
     // resolution like the sibling Err(_) branch does, i.e. Atemporal.
     assert!(
-        matches!(evidence, sinex_primitives::parser::TimingEvidence::Atemporal),
+        matches!(
+            evidence,
+            sinex_primitives::parser::TimingEvidence::Atemporal
+        ),
         "expected Atemporal for a fabricated fallback timestamp, got {evidence:?} \
          -- a pre-epoch mtime makes duration_since(UNIX_EPOCH) fail, so read_mtime \
          falls back to Timestamp::now() but currently mislabels it InferredMtime"

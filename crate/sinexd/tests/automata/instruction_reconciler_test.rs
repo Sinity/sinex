@@ -344,7 +344,10 @@ async fn idle_flush_times_out_pending_instruction_with_no_observation() -> TestR
 
     let outputs = reconciler.flush(&mut state, flush_at).await?;
     assert_eq!(outputs.len(), 1);
-    assert_eq!(outputs[0].payload.status, InstructionExpectationStatus::TimedOut);
+    assert_eq!(
+        outputs[0].payload.status,
+        InstructionExpectationStatus::TimedOut
+    );
     assert!(outputs[0].payload.matched_event_ids.is_empty());
     assert_eq!(state.pending_hyprland_workspace_len(), 0);
     assert!(!reconciler.flush_due(&state, flush_at));

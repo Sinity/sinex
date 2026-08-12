@@ -72,8 +72,8 @@ pub fn event_ids_from_owned_events(events: &[Event<JsonValue>], max: usize) -> V
 #[cfg(test)]
 mod tests {
     use super::*;
-    use sinex_primitives::events::builder::Provenance;
     use sinex_primitives::events::SourceMaterial;
+    use sinex_primitives::events::builder::Provenance;
     use sinex_primitives::{EventSource, EventType, HostName, Id};
     use xtask::sandbox::prelude::sinex_test;
 

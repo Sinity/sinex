@@ -42,7 +42,8 @@ async fn projection_readiness_view_renders_registry_row_caveats(
     let repo = ctx.pool().projection_registry();
 
     let ready_id = repo.begin_build(&registration(&kind, "ready")).await?;
-    repo.mark_ready(ready_id, serde_json::json!({"n": 3})).await?;
+    repo.mark_ready(ready_id, serde_json::json!({"n": 3}))
+        .await?;
 
     let stale_id = repo.begin_build(&registration(&kind, "stale")).await?;
     repo.mark_ready(stale_id, serde_json::json!({})).await?;
@@ -87,7 +88,11 @@ async fn projection_readiness_view_renders_registry_row_caveats(
         stale.caveats[0].id,
         ReadinessCaveatId::ReadmodelStaleBy.as_str()
     );
-    assert!(stale.caveats[0].message.contains("acceptable staleness exceeded"));
+    assert!(
+        stale.caveats[0]
+            .message
+            .contains("acceptable staleness exceeded")
+    );
 
     let failed = find("failed");
     assert_eq!(failed.status, ProjectionStatus::Failed);

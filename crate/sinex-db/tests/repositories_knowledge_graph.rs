@@ -391,12 +391,8 @@ async fn merge_entities_allows_a_second_distinct_source_into_the_same_target(
     ctx: TestContext,
 ) -> TestResult<()> {
     let repo = ctx.pool.knowledge_graph();
-    let source_a = repo
-        .create_entity(CreateEntity::person("dup-a"))
-        .await?;
-    let source_b = repo
-        .create_entity(CreateEntity::person("dup-b"))
-        .await?;
+    let source_a = repo.create_entity(CreateEntity::person("dup-a")).await?;
+    let source_b = repo.create_entity(CreateEntity::person("dup-b")).await?;
     let target = repo
         .create_entity(CreateEntity::person("canonical"))
         .await?;

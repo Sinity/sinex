@@ -282,8 +282,10 @@ async fn test_extract_simple_binary_name_terms_accepts_boolean_binary_names() ->
 #[sinex_test]
 async fn test_extract_simple_binary_name_terms_rejects_complex_filter_predicates() -> TestResult<()>
 {
-    assert!(extract_simple_binary_name_terms("package(sinexd) & binary(cascade_analyzer_test)")
-        .is_none());
+    assert!(
+        extract_simple_binary_name_terms("package(sinexd) & binary(cascade_analyzer_test)")
+            .is_none()
+    );
     assert!(extract_simple_binary_name_terms("not binary(cascade_analyzer_test)").is_none());
     assert!(extract_simple_binary_name_terms("test(cascade_analyzer_test)").is_none());
     Ok(())
@@ -409,7 +411,9 @@ async fn test_infer_lib_target_honors_selected_package_boundary() -> TestResult<
     let sibling_test = repo
         .path()
         .join("crate/sinexd/src/api/handlers/source_status_test.rs");
-    let other_package_test = repo.path().join("crate/sinex-db/tests/repositories_state.rs");
+    let other_package_test = repo
+        .path()
+        .join("crate/sinex-db/tests/repositories_state.rs");
     fs::create_dir_all(sibling_test.parent().expect("sibling test parent"))?;
     fs::create_dir_all(other_package_test.parent().expect("other test parent"))?;
     fs::write(

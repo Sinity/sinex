@@ -487,8 +487,8 @@ async fn test_ensure_nix_tool_ready_rejects_probe_issue() -> ::xtask::sandbox::T
 
 #[sinex_test]
 #[ignore = "sinex-rqu4 open: `xtask check --changed-strict` (the ONLY automated pre-push guard) never runs the secret-literal scanner -- there is no pre-commit hook and no other enforcement point"]
-async fn changed_strict_invocation_still_runs_the_secret_scanner() -> ::xtask::sandbox::TestResult<()>
-{
+async fn changed_strict_invocation_still_runs_the_secret_scanner()
+-> ::xtask::sandbox::TestResult<()> {
     // This mirrors the exact invocation shape `.githooks/pre-push` uses --
     // `xtask check --changed-strict <base_ref>` -- with no other flags, since
     // that hook is the repo's ONLY automated gate (no pre-commit hook

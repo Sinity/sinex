@@ -242,11 +242,13 @@ async fn scope_invalidation_outputs_preserve_payload_for_policy_admission() -> T
             "test.output"
         }
 
-        const OUTPUT_DECLARATIONS: &'static [sinex_primitives::derivation::DerivationOutputDeclaration] =
-            &[sinex_primitives::derivation::DerivationOutputDeclaration {
+        const OUTPUT_DECLARATIONS:
+            &'static [sinex_primitives::derivation::DerivationOutputDeclaration] = &[
+            sinex_primitives::derivation::DerivationOutputDeclaration {
                 declaration_id: "test.derived-adapter-invalidation-policy-admission-test.test.output",
                 owner: "test",
-                product_class: sinex_primitives::derivation::DerivedProductClass::CanonicalDerivedEvent,
+                product_class:
+                    sinex_primitives::derivation::DerivedProductClass::CanonicalDerivedEvent,
                 write_surface: sinex_primitives::derivation::DerivationWriteSurface::DerivedOutput,
                 output_source: None,
                 output_event_type: Some("test.output"),
@@ -261,7 +263,8 @@ async fn scope_invalidation_outputs_preserve_payload_for_policy_admission() -> T
                     sinex_primitives::derivation::ClaimTemporalQuality::DeclaredEffective,
                 ),
                 verification_command: "xtask test -p sinexd -E 'test(scope_invalidation_outputs_preserve_payload)'",
-            }];
+            },
+        ];
 
         async fn process(
             &mut self,
@@ -578,8 +581,14 @@ async fn historical_replay_filters_wildcard_material_only_inputs(
         .expect("material event fixture should carry an id");
     let product_class = sinex_primitives::derivation::DerivedProductClass::CanonicalDerivedEvent;
     let declaration_id = "sinex.test.historical_replay_filters_wildcard_material_only_inputs";
-    seed_product_declaration(ctx.pool(), declaration_id, product_class, "test.source", "test.input")
-        .await?;
+    seed_product_declaration(
+        ctx.pool(),
+        declaration_id,
+        product_class,
+        "test.source",
+        "test.input",
+    )
+    .await?;
     let mut synthesized_event = DynamicPayload::new(
         "test.source",
         "test.input",
@@ -647,7 +656,8 @@ async fn handle_invalidation_message_returns_none_when_output_emit_fails(
         .and_then(|event| event.id)
         .expect("inserted input should have id");
     let product_class = sinex_primitives::derivation::DerivedProductClass::CanonicalDerivedEvent;
-    let declaration_id = "sinex.test.handle_invalidation_message_returns_none_when_output_emit_fails";
+    let declaration_id =
+        "sinex.test.handle_invalidation_message_returns_none_when_output_emit_fails";
     seed_product_declaration(
         ctx.pool(),
         declaration_id,

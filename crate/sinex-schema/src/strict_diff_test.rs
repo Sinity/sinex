@@ -34,8 +34,7 @@ async fn drift_category_display_round_trip() -> xtask::sandbox::TestResult<()> {
 }
 
 #[sinex_test]
-async fn strict_drift_display_includes_location_and_summaries() -> xtask::sandbox::TestResult<()>
-{
+async fn strict_drift_display_includes_location_and_summaries() -> xtask::sandbox::TestResult<()> {
     let drift = StrictDrift {
         category: DriftCategory::ColumnDefault,
         location: "core.events.ts_persisted".to_string(),
@@ -114,8 +113,8 @@ async fn inline_check_drift_reports_partial_marker_subset() -> xtask::sandbox::T
 }
 
 #[sinex_test]
-async fn foreign_key_action_drift_reports_missing_delete_action()
--> xtask::sandbox::TestResult<()> {
+async fn foreign_key_action_drift_reports_missing_delete_action() -> xtask::sandbox::TestResult<()>
+{
     let declared = DECLARED_FK_ACTIONS
         .iter()
         .find(|fk| fk.table == "tagged_items")
@@ -138,8 +137,8 @@ async fn foreign_key_action_drift_reports_missing_delete_action()
 }
 
 #[sinex_test]
-async fn foreign_key_action_drift_reports_missing_fk_definition()
--> xtask::sandbox::TestResult<()> {
+async fn foreign_key_action_drift_reports_missing_fk_definition() -> xtask::sandbox::TestResult<()>
+{
     let declared = DECLARED_FK_ACTIONS
         .iter()
         .find(|fk| fk.table == "tags")
@@ -162,8 +161,8 @@ async fn foreign_key_action_drift_reports_missing_fk_definition()
 }
 
 #[sinex_test]
-async fn foreign_key_action_drift_reports_missing_update_action()
--> xtask::sandbox::TestResult<()> {
+async fn foreign_key_action_drift_reports_missing_update_action() -> xtask::sandbox::TestResult<()>
+{
     let declared = DeclaredForeignKeyAction {
         schema: "core",
         table: "child_rows",
@@ -243,11 +242,10 @@ async fn orphan_column_drift_reports_live_column_outside_source_and_allowlists()
 }
 
 #[sinex_test]
-async fn hypertable_setting_drift_reports_chunk_interval_states()
--> xtask::sandbox::TestResult<()> {
+async fn hypertable_setting_drift_reports_chunk_interval_states() -> xtask::sandbox::TestResult<()>
+{
     assert!(
-        hypertable_chunk_interval_drift(Some((Some(HYPERTABLE_CHUNK_INTERVAL_MICROS),)))
-            .is_none(),
+        hypertable_chunk_interval_drift(Some((Some(HYPERTABLE_CHUNK_INTERVAL_MICROS),))).is_none(),
         "declared 7-day chunk interval is not drift"
     );
 
@@ -287,9 +285,9 @@ async fn hypertable_setting_drift_reports_retention_policy() -> xtask::sandbox::
             constraints (including xor_provenance) but strict_diff never verifies them, \
             so drift there is invisible to `xtask schema strict-diff`"]
 async fn declared_inline_checks_cover_reflection_events() -> xtask::sandbox::TestResult<()> {
-    let covers_reflection_xor_provenance = DECLARED_INLINE_CHECKS
-        .iter()
-        .any(|check| check.schema == "reflection" && check.table == "events" && check.label == "xor_provenance");
+    let covers_reflection_xor_provenance = DECLARED_INLINE_CHECKS.iter().any(|check| {
+        check.schema == "reflection" && check.table == "events" && check.label == "xor_provenance"
+    });
 
     assert!(
         covers_reflection_xor_provenance,

@@ -142,9 +142,9 @@ async fn concurrent_material_registration_race_never_orphans_deleted_blob(
         .await
     });
 
-    let deleted = handle_a
-        .await
-        .map_err(|e| SinexError::unknown(format!("racer A (delete-on-tombstone) panicked: {e}")))??;
+    let deleted = handle_a.await.map_err(|e| {
+        SinexError::unknown(format!("racer A (delete-on-tombstone) panicked: {e}"))
+    })??;
     let insert_result = handle_b
         .await
         .map_err(|e| SinexError::unknown(format!("racer B (dedup insert) panicked: {e}")))?;

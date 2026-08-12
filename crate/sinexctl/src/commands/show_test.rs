@@ -1,5 +1,5 @@
-use crate::client::gateway::ClientConfig;
 use super::*;
+use crate::client::gateway::ClientConfig;
 use sinex_primitives::public_ref::{PublicSinexRef, ResolvedObjectStatus};
 use sinex_primitives::testing::event_fixture;
 use sinex_primitives::views::SinexObjectRef;
@@ -125,8 +125,8 @@ async fn table_renderer_shows_resolution_status_and_surface() -> xtask::TestResu
             PrivacySession, Caveat, ExternalRef) round-trip-parses fine via `sinexctl show \
             document:<id>` but resolve_ref has no real match arm for it -- it's permanently \
             unsupported, not 'not found yet', despite looking identical to a working kind"]
-async fn resolve_ref_supports_document_kind_not_just_unsupported_fallthrough() -> xtask::TestResult<()>
-{
+async fn resolve_ref_supports_document_kind_not_just_unsupported_fallthrough()
+-> xtask::TestResult<()> {
     let client = GatewayClient::new(ClientConfig {
         url: "https://127.0.0.1:1".to_string(), // never contacted for a kind with a real arm
         token: Some("test-token".to_string()),

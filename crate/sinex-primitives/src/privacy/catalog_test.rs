@@ -59,8 +59,7 @@ async fn opt_in_rules_actually_exist() -> ::xtask::sandbox::TestResult<()> {
 }
 
 #[sinex_test]
-async fn builtin_seed_projection_is_explicit_db_policy_data() -> ::xtask::sandbox::TestResult<()>
-{
+async fn builtin_seed_projection_is_explicit_db_policy_data() -> ::xtask::sandbox::TestResult<()> {
     let rules = builtin_policy_seed_rules(false);
     let aws = rules
         .iter()
@@ -89,8 +88,8 @@ async fn builtin_seed_projection_is_explicit_db_policy_data() -> ::xtask::sandbo
 }
 
 #[sinex_test]
-async fn aggressive_path_rule_replaces_collapse_when_opted_in()
--> ::xtask::sandbox::TestResult<()> {
+async fn aggressive_path_rule_replaces_collapse_when_opted_in() -> ::xtask::sandbox::TestResult<()>
+{
     // Document the operator-facing pattern: turning on the aggressive
     // variant and turning off the soft variant produces hashed output
     // for $HOME paths instead of `<HOME>/...` collapse.

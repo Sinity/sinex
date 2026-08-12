@@ -15,12 +15,12 @@ use sinex_primitives::rpc::curation::{
     CurationListProposalsRequest, CurationRecordDuplicateJudgmentRequest,
     CurationRecordJudgmentRequest,
 };
+use sinexd::api::auth::Role;
 use sinexd::api::handlers::{
     handle_curation_finalize, handle_curation_list_duplicate_candidates,
     handle_curation_list_proposals, handle_curation_record_duplicate_judgment,
     handle_curation_record_judgment,
 };
-use sinexd::api::auth::Role;
 use sinexd::api::rpc_server::RpcAuthContext;
 use xtask::sandbox::prelude::*;
 

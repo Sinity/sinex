@@ -1,3 +1,5 @@
+#![allow(clippy::expect_used, clippy::unwrap_used)] // integration test binary, not covered by the lib crate's test-cfg lint relaxation
+
 //! Regression coverage for sinex-guw: the devshell `cargo`/`xtask` launcher
 //! used to rebuild `schema-apply-bootstrap` through `nix build` on every
 //! invocation, adding ~30-60s of serial latency even for quick reruns. The
@@ -84,11 +86,7 @@ fn init_fixture_repo(dir: &Path) {
     std::fs::create_dir_all(dir.join("crate/sinex-schema/src")).unwrap();
     std::fs::create_dir_all(dir.join("crate/sinex-primitives/src")).unwrap();
     std::fs::create_dir_all(dir.join("crate/sinexd/src")).unwrap();
-    std::fs::write(
-        dir.join("crate/sinex-schema/src/lib.rs"),
-        "// schema v1\n",
-    )
-    .unwrap();
+    std::fs::write(dir.join("crate/sinex-schema/src/lib.rs"), "// schema v1\n").unwrap();
     std::fs::write(
         dir.join("crate/sinex-primitives/src/lib.rs"),
         "// primitives v1\n",
@@ -245,7 +243,10 @@ fn bin_returns_cached_path_without_invoking_nix_when_fingerprint_matches() {
         .env("root_dir", fixture.path())
         .env("SINEX_DEV_STATE_DIR", &dev_state_dir)
         .env("pglog", dev_state_dir.join("run/logs"))
-        .env("bootstrap_log", dev_state_dir.join("run/logs/bootstrap.log"))
+        .env(
+            "bootstrap_log",
+            dev_state_dir.join("run/logs/bootstrap.log"),
+        )
         .env("PATH", path_env)
         .output()
         .expect("bash must be on PATH to run this test");

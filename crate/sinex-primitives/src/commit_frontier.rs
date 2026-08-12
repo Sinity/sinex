@@ -196,17 +196,15 @@ impl<C> CommitFrontier<C> {
     /// Fold every contiguous-from-the-front terminal atom into the committed
     /// frontier, stopping at the first hole (or an empty queue).
     fn advance(&mut self) {
-        while let Some(front) = self.pending.front() {
-            if front.outcome.is_none() {
-                break;
+        while matches!(self.pending.front(), Some(entry) if entry.outcome.is_some()) {
+            if let Some(Entry {
+                outcome: Some((_, checkpoint)),
+                ..
+            }) = self.pending.pop_front()
+            {
+                self.committed = Some(checkpoint);
+                self.committed_count += 1;
             }
-            let Entry { outcome, .. } = self
-                .pending
-                .pop_front()
-                .expect("front just observed Some above");
-            let (_, checkpoint) = outcome.expect("checked is_some above");
-            self.committed = Some(checkpoint);
-            self.committed_count += 1;
         }
     }
 
@@ -381,7 +379,10 @@ mod tests {
         );
         let holes = frontier.holes();
         assert_eq!(holes.len(), 1, "only t1 is a genuine hole");
-        assert_eq!(holes[0].position, 1, "t1 was the 2nd atom submitted (0-based index 1)");
+        assert_eq!(
+            holes[0].position, 1,
+            "t1 was the 2nd atom submitted (0-based index 1)"
+        );
         assert!(!frontier.is_fully_committed());
     }
 
@@ -438,7 +439,9 @@ mod tests {
         frontier.complete(t1, o1, p1);
 
         let (position, checkpoint) = frontier.frontier();
-        let checkpoint = checkpoint.copied().expect("frontier committed at least once");
+        let checkpoint = checkpoint
+            .copied()
+            .expect("frontier committed at least once");
 
         let restored: CommitFrontier<u64> = CommitFrontier::restore(checkpoint, position);
         assert_eq!(
@@ -446,7 +449,10 @@ mod tests {
             (position, Some(&checkpoint)),
             "restoring from an observed checkpoint must reproduce the same frontier"
         );
-        assert!(restored.is_fully_committed(), "a freshly restored frontier has no holes");
+        assert!(
+            restored.is_fully_committed(),
+            "a freshly restored frontier has no holes"
+        );
 
         // Post-checkpoint atoms re-enter via submit(), continuing from the
         // restored position rather than resetting to zero.

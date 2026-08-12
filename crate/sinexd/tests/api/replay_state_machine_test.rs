@@ -781,7 +781,9 @@ async fn recover_stale_executing_at_the_real_startup_threshold_misses_a_just_cra
     // (service_container.rs STALE_EXECUTING_THRESHOLD), not a shortened
     // test value.
     const REAL_STARTUP_THRESHOLD: std::time::Duration = std::time::Duration::from_secs(600);
-    let recovered = replay.recover_stale_executing(REAL_STARTUP_THRESHOLD).await?;
+    let recovered = replay
+        .recover_stale_executing(REAL_STARTUP_THRESHOLD)
+        .await?;
 
     assert_eq!(
         recovered, 1,
@@ -818,7 +820,10 @@ async fn recover_stale_executing_restores_archived_cascade(ctx: TestContext) -> 
         .create_operation(scope, "test:planner".to_string())
         .await?;
     replay
-        .update_preview(operation.operation_id, serde_json::json!({ "total_events": 1 }))
+        .update_preview(
+            operation.operation_id,
+            serde_json::json!({ "total_events": 1 }),
+        )
         .await?;
     replay
         .approve(operation.operation_id, "admin:approver".to_string())

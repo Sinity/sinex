@@ -74,9 +74,7 @@ async fn deployment_readiness_maps_to_runtime_target() -> TestResult<()> {
         },
         secrets: DeploymentSecrets {
             api_admin_token_file: Some(PathBuf::from("/run/agenix/sinex-api-admin-token")),
-            gateway_tls_trust_anchor_file: Some(PathBuf::from(
-                "/var/lib/sinex/run/gateway-ca.pem",
-            )),
+            gateway_tls_trust_anchor_file: Some(PathBuf::from("/var/lib/sinex/run/gateway-ca.pem")),
             nats_creds_file: Some(PathBuf::from("/run/agenix/sinex-nats-client-creds")),
             ..DeploymentSecrets::default()
         },

@@ -362,8 +362,7 @@ async fn create_database_from_template_releases_shared_lock_when_clone_lock_acqu
         .await?;
 
     let result =
-        create_database_from_template(&mut conn, "sinex_lld6_never_created", &template_name)
-            .await;
+        create_database_from_template(&mut conn, "sinex_lld6_never_created", &template_name).await;
     assert!(
         result.is_err(),
         "expected the blocked clone-lock acquisition to time out and error"

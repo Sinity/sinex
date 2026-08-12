@@ -137,8 +137,8 @@ async fn find_entry_for_offset_tie_break_prefers_higher_precedence() -> TestResu
 /// sinex-odmc: among entries of EQUAL precedence overlapping the same offset,
 /// the narrower (more specific) span wins.
 #[sinex_test]
-async fn find_entry_for_offset_tie_break_prefers_narrower_span_at_equal_precedence() -> TestResult<()>
-{
+async fn find_entry_for_offset_tie_break_prefers_narrower_span_at_equal_precedence()
+-> TestResult<()> {
     let reader = LedgerReader::new(
         Uuid::now_v7(),
         vec![
@@ -163,7 +163,12 @@ async fn find_entry_for_offset_tie_break_prefers_narrower_span_at_equal_preceden
 async fn find_entry_for_offset_upper_bound_is_exclusive() -> TestResult<()> {
     let reader = LedgerReader::new(
         Uuid::now_v7(),
-        vec![ledger_entry(0, 1_000, ts(1_000), TemporalSourceType::RealtimeCapture)],
+        vec![ledger_entry(
+            0,
+            1_000,
+            ts(1_000),
+            TemporalSourceType::RealtimeCapture,
+        )],
     );
     assert!(
         reader.find_entry_for_offset(1_000).is_none(),

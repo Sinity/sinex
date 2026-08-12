@@ -1031,9 +1031,7 @@ async fn adapter_emit_failure_rolls_back_parser_checkpoint(ctx: TestContext) -> 
     let (runtime, event_receiver) = make_adapter_runtime_no_auto_settle(&ctx).await?;
     drop(event_receiver);
     let mut source =
-        AdapterBackedSource::<TwoRecordAdapter, StatefulCheckpointParser>::new(
-            "desktop.clipboard",
-        );
+        AdapterBackedSource::<TwoRecordAdapter, StatefulCheckpointParser>::new("desktop.clipboard");
     let mut state = AdapterModuleState::default();
 
     source
@@ -1386,9 +1384,7 @@ async fn adapter_source_updates_parser_checkpoint_after_successful_parse(
     let ctx = ctx.with_nats().shared().await?;
     let (runtime, mut event_receiver) = make_adapter_runtime(&ctx).await?;
     let mut source =
-        AdapterBackedSource::<TwoRecordAdapter, StatefulCheckpointParser>::new(
-            "desktop.clipboard",
-        );
+        AdapterBackedSource::<TwoRecordAdapter, StatefulCheckpointParser>::new("desktop.clipboard");
     let mut state = AdapterModuleState::<u64>::default();
 
     source
@@ -1481,10 +1477,9 @@ async fn adapter_durable_emission_receipt_blocks_cursor_when_never_settled(
     let registry = crate::runtime::durable_emission::SettlementRegistry::new();
     let (runtime, mut event_receiver) =
         make_adapter_runtime_with_settlement_registry(&ctx, registry.clone()).await?;
-    let mut source = AdapterBackedSource::<TwoRecordAdapter, StatefulCheckpointParser>::new(
-        "desktop.clipboard",
-    )
-    .with_durable_emission_timeout(std::time::Duration::from_millis(150));
+    let mut source =
+        AdapterBackedSource::<TwoRecordAdapter, StatefulCheckpointParser>::new("desktop.clipboard")
+            .with_durable_emission_timeout(std::time::Duration::from_millis(150));
     let mut state = AdapterModuleState::<u64>::default();
 
     source
@@ -1541,10 +1536,9 @@ async fn adapter_durable_emission_receipt_unlocks_cursor_once_settled(
     let registry = crate::runtime::durable_emission::SettlementRegistry::new();
     let (runtime, mut event_receiver) =
         make_adapter_runtime_with_settlement_registry(&ctx, registry.clone()).await?;
-    let mut source = AdapterBackedSource::<TwoRecordAdapter, StatefulCheckpointParser>::new(
-        "desktop.clipboard",
-    )
-    .with_durable_emission_timeout(std::time::Duration::from_secs(5));
+    let mut source =
+        AdapterBackedSource::<TwoRecordAdapter, StatefulCheckpointParser>::new("desktop.clipboard")
+            .with_durable_emission_timeout(std::time::Duration::from_secs(5));
     let mut state = AdapterModuleState::<u64>::default();
 
     source
@@ -1593,7 +1587,10 @@ async fn adapter_durable_emission_receipt_unlocks_cursor_once_settled(
         Some(json!({ "seen": ["alpha", "beta"] })),
         "persisted parser checkpoint must reflect both durably-settled records"
     );
-    assert!(registry.is_empty(), "every registration should have resolved and been removed");
+    assert!(
+        registry.is_empty(),
+        "every registration should have resolved and been removed"
+    );
     Ok(())
 }
 
@@ -1605,10 +1602,9 @@ async fn adapter_durable_emission_receipt_partial_batch_settlement_blocks_only_t
     let registry = crate::runtime::durable_emission::SettlementRegistry::new();
     let (runtime, mut event_receiver) =
         make_adapter_runtime_with_settlement_registry(&ctx, registry.clone()).await?;
-    let mut source = AdapterBackedSource::<TwoRecordAdapter, StatefulCheckpointParser>::new(
-        "desktop.clipboard",
-    )
-    .with_durable_emission_timeout(std::time::Duration::from_millis(150));
+    let mut source =
+        AdapterBackedSource::<TwoRecordAdapter, StatefulCheckpointParser>::new("desktop.clipboard")
+            .with_durable_emission_timeout(std::time::Duration::from_millis(150));
     let mut state = AdapterModuleState::<u64>::default();
 
     source
@@ -1750,11 +1746,10 @@ async fn adapter_multi_intent_partial_settlement_duplicates_the_settled_sibling_
     let registry1 = crate::runtime::durable_emission::SettlementRegistry::new();
     let (runtime1, mut event_receiver1) =
         make_adapter_runtime_with_settlement_registry(&ctx, registry1.clone()).await?;
-    let mut source1 =
-        AdapterBackedSource::<EmptyLogicalPathRecordAdapter, MultiIntentParser>::new(
-            "desktop.clipboard",
-        )
-        .with_durable_emission_timeout(std::time::Duration::from_millis(150));
+    let mut source1 = AdapterBackedSource::<EmptyLogicalPathRecordAdapter, MultiIntentParser>::new(
+        "desktop.clipboard",
+    )
+    .with_durable_emission_timeout(std::time::Duration::from_millis(150));
     source1
         .initialize(AdapterSourceConfig::default(), &runtime1, &mut state)
         .await?;
@@ -1785,7 +1780,11 @@ async fn adapter_multi_intent_partial_settlement_duplicates_the_settled_sibling_
     let emitted_1 = source1.drain_adapter(None, &mut state, None, None).await?;
     let attempt1 = settler1.await.expect("settler1 did not panic");
 
-    assert_eq!(attempt1.len(), 2, "both sibling intents reach the mpsc handoff");
+    assert_eq!(
+        attempt1.len(),
+        2,
+        "both sibling intents reach the mpsc handoff"
+    );
     assert_eq!(
         attempt1[0].1, None,
         "no occurrence_key was ever stamped, so equivalence_key is None -- admission-side \
@@ -1805,11 +1804,10 @@ async fn adapter_multi_intent_partial_settlement_duplicates_the_settled_sibling_
     let registry2 = crate::runtime::durable_emission::SettlementRegistry::new();
     let (runtime2, mut event_receiver2) =
         make_adapter_runtime_with_settlement_registry(&ctx, registry2.clone()).await?;
-    let mut source2 =
-        AdapterBackedSource::<EmptyLogicalPathRecordAdapter, MultiIntentParser>::new(
-            "desktop.clipboard",
-        )
-        .with_durable_emission_timeout(std::time::Duration::from_millis(150));
+    let mut source2 = AdapterBackedSource::<EmptyLogicalPathRecordAdapter, MultiIntentParser>::new(
+        "desktop.clipboard",
+    )
+    .with_durable_emission_timeout(std::time::Duration::from_millis(150));
     source2
         .initialize(AdapterSourceConfig::default(), &runtime2, &mut state)
         .await?;
@@ -2095,8 +2093,7 @@ async fn absent_occurrence_key_leaves_equivalence_key_none() -> xtask::sandbox::
 }
 
 #[sinex_test]
-async fn record_realtime_hint_promotes_atemporal_intent_timing()
--> xtask::sandbox::TestResult<()> {
+async fn record_realtime_hint_promotes_atemporal_intent_timing() -> xtask::sandbox::TestResult<()> {
     let original_ts = Timestamp::from_unix_timestamp(1_700_000_000)
         .ok_or_else(|| color_eyre::eyre::eyre!("valid original timestamp"))?;
     let hinted_ts = Timestamp::from_unix_timestamp(1_700_000_123)
@@ -2455,10 +2452,7 @@ mod pacing_e2e {
             let records = (0..total).map(move |i| {
                 Ok(SourceRecord {
                     material_id: Id::from_uuid(Uuid::from_u128(u128::from(i) + 1)),
-                    anchor: MaterialAnchor::ByteRange {
-                        start: i,
-                        len: 1,
-                    },
+                    anchor: MaterialAnchor::ByteRange { start: i, len: 1 },
                     bytes: format!("record-{i}").into_bytes(),
                     logical_path: None,
                     source_ts_hint: Some(sinex_primitives::parser::TimingEvidence::UserDeclared {
@@ -2584,8 +2578,7 @@ mod pacing_e2e {
         // (`SINEX_NAMESPACE` env var) — safe to set process-wide here since
         // nextest runs one test per process.
         let namespace = format!("pacing-e2e-{}", Uuid::now_v7().simple());
-        let _namespace_guard =
-            xtask::sandbox::EnvGuard::set_single("SINEX_NAMESPACE", &namespace);
+        let _namespace_guard = xtask::sandbox::EnvGuard::set_single("SINEX_NAMESPACE", &namespace);
         let ctx = ctx.with_nats().shared().await?;
         let nats_client = ctx.nats_client();
 
@@ -2642,8 +2635,12 @@ mod pacing_e2e {
             let sampler_stop = Arc::clone(&sampler_stop);
             tokio::spawn(async move {
                 while !sampler_stop.load(Ordering::Relaxed) {
-                    if let Ok(Some(info)) =
-                        crate::runtime::backlog::raw_events_consumer_pending(&js, &env, Some(&namespace)).await
+                    if let Ok(Some(info)) = crate::runtime::backlog::raw_events_consumer_pending(
+                        &js,
+                        &env,
+                        Some(&namespace),
+                    )
+                    .await
                         && info.num_pending > max_observed_pending.load(Ordering::Relaxed)
                     {
                         max_observed_pending.store(info.num_pending, Ordering::Relaxed);
@@ -2714,9 +2711,10 @@ mod pacing_e2e {
             publish_subject,
         );
 
-        let mut source = AdapterBackedSource::<ManyMaterializedRecordsAdapter, ManyRecordsParser>::new(
-            "test.pacing_e2e",
-        );
+        let mut source =
+            AdapterBackedSource::<ManyMaterializedRecordsAdapter, ManyRecordsParser>::new(
+                "test.pacing_e2e",
+            );
         let mut state = AdapterModuleState::default();
         source
             .initialize(
@@ -2758,7 +2756,9 @@ mod pacing_e2e {
         sampler_stop.store(true, Ordering::Relaxed);
         let _ = sampler_handle.await;
         puller.abort();
-        continuous_producer.await.expect("continuous producer task panicked");
+        continuous_producer
+            .await
+            .expect("continuous producer task panicked");
         let _ = tokio::time::timeout(std::time::Duration::from_secs(2), continuous_drain).await;
 
         // --- Assertions: the production pacing route actually held ---
@@ -2834,8 +2834,7 @@ mod pacing_e2e {
         ctx: TestContext,
     ) -> TestResult<()> {
         let namespace = format!("pacing-negctrl-{}", Uuid::now_v7().simple());
-        let _namespace_guard =
-            xtask::sandbox::EnvGuard::set_single("SINEX_NAMESPACE", &namespace);
+        let _namespace_guard = xtask::sandbox::EnvGuard::set_single("SINEX_NAMESPACE", &namespace);
         let ctx = ctx.with_nats().shared().await?;
         let nats_client = ctx.nats_client();
 
@@ -2879,8 +2878,12 @@ mod pacing_e2e {
             let sampler_stop = Arc::clone(&sampler_stop);
             tokio::spawn(async move {
                 while !sampler_stop.load(Ordering::Relaxed) {
-                    if let Ok(Some(info)) =
-                        crate::runtime::backlog::raw_events_consumer_pending(&js, &env, Some(&namespace)).await
+                    if let Ok(Some(info)) = crate::runtime::backlog::raw_events_consumer_pending(
+                        &js,
+                        &env,
+                        Some(&namespace),
+                    )
+                    .await
                         && info.num_pending > max_observed_pending.load(Ordering::Relaxed)
                     {
                         max_observed_pending.store(info.num_pending, Ordering::Relaxed);
@@ -2903,9 +2906,10 @@ mod pacing_e2e {
             publish_subject,
         );
 
-        let mut source = AdapterBackedSource::<ManyMaterializedRecordsAdapter, ManyRecordsParser>::new(
-            "test.pacing_negctrl",
-        );
+        let mut source =
+            AdapterBackedSource::<ManyMaterializedRecordsAdapter, ManyRecordsParser>::new(
+                "test.pacing_negctrl",
+            );
         let mut state = AdapterModuleState::default();
         source
             .initialize(

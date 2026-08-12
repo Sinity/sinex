@@ -269,7 +269,10 @@ async fn completion_cursor_mid_multibyte_char_does_not_panic() -> TestResult<()>
     // "wörd": w=1 byte, ö=2 bytes (offset 1..3), r, d. cursor=2 lands inside
     // ö's 2-byte encoding -- not a char boundary.
     let line = "w\u{00F6}rd";
-    assert!(!line.is_char_boundary(2), "fixture must straddle a char boundary");
+    assert!(
+        !line.is_char_boundary(2),
+        "fixture must straddle a char boundary"
+    );
     let cmd = CompletionEndpointCommand {
         line: line.to_string(),
         cursor: 2,

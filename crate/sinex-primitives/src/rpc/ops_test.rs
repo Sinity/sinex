@@ -14,8 +14,7 @@ use xtask::sandbox::prelude::{TestResult, sinex_test};
 #[ignore = "sinex-05cg open: ops.start requires only Write while its media worker_command can execute arbitrary programs; role should be >= ops.cancel's Admin"]
 async fn ops_start_role_is_not_lower_than_ops_cancel_role() -> TestResult<()> {
     assert_eq!(
-        OPS_START_METHOD.role,
-        OPS_CANCEL_METHOD.role,
+        OPS_START_METHOD.role, OPS_CANCEL_METHOD.role,
         "ops.start (which can execute an arbitrary worker_command as the sinexd service \
          user) must not require a lower trust tier than ops.cancel; sinex-05cg",
     );

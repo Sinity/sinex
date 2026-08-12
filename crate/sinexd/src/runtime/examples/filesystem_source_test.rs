@@ -4,8 +4,7 @@ use sinex_primitives::SanitizedPath;
 use xtask::sandbox::sinex_test;
 
 #[sinex_test]
-async fn example_ingestion_history_is_explicitly_unavailable() -> xtask::sandbox::TestResult<()>
-{
+async fn example_ingestion_history_is_explicitly_unavailable() -> xtask::sandbox::TestResult<()> {
     let source = FilesystemSource::new(Vec::<Utf8PathBuf>::new());
 
     let error = ExplorationProvider::get_ingestion_history(&source, 10)

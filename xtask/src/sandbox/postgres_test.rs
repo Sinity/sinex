@@ -10,8 +10,7 @@ async fn build_operation_id_stmt_escapes_single_quotes() -> crate::sandbox::Test
     let stmt = build_operation_id_stmt("sinex_app", malicious)?;
 
     assert_eq!(
-        stmt,
-        "ALTER ROLE sinex_app SET sinex.operation_id = 'x''; DROP TABLE core.events; --';",
+        stmt, "ALTER ROLE sinex_app SET sinex.operation_id = 'x''; DROP TABLE core.events; --';",
         "single quotes in operation_id must be escaped by doubling, not left to break out of the literal"
     );
 

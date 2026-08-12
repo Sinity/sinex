@@ -101,8 +101,8 @@ async fn overlaps_and_gap_semantics() -> TestResult<()> {
 /// Deterministic fixture from the design doc: commands run while discussing a
 /// topic, with one contradiction and one caveat.
 #[sinex_test]
-async fn within_relation_assembles_evidence_window_with_contradiction_and_caveat()
--> TestResult<()> {
+async fn within_relation_assembles_evidence_window_with_contradiction_and_caveat() -> TestResult<()>
+{
     // Seed: a "discussing topic X" event.
     let seed = material_event(
         "chat.session",
@@ -259,8 +259,7 @@ async fn sequence_relation_flags_out_of_order_and_span() -> TestResult<()> {
             .any(|c| c.id == "sequence.span_exceeded")
     );
 
-    let out_of_order =
-        EventRelationExpr::Sequence { within_secs: 300 }.evaluate(&[c, b, a], &[]);
+    let out_of_order = EventRelationExpr::Sequence { within_secs: 300 }.evaluate(&[c, b, a], &[]);
     assert!(
         out_of_order
             .caveats
@@ -305,8 +304,7 @@ async fn sequence_relation_span_check_survives_reverse_chronological_input() -> 
 
     // Real elapsed spread is 120s, well past the 30s bound -- regardless of
     // input order, an evidence consumer needs this flagged.
-    let reverse_order =
-        EventRelationExpr::Sequence { within_secs: 30 }.evaluate(&[c, b, a], &[]);
+    let reverse_order = EventRelationExpr::Sequence { within_secs: 30 }.evaluate(&[c, b, a], &[]);
     assert!(
         reverse_order
             .caveats
@@ -425,8 +423,7 @@ async fn evidence_window_renders_as_view_envelope_with_caveats() -> TestResult<(
 }
 
 #[sinex_test]
-async fn causal_footprint_fixture_models_machine_session_as_evidence_window() -> TestResult<()>
-{
+async fn causal_footprint_fixture_models_machine_session_as_evidence_window() -> TestResult<()> {
     let fixture = fixtures::machine_session_causal_footprint();
     let window = fixture.evidence_window();
 
@@ -452,15 +449,13 @@ async fn causal_footprint_fixture_models_machine_session_as_evidence_window() ->
         window
             .support_refs
             .iter()
-            .any(|evidence| evidence.object.label.as_deref()
-                == Some("dev.xtask · xtask.invoked"))
+            .any(|evidence| evidence.object.label.as_deref() == Some("dev.xtask · xtask.invoked"))
     );
     assert!(window.support_refs.iter().any(|evidence| {
         evidence.object.label.as_deref() == Some("machine.scope · build.scope.completed")
     }));
     assert!(window.support_refs.iter().any(|evidence| {
-        evidence.object.label.as_deref()
-            == Some("polylogue.agent-session · agent.session.active")
+        evidence.object.label.as_deref() == Some("polylogue.agent-session · agent.session.active")
     }));
     assert!(
         window.caveats.iter().any(|caveat| {

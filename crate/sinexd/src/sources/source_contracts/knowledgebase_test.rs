@@ -282,7 +282,8 @@ async fn invalid_utf8_returns_parser_error() -> TestResult<()> {
 #[sinex_test]
 #[ignore = "sinex-xtmp open (knowledgebase CRLF): front-matter split leaves CRLF remnants in body -- fails until fixed"]
 async fn split_front_matter_handles_crlf_without_body_contamination() -> TestResult<()> {
-    let crlf_note = "---\r\nid: crlf.test\r\ncreated: 2025-03-15\r\n---\r\nThe real body starts here.\r\n";
+    let crlf_note =
+        "---\r\nid: crlf.test\r\ncreated: 2025-03-15\r\n---\r\nThe real body starts here.\r\n";
     let (fm, body) = split_front_matter(crlf_note);
 
     assert!(
@@ -311,8 +312,7 @@ async fn split_front_matter_handles_crlf_without_body_contamination() -> TestRes
 /// unrelated occurrences instead of one continuous one.
 #[sinex_test]
 #[ignore = "sinex-on0h open: knowledgebase occurrence_identity is path-keyed, so a renamed/moved note forks into a new unlinked occurrence"]
-async fn renamed_note_with_identical_body_keeps_the_same_occurrence_sinex_on0h() -> TestResult<()>
-{
+async fn renamed_note_with_identical_body_keeps_the_same_occurrence_sinex_on0h() -> TestResult<()> {
     let mut parser = KnowledgebaseVaultParser;
 
     let before_rename = parser

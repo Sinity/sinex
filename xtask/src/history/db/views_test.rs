@@ -40,9 +40,10 @@ async fn get_working_sessions_keeps_most_recent_rows_past_the_row_cap() -> TestR
 
     let sessions = db.get_working_sessions_with_zombies(usize::MAX, 5, false)?;
     let most_recent_started_at = started_at_for(total - 1);
-    let covers_most_recent_invocation = sessions
-        .iter()
-        .any(|s| s.first_started == most_recent_started_at || s.last_finished.as_deref() == Some(most_recent_started_at.as_str()));
+    let covers_most_recent_invocation = sessions.iter().any(|s| {
+        s.first_started == most_recent_started_at
+            || s.last_finished.as_deref() == Some(most_recent_started_at.as_str())
+    });
 
     assert!(
         covers_most_recent_invocation,

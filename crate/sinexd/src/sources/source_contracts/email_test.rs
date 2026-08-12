@@ -195,14 +195,16 @@ Caf\xe9 body text with one latin-1 byte, rest is ASCII.\r\n"
     let record = record_for(&bytes, "inbox/legacy.eml");
     bytes.clear();
 
-    let intents = parser
-        .parse_record(record, &test_ctx())
-        .await
-        .expect("a message with a fully valid RFC822 envelope must not hard-fail just \
+    let intents = parser.parse_record(record, &test_ctx()).await.expect(
+        "a message with a fully valid RFC822 envelope must not hard-fail just \
                  because one body byte is not UTF-8 -- best-effort/lossy extraction should \
-                 still recover the envelope");
+                 still recover the envelope",
+    );
 
-    assert!(!intents.is_empty(), "expected at least one email.message.* event");
+    assert!(
+        !intents.is_empty(),
+        "expected at least one email.message.* event"
+    );
     assert_eq!(
         occurrence_field(&intents[0], "message_id"),
         Some("legacy-1@example.com"),

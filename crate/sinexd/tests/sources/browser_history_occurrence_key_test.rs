@@ -58,14 +58,8 @@ async fn qutebrowser_rows_with_no_rowid_do_not_share_an_occurrence_key() {
         "primary/var/tmp/qutebrowser/history.sqlite",
     );
 
-    let intents_a = parser
-        .parse_record(record_a, &test_ctx())
-        .await
-        .unwrap();
-    let intents_b = parser
-        .parse_record(record_b, &test_ctx())
-        .await
-        .unwrap();
+    let intents_a = parser.parse_record(record_a, &test_ctx()).await.unwrap();
+    let intents_b = parser.parse_record(record_b, &test_ctx()).await.unwrap();
 
     let key_a = intents_a[0].occurrence_key.clone();
     let key_b = intents_b[0].occurrence_key.clone();

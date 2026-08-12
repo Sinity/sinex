@@ -157,7 +157,8 @@ struct EmittingAutomaton;
 /// `automata/registry.rs`). `output_source: None` matches any source so
 /// this doesn't need to track `Transducer`'s default
 /// `output_event_source()`.
-const EMITTING_AUTOMATON_OUTPUT_DECLARATIONS: &[sinex_primitives::derivation::DerivationOutputDeclaration] =
+const EMITTING_AUTOMATON_OUTPUT_DECLARATIONS:
+    &[sinex_primitives::derivation::DerivationOutputDeclaration] =
     &[sinex_primitives::derivation::DerivationOutputDeclaration {
         declaration_id: "test.derived-adapter-emitting-test.test.output",
         owner: "test",
@@ -195,7 +196,8 @@ impl Transducer for EmittingAutomaton {
         "test.output"
     }
 
-    const OUTPUT_DECLARATIONS: &'static [sinex_primitives::derivation::DerivationOutputDeclaration] =
+    const OUTPUT_DECLARATIONS:
+        &'static [sinex_primitives::derivation::DerivationOutputDeclaration] =
         EMITTING_AUTOMATON_OUTPUT_DECLARATIONS;
 
     async fn process(
@@ -1147,9 +1149,8 @@ async fn r6d9_checkpoint_before_output_fail_point_fires(ctx: TestContext) -> Tes
     let module_path_without_crate = module_path!()
         .split_once("::")
         .map_or(module_path!(), |(_, rest)| rest);
-    let qualified_name = format!(
-        "{module_path_without_crate}::r6d9_checkpoint_before_output_fail_point_fires"
-    );
+    let qualified_name =
+        format!("{module_path_without_crate}::r6d9_checkpoint_before_output_fail_point_fires");
     let output = tokio::process::Command::new(exe)
         .arg(&qualified_name)
         .arg("--exact")
@@ -1285,7 +1286,8 @@ struct FlushBarrierState {
     has_pending_window: bool,
 }
 
-const FLUSH_BARRIER_OUTPUT_DECLARATIONS: &[sinex_primitives::derivation::DerivationOutputDeclaration] =
+const FLUSH_BARRIER_OUTPUT_DECLARATIONS:
+    &[sinex_primitives::derivation::DerivationOutputDeclaration] =
     &[sinex_primitives::derivation::DerivationOutputDeclaration {
         declaration_id: "test.derived-windowed-flush-barrier-test.test.output",
         owner: "test",
@@ -1329,7 +1331,8 @@ impl Windowed for EmittingWindowedAutomaton {
         "test.output"
     }
 
-    const OUTPUT_DECLARATIONS: &'static [sinex_primitives::derivation::DerivationOutputDeclaration] =
+    const OUTPUT_DECLARATIONS:
+        &'static [sinex_primitives::derivation::DerivationOutputDeclaration] =
         FLUSH_BARRIER_OUTPUT_DECLARATIONS;
 
     async fn accumulate(
@@ -1388,12 +1391,9 @@ async fn timer_flush_does_not_clear_window_state_before_emission_settles(
     // Deliberately never resolved -- the crash window this bead names.
     let (event_sender, _event_receiver) = mpsc::channel::<Event<JsonValue>>(8);
     let emitter = EventEmitter::new(event_sender, false);
-    let runtime = make_runtime_state_with_registry(
-        &ctx,
-        "derived-windowed-flush-barrier-test",
-        registry,
-    )
-    .await?;
+    let runtime =
+        make_runtime_state_with_registry(&ctx, "derived-windowed-flush-barrier-test", registry)
+            .await?;
 
     let mut adapter = AutomatonRuntime::new(WindowedWrapper(EmittingWindowedAutomaton))
         .with_durable_emission_timeout(std::time::Duration::from_millis(100));
@@ -1624,7 +1624,9 @@ async fn r6d9_invalidation_ack_fail_point_fires(ctx: TestContext) -> TestResult<
 /// first, and asserts the second still receives it — proving `deliver_group`
 /// does not carry ack state across separate `create_consumer` calls.
 #[sinex_test]
-async fn r6d9_invalidation_deliver_group_does_not_share_ack_state(ctx: TestContext) -> TestResult<()> {
+async fn r6d9_invalidation_deliver_group_does_not_share_ack_state(
+    ctx: TestContext,
+) -> TestResult<()> {
     let ctx = ctx.with_nats().shared().await?;
     let js = ctx.jetstream().await?;
     let nats_client = ctx.nats_client();
@@ -1633,9 +1635,7 @@ async fn r6d9_invalidation_deliver_group_does_not_share_ack_state(ctx: TestConte
 
     let invalidation = DerivedScopeInvalidation::archived(
         vec![Uuid::now_v7()],
-        sinex_primitives::domain::EventSource::from_static(
-            "test.r6d9-invalidation-deliver-group",
-        ),
+        sinex_primitives::domain::EventSource::from_static("test.r6d9-invalidation-deliver-group"),
         sinex_primitives::domain::EventType::new("test.r6d9_invalidation_deliver_group")
             .expect("valid event type"),
     );

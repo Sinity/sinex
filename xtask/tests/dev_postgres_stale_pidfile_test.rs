@@ -1,3 +1,5 @@
+#![allow(clippy::expect_used, clippy::unwrap_used)] // integration test binary, not covered by the lib crate's test-cfg lint relaxation
+
 //! Regression coverage for sinex-1ul: dev Postgres binds a per-checkout unix
 //! socket (not TCP 5432) and must fail fast + clean up a stale pidfile left
 //! behind by a killed/crashed postmaster, rather than hanging the schema-apply
@@ -101,7 +103,10 @@ fn no_pid_file_is_a_silent_noop() {
     let fx = Fixture::new();
     let (ok, _out, err) = fx.run();
     assert!(ok, "must succeed when there is no pidfile at all");
-    assert!(err.is_empty(), "must not warn when there is nothing to clean up: {err}");
+    assert!(
+        err.is_empty(),
+        "must not warn when there is nothing to clean up: {err}"
+    );
 }
 
 #[test]
@@ -117,7 +122,10 @@ fn malformed_pid_file_is_removed() {
         "must warn about a malformed pidfile, got stderr: {err}"
     );
     assert!(!fx.pid_file().exists(), "malformed pidfile must be removed");
-    assert!(!fx.socket_path().exists(), "stale socket must be removed alongside the pidfile");
+    assert!(
+        !fx.socket_path().exists(),
+        "stale socket must be removed alongside the pidfile"
+    );
 }
 
 #[test]
@@ -154,7 +162,10 @@ fn live_but_unrelated_pid_is_removed() {
         err.contains("unrelated live PID"),
         "must warn about an unrelated live PID reusing the number, got stderr: {err}"
     );
-    assert!(!fx.pid_file().exists(), "unrelated-live-PID pidfile must be removed");
+    assert!(
+        !fx.pid_file().exists(),
+        "unrelated-live-PID pidfile must be removed"
+    );
 }
 
 #[test]

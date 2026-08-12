@@ -1,16 +1,16 @@
 use async_nats::jetstream;
 use futures::StreamExt as _;
 use serde_json::json;
+use sinex_primitives::{Uuid, environment, temporal};
 use sinexd::event_engine::{
     EventEngineResult, JetStreamConsumer, JetStreamTopology, validator::IngestEventValidator,
 };
-use sinex_primitives::{Uuid, environment, temporal};
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::RwLock;
 use tokio::time::timeout;
-use xtask::sandbox::timing::{Timeouts, WaitHelpers};
 use xtask::sandbox::prelude::*;
+use xtask::sandbox::timing::{Timeouts, WaitHelpers};
 
 const FIXTURE_SOURCE_MATERIAL_ID: &str = "00000000-0000-7000-8000-000000000000";
 
@@ -164,7 +164,7 @@ async fn end_to_end_source_runtime_full_flow(ctx: TestContext) -> TestResult<()>
                         .bind(source)
                         .fetch_one(&pool)
                         .await?;
-                Ok(count == 25)
+                Ok::<_, color_eyre::Report>(count == 25)
             }
         },
         Timeouts::MEDIUM,
@@ -198,7 +198,8 @@ async fn end_to_end_source_runtime_full_flow(ctx: TestContext) -> TestResult<()>
         .await?
         .info()
         .await?
-        .state;
+        .state
+        .clone();
     assert_eq!(
         dlq_state.messages, 0,
         "DLQ should be empty in e2e happy path"

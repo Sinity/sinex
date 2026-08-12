@@ -11,7 +11,8 @@ use xtask::sandbox::prelude::sinex_test;
 #[sinex_test]
 #[ignore = "sinex-x444 open: dlq_event_id only reads events[0].id, so two distinct \
             multi-event intents sharing a leading event id collide on DLQ dedupe identity"]
-async fn dlq_event_id_distinguishes_intents_sharing_a_leading_event() -> xtask::sandbox::TestResult<()> {
+async fn dlq_event_id_distinguishes_intents_sharing_a_leading_event()
+-> xtask::sandbox::TestResult<()> {
     // intent A = [X, Y]
     let intent_a = json!({
         "events": [

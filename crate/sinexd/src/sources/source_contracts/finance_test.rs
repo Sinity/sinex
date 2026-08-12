@@ -126,7 +126,10 @@ async fn no_pipe_narration_is_null() -> TestResult<()> {
         .await
         .unwrap();
     assert_eq!(intents.len(), 1);
-    assert_eq!(intents[0].payload["description"], "Example Marketplace purchase");
+    assert_eq!(
+        intents[0].payload["description"],
+        "Example Marketplace purchase"
+    );
     assert!(intents[0].payload["narration"].is_null());
     Ok(())
 }

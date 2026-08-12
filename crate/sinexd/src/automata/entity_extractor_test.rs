@@ -264,7 +264,8 @@ async fn extraction_does_not_silently_drop_co_occurring_entities_sinex_a4w_4() -
     // that recovers the email entity from this same input event -- it never
     // becomes observable anywhere. A fixed extractor must emit both.
     assert!(
-        output.payload.raw_name.contains("jane@example.com") || output.payload.entity_type.as_str() == "person",
+        output.payload.raw_name.contains("jane@example.com")
+            || output.payload.entity_type.as_str() == "person",
         "sinex-a4w.4: the co-occurring email entity (jane@example.com) must also be \
          observable from this event; a single-output transducer call that only ever \
          returns the URL silently discards it"

@@ -104,7 +104,9 @@ async fn document_context_pii_recognizer_catches_ssn_shaped_file_path() -> TestR
         .await
         .unwrap();
     let payload = &intents[0].payload;
-    let file_path = payload["file_path"].as_str().expect("file_path is a string");
+    let file_path = payload["file_path"]
+        .as_str()
+        .expect("file_path is a string");
     assert!(
         file_path.contains("123-45-6789"),
         "fixture path must carry the SSN-shaped text unredacted at the parser boundary \

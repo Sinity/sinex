@@ -424,9 +424,7 @@ async fn replay_dispatch_uses_material_runtime_identity(ctx: TestContext) -> Res
     .from_material(material_id)
     .build()?;
     let inserted = ctx.pool.events().insert(event).await?;
-    let event_id = inserted
-        .id
-        .expect("inserted replay target must have an id");
+    let event_id = inserted.id.expect("inserted replay target must have an id");
     let execution_window = (
         event_id.timestamp() - time::Duration::milliseconds(1),
         event_id.timestamp() + time::Duration::milliseconds(1),
@@ -434,13 +432,8 @@ async fn replay_dispatch_uses_material_runtime_identity(ctx: TestContext) -> Res
 
     let replay = Arc::new(ReplayStateMachine::new(ctx.pool.clone()));
     let env = sinex_primitives::environment::environment();
-    let (command_rx, scan_handle) = spawn_fake_scan_source_runtime(
-        ctx.nats_client(),
-        env,
-        "desktop.activitywatch",
-        1,
-    )
-    .await?;
+    let (command_rx, scan_handle) =
+        spawn_fake_scan_source_runtime(ctx.nats_client(), env, "desktop.activitywatch", 1).await?;
     let replay_output_handle = spawn_replay_output_inserter(
         ctx.pool.clone(),
         command_rx,
@@ -491,7 +484,10 @@ async fn replay_dispatch_uses_material_runtime_identity(ctx: TestContext) -> Res
         .replay
         .expect("dispatch command must carry replay context");
     assert_eq!(replay_context.materials.len(), 1);
-    assert_eq!(replay_context.materials[0].source_material_id, material_uuid);
+    assert_eq!(
+        replay_context.materials[0].source_material_id,
+        material_uuid
+    );
     await_fake_scan_source_runtime(scan_handle, "desktop.activitywatch").await?;
 
     Ok(())
@@ -1044,7 +1040,12 @@ async fn output_validation_gate_passes_when_most_archived_events_never_return(
         .from_material(material_id)
         .build()?;
         let inserted = ctx.pool.events().insert(event).await?;
-        archived_ids.push(inserted.id.expect("inserted event must have an id").to_uuid());
+        archived_ids.push(
+            inserted
+                .id
+                .expect("inserted event must have an id")
+                .to_uuid(),
+        );
     }
 
     let operation = replay

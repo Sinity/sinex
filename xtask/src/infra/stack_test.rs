@@ -1,8 +1,8 @@
 use super::{
     AllCheckoutsCleanup, AllCheckoutsStatus, CleanupActionKind, CleanupScope,
-    GIT_REPOSITORY_ENV_KEYS, collect_snapshot_names, dir_size, discover_nats_port,
-    git_subprocess, list_snapshots, parse_cmdline_bytes, parse_proc_stat_ppid,
-    probe_annex_available, require_successful_command, service_pid_state, stop_dev_sinexd_pid,
+    GIT_REPOSITORY_ENV_KEYS, collect_snapshot_names, dir_size, discover_nats_port, git_subprocess,
+    list_snapshots, parse_cmdline_bytes, parse_proc_stat_ppid, probe_annex_available,
+    require_successful_command, service_pid_state, stop_dev_sinexd_pid,
     sync_event_payload_schemas_for_database_url,
 };
 use super::{StackConfig, StackStatus};
@@ -27,8 +27,8 @@ async fn nats_port_matches_flake_hash_for_sinex_checkout() -> ::xtask::sandbox::
 #[sinex_test]
 #[ignore = "sinex-v37i open: port_offset_for_checkout's 100-slot hash collides across plausible \
             concurrent worktree checkouts, handing them the same NATS port"]
-async fn nats_port_for_checkout_does_not_collide_across_plausible_worktrees(
-) -> ::xtask::sandbox::TestResult<()> {
+async fn nats_port_for_checkout_does_not_collide_across_plausible_worktrees()
+-> ::xtask::sandbox::TestResult<()> {
     // Two plausible agent-worktree checkout paths (this project's own naming
     // convention, see /realm/worktrees/agent-<hash> in CLAUDE.md) that a
     // brute-force search found collide on the 100-slot `port_offset_for_checkout`
@@ -346,8 +346,8 @@ fn spawn_fake_dev_postgres(data_dir: &Path) -> Result<ReapedProcess> {
 }
 
 #[sinex_test]
-async fn orphaned_only_sweep_stops_postgres_for_deleted_checkout_but_spares_live_one()
--> Result<()> {
+async fn orphaned_only_sweep_stops_postgres_for_deleted_checkout_but_spares_live_one() -> Result<()>
+{
     // Two checkouts: one whose directory still exists (must be left running
     // even though nothing else distinguishes it), one whose directory has
     // been removed (the sinex-grlv orphan class — must be reaped). Both

@@ -238,7 +238,11 @@ async fn mac_finds_uppercase_colon_separated() -> ::xtask::sandbox::TestResult<(
 async fn ipv6_finds_ipv4_mapped_notation() -> ::xtask::sandbox::TestResult<()> {
     let input = "addr: ::ffff:192.168.1.1";
     let matches = find_ipv6(input);
-    assert_eq!(matches.len(), 1, "expected exactly one match in {input:?}, got {matches:?}");
+    assert_eq!(
+        matches.len(),
+        1,
+        "expected exactly one match in {input:?}, got {matches:?}"
+    );
     let (start, end) = matches[0];
     assert_eq!(
         &input[start..end],

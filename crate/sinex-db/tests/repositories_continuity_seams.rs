@@ -330,7 +330,11 @@ async fn source_family_filter_uses_an_index_not_a_seq_scan(ctx: TestContext) -> 
     .bind("target-family")
     .fetch_all(ctx.pool())
     .await?;
-    let plan_text = plan.into_iter().map(|(l,)| l).collect::<Vec<_>>().join("\n");
+    let plan_text = plan
+        .into_iter()
+        .map(|(l,)| l)
+        .collect::<Vec<_>>()
+        .join("\n");
 
     assert!(
         !plan_text.to_lowercase().contains("seq scan"),

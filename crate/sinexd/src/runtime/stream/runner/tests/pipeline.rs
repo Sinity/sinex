@@ -138,9 +138,11 @@ mod lk67_invalidation_reachability {
         // Run the real bridge briefly. It has no confirmed events to
         // process, so it just sits polling the confirmed-events consumer --
         // proving it never even glances at the invalidation subject.
-        let bridge_result =
-            tokio::time::timeout(Duration::from_secs(3), runner.run_automaton_event_bridge(Checkpoint::None))
-                .await;
+        let bridge_result = tokio::time::timeout(
+            Duration::from_secs(3),
+            runner.run_automaton_event_bridge(Checkpoint::None),
+        )
+        .await;
         assert!(
             bridge_result.is_err(),
             "bridge should still be idly polling confirmed events after 3s (no confirmed events \

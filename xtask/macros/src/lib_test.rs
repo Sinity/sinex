@@ -3,6 +3,7 @@ use super::{
     parse_sinex_test_attrs_tokens, serial_guard_tokens,
 };
 use quote::quote;
+use syn::parse::Parser as _;
 use syn::{ItemFn, parse2};
 
 fn parse_ok(tokens: proc_macro2::TokenStream) -> super::SinexTestConfig {
@@ -94,9 +95,8 @@ fn async_context_expansion_keeps_single_serial_guard_inside_timed_future() {
         }
     });
 
-    let rendered =
-        expand_async_context_test(&input, &[], &input.block, 30, SerialScope::Workspace)
-            .to_string();
+    let rendered = expand_async_context_test(&input, &[], &input.block, 30, SerialScope::Workspace)
+        .to_string();
     assert_eq!(
         count_occurrences(&rendered, "acquire_workspace_test_guard"),
         1,
@@ -118,8 +118,7 @@ fn simple_async_expansion_keeps_single_serial_guard_inside_timed_future() {
     });
 
     let rendered =
-        expand_simple_async_test(&input, &[], &input.block, 30, SerialScope::Workspace)
-            .to_string();
+        expand_simple_async_test(&input, &[], &input.block, 30, SerialScope::Workspace).to_string();
     assert_eq!(
         count_occurrences(&rendered, "acquire_workspace_test_guard"),
         1,
@@ -153,8 +152,10 @@ fn cases_attr_with_malformed_args_panics_instead_of_compile_erroring() {
     // returns `Err` for a bare path -- there is no token stream to
     // extract at all, unlike a merely-unusual-but-still-tokenizable body,
     // which `parse_args::<TokenStream>()` would happily accept.
-    let attr: syn::Attribute =
-        syn::parse_str("#[cases]").expect("a bare attribute path is well-formed syntax");
+    let attrs = syn::Attribute::parse_outer
+        .parse_str("#[cases]")
+        .expect("a bare attribute path is well-formed syntax");
+    let attr = attrs.into_iter().next().expect("parsed exactly one attribute");
     let result = std::panic::catch_unwind(|| {
         let _: proc_macro2::TokenStream = attr.parse_args().unwrap();
     });

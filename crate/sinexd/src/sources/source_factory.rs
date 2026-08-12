@@ -15,8 +15,8 @@
 use futures::future::BoxFuture;
 use sinex_primitives::parser::SourceId;
 use std::collections::HashMap;
-use std::sync::LazyLock;
 use std::sync::Arc;
+use std::sync::LazyLock;
 
 /// Type-erased factory function for running a source driver.
 ///
@@ -238,8 +238,9 @@ mod tests {
 
     #[sinex_test]
     async fn adapter_source_runtime_preserves_registered_source_id() -> TestResult<()> {
-        let runtime =
-            adapter_source_runtime::<SqliteRowAdapter, ActivityWatchParser>("desktop.activitywatch");
+        let runtime = adapter_source_runtime::<SqliteRowAdapter, ActivityWatchParser>(
+            "desktop.activitywatch",
+        );
 
         assert_eq!(runtime.module_name(), "desktop.activitywatch");
         Ok(())

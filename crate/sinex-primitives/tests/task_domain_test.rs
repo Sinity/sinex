@@ -280,8 +280,8 @@ async fn task_reducer_rejects_completion_without_created_state() -> TestResult<(
             JSON body (historical import, replay, an admin API) can smuggle in source_system: \
             \"test_fixture\" with zero rejection, identical to the gap already tracked for a \
             sibling enum"]
-async fn task_created_payload_rejects_test_fixture_source_system_from_external_input() -> TestResult<()>
-{
+async fn task_created_payload_rejects_test_fixture_source_system_from_external_input()
+-> TestResult<()> {
     let raw = serde_json::json!({
         "task_id": Uuid::now_v7().to_string(),
         "title": "smuggled via external input",

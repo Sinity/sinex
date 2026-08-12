@@ -153,7 +153,11 @@ async fn test_persisted_cursor_after_skips_unchanged_files_on_reopen()
     // `cursor_after()` output into the accumulated cursor (per-path merge,
     // matching `merge_cursor_json_update`'s object-key overlay).
     let stream = adapter.open(dummy_material_id(), &config, None).await?;
-    let records: Vec<SourceRecord> = stream.collect::<Vec<_>>().await.into_iter().collect::<Result<_, _>>()?;
+    let records: Vec<SourceRecord> = stream
+        .collect::<Vec<_>>()
+        .await
+        .into_iter()
+        .collect::<Result<_, _>>()?;
     assert_eq!(records.len(), 2, "both files are new on the first walk");
 
     let mut persisted = DirectoryWalkCursor::default();
@@ -271,8 +275,8 @@ async fn test_max_depth_bounds_recursion() -> xtask::sandbox::TestResult<()> {
 }
 
 #[sinex_test]
-async fn test_input_fingerprint_reports_directory_manifest_shape()
--> xtask::sandbox::TestResult<()> {
+async fn test_input_fingerprint_reports_directory_manifest_shape() -> xtask::sandbox::TestResult<()>
+{
     let dir = TempDir::new().unwrap();
     let root = Utf8PathBuf::from_path_buf(dir.path().to_path_buf()).unwrap();
     let sub = dir.path().join("sub");

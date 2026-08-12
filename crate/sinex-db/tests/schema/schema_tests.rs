@@ -4,8 +4,8 @@
 //! executed against a real `PostgreSQL` database with the required extensions.
 
 use sea_query::*;
-use sinex_primitives::DynamicPayload;
 use sinex_db::schema::defs::*;
+use sinex_primitives::DynamicPayload;
 use sqlx::{PgPool, Row};
 use std::collections::HashMap;
 use xtask::sandbox::prelude::*;

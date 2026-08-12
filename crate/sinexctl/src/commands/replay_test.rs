@@ -1,16 +1,14 @@
 use super::{
-    MaterialReplayabilityScorecard, Replayability, execute_watch, format_per_material_scorecard_table,
-    format_replay_preview_table, preview_total_events, replay_list_envelope,
-    replay_operation_caveats, replay_preview_envelope, replay_status_envelope, truncate_head_chars,
-    truncate_tail_chars, weakness_dimensions,
+    MaterialReplayabilityScorecard, Replayability, execute_watch,
+    format_per_material_scorecard_table, format_replay_preview_table, preview_total_events,
+    replay_list_envelope, replay_operation_caveats, replay_preview_envelope,
+    replay_status_envelope, truncate_head_chars, truncate_tail_chars, weakness_dimensions,
 };
 use crate::client::{ClientConfig, GatewayClient};
 use crate::fmt::render_finite_envelope;
 use crate::model::OutputFormat;
 use serde_json::json;
-use sinex_primitives::rpc::replay::{
-    ReplayCheckpoint, ReplayOperation, ReplayScope, ReplayState,
-};
+use sinex_primitives::rpc::replay::{ReplayCheckpoint, ReplayOperation, ReplayScope, ReplayState};
 use sinex_primitives::views::{ReadinessCaveatId, VIEW_ENVELOPE_SCHEMA_VERSION};
 use wiremock::matchers::{method, path};
 use wiremock::{Mock, MockServer, ResponseTemplate};
@@ -138,14 +136,15 @@ async fn replay_preview_table_surfaces_failed_safety_analysis() -> TestResult<()
     assert!(rendered.contains("Max Cascade Depth: 7"));
     assert!(rendered.contains("Schema Boundary: true"));
     assert!(
-        rendered.contains(
-            "Gates Tripped: require_force_on_schema_mismatch (--force-schema-mismatch)"
-        )
+        rendered
+            .contains("Gates Tripped: require_force_on_schema_mismatch (--force-schema-mismatch)")
     );
     assert!(rendered.contains("Safety Error:   integrity analyzer unavailable"));
-    assert!(rendered.contains(
-        "Safety Detail:  Cascade impact could not be determined. Approve with caution."
-    ));
+    assert!(
+        rendered.contains(
+            "Safety Detail:  Cascade impact could not be determined. Approve with caution."
+        )
+    );
     Ok(())
 }
 
@@ -179,7 +178,10 @@ async fn replay_preview_envelope_caveats_empty_and_unmeasured_preview() -> TestR
     assert!(caveat_ids.contains(&ReadinessCaveatId::SourceAbsent.as_str()));
     assert!(caveat_ids.contains(&ReadinessCaveatId::CoverageUnmeasurable.as_str()));
     assert!(caveat_ids.contains(&ReadinessCaveatId::WindowPartial.as_str()));
-    assert_eq!(envelope.query_echo.as_ref().unwrap()["operation_id"], "op-empty");
+    assert_eq!(
+        envelope.query_echo.as_ref().unwrap()["operation_id"],
+        "op-empty"
+    );
     Ok(())
 }
 
@@ -198,7 +200,10 @@ async fn replay_status_envelope_caveats_failed_zero_progress() -> TestResult<()>
     assert_eq!(envelope.source_surface, "sinexctl.ops.replay.status");
     assert!(caveat_ids.contains(&ReadinessCaveatId::WindowPartial.as_str()));
     assert!(caveat_ids.contains(&ReadinessCaveatId::CoverageUnmeasurable.as_str()));
-    assert_eq!(envelope.query_echo.as_ref().unwrap()["operation_id"], "op-failed");
+    assert_eq!(
+        envelope.query_echo.as_ref().unwrap()["operation_id"],
+        "op-failed"
+    );
     Ok(())
 }
 
@@ -229,11 +234,7 @@ async fn replay_list_envelope_caveats_empty_operation_log() -> TestResult<()> {
 #[sinex_test]
 async fn replay_list_envelope_renders_finite_json() -> TestResult<()> {
     let envelope = replay_list_envelope(
-        vec![fixture_replay_operation(
-            "op-1",
-            ReplayState::Completed,
-            7,
-        )],
+        vec![fixture_replay_operation("op-1", ReplayState::Completed, 7)],
         None,
         None,
         50,

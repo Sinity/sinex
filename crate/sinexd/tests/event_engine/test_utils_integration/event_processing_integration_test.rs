@@ -650,13 +650,15 @@ async fn test_high_frequency_heartbeats(ctx: TestContext) -> TestResult<()> {
             .as_ref()
             .expect("id present")
             .as_uuid()
-            .get_timestamp();
+            .get_timestamp()
+            .map(|ts| ts.to_unix());
         let curr_ts = heartbeat_events[i]
             .id
             .as_ref()
             .expect("id present")
             .as_uuid()
-            .get_timestamp();
+            .get_timestamp()
+            .map(|ts| ts.to_unix());
         assert!(
             curr_ts >= prev_ts,
             "Heartbeats should be chronologically ordered"
