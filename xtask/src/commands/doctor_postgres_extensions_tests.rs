@@ -20,8 +20,12 @@ fn extension_probe_reports_extensions_when_all_required_are_present() {
         stub_psql_output("plpgsql\nvector\ntimescaledb\n")
     });
     assert_eq!(
-        probe.extensions.as_deref(),
-        Some(["plpgsql", "vector", "timescaledb"].as_slice())
+        probe.extensions,
+        Some(vec![
+            "plpgsql".to_string(),
+            "vector".to_string(),
+            "timescaledb".to_string()
+        ])
     );
     assert!(probe.error.is_none());
 }

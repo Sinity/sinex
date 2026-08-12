@@ -11,7 +11,7 @@ fn zero_depth_watch_still_counts_root_level_files_against_the_file_limit() {
     for i in 0..5 {
         std::fs::write(dir.path().join(format!("file{i}.txt")), b"x").expect("write");
     }
-    let root = Utf8PathBuf::from_path_buf(dir.path().to_path_buf()).expect("utf8 path");
+    let root = PathBuf::from_path_buf(dir.path().to_path_buf()).expect("utf8 path");
 
     let mut policy = FileWatchingSecurityPolicy::permissive();
     policy.max_watch_depth = Some(0);
