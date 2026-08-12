@@ -5,6 +5,7 @@ use std::sync::atomic::Ordering;
 use super::confirmation::BATCH_ATOMICITY_SCOPE;
 use super::dlq::DLQ_RETRY_DELAY;
 use super::*;
+use crate::event_engine::durable_failure::persist_failure_evidence;
 use sinex_primitives::events::Event;
 
 impl JetStreamConsumer {
@@ -207,14 +208,28 @@ impl JetStreamConsumer {
                     let mut confirmation_durability_gaps = Vec::new();
                     for prepared in &confirmation_batch {
                         if let Some(err) = confirmed_publish_failures.get(&prepared.parsed_id) {
+                            if let Err(evidence_error) = self
+                                .persist_failure_evidence(
+                                    prepared,
+                                    err,
+                                    "confirmed_publish_durability_gap",
+                                    "system",
+                                )
+                                .await
+                            {
+                                confirmation_durability_gaps.push((
+                                    prepared.parsed_id,
+                                    evidence_error.with_context(
+                                        "settlement_operation",
+                                        "persist_confirmation_gap_evidence",
+                                    ),
+                                ));
+                            }
                             // Durability gap: deliberately not settled — see
                             // the matching note in settle_admission_skips.
                             confirmation_durability_gaps.push((
                                 prepared.parsed_id,
-                                Self::confirmed_event_durability_gap_error(
-                                    prepared.parsed_id,
-                                    err,
-                                ),
+                                Self::confirmed_event_durability_gap_error(prepared.parsed_id, err),
                             ));
                             continue;
                         }
@@ -377,21 +392,19 @@ impl JetStreamConsumer {
                         // settled, or in a sibling sub-batch) — settle
                         // through the shared coordinator, never ack the
                         // message directly.
-                        match self.route_to_dlq(&prepared.message, format!("Persistence error: {e}")).await {
-                            Ok(()) => {
+                        match self
+                            .route_to_dlq(&prepared.message, format!("Persistence error: {e}"))
+                            .await
+                        {
+                            Ok(durable_failure_id) => {
                                 self.stats.dlq_routed.fetch_add(1, Ordering::Relaxed);
-                                // sinex-r6d.11: the DLQ write itself (route_to_dlq's
-                                // Ok(())) is the durable debt record — debt_id has no
-                                // dedicated DB row id available here (DLQ routing is a
-                                // NATS publish, not a DB insert returning a primary
-                                // key), so the event's own id is the identifier an
-                                // operator would actually look this DLQ entry up by
-                                // (it's also what `route_to_dlq` stamps into the
-                                // `Event-Id` header).
+                                // The returned Postgres row is the durable debt
+                                // witness; its ID is carried in the DLQ header for
+                                // later operator retry/terminal checks.
                                 self.settlement_registry.resolve(
                                     prepared.parsed_id.into(),
                                     EmissionReceiptState::DurableDebt {
-                                        debt_id: prepared.parsed_id,
+                                        debt_id: durable_failure_id,
                                         reason: format!(
                                             "isolated (bisection) persistence failure DLQ'd: {e}"
                                         ),
@@ -449,25 +462,27 @@ impl JetStreamConsumer {
                         {
                             Ok(true) => {
                                 match self
-                                    .route_to_dlq(&prepared.message, format!("Persistence error: {e}"))
+                                    .route_to_dlq(
+                                        &prepared.message,
+                                        format!("Persistence error: {e}"),
+                                    )
                                     .await
                                 {
-                                    Ok(()) => {
+                                    Ok(durable_failure_id) => {
                                         self.stats.dlq_routed.fetch_add(1, Ordering::Relaxed);
-                                        // sinex-r6d.11: same debt_id reasoning as the
-                                        // bisection-isolated-poison DLQ site above — no
-                                        // dedicated DB debt-record id exists, so the
-                                        // event's own id is what identifies this DLQ
-                                        // entry.
+                                        // The DLQ route already committed the
+                                        // Postgres witness and returned its ID.
                                         self.settlement_registry.resolve(
                                             prepared.parsed_id.into(),
                                             EmissionReceiptState::DurableDebt {
-                                                debt_id: prepared.parsed_id,
+                                                debt_id: durable_failure_id,
                                                 reason: format!("Persistence error: {e}"),
                                             },
                                         );
-                                        if let Err(err) =
-                                            prepared.settlement.settle_child(ChildOutcome::Safe).await
+                                        if let Err(err) = prepared
+                                            .settlement
+                                            .settle_child(ChildOutcome::Safe)
+                                            .await
                                         {
                                             settlement_errors.push((prepared.parsed_id, err));
                                         }
@@ -488,10 +503,13 @@ impl JetStreamConsumer {
                                         // will reach a settle_child call again.
                                         if let Err(settle_err) = prepared
                                             .settlement
-                                            .settle_child(ChildOutcome::Retry(Some(DLQ_RETRY_DELAY)))
+                                            .settle_child(ChildOutcome::Retry(Some(
+                                                DLQ_RETRY_DELAY,
+                                            )))
                                             .await
                                         {
-                                            settlement_errors.push((prepared.parsed_id, settle_err));
+                                            settlement_errors
+                                                .push((prepared.parsed_id, settle_err));
                                         } else {
                                             settlement_errors.push((
                                                 prepared.parsed_id,
@@ -513,6 +531,23 @@ impl JetStreamConsumer {
                                 // resolved: redelivery means this event_id reaches
                                 // settle_child again, and only that eventual
                                 // terminal outcome may consume the registry entry.
+                                if let Err(evidence_error) = self
+                                    .persist_failure_evidence(
+                                        prepared,
+                                        &e,
+                                        "persistence_retry",
+                                        "retryable",
+                                    )
+                                    .await
+                                {
+                                    settlement_errors.push((
+                                        prepared.parsed_id,
+                                        evidence_error.with_context(
+                                            "settlement_operation",
+                                            "persist_retryable_failure_evidence",
+                                        ),
+                                    ));
+                                }
                                 if let Err(err) = prepared
                                     .settlement
                                     .settle_child(ChildOutcome::Retry(Some(DLQ_RETRY_DELAY)))
@@ -701,6 +736,38 @@ impl JetStreamConsumer {
         Self::should_route_persistence_failure(self.route_db_errors_to_dlq, delivery_attempt, err)
     }
 
+    async fn persist_failure_evidence(
+        &self,
+        prepared: &PreparedEvent,
+        error: &SinexError,
+        stage: &str,
+        category: &str,
+    ) -> EventEngineResult<Uuid> {
+        let delivery_attempt = prepared
+            .message
+            .info()
+            .map(|info| info.delivered)
+            .unwrap_or_default();
+        persist_failure_evidence(
+            &self.pool,
+            prepared.parsed_id,
+            "event-engine.jetstream-consumer",
+            prepared.event.source.as_str(),
+            prepared.event.event_type.as_str(),
+            category,
+            &error.to_string(),
+            prepared.event.payload.clone(),
+            serde_json::json!({
+                "stage": stage,
+                "subject": prepared.message.subject.as_str(),
+                "delivery_attempt": delivery_attempt,
+                "durability_source": "postgres_before_message_settlement",
+            }),
+            i32::try_from(delivery_attempt).unwrap_or(i32::MAX),
+        )
+        .await
+    }
+
     pub(super) fn source_material_delivery_attempt(
         &self,
         msg: &jetstream::Message,
@@ -775,13 +842,16 @@ impl JetStreamConsumer {
                 persistence_error,
                 retry_threshold,
             );
-            match self.route_to_dlq(&prepared.message, dlq_reason.clone()).await {
-                Ok(()) => {
+            match self
+                .route_to_dlq(&prepared.message, dlq_reason.clone())
+                .await
+            {
+                Ok(durable_failure_id) => {
                     self.stats.dlq_routed.fetch_add(1, Ordering::Relaxed);
                     self.settlement_registry.resolve(
                         prepared.parsed_id.into(),
                         EmissionReceiptState::DurableDebt {
-                            debt_id: prepared.parsed_id,
+                            debt_id: durable_failure_id,
                             reason: dlq_reason,
                         },
                     );

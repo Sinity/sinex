@@ -20,6 +20,7 @@ use tokio::sync::Mutex;
 use tokio::task::JoinHandle;
 use tracing::{debug, error, info, warn};
 
+use crate::event_engine::durable_failure::{DURABLE_FAILURE_ID_HEADER, persist_failure_evidence};
 use crate::event_engine::{EventEngineResult, SinexError};
 use crate::runtime::nats_payload::ensure_nats_payload_fits;
 
@@ -202,13 +203,33 @@ impl MaterialAssembler {
         material_id: Uuid,
         error: impl Into<String>,
         context: JsonValue,
-    ) -> EventEngineResult<()> {
+    ) -> EventEngineResult<Uuid> {
         let payload = MaterialDlqPayload {
             material_id: material_id.to_string(),
             error: error.into(),
             context,
             failed_at: Timestamp::now(),
         };
+
+        let payload_json = serde_json::to_value(&payload).map_err(|error| {
+            SinexError::serialization("Failed to encode material DLQ evidence").with_source(error)
+        })?;
+        let durable_failure_id = persist_failure_evidence(
+            &self.pool,
+            material_id,
+            "event-engine.material-assembler",
+            "source-material",
+            "material.assembly",
+            "permanent",
+            &payload.error,
+            payload_json,
+            serde_json::json!({
+                "durability_source": "postgres_pre_material_dlq_settlement",
+                "material_id": material_id,
+            }),
+            0,
+        )
+        .await?;
 
         let bytes = serde_json::to_vec(&payload).map_err(|e| {
             error!(
@@ -242,7 +263,12 @@ impl MaterialAssembler {
                 error
             })?;
 
-        self.nats_client
+        let durable_failure_id_header = durable_failure_id.to_string();
+        headers.insert(
+            DURABLE_FAILURE_ID_HEADER,
+            durable_failure_id_header.as_str(),
+        );
+        self.js
             .publish_with_headers(self.dlq_subject.clone(), headers, bytes.into())
             .await
             .map_err(|e| {
@@ -256,10 +282,23 @@ impl MaterialAssembler {
                 SinexError::network("Failed to publish material DLQ entry")
                     .with_context("material_id", material_id.to_string())
                     .with_source(e)
+            })?
+            .await
+            .map_err(|e| {
+                error!(
+                    target: "sinex_metrics",
+                    metric = "event_engine.material_dlq_publish_failures_total",
+                    material_id = %material_id,
+                    error = %e,
+                    "Failed to confirm material DLQ entry"
+                );
+                SinexError::network("Failed to confirm material DLQ entry")
+                    .with_context("material_id", material_id.to_string())
+                    .with_source(e)
             })?;
 
         debug!(material_id = %material_id, "Routed to DLQ");
-        Ok(())
+        Ok(durable_failure_id)
     }
 
     /// Route a material failure to DLQ, then durably settle it as terminal-failed —

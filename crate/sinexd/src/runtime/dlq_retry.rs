@@ -3,6 +3,7 @@
 //! This module provides utilities for manually retrying messages from the
 //! operator-facing raw-ingest DLQ.
 
+use crate::event_engine::durable_failure::DURABLE_FAILURE_ID_HEADER;
 use crate::runtime::nats_payload::ensure_nats_payload_fits;
 use crate::runtime::{RuntimeResult, SinexError};
 use async_nats::jetstream;
@@ -270,6 +271,7 @@ impl DlqRetryHandler {
                     max_retries = self.config.max_retries(),
                     "DLQ event exceeded max retries during direct retry request; permanently failing it instead of requeueing"
                 );
+                ensure_durable_failure_evidence(Some(&message.headers))?;
                 self.permanently_fail_stream_message(&stream, &message)
                     .await?;
                 return Err(SinexError::processing(
@@ -384,6 +386,7 @@ impl DlqRetryHandler {
                 max_retries = self.config.max_retries(),
                 "Message exceeded max retries, permanently failing"
             );
+            ensure_durable_failure_evidence(msg.headers.as_ref())?;
             msg.ack().await.map_err(|error| {
                 Self::message_settlement_error(
                     "failed to ack permanently failed DLQ message",
@@ -452,9 +455,12 @@ impl DlqRetryHandler {
             .checked_add(1)
             .ok_or_else(|| SinexError::processing("DLQ retry count exceeds supported range"))?
             .to_string();
-        let requeue_generation = target.dlq_requeue_generation.checked_add(1).ok_or_else(|| {
-            SinexError::processing("DLQ requeue generation exceeds supported range")
-        })?;
+        let requeue_generation = target
+            .dlq_requeue_generation
+            .checked_add(1)
+            .ok_or_else(|| {
+                SinexError::processing("DLQ requeue generation exceeds supported range")
+            })?;
         let requeue_generation_str = requeue_generation.to_string();
         let requeue_msg_id = format!(
             "dlq-requeue.{}.{}",
@@ -470,6 +476,9 @@ impl DlqRetryHandler {
         headers.insert("Retried-At", retried_at_str.as_str());
         if let Some(event_id) = target.event_id.as_deref() {
             headers.insert("Event-Id", event_id);
+        }
+        if let Some(durable_failure_id) = target.durable_failure_id.as_deref() {
+            headers.insert(DURABLE_FAILURE_ID_HEADER, durable_failure_id);
         }
         headers.insert("Nats-Msg-Id", requeue_msg_id.as_str());
         transport::insert_transport_class_headers(&mut headers, transport::Class::Critical);
@@ -508,9 +517,12 @@ impl DlqRetryHandler {
             .checked_add(1)
             .ok_or_else(|| SinexError::processing("DLQ retry count exceeds supported range"))?
             .to_string();
-        let requeue_generation = target.dlq_requeue_generation.checked_add(1).ok_or_else(|| {
-            SinexError::processing("DLQ requeue generation exceeds supported range")
-        })?;
+        let requeue_generation = target
+            .dlq_requeue_generation
+            .checked_add(1)
+            .ok_or_else(|| {
+                SinexError::processing("DLQ requeue generation exceeds supported range")
+            })?;
         let requeue_generation_str = requeue_generation.to_string();
         let requeue_msg_id = format!(
             "dlq-requeue.{}.{}",
@@ -526,6 +538,9 @@ impl DlqRetryHandler {
         headers.insert("Retried-At", retried_at_str.as_str());
         if let Some(event_id) = target.event_id.as_deref() {
             headers.insert("Event-Id", event_id);
+        }
+        if let Some(durable_failure_id) = target.durable_failure_id.as_deref() {
+            headers.insert(DURABLE_FAILURE_ID_HEADER, durable_failure_id);
         }
         headers.insert("Nats-Msg-Id", requeue_msg_id.as_str());
         transport::insert_transport_class_headers(&mut headers, transport::Class::Critical);
@@ -611,6 +626,7 @@ struct DlqRequeueTarget {
     original_nats_msg_id: Option<String>,
     event_id: Option<String>,
     dlq_requeue_generation: u32,
+    durable_failure_id: Option<String>,
 }
 
 fn dlq_stored_retry_count(headers: &async_nats::HeaderMap) -> RuntimeResult<u32> {
@@ -637,6 +653,27 @@ fn dlq_requeue_generation(headers: &async_nats::HeaderMap) -> RuntimeResult<u32>
             .with_context("value", value.to_string())
             .with_std_error(&error)
     })
+}
+
+fn ensure_durable_failure_evidence(
+    headers: Option<&async_nats::HeaderMap>,
+) -> RuntimeResult<String> {
+    let value = headers
+        .and_then(|headers| headers.get(DURABLE_FAILURE_ID_HEADER))
+        .ok_or_else(|| {
+            SinexError::processing(
+                "Refusing terminal DLQ settlement without durable failure evidence",
+            )
+            .with_context("required_header", DURABLE_FAILURE_ID_HEADER)
+        })?;
+    let value = value.to_string();
+    value.parse::<sinex_primitives::Uuid>().map_err(|error| {
+        SinexError::processing("DLQ durable failure evidence ID is invalid")
+            .with_context("header", DURABLE_FAILURE_ID_HEADER)
+            .with_context("value", value.clone())
+            .with_source(error)
+    })?;
+    Ok(value)
 }
 
 fn combine_retry_counts(
@@ -796,6 +833,9 @@ fn dlq_requeue_target(
         .map(ToOwned::to_owned)
         .or_else(|| event_id.clone());
     let dlq_requeue_generation = dlq_requeue_generation(headers)?;
+    let durable_failure_id = headers
+        .get(DURABLE_FAILURE_ID_HEADER)
+        .map(std::string::ToString::to_string);
 
     Ok(DlqRequeueTarget {
         original_subject,
@@ -803,6 +843,7 @@ fn dlq_requeue_target(
         original_nats_msg_id,
         event_id,
         dlq_requeue_generation,
+        durable_failure_id,
     })
 }
 

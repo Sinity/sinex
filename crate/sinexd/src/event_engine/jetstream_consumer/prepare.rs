@@ -346,13 +346,13 @@ impl JetStreamConsumer {
         let event_id = rejection.event_id;
         let reason = rejection.reason;
         match self.route_to_dlq(msg, reason.clone()).await {
-            Ok(()) => {
+            Ok(durable_failure_id) => {
                 self.stats.dlq_routed.fetch_add(1, Ordering::Relaxed);
                 if let Some(event_id) = event_id {
                     self.settlement_registry.resolve(
                         event_id.into(),
                         EmissionReceiptState::DurableDebt {
-                            debt_id: event_id,
+                            debt_id: durable_failure_id,
                             reason: format!("admission rejection DLQ'd: {reason}"),
                         },
                     );

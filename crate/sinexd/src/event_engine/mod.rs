@@ -7,6 +7,7 @@
 
 pub mod admission;
 pub mod config;
+pub(crate) mod durable_failure;
 pub mod jetstream_consumer;
 pub mod material_assembler;
 pub mod material_ready_set;

@@ -1,6 +1,6 @@
 use super::{
     DlqRetryHandler, combine_retry_counts, dlq_event_id, dlq_payload_event_id,
-    dlq_requeue_target,
+    dlq_requeue_target, ensure_durable_failure_evidence,
 };
 use xtask::sandbox::sinex_test;
 
@@ -146,5 +146,14 @@ async fn dlq_message_settlement_error_preserves_subject_context() -> TestResult<
     assert!(message.contains("failed to ack retried DLQ message"));
     assert!(message.contains("events.dlq.test.subject"));
     assert!(message.contains("nats unavailable"));
+    Ok(())
+}
+
+#[sinex_test]
+async fn terminal_dlq_settlement_requires_postgres_evidence_header() -> TestResult<()> {
+    let headers = async_nats::HeaderMap::new();
+    let error = ensure_durable_failure_evidence(Some(&headers))
+        .expect_err("terminal settlement must not discard an unrecorded DLQ entry");
+    assert!(error.to_string().contains("durable failure evidence"));
     Ok(())
 }

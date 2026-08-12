@@ -250,6 +250,13 @@ async fn persistence_failure_routing_short_circuits_when_dlq_is_forced() -> Test
 }
 
 #[sinex_test]
+async fn nats_delivery_ceiling_exceeds_every_application_terminal_threshold() -> TestResult<()> {
+    assert!(MAIN_CONSUMER_JETSTREAM_MAX_DELIVER > MAIN_CONSUMER_TERMINAL_DLQ_THRESHOLD);
+    assert!(MAIN_CONSUMER_JETSTREAM_MAX_DELIVER > SOURCE_MATERIAL_READY_DLQ_THRESHOLD);
+    Ok(())
+}
+
+#[sinex_test]
 async fn persistence_failure_routing_uses_delivery_attempts_for_non_retryable_errors()
 -> TestResult<()> {
     assert!(!JetStreamConsumer::should_route_persistence_failure(

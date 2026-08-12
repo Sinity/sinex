@@ -89,9 +89,23 @@ async fn dlq_route_keeps_multi_child_intents_with_same_leading_event_recoverable
         let message = tokio::time::timeout(Duration::from_secs(2), messages.next())
             .await?
             .expect("raw consumer must receive the published intent")?;
-        consumer
-            .route_to_dlq(&message, "adversarial multi-child admission failure".to_string())
+        let durable_failure_id = consumer
+            .route_to_dlq(
+                &message,
+                "adversarial multi-child admission failure".to_string(),
+            )
             .await?;
+        let evidence = sqlx::query!(
+            "SELECT failed_event_id, error_category FROM sinex_schemas.dlq_events WHERE dlq_id = $1",
+            durable_failure_id,
+        )
+        .fetch_one(ctx.pool())
+        .await?;
+        assert_eq!(
+            evidence.failed_event_id,
+            Uuid::parse_str("00000000-0000-7000-8000-000000000001")?
+        );
+        assert_eq!(evidence.error_category, "permanent");
         message.ack().await.map_err(ack_error)?;
     }
 

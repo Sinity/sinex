@@ -60,6 +60,56 @@ async fn route_material_error_propagates_oversized_dlq_payload_failure(
     Ok(())
 }
 
+/// The material route enters the production JetStream path and the live test
+/// database. A successful return therefore proves both the Postgres witness
+/// was written and the JetStream publish was server-confirmed; replacing the
+/// confirmed publish with core NATS, or removing the evidence insert, makes
+/// this fail (the stream is bootstrapped only by this test).
+#[sinex_test]
+async fn material_dlq_requires_and_records_durable_evidence(ctx: TestContext) -> TestResult<()> {
+    let ctx = ctx.with_nats().dedicated().await?;
+    let (assembler, _content_store_dir, _state_dir) = test_assembler(&ctx).await?;
+    super::pipeline::bootstrap_streams(&assembler).await?;
+    let dlq_stream_name = ctx.env().nats_stream_name_with_namespace(
+        Some(ctx.pipeline_namespace().prefix()),
+        "SINEX_RAW_EVENTS_DLQ",
+    );
+    async_nats::jetstream::new(ctx.nats_client())
+        .create_or_update_stream(async_nats::jetstream::stream::Config {
+            name: dlq_stream_name.clone(),
+            subjects: vec![assembler.dlq_subject.clone()],
+            retention: async_nats::jetstream::stream::RetentionPolicy::Limits,
+            storage: async_nats::jetstream::stream::StorageType::Memory,
+            max_age: tokio::time::Duration::from_secs(300),
+            ..Default::default()
+        })
+        .await?;
+
+    let material_id = uuid::Uuid::now_v7();
+    let durable_failure_id = assembler
+        .route_material_error(
+            material_id,
+            "test_material_failure",
+            serde_json::json!({"fixture": true}),
+        )
+        .await?;
+
+    let evidence = sqlx::query!(
+        "SELECT failed_event_id, error_category FROM sinex_schemas.dlq_events WHERE dlq_id = $1",
+        durable_failure_id,
+    )
+    .fetch_one(ctx.pool())
+    .await?;
+    assert_eq!(evidence.failed_event_id, material_id);
+    assert_eq!(evidence.error_category, "permanent");
+
+    let mut stream = async_nats::jetstream::new(ctx.nats_client())
+        .get_stream(&dlq_stream_name)
+        .await?;
+    assert_eq!(stream.info().await?.state.messages, 1);
+    Ok(())
+}
+
 #[sinex_test]
 async fn check_orphaned_folder_rejects_non_uuid_name(ctx: TestContext) -> TestResult<()> {
     let ctx = ctx.with_nats().shared().await?;

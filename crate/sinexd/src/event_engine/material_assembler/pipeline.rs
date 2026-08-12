@@ -116,12 +116,16 @@ async fn apply_redelivery_decision(
                     .route_material_error(material_id, reason.clone(), dlq_context)
                     .await
                 {
-                    Ok(()) => {
+                    Ok(_durable_failure_id) => {
                         assembler
                             .finalize_failed_material(material_id, &reason)
                             .await;
-                        ack_with_warning(message, "material_frame_routed_to_dlq", Some(&material_id))
-                            .await
+                        ack_with_warning(
+                            message,
+                            "material_frame_routed_to_dlq",
+                            Some(&material_id),
+                        )
+                        .await
                     }
                     Err(error) => {
                         // The DLQ publish itself failed: settling this material

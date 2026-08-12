@@ -2,6 +2,8 @@
 
 use serde::Serialize;
 
+use crate::event_engine::durable_failure::{DURABLE_FAILURE_ID_HEADER, persist_failure_evidence};
+
 use super::*;
 
 #[derive(Debug, Serialize)]
@@ -61,11 +63,8 @@ fn dlq_intent_identity(original_payload: &JsonValue) -> Option<String> {
     Some(format!("dlq.intent.{}", hasher.finalize().to_hex()))
 }
 
-fn dlq_requeue_generation(
-    headers: Option<&async_nats::HeaderMap>,
-) -> EventEngineResult<u32> {
-    let Some(value) = headers.and_then(|headers| headers.get(DLQ_REQUEUE_GENERATION_HEADER))
-    else {
+fn dlq_requeue_generation(headers: Option<&async_nats::HeaderMap>) -> EventEngineResult<u32> {
+    let Some(value) = headers.and_then(|headers| headers.get(DLQ_REQUEUE_GENERATION_HEADER)) else {
         return Ok(0);
     };
 
@@ -101,16 +100,16 @@ pub(super) fn dlq_publish_msg_id(
 }
 
 impl JetStreamConsumer {
-    /// Route failed message to DLQ and return Ok(()) on success.
+    /// Route failed message to DLQ and return its durable evidence row ID.
     ///
-    /// Errors indicate the DLQ publish itself failed after all retries. The caller
-    /// is responsible for deciding whether to NAK the original message in that case.
+    /// Errors indicate that evidence persistence or the DLQ publish failed. The
+    /// caller is responsible for deciding whether to NAK the original message.
     #[tracing::instrument(skip(self, msg), fields(error = %error))]
     pub(super) async fn route_to_dlq(
         &self,
         msg: &jetstream::Message,
         error: String,
-    ) -> EventEngineResult<()> {
+    ) -> EventEngineResult<Uuid> {
         let original_nats_msg_id = msg
             .headers
             .as_ref()
@@ -152,6 +151,41 @@ impl JetStreamConsumer {
         let requeue_generation = dlq_requeue_generation(msg.headers.as_ref())?;
         let original_event_id = dlq_event_id(&original_payload);
 
+        // JetStream is only a bounded delivery bus. Write the operator-visible
+        // witness before publishing to it so a later ACK cannot outrun the
+        // evidence that justifies progress. The payload is already behind the
+        // admission privacy chokepoint above.
+        let failed_event_id = original_event_id
+            .as_deref()
+            .and_then(|value| value.parse::<Uuid>().ok())
+            .unwrap_or_else(Uuid::now_v7);
+        let event_type = dlq_payload_field(&original_payload, "event_type")
+            .unwrap_or_else(|| "raw_ingest".to_string());
+        let source = dlq_payload_field(&original_payload, "source")
+            .unwrap_or_else(|| msg.subject.to_string());
+        let retry_count = msg
+            .info()
+            .ok()
+            .map(|info| info.delivered.clamp(0, i64::from(i32::MAX)) as i32)
+            .unwrap_or(0);
+        let durable_failure_id = persist_failure_evidence(
+            &self.pool,
+            failed_event_id,
+            "event-engine.raw-ingest",
+            &source,
+            &event_type,
+            "permanent",
+            &error,
+            original_payload.clone(),
+            serde_json::json!({
+                "original_subject": msg.subject.as_str(),
+                "original_nats_msg_id": original_nats_msg_id,
+                "durability_source": "postgres_pre_dlq_settlement",
+            }),
+            retry_count,
+        )
+        .await?;
+
         let mut dlq_entry = DlqEntry {
             nats_msg_id: original_nats_msg_id,
             error,
@@ -168,6 +202,11 @@ impl JetStreamConsumer {
         headers.insert(DLQ_REQUEUE_GENERATION_HEADER, requeue_generation.as_str());
         headers.insert("Original-Subject", msg.subject.as_str());
         headers.insert("Retry-Count", "0");
+        let durable_failure_id_header = durable_failure_id.to_string();
+        headers.insert(
+            DURABLE_FAILURE_ID_HEADER,
+            durable_failure_id_header.as_str(),
+        );
         insert_traffic_class_header(&mut headers, NatsTrafficClass::RawIngestDlq);
         transport::insert_semantic_transport_class_header(&mut headers, transport::Class::Critical);
         if let Some(event_id) = original_event_id.as_deref() {
@@ -216,7 +255,7 @@ impl JetStreamConsumer {
                 Ok(ack) => match ack.await {
                     Ok(_) => {
                         debug!(nats_msg_id = ?dlq_entry.nats_msg_id, "Routed to DLQ");
-                        return Ok(());
+                        return Ok(durable_failure_id);
                     }
                     Err(err) => {
                         error!(
@@ -254,9 +293,24 @@ impl JetStreamConsumer {
 
     // route_to_dlq_and_ack was removed (sinex-r6d.12): it acked the raw
     // message directly, which is exactly the unilateral per-child settlement
-    // this bead eliminated. Every caller now calls route_to_dlq (write-only,
-    // above) and reports the outcome to the message's shared
+    // this bead eliminated. Every caller now calls route_to_dlq above and reports
+    // the outcome to the message's shared
     // RawEnvelopeSettlement via settle_child instead.
+}
+
+fn dlq_payload_field(payload: &JsonValue, key: &str) -> Option<String> {
+    payload
+        .get(key)
+        .and_then(JsonValue::as_str)
+        .or_else(|| {
+            payload
+                .get("events")
+                .and_then(JsonValue::as_array)
+                .and_then(|events| events.first())
+                .and_then(|event| event.get(key))
+                .and_then(JsonValue::as_str)
+        })
+        .map(ToOwned::to_owned)
 }
 
 #[cfg(test)]
