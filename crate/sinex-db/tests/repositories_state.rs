@@ -975,6 +975,57 @@ async fn start_run_records_and_refreshes_heartbeat(ctx: TestContext) -> TestResu
     Ok(())
 }
 
+/// sinex-5jaj: `start_run`'s doc comment claims "if a run is already active
+/// for this service, it is returned instead" of creating a duplicate, but
+/// `core.runs` has no unique constraint besides its randomly-defaulted
+/// UUIDv7 primary key -- `ON CONFLICT DO NOTHING` never has anything to
+/// conflict on, so every call inserts a brand-new row. Every restart /
+/// re-registration for the same service+instance appends to an unbounded,
+/// retention-free table instead of reusing the existing active run.
+#[sinex_test]
+#[ignore = "sinex-5jaj open: start_run has no unique constraint to dedup on, so every call for \
+            the same service_name+instance_id inserts a new core.runs row instead of returning \
+            the existing active run"]
+async fn start_run_returns_existing_active_run_instead_of_duplicating(
+    ctx: TestContext,
+) -> TestResult<()> {
+    let repo = ctx.pool.state();
+    let module_name = ModuleName::new("start-run-dedup");
+    let manifest = repo
+        .register_module(&module_name, ModuleKind::Service, "1.0.0", None)
+        .await?;
+
+    let first = repo
+        .start_run(
+            Some(manifest.id),
+            "sinexd",
+            "dedup-instance",
+            "test-host",
+            None,
+            None,
+        )
+        .await?;
+
+    let second = repo
+        .start_run(
+            Some(manifest.id),
+            "sinexd",
+            "dedup-instance",
+            "test-host",
+            None,
+            None,
+        )
+        .await?;
+
+    assert_eq!(
+        first.id, second.id,
+        "start_run called twice for the same still-active service+instance should return the \
+         same existing run, not insert a second row"
+    );
+
+    Ok(())
+}
+
 #[sinex_test]
 async fn fresh_runtime_health_preserves_live_run_identity(ctx: TestContext) -> TestResult<()> {
     let repo = ctx.pool.state();

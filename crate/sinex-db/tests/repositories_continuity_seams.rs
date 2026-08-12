@@ -277,3 +277,66 @@ async fn seam_classification_emits_recovered_partial(ctx: TestContext) -> TestRe
     );
     Ok(())
 }
+
+/// sinex-audit-continuity-fullscan (reopened 2026-08-11): PR #2586 added
+/// `ix_events_source_family` (`(split_part(source, '.', 1))`) claiming it
+/// supports `continuity.rs`'s `WHERE split_part(e.source, '.', 1) = $1`
+/// predicate. A perturbation-robustness follow-up audit found the fix does
+/// not actually support the query it claims to on a realistically-sized
+/// table. Reproduces the same EXPLAIN-plan-against-real-volume methodology
+/// as the sinex-1l52 FTS-index fix in `schema_tests_index_tests.rs` -- a
+/// near-empty table's seq-scan cost is too close to zero for a real
+/// cost-based comparison.
+#[sinex_test]
+#[ignore = "sinex-audit-continuity-fullscan open: ix_events_source_family (PR #2586) does not \
+            actually get chosen by the planner for continuity.rs's split_part(e.source, '.', 1) \
+            = $1 predicate at realistic row volume"]
+async fn source_family_filter_uses_an_index_not_a_seq_scan(ctx: TestContext) -> TestResult<()> {
+    sinex_db::schema::apply::apply(&ctx.pool).await?;
+
+    let material_id = ctx
+        .create_source_material(Some("continuity-fullscan-plan-test"))
+        .await?;
+
+    // 200 rows spread across several source families plus the target family,
+    // matching the sinex-1l52 test's volume rationale: enough that a real
+    // cost-based planner choice is being exercised, not a coin flip on an
+    // almost-empty table.
+    for i in 0..200i64 {
+        let family = format!("family-{}", i % 10);
+        seed_event(
+            ctx.pool(),
+            &format!("{family}.probe"),
+            "continuity.fullscan.probe",
+            material_id.to_uuid(),
+        )
+        .await?;
+    }
+    seed_event(
+        ctx.pool(),
+        "target-family.probe",
+        "continuity.fullscan.probe",
+        material_id.to_uuid(),
+    )
+    .await?;
+    sqlx::query("ANALYZE core.events")
+        .execute(ctx.pool())
+        .await?;
+
+    let plan: Vec<(String,)> = sqlx::query_as(
+        "EXPLAIN SELECT e.source_material_id FROM core.events e \
+         WHERE split_part(e.source, '.', 1) = $1 AND e.source_material_id IS NOT NULL",
+    )
+    .bind("target-family")
+    .fetch_all(ctx.pool())
+    .await?;
+    let plan_text = plan.into_iter().map(|(l,)| l).collect::<Vec<_>>().join("\n");
+
+    assert!(
+        !plan_text.to_lowercase().contains("seq scan"),
+        "expected an index/bitmap scan for the split_part(source, '.', 1) predicate now that \
+         ix_events_source_family exists, got a sequential scan instead:\n{plan_text}"
+    );
+
+    Ok(())
+}

@@ -26,6 +26,10 @@ mod index_tests;
 #[path = "schema_tests_migration_tests.rs"]
 mod migration_tests;
 
+#[cfg(test)]
+#[path = "schema_tests_compression_test.rs"]
+mod compression_tests;
+
 // Helper functions for testing
 
 #[derive(Debug)]

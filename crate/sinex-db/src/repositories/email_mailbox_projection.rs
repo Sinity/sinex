@@ -599,3 +599,42 @@ fn array_value(payload: &Value, key: &str) -> Value {
 fn integer_value(payload: &Value, key: &str) -> Option<i64> {
     payload.get(key).and_then(Value::as_i64)
 }
+
+#[cfg(test)]
+mod sinex_79vh_tests {
+    use super::*;
+    use serde_json::json;
+
+    /// sinex-79vh: `ProjectionUpsert::from_event` coerces a malformed/
+    /// out-of-i32-range `attachment_index` to 0 instead of rejecting the
+    /// event, so `attachment_observed_count = attachment_index + 1`
+    /// downstream can silently become inconsistent with the real position
+    /// in the thread instead of surfacing the malformed input.
+    #[test]
+    #[ignore = "sinex-79vh open: attachment_index outside i32 range is silently coerced to 0 \
+                instead of being rejected as malformed input"]
+    fn malformed_attachment_index_is_rejected_not_coerced_to_zero() {
+        let event = EmailMailboxProjectionEvent {
+            source_id: "test-source".to_string(),
+            mode_id: "test-mode".to_string(),
+            observed_event_id: Uuid::now_v7(),
+            event_type: "email.attachment.observed".to_string(),
+            payload: json!({
+                "message_id": "msg-1",
+                // Out of i32 range -- i32::try_from(..).ok() fails, and the
+                // current code silently falls back to 0 via unwrap_or(0)
+                // instead of treating this as malformed input.
+                "attachment_index": i64::from(i32::MAX) + 1,
+            }),
+        };
+
+        let upsert = ProjectionUpsert::from_event(event);
+        assert!(
+            upsert.is_none(),
+            "an attachment_index that cannot fit in i32 is malformed input and should be \
+             rejected (from_event returning None), not silently coerced to attachment_index=0 \
+             -- a real attachment at some other position now collides with the reported \
+             'first attachment' position"
+        );
+    }
+}
