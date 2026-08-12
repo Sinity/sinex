@@ -541,3 +541,34 @@ pub struct TombstoneStatusResponse {
     /// The operation status
     pub operation: TombstoneOperation,
 }
+
+#[cfg(test)]
+mod tombstone_invariant_tests {
+    use super::*;
+
+    /// sinex-40af: TombstoneOperation.state and .phase are independent fields with no
+    /// coupling invariant enforced at construction, deserialization, or transition time.
+    /// A wire payload with mismatched state/phase currently deserializes without error;
+    /// it should be rejected (or the fields collapsed into one authoritative value).
+    #[test]
+    #[ignore = "sinex-40af open: TombstoneOperation.state/.phase can diverge silently -- \
+                mismatched payload deserializes without error"]
+    fn tombstone_operation_rejects_mismatched_state_and_phase() {
+        let json = serde_json::json!({
+            "operation_id": "op-1",
+            "phase": "completed",
+            "state": "pending",
+            "limit": 100,
+            "reason": "test",
+            "created_by": "test",
+            "created_at": "2026-01-01T00:00:00Z",
+            "expires_at": "2026-01-01T01:00:00Z",
+        });
+        let result: Result<TombstoneOperation, _> = serde_json::from_value(json);
+        assert!(
+            result.is_err(),
+            "deserializing a TombstoneOperation with phase=completed but state=pending should \
+             be rejected by a coupling invariant, but currently succeeds silently (sinex-40af)"
+        );
+    }
+}

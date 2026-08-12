@@ -251,3 +251,53 @@ async fn from_args_rejects_invalid_direct_path_overrides() -> TestResult<()> {
     assert!(message.contains("content-store path"));
     Ok(())
 }
+
+/// sinex-421u: `SINEX_EVENT_ENGINE_STRICT_VALIDATION` defaults to `false` (config.rs:361-362,
+/// mirrored by nixos/modules/default.nix:775-781) -- an operator must opt INTO the safer
+/// validation posture rather than opt out of the riskier one. The default should be the
+/// safe posture (strict validation on) with an explicit opt-out for the rare case that
+/// needs it, not the other way around.
+#[sinex_test]
+#[ignore = "sinex-421u open: SINEX_EVENT_ENGINE_STRICT_VALIDATION defaults to false; safer \
+            posture (true) should be the default with explicit opt-out"]
+async fn strict_validation_defaults_to_the_safe_posture() -> TestResult<()> {
+    let config = EventEngineConfig::default();
+    assert!(
+        config.strict_validation,
+        "strict_validation currently defaults to false -- an operator must actively opt in \
+         to the safer posture instead of actively opting out of the risky one (sinex-421u)"
+    );
+    Ok(())
+}
+
+/// sinex-f0mk: `event_engine_raw_consumer_name()` (runtime/backlog.rs) claims in its doc
+/// comment to honor "the same override env var the event engine itself uses"
+/// (`SINEX_EVENT_ENGINE_CONSUMER_NAME`), but `EventEngineConfig`'s `nats_consumer_name` is
+/// set in exactly one place -- a fixed `format!("event-engine-{}", env.name())` -- and never
+/// reads that env var. Setting the override therefore desyncs the backpressure-gate reader
+/// from the actual consumer the event engine creates, silently disabling the gate.
+#[sinex_test]
+#[ignore = "sinex-f0mk open: EventEngineConfig.nats_consumer_name never reads \
+            SINEX_EVENT_ENGINE_CONSUMER_NAME even though backlog::event_engine_raw_consumer_name \
+            claims to honor the same override"]
+async fn event_engine_consumer_name_honors_its_own_documented_override() -> TestResult<()> {
+    unsafe {
+        std::env::set_var("SINEX_EVENT_ENGINE_CONSUMER_NAME", "overridden-consumer");
+    }
+    let env = sinex_primitives::environment::SinexEnvironment::default();
+    let raw_reader_name = sinexd::runtime::backlog::event_engine_raw_consumer_name(&env);
+    let config = EventEngineConfig::default();
+    unsafe {
+        std::env::remove_var("SINEX_EVENT_ENGINE_CONSUMER_NAME");
+    }
+
+    assert_eq!(
+        config.nats_consumer_name, raw_reader_name,
+        "EventEngineConfig.nats_consumer_name ({}) does not honor \
+         SINEX_EVENT_ENGINE_CONSUMER_NAME the way backlog::event_engine_raw_consumer_name ({}) \
+         claims it does -- the backpressure gate silently stops working when this override is \
+         set (sinex-f0mk)",
+        config.nats_consumer_name, raw_reader_name
+    );
+    Ok(())
+}
