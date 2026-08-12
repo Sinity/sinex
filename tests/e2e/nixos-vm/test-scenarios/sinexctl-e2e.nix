@@ -265,6 +265,39 @@ pkgs.testers.nixosTest {
         result = sinexctl("events query -s 1h -n 5 --format json", check=False)
         print(f"Limited query: exit={result[0]}")
 
+    # Test 11: real isolated snapshot/restore drill. This uses the deployed
+    # NixOS unit topology, real pg_dump/pg_restore, and a newly-created drill
+    # database. It never drops or overwrites an existing database or service
+    # state; all writes stay inside this disposable VM.
+    with subtest("Real isolated snapshot restore drill"):
+        archive = "/tmp/sinexctl-real-roundtrip.sinex.tar.zst"
+        restore_target = "/tmp/sinexctl-real-roundtrip-target"
+        drill_database = "sinex_restore_drill"
+        machine.succeed(f"runuser -u postgres -- createdb {drill_database}")
+        machine.succeed(
+            "sinexctl --insecure ops state snapshot "
+            f"--output {archive} --database-url 'postgresql:///sinex_dev?host=/run/postgresql' "
+            "--mode live --compression 1 --workers 1 "
+            "--components postgres,nats,cas,state"
+        )
+        restore = machine.succeed(
+            "sinexctl --insecure ops state restore "
+            f"--archive {archive} --target-dir {restore_target} "
+            f"--restore-database-url 'postgresql:///{drill_database}?host=/run/postgresql' "
+            "--confirm-restore --allow-active-services --format json"
+        )
+        parsed = parse_json_output(restore)
+        assert parsed, f"restore drill should return structured evidence: {restore}"
+        payload = parsed[-1].get("payload", parsed[-1])
+        observed = payload.get("observed_checks", {})
+        assert observed.get("checks_passed") is True, \
+            f"real restore drill failed: {observed}"
+        assert observed.get("postgres_row_counts_match") is True, \
+            f"real PostgreSQL row counts did not match: {observed}"
+        assert observed.get("component_blake3_matches", {}).get("nats") is True, \
+            f"real NATS component hash did not match: {observed}"
+        print("Real snapshot/restore drill verified PostgreSQL rows and NATS state")
+
     print("sinexctl E2E tests completed successfully")
   '';
 }

@@ -5,7 +5,10 @@ sinex runtime state surface — Postgres, NATS JetStream, CAS blob repository,
 and source runtime state — into a single zstd-compressed tar archive.
 
 The default is a **quiesce-mode** backup: services must be stopped before the
-snapshot runs, or `--auto-stop` can stop `sinex-*` services for the command.
+snapshot runs, or `--auto-stop` can stop the active snapshot-writer units for
+the command. The deployed NixOS shape uses `sinexd.service` and
+`nats.service`; generated `sinex-*.service`/`.timer` writers are discovered
+from systemd rather than assumed by a fixed glob.
 `--mode live` is available for urgent forensic capture while services remain
 active; it records `mode: live` in `manifest.json` and should be treated as a
 weaker-consistency artifact. Operator runbooks use the
@@ -14,8 +17,9 @@ weaker-consistency artifact. Operator runbooks use the
 ## Quick start
 
 ```bash
-# Stop sinex services (or let snapshot stop them automatically with --auto-stop)
-sudo systemctl stop 'sinex-*'
+# Stop the deployed writers (or let snapshot discover and stop them with
+# --auto-stop). Include any additional writer units reported by the command.
+sudo systemctl stop sinexd.service nats.service
 
 # Create a snapshot (defaults: zstd level 3, all components)
 sinexctl ops state snapshot --output /var/backup/sinex/$(date +%Y-%m-%d).sinex.tar.zst
@@ -38,7 +42,7 @@ sinexctl ops state snapshot --output <path>
   [--dry-run]                      # estimate sizes, no archive
   [--database-url <url>]           # override DATABASE_URL
   [--state-dir <path>]             # override the deployed SINEX_STATE_DIR
-  [--auto-stop]                    # stop sinex-* services automatically
+  [--auto-stop]                    # stop discovered active writer units automatically
   [--components postgres,nats,cas,state]  # subset, default all
 
 sinexctl ops state restore --archive <path> --target-dir <empty-dir> --dry-run
@@ -58,11 +62,13 @@ sinexctl ops state restore --archive <path> --target-dir <empty-dir>
 | `cas`      | `$STATE_DIR/blob-repository/` directory tree        |
 | `state`    | Everything else under `$STATE_DIR` (spool, WALs, …) |
 
-These paths are deployment-specific. Derive `SINEX_STATE_DIR` and
-`SINEX_CONTENT_STORE_PATH` from the active `sinexd.service` environment before
-restoring, rather than assuming a host-global default. On the current NixOS
-deployment they resolve to `/var/lib/sinex/state` and
-`/var/lib/sinex/state/blob-repository`.
+These paths are deployment-specific. The command derives `SINEX_STATE_DIR` and
+`SINEX_CONTENT_STORE_PATH` from the active `sinexd.service` environment and
+derives the NATS `jetstream.store_dir` from the deployed `nats.service`
+configuration. On the current NixOS deployment they resolve to
+`/var/lib/sinex/state`, `/var/lib/sinex/state/blob-repository`, and
+`/var/lib/nats/jetstream`, respectively. If systemd cannot expose these
+values, capture fails instead of recording an empty component.
 
 ## Archive layout
 
@@ -77,6 +83,10 @@ cas/
   blob-repository/              -- CAS BLAKE3 content store tree
 state/                          -- remaining $STATE_DIR contents
 ```
+
+The NATS component hash covers the JetStream state tree and excludes
+`streams.summary.json` on both capture and restore. The summary is diagnostic
+metadata and may be absent or regenerated without changing the state hash.
 
 ## Archive secrecy and key policy
 
@@ -109,8 +119,9 @@ The dry-run command does not extract or write restored state. It validates:
 - Non-empty component paths declared by the manifest are present in the tar.
 - The target path is an empty directory, or does not exist under an existing
   parent directory.
-- Active `sinex-*` services are reported so destructive restore can quiesce
-  them first.
+- Active snapshot-writer units are reported so destructive restore can quiesce
+  them first. Failure to query systemd is an error, not an empty active-unit
+  result.
 - The restore drill comparison plan includes source count, Postgres table
   count, NATS JetStream member count when present, CAS blob count when present,
   and runtime private-mode state presence.
@@ -147,10 +158,12 @@ Isolated drill execution refuses to run unless:
 
 - `--confirm-restore` is present.
 - The target directory is empty, or does not yet exist under an existing parent.
-- Active `sinex-*` services are stopped, unless `--allow-active-services` is
+- Active snapshot-writer units are stopped, unless `--allow-active-services` is
   explicitly passed for an isolated drill target.
 - Archives with non-empty `postgres` components include
-  `--restore-database-url`, pointing at an empty drill database.
+  `--restore-database-url`, pointing at an empty drill database. The target
+  emptiness query must succeed; missing row-count evidence or a failed query
+  makes the restore verdict fail closed.
 
 The JSON/YAML result includes `observed_checks` comparing the isolated drill
 target against the manifest: source IDs, NATS JetStream member paths when
@@ -168,7 +181,7 @@ empty drill database.
 ### 1. Stop services (if running)
 
 ```bash
-sudo systemctl stop 'sinex-*'
+sudo systemctl stop sinexd.service nats.service
 ```
 
 ### 2. Extract the archive
@@ -259,7 +272,7 @@ sinex-schema apply "$DATABASE_URL"
 ### 9. Start services
 
 ```bash
-sudo systemctl start 'sinex-*'
+sudo systemctl start sinexd.service nats.service
 ```
 
 ### 10. Verify
@@ -296,9 +309,11 @@ For a horizon-3 wipe (complete state replacement):
 
 ## Consistency modes
 
-`--mode quiesce` is the normal backup mode. It refuses to run while `sinex-*`
-services are active unless `--auto-stop` is supplied, then captures Postgres,
-NATS, CAS, and runtime state after quiescence.
+`--mode quiesce` is the normal backup mode. It refuses to run while discovered
+snapshot-writer units are active unless `--auto-stop` is supplied, then
+captures Postgres, NATS, CAS, and runtime state after quiescence. A systemd
+inspection failure also refuses the snapshot, because “no units observed” is
+not evidence that the deployment is quiescent.
 
 `--mode live` is for forensic preservation when stopping services is not
 acceptable. It does not stop services and ignores `--auto-stop`; the archive

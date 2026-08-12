@@ -434,7 +434,22 @@ async fn snapshot_archive_preserves_component_paths_and_nats_member_manifest()
     let output_dir = tempfile::tempdir()?;
     let output_path = output_dir.path().join("test.tar.zst");
     let tools = tempfile::tempdir()?;
-    let _systemctl = make_executable_script(&tools, "systemctl", "#!/bin/sh\nexit 0\n")?;
+    let nats_config = tools.path().join("nats.conf");
+    fs::write(
+        &nats_config,
+        format!(
+            "{{\"jetstream\":{{\"store_dir\":\"{}\"}}}}\n",
+            state_dir.path().join("nats/jetstream").display()
+        ),
+    )?;
+    let _systemctl = make_executable_script(
+        &tools,
+        "systemctl",
+        &format!(
+            "#!/bin/sh\ncase \"$*\" in\n  *'nats.service'*'ExecStart'*) printf '%s\\n' '{{ path=/nix/store/nats-server/bin/nats-server ; argv[]=/nix/store/nats-server/bin/nats-server -c {} ; }}' ;;\n  *) exit 0 ;;\nesac\n",
+            nats_config.display()
+        ),
+    )?;
     let path = format!(
         "{}:{}",
         tools.path().display(),
@@ -1234,6 +1249,111 @@ async fn staging_cleaned_up_on_pg_dump_failure() -> xtask::sandbox::TestResult<(
         "staging directory must be cleaned up after pg_dump failure; found: {staging_entries:?}"
     );
 
+    Ok(())
+}
+
+/// A successful dump without authoritative row-count evidence must still fail
+/// the capture. The archive must not be published with a vacuous restore
+/// baseline.
+#[sinex_test]
+async fn snapshot_fails_when_postgres_row_count_query_fails() -> xtask::sandbox::TestResult<()> {
+    let state_dir = make_fake_state_dir()?;
+    let output_dir = tempfile::tempdir()?;
+    let output_path = output_dir.path().join("row-count-failure.tar.zst");
+    let tools = tempfile::tempdir()?;
+    let _pg_dump = make_executable_script(
+        &tools,
+        "pg_dump",
+        "#!/bin/sh\nwhile [ \"$#\" -gt 0 ]; do\n  if [ \"$1\" = \"--file\" ]; then shift; : > \"$1\"; fi\n  shift\ndone\nexit 0\n",
+    )?;
+    let psql = make_executable_script(
+        &tools,
+        "psql",
+        "#!/bin/sh\nprintf '%s\\n' 'row-count query unavailable' >&2\nexit 17\n",
+    )?;
+    let path = format!(
+        "{}:{}",
+        tools.path().display(),
+        std::env::var("PATH").unwrap_or_default()
+    );
+
+    let output = sinexctl_bin()
+        .env("PATH", path)
+        .env("SINEX_PSQL_BIN", &psql)
+        .args([
+            "admin",
+            "snapshot",
+            "--output",
+            &output_path.to_string_lossy(),
+            "--state-dir",
+            &state_dir.path().to_string_lossy(),
+            "--database-url",
+            "postgresql://snapshot-test/sinex",
+            "--components",
+            "postgres",
+            "--mode",
+            "live",
+        ])
+        .output()?;
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        !output.status.success(),
+        "row-count failure must fail snapshot capture\nstderr: {stderr}"
+    );
+    assert!(
+        stderr.contains("row-count") || stderr.contains("psql"),
+        "failure should identify row-count evidence\nstderr: {stderr}"
+    );
+    assert!(
+        !output_path.exists(),
+        "snapshot must not publish an archive without row-count evidence"
+    );
+    Ok(())
+}
+
+/// A quiesced snapshot must not treat a failed systemd inventory query as an
+/// empty active-unit set.
+#[sinex_test]
+async fn quiesced_snapshot_fails_closed_when_systemctl_inventory_fails()
+-> xtask::sandbox::TestResult<()> {
+    let state_dir = make_fake_state_dir()?;
+    let output_dir = tempfile::tempdir()?;
+    let output_path = output_dir.path().join("systemctl-failure.tar.zst");
+    let tools = tempfile::tempdir()?;
+    let _systemctl = make_executable_script(
+        &tools,
+        "systemctl",
+        "#!/bin/sh\nprintf '%s\\n' 'systemd inventory unavailable' >&2\nexit 23\n",
+    )?;
+    let path = format!(
+        "{}:{}",
+        tools.path().display(),
+        std::env::var("PATH").unwrap_or_default()
+    );
+
+    let output = sinexctl_bin()
+        .env("PATH", path)
+        .args([
+            "admin",
+            "snapshot",
+            "--output",
+            &output_path.to_string_lossy(),
+            "--state-dir",
+            &state_dir.path().to_string_lossy(),
+            "--components",
+            "state",
+        ])
+        .output()?;
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        !output.status.success(),
+        "systemd inventory failure must block quiesced snapshot\nstderr: {stderr}"
+    );
+    assert!(
+        stderr.contains("systemctl") || stderr.contains("active-unit"),
+        "failure should identify systemd inspection\nstderr: {stderr}"
+    );
+    assert!(!output_path.exists());
     Ok(())
 }
 
