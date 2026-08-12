@@ -195,7 +195,13 @@ async fn task_import_rerun_reaches_duplicate_external_ref_protection() -> xtask:
         .await;
 
     run_task_import(&server).await?;
-    run_task_import(&server).await?;
+    let error = run_task_import(&server)
+        .await
+        .expect_err("a duplicate Taskwarrior UUID must fail the import command");
+    assert!(
+        error.to_string().contains("external ref already belongs to another task"),
+        "the duplicate rejection must reach the CLI caller: {error}"
+    );
 
     let requests = requests.lock().expect("read task import requests");
     assert_eq!(
@@ -231,11 +237,15 @@ fn taskwarrior_export() -> serde_json::Value {
 }
 
 async fn run_task_import(server: &MockServer) -> xtask::TestResult<()> {
+    run_task_import_with_export(server, taskwarrior_export()).await
+}
+
+async fn run_task_import_with_export(
+    server: &MockServer,
+    export: serde_json::Value,
+) -> xtask::TestResult<()> {
     let export_file = tempfile::NamedTempFile::new()?;
-    std::fs::write(
-        export_file.path(),
-        serde_json::to_vec(&taskwarrior_export())?,
-    )?;
+    std::fs::write(export_file.path(), serde_json::to_vec(&export)?)?;
     let client = GatewayClient::new(ClientConfig {
         url: server.uri(),
         token: Some("test-token".to_string()),
@@ -248,6 +258,36 @@ async fn run_task_import(server: &MockServer) -> xtask::TestResult<()> {
     }
     .execute(&client, OutputFormat::Table)
     .await
+}
+
+#[sinex_test]
+async fn task_import_rejects_metadata_type_loss_before_gateway_route() -> xtask::TestResult<()> {
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/"))
+        .respond_with(ResponseTemplate::new(500))
+        .expect(0)
+        .mount(&server)
+        .await;
+
+    let error = run_task_import_with_export(
+        &server,
+        serde_json::json!([{
+            "uuid": taskwarrior_uuid(),
+            "description": "Renew SSL certificate",
+            "tags": ["ops", 7],
+            "due": "20260901T000000Z",
+        }]),
+    )
+    .await
+    .expect_err("invalid metadata must fail instead of being silently dropped");
+    assert!(
+        error
+            .to_string()
+            .contains("tag at index 1 must be a string"),
+        "the invalid metadata error must identify the lossy field: {error}"
+    );
+    Ok(())
 }
 
 fn successful_task_create_response(request: &serde_json::Value) -> ResponseTemplate {
