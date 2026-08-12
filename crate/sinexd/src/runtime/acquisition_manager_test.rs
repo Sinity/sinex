@@ -152,9 +152,7 @@ async fn oversized_logical_record_is_chunked_without_losing_anchor(
     ctx: TestContext,
 ) -> TestResult<()> {
     let ctx = ctx.with_nats().shared().await?;
-    let work_dir = tempfile::tempdir()?;
-    let manager = AcquisitionManager::with_defaults(ctx.nats_client(), "oversized-test")
-        .with_work_dir(work_dir.path());
+    let manager = AcquisitionManager::with_defaults(ctx.nats_client(), "oversized-test");
     let mut handle = manager.begin_material("test://oversized").await?;
     let oversized = vec![0u8; AcquisitionManager::MAX_NATS_PAYLOAD_BYTES + 1];
 
@@ -172,24 +170,17 @@ async fn oversized_logical_record_is_chunked_without_losing_anchor(
     );
     assert_eq!(
         handle.hasher.clone().finalize().to_hex().to_string(),
-        blake3::hash(&oversized).to_hex().to_string()
+        blake3::hash(&oversized).to_hex().to_string(),
+        "anti-vacuity: removing record_published_slice after the JetStream acknowledgement loses the production acquisition hash/offset progress"
     );
 
-    let metadata = tokio::fs::metadata(handle.temp_path()).await?;
-    assert_eq!(
-        metadata.len(),
-        oversized.len() as u64,
-        "logical record bytes should be mirrored exactly once"
-    );
     Ok(())
 }
 
 #[sinex_test]
 async fn append_record_batch_returns_per_record_anchors(ctx: TestContext) -> TestResult<()> {
     let ctx = ctx.with_nats().shared().await?;
-    let work_dir = tempfile::tempdir()?;
-    let manager = AcquisitionManager::with_defaults(ctx.nats_client(), "record-batch-test")
-        .with_work_dir(work_dir.path());
+    let manager = AcquisitionManager::with_defaults(ctx.nats_client(), "record-batch-test");
     let mut handle = manager.begin_material("test://record-batch").await?;
     let records = vec![
         b"alpha".to_vec(),
@@ -216,10 +207,6 @@ async fn append_record_batch_returns_per_record_anchors(ctx: TestContext) -> Tes
     );
     assert_eq!(handle.bytes_written(), 14);
     assert_eq!(handle.slice_count, 1);
-    assert_eq!(
-        tokio::fs::read(handle.temp_path()).await?,
-        b"alphabetagamma"
-    );
     Ok(())
 }
 
@@ -301,10 +288,6 @@ async fn append_stream_batches_records_into_one_slice(ctx: TestContext) -> TestR
         .as_ref()
         .ok_or_else(|| SinexError::invalid_state("stream material should be active"))?;
     assert_eq!(handle.slice_count, 1);
-    assert_eq!(
-        tokio::fs::read(handle.temp_path()).await?,
-        b"one\ntwo\nthree\n"
-    );
     stream.finalize("test-complete").await?;
     Ok(())
 }
@@ -560,11 +543,14 @@ async fn prime_begins_material_without_staging_content(ctx: TestContext) -> Test
 // rejected — `publish_slice`'s `MAX_NATS_PAYLOAD_BYTES` (512KiB) guard is
 // unreachable through this path today because the chunker never hands it
 // more than 256KiB at a time. This test now asserts the current contract:
-// an oversized `append_slice` call succeeds and stages the full payload
-// locally, mirroring `oversized_logical_record_is_chunked_without_losing_anchor`
-// but through the single-record `append_slice` entry point.
+// an oversized `append_slice` call succeeds and preserves the full payload's
+// durable byte accounting, mirroring
+// `oversized_logical_record_is_chunked_without_losing_anchor` through the
+// single-record entry point.
 #[sinex_test]
-async fn oversized_slice_is_chunked_and_staged_locally(ctx: TestContext) -> TestResult<()> {
+async fn oversized_slice_is_chunked_without_losing_durable_byte_accounting(
+    ctx: TestContext,
+) -> TestResult<()> {
     let ctx = ctx.with_nats().shared().await?;
     let work_dir = tempfile::tempdir()?;
     let manager = AcquisitionManager::with_defaults(ctx.nats_client(), "oversized-test")
@@ -584,11 +570,5 @@ async fn oversized_slice_is_chunked_and_staged_locally(ctx: TestContext) -> Test
         blake3::hash(&oversized).to_hex().to_string()
     );
 
-    let metadata = tokio::fs::metadata(handle.temp_path()).await?;
-    assert_eq!(
-        metadata.len(),
-        oversized.len() as u64,
-        "oversized slice bytes should be mirrored locally exactly once"
-    );
     Ok(())
 }

@@ -135,6 +135,18 @@ impl MaterialAssembler {
         // WAL is immutable — End message remains. In-memory state reverted.
     }
 
+    async fn recover_finalization_worker_panic(
+        state_handle: &Arc<Mutex<super::state::AssemblerState>>,
+    ) {
+        let mut state = state_handle.lock().await;
+        if state.phase == AssemblyPhase::Finalizing {
+            // `pending_end` remains retained throughout the worker attempt, so
+            // returning to Accumulating makes the maintenance re-drive route
+            // immediately usable after a detached worker panic.
+            state.phase = AssemblyPhase::Accumulating;
+        }
+    }
+
     /// Route material failure to DLQ.
     ///
     /// Mirrors the raw-event DLQ discipline (`jetstream_consumer::dlq::route_to_dlq`):
@@ -223,7 +235,10 @@ impl MaterialAssembler {
         context: JsonValue,
         resume_phase: AssemblyPhase,
     ) -> EventEngineResult<()> {
-        if let Err(error) = self.route_material_error(material_id, reason, context).await {
+        if let Err(error) = self
+            .route_material_error(material_id, reason, context)
+            .await
+        {
             warn!(
                 material_id = %material_id,
                 failure_reason = reason,
@@ -370,8 +385,7 @@ impl MaterialAssembler {
             return Ok(false);
         }
 
-        let is_self_observation =
-            is_self_observation_material_source(&material.source_identifier);
+        let is_self_observation = is_self_observation_material_source(&material.source_identifier);
         let (recovery_reason, metadata_key, dlq_policy) = if is_self_observation {
             (
                 ZERO_EVENT_SELF_OBSERVATION_TIMEOUT_RECOVERY_REASON,
@@ -404,12 +418,10 @@ impl MaterialAssembler {
             )
             .await
             .map_err(|error| {
-                SinexError::database(
-                    "Failed to mark zero-event timeout recovered_partial",
-                )
-                .with_context("material_id", material_id.to_string())
-                .with_context("parsed_event_count", parsed_event_count.to_string())
-                .with_source(error)
+                SinexError::database("Failed to mark zero-event timeout recovered_partial")
+                    .with_context("material_id", material_id.to_string())
+                    .with_context("parsed_event_count", parsed_event_count.to_string())
+                    .with_source(error)
             })?;
 
         info!(
@@ -490,6 +502,35 @@ impl MaterialAssembler {
         Ok(())
     }
 
+    /// Make a finalization that exceeded its recovery age durably visible and
+    /// terminal. This is deliberately separate from ordinary stale-slice
+    /// handling: a `Finalizing` state already owns an END frame, so it cannot
+    /// depend on WorkQueue redelivery for recovery.
+    pub(super) async fn fail_stalled_finalization(
+        &self,
+        material_id: Uuid,
+        elapsed_secs: i64,
+    ) -> EventEngineResult<()> {
+        let reason = "material_finalization_stalled";
+        self.route_material_error(
+            material_id,
+            reason,
+            serde_json::json!({
+                "elapsed_seconds": elapsed_secs,
+                "finalize_timeout_seconds": self.finalize_timeout.as_secs(),
+                "slice_arrival_timeout_seconds": self.slice_arrival_timeout.as_secs(),
+            }),
+        )
+        .await?;
+
+        self.finalize_failed_material_claimed_checked(
+            material_id,
+            reason,
+            AssemblyPhase::Accumulating,
+        )
+        .await
+    }
+
     async fn route_terminal_failure_with_retry(
         &self,
         material_id: Uuid,
@@ -498,7 +539,10 @@ impl MaterialAssembler {
         state_handle: &Arc<Mutex<super::state::AssemblerState>>,
         end: MaterialEndMessage,
     ) -> EventEngineResult<()> {
-        if let Err(error) = self.route_material_error(material_id, reason, context).await {
+        if let Err(error) = self
+            .route_material_error(material_id, reason, context)
+            .await
+        {
             warn!(
                 material_id = %material_id,
                 failure_reason = reason,
@@ -542,7 +586,8 @@ impl MaterialAssembler {
     ) {
         self.finalize_in_flight
             .fetch_add(1, std::sync::atomic::Ordering::AcqRel);
-        let assembler = self.clone_for_task();
+        let worker_assembler = self.clone_for_task();
+        let recovery_assembler = self.clone_for_task();
         let semaphore = self.finalize_semaphore.clone();
         let in_flight = self.finalize_in_flight.clone();
         tokio::spawn(async move {
@@ -556,19 +601,45 @@ impl MaterialAssembler {
             }
             let _guard = InFlightGuard(in_flight);
 
-            let _permit = match semaphore.acquire().await {
-                Ok(permit) => permit,
-                Err(_) => return,
-            };
-            if let Err(error) = assembler
-                .try_finalize_pending_end(material_id, state_handle, PendingEndBehavior::Ignore)
-                .await
-            {
-                warn!(
+            let worker_state_handle = state_handle.clone();
+            let worker = tokio::spawn(async move {
+                let _permit = semaphore
+                    .acquire()
+                    .await
+                    .map_err(|_| SinexError::service("material finalization semaphore closed"))?;
+                worker_assembler
+                    .try_finalize_pending_end(
+                        material_id,
+                        worker_state_handle,
+                        PendingEndBehavior::Ignore,
+                    )
+                    .await
+            });
+
+            match worker.await {
+                Ok(Ok(())) => {}
+                Ok(Err(error)) => warn!(
                     material_id = %material_id,
                     error = %error,
                     "Decoupled material finalize failed; retry state preserved for maintenance re-drive"
-                );
+                ),
+                Err(error) => {
+                    warn!(
+                        material_id = %material_id,
+                        error = ?error,
+                        "Decoupled material finalize worker panicked or was aborted; restoring maintenance recovery state"
+                    );
+                    Self::recover_finalization_worker_panic(&state_handle).await;
+                    // Keep the recovery action observable even if the worker
+                    // vanished before it could emit its own error.
+                    let _ = recovery_assembler
+                        .route_material_error(
+                            material_id,
+                            "material_finalize_worker_terminated",
+                            serde_json::json!({ "join_error": error.to_string() }),
+                        )
+                        .await;
+                }
             }
         });
     }
@@ -737,7 +808,7 @@ impl MaterialAssembler {
                 "Assembly state machine accepted finalization start"
             );
             state.phase = AssemblyPhase::Finalizing;
-            let end = state.pending_end.take().ok_or_else(|| {
+            let end = state.pending_end.clone().ok_or_else(|| {
                 SinexError::service(format!(
                     "State corruption: pending_end missing during finalization for material {material_id}"
                 ))
@@ -986,10 +1057,12 @@ impl MaterialAssembler {
                     "Material finalization exceeded timeout; preserving retry state and NAKing for redelivery"
                 );
                 Self::revert_finalization_start(&state_handle, end).await;
-                return Err(SinexError::processing("material finalization exceeded timeout")
-                    .with_context("material_id", material_id.to_string())
-                    .with_context("timeout_secs", self.finalize_timeout.as_secs().to_string())
-                    .with_context("finalization_stage", "commit_outcome_unknown"));
+                return Err(
+                    SinexError::processing("material finalization exceeded timeout")
+                        .with_context("material_id", material_id.to_string())
+                        .with_context("timeout_secs", self.finalize_timeout.as_secs().to_string())
+                        .with_context("finalization_stage", "commit_outcome_unknown"),
+                );
             }
             Ok(Err(e)) => {
                 let commit_outcome_unknown = e.is_commit_outcome_unknown();

@@ -80,9 +80,11 @@ pub async fn apply_schema(pool: &DbPool) -> Result<()> {
             .with_context("error_class", ERROR_CLASS_SCHEMA_APPLY_CONCURRENT));
         }
         Err(err) => {
-            return Err(SinexError::database("Failed to acquire schema-apply advisory lock")
-                .with_operation("schema_apply.ddl_apply_lock")
-                .with_source(err));
+            return Err(
+                SinexError::database("Failed to acquire schema-apply advisory lock")
+                    .with_operation("schema_apply.ddl_apply_lock")
+                    .with_source(err),
+            );
         }
     };
 
@@ -90,6 +92,7 @@ pub async fn apply_schema(pool: &DbPool) -> Result<()> {
     crate::schema::apply::apply(pool)
         .await
         .map_err(map_apply_error)?;
+    record_binary_schema_version(pool).await?;
     info!("Database schema apply completed");
 
     if privacy_seed_builtin_enabled() {
@@ -111,9 +114,41 @@ pub async fn apply_schema(pool: &DbPool) -> Result<()> {
             }
         }
     } else {
-        info!("SINEX_PRIVACY_SEED_BUILTIN disabled -- skipping built-in privacy catalog convergence");
+        info!(
+            "SINEX_PRIVACY_SEED_BUILTIN disabled -- skipping built-in privacy catalog convergence"
+        );
     }
 
+    Ok(())
+}
+
+/// Record the compatibility epoch only after all DDL convergence has
+/// succeeded. This is deliberately part of the schema-apply transaction
+/// boundary: an old binary sees the upgraded epoch on rollback and refuses to
+/// start instead of re-adding destructive-drop columns as empty data.
+async fn record_binary_schema_version(pool: &DbPool) -> Result<()> {
+    use sinex_primitives::EXPECTED_BINARY_SCHEMA_VERSION;
+
+    sqlx::query(
+        r#"
+        INSERT INTO sinex_schemas.binary_schema_version (id, version)
+        VALUES (1, $1)
+        ON CONFLICT (id) DO UPDATE SET version = EXCLUDED.version
+        "#,
+    )
+    .bind(EXPECTED_BINARY_SCHEMA_VERSION)
+    .execute(pool)
+    .await
+    .map_err(|error| {
+        SinexError::database("Failed to record binary schema version after schema apply")
+            .with_operation("schema_apply.record_binary_schema_version")
+            .with_source(error)
+    })?;
+
+    info!(
+        version = EXPECTED_BINARY_SCHEMA_VERSION,
+        "Recorded binary schema version"
+    );
     Ok(())
 }
 

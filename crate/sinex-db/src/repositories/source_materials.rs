@@ -36,6 +36,13 @@ pub use types::{
 pub struct SourceMaterialRepository<'a> {
     pool: &'a PgPool,
 }
+
+/// A source-material registry row removed by the age-gated orphan sweep.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct DeletedStaleMaterial {
+    pub id: Uuid,
+    pub optional_blob_id: Option<Uuid>,
+}
 impl<'a> Repository<'a> for SourceMaterialRepository<'a> {
     fn new(pool: &'a PgPool) -> Self {
         Self { pool }
@@ -1709,6 +1716,65 @@ impl SourceMaterialRepository<'_> {
         .await
         .map_err(|e| db_error(e, "delete material if orphan"))?;
         Ok(deleted.map(|row| row.optional_blob_id))
+    }
+
+    /// Delete a bounded batch of registry rows that have outlived the material
+    /// recovery window, remain in a disposable lifecycle state, and have never
+    /// gained a live or archived event reference.
+    ///
+    /// The age/status/reference predicates are repeated in the DELETE itself so
+    /// a concurrent event admission cannot turn a previously selected row into
+    /// an unsafe deletion between selection and mutation.
+    pub async fn delete_stale_unreferenced_materials(
+        &self,
+        older_than: Timestamp,
+        limit: i64,
+    ) -> DbResult<Vec<DeletedStaleMaterial>> {
+        let deleted = sqlx::query!(
+            r#"
+            WITH candidates AS (
+                SELECT sm.id
+                FROM raw.source_material_registry sm
+                WHERE sm.status IN ('sensing', 'failed')
+                  AND COALESCE(sm.end_time, sm.start_time, sm.staged_at) < $1
+                  AND NOT EXISTS (
+                      SELECT 1 FROM core.events e WHERE e.source_material_id = sm.id
+                  )
+                  AND NOT EXISTS (
+                      SELECT 1 FROM audit.archived_events ae WHERE ae.source_material_id = sm.id
+                  )
+                ORDER BY COALESCE(sm.end_time, sm.start_time, sm.staged_at) ASC, sm.id ASC
+                LIMIT $2
+            )
+            DELETE FROM raw.source_material_registry sm
+            USING candidates
+            WHERE sm.id = candidates.id
+              AND sm.status IN ('sensing', 'failed')
+              AND COALESCE(sm.end_time, sm.start_time, sm.staged_at) < $1
+              AND NOT EXISTS (
+                  SELECT 1 FROM core.events e WHERE e.source_material_id = sm.id
+              )
+              AND NOT EXISTS (
+                  SELECT 1 FROM audit.archived_events ae WHERE ae.source_material_id = sm.id
+              )
+            RETURNING
+                sm.id as "id!: Uuid",
+                sm.optional_blob_id as "optional_blob_id?: Uuid"
+            "#,
+            *older_than,
+            limit,
+        )
+        .fetch_all(self.pool)
+        .await
+        .map_err(|e| db_error(e, "delete stale unreferenced source materials"))?;
+
+        Ok(deleted
+            .into_iter()
+            .map(|row| DeletedStaleMaterial {
+                id: row.id,
+                optional_blob_id: row.optional_blob_id,
+            })
+            .collect())
     }
 }
 

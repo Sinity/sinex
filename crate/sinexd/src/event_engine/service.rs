@@ -4,8 +4,9 @@
 
 // Local crate imports
 use crate::event_engine::{
-    EventEngineResult, JetStreamEventLane, JetStreamTopology, SinexError, config::EventEngineConfig,
-    material_ready_set::MaterialReadySet, validator::IngestEventValidator,
+    EventEngineResult, JetStreamEventLane, JetStreamTopology, SinexError,
+    config::EventEngineConfig, material_ready_set::MaterialReadySet,
+    validator::IngestEventValidator,
 };
 // External crates
 use crate::runtime::content_store::{ContentStoreConfig, MaterialContentStore};
@@ -645,7 +646,11 @@ impl IngestService {
             if let Some(module_run_id) = module_run_id {
                 let module_run_id =
                     Id::<sinex_db::repositories::state::ModuleRun>::from_uuid(module_run_id);
-                if let Err(error) = pool.state().record_module_run_heartbeat(module_run_id).await {
+                if let Err(error) = pool
+                    .state()
+                    .record_module_run_heartbeat(module_run_id)
+                    .await
+                {
                     warn!(
                         module_run_id = %module_run_id,
                         error = %error,
@@ -1139,10 +1144,19 @@ impl IngestService {
         let (ready_tx, ready_rx) = tokio::sync::oneshot::channel();
         let handle = tokio::spawn(async move {
             let durability_thresholds = durability_thresholds?;
+            let max_blob_size = usize::try_from(max_material_size_bytes).map_err(|error| {
+                SinexError::validation("max material size does not fit content-store limit")
+                    .with_context(
+                        "max_material_size_bytes",
+                        max_material_size_bytes.to_string(),
+                    )
+                    .with_std_error(&error)
+            })?;
             let content_store_config = ContentStoreConfig {
                 root_path: content_store_path.clone(),
                 num_copies: None,
                 large_files: None,
+                max_blob_size,
                 ..Default::default()
             };
 
@@ -1371,6 +1385,22 @@ impl IngestService {
                             Err(error) => {
                                 warn!(error = %error, "blob GC sweep failed");
                             }
+                        }
+
+                        match crate::runtime::content_store::gc::sweep_stale_material_registry(
+                            &pool,
+                            &content_store,
+                            true,
+                        )
+                        .await
+                        {
+                            Ok(report) => info!(
+                                registry_rows_deleted = report.registry_rows_deleted,
+                                blobs_deleted = report.blobs_deleted,
+                                blob_cleanup_failures = report.blob_cleanup_failures,
+                                "source-material lifecycle GC sweep complete"
+                            ),
+                            Err(error) => warn!(error = %error, "source-material lifecycle GC sweep failed"),
                         }
                     }
                     () = crate::runtime::wait_for_shutdown_signal_bool(&shutdown_flag, &shutdown_notify) => {

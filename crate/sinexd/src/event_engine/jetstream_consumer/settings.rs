@@ -30,10 +30,22 @@ pub(super) const MAIN_CONSUMER_TERMINAL_DLQ_THRESHOLD: i64 = 10;
 /// during normal backlog drains. See #1310 / #1311.
 pub(super) const SOURCE_MATERIAL_READY_DLQ_THRESHOLD: i64 = 30;
 
+// A WorkQueue message that reaches NATS `max_deliver` stops redelivering, so
+// every application-side terminal DLQ decision must happen strictly before
+// that ceiling. Keep this a compile-time invariant rather than a comment:
+// changing either retry budget must fail compilation until the margin is
+// reconsidered deliberately.
+const _: () = assert!(
+    MAIN_CONSUMER_JETSTREAM_MAX_DELIVER > MAIN_CONSUMER_TERMINAL_DLQ_THRESHOLD
+        && MAIN_CONSUMER_JETSTREAM_MAX_DELIVER > SOURCE_MATERIAL_READY_DLQ_THRESHOLD
+);
+
 /// Retry delay for deferred events whose source material isn't registered yet.
 ///
-/// Each NAK with this delay counts toward `max_deliver` (10), so the total race
-/// window the system tolerates is `delay * max_deliver` (= 50 s with 5 s delay).
+/// Each NAK with this delay counts toward the source-material terminal threshold
+/// (30), so the total race window the system tolerates is about 150 s with a
+/// 5 s delay. The NATS `max_deliver` ceiling remains strictly above that
+/// threshold by the compile-time assertion above.
 ///
 /// The cross-stream race is the load-bearing case: events on
 /// `PROD_SINEX_RAW_EVENTS` and material lifecycle frames on `SOURCE_MATERIAL`
@@ -43,7 +55,7 @@ pub(super) const SOURCE_MATERIAL_READY_DLQ_THRESHOLD: i64 = 30;
 /// total window) was insufficient and DLQ'd every fresh self-observation
 /// material's first events (see issue #1241).
 ///
-/// 5 s × 10 retries = 50 s is the practical upper bound a healthy assembler
+/// 5 s × 30 retries = 150 s is the practical upper bound a healthy assembler
 /// should clear; longer delays mainly hurt liveness under transient races.
 pub(super) const FK_VIOLATION_RETRY_DELAY: Duration = Duration::from_secs(5);
 pub(super) const STREAM_CAPACITY_CHECK_INTERVAL: Duration = Duration::from_mins(5); // Check every 5 minutes

@@ -4,8 +4,19 @@ use super::*;
 use xtask::sandbox::sinex_test;
 
 #[sinex_test]
-async fn parse_unused_output_extracts_numbered_unused_entries()
+async fn default_blob_retrieval_cap_matches_default_material_assembly_cap()
 -> ::xtask::sandbox::TestResult<()> {
+    assert_eq!(
+        ContentStoreConfig::default().max_blob_size,
+        512 * 1024 * 1024,
+        "anti-vacuity: restoring the old 100 MiB default recreates the accepted-but-unreadable material band"
+    );
+    Ok(())
+}
+
+#[sinex_test]
+async fn parse_unused_output_extracts_numbered_unused_entries() -> ::xtask::sandbox::TestResult<()>
+{
     let entries = parse_unused_output(
         br#"{"unused-list":{"2":"SHA256E-s4--beef.txt","1":"SHA256E-s5--deadbeef.dat"}}"#,
     )
@@ -20,8 +31,8 @@ async fn parse_unused_output_extracts_numbered_unused_entries()
 }
 
 #[sinex_test]
-async fn parse_unused_output_rejects_non_numeric_entry_numbers()
--> ::xtask::sandbox::TestResult<()> {
+async fn parse_unused_output_rejects_non_numeric_entry_numbers() -> ::xtask::sandbox::TestResult<()>
+{
     let error = parse_unused_output(br#"{"unused-list":{"oops":"SHA256E-s5--deadbeef.dat"}}"#)
         .expect_err("non-numeric unused entry number must fail honestly");
 
@@ -30,8 +41,8 @@ async fn parse_unused_output_rejects_non_numeric_entry_numbers()
 }
 
 #[sinex_test]
-async fn local_cas_key_parse_requires_canonical_blake3_digest()
--> ::xtask::sandbox::TestResult<()> {
+async fn local_cas_key_parse_requires_canonical_blake3_digest() -> ::xtask::sandbox::TestResult<()>
+{
     let digest = "a".repeat(64);
     let parsed = ContentStoreKey::parse(&format!("{LOCAL_BLAKE3_CAS_BACKEND}-s42--{digest}"))?;
 
@@ -57,8 +68,8 @@ async fn local_cas_key_parse_requires_canonical_blake3_digest()
 }
 
 #[sinex_test]
-async fn path_if_local_does_not_resolve_malformed_local_cas_key()
--> ::xtask::sandbox::TestResult<()> {
+async fn path_if_local_does_not_resolve_malformed_local_cas_key() -> ::xtask::sandbox::TestResult<()>
+{
     let repo_dir = tempfile::tempdir()?;
     let repo_path = Utf8PathBuf::from_path_buf(repo_dir.path().to_path_buf())
         .expect("temp path should be valid utf-8");

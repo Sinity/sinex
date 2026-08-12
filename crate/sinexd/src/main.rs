@@ -388,6 +388,8 @@ fn export_source_skeleton(
 }
 
 async fn serve(cli: &Cli) -> color_eyre::Result<()> {
+    sinexd::runtime::preflight::resources::verify_startup_storage()?;
+
     // The event engine and API are enabled by default. Focused module-local
     // development runs opt out via environment flags so a selected automaton
     // does not also start a duplicate admission/persistence pipeline.

@@ -28,6 +28,7 @@ pub struct EventBuilder<T, P> {
     pub(crate) provenance_data: Option<Provenance>,
     pub(crate) associated_blob_ids: Option<Vec<Uuid>>,
     pub(crate) anchor_payload_hash: Option<Vec<u8>>,
+    pub(crate) equivalence_key: Option<String>,
     pub(crate) _state: std::marker::PhantomData<P>,
 }
 
@@ -52,6 +53,7 @@ impl<T> EventBuilder<T, NoProvenance> {
             provenance_data: None,
             associated_blob_ids: None,
             anchor_payload_hash: None,
+            equivalence_key: None,
             _state: std::marker::PhantomData,
         }
     }
@@ -99,6 +101,7 @@ impl<T> EventBuilder<T, NoProvenance> {
             provenance_data: Some(provenance),
             associated_blob_ids: self.associated_blob_ids,
             anchor_payload_hash: self.anchor_payload_hash,
+            equivalence_key: self.equivalence_key,
             _state: std::marker::PhantomData,
         }
     }
@@ -124,6 +127,14 @@ impl<T> EventBuilder<T, NoProvenance> {
 }
 
 impl<T> EventBuilder<T, HasProvenance> {
+    /// Set the stable occurrence key used by admission and direct producers to
+    /// recognize an identical retry or replay.
+    #[must_use]
+    pub fn with_equivalence_key(mut self, key: impl Into<String>) -> Self {
+        self.equivalence_key = Some(key.into());
+        self
+    }
+
     pub fn at_time(mut self, ts: Timestamp) -> Self {
         self.timestamp = Some(ts);
         self
@@ -302,7 +313,7 @@ impl<T> EventBuilder<T, HasProvenance> {
             temporal_policy: None,
             semantics_version: None,
             scope_key: None,
-            equivalence_key: None,
+            equivalence_key: self.equivalence_key,
             created_by_operation_id,
             automaton_model: None,
             product_class: None,

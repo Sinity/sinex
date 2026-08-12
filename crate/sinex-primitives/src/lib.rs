@@ -98,9 +98,14 @@ pub mod prelude {
     pub use crate::temporal::OffsetDateTime;
 }
 
-/// Expected binary schema version — checked at startup against `sinex_schemas.binary_schema_version`.
-/// Bump when the DB schema changes in a backward-incompatible way.
-pub const EXPECTED_BINARY_SCHEMA_VERSION: &str = "1";
+/// Expected binary schema version — checked at startup against
+/// `sinex_schemas.binary_schema_version`.
+///
+/// Bump this only for destructive declarative convergence (for example, a
+/// new `columns_to_drop` entry). `sinex_db::apply_schema` writes this value
+/// only after DDL convergence succeeds, so rolling back to an older binary
+/// fails before it can recreate a dropped column as empty data.
+pub const EXPECTED_BINARY_SCHEMA_VERSION: &str = "2";
 
 // Re-export commonly used types at crate root
 pub use activity::{ActivitySourceKind, classify_trusted_activity_signal, primary_activity_source};
@@ -124,9 +129,9 @@ pub use deployment_readiness::{
 };
 pub use derivation::{
     AdjudicationStatus, ClaimSupport, ClaimSupportTemplate, ClaimTemporalQuality,
-    DerivationDeclarationId, DerivationOutputDeclaration, DerivationScope,
-    DerivationWriteSurface, DerivedProductClass, InputEligibility, ProjectionFreshnessClass,
-    ProjectionStatus, SourceCoverage, SupportLevel, TstzRange,
+    DerivationDeclarationId, DerivationOutputDeclaration, DerivationScope, DerivationWriteSurface,
+    DerivedProductClass, InputEligibility, ProjectionFreshnessClass, ProjectionStatus,
+    SourceCoverage, SupportLevel, TstzRange,
 };
 pub use derivations::{
     DERIVATION_SPECS, DESKTOP_CONTEXT_CURRENT_VIEW_DERIVATION,

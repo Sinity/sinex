@@ -372,21 +372,25 @@ fn parse_date(s: &str) -> ParserResult<Timestamp> {
 
 fn build_intent(tx: &JournalTransaction, ctx: &ParserContext) -> ParsedEventIntent {
     // Compute occurrence key from (date, description, first explicit posting amount).
-    // The first posting with an explicit amount is typically the source account.
-    let first_amount = tx
+    // With all posting amounts elided, the transaction's material byte anchor
+    // is the stable distinguishing coordinate; never collapse real entries
+    // onto a fixed synthetic amount.
+    let first_amount_or_anchor = tx
         .postings
         .iter()
         .find(|p| p.amount.is_some())
         .and_then(|p| p.amount.as_deref())
-        .unwrap_or("0")
-        .to_string();
+        .map_or_else(|| format!("anchor:{}", tx.index), ToString::to_string);
 
     let occurrence_key = OccurrenceKey {
         source_id: SourceId::from_static("hledger-journal"),
         fields: vec![
             ("date".into(), tx.date.inner().date().to_string()),
             ("description".into(), tx.description.clone()),
-            ("first_amount".into(), first_amount),
+            (
+                "first_explicit_posting_amount".into(),
+                first_amount_or_anchor,
+            ),
         ],
     };
 

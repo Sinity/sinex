@@ -122,7 +122,6 @@ async fn task_state_present_envelope_renders_without_caveats() -> xtask::TestRes
 /// (idempotency). Exercises the real build_task_create_request() used by
 /// TaskImportCommand::execute(), not a reimplementation.
 #[sinex_test]
-#[ignore = "sinex-3z2t open: import drops tags/due_at and never populates external_refs -- fails until fixed"]
 async fn task_import_preserves_tags_due_at_and_external_refs_for_idempotency()
 -> xtask::TestResult<()> {
     let taskwarrior_export = serde_json::json!({
@@ -134,7 +133,7 @@ async fn task_import_preserves_tags_due_at_and_external_refs_for_idempotency()
         "due": "20260901T000000Z",
     });
 
-    let request = build_task_create_request(&taskwarrior_export);
+    let request = build_task_create_request(&taskwarrior_export)?;
 
     assert_eq!(
         request.tags,

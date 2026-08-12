@@ -280,16 +280,13 @@ async fn occurrence_key_fields_and_order() -> TestResult<()> {
     let key = intents[0].occurrence_key.as_ref().unwrap();
     assert_eq!(key.fields[0].0, "date");
     assert_eq!(key.fields[1].0, "description");
-    assert_eq!(key.fields[2].0, "first_amount");
+    assert_eq!(key.fields[2].0, "first_explicit_posting_amount");
     // The first explicit amount for the first transaction is "40.00" (Fuel posting).
     assert_eq!(key.fields[2].1, "40.00");
     Ok(())
 }
 
 #[sinex_test]
-#[ignore = "sinex-ztlf open: first_amount falls back to a fixed \"0\" sentinel when no posting \
-            has an explicit amount, so two distinct same-day same-description transactions with \
-            only elided (implicit-balance) postings collide onto the same occurrence_key"]
 async fn occurrence_key_does_not_collide_when_all_postings_elide_amount() -> TestResult<()> {
     // Two distinct transactions, same date and description (a plausible
     // recurring same-day entry, e.g. two cash withdrawals), neither posting
@@ -312,8 +309,8 @@ async fn occurrence_key_does_not_collide_when_all_postings_elide_amount() -> Tes
     let key_b = intents[1].occurrence_key.as_ref().unwrap();
     assert_ne!(
         key_a, key_b,
-        "two distinct transactions collided onto the same occurrence_key because \
-         first_amount fell back to the same \"0\" sentinel for both: {key_a:?}"
+        "two distinct transactions must retain distinct material anchors when no posting \
+         supplies an explicit amount: {key_a:?}"
     );
     Ok(())
 }
@@ -375,7 +372,6 @@ async fn timestamp_matches_journal_date() -> TestResult<()> {
 /// declaration) -- it exists to make the gap executable and fails against
 /// current code either way, since the two never actually agree today.
 #[sinex_test]
-#[ignore = "sinex-xtmp open (finance occurrence-key mismatch): declared vs emitted field name disagree -- fails until fixed"]
 async fn occurrence_key_field_name_matches_declared_contract() -> TestResult<()> {
     const DECLARED_THIRD_FIELD_NAME: &str = "first_explicit_posting_amount";
 

@@ -4,7 +4,7 @@ use std::collections::BTreeSet;
 
 use serde_json::json;
 use sinex_db::DbPoolExt;
-use sinex_db::repositories::SourceMaterial as DbSourceMaterial;
+use sinex_db::repositories::{EventStorageLane, SourceMaterial as DbSourceMaterial};
 use sinex_primitives::events::EventPayload;
 use sinex_primitives::events::SourceMaterial;
 use sinex_primitives::events::payloads::{
@@ -13,7 +13,10 @@ use sinex_primitives::events::payloads::{
 use sinex_primitives::rpc::browser::{
     BrowserCaptureBatchRequest, BrowserCaptureBatchResponse, BrowserCaptureObservation,
 };
-use sinex_primitives::{Id, Result, SinexError, Uuid};
+use sinex_primitives::{
+    Id, Result, SinexError, Uuid,
+    parser::{OccurrenceKey, SourceId, occurrence_key_string},
+};
 
 const MAX_BROWSER_CAPTURE_BATCH_OBSERVATIONS: usize = 256;
 const MAX_BROWSER_CAPTURE_FIELD_LEN: usize = 16 * 1024;
@@ -132,6 +135,7 @@ async fn persist_browser_observations(
 
     for (index, observation) in req.observations.iter().enumerate() {
         let sequence = req.sequence_start + index as u64;
+        let equivalence_key = browser_observation_equivalence_key(&req.profile_id, observation);
         let event = match observation {
             BrowserCaptureObservation::Navigation {
                 observed_at,
@@ -156,6 +160,7 @@ async fn persist_browser_observations(
             }
             .from_material(material_ref)
             .at_time(*observed_at)
+            .with_equivalence_key(equivalence_key.clone())
             .build()?
             .to_json_event()
             .map_err(|error| {
@@ -181,6 +186,7 @@ async fn persist_browser_observations(
             }
             .from_material(material_ref)
             .at_time(*observed_at)
+            .with_equivalence_key(equivalence_key.clone())
             .build()?
             .to_json_event()
             .map_err(|error| {
@@ -210,6 +216,7 @@ async fn persist_browser_observations(
             }
             .from_material(material_ref)
             .at_time(*observed_at)
+            .with_equivalence_key(equivalence_key.clone())
             .build()?
             .to_json_event()
             .map_err(|error| {
@@ -217,6 +224,16 @@ async fn persist_browser_observations(
                     .with_std_error(&error)
             })?,
         };
+        if let Some(existing) = services
+            .pool()
+            .events()
+            .find_live_by_equivalence_key(&equivalence_key, EventStorageLane::Activity)
+            .await?
+            && existing.payload == event.payload
+        {
+            event_ids.push(existing.id.to_string());
+            continue;
+        }
         let inserted = services.pool().events().insert(event).await?;
         let event_id = inserted.id.ok_or_else(|| {
             SinexError::invalid_state("browser.capture_batch persisted event missing id")
@@ -227,6 +244,63 @@ async fn persist_browser_observations(
     }
 
     Ok(event_ids)
+}
+
+fn browser_observation_equivalence_key(
+    profile_id: &str,
+    observation: &BrowserCaptureObservation,
+) -> String {
+    let fields = match observation {
+        BrowserCaptureObservation::Navigation {
+            observed_at,
+            tab_id,
+            url,
+            ..
+        } => vec![
+            ("profile_id".to_string(), profile_id.to_string()),
+            (
+                "tab_id".to_string(),
+                tab_id
+                    .as_ref()
+                    .map(ToString::to_string)
+                    .unwrap_or_default(),
+            ),
+            ("url".to_string(), url.clone()),
+            ("observed_at".to_string(), observed_at.format_rfc3339()),
+        ],
+        BrowserCaptureObservation::TabActivated {
+            observed_at,
+            tab_id,
+            window_id,
+            ..
+        } => vec![
+            ("profile_id".to_string(), profile_id.to_string()),
+            ("tab_id".to_string(), tab_id.to_string()),
+            (
+                "window_id".to_string(),
+                window_id
+                    .as_ref()
+                    .map(ToString::to_string)
+                    .unwrap_or_default(),
+            ),
+            ("observed_at".to_string(), observed_at.format_rfc3339()),
+        ],
+        BrowserCaptureObservation::DownloadObserved {
+            observed_at,
+            download_id,
+            url,
+            ..
+        } => vec![
+            ("profile_id".to_string(), profile_id.to_string()),
+            ("download_id".to_string(), download_id.clone()),
+            ("url".to_string(), url.clone()),
+            ("observed_at".to_string(), observed_at.format_rfc3339()),
+        ],
+    };
+    occurrence_key_string(&OccurrenceKey {
+        source_id: SourceId::from_static("browser.webextension-live"),
+        fields,
+    })
 }
 
 fn validate_observation(observation: &BrowserCaptureObservation) -> Result<()> {

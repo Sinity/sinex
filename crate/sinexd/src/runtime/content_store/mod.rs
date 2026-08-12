@@ -246,13 +246,13 @@ pub struct ContentStoreConfig {
     #[serde(default)]
     pub legacy_annex_enabled: bool,
     /// Maximum blob size in bytes before ingestion is rejected.
-    /// Defaults to 100 MB. Set to 0 to disable.
+    /// Defaults to the material assembler's 512 MiB acceptance ceiling. Set to 0 to disable.
     #[serde(default = "default_max_blob_size")]
     pub max_blob_size: usize,
 }
 
 const fn default_max_blob_size() -> usize {
-    100 * 1024 * 1024 // 100 MB
+    512 * 1024 * 1024 // Match the default material assembler ceiling.
 }
 
 impl Default for ContentStoreConfig {

@@ -3,6 +3,7 @@
 use std::sync::atomic::Ordering;
 
 use super::confirmation::BATCH_ATOMICITY_SCOPE;
+use super::dlq::DLQ_RETRY_DELAY;
 use super::*;
 use sinex_primitives::events::Event;
 
@@ -414,7 +415,7 @@ impl JetStreamConsumer {
                                 // starves the later `DurableDebt` resolution).
                                 prepared
                                     .settlement
-                                    .settle_child(ChildOutcome::Retry(None))
+                                    .settle_child(ChildOutcome::Retry(Some(DLQ_RETRY_DELAY)))
                                     .await?;
                                 return Err(err.with_context(
                                     "settlement_operation",
@@ -487,7 +488,7 @@ impl JetStreamConsumer {
                                         // will reach a settle_child call again.
                                         if let Err(settle_err) = prepared
                                             .settlement
-                                            .settle_child(ChildOutcome::Retry(None))
+                                            .settle_child(ChildOutcome::Retry(Some(DLQ_RETRY_DELAY)))
                                             .await
                                         {
                                             settlement_errors.push((prepared.parsed_id, settle_err));
@@ -514,7 +515,7 @@ impl JetStreamConsumer {
                                 // terminal outcome may consume the registry entry.
                                 if let Err(err) = prepared
                                     .settlement
-                                    .settle_child(ChildOutcome::Retry(None))
+                                    .settle_child(ChildOutcome::Retry(Some(DLQ_RETRY_DELAY)))
                                     .await
                                 {
                                     warn!(
@@ -844,14 +845,10 @@ impl JetStreamConsumer {
     pub(super) fn should_route_persistence_failure(
         route_db_errors_to_dlq: bool,
         delivery_attempt: std::result::Result<i64, String>,
-        err: &SinexError,
+        _err: &SinexError,
     ) -> EventEngineResult<bool> {
         if route_db_errors_to_dlq {
             return Ok(true);
-        }
-
-        if sinex_db::query_helpers::is_retryable_db_error(err) {
-            return Ok(false);
         }
 
         match delivery_attempt {

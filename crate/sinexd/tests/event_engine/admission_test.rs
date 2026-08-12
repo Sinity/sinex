@@ -28,6 +28,13 @@ fn admission_service(ctx: &TestContext) -> AdmissionService {
     )
 }
 
+fn validating_admission_service(ctx: &TestContext) -> AdmissionService {
+    AdmissionService::new(
+        ctx.pool.clone(),
+        Arc::new(RwLock::new(IngestEventValidator::new(true))),
+    )
+}
+
 fn material_event(
     material_id: Id<SourceMaterial>,
     event_id: Uuid,
@@ -155,6 +162,39 @@ async fn admission_decision_outcome_maps_negative_anchor_rejection(
         other => panic!("negative-anchor event should map to rejected outcome: {other:?}"),
     }
 
+    Ok(())
+}
+
+/// The production admission path must run `IngestEventValidator::validate_event`,
+/// rather than only its payload-schema lookup. A scalar payload has no registered
+/// schema here, so the old payload-only path accepted it; the full validator must
+/// reject it before persistence because canonical event payloads are objects.
+#[sinex_test]
+async fn admission_rejects_non_object_payload_via_full_ingest_validator(
+    ctx: TestContext,
+) -> TestResult<()> {
+    let material_id = ctx
+        .create_source_material(Some("admission-full-validator"))
+        .await?;
+    let event = material_event(
+        material_id,
+        Uuid::now_v7(),
+        "test.structural",
+        "payload.invalid",
+        serde_json::json!("not an object"),
+    )?;
+
+    let decision = validating_admission_service(&ctx)
+        .admit_event(event)
+        .await?;
+    let AdmissionDecision::Rejected(rejection) = decision else {
+        panic!("the production admission path must reject scalar event payloads");
+    };
+    assert_eq!(rejection.kind, AdmissionRejectionKind::SchemaValidation);
+    assert!(
+        rejection.reason.contains("expected object"),
+        "full validator failure must explain the payload-shape violation: {rejection:?}"
+    );
     Ok(())
 }
 

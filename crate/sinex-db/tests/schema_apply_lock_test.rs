@@ -8,6 +8,8 @@
 //! two-phase `NOT VALID -> VALIDATE CONSTRAINT` step.
 
 use sinex_db::advisory_lock::AdvisoryLock;
+use sinex_primitives::EXPECTED_BINARY_SCHEMA_VERSION;
+use sqlx::Row;
 use xtask::sandbox::prelude::*;
 
 /// Must match `SCHEMA_DDL_APPLY_LOCK_KEY` in `crate/sinex-db/src/schema_apply.rs`.
@@ -28,7 +30,9 @@ async fn apply_schema_rejects_concurrent_caller_holding_the_ddl_lock(
          schema DDL-apply advisory lock, instead of racing convergence DDL unguarded",
     );
     assert!(
-        error.to_string().contains("already applying the database schema"),
+        error
+            .to_string()
+            .contains("already applying the database schema"),
         "unexpected error: {error}"
     );
 
@@ -41,5 +45,31 @@ async fn apply_schema_rejects_concurrent_caller_holding_the_ddl_lock(
         .await
         .expect("apply_schema must succeed once the DDL-apply lock is free");
 
+    Ok(())
+}
+
+/// A successful DDL apply upgrades the persisted compatibility epoch. Without
+/// this write, an old binary cannot distinguish a database after destructive
+/// convergence from its pre-drop shape and could silently recreate columns on
+/// rollback.
+#[sinex_test]
+async fn apply_schema_records_current_binary_schema_version(ctx: TestContext) -> TestResult<()> {
+    sqlx::query(
+        r#"
+        INSERT INTO sinex_schemas.binary_schema_version (id, version)
+        VALUES (1, 'stale-before-apply')
+        ON CONFLICT (id) DO UPDATE SET version = EXCLUDED.version
+        "#,
+    )
+    .execute(&ctx.pool)
+    .await?;
+
+    sinex_db::apply_schema(&ctx.pool).await?;
+
+    let row = sqlx::query("SELECT version FROM sinex_schemas.binary_schema_version WHERE id = 1")
+        .fetch_one(&ctx.pool)
+        .await?;
+    let version: String = row.try_get("version")?;
+    assert_eq!(version, EXPECTED_BINARY_SCHEMA_VERSION);
     Ok(())
 }

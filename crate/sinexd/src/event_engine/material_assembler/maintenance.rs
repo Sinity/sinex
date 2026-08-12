@@ -262,12 +262,12 @@ impl MaterialAssembler {
         for (material_id, state_handle) in state_handles {
             let state = state_handle.lock().await;
 
-            if state.phase == state::AssemblyPhase::Finalizing {
-                continue;
-            }
-
             let elapsed = now - state.last_slice_received;
-            let timeout_secs = if state.phase == state::AssemblyPhase::PendingBegin
+            let timeout_secs = if state.phase == state::AssemblyPhase::Finalizing {
+                self.slice_arrival_timeout
+                    .as_secs()
+                    .max(self.finalize_timeout.as_secs()) as i64
+            } else if state.phase == state::AssemblyPhase::PendingBegin
                 && state.pending_end.is_some()
                 && state.slice_count == 0
                 && state.buffered_slices.is_empty()
@@ -279,7 +279,8 @@ impl MaterialAssembler {
             };
             let timed_out = elapsed.whole_seconds() > timeout_secs;
             if timed_out
-                && (state.pending_end.is_none()
+                && (state.phase == state::AssemblyPhase::Finalizing
+                    || state.pending_end.is_none()
                     || !state.buffered_slices.is_empty()
                     || state.phase == state::AssemblyPhase::PendingBegin)
             {
@@ -332,6 +333,33 @@ impl MaterialAssembler {
     }
 
     async fn process_stale_material(&self, material_id: Uuid, elapsed_secs: i64) {
+        let finalization_stalled =
+            self.get_state_handle(&material_id)
+                .is_some_and(|state_handle| {
+                    state_handle
+                        .try_lock()
+                        .is_ok_and(|state| state.phase == state::AssemblyPhase::Finalizing)
+                });
+
+        if finalization_stalled {
+            warn!(
+                material_id = %material_id,
+                elapsed_secs,
+                "Finalizing material exceeded its recovery age; routing a visible terminal failure"
+            );
+            if let Err(error) = self
+                .fail_stalled_finalization(material_id, elapsed_secs)
+                .await
+            {
+                warn!(
+                    material_id = %material_id,
+                    error = %error,
+                    "Failed to settle stalled finalization; retaining state for the next stale sweep"
+                );
+            }
+            return;
+        }
+
         info!(
             material_id = %material_id,
             elapsed_secs,

@@ -21,6 +21,27 @@ fn test_service() -> IngestService {
 }
 
 #[sinex_test]
+async fn binary_schema_version_mismatch_refuses_event_engine_startup(
+    ctx: TestContext,
+) -> xtask::sandbox::TestResult<()> {
+    sqlx::query(
+        r#"
+        INSERT INTO sinex_schemas.binary_schema_version (id, version)
+        VALUES (1, 'incompatible-test-version')
+        ON CONFLICT (id) DO UPDATE SET version = EXCLUDED.version
+        "#,
+    )
+    .execute(&ctx.pool)
+    .await?;
+
+    let error = IngestService::verify_binary_schema_version(&ctx.pool)
+        .await
+        .expect_err("an incompatible binary schema version must fail before event-engine startup");
+    assert!(error.to_string().contains("Schema version mismatch"));
+    Ok(())
+}
+
+#[sinex_test]
 async fn wait_for_tasks_aborts_hung_tasks_before_shutdown() -> xtask::sandbox::TestResult<()> {
     struct CancelFlag(Arc<AtomicBool>);
 
@@ -56,8 +77,7 @@ async fn wait_for_tasks_aborts_hung_tasks_before_shutdown() -> xtask::sandbox::T
 }
 
 #[sinex_test]
-async fn log_aborted_task_shutdown_result_accepts_clean_exit() -> xtask::sandbox::TestResult<()>
-{
+async fn log_aborted_task_shutdown_result_accepts_clean_exit() -> xtask::sandbox::TestResult<()> {
     let handle = tokio::spawn(async {});
     let error = IngestService::log_aborted_task_shutdown_result(0, handle.await);
     assert!(error.is_none());
@@ -65,8 +85,8 @@ async fn log_aborted_task_shutdown_result_accepts_clean_exit() -> xtask::sandbox
 }
 
 #[sinex_test]
-async fn log_aborted_task_shutdown_result_accepts_cancelled_task()
--> xtask::sandbox::TestResult<()> {
+async fn log_aborted_task_shutdown_result_accepts_cancelled_task() -> xtask::sandbox::TestResult<()>
+{
     let handle = tokio::spawn(async {
         tokio::time::sleep(Duration::from_secs(30)).await;
     });
@@ -77,8 +97,8 @@ async fn log_aborted_task_shutdown_result_accepts_cancelled_task()
 }
 
 #[sinex_test]
-async fn log_aborted_task_shutdown_result_rejects_panicked_task()
--> xtask::sandbox::TestResult<()> {
+async fn log_aborted_task_shutdown_result_rejects_panicked_task() -> xtask::sandbox::TestResult<()>
+{
     let handle = tokio::spawn(async {
         panic!("event_engine background task panic");
     });
@@ -189,8 +209,7 @@ async fn unexpected_task_exit_notifies_shutdown_waiters() -> xtask::sandbox::Tes
 }
 
 #[sinex_test]
-async fn prior_shutdown_signal_wakes_late_waiters_immediately() -> xtask::sandbox::TestResult<()>
-{
+async fn prior_shutdown_signal_wakes_late_waiters_immediately() -> xtask::sandbox::TestResult<()> {
     let service = test_service();
     trigger_shutdown(&service.shutdown_flag, &service.shutdown_notify);
     trigger_shutdown(&service.shutdown_flag, &service.shutdown_notify);
@@ -285,8 +304,8 @@ async fn handle_material_assembler_result_preserves_errors_during_shutdown()
 }
 
 #[sinex_test]
-async fn handle_material_assembler_result_allows_clean_shutdown()
--> xtask::sandbox::TestResult<()> {
+async fn handle_material_assembler_result_allows_clean_shutdown() -> xtask::sandbox::TestResult<()>
+{
     let shutdown_flag = Arc::new(AtomicBool::new(true));
 
     IngestService::handle_material_assembler_result(Ok(()), &shutdown_flag)?;
@@ -323,8 +342,8 @@ async fn monitor_runtime_waits_for_remaining_critical_tasks_after_failure()
 }
 
 #[sinex_test]
-async fn finish_startup_failure_preserves_cleanup_error_context()
--> xtask::sandbox::TestResult<()> {
+async fn finish_startup_failure_preserves_cleanup_error_context() -> xtask::sandbox::TestResult<()>
+{
     let service = test_service();
     let sibling_finished = Arc::new(AtomicBool::new(false));
 
@@ -385,11 +404,9 @@ async fn finish_startup_failure_preserves_background_task_error_context()
 }
 
 #[sinex_test]
-async fn material_ready_set_maintenance_purges_idle_entries() -> xtask::sandbox::TestResult<()>
-{
+async fn material_ready_set_maintenance_purges_idle_entries() -> xtask::sandbox::TestResult<()> {
     let mut service = test_service();
-    let ready_set =
-        MaterialReadySet::with_policy_for_tests(Duration::from_millis(10), u64::MAX);
+    let ready_set = MaterialReadySet::with_policy_for_tests(Duration::from_millis(10), u64::MAX);
     let material_id = Uuid::now_v7();
     ready_set.mark_ready(material_id);
 

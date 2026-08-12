@@ -476,7 +476,10 @@ impl ContentStoreManager {
         // Find the actual file path
         let path = self.find_symlink_path(&canonical_key).await?;
 
-        let file_len = tokio::fs::metadata(&path).await.map_err(SinexError::io)?.len();
+        let file_len = tokio::fs::metadata(&path)
+            .await
+            .map_err(SinexError::io)?
+            .len();
         if max_size > 0 && file_len as usize > max_size {
             return Err(SinexError::blob_storage(format!(
                 "blob content size {file_len} exceeds retrieval limit {max_size} for {content_key}"

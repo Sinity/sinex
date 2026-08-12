@@ -4,7 +4,9 @@ use serde::Deserialize;
 use sinex_db::DbPoolExt;
 use sinex_db::repositories::state::Operation as DbOperation;
 use sinex_db::repositories::state::PROJECTION_REBUILD_OPERATION_TYPE;
-use sinex_db::repositories::{EmailMailboxProjectionEvent, EmailProviderStateUpsert};
+use sinex_db::repositories::{
+    EmailMailboxProjectionEvent, EmailProviderStateUpsert, EventStorageLane,
+};
 use sinex_primitives::Id;
 use sinex_primitives::SinexError;
 use sinex_primitives::domain::{
@@ -20,7 +22,7 @@ use sinex_primitives::events::EventPayload;
 use sinex_primitives::events::{Event, SourceMaterial};
 use sinex_primitives::parser::{
     InputShapeAdapter, MaterialAnchor, MaterialParser, ParserContext, SourceId, SourceRecord,
-    maybe_occurrence_key_string,
+    OccurrenceKey, maybe_occurrence_key_string,
 };
 use sinex_primitives::rpc::sources::{SourceMaterialMetadataContract, SourceOrigin};
 use sinex_primitives::temporal::Timestamp;
@@ -2297,8 +2299,10 @@ async fn emit_email_capture_runtime_observed(
     payload: EmailCaptureRuntimeObservedPayload,
 ) -> Result<()> {
     let material_id = Id::<SourceMaterial>::from_uuid(material_record.id);
+    let equivalence_key = email_capture_runtime_equivalence_key(&payload);
     let event = payload
         .from_material(material_id)
+        .with_equivalence_key(equivalence_key.clone())
         .build()
         .map_err(|error| {
             SinexError::processing(format!(
@@ -2313,8 +2317,67 @@ async fn emit_email_capture_runtime_observed(
             ))
             .with_operation("ops.start")
         })?;
+    if let Some(existing) = pool
+        .events()
+        .find_live_by_equivalence_key(&equivalence_key, EventStorageLane::Activity)
+        .await?
+        && existing.payload == event.payload
+    {
+        return Ok(());
+    }
     pool.events().insert(event).await?;
     Ok(())
+}
+
+fn email_capture_runtime_equivalence_key(payload: &EmailCaptureRuntimeObservedPayload) -> String {
+    maybe_occurrence_key_string(Some(&OccurrenceKey {
+        source_id: SourceId::from_static("email.mailbox"),
+        fields: vec![
+            ("provider".to_string(), payload.provider.as_str().to_string()),
+            (
+                "account_binding_ref".to_string(),
+                payload.account_binding_ref.clone(),
+            ),
+            ("mode_id".to_string(), payload.mode_id.clone()),
+            (
+                "observed_at".to_string(),
+                payload.observed_at.format_rfc3339(),
+            ),
+        ],
+    }))
+    .expect("a concrete occurrence key always serializes")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn email_runtime_equivalence_key_uses_the_declared_occurrence_fields() {
+        let observed_at = Timestamp::from_const(time::macros::datetime!(2030-01-02 03:04:05 UTC));
+        let payload = EmailCaptureRuntimeObservedPayload {
+            provider: EmailProviderKind::Gmail,
+            account_binding_ref: "account:primary".to_string(),
+            mode_id: "email.mailbox.gmail-api-scheduled-sync".to_string(),
+            observed_at,
+            provider_runtime:
+                sinex_primitives::events::payloads::email::EmailProviderRuntime::ScheduledSync,
+            auth_state: EmailAuthorizationState::Authorized,
+            network_state: EmailNetworkState::Online,
+            rate_limit_state: None,
+            sync_state: EmailSyncState::Idle,
+            pending_messages: None,
+            pending_material_bytes: None,
+            caveats: Vec::new(),
+            actions: Vec::new(),
+        };
+        let retry = payload.clone();
+        assert_eq!(
+            email_capture_runtime_equivalence_key(&payload),
+            email_capture_runtime_equivalence_key(&retry),
+            "a retry of the same runtime observation must resolve to the same occurrence key"
+        );
+    }
 }
 
 fn email_provider_executed_runtime_value(

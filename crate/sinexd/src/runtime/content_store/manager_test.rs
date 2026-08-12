@@ -93,8 +93,7 @@ async fn git_annex_content_hash_is_verified_as_annex_digest() -> TestResult<()> 
 async fn require_ingest_filename_prefers_explicit_filename() -> TestResult<()> {
     let path = Utf8Path::new("/tmp/example.txt");
 
-    let filename =
-        require_ingest_filename(path, Some("provided.txt")).expect("explicit filename");
+    let filename = require_ingest_filename(path, Some("provided.txt")).expect("explicit filename");
 
     assert_eq!(filename, "provided.txt");
     Ok(())
@@ -155,9 +154,15 @@ async fn ingest_repairs_zombie_blob_row_by_rewriting_missing_content(
         .content_store
         .path_if_local(&content_key)?
         .expect("payload is stored via the local BLAKE3 CAS backend");
-    assert!(local_path.exists(), "fixture sanity: file must exist after ingest");
+    assert!(
+        local_path.exists(),
+        "fixture sanity: file must exist after ingest"
+    );
     tokio::fs::remove_file(&local_path).await?;
-    assert!(!local_path.exists(), "fixture sanity: file must be gone before re-ingest");
+    assert!(
+        !local_path.exists(),
+        "fixture sanity: file must be gone before re-ingest"
+    );
 
     // Re-ingesting identical content must detect the zombie row and re-write
     // the file rather than short-circuiting on the stale dedup hit.

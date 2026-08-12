@@ -276,9 +276,14 @@ async fn persistence_failure_routing_uses_delivery_attempts_for_non_retryable_er
 }
 
 #[sinex_test]
-async fn persistence_failure_routing_never_dlqs_retryable_db_errors() -> TestResult<()> {
+async fn persistence_failure_routing_terminally_dlqs_retryable_db_errors() -> TestResult<()> {
     let retryable = SinexError::database("serialization failure").with_context("sqlstate", "40001");
     assert!(!JetStreamConsumer::should_route_persistence_failure(
+        false,
+        Ok(MAIN_CONSUMER_TERMINAL_DLQ_THRESHOLD - 1),
+        &retryable,
+    )?);
+    assert!(JetStreamConsumer::should_route_persistence_failure(
         false,
         Ok(MAIN_CONSUMER_TERMINAL_DLQ_THRESHOLD),
         &retryable,

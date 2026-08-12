@@ -19,13 +19,14 @@ pub(super) const DLQ_PUBLISH_BACKOFF_BASE: Duration = Duration::from_millis(200)
 pub(super) const DLQ_PUBLISH_BACKOFF_MAX: Duration = Duration::from_secs(2);
 pub(super) const DLQ_DUPLICATE_WINDOW: Duration = Duration::from_hours(1);
 pub(super) const DLQ_RETRY_DELAY: Duration = Duration::from_secs(1);
+pub(super) const DLQ_REQUEUE_GENERATION_HEADER: &str = "Dlq-Requeue-Generation";
 
 /// Extract the failed event's id from a raw-ingress payload.
 ///
 /// Durable ingress carries an [`EventIntent`] envelope (#1149) whose events live
 /// under `events[]`, so the id is `events[0].id`; legacy/escape-hatch flat events
-/// carry a top-level `id`. DLQ dedupe identity and the `Event-Id` header derive
-/// from this, so both formats must resolve.
+/// carry a top-level `id`. This is the operator-facing primary id used in the
+/// `Event-Id` header; multi-event intent dedupe uses every child below.
 pub(super) fn dlq_event_id(payload: &JsonValue) -> Option<String> {
     payload
         .get("id")
@@ -41,22 +42,61 @@ pub(super) fn dlq_event_id(payload: &JsonValue) -> Option<String> {
         .map(str::to_owned)
 }
 
+fn dlq_intent_identity(original_payload: &JsonValue) -> Option<String> {
+    let events = original_payload.get("events")?.as_array()?;
+    if events.len() < 2 {
+        return None;
+    }
+
+    // Keep the full ordered child identity in the dedupe key. A first-child
+    // key merges [X, Y] and [X, Z] inside JetStream's dupeWindow, which turns
+    // an acknowledged DLQ publish into silent loss of Z.
+    let mut hasher = blake3::Hasher::new();
+    hasher.update(b"sinex.dlq.intent.v1\0");
+    for event in events {
+        let id = event.get("id")?.as_str()?;
+        hasher.update(id.as_bytes());
+        hasher.update(&[0]);
+    }
+    Some(format!("dlq.intent.{}", hasher.finalize().to_hex()))
+}
+
+fn dlq_requeue_generation(
+    headers: Option<&async_nats::HeaderMap>,
+) -> EventEngineResult<u32> {
+    let Some(value) = headers.and_then(|headers| headers.get(DLQ_REQUEUE_GENERATION_HEADER))
+    else {
+        return Ok(0);
+    };
+
+    value.as_str().parse::<u32>().map_err(|error| {
+        SinexError::processing("Invalid DLQ requeue generation header")
+            .with_context("header", DLQ_REQUEUE_GENERATION_HEADER)
+            .with_context("value", value.to_string())
+            .with_std_error(&error)
+    })
+}
+
 pub(super) fn dlq_publish_msg_id(
     msg: &jetstream::Message,
     original_nats_msg_id: Option<&str>,
     original_payload: &JsonValue,
-) -> String {
-    if let Some(event_id) = dlq_event_id(original_payload) {
-        return format!("dlq.{event_id}");
-    }
+) -> EventEngineResult<String> {
+    let base = dlq_intent_identity(original_payload)
+        .or_else(|| dlq_event_id(original_payload).map(|event_id| format!("dlq.{event_id}")))
+        .or_else(|| original_nats_msg_id.map(|original_id| format!("dlq.msg.{original_id}")))
+        .unwrap_or_else(|| {
+            let mut hasher = blake3::Hasher::new();
+            hasher.update(msg.subject.as_str().as_bytes());
+            hasher.update(&msg.payload);
+            format!("dlq.hash.{}", hasher.finalize().to_hex())
+        });
+    let generation = dlq_requeue_generation(msg.headers.as_ref())?;
 
-    if let Some(original_id) = original_nats_msg_id {
-        format!("dlq.msg.{original_id}")
+    if generation == 0 {
+        Ok(base)
     } else {
-        let mut hasher = blake3::Hasher::new();
-        hasher.update(msg.subject.as_str().as_bytes());
-        hasher.update(&msg.payload);
-        format!("dlq.hash.{}", hasher.finalize().to_hex())
+        Ok(format!("{base}.requeue.{generation}"))
     }
 }
 
@@ -108,7 +148,8 @@ impl JetStreamConsumer {
         // ── End DLQ redaction ────────────────────────────────────────────────
 
         let dlq_publish_msg_id =
-            dlq_publish_msg_id(msg, original_nats_msg_id.as_deref(), &original_payload);
+            dlq_publish_msg_id(msg, original_nats_msg_id.as_deref(), &original_payload)?;
+        let requeue_generation = dlq_requeue_generation(msg.headers.as_ref())?;
         let original_event_id = dlq_event_id(&original_payload);
 
         let mut dlq_entry = DlqEntry {
@@ -123,6 +164,8 @@ impl JetStreamConsumer {
         })?;
         let mut headers = async_nats::HeaderMap::new();
         headers.insert("Nats-Msg-Id", dlq_publish_msg_id.as_str());
+        let requeue_generation = requeue_generation.to_string();
+        headers.insert(DLQ_REQUEUE_GENERATION_HEADER, requeue_generation.as_str());
         headers.insert("Original-Subject", msg.subject.as_str());
         headers.insert("Retry-Count", "0");
         insert_traffic_class_header(&mut headers, NatsTrafficClass::RawIngestDlq);

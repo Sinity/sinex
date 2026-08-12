@@ -330,13 +330,66 @@ async fn privacy_dictionary_matcher_redacts_from_db(ctx: TestContext) -> TestRes
         .await?;
 
     let engine = PolicyEngine::load(pool.clone()).await?;
-    let payload = json!({ "title": "meeting about PRIVATE_PROJECT" });
+    let payload = json!({
+        "title": "meeting about PRIVATE_PROJECT with PRIVATE_PERSON"
+    });
     let event = make_material_event("test.source", "test.event", payload);
     let result = engine.redact_batch(vec![admit(event)]).await;
 
     let title = payload_str(&result[0].event.payload, "/title");
     assert!(!title.contains("PRIVATE_PROJECT"), "got: {title}");
-    assert!(title.contains("<DICT>"), "got: {title}");
+    assert!(!title.contains("PRIVATE_PERSON"), "got: {title}");
+    assert_eq!(title.matches("<DICT>").count(), 2, "got: {title}");
+
+    Ok(())
+}
+
+/// DB-configured literals use the same policy engine and persistence
+/// chokepoint as operator rules. Unicode case-fold expansion before a match
+/// must neither panic nor reuse a lowercased byte offset against the original
+/// string, and a merely textual encrypted-token marker must not bypass it.
+#[sinex_test]
+async fn privacy_literal_policy_handles_unicode_and_forged_envelope_marker(
+    ctx: TestContext,
+) -> TestResult<()> {
+    let pool = ctx.pool();
+    let repo = pool.privacy_policy();
+    repo.add_recognizer_rule(
+        "unicode-literal-redact",
+        "case-insensitive operator literal",
+        "literal",
+        "secret",
+        json!({}),
+        None,
+        "local_pattern",
+        false,
+        "redact",
+        Some("<SECRET>"),
+        "default",
+    )
+    .await?;
+    repo.bind_field_rule("unicode-literal-redact", None, None, None, 0)
+        .await?;
+
+    let engine = PolicyEngine::load(pool.clone()).await?;
+    let payload = json!({
+        "note": "İ SECRET; ẞ SECRET; documentation says ⌜enc:v1:example but SECRET stays private"
+    });
+    let result = engine
+        .redact_batch(vec![admit(make_material_event(
+            "test.source",
+            "test.event",
+            payload,
+        ))])
+        .await;
+
+    let note = payload_str(&result[0].event.payload, "/note");
+    let without_replacement_markers = note.replace("<SECRET>", "");
+    assert!(
+        !without_replacement_markers.to_ascii_lowercase().contains("secret"),
+        "got: {note}"
+    );
+    assert_eq!(note.matches("<SECRET>").count(), 3, "got: {note}");
 
     Ok(())
 }

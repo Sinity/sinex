@@ -92,11 +92,7 @@ async fn end_before_begin_without_slices_short_timeouts(ctx: TestContext) -> Tes
 }
 
 #[sinex_test]
-#[ignore = "sinex-2nsg open: a material wedged in AssemblyPhase::Finalizing is never surfaced by \
-            find_stale_materials no matter how old it is (maintenance.rs unconditional `continue` \
-            on Finalizing), so a panicked detached finalize worker leaves it permanently invisible \
-            to the stale sweep; un-ignore once Finalizing gets an age bound"]
-async fn finalizing_phase_material_stuck_for_hours_is_never_flagged_stale(
+async fn finalizing_phase_material_stuck_for_hours_is_flagged_stale(
     ctx: TestContext,
 ) -> TestResult<()> {
     let ctx = ctx.with_nats().shared().await?;
@@ -111,6 +107,14 @@ async fn finalizing_phase_material_stuck_for_hours_is_never_flagged_stale(
     // Simulate a detached finalize worker that panicked mid-flight: the phase
     // was set to Finalizing and never reverted, hours ago.
     state.phase = super::super::state::AssemblyPhase::Finalizing;
+    state.pending_end = Some(super::super::state::MaterialEndMessage {
+        material_id: material_id.to_string(),
+        ended_at: Timestamp::now().format_rfc3339(),
+        content_hash: "0".repeat(64),
+        total_slices: 1,
+        total_size_bytes: 1,
+        metadata: json!({}),
+    });
     state.last_slice_received = Timestamp::now() - time::Duration::hours(6);
     assembler.insert_state_handle(material_id, state);
 
@@ -118,8 +122,58 @@ async fn finalizing_phase_material_stuck_for_hours_is_never_flagged_stale(
 
     assert!(
         stale.iter().any(|(id, _)| *id == material_id),
-        "a material wedged in Finalizing for 6 hours must eventually be surfaced as stale, \
-         not silently excluded forever regardless of age"
+        "anti-vacuity: restoring the Finalizing skip in find_stale_materials makes this \
+         production stale-sweep assertion fail"
+    );
+    Ok(())
+}
+
+#[sinex_test]
+async fn stale_finalizing_material_routes_visible_terminal_failure(
+    ctx: TestContext,
+) -> TestResult<()> {
+    let ctx = ctx.with_nats().shared().await?;
+    let (assembler, _content_store_dir, _state_dir) =
+        super::super::test_support::TestAssemblerBuilder::new("maintenance-finalizing-timeout")
+            .slice_timeout_secs(60)
+            .build(&ctx)
+            .await?;
+    let dlq_subject = ctx.pipeline_namespace().subject("events.dlq.event_engine");
+    let mut dlq_sub = ctx.nats_client().subscribe(dlq_subject).await?;
+
+    let material_id = Uuid::now_v7();
+    ctx.pool
+        .source_materials()
+        .register_external_in_flight(
+            material_id,
+            "test",
+            Some(&format!("test://stalled-finalize/{material_id}")),
+            json!({}),
+            Timestamp::now() - time::Duration::hours(6),
+        )
+        .await?;
+    let mut state = assembler.create_placeholder_state(material_id).await?;
+    state.phase = super::super::state::AssemblyPhase::Finalizing;
+    state.last_slice_received = Timestamp::now() - time::Duration::hours(6);
+    assembler.insert_state_handle(material_id, state);
+
+    assembler
+        .process_stale_material(material_id, 6 * 60 * 60)
+        .await;
+
+    let material = ctx
+        .pool
+        .source_materials()
+        .get_by_id(Id::from_uuid(material_id))
+        .await?
+        .expect("stalled material registry row should exist");
+    assert_eq!(material.status, MaterialStatus::Failed);
+    let dlq = timeout(Duration::from_secs(1), dlq_sub.next())
+        .await?
+        .expect("stalled finalization must have a visible DLQ record");
+    assert!(
+        std::str::from_utf8(&dlq.payload)?.contains("material_finalization_stalled"),
+        "anti-vacuity: removing fail_stalled_finalization from process_stale_material leaves the material invisible and this production-route DLQ assertion fails"
     );
     Ok(())
 }

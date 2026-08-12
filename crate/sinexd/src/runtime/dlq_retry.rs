@@ -20,6 +20,10 @@ const DEFAULT_DLQ_CONSUMER_NAME: &str = "dlq-retry-consumer";
 const DEFAULT_DLQ_BATCH_SIZE: usize = 10;
 const DEFAULT_DLQ_ACK_WAIT: Seconds = Seconds::from_secs(60);
 const DEFAULT_DLQ_INTER_BATCH_DELAY_MS: u64 = 200;
+/// Preserved across DLQ requeue/refail cycles so the next DLQ publication gets
+/// a fresh JetStream dedupe identity instead of colliding with the entry just
+/// removed from the DLQ stream.
+const DLQ_REQUEUE_GENERATION_HEADER: &str = "Dlq-Requeue-Generation";
 
 /// Configuration for DLQ retry operations
 #[derive(Debug, Clone)]
@@ -445,15 +449,26 @@ impl DlqRetryHandler {
         let target = dlq_requeue_target(headers_ref, msg.subject.as_str(), &msg.payload)?;
         let mut headers = async_nats::HeaderMap::new();
         let retry_count_str = (retry_count + 1).to_string();
+        let requeue_generation = target.dlq_requeue_generation.checked_add(1).ok_or_else(|| {
+            SinexError::processing("DLQ requeue generation exceeds supported range")
+        })?;
+        let requeue_generation_str = requeue_generation.to_string();
+        let requeue_msg_id = format!(
+            "dlq-requeue.{}.{}",
+            target.original_nats_msg_id.as_deref().unwrap_or("unknown"),
+            requeue_generation
+        );
         let retried_at_str = temporal::format_rfc3339(temporal::now());
         headers.insert("Retry-Count", retry_count_str.as_str());
+        headers.insert(
+            DLQ_REQUEUE_GENERATION_HEADER,
+            requeue_generation_str.as_str(),
+        );
         headers.insert("Retried-At", retried_at_str.as_str());
         if let Some(event_id) = target.event_id.as_deref() {
             headers.insert("Event-Id", event_id);
         }
-        if let Some(msg_id) = target.original_nats_msg_id.as_deref() {
-            headers.insert("Nats-Msg-Id", msg_id);
-        }
+        headers.insert("Nats-Msg-Id", requeue_msg_id.as_str());
         transport::insert_transport_class_headers(&mut headers, transport::Class::Critical);
 
         ensure_nats_payload_fits(
@@ -487,15 +502,26 @@ impl DlqRetryHandler {
 
         let mut headers = async_nats::HeaderMap::new();
         let retry_count_str = (retry_count + 1).to_string();
+        let requeue_generation = target.dlq_requeue_generation.checked_add(1).ok_or_else(|| {
+            SinexError::processing("DLQ requeue generation exceeds supported range")
+        })?;
+        let requeue_generation_str = requeue_generation.to_string();
+        let requeue_msg_id = format!(
+            "dlq-requeue.{}.{}",
+            target.original_nats_msg_id.as_deref().unwrap_or("unknown"),
+            requeue_generation
+        );
         let retried_at_str = temporal::format_rfc3339(temporal::now());
         headers.insert("Retry-Count", retry_count_str.as_str());
+        headers.insert(
+            DLQ_REQUEUE_GENERATION_HEADER,
+            requeue_generation_str.as_str(),
+        );
         headers.insert("Retried-At", retried_at_str.as_str());
         if let Some(event_id) = target.event_id.as_deref() {
             headers.insert("Event-Id", event_id);
         }
-        if let Some(msg_id) = target.original_nats_msg_id.as_deref() {
-            headers.insert("Nats-Msg-Id", msg_id);
-        }
+        headers.insert("Nats-Msg-Id", requeue_msg_id.as_str());
         transport::insert_transport_class_headers(&mut headers, transport::Class::Critical);
 
         ensure_nats_payload_fits(
@@ -578,6 +604,7 @@ struct DlqRequeueTarget {
     original_payload: Vec<u8>,
     original_nats_msg_id: Option<String>,
     event_id: Option<String>,
+    dlq_requeue_generation: u32,
 }
 
 fn dlq_stored_retry_count(headers: &async_nats::HeaderMap) -> RuntimeResult<u32> {
@@ -588,6 +615,19 @@ fn dlq_stored_retry_count(headers: &async_nats::HeaderMap) -> RuntimeResult<u32>
     value.as_str().parse::<u32>().map_err(|error| {
         SinexError::processing("DLQ Retry-Count header is invalid".to_string())
             .with_context("header", "Retry-Count")
+            .with_context("value", value.to_string())
+            .with_std_error(&error)
+    })
+}
+
+fn dlq_requeue_generation(headers: &async_nats::HeaderMap) -> RuntimeResult<u32> {
+    let Some(value) = headers.get(DLQ_REQUEUE_GENERATION_HEADER) else {
+        return Ok(0);
+    };
+
+    value.as_str().parse::<u32>().map_err(|error| {
+        SinexError::processing("DLQ requeue generation header is invalid")
+            .with_context("header", DLQ_REQUEUE_GENERATION_HEADER)
             .with_context("value", value.to_string())
             .with_std_error(&error)
     })
@@ -749,12 +789,14 @@ fn dlq_requeue_target(
         .and_then(|value| value.as_str())
         .map(ToOwned::to_owned)
         .or_else(|| event_id.clone());
+    let dlq_requeue_generation = dlq_requeue_generation(headers)?;
 
     Ok(DlqRequeueTarget {
         original_subject,
         original_payload,
         original_nats_msg_id,
         event_id,
+        dlq_requeue_generation,
     })
 }
 

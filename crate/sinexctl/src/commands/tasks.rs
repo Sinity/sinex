@@ -8,7 +8,7 @@ use sinex_primitives::rpc::tasks::{
     TaskCancelRequest, TaskCompleteRequest, TaskListRequest, TaskListResponse, TaskStateGetRequest,
     TaskStateResponse, TaskStatusSetRequest, TaskUpdateRequest,
 };
-use sinex_primitives::task_domain::{TaskFieldUpdate, TaskStatus};
+use sinex_primitives::task_domain::{TaskExternalRef, TaskFieldUpdate, TaskStatus};
 use sinex_primitives::views::{
     CaveatView, ReadinessCaveatId, SinexObjectKind, SinexObjectRef, ViewEnvelope,
 };
@@ -92,6 +92,7 @@ impl TaskImportCommand {
                 skipped += 1;
                 continue;
             }
+            let request = build_task_create_request(task)?;
             if self.dry_run {
                 let desc = task["description"].as_str().unwrap_or("");
                 println!("  [dry-run] {uuid} {desc}");
@@ -99,7 +100,6 @@ impl TaskImportCommand {
                 continue;
             }
             // Taskwarrior export → sinex task.created event
-            let request = build_task_create_request(task);
             match client.tasks_create(request).await {
                 Ok(_) => imported += 1,
                 Err(e) => {
@@ -115,24 +115,55 @@ impl TaskImportCommand {
 
 /// Build a `TaskCreateRequest` from one Taskwarrior export JSON object.
 ///
-/// sinex-3z2t: this currently drops `tags`/`due` (lossy) and never
-/// populates `external_refs` with the Taskwarrior UUID, so the server's
-/// `reject_duplicate_external_refs` dedup guard never fires on re-import
-/// (non-idempotent).
-fn build_task_create_request(task: &serde_json::Value) -> sinex_primitives::rpc::tasks::TaskCreateRequest {
+fn build_task_create_request(
+    task: &serde_json::Value,
+) -> Result<sinex_primitives::rpc::tasks::TaskCreateRequest> {
     let title = task["description"].as_str().unwrap_or("").to_string();
     let project = task["project"].as_str().map(String::from);
+    let uuid = task["uuid"]
+        .as_str()
+        .filter(|uuid| !uuid.trim().is_empty())
+        .ok_or_else(|| eyre!("Taskwarrior task is missing uuid"))?;
+    let tags = task["tags"]
+        .as_array()
+        .map(|tags| {
+            tags.iter()
+                .filter_map(serde_json::Value::as_str)
+                .map(ToString::to_string)
+                .collect()
+        })
+        .unwrap_or_default();
+    let due_at = task["due"]
+        .as_str()
+        .map(parse_taskwarrior_due_at)
+        .transpose()?;
 
-    sinex_primitives::rpc::tasks::TaskCreateRequest {
+    Ok(sinex_primitives::rpc::tasks::TaskCreateRequest {
         task_id: None,
         title,
         body: None,
         project_id: project,
-        tags: vec![],
-        due_at: None,
+        tags,
+        due_at,
         priority: task["priority"].as_str().map(String::from),
-        external_refs: vec![],
+        external_refs: vec![TaskExternalRef {
+            system: "taskwarrior".to_string(),
+            external_id: uuid.to_string(),
+            version: None,
+        }],
+    })
+}
+
+fn parse_taskwarrior_due_at(input: &str) -> Result<sinex_primitives::Timestamp> {
+    if let Ok(timestamp) = sinex_primitives::Timestamp::parse_rfc3339(input) {
+        return Ok(timestamp);
     }
+    let due = time::PrimitiveDateTime::parse(
+        input,
+        time::macros::format_description!("[year][month][day]T[hour][minute][second]Z"),
+    )
+    .map_err(|error| eyre!("invalid Taskwarrior due timestamp {input:?}: {error}"))?;
+    Ok(sinex_primitives::Timestamp::from(due.assume_utc()))
 }
 
 #[derive(Debug, Args)]

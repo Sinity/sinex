@@ -686,7 +686,9 @@ impl AdmissionService {
                 let mut rejection = AdmissionRejection::new(
                     AdmissionRejectionKind::OccurrenceDuplicate,
                     match &event.equivalence_key {
-                        Some(key) => format!("live event with equivalence_key {key} already exists"),
+                        Some(key) => {
+                            format!("live event with equivalence_key {key} already exists")
+                        }
                         None => "live event with equivalence_key already exists".to_string(),
                     },
                 );
@@ -1116,11 +1118,7 @@ impl AdmissionService {
             live_by_key.insert(
                 key.clone(),
                 LiveEquivalenceRow {
-                    equivalence_key: admitted
-                        .event
-                        .equivalence_key
-                        .clone()
-                        .unwrap_or_default(),
+                    equivalence_key: admitted.event.equivalence_key.clone().unwrap_or_default(),
                     id: admitted.event_id,
                     payload: admitted.event.payload.clone(),
                     content_hash: Some(payload_content_hash(&admitted.event.payload).to_vec()),
@@ -1282,16 +1280,16 @@ impl AdmissionService {
         )
         .await
         .map_err(|_| {
-                error!(
-                    target: "sinex_metrics",
-                    metric = "event_engine.batch_insert_timeouts_total",
-                    batch_size = to_persist.len(),
-                    timeout_seconds = write_timeout.as_secs_f64(),
-                    "Timed out waiting for batch insert to complete"
-                );
-                SinexError::database(format!(
-                    "Persisting batch timed out after {write_timeout:?}"
-                ))
+            error!(
+                target: "sinex_metrics",
+                metric = "event_engine.batch_insert_timeouts_total",
+                batch_size = to_persist.len(),
+                timeout_seconds = write_timeout.as_secs_f64(),
+                "Timed out waiting for batch insert to complete"
+            );
+            SinexError::database(format!(
+                "Persisting batch timed out after {write_timeout:?}"
+            ))
         })?;
 
         let insert_result = match insert_result {
@@ -1374,8 +1372,11 @@ impl AdmissionService {
 
     async fn validate_event(&self, event: &Event<JsonValue>) -> EventEngineResult<Option<Uuid>> {
         let guard = self.validator.read().await;
-        let validation =
-            guard.validate_payload_for(&event.source, &event.event_type, &event.payload);
+        // Structural/plausibility validation is part of the admission boundary,
+        // not a test-only precursor to schema validation. `validate_event`
+        // performs the shared envelope, payload-shape, temporal, ID, and
+        // provenance checks before consulting the registered payload schema.
+        let validation = guard.validate_event(event);
         let strict_mode = guard.is_strict_mode();
         resolve_validation_result(validation, strict_mode, &event.source, &event.event_type)
     }
