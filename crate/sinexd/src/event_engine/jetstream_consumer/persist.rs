@@ -18,7 +18,7 @@ impl JetStreamConsumer {
         // This prevents FK violations without relying on database error handling.
         // We partition by index (not reference) so that ready events can be
         // mutated in place by the post-readiness `ts_orig` resolution below.
-        let ready_indices: Vec<usize> = if let Some(ref ready_set) = self.ready_set {
+        let mut ready_indices: Vec<usize> = if let Some(ref ready_set) = self.ready_set {
             let mut ready = Vec::with_capacity(batch.len());
             let mut not_ready = Vec::new();
 

@@ -195,6 +195,7 @@ impl JetStreamConsumer {
         batch: &mut [PreparedEvent],
         ready_indices: &[usize],
     ) -> EventEngineResult<Vec<usize>> {
+    ) -> EventEngineResult<Vec<usize>> {
         // Collect distinct materials that actually need resolution.
         let mut needed: Vec<Uuid> = Vec::new();
         for &idx in ready_indices {
@@ -210,6 +211,7 @@ impl JetStreamConsumer {
             }
         }
         if needed.is_empty() {
+            return Ok(ready_indices.to_vec());
             return Ok(ready_indices.to_vec());
         }
 
@@ -309,7 +311,6 @@ impl JetStreamConsumer {
                 valid_indices.push(idx);
             }
         }
-
         for (idx, rejection) in rejected {
             self.record_admission_rejection(&rejection).await;
             let prepared = &batch[idx];

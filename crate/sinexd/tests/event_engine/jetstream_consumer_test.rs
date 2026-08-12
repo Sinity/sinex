@@ -2744,7 +2744,136 @@ async fn settlement_registry_resolves_durable_debt_for_an_admission_rejected_eve
     Ok(())
 }
 
-/// sinex-txt4 regression test. Reproduces the bead's named repro
+/// sinex-7s0: material events legitimately arrive without `ts_orig`, so their
+/// source-material start time is resolved only after the readiness FK gate. The
+/// resolved value must then pass the same plausibility checks as an explicit
+/// timestamp and route old/future values through the normal JetStream DLQ
+/// settlement path, while a valid value persists.
+#[sinex_test]
+async fn resolved_material_ts_orig_reuses_plausibility_gate(
+    ctx: TestContext,
+) -> TestResult<()> {
+    let ctx = ctx.with_nats().shared().await?;
+    let setup = start_isolated_consumer(&ctx, "resolved-ts-orig").await?;
+    let nats_client = ctx.nats_client();
+    let env = ctx.env();
+    let now = temporal::now();
+    let initial_dlq_messages = setup
+        .js
+        .get_stream(&setup.topology.dlq_stream)
+        .await?
+        .info()
+        .await?
+        .state
+        .messages;
+    let valid_start_time = Timestamp::from(now.to_postgres_parts().0);
+    let cases = [
+        (
+            "past",
+            Timestamp::from_const(time::macros::datetime!(1990-01-01 00:00:00 UTC)),
+        ),
+        ("future", now + time::Duration::days(1)),
+        ("valid", valid_start_time - time::Duration::minutes(1)),
+    ];
+    let mut event_ids = Vec::new();
+
+    for (label, start_time) in cases {
+        let material_id = Uuid::now_v7();
+        sqlx::query(
+            r"
+            INSERT INTO raw.source_material_registry
+                (id, material_kind, source_identifier, status, timing_info_type, staged_at, start_time)
+            VALUES ($1::uuid, 'annex', $2, 'completed', 'intrinsic', $3, $4)
+            ",
+        )
+        .bind(material_id)
+        .bind(format!("resolved-ts-orig-{label}-{material_id}"))
+        .bind(now)
+        .bind(start_time)
+        .execute(&ctx.pool)
+        .await?;
+
+        let event_id = Uuid::now_v7();
+        event_ids.push((label, event_id, material_id, start_time));
+        let event = json!({
+            "id": event_id.to_string(),
+            "source": "resolved_ts_orig",
+            "event_type": "resolved_ts_orig.event",
+            "payload": {"case": label},
+            "host": "test-host",
+            "source_material_id": material_id.to_string(),
+            "anchor_byte": 0,
+        });
+        let subject = env.nats_subject_with_namespace(
+            Some(&setup.namespace),
+            "events.raw.resolved_ts_orig.event",
+        );
+        nats_client
+            .publish(
+                subject,
+                serde_json::to_vec(&admission_envelope("resolved_ts_orig", event))?.into(),
+            )
+            .await?;
+    }
+    nats_client.flush().await?;
+
+    let valid_id = event_ids
+        .iter()
+        .find(|(label, _, _, _)| *label == "valid")
+        .map(|(_, event_id, _, _)| *event_id)
+        .expect("valid case exists");
+    WaitHelpers::wait_for_event_id(&ctx.pool, valid_id.into(), Timeouts::SHORT).await?;
+
+    WaitHelpers::wait_for_condition(
+        || {
+            let js = setup.js.clone();
+            let stream_name = setup.topology.dlq_stream.clone();
+            async move {
+                let mut stream = js
+                    .get_stream(&stream_name)
+                    .await
+                    .map_err(|error| SinexError::network(error.to_string()))?;
+                let messages = stream
+                    .info()
+                    .await
+                    .map_err(|error| SinexError::network(error.to_string()))?
+                    .state
+                    .messages;
+                Ok::<bool, SinexError>(messages >= initial_dlq_messages + 2)
+            }
+        },
+        Timeouts::SHORT,
+    )
+    .await?;
+
+    for (label, event_id, _, expected_ts) in event_ids {
+        let persisted: Option<Uuid> = sqlx::query_scalar(
+            "SELECT id FROM core.events WHERE id = $1::uuid",
+        )
+        .bind(event_id)
+        .fetch_optional(&ctx.pool)
+        .await?;
+        if label == "valid" {
+            assert_eq!(persisted, Some(event_id));
+            let stored: Timestamp = sqlx::query_scalar(
+                "SELECT ts_orig FROM core.events WHERE id = $1::uuid",
+            )
+            .bind(event_id)
+            .fetch_one(&ctx.pool)
+            .await?;
+            assert_eq!(stored, expected_ts);
+        } else {
+            assert_eq!(persisted, None, "implausible {label} material timestamp must not persist");
+        }
+    }
+
+    setup.handle.abort();
+    let _ = setup.handle.await;
+    Ok(())
+}
+
+/// sinex-txt4 regression test (CRITICAL, currently EXPECTED TO FAIL — no fix
+/// has landed for this bead yet). Reproduces the bead's own named repro
 /// recipe exactly: two events sharing an `equivalence_key`, published as two
 /// separate NATS messages with NO persistence barrier between them, so both
 /// land in the SAME fetch batch. Admission's equivalence-key pre-pass only

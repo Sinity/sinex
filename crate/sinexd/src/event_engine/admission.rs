@@ -673,6 +673,70 @@ impl AdmissionService {
         self.storage_lane = storage_lane;
     }
 
+    /// Return the standard admission rejection for an implausible `ts_orig`.
+    ///
+    /// Material events defer timestamp resolution until after the readiness FK
+    /// gate. The same lower-bound and future-skew contract must therefore be
+    /// callable again after that resolution, rather than being duplicated or
+    /// silently skipped.
+    pub(crate) fn ts_orig_plausibility_rejection(
+        &self,
+        event: &Event<JsonValue>,
+    ) -> Option<AdmissionRejection> {
+        let ts_orig = event.ts_orig?;
+        let event_id = event.id.map(|id| id.to_uuid()).unwrap_or_default();
+        let now = Timestamp::now();
+        if ts_orig < self.ts_orig_lower_bound {
+            error!(
+                target: "sinex_metrics",
+                metric = "event_engine.admission_rejections_total",
+                kind = "past_timestamp",
+                event_id = ?event.id,
+                source = %event.source,
+                event_type = %event.event_type,
+                ts_orig = %ts_orig,
+                lower_bound = %self.ts_orig_lower_bound,
+                "Event ts_orig predates lower bound"
+            );
+            return Some(
+                AdmissionRejection::new(
+                    AdmissionRejectionKind::PastTimestamp,
+                    format!(
+                        "ts_orig {ts_orig} predates lower bound {} (implausibly old)",
+                        self.ts_orig_lower_bound
+                    ),
+                )
+                .with_event_id(event_id),
+            );
+        }
+        if ts_orig > now + self.future_ts_skew {
+            let latest_expected = now + self.future_ts_skew;
+            error!(
+                target: "sinex_metrics",
+                metric = "event_engine.admission_rejections_total",
+                kind = "future_timestamp",
+                event_id = ?event.id,
+                source = %event.source,
+                event_type = %event.event_type,
+                ts_orig = %ts_orig,
+                latest_expected = %latest_expected,
+                skew_seconds = (ts_orig - now).whole_seconds(),
+                "Event ts_orig is implausibly far in the future"
+            );
+            return Some(
+                AdmissionRejection::new(
+                    AdmissionRejectionKind::FutureTimestamp,
+                    format!(
+                        "ts_orig {ts_orig} exceeds latest expected {latest_expected} by {} seconds (implausibly future)",
+                        (ts_orig - now).whole_seconds()
+                    ),
+                )
+                .with_event_id(event_id),
+            );
+        }
+        None
+    }
+
     /// Which physical event table (`core.events` vs `reflection.events`) this
     /// service persists into. Read-only accessor for callers that need to
     /// label an outcome with its storage lane (sinex-r6d.11 settlement
