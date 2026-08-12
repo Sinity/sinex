@@ -84,6 +84,25 @@ async fn insert_batch_keeps_cross_chunk_reflection_parent_live(ctx: TestContext)
     let material_id = ctx
         .create_source_material(Some("kgp4-cross-chunk-parent-material"))
         .await?;
+    let declaration_id = "insert-batch-kgp4-reflection-child";
+    sqlx::query(
+        r#"
+        INSERT INTO derivation.product_declarations (
+            declaration_id, owner, product_class, write_surface,
+            output_source, output_event_type, semantics_version,
+            input_eligibility, default_claim_support, verification_command
+        )
+        VALUES (
+            $1, 'kgp4-test', 'canonical_derived_event',
+            'derived_output', 'sinex.child', 'kgp4.reflection.child', 'v1',
+            'default_canonical_input', '{}'::jsonb, 'true'
+        )
+        ON CONFLICT (declaration_id) DO NOTHING
+        "#,
+    )
+    .bind(declaration_id)
+    .execute(ctx.pool())
+    .await?;
     let parent_id = Id::new();
     let mut parent = DynamicPayload::new(
         "sinex.parent",
@@ -102,6 +121,8 @@ async fn insert_batch_keeps_cross_chunk_reflection_parent_live(ctx: TestContext)
     .from_parents(vec![EventId::from_uuid(*parent_id.as_uuid())])?
     .build()?;
     child.product_class = Some(DerivedProductClass::CanonicalDerivedEvent);
+    child.claim_support = Some(sinex_primitives::derivation::ClaimSupport::unknown());
+    child.derivation_declaration_id = Some(declaration_id.to_string());
 
     // Put the child in chunk one and its parent in chunk two. The production
     // insert path must validate parent liveness against the full batch, not
