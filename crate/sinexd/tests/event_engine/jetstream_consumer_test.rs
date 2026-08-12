@@ -2886,17 +2886,11 @@ async fn resolved_material_ts_orig_reuses_plausibility_gate(
     Ok(())
 }
 
-/// sinex-txt4 regression test (CRITICAL, currently EXPECTED TO FAIL — no fix
-/// has landed for this bead yet). Reproduces the bead's own named repro
-/// recipe exactly: two events sharing an `equivalence_key`, published as two
-/// separate NATS messages with NO persistence barrier between them, so both
-/// land in the SAME fetch batch. Admission's equivalence-key pre-pass only
-/// resolves against already-committed `core.events` rows (admission.rs
-/// intra-batch collapse maps are `admit_intent_bytes`-local and dropped at
-/// return) — so message 2's pre-pass cannot see message 1's still-in-flight
-/// event, both classify as Fresh, and both persist as live rows sharing one
-/// equivalence_key, silently violating the single-live-interpretation
-/// invariant.
+/// sinex-txt4 regression test. Reproduces the bead's named repro recipe:
+/// two events sharing an `equivalence_key`, published as separate NATS
+/// messages with NO persistence barrier between them, so both land in the
+/// SAME fetch batch. Admission must carry its equivalence-key state across
+/// the whole fetch, not just one intent, and leave one live interpretation.
 ///
 /// Deliberately does NOT call `wait_for_event_id` between the two
 /// `publish_event` calls, and publishes both BEFORE the consumer is spawned
@@ -2985,10 +2979,24 @@ async fn equivalence_key_collision_within_one_fetch_batch_must_not_duplicate(
     let consumer_handle = spawn_consumer_and_wait_ready(&ctx, &js, &topology, consumer).await?;
 
     WaitHelpers::wait_for_source_events(&pool, "txt4-source", 1, Timeouts::STANDARD).await?;
-    // Give the second message a full drain cycle to also land (or collide)
-    // before asserting -- the bug's failure mode is a SECOND live row, not
-    // absence, so we must not race the assertion against in-flight work.
-    tokio::time::sleep(Duration::from_millis(500)).await;
+    // Wait for the second revision itself to become live before checking the
+    // cardinality. This avoids a fixed sleep and proves the consumer reached
+    // the final same-key state.
+    WaitHelpers::wait_for_condition(
+        || {
+            let pool = pool.clone();
+            async move {
+                let live_second: i64 =
+                    sqlx::query_scalar("SELECT COUNT(*) FROM core.events WHERE id = $1")
+                        .bind(second_id)
+                        .fetch_one(&pool)
+                        .await?;
+                Ok::<bool, SinexError>(live_second == 1)
+            }
+        },
+        Timeouts::STANDARD,
+    )
+    .await?;
 
     let live_count: i64 =
         sqlx::query_scalar("SELECT COUNT(*) FROM core.events WHERE equivalence_key = $1")

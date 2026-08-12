@@ -194,7 +194,10 @@ fn performance_characteristic_events() -> impl Strategy<Value = Vec<RawEvent>> {
     })
 }
 
-/// Production validation wrapper for events (avoid mock-only checks).
+/// Shared structural-validation wrapper for property tests. Schema validation
+/// is disabled here because these properties exercise the envelope and domain
+/// invariants independently of the production schema registry; the real
+/// admission route is covered by sinexd's `AdmissionService` tests.
 fn validate_event(event: &RawEvent) -> std::result::Result<(), String> {
     let validator = EventValidator::with_validation_enabled(false);
     validator.validate(event).map_err(|err| err.to_string())
