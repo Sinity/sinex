@@ -486,6 +486,7 @@ async fn restore_state_params(
             source_identifier: state_snapshot.source_identifier,
             metadata: state_snapshot.metadata,
             phase: state_snapshot.phase,
+            finalizing_since: None,
             hasher,
             pending_write: state_snapshot.pending_write,
             pending_end: state_snapshot.pending_end,
@@ -1106,7 +1107,7 @@ pub(super) async fn handle_slice(
         let expected_slices = end.total_slices;
         let Some(incoming_end) = offset.checked_add(data.len() as i64) else {
             let resume_phase = state.phase;
-            state.phase = AssemblyPhase::Finalizing;
+            state.mark_finalizing();
             drop(state);
 
             assembler
@@ -1138,7 +1139,7 @@ pub(super) async fn handle_slice(
 
         if incoming_end > expected_total_bytes {
             let resume_phase = state.phase;
-            state.phase = AssemblyPhase::Finalizing;
+            state.mark_finalizing();
             drop(state);
 
             assembler
@@ -1186,7 +1187,7 @@ pub(super) async fn handle_slice(
                 let buffered_count = state.buffered_slices.len();
                 let expected_offset = state.expected_offset;
                 let resume_phase = state.phase;
-                state.phase = AssemblyPhase::Finalizing;
+                state.mark_finalizing();
                 drop(state);
 
                 assembler
@@ -1243,7 +1244,7 @@ pub(super) async fn handle_slice(
                 let expected_offset = state.expected_offset;
                 let buffered_offsets: Vec<_> = state.buffered_slices.keys().copied().collect();
                 let resume_phase = state.phase;
-                state.phase = AssemblyPhase::Finalizing;
+                state.mark_finalizing();
                 drop(state);
 
                 assembler
@@ -1269,7 +1270,7 @@ pub(super) async fn handle_slice(
                     let expected_offset = state.expected_offset;
                     let buffered_offsets: Vec<_> = state.buffered_slices.keys().copied().collect();
                     let resume_phase = state.phase;
-                    state.phase = AssemblyPhase::Finalizing;
+                    state.mark_finalizing();
                     drop(state);
 
                     assembler

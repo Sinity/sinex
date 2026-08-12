@@ -262,12 +262,28 @@ impl MaterialAssembler {
         for (material_id, state_handle) in state_handles {
             let state = state_handle.lock().await;
 
+            if state.phase == state::AssemblyPhase::Finalizing {
+                let finalizing_since = state
+                    .finalizing_since
+                    .unwrap_or(state.last_slice_received);
+                let elapsed = (now - finalizing_since).whole_seconds();
+                if elapsed > self.finalize_timeout.as_secs() as i64 {
+                    tracing::warn!(
+                        target: "sinex_metrics",
+                        metric = "assembly_finalization_stale",
+                        material_id = %material_id,
+                        elapsed_secs = elapsed,
+                        finalize_timeout_secs = self.finalize_timeout.as_secs(),
+                        pending_end = state.pending_end.is_some(),
+                        "Material finalization exceeded its recovery age bound"
+                    );
+                    stale.push((material_id, elapsed));
+                }
+                continue;
+            }
+
             let elapsed = now - state.last_slice_received;
-            let timeout_secs = if state.phase == state::AssemblyPhase::Finalizing {
-                self.slice_arrival_timeout
-                    .as_secs()
-                    .max(self.finalize_timeout.as_secs()) as i64
-            } else if state.phase == state::AssemblyPhase::PendingBegin
+            let timeout_secs = if state.phase == state::AssemblyPhase::PendingBegin
                 && state.pending_end.is_some()
                 && state.slice_count == 0
                 && state.buffered_slices.is_empty()
@@ -279,8 +295,7 @@ impl MaterialAssembler {
             };
             let timed_out = elapsed.whole_seconds() > timeout_secs;
             if timed_out
-                && (state.phase == state::AssemblyPhase::Finalizing
-                    || state.pending_end.is_none()
+                && (state.pending_end.is_none()
                     || !state.buffered_slices.is_empty()
                     || state.phase == state::AssemblyPhase::PendingBegin)
             {
@@ -333,30 +348,10 @@ impl MaterialAssembler {
     }
 
     async fn process_stale_material(&self, material_id: Uuid, elapsed_secs: i64) {
-        let finalization_stalled =
-            self.get_state_handle(&material_id)
-                .is_some_and(|state_handle| {
-                    state_handle
-                        .try_lock()
-                        .is_ok_and(|state| state.phase == state::AssemblyPhase::Finalizing)
-                });
-
-        if finalization_stalled {
-            warn!(
-                material_id = %material_id,
-                elapsed_secs,
-                "Finalizing material exceeded its recovery age; routing a visible terminal failure"
-            );
-            if let Err(error) = self
-                .fail_stalled_finalization(material_id, elapsed_secs)
-                .await
-            {
-                warn!(
-                    material_id = %material_id,
-                    error = %error,
-                    "Failed to settle stalled finalization; retaining state for the next stale sweep"
-                );
-            }
+        if self
+            .recover_stale_finalizing_material(material_id, elapsed_secs)
+            .await
+        {
             return;
         }
 
@@ -426,6 +421,60 @@ impl MaterialAssembler {
                 "Failed to route timed-out material to DLQ; leaving it unmarked so the next stale sweep retries instead of settling terminal-failed with no durable trace"
             );
         }
+    }
+
+    async fn recover_stale_finalizing_material(&self, material_id: Uuid, elapsed_secs: i64) -> bool {
+        let Some(state_handle) = self.get_state_handle(&material_id) else {
+            return false;
+        };
+
+        let (should_redrive, has_pending_end) = {
+            let mut state = state_handle.lock().await;
+            if state.phase != state::AssemblyPhase::Finalizing {
+                (false, false)
+            } else {
+                let has_pending_end = state.pending_end.is_some();
+                state.restore_phase(state::AssemblyPhase::Accumulating);
+                (true, has_pending_end)
+            }
+        };
+
+        if !should_redrive {
+            return false;
+        }
+
+        if has_pending_end {
+            warn!(
+                material_id = %material_id,
+                elapsed_secs,
+                "Re-driving stale material finalization after restoring retry state"
+            );
+            self.dispatch_finalize(material_id, state_handle);
+        } else {
+            warn!(
+                material_id = %material_id,
+                elapsed_secs,
+                "Stale material finalization has no retained END; routing terminal recovery failure"
+            );
+            if let Err(error) = self
+                .route_material_error_then_finalize_failed(
+                    material_id,
+                    "stale_material_finalization_without_end",
+                    serde_json::json!({
+                        "elapsed_seconds": elapsed_secs,
+                        "recovery": "finalizing_stale_without_pending_end",
+                    }),
+                )
+                .await
+            {
+                warn!(
+                    material_id = %material_id,
+                    error = %error,
+                    "Failed to settle stale material finalization without END; preserving retry state"
+                );
+            }
+        }
+        true
     }
 
     pub(super) async fn reconcile_orphaned_sensing_materials(&self) -> EventEngineResult<()> {
@@ -603,17 +652,19 @@ impl MaterialAssembler {
             .await
             .map_err(|e| SinexError::io("Failed to iterate state directory").with_source(e))?
         {
-            let file_type = match entry.file_type().await {
-                Ok(file_type) => file_type,
-                Err(error) => {
-                    warn!(path = %entry.path().display(), error = %error, "Skipping state entry whose type could not be inspected");
-                    continue;
-                }
-            };
-            if file_type.is_dir()
-                && let Err(error) = self.check_orphaned_folder(entry.path()).await
+            if entry
+                .file_type()
+                .await
+                .map_err(|e| SinexError::io("Failed to check file type").with_source(e))?
+                .is_dir()
             {
-                warn!(path = %entry.path().display(), error = %error, "Skipping malformed orphaned assembly state entry");
+                if let Err(error) = self.check_orphaned_folder(entry.path()).await {
+                    warn!(
+                        path = %entry.path().display(),
+                        error = %error,
+                        "Skipping invalid orphaned assembler state entry"
+                    );
+                }
             }
         }
 

@@ -46,7 +46,7 @@ async fn finalize_failed_material_skips_material_already_finalizing(
 
     assembler
         .finalize_failed_material(material_id, "slice_arrival_timeout")
-        .await;
+        .await?;
 
     let material = ctx
         .pool
@@ -143,7 +143,7 @@ async fn finalize_failed_material_skips_terminal_material_without_state(
 
     assembler
         .finalize_failed_material(material_id, "slice_arrival_timeout")
-        .await;
+        .await?;
 
     let material = ctx
         .pool
@@ -183,7 +183,7 @@ async fn finalize_failed_material_recovers_timeout_when_events_were_admitted(
 
     assembler
         .finalize_failed_material(material_id, "slice_arrival_timeout")
-        .await;
+        .await?;
 
     let material = ctx
         .pool
@@ -247,6 +247,44 @@ async fn finalize_failed_material_preserves_retry_state_when_failure_mark_is_not
         "staged material should remain on disk for retry"
     );
     assert_eq!(state_handle.lock().await.phase, AssemblyPhase::Accumulating);
+    Ok(())
+}
+
+#[sinex_test]
+async fn route_material_error_propagates_terminal_settlement_failure(
+    ctx: TestContext,
+) -> TestResult<()> {
+    let ctx = ctx.with_nats().shared().await?;
+    let (assembler, _content_store_dir, _state_dir) = test_assembler(&ctx).await?;
+    let material_id = Uuid::now_v7();
+
+    ctx.pool
+        .source_materials()
+        .register_external_in_flight(
+            material_id,
+            "test",
+            Some("test://terminal-settlement-failure"),
+            json!({}),
+            Timestamp::now(),
+        )
+        .await?;
+    ctx.pool.close().await;
+
+    let error = assembler
+        .route_material_error_then_finalize_failed(
+            material_id,
+            "material_persist_failed",
+            json!({"fault_injection": "closed_database_pool"}),
+        )
+        .await
+        .expect_err("DLQ success must not hide terminal settlement failure");
+
+    assert!(
+        error
+            .to_string()
+            .contains("Failed to mark material as failed in database"),
+        "unexpected settlement error: {error}"
+    );
     Ok(())
 }
 

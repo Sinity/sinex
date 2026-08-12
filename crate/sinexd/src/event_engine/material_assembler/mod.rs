@@ -722,6 +722,7 @@ impl MaterialAssembler {
             source_identifier: String::new(),
             metadata: serde_json::json!({}),
             phase: AssemblyPhase::PendingBegin,
+            finalizing_since: None,
             hasher: Hasher::new(),
             pending_write: None,
             pending_end: None,

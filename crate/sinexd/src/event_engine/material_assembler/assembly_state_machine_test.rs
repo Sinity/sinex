@@ -22,6 +22,7 @@ fn test_state(phase: AssemblyPhase) -> AssemblerState {
         source_identifier: "test://state-machine".to_string(),
         metadata: json!({}),
         phase,
+        finalizing_since: None,
         hasher: Hasher::new(),
         pending_write: None,
         pending_end: None,

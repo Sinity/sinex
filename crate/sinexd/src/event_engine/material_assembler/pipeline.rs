@@ -116,26 +116,31 @@ async fn apply_redelivery_decision(
                     .route_material_error(material_id, reason.clone(), dlq_context)
                     .await
                 {
-                    Ok(_durable_failure_id) => {
-                        match assembler.finalize_failed_material(material_id, &reason).await {
-                            Ok(()) => ack_with_warning(
-                                message,
-                                "material_frame_routed_to_dlq",
-                                Some(&material_id),
-                            )
-                            .await,
+                    Ok(()) => {
+                        match assembler
+                            .finalize_failed_material(material_id, &reason)
+                            .await
+                        {
+                            Ok(()) => {
+                                ack_with_warning(
+                                    message,
+                                    "material_frame_routed_to_dlq",
+                                    Some(&material_id),
+                                )
+                                .await
+                            }
                             Err(error) => {
                                 warn!(
                                     subject = %message.subject,
                                     material_id = %material_id,
                                     reason = %reason,
                                     error = %error,
-                                    "Material failure cleanup was not durable; NAKing instead of ACKing DLQ-routed frame"
+                                    "Material DLQ publish succeeded but terminal settlement failed; NAKing for retry"
                                 );
                                 nak_with_warning(
                                     message,
                                     Some(MATERIAL_DLQ_PUBLISH_FAILURE_RETRY_DELAY),
-                                    "material_failure_cleanup_failed",
+                                    "material_terminal_settlement_failed",
                                     Some(&material_id),
                                 )
                                 .await

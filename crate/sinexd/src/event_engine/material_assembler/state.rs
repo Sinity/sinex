@@ -153,6 +153,13 @@ pub(super) struct AssemblerState {
     pub source_identifier: String,
     pub metadata: JsonValue,
     pub phase: AssemblyPhase,
+    /// Wall-clock instant at which the current finalization attempt began.
+    ///
+    /// This is intentionally separate from `last_slice_received`: a complete
+    /// material may sit idle for a long time before its detached finalizer is
+    /// scheduled, and that idle age must not make a healthy finalization look
+    /// stale immediately after it starts.
+    pub finalizing_since: Option<Timestamp>,
     pub hasher: Hasher,
     pub pending_write: Option<PendingWrite>,
     pub pending_end: Option<MaterialEndMessage>,
@@ -185,6 +192,18 @@ pub(super) struct FinalizationState {
 }
 
 impl AssemblerState {
+    pub(super) fn mark_finalizing(&mut self) {
+        self.phase = AssemblyPhase::Finalizing;
+        self.finalizing_since = Some(Timestamp::now());
+    }
+
+    pub(super) fn restore_phase(&mut self, phase: AssemblyPhase) {
+        self.phase = phase;
+        if phase != AssemblyPhase::Finalizing {
+            self.finalizing_since = None;
+        }
+    }
+
     pub(super) fn buffers_dir(&self) -> PathBuf {
         self.state_dir.join(BUFFER_DIR_NAME)
     }
@@ -347,7 +366,7 @@ pub(super) async fn handle_begin(
         state.source_identifier.clone_from(&source_identifier);
         state.metadata = metadata.clone();
         state.started_at = started_at;
-        state.phase = AssemblyPhase::Accumulating;
+        state.restore_phase(AssemblyPhase::Accumulating);
         assembler.stats_inc_started(); // Track new assembly start
         assembler.insert_state_handle(material_id, state)
     };
@@ -384,7 +403,7 @@ pub(super) async fn handle_begin(
         state.source_identifier.clone_from(&source_identifier);
         state.metadata = merge_metadata(&state.metadata, &metadata);
         state.started_at = started_at;
-        state.phase = AssemblyPhase::Accumulating;
+        state.restore_phase(AssemblyPhase::Accumulating);
 
         if state.temp_file.is_none() {
             let temp_file = File::options()

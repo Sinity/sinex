@@ -22,6 +22,7 @@ fn test_state(material_id: Uuid) -> AssemblerState {
         source_identifier: "test".to_string(),
         metadata: JsonValue::Null,
         phase: AssemblyPhase::PendingBegin,
+        finalizing_since: None,
         hasher: Hasher::new(),
         pending_write: None,
         pending_end: None,
