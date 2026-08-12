@@ -18,6 +18,10 @@ pub use material::*;
 pub use operations::*;
 pub use temporal::*;
 
+#[cfg(test)]
+#[path = "domain_test.rs"]
+mod domain_test;
+
 // ─── Compile-time validation helpers ─────────────────────────────────────────
 
 /// Compile-time assertion: string must be non-empty and contain no null bytes.

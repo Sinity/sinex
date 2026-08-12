@@ -1338,3 +1338,56 @@ fn systemd_context(event_type: &'static str, ts_orig: Timestamp) -> AutomatonCon
         trigger_anchor_byte: None,
     }
 }
+
+/// sinex-e5fl: an out-of-order OLDER systemd start for a subject that already
+/// has a newer open interval unconditionally overwrites `active_subject_states`
+/// with the older observation -- `restart_close` correctly stays None (the
+/// filter requires `observation.ts_orig > previous.ts_orig`), but the
+/// unconditional `.insert(subject_id, observation)` right after it doesn't
+/// share that guard. The genuinely current, newer open interval silently
+/// reverts to stale older state.
+#[sinex_test]
+#[ignore = "sinex-e5fl open: out-of-order older systemd start silently replaces a newer open interval instead of being rejected"]
+async fn interval_lift_out_of_order_older_start_does_not_replace_newer_open_state()
+-> xtask::sandbox::TestResult<()> {
+    let newer = Timestamp::from_unix_timestamp(1_700_000_200)
+        .ok_or_else(|| color_eyre::eyre::eyre!("valid timestamp"))?;
+    let older = Timestamp::from_unix_timestamp(1_700_000_000)
+        .ok_or_else(|| color_eyre::eyre::eyre!("valid timestamp"))?;
+    assert!(older < newer);
+
+    let mut automaton = IntervalLift;
+    let mut state = IntervalLiftState::default();
+
+    // The genuinely current start arrives first (newer).
+    let newer_context = systemd_context("unit.started", newer);
+    automaton
+        .process_single(&mut state, uzc_unit_started()?, &newer_context)
+        .await?;
+    assert_eq!(
+        state.active_subject_states.get("u.service").map(|o| o.ts_orig),
+        Some(newer)
+    );
+
+    // A late/out-of-order OLDER start for the same subject arrives afterward
+    // (e.g. a backfilled or delayed-delivery event). Since older.ts_orig is
+    // NOT after newer.ts_orig, no restart-close fires -- correct. But the
+    // unconditional insert() right after the filter still overwrites state.
+    let older_context = systemd_context("unit.started", older);
+    let output = automaton
+        .process_single(&mut state, uzc_unit_started()?, &older_context)
+        .await?;
+    assert!(
+        output.is_none(),
+        "an out-of-order older start must not emit a spurious restart-close"
+    );
+
+    assert_eq!(
+        state.active_subject_states.get("u.service").map(|o| o.ts_orig),
+        Some(newer),
+        "the older out-of-order start silently replaced the newer open interval's \
+         start time -- a subsequent stop event would compute duration from the \
+         wrong (older) start, overstating the interval's real length"
+    );
+    Ok(())
+}

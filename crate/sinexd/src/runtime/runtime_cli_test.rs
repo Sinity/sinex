@@ -1,8 +1,9 @@
 use super::{
-    NatsArgs, RuntimeCli, RuntimeCommand, default_service_name, edge_mode_enabled,
-    handle_export_result, parse_checkpoint, render_cli_value, render_optional_cli_timestamp,
-    resolve_primary_database_url, validate_identity_token,
+    NatsArgs, RuntimeCli, RuntimeCliRunner, RuntimeCommand, default_service_name,
+    edge_mode_enabled, handle_export_result, parse_checkpoint, render_cli_value,
+    render_optional_cli_timestamp, resolve_primary_database_url, validate_identity_token,
 };
+use crate::automata::canonicalizer::TerminalCommandCanonicalizerRuntime;
 use crate::runtime::SinexError;
 use crate::runtime::stream::Checkpoint;
 use sinex_primitives::SanitizedPath;
@@ -154,5 +155,37 @@ async fn edge_mode_requires_truthy_boolean_override() -> xtask::sandbox::TestRes
     );
 
     unsafe { std::env::remove_var("SINEX_EDGE_MODE") };
+    Ok(())
+}
+
+/// sinex-mi2y: `RuntimeCliRunner::connect_primary_db` calls bare
+/// `PgPool::connect(&database_url)`, bypassing `sinex_db::create_pool_with_config`
+/// entirely -- so the runtime/automaton lane never gets `statement_timeout`
+/// configured, unlike every other pool in the system that goes through the
+/// shared config path. A runaway query on this lane runs with Postgres'
+/// default statement_timeout (0 = unlimited).
+#[sinex_test]
+async fn connect_primary_db_leaves_statement_timeout_unbounded() -> TestResult<()> {
+    let database_url =
+        std::env::var("DATABASE_URL").expect("DATABASE_URL must be set for this test");
+    let cli = test_cli_with_database_url(Some(&database_url));
+
+    let pool = RuntimeCliRunner::<TerminalCommandCanonicalizerRuntime>::connect_primary_db(&cli)
+        .await
+        .expect("connect_primary_db should connect to the dev database");
+
+    let effective_timeout: String = sqlx::query_scalar("SHOW statement_timeout")
+        .fetch_one(&pool)
+        .await
+        .expect("SHOW statement_timeout should succeed");
+
+    assert_ne!(
+        effective_timeout, "0",
+        "connect_primary_db's pool has statement_timeout=0 (unlimited) -- it bypasses \
+         sinex_db::create_pool_with_config, which is the only path that installs the \
+         session hook setting a bounded statement_timeout. Every automaton/source-binding \
+         connection on this lane can run a runaway query forever (the exact class of \
+         incident sinex-o1mg was)."
+    );
     Ok(())
 }

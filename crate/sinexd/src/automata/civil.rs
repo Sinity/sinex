@@ -163,4 +163,37 @@ mod tests {
         // 2024-06-15 14:37:20 CEST (== 12:37:20 UTC) floors to 14:00 CEST (12:00 UTC).
         assert_eq!(floor_to_civil_hour(ts(1_718_455_040)), ts(1_718_452_800));
     }
+
+    /// sinex-byly: on ANY timezone-resolution failure, `to_zoned` returns `None`
+    /// and every caller (`floor_to_civil_hour`/`_day`, `civil_hour_end`/`_day_end`)
+    /// silently returns the input timestamp completely unfloored -- there is no
+    /// way for a caller to distinguish "successfully bucketed" from "resolution
+    /// failed, here's your raw input back". Relies on nextest's one-process-per-test
+    /// isolation: `OPERATOR_TZ` is a `LazyLock` read once per process, so this test
+    /// must be the first (and only) thing in its process to touch `operator_tz()`.
+    #[test]
+    #[ignore = "sinex-byly open: floor_to_civil_hour silently returns the unfloored \
+                input when SINEX_LOCAL_TZ cannot be resolved, instead of surfacing \
+                the failure or falling back to a defined, still-floored behavior"]
+    fn floor_to_civil_hour_does_not_silently_pass_through_on_unresolvable_timezone() {
+        // SAFETY: this test is the first thing in its (nextest-isolated) process to
+        // touch OPERATOR_TZ, so this mutation is observed by the LazyLock's one-time
+        // initialization and not racing any other test.
+        unsafe { std::env::set_var("SINEX_LOCAL_TZ", "Not/A/Real/Timezone") };
+
+        // A timestamp with non-zero minutes/seconds: under any successfully-resolved
+        // timezone (even UTC), flooring to the hour must change it.
+        let unfloored = ts(1_718_455_040); // 2024-06-15 12:37:20 UTC
+        let floored = floor_to_civil_hour(unfloored);
+
+        assert_ne!(
+            floored, unfloored,
+            "floor_to_civil_hour returned the input completely unchanged when \
+             SINEX_LOCAL_TZ=\"Not/A/Real/Timezone\" could not be resolved -- this is \
+             the silent-fallback bug: a genuinely broken timezone config produces \
+             output indistinguishable from a correctly-bucketed hour, and every \
+             hourly/daily summary built on top silently reverts to raw UTC bucketing \
+             with no warning anywhere."
+        );
+    }
 }
