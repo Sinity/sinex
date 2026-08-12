@@ -2599,27 +2599,148 @@ mod pacing_e2e {
         Ok(())
     }
 
-    // A companion negative-control test (`RateBudget::unlimited()` should let
-    // backlog run past the paced test's bound) was attempted here and
-    // removed (sinex-audit-2n9-unlimited-negctrl-cap): it failed
-    // deterministically at an observed max_pending of exactly 40 across
-    // multiple runs (including with the tail sampling window widened from
-    // 3s to 8s, ruling out a sampling-race explanation). The pacing
-    // implementation itself was independently verified correct by direct
-    // code review (`RateBudget::unlimited()` nulls both rate and backlog
-    // fields; `merged_with_override` replaces the whole struct, not a
-    // field-level merge, per its own passing unit test
-    // `merged_override_wins_when_present`; `BacklogGate::from_budget`
-    // returns `None` for an unlimited budget; `ScanPacer::after_batch`
-    // skips the wait entirely when the gate is `None`) and by the positive-
-    // control test above (`paced_historical_scan_holds_raw_backlog_below_threshold`)
-    // passing reliably. The deterministic cap at exactly 40 rather than
-    // TOTAL_RECORDS (240) under `--unlimited` therefore looks like a real,
-    // reproducible phenomenon somewhere in this test's own NATS/JetStream
-    // measurement path (`raw_events_consumer_pending`'s `num_pending`, the
-    // WorkQueue-retention stream config, or `max_ack_pending: 0` client-vs-
-    // server default semantics) rather than a pacing regression -- but the
-    // root cause was not conclusively identified. Filed as a follow-up
-    // rather than shipped as a permanently-failing or silently-ignored
-    // assertion.
+    /// Companion negative control for `paced_historical_scan_holds_raw_backlog_below_threshold`:
+    /// under `RateBudget::unlimited()`, backlog should be allowed to grow well past the paced
+    /// bound (proving the *positive* test's bound is actually enforced by pacing, not by some
+    /// other structural cap). Restored per sinex-audit-2n9-unlimited-negctrl-cap after being
+    /// deleted rather than kept as a red test: it fails deterministically at an observed
+    /// max_pending of exactly 40 (== the continuous-probe emit count, suspiciously) across
+    /// multiple runs, including with the tail sampling window widened from 3s to 8s (ruling out
+    /// a sampling-race explanation). `RateBudget::unlimited()` itself was independently verified
+    /// correct by direct code review: it nulls both rate and backlog threshold fields;
+    /// `BacklogGate::from_budget` returns `None` for it; `ScanPacer::after_batch` skips the wait
+    /// entirely when the gate is `None`. The root cause of the exact-40 cap under `--unlimited`
+    /// was not conclusively identified — candidates are this test's own NATS/JetStream
+    /// measurement path (`raw_events_consumer_pending`'s `num_pending`), the WorkQueue-retention
+    /// stream config, or `max_ack_pending` client-vs-server default semantics — not a pacing
+    /// regression in production code. Kept as an ignored red test so the discrepancy stays
+    /// live instead of only living in a comment.
+    #[sinex_test(timeout = 90)]
+    #[ignore = "sinex-audit-2n9-unlimited-negctrl-cap open: RateBudget::unlimited() should let \
+                observed backlog exceed the paced test's 40-message bound, but it deterministically \
+                caps at exactly 40 too -- root cause not yet identified, see doc comment above"]
+    async fn unlimited_historical_scan_lets_backlog_grow_past_paced_bound(
+        ctx: TestContext,
+    ) -> TestResult<()> {
+        let namespace = format!("pacing-negctrl-{}", Uuid::now_v7().simple());
+        let _namespace_guard =
+            xtask::sandbox::EnvGuard::set_single("SINEX_NAMESPACE", &namespace);
+        let ctx = ctx.with_nats().shared().await?;
+        let nats_client = ctx.nats_client();
+
+        crate::runtime::jetstream_streams::bootstrap_raw_events_stream(
+            &nats_client,
+            Some(&namespace),
+        )
+        .await?;
+        let env = sinex_primitives::environment::environment();
+        let stream_name = env.nats_stream_name_with_namespace(Some(&namespace), "SINEX_RAW_EVENTS");
+        let consumer_name = crate::runtime::backlog::event_engine_raw_consumer_name(&env);
+
+        let js = async_nats::jetstream::new(nats_client.clone());
+        let mut stream = js.get_stream(&stream_name).await?;
+        let consumer = stream
+            .create_consumer(async_nats::jetstream::consumer::pull::Config {
+                name: Some(consumer_name.clone()),
+                durable_name: Some(consumer_name.clone()),
+                ack_policy: async_nats::jetstream::consumer::AckPolicy::Explicit,
+                ack_wait: std::time::Duration::from_secs(30),
+                ..Default::default()
+            })
+            .await?;
+
+        // Same deliberately slow puller (~33 msg/s) as the positive-control test.
+        let mut messages = consumer.messages().await?;
+        let puller = tokio::spawn(async move {
+            while let Some(Ok(msg)) = messages.next().await {
+                let _ = msg.ack().await;
+                tokio::time::sleep(std::time::Duration::from_millis(30)).await;
+            }
+        });
+
+        let max_observed_pending = Arc::new(AtomicU64::new(0));
+        let sampler_stop = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let sampler_handle = {
+            let js = js.clone();
+            let env = env.clone();
+            let namespace = namespace.clone();
+            let max_observed_pending = Arc::clone(&max_observed_pending);
+            let sampler_stop = Arc::clone(&sampler_stop);
+            tokio::spawn(async move {
+                while !sampler_stop.load(Ordering::Relaxed) {
+                    if let Ok(Some(info)) =
+                        crate::runtime::backlog::raw_events_consumer_pending(&js, &env, Some(&namespace)).await
+                        && info.num_pending > max_observed_pending.load(Ordering::Relaxed)
+                    {
+                        max_observed_pending.store(info.num_pending, Ordering::Relaxed);
+                    }
+                    // Widened sampling window (vs the positive test's 75ms) to rule out a
+                    // sampling-race explanation for the exact-40 cap, per the doc comment.
+                    tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+                }
+            })
+        };
+
+        let (runtime, event_receiver_raw) = make_adapter_runtime(&ctx).await?;
+        let settlement_registry = crate::runtime::durable_emission::SettlementRegistry::new();
+        let publish_subject =
+            env.nats_raw_event_subject_with_namespace(Some(&namespace), "test", "pacing.negctrl");
+        settle_and_publish_events(
+            event_receiver_raw,
+            settlement_registry,
+            js.clone(),
+            publish_subject,
+        );
+
+        let mut source = AdapterBackedSource::<ManyMaterializedRecordsAdapter, ManyRecordsParser>::new(
+            "test.pacing_negctrl",
+        );
+        let mut state = AdapterModuleState::default();
+        source
+            .initialize(
+                AdapterSourceConfig {
+                    adapter: serde_json::json!({"total_records": TOTAL_RECORDS}),
+                    ..Default::default()
+                },
+                &runtime,
+                &mut state,
+            )
+            .await?;
+
+        let report = source
+            .scan_historical(
+                &mut state,
+                Checkpoint::None,
+                TimeHorizon::Historical {
+                    end_time: Timestamp::now(),
+                },
+                ScanArgs {
+                    rate_budget: Some(RateBudget::unlimited()),
+                    ..Default::default()
+                },
+            )
+            .await?;
+
+        tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+        sampler_stop.store(true, Ordering::Relaxed);
+        let _ = sampler_handle.await;
+        puller.abort();
+
+        assert_eq!(
+            report.events_processed, TOTAL_RECORDS,
+            "every fixture record should settle and be counted under --unlimited too"
+        );
+
+        let observed_max = max_observed_pending.load(Ordering::Relaxed);
+        assert!(
+            observed_max > 40,
+            "RateBudget::unlimited() should let raw backlog exceed the paced test's 40-message \
+             bound (BacklogGate::from_budget returns None for it, so nothing should throttle \
+             drain) -- observed_max={observed_max} instead deterministically caps at the same \
+             bound as the PACED positive-control test, which is the unresolved discrepancy \
+             sinex-audit-2n9-unlimited-negctrl-cap tracks"
+        );
+
+        Ok(())
+    }
 }

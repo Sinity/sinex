@@ -298,3 +298,31 @@ pub fn print_version_info() -> crate::runtime::RuntimeResult<()> {
     }
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    #[ignore = "sinex-80tt open: build metadata (commit/branch/build-time/git-clean) has been permanently placeholder since shadow-rs was removed in #1054; RuntimeVersion::current() never reflects the real build"]
+    fn runtime_version_reports_real_build_metadata_not_placeholders() {
+        let version = RuntimeVersion::current().expect("version info must be constructible");
+
+        assert_ne!(
+            version.commit_hash, "unknown",
+            "commit_hash is hardcoded \"unknown\" (build::SHORT_COMMIT) instead of the real short commit"
+        );
+        assert_ne!(
+            version.branch, "unknown",
+            "branch is hardcoded \"unknown\" (build::BRANCH) instead of the real git branch"
+        );
+        assert_ne!(
+            version.build_timestamp, "unknown",
+            "build_timestamp is hardcoded \"unknown\" (build::BUILD_TIME_3339) instead of a real RFC3339 timestamp"
+        );
+        assert!(
+            !runtime_is_dirty(),
+            "runtime_is_dirty() is unconditionally true because build::GIT_CLEAN is hardcoded false"
+        );
+    }
+}

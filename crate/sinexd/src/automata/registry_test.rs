@@ -281,3 +281,18 @@ async fn registered_automata_are_bridge_repairable() -> TestResult<()> {
     assert!(!checked.is_empty(), "automata registry must not be empty");
     Ok(())
 }
+
+#[test]
+#[ignore = "sinex-08un open: manages_own_continuous_loop is capability-negotiated in AutomatonRuntimeContract and gates a real branch in automaton_runtime.rs, but every registered automaton hardcodes it false (via the generic adapter) -- the true branch (module-owned scan loop) is structurally dead code, never exercised by any registered automaton or test"]
+fn at_least_one_automaton_should_exercise_the_manages_own_continuous_loop_branch() {
+    let any_self_managed = AUTOMATA
+        .iter()
+        .any(|spec| (spec.contract)().manages_own_continuous_loop);
+
+    assert!(
+        any_self_managed,
+        "manages_own_continuous_loop is true for zero of {} registered automata -- \
+         the self-managed-loop branch in automaton_runtime.rs is unreachable in production",
+        AUTOMATA.len()
+    );
+}
