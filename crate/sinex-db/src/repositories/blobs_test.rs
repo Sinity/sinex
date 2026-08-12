@@ -210,3 +210,50 @@ async fn concurrent_material_registration_race_never_orphans_deleted_blob(
 
     Ok(())
 }
+
+/// sinex-ldyx (finding #1): the blake3 INSERT branch in `insert_with_executor`
+/// only arbitrates `ON CONFLICT (checksum_blake3)`, but `core.blobs` also
+/// carries a second unique index, `uk_blobs_annex_backend_content_hash`
+/// (`annex_backend`, `content_hash`), that this branch does not guard at
+/// all. Re-inserting content already stored WITHOUT a blake3 checksum, this
+/// time WITH one computed, hits the unguarded second index and raises a raw
+/// `23505` instead of being handled gracefully like the checksum_blake3
+/// conflict path.
+#[sinex_test]
+#[ignore = "sinex-ldyx open: the blake3 INSERT branch only arbitrates ON CONFLICT \
+            (checksum_blake3), leaving uk_blobs_annex_backend_content_hash unguarded -- a \
+            same-content re-insert that newly carries a blake3 checksum hits a raw 23505 \
+            instead of updating the existing row"]
+async fn reinserting_with_newly_computed_blake3_does_not_raise_raw_conflict(
+    ctx: TestContext,
+) -> TestResult<()> {
+    let repo = ctx.pool.blobs();
+
+    let without_blake3 = Blob::builder()
+        .storage_backend("SHA256E".to_string())
+        .content_hash("ldyx-shared-content-hash".to_string())
+        .original_filename("ldyx-annex-collision.bin".to_string())
+        .size_bytes(4)
+        .mime_type("application/octet-stream".to_string())
+        .build();
+    repo.insert(without_blake3).await?;
+
+    let with_blake3 = Blob::builder()
+        .storage_backend("SHA256E".to_string())
+        .content_hash("ldyx-shared-content-hash".to_string())
+        .original_filename("ldyx-annex-collision.bin".to_string())
+        .size_bytes(4)
+        .mime_type("application/octet-stream".to_string())
+        .checksum_blake3("ldyx-newly-computed-blake3".to_string())
+        .build();
+
+    let result = repo.insert(with_blake3).await;
+    assert!(
+        result.is_ok(),
+        "re-inserting the same (annex_backend, content_hash) with a newly-computed blake3 \
+         checksum should update the existing row, not raise a raw unique-violation from the \
+         unguarded uk_blobs_annex_backend_content_hash index: {result:?}"
+    );
+
+    Ok(())
+}

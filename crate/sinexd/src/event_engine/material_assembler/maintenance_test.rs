@@ -8,6 +8,59 @@ use tokio::time::{Duration, timeout};
 use xtask::sandbox::prelude::*;
 
 #[sinex_test]
+#[ignore = "sinex-x6sk open: a Completed material stuck with total_bytes=NULL (finalizing UPDATE \
+            never ran) has no reconciliation path -- reconcile_orphaned_sensing_materials only \
+            handles status=Sensing rows"]
+async fn orphan_reconcile_does_not_repair_completed_material_stuck_with_null_total_bytes(
+    ctx: TestContext,
+) -> TestResult<()> {
+    // sinex-x6sk: register_material (the only production INSERT path) never
+    // accepts total_bytes -- the row is immediately status=Completed with
+    // total_bytes=NULL, and callers that know the byte size finalize it via
+    // a SEPARATE, non-transactional raw sqlx::query! UPDATE afterward
+    // (ops/media.rs, sources.rs, ops.rs::register_email_staged_material). If
+    // that UPDATE never runs (handler crash, request abort), the material is
+    // permanently mis-scored as anchor-unstable
+    // (ContinuityScorecard::from_material_facts treats total_bytes.is_none()
+    // as "still sensing"), and nothing reconciles it --
+    // reconcile_orphaned_sensing_materials only handles status=Sensing rows.
+    let ctx = ctx.with_nats().shared().await?;
+    let (assembler, _content_store_dir, _state_dir) =
+        super::super::test_support::TestAssemblerBuilder::new("x6sk-orphan-total-bytes")
+            .slice_timeout_secs(3_600)
+            .build(&ctx)
+            .await?;
+
+    let material = sinex_db::repositories::SourceMaterial::file("x6sk-orphan-material.bin");
+    let record = ctx
+        .pool
+        .source_materials()
+        .register_material(material)
+        .await?;
+    assert_eq!(record.status, MaterialStatus::Completed);
+    assert!(record.total_bytes.is_none());
+
+    assembler.reconcile_orphaned_sensing_materials().await?;
+
+    let after = ctx
+        .pool
+        .source_materials()
+        .get_by_id(Id::from_uuid(record.id))
+        .await?
+        .expect("material should still exist");
+
+    assert!(
+        after.total_bytes.is_some(),
+        "sinex-x6sk: a Completed material with total_bytes still NULL after finalization has \
+         no reconciliation path -- reconcile_orphaned_sensing_materials only handles \
+         status=Sensing rows, so this permanently mis-scored anchor-unstable state is never \
+         repaired"
+    );
+
+    Ok(())
+}
+
+#[sinex_test]
 async fn end_before_begin_without_slices_short_timeouts(ctx: TestContext) -> TestResult<()> {
     let ctx = ctx.with_nats().shared().await?;
     let (assembler, _content_store_dir, _state_dir) =
