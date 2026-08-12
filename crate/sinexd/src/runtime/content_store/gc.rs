@@ -18,7 +18,7 @@ use sqlx::PgPool;
 use time::Duration;
 use tracing::warn;
 
-use super::{MaterialContentStore, UnusedContentEntry};
+use super::{LOCAL_BLAKE3_CAS_BACKEND, MaterialContentStore, UnusedContentEntry};
 
 /// Counts produced by a single sweep pass.
 #[derive(Debug, Clone, Copy, Default, Serialize, PartialEq, Eq)]
@@ -180,20 +180,32 @@ pub async fn sweep_orphans_detailed(
     apply: bool,
 ) -> RuntimeResult<(BlobGcReport, Vec<UnusedContentEntry>)> {
     if !content_store.config.legacy_annex_enabled {
-        let (cas_report, _) = super::cas_fsck::check_cas(pool, content_store, apply).await?;
+        let (cas_report, statuses) =
+            super::cas_fsck::check_cas(pool, content_store, apply).await?;
         let report = BlobGcReport {
             total_unused: cas_report.orphaned,
             db_backed: cas_report.referenced,
             orphaned: cas_report.orphaned,
             dropped: cas_report.removed,
         };
-        // Convert CasFileStatus entries to UnusedContentEntry for CLI rendering.
-        // We don't have numbered entries here — supply 0 as placeholder.
-        let unused_entries: Vec<UnusedContentEntry> = cas_report
-            .orphaned
-            .checked_div(1)
-            .map(|_| Vec::new()) // We don't have UnusedContentEntry from CAS; return empty
-            .unwrap_or_default();
+        // Preserve the actual orphan identities for dry-run inspection.
+        let unused_entries = statuses
+            .into_iter()
+            .filter(|status| matches!(status.status, super::CasStatus::Orphaned))
+            .enumerate()
+            .filter_map(|(index, status)| {
+                let key = format!(
+                    "{LOCAL_BLAKE3_CAS_BACKEND}-s{}--{}",
+                    status.size_bytes, status.hash
+                );
+                super::ContentStoreKey::parse(&key)
+                    .ok()
+                    .map(|key| UnusedContentEntry {
+                        number: u32::try_from(index + 1).unwrap_or(u32::MAX),
+                        key,
+                    })
+            })
+            .collect();
         return Ok((report, unused_entries));
     }
 

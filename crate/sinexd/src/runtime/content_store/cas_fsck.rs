@@ -15,6 +15,7 @@ use crate::runtime::{RuntimeResult, SinexError};
 use serde::{Deserialize, Serialize};
 use sqlx::PgPool;
 use std::collections::HashSet;
+use std::time::{Duration as StdDuration, SystemTime};
 
 use super::{LOCAL_BLAKE3_CAS_BACKEND, LOCAL_BLAKE3_CAS_DIR, MaterialContentStore};
 
@@ -67,7 +68,11 @@ pub struct CasFsckReport {
     pub removed: usize,
     /// Total bytes of orphaned content identified.
     pub orphaned_bytes: u64,
+    /// Orphaned files protected by the minimum age/grace period.
+    pub protected_recent: usize,
 }
+
+const CAS_ORPHAN_GRACE: StdDuration = StdDuration::from_secs(10 * 60);
 
 /// Run a CAS filesystem check.
 ///
@@ -84,6 +89,11 @@ pub async fn check_cas(
 
     // Build a set of known hashes from core.blobs for SINEXBLAKE3 entries
     let known_blake3_hashes = load_sinexblake3_hashes(pool).await?;
+    if apply && !entries.is_empty() && known_blake3_hashes.is_empty() {
+        return Err(SinexError::validation(
+            "refusing CAS orphan deletion because the paired database has no SINEXBLAKE3 rows",
+        ));
+    }
     let mut known_hash_set: HashSet<String> = HashSet::new();
     for (hash, _blob_id) in &known_blake3_hashes {
         known_hash_set.insert(hash.clone());
@@ -142,7 +152,19 @@ pub async fn check_cas(
             // Orphaned: on disk, not in DB
             report.orphaned += 1;
             report.orphaned_bytes += size;
-            if apply {
+            let is_recent = tokio::fs::metadata(path.as_std_path())
+                .await
+                .ok()
+                .and_then(|metadata| metadata.modified().ok())
+                .is_some_and(|modified| {
+                    SystemTime::now()
+                        .duration_since(modified)
+                        .is_ok_and(|age| age < CAS_ORPHAN_GRACE)
+                });
+            if is_recent {
+                report.protected_recent += 1;
+            }
+            if apply && !is_recent {
                 match tokio::fs::remove_file(path.as_str()).await {
                     Ok(()) => {
                         report.removed += 1;

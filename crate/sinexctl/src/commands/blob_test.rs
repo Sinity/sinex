@@ -26,6 +26,7 @@ fn fsck_summary() -> BlobFsckSummary {
         missing: 3,
         removed: 0,
         orphaned_bytes: 1024,
+        protected_recent: 0,
         details: Vec::new(),
     }
 }

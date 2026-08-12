@@ -204,6 +204,7 @@ struct BlobFsckSummary {
     missing: usize,
     removed: usize,
     orphaned_bytes: u64,
+    protected_recent: usize,
     details: Vec<CasFileDetail>,
 }
 
@@ -243,6 +244,7 @@ impl BlobFsckCommand {
             missing,
             removed,
             orphaned_bytes,
+            protected_recent,
         } = report;
 
         let details: Vec<CasFileDetail> = file_statuses
@@ -266,6 +268,7 @@ impl BlobFsckCommand {
             missing,
             removed,
             orphaned_bytes,
+            protected_recent,
             details,
         };
 
@@ -290,6 +293,10 @@ fn format_blob_fsck_summary(summary: &BlobFsckSummary) -> String {
     output.push_str(&format!(
         "  Orphaned bytes: {}\n",
         format_bytes(summary.orphaned_bytes)
+    ));
+    output.push_str(&format!(
+        "  Protected recent: {}\n",
+        summary.protected_recent
     ));
     output.push_str(&format!("  Corrupt: {}\n", summary.corrupt));
     output.push_str(&format!("  Malformed: {}\n", summary.malformed));
