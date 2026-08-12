@@ -22,7 +22,7 @@ use tokio::io::AsyncReadExt;
 use super::{
     ContentStoreKey, LOCAL_BLAKE3_CAS_BACKEND, LOCAL_BLAKE3_CAS_DIR, MaterialContentStore,
 };
-use crate::runtime::pacing::{PacingController, RateBudget};
+use crate::runtime::work_control::{WorkBudget, WorkCancellation, WorkController, WorkIdentity};
 
 /// Result of a single CAS file check.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -148,12 +148,17 @@ pub async fn check_cas_with_options(
     let mut report = CasFsckReport::default();
     let mut orphan_candidates = Vec::new();
     let mut present_hashes: HashSet<String> = HashSet::new();
-    let mut pacer = PacingController::new(RateBudget {
-        events_per_sec: None,
-        bytes_per_sec: options.verify_bytes_per_sec,
-        backlog_pause_threshold: None,
-        backlog_resume_threshold: None,
-    });
+    let mut work = WorkController::new(
+        WorkIdentity::ephemeral("cas-fsck", content_store.root_path().as_str()),
+        WorkBudget {
+            // The scan-level deadline below turns this into an incomplete,
+            // reportable pass; the controller owns rate/cancellation waits.
+            max_runtime: None,
+            bytes_per_sec: options.verify_bytes_per_sec,
+            ..WorkBudget::default()
+        },
+        WorkCancellation::new(),
+    );
 
     // Build a set of known hashes from core.blobs for SINEXBLAKE3 entries
     let known_blake3_hashes = load_sinexblake3_hashes(pool).await?;
@@ -215,7 +220,9 @@ pub async fn check_cas_with_options(
             match verify_cas_file_content(&path, &hash).await {
                 Ok((matches, bytes_read)) => {
                     report.bytes_verified = report.bytes_verified.saturating_add(bytes_read);
-                    pacer.record_and_throttle(1, bytes_read).await;
+                    work
+                        .record_batch("verify", 1, bytes_read, Some(path.to_string()))
+                        .await?;
                     if matches {
                         report.referenced += 1;
                         file_statuses.push(CasFileStatus {

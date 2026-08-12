@@ -75,6 +75,10 @@ pub mod systemd_notify;
 pub mod tags;
 pub mod version;
 pub mod watcher_handle;
+pub mod work_control;
+
+#[cfg(test)]
+mod work_control_test;
 
 pub use acquisition_manager::{
     AcquisitionManager, AppendStreamAcquirer, RotationPolicy, SOURCE_MATERIAL_BEGIN_SUBJECT,

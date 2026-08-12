@@ -120,6 +120,10 @@ use crate::runtime::acquisition_manager::{
     AcquisitionManager, AppendStreamAcquirer, RotationPolicy,
 };
 use crate::runtime::checkpoint::{CheckpointManager, CheckpointState};
+#[cfg(feature = "db")]
+use crate::runtime::content_store::{
+    ContentStoreConfig, ContentStoreManager, default_content_store_path,
+};
 use crate::runtime::durable_emission::{
     DurableEmissionRequest, EmissionOrigin, ProgressAtom, ReceiptLevel,
 };
@@ -690,11 +694,78 @@ where
         &mut self,
         replay: MaterialReplayContext,
     ) -> RuntimeResult<ScanReport> {
+        #[cfg(feature = "db")]
+        let content_store = {
+            let pool = self
+                .runtime
+                .as_ref()
+                .and_then(|runtime| runtime.handles().db_pool().cloned())
+                .ok_or_else(|| {
+                    crate::runtime::SinexError::configuration(
+                        "FileDrop replay requires a database-backed source-material CAS route",
+                    )
+                })?;
+            Arc::new(
+                ContentStoreManager::new(
+                    ContentStoreConfig {
+                        root_path: default_content_store_path(),
+                        ..Default::default()
+                    },
+                    pool,
+                    None,
+                )
+                .map_err(|error| {
+                    crate::runtime::SinexError::configuration(
+                        "FileDrop replay could not initialize the shared source-material CAS",
+                    )
+                    .with_source(error.to_string())
+                })?,
+            )
+        };
+        #[cfg(not(feature = "db"))]
+        return Err(crate::runtime::SinexError::configuration(
+            "FileDrop replay requires the database-backed source-material CAS route",
+        ));
+
         let start = Instant::now();
         let mut emitted: u64 = 0;
         let mut skipped: u64 = 0;
 
         for material in &replay.materials {
+            let material_bytes = {
+                #[cfg(feature = "db")]
+                {
+                    let pool = self
+                        .runtime
+                        .as_ref()
+                        .and_then(|runtime| runtime.handles().db_pool())
+                        .ok_or_else(|| {
+                            crate::runtime::SinexError::configuration(
+                                "FileDrop replay requires a database-backed source-material CAS route",
+                            )
+                        })?;
+                    crate::sources::parse_listener::load_material_bytes(
+                        pool,
+                        &content_store,
+                        material.source_material_id,
+                    )
+                    .await
+                    .map_err(|reason| {
+                        crate::runtime::SinexError::processing(
+                            "FileDrop replay could not load authoritative source-material bytes",
+                        )
+                        .with_context(
+                            "source_material_id",
+                            material.source_material_id.to_string(),
+                        )
+                        .with_context("reason", reason)
+                    })?
+                }
+                #[cfg(not(feature = "db"))]
+                {
+                    unreachable!("database-backed replay returned early above")
+                }
+            };
             let occurrences = replay
                 .occurrences
                 .iter()
@@ -716,14 +787,39 @@ where
                     skipped = skipped.saturating_add(1);
                     continue;
                 }
+                let (anchor, range) = file_drop_replay_range(
+                    material_bytes.len() as u64,
+                    occurrence,
+                )?;
+                let bytes = material_bytes
+                    .get(range)
+                    .ok_or_else(|| {
+                        crate::runtime::SinexError::invalid_state(
+                            "FileDrop replay occurrence range falls outside authoritative source-material bytes",
+                        )
+                        .with_context(
+                            "source_material_id",
+                            material.source_material_id.to_string(),
+                        )
+                        .with_context("anchor_byte", occurrence.anchor_byte.to_string())
+                        .with_context(
+                            "offset_start",
+                            occurrence
+                                .offset_start
+                                .map_or_else(|| "missing".to_string(), |value| value.to_string()),
+                        )
+                        .with_context(
+                            "offset_end",
+                            occurrence
+                                .offset_end
+                                .map_or_else(|| "missing".to_string(), |value| value.to_string()),
+                        )
+                    })?
+                    .to_vec();
                 let logical_path = metadata
                     .get("path")
                     .and_then(JsonValue::as_str)
                     .map(Utf8PathBuf::from);
-                let bytes = logical_path
-                    .as_ref()
-                    .map_or_else(Vec::new, |path| path.as_str().as_bytes().to_vec());
-                let anchor = file_drop_replay_anchor(bytes.len() as u64, occurrence)?;
 
                 let record = SourceRecord {
                     material_id: Id::from_uuid(material.source_material_id),
@@ -2598,7 +2694,7 @@ fn hash_anchor_key_to_i64(digest: &blake3::Hash) -> i64 {
 /// coordinates. FileDrop captures append several records into one material,
 /// so a directory path is not a substitute for the append-stream offset.
 fn file_drop_replay_anchor(
-    bytes_len: u64,
+    material_len: u64,
     occurrence: &crate::runtime::stream::ReplayMaterialOccurrence,
 ) -> RuntimeResult<MaterialAnchor> {
     let start = u64::try_from(occurrence.anchor_byte).map_err(|_| {
@@ -2607,7 +2703,12 @@ fn file_drop_replay_anchor(
         )
         .with_context("anchor_byte", occurrence.anchor_byte.to_string())
     })?;
-    let offset_start = occurrence.offset_start.unwrap_or(occurrence.anchor_byte);
+    let offset_start = occurrence.offset_start.ok_or_else(|| {
+        crate::runtime::SinexError::invalid_state(
+            "FileDrop replay occurrence is missing offset_start; cannot safely recover bytes",
+        )
+        .with_context("anchor_byte", occurrence.anchor_byte.to_string())
+    })?;
     if offset_start != occurrence.anchor_byte {
         return Err(crate::runtime::SinexError::invalid_state(
             "FileDrop replay occurrence offset_start disagrees with anchor_byte",
@@ -2616,17 +2717,17 @@ fn file_drop_replay_anchor(
         .with_context("offset_start", offset_start.to_string()));
     }
 
-    let default_end = start.saturating_add(bytes_len);
-    let end = occurrence
-        .offset_end
-        .map(u64::try_from)
-        .transpose()
-        .map_err(|_| {
-            crate::runtime::SinexError::invalid_state(
-                "FileDrop replay occurrence offset_end must be non-negative",
-            )
-        })?
-        .unwrap_or(default_end);
+    let end = occurrence.offset_end.ok_or_else(|| {
+        crate::runtime::SinexError::invalid_state(
+            "FileDrop replay occurrence is missing offset_end; cannot safely recover bytes",
+        )
+        .with_context("anchor_byte", occurrence.anchor_byte.to_string())
+    })?;
+    let end = u64::try_from(end).map_err(|_| {
+        crate::runtime::SinexError::invalid_state(
+            "FileDrop replay occurrence offset_end must be non-negative",
+        )
+    })?;
     let len = end.checked_sub(start).ok_or_else(|| {
         crate::runtime::SinexError::invalid_state(
             "FileDrop replay occurrence offset_end precedes anchor_byte",
@@ -2634,8 +2735,43 @@ fn file_drop_replay_anchor(
         .with_context("anchor_byte", occurrence.anchor_byte.to_string())
         .with_context("offset_end", end.to_string())
     })?;
+    if end > material_len {
+        return Err(crate::runtime::SinexError::invalid_state(
+            "FileDrop replay occurrence range exceeds authoritative source-material bytes",
+        )
+        .with_context("offset_end", end.to_string())
+        .with_context("material_len", material_len.to_string()));
+    }
 
     Ok(MaterialAnchor::ByteRange { start, len })
+}
+
+fn file_drop_replay_range(
+    material_len: u64,
+    occurrence: &crate::runtime::stream::ReplayMaterialOccurrence,
+) -> RuntimeResult<(MaterialAnchor, std::ops::Range<usize>)> {
+    let anchor = file_drop_replay_anchor(material_len, occurrence)?;
+    let MaterialAnchor::ByteRange { start, len } = anchor else {
+        return Err(crate::runtime::SinexError::invalid_state(
+            "FileDrop replay produced a non-byte anchor for a material-backed occurrence",
+        ));
+    };
+    let range_start = usize::try_from(start).map_err(|_| {
+        crate::runtime::SinexError::invalid_state(
+            "FileDrop replay occurrence start does not fit the host slice index",
+        )
+    })?;
+    let range_end = start.checked_add(len).ok_or_else(|| {
+        crate::runtime::SinexError::invalid_state(
+            "FileDrop replay occurrence range overflows",
+        )
+    })?;
+    let range_end = usize::try_from(range_end).map_err(|_| {
+        crate::runtime::SinexError::invalid_state(
+            "FileDrop replay occurrence end does not fit the host slice index",
+        )
+    })?;
+    Ok((anchor, range_start..range_end))
 }
 
 /// Convert a `ParsedEventIntent` to an `Event<JsonValue>`, overriding `anchor_byte`

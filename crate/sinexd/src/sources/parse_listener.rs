@@ -122,7 +122,7 @@ pub async fn spawn_parse_listener(
 /// row is missing, or whose content cannot be retrieved returns `Err`. The
 /// listener turns any `Err` into `SourceParseAck { accepted: false, .. }` so a
 /// parse-replay never silently "succeeds" with zero events on missing material.
-async fn load_material_bytes(
+pub(crate) async fn load_material_bytes(
     pool: &PgPool,
     content_store: &ContentStoreManager,
     material_id: Uuid,

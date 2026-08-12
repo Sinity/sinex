@@ -1,9 +1,13 @@
 use super::*;
 use crate::runtime::checkpoint::CheckpointManager;
-use crate::runtime::parser::adapters::{AppendOnlyCursor, ChainedCursor, SqliteRowCursor};
+use crate::runtime::content_store::{ContentStoreConfig, ContentStoreManager};
+use crate::runtime::parser::adapters::{
+    AppendOnlyCursor, ChainedCursor, FileDropAdapter, SqliteRowCursor,
+};
 use crate::runtime::parser::{InputShapeKind, ParserError, ParserResult, SourceRecord};
 use crate::runtime::stream::{
-    Checkpoint, ContinuousStart, EventEmitter, RuntimeHandles, ScanArgs, ServiceInfo, TimeHorizon,
+    Checkpoint, ContinuousStart, EventEmitter, ReplayMaterialOccurrence, ReplayScopeFilters,
+    ResolvedReplayMaterial, RuntimeHandles, ScanArgs, ServiceInfo, TimeHorizon,
 };
 use crate::runtime::{EventTransport, NatsPublisher, SOURCE_MATERIAL_STREAM};
 use async_trait::async_trait;
@@ -11,6 +15,7 @@ use camino::Utf8PathBuf;
 use futures::stream::{self, BoxStream};
 use sinex_db::DbPoolExt;
 use sinex_db::repositories::source_material_relation_types;
+use sinex_db::repositories::source_materials::SourceMaterial as SourceMaterialRegistration;
 use sinex_primitives::domain::{EventSource, EventType};
 use sinex_primitives::events::Event;
 use sinex_primitives::parser::{MaterialAnchor, ParserId, ParserManifest, SourceId};
@@ -23,7 +28,9 @@ use sinex_primitives::rpc::sources::{CaveatSeverity, caveat_codes};
 use sinex_primitives::{Bytes, HostName, JsonValue, Seconds, SinexError};
 use std::{collections::HashMap, sync::Arc};
 use tokio::sync::mpsc;
-use xtask::sandbox::prelude::{TestContext, TestResult, WaitHelpers, sinex_test};
+use xtask::sandbox::prelude::{
+    EnvGuard, TestContext, TestResult, WaitHelpers, sinex_serial_test, sinex_test,
+};
 
 #[derive(Default)]
 struct TestAdapter;
@@ -435,7 +442,10 @@ impl MaterialParser for EmittingParser {
                 .parser_version("1.0.0")
                 .event_type(EventType::from_static("test.event"))
                 .event_source(EventSource::from_static("test"))
-                .payload(serde_json::json!({"parsed": true}))
+                .payload(serde_json::json!({
+                    "parsed": true,
+                    "record_bytes": record.bytes,
+                }))
                 .ts_orig(ctx.acquisition_time)
                 .timing(sinex_primitives::parser::TimingEvidence::StagedAtFallback)
                 .anchor(record.anchor)
@@ -2413,8 +2423,8 @@ fn file_drop_replay_reuses_original_append_offsets() {
         record_metadata: json!({"event_kind": "Deleted", "path": "/tmp/two"}),
     };
 
-    let anchor_one = file_drop_replay_anchor(6, &occurrence_one).unwrap();
-    let anchor_two = file_drop_replay_anchor(8, &occurrence_two).unwrap();
+    let anchor_one = file_drop_replay_anchor(31, &occurrence_one).unwrap();
+    let anchor_two = file_drop_replay_anchor(31, &occurrence_two).unwrap();
     assert_eq!(
         anchor_one,
         MaterialAnchor::ByteRange { start: 17, len: 6 }
@@ -2449,6 +2459,26 @@ fn file_drop_replay_reuses_original_append_offsets() {
     assert_eq!(
         content_anchor,
         MaterialAnchor::ByteRange { start: 0, len: 42 }
+    );
+}
+
+#[test]
+fn file_drop_replay_fails_closed_without_durable_range_coordinates() {
+    let occurrence = crate::runtime::stream::ReplayMaterialOccurrence {
+        source_material_id: Uuid::nil(),
+        anchor_byte: 0,
+        offset_start: None,
+        offset_end: None,
+        record_metadata: json!({"event_kind": "Created", "path": "/tmp/missing"}),
+    };
+
+    let error = file_drop_replay_range(32, &occurrence)
+        .expect_err("replay must not guess a byte range from logical metadata");
+    assert!(
+        error
+            .to_string()
+            .contains("missing offset_start; cannot safely recover bytes"),
+        "unexpected error: {error}"
     );
 }
 
@@ -2507,6 +2537,144 @@ async fn file_drop_replay_anchor_matches_live_append_capture(
         ),
         "replay must reuse the append acquirer's exact coordinate space"
     );
+    Ok(())
+}
+
+#[sinex_serial_test]
+async fn file_drop_replay_reads_authoritative_cas_bytes_after_source_removed(
+    ctx: TestContext,
+) -> TestResult<()> {
+    let ctx = ctx.with_nats().shared().await?;
+    let (runtime, mut event_receiver) = make_adapter_runtime_with_db(&ctx).await?;
+
+    let _cas_dir = tempfile::tempdir()?;
+    let cas_root = Utf8PathBuf::from_path_buf(_cas_dir.path().to_path_buf()).map_err(|path| {
+        SinexError::validation("test CAS path should be valid UTF-8")
+            .with_context("path", path.display().to_string())
+    })?;
+    let mut env = EnvGuard::new();
+    env.set("SINEX_CONTENT_STORE_PATH", &cas_root);
+    let content_store = ContentStoreManager::new(
+        ContentStoreConfig {
+            root_path: cas_root,
+            ..Default::default()
+        },
+        ctx.pool().clone(),
+        None,
+    )?;
+
+    let source_root = tempfile::tempdir()?;
+    let source_path = source_root.path().join("original.txt");
+    tokio::fs::write(&source_path, b"path-derived bytes before mutation").await?;
+    let logical_path = Utf8PathBuf::from_path_buf(source_path.clone()).map_err(|path| {
+        SinexError::validation("test source path should be valid UTF-8")
+            .with_context("path", path.display().to_string())
+    })?;
+    let authoritative_bytes = b"authoritative bytes retained in CAS";
+    let blob = content_store
+        .ingest_from_bytes(authoritative_bytes, "original.txt", "text/plain")
+        .await?;
+    let material = ctx
+        .pool()
+        .source_materials()
+        .register_material(
+            SourceMaterialRegistration::blob_text(logical_path.as_str())
+                .with_blob_id(blob.id)
+                .with_metadata(json!({
+                    "path": logical_path,
+                    "logical_source_identifier": "file-drop-replay-test",
+                })),
+        )
+        .await?;
+
+    // Anti-vacuity mutation: the watched path is changed and then removed while
+    // the registry row and CAS object remain available to replay.
+    tokio::fs::write(&source_path, b"mutated path bytes that replay must ignore").await?;
+    tokio::fs::remove_file(&source_path).await?;
+
+    let mut source =
+        AdapterBackedSource::<FileDropAdapter, EmittingParser>::new("file-drop-replay-test");
+    let mut state = AdapterModuleState::default();
+    source
+        .initialize(
+            AdapterSourceConfig {
+                adapter: json!({"watch_paths": []}),
+                ..Default::default()
+            },
+            &runtime,
+            &mut state,
+        )
+        .await?;
+
+    let report = source
+        .scan_historical(
+            &mut state,
+            Checkpoint::None,
+            TimeHorizon::Historical {
+                end_time: Timestamp::now(),
+            },
+            ScanArgs {
+                replay: Some(MaterialReplayContext {
+                    operation_id: Uuid::now_v7(),
+                    materials: vec![ResolvedReplayMaterial {
+                        source_material_id: material.id,
+                        material_kind: "local_cas".to_string(),
+                        source_identifier: logical_path.to_string(),
+                        material_metadata: json!({"path": logical_path}),
+                        material_start_time: None,
+                        material_end_time: None,
+                    }],
+                    occurrences: vec![ReplayMaterialOccurrence {
+                        source_material_id: material.id,
+                        anchor_byte: 0,
+                        offset_start: Some(0),
+                        offset_end: Some(authoritative_bytes.len() as i64),
+                        record_metadata: json!({
+                            "event_kind": "Created",
+                            "path": logical_path,
+                        }),
+                    }],
+                    replay_scope: ReplayScopeFilters::default(),
+                }),
+                ..Default::default()
+            },
+        )
+        .await?;
+    let event = event_receiver
+        .recv()
+        .await
+        .ok_or_else(|| SinexError::processing("expected replayed file-drop event"))?;
+    let authoritative_hash = blake3::hash(authoritative_bytes);
+    let logical_path_hash = blake3::hash(logical_path.as_str().as_bytes());
+
+    assert_eq!(report.events_processed, 1);
+    assert_eq!(
+        event.payload["record_bytes"],
+        json!(authoritative_bytes.as_slice())
+    );
+    assert_eq!(
+        event.anchor_payload_hash.as_deref(),
+        Some(authoritative_hash.as_bytes().as_slice()),
+        "replay must hash the bytes loaded from authoritative CAS"
+    );
+    assert_ne!(
+        event.anchor_payload_hash.as_deref(),
+        Some(logical_path_hash.as_bytes().as_slice()),
+        "replay must never synthesize bytes from logical_path"
+    );
+    match event.provenance() {
+        sinex_primitives::events::Provenance::Material {
+            anchor_byte,
+            offset_start,
+            offset_end,
+            ..
+        } => {
+            assert_eq!(*anchor_byte, 0);
+            assert_eq!(*offset_start, Some(0));
+            assert_eq!(*offset_end, Some(authoritative_bytes.len() as i64));
+        }
+        other => panic!("expected material provenance, got {other:?}"),
+    }
     Ok(())
 }
 
