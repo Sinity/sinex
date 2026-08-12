@@ -114,3 +114,7 @@ impl MaterialParser for NotificationClosedParser {
         ])
     }
 }
+
+#[cfg(test)]
+#[path = "notification_closed_test.rs"]
+mod notification_closed_test;

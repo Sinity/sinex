@@ -68,7 +68,7 @@ async fn test_basic_stream_processing(ctx: TestContext) -> TestResult<()> {
     // Publish events
     for (i, event) in test_events.iter().enumerate() {
         let event_bytes = serde_json::to_vec(event)?;
-        let ack = jetstream.publish(subject, event_bytes.into()).await?;
+        let ack = jetstream.publish(subject.clone(), event_bytes.into()).await?;
         ack.await?;
 
         debug!(
@@ -90,7 +90,10 @@ async fn test_basic_stream_processing(ctx: TestContext) -> TestResult<()> {
                 let message = message?;
                 let event: serde_json::Value = serde_json::from_slice(&message.payload)?;
                 received_events.push(event);
-                message.ack().await?;
+                message
+                    .ack()
+                    .await
+                    .map_err(|e| color_eyre::eyre::eyre!(e.to_string()))?;
             }
         }
         Ok::<(), color_eyre::eyre::Error>(())
@@ -186,7 +189,7 @@ async fn test_multi_subject_stream_processing(ctx: TestContext) -> TestResult<()
     for (subject, event) in &test_cases {
         let event_bytes = serde_json::to_vec(event)?;
         let ack = jetstream
-            .publish(subject.as_str(), event_bytes.into())
+            .publish(subject.clone(), event_bytes.into())
             .await?;
         ack.await?;
 
@@ -227,7 +230,10 @@ async fn test_multi_subject_stream_processing(ctx: TestContext) -> TestResult<()
                     .or_insert_with(Vec::new)
                     .push(event);
 
-                message.ack().await?;
+                message
+                    .ack()
+                    .await
+                    .map_err(|e| color_eyre::eyre::eyre!(e.to_string()))?;
                 total_received += 1;
             }
         }
@@ -288,7 +294,7 @@ async fn test_consumer_group_processing(ctx: TestContext) -> TestResult<()> {
 
         let event_bytes = serde_json::to_vec(&event)?;
         let ack = jetstream
-            .publish(subject.as_str(), event_bytes.into())
+            .publish(subject.clone(), event_bytes.into())
             .await?;
         ack.await?;
     }
@@ -334,7 +340,10 @@ async fn test_consumer_group_processing(ctx: TestContext) -> TestResult<()> {
                     let message = message?;
                     let event: serde_json::Value = serde_json::from_slice(&message.payload)?;
                     received_messages.push(event);
-                    message.ack().await?;
+                    message
+                        .ack()
+                        .await
+                        .map_err(|e| color_eyre::eyre::eyre!(e.to_string()))?;
 
                     // Stop if we've got a reasonable share
                     if received_messages.len() >= event_count / consumer_count + 2 {
@@ -440,7 +449,7 @@ async fn test_ordered_stream_processing(ctx: TestContext) -> TestResult<()> {
 
         let event_bytes = serde_json::to_vec(&event)?;
         let ack = jetstream
-            .publish(subject.as_str(), event_bytes.into())
+            .publish(subject.clone(), event_bytes.into())
             .await?;
         ack.await?;
     }
@@ -472,7 +481,10 @@ async fn test_ordered_stream_processing(ctx: TestContext) -> TestResult<()> {
                 let event: serde_json::Value = serde_json::from_slice(&message.payload)?;
                 let sequence_number = event["sequence_number"].as_u64().unwrap() as usize;
                 received_sequence.push(sequence_number);
-                message.ack().await?;
+                message
+                    .ack()
+                    .await
+                    .map_err(|e| color_eyre::eyre::eyre!(e.to_string()))?;
             }
         }
         Ok::<(), color_eyre::eyre::Error>(())
@@ -535,7 +547,7 @@ async fn test_stream_error_handling(ctx: TestContext) -> TestResult<()> {
     for (i, event) in test_events.iter().enumerate() {
         let event_bytes = serde_json::to_vec(event)?;
         let ack = jetstream
-            .publish(subject.as_str(), event_bytes.into())
+            .publish(subject.clone(), event_bytes.into())
             .await?;
         ack.await?;
 
@@ -573,17 +585,26 @@ async fn test_stream_error_handling(ctx: TestContext) -> TestResult<()> {
                             processing_errors += 1;
                             // NACK or handle error (in real implementation)
                             // For test, we still ACK to avoid redelivery
-                            message.ack().await?;
+                            message
+                                .ack()
+                                .await
+                                .map_err(|e| color_eyre::eyre::eyre!(e.to_string()))?;
                         } else {
                             debug!(event = event_label(&event), "Successfully processed event");
                             successfully_processed += 1;
-                            message.ack().await?;
+                            message
+                                .ack()
+                                .await
+                                .map_err(|e| color_eyre::eyre::eyre!(e.to_string()))?;
                         }
                     }
                     Err(e) => {
                         warn!(error = %e, "Failed to parse event payload");
                         processing_errors += 1;
-                        message.ack().await?; // ACK to avoid infinite redelivery
+                        message
+                            .ack()
+                            .await
+                            .map_err(|e| color_eyre::eyre::eyre!(e.to_string()))?; // ACK to avoid infinite redelivery
                     }
                 }
             }

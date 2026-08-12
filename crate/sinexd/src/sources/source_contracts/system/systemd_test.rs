@@ -67,6 +67,36 @@ async fn test_systemd_parser_skips_non_unit_records() -> TestResult<()> {
     Ok(())
 }
 
+/// sinex-10ef open: same bug shape as journald.rs -- a missing/malformed
+/// `__REALTIME_TIMESTAMP` falls back to a fabricated `Timestamp::now()`, but
+/// the intent is still unconditionally tagged `TimingEvidence::Intrinsic`
+/// rather than `Atemporal`, bypassing deferred resolution via
+/// `raw.temporal_ledger`.
+#[sinex_test]
+#[ignore = "sinex-10ef open: systemd.rs tags a fabricated Timestamp::now() fallback as \
+            TimingEvidence::Intrinsic instead of Atemporal when __REALTIME_TIMESTAMP is \
+            missing/malformed, bypassing temporal_ledger-based deferred resolution"]
+async fn test_systemd_missing_realtime_timestamp_is_tagged_atemporal_not_intrinsic()
+-> TestResult<()> {
+    let mid = Id::<SourceMaterial>::new();
+    let line = r#"{"__CURSOR":"s=abc;i=9","_SYSTEMD_UNIT":"nginx.service","MESSAGE":"Started nginx.service."}"#;
+    let records = records_from_journal_lines(mid, &[line]);
+    let record = records[0].as_ref().unwrap().clone();
+
+    let mut parser = SystemdParser;
+    let ctx = make_ctx(mid);
+    let intents = parser.parse_record(record, &ctx).await?;
+
+    assert_eq!(intents.len(), 1);
+    assert_eq!(
+        intents[0].timing,
+        TimingEvidence::Atemporal,
+        "a fabricated Timestamp::now() fallback must be tagged Atemporal (deferred \
+         resolution via raw.temporal_ledger), not Intrinsic (trusted verbatim)"
+    );
+    Ok(())
+}
+
 #[sinex_test]
 async fn test_infer_unit_type() -> TestResult<()> {
     assert!(matches!(

@@ -346,3 +346,7 @@ pub fn check_path_depth(path: &Path, max_depth: Option<usize>) -> Result<()> {
     }
     Ok(())
 }
+
+#[cfg(test)]
+#[path = "file_watching_security_test.rs"]
+mod tests;

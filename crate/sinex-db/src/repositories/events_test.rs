@@ -1,3 +1,4 @@
+use std::collections::HashSet;
 use xtask::sandbox::sinex_test;
 // event_select_columns! is available in scope from the parent module
 
@@ -93,6 +94,55 @@ async fn no_extraneous_columns() -> TestResult<()> {
         "event_select_columns! column count ({count}) != declared count ({}). \
          Update EXPECTED_COLUMNS to match the macro.",
         EXPECTED_COLUMNS.len()
+    );
+    Ok(())
+}
+
+/// The other three tests in this file only compare `event_select_columns!()`
+/// against a second hardcoded list in this SAME file (sinex-0t6w) — a
+/// schema change that never touches this file (e.g. a bare `xtask schema
+/// apply` DDL edit) can silently desync the macro from the real
+/// `core.events` table with all three "drift guards" still green, since
+/// they never look at the database. This test is the one that actually
+/// looks: it queries `information_schema.columns` for the live table and
+/// asserts the macro's column set is exactly the real one.
+#[sinex_test]
+async fn event_select_columns_matches_live_core_events_schema(
+    ctx: xtask::sandbox::TestContext,
+) -> TestResult<()> {
+    let pool = ctx.pool.clone();
+    let rows = sqlx::query!(
+        r#"
+        SELECT column_name as "column_name!"
+        FROM information_schema.columns
+        WHERE table_schema = 'core' AND table_name = 'events'
+        "#
+    )
+    .fetch_all(&pool)
+    .await?;
+    let live_columns: HashSet<String> = rows.into_iter().map(|r| r.column_name).collect();
+
+    // event_select_columns! entries are either a bare column name or a cast
+    // expression like `source_material_id::uuid as source_material_id` — the
+    // real output column name is whatever comes after `as`, if present.
+    let cols: &str = event_select_columns!();
+    let macro_columns: HashSet<String> = cols
+        .split(',')
+        .map(|c| {
+            let c = c.trim();
+            match c.rsplit_once(" as ") {
+                Some((_, alias)) => alias.trim().to_string(),
+                None => c.to_string(),
+            }
+        })
+        .collect();
+
+    let missing_from_macro: Vec<&String> = live_columns.difference(&macro_columns).collect();
+    let missing_from_db: Vec<&String> = macro_columns.difference(&live_columns).collect();
+    assert!(
+        missing_from_macro.is_empty() && missing_from_db.is_empty(),
+        "event_select_columns! has drifted from the live core.events schema — \
+         in DB but not macro: {missing_from_macro:?}; in macro but not DB: {missing_from_db:?}"
     );
     Ok(())
 }

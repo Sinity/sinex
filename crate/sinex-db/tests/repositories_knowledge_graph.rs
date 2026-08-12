@@ -314,3 +314,146 @@ async fn merge_entities_idempotent(ctx: TestContext) -> TestResult<()> {
     );
     Ok(())
 }
+
+/// sinex-nri2: `core.entities.canonical_name` has a bare `UNIQUE` constraint
+/// with no `entity_type` in the key (crate/sinex-schema/src/defs/entities.rs).
+/// A person named "Apple" and an organization named "Apple" both normalize to
+/// the same canonical_name ("apple") and collide globally, even though they
+/// are genuinely different entities of different kinds.
+#[sinex_test]
+#[ignore = "sinex-nri2 open: canonical_name UNIQUE constraint has no entity_type in the key, so a person and organization with the same name collide globally"]
+async fn same_canonical_name_across_different_entity_kinds_does_not_collide(
+    ctx: TestContext,
+) -> TestResult<()> {
+    let repo = ctx.pool.knowledge_graph();
+
+    let person = repo
+        .create_entity(CreateEntity::person("Apple").with_canonical_name("apple"))
+        .await
+        .expect("creating the person entity should succeed");
+
+    let organization = repo
+        .create_entity(CreateEntity::organization("Apple").with_canonical_name("apple"))
+        .await;
+
+    assert!(
+        organization.is_ok(),
+        "a person named 'Apple' and an organization named 'Apple' collided on the \
+         globally-unique canonical_name constraint ({:?}) -- canonical_name should \
+         be unique per (entity_type, canonical_name), not globally across all kinds",
+        organization.err()
+    );
+    let organization = organization.unwrap();
+    assert_ne!(person.id, organization.id);
+    Ok(())
+}
+
+/// sinex-cmy: `create_entity_with_executor` defaults `confidence_score` to 1.0
+/// and `source_event_ids` to an empty vec when neither is supplied -- an
+/// entity created with ZERO evidence is stamped with MAXIMUM confidence,
+/// fabricating authority the caller never claimed.
+#[sinex_test]
+#[ignore = "sinex-cmy open: entity creation with no source_event_ids defaults confidence_score to 1.0 instead of reflecting the absence of evidence"]
+async fn entity_with_no_source_events_does_not_default_to_full_confidence(
+    ctx: TestContext,
+) -> TestResult<()> {
+    let repo = ctx.pool.knowledge_graph();
+
+    // Deliberately supply neither confidence_score nor source_event_ids.
+    let entity = repo
+        .create_entity(CreateEntity::person("Evidence-Free Person"))
+        .await?;
+
+    assert!(
+        entity.source_event_ids.is_empty(),
+        "sanity: this entity really has no source events"
+    );
+    assert_ne!(
+        entity.confidence_score, 1.0,
+        "an entity created with zero source_event_ids was stamped confidence_score=1.0 \
+         (maximum confidence) -- this fabricates evidentiary authority the caller never \
+         provided, exactly the pattern curation.rs's own doctrine says consumers must not \
+         trust ('consumers must not treat co-occurrence as ground truth')"
+    );
+    Ok(())
+}
+
+/// sinex-6t5h: `ix_entities_merged` is a UNIQUE index on `merged_into_id`
+/// (WHERE is_merged) -- see crate/sinex-schema/src/defs/entities.rs:215.
+/// That means at most ONE entity can ever be merged into a given target.
+/// Merging a second, DIFFERENT duplicate entity into the same already-live
+/// target must be a normal, expected operation (deduping 3+ occurrences of
+/// the same real-world entity down to one canonical row) but the unique
+/// index blocks it with a constraint violation, aborting the transaction.
+#[sinex_test]
+#[ignore = "sinex-6t5h open: a second distinct source merged into an already-used target hits the ix_entities_merged unique-index violation and aborts"]
+async fn merge_entities_allows_a_second_distinct_source_into_the_same_target(
+    ctx: TestContext,
+) -> TestResult<()> {
+    let repo = ctx.pool.knowledge_graph();
+    let source_a = repo.create_entity(CreateEntity::person("dup-a")).await?;
+    let source_b = repo.create_entity(CreateEntity::person("dup-b")).await?;
+    let target = repo
+        .create_entity(CreateEntity::person("canonical"))
+        .await?;
+
+    repo.merge_entities(source_a.id, target.id).await?;
+
+    let second_merge = repo.merge_entities(source_b.id, target.id).await;
+    assert!(
+        second_merge.is_ok(),
+        "sinex-6t5h: merging a second distinct duplicate entity into an already-used target \
+         must succeed (real-world dedup routinely collapses 3+ occurrences into one canonical \
+         entity) -- got {second_merge:?}"
+    );
+    Ok(())
+}
+
+/// sinex-pift: `find_paths`'s recursive CTE guards against reusing the same
+/// relation *id* (`NOT rel.id::uuid = ANY(path.relation_ids)`) but never
+/// against revisiting the same *node*. On a graph with a 2-cycle backed by
+/// two distinct forward edges (B->C twice) and one back edge (C->B), a path
+/// from A to C can legally re-enter B via distinct edge ids, producing a
+/// second, longer path that revisits B -- something a normal "paths between
+/// two entities" query should treat as non-simple and exclude.
+#[sinex_test]
+#[ignore = "sinex-pift open: find_paths guards edge-id reuse only, not node revisits, so cyclic distinct-edge graphs surface non-simple paths"]
+async fn find_paths_excludes_paths_that_revisit_a_node(ctx: TestContext) -> TestResult<()> {
+    let repo = ctx.pool.knowledge_graph();
+
+    let a = repo.create_entity(CreateEntity::person("pift-a")).await?;
+    let b = repo.create_entity(CreateEntity::person("pift-b")).await?;
+    let c = repo.create_entity(CreateEntity::person("pift-c")).await?;
+
+    repo.create_relation(CreateEntityRelation::new(a.id, b.id, "knows"))
+        .await?;
+    // Two DISTINCT edges B->C (different relation_type, since (from, to,
+    // relation_type) is unique) plus a back edge C->B, forming a cycle with
+    // no repeated edge id.
+    repo.create_relation(CreateEntityRelation::new(b.id, c.id, "knows"))
+        .await?;
+    repo.create_relation(CreateEntityRelation::new(c.id, b.id, "knows"))
+        .await?;
+    repo.create_relation(CreateEntityRelation::new(b.id, c.id, "collaborated_with"))
+        .await?;
+
+    let paths = repo.find_paths(a.id, c.id, 5).await?;
+
+    for path in &paths {
+        let mut visited = vec![a.id];
+        for hop in path {
+            visited.push(hop.to_entity_id);
+        }
+        let mut sorted = visited.clone();
+        sorted.sort_by_key(|id| *id.as_uuid());
+        sorted.dedup();
+        assert_eq!(
+            sorted.len(),
+            visited.len(),
+            "sinex-pift: found a non-simple path (length {}) that revisits a node between A and \
+             C -- find_paths must only return simple (node-disjoint) paths",
+            path.len()
+        );
+    }
+    Ok(())
+}

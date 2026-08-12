@@ -59,8 +59,7 @@ async fn opt_in_rules_actually_exist() -> ::xtask::sandbox::TestResult<()> {
 }
 
 #[sinex_test]
-async fn builtin_seed_projection_is_explicit_db_policy_data() -> ::xtask::sandbox::TestResult<()>
-{
+async fn builtin_seed_projection_is_explicit_db_policy_data() -> ::xtask::sandbox::TestResult<()> {
     let rules = builtin_policy_seed_rules(false);
     let aws = rules
         .iter()
@@ -89,8 +88,8 @@ async fn builtin_seed_projection_is_explicit_db_policy_data() -> ::xtask::sandbo
 }
 
 #[sinex_test]
-async fn aggressive_path_rule_replaces_collapse_when_opted_in()
--> ::xtask::sandbox::TestResult<()> {
+async fn aggressive_path_rule_replaces_collapse_when_opted_in() -> ::xtask::sandbox::TestResult<()>
+{
     // Document the operator-facing pattern: turning on the aggressive
     // variant and turning off the soft variant produces hashed output
     // for $HOME paths instead of `<HOME>/...` collapse.
@@ -257,6 +256,36 @@ async fn openai_key_uses_suppress_strategy() -> ::xtask::sandbox::TestResult<()>
         matches!(rule.strategy, Strategy::Suppress),
         "OpenAI API key should be suppressed, got {:?}",
         rule.strategy
+    );
+    Ok(())
+}
+
+#[sinex_test]
+#[ignore = "sinex-2hgc open: policy_seed_rule silently drops rules with unsupported matcher shapes (Matcher::All/Any) instead of erroring or logging -- filter_map swallows the None with no operator-visible signal"]
+async fn builtin_policy_seed_rules_does_not_silently_drop_unsupported_matcher_shapes()
+-> ::xtask::sandbox::TestResult<()> {
+    // A rule using Matcher::Any is a real, supported catalog matcher shape
+    // (used by builtin_rules() itself elsewhere), but policy_seed_rule has no
+    // case for it -- it falls through to `Matcher::All(_) | Matcher::Any(_) => return None`.
+    let unsupported_rule = PatternRule {
+        name: "test-any-matcher".into(),
+        description: "regression fixture for sinex-2hgc".into(),
+        category: RuleCategory::Custom,
+        matcher: Matcher::Any(vec![Matcher::Literal {
+            text: "x".into(),
+            case_sensitive: false,
+        }]),
+        strategy: Strategy::Redact { label: None },
+        contexts: Vec::new(),
+        enabled: true,
+    };
+
+    let seeded = policy_seed_rule(unsupported_rule, true);
+
+    assert!(
+        seeded.is_some(),
+        "policy_seed_rule silently dropped a Matcher::Any rule with no error/log/count signal -- \
+         seeding should either support this matcher shape or surface the omission, not silently return None"
     );
     Ok(())
 }

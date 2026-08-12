@@ -7,14 +7,16 @@ use sinex_primitives::{
     event_contracts::SHELL_HISTORY_COMMAND_IMPORTED_CONTRACT_ID,
     events::Event,
     events::admission::EventIntent,
-    events::payloads::{ActivityDailySummaryPayload, ActivityHourlySummaryPayload, StateIntervalPayload},
+    events::payloads::{
+        ActivityDailySummaryPayload, ActivityHourlySummaryPayload, StateIntervalPayload,
+    },
 };
-use std::collections::BTreeMap;
 use sinexd::event_engine::{
     AdmissionDecision, AdmissionRejection, AdmissionRejectionKind, AdmissionService, AdmittedEvent,
     CandidateEvent, CandidateEventMetadata, IngestEventValidator,
 };
 use sqlx::Row;
+use std::collections::BTreeMap;
 use std::sync::Arc;
 use tokio::sync::RwLock;
 use xtask::sandbox::prelude::*;
@@ -261,9 +263,65 @@ async fn admission_service_rejects_direct_negative_anchor(ctx: TestContext) -> T
     match service.admit_event(event).await? {
         AdmissionDecision::Rejected(rejection) => {
             assert_eq!(rejection.kind, AdmissionRejectionKind::NegativeAnchor);
+            // sinex-tpv9: the id is genuinely known at this point (the caller
+            // already stamped it above); the rejection must carry it so
+            // operators can trace which event was dropped, instead of
+            // rejecting silently with event_id: None.
+            assert_eq!(
+                rejection.event_id,
+                Some(event_id),
+                "negative-anchor rejection must carry the known event_id (sinex-tpv9)"
+            );
         }
         AdmissionDecision::Admitted(_) => panic!("negative anchor should be rejected"),
         other => panic!("unexpected negative-anchor admission decision: {other:?}"),
+    }
+
+    let persisted = ctx
+        .pool
+        .events()
+        .get_by_id(Id::<Event>::from_uuid(event_id))
+        .await?;
+    assert!(persisted.is_none());
+
+    Ok(())
+}
+
+#[sinex_test]
+async fn admission_service_rejects_future_timestamp_with_event_id(
+    ctx: TestContext,
+) -> TestResult<()> {
+    let material_id = ctx
+        .create_source_material(Some("admission-future-timestamp"))
+        .await?;
+    let event_id = Uuid::now_v7();
+    let mut event = DynamicPayload::new(
+        "admission-test",
+        "future.timestamp",
+        serde_json::json!({ "ok": false }),
+    )
+    .from_material_at(material_id, 0)
+    .build()?
+    .to_json_event()?;
+    event.id = Some(Id::from_uuid(event_id));
+    event.ts_orig = Some(Timestamp::now() + time::Duration::days(3650));
+
+    let service = admission_service(&ctx);
+
+    match service.admit_event(event).await? {
+        AdmissionDecision::Rejected(rejection) => {
+            assert_eq!(rejection.kind, AdmissionRejectionKind::FutureTimestamp);
+            // sinex-tpv9: the id is genuinely known at this point; the
+            // rejection must carry it so operators can trace which event was
+            // dropped, instead of rejecting silently with event_id: None.
+            assert_eq!(
+                rejection.event_id,
+                Some(event_id),
+                "future-timestamp rejection must carry the known event_id (sinex-tpv9)"
+            );
+        }
+        AdmissionDecision::Admitted(_) => panic!("implausibly future ts_orig should be rejected"),
+        other => panic!("unexpected future-timestamp admission decision: {other:?}"),
     }
 
     let persisted = ctx
@@ -588,7 +646,9 @@ async fn admit_and_persist(
 async fn supersede_on_change_changed_content_returns_superseded(
     ctx: TestContext,
 ) -> TestResult<()> {
-    let material_id = ctx.create_source_material(Some("n9a-supersede-changed")).await?;
+    let material_id = ctx
+        .create_source_material(Some("n9a-supersede-changed"))
+        .await?;
     let ts = Timestamp::now();
     let key = "n9a-supersede-changed-key".to_string();
     let service = admission_service(&ctx);
@@ -636,7 +696,9 @@ async fn supersede_on_change_changed_content_returns_superseded(
 
 #[sinex_test]
 async fn supersede_on_change_identical_content_suppresses(ctx: TestContext) -> TestResult<()> {
-    let material_id = ctx.create_source_material(Some("n9a-supersede-identical")).await?;
+    let material_id = ctx
+        .create_source_material(Some("n9a-supersede-identical"))
+        .await?;
     let ts = Timestamp::now();
     let key = "n9a-supersede-identical-key".to_string();
     let service = admission_service(&ctx);
@@ -679,7 +741,9 @@ async fn suppress_duplicate_type_changed_content_still_suppresses(
 ) -> TestResult<()> {
     // A type that did NOT opt into SupersedeOnChange keeps the pre-n9a
     // behavior: any live row on the same key suppresses, even changed content.
-    let material_id = ctx.create_source_material(Some("n9a-suppress-default")).await?;
+    let material_id = ctx
+        .create_source_material(Some("n9a-suppress-default"))
+        .await?;
     let key = "n9a-suppress-default-key".to_string();
     let service = admission_service(&ctx);
 
@@ -778,7 +842,9 @@ fn hourly_summary_payload(ts: Timestamp, hour_id: &str, event_count: u64) -> Jso
 async fn daily_summary_supersede_on_change_changed_content_returns_superseded(
     ctx: TestContext,
 ) -> TestResult<()> {
-    let material_id = ctx.create_source_material(Some("74yj-daily-supersede-changed")).await?;
+    let material_id = ctx
+        .create_source_material(Some("74yj-daily-supersede-changed"))
+        .await?;
     let ts = Timestamp::now();
     let day_id = "activity-day-74yj-changed".to_string();
     let key = day_id.clone();
@@ -834,7 +900,9 @@ async fn daily_summary_supersede_on_change_changed_content_returns_superseded(
 async fn daily_summary_supersede_on_change_identical_content_suppresses(
     ctx: TestContext,
 ) -> TestResult<()> {
-    let material_id = ctx.create_source_material(Some("74yj-daily-supersede-identical")).await?;
+    let material_id = ctx
+        .create_source_material(Some("74yj-daily-supersede-identical"))
+        .await?;
     let ts = Timestamp::now();
     let day_id = "activity-day-74yj-identical".to_string();
     let key = day_id.clone();
@@ -878,7 +946,9 @@ async fn daily_summary_supersede_on_change_identical_content_suppresses(
 async fn hourly_summary_supersede_on_change_changed_content_returns_superseded(
     ctx: TestContext,
 ) -> TestResult<()> {
-    let material_id = ctx.create_source_material(Some("74yj-hourly-supersede-changed")).await?;
+    let material_id = ctx
+        .create_source_material(Some("74yj-hourly-supersede-changed"))
+        .await?;
     let ts = Timestamp::now();
     let hour_id = "activity-hour-74yj-changed".to_string();
     let key = hour_id.clone();
@@ -934,12 +1004,14 @@ async fn hourly_summary_supersede_on_change_changed_content_returns_superseded(
 // a larger value is the genuine growth a heartbeat produces.
 
 fn window_active_payload(duration_ms: u64) -> JsonValue {
-    serde_json::to_value(sinex_primitives::events::payloads::ActivityWatchWindowActivePayload {
-        app: "kitty".to_string(),
-        title: "sinex-h3g".to_string(),
-        duration_ms,
-        bucket_id: "aw-watcher-window_test-host".to_string(),
-    })
+    serde_json::to_value(
+        sinex_primitives::events::payloads::ActivityWatchWindowActivePayload {
+            app: "kitty".to_string(),
+            title: "sinex-h3g".to_string(),
+            duration_ms,
+            bucket_id: "aw-watcher-window_test-host".to_string(),
+        },
+    )
     .expect("window.active payload serializes")
 }
 
@@ -954,7 +1026,9 @@ fn window_active_payload(duration_ms: u64) -> JsonValue {
 async fn activitywatch_window_active_supersede_on_change_grown_duration_returns_superseded(
     ctx: TestContext,
 ) -> TestResult<()> {
-    let material_id = ctx.create_source_material(Some("h3g-aw-supersede-grown")).await?;
+    let material_id = ctx
+        .create_source_material(Some("h3g-aw-supersede-grown"))
+        .await?;
     let key = "desktop.activitywatch|bucket_id=aw-watcher-window_test-host|event_timestamp=2026-07-01T00:00:00Z".to_string();
     let service = admission_service(&ctx);
 
@@ -1013,7 +1087,9 @@ async fn activitywatch_window_active_supersede_on_change_grown_duration_returns_
 async fn activitywatch_window_active_supersede_on_change_unmodified_reread_suppresses(
     ctx: TestContext,
 ) -> TestResult<()> {
-    let material_id = ctx.create_source_material(Some("h3g-aw-supersede-identical")).await?;
+    let material_id = ctx
+        .create_source_material(Some("h3g-aw-supersede-identical"))
+        .await?;
     let key = "desktop.activitywatch|bucket_id=aw-watcher-window_test-host|event_timestamp=2026-07-01T00:05:00Z".to_string();
     let service = admission_service(&ctx);
 

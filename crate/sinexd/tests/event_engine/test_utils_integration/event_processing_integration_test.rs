@@ -84,7 +84,7 @@ async fn test_process_lifecycle_events(ctx: TestContext) -> TestResult<()> {
         "version": version,
         "git_revision": "abc123",
         "binary_hash": "def456",
-        "build_time": Utc::now(),
+        "build_time": time::OffsetDateTime::now_utc().to_string(),
         "config_hash": "ghi789"
     });
     let _started_event = ctx
@@ -221,7 +221,7 @@ async fn test_process_heartbeat_with_custom_metrics(ctx: TestContext) -> TestRes
 
     // Create heartbeat with custom metrics
     let custom_metrics = {
-        let mut metrics = HashMap::new();
+        let mut metrics = std::collections::HashMap::new();
         metrics.insert("queue_size".to_string(), json!(25));
         metrics.insert("active_connections".to_string(), json!(8));
         metrics.insert("cache_hit_rate".to_string(), json!(0.85));
@@ -300,7 +300,7 @@ async fn test_health_aggregator_process_discovery(ctx: TestContext) -> TestResul
             "version": "1.0.0",
             "git_revision": "abc123",
             "binary_hash": "def456",
-            "build_time": Utc::now(),
+            "build_time": time::OffsetDateTime::now_utc().to_string(),
             "config_hash": "ghi789"
         });
 
@@ -351,7 +351,7 @@ async fn test_health_aggregator_process_discovery(ctx: TestContext) -> TestResul
         ORDER BY payload->>'process_name', ts_orig DESC
         "#
     )
-    .fetch_all(ctx.pool.as_ref())
+    .fetch_all(&ctx.pool)
     .await?;
 
     assert_eq!(health_data.len(), 4, "Should find all 4 processes");
@@ -410,7 +410,7 @@ async fn test_process_failure_detection(ctx: TestContext) -> TestResult<()> {
         "version": version,
         "git_revision": "abc123",
         "binary_hash": "def456",
-        "build_time": Utc::now(),
+        "build_time": time::OffsetDateTime::now_utc().to_string(),
         "config_hash": "ghi789"
     });
     let _started_event = ctx
@@ -443,7 +443,7 @@ async fn test_process_failure_detection(ctx: TestContext) -> TestResult<()> {
 
     // Simulate degraded state
     let degraded_custom_metrics = {
-        let mut metrics = HashMap::new();
+        let mut metrics = std::collections::HashMap::new();
         metrics.insert("health_status".to_string(), json!("degraded"));
         metrics.insert("error_count".to_string(), json!(5));
         metrics
@@ -470,7 +470,7 @@ async fn test_process_failure_detection(ctx: TestContext) -> TestResult<()> {
 
     // Simulate critical state
     let critical_custom_metrics = {
-        let mut metrics = HashMap::new();
+        let mut metrics = std::collections::HashMap::new();
         metrics.insert("health_status".to_string(), json!("critical"));
         metrics.insert("error_count".to_string(), json!(15));
         metrics.insert(
@@ -650,13 +650,15 @@ async fn test_high_frequency_heartbeats(ctx: TestContext) -> TestResult<()> {
             .as_ref()
             .expect("id present")
             .as_uuid()
-            .timestamp();
+            .get_timestamp()
+            .map(|ts| ts.to_unix());
         let curr_ts = heartbeat_events[i]
             .id
             .as_ref()
             .expect("id present")
             .as_uuid()
-            .timestamp();
+            .get_timestamp()
+            .map(|ts| ts.to_unix());
         assert!(
             curr_ts >= prev_ts,
             "Heartbeats should be chronologically ordered"

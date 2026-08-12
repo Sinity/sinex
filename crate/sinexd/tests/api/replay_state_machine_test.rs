@@ -715,6 +715,90 @@ async fn recover_stale_executing_clears_executor_module(ctx: TestContext) -> Res
     Ok(())
 }
 
+/// sinex-1u9c: `recover_stale_replay_operations` runs exactly once, at
+/// `ServiceContainer::new`, with a 10-minute staleness threshold
+/// (service_container.rs `STALE_EXECUTING_THRESHOLD`). At that exact call
+/// site no replay can possibly be in flight yet (single-daemon deployment,
+/// execution runs inside sinexd itself) -- so the threshold guards a
+/// scenario that cannot exist there, while a real crash-then-fast-systemd-
+/// restart (RestartSec=10) leaves the operation permanently stranded because
+/// it is nowhere near 10 minutes old on the very next startup.
+#[sinex_test]
+#[ignore = "sinex-1u9c open: the real recover_stale_replay_operations threshold (10 minutes) never \
+            recovers an operation stranded moments before a fast systemd restart; un-ignore once \
+            the guard runs unconditionally (or with a much shorter threshold) at startup"]
+async fn recover_stale_executing_at_the_real_startup_threshold_misses_a_just_crashed_operation(
+    ctx: TestContext,
+) -> Result<()> {
+    let replay = sinexd::api::ReplayStateMachine::new(ctx.pool.clone());
+    let scope = ReplayScope {
+        source_name: "test-source".to_string(),
+        time_window: None,
+        material_filter: None,
+        filters: HashMap::new(),
+        ..Default::default()
+    };
+
+    let operation = replay
+        .create_operation(scope, "test:planner".to_string())
+        .await?;
+    replay
+        .update_preview(
+            operation.operation_id,
+            serde_json::json!({ "total_events": 1 }),
+        )
+        .await?;
+    replay
+        .approve(operation.operation_id, "admin:approver".to_string())
+        .await?;
+    replay
+        .transition(operation.operation_id, ReplayState::Executing)
+        .await?;
+
+    // Simulate the realistic crash: the operation started 30 seconds before
+    // the next daemon startup -- exactly what `Restart=on-failure;
+    // RestartSec=10` produces after an earlyoom SIGKILL, per
+    // nixos/modules/default.nix.
+    let stale_started_at = sinex_primitives::temporal::now() - time::Duration::seconds(30);
+    sqlx::query!(
+        r#"
+        UPDATE core.operations_log
+        SET preview_summary = jsonb_set(
+                preview_summary,
+                '{started_at}',
+                to_jsonb($2::timestamptz),
+                true
+            )
+        WHERE id = $1::uuid
+        "#,
+        operation.operation_id,
+        *stale_started_at,
+    )
+    .execute(&ctx.pool)
+    .await?;
+
+    // This is the REAL production threshold used at ServiceContainer::new
+    // (service_container.rs STALE_EXECUTING_THRESHOLD), not a shortened
+    // test value.
+    const REAL_STARTUP_THRESHOLD: std::time::Duration = std::time::Duration::from_secs(600);
+    let recovered = replay
+        .recover_stale_executing(REAL_STARTUP_THRESHOLD)
+        .await?;
+
+    assert_eq!(
+        recovered, 1,
+        "sinex-1u9c: the very next daemon startup after a crash must recover an operation that \
+         was executing when the crash happened, regardless of how few seconds old it is -- \
+         nothing can legitimately still be 'in flight' at ServiceContainer::new in a \
+         single-daemon deployment"
+    );
+
+    let recovered_operation = replay.load_operation(operation.operation_id).await?;
+    assert_eq!(recovered_operation.state, ReplayState::Failed);
+
+    Ok(())
+}
+
 /// #2194 F1: a crash after the archive cascade commits but before re-ingest
 /// completes must NOT lose the archived events. Crash-recovery must restore the
 /// cascade from `audit.archived_events` (driven by the durable journal in the
@@ -736,7 +820,10 @@ async fn recover_stale_executing_restores_archived_cascade(ctx: TestContext) -> 
         .create_operation(scope, "test:planner".to_string())
         .await?;
     replay
-        .update_preview(operation.operation_id, serde_json::json!({ "total_events": 1 }))
+        .update_preview(
+            operation.operation_id,
+            serde_json::json!({ "total_events": 1 }),
+        )
         .await?;
     replay
         .approve(operation.operation_id, "admin:approver".to_string())

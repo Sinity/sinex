@@ -279,3 +279,37 @@ async fn builder_auto_syncs_operation_id_to_event_field() -> TestResult<()> {
 
     Ok(())
 }
+
+/// sinex-66rs: the serde XOR provenance rejection (builder.rs) is proven
+/// correct in isolation against bare `Provenance`, but never through the
+/// actual `#[serde(flatten)] provenance: Provenance` shape on `Event<T>`
+/// that admission.rs deserializes on the hot path. Whether serde's
+/// FlatMapDeserializer/Content-buffering path for `#[serde(flatten)]`
+/// actually propagates the same rejection through the flatten boundary is
+/// unproven -- this exercises the real wire shape, not a bare enum.
+#[sinex_test]
+async fn event_wire_shape_rejects_neither_material_nor_derived_provenance_through_flatten()
+-> TestResult<()> {
+    use sinex_primitives::events::Event;
+
+    // A JSON object shaped like a wire Event but carrying NEITHER
+    // material-provenance fields (source_material_id/anchor_byte) NOR
+    // derived-provenance fields (source_event_ids) -- must be rejected by
+    // the same XOR invariant bare Provenance enforces, but through the
+    // #[serde(flatten)] Event<JsonValue> deserialization path.
+    let wire = json!({
+        "source": "test-source",
+        "event_type": "test.event",
+        "host": "test-host",
+        "payload": {"key": "val"},
+    });
+
+    let result = serde_json::from_value::<Event<serde_json::Value>>(wire);
+    assert!(
+        result.is_err(),
+        "sinex-66rs: an Event wire payload with neither material nor derived provenance \
+         fields deserialized successfully through the flatten boundary: {result:?}"
+    );
+
+    Ok(())
+}

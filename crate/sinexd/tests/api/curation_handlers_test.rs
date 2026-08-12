@@ -15,12 +15,12 @@ use sinex_primitives::rpc::curation::{
     CurationListProposalsRequest, CurationRecordDuplicateJudgmentRequest,
     CurationRecordJudgmentRequest,
 };
+use sinexd::api::auth::Role;
 use sinexd::api::handlers::{
     handle_curation_finalize, handle_curation_list_duplicate_candidates,
     handle_curation_list_proposals, handle_curation_record_duplicate_judgment,
     handle_curation_record_judgment,
 };
-use sinexd::api::auth::Role;
 use sinexd::api::rpc_server::RpcAuthContext;
 use xtask::sandbox::prelude::*;
 
@@ -184,6 +184,61 @@ async fn curation_record_judgment_clamps_self_claimed_operator_actor_kind(
         .list_operations(Some("curation.finalize"), None, 10)
         .await?;
     assert!(operations.is_empty());
+    Ok(())
+}
+
+/// sinex-fp0y: unlike `actor_kind` (clamped above, sinex-audit-actorkind),
+/// `actor_id` is NOT validated against the authenticated caller --
+/// `handle_curation_record_judgment` does `req.actor_id.filter(non_empty)
+/// .unwrap_or_else(|| auth.actor_id().to_string())`, so any non-empty
+/// client-supplied `actor_id` is persisted verbatim, letting a caller
+/// impersonate an arbitrary identity in the judgment record.
+#[sinex_test]
+#[ignore = "sinex-fp0y open: curation.judgments.record persists a client-supplied actor_id verbatim instead of the authenticated caller's identity"]
+async fn curation_record_judgment_ignores_client_supplied_actor_id_sinex_fp0y(
+    ctx: TestContext,
+) -> TestResult<()> {
+    common::seed_rpc_handler_product_declarations(ctx.pool()).await?;
+    let proposal_event = insert_fixture_proposal(&ctx).await?;
+    let proposal_event_id = proposal_event
+        .id
+        .as_ref()
+        .ok_or_else(|| color_eyre::eyre::eyre!("inserted proposal missing id"))?
+        .to_uuid()
+        .to_string();
+
+    let write_auth = RpcAuthContext {
+        token_prefix: "attacker".to_string(),
+        actor_id: "token:attacker".to_string(),
+        authenticated_at: sinex_primitives::Timestamp::now(),
+        role: Role::Write,
+    };
+
+    let value = handle_curation_record_judgment(
+        ctx.pool(),
+        CurationRecordJudgmentRequest {
+            proposal_event_id,
+            actor_kind: CurationJudgmentActorKind::TestFixture,
+            // Spoofed identity: this authenticated caller is "token:attacker".
+            actor_id: Some("system:local".to_string()),
+            decision: CurationJudgmentDecision::Accept,
+            corrected_payload: None,
+            comment: Some("spoofed identity attempt".to_string()),
+            authorization_context: None,
+        },
+        &write_auth,
+    )
+    .await?;
+
+    assert_eq!(
+        value.judgment.actor_id,
+        write_auth.actor_id().to_string(),
+        "sinex-fp0y: the persisted judgment actor_id must be the authenticated caller's real \
+         identity ({:?}), not the client-supplied value ({:?}) -- a request can currently \
+         impersonate any actor_id it likes",
+        write_auth.actor_id(),
+        value.judgment.actor_id
+    );
     Ok(())
 }
 

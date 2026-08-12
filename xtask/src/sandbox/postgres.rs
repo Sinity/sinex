@@ -6,7 +6,7 @@ use std::path::PathBuf;
 use std::process::Command;
 
 use crate::infra::services::postgres::{
-    PostgresConfig as SharedPgConfig, PostgresDurabilityMode, PostgresManager,
+    PostgresConfig as SharedPgConfig, PostgresDurabilityMode, PostgresManager, pg_literal,
     validate_pg_identifier,
 };
 
@@ -69,6 +69,21 @@ pub struct PgEnv {
     pub app_user: String,
     pub database: String,
     pub operation_id: String,
+}
+
+/// Build the `ALTER ROLE ... SET sinex.operation_id = ...` statement used to
+/// tag the ephemeral app role for RLS/audit purposes. `app_user` is validated
+/// as a strict Postgres identifier before being interpolated unquoted;
+/// `operation_id` is an arbitrary string value, so it goes through
+/// [`pg_literal`] escaping rather than being trusted as an identifier
+/// (sinex-3pgp: raw `format!()` interpolation let a crafted `operation_id`
+/// break out of the intended `SET` statement).
+fn build_operation_id_stmt(app_user: &str, operation_id: &str) -> Result<String> {
+    validate_pg_identifier(app_user, "role")?;
+    Ok(format!(
+        "ALTER ROLE {app_user} SET sinex.operation_id = {};",
+        pg_literal(operation_id)
+    ))
 }
 
 /// Setup an ephemeral Postgres instance
@@ -135,15 +150,12 @@ pub fn setup_ephemeral(config: &PostgresConfig) -> Result<(PgInstance, PgEnv)> {
     }
 
     // Validate all identifier fields that are interpolated into DDL before any use.
-    // app_user was checked immediately before the ALTER ROLE; validate superuser and
-    // database here so every field that reaches a format!() SQL builder is covered.
+    // app_user is validated inside build_operation_id_stmt (it's interpolated there);
+    // validate superuser and database here so every field that reaches a format!()
+    // SQL builder is covered.
     validate_pg_identifier(&config.superuser, "role")?;
     validate_pg_identifier(&config.database, "database")?;
-    validate_pg_identifier(&config.app_user, "role")?;
-    let stmt = format!(
-        "ALTER ROLE {} SET sinex.operation_id = '{}';",
-        config.app_user, config.operation_id
-    );
+    let stmt = build_operation_id_stmt(&config.app_user, &config.operation_id)?;
     mgr.psql(&config.superuser, "postgres", &stmt)?;
 
     mgr.ensure_db(&config.database, &config.app_user, &config.superuser)?;
@@ -188,3 +200,7 @@ pub fn psql(env: &PgEnv, user: &str, database: &str, sql: &str) -> Result<String
     }
     Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
 }
+
+#[cfg(test)]
+#[path = "postgres_test.rs"]
+mod tests;

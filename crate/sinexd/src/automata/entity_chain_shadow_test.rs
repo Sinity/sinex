@@ -6,12 +6,12 @@
 
 use super::*;
 use sinex_db::repositories::source_materials::material_types;
+use sinex_primitives::Id;
 use sinex_primitives::derivation::{AdjudicationStatus, SupportLevel};
 use sinex_primitives::domain::RelationType;
 use sinex_primitives::events::payloads::{CanonicalCommandPayload, CurationJudgmentActorKind};
 use sinex_primitives::events::{EntityRelatedPayload, EventPayload};
 use sinex_primitives::temporal::Duration;
-use sinex_primitives::Id;
 use xtask::sandbox::prelude::*;
 use xtask::sandbox::sinex_test;
 
@@ -221,7 +221,9 @@ async fn entity_chain_stream_checkpoint_shadow_lane(ctx: TestContext) -> TestRes
     // AC: writes derivation.lane_outputs with product_class=semantic_candidate
     // and an honest ClaimSupport -- never core.events.
     let repo = pool.derivation_lanes();
-    let rows = repo.list_lane_outputs(result.candidate_lane_id, 100).await?;
+    let rows = repo
+        .list_lane_outputs(result.candidate_lane_id, 100)
+        .await?;
     assert_eq!(
         rows.len(),
         result.outputs.entities.len() + result.outputs.relations.len()
@@ -293,15 +295,14 @@ async fn stream_checkpoint_scope_reproducible(ctx: TestContext) -> TestResult<()
     // Re-run under the SAME epoch (the bead's literal wording) -- reusing
     // `first.epoch_id` rather than minting a second one, since two runs
     // over an identical frozen scope are the same interpretation regime.
-    let second =
-        run_entity_chain_shadow_lane(
-            pool,
-            scope,
-            Some(first.epoch_id),
-            Some((first.baseline_lane_id, first.candidate_lane_id)),
-            "repro-b",
-        )
-        .await?;
+    let second = run_entity_chain_shadow_lane(
+        pool,
+        scope,
+        Some(first.epoch_id),
+        Some((first.baseline_lane_id, first.candidate_lane_id)),
+        "repro-b",
+    )
+    .await?;
 
     assert_eq!(
         first.outputs, second.outputs,
@@ -362,7 +363,10 @@ async fn entity_chain_shadow_lane_promotion_flips_status_and_emits_finalized(
         .expect("promoted output must carry adjudication_event_id");
     assert_ne!(adjudication_event_id, uuid::Uuid::nil());
 
-    let lane = pool.derivation_lanes().get_lane(result.candidate_lane_id).await?;
+    let lane = pool
+        .derivation_lanes()
+        .get_lane(result.candidate_lane_id)
+        .await?;
     assert_eq!(
         lane.status, "promoted",
         "promotion through proposal -> judgment -> finalizer must flip the lane to promoted"
@@ -436,9 +440,10 @@ async fn entity_related_direct_canonical_rejected(ctx: TestContext) -> TestResul
         CurationJudgmentActorKind::Operator,
     )
     .await;
-    let bypass_error =
-        bypass_result.expect_err("finalizing an entity.related proposal must be refused before \
-             a finalizer is registered (the curation-bypass rejection)");
+    let bypass_error = bypass_result.expect_err(
+        "finalizing an entity.related proposal must be refused before \
+             a finalizer is registered (the curation-bypass rejection)",
+    );
     assert!(
         bypass_error.to_string().contains("no registered finalizer"),
         "expected the curation-bypass rejection, got: {bypass_error}"
@@ -483,6 +488,38 @@ async fn shadow_lane_relation_coverage_reflects_actual_material_grounding_sinex_
         "sinex-ee7p: a relation whose evidence events both have source_material_id: None \
          has no actual material grounding and should not be marked source_coverage: covered \
          -- got 'covered' unconditionally regardless of the pair's real grounding",
+    );
+    Ok(())
+}
+
+/// sinex-u39b (sub-issue 3 of 6): `read_stream_checkpoint_events` computes
+/// `limit` via `end_seq.saturating_sub(start_seq)`. For a malformed scope
+/// with `start_seq > end_seq`, that saturates to 0 rather than surfacing an
+/// error -- the lane silently processes zero events and still reports
+/// success instead of rejecting the nonsensical range.
+#[sinex_test]
+#[ignore = "sinex-u39b open: entity_chain_shadow silently accepts a start_seq > end_seq scope as zero-events-processed success instead of erroring"]
+async fn shadow_lane_rejects_start_seq_past_end_seq_sinex_u39b(ctx: TestContext) -> TestResult<()> {
+    let pool = ctx.pool();
+    seed_declarations(pool).await?;
+    insert_fixture_events(pool).await?;
+
+    let scope = DerivationScope::StreamCheckpoint {
+        stream: "core-events".to_string(),
+        filter_subjects: vec![],
+        start_seq: 100,
+        end_seq: Some(5),
+        coverage_window: None,
+        input_set_hash: "malformed-start-past-end".to_string(),
+    };
+
+    let result = run_entity_chain_shadow_lane(pool, scope, None, None, "malformed-range").await;
+    let succeeded_with_output_count = result.as_ref().ok().map(|r| r.outputs.entities.len());
+
+    assert!(
+        result.is_err(),
+        "sinex-u39b: a scope with start_seq (100) > end_seq (5) must be rejected, not silently \
+         accepted as a zero-event success (entity count if it succeeded: {succeeded_with_output_count:?})"
     );
     Ok(())
 }

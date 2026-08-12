@@ -4,8 +4,8 @@
 //! executed against a real `PostgreSQL` database with the required extensions.
 
 use sea_query::*;
-use sinex_primitives::DynamicPayload;
 use sinex_db::schema::defs::*;
+use sinex_primitives::DynamicPayload;
 use sqlx::{PgPool, Row};
 use std::collections::HashMap;
 use xtask::sandbox::prelude::*;
@@ -25,6 +25,10 @@ mod index_tests;
 #[cfg(test)]
 #[path = "schema_tests_migration_tests.rs"]
 mod migration_tests;
+
+#[cfg(test)]
+#[path = "schema_tests_compression_test.rs"]
+mod compression_tests;
 
 // Helper functions for testing
 

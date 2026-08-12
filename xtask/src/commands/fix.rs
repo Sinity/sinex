@@ -37,6 +37,15 @@ pub struct FixCommand {
     pub smart: bool,
 }
 
+/// Whether `--thorough` should take the all-packages thorough-fix path.
+///
+/// sinex-t7y4: extracted unchanged from `FixCommand::execute`'s dispatch —
+/// today this is `thorough && packages_empty`, silently dropping thorough
+/// behavior whenever explicit `-p` packages are passed.
+fn should_run_thorough_fixes(thorough: bool, packages_empty: bool) -> bool {
+    thorough && packages_empty
+}
+
 impl XtaskCommand for FixCommand {
     fn name(&self) -> &'static str {
         "fix"
@@ -164,7 +173,7 @@ impl XtaskCommand for FixCommand {
         self.run_fmt(&packages, ctx.is_human())?;
         ctx.finish_stage(fmt_stage, true);
 
-        if self.thorough && packages.is_empty() {
+        if should_run_thorough_fixes(self.thorough, packages.is_empty()) {
             // Thorough mode: iterate through all packages for maximum fix coverage
             let thorough_stage = ctx.start_stage("thorough");
             self.run_thorough_fixes(ctx)?;
@@ -425,3 +434,7 @@ impl FixCommand {
         Ok(())
     }
 }
+
+#[cfg(test)]
+#[path = "fix_test.rs"]
+mod tests;

@@ -238,11 +238,15 @@ fn non_strict_mode_still_accepts_schema_not_found() {
 #[test]
 fn admitted_to_stream_rows_persists_the_pre_redaction_hash_not_a_post_mutation_recompute() {
     let original_payload = serde_json::json!({ "value": "hello\u{0}world" });
-    let event = DynamicPayload::new("test.source", SUPERSEDE_ON_CHANGE_EVENT_TYPE, original_payload.clone())
-        .from_material(Id::new())
-        .at_time(sinex_primitives::Timestamp::now())
-        .build()
-        .expect("test event should build");
+    let event = DynamicPayload::new(
+        "test.source",
+        SUPERSEDE_ON_CHANGE_EVENT_TYPE,
+        original_payload.clone(),
+    )
+    .from_material(Id::new())
+    .at_time(sinex_primitives::Timestamp::now())
+    .build()
+    .expect("test event should build");
 
     // Mirrors the real construction site in persist.rs::persist_batch_optimized:
     // content_hash is captured from the payload AS IT STOOD at this exact point.
@@ -266,5 +270,47 @@ fn admitted_to_stream_rows_persists_the_pre_redaction_hash_not_a_post_mutation_r
         "the persisted content_hash must be the PRE-redaction hash captured at \
          AdmittedEvent construction, not a hash recomputed from the (now-mutated) \
          event.payload"
+    );
+}
+
+/// sinex-e624: `is_isolatable_batch_persistence_failure` exists as two
+/// independent copies (this file's module, and
+/// jetstream_consumer::persistence_support) which have already drifted --
+/// the persistence_support copy also isolates SQLSTATE class 54 (program
+/// limit exceeded), this copy does not. A program-limit-exceeded error
+/// should isolate its batch the same way on both consumer paths; it
+/// currently doesn't on this one.
+#[test]
+#[ignore = "sinex-e624 open: is_isolatable_batch_persistence_failure (admission.rs) omits \
+            SQLSTATE_PROGRAM_LIMIT_EXCEEDED_CLASS (\"54\") that the jetstream_consumer::\
+            persistence_support copy already isolates on -- the two copies have drifted"]
+fn is_isolatable_batch_persistence_failure_covers_program_limit_exceeded_class() {
+    let err = SinexError::database("test: statement too complex").with_context("sqlstate", "54001");
+    assert!(
+        is_isolatable_batch_persistence_failure(&err),
+        "a program-limit-exceeded (class 54) error should isolate its batch, \
+         matching jetstream_consumer::persistence_support::is_isolatable_batch_persistence_failure's \
+         behavior for the identical input"
+    );
+}
+
+/// sinex-w16e: a row-level deterministic validation error (e.g. "validated
+/// event missing ts_orig", admission.rs's own `admitted_to_stream_rows`
+/// path) is NOT classified isolatable -- it carries no sqlstate and its text
+/// doesn't match the one hardcoded "non-live source_event_ids" fragment
+/// `is_non_live_derived_parent_validation` checks for. One bad event with a
+/// missing ts_orig currently DLQs its whole batch, including healthy
+/// siblings, instead of being bisected out on its own.
+#[test]
+#[ignore = "sinex-w16e open: is_isolatable_batch_persistence_failure does not classify a \
+            deterministic row-level Validation error (missing ts_orig / claim_support \
+            serialize failure) as isolatable -- only the single 'non-live source_event_ids' \
+            text fragment qualifies, so one bad row DLQs the whole batch"]
+fn is_isolatable_batch_persistence_failure_covers_deterministic_row_validation_errors() {
+    let err = SinexError::validation("validated event missing ts_orig");
+    assert!(
+        is_isolatable_batch_persistence_failure(&err),
+        "a deterministic row-level validation error (no sqlstate, not a transient DB \
+         condition) should isolate its own row rather than DLQing the entire batch"
     );
 }

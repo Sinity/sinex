@@ -449,6 +449,94 @@ async fn sync_schema_bundle_converges_same_version_content_drift(
 }
 
 #[sinex_test]
+#[ignore = "sinex-2gk open: sync_schema_bundle trusts the stored content_hash column instead of \
+            recomputing it from schema_content, so a manually-edited schema_content with a stale \
+            content_hash false-cleans as 'unchanged' and is never reconciled back"]
+async fn sync_schema_bundle_detects_content_hash_drift_from_schema_content(
+    ctx: TestContext,
+) -> color_eyre::Result<()> {
+    let repo = ctx.pool.schemas();
+    let source = unique_schema_source("hash-drift-source");
+    let event_type = unique_schema_event_type("hash.drift.event");
+    let original = NewEventSchema {
+        source: source.clone(),
+        event_type: event_type.clone(),
+        schema_version: "1.0.0".to_string(),
+        schema_content: json!({
+            "type": "object",
+            "properties": { "value": { "type": "string" } },
+            "required": ["value"]
+        }),
+    };
+    let registered = repo.register_schema(original.clone()).await?;
+    let original_hash = registered.content_hash.clone();
+
+    // Simulate a manual/out-of-band edit to schema_content that does NOT
+    // recompute content_hash -- exactly the drift scenario sinex-2gk describes
+    // (schema_management.rs's stored-hash comparison vs validation.rs's
+    // compile-from-schema_content). content_hash still matches the ORIGINAL
+    // content, not the corrupted one now in the row.
+    sqlx::query!(
+        r#"
+        UPDATE sinex_schemas.event_payload_schemas
+        SET schema_content = $2
+        WHERE id = $1::uuid
+        "#,
+        registered.id.to_uuid(),
+        json!({
+            "type": "object",
+            "properties": { "value": { "type": "integer" } },
+            "required": ["value"]
+        })
+    )
+    .execute(&ctx.pool)
+    .await?;
+
+    // Re-syncing the bundle with the ORIGINAL (correct) content: content_hash
+    // matches what's stored (stale), so sync_schema_bundle currently reports
+    // this as unchanged and never reconciles schema_content back to what the
+    // bundle actually declares.
+    let sync_result = repo
+        .sync_schema_bundle([
+            sinex_primitives::events::schema_registry::SchemaBundleEntry::new(
+                original.source.to_string(),
+                original.event_type.to_string(),
+                original.schema_version.clone(),
+                original.schema_content.clone(),
+            )?,
+        ])
+        .await?;
+
+    let active = repo
+        .get_active_schema(source.as_str(), event_type.as_str())
+        .await?;
+
+    // The fix: sync must detect that stored schema_content no longer matches
+    // the stored content_hash (integrity check, not a trust-the-column
+    // comparison) and converge back to the bundle's declared content rather
+    // than silently reporting "unchanged" while corrupted content_content
+    // persists indefinitely.
+    assert_eq!(
+        sync_result.unchanged, 0,
+        "sync must not report 'unchanged' when stored schema_content no longer \
+         matches its own stored content_hash -- got unchanged={}, updated={}",
+        sync_result.unchanged, sync_result.updated
+    );
+    assert_eq!(
+        active.schema_content, original.schema_content,
+        "sync must reconcile schema_content back to the bundle's declared \
+         content once hash/content drift is detected, not leave the \
+         manually-corrupted content in place"
+    );
+    assert_eq!(
+        active.content_hash, original_hash,
+        "content_hash must be recomputed/reconfirmed against real schema_content, \
+         not merely copied forward"
+    );
+    Ok(())
+}
+
+#[sinex_test]
 async fn concurrent_schema_bundle_sync_is_idempotent(ctx: TestContext) -> color_eyre::Result<()> {
     let source = unique_schema_source("sync-concurrent-source");
     let event_type = unique_schema_event_type("sync.concurrent.event");

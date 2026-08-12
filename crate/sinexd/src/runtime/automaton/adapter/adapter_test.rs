@@ -20,7 +20,7 @@ use crate::runtime::shutdown::ShutdownConfig;
 use crate::runtime::stream::{
     Checkpoint, EventEmitter, RuntimeContext, RuntimeHandles, RuntimeModule, ScanArgs, ServiceInfo,
 };
-use crate::runtime::{AutomatonLogicError, ScopeReconciler, Transducer};
+use crate::runtime::{AutomatonLogicError, ScopeReconciler, Transducer, Windowed, WindowedWrapper};
 use crate::runtime::{
     CheckpointManager, CheckpointState, EventTransport, NatsPublisher, SinexError,
 };
@@ -157,7 +157,8 @@ struct EmittingAutomaton;
 /// `automata/registry.rs`). `output_source: None` matches any source so
 /// this doesn't need to track `Transducer`'s default
 /// `output_event_source()`.
-const EMITTING_AUTOMATON_OUTPUT_DECLARATIONS: &[sinex_primitives::derivation::DerivationOutputDeclaration] =
+const EMITTING_AUTOMATON_OUTPUT_DECLARATIONS:
+    &[sinex_primitives::derivation::DerivationOutputDeclaration] =
     &[sinex_primitives::derivation::DerivationOutputDeclaration {
         declaration_id: "test.derived-adapter-emitting-test.test.output",
         owner: "test",
@@ -195,7 +196,8 @@ impl Transducer for EmittingAutomaton {
         "test.output"
     }
 
-    const OUTPUT_DECLARATIONS: &'static [sinex_primitives::derivation::DerivationOutputDeclaration] =
+    const OUTPUT_DECLARATIONS:
+        &'static [sinex_primitives::derivation::DerivationOutputDeclaration] =
         EMITTING_AUTOMATON_OUTPUT_DECLARATIONS;
 
     async fn process(
@@ -743,6 +745,30 @@ async fn derived_source_state_reports_processed_counters() -> TestResult<()> {
 }
 
 #[sinex_test]
+#[ignore = "sinex-g9sy open: record_processed_input has no monotonicity guard on \
+            last_input_event_id -- an out-of-order (older) input silently overwrites a \
+            newer high-water mark, unlike the sibling max_input_ts_orig field which does guard"]
+async fn record_processed_input_does_not_regress_last_input_event_id() -> TestResult<()> {
+    let mut adapter = AutomatonRuntime::new(TransducerWrapper(TestAutomaton));
+
+    let newer_id: Id<Event<JsonValue>> =
+        Uuid::from_u128(0xffff_ffff_ffff_ffff_ffff_ffff_ffff_ffff).into();
+    let older_id: Id<Event<JsonValue>> =
+        Uuid::from_u128(0x0000_0000_0000_0000_0000_0000_0000_0001).into();
+
+    adapter.record_processed_input(newer_id, None);
+    adapter.record_processed_input(older_id, None);
+
+    assert_eq!(
+        adapter.persisted_state.last_input_event_id,
+        Some(*newer_id.as_uuid()),
+        "last_input_event_id regressed from the newer input to an older one -- \
+         record_processed_input has no monotonicity guard, unlike max_input_ts_orig"
+    );
+    Ok(())
+}
+
+#[sinex_test]
 async fn derived_ingestion_history_is_explicitly_unavailable() -> TestResult<()> {
     let adapter = AutomatonRuntime::new(TransducerWrapper(TestAutomaton));
 
@@ -1123,9 +1149,8 @@ async fn r6d9_checkpoint_before_output_fail_point_fires(ctx: TestContext) -> Tes
     let module_path_without_crate = module_path!()
         .split_once("::")
         .map_or(module_path!(), |(_, rest)| rest);
-    let qualified_name = format!(
-        "{module_path_without_crate}::r6d9_checkpoint_before_output_fail_point_fires"
-    );
+    let qualified_name =
+        format!("{module_path_without_crate}::r6d9_checkpoint_before_output_fail_point_fires");
     let output = tokio::process::Command::new(exe)
         .arg(&qualified_name)
         .arg("--exact")
@@ -1237,6 +1262,161 @@ async fn process_batch_advances_checkpoint_only_after_durable_emission_settles(
         );
     }
 
+    Ok(())
+}
+
+// -------------------------------------------------------------------------
+// sinex-vxu remaining scope: timer_flush has no state-commit barrier
+// -------------------------------------------------------------------------
+//
+// process_batch_advances_checkpoint_only_after_durable_emission_settles
+// (above) proves the live-bridge path IS gated on durable-emission
+// settlement. `AutomatonRuntime::timer_flush` (process.rs) is a completely
+// separate code path used by every Windowed automaton's trailing-bucket
+// flush -- it calls `emit_output_events` directly and returns the emitted
+// count with NO settlement check at all, unlike `commit_prepared_inputs`'s
+// per-input gating. If a shutdown/checkpoint-save happens right after
+// `timer_flush` mutates `persisted_state.state` (e.g. resetting a window
+// accumulator) but before the emitted event durably lands, that window's
+// data is gone with nothing to replay it from -- CLAUDE.md's own note on
+// this bead: "historical replay/timer_flush/shutdown still open".
+
+#[derive(Debug, Default, Serialize, Deserialize)]
+struct FlushBarrierState {
+    has_pending_window: bool,
+}
+
+const FLUSH_BARRIER_OUTPUT_DECLARATIONS:
+    &[sinex_primitives::derivation::DerivationOutputDeclaration] =
+    &[sinex_primitives::derivation::DerivationOutputDeclaration {
+        declaration_id: "test.derived-windowed-flush-barrier-test.test.output",
+        owner: "test",
+        product_class: sinex_primitives::derivation::DerivedProductClass::CanonicalDerivedEvent,
+        write_surface: sinex_primitives::derivation::DerivationWriteSurface::DerivedOutput,
+        output_source: None,
+        output_event_type: Some("test.output"),
+        projection_kind: None,
+        artifact_kind: None,
+        proposal_kind: None,
+        semantics_version: "1.0.0",
+        input_eligibility: sinex_primitives::derivation::InputEligibility::ExplicitOnly,
+        default_support: sinex_primitives::derivation::ClaimSupportTemplate::new(
+            sinex_primitives::derivation::SupportLevel::Convergent,
+            sinex_primitives::derivation::SourceCoverage::Partial,
+            sinex_primitives::derivation::ClaimTemporalQuality::DeclaredEffective,
+        ),
+        verification_command: "xtask test -p sinexd -E 'test(timer_flush_does_not_clear)'",
+    }];
+
+/// Minimal Windowed fixture: `flush_due` is true whenever a window is open;
+/// `emit` unconditionally clears it (mirroring every real Windowed
+/// automaton's `state.reset_hour()`-shaped emit, e.g.
+/// `crate::automata::hourly::HourlySummarizer`).
+struct EmittingWindowedAutomaton;
+
+impl Windowed for EmittingWindowedAutomaton {
+    type State = FlushBarrierState;
+    type Input = JsonValue;
+    type Output = JsonValue;
+
+    fn name(&self) -> &'static str {
+        "derived-windowed-flush-barrier-test"
+    }
+
+    fn input_event_type(&self) -> &'static str {
+        "test.input"
+    }
+
+    fn output_event_type(&self) -> &'static str {
+        "test.output"
+    }
+
+    const OUTPUT_DECLARATIONS:
+        &'static [sinex_primitives::derivation::DerivationOutputDeclaration] =
+        FLUSH_BARRIER_OUTPUT_DECLARATIONS;
+
+    async fn accumulate(
+        &mut self,
+        state: &mut Self::State,
+        _input: Self::Input,
+        _context: &AutomatonContext,
+    ) -> Result<(), AutomatonLogicError> {
+        state.has_pending_window = true;
+        Ok(())
+    }
+
+    fn window_complete(&self, _state: &Self::State) -> bool {
+        false
+    }
+
+    fn flush_due(&self, state: &Self::State, _now: Timestamp) -> bool {
+        state.has_pending_window
+    }
+
+    async fn emit(
+        &mut self,
+        state: &mut Self::State,
+        _context: &AutomatonContext,
+    ) -> Result<Option<DerivedOutput<Self::Output>>, AutomatonLogicError> {
+        // The exact shape of the bug: state is reset as part of emit, with
+        // no check of whether the output below actually settles durably.
+        state.has_pending_window = false;
+        let declaration = &FLUSH_BARRIER_OUTPUT_DECLARATIONS[0];
+        Ok(Some(
+            DerivedOutput::windowed(json!({"ok": true}), Timestamp::now(), Vec::new())
+                .with_declaration_id(declaration.declaration_id)
+                .with_product_class(declaration.product_class)
+                .with_claim_support(declaration.default_support.instantiate(1, 0, 1, 0)),
+        ))
+    }
+}
+
+/// sinex-vxu open (remaining scope): `timer_flush` must not clear
+/// `persisted_state.state` past an emitted output whose durable-emission
+/// receipt never settles -- the same barrier `process_batch` already has
+/// via `commit_prepared_inputs`. Currently it has none: this proves
+/// `has_pending_window` is cleared even though the registry below never
+/// resolves the emitted event, so a shutdown/checkpoint-save landing here
+/// would durably lose the window with no receipt ever having unlocked it.
+#[sinex_test]
+#[ignore = "sinex-vxu open: timer_flush has no state-commit barrier -- it mutates \
+            persisted_state.state unconditionally before its emitted output's \
+            durable-emission receipt is known to have settled, unlike process_batch's \
+            commit_prepared_inputs gating"]
+async fn timer_flush_does_not_clear_window_state_before_emission_settles(
+    ctx: TestContext,
+) -> TestResult<()> {
+    let ctx = ctx.with_nats().shared().await?;
+    let registry = crate::runtime::durable_emission::SettlementRegistry::new();
+    // Deliberately never resolved -- the crash window this bead names.
+    let (event_sender, _event_receiver) = mpsc::channel::<Event<JsonValue>>(8);
+    let emitter = EventEmitter::new(event_sender, false);
+    let runtime =
+        make_runtime_state_with_registry(&ctx, "derived-windowed-flush-barrier-test", registry)
+            .await?;
+
+    let mut adapter = AutomatonRuntime::new(WindowedWrapper(EmittingWindowedAutomaton))
+        .with_durable_emission_timeout(std::time::Duration::from_millis(100));
+    adapter.event_emitter = Some(emitter);
+    adapter.runtime = Some(runtime);
+    adapter.persisted_state.state.has_pending_window = true;
+
+    let emitted = adapter.timer_flush(Timestamp::now()).await?;
+
+    // Unlike process_batch (which only counts durably-confirmed events),
+    // timer_flush's emitted count is just `output_events.len()` -- it
+    // reports success the instant the mpsc handoff succeeds, never having
+    // consulted the settlement registry wired above at all.
+    assert_eq!(
+        emitted, 1,
+        "timer_flush reports the mpsc handoff as emitted with no durable-settlement check"
+    );
+    assert!(
+        adapter.persisted_state.state.has_pending_window,
+        "timer_flush must not clear the window's state past an output whose durable-emission \
+         receipt never settled -- doing so unconditionally is exactly sinex-vxu's remaining \
+         crash-loss window"
+    );
     Ok(())
 }
 
@@ -1444,7 +1624,9 @@ async fn r6d9_invalidation_ack_fail_point_fires(ctx: TestContext) -> TestResult<
 /// first, and asserts the second still receives it — proving `deliver_group`
 /// does not carry ack state across separate `create_consumer` calls.
 #[sinex_test]
-async fn r6d9_invalidation_deliver_group_does_not_share_ack_state(ctx: TestContext) -> TestResult<()> {
+async fn r6d9_invalidation_deliver_group_does_not_share_ack_state(
+    ctx: TestContext,
+) -> TestResult<()> {
     let ctx = ctx.with_nats().shared().await?;
     let js = ctx.jetstream().await?;
     let nats_client = ctx.nats_client();
@@ -1453,9 +1635,7 @@ async fn r6d9_invalidation_deliver_group_does_not_share_ack_state(ctx: TestConte
 
     let invalidation = DerivedScopeInvalidation::archived(
         vec![Uuid::now_v7()],
-        sinex_primitives::domain::EventSource::from_static(
-            "test.r6d9-invalidation-deliver-group",
-        ),
+        sinex_primitives::domain::EventSource::from_static("test.r6d9-invalidation-deliver-group"),
         sinex_primitives::domain::EventType::new("test.r6d9_invalidation_deliver_group")
             .expect("valid event type"),
     );

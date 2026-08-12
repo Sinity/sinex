@@ -282,7 +282,8 @@ async fn invalid_utf8_returns_parser_error() -> TestResult<()> {
 #[sinex_test]
 #[ignore = "sinex-xtmp open (knowledgebase CRLF): front-matter split leaves CRLF remnants in body -- fails until fixed"]
 async fn split_front_matter_handles_crlf_without_body_contamination() -> TestResult<()> {
-    let crlf_note = "---\r\nid: crlf.test\r\ncreated: 2025-03-15\r\n---\r\nThe real body starts here.\r\n";
+    let crlf_note =
+        "---\r\nid: crlf.test\r\ncreated: 2025-03-15\r\n---\r\nThe real body starts here.\r\n";
     let (fm, body) = split_front_matter(crlf_note);
 
     assert!(
@@ -300,6 +301,44 @@ async fn split_front_matter_handles_crlf_without_body_contamination() -> TestRes
     assert!(
         body.trim_start().starts_with("The real body starts here."),
         "body must start with the real content, got: {body:?}"
+    );
+    Ok(())
+}
+
+/// sinex-on0h: `occurrence_identity = (path, body_text_hash)` means a note
+/// renamed/moved (same body, different path) mints a brand-new occurrence
+/// key rather than being recognized as the same note that moved -- no
+/// rename detection exists. This forks the note's history into two
+/// unrelated occurrences instead of one continuous one.
+#[sinex_test]
+#[ignore = "sinex-on0h open: knowledgebase occurrence_identity is path-keyed, so a renamed/moved note forks into a new unlinked occurrence"]
+async fn renamed_note_with_identical_body_keeps_the_same_occurrence_sinex_on0h() -> TestResult<()> {
+    let mut parser = KnowledgebaseVaultParser;
+
+    let before_rename = parser
+        .parse_record(
+            record_for("permanent.concept.original-name.md", BASIC_NOTE.as_bytes()),
+            &test_ctx(),
+        )
+        .await
+        .unwrap();
+    let after_rename = parser
+        .parse_record(
+            // Same body, moved/renamed path -- a real Obsidian rename.
+            record_for("permanent.concept.renamed.md", BASIC_NOTE.as_bytes()),
+            &test_ctx(),
+        )
+        .await
+        .unwrap();
+
+    let key_before = before_rename[0].occurrence_key.as_ref().unwrap();
+    let key_after = after_rename[0].occurrence_key.as_ref().unwrap();
+
+    assert_eq!(
+        key_before, key_after,
+        "sinex-on0h: a note with identical body content that was only renamed/moved must keep \
+         the same occurrence identity -- got two different occurrence keys ({key_before:?} vs \
+         {key_after:?}), forking the note's history at the rename"
     );
     Ok(())
 }

@@ -329,3 +329,88 @@ async fn test_retryable_connection_report_treats_runtime_shutdown_as_transient()
 
     Ok(())
 }
+
+#[sinex_test]
+#[ignore = "sinex-lld6 open: create_database_from_template leaks the shared template_lock_id advisory lock if the exclusive clone_lock_id acquisition fails afterward"]
+async fn create_database_from_template_releases_shared_lock_when_clone_lock_acquisition_fails()
+-> TestResult<()> {
+    let config = PoolConfig::default();
+    let template_name = format!("sinex_lld6_template_{}", std::process::id());
+    let template_lock_id = advisory_lock_key(&template_name);
+    let clone_lock_id = advisory_lock_key(&format!("{template_name}::clone"));
+
+    // A competing session holds the exclusive clone lock for the whole test,
+    // forcing create_database_from_template's second lock acquisition to
+    // block and then time out via statement_timeout, exactly the failure
+    // mode this bug is about (any error there, not just a timeout, skips
+    // the unlock code below it).
+    let mut blocker = sqlx::PgPool::connect(&config.admin_url)
+        .await?
+        .acquire()
+        .await?;
+    sqlx::query("SELECT pg_advisory_lock($1)")
+        .bind(clone_lock_id)
+        .execute(blocker.as_mut())
+        .await?;
+
+    let mut conn: PoolConnection<Postgres> = sqlx::PgPool::connect(&config.admin_url)
+        .await?
+        .acquire()
+        .await?;
+    sqlx::query("SET statement_timeout = '300ms'")
+        .execute(conn.as_mut())
+        .await?;
+
+    let result =
+        create_database_from_template(&mut conn, "sinex_lld6_never_created", &template_name).await;
+    assert!(
+        result.is_err(),
+        "expected the blocked clone-lock acquisition to time out and error"
+    );
+
+    // Reset statement_timeout on `conn` itself before using it to check lock
+    // state (the previous SET could still be in effect for the same
+    // session).
+    sqlx::query("SET statement_timeout = 0")
+        .execute(conn.as_mut())
+        .await?;
+
+    // If the shared template lock leaked, `conn`'s OWN session still holds
+    // it, so a fresh attempt from the SAME connection to acquire it
+    // exclusively (which Postgres allows self-upgrading only when there is
+    // no OTHER holder) would still see it as already held by this session.
+    // The reliable cross-session check: a third connection's non-blocking
+    // exclusive attempt must succeed once `conn`'s shared lock is truly
+    // released.
+    let mut checker: PoolConnection<Postgres> = sqlx::PgPool::connect(&config.admin_url)
+        .await?
+        .acquire()
+        .await?;
+    let still_locked: bool = sqlx::query_scalar("SELECT NOT pg_try_advisory_lock($1)")
+        .bind(template_lock_id)
+        .fetch_one(checker.as_mut())
+        .await?;
+    if still_locked {
+        // clean up our own probe attempt state is moot -- pg_try_advisory_lock
+        // failed, so nothing to unlock on `checker`.
+    } else {
+        sqlx::query("SELECT pg_advisory_unlock($1)")
+            .bind(template_lock_id)
+            .execute(checker.as_mut())
+            .await?;
+    }
+
+    let _ = sqlx::query("SELECT pg_advisory_unlock($1)")
+        .bind(clone_lock_id)
+        .execute(blocker.as_mut())
+        .await;
+
+    assert!(
+        !still_locked,
+        "template_lock_id shared advisory lock must be released even when the subsequent \
+         exclusive clone_lock_id acquisition fails -- it leaked because the second lock's \
+         `?` early-returns past the unconditional unlock statements at the end of \
+         create_database_from_template"
+    );
+    Ok(())
+}

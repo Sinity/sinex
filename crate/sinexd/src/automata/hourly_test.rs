@@ -97,3 +97,69 @@ async fn hourly_forward_bucket_still_closes_current_hour() -> xtask::sandbox::Te
     );
     Ok(())
 }
+
+/// sinex-4wop: `accumulate`'s next-bucket branch does `state.pending_window =
+/// Some(...)` -- a bare overwrite, not an accumulation. If a SECOND
+/// boundary-crossing event arrives (also past the current hour) before the
+/// current hour is flushed, it silently replaces the first pending event
+/// instead of both contributing to the new hour once opened. Real data loss
+/// on flush lag, not just a duplicate/ordering quirk.
+#[sinex_test]
+#[ignore = "sinex-4wop open: pending_window overwrite drops the first of two boundary-crossing events on flush lag"]
+async fn hourly_pending_window_overwrite_does_not_drop_boundary_crossing_events()
+-> xtask::sandbox::TestResult<()> {
+    let mut summarizer = HourlySummarizer;
+    let mut state = HourlySummaryState::default();
+
+    let base = Timestamp::from_unix_timestamp(1_700_000_000).expect("valid ts"); // hour H
+    let next_a = base + time::Duration::seconds(3600); // hour H+1, event A
+    let next_b = next_a + time::Duration::seconds(100); // hour H+1, event B (same bucket as A)
+
+    // Open hour H.
+    summarizer
+        .accumulate(
+            &mut state,
+            window(base, base),
+            &AutomatonContext::timer_flush(base)?,
+        )
+        .await?;
+    assert_eq!(state.window_count, 1);
+
+    // Event A crosses into H+1 before H is flushed -- becomes the pending window.
+    summarizer
+        .accumulate(
+            &mut state,
+            window(next_a, next_a),
+            &AutomatonContext::timer_flush(next_a)?,
+        )
+        .await?;
+    assert!(summarizer.window_complete(&state));
+
+    // Event B ALSO crosses into H+1, arriving before H is ever flushed. Today
+    // this overwrites the pending window instead of accumulating alongside A.
+    summarizer
+        .accumulate(
+            &mut state,
+            window(next_b, next_b),
+            &AutomatonContext::timer_flush(next_b)?,
+        )
+        .await?;
+
+    // Flush H, which should seed the new H+1 bucket from whatever was pending.
+    let output = summarizer
+        .emit(&mut state, &AutomatonContext::timer_flush(next_b)?)
+        .await?
+        .expect("closed hour H should emit a summary");
+    assert_eq!(
+        output.payload.window_count, 1,
+        "only hour H's own window contributes to H's summary"
+    );
+
+    assert_eq!(
+        state.window_count, 2,
+        "hour H+1 should have been seeded by BOTH boundary-crossing events (A and B), \
+         but the pending_window overwrite means only the most recent one (B) survived -- \
+         event A was silently dropped with no warning or durable debt record."
+    );
+    Ok(())
+}

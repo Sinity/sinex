@@ -281,3 +281,50 @@ async fn registered_automata_are_bridge_repairable() -> TestResult<()> {
     assert!(!checked.is_empty(), "automata registry must not be empty");
     Ok(())
 }
+
+/// sinex-r6d.6 reopened: `registered_automata_are_bridge_repairable` never reads
+/// `manages_own_checkpoints`, the exact bit that gates whether an automaton
+/// takes the bridge-checkpoint-preload path this bead's closure regression
+/// (`automaton_bridge_runs_historical_catchup_from_saved_bridge_checkpoint`)
+/// proves. Every registered automaton's `AutomatonRuntime::capabilities()`
+/// hardcodes `manages_own_checkpoints: true`
+/// (crate/sinexd/src/runtime/automaton/adapter/mod.rs:587), which makes
+/// `bridge_manages_checkpoints` (automaton_runtime.rs:205) false for all of
+/// them — the bridge-checkpoint mechanism the closure's regression test
+/// exercises is dead code on every currently-registered automaton. The
+/// outcome is still correct today because each adapter's own persisted
+/// checkpoint gates catch-up via a different path, but the closure's stated
+/// mechanism is not the operating one.
+#[sinex_test]
+#[ignore = "sinex-r6d.6 open: registered automata all set manages_own_checkpoints=true, \
+            so the bridge-checkpoint-preload mechanism this bead's original closure \
+            regression proves is never exercised in production"]
+async fn registered_automata_use_the_bridge_checkpoint_mechanism_their_closure_claims()
+-> TestResult<()> {
+    for spec in AUTOMATA {
+        let contract = (spec.contract)();
+        assert!(
+            !contract.manages_own_checkpoints,
+            "{} sets manages_own_checkpoints=true, so it never takes the bridge-checkpoint-preload \
+             path that automaton_bridge_runs_historical_catchup_from_saved_bridge_checkpoint proves \
+             is lossless -- that regression test exercises a code path this automaton doesn't use",
+            spec.name
+        );
+    }
+    Ok(())
+}
+
+#[test]
+#[ignore = "sinex-08un open: manages_own_continuous_loop is capability-negotiated in AutomatonRuntimeContract and gates a real branch in automaton_runtime.rs, but every registered automaton hardcodes it false (via the generic adapter) -- the true branch (module-owned scan loop) is structurally dead code, never exercised by any registered automaton or test"]
+fn at_least_one_automaton_should_exercise_the_manages_own_continuous_loop_branch() {
+    let any_self_managed = AUTOMATA
+        .iter()
+        .any(|spec| (spec.contract)().manages_own_continuous_loop);
+
+    assert!(
+        any_self_managed,
+        "manages_own_continuous_loop is true for zero of {} registered automata -- \
+         the self-managed-loop branch in automaton_runtime.rs is unreachable in production",
+        AUTOMATA.len()
+    );
+}

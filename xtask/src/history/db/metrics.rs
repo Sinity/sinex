@@ -770,3 +770,7 @@ impl HistoryDb {
         Ok(results)
     }
 }
+
+#[cfg(test)]
+#[path = "metrics_test.rs"]
+mod tests;

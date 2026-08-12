@@ -103,3 +103,7 @@ impl MaterialParser for NotificationActionParser {
         ])
     }
 }
+
+#[cfg(test)]
+#[path = "notification_action_test.rs"]
+mod notification_action_test;

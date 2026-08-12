@@ -17,6 +17,7 @@
 //! actually needed a new `#[path]` override for exactly that reason.
 
 mod sources {
+    mod browser_history_occurrence_key_test;
     mod browser_history_parser_test;
     mod email_mailbox_parser_test;
     mod email_provider_cursor_parser_test;
@@ -37,6 +38,6 @@ mod sources {
 // still resolves under the aggregated root. (`crate::production_path_case_test`
 // needs no entry: `#[macro_export]` macros always live at the crate root.)
 pub(crate) use sources::production_path::{
-    ALL_OBLIGATIONS, AdapterKind, ProductionPathCase, _run_case_with_directory_entry,
-    _run_case_with_logical_path, fixtures, obligations, run_production_path_case,
+    _run_case_with_directory_entry, _run_case_with_logical_path, ALL_OBLIGATIONS, AdapterKind,
+    ProductionPathCase, fixtures, obligations, run_production_path_case,
 };

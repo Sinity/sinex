@@ -101,8 +101,8 @@ async fn overlaps_and_gap_semantics() -> TestResult<()> {
 /// Deterministic fixture from the design doc: commands run while discussing a
 /// topic, with one contradiction and one caveat.
 #[sinex_test]
-async fn within_relation_assembles_evidence_window_with_contradiction_and_caveat()
--> TestResult<()> {
+async fn within_relation_assembles_evidence_window_with_contradiction_and_caveat() -> TestResult<()>
+{
     // Seed: a "discussing topic X" event.
     let seed = material_event(
         "chat.session",
@@ -259,13 +259,82 @@ async fn sequence_relation_flags_out_of_order_and_span() -> TestResult<()> {
             .any(|c| c.id == "sequence.span_exceeded")
     );
 
-    let out_of_order =
-        EventRelationExpr::Sequence { within_secs: 300 }.evaluate(&[c, b, a], &[]);
+    let out_of_order = EventRelationExpr::Sequence { within_secs: 300 }.evaluate(&[c, b, a], &[]);
     assert!(
         out_of_order
             .caveats
             .iter()
             .any(|c| c.id == "sequence.out_of_order")
+    );
+
+    Ok(())
+}
+
+/// sinex-yhyo: `evaluate_sequence`'s span check computes `span = end - start`
+/// using first-in-input-order/last-in-input-order timestamps, not min/max.
+/// On reverse-chronological input, `end < start` so `span` is negative and
+/// `span > Duration::seconds(within_secs)` never fires -- the span bound
+/// silently stops being enforced exactly when the input is most out of
+/// order. This is independent of `sequence.out_of_order`, which is a
+/// separate caveat that does fire correctly here.
+#[sinex_test]
+#[ignore = "sinex-yhyo open: sequence span check goes silently negative (and so never exceeds the bound) on reverse-chronological input"]
+async fn sequence_relation_span_check_survives_reverse_chronological_input() -> TestResult<()> {
+    let a = material_event(
+        "a",
+        "a.evt",
+        Some(at(0)),
+        Some(TemporalSourceType::RealtimeCapture),
+        json!({}),
+    );
+    let b = material_event(
+        "b",
+        "b.evt",
+        Some(at(60)),
+        Some(TemporalSourceType::RealtimeCapture),
+        json!({}),
+    );
+    let c = material_event(
+        "c",
+        "c.evt",
+        Some(at(120)),
+        Some(TemporalSourceType::RealtimeCapture),
+        json!({}),
+    );
+
+    // Real elapsed spread is 120s, well past the 30s bound -- regardless of
+    // input order, an evidence consumer needs this flagged.
+    let reverse_order = EventRelationExpr::Sequence { within_secs: 30 }.evaluate(&[c, b, a], &[]);
+    assert!(
+        reverse_order
+            .caveats
+            .iter()
+            .any(|caveat| caveat.id == "sequence.span_exceeded"),
+        "reverse-chronological input spanning 120s against a 30s bound must still raise \
+         sequence.span_exceeded, not just sequence.out_of_order"
+    );
+
+    Ok(())
+}
+
+/// sinex-9xkq: `ObservedRange::union` always keeps `self.basis`, so the
+/// result depends on which operand is `self` rather than which basis is
+/// actually stronger evidence. A commutative "union of evidence" operation
+/// should not produce a different basis depending on argument order.
+#[sinex_test]
+#[ignore = "sinex-9xkq open: ObservedRange::union unconditionally latches self.basis, so union is order-dependent instead of choosing the stronger basis"]
+async fn observed_range_union_basis_is_order_independent() -> TestResult<()> {
+    let precise = ObservedRange::point(at(0), TimeBasis::SourceIntrinsic, TimeQuality::Exact);
+    let loose = ObservedRange::unknown(TimeBasis::AtemporalAnchor);
+
+    let forward = precise.union(&loose);
+    let backward = loose.union(&precise);
+
+    assert_eq!(
+        forward.basis, backward.basis,
+        "union of the same two ranges must agree on basis regardless of argument order \
+         (forward={:?}, backward={:?})",
+        forward.basis, backward.basis
     );
 
     Ok(())
@@ -354,8 +423,7 @@ async fn evidence_window_renders_as_view_envelope_with_caveats() -> TestResult<(
 }
 
 #[sinex_test]
-async fn causal_footprint_fixture_models_machine_session_as_evidence_window() -> TestResult<()>
-{
+async fn causal_footprint_fixture_models_machine_session_as_evidence_window() -> TestResult<()> {
     let fixture = fixtures::machine_session_causal_footprint();
     let window = fixture.evidence_window();
 
@@ -381,15 +449,13 @@ async fn causal_footprint_fixture_models_machine_session_as_evidence_window() ->
         window
             .support_refs
             .iter()
-            .any(|evidence| evidence.object.label.as_deref()
-                == Some("dev.xtask · xtask.invoked"))
+            .any(|evidence| evidence.object.label.as_deref() == Some("dev.xtask · xtask.invoked"))
     );
     assert!(window.support_refs.iter().any(|evidence| {
         evidence.object.label.as_deref() == Some("machine.scope · build.scope.completed")
     }));
     assert!(window.support_refs.iter().any(|evidence| {
-        evidence.object.label.as_deref()
-            == Some("polylogue.agent-session · agent.session.active")
+        evidence.object.label.as_deref() == Some("polylogue.agent-session · agent.session.active")
     }));
     assert!(
         window.caveats.iter().any(|caveat| {

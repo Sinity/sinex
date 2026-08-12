@@ -109,3 +109,24 @@ async fn inject_unused_dep_surfaces_unreadable_manifest() -> TestResult<()> {
     assert!(message.contains(cargo_toml.display().to_string().as_str()));
     Ok(())
 }
+
+#[sinex_test]
+#[ignore = "sinex-oi96 open: inject_unused_dep always appends a fresh [dependencies] \
+            block, so calling it twice for the same crate produces a Cargo.toml with \
+            two [dependencies] tables instead of updating the existing one"]
+async fn inject_unused_dep_is_idempotent_across_repeated_calls() -> TestResult<()> {
+    let workspace = EphemeralWorkspace::new()?;
+    workspace.inject_unused_dep(DEFAULT_CRATE, "serde_json", "1")?;
+    workspace.inject_unused_dep(DEFAULT_CRATE, "regex", "1")?;
+
+    let cargo_toml = workspace.crate_cargo_toml(DEFAULT_CRATE);
+    let contents = std::fs::read_to_string(&cargo_toml)?;
+    let dependencies_table_count = contents.matches("[dependencies]").count();
+
+    assert_eq!(
+        dependencies_table_count, 1,
+        "Cargo.toml has {dependencies_table_count} [dependencies] tables after two \
+         inject_unused_dep calls — cargo only honors the first, silently dropping later ones:\n{contents}"
+    );
+    Ok(())
+}

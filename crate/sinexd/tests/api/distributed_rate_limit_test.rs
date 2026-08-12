@@ -336,3 +336,31 @@ async fn default_config_has_sane_values() -> TestResult<()> {
     assert!(config.enabled);
     Ok(())
 }
+
+/// sinex-h7vi (finding 2): `from_gateway_config` guards the RPM computation against a
+/// zero-second window via `.max(1)`, but stores the raw (possibly zero) window in
+/// `window_seconds` -- the field `DistributedRateLimiter::new` later doubles to build the
+/// KV `max_age`. With `rpc_rate_limit_window_secs=0`, RPM is computed as if window=1s but
+/// KV retention (`max_age = window_seconds * 2`) is 0 -- counters expire immediately while
+/// the limit assumes a real window, an enforcement bypass.
+#[test]
+#[ignore = "sinex-h7vi open: window_seconds=0 computes RPM against a 1s window but stores \
+            window_seconds=0, producing a 0s KV max_age -- computed limit and actual \
+            retention disagree"]
+fn zero_second_window_produces_consistent_rpm_and_retention_window() {
+    let gw_config = sinexd::api::config::GatewayConfig {
+        rpc_rate_limit_window_secs: 0,
+        ..Default::default()
+    };
+    let rl_config = DistributedRateLimitConfig::from_gateway_config(&gw_config);
+
+    // RPM was computed assuming a >=1s window (the `.max(1)` guard), so the effective
+    // window used for retention should also be >=1s -- it must not be the raw zero.
+    assert!(
+        rl_config.window_seconds >= 1,
+        "window_seconds={} was computed as if window>=1s for RPM purposes, but is stored as \
+         the raw (zero) value used to derive KV max_age -- retention and rate computation \
+         disagree (sinex-h7vi)",
+        rl_config.window_seconds
+    );
+}

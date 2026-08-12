@@ -15,8 +15,8 @@
 use futures::future::BoxFuture;
 use sinex_primitives::parser::SourceId;
 use std::collections::HashMap;
-use std::sync::LazyLock;
 use std::sync::Arc;
+use std::sync::LazyLock;
 
 /// Type-erased factory function for running a source driver.
 ///
@@ -238,10 +238,36 @@ mod tests {
 
     #[sinex_test]
     async fn adapter_source_runtime_preserves_registered_source_id() -> TestResult<()> {
-        let runtime =
-            adapter_source_runtime::<SqliteRowAdapter, ActivityWatchParser>("desktop.activitywatch");
+        let runtime = adapter_source_runtime::<SqliteRowAdapter, ActivityWatchParser>(
+            "desktop.activitywatch",
+        );
 
         assert_eq!(runtime.module_name(), "desktop.activitywatch");
         Ok(())
+    }
+
+    /// sinex-2fkc: SOURCE_FACTORY_REGISTRY is a first-registration-wins HashMap with no
+    /// collision detection. media.audio-transcript and media.screen-ocr each have TWO
+    /// SourceFactoryEntry registrations (the auto-registered staged FileContentDropAdapter
+    /// parser via #[derive(SourceMeta)], and the explicit register_source! for the live
+    /// driver) -- dispatch silently resolves to whichever links first. This must fail until
+    /// the collision is either eliminated (drop the redundant auto-registration) or rejected
+    /// at startup (panic/hard-error on duplicate source_id in SOURCE_FACTORY_REGISTRY's
+    /// construction, replacing the current `.or_insert`).
+    #[test]
+    #[ignore = "sinex-2fkc open: media.audio-transcript and media.screen-ocr each have 2 \
+                colliding SourceFactoryEntry registrations, silently resolved by link order"]
+    fn media_capture_source_ids_do_not_silently_collide_in_factory_registry() {
+        for source_id in ["media.audio-transcript", "media.screen-ocr"] {
+            let count = inventory::iter::<SourceFactoryEntry>()
+                .filter(|e| e.source_id == source_id)
+                .count();
+            assert_eq!(
+                count, 1,
+                "{source_id} has {count} SourceFactoryEntry registrations colliding on the \
+                 same source_id -- first-registration-wins makes dispatch link-order-dependent \
+                 (sinex-2fkc)"
+            );
+        }
     }
 }

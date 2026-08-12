@@ -82,3 +82,48 @@ async fn test_hooks_builder_source_material_retry_budget() -> ::xtask::sandbox::
     );
     Ok(())
 }
+
+#[sinex_test]
+#[ignore = "sinex-5xta open: fail_on_delivery(n) ignores n and behaves identically to fail_once (fails on delivery 1, not the Nth)"]
+async fn fail_on_delivery_arms_only_on_the_requested_delivery_number()
+-> ::xtask::sandbox::TestResult<()> {
+    // `TestHooks` has no field capable of storing a target delivery count at
+    // all (fail_once/delivery_counter/persistence_failures_remaining/
+    // confirmation_failures -- none of these carry an "n"), so
+    // `fail_on_delivery(n)` cannot possibly behave differently for
+    // different `n`. Prove it structurally: two builders differing only in
+    // `n` must be indistinguishable via any hook field a consumer could act
+    // on, which is the exact bug (both fail on delivery 1, not delivery n).
+    let (hooks_n1, counters_n1) = TestHooks::builder().fail_on_delivery(1).build();
+    let (hooks_n100, counters_n100) = TestHooks::builder().fail_on_delivery(100).build();
+
+    assert!(
+        hooks_n1.fail_once.is_some() && hooks_n100.fail_once.is_some(),
+        "both should arm the immediate fail_once flag today (the bug)"
+    );
+    // The real fix must give fail_on_delivery(n) a way to distinguish n=1
+    // from n=100 -- e.g. a target-count field checked against
+    // delivery_counter before firing. Until then, both configurations fire
+    // on the very first delivery, so a consumer relying on
+    // `fail_on_delivery(100)` to survive 99 deliveries first cannot pass.
+    assert!(
+        !counters_n1.has_failed_once() && !counters_n100.has_failed_once(),
+        "fail_once starts armed-but-not-yet-triggered"
+    );
+    // Simulate a single delivery attempt firing the n=100 flag, exactly as
+    // the real consumer path does for plain fail_once() -- there is no
+    // delivery-count check anywhere in this struct to gate it on n.
+    hooks_n100
+        .fail_once
+        .as_ref()
+        .unwrap()
+        .store(false, std::sync::atomic::Ordering::SeqCst);
+    assert!(
+        !counters_n100.has_failed_once(),
+        "fail_on_delivery(100) must NOT have fired after only 1 delivery -- \
+         it should still be armed-but-not-yet-triggered, proving the Nth-delivery \
+         semantics are real rather than an alias for fail_once()"
+    );
+    let _ = hooks_n1;
+    Ok(())
+}

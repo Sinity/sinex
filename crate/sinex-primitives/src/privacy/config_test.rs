@@ -3,8 +3,7 @@ use std::ffi::OsString;
 use std::sync::LazyLock;
 use xtask::sandbox::sinex_test;
 
-static ENV_LOCK: LazyLock<tokio::sync::Mutex<()>> =
-    LazyLock::new(|| tokio::sync::Mutex::new(()));
+static ENV_LOCK: LazyLock<tokio::sync::Mutex<()>> = LazyLock::new(|| tokio::sync::Mutex::new(()));
 
 fn restore_var(key: &str, value: Option<OsString>) {
     match value {
@@ -304,6 +303,34 @@ async fn from_env_rejects_invalid_default_strategy() -> ::xtask::sandbox::TestRe
         error
             .to_string()
             .contains("expected redact, encrypt, hash, or suppress")
+    );
+    Ok(())
+}
+
+#[sinex_test]
+#[ignore = "sinex-vceo open: documented SINEX_PRIVACY_BUILTIN default is 'all' (from_env doc table) but the actual runtime default (no env var, no config file) is CategorySet::None"]
+async fn from_env_default_matches_documented_builtin_default() -> ::xtask::sandbox::TestResult<()> {
+    let _guard = ENV_LOCK.lock().await;
+    let old_builtin = std::env::var_os("SINEX_PRIVACY_BUILTIN");
+    let old_config_path = std::env::var_os("SINEX_PRIVACY_CONFIG");
+    let old_state_dir = std::env::var_os("SINEX_STATE_DIR");
+    unsafe {
+        std::env::remove_var("SINEX_PRIVACY_BUILTIN");
+        std::env::remove_var("SINEX_PRIVACY_CONFIG");
+        std::env::remove_var("SINEX_STATE_DIR");
+    }
+
+    let config = PrivacyConfig::from_env().expect("from_env with no overrides must succeed");
+
+    restore_var("SINEX_PRIVACY_BUILTIN", old_builtin);
+    restore_var("SINEX_PRIVACY_CONFIG", old_config_path);
+    restore_var("SINEX_STATE_DIR", old_state_dir);
+
+    assert!(
+        matches!(config.builtin_categories, CategorySet::All),
+        "from_env()'s own doc table documents SINEX_PRIVACY_BUILTIN default as 'all', \
+         but with no env var and no config file the actual result is {:?}",
+        config.builtin_categories
     );
     Ok(())
 }

@@ -344,10 +344,70 @@ async fn idle_flush_times_out_pending_instruction_with_no_observation() -> TestR
 
     let outputs = reconciler.flush(&mut state, flush_at).await?;
     assert_eq!(outputs.len(), 1);
-    assert_eq!(outputs[0].payload.status, InstructionExpectationStatus::TimedOut);
+    assert_eq!(
+        outputs[0].payload.status,
+        InstructionExpectationStatus::TimedOut
+    );
     assert!(outputs[0].payload.matched_event_ids.is_empty());
     assert_eq!(state.pending_hyprland_workspace_len(), 0);
     assert!(!reconciler.flush_due(&state, flush_at));
+    Ok(())
+}
+
+#[sinex_test]
+#[ignore = "sinex-hj66 open: idle-flush claim_support hardcodes the same evidence_event_count as the \
+            observation-match path even though the idle-flush output has one parent event and zero \
+            matched observations, fabricating evidentiary weight the output doesn't have"]
+async fn idle_flush_claim_support_reports_the_real_evidence_count_not_the_matched_path_count()
+-> TestResult<()> {
+    let mut reconciler = InstructionExpectationReconciler;
+    let mut state = InstructionExpectationState::default();
+    let started_at = Timestamp::from_unix_timestamp(1_700_000_000).expect("valid timestamp");
+    let deadline = started_at + Duration::seconds(1);
+    let flush_at = started_at + Duration::seconds(10);
+
+    let instruction_ctx = context(
+        DesktopWorkspaceSwitchInstructionPayload::SOURCE.as_str(),
+        DesktopWorkspaceSwitchInstructionPayload::EVENT_TYPE.as_str(),
+        started_at,
+    );
+    reconciler
+        .reconcile(
+            &mut state,
+            "desktop.hyprland.workspace",
+            serde_json::to_value(instruction(4, Some(deadline), false)?)?,
+            &instruction_ctx,
+        )
+        .await?;
+
+    let outputs = reconciler.flush(&mut state, flush_at).await?;
+    assert_eq!(outputs.len(), 1);
+    let output = &outputs[0];
+
+    // The idle-flush path has exactly ONE parent event (the instruction
+    // itself) and ZERO matched observation events -- claim_support must
+    // reflect that, not the two-event count the observation-match path
+    // (reconcile_workspace_observation) legitimately reports.
+    assert_eq!(
+        output.source_event_ids.len(),
+        1,
+        "sanity: idle-flush should carry exactly one parent (the instruction event)"
+    );
+    assert!(output.payload.matched_event_ids.is_empty());
+
+    let claim_support = output
+        .claim_support
+        .as_ref()
+        .expect("idle-flush output should carry claim_support");
+    assert_eq!(
+        claim_support.evidence_event_count(),
+        1,
+        "claim_support.evidence_event_count() reported {} but the idle-flush output only has \
+         {} real parent event(s) and 0 matched observations -- this fabricates evidentiary \
+         support the output doesn't actually have",
+        claim_support.evidence_event_count(),
+        output.source_event_ids.len(),
+    );
     Ok(())
 }
 

@@ -104,7 +104,9 @@ async fn document_context_pii_recognizer_catches_ssn_shaped_file_path() -> TestR
         .await
         .unwrap();
     let payload = &intents[0].payload;
-    let file_path = payload["file_path"].as_str().expect("file_path is a string");
+    let file_path = payload["file_path"]
+        .as_str()
+        .expect("file_path is a string");
     assert!(
         file_path.contains("123-45-6789"),
         "fixture path must carry the SSN-shaped text unredacted at the parser boundary \
@@ -140,5 +142,35 @@ async fn document_context_pii_recognizer_catches_ssn_shaped_file_path() -> TestR
          fails, the catalog's contexts scoping changed and this test's premise needs revisiting"
     );
 
+    Ok(())
+}
+
+/// sinex-mrp4: a staged record whose path bytes aren't valid UTF-8 is
+/// silently treated as "nothing to ingest" (`parse_record` returns
+/// `Ok(vec![])`) instead of surfacing an explicit error/warning. From the
+/// caller's side this is indistinguishable from "there was genuinely
+/// nothing here" — silent data loss from staging/replay, not a visible
+/// parse failure.
+#[sinex_test]
+#[ignore = "sinex-mrp4 open: document.staging silently returns Ok(vec![]) \
+            for a record whose path bytes aren't valid UTF-8 instead of \
+            surfacing an explicit ParserError"]
+async fn non_utf8_staged_path_surfaces_an_error_not_silent_empty() -> TestResult<()> {
+    let mut parser = DocumentStagingParser;
+    let record = SourceRecord {
+        material_id: Id::new(),
+        anchor: MaterialAnchor::ByteRange { start: 0, len: 2 },
+        bytes: vec![0xff, 0xfe],
+        logical_path: None,
+        source_ts_hint: None,
+        metadata: serde_json::Value::Null,
+    };
+
+    let result = parser.parse_record(record, &test_ctx()).await;
+    assert!(
+        result.is_err(),
+        "a non-UTF8 staged path must surface an explicit error, not silently return an \
+         empty intent list indistinguishable from 'nothing to ingest': got {result:?}"
+    );
     Ok(())
 }

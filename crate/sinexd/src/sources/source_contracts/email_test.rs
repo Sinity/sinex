@@ -167,6 +167,52 @@ async fn malformed_utf8_is_rejected() -> TestResult<()> {
     Ok(())
 }
 
+/// sinex-mrp4: distinguishes the pathological all-garbage case above
+/// (`malformed_utf8_is_rejected`, entirely reasonable to hard-fail) from a
+/// message with a perfectly valid, extractable RFC822 envelope where only
+/// the BODY carries one legacy-encoded (non-UTF-8) byte. `parse_rfc822`
+/// currently runs `std::str::from_utf8` on the whole `record.bytes` blob up
+/// front, so the one bad body byte throws away From/To/Subject/Message-Id
+/// too -- zero `email.message.*` events for a message whose envelope was
+/// entirely readable.
+#[sinex_test]
+#[ignore = "sinex-mrp4 open: parse_rfc822 hard-rejects the WHOLE message on \
+            any non-UTF8 byte anywhere in record.bytes, even when the \
+            RFC822 headers/envelope are perfectly valid UTF-8 and only the \
+            body carries a legacy-encoded byte"]
+async fn valid_envelope_with_one_non_utf8_body_byte_still_yields_an_event() -> TestResult<()> {
+    let mut parser = EmailMailboxParser;
+    let mut bytes = b"From: alice@example.com\r\n\
+To: bob@example.com\r\n\
+Subject: legacy encoded body\r\n\
+Message-Id: <legacy-1@example.com>\r\n\
+\r\n\
+Caf\xe9 body text with one latin-1 byte, rest is ASCII.\r\n"
+        .to_vec();
+    // Sanity-check the fixture actually contains a non-UTF-8 byte and would
+    // otherwise decode fine (headers are pure ASCII).
+    assert!(std::str::from_utf8(&bytes).is_err());
+    let record = record_for(&bytes, "inbox/legacy.eml");
+    bytes.clear();
+
+    let intents = parser.parse_record(record, &test_ctx()).await.expect(
+        "a message with a fully valid RFC822 envelope must not hard-fail just \
+                 because one body byte is not UTF-8 -- best-effort/lossy extraction should \
+                 still recover the envelope",
+    );
+
+    assert!(
+        !intents.is_empty(),
+        "expected at least one email.message.* event"
+    );
+    assert_eq!(
+        occurrence_field(&intents[0], "message_id"),
+        Some("legacy-1@example.com"),
+        "the valid Message-Id header should still be extracted"
+    );
+    Ok(())
+}
+
 #[sinex_test]
 async fn maildir_entry_preserves_folder_flags_and_move_identity() -> TestResult<()> {
     let mut parser = EmailMailboxParser;

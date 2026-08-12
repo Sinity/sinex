@@ -273,3 +273,27 @@ async fn task_reducer_rejects_completion_without_created_state() -> TestResult<(
     assert!(error.to_string().contains("requires an existing task"));
     Ok(())
 }
+
+#[sinex_test]
+#[ignore = "sinex-06xg open: TaskSourceSystem::TestFixture has no #[cfg(test)] gate, so it's \
+            production-constructible -- any code path that deserializes a raw TaskCreatedPayload \
+            JSON body (historical import, replay, an admin API) can smuggle in source_system: \
+            \"test_fixture\" with zero rejection, identical to the gap already tracked for a \
+            sibling enum"]
+async fn task_created_payload_rejects_test_fixture_source_system_from_external_input()
+-> TestResult<()> {
+    let raw = serde_json::json!({
+        "task_id": Uuid::now_v7().to_string(),
+        "title": "smuggled via external input",
+        "source_system": "test_fixture",
+    });
+
+    let result: Result<TaskCreatedPayload, _> = serde_json::from_value(raw);
+    assert!(
+        result.is_err(),
+        "a TaskCreatedPayload deserialized from arbitrary external JSON should never be able to \
+         claim source_system: test_fixture -- that variant exists for test fixtures only and has \
+         no #[cfg(test)] gate to stop production deserialization from accepting it, got: {result:?}"
+    );
+    Ok(())
+}

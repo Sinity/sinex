@@ -222,3 +222,53 @@ async fn extraction_output_is_missing_equivalence_key_sinex_im80() -> TestResult
     );
     Ok(())
 }
+
+/// sinex-a4w.4: `process()` returns a single `Option<DerivedOutput<..>>`, and
+/// `find_first_entity` stops at the first pattern match in priority order
+/// (URL > email > file path > command). A single input event that contains
+/// two co-occurring entity kinds (a URL and an email address) can only ever
+/// surface the URL -- the email is silently and permanently unobservable
+/// from this event, not deferred or queued, just dropped.
+#[sinex_test]
+#[ignore = "sinex-a4w.4 open: entity_extractor emits only the first-matched entity per event, silently dropping co-occurring entities of other kinds"]
+async fn extraction_does_not_silently_drop_co_occurring_entities_sinex_a4w_4() -> TestResult<()> {
+    let mut extractor = EntityExtractor;
+    let context = AutomatonContext {
+        trigger_event_id: Id::<Event<JsonValue>>::new(),
+        source: EventSource::from_static("test.source"),
+        event_type: EventType::from_static("test.type"),
+        ts_orig: Some(Timestamp::now()),
+        ts_coided: Timestamp::now(),
+        processing_mode: ProcessingMode::Live,
+        trigger_kind: TriggerKind::NewEvent,
+        created_by_operation_id: None,
+        trigger_material_id: None,
+        trigger_anchor_byte: None,
+    };
+    let input = json!({
+        "text": "Ping https://example.com/status and cc jane@example.com about it."
+    });
+
+    let output = extractor
+        .process(&mut (), input, &context)
+        .await?
+        .expect("at least the URL entity should be extracted");
+
+    assert_eq!(
+        output.payload.entity_type.as_str(),
+        "url",
+        "current priority order surfaces the URL, confirming the email co-occurrence is next"
+    );
+
+    // The bug: there is no second output, output stream, or subsequent call
+    // that recovers the email entity from this same input event -- it never
+    // becomes observable anywhere. A fixed extractor must emit both.
+    assert!(
+        output.payload.raw_name.contains("jane@example.com")
+            || output.payload.entity_type.as_str() == "person",
+        "sinex-a4w.4: the co-occurring email entity (jane@example.com) must also be \
+         observable from this event; a single-output transducer call that only ever \
+         returns the URL silently discards it"
+    );
+    Ok(())
+}

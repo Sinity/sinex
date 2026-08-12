@@ -110,6 +110,74 @@ async fn derive_falls_back_to_material_tier() -> TestResult<()> {
     Ok(())
 }
 
+/// sinex-odmc: when multiple ledger entries overlap the same offset, the
+/// higher-precedence source_type wins regardless of span width.
+#[sinex_test]
+async fn find_entry_for_offset_tie_break_prefers_higher_precedence() -> TestResult<()> {
+    let reader = LedgerReader::new(
+        Uuid::now_v7(),
+        vec![
+            // Wider span, lower precedence (InferredMtime).
+            ledger_entry(0, 1_000, ts(1_000), TemporalSourceType::InferredMtime),
+            // Narrower span, higher precedence (RealtimeCapture) — must win.
+            ledger_entry(400, 600, ts(2_000), TemporalSourceType::RealtimeCapture),
+        ],
+    );
+    let found = reader
+        .find_entry_for_offset(500)
+        .expect("offset 500 is covered by both overlapping entries");
+    assert_eq!(
+        found.source_type,
+        TemporalSourceType::RealtimeCapture,
+        "higher-precedence source_type must win the tie-break even though its span is narrower"
+    );
+    Ok(())
+}
+
+/// sinex-odmc: among entries of EQUAL precedence overlapping the same offset,
+/// the narrower (more specific) span wins.
+#[sinex_test]
+async fn find_entry_for_offset_tie_break_prefers_narrower_span_at_equal_precedence()
+-> TestResult<()> {
+    let reader = LedgerReader::new(
+        Uuid::now_v7(),
+        vec![
+            ledger_entry(0, 1_000, ts(1_000), TemporalSourceType::RealtimeCapture),
+            ledger_entry(400, 600, ts(2_000), TemporalSourceType::RealtimeCapture),
+        ],
+    );
+    let found = reader
+        .find_entry_for_offset(500)
+        .expect("offset 500 is covered by both overlapping entries");
+    assert_eq!(
+        (found.offset_start, found.offset_end),
+        (400, 600),
+        "at equal precedence, the narrower (more specific) span must win"
+    );
+    Ok(())
+}
+
+/// sinex-odmc: the `offset >= start && offset < end` boundary is exclusive on
+/// the upper bound — an offset exactly at `offset_end` must NOT match.
+#[sinex_test]
+async fn find_entry_for_offset_upper_bound_is_exclusive() -> TestResult<()> {
+    let reader = LedgerReader::new(
+        Uuid::now_v7(),
+        vec![ledger_entry(
+            0,
+            1_000,
+            ts(1_000),
+            TemporalSourceType::RealtimeCapture,
+        )],
+    );
+    assert!(
+        reader.find_entry_for_offset(1_000).is_none(),
+        "offset_end is an exclusive upper bound, offset==end must not match"
+    );
+    assert!(reader.find_entry_for_offset(999).is_some());
+    Ok(())
+}
+
 /// Replay stability: re-deriving from the same material yields the same
 /// `(ts_orig, rung)`. Replay re-reads identical material timing + ledger, so
 /// the only thing that changes is the event id (`ts_coided`), never `ts_orig`.

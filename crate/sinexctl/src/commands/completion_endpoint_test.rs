@@ -252,3 +252,50 @@ async fn ops_dlq_completion_marks_purge_options_destructive() -> TestResult<()> 
     assert_eq!(confirm.danger, "destructive");
     Ok(())
 }
+
+/// sinex-hku1 open: `_complete` clamps `--cursor` only to the line's byte
+/// UPPER bound (`cursor.min(line.len())`), never to the nearest valid UTF-8
+/// char boundary. A shell can pass any `--cursor` byte offset (it counts
+/// characters, not necessarily UTF-8 byte boundaries, and is attacker/typo-
+/// controlled), so a cursor landing mid-codepoint panics on the `&line[..cursor]`
+/// slice. This exercises the real production entry point
+/// (`CompletionEndpointCommand::complete` -> `active_token`), not a private
+/// helper in isolation.
+#[sinex_test]
+#[ignore = "sinex-hku1 open: --cursor landing mid-UTF8-codepoint panics active_token's \
+            &line[..cursor] slice (and the same shape in active_token_start, \
+            query completion's expression slice, ops_dlq_subcommand, command_context)"]
+async fn completion_cursor_mid_multibyte_char_does_not_panic() -> TestResult<()> {
+    // "wörd": w=1 byte, ö=2 bytes (offset 1..3), r, d. cursor=2 lands inside
+    // ö's 2-byte encoding -- not a char boundary.
+    let line = "w\u{00F6}rd";
+    assert!(
+        !line.is_char_boundary(2),
+        "fixture must straddle a char boundary"
+    );
+    let cmd = CompletionEndpointCommand {
+        line: line.to_string(),
+        cursor: 2,
+    };
+    let _response = cmd.complete(None).await;
+    Ok(())
+}
+
+// sinex-e6sc: `sinexctl _complete` panics on non-ASCII input at a
+// non-char-boundary cursor offset. `active_token` (and the 3 other sites at
+// completion_endpoint.rs:347,636,756) clamp `cursor` to `line.len()` (a
+// *byte* length) but never check that the clamped value actually falls on a
+// UTF-8 char boundary before slicing `&line[..cursor]` -- a raw --cursor
+// byte offset from shell/picker frontends that lands mid-codepoint panics
+// instead of completing.
+#[test]
+#[ignore = "sinex-e6sc open: active_token panics when `cursor` lands mid- \
+            UTF-8-codepoint (completion_endpoint.rs:158-163, unguarded \
+            &line[..cursor] slice after only byte-length clamping)"]
+fn active_token_does_not_panic_on_non_char_boundary_cursor() {
+    // "тест" is 4 chars, each 2 bytes (8 bytes total). cursor=3 lands inside
+    // the 2nd character's encoding -- a plausible raw byte offset a
+    // shell/picker frontend could pass for a multi-byte-containing line.
+    let line = "тест";
+    let _ = active_token(line, 3);
+}

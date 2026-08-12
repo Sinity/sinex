@@ -313,10 +313,7 @@ pub fn validate_json_value(value: &Value) -> Result<()> {
 pub fn strip_postgres_jsonb_nul_chars(value: &mut Value) -> usize {
     match value {
         Value::String(text) => strip_nul_chars_from_string(text),
-        Value::Array(values) => values
-            .iter_mut()
-            .map(strip_postgres_jsonb_nul_chars)
-            .sum(),
+        Value::Array(values) => values.iter_mut().map(strip_postgres_jsonb_nul_chars).sum(),
         Value::Object(map) => {
             let mut stripped = 0;
             let entries = std::mem::take(map);
@@ -409,3 +406,7 @@ pub fn normalize_unicode(input: &str) -> Result<String> {
 
     Ok(normalized)
 }
+
+#[cfg(test)]
+#[path = "core_test.rs"]
+mod tests;

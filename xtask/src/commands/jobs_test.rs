@@ -56,6 +56,25 @@ async fn test_truncate_str() -> ::xtask::sandbox::TestResult<()> {
     Ok(())
 }
 
+// sinex-e6ti: `xtask jobs list/active` panics on non-ASCII command names.
+// `truncate_str`'s `&s[..max_len - 3]` slices by byte index computed from a
+// char-count-oriented max_len, without checking UTF-8 char boundaries --
+// same bug class already fixed elsewhere via
+// sinex_primitives::text::truncate_cols, but this call site (jobs.rs:697)
+// still uses the raw unsafe slice. A multi-byte command name (e.g. one
+// containing "тест" or an emoji) whose byte length crosses max_len at a
+// non-boundary point panics instead of truncating.
+#[test]
+#[ignore = "sinex-e6ti open: truncate_str panics on multi-byte UTF-8 input \
+            whose byte-length crosses max_len at a non-char-boundary point \
+            (xtask/src/commands/jobs.rs:697, raw &s[..max_len - 3] slice)"]
+fn test_truncate_str_does_not_panic_on_multibyte_boundary_straddle() {
+    // 15 two-byte Cyrillic chars = 30 bytes. max_len=10 lands the byte cut
+    // (10-3=7) squarely inside the 4th character's 2-byte encoding.
+    let s = "т".repeat(15);
+    let _ = truncate_str(&s, 10);
+}
+
 #[sinex_test]
 async fn test_status_to_str() -> ::xtask::sandbox::TestResult<()> {
     assert_eq!(status_to_str(JobLifecycleStatus::Running), "running");

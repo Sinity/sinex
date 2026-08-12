@@ -1038,3 +1038,30 @@ async fn test_classify_package_proof_coverage_stale() -> ::xtask::sandbox::TestR
     assert_eq!(coverage[0].proof_invocation_id, Some(invocation_id));
     Ok(())
 }
+
+#[sinex_test]
+#[ignore = "sinex-jzf7 open: BenchConfig.git_tag/.gha are unreachable from the real CLI \
+            (BenchArgs has neither field) and unread even if manually set true -- no \
+            implementation exists for either feature"]
+async fn bench_command_exposes_git_tag_and_gha_flags() -> ::xtask::sandbox::TestResult<()> {
+    use clap::Parser;
+
+    let git_tag_error = crate::Cli::try_parse_from(["xtask", "test", "bench", "--git-tag"])
+        .err()
+        .map(|e| e.to_string());
+    assert!(
+        git_tag_error.is_none(),
+        "xtask test bench --git-tag was rejected -- BenchArgs has no git_tag field, so \
+         BenchConfig.git_tag can never be set from the real CLI: {git_tag_error:?}"
+    );
+
+    let gha_error = crate::Cli::try_parse_from(["xtask", "test", "bench", "--gha"])
+        .err()
+        .map(|e| e.to_string());
+    assert!(
+        gha_error.is_none(),
+        "xtask test bench --gha was rejected -- BenchArgs has no gha field, so \
+         BenchConfig.gha can never be set from the real CLI: {gha_error:?}"
+    );
+    Ok(())
+}

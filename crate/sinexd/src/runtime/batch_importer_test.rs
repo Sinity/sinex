@@ -205,3 +205,32 @@ async fn scan_detects_replaced_file() -> TestResult<()> {
     assert_eq!(files[0].start_line_number, 0);
     Ok(())
 }
+
+#[test]
+#[ignore = "sinex-o55w open: detect_change_kind requires modified_unix_ms to differ, so a same-millisecond append is misclassified as Replaced instead of Appended, causing content duplication on re-import"]
+fn detect_change_kind_treats_same_millisecond_append_as_replaced_not_appended() {
+    let previous = ImportedFileState {
+        fingerprint: ImportedFileFingerprint {
+            size_bytes: 8,
+            modified_unix_ms: Some(1_000),
+        },
+        imported_offset_bytes: 8,
+        imported_line_count: 1,
+    };
+    // Same millisecond-resolution mtime, but the file genuinely grew (an append).
+    let current = ImportedFileFingerprint {
+        size_bytes: 16,
+        modified_unix_ms: Some(1_000),
+    };
+
+    let kind = detect_change_kind(Some(&previous), current);
+
+    // BUG: this returns Some(Replaced) today because modified_unix_ms is unchanged,
+    // even though size_bytes strictly grew and imported_offset_bytes is still a
+    // valid prefix -- the correct classification is Appended.
+    assert_eq!(
+        kind,
+        Some(ImportFileChangeKind::Appended),
+        "same-ms size growth past imported_offset_bytes must be classified Appended, not Replaced"
+    );
+}

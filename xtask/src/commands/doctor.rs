@@ -2239,3 +2239,11 @@ use deployment::{redact_database_url_password, resolve_effective_database_probe_
 #[cfg(test)]
 #[path = "doctor_build_cache_policy_tests.rs"]
 mod build_cache_policy_tests;
+
+#[cfg(test)]
+#[path = "doctor_postgres_extensions_tests.rs"]
+mod postgres_extensions_tests;
+
+#[cfg(test)]
+#[path = "doctor_tls_check_tests.rs"]
+mod tls_check_tests;

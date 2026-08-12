@@ -65,13 +65,16 @@ async fn maybe_occurrence_key_string_some_and_none() -> xtask::sandbox::TestResu
 }
 
 #[sinex_test]
-async fn maybe_occurrence_key_string_hashes_oversized_projection(
-) -> xtask::sandbox::TestResult<()> {
+async fn maybe_occurrence_key_string_hashes_oversized_projection() -> xtask::sandbox::TestResult<()>
+{
     let key = OccurrenceKey {
         source_id: SourceId::from_static("raindrop-bookmarks"),
         fields: vec![
             ("raindrop_id".into(), "684930393".into()),
-            ("url".into(), format!("https://example.test/{}", "x".repeat(900))),
+            (
+                "url".into(),
+                format!("https://example.test/{}", "x".repeat(900)),
+            ),
             ("created".into(), "2023-11-27T01:08:53.133000+01:00".into()),
         ],
     };
@@ -80,6 +83,26 @@ async fn maybe_occurrence_key_string_hashes_oversized_projection(
     assert!(projected.len() <= 512);
     assert!(projected.starts_with("raindrop-bookmarks|occurrence_hash="));
     assert_ne!(projected, occurrence_key_string(&key));
+    Ok(())
+}
+
+#[sinex_test]
+#[ignore = "sinex-g6x1 open: bounded_occurrence_key_string's oversized-key fallback unboundedly \
+            prepends source_id, so a long SourceId alone still blows past the 512-byte DB bound"]
+async fn maybe_occurrence_key_string_stays_bounded_even_with_long_source_id()
+-> xtask::sandbox::TestResult<()> {
+    let long_source_id = "a".repeat(600);
+    let key = OccurrenceKey {
+        source_id: SourceId::new(long_source_id).expect("valid source id chars"),
+        fields: vec![("x".into(), "y".into())],
+    };
+    let projected = maybe_occurrence_key_string(Some(&key)).expect("key should project");
+    assert!(
+        projected.len() <= 512,
+        "projected occurrence key is {} bytes, exceeds the 512-byte DB bound the fallback is \
+         supposed to guarantee",
+        projected.len()
+    );
     Ok(())
 }
 

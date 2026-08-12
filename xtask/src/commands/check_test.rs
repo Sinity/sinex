@@ -484,3 +484,25 @@ async fn test_ensure_nix_tool_ready_rejects_probe_issue() -> ::xtask::sandbox::T
     assert!(rendered.contains("failed to run `nix --version`"));
     Ok(())
 }
+
+#[sinex_test]
+#[ignore = "sinex-rqu4 open: `xtask check --changed-strict` (the ONLY automated pre-push guard) never runs the secret-literal scanner -- there is no pre-commit hook and no other enforcement point"]
+async fn changed_strict_invocation_still_runs_the_secret_scanner()
+-> ::xtask::sandbox::TestResult<()> {
+    // This mirrors the exact invocation shape `.githooks/pre-push` uses --
+    // `xtask check --changed-strict <base_ref>` -- with no other flags, since
+    // that hook is the repo's ONLY automated gate (no pre-commit hook
+    // exists at all).
+    let mut cmd = make_cmd(CheckFlags::default());
+    cmd.changed_strict = Some(Some("origin/master".to_string()));
+    cmd.resolve_flags();
+
+    assert!(
+        cmd.forbidden,
+        "the repo's only automated push-time guard (`xtask check --changed-strict`) must run \
+         the provider-shaped-secret-literal scanner (check_provider_shaped_secret_literals), \
+         or a real credential committed on a branch that only ever runs --changed-strict can \
+         reach origin without ever being scanned"
+    );
+    Ok(())
+}

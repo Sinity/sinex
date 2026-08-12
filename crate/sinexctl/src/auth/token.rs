@@ -61,3 +61,41 @@ fn apply_runtime_role(token: &str, role: Option<RuntimeTargetGatewayTokenRole>) 
         |role| role.apply_to_token(token),
     )
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // sinex-rywp bug 2: an empty explicit `--token ""` is accepted and
+    // returned immediately, skipping the SINEX_API_TOKEN env var and token
+    // file fallbacks -- an empty explicit token silently wins over a
+    // genuinely-configured fallback token instead of falling through.
+    //
+    // (Bug 1 from the same audit report -- "file contents not trimmed" --
+    // does NOT reproduce against current code: apply_runtime_role trims via
+    // token.trim() on both the role=None and role=Some branches, and
+    // RuntimeTargetGatewayTokenRole::apply_to_token also trims. Not writing
+    // a test for it; see the sinex-rywp bd comment.)
+    #[test]
+    #[ignore = "sinex-rywp open: empty explicit --token silently wins over \
+                a configured SINEX_API_TOKEN/token-file fallback instead of \
+                falling through (auth/token.rs load_token, explicit_token \
+                branch returns unconditionally on Some(_), even Some(\"\"))"]
+    fn empty_explicit_token_does_not_fall_back_to_env_or_file() {
+        // SAFETY: test-only env mutation, single-threaded within this test
+        // body (no other test in this crate touches SINEX_API_TOKEN).
+        unsafe {
+            std::env::set_var("SINEX_API_TOKEN", "real-configured-token");
+        }
+        let result = load_token(Some(""), None, None);
+        unsafe {
+            std::env::remove_var("SINEX_API_TOKEN");
+        }
+        assert_eq!(
+            result.unwrap(),
+            "real-configured-token",
+            "an empty explicit token must fall through to SINEX_API_TOKEN, \
+             not silently win as an empty bearer token"
+        );
+    }
+}

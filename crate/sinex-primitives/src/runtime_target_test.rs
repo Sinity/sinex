@@ -74,9 +74,7 @@ async fn deployment_readiness_maps_to_runtime_target() -> TestResult<()> {
         },
         secrets: DeploymentSecrets {
             api_admin_token_file: Some(PathBuf::from("/run/agenix/sinex-api-admin-token")),
-            gateway_tls_trust_anchor_file: Some(PathBuf::from(
-                "/var/lib/sinex/run/gateway-ca.pem",
-            )),
+            gateway_tls_trust_anchor_file: Some(PathBuf::from("/var/lib/sinex/run/gateway-ca.pem")),
             nats_creds_file: Some(PathBuf::from("/run/agenix/sinex-nats-client-creds")),
             ..DeploymentSecrets::default()
         },
@@ -118,6 +116,19 @@ async fn gateway_token_role_applies_expected_suffix() -> TestResult<()> {
     assert_eq!(
         RuntimeTargetGatewayTokenRole::Readonly.apply_to_token("sinex_secret:admin"),
         "sinex_secret:admin"
+    );
+    Ok(())
+}
+
+#[sinex_test]
+#[ignore = "sinex-az3h open: apply_to_token silently ignores the requested role when the token already carries a recognized suffix -- Readonly.apply_to_token on an Admin-suffixed token must downgrade the suffix, not leave the token Admin-privileged"]
+async fn gateway_token_role_reapplies_requested_role_even_over_an_existing_suffix() -> TestResult<()>
+{
+    // A caller asking to mint a Readonly-scoped token must never get an Admin-suffixed
+    // token back just because the input happened to already carry a `:admin` suffix.
+    assert_eq!(
+        RuntimeTargetGatewayTokenRole::Readonly.apply_to_token("sinex_secret:admin"),
+        "sinex_secret:readonly"
     );
     Ok(())
 }

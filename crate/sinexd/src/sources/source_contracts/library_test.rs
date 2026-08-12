@@ -319,3 +319,42 @@ async fn extract_author_title_preserves_inner_dashes() -> xtask::sandbox::TestRe
     assert_eq!(title.as_deref(), Some("The XX Factor"));
     Ok(())
 }
+
+#[sinex_test]
+#[ignore = "sinex-k42g open: read_mtime tags a wall-clock Timestamp::now() fallback as \
+            TimingEvidence::InferredMtime (resolved quality) when metadata.modified() \
+            succeeds but the SystemTime->Timestamp conversion fails (e.g. a pre-epoch \
+            mtime), instead of Atemporal like the adjacent Err(_) branch"]
+async fn read_mtime_tags_pre_epoch_metadata_as_atemporal_not_inferred()
+-> xtask::sandbox::TestResult<()> {
+    let dir = TempDir::new()?;
+    let path = dir.path().join("pre-epoch.txt");
+    std::fs::write(&path, b"content")?;
+    // A modified-time before UNIX_EPOCH: std::fs::metadata() succeeds (the file
+    // exists and has SOME mtime), but duration_since(UNIX_EPOCH) fails inside
+    // read_mtime, driving it into the unwrap_or_else(Timestamp::now) fallback --
+    // the exact "Ok(meta) but timestamp-extraction-fails" branch this bead cites.
+    let pre_epoch = std::time::SystemTime::UNIX_EPOCH - std::time::Duration::from_secs(3600);
+    std::fs::File::options()
+        .write(true)
+        .open(&path)?
+        .set_modified(pre_epoch)?;
+
+    let utf8_path = Utf8PathBuf::from_path_buf(path.clone())
+        .map_err(|_| color_eyre::eyre::eyre!("non-utf8 tempdir path"))?;
+    let (_mtime, evidence) = read_mtime(&utf8_path);
+
+    // Correct behavior: a fabricated now() timestamp must never be tagged as a
+    // resolved-quality InferredMtime -- it must defer to raw.temporal_ledger
+    // resolution like the sibling Err(_) branch does, i.e. Atemporal.
+    assert!(
+        matches!(
+            evidence,
+            sinex_primitives::parser::TimingEvidence::Atemporal
+        ),
+        "expected Atemporal for a fabricated fallback timestamp, got {evidence:?} \
+         -- a pre-epoch mtime makes duration_since(UNIX_EPOCH) fail, so read_mtime \
+         falls back to Timestamp::now() but currently mislabels it InferredMtime"
+    );
+    Ok(())
+}

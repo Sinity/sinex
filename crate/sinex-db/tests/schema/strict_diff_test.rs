@@ -45,7 +45,10 @@ async fn restore_trigger(pool: &sqlx::PgPool, table: &str, trigger_name: &str) -
 /// the comment forces a hash mismatch, which forces `apply()` to re-run the
 /// whole function-set SQL and restore every function in the set (including
 /// the one this test corrupted) to its canonical body.
-async fn restore_function_set(pool: &sqlx::PgPool, representative_signature: &str) -> TestResult<()> {
+async fn restore_function_set(
+    pool: &sqlx::PgPool,
+    representative_signature: &str,
+) -> TestResult<()> {
     sqlx::query(&format!(
         "COMMENT ON FUNCTION {representative_signature} IS NULL"
     ))
@@ -787,7 +790,9 @@ async fn detects_manual_edit_to_fn_document_projection(ctx: TestContext) -> Test
     let drifts = check_strict(&ctx.pool).await?;
     let matched: Vec<_> = drifts
         .iter()
-        .filter(|d| d.category == DriftCategory::TriggerBody && d.location == "core.fn_document_projection")
+        .filter(|d| {
+            d.category == DriftCategory::TriggerBody && d.location == "core.fn_document_projection"
+        })
         .collect();
 
     assert_eq!(
@@ -846,7 +851,12 @@ async fn detects_manual_edit_to_fn_events_validate_material_bounds(
         "expected exactly one trigger_body drift on fn_events_validate_material_bounds, got: {drifts:?}"
     );
 
-    restore_trigger(&ctx.pool, "core.events", "trg_events_validate_material_bounds").await?;
+    restore_trigger(
+        &ctx.pool,
+        "core.events",
+        "trg_events_validate_material_bounds",
+    )
+    .await?;
 
     Ok(())
 }
@@ -996,12 +1006,7 @@ async fn detects_manual_edit_to_fn_temporal_ledger_append_only(ctx: TestContext)
         "expected exactly one trigger_body drift on fn_temporal_ledger_append_only, got: {drifts:?}"
     );
 
-    restore_trigger(
-        &ctx.pool,
-        "raw.temporal_ledger",
-        "trg_tl_no_update_delete",
-    )
-    .await?;
+    restore_trigger(&ctx.pool, "raw.temporal_ledger", "trg_tl_no_update_delete").await?;
 
     Ok(())
 }
@@ -1077,7 +1082,11 @@ async fn detects_manual_edit_to_execute_cascade_tombstone(ctx: TestContext) -> T
         "expected exactly one trigger_body drift on execute_cascade_tombstone, got: {drifts:?}"
     );
 
-    restore_function_set(&ctx.pool, "core.execute_cascade_tombstone(uuid[],text,uuid)").await?;
+    restore_function_set(
+        &ctx.pool,
+        "core.execute_cascade_tombstone(uuid[],text,uuid)",
+    )
+    .await?;
 
     Ok(())
 }
@@ -1114,7 +1123,11 @@ async fn detects_manual_edit_to_execute_cascade_restore(ctx: TestContext) -> Tes
         "expected exactly one trigger_body drift on execute_cascade_restore, got: {drifts:?}"
     );
 
-    restore_function_set(&ctx.pool, "core.execute_cascade_tombstone(uuid[],text,uuid)").await?;
+    restore_function_set(
+        &ctx.pool,
+        "core.execute_cascade_tombstone(uuid[],text,uuid)",
+    )
+    .await?;
 
     Ok(())
 }
@@ -1255,10 +1268,7 @@ async fn apply_replaces_legacy_unversioned_check_constraint(ctx: TestContext) ->
     )
     .fetch_one(&ctx.pool)
     .await?;
-    assert!(
-        def.contains("'source'"),
-        "renamed back to 'source': {def}"
-    );
+    assert!(def.contains("'source'"), "renamed back to 'source': {def}");
     assert!(
         !def.contains("'node'"),
         "stale 'node' value must be gone: {def}"
@@ -1303,6 +1313,51 @@ async fn diff_detects_stale_versioned_check_constraint(ctx: TestContext) -> Test
     assert!(
         !def.contains("'misc'"),
         "stale 'misc' value must be cleared: {def}"
+    );
+
+    Ok(())
+}
+
+/// sinex-l8q1: `converge.rs` explicitly documents that anonymous
+/// `CREATE TABLE` CHECK constraints -- including the provenance XOR
+/// invariant on `core.events` -- are excluded from schema convergence
+/// ("set-and-forget at table creation"). If the constraint is ever dropped
+/// on a live database (manual DBA mistake, botched migration), neither
+/// `apply()` nor `strict-diff` will ever restore or even report it.
+#[sinex_test]
+#[ignore = "sinex-l8q1 open: anonymous CHECK constraints (the provenance XOR invariant on \
+            core.events) are excluded from schema convergence -- apply()/strict-diff never \
+            restore or report them if dropped"]
+async fn xor_provenance_check_drift_is_detected_by_strict_diff(ctx: TestContext) -> TestResult<()> {
+    sinex_db::schema::apply::apply(&ctx.pool).await?;
+
+    let constraint_name: String = sqlx::query_scalar(
+        r"SELECT c.conname
+          FROM pg_constraint c
+          JOIN pg_class t ON t.oid = c.conrelid
+          JOIN pg_namespace n ON n.oid = t.relnamespace
+          WHERE n.nspname = 'core' AND t.relname = 'events' AND c.contype = 'c'
+            AND pg_get_constraintdef(c.oid) LIKE '%source_material_id IS NOT NULL AND source_event_ids IS NULL%'",
+    )
+    .fetch_one(&ctx.pool)
+    .await?;
+
+    sqlx::query(&format!(
+        "ALTER TABLE core.events DROP CONSTRAINT {constraint_name}"
+    ))
+    .execute(&ctx.pool)
+    .await?;
+
+    let drifts = check_strict(&ctx.pool).await?;
+    let matched = drifts
+        .iter()
+        .any(|d| format!("{d:?}").contains(&constraint_name));
+    assert!(
+        matched,
+        "dropping the provenance XOR CHECK constraint ({constraint_name}) on core.events should \
+         be detected as schema drift by strict-diff, but converge.rs explicitly excludes \
+         anonymous CHECK constraints (sinex-l8q1) -- and neither apply() above nor strict-diff \
+         restores/reports the missing invariant: {drifts:?}"
     );
 
     Ok(())

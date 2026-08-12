@@ -2,8 +2,8 @@ use super::*;
 use crate::runtime::MultiOutputTransducer;
 use crate::runtime::automaton::AutomatonContext;
 use sinex_primitives::domain::{ProcessingMode, TriggerKind};
-use sinex_primitives::events::enums::{SystemdActiveState, SystemdUnitType};
 use sinex_primitives::events::Event;
+use sinex_primitives::events::enums::{SystemdActiveState, SystemdUnitType};
 use sinex_primitives::{EventSource, EventType, Id, JsonValue, Timestamp, Uuid};
 use std::collections::{BTreeMap, BTreeSet};
 use xtask::sandbox::sinex_test;
@@ -125,8 +125,8 @@ async fn interval_lift_rule_catalog_is_the_input_contract() -> xtask::sandbox::T
 }
 
 #[sinex_test]
-async fn interval_lift_closes_previous_focus_on_next_transition(
-) -> xtask::sandbox::TestResult<()> {
+async fn interval_lift_closes_previous_focus_on_next_transition() -> xtask::sandbox::TestResult<()>
+{
     let start = Timestamp::from_unix_timestamp(1_700_000_000)
         .ok_or_else(|| color_eyre::eyre::eyre!("valid timestamp"))?;
     let end = Timestamp::from_unix_timestamp(1_700_000_045)
@@ -147,7 +147,10 @@ async fn interval_lift_closes_previous_focus_on_next_transition(
     let first_output = automaton
         .process_single(&mut state, serde_json::to_value(first)?, &first_context)
         .await?;
-    assert!(first_output.is_none(), "first transition seeds the open interval");
+    assert!(
+        first_output.is_none(),
+        "first transition seeds the open interval"
+    );
 
     let second_context = focus_context(end);
     let second_id = second_context.trigger_uuid();
@@ -176,21 +179,32 @@ async fn interval_lift_closes_previous_focus_on_next_transition(
     assert_eq!(output.payload.start_event_type, "window.focused");
     assert_eq!(output.payload.end_event_type, "window.focused");
     assert_eq!(
-        output.payload.attributes.get("window_class").map(String::as_str),
+        output
+            .payload
+            .attributes
+            .get("window_class")
+            .map(String::as_str),
         Some("kitty")
     );
     assert_eq!(
-        output.payload.attributes.get("workspace_id").map(String::as_str),
+        output
+            .payload
+            .attributes
+            .get("workspace_id")
+            .map(String::as_str),
         Some("2")
     );
     let expected_key = format!("interval:desktop.focus:0xabc:ts:{start}");
-    assert_eq!(output.equivalence_key.as_deref(), Some(expected_key.as_str()));
+    assert_eq!(
+        output.equivalence_key.as_deref(),
+        Some(expected_key.as_str())
+    );
     Ok(())
 }
 
 #[sinex_test]
-async fn interval_lift_equivalence_key_is_start_occurrence_not_parent_ids(
-) -> xtask::sandbox::TestResult<()> {
+async fn interval_lift_equivalence_key_is_start_occurrence_not_parent_ids()
+-> xtask::sandbox::TestResult<()> {
     // sinex-ecy / y8v: the interval key is the material occurrence of the START
     // evidence (start-anchored — ends move, starts do not), never the parent event
     // interpretation ids (which re-mint every replay and collide -> silent suppression).
@@ -240,7 +254,9 @@ async fn interval_lift_equivalence_key_is_start_occurrence_not_parent_ids(
     let expected = format!("interval:desktop.focus:0xabc:{material}:100");
     assert_eq!(output.payload.interval_id, expected);
     assert_eq!(output.equivalence_key.as_deref(), Some(expected.as_str()));
-    let key = output.equivalence_key.expect("interval carries an equivalence key");
+    let key = output
+        .equivalence_key
+        .expect("interval carries an equivalence key");
     assert!(
         !key.contains(&first_id.to_string()) && !key.contains(&second_id.to_string()),
         "occurrence key must not embed parent event interpretation ids: {key}"
@@ -253,8 +269,8 @@ async fn interval_lift_equivalence_key_is_start_occurrence_not_parent_ids(
 }
 
 #[sinex_test]
-async fn interval_lift_updates_same_focus_without_closing_interval(
-) -> xtask::sandbox::TestResult<()> {
+async fn interval_lift_updates_same_focus_without_closing_interval()
+-> xtask::sandbox::TestResult<()> {
     let start = Timestamp::from_unix_timestamp(1_700_000_000)
         .ok_or_else(|| color_eyre::eyre::eyre!("valid timestamp"))?;
     let refresh = Timestamp::from_unix_timestamp(1_700_000_005)
@@ -320,6 +336,103 @@ async fn interval_lift_updates_same_focus_without_closing_interval(
 }
 
 #[sinex_test]
+async fn interval_lift_f8b_sequential_focus_transitions_each_close_a_distinct_interval()
+-> xtask::sandbox::TestResult<()> {
+    // sinex-f8b: live proof on 2026-07-04 showed the interval-lift live bridge
+    // consumed only the FIRST fresh focus transition after startup; later fresh
+    // rows in the same induced focus sequence were present in core.events but
+    // never used as interval parents. Root cause was equivalence_key collision
+    // from a restored local sequence counter. Fixed by keying interval identity
+    // to the start evidence's own material occurrence (interval_occurrence_key).
+    // This test proves a run of 4 consecutive real subject transitions produces
+    // 3 distinct closed intervals with 3 DISTINCT equivalence keys — regressing
+    // to any shared/counter-derived key would collapse these into fewer outputs
+    // or collide their equivalence_key, which is exactly what would make this
+    // test fail.
+    let t0 = Timestamp::from_unix_timestamp(1_700_000_000)
+        .ok_or_else(|| color_eyre::eyre::eyre!("valid timestamp"))?;
+    let t1 = Timestamp::from_unix_timestamp(1_700_000_010)
+        .ok_or_else(|| color_eyre::eyre::eyre!("valid timestamp"))?;
+    let t2 = Timestamp::from_unix_timestamp(1_700_000_020)
+        .ok_or_else(|| color_eyre::eyre::eyre!("valid timestamp"))?;
+    let t3 = Timestamp::from_unix_timestamp(1_700_000_030)
+        .ok_or_else(|| color_eyre::eyre::eyre!("valid timestamp"))?;
+
+    let windows = [
+        ("0xaaa", "kitty", t0, 10),
+        ("0xbbb", "qutebrowser", t1, 20),
+        ("0xccc", "obsidian", t2, 30),
+        ("0xddd", "slack", t3, 40),
+    ];
+
+    let mut automaton = IntervalLift;
+    let mut state = IntervalLiftState::default();
+    let mut closed = Vec::new();
+    let mut previous_window_id: Option<String> = None;
+    for (window_id, class, ts, anchor) in windows {
+        let material = Uuid::now_v7();
+        let ctx = focus_context_with_material(ts, material, anchor);
+        let payload = HyprlandWindowFocusedPayload {
+            window_id: Some(window_id.to_string()),
+            window_class: Some(class.to_string()),
+            window_title: Some(class.to_string()),
+            workspace_id: Some(1),
+            previous_window_id: previous_window_id.clone(),
+        };
+        if let Some(output) = automaton
+            .process_single(&mut state, serde_json::to_value(payload)?, &ctx)
+            .await?
+        {
+            closed.push(output);
+        }
+        previous_window_id = Some(window_id.to_string());
+    }
+
+    assert_eq!(
+        closed.len(),
+        3,
+        "4 sequential transitions must close exactly 3 intervals (one per prior \
+         subject), not silently drop any after the first — got {} closes: {:?}",
+        closed.len(),
+        closed
+            .iter()
+            .map(|o| o.payload.subject_id.clone())
+            .collect::<Vec<_>>()
+    );
+
+    let subjects: Vec<_> = closed
+        .iter()
+        .map(|o| o.payload.subject_id.clone())
+        .collect();
+    assert_eq!(
+        subjects,
+        vec![
+            Some("0xaaa".to_string()),
+            Some("0xbbb".to_string()),
+            Some("0xccc".to_string()),
+        ],
+        "each prior focus subject must be closed in order, none skipped"
+    );
+
+    let keys: BTreeSet<_> = closed
+        .iter()
+        .map(|o| {
+            o.equivalence_key
+                .clone()
+                .expect("interval carries an equivalence key")
+        })
+        .collect();
+    assert_eq!(
+        keys.len(),
+        3,
+        "each closed interval must carry a DISTINCT equivalence_key — a collision \
+         here means the second/third transition would be silently suppressed by \
+         event-engine equivalence_key admission dedup, reproducing sinex-f8b: {keys:?}"
+    );
+    Ok(())
+}
+
+#[sinex_test]
 async fn interval_lift_ignores_non_monotonic_transition() -> xtask::sandbox::TestResult<()> {
     let later = Timestamp::from_unix_timestamp(1_700_000_100)
         .ok_or_else(|| color_eyre::eyre::eyre!("valid timestamp"))?;
@@ -344,7 +457,11 @@ async fn interval_lift_ignores_non_monotonic_transition() -> xtask::sandbox::Tes
     };
 
     automaton
-        .process_single(&mut state, serde_json::to_value(first)?, &focus_context(later))
+        .process_single(
+            &mut state,
+            serde_json::to_value(first)?,
+            &focus_context(later),
+        )
         .await?;
     let output = automaton
         .process_single(
@@ -359,8 +476,8 @@ async fn interval_lift_ignores_non_monotonic_transition() -> xtask::sandbox::Tes
 }
 
 #[sinex_test]
-async fn interval_lift_closes_previous_workspace_on_next_switch(
-) -> xtask::sandbox::TestResult<()> {
+async fn interval_lift_closes_previous_workspace_on_next_switch() -> xtask::sandbox::TestResult<()>
+{
     let start = Timestamp::from_unix_timestamp(1_700_000_000)
         .ok_or_else(|| color_eyre::eyre::eyre!("valid timestamp"))?;
     let end = Timestamp::from_unix_timestamp(1_700_000_090)
@@ -441,13 +558,16 @@ async fn interval_lift_closes_previous_workspace_on_next_switch(
         Some("0xabc")
     );
     let expected_key = format!("interval:desktop.workspace:workspace:2:ts:{start}");
-    assert_eq!(output.equivalence_key.as_deref(), Some(expected_key.as_str()));
+    assert_eq!(
+        output.equivalence_key.as_deref(),
+        Some(expected_key.as_str())
+    );
     Ok(())
 }
 
 #[sinex_test]
-async fn interval_lift_updates_same_workspace_without_closing_interval(
-) -> xtask::sandbox::TestResult<()> {
+async fn interval_lift_updates_same_workspace_without_closing_interval()
+-> xtask::sandbox::TestResult<()> {
     let start = Timestamp::from_unix_timestamp(1_700_000_000)
         .ok_or_else(|| color_eyre::eyre::eyre!("valid timestamp"))?;
     let refresh = Timestamp::from_unix_timestamp(1_700_000_005)
@@ -499,8 +619,8 @@ async fn interval_lift_updates_same_workspace_without_closing_interval(
 }
 
 #[sinex_test]
-async fn interval_lift_lifts_activitywatch_window_observed_duration(
-) -> xtask::sandbox::TestResult<()> {
+async fn interval_lift_lifts_activitywatch_window_observed_duration()
+-> xtask::sandbox::TestResult<()> {
     let start = Timestamp::from_unix_timestamp(1_700_000_000)
         .ok_or_else(|| color_eyre::eyre::eyre!("valid timestamp"))?;
     let end = start + sinex_primitives::temporal::Duration::seconds(30);
@@ -538,22 +658,33 @@ async fn interval_lift_lifts_activitywatch_window_observed_duration(
     assert_eq!(output.payload.start_event_type, "window.active");
     assert_eq!(output.payload.end_event_type, "window.active");
     assert_eq!(
-        output.payload.attributes.get("bucket_id").map(String::as_str),
+        output
+            .payload
+            .attributes
+            .get("bucket_id")
+            .map(String::as_str),
         Some("aw-watcher-window_sinnix-prime")
     );
     assert_eq!(
-        output.payload.attributes.get("duration_ms").map(String::as_str),
+        output
+            .payload
+            .attributes
+            .get("duration_ms")
+            .map(String::as_str),
         Some("30000")
     );
     let expected_key =
         format!("interval:desktop.activitywatch.window:app:kitty|title:codex:ts:{start}");
-    assert_eq!(output.equivalence_key.as_deref(), Some(expected_key.as_str()));
+    assert_eq!(
+        output.equivalence_key.as_deref(),
+        Some(expected_key.as_str())
+    );
     Ok(())
 }
 
 #[sinex_test]
-async fn interval_lift_emits_each_activitywatch_window_row_independently(
-) -> xtask::sandbox::TestResult<()> {
+async fn interval_lift_emits_each_activitywatch_window_row_independently()
+-> xtask::sandbox::TestResult<()> {
     let start = Timestamp::from_unix_timestamp(1_700_000_000)
         .ok_or_else(|| color_eyre::eyre::eyre!("valid timestamp"))?;
     let end = Timestamp::from_unix_timestamp(1_700_000_030)
@@ -594,15 +725,19 @@ async fn interval_lift_emits_each_activitywatch_window_row_independently(
     assert_eq!(second.payload.start_time, end);
     assert_eq!(second.payload.duration_secs, 10);
     assert_eq!(
-        second.payload.attributes.get("duration_ms").map(String::as_str),
+        second
+            .payload
+            .attributes
+            .get("duration_ms")
+            .map(String::as_str),
         Some("10000")
     );
     Ok(())
 }
 
 #[sinex_test]
-async fn interval_lift_merges_activitywatch_zero_duration_heartbeats(
-) -> xtask::sandbox::TestResult<()> {
+async fn interval_lift_merges_activitywatch_zero_duration_heartbeats()
+-> xtask::sandbox::TestResult<()> {
     let first_ts = Timestamp::from_unix_timestamp(1_700_000_000)
         .ok_or_else(|| color_eyre::eyre::eyre!("valid timestamp"))?;
     let refresh_ts = first_ts + sinex_primitives::temporal::Duration::seconds(2);
@@ -679,8 +814,8 @@ async fn interval_lift_merges_activitywatch_zero_duration_heartbeats(
 }
 
 #[sinex_test]
-async fn interval_lift_splits_activitywatch_heartbeat_after_large_gap(
-) -> xtask::sandbox::TestResult<()> {
+async fn interval_lift_splits_activitywatch_heartbeat_after_large_gap()
+-> xtask::sandbox::TestResult<()> {
     let first_ts = Timestamp::from_unix_timestamp(1_700_000_000)
         .ok_or_else(|| color_eyre::eyre::eyre!("valid timestamp"))?;
     let late_ts = first_ts + sinex_primitives::temporal::Duration::seconds(45);
@@ -729,8 +864,7 @@ async fn interval_lift_splits_activitywatch_heartbeat_after_large_gap(
 }
 
 #[sinex_test]
-async fn interval_lift_continuous_heartbeat_stream_is_one_bout(
-) -> xtask::sandbox::TestResult<()> {
+async fn interval_lift_continuous_heartbeat_stream_is_one_bout() -> xtask::sandbox::TestResult<()> {
     // sinex-zs6 regression: a continuous same-subject heartbeat stream must be ONE
     // interval, not chopped into fixed ~30s pieces. Pre-fix the gap was measured
     // from the FIRST heartbeat, so the merge window degenerated into a max interval
@@ -756,13 +890,20 @@ async fn interval_lift_continuous_heartbeat_stream_is_one_bout(
         let out = automaton
             .process_single(&mut state, payload()?, &activitywatch_context(ts))
             .await?;
-        assert!(out.is_none(), "continuous 5s heartbeats must merge, not chop (beat {i})");
+        assert!(
+            out.is_none(),
+            "continuous 5s heartbeats must merge, not chop (beat {i})"
+        );
     }
 
     // A beat after a 2-minute silence (>30s) ends the bout at last_seen(+60) + slack.
     let after_silence = start + sinex_primitives::temporal::Duration::seconds(180);
     let output = automaton
-        .process_single(&mut state, payload()?, &activitywatch_context(after_silence))
+        .process_single(
+            &mut state,
+            payload()?,
+            &activitywatch_context(after_silence),
+        )
         .await?
         .expect("the post-silence beat closes the single continuous bout");
 
@@ -777,8 +918,8 @@ async fn interval_lift_continuous_heartbeat_stream_is_one_bout(
 }
 
 #[sinex_test]
-async fn interval_lift_lifts_activitywatch_afk_observed_duration(
-) -> xtask::sandbox::TestResult<()> {
+async fn interval_lift_lifts_activitywatch_afk_observed_duration() -> xtask::sandbox::TestResult<()>
+{
     let start = Timestamp::from_unix_timestamp(1_700_000_000)
         .ok_or_else(|| color_eyre::eyre::eyre!("valid timestamp"))?;
     let end = start + sinex_primitives::temporal::Duration::milliseconds(45_714);
@@ -812,26 +953,36 @@ async fn interval_lift_lifts_activitywatch_afk_observed_duration(
     assert_eq!(output.payload.start_event_type, "afk.changed");
     assert_eq!(output.payload.end_event_type, "afk.changed");
     assert_eq!(
-        output.payload.attributes.get("bucket_id").map(String::as_str),
+        output
+            .payload
+            .attributes
+            .get("bucket_id")
+            .map(String::as_str),
         Some("aw-watcher-afk_sinnix-prime")
     );
     assert_eq!(
-        output.payload.attributes.get("duration_ms").map(String::as_str),
+        output
+            .payload
+            .attributes
+            .get("duration_ms")
+            .map(String::as_str),
         Some("45714")
     );
     assert_eq!(
         output.payload.attributes.get("status").map(String::as_str),
         Some("afk")
     );
-    let expected_key =
-        format!("interval:desktop.activitywatch.afk:status:afk:ts:{start}");
-    assert_eq!(output.equivalence_key.as_deref(), Some(expected_key.as_str()));
+    let expected_key = format!("interval:desktop.activitywatch.afk:status:afk:ts:{start}");
+    assert_eq!(
+        output.equivalence_key.as_deref(),
+        Some(expected_key.as_str())
+    );
     Ok(())
 }
 
 #[sinex_test]
-async fn interval_lift_emits_not_afk_as_distinct_status_interval(
-) -> xtask::sandbox::TestResult<()> {
+async fn interval_lift_emits_not_afk_as_distinct_status_interval() -> xtask::sandbox::TestResult<()>
+{
     let start = Timestamp::from_unix_timestamp(1_700_000_100)
         .ok_or_else(|| color_eyre::eyre::eyre!("valid timestamp"))?;
 
@@ -856,8 +1007,8 @@ async fn interval_lift_emits_not_afk_as_distinct_status_interval(
 }
 
 #[sinex_test]
-async fn interval_lift_clamps_open_activitywatch_afk_duration_at_creation_time(
-) -> xtask::sandbox::TestResult<()> {
+async fn interval_lift_clamps_open_activitywatch_afk_duration_at_creation_time()
+-> xtask::sandbox::TestResult<()> {
     let start = Timestamp::from_unix_timestamp(1_700_000_200)
         .ok_or_else(|| color_eyre::eyre::eyre!("valid timestamp"))?;
     let bound = start + sinex_primitives::temporal::Duration::seconds(61);
@@ -890,7 +1041,11 @@ async fn interval_lift_clamps_open_activitywatch_afk_duration_at_creation_time(
     assert_eq!(output.payload.duration_secs, 61);
     assert_eq!(output.source_event_ids, vec![event_id]);
     assert_eq!(
-        output.payload.attributes.get("duration_ms").map(String::as_str),
+        output
+            .payload
+            .attributes
+            .get("duration_ms")
+            .map(String::as_str),
         Some("919451")
     );
     Ok(())
@@ -951,20 +1106,34 @@ async fn interval_lift_closes_systemd_unit_on_stop() -> xtask::sandbox::TestResu
     assert_eq!(output.payload.start_event_type, "unit.started");
     assert_eq!(output.payload.end_event_type, "unit.stopped");
     assert_eq!(
-        output.payload.attributes.get("unit_type").map(String::as_str),
+        output
+            .payload
+            .attributes
+            .get("unit_type")
+            .map(String::as_str),
         Some("service")
     );
     assert_eq!(
-        output.payload.attributes.get("active_state").map(String::as_str),
+        output
+            .payload
+            .attributes
+            .get("active_state")
+            .map(String::as_str),
         Some("active")
     );
     assert_eq!(
-        output.payload.attributes.get("sub_state").map(String::as_str),
+        output
+            .payload
+            .attributes
+            .get("sub_state")
+            .map(String::as_str),
         Some("running")
     );
-    let expected_key =
-        format!("interval:system.systemd.unit:sinexd.service:ts:{start}");
-    assert_eq!(output.equivalence_key.as_deref(), Some(expected_key.as_str()));
+    let expected_key = format!("interval:system.systemd.unit:sinexd.service:ts:{start}");
+    assert_eq!(
+        output.equivalence_key.as_deref(),
+        Some(expected_key.as_str())
+    );
     Ok(())
 }
 
@@ -993,13 +1162,26 @@ async fn interval_lift_uzc_tie_supersedes_open_state_in_place() -> xtask::sandbo
     // sinex-uzc(a): two transitions at the SAME ts — the later supersedes in place
     // (deterministic tiebreak), no zero-duration interval; the next transition closes
     // from the superseding observation.
-    let t = Timestamp::from_unix_timestamp(1_700_000_000).ok_or_else(|| color_eyre::eyre::eyre!("ts"))?;
+    let t = Timestamp::from_unix_timestamp(1_700_000_000)
+        .ok_or_else(|| color_eyre::eyre::eyre!("ts"))?;
     let later = t + sinex_primitives::temporal::Duration::seconds(10);
     let mut automaton = IntervalLift;
     let mut state = IntervalLiftState::default();
-    assert!(automaton.process_single(&mut state, uzc_focus("0xA")?, &focus_context(t)).await?.is_none());
-    assert!(automaton.process_single(&mut state, uzc_focus("0xB")?, &focus_context(t)).await?.is_none());
-    let out = automaton.process_single(&mut state, uzc_focus("0xC")?, &focus_context(later)).await?
+    assert!(
+        automaton
+            .process_single(&mut state, uzc_focus("0xA")?, &focus_context(t))
+            .await?
+            .is_none()
+    );
+    assert!(
+        automaton
+            .process_single(&mut state, uzc_focus("0xB")?, &focus_context(t))
+            .await?
+            .is_none()
+    );
+    let out = automaton
+        .process_single(&mut state, uzc_focus("0xC")?, &focus_context(later))
+        .await?
         .expect("next transition closes the superseding state");
     assert_eq!(out.payload.subject_id.as_deref(), Some("0xB"));
     assert_eq!(out.payload.start_time, t);
@@ -1012,14 +1194,29 @@ async fn interval_lift_uzc_out_of_order_transition_is_skipped() -> xtask::sandbo
     // sinex-uzc(a): a transition older than the open state is skipped (durable debt),
     // never silently folded — the open state survives and closes on the next in-order
     // transition.
-    let t10 = Timestamp::from_unix_timestamp(1_700_000_010).ok_or_else(|| color_eyre::eyre::eyre!("ts"))?;
-    let t0 = Timestamp::from_unix_timestamp(1_700_000_000).ok_or_else(|| color_eyre::eyre::eyre!("ts"))?;
-    let t20 = Timestamp::from_unix_timestamp(1_700_000_020).ok_or_else(|| color_eyre::eyre::eyre!("ts"))?;
+    let t10 = Timestamp::from_unix_timestamp(1_700_000_010)
+        .ok_or_else(|| color_eyre::eyre::eyre!("ts"))?;
+    let t0 = Timestamp::from_unix_timestamp(1_700_000_000)
+        .ok_or_else(|| color_eyre::eyre::eyre!("ts"))?;
+    let t20 = Timestamp::from_unix_timestamp(1_700_000_020)
+        .ok_or_else(|| color_eyre::eyre::eyre!("ts"))?;
     let mut automaton = IntervalLift;
     let mut state = IntervalLiftState::default();
-    assert!(automaton.process_single(&mut state, uzc_focus("0xA")?, &focus_context(t10)).await?.is_none());
-    assert!(automaton.process_single(&mut state, uzc_focus("0xB")?, &focus_context(t0)).await?.is_none());
-    let out = automaton.process_single(&mut state, uzc_focus("0xC")?, &focus_context(t20)).await?
+    assert!(
+        automaton
+            .process_single(&mut state, uzc_focus("0xA")?, &focus_context(t10))
+            .await?
+            .is_none()
+    );
+    assert!(
+        automaton
+            .process_single(&mut state, uzc_focus("0xB")?, &focus_context(t0))
+            .await?
+            .is_none()
+    );
+    let out = automaton
+        .process_single(&mut state, uzc_focus("0xC")?, &focus_context(t20))
+        .await?
         .expect("in-order transition closes the still-open 0xA");
     assert_eq!(out.payload.subject_id.as_deref(), Some("0xA"));
     assert_eq!(out.payload.start_time, t10);
@@ -1028,15 +1225,32 @@ async fn interval_lift_uzc_out_of_order_transition_is_skipped() -> xtask::sandbo
 }
 
 #[sinex_test]
-async fn interval_lift_uzc_start_after_start_emits_restart_fence() -> xtask::sandbox::TestResult<()> {
+async fn interval_lift_uzc_start_after_start_emits_restart_fence() -> xtask::sandbox::TestResult<()>
+{
     // sinex-uzc(c): a second start for the same unit emits an implied restart-fence
     // close of the first, instead of silently discarding it.
-    let t = Timestamp::from_unix_timestamp(1_700_000_000).ok_or_else(|| color_eyre::eyre::eyre!("ts"))?;
+    let t = Timestamp::from_unix_timestamp(1_700_000_000)
+        .ok_or_else(|| color_eyre::eyre::eyre!("ts"))?;
     let restart = t + sinex_primitives::temporal::Duration::seconds(10);
     let mut automaton = IntervalLift;
     let mut state = IntervalLiftState::default();
-    assert!(automaton.process_single(&mut state, uzc_unit_started()?, &systemd_context("unit.started", t)).await?.is_none());
-    let out = automaton.process_single(&mut state, uzc_unit_started()?, &systemd_context("unit.started", restart)).await?
+    assert!(
+        automaton
+            .process_single(
+                &mut state,
+                uzc_unit_started()?,
+                &systemd_context("unit.started", t)
+            )
+            .await?
+            .is_none()
+    );
+    let out = automaton
+        .process_single(
+            &mut state,
+            uzc_unit_started()?,
+            &systemd_context("unit.started", restart),
+        )
+        .await?
         .expect("start-after-start emits the implied restart-fence close");
     assert_eq!(out.payload.subject_id.as_deref(), Some("u.service"));
     assert_eq!(out.payload.start_time, t);
@@ -1049,18 +1263,32 @@ async fn interval_lift_uzc_start_after_start_emits_restart_fence() -> xtask::san
 async fn interval_lift_uzc_stop_before_start_is_zero_duration() -> xtask::sandbox::TestResult<()> {
     // sinex-uzc(b): a stop with ts <= start closes a zero-duration interval (end
     // clamped to start) rather than discarding the matched start+stop.
-    let start = Timestamp::from_unix_timestamp(1_700_000_010).ok_or_else(|| color_eyre::eyre::eyre!("ts"))?;
-    let early_stop = Timestamp::from_unix_timestamp(1_700_000_005).ok_or_else(|| color_eyre::eyre::eyre!("ts"))?;
+    let start = Timestamp::from_unix_timestamp(1_700_000_010)
+        .ok_or_else(|| color_eyre::eyre::eyre!("ts"))?;
+    let early_stop = Timestamp::from_unix_timestamp(1_700_000_005)
+        .ok_or_else(|| color_eyre::eyre::eyre!("ts"))?;
     let mut automaton = IntervalLift;
     let mut state = IntervalLiftState::default();
-    automaton.process_single(&mut state, uzc_unit_started()?, &systemd_context("unit.started", start)).await?;
-    let out = automaton.process_single(&mut state, serde_json::to_value(SystemdUnitStoppedPayload {
-        unit_name: "u.service".to_string(),
-        unit_type: SystemdUnitType::Service,
-        exit_code: None,
-        active_state: SystemdActiveState::Inactive,
-        sub_state: "dead".to_string(),
-    })?, &systemd_context("unit.stopped", early_stop)).await?
+    automaton
+        .process_single(
+            &mut state,
+            uzc_unit_started()?,
+            &systemd_context("unit.started", start),
+        )
+        .await?;
+    let out = automaton
+        .process_single(
+            &mut state,
+            serde_json::to_value(SystemdUnitStoppedPayload {
+                unit_name: "u.service".to_string(),
+                unit_type: SystemdUnitType::Service,
+                exit_code: None,
+                active_state: SystemdActiveState::Inactive,
+                sub_state: "dead".to_string(),
+            })?,
+            &systemd_context("unit.stopped", early_stop),
+        )
+        .await?
         .expect("stop-before-start still closes (zero duration), never dropped");
     assert_eq!(out.payload.start_time, start);
     assert_eq!(out.payload.end_time, start);
@@ -1069,8 +1297,8 @@ async fn interval_lift_uzc_stop_before_start_is_zero_duration() -> xtask::sandbo
 }
 
 #[sinex_test]
-async fn interval_lift_ignores_systemd_stop_without_matching_start(
-) -> xtask::sandbox::TestResult<()> {
+async fn interval_lift_ignores_systemd_stop_without_matching_start()
+-> xtask::sandbox::TestResult<()> {
     let end = Timestamp::from_unix_timestamp(1_700_000_125)
         .ok_or_else(|| color_eyre::eyre::eyre!("valid timestamp"))?;
 
@@ -1093,8 +1321,7 @@ async fn interval_lift_ignores_systemd_stop_without_matching_start(
 }
 
 #[sinex_test]
-async fn interval_lift_decodes_legacy_focus_checkpoint_state(
-) -> xtask::sandbox::TestResult<()> {
+async fn interval_lift_decodes_legacy_focus_checkpoint_state() -> xtask::sandbox::TestResult<()> {
     let event_id = Uuid::now_v7();
     let state: IntervalLiftState = serde_json::from_value(serde_json::json!({
         "active_focus": {
@@ -1169,7 +1396,11 @@ async fn suspend_fence_closes_open_focus_interval() -> xtask::sandbox::TestResul
         )
         .await?;
 
-    assert_eq!(closes.len(), 1, "suspend closes the one open focus interval");
+    assert_eq!(
+        closes.len(),
+        1,
+        "suspend closes the one open focus interval"
+    );
     let closed = &closes[0];
     assert_eq!(
         closed.payload.end_time, suspend_ts,
@@ -1337,4 +1568,63 @@ fn systemd_context(event_type: &'static str, ts_orig: Timestamp) -> AutomatonCon
         trigger_material_id: None,
         trigger_anchor_byte: None,
     }
+}
+
+/// sinex-e5fl: an out-of-order OLDER systemd start for a subject that already
+/// has a newer open interval unconditionally overwrites `active_subject_states`
+/// with the older observation -- `restart_close` correctly stays None (the
+/// filter requires `observation.ts_orig > previous.ts_orig`), but the
+/// unconditional `.insert(subject_id, observation)` right after it doesn't
+/// share that guard. The genuinely current, newer open interval silently
+/// reverts to stale older state.
+#[sinex_test]
+#[ignore = "sinex-e5fl open: out-of-order older systemd start silently replaces a newer open interval instead of being rejected"]
+async fn interval_lift_out_of_order_older_start_does_not_replace_newer_open_state()
+-> xtask::sandbox::TestResult<()> {
+    let newer = Timestamp::from_unix_timestamp(1_700_000_200)
+        .ok_or_else(|| color_eyre::eyre::eyre!("valid timestamp"))?;
+    let older = Timestamp::from_unix_timestamp(1_700_000_000)
+        .ok_or_else(|| color_eyre::eyre::eyre!("valid timestamp"))?;
+    assert!(older < newer);
+
+    let mut automaton = IntervalLift;
+    let mut state = IntervalLiftState::default();
+
+    // The genuinely current start arrives first (newer).
+    let newer_context = systemd_context("unit.started", newer);
+    automaton
+        .process_single(&mut state, uzc_unit_started()?, &newer_context)
+        .await?;
+    assert_eq!(
+        state
+            .active_subject_states
+            .get("u.service")
+            .map(|o| o.ts_orig),
+        Some(newer)
+    );
+
+    // A late/out-of-order OLDER start for the same subject arrives afterward
+    // (e.g. a backfilled or delayed-delivery event). Since older.ts_orig is
+    // NOT after newer.ts_orig, no restart-close fires -- correct. But the
+    // unconditional insert() right after the filter still overwrites state.
+    let older_context = systemd_context("unit.started", older);
+    let output = automaton
+        .process_single(&mut state, uzc_unit_started()?, &older_context)
+        .await?;
+    assert!(
+        output.is_none(),
+        "an out-of-order older start must not emit a spurious restart-close"
+    );
+
+    assert_eq!(
+        state
+            .active_subject_states
+            .get("u.service")
+            .map(|o| o.ts_orig),
+        Some(newer),
+        "the older out-of-order start silently replaced the newer open interval's \
+         start time -- a subsequent stop event would compute duration from the \
+         wrong (older) start, overstating the interval's real length"
+    );
+    Ok(())
 }

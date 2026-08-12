@@ -1,7 +1,8 @@
 use super::{
-    Environment, command_stdout, database_url_masked, format_probe_issues, truncate_process_line,
+    Environment, command_stdout, database_url_masked, format_probe_issues, git_dirty,
+    truncate_process_line,
 };
-use crate::sandbox::sinex_test;
+use crate::sandbox::{sinex_serial_test, sinex_test};
 
 #[sinex_test]
 async fn command_stdout_reports_non_zero_exit() -> crate::sandbox::TestResult<()> {
@@ -83,4 +84,47 @@ fn truncate_process_line_does_not_panic_on_multibyte_command() {
     let command = "проверка ".repeat(20);
     let truncated = truncate_process_line(&command, 15);
     assert!(truncated.chars().all(|c| c != '\u{FFFD}'));
+}
+
+/// sinex-fd72: `git_dirty()` uses `git diff --quiet` alone, which compares the
+/// working tree against the INDEX, not the index against HEAD. A change that
+/// has been `git add`'d but not committed is invisible to it -- the working
+/// tree now matches the index, so `git diff --quiet` reports clean even though
+/// the repo genuinely has uncommitted (staged) changes.
+#[sinex_serial_test]
+#[ignore = "sinex-fd72 open: git_dirty() uses `git diff --quiet` alone, which misses staged-but-uncommitted changes"]
+async fn git_dirty_detects_staged_but_uncommitted_changes() -> crate::sandbox::TestResult<()> {
+    let repo = tempfile::tempdir()?;
+    let run_git = |args: &[&str]| -> crate::sandbox::TestResult<()> {
+        let status = std::process::Command::new("git")
+            .args(args)
+            .current_dir(repo.path())
+            .status()?;
+        assert!(status.success(), "git {args:?} failed");
+        Ok(())
+    };
+
+    run_git(&["init", "-q"])?;
+    run_git(&["config", "user.email", "test@example.test"])?;
+    run_git(&["config", "user.name", "Test"])?;
+    let tracked = repo.path().join("tracked.txt");
+    std::fs::write(&tracked, "original\n")?;
+    run_git(&["add", "tracked.txt"])?;
+    run_git(&["commit", "-q", "-m", "initial"])?;
+
+    // Modify and stage, but do NOT commit -- the repo is genuinely dirty.
+    std::fs::write(&tracked, "modified\n")?;
+    run_git(&["add", "tracked.txt"])?;
+
+    let cwd = std::env::current_dir()?;
+    std::env::set_current_dir(repo.path())?;
+    let dirty = git_dirty();
+    std::env::set_current_dir(cwd)?;
+
+    assert_eq!(
+        dirty,
+        Ok(true),
+        "a staged-but-uncommitted change must be reported as dirty; sinex-fd72",
+    );
+    Ok(())
 }
