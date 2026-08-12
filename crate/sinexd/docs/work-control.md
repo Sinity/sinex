@@ -1,46 +1,30 @@
-# Work-control contract
+# Shared work-control contract
 
-`runtime::work_control` is the common execution contract for expensive
-maintenance and rebuild work. It is deliberately policy-free by default:
-`WorkBudget::default()` does not impose a wall-clock, item, or throughput cap.
-Callers may add limits when they have a measured host-admission reason.
+`runtime::work_control` is the common admission, cancellation, accounting, and
+resumption primitive for maintenance and rebuild work. A caller supplies a
+`WorkIdentity`, a `WorkBudget`, a cancellation token, and (when resuming) the
+last durable `WorkProgress` cursor. The controller reports `Completed`,
+`Partial`, `Cancelled`, or `Failed`; a partial result is never presented as a
+complete scan.
 
-The contract separates four concerns:
+Budgets are opt-in. The generic default is unlimited because the controller
+cannot infer a safe deadline or throughput for a large CAS, replay, or import.
+Callers that need bounded service impact choose explicit item, byte, runtime,
+or sustained-rate limits and persist the returned cursor. `WorkAdmission`
+provides FIFO concurrency control, and cancellation is cooperative and wakes
+waiters promptly.
 
-- `WorkCancellation` is sticky and wakes admission/rate/pressure waiters.
-- `WorkAdmission` is FIFO and limits concurrent operations sharing a resource.
-- `WorkBudget` accounts items and bytes and optionally paces sustained rates.
-- `WorkProgress` is a single resumable cursor. The caller owns persistence; the
-  controller intentionally retains no batch history.
+## Current integration map
 
-Pressure is a pause condition, not a proof of failure or a correctness bound.
-`WorkController::wait_for_pressure` can use PSI, database-pool availability,
-JetStream backlog, or a caller-defined signal. A caller resumes from the last
-durably persisted cursor after the pressure clears.
-
-An operation must distinguish these outcomes:
-
-- `Completed`: all work in its declared scope was processed;
-- `Partial(reason)`: an explicit budget stopped the pass before scope completion;
-- `Cancelled`: an operator or supervisor cancellation stopped it;
-- `Failed`: the caller observed an operational error and marked it as such.
-
-Destructive callers must perform `destructive_boundary_check()` immediately
-before mutation and re-read their authority there. A runtime limit, an mtime
-grace period, or an old snapshot is never sufficient authorization to delete.
-
-## Integration census
-
-| Operation | Current relationship to the controller | Required next step |
+| Caller | Status | Boundary and evidence |
 | --- | --- | --- |
-| CAS fsck / orphan reconciliation | Migrated. The normal route is unlimited by default; explicit bounded passes report incomplete and `--apply` refuses partial deletion. | Stream the filesystem enumeration/status output and persist a cursor before making CAS cleanup resumable at very large scale. |
-| CAS GC | Reuses the CAS fsck route for the local backend; legacy git-annex remains a separate external command. | Give external-command execution the same cancellation, admission, and outcome envelope. |
-| Source replay / historical import | Not migrated. Source and automaton checkpoints have their own domain-specific durability contracts. | Adapt the controller around existing source/automaton cursors only after the durable-emission receipt and replay-scope contracts are closed; do not replace those authorities with a generic counter. |
-| Projection rebuild / invalidation | Not migrated. Projection registry and invalidation state are the authority. | Add controller progress as an execution layer over projection scope, preserving registry freshness and invalidation semantics. |
-| Schema apply / backfill | Not migrated. `xtask` and schema backfill state own these operations. | Add an adapter at the `xtask` operation boundary, with database statement timeouts and resumable relation/keyset cursors. |
-| Snapshot / restore | Not migrated. Snapshot manifests and component verification own correctness. | Use controller progress for scheduling and cancellation, while manifest/component hashes remain the authority. |
-| Tombstone / purge / other destructive lifecycle operations | Not migrated. Operation state, tombstone authority, and final rechecks own safety. | Share admission/cancellation/progress only after each mutation path retains its transaction and final authority recheck. |
+| CAS fsck/orphan reconciliation | Migrated | `cas_fsck::check_cas_with_options_and_control` and `check_cas_bounded_with_control` use the controller for cancellation, runtime/byte/entry limits, resumable directory cursors, streamed status reporting, and fail-closed destructive boundaries. Focused CAS fsck tests cover cancellation, budget stops, cursor resumption, bounded reporting, and apply refusal. |
+| Historical replay/import | Not migrated | Replay and source-drain loops have their own durable cursor and pacing contracts. They must adopt this controller only when their operation record can persist the same identity, cursor, and partial outcome. The open `sinex-w4i` and `sinex-r6d` durability work remains the prerequisite rather than being hidden behind a generic wrapper. |
+| Projection rebuilds | Not migrated | Projection invalidation/rebuild has operation and stale-registry state but still needs a caller-specific cursor and mutation-boundary contract. Keep this tracked with the open projection/replay beads (`sinex-68c.4` descendants and `sinex-lk67`). |
+| Schema apply/backfill | Intentionally excluded for now | Declarative schema convergence must remain atomic and fail-fast; backfills need a separate database-side batch/checkpoint design. Do not impose an arbitrary wall-clock refusal. Track scale work in the open reimport/schema beads (`sinex-p61n`, `sinex-5ai`). |
+| Material/CAS GC | Partially migrated | CAS orphan inspection uses the controller. Material assembler maintenance has separate retry and terminal-settlement state and must not be treated as covered until its lifecycle work (`sinex-r6d.14`, `sinex-cgcs`) supplies durable leases and deletion receipts. |
+| Other maintenance loops | Not migrated | Each caller must be classified before being wired: either adopt the contract with a durable cursor and authority recheck, be explicitly unlimited by design, or receive a linked Beads follow-up. |
 
-The census is intentionally explicit: “uses a progress-like field” is not
-treated as “uses the common controller,” and a generic budget must not weaken a
-domain-specific durability or deletion invariant.
+The controller is a coordination mechanism, not a policy that silently caps all
+work. Destructive callers must re-check authority immediately before mutation;
+elapsed time or an mtime grace period is never proof that deletion is safe.
