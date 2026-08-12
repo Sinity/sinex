@@ -219,6 +219,9 @@ fn default_batch_limit() -> i64 {
 /// Pending ──create──→ Previewed ──approve──→ Executing ──complete──→ Completed
 ///              │            │
 ///              └──cancel────┴──────────────────────────────────────→ Cancelled
+///
+/// Once execution records its deletion boundary, a lost completion write can
+/// be recovered by a later status or approve request.
 /// ```
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -402,6 +405,9 @@ pub struct TombstoneOperation {
     /// Number of events actually tombstoned
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub tombstoned_count: Option<u64>,
+    /// Durable receipt written atomically with the irreversible deletion.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub deletion_committed_at: Option<String>,
     /// Error details if failed
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub error_details: Option<String>,

@@ -496,7 +496,13 @@ const DECLARED_FUNCTION_BODIES: &[DeclaredFunctionBody] = &[
         schema: "core",
         function_name: "execute_cascade_tombstone",
         // Permanent deletion from archive — irrecoverable if the body is wrong.
-        expected_markers: &["event_tombstones", "archived_events", "ON CONFLICT"],
+        expected_markers: &[
+            "event_tombstones",
+            "archived_events",
+            "ON CONFLICT",
+            "deletion_committed_at",
+            "tombstone operation",
+        ],
     },
     DeclaredFunctionBody {
         schema: "core",

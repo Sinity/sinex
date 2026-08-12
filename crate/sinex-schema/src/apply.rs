@@ -2421,6 +2421,28 @@ BEGIN
     DELETE FROM audit.archived_events
     WHERE id = ANY(p_archived_ids);
 
+    -- Record the irreversible deletion boundary in the operation row before
+    -- this transaction can commit. A later completion update may be lost, but
+    -- this receipt makes the operation safely resumable and handles zero-row
+    -- counts that event_tombstone witnesses alone cannot represent.
+    SELECT count(*)::bigint INTO v_count
+    FROM core.event_tombstones
+    WHERE purge_operation_id = p_operation_id
+      AND id = ANY(p_archived_ids);
+
+    UPDATE core.operations_log
+    SET scope = jsonb_set(
+        jsonb_set(scope, '{deletion_committed_at}',
+            to_jsonb(clock_timestamp()::text), true),
+        '{tombstoned_count}', to_jsonb(v_count), true)
+    WHERE id = p_operation_id
+      AND operation_type = 'tombstone';
+
+    IF NOT FOUND THEN
+        RAISE EXCEPTION 'tombstone operation % not found while recording deletion boundary',
+            p_operation_id;
+    END IF;
+
     RETURN v_count;
 END;
 $$;
