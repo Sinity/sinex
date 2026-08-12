@@ -278,7 +278,7 @@ pkgs.testers.nixosTest {
             "sinexctl --insecure ops state snapshot "
             f"--output {archive} --database-url 'postgresql:///sinex_dev?host=/run/postgresql' "
             "--mode quiesce --auto-stop --compression 1 --workers 1 "
-            "--components postgres,nats,cas,state"
+            "--components postgres,nats,cas,state --format json"
         )
         snapshot_values = parse_json_output(snapshot)
         assert snapshot_values, f"snapshot should return structured evidence: {snapshot}"
