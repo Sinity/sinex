@@ -936,7 +936,7 @@ async fn tombstone_cancel_persists_terminal_metadata(ctx: TestContext) -> TestRe
         Some("Cancelled by system:local: operator requested stop")
     );
 
-    let persisted_duration_ms: i32 = sqlx::query_scalar!(
+    let persisted_duration_ms: i64 = sqlx::query_scalar!(
         r#"SELECT duration_ms as "duration_ms!" FROM core.operations_log WHERE id = $1::uuid"#,
         created.operation.operation_id.parse::<uuid::Uuid>()?
     )
@@ -1010,7 +1010,7 @@ async fn tombstone_expiry_persists_terminal_metadata(ctx: TestContext) -> TestRe
         Some("Expired before approval")
     );
 
-    let persisted_duration_ms: i32 = sqlx::query_scalar!(
+    let persisted_duration_ms: i64 = sqlx::query_scalar!(
         r#"SELECT duration_ms as "duration_ms!" FROM core.operations_log WHERE id = $1::uuid"#,
         created.operation.operation_id.parse::<uuid::Uuid>()?
     )
@@ -1045,8 +1045,6 @@ async fn tombstone_expiry_persists_terminal_metadata(ctx: TestContext) -> TestRe
 /// completion write lost" and unconditionally relabels any lapsed-TTL
 /// non-terminal operation as Expired/"Expired before approval".
 #[sinex_test]
-#[ignore = "sinex-9djc open: reconcile_tombstone_expiry has no way to distinguish \
-'never started' from 'deletion committed, completion write lost' -- fails until fixed"]
 async fn tombstone_status_does_not_mislabel_completed_deletion_as_expired(
     ctx: TestContext,
 ) -> TestResult<()> {

@@ -680,6 +680,22 @@ impl EventRepository<'_> {
         Ok(rows.into_iter().map(Id::from_uuid).collect())
     }
 
+    /// Count the immutable tombstone witnesses written by one cascade
+    /// operation.  The witness rows survive deletion of the archived event
+    /// rows and therefore provide the recovery authority when the lifecycle
+    /// operation's post-delete completion write was interrupted.
+    pub async fn count_tombstones_for_operation(&self, operation_id: Uuid) -> DbResult<i64> {
+        sqlx::query_scalar!(
+            r#"SELECT COUNT(*)::bigint as "count!"
+               FROM core.event_tombstones
+               WHERE purge_operation_id = $1"#,
+            operation_id,
+        )
+        .fetch_one(self.pool)
+        .await
+        .map_err(|e| db_error(e, "count tombstones for operation"))
+    }
+
     // ========== Equivalence-Key Occurrence Queries ==========
 
     /// The live occurrence row that admission compares a fresh interpretation

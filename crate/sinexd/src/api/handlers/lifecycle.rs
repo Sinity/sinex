@@ -669,6 +669,66 @@ async fn reconcile_tombstone_expiry(
         && let Ok(expires_at) = Timestamp::parse_rfc3339(&operation.expires_at)
         && now > expires_at
     {
+        // A completion-write failure can leave the operation in Executing
+        // after execute_cascade_tombstone has already committed.  The
+        // immutable event_tombstones witnesses are the authority for that
+        // case; never relabel a completed destructive operation as "expired
+        // before approval" merely because its pre-approval TTL elapsed.
+        if operation.state == TombstoneOperationState::Executing {
+            let operation_uuid = parse_operation_uuid(operation_id)?;
+            let tombstoned_count = pool
+                .events()
+                .count_tombstones_for_operation(operation_uuid)
+                .await
+                .map_err(|e| {
+                    SinexError::database(
+                        "Failed to inspect tombstone witnesses during expiry reconciliation",
+                    )
+                    .with_source(e.to_string())
+                })?;
+            if tombstoned_count > 0 {
+                operation.state = TombstoneOperationState::Completed;
+                operation.finished_at = Some(now.format_rfc3339());
+                operation.tombstoned_count = Some(
+                    u64::try_from(tombstoned_count).map_err(|_| {
+                        SinexError::invalid_state(
+                            "Tombstone witness count cannot be represented as u64",
+                        )
+                    })?,
+                );
+                operation.error_details = Some(
+                    "Deletion committed; lifecycle completion state recovered from tombstone witnesses"
+                        .to_string(),
+                );
+                sync_tombstone_phase(operation);
+                let scope = serde_json::to_value(&*operation)?;
+                pool.state()
+                    .update_tombstone_operation(
+                        operation_id,
+                        phase_to_result_status(operation.phase),
+                        scope,
+                        Some(merge_preview_summary(
+                            preview_summary,
+                            json!({
+                                "message": "Tombstone completion recovered from immutable deletion witnesses",
+                                "recovery": "tombstone_witnesses",
+                                "tombstoned_count": tombstoned_count,
+                            }),
+                        )),
+                        Some("Tombstone operation completion recovered after deletion committed"),
+                        tombstone_duration_ms(operation, now)?,
+                    )
+                    .await
+                    .map_err(|e| {
+                        SinexError::database(
+                            "Failed to persist recovered tombstone completion",
+                        )
+                        .with_source(e.to_string())
+                    })?;
+                return Ok(false);
+            }
+        }
+
         operation.state = TombstoneOperationState::Expired;
         operation.finished_at = Some(now.format_rfc3339());
         operation.error_details = Some("Expired before approval".to_string());
