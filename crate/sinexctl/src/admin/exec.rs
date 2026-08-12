@@ -192,8 +192,8 @@ pub fn validate_restore_database_url(database_url: &str) -> Result<()> {
         });
     if !is_disposable {
         bail!(
-            "restore database `{database_name}` is not named as a disposable rehearsal target; "
-                + "use a database name containing dev, test, drill, restore, scratch, or tmp"
+            "restore database `{database_name}` is not named as a disposable rehearsal target; \
+             use a database name containing dev, test, drill, restore, scratch, or tmp"
         );
     }
     Ok(())
