@@ -223,7 +223,6 @@ pub async fn check_cas_with_options_and_control(
 
     'scan: loop {
         let batch = walker.next_batch(256).await?;
-        progress_checkpoint = batch.checkpoint.clone();
         for (hash, path, size) in batch.entries {
             if options
                 .max_entries
@@ -340,6 +339,11 @@ pub async fn check_cas_with_options_and_control(
                 });
             }
         }
+        // Commit the cursor only after every entry in this batch has been
+        // classified.  If cancellation or an entry budget stops inside the
+        // batch, retaining the previous cursor makes the resumed pass replay
+        // the batch instead of skipping its unfinished suffix.
+        progress_checkpoint = batch.checkpoint.clone();
         if batch.complete {
             scan_complete = true;
             break;
@@ -521,7 +525,6 @@ where
 
     'scan: loop {
         let batch = walker.next_batch(256).await?;
-        progress_checkpoint = batch.checkpoint.clone();
         for (hash, path, size) in batch.entries {
             if options
                 .max_entries
@@ -634,6 +637,7 @@ where
                 });
             }
         }
+        progress_checkpoint = batch.checkpoint.clone();
         if batch.complete {
             scan_complete = true;
             break;
