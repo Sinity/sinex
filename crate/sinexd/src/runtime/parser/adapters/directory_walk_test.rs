@@ -48,6 +48,24 @@ async fn test_empty_directory_yields_zero_records() -> xtask::sandbox::TestResul
 }
 
 #[sinex_test]
+async fn oversized_directory_file_is_rejected_as_a_visible_error() -> xtask::sandbox::TestResult<()> {
+    let dir = TempDir::new().unwrap();
+    let root = Utf8PathBuf::from_path_buf(dir.path().to_path_buf()).unwrap();
+    let path = dir.path().join("oversized.bin");
+    let file = std::fs::File::create(&path).unwrap();
+    file.set_len(super::MAX_FILE_BYTES + 1).unwrap();
+
+    let adapter = DirectoryWalkAdapter;
+    let mut stream = adapter
+        .open(dummy_material_id(), &simple_config(vec![root]), None)
+        .await
+        .unwrap();
+    let error = stream.next().await.unwrap().unwrap_err();
+    assert!(error.to_string().contains("directory input cap"));
+    Ok(())
+}
+
+#[sinex_test]
 async fn test_walk_emits_record_per_file() -> xtask::sandbox::TestResult<()> {
     let dir = TempDir::new().unwrap();
     let root = Utf8PathBuf::from_path_buf(dir.path().to_path_buf()).unwrap();

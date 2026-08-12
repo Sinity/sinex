@@ -52,6 +52,34 @@ impl InputShapeAdapter for TestAdapter {
 impl InputShapeAdapterExt for TestAdapter {}
 
 #[derive(Default)]
+struct ErroringAdapter;
+
+#[async_trait]
+impl InputShapeAdapter for ErroringAdapter {
+    type Config = ();
+    type Cursor = u64;
+
+    const KIND: InputShapeKind = InputShapeKind::StaticFile;
+
+    async fn open(
+        &self,
+        _material_id: Id<SourceMaterial>,
+        _config: &Self::Config,
+        _cursor: Option<Self::Cursor>,
+    ) -> ParserResult<BoxStream<'static, ParserResult<SourceRecord>>> {
+        Ok(Box::pin(stream::iter(vec![Err(ParserError::Adapter(
+            "fixture input exceeded whole-file limit".to_string(),
+        ))])))
+    }
+
+    fn cursor_after(&self, _record: &SourceRecord) -> ParserResult<Self::Cursor> {
+        Ok(1)
+    }
+}
+
+impl InputShapeAdapterExt for ErroringAdapter {}
+
+#[derive(Default)]
 struct FingerprintAdapter {
     fingerprint: Option<SourceRecordFingerprint>,
 }
@@ -921,6 +949,33 @@ async fn adapter_oversized_record_is_chunked_and_emitted(ctx: TestContext) -> Te
         material_frame_messages <= 4,
         "one oversized logical record should use BEGIN plus a few material slices, got {material_frame_messages}"
     );
+    Ok(())
+}
+
+#[sinex_test]
+async fn adapter_stream_error_is_returned_without_advancing_cursor(
+    ctx: TestContext,
+) -> TestResult<()> {
+    let ctx = ctx.with_nats().shared().await?;
+    let (runtime, _event_receiver) = make_adapter_runtime(&ctx).await?;
+    let mut source = AdapterBackedSource::<ErroringAdapter, TestParser>::new("desktop.clipboard");
+    let mut state = AdapterModuleState::default();
+
+    source
+        .initialize(AdapterSourceConfig::default(), &runtime, &mut state)
+        .await?;
+    let error = source
+        .drain_adapter(None, &mut state, None, None)
+        .await
+        .expect_err("adapter stream failures must remain visible to the runtime");
+
+    assert!(
+        error
+            .to_string()
+            .contains("adapter stream yielded an error")
+    );
+    assert!(error.to_string().contains("whole-file limit"));
+    assert_eq!(state.cursor, None);
     Ok(())
 }
 

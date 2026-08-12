@@ -131,6 +131,18 @@ async fn test_static_file_missing_path_returns_error() -> xtask::sandbox::TestRe
 }
 
 #[sinex_test]
+async fn static_file_bounded_read_rejects_growth_without_partial_material()
+-> xtask::sandbox::TestResult<()> {
+    let mut f = NamedTempFile::new().unwrap();
+    f.write_all(b"12345").unwrap();
+
+    let error = super::read_file_bounded_sync(f.path(), 4).unwrap_err();
+    assert_eq!(error.kind(), std::io::ErrorKind::InvalidData);
+    assert!(error.to_string().contains("whole-file adapter input"));
+    Ok(())
+}
+
+#[sinex_test]
 async fn test_static_file_empty_file_yields_one_empty_record() -> xtask::sandbox::TestResult<()>
 {
     let f = NamedTempFile::new().unwrap();

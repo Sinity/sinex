@@ -1400,12 +1400,12 @@ where
                 let record = match record_result {
                     Ok(r) => r,
                     Err(e) => {
-                        warn!(
-                            source = self.source_id,
-                            error = %e,
-                            "Adapter stream error — skipping record"
-                        );
-                        continue;
+                        return Err(crate::runtime::SinexError::processing(
+                            "adapter stream yielded an error",
+                        )
+                        .with_context("source_id", self.source_id)
+                        .with_context("adapter_kind", A::KIND.as_str())
+                        .with_context("error", e.to_string()));
                     }
                 };
 
@@ -1458,12 +1458,12 @@ where
                 let next_record = match next_record_result {
                     Ok(record) => record,
                     Err(e) => {
-                        warn!(
-                            source = self.source_id,
-                            error = %e,
-                            "Adapter stream error while batching — skipping record"
-                        );
-                        continue;
+                        return Err(crate::runtime::SinexError::processing(
+                            "adapter stream yielded an error while batching",
+                        )
+                        .with_context("source_id", self.source_id)
+                        .with_context("adapter_kind", A::KIND.as_str())
+                        .with_context("error", e.to_string()));
                     }
                 };
 

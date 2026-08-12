@@ -13,7 +13,6 @@ use futures::stream::{self, BoxStream};
 use globset::{Glob, GlobSet, GlobSetBuilder};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use tokio::fs;
 
 use sinex_primitives::events::SourceMaterial;
 use sinex_primitives::ids::Id;
@@ -22,6 +21,8 @@ use sinex_primitives::parser::{InputShapeKind, MaterialAnchor, SourceRecord};
 use crate::runtime::parser::{
     InputShapeAdapter, ParserError, ParserResult, SourceRecordFingerprint,
 };
+
+use super::{MAX_WHOLE_FILE_BYTES, read_file_bounded, read_file_bounded_sync};
 
 // =============================================================================
 // FileFingerprint
@@ -110,7 +111,7 @@ impl DirectoryWalkCursor {
 #[derive(Debug, Clone, Default)]
 pub struct DirectoryWalkAdapter;
 
-const MAX_FILE_BYTES: u64 = 64 * 1024 * 1024;
+const MAX_FILE_BYTES: u64 = MAX_WHOLE_FILE_BYTES;
 
 impl DirectoryWalkAdapter {
     /// Compile the configured globs into a [`GlobSet`].
@@ -268,7 +269,7 @@ fn structured_file_shape_hash(path: &Utf8Path, extension: &str) -> Option<String
     if metadata.len() > MAX_FILE_BYTES {
         return None;
     }
-    let bytes = std::fs::read(path.as_std_path()).ok()?;
+    let bytes = read_file_bounded_sync(path.as_std_path(), MAX_FILE_BYTES).ok()?;
     let fingerprint = match extension {
         "csv" => SourceRecordFingerprint::from_csv_bytes(&bytes).ok()?,
         "tsv" => SourceRecordFingerprint::from_tsv_bytes(&bytes).ok()?,
@@ -358,12 +359,14 @@ impl InputShapeAdapter for DirectoryWalkAdapter {
                         entry.path, MAX_FILE_BYTES
                     )));
                 }
-                let bytes = fs::read(entry.path.as_std_path()).await.map_err(|e| {
-                    ParserError::Io(std::io::Error::new(
-                        e.kind(),
-                        format!("failed to read {}: {e}", entry.path),
-                    ))
-                })?;
+                let bytes = read_file_bounded(entry.path.as_std_path(), MAX_FILE_BYTES)
+                    .await
+                    .map_err(|e| {
+                        ParserError::Io(std::io::Error::new(
+                            e.kind(),
+                            format!("failed to read {}: {e}", entry.path),
+                        ))
+                    })?;
 
                 // Thread the fingerprint observed during the scan through to
                 // `cursor_after()` via `metadata`. `cursor_after()` only sees

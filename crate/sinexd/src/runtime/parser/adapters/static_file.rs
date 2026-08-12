@@ -15,6 +15,8 @@ use crate::runtime::parser::{
     InputShapeAdapter, ParserError, ParserResult, SourceRecordFingerprint,
 };
 
+use super::{MAX_WHOLE_FILE_BYTES, read_file_bounded, read_file_bounded_sync};
+
 // =============================================================================
 // StaticFileAdapter
 // =============================================================================
@@ -26,7 +28,7 @@ use crate::runtime::parser::{
 #[derive(Debug, Clone, Default)]
 pub struct StaticFileAdapter;
 
-const MAX_FILE_BYTES: u64 = 64 * 1024 * 1024;
+const MAX_FILE_BYTES: u64 = MAX_WHOLE_FILE_BYTES;
 
 /// Configuration for [`StaticFileAdapter`].
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
@@ -102,7 +104,9 @@ impl InputShapeAdapter for StaticFileAdapter {
                     config.path, MAX_FILE_BYTES
                 )));
             }
-            std::fs::read(&path)?
+            read_file_bounded(Path::new(&path), MAX_FILE_BYTES)
+                .await
+                .map_err(ParserError::Io)?
         };
 
         let len = bytes.len() as u64;
@@ -133,7 +137,8 @@ impl InputShapeAdapter for StaticFileAdapter {
                 config.path, MAX_FILE_BYTES
             )));
         }
-        let bytes = std::fs::read(&config.path)?;
+        let bytes = read_file_bounded_sync(Path::new(&config.path), MAX_FILE_BYTES)
+            .map_err(ParserError::Io)?;
         match Utf8Path::new(&config.path)
             .extension()
             .map(str::to_ascii_lowercase)
