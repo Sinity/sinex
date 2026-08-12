@@ -185,3 +185,7 @@ impl<T: Serialize> CommandOutput<T> {
         }
     }
 }
+
+#[cfg(test)]
+#[path = "output_test.rs"]
+mod tests;

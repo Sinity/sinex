@@ -2878,3 +2878,28 @@ async fn test_get_resource_usage_for_invocation_prefers_process_metrics() -> Tes
     assert_eq!(usage.host_memory_usage_max_mb, Some(1024.0));
     Ok(())
 }
+
+/// sinex-5zzc: `get_transition_probability`'s `window_mins * 60` multiplication
+/// (prediction.rs) uses plain `u32` arithmetic with no checked/saturating guard.
+/// A caller-influenced `window_mins` near `u32::MAX` overflows before the query
+/// even runs. Debug/test builds have overflow-checks on, so this currently
+/// panics rather than returning an error or a saturated/clamped result.
+#[sinex_test]
+#[ignore = "sinex-5zzc open: get_transition_probability panics on a large window_mins (window_mins * 60 overflows u32 with no checked/saturating arithmetic)"]
+async fn get_transition_probability_large_window_mins_does_not_panic() -> TestResult<()> {
+    let dir = tempdir()?;
+    let db_path = dir.path().join("test-history.db");
+    let db = HistoryDb::open(&db_path)?;
+
+    let panicked = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        db.get_transition_probability("check", "test", u32::MAX / 30, 10)
+    }))
+    .is_err();
+
+    assert!(
+        !panicked,
+        "get_transition_probability must not panic on a large window_mins value \
+         (window_mins * 60 overflows u32 with no checked/saturating arithmetic); sinex-5zzc",
+    );
+    Ok(())
+}
