@@ -448,7 +448,10 @@ impl DlqRetryHandler {
         })?;
         let target = dlq_requeue_target(headers_ref, msg.subject.as_str(), &msg.payload)?;
         let mut headers = async_nats::HeaderMap::new();
-        let retry_count_str = (retry_count + 1).to_string();
+        let retry_count_str = retry_count
+            .checked_add(1)
+            .ok_or_else(|| SinexError::processing("DLQ retry count exceeds supported range"))?
+            .to_string();
         let requeue_generation = target.dlq_requeue_generation.checked_add(1).ok_or_else(|| {
             SinexError::processing("DLQ requeue generation exceeds supported range")
         })?;
@@ -501,7 +504,10 @@ impl DlqRetryHandler {
             dlq_requeue_target(&message.headers, message.subject.as_str(), &message.payload)?;
 
         let mut headers = async_nats::HeaderMap::new();
-        let retry_count_str = (retry_count + 1).to_string();
+        let retry_count_str = retry_count
+            .checked_add(1)
+            .ok_or_else(|| SinexError::processing("DLQ retry count exceeds supported range"))?
+            .to_string();
         let requeue_generation = target.dlq_requeue_generation.checked_add(1).ok_or_else(|| {
             SinexError::processing("DLQ requeue generation exceeds supported range")
         })?;

@@ -137,3 +137,43 @@ async fn small_files_use_local_cas_without_content_store_process()
     assert!(!content_path.exists());
     Ok(())
 }
+
+#[sinex_test]
+async fn direct_store_file_enforces_configured_size_limit() -> ::xtask::sandbox::TestResult<()> {
+    let repo_dir = tempfile::tempdir()?;
+    let repo_path = Utf8PathBuf::from_path_buf(repo_dir.path().to_path_buf())
+        .expect("temp path should be valid utf-8");
+    let content_store = MaterialContentStore::new(ContentStoreConfig {
+        root_path: repo_path.clone(),
+        max_blob_size: 1,
+        ..Default::default()
+    })?;
+    let source_path = repo_path.join("too-large.bin");
+    tokio::fs::write(&source_path, b"12").await?;
+
+    let error = content_store
+        .store_file(&source_path)
+        .await
+        .expect_err("direct content-store writes must enforce max_blob_size");
+    assert!(error.to_string().contains("exceeds limit"));
+    Ok(())
+}
+
+#[sinex_test]
+async fn annex_path_arguments_reject_traversal() -> ::xtask::sandbox::TestResult<()> {
+    let repo_dir = tempfile::tempdir()?;
+    let repo_path = Utf8PathBuf::from_path_buf(repo_dir.path().to_path_buf())
+        .expect("temp path should be valid utf-8");
+    let content_store = MaterialContentStore::new(ContentStoreConfig {
+        root_path: repo_path,
+        legacy_annex_enabled: true,
+        ..Default::default()
+    })?;
+
+    let error = content_store
+        .resolve_argument("../outside")
+        .await
+        .expect_err("annex path arguments must not escape the configured root");
+    assert!(error.to_string().contains("root-contained"));
+    Ok(())
+}

@@ -204,10 +204,8 @@ async fn run_command_async(
     mut cmd: AsyncCommand,
     context: &'static str,
 ) -> RuntimeResult<std::process::Output> {
-    {
-        let _guard = content_store_process_lock().lock().await;
-        record_process_invocation(cmd.as_std().get_program(), false);
-    }
+    let _guard = content_store_process_lock().lock().await;
+    record_process_invocation(cmd.as_std().get_program(), false);
     cmd.output()
         .await
         .map_err(|e| SinexError::processing(context).with_source(e))
@@ -584,7 +582,18 @@ impl MaterialContentStore {
             .await
             .map_err(SinexError::io)?
             .len();
+        self.ensure_file_size_allowed(file_size)?;
         self.store_file_local_cas(&resolved_path, file_size).await
+    }
+
+    fn ensure_file_size_allowed(&self, file_size: u64) -> RuntimeResult<()> {
+        if self.config.max_blob_size > 0 && file_size > self.config.max_blob_size as u64 {
+            return Err(SinexError::blob_storage(format!(
+                "blob size {file_size} exceeds limit {}",
+                self.config.max_blob_size
+            )));
+        }
+        Ok(())
     }
 
     async fn store_file_local_cas(
@@ -761,6 +770,7 @@ impl MaterialContentStore {
                 .await
                 .map_err(SinexError::io)?
                 .len();
+            self.ensure_file_size_allowed(file_size)?;
             let hash = Self::compute_blake3_hash(&resolved_path).await?;
             let _path = self.local_blake3_cas_path_for_hash(&hash)?;
             return Ok(ContentStoreKey {
@@ -793,15 +803,34 @@ impl MaterialContentStore {
         ContentStoreKey::parse(&key_str)
     }
 
-    fn resolve_argument(&self, key_or_path: &str) -> (bool, String) {
+    async fn resolve_argument(&self, key_or_path: &str) -> RuntimeResult<(bool, String)> {
         let candidate = self.config.root_path.join(key_or_path);
         if candidate.exists() {
-            let rel = candidate
-                .strip_prefix(&self.config.root_path)
-                .unwrap_or(&candidate);
-            (false, rel.to_string())
+            let canonical_root = tokio::fs::canonicalize(&self.config.root_path)
+                .await
+                .map_err(SinexError::io)?;
+            let canonical_candidate = tokio::fs::canonicalize(&candidate)
+                .await
+                .map_err(SinexError::io)?;
+            if !canonical_candidate.starts_with(&canonical_root) {
+                return Err(SinexError::validation(
+                    "content-store path escapes configured root",
+                ));
+            }
+            let rel = canonical_candidate
+                .strip_prefix(&canonical_root)
+                .map_err(|_| SinexError::validation("content-store path is not root-relative"))?;
+            return Ok((false, rel.to_string_lossy().into_owned()));
         } else {
-            (true, key_or_path.to_string())
+            let path = Path::new(key_or_path);
+            if path.is_absolute() || path.components().any(|part| {
+                matches!(part, std::path::Component::ParentDir)
+            }) {
+                return Err(SinexError::validation(
+                    "content-store argument must be a key or a root-contained relative path",
+                ));
+            }
+            Ok((true, key_or_path.to_string()))
         }
     }
 
@@ -824,7 +853,7 @@ impl MaterialContentStore {
             )));
         }
 
-        let (is_key, argument) = self.resolve_argument(key_or_path);
+        let (is_key, argument) = self.resolve_argument(key_or_path).await?;
 
         let mut cmd = AsyncCommand::new("git-annex");
         cmd.arg("get");
@@ -870,7 +899,7 @@ impl MaterialContentStore {
             )));
         }
 
-        let (is_key, argument) = self.resolve_argument(key_or_path);
+        let (is_key, argument) = self.resolve_argument(key_or_path).await?;
         let mut cmd = AsyncCommand::new("git-annex");
         cmd.arg("drop");
         if is_key {
