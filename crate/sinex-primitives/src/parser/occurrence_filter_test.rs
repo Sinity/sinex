@@ -84,6 +84,26 @@ async fn maybe_occurrence_key_string_hashes_oversized_projection(
 }
 
 #[sinex_test]
+#[ignore = "sinex-g6x1 open: bounded_occurrence_key_string's oversized-key fallback unboundedly \
+            prepends source_id, so a long SourceId alone still blows past the 512-byte DB bound"]
+async fn maybe_occurrence_key_string_stays_bounded_even_with_long_source_id(
+) -> xtask::sandbox::TestResult<()> {
+    let long_source_id = "a".repeat(600);
+    let key = OccurrenceKey {
+        source_id: SourceId::new(long_source_id).expect("valid source id chars"),
+        fields: vec![("x".into(), "y".into())],
+    };
+    let projected = maybe_occurrence_key_string(Some(&key)).expect("key should project");
+    assert!(
+        projected.len() <= 512,
+        "projected occurrence key is {} bytes, exceeds the 512-byte DB bound the fallback is \
+         supposed to guarantee",
+        projected.len()
+    );
+    Ok(())
+}
+
+#[sinex_test]
 async fn escaping_prevents_delimiter_injection_collision() -> xtask::sandbox::TestResult<()> {
     // Without escaping, `(foo, "bar|baz")` and `(foo|bar, "baz")`
     // would both encode as `test.unit|foo=bar|baz` and silently

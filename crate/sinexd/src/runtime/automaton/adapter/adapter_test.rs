@@ -743,6 +743,30 @@ async fn derived_source_state_reports_processed_counters() -> TestResult<()> {
 }
 
 #[sinex_test]
+#[ignore = "sinex-g9sy open: record_processed_input has no monotonicity guard on \
+            last_input_event_id -- an out-of-order (older) input silently overwrites a \
+            newer high-water mark, unlike the sibling max_input_ts_orig field which does guard"]
+async fn record_processed_input_does_not_regress_last_input_event_id() -> TestResult<()> {
+    let mut adapter = AutomatonRuntime::new(TransducerWrapper(TestAutomaton));
+
+    let newer_id: Id<Event<JsonValue>> =
+        Uuid::from_u128(0xffff_ffff_ffff_ffff_ffff_ffff_ffff_ffff).into();
+    let older_id: Id<Event<JsonValue>> =
+        Uuid::from_u128(0x0000_0000_0000_0000_0000_0000_0000_0001).into();
+
+    adapter.record_processed_input(newer_id, None);
+    adapter.record_processed_input(older_id, None);
+
+    assert_eq!(
+        adapter.persisted_state.last_input_event_id,
+        Some(*newer_id.as_uuid()),
+        "last_input_event_id regressed from the newer input to an older one -- \
+         record_processed_input has no monotonicity guard, unlike max_input_ts_orig"
+    );
+    Ok(())
+}
+
+#[sinex_test]
 async fn derived_ingestion_history_is_explicitly_unavailable() -> TestResult<()> {
     let adapter = AutomatonRuntime::new(TransducerWrapper(TestAutomaton));
 

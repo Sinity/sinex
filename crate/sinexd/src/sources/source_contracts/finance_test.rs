@@ -283,6 +283,38 @@ async fn occurrence_key_fields_and_order() -> TestResult<()> {
     Ok(())
 }
 
+#[sinex_test]
+#[ignore = "sinex-ztlf open: first_amount falls back to a fixed \"0\" sentinel when no posting \
+            has an explicit amount, so two distinct same-day same-description transactions with \
+            only elided (implicit-balance) postings collide onto the same occurrence_key"]
+async fn occurrence_key_does_not_collide_when_all_postings_elide_amount() -> TestResult<()> {
+    // Two distinct transactions, same date and description (a plausible
+    // recurring same-day entry, e.g. two cash withdrawals), neither posting
+    // carrying an explicit amount on either transaction.
+    const ELIDED_JOURNAL: &str = "2030-01-05 ATM Withdrawal\n\
+        \tAssets:Checking:ExampleBank\n\
+        \tAssets:Cash:Wallet\n\
+        \n\
+        2030-01-05 ATM Withdrawal\n\
+        \tAssets:Checking:ExampleBank\n\
+        \tAssets:Cash:Envelope\n\
+        \n";
+    let mut parser = HledgerJournalParser;
+    let intents = parser
+        .parse_record(record_for(ELIDED_JOURNAL.as_bytes()), &test_ctx())
+        .await
+        .unwrap();
+    assert_eq!(intents.len(), 2);
+    let key_a = intents[0].occurrence_key.as_ref().unwrap();
+    let key_b = intents[1].occurrence_key.as_ref().unwrap();
+    assert_ne!(
+        key_a, key_b,
+        "two distinct transactions collided onto the same occurrence_key because \
+         first_amount fell back to the same \"0\" sentinel for both: {key_a:?}"
+    );
+    Ok(())
+}
+
 // ---------------------------------------------------------------------------
 // Invalid date surfaces a parse error
 // ---------------------------------------------------------------------------
