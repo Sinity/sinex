@@ -50,7 +50,24 @@ async fn test_events_indexes_creation() -> color_eyre::eyre::Result<()> {
         "sinex-1l52: ix_events_payload_text_fts must exist so PayloadFilter::TextSearch/ \
          hybrid_search FTS queries don't full-scan the hypertable"
     );
+    assert!(
+        index_names
+            .iter()
+            .any(|name| name == "ix_events_associated_blob_ids"),
+        "blob tombstone reference checks require a GIN index on live associated_blob_ids"
+    );
     Ok(())
+}
+
+#[test]
+fn archived_blob_reference_index_is_declared() {
+    assert!(
+        ArchivedEvents::create_indexes_sql()
+            .iter()
+            .any(|sql| sql.contains("ix_archived_events_associated_blob_ids")
+                && sql.contains("USING GIN (associated_blob_ids)")),
+        "archived blob reference checks require a GIN index on associated_blob_ids"
+    );
 }
 
 /// sinex-1l52: the FTS index must actually be usable by the exact query shape

@@ -48,6 +48,52 @@ impl EventRepository<'_> {
             .collect()
     }
 
+    /// Fetch a bounded source/time page using a UUIDv7 keyset cursor.
+    pub async fn get_by_source_and_time_range_after_id(
+        &self,
+        source: &EventSource,
+        start: Timestamp,
+        end: Timestamp,
+        after_id: Option<sinex_primitives::Id<Event<JsonValue>>>,
+        limit: i64,
+    ) -> DbResult<Vec<Event<JsonValue>>> {
+        if limit <= 0 {
+            return Err(crate::SinexError::validation(
+                "keyset page limit must be positive",
+            ));
+        }
+
+        let mut query = String::from(concat!(
+            "SELECT ",
+            event_select_columns!(),
+            " FROM core.events WHERE source = $1 AND ts_coided >= $2 AND ts_coided <= $3"
+        ));
+        if after_id.is_some() {
+            query.push_str(" AND id < $4");
+        }
+        query.push_str(if after_id.is_some() {
+            " ORDER BY id DESC LIMIT $5"
+        } else {
+            " ORDER BY id DESC LIMIT $4"
+        });
+
+        let mut request = sqlx::query_as::<_, EventRecord>(&query)
+            .bind(source.as_str())
+            .bind(start)
+            .bind(end);
+        if let Some(after_id) = after_id {
+            request = request.bind(after_id.to_uuid());
+        }
+        request = request.bind(limit);
+        request
+            .fetch_all(self.pool())
+            .await
+            .map_err(|e| db_error(e, "get events by source and time range after id"))?
+            .into_iter()
+            .map(super::events::conversions::EventRecordExt::try_to_event)
+            .collect()
+    }
+
     /// Get material-root events by source and time range.
     #[instrument(skip(self), fields(source = %source.as_str()))]
     pub async fn get_material_root_events_in_range(
@@ -75,6 +121,53 @@ impl EventRepository<'_> {
         .map_err(|e| db_error(e, "get material-root events by source and time range"))?;
 
         records
+            .into_iter()
+            .map(super::events::conversions::EventRecordExt::try_to_event)
+            .collect()
+    }
+
+    /// Fetch bounded material-root events with a UUIDv7 keyset cursor.
+    pub async fn get_material_root_events_in_range_after_id(
+        &self,
+        source: &EventSource,
+        start: Timestamp,
+        end: Timestamp,
+        after_id: Option<sinex_primitives::Id<Event<JsonValue>>>,
+        limit: i64,
+    ) -> DbResult<Vec<Event<JsonValue>>> {
+        if limit <= 0 {
+            return Err(crate::SinexError::validation(
+                "keyset page limit must be positive",
+            ));
+        }
+
+        let mut query = String::from(concat!(
+            "SELECT ",
+            event_select_columns!(),
+            " FROM core.events WHERE source = $1 AND ts_coided >= $2 AND ts_coided <= $3 ",
+            "AND source_event_ids IS NULL"
+        ));
+        if after_id.is_some() {
+            query.push_str(" AND id < $4");
+        }
+        query.push_str(if after_id.is_some() {
+            " ORDER BY id DESC LIMIT $5"
+        } else {
+            " ORDER BY id DESC LIMIT $4"
+        });
+
+        let mut request = sqlx::query_as::<_, EventRecord>(&query)
+            .bind(source.as_str())
+            .bind(start)
+            .bind(end);
+        if let Some(after_id) = after_id {
+            request = request.bind(after_id.to_uuid());
+        }
+        request = request.bind(limit);
+        request
+            .fetch_all(self.pool())
+            .await
+            .map_err(|e| db_error(e, "get material-root events after id"))?
             .into_iter()
             .map(super::events::conversions::EventRecordExt::try_to_event)
             .collect()

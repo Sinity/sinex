@@ -101,6 +101,40 @@ impl EventRepository<'_> {
         records_to_events(records)
     }
 
+    /// Fetch a bounded source page using a UUIDv7 keyset cursor.
+    pub async fn get_by_source_after_id(
+        &self,
+        source: &EventSource,
+        after_id: Option<Id<Event<JsonValue>>>,
+        limit: i64,
+    ) -> DbResult<Vec<Event<JsonValue>>> {
+        validate_keyset_limit(limit)?;
+        let mut query = String::from(concat!(
+            "SELECT ",
+            event_select_columns!(),
+            " FROM core.events WHERE source = $1"
+        ));
+        if after_id.is_some() {
+            query.push_str(" AND id < $2");
+        }
+        query.push_str(if after_id.is_some() {
+            " ORDER BY id DESC LIMIT $3"
+        } else {
+            " ORDER BY id DESC LIMIT $2"
+        });
+
+        let mut request = sqlx::query_as::<_, EventRecord>(&query).bind(source.as_str());
+        if let Some(after_id) = after_id {
+            request = request.bind(after_id.to_uuid());
+        }
+        request = request.bind(limit);
+        let records = request
+            .fetch_all(self.pool)
+            .await
+            .map_err(|e| db_error(e, "get events by source after id"))?;
+        records_to_events(records)
+    }
+
     #[instrument(
         skip(self),
         fields(event_type = %event_type, limit = pagination.limit(), offset = pagination.offset())
@@ -124,6 +158,40 @@ impl EventRepository<'_> {
         .await
         .map_err(|e| db_error(e, "get events by type"))?;
 
+        records_to_events(records)
+    }
+
+    /// Fetch a bounded event-type page using a UUIDv7 keyset cursor.
+    pub async fn get_by_event_type_after_id(
+        &self,
+        event_type: &EventType,
+        after_id: Option<Id<Event<JsonValue>>>,
+        limit: i64,
+    ) -> DbResult<Vec<Event<JsonValue>>> {
+        validate_keyset_limit(limit)?;
+        let mut query = String::from(concat!(
+            "SELECT ",
+            event_select_columns!(),
+            " FROM core.events WHERE event_type = $1"
+        ));
+        if after_id.is_some() {
+            query.push_str(" AND id < $2");
+        }
+        query.push_str(if after_id.is_some() {
+            " ORDER BY id DESC LIMIT $3"
+        } else {
+            " ORDER BY id DESC LIMIT $2"
+        });
+
+        let mut request = sqlx::query_as::<_, EventRecord>(&query).bind(event_type.as_str());
+        if let Some(after_id) = after_id {
+            request = request.bind(after_id.to_uuid());
+        }
+        request = request.bind(limit);
+        let records = request
+            .fetch_all(self.pool)
+            .await
+            .map_err(|e| db_error(e, "get events by type after id"))?;
         records_to_events(records)
     }
 
@@ -236,6 +304,43 @@ impl EventRepository<'_> {
         .await
         .map_err(|e| db_error(e, "get events by time range"))?;
 
+        records_to_events(records)
+    }
+
+    /// Fetch a bounded time-range page using a UUIDv7 keyset cursor.
+    pub async fn get_by_time_range_after_id(
+        &self,
+        start: Timestamp,
+        end: Timestamp,
+        after_id: Option<Id<Event<JsonValue>>>,
+        limit: i64,
+    ) -> DbResult<Vec<Event<JsonValue>>> {
+        validate_keyset_limit(limit)?;
+        let mut query = String::from(concat!(
+            "SELECT ",
+            event_select_columns!(),
+            " FROM core.events WHERE ts_coided >= $1 AND ts_coided <= $2"
+        ));
+        if after_id.is_some() {
+            query.push_str(" AND id < $3");
+        }
+        query.push_str(if after_id.is_some() {
+            " ORDER BY id DESC LIMIT $4"
+        } else {
+            " ORDER BY id DESC LIMIT $3"
+        });
+
+        let mut request = sqlx::query_as::<_, EventRecord>(&query)
+            .bind(start)
+            .bind(end);
+        if let Some(after_id) = after_id {
+            request = request.bind(after_id.to_uuid());
+        }
+        request = request.bind(limit);
+        let records = request
+            .fetch_all(self.pool)
+            .await
+            .map_err(|e| db_error(e, "get events by time range after id"))?;
         records_to_events(records)
     }
 
@@ -393,16 +498,25 @@ impl EventRepository<'_> {
     pub async fn find_invalid_payloads(&self, limit: i64) -> DbResult<Vec<InvalidPayloadEvent>> {
         sqlx::query!(
             r#"
+            WITH bounded_events AS (
+                SELECT
+                    id,
+                    source,
+                    event_type,
+                    ts_coided,
+                    payload
+                FROM core.events
+                WHERE payload IS NULL OR payload = 'null'::jsonb OR payload = '{}'::jsonb
+                ORDER BY ts_coided DESC, id DESC
+                LIMIT $1
+            )
             SELECT
                 id::uuid as "id!",
                 source as "source!",
                 event_type as "event_type!",
                 ts_coided as "ts_coided!: Timestamp",
                 payload as "payload!"
-            FROM core.events
-            WHERE payload IS NULL OR payload = 'null'::jsonb OR payload = '{}'::jsonb
-            ORDER BY ts_coided DESC
-            LIMIT $1
+            FROM bounded_events
             "#,
             limit
         )
@@ -436,14 +550,19 @@ impl EventRepository<'_> {
     > {
         let rows = sqlx::query!(
             r#"
-            WITH ordered_events AS (
+            WITH bounded_events AS (
+                SELECT id, source, ts_orig
+                FROM core.events
+                WHERE ts_orig IS NOT NULL
+                ORDER BY id DESC
+                LIMIT $1
+            ), ordered_events AS (
                 SELECT
                     id,
                     ts_orig,
                     LAG(id) OVER (PARTITION BY source ORDER BY id) as prev_id,
                     LAG(ts_orig) OVER (PARTITION BY source ORDER BY id) as prev_ts
-                FROM core.events
-                WHERE ts_orig IS NOT NULL
+                FROM bounded_events
             )
             SELECT
                 id::uuid as "id!",
@@ -452,7 +571,6 @@ impl EventRepository<'_> {
                 prev_ts as "prev_ts: Timestamp"
             FROM ordered_events
             WHERE prev_ts IS NOT NULL AND ts_orig < prev_ts
-            LIMIT $1
             "#,
             limit
         )
@@ -561,15 +679,20 @@ impl EventRepository<'_> {
         let rows = sqlx::query_as!(
             InvalidTimestamp,
             r#"
+            WITH bounded_events AS (
+                SELECT id, ts_orig, ts_coided
+                FROM core.events
+                WHERE ts_orig > NOW() + INTERVAL '1 hour'
+                   OR ts_orig < '2020-01-01'::timestamptz
+                   OR ts_coided > NOW() + INTERVAL '1 hour'
+                ORDER BY ts_coided DESC, id DESC
+                LIMIT $1
+            )
             SELECT
                 id::uuid as "event_id!: Id<Event<JsonValue>>",
                 ts_orig as "ts_orig: Timestamp",
                 ts_coided as "ts_coided!: Timestamp"
-            FROM core.events
-            WHERE ts_orig > NOW() + INTERVAL '1 hour'
-               OR ts_orig < '2020-01-01'::timestamptz
-               OR ts_coided > NOW() + INTERVAL '1 hour'
-            LIMIT $1
+            FROM bounded_events
             "#,
             limit
         )
@@ -831,6 +954,13 @@ impl EventRepository<'_> {
 
         Ok(rows)
     }
+}
+
+fn validate_keyset_limit(limit: i64) -> DbResult<()> {
+    if limit <= 0 {
+        return Err(SinexError::validation("keyset page limit must be positive"));
+    }
+    Ok(())
 }
 
 /// The live `core.events` row an incoming equivalence-keyed interpretation

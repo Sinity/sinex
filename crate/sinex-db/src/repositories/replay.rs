@@ -15,6 +15,8 @@ use sqlx::postgres::types::PgRange;
 use sqlx::{PgPool, Postgres, QueryBuilder, Row, Transaction};
 use uuid::Uuid;
 
+const SCOPE_ROOT_PAGE_SIZE: i64 = 10_000;
+
 /// Repository for replay-operation database access.
 pub struct ReplayRepository<'a> {
     pool: &'a PgPool,
@@ -353,14 +355,56 @@ impl ReplayRepository<'_> {
 
     /// Collect the root event IDs matching a replay scope.
     pub async fn collect_scope_root_ids(&self, scope: &ReplayScope) -> Result<Vec<Uuid>> {
+        let mut root_ids = Vec::new();
+        let mut after_id = None;
+
+        loop {
+            let page = self
+                .collect_scope_root_ids_page(scope, after_id, SCOPE_ROOT_PAGE_SIZE)
+                .await?;
+            let Some(last_id) = page.last().copied() else {
+                break;
+            };
+
+            root_ids.extend(page);
+            after_id = Some(last_id);
+        }
+
+        Ok(root_ids)
+    }
+
+    /// Fetch one bounded keyset page of root event IDs matching a replay scope.
+    ///
+    /// The public collector retains its historical `Vec` API, but every query
+    /// against the potentially large root set is bounded and seeks from the
+    /// previous UUIDv7 key rather than asking PostgreSQL to materialize the
+    /// complete result set at once.
+    pub async fn collect_scope_root_ids_page(
+        &self,
+        scope: &ReplayScope,
+        after_id: Option<Uuid>,
+        limit: i64,
+    ) -> Result<Vec<Uuid>> {
+        if limit <= 0 {
+            return Err(SinexError::validation(
+                "scope root page limit must be positive",
+            ));
+        }
+
         let window = resolve_time_window(scope);
         let mut builder = build_filter_query(scope, window, "SELECT id::uuid FROM core.events");
-        let rows: Vec<(Uuid,)> = builder
-            .build_query_as()
+        if let Some(after_id) = after_id {
+            builder.push(" AND id < ");
+            builder.push_bind(after_id);
+        }
+        builder.push(" ORDER BY id DESC LIMIT ");
+        builder.push_bind(limit);
+
+        builder
+            .build_query_scalar::<Uuid>()
             .fetch_all(self.pool)
             .await
-            .map_err(|e| SinexError::database(format!("collect scope root ids: {e}")))?;
-        Ok(rows.into_iter().map(|(id,)| id).collect())
+            .map_err(|e| SinexError::database(format!("collect scope root ids page: {e}")))
     }
 
     /// Count total material-root events matching a replay scope.

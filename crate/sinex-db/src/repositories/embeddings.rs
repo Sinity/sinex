@@ -2,7 +2,7 @@ use super::common::DbResult;
 use sinex_primitives::SinexError;
 use sinex_primitives::Uuid;
 use sqlx::{PgPool, Postgres, QueryBuilder};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 pub struct EmbeddingRepository<'a> {
     pool: &'a PgPool,
@@ -150,6 +150,16 @@ impl<'a> EmbeddingRepository<'a> {
             return Ok(0);
         }
 
+        for row in rows {
+            validate_non_empty_text("embedded_text", &row.embedded_text)?;
+        }
+        let validations: Vec<_> = rows
+            .iter()
+            .map(|row| (row.model_id, row.embedding.as_slice()))
+            .collect();
+        self.validate_embedding_batch(&validations, "insert_event_embeddings")
+            .await?;
+
         let mut query = QueryBuilder::<Postgres>::new(
             "INSERT INTO core.event_embeddings \
              (event_id, embedding_model_id, embedded_text, embedding) ",
@@ -163,16 +173,6 @@ impl<'a> EmbeddingRepository<'a> {
                 .push_unseparated("::text::vector");
         });
         query.push(" ON CONFLICT (event_id, embedding_model_id) DO NOTHING");
-
-        for row in rows {
-            validate_non_empty_text("embedded_text", &row.embedded_text)?;
-            self.validate_embedding_for_model(
-                row.model_id,
-                &row.embedding,
-                "insert_event_embeddings",
-            )
-            .await?;
-        }
 
         let result = query.build().execute(self.pool).await?;
         Ok(result.rows_affected())
@@ -504,6 +504,16 @@ impl<'a> EmbeddingRepository<'a> {
             return Ok(());
         }
 
+        for entry in entries {
+            validate_non_empty_text("text_hash", &entry.text_hash)?;
+        }
+        let validations: Vec<_> = entries
+            .iter()
+            .map(|entry| (model_id, entry.embedding.as_slice()))
+            .collect();
+        self.validate_embedding_batch(&validations, "cache_upsert")
+            .await?;
+
         let mut query = QueryBuilder::<Postgres>::new(
             "INSERT INTO core.embedding_cache \
              (text_hash, embedding_model_id, embedding, text_sample) ",
@@ -523,12 +533,6 @@ impl<'a> EmbeddingRepository<'a> {
               use_count = core.embedding_cache.use_count + 1, \
               last_used_at = now()",
         );
-
-        for entry in entries {
-            validate_non_empty_text("text_hash", &entry.text_hash)?;
-            self.validate_embedding_for_model(model_id, &entry.embedding, "cache_upsert")
-                .await?;
-        }
 
         query.build().execute(self.pool).await?;
         Ok(())
@@ -571,31 +575,52 @@ impl<'a> EmbeddingRepository<'a> {
         embedding: &[f32],
         context: &str,
     ) -> DbResult<()> {
-        validate_embedding_values(embedding)?;
+        self.validate_embedding_batch(&[(model_id, embedding)], context)
+            .await
+    }
 
-        let dimensions = sqlx::query_scalar!(
+    async fn validate_embedding_batch(
+        &self,
+        embeddings: &[(Uuid, &[f32])],
+        context: &str,
+    ) -> DbResult<()> {
+        let mut model_ids = HashSet::with_capacity(embeddings.len());
+        for (model_id, embedding) in embeddings {
+            validate_embedding_values(embedding)?;
+            model_ids.insert(*model_id);
+        }
+
+        let model_ids: Vec<Uuid> = model_ids.into_iter().collect();
+        let model_dimensions = sqlx::query_as::<_, EmbeddingModelDimension>(
             r#"
-            SELECT dimensions as "dimensions!"
+            SELECT id, dimensions
             FROM core.embedding_models
-            WHERE id = $1 AND is_active = true
+            WHERE id = ANY($1) AND is_active = true
             "#,
-            model_id,
         )
-        .fetch_optional(self.pool)
-        .await?
-        .ok_or_else(|| {
-            SinexError::not_found("active embedding model not found")
-                .with_context("model_id", model_id.to_string())
-                .with_context("context", context)
-        })?;
+        .bind(&model_ids)
+        .fetch_all(self.pool)
+        .await?;
+        let model_dimensions: HashMap<Uuid, i32> = model_dimensions
+            .into_iter()
+            .map(|row| (row.id, row.dimensions))
+            .collect();
 
-        if dimensions as usize != embedding.len() {
-            return Err(SinexError::validation(format!(
-                "embedding dimension mismatch: model expects {dimensions}, got {}",
-                embedding.len()
-            ))
-            .with_context("model_id", model_id.to_string())
-            .with_context("context", context));
+        for (model_id, embedding) in embeddings {
+            let dimensions = model_dimensions.get(model_id).ok_or_else(|| {
+                SinexError::not_found("active embedding model not found")
+                    .with_context("model_id", model_id.to_string())
+                    .with_context("context", context)
+            })?;
+
+            if *dimensions as usize != embedding.len() {
+                return Err(SinexError::validation(format!(
+                    "embedding dimension mismatch: model expects {dimensions}, got {}",
+                    embedding.len()
+                ))
+                .with_context("model_id", model_id.to_string())
+                .with_context("context", context));
+            }
         }
 
         Ok(())
@@ -723,6 +748,12 @@ pub struct EventEmbeddingRow {
     pub model_id: Uuid,
     pub embedded_text: String,
     pub embedding: Vec<f32>,
+}
+
+#[derive(Debug, sqlx::FromRow)]
+struct EmbeddingModelDimension {
+    id: Uuid,
+    dimensions: i32,
 }
 
 #[derive(Debug, sqlx::FromRow)]
