@@ -61,7 +61,6 @@ impl RuntimeRunner {
             command_listener_handle: None,
             parse_listener_handle: None,
             processing_model: ProcessingModel::StatelessWorker,
-            leader_state: None,
             #[cfg(any(test, feature = "testing"))]
             confirmed_consumer_ready_rx: Some(confirmed_consumer_ready_rx),
             #[cfg(any(test, feature = "testing"))]

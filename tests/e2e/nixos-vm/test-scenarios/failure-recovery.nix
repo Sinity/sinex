@@ -304,7 +304,6 @@ pkgs.testers.nixosTest {
           defaults = {
             instances = 1;
             logLevel = "info";
-            env.SINEX_COORDINATION_DISABLED = "0";
           };
         };
 

@@ -38,7 +38,6 @@ let
       enable = lib.mkDefault true;
       coordination.enable = lib.mkDefault false;
       defaults.instances = lib.mkDefault 1;
-      defaults.env.SINEX_COORDINATION_DISABLED = lib.mkDefault "1";
     };
 
     sources = {

@@ -7,7 +7,7 @@
 
 use super::{
     Arc, CONFIRMED_EVENT_CHANNEL_CAPACITY, Checkpoint, Event, JetStreamEventConsumer,
-    JetStreamEventConsumerConfig, JsonValue, LeaderState, ProcessingModel,
+    JetStreamEventConsumerConfig, JsonValue,
     RunnerConfirmedEventHandler, RuntimeResult, RuntimeRunner, ScanArgs, SinexError, TimeHorizon,
     Uuid, debug, info, mpsc, systemd_notify, warn,
 };
@@ -34,14 +34,6 @@ impl RuntimeRunner {
             // the systemd notify contract before waiting on lease handoff or
             // expiry so host activation does not fail on a legitimate standby.
             systemd_notify::notify_ready("sinex-runtime");
-
-            if self.processing_model == ProcessingModel::LeaderStandby {
-                let leader_acquired = self.acquire_leader_standby().await?;
-                if !leader_acquired {
-                    info!("Drain requested while waiting in leader standby; exiting cleanly");
-                    return Ok(());
-                }
-            }
 
             if capabilities.manages_own_continuous_loop {
                 let _continuous_report = self
@@ -85,101 +77,6 @@ impl RuntimeRunner {
         }
 
         Ok(())
-    }
-
-    /// Acquire leadership for `LeaderStandby` processing model.
-    ///
-    /// If another instance currently holds the lease, remain in standby and
-    /// retry until the lease is handed off or expires.
-    pub(super) async fn acquire_leader_standby(&mut self) -> RuntimeResult<bool> {
-        #[cfg(feature = "messaging")]
-        {
-            let rs = self
-                .runtime_state()
-                .ok_or_else(|| SinexError::lifecycle("Runtime state missing".to_string()))?;
-            let drain_controller = rs.handles().runtime_drain();
-            let nc = rs
-                .nats_client()
-                .ok_or_else(|| SinexError::lifecycle("NATS client missing".to_string()))?;
-            let service = rs.service_info().service_name().to_string();
-            let host = rs.service_info().host().as_str().to_string();
-            let pid = std::process::id();
-            let instance_id = format!("{host}-{pid}");
-
-            let js = async_nats::jetstream::new(nc);
-            let kv_client =
-                sinex_primitives::coordination::CoordinationKvClient::new(js, service.clone());
-            let heartbeat_interval = kv_client.heartbeat_interval();
-            let mut announced_standby = false;
-
-            loop {
-                if drain_controller.is_requested() {
-                    return Ok(false);
-                }
-
-                let is_leader = kv_client
-                    .acquire_leadership(&instance_id)
-                    .await
-                    .map_err(|e| {
-                        SinexError::processing(format!("Failed to acquire leadership: {e}"))
-                    })?;
-
-                if is_leader {
-                    break;
-                }
-
-                if !announced_standby {
-                    info!(
-                        service = %service,
-                        heartbeat_interval_ms = heartbeat_interval.as_millis(),
-                        "Not leader; entering standby and waiting for lease handoff or expiry"
-                    );
-                    announced_standby = true;
-                }
-
-                tokio::time::sleep(heartbeat_interval).await;
-            }
-
-            info!("Confirmed as leader, proceeding with processing");
-
-            // Reuse the configured coordination heartbeat interval so stream-mode
-            // leader/standby timing matches the main coordination runtime.
-            let kv_clone = kv_client.clone();
-            let instance_id_clone = instance_id.clone();
-            let (heartbeat_shutdown, heartbeat_shutdown_rx) = tokio::sync::oneshot::channel();
-            let heartbeat_handle = tokio::spawn(async move {
-                let mut interval = tokio::time::interval(heartbeat_interval);
-                let mut heartbeat_shutdown_rx = heartbeat_shutdown_rx;
-                loop {
-                    tokio::select! {
-                        _ = interval.tick() => {
-                            if let Err(e) = kv_clone.acquire_leadership(&instance_id_clone).await {
-                                warn!("Heartbeat failed: {e}");
-                            }
-                        }
-                        _ = &mut heartbeat_shutdown_rx => {
-                            break;
-                        }
-                    }
-                }
-            });
-
-            self.leader_state = Some(LeaderState {
-                kv_client,
-                instance_id,
-                heartbeat_shutdown,
-                heartbeat_handle,
-            });
-        }
-
-        #[cfg(not(feature = "messaging"))]
-        {
-            self.runtime_state()
-                .ok_or_else(|| SinexError::lifecycle("Runtime state missing".to_string()))?;
-            warn!("LeaderStandby mode requires messaging feature. Skipping leadership check.");
-        }
-
-        Ok(true)
     }
 
     #[cfg(feature = "messaging")]

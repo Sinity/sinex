@@ -148,12 +148,10 @@ impl RuntimeRunner {
         // NATS is the only transport
         let transport_type = "NATS";
 
-        // Determine if automaton to enable LeaderStandby
-        if matches!(self.module.module_kind(), ModuleKind::Automaton) {
-            self.processing_model = ProcessingModel::LeaderStandby;
-        } else {
-            self.processing_model = ProcessingModel::StatelessWorker;
-        }
+        // Sinex runs one daemon instance per deployment. Automata therefore
+        // process directly; the old internal leader/standby election created
+        // needless NATS-KV traffic for a handoff that cannot occur.
+        self.processing_model = ProcessingModel::StatelessWorker;
 
         #[cfg(feature = "db")]
         let module_run_id = if let Some(pool) = db_pool.as_ref() {

@@ -1,5 +1,5 @@
 //! Runtime-side `RuntimeRunner` tests: drain bridge under live traffic,
-//! signal/watch shutdown channel behaviour, leader-standby coordination,
+//! signal/watch shutdown channel behaviour,
 //! resubscribing listener retries, and shutdown error collapse.
 
 use super::*;
@@ -145,70 +145,6 @@ async fn signal_watch_shutdown_delivers_to_receiver() -> TestResult<()> {
     assert!(RuntimeRunner::signal_watch_shutdown(tx, "listener"));
     rx.changed().await?;
     assert!(*rx.borrow());
-    Ok(())
-}
-
-#[cfg(feature = "messaging")]
-#[sinex_test]
-async fn acquire_leader_standby_waits_for_existing_leader_release(
-    ctx: TestContext,
-) -> TestResult<()> {
-    let ctx = ctx.with_nats().shared().await?;
-    let transport = EventTransport::Nats(Arc::new(crate::runtime::NatsPublisher::new(
-        ctx.nats_client(),
-    )));
-    let mut runner = RuntimeRunner::new(RuntimeTestModule);
-    runner
-        .initialize_with_transport(
-            "runtime-standby-test".to_string(),
-            HashMap::new(),
-            Some(ctx.pool().clone()),
-            transport,
-            std::env::temp_dir(),
-            false,
-        )
-        .await?;
-
-    let runtime = runner
-        .runtime_state()
-        .ok_or_else(|| color_eyre::eyre::eyre!("runtime state missing after init"))?;
-    let nats_client = runtime
-        .nats_client()
-        .ok_or_else(|| color_eyre::eyre::eyre!("nats client missing after init"))?;
-    let js = async_nats::jetstream::new(nats_client.clone());
-    let kv_client = sinex_primitives::coordination::CoordinationKvClient::new(
-        js,
-        runtime.service_info().service_name().to_string(),
-    );
-
-    kv_client.acquire_leadership("existing-leader").await?;
-
-    let runner = Arc::new(tokio::sync::Mutex::new(runner));
-    let acquired = Arc::new(AtomicBool::new(false));
-    let runner_task = runner.clone();
-    let acquired_task = acquired.clone();
-
-    let wait_handle = tokio::spawn(async move {
-        let mut guard = runner_task.lock().await;
-        guard.acquire_leader_standby().await?;
-        acquired_task.store(true, Ordering::SeqCst);
-        Ok::<(), SinexError>(())
-    });
-
-    tokio::time::sleep(Duration::from_millis(200)).await;
-    assert!(
-        !acquired.load(Ordering::SeqCst),
-        "standby runner should wait while another instance holds leadership"
-    );
-
-    kv_client.release_leadership("existing-leader").await?;
-    let _ = tokio::time::timeout(Duration::from_secs(6), wait_handle).await??;
-    assert!(
-        acquired.load(Ordering::SeqCst),
-        "runner should acquire leadership after the prior leader releases it"
-    );
-
-    runner.lock().await.shutdown_leader_state().await?;
     Ok(())
 }
 

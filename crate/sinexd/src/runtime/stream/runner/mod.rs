@@ -78,7 +78,6 @@ pub struct RuntimeRunner {
     /// holds a NATS subscription and is aborted directly (like `consumer_handle`).
     parse_listener_handle: Option<tokio::task::JoinHandle<()>>,
     processing_model: ProcessingModel,
-    leader_state: Option<LeaderState>,
     /// sinex-li78 test/harness-only hook, paired with `confirmed_consumer_ready_tx`
     /// below: exposed to callers (via `take_confirmed_consumer_ready`) so a
     /// test can deterministically wait for the automaton bridge's
@@ -92,13 +91,6 @@ pub struct RuntimeRunner {
     /// bridge and handed to `JetStreamEventConsumer::run_with_ready_signal`.
     #[cfg(any(test, feature = "testing"))]
     confirmed_consumer_ready_tx: Option<tokio::sync::oneshot::Sender<()>>,
-}
-
-struct LeaderState {
-    kv_client: sinex_primitives::coordination::CoordinationKvClient,
-    instance_id: String,
-    heartbeat_shutdown: tokio::sync::oneshot::Sender<()>,
-    heartbeat_handle: tokio::task::JoinHandle<()>,
 }
 
 #[cfg(feature = "messaging")]

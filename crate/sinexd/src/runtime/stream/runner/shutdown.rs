@@ -1,7 +1,7 @@
 //! Shutdown sequence for `RuntimeRunner`.
 //!
 //! Hosts the public `shutdown` entry point and its supporting helpers
-//! (`shutdown_task`, `shutdown_leader_state`, `shutdown_event_batcher`).
+//! (`shutdown_task`, `shutdown_event_batcher`).
 //! Idempotent: safe to call on already-shut-down or never-initialized
 //! runners.
 
@@ -53,11 +53,6 @@ impl RuntimeRunner {
             &mut shutdown_errors,
             "parse listener",
             Self::shutdown_task(&mut self.parse_listener_handle, None, "parse listener").await,
-        );
-        Self::push_shutdown_error(
-            &mut shutdown_errors,
-            "coordination",
-            self.shutdown_leader_state().await,
         );
         Self::push_shutdown_error(
             &mut shutdown_errors,
@@ -123,29 +118,6 @@ impl RuntimeRunner {
                 h.abort();
                 Self::shutdown_join_result(name, h.await)
             }
-        } else {
-            Ok(())
-        }
-    }
-
-    pub(super) async fn shutdown_leader_state(&mut self) -> RuntimeResult<()> {
-        if let Some(state) = self.leader_state.take() {
-            let mut shutdown_errors = Vec::new();
-            Self::signal_shutdown_channel(state.heartbeat_shutdown, "coordination heartbeat");
-            Self::push_shutdown_error(
-                &mut shutdown_errors,
-                "coordination heartbeat",
-                Self::shutdown_join_result("coordination heartbeat", state.heartbeat_handle.await),
-            );
-            Self::push_shutdown_error(
-                &mut shutdown_errors,
-                "coordination leadership release",
-                Self::leadership_release_result(
-                    &state.instance_id,
-                    state.kv_client.release_leadership(&state.instance_id).await,
-                ),
-            );
-            Self::collapse_shutdown_errors(shutdown_errors)
         } else {
             Ok(())
         }

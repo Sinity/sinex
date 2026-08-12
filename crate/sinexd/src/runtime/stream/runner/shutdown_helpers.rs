@@ -59,13 +59,6 @@ impl RuntimeRunner {
         }
     }
 
-    pub(super) fn leadership_release_result(
-        instance_id: &str,
-        result: RuntimeResult<()>,
-    ) -> RuntimeResult<()> {
-        result.map_err(|error| error.with_context("instance_id", instance_id.to_string()))
-    }
-
     pub(super) fn event_batcher_shutdown_result(
         result: Result<RuntimeResult<()>, tokio::task::JoinError>,
     ) -> RuntimeResult<()> {
