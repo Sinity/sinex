@@ -12,8 +12,8 @@ use std::sync::{
     OnceLock,
     atomic::{AtomicU64, Ordering},
 };
-use std::time::Duration;
-use tokio::io::AsyncReadExt;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::process::Command as AsyncCommand;
 use tokio::sync::Mutex as AsyncMutex;
 use tracing::{debug, info, warn};
@@ -52,10 +52,16 @@ pub use path_validator::{VerifiedPath, create_secure_temp_path, validate_and_con
 
 pub const LOCAL_BLAKE3_CAS_BACKEND: &str = ContentKey::LOCAL_BLAKE3_CAS_BACKEND;
 const LOCAL_BLAKE3_CAS_DIR: &str = "sinex-cas";
+pub(crate) const CAS_LIFECYCLE_DIR: &str = ".sinex-cas-lifecycle";
+const CAS_PENDING_DELETE_DIR: &str = "pending-deletes";
+const CAS_QUARANTINE_DIR: &str = "quarantine";
 const CONTENT_STORE_PROCESS_COUNTERS_PATH_ENV: &str = "SINEX_CONTENT_STORE_PROCESS_COUNTERS_PATH";
 
 static CONTENT_STORE_PROCESS_LOCK: OnceLock<AsyncMutex<()>> = OnceLock::new();
 static CONTENT_STORE_PROCESS_COUNTERS: OnceLock<ContentStoreProcessCounterState> = OnceLock::new();
+#[cfg(test)]
+static TEST_FAIL_NEXT_PENDING_DELETE: std::sync::atomic::AtomicBool =
+    std::sync::atomic::AtomicBool::new(false);
 
 #[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
 pub struct ContentStoreProcessCounters {
@@ -351,6 +357,21 @@ pub struct ContentStoreKey {
     pub digest: String,
 }
 
+/// Durable record for a CAS object that has crossed the reference recheck and
+/// is waiting for irreversible removal. The record is written before the
+/// source name is moved, so a crash can always be reconciled without guessing
+/// whether the object was already quarantined.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct PendingDeletion {
+    pub operation_id: String,
+    pub key: ContentStoreKey,
+    pub source_path: Utf8PathBuf,
+    pub quarantine_path: Utf8PathBuf,
+    pub created_at_unix_secs: u64,
+    #[serde(skip)]
+    pub(crate) record_path: Utf8PathBuf,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct UnusedContentEntry {
     pub number: u32,
@@ -502,17 +523,15 @@ fn cas_path_name(path: &Utf8Path) -> RuntimeResult<String> {
 }
 
 impl CasWalker {
-    async fn new(
-        cas_root: Utf8PathBuf,
-        checkpoint: CasWalkCheckpoint,
-    ) -> RuntimeResult<Self> {
+    async fn new(cas_root: Utf8PathBuf, checkpoint: CasWalkCheckpoint) -> RuntimeResult<Self> {
         let mut prefix_dirs = if checkpoint.complete {
             Vec::new()
         } else {
             read_sorted_cas_directories(&cas_root).await?
         };
         if let Some(prefix_a) = checkpoint.prefix_a.as_deref() {
-            prefix_dirs.retain(|path| cas_path_name(path).is_ok_and(|name| name.as_str() >= prefix_a));
+            prefix_dirs
+                .retain(|path| cas_path_name(path).is_ok_and(|name| name.as_str() >= prefix_a));
         }
         Ok(Self {
             prefix_dirs,
@@ -586,8 +605,9 @@ impl CasWalker {
                 let prefix_a = cas_path_name(prefix_path)?;
                 if self.checkpoint.prefix_a.as_deref() == Some(prefix_a.as_str()) {
                     if let Some(prefix_b) = self.checkpoint.prefix_b.as_deref() {
-                        self.hash_dirs
-                            .retain(|path| cas_path_name(path).is_ok_and(|name| name.as_str() > prefix_b));
+                        self.hash_dirs.retain(|path| {
+                            cas_path_name(path).is_ok_and(|name| name.as_str() > prefix_b)
+                        });
                     }
                 }
                 self.hash_index = 0;
@@ -598,7 +618,11 @@ impl CasWalker {
             }
 
             let hash_path = self.hash_dirs[self.hash_index].clone();
-            self.hash_entries = Some(tokio::fs::read_dir(hash_path).await.map_err(SinexError::io)?);
+            self.hash_entries = Some(
+                tokio::fs::read_dir(hash_path)
+                    .await
+                    .map_err(SinexError::io)?,
+            );
         }
 
         Ok(CasWalkBatch {
@@ -676,6 +700,203 @@ impl MaterialContentStore {
     #[must_use]
     pub fn root_path(&self) -> &Utf8Path {
         &self.config.root_path
+    }
+
+    fn lifecycle_root(&self) -> Utf8PathBuf {
+        self.config.root_path.join(CAS_LIFECYCLE_DIR)
+    }
+
+    fn pending_delete_root(&self) -> Utf8PathBuf {
+        self.lifecycle_root().join(CAS_PENDING_DELETE_DIR)
+    }
+
+    fn quarantine_root(&self) -> Utf8PathBuf {
+        self.lifecycle_root().join(CAS_QUARANTINE_DIR)
+    }
+
+    async fn sync_directory(path: &Utf8Path) -> RuntimeResult<()> {
+        tokio::fs::File::open(path)
+            .await
+            .map_err(SinexError::io)?
+            .sync_all()
+            .await
+            .map_err(SinexError::io)
+    }
+
+    async fn write_pending_deletion(&self, pending: &PendingDeletion) -> RuntimeResult<()> {
+        let bytes = serde_json::to_vec(pending).map_err(|error| {
+            SinexError::serialization("serialize CAS pending-delete record").with_source(error)
+        })?;
+        let temp_path = pending
+            .record_path
+            .with_extension(format!("json.tmp-{}", Uuid::now_v7()));
+        let mut file = tokio::fs::File::create(&temp_path)
+            .await
+            .map_err(SinexError::io)?;
+        file.write_all(&bytes).await.map_err(SinexError::io)?;
+        file.sync_all().await.map_err(SinexError::io)?;
+        drop(file);
+        tokio::fs::rename(&temp_path, &pending.record_path)
+            .await
+            .map_err(SinexError::io)?;
+        Self::sync_directory(
+            pending
+                .record_path
+                .parent()
+                .ok_or_else(|| SinexError::processing("CAS pending-delete record has no parent"))?,
+        )
+        .await
+    }
+
+    /// List durable CAS deletion records. Malformed records fail closed: the
+    /// caller must repair the lifecycle directory before any sweep can mutate
+    /// content.
+    pub async fn list_pending_deletions(&self) -> RuntimeResult<Vec<PendingDeletion>> {
+        let root = self.pending_delete_root();
+        if !root.exists() {
+            return Ok(Vec::new());
+        }
+        let mut entries = tokio::fs::read_dir(&root).await.map_err(SinexError::io)?;
+        let mut pending = Vec::new();
+        while let Some(entry) = entries.next_entry().await.map_err(SinexError::io)? {
+            if !entry.file_type().await.map_err(SinexError::io)?.is_file()
+                || entry.path().extension().and_then(|ext| ext.to_str()) != Some("json")
+            {
+                continue;
+            }
+            let record_path = Self::require_utf8_path(entry.path())?;
+            let bytes = tokio::fs::read(&record_path)
+                .await
+                .map_err(SinexError::io)?;
+            let mut record: PendingDeletion = serde_json::from_slice(&bytes).map_err(|error| {
+                SinexError::serialization("parse CAS pending-delete record")
+                    .with_context("path", record_path.to_string())
+                    .with_source(error)
+            })?;
+            record.record_path = record_path;
+            pending.push(record);
+        }
+        pending.sort_by(|left, right| left.operation_id.cmp(&right.operation_id));
+        Ok(pending)
+    }
+
+    /// Atomically move a local CAS object into a durable quarantine. The
+    /// pending-delete record is created and fsynced before the rename, and is
+    /// intentionally retained until the quarantine bytes are gone.
+    pub async fn quarantine_local_cas(
+        &self,
+        key: &ContentStoreKey,
+    ) -> RuntimeResult<Option<PendingDeletion>> {
+        if !key.is_local_blake3_cas() {
+            return Err(SinexError::validation(
+                "CAS quarantine requires a local BLAKE3 content key",
+            ));
+        }
+        let source_path = self
+            .path_if_local(&key.key)?
+            .ok_or_else(|| SinexError::validation("local CAS key did not resolve to a path"))?;
+        if !source_path.exists() {
+            return Ok(None);
+        }
+        self.canonicalize_local_cas_path(&source_path).await?;
+
+        let lifecycle_root = self.lifecycle_root();
+        let records_root = self.pending_delete_root();
+        let quarantine_root = self.quarantine_root();
+        tokio::fs::create_dir_all(&records_root)
+            .await
+            .map_err(SinexError::io)?;
+        tokio::fs::create_dir_all(&quarantine_root)
+            .await
+            .map_err(SinexError::io)?;
+        restrict_permissions(lifecycle_root.as_std_path(), CONTENT_STORE_DIR_MODE);
+        restrict_permissions(records_root.as_std_path(), CONTENT_STORE_DIR_MODE);
+        restrict_permissions(quarantine_root.as_std_path(), CONTENT_STORE_DIR_MODE);
+
+        let operation_id = Uuid::now_v7().to_string();
+        let quarantine_path = quarantine_root.join(format!("{operation_id}-{}", key.digest));
+        let record_path = records_root.join(format!("{operation_id}.json"));
+        let created_at_unix_secs = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs();
+        let pending = PendingDeletion {
+            operation_id,
+            key: key.clone(),
+            source_path: source_path.clone(),
+            quarantine_path: quarantine_path.clone(),
+            created_at_unix_secs,
+            record_path,
+        };
+        self.write_pending_deletion(&pending).await?;
+        if let Err(error) = tokio::fs::rename(&source_path, &quarantine_path).await {
+            let _ = tokio::fs::remove_file(&pending.record_path).await;
+            return Err(SinexError::io(error));
+        }
+        Self::sync_directory(
+            source_path
+                .parent()
+                .ok_or_else(|| SinexError::processing("local CAS object has no parent"))?,
+        )
+        .await?;
+        Self::sync_directory(&quarantine_root).await?;
+        Ok(Some(pending))
+    }
+
+    /// Finish a previously quarantined deletion. If the unlink fails, both
+    /// the quarantine bytes and its record remain for a later retry.
+    pub async fn finalize_pending_deletion(&self, pending: &PendingDeletion) -> RuntimeResult<()> {
+        #[cfg(test)]
+        if TEST_FAIL_NEXT_PENDING_DELETE.swap(false, Ordering::SeqCst) {
+            return Err(SinexError::io("injected CAS quarantine delete failure"));
+        }
+        match tokio::fs::remove_file(&pending.quarantine_path).await {
+            Ok(()) => {}
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => return Err(SinexError::io(error)),
+        }
+        Self::sync_directory(&self.quarantine_root()).await?;
+        match tokio::fs::remove_file(&pending.record_path).await {
+            Ok(()) => {}
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => return Err(SinexError::io(error)),
+        }
+        Self::sync_directory(&self.pending_delete_root()).await
+    }
+
+    /// Restore a pending deletion when a database reference reappears during
+    /// the quarantine grace period.
+    pub async fn restore_pending_deletion(&self, pending: &PendingDeletion) -> RuntimeResult<()> {
+        if pending.quarantine_path.exists() {
+            if pending.source_path.exists() {
+                tokio::fs::remove_file(&pending.quarantine_path)
+                    .await
+                    .map_err(SinexError::io)?;
+            } else {
+                let parent = pending.source_path.parent().ok_or_else(|| {
+                    SinexError::processing("pending CAS source path has no parent")
+                })?;
+                tokio::fs::create_dir_all(parent)
+                    .await
+                    .map_err(SinexError::io)?;
+                tokio::fs::rename(&pending.quarantine_path, &pending.source_path)
+                    .await
+                    .map_err(SinexError::io)?;
+                Self::sync_directory(parent).await?;
+            }
+            Self::sync_directory(&self.quarantine_root()).await?;
+        }
+        match tokio::fs::remove_file(&pending.record_path).await {
+            Ok(()) => {}
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => return Err(SinexError::io(error)),
+        }
+        Self::sync_directory(&self.pending_delete_root()).await
+    }
+
+    #[cfg(test)]
+    pub(crate) fn fail_next_pending_delete_for_tests() {
+        TEST_FAIL_NEXT_PENDING_DELETE.store(true, Ordering::SeqCst);
     }
 
     /// Initialize a content-store root. Uses git-annex when `legacy_annex_enabled` is true;
@@ -1125,12 +1346,23 @@ impl MaterialContentStore {
                     "cannot drop local CAS content without force: {key_or_path}"
                 )));
             }
-            self.canonicalize_local_cas_path(&path).await?;
-            match tokio::fs::remove_file(&path).await {
-                Ok(()) => return Ok(()),
-                Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
-                Err(error) => return Err(SinexError::io(error)),
+            let key = ContentStoreKey::parse(key_or_path)?;
+            if !path.exists() {
+                if let Some(pending) = self
+                    .list_pending_deletions()
+                    .await?
+                    .into_iter()
+                    .find(|pending| pending.key == key)
+                {
+                    self.finalize_pending_deletion(&pending).await?;
+                }
+                return Ok(());
             }
+            self.canonicalize_local_cas_path(&path).await?;
+            if let Some(pending) = self.quarantine_local_cas(&key).await? {
+                self.finalize_pending_deletion(&pending).await?;
+            }
+            return Ok(());
         }
 
         if !self.config.legacy_annex_enabled {

@@ -38,6 +38,12 @@ pub struct BlobGcReport {
     pub protected_recent: usize,
     /// Orphans that gained DB authority before apply deletion.
     pub recheck_protected: usize,
+    /// Orphans moved into durable quarantine during an apply pass.
+    pub quarantined: usize,
+    /// Pending quarantines retained for a later reconciliation pass.
+    pub pending_deletes: usize,
+    /// Pending quarantines restored after a database reference reappeared.
+    pub restored: usize,
 }
 
 /// Results from the source-material lifecycle half of a periodic content GC.
@@ -189,6 +195,9 @@ pub async fn sweep_orphans(
             staged: cas_report.staged,
             protected_recent: cas_report.protected_recent,
             recheck_protected: cas_report.recheck_protected,
+            quarantined: cas_report.quarantined,
+            pending_deletes: cas_report.pending_deletes,
+            restored: cas_report.restored,
         });
     }
 
@@ -210,8 +219,7 @@ pub async fn sweep_orphans_detailed(
     apply: bool,
 ) -> RuntimeResult<(BlobGcReport, Vec<UnusedContentEntry>)> {
     if !content_store.config.legacy_annex_enabled {
-        let (cas_report, statuses) =
-            super::cas_fsck::check_cas(pool, content_store, apply).await?;
+        let (cas_report, statuses) = super::cas_fsck::check_cas(pool, content_store, apply).await?;
         let report = BlobGcReport {
             total_unused: cas_report.orphaned,
             db_backed: cas_report.referenced,
@@ -220,6 +228,9 @@ pub async fn sweep_orphans_detailed(
             staged: cas_report.staged,
             protected_recent: cas_report.protected_recent,
             recheck_protected: cas_report.recheck_protected,
+            quarantined: cas_report.quarantined,
+            pending_deletes: cas_report.pending_deletes,
+            restored: cas_report.restored,
         };
         // Preserve the actual orphan identities for dry-run inspection.
         let unused_entries = statuses
@@ -294,6 +305,9 @@ pub async fn sweep_orphans_detailed(
         staged: 0,
         protected_recent: 0,
         recheck_protected: 0,
+        quarantined: 0,
+        pending_deletes: 0,
+        restored: 0,
     };
 
     Ok((report, orphaned_unused))

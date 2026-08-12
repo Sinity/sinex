@@ -74,6 +74,9 @@ struct BlobSweepSummary {
     staged_entries: usize,
     protected_recent_entries: usize,
     recheck_protected_entries: usize,
+    quarantined_entries: usize,
+    pending_delete_entries: usize,
+    restored_entries: usize,
     orphaned_keys: Vec<BlobOrphanEntry>,
 }
 
@@ -115,6 +118,9 @@ impl BlobSweepOrphansCommand {
             staged,
             protected_recent,
             recheck_protected,
+            quarantined,
+            pending_deletes,
+            restored,
         } = report;
 
         let summary = BlobSweepSummary {
@@ -127,6 +133,9 @@ impl BlobSweepOrphansCommand {
             staged_entries: staged,
             protected_recent_entries: protected_recent,
             recheck_protected_entries: recheck_protected,
+            quarantined_entries: quarantined,
+            pending_delete_entries: pending_deletes,
+            restored_entries: restored,
             orphaned_keys: orphan_entries.into_iter().map(blob_orphan_entry).collect(),
         };
 
@@ -178,6 +187,18 @@ fn format_blob_sweep_summary(summary: &BlobSweepSummary) -> String {
     output.push_str(&format!(
         "  Recheck-Protected Entries: {}\n",
         summary.recheck_protected_entries
+    ));
+    output.push_str(&format!(
+        "  Quarantined Entries: {}\n",
+        summary.quarantined_entries
+    ));
+    output.push_str(&format!(
+        "  Pending Deletes: {}\n",
+        summary.pending_delete_entries
+    ));
+    output.push_str(&format!(
+        "  Restored Entries: {}\n",
+        summary.restored_entries
     ));
     if !summary.orphaned_keys.is_empty() {
         output.push_str("  Orphaned Keys:\n");
@@ -236,6 +257,9 @@ struct BlobFsckSummary {
     protected_recent: usize,
     staged: usize,
     recheck_protected: usize,
+    quarantined: usize,
+    pending_deletes: usize,
+    restored: usize,
     entries_scanned: usize,
     bytes_verified: u64,
     incomplete: bool,
@@ -295,6 +319,9 @@ impl BlobFsckCommand {
             protected_recent,
             staged,
             recheck_protected,
+            quarantined,
+            pending_deletes,
+            restored,
             entries_scanned,
             bytes_verified,
             incomplete,
@@ -325,6 +352,9 @@ impl BlobFsckCommand {
             protected_recent,
             staged,
             recheck_protected,
+            quarantined,
+            pending_deletes,
+            restored,
             entries_scanned,
             bytes_verified,
             incomplete,
@@ -363,6 +393,9 @@ fn format_blob_fsck_summary(summary: &BlobFsckSummary) -> String {
         "  Recheck-protected: {}\n",
         summary.recheck_protected
     ));
+    output.push_str(&format!("  Quarantined: {}\n", summary.quarantined));
+    output.push_str(&format!("  Pending deletes: {}\n", summary.pending_deletes));
+    output.push_str(&format!("  Restored: {}\n", summary.restored));
     output.push_str(&format!("  Corrupt: {}\n", summary.corrupt));
     output.push_str(&format!("  Malformed: {}\n", summary.malformed));
     output.push_str(&format!("  Missing (DB, not disk): {}\n", summary.missing));
@@ -828,12 +861,11 @@ fn blob_sweep_envelope(summary: BlobSweepSummary) -> ViewEnvelope<BlobSweepSumma
 fn blob_fsck_envelope(summary: BlobFsckSummary) -> ViewEnvelope<BlobFsckSummary> {
     let mode = summary.mode;
     let content_store_path = summary.content_store_path.clone();
-    let mut envelope = ViewEnvelope::new("sinexctl.ops.blob.fsck", summary).with_query_echo(
-        serde_json::json!({
+    let mut envelope =
+        ViewEnvelope::new("sinexctl.ops.blob.fsck", summary).with_query_echo(serde_json::json!({
             "mode": mode,
             "content_store_path": content_store_path,
-        }),
-    );
+        }));
     if envelope.payload.referenced == 0 && envelope.payload.details.is_empty() {
         envelope.caveats.push(blob_caveat(
             ReadinessCaveatId::CoverageUnmeasurable,

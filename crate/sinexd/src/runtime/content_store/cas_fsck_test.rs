@@ -24,9 +24,7 @@ fn default_fsck_options_do_not_impose_arbitrary_limits() {
 }
 
 #[sinex_test]
-async fn cancelled_fsck_reports_incomplete_without_scanning(
-    ctx: TestContext,
-) -> TestResult<()> {
+async fn cancelled_fsck_reports_incomplete_without_scanning(ctx: TestContext) -> TestResult<()> {
     let store_dir = tempfile::tempdir()?;
     let root_path = Utf8PathBuf::from_path_buf(store_dir.path().to_path_buf())
         .expect("temporary content-store path must be UTF-8");
@@ -52,6 +50,90 @@ async fn cancelled_fsck_reports_incomplete_without_scanning(
     assert_eq!(checkpoint, CasWalkCheckpoint::default());
     Ok(())
 }
+
+#[sinex_test]
+async fn pending_cas_delete_survives_failure_and_resumes(_ctx: TestContext) -> TestResult<()> {
+    let store_dir = tempfile::tempdir()?;
+    let root_path = Utf8PathBuf::from_path_buf(store_dir.path().to_path_buf())
+        .expect("temporary content-store path must be UTF-8");
+    let content_store = MaterialContentStore::new(ContentStoreConfig {
+        root_path: root_path.clone(),
+        ..Default::default()
+    })?;
+    let source = root_path.join("delete-me.txt");
+    tokio::fs::write(&source, b"pending delete").await?;
+    let key = content_store.store_file(&source).await?;
+    let original_path = content_store
+        .path_if_local(&key.key)?
+        .expect("local CAS key must resolve to its object");
+
+    let pending = content_store
+        .quarantine_local_cas(&key)
+        .await?
+        .expect("existing CAS object must be quarantined");
+    assert!(!original_path.exists());
+    assert!(pending.quarantine_path.exists());
+    assert_eq!(content_store.list_pending_deletions().await?.len(), 1);
+
+    MaterialContentStore::fail_next_pending_delete_for_tests();
+    assert!(
+        content_store
+            .finalize_pending_deletion(&pending)
+            .await
+            .is_err()
+    );
+    assert!(pending.quarantine_path.exists());
+    assert_eq!(content_store.list_pending_deletions().await?.len(), 1);
+
+    content_store.drop_content(&key.key, true).await?;
+    assert!(!pending.quarantine_path.exists());
+    assert!(content_store.list_pending_deletions().await?.is_empty());
+    Ok(())
+}
+
+#[sinex_test]
+async fn referenced_cas_quarantine_is_restored_by_apply_reconciliation(
+    ctx: TestContext,
+) -> TestResult<()> {
+    let store_dir = tempfile::tempdir()?;
+    let root_path = Utf8PathBuf::from_path_buf(store_dir.path().to_path_buf())
+        .expect("temporary content-store path must be UTF-8");
+    let content_store = MaterialContentStore::new(ContentStoreConfig {
+        root_path: root_path.clone(),
+        ..Default::default()
+    })?;
+    let source = root_path.join("restore-me.txt");
+    tokio::fs::write(&source, b"restore after reference").await?;
+    let key = content_store.store_file(&source).await?;
+    let original_path = content_store
+        .path_if_local(&key.key)?
+        .expect("local CAS key must resolve to its object");
+    let pending = content_store
+        .quarantine_local_cas(&key)
+        .await?
+        .expect("existing CAS object must be quarantined");
+
+    ctx.pool
+        .blobs()
+        .insert(
+            Blob::builder()
+                .storage_backend(LOCAL_BLAKE3_CAS_BACKEND.to_string())
+                .content_hash(key.digest.clone())
+                .size_bytes(key.size as i64)
+                .checksum_blake3(key.digest.clone())
+                .build(),
+        )
+        .await?;
+
+    let report = sweep_orphans(ctx.pool(), &content_store, true).await?;
+    assert_eq!(report.restored, 1);
+    assert_eq!(report.removed, 0);
+    assert!(original_path.exists());
+    assert!(!pending.quarantine_path.exists());
+    assert!(content_store.list_pending_deletions().await?.is_empty());
+    Ok(())
+}
+
 #[sinex_test]
 async fn live_source_material_manifest_cas_reference_survives_apply_orphan_sweep(
     ctx: TestContext,
@@ -163,7 +245,9 @@ async fn detailed_cas_sweep_returns_orphan_identity_for_operator_output(
 
     let (report, entries) = sweep_orphans_detailed(ctx.pool(), &content_store, true).await?;
     assert_eq!(report.orphaned, 1);
-    assert_eq!(report.dropped, 1);
+    assert_eq!(report.dropped, 0);
+    assert_eq!(report.quarantined, 1);
+    assert_eq!(report.pending_deletes, 1);
     assert_eq!(entries.len(), 1);
     assert_eq!(entries[0].key, key);
     assert_eq!(entries[0].number, 1);
@@ -173,8 +257,20 @@ async fn detailed_cas_sweep_returns_orphan_identity_for_operator_output(
     );
     assert!(
         !orphan_path.exists(),
-        "apply-mode detailed sweep must remove the aged orphan after recording its identity"
+        "anti-vacuity: apply-mode sweep must move an orphan out of the live CAS tree before retryable deletion"
     );
+
+    let mut pending = content_store
+        .list_pending_deletions()
+        .await?
+        .pop()
+        .expect("quarantined orphan must have a durable retry record");
+    pending.created_at_unix_secs = pending.created_at_unix_secs.saturating_sub(11 * 60);
+    tokio::fs::write(&pending.record_path, serde_json::to_vec(&pending)?).await?;
+    let retry_report = sweep_orphans(ctx.pool(), &content_store, true).await?;
+    assert_eq!(retry_report.dropped, 1);
+    assert_eq!(retry_report.pending_deletes, 0);
+    assert!(content_store.list_pending_deletions().await?.is_empty());
     Ok(())
 }
 

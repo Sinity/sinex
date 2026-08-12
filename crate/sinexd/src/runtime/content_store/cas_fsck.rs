@@ -17,7 +17,8 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value as JsonValue;
 use sqlx::PgPool;
 use std::collections::{HashMap, HashSet};
-use std::time::{Duration as StdDuration, SystemTime};
+use std::sync::OnceLock;
+use std::time::{Duration as StdDuration, SystemTime, UNIX_EPOCH};
 use tokio::io::AsyncReadExt;
 
 use super::{
@@ -25,7 +26,8 @@ use super::{
     MaterialContentStore,
 };
 use crate::runtime::work_control::{
-    WorkBudget, WorkCancellation, WorkController, WorkIdentity, WorkOutcome, WorkStopReason,
+    WorkAdmission, WorkBudget, WorkCancellation, WorkController, WorkIdentity, WorkOutcome,
+    WorkStopReason,
 };
 
 /// Result of a single CAS file check.
@@ -85,6 +87,12 @@ pub struct CasFsckReport {
     pub staged: usize,
     /// Orphans that became DB-referenced during the scan/apply race.
     pub recheck_protected: usize,
+    /// Orphans moved into durable quarantine during an apply pass.
+    pub quarantined: usize,
+    /// Pending quarantines retained for a later reconciliation pass.
+    pub pending_deletes: usize,
+    /// Pending quarantines restored after a database reference reappeared.
+    pub restored: usize,
     /// Number of filesystem entries inspected before completion or a budget stop.
     pub entries_scanned: usize,
     /// Bytes read for cryptographic verification.
@@ -96,6 +104,11 @@ pub struct CasFsckReport {
 }
 
 const CAS_ORPHAN_GRACE: StdDuration = StdDuration::from_secs(10 * 60);
+static CAS_FSCK_ADMISSION: OnceLock<WorkAdmission> = OnceLock::new();
+
+fn cas_fsck_admission() -> &'static WorkAdmission {
+    CAS_FSCK_ADMISSION.get_or_init(|| WorkAdmission::new(1))
+}
 
 /// Why a CAS fsck stopped before reaching the end of its snapshot.
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
@@ -172,10 +185,23 @@ pub async fn check_cas_with_options_and_control(
     cancellation: WorkCancellation,
 ) -> RuntimeResult<(CasFsckReport, Vec<CasFileStatus>, CasWalkCheckpoint)> {
     let initial_checkpoint = checkpoint.unwrap_or_default();
-    let mut walker = content_store.cas_walker(Some(initial_checkpoint.clone())).await?;
+    let mut walker = content_store
+        .cas_walker(Some(initial_checkpoint.clone()))
+        .await?;
     let mut file_statuses: Vec<CasFileStatus> = Vec::new();
     let mut report = CasFsckReport::default();
     let mut present_hashes: HashSet<String> = HashSet::new();
+    if cancellation.is_cancelled() {
+        report.incomplete = true;
+        report.stop_reason = Some(CasFsckStopReason::Cancelled);
+        if apply {
+            return Err(SinexError::validation(
+                "refusing CAS orphan deletion because fsck was cancelled before scanning",
+            ));
+        }
+        return Ok((report, file_statuses, initial_checkpoint));
+    }
+    let _admission = cas_fsck_admission().acquire(&cancellation).await?;
     let mut work = WorkController::new(
         WorkIdentity::ephemeral("cas-fsck", content_store.root_path().as_str()),
         WorkBudget {
@@ -188,23 +214,12 @@ pub async fn check_cas_with_options_and_control(
     let mut progress_checkpoint = initial_checkpoint;
     let mut scan_complete = false;
 
-    if work.cancellation().is_cancelled() {
-        report.incomplete = true;
-        report.stop_reason = Some(CasFsckStopReason::Cancelled);
-        if apply {
-            return Err(SinexError::validation(
-                "refusing CAS orphan deletion because fsck was cancelled before scanning",
-            ));
-        }
-        return Ok((report, file_statuses, progress_checkpoint));
-    }
-
     // Build a set of known hashes from core.blobs for SINEXBLAKE3 entries
-    let known_blake3_hashes: HashMap<_, _> = load_sinexblake3_hashes(pool)
-        .await?
-        .into_iter()
-        .collect();
+    let known_blake3_hashes: HashMap<_, _> =
+        load_sinexblake3_hashes(pool).await?.into_iter().collect();
     let known_hash_set: HashSet<String> = known_blake3_hashes.keys().cloned().collect();
+
+    reconcile_pending_deletions(pool, content_store, apply, &mut report).await?;
 
     'scan: loop {
         let batch = walker.next_batch(256).await?;
@@ -416,13 +431,19 @@ pub async fn check_cas_with_options_and_control(
                 report.recheck_protected += 1;
                 continue;
             }
-            match tokio::fs::remove_file(path.as_str()).await {
-                Ok(()) => report.removed += 1,
+            let key =
+                ContentStoreKey::parse(&format!("{LOCAL_BLAKE3_CAS_BACKEND}-s{size}--{hash}"))?;
+            match content_store.quarantine_local_cas(&key).await {
+                Ok(Some(_pending)) => {
+                    report.quarantined += 1;
+                    report.pending_deletes += 1;
+                }
+                Ok(None) => {}
                 Err(error) => tracing::warn!(
                     error = %error,
                     path = %path,
                     size_bytes = size,
-                    "Failed to remove orphaned CAS file"
+                    "Failed to quarantine orphaned CAS file; retaining it for retry"
                 ),
             }
         }
@@ -462,8 +483,23 @@ where
         ));
     }
 
+    if cancellation.is_cancelled() {
+        let checkpoint = checkpoint.unwrap_or_default();
+        return Ok((
+            CasFsckReport {
+                incomplete: true,
+                stop_reason: Some(CasFsckStopReason::Cancelled),
+                ..CasFsckReport::default()
+            },
+            checkpoint,
+        ));
+    }
+    let _admission = cas_fsck_admission().acquire(&cancellation).await?;
+
     let initial_checkpoint = checkpoint.unwrap_or_default();
-    let mut walker = content_store.cas_walker(Some(initial_checkpoint.clone())).await?;
+    let mut walker = content_store
+        .cas_walker(Some(initial_checkpoint.clone()))
+        .await?;
     let mut report = CasFsckReport::default();
     let mut work = WorkController::new(
         WorkIdentity::ephemeral("cas-fsck-bounded", content_store.root_path().as_str()),
@@ -697,16 +733,64 @@ where
 }
 
 fn missing_cas_path(content_store: &MaterialContentStore, hash: &str) -> camino::Utf8PathBuf {
-    content_store.local_blake3_cas_path_for_hash(hash).map_or_else(
-        |_| {
-            content_store
-                .root_path()
-                .join(LOCAL_BLAKE3_CAS_DIR)
-                .join("<invalid-hash>")
-                .join(hash)
-        },
-        |path| path,
-    )
+    content_store
+        .local_blake3_cas_path_for_hash(hash)
+        .map_or_else(
+            |_| {
+                content_store
+                    .root_path()
+                    .join(LOCAL_BLAKE3_CAS_DIR)
+                    .join("<invalid-hash>")
+                    .join(hash)
+            },
+            |path| path,
+        )
+}
+
+/// Reconcile objects left in the durable quarantine by a prior sweep. A
+/// reference that reappears wins over deletion; otherwise the quarantine grace
+/// period gives an in-flight database commit time to publish its authority.
+async fn reconcile_pending_deletions(
+    pool: &PgPool,
+    content_store: &MaterialContentStore,
+    apply: bool,
+    report: &mut CasFsckReport,
+) -> RuntimeResult<()> {
+    let pending = content_store.list_pending_deletions().await?;
+    let now = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs();
+    for record in pending {
+        if !apply {
+            report.pending_deletes += 1;
+            continue;
+        }
+        if cas_hash_is_referenced(pool, &record.key.digest)
+            .await?
+            .is_some()
+        {
+            content_store.restore_pending_deletion(&record).await?;
+            report.restored += 1;
+            continue;
+        }
+        if now.saturating_sub(record.created_at_unix_secs) < CAS_ORPHAN_GRACE.as_secs() {
+            report.pending_deletes += 1;
+            continue;
+        }
+        match content_store.finalize_pending_deletion(&record).await {
+            Ok(()) => report.removed += 1,
+            Err(error) => {
+                report.pending_deletes += 1;
+                tracing::warn!(
+                    operation_id = %record.operation_id,
+                    error = %error,
+                    "Failed to finalize pending CAS deletion; retaining record for retry"
+                );
+            }
+        }
+    }
+    Ok(())
 }
 
 fn fsck_stop_reason(work: &WorkController) -> Option<CasFsckStopReason> {
@@ -716,9 +800,7 @@ fn fsck_stop_reason(work: &WorkController) -> Option<CasFsckStopReason> {
         WorkOutcome::Partial(WorkStopReason::RuntimeBudget) => {
             Some(CasFsckStopReason::RuntimeBudget)
         }
-        WorkOutcome::Partial(WorkStopReason::ItemBudget) => {
-            Some(CasFsckStopReason::EntryBudget)
-        }
+        WorkOutcome::Partial(WorkStopReason::ItemBudget) => Some(CasFsckStopReason::EntryBudget),
         WorkOutcome::Partial(WorkStopReason::ByteBudget)
         | WorkOutcome::Completed
         | WorkOutcome::Failed => None,
