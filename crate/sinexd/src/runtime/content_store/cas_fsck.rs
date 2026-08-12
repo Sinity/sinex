@@ -52,6 +52,8 @@ pub enum CasStatus {
     Malformed,
     /// A `SINEXBLAKE3` blob row exists in `core.blobs` but the file is not on disk.
     Missing,
+    /// A content-store staging file that has not been atomically published.
+    Staged,
 }
 
 /// Aggregate report from a CAS fsck run.
@@ -73,6 +75,10 @@ pub struct CasFsckReport {
     pub orphaned_bytes: u64,
     /// Orphaned files protected by the minimum age/grace period.
     pub protected_recent: usize,
+    /// In-flight staging files retained regardless of age.
+    pub staged: usize,
+    /// Orphans that became DB-referenced during the scan/apply race.
+    pub recheck_protected: usize,
 }
 
 const CAS_ORPHAN_GRACE: StdDuration = StdDuration::from_secs(10 * 60);
@@ -114,6 +120,18 @@ pub async fn check_cas(
     let mut matched_blob_ids: HashSet<String> = HashSet::new();
 
     for (hash, path, size) in entries {
+        if hash.contains(".tmp-") {
+            report.staged += 1;
+            file_statuses.push(CasFileStatus {
+                hash,
+                path: path.to_string(),
+                size_bytes: size,
+                status: CasStatus::Staged,
+                blob_id: None,
+            });
+            continue;
+        }
+
         // Check if hash is in the DB
         if known_hash_set.contains(&hash) {
             let blob_id = known_blake3_hashes
@@ -178,6 +196,17 @@ pub async fn check_cas(
                 report.protected_recent += 1;
             }
             if apply && !is_recent {
+                if cas_hash_is_referenced(pool, &hash).await?.is_some() {
+                    report.recheck_protected += 1;
+                    file_statuses.push(CasFileStatus {
+                        hash,
+                        path: path.to_string(),
+                        size_bytes: size,
+                        status: CasStatus::Orphaned,
+                        blob_id: None,
+                    });
+                    continue;
+                }
                 match tokio::fs::remove_file(path.as_str()).await {
                     Ok(()) => {
                         report.removed += 1;
@@ -236,6 +265,27 @@ pub async fn check_cas(
     }
 
     Ok((report, file_statuses))
+}
+
+/// Re-check DB authority immediately before destructive filesystem mutation.
+/// The initial hash snapshot is intentionally not sufficient: a material/blob
+/// commit can race a long fsck walk and publish a reference after the snapshot.
+async fn cas_hash_is_referenced(pool: &PgPool, hash: &str) -> RuntimeResult<Option<String>> {
+    sqlx::query_scalar::<_, String>(
+        r"
+        SELECT id::text
+        FROM core.blobs
+        WHERE annex_backend = $1 AND checksum_blake3 = $2
+        LIMIT 1
+        ",
+    )
+    .bind(LOCAL_BLAKE3_CAS_BACKEND)
+    .bind(hash)
+    .fetch_optional(pool)
+    .await
+    .map_err(|error| {
+        SinexError::database("re-check CAS authority before orphan removal").with_source(error)
+    })
 }
 
 /// Load all BLAKE3 hashes that have a durable database authority.

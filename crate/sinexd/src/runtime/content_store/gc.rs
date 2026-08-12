@@ -32,6 +32,12 @@ pub struct BlobGcReport {
     /// Number of orphaned entries actually dropped from the content store.
     /// Always 0 when `apply == false`.
     pub dropped: usize,
+    /// In-flight CAS staging files retained by fsck.
+    pub staged: usize,
+    /// Orphans protected by the grace period.
+    pub protected_recent: usize,
+    /// Orphans that gained DB authority before apply deletion.
+    pub recheck_protected: usize,
 }
 
 /// Results from the source-material lifecycle half of a periodic content GC.
@@ -177,6 +183,9 @@ pub async fn sweep_orphans(
             db_backed: cas_report.referenced,
             orphaned: cas_report.orphaned,
             dropped: cas_report.removed,
+            staged: cas_report.staged,
+            protected_recent: cas_report.protected_recent,
+            recheck_protected: cas_report.recheck_protected,
         });
     }
 
@@ -205,6 +214,9 @@ pub async fn sweep_orphans_detailed(
             db_backed: cas_report.referenced,
             orphaned: cas_report.orphaned,
             dropped: cas_report.removed,
+            staged: cas_report.staged,
+            protected_recent: cas_report.protected_recent,
+            recheck_protected: cas_report.recheck_protected,
         };
         // Preserve the actual orphan identities for dry-run inspection.
         let unused_entries = statuses
@@ -276,6 +288,9 @@ pub async fn sweep_orphans_detailed(
         db_backed,
         orphaned: orphaned_unused.len(),
         dropped,
+        staged: 0,
+        protected_recent: 0,
+        recheck_protected: 0,
     };
 
     Ok((report, orphaned_unused))

@@ -75,3 +75,48 @@ async fn live_source_material_manifest_cas_reference_survives_apply_orphan_sweep
 
     Ok(())
 }
+
+#[sinex_test]
+async fn in_flight_cas_staging_file_survives_apply_fsck(ctx: TestContext) -> TestResult<()> {
+    let store_dir = tempfile::tempdir()?;
+    let root_path = Utf8PathBuf::from_path_buf(store_dir.path().to_path_buf())
+        .expect("temporary content-store path must be UTF-8");
+    let content_store = MaterialContentStore::new(ContentStoreConfig {
+        root_path: root_path.clone(),
+        ..Default::default()
+    })?;
+
+    let authority_source = root_path.join("authority.txt");
+    tokio::fs::write(&authority_source, b"authority").await?;
+    let authority_key = content_store.store_file(&authority_source).await?;
+    let material_id = Uuid::now_v7();
+    ctx.pool
+        .source_materials()
+        .register_external_in_flight(
+            material_id,
+            "test",
+            Some(&format!("test://cas-staging/{material_id}")),
+            json!({"material_manifest": {"content_key": authority_key.key}}),
+            Timestamp::now(),
+        )
+        .await?;
+
+    let staged_dir = root_path.join("sinex-cas").join("aa").join("bb");
+    tokio::fs::create_dir_all(&staged_dir).await?;
+    let staged_path = staged_dir.join(format!("{}.tmp-in-flight", authority_key.digest));
+    tokio::fs::write(&staged_path, b"partially copied").await?;
+
+    let (report, statuses) = check_cas(ctx.pool(), &content_store, true).await?;
+    assert_eq!(report.staged, 1);
+    assert_eq!(report.removed, 0);
+    assert!(
+        staged_path.exists(),
+        "anti-vacuity: an in-flight .tmp object must survive apply fsck"
+    );
+    assert!(
+        statuses
+            .iter()
+            .any(|status| status.status == CasStatus::Staged)
+    );
+    Ok(())
+}

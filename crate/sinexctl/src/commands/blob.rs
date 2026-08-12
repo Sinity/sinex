@@ -71,6 +71,9 @@ struct BlobSweepSummary {
     db_backed_entries: usize,
     orphaned_entries: usize,
     dropped_entries: usize,
+    staged_entries: usize,
+    protected_recent_entries: usize,
+    recheck_protected_entries: usize,
     orphaned_keys: Vec<BlobOrphanEntry>,
 }
 
@@ -109,6 +112,9 @@ impl BlobSweepOrphansCommand {
             db_backed,
             orphaned,
             dropped,
+            staged,
+            protected_recent,
+            recheck_protected,
         } = report;
 
         let summary = BlobSweepSummary {
@@ -118,6 +124,9 @@ impl BlobSweepOrphansCommand {
             db_backed_entries: db_backed,
             orphaned_entries: orphaned,
             dropped_entries: dropped,
+            staged_entries: staged,
+            protected_recent_entries: protected_recent,
+            recheck_protected_entries: recheck_protected,
             orphaned_keys: orphan_entries.into_iter().map(blob_orphan_entry).collect(),
         };
 
@@ -158,6 +167,18 @@ fn format_blob_sweep_summary(summary: &BlobSweepSummary) -> String {
         summary.orphaned_entries
     ));
     output.push_str(&format!("  Dropped Entries: {}\n", summary.dropped_entries));
+    output.push_str(&format!(
+        "  Staged Entries (retained): {}\n",
+        summary.staged_entries
+    ));
+    output.push_str(&format!(
+        "  Protected Recent Entries: {}\n",
+        summary.protected_recent_entries
+    ));
+    output.push_str(&format!(
+        "  Recheck-Protected Entries: {}\n",
+        summary.recheck_protected_entries
+    ));
     if !summary.orphaned_keys.is_empty() {
         output.push_str("  Orphaned Keys:\n");
         for orphan in &summary.orphaned_keys {
@@ -205,6 +226,8 @@ struct BlobFsckSummary {
     removed: usize,
     orphaned_bytes: u64,
     protected_recent: usize,
+    staged: usize,
+    recheck_protected: usize,
     details: Vec<CasFileDetail>,
 }
 
@@ -245,6 +268,8 @@ impl BlobFsckCommand {
             removed,
             orphaned_bytes,
             protected_recent,
+            staged,
+            recheck_protected,
         } = report;
 
         let details: Vec<CasFileDetail> = file_statuses
@@ -269,6 +294,8 @@ impl BlobFsckCommand {
             removed,
             orphaned_bytes,
             protected_recent,
+            staged,
+            recheck_protected,
             details,
         };
 
@@ -297,6 +324,11 @@ fn format_blob_fsck_summary(summary: &BlobFsckSummary) -> String {
     output.push_str(&format!(
         "  Protected recent: {}\n",
         summary.protected_recent
+    ));
+    output.push_str(&format!("  Staged (retained): {}\n", summary.staged));
+    output.push_str(&format!(
+        "  Recheck-protected: {}\n",
+        summary.recheck_protected
     ));
     output.push_str(&format!("  Corrupt: {}\n", summary.corrupt));
     output.push_str(&format!("  Malformed: {}\n", summary.malformed));
