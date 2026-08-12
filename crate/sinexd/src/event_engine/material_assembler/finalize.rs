@@ -17,6 +17,7 @@ use sinex_primitives::{
 };
 use tokio::io::AsyncWriteExt;
 use tokio::sync::Mutex;
+use tokio::task::JoinHandle;
 use tracing::{debug, error, info, warn};
 
 use crate::event_engine::{EventEngineResult, SinexError};
@@ -147,6 +148,46 @@ impl MaterialAssembler {
             // returning to Accumulating makes the maintenance re-drive route
             // immediately usable after a detached worker panic.
             state.phase = AssemblyPhase::Accumulating;
+        }
+    }
+
+    async fn observe_finalize_worker(
+        &self,
+        material_id: Uuid,
+        state_handle: Arc<Mutex<super::state::AssemblerState>>,
+        worker: JoinHandle<EventEngineResult<()>>,
+    ) {
+        match worker.await {
+            Ok(Ok(())) => {}
+            Ok(Err(error)) => warn!(
+                material_id = %material_id,
+                error = %error,
+                "Decoupled material finalize failed; retry state preserved for maintenance re-drive"
+            ),
+            Err(error) => {
+                warn!(
+                    material_id = %material_id,
+                    error = ?error,
+                    "Decoupled material finalize worker panicked or was aborted; restoring maintenance recovery state"
+                );
+                Self::recover_finalization_worker_panic(&state_handle).await;
+                // Keep the recovery action observable even if the worker
+                // vanished before it could emit its own error.
+                if let Err(dlq_error) = self
+                    .route_material_error(
+                        material_id,
+                        "material_finalize_worker_terminated",
+                        serde_json::json!({ "join_error": error.to_string() }),
+                    )
+                    .await
+                {
+                    warn!(
+                        material_id = %material_id,
+                        error = %dlq_error,
+                        "Failed to publish material finalize worker termination evidence"
+                    );
+                }
+            }
         }
     }
 
@@ -619,31 +660,9 @@ impl MaterialAssembler {
                     .await
             });
 
-            match worker.await {
-                Ok(Ok(())) => {}
-                Ok(Err(error)) => warn!(
-                    material_id = %material_id,
-                    error = %error,
-                    "Decoupled material finalize failed; retry state preserved for maintenance re-drive"
-                ),
-                Err(error) => {
-                    warn!(
-                        material_id = %material_id,
-                        error = ?error,
-                        "Decoupled material finalize worker panicked or was aborted; restoring maintenance recovery state"
-                    );
-                    Self::recover_finalization_worker_panic(&state_handle).await;
-                    // Keep the recovery action observable even if the worker
-                    // vanished before it could emit its own error.
-                    let _ = recovery_assembler
-                        .route_material_error(
-                            material_id,
-                            "material_finalize_worker_terminated",
-                            serde_json::json!({ "join_error": error.to_string() }),
-                        )
-                        .await;
-                }
-            }
+            recovery_assembler
+                .observe_finalize_worker(material_id, state_handle, worker)
+                .await;
         });
     }
 

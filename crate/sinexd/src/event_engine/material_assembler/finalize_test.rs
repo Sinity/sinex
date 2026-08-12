@@ -60,6 +60,64 @@ async fn finalize_failed_material_skips_material_already_finalizing(
 }
 
 #[sinex_test]
+async fn finalize_worker_termination_reverts_phase_and_emits_dlq(
+    ctx: TestContext,
+) -> TestResult<()> {
+    let ctx = ctx.with_nats().shared().await?;
+    let (assembler, _content_store_dir, _state_dir) = test_assembler(&ctx).await?;
+    let material_id = Uuid::now_v7();
+    let dlq_subject = ctx.pipeline_namespace().subject("events.dlq.event_engine");
+    let mut dlq_sub = ctx.nats_client().subscribe(dlq_subject).await?;
+
+    let mut state = assembler.create_placeholder_state(material_id).await?;
+    state.phase = AssemblyPhase::Finalizing;
+    let state_handle = assembler.insert_state_handle(material_id, state);
+
+    let panicked_worker = tokio::spawn(async {
+        panic!("test-only finalization worker panic");
+        #[allow(unreachable_code)]
+        Ok::<(), SinexError>(())
+    });
+    assembler
+        .observe_finalize_worker(material_id, state_handle.clone(), panicked_worker)
+        .await;
+
+    assert_eq!(
+        state_handle.lock().await.phase,
+        AssemblyPhase::Accumulating,
+        "anti-vacuity: removing worker-termination recovery leaves a panicked finalizer stuck in Finalizing"
+    );
+    let panic_dlq = timeout(std::time::Duration::from_secs(1), dlq_sub.next())
+        .await?
+        .expect("panicked finalizer must publish visible recovery evidence");
+    assert!(
+        std::str::from_utf8(&panic_dlq.payload)?.contains("material_finalize_worker_terminated"),
+        "anti-vacuity: bypassing the worker JoinError branch removes the panic recovery record"
+    );
+
+    state_handle.lock().await.phase = AssemblyPhase::Finalizing;
+    let aborted_worker = tokio::spawn(std::future::pending::<EventEngineResult<()>>());
+    aborted_worker.abort();
+    assembler
+        .observe_finalize_worker(material_id, state_handle.clone(), aborted_worker)
+        .await;
+
+    assert_eq!(
+        state_handle.lock().await.phase,
+        AssemblyPhase::Accumulating,
+        "anti-vacuity: removing worker-termination recovery leaves an aborted finalizer stuck in Finalizing"
+    );
+    let abort_dlq = timeout(std::time::Duration::from_secs(1), dlq_sub.next())
+        .await?
+        .expect("aborted finalizer must publish visible recovery evidence");
+    assert!(
+        std::str::from_utf8(&abort_dlq.payload)?.contains("material_finalize_worker_terminated"),
+        "anti-vacuity: bypassing the worker JoinError branch removes the abort recovery record"
+    );
+    Ok(())
+}
+
+#[sinex_test]
 async fn finalize_failed_material_skips_terminal_material_without_state(
     ctx: TestContext,
 ) -> TestResult<()> {
