@@ -25,6 +25,31 @@ async fn nats_port_matches_flake_hash_for_sinex_checkout() -> ::xtask::sandbox::
 }
 
 #[sinex_test]
+#[ignore = "sinex-v37i open: port_offset_for_checkout's 100-slot hash collides across plausible \
+            concurrent worktree checkouts, handing them the same NATS port"]
+async fn nats_port_for_checkout_does_not_collide_across_plausible_worktrees(
+) -> ::xtask::sandbox::TestResult<()> {
+    // Two plausible agent-worktree checkout paths (this project's own naming
+    // convention, see /realm/worktrees/agent-<hash> in CLAUDE.md) that a
+    // brute-force search found collide on the 100-slot `port_offset_for_checkout`
+    // hash space (`sha256(path)[0] % 100`) -- both derive offset 22, so two
+    // concurrent agent worktrees using these checkouts would be handed the
+    // exact same dev NATS port.
+    let a = Path::new("/realm/worktrees/agent-00000000");
+    let b = Path::new("/realm/worktrees/agent-00000012");
+
+    assert_ne!(
+        StackConfig::nats_port_for_checkout(a),
+        StackConfig::nats_port_for_checkout(b),
+        "two distinct concurrent-worktree checkout paths were handed the same NATS port \
+         ({}) -- the 100-slot hash space is too small to avoid collisions across this \
+         project's own documented concurrent-worktree workflow",
+        StackConfig::nats_port_for_checkout(a)
+    );
+    Ok(())
+}
+
+#[sinex_test]
 async fn discover_nats_port_reads_generated_config() -> Result<()> {
     let temp = tempfile::tempdir()?;
     let config_dir = temp.path().join("config/nats");

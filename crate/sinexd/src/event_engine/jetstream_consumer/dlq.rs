@@ -215,3 +215,7 @@ impl JetStreamConsumer {
     // above) and reports the outcome to the message's shared
     // RawEnvelopeSettlement via settle_child instead.
 }
+
+#[cfg(test)]
+#[path = "dlq_test.rs"]
+mod tests;

@@ -65,3 +65,33 @@ async fn check_tls_config_rejects_wrong_ca_when_chain_verification_enabled() -> 
     );
     Ok(())
 }
+
+#[sinex_test]
+#[ignore = "sinex-wvg5 open: verify_key_matches_cert's Err path (key file present but unparseable) \
+            is silently downgraded to a warning instead of an issue, so check_tls_config reports \
+            valid=true for a private key that cannot even be parsed"]
+async fn check_tls_config_fails_when_key_file_is_unparseable() -> TestResult<()> {
+    let cert_dir = tempdir()?;
+    generate_dev_certs(&test_cert_config(cert_dir.path(), "Unparseable Key TLS CA"))?;
+
+    // Overwrite the (valid) generated key with content that is not a parseable
+    // PEM private key at all -- rcgen::KeyPair::from_pem will Err on this,
+    // which is exactly the downgraded-to-warning path this bead describes.
+    let key_path = cert_dir.path().join("server-key.pem");
+    std::fs::write(&key_path, b"this is not a PEM private key")?;
+
+    let result = check_tls_config(&TlsCheckOptions {
+        cert_path: Some(cert_dir.path().join("server.pem")),
+        key_path: Some(key_path),
+        ca_path: None,
+        verify_chain: false,
+        check_nats: false,
+    })?;
+
+    assert!(
+        !result.valid,
+        "an unparseable private key must fail TLS verification, not just warn: {:?} / {:?}",
+        result.issues, result.warnings
+    );
+    Ok(())
+}
