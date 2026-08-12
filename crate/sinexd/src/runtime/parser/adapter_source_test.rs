@@ -21,7 +21,7 @@ use sinex_primitives::privacy::{
 };
 use sinex_primitives::rpc::sources::{CaveatSeverity, caveat_codes};
 use sinex_primitives::{Bytes, HostName, JsonValue, Seconds, SinexError};
-use std::collections::HashMap;
+use std::{collections::HashMap, sync::Arc};
 use tokio::sync::mpsc;
 use xtask::sandbox::prelude::{TestContext, TestResult, WaitHelpers, sinex_test};
 
@@ -1715,27 +1715,11 @@ impl MaterialParser for MultiIntentParser {
     }
 }
 
-/// sinex-w4i: a record that parses into multiple intents currently commits
-/// or withholds progress as ONE atom (every sibling event must settle for
-/// the record's cursor to advance — proven by the first half of this test),
-/// but that all-or-nothing gate is only a re-emission guard, not a
-/// durability-idempotence guard: the sibling that DID already durably
-/// settle on the first attempt (`inserted: true` — the real event-engine
-/// already wrote it) has no equivalence_key and is not remembered anywhere
-/// once the retry starts from scratch. The second attempt mints and
-/// durably persists a BRAND NEW event for that same logical occurrence.
-/// Fix per the bead's AC: either buffer-then-emit only after all of a
-/// record's intents durably settle (so a never-settled sibling can never
-/// leave an orphaned already-persisted twin), or stamp occurrence identity
-/// so admission-side equivalence_key suppression catches the duplicate on
-/// retry. Neither exists yet — this test only proves the gap, per the
-/// coordinator's explicit "test only, do not fix" scope (r6d.11's shared
-/// durable-emission primitive is being fixed in a separate sequenced pass).
+/// sinex-w4i: every keyless sibling emitted from one material record receives
+/// a deterministic occurrence identity. The durable-emission gate still keeps
+/// the record cursor closed until every sibling settles, while admission can
+/// now recognize a settled sibling if the whole record is retried.
 #[sinex_test]
-#[ignore = "sinex-w4i open: a multi-intent record's already-durably-settled \
-            sibling has no occurrence identity, so a retry forced by an \
-            unsettled sibling re-emits and re-persists a duplicate event \
-            for the settled one"]
 async fn adapter_multi_intent_partial_settlement_duplicates_the_settled_sibling_on_retry(
     ctx: TestContext,
 ) -> TestResult<()> {
@@ -1786,10 +1770,11 @@ async fn adapter_multi_intent_partial_settlement_duplicates_the_settled_sibling_
         "both sibling intents reach the mpsc handoff"
     );
     assert_eq!(
-        attempt1[0].1, None,
-        "no occurrence_key was ever stamped, so equivalence_key is None -- admission-side \
-         dedup has nothing to key off"
+        attempt1.iter().filter(|(_, key)| key.is_some()).count(),
+        2,
+        "every keyless sibling must carry an admission identity"
     );
+    assert_ne!(attempt1[0].1, attempt1[1].1, "sibling slots must not collide");
     assert_eq!(
         emitted_1, 0,
         "the record does not fully unlock (its second sibling never settled), so the FIRST \
@@ -1848,30 +1833,14 @@ async fn adapter_multi_intent_partial_settlement_duplicates_the_settled_sibling_
     );
     assert_eq!(state.cursor, Some(1));
 
-    // THE BUG, proven at its actual root cause: `emit_batch_durable`
-    // (durable_emission_backend.rs) assigns every event a BRAND NEW random
-    // id via `Id::new()` on every call, with no check against
-    // `DurableEmissionRequest::progress_atom` or any other prior-attempt
-    // state -- there is categorically no idempotency mechanism between
-    // attempt 1 and attempt 2 at all. Combined with `MultiIntentParser`
-    // never setting `occurrence_key` (matching every real multi-intent
-    // source with no natural dedup key -- the bead's exact precondition),
-    // "first" receives an `inserted: true` durable-persistence confirmation
-    // in BOTH attempts: once in attempt 1 (even though the record never
-    // unlocked because "second" never settled) and again in attempt 2's
-    // full re-parse. An idempotent retry must durably confirm each logical
-    // occurrence exactly once; this codebase currently confirms it twice.
-    let attempt1_confirmed_first = 1; // registry1.resolve(attempt1[0].0, inserted: true) above
-    let attempt2_confirmed_first = 1; // registry2.resolve(attempt2_ids[0].0, inserted: true) above
-    let first_occurrence_durable_confirmations =
-        attempt1_confirmed_first + attempt2_confirmed_first;
     assert_eq!(
-        1, first_occurrence_durable_confirmations,
-        "a multi-intent record's already-durably-confirmed sibling must not be durably \
-         reconfirmed a second time when an unsettled sibling forces a full retry -- this \
-         codebase has no mechanism (neither request-level idempotency in \
-         emit_batch_durable, nor an equivalence_key on the retried event) preventing it, \
-         per sinex-w4i's AC"
+        attempt2_ids.iter().filter(|(_, key)| key.is_some()).count(),
+        2,
+        "retry must preserve identity for every sibling"
+    );
+    assert_ne!(
+        attempt2_ids[0].1, attempt2_ids[1].1,
+        "retry sibling slots must remain distinct"
     );
     Ok(())
 }
@@ -2057,16 +2026,19 @@ async fn occurrence_key_lands_as_equivalence_key() -> xtask::sandbox::TestResult
         None,
         None,
         None,
+        0,
     )
     .expect("intent conversion");
     assert_eq!(event.equivalence_key, Some(occurrence_key_string(&key)));
     Ok(())
 }
 
-/// Intents without an occurrence key leave `equivalence_key` unset (the
-/// curation workbench simply has nothing to group on for that event).
+/// Keyless material intents use the material coordinates and deterministic
+/// parser output ordinal as a retry-stable fallback identity.
 #[sinex_test]
-async fn absent_occurrence_key_leaves_equivalence_key_none() -> xtask::sandbox::TestResult<()> {
+async fn keyless_material_intent_gets_retry_stable_equivalence_key()
+-> xtask::sandbox::TestResult<()> {
+    let material_id = Id::<SourceMaterial>::from_uuid(Uuid::now_v7());
     let intent = ParsedEventIntent::builder()
         .source_id(SourceId::from_static("test.unit"))
         .parser_id(ParserId::from_static("test-parser"))
@@ -2081,14 +2053,63 @@ async fn absent_occurrence_key_leaves_equivalence_key_none() -> xtask::sandbox::
         .build();
     let event = intent_to_event_with_anchor(
         intent,
-        Id::<SourceMaterial>::from_uuid(Uuid::now_v7()),
+        material_id,
         0,
         None,
         None,
         None,
+        0,
     )
     .expect("intent conversion");
-    assert_eq!(event.equivalence_key, None);
+    assert!(event.equivalence_key.is_some());
+    assert!(event.equivalence_key.as_deref().unwrap().contains("sibling_index"));
+    Ok(())
+}
+
+#[sinex_test]
+async fn keyless_multi_intent_sibling_identity_is_stable_across_reparse()
+-> xtask::sandbox::TestResult<()> {
+    let material_id = Id::<SourceMaterial>::from_uuid(Uuid::now_v7());
+    let make_intent = |which| {
+        ParsedEventIntent::builder()
+            .source_id(SourceId::from_static("test.unit"))
+            .parser_id(ParserId::from_static("multi-intent-parser"))
+            .parser_version("1.0.0")
+            .event_type(EventType::from_static("test.event"))
+            .event_source(EventSource::from_static("test"))
+            .payload(serde_json::json!({"parsed": which}))
+            .ts_orig(Timestamp::from_unix_timestamp(1_700_000_000).expect("timestamp"))
+            .timing(sinex_primitives::parser::TimingEvidence::StagedAtFallback)
+            .anchor(MaterialAnchor::ByteRange { start: 12, len: 4 })
+            .privacy_context(ProcessingContext::Metadata)
+            .build()
+    };
+    let first_attempt = ["first", "second"]
+        .into_iter()
+        .enumerate()
+        .map(|(index, which)| {
+            intent_to_event_with_anchor(
+                make_intent(which), material_id, 12, Some(12), Some(16), None, index,
+            )
+            .expect("first conversion")
+            .equivalence_key
+            .expect("fallback identity")
+        })
+        .collect::<Vec<_>>();
+    let retry = ["first", "second"]
+        .into_iter()
+        .enumerate()
+        .map(|(index, which)| {
+            intent_to_event_with_anchor(
+                make_intent(which), material_id, 12, Some(12), Some(16), None, index,
+            )
+            .expect("retry conversion")
+            .equivalence_key
+            .expect("fallback identity")
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(first_attempt, retry);
+    assert_ne!(first_attempt[0], first_attempt[1]);
     Ok(())
 }
 
@@ -2128,6 +2149,7 @@ async fn record_realtime_hint_promotes_atemporal_intent_timing() -> xtask::sandb
         None,
         None,
         None,
+        0,
     )
     .expect("intent conversion");
     assert_eq!(event.ts_orig, Some(hinted_ts));
@@ -2373,6 +2395,64 @@ fn file_drop_replay_reuses_original_append_offsets() {
         content_anchor,
         MaterialAnchor::ByteRange { start: 0, len: 42 }
     );
+}
+
+/// The FileDrop parity check must use the same serialized bytes and append
+/// acquirer that live capture uses. Synthetic non-zero offsets can pass while
+/// the live/replay coordinate spaces still disagree.
+#[sinex_test]
+async fn file_drop_replay_anchor_matches_live_append_capture(
+    ctx: TestContext,
+) -> TestResult<()> {
+    let ctx = ctx.with_nats().shared().await?;
+    let work_dir = tempfile::tempdir()?;
+    let manager = Arc::new(
+        AcquisitionManager::with_defaults(ctx.nats_client(), "file-drop-parity")
+            .with_work_dir(work_dir.path()),
+    );
+    let mut acquirer = AppendStreamAcquirer::new(manager);
+    let record = SourceRecord {
+        material_id: Id::from_uuid(Uuid::nil()),
+        anchor: MaterialAnchor::DirectoryEntry {
+            path: Utf8PathBuf::from("/tmp/file-drop/parity.txt"),
+            content_hash: None,
+        },
+        bytes: b"/tmp/file-drop/parity.txt".to_vec(),
+        logical_path: Some(Utf8PathBuf::from("/tmp/file-drop/parity.txt")),
+        source_ts_hint: None,
+        metadata: json!({"event_kind": "Created", "capture_surface": "file_drop"}),
+    };
+    let live_bytes = materialization_bytes_for_adapter_record(&record)?;
+    let live = acquirer
+        .append_with_anchor(&live_bytes, "file-drop")
+        .await?;
+    acquirer.finalize("parity-test").await?;
+
+    let occurrence = crate::runtime::stream::ReplayMaterialOccurrence {
+        source_material_id: live.material_id,
+        anchor_byte: live.offset_start,
+        offset_start: Some(live.offset_start),
+        offset_end: Some(live.offset_end),
+        record_metadata: record.metadata,
+    };
+    let replay = file_drop_replay_anchor(live_bytes.len() as u64, &occurrence)?;
+    assert_eq!(
+        replay,
+        MaterialAnchor::ByteRange {
+            start: live.offset_start as u64,
+            len: live_bytes.len() as u64,
+        }
+    );
+    assert_eq!(
+        anchor_offsets_for_materialized_record(&replay),
+        (
+            live.offset_start,
+            Some(live.offset_start),
+            Some(live.offset_end)
+        ),
+        "replay must reuse the append acquirer's exact coordinate space"
+    );
+    Ok(())
 }
 
 // =============================================================================

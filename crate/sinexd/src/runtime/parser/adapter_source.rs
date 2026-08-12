@@ -844,7 +844,7 @@ where
         };
 
         let mut emitted = 0u64;
-        for intent in intents {
+        for (sibling_index, intent) in intents.into_iter().enumerate() {
             match intent_to_event_with_anchor(
                 intent,
                 material_id,
@@ -852,6 +852,7 @@ where
                 offset_start,
                 offset_end,
                 Some(anchor_payload_hash),
+                sibling_index,
             ) {
                 Ok(event) => {
                     if let Err(e) = event_emitter.emit(event).await {
@@ -1587,7 +1588,7 @@ where
                 let anchor_payload_hash = materialized.anchor_payload_hash;
                 let mut record_processed = true;
                 let record_events_start = batch_events.len();
-                for intent in intents {
+                for (sibling_index, intent) in intents.into_iter().enumerate() {
                     // Use the materialization anchor so events reference their real
                     // material location, whether the record came from the default
                     // append stream or from an adapter-staged content material.
@@ -1598,6 +1599,7 @@ where
                         materialized.offset_start,
                         materialized.offset_end,
                         anchor_payload_hash,
+                        sibling_index,
                     ) {
                         Ok(event) => {
                             batch_events.push(event);
@@ -2648,7 +2650,18 @@ fn intent_to_event_with_anchor(
     offset_start: Option<i64>,
     offset_end: Option<i64>,
     anchor_payload_hash: Option<[u8; 32]>,
+    sibling_index: usize,
 ) -> Result<Event<JsonValue>, String> {
+    let fallback_equivalence_key = if intent.is_material() {
+        Some(material_occurrence_equivalence_key(
+            &intent,
+            material_id,
+            anchor_byte_override,
+            sibling_index,
+        ))
+    } else {
+        None
+    };
     let builder: EventBuilder<JsonValue, NoProvenance> =
         EventBuilder::new_internal(intent.event_source, intent.event_type, intent.payload);
 
@@ -2681,10 +2694,33 @@ fn intent_to_event_with_anchor(
     // curation duplicate-detection workbench (#1448) and also drives admission
     // suppression (#1637): the event_engine will suppress a new event if a live
     // row with the same equivalence_key already exists in core.events.
-    built.equivalence_key =
-        sinex_primitives::parser::maybe_occurrence_key_string(intent.occurrence_key.as_ref());
+    built.equivalence_key = sinex_primitives::parser::maybe_occurrence_key_string(
+        intent.occurrence_key.as_ref(),
+    )
+    .or(fallback_equivalence_key);
 
     Ok(built)
+}
+
+/// Give keyless sibling intents a retry-stable identity. A single source
+/// record may intentionally produce multiple events, so `(material, anchor)`
+/// alone is not enough; the parser's deterministic output ordinal identifies
+/// the sibling slot while the material coordinates identify the occurrence.
+fn material_occurrence_equivalence_key(
+    intent: &ParsedEventIntent,
+    material_id: Id<SourceMaterial>,
+    anchor_byte: i64,
+    sibling_index: usize,
+) -> String {
+    sinex_primitives::parser::occurrence_key_string(&sinex_primitives::parser::OccurrenceKey {
+        source_id: intent.source_id.clone(),
+        fields: vec![
+            ("material_id".to_string(), material_id.to_string()),
+            ("anchor_byte".to_string(), anchor_byte.to_string()),
+            ("event_type".to_string(), intent.event_type.to_string()),
+            ("sibling_index".to_string(), sibling_index.to_string()),
+        ],
+    })
 }
 
 fn apply_record_timing_hint_to_intents(

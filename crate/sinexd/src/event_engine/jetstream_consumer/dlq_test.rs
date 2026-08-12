@@ -1,4 +1,4 @@
-use super::DLQ_REQUEUE_GENERATION_HEADER;
+use super::{DLQ_REQUEUE_GENERATION_HEADER, dlq_intent_identity};
 use crate::{
     event_engine::{JetStreamConsumer, validator::IngestEventValidator},
     runtime::{DlqRetryConfig, DlqRetryHandler},
@@ -13,6 +13,29 @@ use xtask::sandbox::prelude::*;
 
 fn ack_error(error: impl std::fmt::Display) -> SinexError {
     SinexError::processing(format!("JetStream ACK failed: {error}"))
+}
+
+#[test]
+fn malformed_multi_child_intents_keep_full_child_identity() {
+    let first = json!({
+        "events": [
+            {"id": "same-leading-child"},
+            {"payload": {"kind": "recoverable-a"}}
+        ]
+    });
+    let second = json!({
+        "events": [
+            {"id": "same-leading-child"},
+            {"payload": {"kind": "recoverable-b"}}
+        ]
+    });
+
+    let first_identity = dlq_intent_identity(&first).expect("multi-child intent identity");
+    let second_identity = dlq_intent_identity(&second).expect("multi-child intent identity");
+    assert_ne!(
+        first_identity, second_identity,
+        "malformed child payloads must not collapse to the leading child id"
+    );
 }
 
 async fn bootstrapped_consumer(

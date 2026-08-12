@@ -52,12 +52,21 @@ fn dlq_intent_identity(original_payload: &JsonValue) -> Option<String> {
 
     // Keep the full ordered child identity in the dedupe key. A first-child
     // key merges [X, Y] and [X, Z] inside JetStream's dupeWindow, which turns
-    // an acknowledged DLQ publish into silent loss of Z.
+    // an acknowledged DLQ publish into silent loss of Z. Include the complete
+    // child JSON when an invalid envelope has no usable id: malformed intents
+    // are still distinct recoverable failures and must not fall back to the
+    // first-child-only operator id.
     let mut hasher = blake3::Hasher::new();
     hasher.update(b"sinex.dlq.intent.v1\0");
     for event in events {
-        let id = event.get("id")?.as_str()?;
-        hasher.update(id.as_bytes());
+        if let Some(id) = event.get("id").and_then(JsonValue::as_str) {
+            hasher.update(b"id\0");
+            hasher.update(id.as_bytes());
+        } else {
+            hasher.update(b"json\0");
+            let child = serde_json::to_vec(event).ok()?;
+            hasher.update(&child);
+        }
         hasher.update(&[0]);
     }
     Some(format!("dlq.intent.{}", hasher.finalize().to_hex()))
