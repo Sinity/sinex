@@ -2648,19 +2648,24 @@ async fn settlement_registry_resolves_durable_debt_for_a_dlqd_event(
     nats_client.flush().await?;
 
     let state = tokio::time::timeout(Duration::from_secs(Timeouts::STANDARD), rx).await??;
-    match state {
+    let debt_id = match state {
         EmissionReceiptState::DurableDebt { debt_id, reason } => {
-            assert_eq!(
-                debt_id, event_id,
-                "debt_id has no dedicated DB row here, so it must be the event's own id"
-            );
             assert!(
                 reason.contains("Source material"),
                 "reason should identify the orphaned source material, got: {reason}"
             );
+            debt_id
         }
         other => panic!("expected DurableDebt{{..}}, got {other:?}"),
-    }
+    };
+    let evidence = sqlx::query!(
+        "SELECT dlq_id, failed_event_id FROM sinex_schemas.dlq_events WHERE failed_event_id = $1 ORDER BY created_at DESC LIMIT 1",
+        event_id,
+    )
+    .fetch_one(ctx.pool())
+    .await?;
+    assert_eq!(evidence.failed_event_id, event_id);
+    assert_eq!(debt_id, evidence.dlq_id);
 
     consumer_handle.abort();
     let _ = consumer_handle.await;
@@ -2737,22 +2742,27 @@ async fn settlement_registry_resolves_durable_debt_for_an_admission_rejected_eve
     nats_client.flush().await?;
 
     let state = tokio::time::timeout(Duration::from_secs(Timeouts::STANDARD), rx).await??;
-    match state {
+    let debt_id = match state {
         EmissionReceiptState::DurableDebt { debt_id, reason } => {
-            assert_eq!(
-                debt_id, event_id,
-                "debt_id has no dedicated DB row here, so it must be the rejected event's own id"
-            );
             assert!(
                 reason.contains("admission rejection"),
                 "reason should identify this as an admission-rejection DLQ, got: {reason}"
             );
+            debt_id
         }
         other => panic!(
             "expected DurableDebt{{..}} (admission-rejected event must resolve the \
              settlement registry so the source cursor unlocks past it), got {other:?}"
         ),
-    }
+    };
+    let evidence = sqlx::query!(
+        "SELECT dlq_id, failed_event_id FROM sinex_schemas.dlq_events WHERE failed_event_id = $1 ORDER BY created_at DESC LIMIT 1",
+        event_id,
+    )
+    .fetch_one(ctx.pool())
+    .await?;
+    assert_eq!(evidence.failed_event_id, event_id);
+    assert_eq!(debt_id, evidence.dlq_id);
 
     // The rejected event must never reach core.events.
     assert!(
