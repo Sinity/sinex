@@ -314,3 +314,66 @@ async fn merge_entities_idempotent(ctx: TestContext) -> TestResult<()> {
     );
     Ok(())
 }
+
+/// sinex-nri2: `core.entities.canonical_name` has a bare `UNIQUE` constraint
+/// with no `entity_type` in the key (crate/sinex-schema/src/defs/entities.rs).
+/// A person named "Apple" and an organization named "Apple" both normalize to
+/// the same canonical_name ("apple") and collide globally, even though they
+/// are genuinely different entities of different kinds.
+#[sinex_test]
+#[ignore = "sinex-nri2 open: canonical_name UNIQUE constraint has no entity_type in the key, so a person and organization with the same name collide globally"]
+async fn same_canonical_name_across_different_entity_kinds_does_not_collide(
+    ctx: TestContext,
+) -> TestResult<()> {
+    let repo = ctx.pool.knowledge_graph();
+
+    let person = repo
+        .create_entity(CreateEntity::person("Apple").with_canonical_name("apple"))
+        .await
+        .expect("creating the person entity should succeed");
+
+    let organization = repo
+        .create_entity(CreateEntity::organization("Apple").with_canonical_name("apple"))
+        .await;
+
+    assert!(
+        organization.is_ok(),
+        "a person named 'Apple' and an organization named 'Apple' collided on the \
+         globally-unique canonical_name constraint ({:?}) -- canonical_name should \
+         be unique per (entity_type, canonical_name), not globally across all kinds",
+        organization.err()
+    );
+    let organization = organization.unwrap();
+    assert_ne!(person.id, organization.id);
+    Ok(())
+}
+
+/// sinex-cmy: `create_entity_with_executor` defaults `confidence_score` to 1.0
+/// and `source_event_ids` to an empty vec when neither is supplied -- an
+/// entity created with ZERO evidence is stamped with MAXIMUM confidence,
+/// fabricating authority the caller never claimed.
+#[sinex_test]
+#[ignore = "sinex-cmy open: entity creation with no source_event_ids defaults confidence_score to 1.0 instead of reflecting the absence of evidence"]
+async fn entity_with_no_source_events_does_not_default_to_full_confidence(
+    ctx: TestContext,
+) -> TestResult<()> {
+    let repo = ctx.pool.knowledge_graph();
+
+    // Deliberately supply neither confidence_score nor source_event_ids.
+    let entity = repo
+        .create_entity(CreateEntity::person("Evidence-Free Person"))
+        .await?;
+
+    assert!(
+        entity.source_event_ids.is_empty(),
+        "sanity: this entity really has no source events"
+    );
+    assert_ne!(
+        entity.confidence_score, 1.0,
+        "an entity created with zero source_event_ids was stamped confidence_score=1.0 \
+         (maximum confidence) -- this fabricates evidentiary authority the caller never \
+         provided, exactly the pattern curation.rs's own doctrine says consumers must not \
+         trust ('consumers must not treat co-occurrence as ground truth')"
+    );
+    Ok(())
+}

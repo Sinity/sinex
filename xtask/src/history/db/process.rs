@@ -83,3 +83,7 @@ pub(super) fn is_process_running(pid: u32) -> bool {
         true
     }
 }
+
+#[cfg(test)]
+#[path = "process_test.rs"]
+mod tests;

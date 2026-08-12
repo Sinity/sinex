@@ -232,3 +232,61 @@ async fn missing_logical_path_returns_error() -> TestResult<()> {
     assert!(msg.contains("logical_path"), "got: {msg}");
     Ok(())
 }
+
+/// sinex-nndq (AC item 3): `run_git_log` decodes the ENTIRE `git log` subprocess
+/// output as one `String::from_utf8(...)?` before any per-commit parsing. A
+/// single commit with invalid-UTF8 bytes anywhere in its message aborts capture
+/// of the WHOLE repository's history, not just that one commit.
+#[sinex_test]
+#[ignore = "sinex-nndq open: one commit with invalid-UTF8 message bytes aborts capture of the entire repo's history instead of being isolated"]
+async fn one_invalid_utf8_commit_does_not_abort_capture_of_the_whole_repo() -> TestResult<()> {
+    let tmp = tempfile::tempdir().map_err(|e| color_eyre::eyre::eyre!("tempdir: {e}"))?;
+    let repo_path = tmp.path().to_str().expect("utf8 tmp path");
+
+    let run = |args: &[&str]| {
+        std::process::Command::new("git")
+            .arg("-C")
+            .arg(repo_path)
+            .args(args)
+            .env("GIT_AUTHOR_NAME", "Test")
+            .env("GIT_AUTHOR_EMAIL", "test@example.com")
+            .env("GIT_COMMITTER_NAME", "Test")
+            .env("GIT_COMMITTER_EMAIL", "test@example.com")
+            .output()
+    };
+
+    run(&["init", "-q"]).map_err(|e| color_eyre::eyre::eyre!("git init: {e}"))?;
+    run(&["commit", "--allow-empty", "-q", "-m", "good commit before"])
+        .map_err(|e| color_eyre::eyre::eyre!("git commit 1: {e}"))?;
+
+    // Commit with an invalid-UTF8 byte sequence in the message, via -F to avoid
+    // shell/arg-encoding entirely re-mangling the raw bytes.
+    let bad_msg_path = tmp.path().join("bad-msg");
+    std::fs::write(&bad_msg_path, [0x62, 0x61, 0x64, 0xff, 0xfe, 0x0a]) // "bad" + invalid UTF-8 + \n
+        .map_err(|e| color_eyre::eyre::eyre!("write bad message: {e}"))?;
+    run(&[
+        "commit",
+        "--allow-empty",
+        "-q",
+        "-F",
+        bad_msg_path.to_str().expect("utf8 tmp path"),
+    ])
+    .map_err(|e| color_eyre::eyre::eyre!("git commit 2 (invalid utf8): {e}"))?;
+
+    run(&["commit", "--allow-empty", "-q", "-m", "good commit after"])
+        .map_err(|e| color_eyre::eyre::eyre!("git commit 3: {e}"))?;
+
+    let commits = run_git_log(repo_path)
+        .await
+        .expect("a single bad-UTF8 commit should not abort capture of the whole repo");
+
+    assert_eq!(
+        commits.len(),
+        2,
+        "expected the 2 good commits to be captured despite one invalid-UTF8 commit \
+         in between -- got {} commits (run_git_log currently fails the ENTIRE batch \
+         via a single String::from_utf8(output.stdout)? on the whole subprocess output)",
+        commits.len()
+    );
+    Ok(())
+}

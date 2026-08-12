@@ -17,6 +17,7 @@
 //! actually needed a new `#[path]` override for exactly that reason.
 
 mod sources {
+    mod browser_history_occurrence_key_test;
     mod browser_history_parser_test;
     mod email_mailbox_parser_test;
     mod email_provider_cursor_parser_test;
