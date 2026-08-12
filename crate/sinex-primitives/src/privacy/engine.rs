@@ -9,8 +9,8 @@ use super::config::{CategorySet, PrivacyConfig};
 use super::detector;
 use super::envelope;
 use super::{
-    Matcher, PatternRule, PrivacyError, Processed, ProcessingContext, RuleCategory, Strategy,
-    StructuralDetector,
+    Matcher, PatternRule, PrivacyError, PrivacyMatchFinding, Processed, ProcessingContext,
+    RuleCategory, Strategy, StructuralDetector,
 };
 
 // ─── Compiled rule ───────────────────────────────────────────
@@ -366,6 +366,38 @@ impl PrivacyEngine {
         }
     }
 
+    /// Detect matches without applying a strategy or retaining matched text.
+    ///
+    /// This is the report-only counterpart to [`Self::process`]. It is used by
+    /// bounded privacy audits so the recognizer catalog can measure cleartext
+    /// posture without ever constructing a redacted or raw-value report.
+    #[must_use]
+    pub fn detect_matches(
+        &self,
+        input: &str,
+        ctx: ProcessingContext,
+    ) -> Vec<PrivacyMatchFinding> {
+        if !self.enabled || input.is_empty() {
+            return Vec::new();
+        }
+
+        self.rules
+            .iter()
+            .zip(self.definitions.iter())
+            .filter_map(|(rule, definition)| {
+                if !rule.matches_context(ctx) {
+                    return None;
+                }
+                let match_count = self.matcher_match_count(&rule.matcher, input);
+                (match_count > 0).then(|| PrivacyMatchFinding {
+                    rule_name: definition.name.clone(),
+                    category: definition.category,
+                    match_count,
+                })
+            })
+            .collect()
+    }
+
     /// Check if any Suppress rule matches.
     #[must_use]
     pub fn should_suppress(&self, input: &str, ctx: ProcessingContext) -> bool {
@@ -435,6 +467,42 @@ impl PrivacyEngine {
             CompiledMatcher::Any(sub_matchers) => {
                 sub_matchers.iter().any(|m| self.matcher_hits(m, input))
             }
+        }
+    }
+
+    #[allow(
+        clippy::self_only_used_in_recursion,
+        reason = "Recursive matcher traversal shares the engine's case-folding and structural detector helpers"
+    )]
+    fn matcher_match_count(&self, matcher: &CompiledMatcher, input: &str) -> u64 {
+        match matcher {
+            CompiledMatcher::Regex(re) => re.find_iter(input).count() as u64,
+            CompiledMatcher::Structural(det) => detector::find_matches(*det, input).len() as u64,
+            CompiledMatcher::Literal {
+                lower,
+                case_sensitive,
+                original,
+            } => {
+                if *case_sensitive {
+                    input.match_indices(original.as_str()).count() as u64
+                } else {
+                    find_case_insensitive_spans(input, lower).len() as u64
+                }
+            }
+            CompiledMatcher::All(sub_matchers) => {
+                if sub_matchers
+                    .iter()
+                    .all(|matcher| self.matcher_match_count(matcher, input) > 0)
+                {
+                    1
+                } else {
+                    0
+                }
+            }
+            CompiledMatcher::Any(sub_matchers) => sub_matchers
+                .iter()
+                .map(|matcher| self.matcher_match_count(matcher, input))
+                .sum(),
         }
     }
 

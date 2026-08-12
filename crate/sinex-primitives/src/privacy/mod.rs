@@ -259,6 +259,18 @@ pub struct PatternRule {
     pub enabled: bool,
 }
 
+/// A report-only recognizer result. It intentionally carries rule metadata and
+/// counts only. Matched text and byte spans never cross the privacy API.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct PrivacyMatchFinding {
+    /// Catalog or policy rule name.
+    pub rule_name: String,
+    /// Rule category.
+    pub category: RuleCategory,
+    /// Number of matcher hits in the inspected scalar.
+    pub match_count: u64,
+}
+
 fn default_true() -> bool {
     true
 }

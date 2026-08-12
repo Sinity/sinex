@@ -108,6 +108,34 @@ async fn preserves_normal_commands() -> ::xtask::sandbox::TestResult<()> {
     Ok(())
 }
 
+#[sinex_test]
+async fn count_only_detection_reports_metadata_without_values()
+-> ::xtask::sandbox::TestResult<()> {
+    let e = test_engine();
+    let secret = aws_access_key_fixture();
+    let input = format!("url=https://user:password@example.test and key={secret}");
+    let findings = e.detect_matches(&input, ProcessingContext::Metadata);
+    let aws = findings
+        .iter()
+        .find(|finding| finding.rule_name == "aws_access_key")
+        .expect("AWS fixture should be detected");
+    assert_eq!(aws.match_count, 1);
+    let serialized = serde_json::to_string(&findings)?;
+    assert!(!serialized.contains(&secret));
+    assert!(!serialized.contains("password"));
+    Ok(())
+}
+
+#[sinex_test]
+async fn count_only_detection_keeps_benign_text_empty()
+-> ::xtask::sandbox::TestResult<()> {
+    let e = test_engine();
+    assert!(e
+        .detect_matches("git status --short", ProcessingContext::Command)
+        .is_empty());
+    Ok(())
+}
+
 // ── Suppress strategy ──
 
 #[sinex_test]

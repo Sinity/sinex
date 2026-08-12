@@ -49,6 +49,18 @@ pub const PRIVACY_POLICY_LIST_METHOD: RpcMethod<
     RpcMutability::ReadOnly,
 );
 
+/// Read-only bounded recognizer audit over persisted privacy surfaces.
+pub const PRIVACY_SHADOW_AUDIT_METHOD: RpcMethod<
+    PrivacyShadowAuditRequest,
+    PrivacyShadowAuditResponse,
+> = RpcMethod::new(
+    methods::PRIVACY_SHADOW_AUDIT,
+    RpcRole::ReadOnly,
+    RpcDomain::Privacy,
+    RpcStability::Experimental,
+    RpcMutability::ReadOnly,
+);
+
 pub const PRIVACY_POLICY_RULE_ADD_METHOD: RpcMethod<
     PrivacyPolicyRuleAddRequest,
     PrivacyPolicyMutationResponse,
@@ -187,6 +199,101 @@ pub struct PrivacyPolicyListResponse {
     pub key_namespaces: Vec<PrivacyPolicyKeyNamespace>,
     pub recognizer_backends: Vec<PrivacyPolicyRecognizerBackend>,
     pub dictionaries: Vec<PrivacyPolicyDictionary>,
+}
+
+/// Request: privacy.shadow_audit.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct PrivacyShadowAuditRequest {
+    /// Lower bound for event timestamps. Supports RFC3339 and duration syntax.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub since: Option<String>,
+    /// Upper bound for event timestamps. Supports RFC3339 and duration syntax.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub until: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub event_type: Option<String>,
+    /// Maximum event rows inspected from each event lane.
+    #[serde(default = "default_shadow_event_limit")]
+    pub limit_events: i64,
+    /// Maximum rows inspected from each non-event surface.
+    #[serde(default = "default_shadow_surface_limit")]
+    pub limit_rows_per_surface: i64,
+}
+
+/// Stable status vocabulary shared by report-only audits and purge reports.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PrivacyInvalidationStatus {
+    Purged,
+    StaleMarked,
+    Residual,
+    RetainedByDesign,
+    Scanned,
+    Failed,
+}
+
+/// One enumerated privacy/lifecycle surface.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PrivacyInvalidationSurface {
+    pub surface: String,
+    pub status: PrivacyInvalidationStatus,
+    #[serde(default)]
+    pub before_count: u64,
+    #[serde(default)]
+    pub after_count: u64,
+    #[serde(default)]
+    pub affected_count: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub residual_horizon: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub detail: Option<String>,
+}
+
+/// Persisted report for a destructive invalidation operation.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PrivacyInvalidationReport {
+    pub schema_version: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub operation_id: Option<String>,
+    pub generated_at: String,
+    pub surfaces: Vec<PrivacyInvalidationSurface>,
+    #[serde(default)]
+    pub caveats: Vec<String>,
+}
+
+/// One aggregate row from a report-only recognizer audit.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PrivacyShadowAuditFinding {
+    pub recognizer: String,
+    pub category: crate::privacy::RuleCategory,
+    pub surface: String,
+    pub source: String,
+    pub event_type: String,
+    pub field_path: String,
+    pub sampled_row_count: u64,
+    pub matched_row_count: u64,
+    pub match_count: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub first_seen: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_seen: Option<String>,
+}
+
+/// Response: privacy.shadow_audit.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PrivacyShadowAuditResponse {
+    pub schema_version: String,
+    pub generated_at: String,
+    pub read_only_proven: bool,
+    pub scanned_events: u64,
+    pub scanned_rows: u64,
+    pub scope: PrivacyShadowAuditRequest,
+    pub surfaces: Vec<PrivacyInvalidationSurface>,
+    pub findings: Vec<PrivacyShadowAuditFinding>,
+    #[serde(default)]
+    pub caveats: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -412,6 +519,14 @@ const fn default_true() -> bool {
 
 fn default_dictionary_source_kind() -> String {
     "user".to_string()
+}
+
+fn default_shadow_event_limit() -> i64 {
+    10_000
+}
+
+fn default_shadow_surface_limit() -> i64 {
+    500
 }
 
 impl Default for PrivateModeEnableRequest {

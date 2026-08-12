@@ -61,6 +61,7 @@ async fn tombstone_duration_ms_preserves_large_elapsed_values() -> TestResult<()
         finished_at: None,
         tombstoned_count: None,
         deletion_committed_at: None,
+        invalidation_report: None,
         error_details: None,
     };
 
@@ -92,6 +93,7 @@ async fn matches_requested_tombstone_state_uses_reconciled_state() -> TestResult
         finished_at: None,
         tombstoned_count: None,
         deletion_committed_at: None,
+        invalidation_report: None,
         error_details: Some("Expired before approval".to_string()),
     };
 

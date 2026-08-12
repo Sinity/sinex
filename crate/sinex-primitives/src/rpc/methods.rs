@@ -15,6 +15,7 @@ pub const PRIVACY_POLICY_DICTIONARY_ADD: &str = "privacy.policy.dictionary.add";
 pub const PRIVACY_POLICY_RULE_ADD: &str = "privacy.policy.rule.add";
 pub const PRIVACY_POLICY_SEED_BUILTIN: &str = "privacy.policy.seed.builtin";
 pub const PRIVACY_POLICY_SCOPE_BIND: &str = "privacy.policy.scope.bind";
+pub const PRIVACY_SHADOW_AUDIT: &str = "privacy.shadow_audit";
 pub const PRIVACY_POLICY_RULE_REMOVE: &str = "privacy.policy.rule.remove";
 pub const PRIVACY_POLICY_RULE_SET_ENABLED: &str = "privacy.policy.rule.set_enabled";
 pub const PRIVACY_POLICY_FIELD_BIND: &str = "privacy.policy.field.bind";

@@ -889,6 +889,7 @@ pub async fn handle_tombstone_create(
         finished_at: None,
         tombstoned_count: None,
         deletion_committed_at: None,
+        invalidation_report: None,
         error_details: None,
     };
 

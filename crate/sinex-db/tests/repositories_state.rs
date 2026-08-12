@@ -445,6 +445,7 @@ async fn cancel_tombstone_operation_rejects_invalid_created_at(ctx: TestContext)
         finished_at: None,
         tombstoned_count: None,
         deletion_committed_at: None,
+        invalidation_report: None,
         error_details: None,
     };
 

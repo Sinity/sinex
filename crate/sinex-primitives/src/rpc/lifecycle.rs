@@ -3,6 +3,7 @@
 //! Types for the three-tier data lifecycle: Live ↔ Archive → Tombstone
 
 use crate::domain::{DataTier, EventSource};
+use crate::rpc::privacy::PrivacyInvalidationReport;
 use crate::rpc::{RpcDomain, RpcMethod, RpcMutability, RpcRole, RpcStability, methods};
 use serde::{Deserialize, Serialize};
 
@@ -408,6 +409,10 @@ pub struct TombstoneOperation {
     /// Durable receipt written atomically with the irreversible deletion.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub deletion_committed_at: Option<String>,
+    /// Surface-by-surface purge and residual evidence committed with the
+    /// operation after the deletion boundary.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub invalidation_report: Option<PrivacyInvalidationReport>,
     /// Error details if failed
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub error_details: Option<String>,

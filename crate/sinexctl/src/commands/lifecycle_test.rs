@@ -37,6 +37,7 @@ fn fixture_tombstone_operation(id: &str) -> TombstoneOperation {
         finished_at: None,
         tombstoned_count: None,
         deletion_committed_at: None,
+        invalidation_report: None,
         error_details: None,
     }
 }
