@@ -11,6 +11,7 @@ pub mod dlq;
 pub mod documents;
 pub mod health;
 pub mod import_progress;
+pub mod import_report;
 pub mod instructions;
 pub mod lifecycle;
 pub mod llm;
@@ -52,6 +53,8 @@ pub use audit::handle_audit_get;
 pub use automata::handle_automata_status;
 pub use browser::handle_browser_capture_batch;
 pub use dlq::{handle_dlq_list, handle_dlq_peek, handle_dlq_purge, handle_dlq_requeue};
+pub use import_progress::handle_sources_import_progress;
+pub use import_report::handle_sources_import_report;
 pub use instructions::handle_hyprland_workspace_switch;
 pub use lifecycle::{
     handle_lifecycle_archive,
@@ -78,7 +81,6 @@ pub use semantic::{
     handle_semantic_lane_outputs_seed_entity_events, handle_semantic_lane_outputs_write,
     handle_semantic_lane_set_status, handle_semantic_lanes_list,
 };
-pub use import_progress::handle_sources_import_progress;
 pub use shadow::{handle_shadow_create, handle_shadow_delete, handle_shadow_list};
 pub use source_status::{handle_sources_status, handle_sources_status_view};
 

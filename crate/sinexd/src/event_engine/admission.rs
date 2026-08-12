@@ -20,9 +20,7 @@ use sinex_primitives::events::admission::{ACCEPTED_ENVELOPE_VERSIONS, EventInten
 use sinex_primitives::events::builder::{EventId, Provenance};
 use sinex_primitives::events::schema_registry::{RevisionPolicy, revision_policy_for_event_type};
 use sinex_primitives::events::{EquivalenceKey, Event, ScopeKey, payload_content_hash};
-use sinex_primitives::{
-    Id, JsonValue, Timestamp, Uuid, try_strip_postgres_jsonb_nul_chars,
-};
+use sinex_primitives::{Id, JsonValue, Timestamp, Uuid, try_strip_postgres_jsonb_nul_chars};
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
@@ -116,6 +114,17 @@ pub struct CandidateEventMetadata {
 pub struct CandidateEvent {
     pub event: Event<JsonValue>,
     pub metadata: CandidateEventMetadata,
+}
+
+/// Candidate identity retained when admission suppresses an event before it
+/// reaches `core.events`. This is the durable reporting context for a rerun.
+#[derive(Debug, Clone)]
+pub struct SuppressedCandidate {
+    pub event_id: Uuid,
+    pub operation_id: Option<Uuid>,
+    pub source_material_id: Option<Uuid>,
+    pub source: String,
+    pub event_type: String,
 }
 
 impl CandidateEvent {
@@ -335,6 +344,7 @@ pub struct AdmissionRejection {
     pub kind: AdmissionRejectionKind,
     pub reason: String,
     pub event_id: Option<Uuid>,
+    pub candidate: Option<SuppressedCandidate>,
 }
 
 impl AdmissionRejection {
@@ -343,12 +353,33 @@ impl AdmissionRejection {
             kind,
             reason: reason.into(),
             event_id: None,
+            candidate: None,
         }
     }
 
     #[must_use]
     pub fn with_event_id(mut self, event_id: Uuid) -> Self {
         self.event_id = Some(event_id);
+        self
+    }
+
+    #[must_use]
+    pub fn with_candidate(mut self, event: &Event<JsonValue>) -> Self {
+        let Some(event_id) = event.id.map(|id| id.to_uuid()) else {
+            return self;
+        };
+        let source_material_id = match &event.provenance {
+            Provenance::Material { id, .. } => Some(id.to_uuid()),
+            Provenance::Derived { .. } => None,
+        };
+        self.event_id = Some(event_id);
+        self.candidate = Some(SuppressedCandidate {
+            event_id,
+            operation_id: event.created_by_operation_id,
+            source_material_id,
+            source: event.source.to_string(),
+            event_type: event.event_type.to_string(),
+        });
         self
     }
 
@@ -787,9 +818,7 @@ impl AdmissionService {
                         None => "live event with equivalence_key already exists".to_string(),
                     },
                 );
-                if let Some(id) = event.id {
-                    rejection = rejection.with_event_id(id.to_uuid());
-                }
+                rejection = rejection.with_candidate(&event);
                 return Ok(AdmissionDecision::Suppressed(rejection));
             }
             EquivalenceOutcome::Supersede {
@@ -818,10 +847,9 @@ impl AdmissionService {
         }
 
         if let Some(ts_orig) = event.ts_orig {
-            if let Some(rejection) = self.timestamp_rejection(
-                ts_orig,
-                event.id.map(|id| id.to_uuid()).unwrap_or_default(),
-            ) {
+            if let Some(rejection) = self
+                .timestamp_rejection(ts_orig, event.id.map(|id| id.to_uuid()).unwrap_or_default())
+            {
                 error!(
                     target: "sinex_metrics",
                     metric = "event_engine.admission_rejections_total",
@@ -1754,11 +1782,13 @@ fn admitted_to_stream_rows(batch: &[&AdmittedEvent]) -> EventEngineResult<Vec<St
             let content_hash = admitted.content_hash;
 
             let mut payload = event.payload.clone();
-            let stripped_nul_bytes = try_strip_postgres_jsonb_nul_chars(&mut payload)
-                .map_err(|error| {
-                    SinexError::validation("event payload cannot be represented as PostgreSQL JSONB")
-                        .with_context("event_id", admitted.event_id.to_string())
-                        .with_source(error)
+            let stripped_nul_bytes =
+                try_strip_postgres_jsonb_nul_chars(&mut payload).map_err(|error| {
+                    SinexError::validation(
+                        "event payload cannot be represented as PostgreSQL JSONB",
+                    )
+                    .with_context("event_id", admitted.event_id.to_string())
+                    .with_source(error)
                 })?;
             if stripped_nul_bytes > 0 {
                 warn!(

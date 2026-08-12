@@ -1,14 +1,14 @@
 use crate::defs::{
     ArchivedEventAnnotations, ArchivedEventEmbeddings, ArchivedEvents, ArchivedTaggedItems,
-    AuthorityFinalizerRegistry, BinarySchemaVersion, Blobs, DerivationEpochs,
-    DerivationLaneDiffs, DerivationLaneOutputs, DerivationLanes, DerivationProductDeclarations,
+    AuthorityFinalizerRegistry, BinarySchemaVersion, Blobs, DerivationEpochs, DerivationLaneDiffs,
+    DerivationLaneOutputs, DerivationLanes, DerivationProductDeclarations,
     DerivationProjectionDependencies, DerivationProjectionRegistry, DocumentChunks, Documents,
     EmailMailboxProjection, EmailProviderState, EmbeddingCache, EmbeddingModels, Entities,
     EntityRelations, EventAnnotations, EventClusterMembers, EventClusters, EventEmbeddings,
-    EventPayloadSchemas, EventReplacements, EventTombstones, Events, Manifests, ModelEffects,
+    EventPayloadSchemas, EventReplacements, EventTombstones, Events, ImportOutcomes, Manifests,
+    ModelEffects,
     OperationsLog, Runs, SourceMaterialLinks, SourceMaterialRegistry, SourceSessionState,
-    TaggedItems, Tags,
-    TemporalLedger,
+    TaggedItems, Tags, TemporalLedger,
 };
 use crate::registry;
 use sea_query::{IndexCreateStatement, PostgresQueryBuilder, TableCreateStatement};
@@ -881,6 +881,7 @@ async fn create_tables(pool: &PgPool) -> Result<(), ApplyError> {
         render_table(&EventClusterMembers::create_table_statement()),
         render_table(&EventTombstones::create_table_statement()),
         render_table(&EventReplacements::create_table_statement()),
+        render_table(&ImportOutcomes::create_table_statement()),
         render_table(&Documents::create_table_statement()),
         render_table(&DocumentChunks::create_table_statement()),
     ];
@@ -993,14 +994,20 @@ async fn create_indexes(pool: &PgPool) -> Result<(), ApplyError> {
     index_sql.extend(Entities::create_gin_indexes_sql());
     index_sql.extend(Entities::create_trigram_indexes_sql());
     index_sql.extend(render_indexes(EntityRelations::create_indexes()));
-    index_sql.extend(render_indexes(DerivationProductDeclarations::create_indexes()));
+    index_sql.extend(render_indexes(
+        DerivationProductDeclarations::create_indexes(),
+    ));
     index_sql.extend(render_indexes(DerivationEpochs::create_indexes()));
     index_sql.extend(render_indexes(DerivationLanes::create_indexes()));
     index_sql.extend(render_indexes(DerivationLaneOutputs::create_indexes()));
     index_sql.extend(render_indexes(DerivationLaneDiffs::create_indexes()));
-    index_sql.extend(render_indexes(DerivationProjectionRegistry::create_indexes()));
+    index_sql.extend(render_indexes(
+        DerivationProjectionRegistry::create_indexes(),
+    ));
     index_sql.extend(DerivationProjectionRegistry::create_gist_indexes_sql());
-    index_sql.extend(render_indexes(DerivationProjectionDependencies::create_indexes()));
+    index_sql.extend(render_indexes(
+        DerivationProjectionDependencies::create_indexes(),
+    ));
     index_sql.extend(render_indexes(AuthorityFinalizerRegistry::create_indexes()));
     index_sql.extend(render_indexes(TaggedItems::create_indexes()));
     index_sql.extend(render_indexes(EventAnnotations::create_indexes()));
@@ -1014,6 +1021,7 @@ async fn create_indexes(pool: &PgPool) -> Result<(), ApplyError> {
     index_sql.extend(render_indexes(Manifests::create_indexes()));
     index_sql.extend(render_indexes(Runs::create_indexes()));
     index_sql.extend(render_indexes(EventReplacements::create_indexes()));
+    index_sql.extend(render_indexes(ImportOutcomes::create_indexes()));
     index_sql.extend(render_indexes(Documents::create_indexes()));
     index_sql.extend(render_indexes(DocumentChunks::create_indexes()));
     index_sql.extend(DocumentChunks::create_fts_indexes_sql());
@@ -1177,8 +1185,12 @@ async fn create_triggers_and_functions(pool: &PgPool) -> Result<(), ApplyError> 
     )
     .await?;
 
-    ensure_function_set_sql(pool, OPERATIONS_AND_CASCADE_FUNCTIONS, OPERATIONS_AND_CASCADE_SQL)
-        .await?;
+    ensure_function_set_sql(
+        pool,
+        OPERATIONS_AND_CASCADE_FUNCTIONS,
+        OPERATIONS_AND_CASCADE_SQL,
+    )
+    .await?;
     ensure_function_set_sql(pool, TOMBSTONE_LIFECYCLE_FUNCTIONS, TOMBSTONE_LIFECYCLE_SQL).await?;
     ensure_function_set_sql(pool, JSONB_MERGE_FUNCTIONS, JSONB_MERGE_SQL).await?;
     ensure_function_and_trigger_set_sql(
@@ -1741,11 +1753,7 @@ async fn mark_view_applied(
 /// Skip only when the declared SQL hash matches what was last applied (the
 /// real no-op case); always apply -- and re-stamp the hash -- when the
 /// relation is missing or the declared SQL has changed.
-async fn ensure_view_sql(
-    pool: &PgPool,
-    qualified_name: &str,
-    sql: &str,
-) -> Result<(), ApplyError> {
+async fn ensure_view_sql(pool: &PgPool, qualified_name: &str, sql: &str) -> Result<(), ApplyError> {
     let expected_hash = view_sql_hash(sql);
     let exists = matches!(relation_kind(pool, qualified_name).await?, Some('v'));
 
@@ -3439,6 +3447,8 @@ ORDER BY last_updated DESC;
 // the database owner role.
 const ROLE_GRANTS_SQL: &str = r"
 GRANT USAGE ON SCHEMA core, reflection, raw, sinex_schemas, audit TO sinex_event_engine, sinex_api, sinex_readonly;
+GRANT SELECT, INSERT ON audit.import_outcomes TO sinex_event_engine;
+GRANT SELECT ON audit.import_outcomes TO sinex_api, sinex_readonly;
 
 -- Privacy policy (#1042): event_engine loads rules at the chokepoint; gateway manages
 -- them via sinexctl; readonly may inspect.

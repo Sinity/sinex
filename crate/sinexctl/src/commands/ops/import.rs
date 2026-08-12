@@ -1,5 +1,7 @@
 use super::*;
-use sinex_primitives::rpc::sources::ImportProgressEntry;
+use sinex_primitives::rpc::sources::{
+    ImportProgressEntry, SourcesImportReportRequest, SourcesImportReportResponse,
+};
 use tabled::{builder::Builder, settings::Style};
 
 /// Live rate/position/ETA/backlog for in-flight paced historical imports
@@ -9,14 +11,21 @@ use tabled::{builder::Builder, settings::Style};
 /// imported".
 #[derive(Debug, Subcommand)]
 #[command(after_help = "\
-EXAMPLES:
+    EXAMPLES:
     sinexctl ops import list
     sinexctl ops import list --format json
+    sinexctl ops import report <operation-id>
+    sinexctl ops import report <operation-id> --format json
 ")]
 pub enum ImportCommands {
     /// List in-flight paced historical imports.
     #[command(alias = "ls")]
     List,
+    /// Render durable new/suppressed/superseded/failure outcomes for one import operation.
+    Report {
+        /// Replay or import operation UUID returned by the operation control plane.
+        operation_id: String,
+    },
 }
 
 impl ImportCommands {
@@ -32,9 +41,77 @@ impl ImportCommands {
                 }
                 println!("{}", format_import_progress_table(&response.imports));
             }
+            Self::Report { operation_id } => {
+                let response = client
+                    .sources_import_report(SourcesImportReportRequest {
+                        operation_id: operation_id.clone(),
+                    })
+                    .await?;
+                let envelope = ViewEnvelope::new("sinexctl.ops.import.report", response.clone());
+                if print_finite_envelope(&envelope, format)? {
+                    return Ok(());
+                }
+                println!("{}", format_import_report_table(&response));
+            }
         }
         Ok(())
     }
+}
+
+fn format_import_report_table(report: &SourcesImportReportResponse) -> String {
+    let mut output = format!(
+        "Import idempotence: {} new, {} suppressed, {} superseded, {} failures, {} DLQ, {} unresolved\nOperation: {} ({})\n",
+        report.new,
+        report.suppressed,
+        report.superseded,
+        report.failures,
+        report.dlq,
+        report.unresolved,
+        report.operation_id,
+        report.operation_status,
+    );
+    if let Some(source) = &report.source {
+        output.push_str(&format!("Source: {source}\n"));
+    }
+    output.push_str(&format!("Attempted: {}\n", report.attempted));
+    if !report.source_material_ids.is_empty() {
+        output.push_str(&format!(
+            "Source materials: {}\n",
+            report.source_material_ids.join(", ")
+        ));
+    }
+
+    if !report.breakdown.is_empty() {
+        let mut builder = Builder::new();
+        builder.push_record([
+            "SOURCE",
+            "EVENT TYPE",
+            "MATERIAL",
+            "NEW",
+            "SUPPRESSED",
+            "SUPERSEDED",
+            "FAILURES",
+            "DLQ",
+        ]);
+        for row in &report.breakdown {
+            builder.push_record([
+                row.source.clone(),
+                row.event_type.clone(),
+                row.source_material_id
+                    .clone()
+                    .unwrap_or_else(|| "-".to_string()),
+                row.new.to_string(),
+                row.suppressed.to_string(),
+                row.superseded.to_string(),
+                row.failures.to_string(),
+                row.dlq.to_string(),
+            ]);
+        }
+        let mut table = builder.build();
+        table.with(Style::rounded());
+        output.push_str(&table.to_string());
+    }
+    output
 }
 
 fn format_import_progress_table(imports: &[ImportProgressEntry]) -> String {
@@ -44,7 +121,13 @@ fn format_import_progress_table(imports: &[ImportProgressEntry]) -> String {
 
     let mut builder = Builder::new();
     builder.push_record([
-        "SOURCE", "PACED", "RATE(ev/s)", "EVENTS", "POSITION", "ETA", "BACKLOG",
+        "SOURCE",
+        "PACED",
+        "RATE(ev/s)",
+        "EVENTS",
+        "POSITION",
+        "ETA",
+        "BACKLOG",
     ]);
     for entry in imports {
         builder.push_record([

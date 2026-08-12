@@ -155,6 +155,20 @@ pub const SOURCES_IMPORT_PROGRESS_METHOD: RpcMethod<
     RpcMutability::ReadOnly,
 );
 
+/// `sources.import_report` — durable outcome counts for one import/replay
+/// operation. Unlike `sources.import_progress`, this remains available after
+/// the scan completes and is suitable for manifest and rerun comparison.
+pub const SOURCES_IMPORT_REPORT_METHOD: RpcMethod<
+    SourcesImportReportRequest,
+    SourcesImportReportResponse,
+> = RpcMethod::new(
+    methods::SOURCES_IMPORT_REPORT,
+    RpcRole::ReadOnly,
+    RpcDomain::Sources,
+    RpcStability::Experimental,
+    RpcMutability::ReadOnly,
+);
+
 pub const SOURCES_REMEDIATION_PLAN_METHOD: RpcMethod<
     SourcesRemediationPlanRequest,
     SourcesRemediationPlanResponse,
@@ -636,6 +650,62 @@ pub struct ImportProgressEntry {
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct SourcesImportProgressResponse {
     pub imports: Vec<ImportProgressEntry>,
+}
+
+/// Request: `sources.import_report`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SourcesImportReportRequest {
+    pub operation_id: String,
+}
+
+/// Per-source/material/event-type counts in an import report.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ImportReportBreakdown {
+    pub source: String,
+    pub event_type: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub source_material_id: Option<String>,
+    pub new: u64,
+    pub suppressed: u64,
+    pub superseded: u64,
+    pub failures: u64,
+    pub dlq: u64,
+}
+
+/// An event/material reference retained for operator audit.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ImportReportExample {
+    pub outcome: String,
+    pub event_id: String,
+    pub source: String,
+    pub event_type: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub source_material_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub reason: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub superseded_event_id: Option<String>,
+}
+
+/// Response: `sources.import_report`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SourcesImportReportResponse {
+    pub operation_id: String,
+    pub operation_type: String,
+    pub operation_status: String,
+    pub scope: JsonValue,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub source: Option<String>,
+    pub source_material_ids: Vec<String>,
+    pub attempted: u64,
+    pub new: u64,
+    pub suppressed: u64,
+    pub superseded: u64,
+    pub failures: u64,
+    pub dlq: u64,
+    pub unresolved: u64,
+    pub breakdown: Vec<ImportReportBreakdown>,
+    pub examples: Vec<ImportReportExample>,
 }
 
 // ─────────────────────────────────────────────────────────────

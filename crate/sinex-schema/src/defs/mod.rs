@@ -17,6 +17,7 @@ pub mod documents;
 pub mod embeddings;
 pub mod entities;
 pub mod events;
+pub mod import_outcomes;
 pub mod manifests;
 pub mod model_effects;
 pub mod operations;
@@ -33,6 +34,7 @@ pub use documents::*;
 pub use embeddings::*;
 pub use entities::*;
 pub use events::*;
+pub use import_outcomes::*;
 pub use manifests::*;
 pub use model_effects::*;
 pub use operations::*;
@@ -54,6 +56,7 @@ pub mod records {
     pub use super::embeddings::EmbeddingModelRecord;
     pub use super::entities::EntityRecord;
     pub use super::events::{EventRecord, EventReplacementRecord};
+    pub use super::import_outcomes::ImportOutcomeRecord;
     pub use super::manifests::ManifestRecord;
     pub use super::source_materials::{SourceMaterialLinkRecord, SourceMaterialRecord};
     pub use super::temporal_ledger::TemporalLedgerRecord;
@@ -133,6 +136,14 @@ const ALL_TABLES: &[TableMeta] = &[
         schema: "audit",
         name: "archived_tagged_items",
         qualified_name: "audit.archived_tagged_items",
+        is_hypertable: false,
+        has_triggers: false,
+        cleanup_protected: false,
+    },
+    TableMeta {
+        schema: "audit",
+        name: "import_outcomes",
+        qualified_name: "audit.import_outcomes",
         is_hypertable: false,
         has_triggers: false,
         cleanup_protected: false,

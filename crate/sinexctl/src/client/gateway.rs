@@ -129,19 +129,20 @@ use sinex_primitives::rpc::{
         SOURCES_ANNOTATE_METHOD, SOURCES_ARCHIVE_METHOD, SOURCES_BINDINGS_LIST_METHOD,
         SOURCES_CONTINUITY_EXPLAIN_GAP_METHOD, SOURCES_CONTINUITY_GET_METHOD,
         SOURCES_CONTINUITY_LIST_METHOD, SOURCES_CONTINUITY_METHOD, SOURCES_COVERAGE_METHOD,
-        SOURCES_DRIFT_LIST_METHOD, SOURCES_LIST_METHOD, SOURCES_PACKAGE_COMPLETENESS_METHOD,
-        SOURCES_PRESETS_LIST_METHOD, SOURCES_READINESS_GET_METHOD, SOURCES_READINESS_LIST_METHOD,
+        SOURCES_DRIFT_LIST_METHOD, SOURCES_IMPORT_REPORT_METHOD, SOURCES_LIST_METHOD,
+        SOURCES_PACKAGE_COMPLETENESS_METHOD, SOURCES_PRESETS_LIST_METHOD,
+        SOURCES_READINESS_GET_METHOD, SOURCES_READINESS_LIST_METHOD,
         SOURCES_REMEDIATION_PLAN_METHOD, SOURCES_SHOW_METHOD, SOURCES_STAGE_METHOD,
         SourcesAnnotateRequest, SourcesAnnotateResponse, SourcesArchiveRequest,
         SourcesArchiveResponse, SourcesBindingsListRequest, SourcesBindingsListResponse,
         SourcesContinuityRequest, SourcesContinuityResponse, SourcesCoverageRequest,
         SourcesCoverageResponse, SourcesDriftListRequest, SourcesDriftListResponse,
-        SourcesListRequest, SourcesListResponse, SourcesPackageCompletenessRequest,
-        SourcesPackageCompletenessResponse, SourcesPresetsListRequest, SourcesPresetsListResponse,
-        SourcesReadinessGetRequest, SourcesReadinessGetResponse, SourcesReadinessListRequest,
-        SourcesReadinessListResponse, SourcesRemediationPlanRequest,
-        SourcesRemediationPlanResponse, SourcesShowRequest, SourcesShowResponse,
-        SourcesStageRequest, SourcesStageResponse,
+        SourcesImportReportRequest, SourcesImportReportResponse, SourcesListRequest,
+        SourcesListResponse, SourcesPackageCompletenessRequest, SourcesPackageCompletenessResponse,
+        SourcesPresetsListRequest, SourcesPresetsListResponse, SourcesReadinessGetRequest,
+        SourcesReadinessGetResponse, SourcesReadinessListRequest, SourcesReadinessListResponse,
+        SourcesRemediationPlanRequest, SourcesRemediationPlanResponse, SourcesShowRequest,
+        SourcesShowResponse, SourcesStageRequest, SourcesStageResponse,
     },
     system::{
         SYSTEM_HEALTH_METHOD, SYSTEM_PING_METHOD, SYSTEM_VERSION_METHOD, SystemHealthRequest,
@@ -1305,6 +1306,14 @@ impl GatewayClient {
             &sinex_primitives::rpc::sources::SourcesImportProgressRequest {},
         )
         .await
+    }
+
+    pub async fn sources_import_report(
+        &self,
+        request: SourcesImportReportRequest,
+    ) -> Result<SourcesImportReportResponse> {
+        self.call_typed(SOURCES_IMPORT_REPORT_METHOD, &request)
+            .await
     }
 
     pub async fn sources_remediation_plan(

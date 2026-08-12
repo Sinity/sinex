@@ -12,6 +12,7 @@ pub mod email_provider_state;
 pub mod embeddings;
 pub mod events;
 pub mod events_extensions;
+pub mod import_outcomes;
 pub mod integrity;
 pub mod knowledge_graph;
 pub mod model_effects;
@@ -53,6 +54,9 @@ pub use events::{
     COPY_BATCH_THRESHOLD, EventAnnotation, EventPayloadSchema, EventRepository, EventRepositoryTx,
     EventStorageLane, LiveEquivalenceRow, ReplacementKind, ReplacementRecord,
     StreamBatchInsertResult, StreamBatchRow,
+};
+pub use import_outcomes::{
+    ImportEventRow, ImportOutcomeRepository, ImportReplacementRow, ImportReportData,
 };
 pub use integrity::IntegrityRepository;
 pub use knowledge_graph::{
@@ -115,6 +119,7 @@ pub trait DbPoolExt {
     fn schema_cache(&self) -> schema_cache::SchemaCacheRepository<'_>;
     fn replay(&self) -> replay::ReplayRepository<'_>;
     fn integrity(&self) -> integrity::IntegrityRepository<'_>;
+    fn import_outcomes(&self) -> import_outcomes::ImportOutcomeRepository<'_>;
     fn continuity(&self) -> continuity::ContinuityRepository<'_>;
     fn model_effects(&self) -> model_effects::ModelEffectRepository<'_>;
     fn documents(&self) -> document_search::DocumentSearchRepository<'_>;
@@ -193,6 +198,10 @@ impl DbPoolExt for PgPool {
 
     fn integrity(&self) -> integrity::IntegrityRepository<'_> {
         integrity::IntegrityRepository::new(self)
+    }
+
+    fn import_outcomes(&self) -> import_outcomes::ImportOutcomeRepository<'_> {
+        import_outcomes::ImportOutcomeRepository::new(self)
     }
 
     fn continuity(&self) -> continuity::ContinuityRepository<'_> {

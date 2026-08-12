@@ -115,7 +115,9 @@ impl JetStreamConsumer {
                                  kept existing live interpretation and suppressed this revision"
                             ),
                             event_id: Some(admitted.event_id),
-                        };
+                            candidate: None,
+                        }
+                        .with_candidate(&admitted.event);
                         self.record_admission_suppression(&rejection).await;
                         self.settlement_registry.resolve(
                             admitted.event_id.into(),
@@ -462,6 +464,30 @@ impl JetStreamConsumer {
     }
 
     pub(super) async fn record_admission_suppression(&self, rejection: &AdmissionRejection) {
+        if let Some(candidate) = &rejection.candidate
+            && let Err(error) = self
+                .pool
+                .import_outcomes()
+                .record_suppressed(
+                    candidate.operation_id,
+                    candidate.event_id,
+                    candidate.source_material_id,
+                    &candidate.source,
+                    &candidate.event_type,
+                    &rejection.reason,
+                    None,
+                )
+                .await
+        {
+            tracing::error!(
+                target: "sinex_metrics",
+                operation_id = ?candidate.operation_id,
+                candidate_event_id = %candidate.event_id,
+                error = %error,
+                "failed to persist suppressed import outcome"
+            );
+        }
+
         let kind_label = match rejection.kind {
             AdmissionRejectionKind::OccurrenceDuplicate => "occurrence_duplicate",
             AdmissionRejectionKind::PayloadTooLarge => "payload_too_large",

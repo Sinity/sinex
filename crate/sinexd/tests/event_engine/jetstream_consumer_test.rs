@@ -38,6 +38,29 @@ async fn publish_event(
     payload: serde_json::Value,
     overrides: EventOverrides,
 ) -> TestResult<Uuid> {
+    publish_event_with_operation(
+        pool,
+        nats_client,
+        namespace,
+        source,
+        event_type,
+        payload,
+        overrides,
+        None,
+    )
+    .await
+}
+
+async fn publish_event_with_operation(
+    pool: &sinex_db::DbPool,
+    nats_client: &async_nats::Client,
+    namespace: &str,
+    source: &str,
+    event_type: &str,
+    payload: serde_json::Value,
+    overrides: EventOverrides,
+    operation_id: Option<Uuid>,
+) -> TestResult<Uuid> {
     ensure_fixture_source_material(pool).await?;
     let env = sinex_primitives::environment();
     let event_id = overrides.id.unwrap_or_else(Uuid::now_v7);
@@ -55,6 +78,7 @@ async fn publish_event(
         "source_material_id": FIXTURE_SOURCE_MATERIAL_ID,
         "anchor_byte": 0,
         "equivalence_key": overrides.equivalence_key,
+        "created_by_operation_id": operation_id.map(|id| id.to_string()),
     });
     let envelope = admission_envelope(source, event);
 
@@ -918,6 +942,113 @@ async fn duplicate_equivalence_key_is_suppressed_without_dlq(ctx: TestContext) -
     );
 
     setup.handle.abort();
+    Ok(())
+}
+
+/// A duplicate rerun through the real NATS admission path must leave a
+/// durable operation-scoped report: the first operation admits one live row,
+/// while the second operation reports one suppression and no new live row.
+#[sinex_test]
+async fn duplicate_rerun_is_visible_in_import_report(ctx: TestContext) -> TestResult<()> {
+    let ctx = ctx.with_nats().shared().await?;
+    let setup = start_isolated_consumer(&ctx, "import-report-rerun").await?;
+    let nats_client = ctx.nats_client();
+    let first_operation = ctx
+        .pool
+        .state()
+        .start_replay_operation(
+            "import-report-test",
+            json!({"source": "import-report"}),
+            None,
+        )
+        .await?;
+    let second_operation = ctx
+        .pool
+        .state()
+        .start_replay_operation(
+            "import-report-test",
+            json!({"source": "import-report"}),
+            None,
+        )
+        .await?;
+    let equivalence_key = "import-report-rerun-key".to_string();
+
+    let first_id = publish_event_with_operation(
+        &ctx.pool,
+        &nats_client,
+        &setup.namespace,
+        "import-report",
+        "pipeline.event",
+        json!({"sequence": 1}),
+        EventOverrides {
+            equivalence_key: Some(equivalence_key.clone()),
+            ..Default::default()
+        },
+        Some(first_operation.to_uuid()),
+    )
+    .await?;
+    WaitHelpers::wait_for_event_id(&ctx.pool, first_id.into(), Timeouts::SHORT).await?;
+
+    let duplicate_id = publish_event_with_operation(
+        &ctx.pool,
+        &nats_client,
+        &setup.namespace,
+        "import-report",
+        "pipeline.event",
+        json!({"sequence": 1}),
+        EventOverrides {
+            equivalence_key: Some(equivalence_key.clone()),
+            ..Default::default()
+        },
+        Some(second_operation.to_uuid()),
+    )
+    .await?;
+    WaitHelpers::wait_for_condition(
+        || {
+            let js = setup.js.clone();
+            let stream_name = setup.topology.events_stream.clone();
+            let consumer_name = setup.topology.consumer_durable.clone();
+            async move {
+                let stream = js
+                    .get_stream(&stream_name)
+                    .await
+                    .map_err(|error| SinexError::network(error.to_string()))?;
+                let mut consumer = stream
+                    .get_consumer::<jetstream::consumer::pull::Config>(&consumer_name)
+                    .await
+                    .map_err(|error| SinexError::network(error.to_string()))?;
+                let info = consumer
+                    .info()
+                    .await
+                    .map_err(|error| SinexError::network(error.to_string()))?;
+                Ok::<bool, SinexError>(info.num_pending == 0 && info.num_ack_pending == 0)
+            }
+        },
+        Timeouts::SHORT,
+    )
+    .await?;
+
+    assert!(
+        ctx.pool
+            .events()
+            .get_by_id(duplicate_id.into())
+            .await?
+            .is_none(),
+        "duplicate rerun must not create a second live row"
+    );
+    let report = ctx
+        .pool
+        .import_outcomes()
+        .report(second_operation.to_uuid())
+        .await?
+        .expect("operation-scoped import report should exist");
+    assert_eq!(report.admitted.len(), 0);
+    assert_eq!(report.outcomes.len(), 1);
+    assert_eq!(report.outcomes[0].outcome, "suppressed");
+    assert_eq!(report.outcomes[0].candidate_event_id, duplicate_id);
+
+    setup.handle.abort();
+    let _ = setup.handle.await;
     Ok(())
 }
 

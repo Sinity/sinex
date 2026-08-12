@@ -241,7 +241,6 @@ pub fn build() -> HashMap<&'static str, FormatCapability> {
         FormatCapability::streaming(TABLE_JSON_NDJSON_YAML)
             .with_note("streams progress updates until operation completes"),
     );
-
     // ── DLQ ──────────────────────────────────────────────────────────────────
     m.insert(
         "ops dlq list",
@@ -343,6 +342,11 @@ pub fn build() -> HashMap<&'static str, FormatCapability> {
     m.insert(
         "ops catchup status",
         FormatCapability::single_shot(TABLE_JSON_YAML),
+    );
+    m.insert(
+        "ops import report",
+        FormatCapability::single_shot(TABLE_JSON_YAML)
+            .with_note("durable new/suppressed/superseded/failure counts for one operation"),
     );
     m.insert(
         "ops evidence compile",
@@ -967,10 +971,7 @@ fn effect_for_path(path: &str, capability: &FormatCapability) -> CommandEffect {
     }
 }
 
-fn output_contract_for_path(
-    path: &str,
-    capability: &FormatCapability,
-) -> CommandOutputContract {
+fn output_contract_for_path(path: &str, capability: &FormatCapability) -> CommandOutputContract {
     if capability.streaming {
         return CommandOutputContract::Streaming;
     }
@@ -1026,6 +1027,7 @@ fn finite_view_paths() -> &'static [&'static str] {
         "ops replay list",
         "ops replay preview",
         "ops replay status",
+        "ops import report",
         "privacy audit",
         "privacy export",
         "privacy policy list",
@@ -1155,6 +1157,7 @@ fn backing_rpc_methods_for_path(path: &str) -> &'static [&'static str] {
         "ops replay cancel" => &[methods::REPLAY_CANCEL_OPERATION],
         "ops replay status" | "ops replay watch" => &[methods::REPLAY_OPERATION_STATUS],
         "ops replay list" => &[methods::REPLAY_LIST_OPERATIONS],
+        "ops import report" => &[methods::SOURCES_IMPORT_REPORT],
         "ops dlq list" => &[methods::DLQ_LIST],
         "ops dlq peek" => &[methods::DLQ_PEEK],
         "ops dlq requeue" => &[methods::DLQ_REQUEUE],

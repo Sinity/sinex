@@ -607,6 +607,9 @@ fn command_path(cmd: &Commands) -> String {
             },
             OpsCommands::Import(import_cmd) => match import_cmd {
                 sinexctl::commands::ops::ImportCommands::List => "ops import list".to_string(),
+                sinexctl::commands::ops::ImportCommands::Report { .. } => {
+                    "ops import report".to_string()
+                }
             },
             OpsCommands::Evidence(evidence_cmd) => match evidence_cmd {
                 sinexctl::commands::ops::EvidenceCommands::Compile { .. } => {
