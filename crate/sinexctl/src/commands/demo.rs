@@ -25,19 +25,23 @@ const BATCH_SIZE: usize = 500;
 #[derive(Debug, Args)]
 #[command(after_help = "\
 EXAMPLES:
-    # Seed 10 000 events with default seed
-    sinexctl ops demo
+    # Seed 10 000 events with default seed (explicitly confirmed)
+    sinexctl ops demo --confirm
 
     # Deterministic seed — same args always produce same events
-    sinexctl ops demo --seed 42
+    sinexctl ops demo --seed 42 --confirm
 
     # Smaller run
-    sinexctl ops demo --count 5000
+    sinexctl ops demo --count 5000 --confirm
 
     # Wipe previous demo data first, then seed
-    sinexctl ops demo --count 5000 --clear
+    sinexctl ops demo --count 5000 --clear --confirm
 ")]
 pub struct DemoCommand {
+    /// Acknowledge that this command writes synthetic events directly to the database.
+    #[arg(long)]
+    pub confirm: bool,
+
     /// RNG seed for deterministic event generation.
     /// Same seed + same count always produces identical events.
     #[arg(long, default_value = "0")]
@@ -64,6 +68,8 @@ static EVENT_TYPES: &[(&str, PayloadFn)] = &[
 
 impl DemoCommand {
     pub async fn execute(&self) -> Result<()> {
+        require_confirmation(self.confirm)?;
+
         let database_url = env::var("DATABASE_URL").map_err(|_| {
             color_eyre::eyre::eyre!(
                 "DATABASE_URL not set. Set it in your environment or use the gateway commands instead."
@@ -200,6 +206,17 @@ impl DemoCommand {
 
         Ok(())
     }
+}
+
+fn require_confirmation(confirm: bool) -> Result<()> {
+    if !confirm {
+        return Err(color_eyre::eyre::eyre!(
+            "sinexctl ops demo writes synthetic events directly to DATABASE_URL; "
+                .to_string()
+                + "rerun with --confirm to proceed"
+        ));
+    }
+    Ok(())
 }
 
 #[derive(Debug, Clone)]
