@@ -1360,7 +1360,7 @@ async fn snapshot_restore_rejects_production_shaped_database_target()
 
     let command = AdminSnapshotRestoreCommand {
         archive: archive_path,
-        target_dir: target,
+        target_dir: target.clone(),
         dry_run: false,
         allow_non_empty_target: false,
         confirm_restore: true,
