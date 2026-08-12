@@ -442,10 +442,12 @@ impl AdminSnapshotCommand {
         }
 
         if component_set.contains("nats") {
-            let nats_src = topology
-                .nats_store_dir
-                .clone()
-                .unwrap_or_else(|| state_dir.join("nats/jetstream"));
+            let nats_src = topology.nats_store_dir.as_deref().ok_or_else(|| {
+                eyre!(
+                    "NATS JetStream store directory was not discovered; refusing to use a \
+                     state-directory fallback"
+                )
+            })?;
             if !nats_src.is_dir() {
                 bail!(
                     "NATS JetStream store directory {} is absent; refusing to record an empty backup",
@@ -455,7 +457,7 @@ impl AdminSnapshotCommand {
             let mut record = self.capture_dir_component(
                 "nats",
                 "nats/jetstream/",
-                &nats_src,
+                nats_src,
                 staging,
                 self.dry_run,
                 mode.tolerates_vanished_files(),
@@ -1011,6 +1013,8 @@ impl AdminSnapshotRestoreCommand {
                  an empty drill database"
             )
         })?;
+        exec::validate_restore_database_url(restore_database_url)
+            .context("validate PostgreSQL restore rehearsal target")?;
         topology.verify_restore_database_empty(restore_database_url, self.psql_bin.as_deref())
     }
 }

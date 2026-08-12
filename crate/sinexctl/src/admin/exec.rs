@@ -163,6 +163,42 @@ pub fn pg_user_relation_count(database_url: &str, psql_bin: Option<&Path>) -> Re
         .context("parse restore-target user relation count")
 }
 
+/// Refuse restore drills aimed at production-shaped database names.
+///
+/// Emptiness is necessary but not sufficient evidence for a safe rehearsal:
+/// an empty database URL can still be the wrong operator target. Requiring a
+/// conventional disposable name makes an accidental production URL fail
+/// before any restore command runs.
+pub fn validate_restore_database_url(database_url: &str) -> Result<()> {
+    let parsed = reqwest::Url::parse(database_url)
+        .context("parse restore database URL for rehearsal-target validation")?;
+    if !matches!(parsed.scheme(), "postgres" | "postgresql") {
+        bail!(
+            "restore database URL must use the postgres or postgresql scheme, got `{}`",
+            parsed.scheme()
+        );
+    }
+    let database_name = parsed
+        .path_segments()
+        .and_then(|segments| segments.filter(|segment| !segment.is_empty()).next_back())
+        .ok_or_else(|| eyre!("restore database URL must include a database name"))?;
+    let normalized = database_name.to_ascii_lowercase();
+    let is_disposable = ["dev", "test", "drill", "restore", "scratch", "tmp"]
+        .iter()
+        .any(|marker| {
+            normalized
+                .split(|ch: char| !ch.is_ascii_alphanumeric())
+                .any(|part| part == *marker)
+        });
+    if !is_disposable {
+        bail!(
+            "restore database `{database_name}` is not named as a disposable rehearsal target; "
+                + "use a database name containing dev, test, drill, restore, scratch, or tmp"
+        );
+    }
+    Ok(())
+}
+
 /// The independently deployed surfaces that a backup/restore operation must
 /// understand.  All callers use this discovery result instead of inventing a
 /// state path, unit glob, or database-target assumption locally.
@@ -802,7 +838,7 @@ pub fn cp_entry_live(src: &Path, dst: &Path) -> Result<()> {
 mod tests {
     use super::{
         SnapshotTopology, is_snapshot_writer_unit, nats_config_path_from_exec_start,
-        nats_store_dir_from_config,
+        nats_store_dir_from_config, validate_restore_database_url,
     };
 
     #[test]
@@ -866,5 +902,24 @@ mod tests {
             "sinex-desktop-acl-refresh.service"
         ));
         assert!(!is_snapshot_writer_unit("postgresql.service"));
+    }
+
+    #[test]
+    fn restore_target_validation_accepts_disposable_database_names() {
+        for url in [
+            "postgresql:///sinex_restore_drill?host=/run/postgresql",
+            "postgres://localhost/sinex_dev",
+            "postgresql://localhost/sinex_test",
+        ] {
+            validate_restore_database_url(url)
+                .unwrap_or_else(|error| panic!("{url} should be accepted: {error:#}"));
+        }
+    }
+
+    #[test]
+    fn restore_target_validation_rejects_production_shaped_database_names() {
+        let error = validate_restore_database_url("postgresql:///sinex_prod")
+            .expect_err("production-shaped restore targets must be rejected");
+        assert!(error.to_string().contains("disposable rehearsal target"));
     }
 }

@@ -1257,7 +1257,7 @@ async fn snapshot_restore_checks_database_empty_before_extracting_target()
             "--target-dir",
             &target.to_string_lossy(),
             "--restore-database-url",
-            "postgresql://restore/nonempty",
+            "postgresql://restore/sinex_restore_nonempty",
             "--pg-restore-bin",
             &pg_restore.to_string_lossy(),
             "--psql-bin",
@@ -1283,6 +1283,100 @@ async fn snapshot_restore_checks_database_empty_before_extracting_target()
         !restore_marker.exists(),
         "pg_restore must not run on a non-empty target"
     );
+    Ok(())
+}
+
+#[sinex_test]
+async fn quiesced_snapshot_auto_stop_targets_real_writer_units() -> xtask::sandbox::TestResult<()> {
+    let state_dir = make_fake_state_dir()?;
+    let output_dir = tempfile::tempdir()?;
+    let output_path = output_dir.path().join("auto-stop.sinex.tar.zst");
+    let tools = tempfile::tempdir()?;
+    let active_marker = tools.path().join("active-writers");
+    fs::write(&active_marker, b"running")?;
+    let stop_log = tools.path().join("stop.log");
+    let _systemctl = make_executable_script(
+        &tools,
+        "systemctl",
+        &format!(
+            "#!/bin/sh\ncase \"$1\" in\n  list-units) if [ -e '{}' ]; then printf '%s\\n' 'sinexd.service loaded active running' 'nats.service loaded active running' 'postgresql.service loaded active running'; fi ;;\n  stop) printf '%s\\n' \"$*\" >> '{}'; rm -f '{}' ;;\n  *) exit 0 ;;\nesac\n",
+            active_marker.display(),
+            stop_log.display(),
+            active_marker.display(),
+        ),
+    )?;
+    let path = format!(
+        "{}:{}",
+        tools.path().display(),
+        std::env::var("PATH").unwrap_or_default()
+    );
+
+    let output = sinexctl_bin()
+        .env("PATH", path)
+        .args([
+            "ops",
+            "state",
+            "snapshot",
+            "--output",
+            &output_path.to_string_lossy(),
+            "--state-dir",
+            &state_dir.path().to_string_lossy(),
+            "--components",
+            "state",
+            "--auto-stop",
+            "--compression",
+            "1",
+            "--workers",
+            "1",
+        ])
+        .output()?;
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        output.status.success(),
+        "auto-stop snapshot should succeed against active deployed writer names\nstdout: {stdout}\nstderr: {stderr}"
+    );
+    let manifest = AdminSnapshotInspectCommand {
+        archive: output_path,
+    }
+    .execute()?;
+    assert_eq!(manifest.mode, "quiesce");
+    let stop_log = fs::read_to_string(stop_log)?;
+    assert!(stop_log.contains("stop sinexd.service nats.service"));
+    assert!(!stop_log.contains("postgresql.service"));
+    assert!(
+        !active_marker.exists(),
+        "auto-stop must leave writer units inactive"
+    );
+    Ok(())
+}
+
+#[sinex_test]
+async fn snapshot_restore_rejects_production_shaped_database_target()
+-> xtask::sandbox::TestResult<()> {
+    let (_dir, archive_path) = make_postgres_snapshot_archive()?;
+    let target_parent = tempfile::tempdir()?;
+    let target = target_parent.path().join("production-shaped-target");
+
+    let command = AdminSnapshotRestoreCommand {
+        archive: archive_path,
+        target_dir: target,
+        dry_run: false,
+        allow_non_empty_target: false,
+        confirm_restore: true,
+        allow_active_services: true,
+        restore_database_url: Some("postgresql:///sinex_prod".to_string()),
+        pg_restore_bin: None,
+        psql_bin: None,
+    };
+    let error = command
+        .execute()
+        .expect_err("production-shaped database URLs must not be restore targets");
+    assert!(
+        format!("{error:#}").contains("disposable rehearsal target"),
+        "error should explain the rehearsal-target policy: {error:#}"
+    );
+    assert!(!target.exists(), "target extraction must not begin");
     Ok(())
 }
 
