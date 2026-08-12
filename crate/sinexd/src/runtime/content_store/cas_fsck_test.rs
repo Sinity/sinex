@@ -134,15 +134,46 @@ async fn detailed_cas_sweep_returns_orphan_identity_for_operator_output(
     let source = root_path.join("orphan.txt");
     tokio::fs::write(&source, b"operator-visible orphan").await?;
     let key = content_store.store_file(&source).await?;
+    let orphan_path = content_store
+        .path_if_local(&key.key)?
+        .expect("local CAS key must resolve to the stored orphan path");
+    std::fs::File::open(orphan_path.as_std_path())?.set_times(
+        std::fs::FileTimes::new().set_modified(
+            SystemTime::now()
+                .checked_sub(Duration::from_secs(11 * 60))
+                .expect("test clock must support an eleven-minute subtraction"),
+        ),
+    )?;
 
-    let (report, entries) = sweep_orphans_detailed(ctx.pool(), &content_store, false).await?;
+    // Apply-mode fsck refuses to delete when the paired database has no known
+    // local-CAS rows. Keep one synthetic authority row so this test reaches
+    // the orphan deletion and operator-detail path.
+    let retained_hash = blake3::hash(b"retained authority").to_hex().to_string();
+    ctx.pool
+        .blobs()
+        .insert(
+            Blob::builder()
+                .storage_backend(LOCAL_BLAKE3_CAS_BACKEND.to_string())
+                .content_hash(retained_hash.clone())
+                .size_bytes(17)
+                .checksum_blake3(retained_hash)
+                .build(),
+        )
+        .await?;
+
+    let (report, entries) = sweep_orphans_detailed(ctx.pool(), &content_store, true).await?;
     assert_eq!(report.orphaned, 1);
+    assert_eq!(report.dropped, 1);
     assert_eq!(entries.len(), 1);
     assert_eq!(entries[0].key, key);
     assert_eq!(entries[0].number, 1);
     assert_eq!(
         entries[0].key.key, key.key,
         "anti-vacuity: local-CAS detailed sweeps must preserve the exact orphan key for operator auditing"
+    );
+    assert!(
+        !orphan_path.exists(),
+        "apply-mode detailed sweep must remove the aged orphan after recording its identity"
     );
     Ok(())
 }
