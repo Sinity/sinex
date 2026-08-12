@@ -292,7 +292,7 @@ pub trait Windowed: Send + Sync + 'static {
     /// Default: accumulate all events, then emit if window is complete.
     fn recompute_window(
         &mut self,
-        state: &mut Self::State,
+        _state: &mut Self::State,
         events: Vec<Self::Input>,
         context: &AutomatonContext,
     ) -> impl std::future::Future<
@@ -401,7 +401,7 @@ pub trait ScopeReconciler: Send + Sync + 'static {
     /// Default: reconcile each event in the working set, collecting outputs.
     fn recompute_scope(
         &mut self,
-        state: &mut Self::State,
+        _state: &mut Self::State,
         scope_key: &str,
         working_set: Vec<Self::Input>,
         context: &AutomatonContext,
@@ -659,9 +659,6 @@ impl<N: Transducer> Automaton for TransducerWrapper<N> {
     }
     fn automaton_model(&self) -> AutomatonModel {
         self.0.automaton_model()
-    }
-    fn supports_scope_invalidation_recompute(&self) -> bool {
-        self.0.supports_scope_invalidation_recompute()
     }
     const OUTPUT_DECLARATIONS: &'static [DerivationOutputDeclaration] = N::OUTPUT_DECLARATIONS;
 
