@@ -158,6 +158,12 @@ sinexctl ops state restore \
     --confirm-restore
 ```
 
+The restore database name must identify a disposable rehearsal target. Use a
+name containing `dev`, `test`, `drill`, `restore`, `scratch`, or `tmp`, such as
+`sinex_restore_drill`. This naming check complements the live PostgreSQL
+emptiness query and prevents an empty production-shaped URL such as
+`sinex_prod` from being accepted as a drill target.
+
 Isolated drill execution refuses to run unless:
 
 - `--confirm-restore` is present.
@@ -166,8 +172,9 @@ Isolated drill execution refuses to run unless:
   explicitly passed for an isolated drill target.
 - Archives with non-empty `postgres` components include
   `--restore-database-url`, pointing at an empty drill database. The target
-  emptiness query must succeed; missing row-count evidence or a failed query
-  makes the restore verdict fail closed.
+  URL must use a disposable rehearsal database name and the emptiness query
+  must succeed; missing row-count evidence or a failed query makes the restore
+  verdict fail closed.
 
 The deployed-topology round-trip is an executable seam, not evidence that a
 NixOS integration run occurred. Use a dedicated empty drill database and opt

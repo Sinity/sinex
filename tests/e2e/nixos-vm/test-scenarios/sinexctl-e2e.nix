@@ -274,17 +274,22 @@ pkgs.testers.nixosTest {
         restore_target = "/tmp/sinexctl-real-roundtrip-target"
         drill_database = "sinex_restore_drill"
         machine.succeed(f"runuser -u postgres -- createdb {drill_database}")
-        machine.succeed(
+        snapshot = machine.succeed(
             "sinexctl --insecure ops state snapshot "
             f"--output {archive} --database-url 'postgresql:///sinex_dev?host=/run/postgresql' "
-            "--mode live --compression 1 --workers 1 "
+            "--mode quiesce --auto-stop --compression 1 --workers 1 "
             "--components postgres,nats,cas,state"
         )
+        snapshot_values = parse_json_output(snapshot)
+        assert snapshot_values, f"snapshot should return structured evidence: {snapshot}"
+        snapshot_payload = snapshot_values[-1].get("payload", snapshot_values[-1])
+        assert snapshot_payload.get("mode") == "quiesce", \
+            f"snapshot must record quiesce mode after auto-stop: {snapshot_payload}"
         restore = machine.succeed(
             "sinexctl --insecure ops state restore "
             f"--archive {archive} --target-dir {restore_target} "
             f"--restore-database-url 'postgresql:///{drill_database}?host=/run/postgresql' "
-            "--confirm-restore --allow-active-services --format json"
+            "--confirm-restore --format json"
         )
         parsed = parse_json_output(restore)
         assert parsed, f"restore drill should return structured evidence: {restore}"
