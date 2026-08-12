@@ -626,12 +626,14 @@ fn copy_dir_contents_live(src: &Path, dst: &Path) -> Result<()> {
         };
         let src_path = entry.path();
         let dst_path = dst.join(entry.file_name());
-        copy_entry_live(&src_path, &dst_path)?;
+        cp_entry_live(&src_path, &dst_path)?;
     }
     Ok(())
 }
 
-fn copy_entry_live(src: &Path, dst: &Path) -> Result<()> {
+/// Copy one live-snapshot entry while treating a source that vanishes between
+/// enumeration and copying as an expected race.
+pub fn cp_entry_live(src: &Path, dst: &Path) -> Result<()> {
     let metadata = match std::fs::symlink_metadata(src) {
         Ok(metadata) => metadata,
         Err(error) if error.kind() == ErrorKind::NotFound => return Ok(()),

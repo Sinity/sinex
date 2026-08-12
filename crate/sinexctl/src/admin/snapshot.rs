@@ -659,7 +659,7 @@ impl AdminSnapshotCommand {
                     .with_context(|| format!("copy {name} component from {}", src.display()))?;
             }
             let bytes = estimate_dir_bytes(&component_root);
-            let blake3 = blake3_dir(&component_root)
+            let blake3 = component_blake3(name, &component_root)
                 .with_context(|| format!("hash captured {name} component"))?;
             (bytes, blake3)
         };
@@ -734,17 +734,28 @@ impl AdminSnapshotCommand {
                     }
                 } else {
                     let dst_file = dst_dir.join(&fname);
-                    std::fs::copy(&src_entry, &dst_file).with_context(|| {
-                        format!(
-                            "copy state file {} -> {}",
-                            src_entry.display(),
-                            dst_file.display()
-                        )
-                    })?;
+                    if tolerate_vanished_files {
+                        exec::cp_entry_live(&src_entry, &dst_file).with_context(|| {
+                            format!(
+                                "live-copy state file {} -> {}",
+                                src_entry.display(),
+                                dst_file.display()
+                            )
+                        })?;
+                    } else {
+                        std::fs::copy(&src_entry, &dst_file).with_context(|| {
+                            format!(
+                                "copy state file {} -> {}",
+                                src_entry.display(),
+                                dst_file.display()
+                            )
+                        })?;
+                    }
                 }
             }
             let bytes = estimate_dir_bytes(&dst_dir);
-            let blake3 = blake3_dir(&dst_dir).context("hash captured state component")?;
+            let blake3 =
+                component_blake3("state", &dst_dir).context("hash captured state component")?;
             (bytes, blake3)
         };
 
@@ -1366,8 +1377,13 @@ fn observe_restored_target(
     let manifest_private_mode_state_present = expected_private_mode_state_present(manifest)
         .unwrap_or_else(|| archive_path_contains(archive_entries, "state/private-mode/state.json"));
     let source_ids_match = source_ids == manifest.source_ids;
+    let postgres_component_is_non_empty = manifest
+        .components
+        .iter()
+        .any(|component| component.name == "postgres" && component.bytes > 0);
     let postgres_row_counts_match = expected_postgres_row_counts
-        .map(|expected| postgres_row_counts.is_some_and(|observed| observed == &expected));
+        .map(|expected| postgres_row_counts.is_some_and(|observed| observed == &expected))
+        .or_else(|| postgres_component_is_non_empty.then_some(false));
     let nats_member_paths_match = expected_nats_member_paths.map(|expected| {
         nats_member_paths
             .as_ref()
@@ -1425,7 +1441,10 @@ fn restore_failed_checks(input: &RestoreFailedCheckInput<'_>) -> Vec<String> {
             failed.push(format!("component_blake3_matches.{component}"));
         }
     }
-    if input.postgres_row_counts_match == Some(false) {
+    if input
+        .postgres_row_counts_match
+        .is_some_and(|matched| !matched)
+    {
         failed.push("postgres_row_counts_match".to_string());
     }
     if input.nats_member_paths_match == Some(false) {
@@ -1455,23 +1474,21 @@ fn observed_component_blake3(
                     let component_root = target_dir.join(&component.name);
                     component_root
                         .exists()
-                        .then(|| {
-                            blake3_dir_excluding(&component_root, &["streams.summary.json"]).ok()
-                        })
+                        .then(|| component_blake3("nats", &component_root).ok())
                         .flatten()
                 }
                 "state" | "cas" => {
                     let component_root = target_dir.join(&component.name);
                     component_root
                         .exists()
-                        .then(|| blake3_dir(&component_root).ok())
+                        .then(|| component_blake3(&component.name, &component_root).ok())
                         .flatten()
                 }
                 other => {
                     let component_root = target_dir.join(other);
                     component_root
                         .exists()
-                        .then(|| blake3_dir(&component_root).ok())
+                        .then(|| component_blake3(other, &component_root).ok())
                         .flatten()
                 }
             }?;
@@ -1655,13 +1672,17 @@ fn blake3_file(path: &Path) -> Result<String> {
     Ok(hash.to_hex().to_string())
 }
 
-/// Compute a deterministic BLAKE3 summary over a directory tree.
-///
-/// Strategy: sort all regular file paths lexicographically, hash each file's
-/// contents, then hash the concatenation of (`relative_path` + `file_hash`) pairs.
-/// This gives a stable content-addressed fingerprint of the tree.
-fn blake3_dir(dir: &Path) -> Result<String> {
-    blake3_dir_excluding(dir, &[])
+const NATS_SUMMARY_PATH: &str = "streams.summary.json";
+
+/// Hash a captured component using the same content policy at capture and
+/// restore time. The NATS stream listing is operator metadata, not JetStream
+/// state, so it is excluded from both sides of the comparison.
+fn component_blake3(name: &str, root: &Path) -> Result<String> {
+    let excluded = match name {
+        "nats" => &[NATS_SUMMARY_PATH][..],
+        _ => &[][..],
+    };
+    blake3_dir_excluding(root, excluded)
 }
 
 fn blake3_dir_excluding(dir: &Path, excluded_relative_paths: &[&str]) -> Result<String> {
