@@ -309,11 +309,13 @@ impl AdminSnapshotCommand {
     pub fn execute(&self) -> Result<SnapshotResult> {
         let mode = SnapshotMode::parse(&self.mode)?;
 
-        let state_dir = match self.state_dir.clone() {
-            Some(path) => path,
-            None => exec::sinex_service_path("SINEX_STATE_DIR")
-                .context("resolve deployed SINEX_STATE_DIR; pass --state-dir for an explicit fixture or alternate deployment")?,
-        };
+        let captures_nats = self.components.iter().any(|c| c == &Component::Nats);
+        let topology = exec::SnapshotTopology::discover(
+            self.state_dir.as_deref(),
+            captures_nats && !self.dry_run,
+            !self.dry_run && mode.requires_quiescence(),
+        )?;
+        let state_dir = topology.state_dir.clone();
         let content_store_dir = match self.state_dir.as_ref() {
             Some(_) => state_dir.join("blob-repository"),
             None => exec::sinex_service_path("SINEX_CONTENT_STORE_PATH")
@@ -335,12 +337,11 @@ impl AdminSnapshotCommand {
 
         // 2. Verify/stop services.
         if !self.dry_run && mode.requires_quiescence() {
-            let active = exec::active_sinex_services()
-                .context("inspect active services before quiesced snapshot")?;
+            let active = &topology.active_writer_units;
             if !active.is_empty() {
                 if self.auto_stop {
                     eprintln!("Stopping {} active sinex service(s)…", active.len());
-                    exec::stop_sinex_services()
+                    exec::stop_sinex_services_for(active)
                         .context("auto-stop sinex services before snapshot")?;
                 } else {
                     bail!(
@@ -393,6 +394,7 @@ impl AdminSnapshotCommand {
             &created_at,
             &state_dir,
             &content_store_dir,
+            &topology,
             database_url.as_deref(),
             &mut staging,
         );
@@ -413,6 +415,7 @@ impl AdminSnapshotCommand {
         created_at: &str,
         state_dir: &Path,
         content_store_dir: &Path,
+        topology: &exec::SnapshotTopology,
         database_url: Option<&str>,
         staging: &mut StagingDir,
     ) -> Result<SnapshotResult> {
@@ -430,12 +433,10 @@ impl AdminSnapshotCommand {
         }
 
         if component_set.contains("nats") {
-            let nats_src = if self.dry_run {
-                state_dir.join("nats/jetstream")
-            } else {
-                exec::nats_jetstream_store_dir()
-                    .context("discover the deployed NATS JetStream store directory for snapshot")?
-            };
+            let nats_src = topology
+                .nats_store_dir
+                .clone()
+                .unwrap_or_else(|| state_dir.join("nats/jetstream"));
             if !nats_src.is_dir() {
                 bail!(
                     "NATS JetStream store directory {} is absent; refusing to record an empty backup",
@@ -797,8 +798,9 @@ impl AdminSnapshotRestoreCommand {
             );
         }
 
-        let active_services = exec::active_sinex_services()
-            .context("inspect active services before restore planning")?;
+        let topology = exec::SnapshotTopology::discover(None, false, true)
+            .context("discover deployed backup topology before restore planning")?;
+        let active_services = topology.active_writer_units.clone();
         let mut warnings = Vec::new();
         if !active_services.is_empty() {
             warnings.push(format!(
@@ -830,7 +832,12 @@ impl AdminSnapshotRestoreCommand {
         let observed_checks = if self.dry_run {
             None
         } else {
-            Some(self.execute_restore_drill(&inspect, &archive_entries, &target_state)?)
+            Some(self.execute_restore_drill(
+                &inspect,
+                &archive_entries,
+                &target_state,
+                &topology,
+            )?)
         };
 
         Ok(SnapshotRestorePlanResult {
@@ -854,6 +861,7 @@ impl AdminSnapshotRestoreCommand {
         inspect: &SnapshotInspectResult,
         archive_entries: &[String],
         target_state: &RestoreTargetState,
+        topology: &exec::SnapshotTopology,
     ) -> Result<RestoreObservedChecks> {
         if !self.confirm_restore {
             bail!(
@@ -862,8 +870,7 @@ impl AdminSnapshotRestoreCommand {
             );
         }
         if !self.allow_active_services {
-            let active_services = exec::active_sinex_services()
-                .context("inspect active services before restore drill")?;
+            let active_services = &topology.active_writer_units;
             if !active_services.is_empty() {
                 bail!(
                     "sinex services are active; stop them before restore drill execution or pass \
@@ -908,7 +915,7 @@ impl AdminSnapshotRestoreCommand {
             )
         })?;
 
-        let postgres_row_counts = self.execute_postgres_restore_drill(&inspect.manifest)?;
+        let postgres_row_counts = self.execute_postgres_restore_drill(&inspect.manifest, topology)?;
 
         Ok(observe_restored_target(
             &inspect.manifest,
@@ -921,6 +928,7 @@ impl AdminSnapshotRestoreCommand {
     fn execute_postgres_restore_drill(
         &self,
         manifest: &SnapshotManifest,
+        topology: &exec::SnapshotTopology,
     ) -> Result<Option<BTreeMap<String, i64>>> {
         let Some(component) = manifest
             .components
@@ -946,16 +954,10 @@ impl AdminSnapshotRestoreCommand {
             )
         })?;
         let dump_path = self.target_dir.join(&component.path);
-        let user_relation_count = exec::pg_user_relation_count(
+        topology.verify_restore_database_empty(
             restore_database_url,
             self.psql_bin.as_deref(),
-        )
-        .context("verify restore target database is empty")?;
-        if user_relation_count != 0 {
-            bail!(
-                "restore target database is not empty: {user_relation_count} user relation(s) exist"
-            );
-        }
+        )?;
         exec::psql_execute(
             restore_database_url,
             "CREATE EXTENSION IF NOT EXISTS timescaledb; SELECT timescaledb_pre_restore();",

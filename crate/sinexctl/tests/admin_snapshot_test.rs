@@ -1007,6 +1007,62 @@ async fn snapshot_restore_execute_preserves_dry_run_plan() -> xtask::sandbox::Te
     Ok(())
 }
 
+/// Full backup -> restore verification against the deployed NixOS topology.
+///
+/// This is opt-in because it reads the live state root and restores PostgreSQL
+/// into an operator-provided empty drill database. Run it with
+/// `SINEX_REAL_TOPOLOGY_TEST=1`, `DATABASE_URL=<live-source-url>`, and
+/// `SINEX_REAL_RESTORE_DATABASE_URL=<dedicated-empty-drill-url>`.
+#[sinex_test]
+async fn real_deployed_topology_backup_restore_round_trip() -> TestResult<()> {
+    if std::env::var("SINEX_REAL_TOPOLOGY_TEST").as_deref() != Ok("1") {
+        return Ok(());
+    }
+    let source_database_url = std::env::var("DATABASE_URL")
+        .expect("DATABASE_URL must identify the real deployed source database");
+    let restore_database_url = std::env::var("SINEX_REAL_RESTORE_DATABASE_URL")
+        .expect("SINEX_REAL_RESTORE_DATABASE_URL must identify a dedicated empty drill database");
+    let output_dir = tempfile::tempdir()?;
+    let archive = output_dir.path().join("real-topology.sinex.tar.zst");
+
+    let snapshot = AdminSnapshotCommand {
+        output: archive.clone(),
+        compression: 3,
+        workers: 1,
+        mode: "live".to_string(),
+        dry_run: false,
+        database_url: Some(source_database_url),
+        state_dir: None,
+        auto_stop: false,
+        components: Component::all(),
+    }
+    .execute()?;
+    assert_eq!(snapshot.output_path.as_deref(), Some(archive.to_str().unwrap()));
+
+    let target_parent = tempfile::tempdir()?;
+    let restore = AdminSnapshotRestoreCommand {
+        archive,
+        target_dir: target_parent.path().join("restore-target"),
+        dry_run: false,
+        allow_non_empty_target: false,
+        confirm_restore: true,
+        allow_active_services: true,
+        restore_database_url: Some(restore_database_url),
+        pg_restore_bin: None,
+        psql_bin: None,
+    }
+    .execute()?;
+    let observed = restore
+        .observed_checks
+        .expect("real restore drill must produce observations");
+    assert!(
+        observed.checks_passed,
+        "real deployed-topology restore checks failed: {:?}",
+        observed.failed_checks
+    );
+    Ok(())
+}
+
 #[sinex_test]
 async fn snapshot_restore_executes_postgres_drill_with_row_count_check()
 -> xtask::sandbox::TestResult<()> {
@@ -1087,7 +1143,7 @@ async fn snapshot_restore_ignores_nats_summary_in_component_hash() -> xtask::san
 
     let cmd = AdminSnapshotRestoreCommand {
         archive: archive_path,
-        target_dir: target,
+        target_dir: target.clone(),
         dry_run: false,
         allow_non_empty_target: false,
         confirm_restore: true,
@@ -1102,6 +1158,12 @@ async fn snapshot_restore_ignores_nats_summary_in_component_hash() -> xtask::san
         .as_ref()
         .ok_or_else(|| color_eyre::eyre::eyre!("restore drill should report observations"))?;
 
+    assert!(
+        target
+            .join("nats/jetstream/streams/events/meta.json")
+            .exists(),
+        "restore target should contain the captured JetStream member"
+    );
     assert!(observed.checks_passed);
     assert!(observed.failed_checks.is_empty());
     assert_eq!(observed.nats_member_count, Some(1));

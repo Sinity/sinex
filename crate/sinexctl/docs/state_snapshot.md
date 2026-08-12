@@ -165,6 +165,22 @@ Isolated drill execution refuses to run unless:
   emptiness query must succeed; missing row-count evidence or a failed query
   makes the restore verdict fail closed.
 
+For the full deployed-topology integration test, use a dedicated empty drill
+database and opt in explicitly:
+
+```bash
+SINEX_REAL_TOPOLOGY_TEST=1 \
+DATABASE_URL="$DATABASE_URL" \
+SINEX_REAL_RESTORE_DATABASE_URL="$SINEX_RESTORE_DATABASE_URL" \
+  xtask test -p sinexctl -E 'test(real_deployed_topology_backup_restore_round_trip)'
+```
+
+The test discovers `SINEX_STATE_DIR`, the NATS `jetstream.store_dir`, and
+active writer units from the live NixOS deployment, captures all components,
+then restores the archive into the supplied empty PostgreSQL drill database
+and isolated filesystem target. It is intentionally opt-in because it reads
+live state and requires an operator-provisioned empty database.
+
 The JSON/YAML result includes `observed_checks` comparing the isolated drill
 target against the manifest: source IDs, NATS JetStream member paths when
 present, CAS blob count when present, and private-mode state presence. When a

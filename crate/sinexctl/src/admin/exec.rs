@@ -163,6 +163,70 @@ pub fn pg_user_relation_count(database_url: &str, psql_bin: Option<&Path>) -> Re
         .context("parse restore-target user relation count")
 }
 
+/// The independently deployed surfaces that a backup/restore operation must
+/// understand.  All callers use this discovery result instead of inventing a
+/// state path, unit glob, or database-target assumption locally.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SnapshotTopology {
+    pub state_dir: PathBuf,
+    pub nats_store_dir: Option<PathBuf>,
+    pub active_writer_units: Vec<String>,
+}
+
+impl SnapshotTopology {
+    /// Discover the deployed topology needed by one snapshot/restore route.
+    /// Explicit state paths are test/alternate-deployment overrides; the
+    /// normal path reads the service environment and NATS unit configuration.
+    pub fn discover(
+        state_dir_override: Option<&Path>,
+        require_nats: bool,
+        inspect_active_units: bool,
+    ) -> Result<Self> {
+        let state_dir = match state_dir_override {
+            Some(path) => path.to_path_buf(),
+            None => sinex_service_path("SINEX_STATE_DIR")
+                .context("resolve deployed SINEX_STATE_DIR")?,
+        };
+        let nats_store_dir = if require_nats {
+            Some(if state_dir_override.is_some() {
+                state_dir.join("nats/jetstream")
+            } else {
+                nats_jetstream_store_dir()
+                    .context("discover deployed NATS JetStream store directory")?
+            })
+        } else {
+            None
+        };
+        let active_writer_units = if inspect_active_units {
+            active_sinex_services().context("inspect active snapshot-writer units")?
+        } else {
+            Vec::new()
+        };
+        Ok(Self {
+            state_dir,
+            nats_store_dir,
+            active_writer_units,
+        })
+    }
+
+    /// Verify the isolated PostgreSQL restore target through the same
+    /// topology object that discovered the writer services and state roots.
+    pub fn verify_restore_database_empty(
+        &self,
+        database_url: &str,
+        psql_bin: Option<&Path>,
+    ) -> Result<()> {
+        let user_relation_count = pg_user_relation_count(database_url, psql_bin)
+            .context("verify restore target database is empty")?;
+        if user_relation_count != 0 {
+            bail!(
+                "restore target database is not empty: {user_relation_count} user relation(s) exist"
+            );
+        }
+        Ok(())
+    }
+}
+
 /// Restore a custom-format `pg_dump` archive into `database_url`.
 pub fn pg_restore(
     database_url: &str,
@@ -447,13 +511,18 @@ pub fn active_sinex_services() -> Result<Vec<String>> {
 
 /// Stop the active writer services without stopping PostgreSQL via a target.
 pub fn stop_sinex_services() -> Result<()> {
-    let active = active_sinex_services()?;
+    let topology = SnapshotTopology::discover(None, false, true)?;
+    stop_sinex_services_for(&topology.active_writer_units)
+}
+
+/// Stop the writer units already observed by [`SnapshotTopology`].
+pub fn stop_sinex_services_for(active: &[String]) -> Result<()> {
     if active.is_empty() {
         return Ok(());
     }
     let output = Command::new("systemctl")
         .arg("stop")
-        .args(&active)
+        .args(active)
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::piped())
@@ -537,16 +606,24 @@ pub fn nats_jetstream_store_dir() -> Result<PathBuf> {
         bail!("systemctl could not inspect nats.service");
     }
     let command = String::from_utf8_lossy(&output.stdout);
-    let config_path = command
-        .split_whitespace()
-        .collect::<Vec<_>>()
+    let config_path = nats_config_path_from_exec_start(&command)?;
+    let config = std::fs::read_to_string(&config_path)
+        .with_context(|| format!("read NATS config {}", config_path.display()))?;
+    nats_store_dir_from_config(&config)
+        .with_context(|| format!("parse NATS config {} as JSON", config_path.display()))
+}
+
+fn nats_config_path_from_exec_start(exec_start: &str) -> Result<PathBuf> {
+    let tokens = exec_start.split_whitespace().collect::<Vec<_>>();
+    let config_path = tokens
         .windows(2)
         .find_map(|parts| (parts[0] == "-c").then_some(parts[1]))
         .ok_or_else(|| eyre!("nats.service ExecStart does not expose a -c config path"))?;
-    let config = std::fs::read_to_string(config_path)
-        .with_context(|| format!("read NATS config {config_path}"))?;
-    let config: Value = serde_json::from_str(&config)
-        .with_context(|| format!("parse NATS config {config_path} as JSON"))?;
+    Ok(PathBuf::from(config_path))
+}
+
+fn nats_store_dir_from_config(config: &str) -> Result<PathBuf> {
+    let config: Value = serde_json::from_str(config)?;
     let store_dir = config
         .get("jetstream")
         .and_then(|jetstream| jetstream.get("store_dir"))
@@ -693,5 +770,36 @@ pub fn cp_entry_live(src: &Path, dst: &Path) -> Result<()> {
         }
     } else {
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{nats_config_path_from_exec_start, nats_store_dir_from_config};
+
+    #[test]
+    fn parses_systemd_nats_execstart_and_json_store_dir() {
+        let exec_start = "{ path=/nix/store/nats/bin/nats-server ; argv[]=/nix/store/nats/bin/nats-server -c /nix/store/config ; status=0/0 }";
+        assert_eq!(
+            nats_config_path_from_exec_start(exec_start)
+                .expect("systemd ExecStart should expose -c config path")
+                .to_string_lossy(),
+            "/nix/store/config"
+        );
+        assert_eq!(
+            nats_store_dir_from_config(
+                r#"{"jetstream":{"store_dir":"/var/lib/nats/jetstream"}}"#
+            )
+            .expect("NATS JSON should expose jetstream.store_dir")
+            .to_string_lossy(),
+            "/var/lib/nats/jetstream"
+        );
+    }
+
+    #[test]
+    fn rejects_nats_config_without_store_dir() {
+        let error = nats_store_dir_from_config(r#"{"jetstream":{}}"#)
+            .expect_err("missing NATS store_dir must not silently select a fallback");
+        assert!(error.to_string().contains("store_dir"));
     }
 }

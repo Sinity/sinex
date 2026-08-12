@@ -50,10 +50,14 @@ pub struct ComponentRecord {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(untagged)]
 pub enum ComponentExtras {
+    /// NATS `JetStream` state member paths.
+    ///
+    /// Keep this before `Postgres`: `PostgresExtras::row_counts` is optional,
+    /// so serde's untagged matching would otherwise accept every NATS extras
+    /// object as an empty Postgres record and discard `member_paths`.
+    Nats(NatsExtras),
     /// `PostgreSQL` row counts per table.
     Postgres(PostgresExtras),
-    /// NATS `JetStream` state member paths.
-    Nats(NatsExtras),
     /// CAS blob count.
     Cas(CasExtras),
     /// Runtime state metadata.
