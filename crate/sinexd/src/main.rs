@@ -417,6 +417,11 @@ async fn serve(cli: &Cli) -> color_eyre::Result<()> {
             sinex_db::apply_schema_for_url(&config.database_url).await?;
         }
 
+        // Validate the serializer/schema contract before any sources or
+        // consumers can start. The COPY path retains its lazy OnceLock check
+        // as defense in depth, but startup must fail before the first large
+        // batch can reach PostgreSQL.
+        sinex_db::verify_event_copy_contract();
         config.validate().await?;
         Some(config)
     } else {
