@@ -433,9 +433,10 @@ async fn replay_execution_fails_when_replacement_recording_fails(ctx: TestContex
         .events()
         .get_replacements_by_operation(planned.operation_id)
         .await?;
-    assert!(
-        replacements.is_empty(),
-        "failed replacement recording must not partially insert lineage rows"
+    assert_eq!(
+        replacements.len(),
+        1,
+        "replacement-record failure compensation should retry and leave one complete lineage row"
     );
 
     await_fake_scan_source_runtime(scan_handle, "replacement-record-fail-test").await?;

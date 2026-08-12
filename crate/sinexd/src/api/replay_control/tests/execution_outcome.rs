@@ -3,20 +3,24 @@ use super::*;
 async fn replay_execution_records_outcome(ctx: TestContext) -> Result<()> {
     let ctx = ctx.with_nats().dedicated().await?;
 
-    let (material_id, inserted) = loop {
-        let material_id = ctx.create_source_material(Some("replay-outcome")).await?;
-        let event = DynamicPayload::new(
-            "fs-test",
-            FileCreatedPayload::EVENT_TYPE.as_static_str(),
-            json!({ "path": "/tmp/replay.txt" }),
-        )
-        .from_material_at(material_id, i * 10)
-        .build()?;
-        let inserted = ctx.pool.events().insert(event).await?;
-        if let Some(ts_orig) = inserted.ts_orig
-            && ts_orig.inner().nanosecond() > 0
-        {
-            break (material_id, inserted);
+    let (material_id, inserted) = {
+        let mut i = 0;
+        loop {
+            let material_id = ctx.create_source_material(Some("replay-outcome")).await?;
+            let event = DynamicPayload::new(
+                "fs-test",
+                FileCreatedPayload::EVENT_TYPE.as_static_str(),
+                json!({ "path": "/tmp/replay.txt" }),
+            )
+            .from_material_at(material_id, i * 10)
+            .build()?;
+            let inserted = ctx.pool.events().insert(event).await?;
+            if let Some(ts_orig) = inserted.ts_orig
+                && ts_orig.inner().nanosecond() > 0
+            {
+                break (material_id, inserted);
+            }
+            i += 1;
         }
     };
 
