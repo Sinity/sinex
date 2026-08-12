@@ -1,6 +1,6 @@
 use super::{
-    configured_hostname_resolution_probe, resolution_target_host, verify_disk_space,
-    verify_disk_space_for_paths, verify_filesystem_permissions,
+    configured_data_dir, configured_hostname_resolution_probe, resolution_target_host,
+    verify_disk_space, verify_disk_space_for_paths, verify_filesystem_permissions,
 };
 use serde_json::Value;
 use std::fs;
@@ -12,6 +12,20 @@ fn spacious_tempdir() -> ::xtask::sandbox::TestResult<TempDir> {
     let root = std::env::current_dir()?.join(".sinex/test-preflight-resources");
     fs::create_dir_all(&root)?;
     Ok(tempdir_in(root)?)
+}
+
+#[sinex_test]
+async fn configured_data_dir_prefers_deployed_content_store_path()
+-> ::xtask::sandbox::TestResult<()> {
+    let root = spacious_tempdir()?;
+    let deployed_cas = root.path().join("deployed-cas");
+    let stale_data_dir = root.path().join("stale-data");
+    let mut env = EnvGuard::new();
+    env.set("SINEX_CONTENT_STORE_PATH", &deployed_cas);
+    env.set("SINEX_DATA_DIR", &stale_data_dir);
+
+    assert_eq!(configured_data_dir()?, deployed_cas.to_string_lossy());
+    Ok(())
 }
 
 #[sinex_test]

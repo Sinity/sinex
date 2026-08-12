@@ -36,12 +36,13 @@ fn configured_state_dir() -> RuntimeResult<String> {
 }
 
 fn configured_data_dir() -> RuntimeResult<String> {
-    shared_env::strict_var("SINEX_DATA_DIR")?.map_or_else(
-        || Ok(
-            crate::runtime::content_store::default_content_store_path().to_string(),
-        ),
-        Ok,
-    )
+    if let Some(content_store_path) = shared_env::strict_var("SINEX_CONTENT_STORE_PATH")? {
+        return Ok(content_store_path);
+    }
+    if let Some(data_dir) = shared_env::strict_var("SINEX_DATA_DIR")? {
+        return Ok(data_dir);
+    }
+    Ok(crate::runtime::content_store::default_content_store_path().to_string())
 }
 
 fn configured_log_dir() -> RuntimeResult<String> {
