@@ -5,8 +5,8 @@
 //! source-material/blob/ledger commit boundary lives in `finalization_transaction`.
 
 use camino::Utf8PathBuf;
-use serde::Serialize;
 use futures::FutureExt as _;
+use serde::Serialize;
 use sinex_db::repositories::DbPoolExt;
 use sinex_db::schema::defs::records::SourceMaterialRecord;
 use sinex_primitives::Timestamp;
@@ -21,10 +21,8 @@ use tokio::sync::Mutex;
 use tokio::task::JoinHandle;
 use tracing::{debug, error, info, warn};
 
+use crate::event_engine::durable_failure::{DURABLE_FAILURE_ID_HEADER, persist_failure_evidence};
 use crate::event_engine::{EventEngineResult, SinexError};
-use crate::event_engine::durable_failure::{
-    DURABLE_FAILURE_ID_HEADER, persist_failure_evidence,
-};
 use crate::runtime::nats_payload::ensure_nats_payload_fits;
 
 use super::assembly_state_machine::{
@@ -64,7 +62,8 @@ fn final_material_status(metadata: &JsonValue) -> MaterialStatus {
 /// DLQ payload for material failures
 #[derive(Debug, Serialize)]
 struct MaterialDlqPayload {
-    material_id: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    material_id: Option<String>,
     error: String,
     context: JsonValue,
     failed_at: Timestamp,
@@ -207,20 +206,34 @@ impl MaterialAssembler {
         error: impl Into<String>,
         context: JsonValue,
     ) -> EventEngineResult<Uuid> {
+        self.route_material_frame_error(Some(material_id), error, context)
+            .await
+    }
+
+    /// Route a material frame failure when decoding may not have produced a
+    /// material ID. A generated witness ID keeps the malformed frame
+    /// operator-visible and lets the caller settle it only after the confirmed
+    /// JetStream publish succeeds.
+    pub(super) async fn route_material_frame_error(
+        &self,
+        material_id: Option<Uuid>,
+        error: impl Into<String>,
+        context: JsonValue,
+    ) -> EventEngineResult<Uuid> {
+        let failure_event_id = material_id.unwrap_or_else(Uuid::now_v7);
         let payload = MaterialDlqPayload {
-            material_id: material_id.to_string(),
+            material_id: material_id.map(|id| id.to_string()),
             error: error.into(),
             context,
             failed_at: Timestamp::now(),
         };
 
         let payload_json = serde_json::to_value(&payload).map_err(|error| {
-            SinexError::serialization("Failed to encode material DLQ evidence")
-                .with_source(error)
+            SinexError::serialization("Failed to encode material DLQ evidence").with_source(error)
         })?;
         let durable_failure_id = persist_failure_evidence(
             &self.pool,
-            material_id,
+            failure_event_id,
             "event-engine.material-assembler",
             "source-material",
             "material.assembly",
@@ -230,6 +243,7 @@ impl MaterialAssembler {
             serde_json::json!({
                 "durability_source": "postgres_pre_material_dlq_settlement",
                 "material_id": material_id,
+                "failure_event_id": failure_event_id,
             }),
             0,
         )
@@ -239,12 +253,15 @@ impl MaterialAssembler {
             error!(
                 target: "sinex_metrics",
                 metric = "event_engine.material_dlq_publish_failures_total",
-                material_id = %material_id,
+                material_id = ?material_id,
                 error = %e,
                 "Failed to encode DLQ payload"
             );
             SinexError::serialization(format!("Failed to encode material DLQ payload: {e}"))
-                .with_context("material_id", material_id.to_string())
+                .with_context(
+                    "material_id",
+                    material_id.map(|id| id.to_string()).unwrap_or_default(),
+                )
         })?;
 
         let mut headers = async_nats::HeaderMap::new();
@@ -256,11 +273,14 @@ impl MaterialAssembler {
 
         ensure_nats_payload_fits("source-material DLQ entry", &self.dlq_subject, bytes.len())
             .map_err(|error| {
-                let error = error.with_context("material_id", material_id.to_string());
+                let error = error.with_context(
+                    "material_id",
+                    material_id.map(|id| id.to_string()).unwrap_or_default(),
+                );
                 error!(
                     target: "sinex_metrics",
                     metric = "event_engine.material_dlq_publish_failures_total",
-                    material_id = %material_id,
+                    material_id = ?material_id,
                     error = %error,
                     "Failed to publish material DLQ entry"
                 );
@@ -279,12 +299,15 @@ impl MaterialAssembler {
                 error!(
                     target: "sinex_metrics",
                     metric = "event_engine.material_dlq_publish_failures_total",
-                    material_id = %material_id,
+                    material_id = ?material_id,
                     error = %e,
                     "Failed to publish material DLQ entry"
                 );
                 SinexError::network("Failed to publish material DLQ entry")
-                    .with_context("material_id", material_id.to_string())
+                    .with_context(
+                        "material_id",
+                        material_id.map(|id| id.to_string()).unwrap_or_default(),
+                    )
                     .with_source(e)
             })?
             .await
@@ -292,16 +315,19 @@ impl MaterialAssembler {
                 error!(
                     target: "sinex_metrics",
                     metric = "event_engine.material_dlq_publish_failures_total",
-                    material_id = %material_id,
+                    material_id = ?material_id,
                     error = %e,
                     "Failed to confirm material DLQ entry"
                 );
                 SinexError::network("Failed to confirm material DLQ entry")
-                    .with_context("material_id", material_id.to_string())
+                    .with_context(
+                        "material_id",
+                        material_id.map(|id| id.to_string()).unwrap_or_default(),
+                    )
                     .with_source(e)
             })?;
 
-        debug!(material_id = %material_id, "Routed to DLQ");
+        debug!(material_id = ?material_id, failure_event_id = %failure_event_id, "Routed to DLQ");
         Ok(durable_failure_id)
     }
 

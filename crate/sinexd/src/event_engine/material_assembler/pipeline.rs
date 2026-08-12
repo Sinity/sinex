@@ -111,12 +111,12 @@ async fn apply_redelivery_decision(
             nak_with_warning(message, Some(delay), reason, material_id.as_ref()).await
         }
         RedeliveryDecision::Dlq { reason } => {
-            if let Some(material_id) = material_id {
-                match assembler
-                    .route_material_error(material_id, reason.clone(), dlq_context)
-                    .await
-                {
-                    Ok(_durable_failure_id) => {
+            match assembler
+                .route_material_frame_error(material_id, reason.clone(), dlq_context)
+                .await
+            {
+                Ok(_durable_failure_id) => {
+                    if let Some(material_id) = material_id {
                         match assembler
                             .finalize_failed_material(material_id, &reason)
                             .await
@@ -146,35 +146,31 @@ async fn apply_redelivery_decision(
                                 .await
                             }
                         }
-                    }
-                    Err(error) => {
-                        // The DLQ publish itself failed: settling this material
-                        // Failed now would leave zero durable trace of why (sinex-wb1).
-                        // NAK for redelivery instead, mirroring the raw-event DLQ
-                        // discipline (route_to_dlq only ACKs after DLQ publish confirms).
-                        warn!(
-                            subject = %message.subject,
-                            material_id = %material_id,
-                            reason = %reason,
-                            error = %error,
-                            "DLQ publish failed for material frame; NAKing instead of settling terminal-failed without durable evidence"
-                        );
-                        nak_with_warning(
-                            message,
-                            Some(MATERIAL_DLQ_PUBLISH_FAILURE_RETRY_DELAY),
-                            "material_frame_dlq_publish_failed",
-                            Some(&material_id),
-                        )
-                        .await
+                    } else {
+                        ack_with_warning(message, "malformed_material_frame_routed_to_dlq", None)
+                            .await
                     }
                 }
-            } else {
-                warn!(
-                    subject = %message.subject,
-                    reason,
-                    "Material frame was classified as DLQ but no material_id was available"
-                );
-                ack_with_warning(message, "material_frame_routed_to_dlq", None).await
+                Err(error) => {
+                    // The DLQ publish itself failed: settling this material
+                    // Failed now would leave zero durable trace of why (sinex-wb1).
+                    // NAK for redelivery instead, mirroring the raw-event DLQ
+                    // discipline (route_to_dlq only ACKs after DLQ publish confirms).
+                    warn!(
+                        subject = %message.subject,
+                        material_id = ?material_id,
+                        reason = %reason,
+                        error = %error,
+                        "DLQ publish failed for material frame; NAKing instead of settling terminal-failed without durable evidence"
+                    );
+                    nak_with_warning(
+                        message,
+                        Some(MATERIAL_DLQ_PUBLISH_FAILURE_RETRY_DELAY),
+                        "material_frame_dlq_publish_failed",
+                        material_id.as_ref(),
+                    )
+                    .await
+                }
             }
         }
     }
