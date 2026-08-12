@@ -59,35 +59,53 @@ async fn delete_unreferenced_blob(
     content_store: &MaterialContentStore,
     blob_id: Id<sinex_db::models::Blob>,
 ) -> RuntimeResult<UnreferencedBlobCleanup> {
-    pool.with_transaction(async |tx| {
-        let Some(blob) = pool
-            .blobs()
-            .lock_by_id_for_update(&mut **tx, blob_id)
-            .await?
-        else {
-            return Ok(UnreferencedBlobCleanup::AlreadyGone);
-        };
+    // Commit the database-side reference removal before deleting bytes.  The
+    // reverse ordering used to create a loss window: a database rollback after
+    // `drop_content` left a committed blob row pointing at missing CAS data.
+    // If the post-commit filesystem operation fails, fsck can classify and
+    // recover the now-unreferenced object instead.
+    let blob = pool
+        .with_transaction(async |tx| {
+            let Some(blob) = pool
+                .blobs()
+                .lock_by_id_for_update(&mut **tx, blob_id)
+                .await?
+            else {
+                return Ok(None);
+            };
 
-        if pool
-            .blobs()
-            .is_referenced_excluding_material_with_executor(&mut **tx, blob_id, Uuid::nil())
-            .await?
-        {
-            return Ok(UnreferencedBlobCleanup::StillReferenced);
-        }
+            if pool
+                .blobs()
+                .is_referenced_excluding_material_with_executor(&mut **tx, blob_id, Uuid::nil())
+                .await?
+            {
+                return Ok(Some(None));
+            }
 
-        content_store
-            .drop_content(&blob.content_key(), true)
-            .await?;
-        pool.blobs()
-            .delete_by_id_with_executor(&mut **tx, blob_id)
-            .await?;
-        Ok(UnreferencedBlobCleanup::Deleted)
-    })
-    .await
-    .map_err(|error| {
-        SinexError::database("delete unreferenced blob during material GC").with_source(error)
-    })
+            pool.blobs()
+                .delete_by_id_with_executor(&mut **tx, blob_id)
+                .await?;
+            Ok(Some(Some(blob)))
+        })
+        .await
+        .map_err(|error| {
+            SinexError::database("delete unreferenced blob during material GC").with_source(error)
+        })?;
+
+    let Some(blob) = blob else {
+        return Ok(UnreferencedBlobCleanup::AlreadyGone);
+    };
+    let Some(blob) = blob else {
+        return Ok(UnreferencedBlobCleanup::StillReferenced);
+    };
+    content_store
+        .drop_content(&blob.content_key(), true)
+        .await
+        .map_err(|error| {
+            SinexError::blob_storage("remove unreferenced CAS content after DB commit")
+                .with_source(error)
+        })?;
+    Ok(UnreferencedBlobCleanup::Deleted)
 }
 
 /// Remove aged, unreferenced material registry rows and the blob rows they kept

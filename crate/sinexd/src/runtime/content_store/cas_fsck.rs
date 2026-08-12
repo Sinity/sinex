@@ -348,3 +348,7 @@ pub async fn sweep_orphans_cas(
     let (report, _) = check_cas(pool, content_store, apply).await?;
     Ok(report)
 }
+
+#[cfg(test)]
+#[path = "cas_fsck_test.rs"]
+mod tests;
