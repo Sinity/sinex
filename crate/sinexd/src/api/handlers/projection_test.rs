@@ -121,6 +121,23 @@ async fn projection_readiness_view_renders_registry_row_caveats(
     Ok(())
 }
 
+// sinex-eriz: a dedicated integration test for the corrupt-freshness_class
+// fallback (registered_projection_rows unwrap_or(Manual)) was attempted here
+// and WITHDRAWN on self-review -- derivation.rs:860 has a DB CHECK constraint
+// (`freshness_class IN ('seconds','minutes','hours','days','manual')`) that
+// rejects any value the Rust FromStr parser wouldn't also accept, so the
+// natural "corrupt row" repro this bug describes cannot be constructed via a
+// normal INSERT/UPDATE against the current schema. Reproducing it would need
+// either dropping/recreating the CHECK constraint (unacceptably risky DDL on
+// a shared dev DB with concurrent lanes writing to the same table) or a
+// version-skew scenario (CHECK updated, old rows not backfilled) this test
+// harness has no fixture for. The bug itself is still real (confirmed by
+// reading projection.rs:73-80: the freshness_class fallback direction is the
+// opposite of the sibling status field's fail-loud Failed fallback) -- it
+// just needs either a pure-Rust unit test of the exact fallback expression
+// (extracted from registered_projection_rows into a testable helper) or a
+// schema-versioned fixture, neither of which existed to reuse in this pass.
+
 /// Real behavior under test: the first-slice `email_mailbox` entry is
 /// computed at READ TIME from `core.email_mailbox_projection` (a real,
 /// already-existing read model — not a synthetic placeholder), not from a

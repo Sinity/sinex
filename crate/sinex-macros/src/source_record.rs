@@ -1464,3 +1464,7 @@ fn timestamp_format_token(name: &str) -> syn::Result<TokenStream> {
         }
     })
 }
+
+#[cfg(test)]
+#[path = "source_record_test.rs"]
+mod tests;

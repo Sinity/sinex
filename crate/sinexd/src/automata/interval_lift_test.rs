@@ -320,6 +320,96 @@ async fn interval_lift_updates_same_focus_without_closing_interval(
 }
 
 #[sinex_test]
+async fn interval_lift_f8b_sequential_focus_transitions_each_close_a_distinct_interval(
+) -> xtask::sandbox::TestResult<()> {
+    // sinex-f8b: live proof on 2026-07-04 showed the interval-lift live bridge
+    // consumed only the FIRST fresh focus transition after startup; later fresh
+    // rows in the same induced focus sequence were present in core.events but
+    // never used as interval parents. Root cause was equivalence_key collision
+    // from a restored local sequence counter. Fixed by keying interval identity
+    // to the start evidence's own material occurrence (interval_occurrence_key).
+    // This test proves a run of 4 consecutive real subject transitions produces
+    // 3 distinct closed intervals with 3 DISTINCT equivalence keys — regressing
+    // to any shared/counter-derived key would collapse these into fewer outputs
+    // or collide their equivalence_key, which is exactly what would make this
+    // test fail.
+    let t0 = Timestamp::from_unix_timestamp(1_700_000_000)
+        .ok_or_else(|| color_eyre::eyre::eyre!("valid timestamp"))?;
+    let t1 = Timestamp::from_unix_timestamp(1_700_000_010)
+        .ok_or_else(|| color_eyre::eyre::eyre!("valid timestamp"))?;
+    let t2 = Timestamp::from_unix_timestamp(1_700_000_020)
+        .ok_or_else(|| color_eyre::eyre::eyre!("valid timestamp"))?;
+    let t3 = Timestamp::from_unix_timestamp(1_700_000_030)
+        .ok_or_else(|| color_eyre::eyre::eyre!("valid timestamp"))?;
+
+    let windows = [
+        ("0xaaa", "kitty", t0, 10),
+        ("0xbbb", "qutebrowser", t1, 20),
+        ("0xccc", "obsidian", t2, 30),
+        ("0xddd", "slack", t3, 40),
+    ];
+
+    let mut automaton = IntervalLift;
+    let mut state = IntervalLiftState::default();
+    let mut closed = Vec::new();
+    let mut previous_window_id: Option<String> = None;
+    for (window_id, class, ts, anchor) in windows {
+        let material = Uuid::now_v7();
+        let ctx = focus_context_with_material(ts, material, anchor);
+        let payload = HyprlandWindowFocusedPayload {
+            window_id: Some(window_id.to_string()),
+            window_class: Some(class.to_string()),
+            window_title: Some(class.to_string()),
+            workspace_id: Some(1),
+            previous_window_id: previous_window_id.clone(),
+        };
+        if let Some(output) = automaton
+            .process_single(&mut state, serde_json::to_value(payload)?, &ctx)
+            .await?
+        {
+            closed.push(output);
+        }
+        previous_window_id = Some(window_id.to_string());
+    }
+
+    assert_eq!(
+        closed.len(),
+        3,
+        "4 sequential transitions must close exactly 3 intervals (one per prior \
+         subject), not silently drop any after the first — got {} closes: {:?}",
+        closed.len(),
+        closed.iter().map(|o| o.payload.subject_id.clone()).collect::<Vec<_>>()
+    );
+
+    let subjects: Vec<_> = closed
+        .iter()
+        .map(|o| o.payload.subject_id.clone())
+        .collect();
+    assert_eq!(
+        subjects,
+        vec![
+            Some("0xaaa".to_string()),
+            Some("0xbbb".to_string()),
+            Some("0xccc".to_string()),
+        ],
+        "each prior focus subject must be closed in order, none skipped"
+    );
+
+    let keys: BTreeSet<_> = closed
+        .iter()
+        .map(|o| o.equivalence_key.clone().expect("interval carries an equivalence key"))
+        .collect();
+    assert_eq!(
+        keys.len(),
+        3,
+        "each closed interval must carry a DISTINCT equivalence_key — a collision \
+         here means the second/third transition would be silently suppressed by \
+         event-engine equivalence_key admission dedup, reproducing sinex-f8b: {keys:?}"
+    );
+    Ok(())
+}
+
+#[sinex_test]
 async fn interval_lift_ignores_non_monotonic_transition() -> xtask::sandbox::TestResult<()> {
     let later = Timestamp::from_unix_timestamp(1_700_000_100)
         .ok_or_else(|| color_eyre::eyre::eyre!("valid timestamp"))?;
