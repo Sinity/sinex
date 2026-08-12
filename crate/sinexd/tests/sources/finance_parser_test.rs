@@ -235,9 +235,36 @@ async fn occurrence_key_fields_and_order() {
     let key = intents[0].occurrence_key.as_ref().unwrap();
     assert_eq!(key.fields[0].0, "date");
     assert_eq!(key.fields[1].0, "description");
-    assert_eq!(key.fields[2].0, "first_amount");
+    assert_eq!(key.fields[2].0, "first_explicit_posting_amount_or_anchor");
     // The first explicit amount for the first transaction is "40.00" (Fuel posting).
     assert_eq!(key.fields[2].1, "40.00");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn implicit_amount_transactions_keep_distinct_occurrence_keys_on_parser_route() {
+    const JOURNAL: &str = "2030-01-05 ATM Withdrawal\n\
+        \tAssets:Checking:ExampleBank\n\
+        \tAssets:Cash:Wallet\n\
+        \n\
+        2030-01-05 ATM Withdrawal\n\
+        \tAssets:Checking:ExampleBank\n\
+        \tAssets:Cash:Envelope\n\
+        \n";
+
+    let mut parser = HledgerJournalParser;
+    let intents = parser
+        .parse_record(record_for(JOURNAL.as_bytes()), &test_ctx())
+        .await
+        .unwrap();
+
+    assert_eq!(intents.len(), 2);
+    let key_a = intents[0].occurrence_key.as_ref().unwrap();
+    let key_b = intents[1].occurrence_key.as_ref().unwrap();
+    assert_eq!(key_a.fields[2].1, "anchor:0");
+    assert_eq!(key_b.fields[2].1, "anchor:1");
+    assert_ne!(key_a, key_b);
+    // Anti-vacuity mutation: changing the source fallback to `unwrap_or("0")`
+    // makes the two route-emitted keys equal and fails the anchor assertions.
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

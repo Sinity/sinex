@@ -67,7 +67,7 @@ pub struct HledgerJournalParserConfig;
     privacy_tier = PrivacyTier::Sensitive,
     horizons(Horizon::Historical),
     retention = RetentionPolicy::Forever,
-    occurrence_identity = OccurrenceIdentity::Uuid5From("(date, description, first_explicit_posting_amount)"),
+    occurrence_identity = OccurrenceIdentity::Uuid5From("(date, description, first_explicit_posting_amount_or_anchor)"),
     access_scope = AccessScope::StagedExport,
     implementation = "sinexd",
     privacy_context = ProcessingContext::Document,
@@ -371,11 +371,11 @@ fn parse_date(s: &str) -> ParserResult<Timestamp> {
 // ---------------------------------------------------------------------------
 
 fn build_intent(tx: &JournalTransaction, ctx: &ParserContext) -> ParsedEventIntent {
-    // Compute occurrence key from (date, description, first explicit posting amount).
-    // With all posting amounts elided, the transaction's material byte anchor
-    // is the stable distinguishing coordinate; never collapse real entries
-    // onto a fixed synthetic amount.
-    let first_amount_or_anchor = tx
+    // Compute occurrence key from (date, description, first explicit posting
+    // amount), falling back to the parser's existing material anchor when the
+    // journal elides every amount. The fallback is a source coordinate, not a
+    // synthesized amount or content-derived identity.
+    let first_explicit_posting_amount_or_anchor = tx
         .postings
         .iter()
         .find(|p| p.amount.is_some())
@@ -388,8 +388,8 @@ fn build_intent(tx: &JournalTransaction, ctx: &ParserContext) -> ParsedEventInte
             ("date".into(), tx.date.inner().date().to_string()),
             ("description".into(), tx.description.clone()),
             (
-                "first_explicit_posting_amount".into(),
-                first_amount_or_anchor,
+                "first_explicit_posting_amount_or_anchor".into(),
+                first_explicit_posting_amount_or_anchor,
             ),
         ],
     };
