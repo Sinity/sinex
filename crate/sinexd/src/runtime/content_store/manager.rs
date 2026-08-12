@@ -26,6 +26,7 @@ use tracing::{debug, info, warn};
 use super::{
     ContentStoreConfig, ContentStoreKey, LOCAL_BLAKE3_CAS_BACKEND, MaterialContentStore,
     path_validator::{VerifiedPath, create_secure_temp_path, validate_path_exists},
+    run_command_async,
 };
 use tokio::io::AsyncWriteExt;
 use tokio::process::Command as AsyncCommand;
@@ -362,19 +363,18 @@ impl ContentStoreManager {
         let file_metadata = tokio::fs::metadata(validated_path)
             .await
             .map_err(SinexError::io)?;
-        let size_bytes = file_metadata.len() as i64;
-        let max_size = self.content_store.config.max_blob_size;
-        if max_size > 0 && file_metadata.len() as usize > max_size {
-            return Err(SinexError::blob_storage(format!(
-                "blob size {} exceeds limit {max_size} for {:?}",
-                file_metadata.len(),
-                validated_path
-            )));
-        }
+        self.content_store
+            .ensure_file_size_allowed(file_metadata.len())?;
+        let size_bytes = i64::try_from(file_metadata.len()).map_err(|error| {
+            SinexError::blob_storage("blob size does not fit database metadata").with_source(error)
+        })?;
 
-        let blake3_hash = MaterialContentStore::compute_blake3_hash(validated_path)
-            .await
-            .map_err(|e| SinexError::blob_storage(e).with_operation("compute_hash"))?;
+        let blake3_hash = MaterialContentStore::compute_blake3_hash_with_limit(
+            validated_path,
+            self.content_store.config.max_blob_size,
+        )
+        .await
+        .map_err(|e| SinexError::blob_storage(e).with_operation("compute_hash"))?;
 
         let effective_filename = require_ingest_filename(validated_path, original_filename)?;
 
@@ -468,7 +468,10 @@ impl ContentStoreManager {
         self.register_new_blob(
             &content_key,
             filename,
-            content.len() as i64,
+            i64::try_from(content.len()).map_err(|error| {
+                SinexError::blob_storage("blob size does not fit database metadata")
+                    .with_source(error)
+            })?,
             content_type.to_string(),
             blake3_hash,
         )
@@ -485,13 +488,11 @@ impl ContentStoreManager {
                 blob.size_bytes
             )));
         }
-        let max_size = self.content_store.config.max_blob_size;
-        if max_size > 0 && blob.size_bytes as usize > max_size {
-            return Err(SinexError::blob_storage(format!(
-                "blob metadata size {} exceeds retrieval limit {max_size} for {content_key}",
-                blob.size_bytes
-            )));
-        }
+        let metadata_size = u64::try_from(blob.size_bytes).map_err(|error| {
+            SinexError::processing("Blob metadata size does not fit an unsigned size")
+                .with_source(error)
+        })?;
+        self.content_store.ensure_file_size_allowed(metadata_size)?;
         let canonical_key = blob.content_key();
 
         // Ensure content is available locally
@@ -507,14 +508,14 @@ impl ContentStoreManager {
             .await
             .map_err(SinexError::io)?
             .len();
-        if max_size > 0 && file_len as usize > max_size {
-            return Err(SinexError::blob_storage(format!(
-                "blob content size {file_len} exceeds retrieval limit {max_size} for {content_key}"
-            )));
-        }
+        self.content_store.ensure_file_size_allowed(file_len)?;
 
         // Read the content
-        let content = tokio::fs::read(&path).await.map_err(SinexError::io)?;
+        let content = MaterialContentStore::read_file_with_limit(
+            &path,
+            self.content_store.config.max_blob_size,
+        )
+        .await?;
 
         // Verify integrity against the stored hashes if available. Prefer the
         // canonical content hash (git-annex SHA256), but fall back to the
@@ -606,14 +607,7 @@ impl ContentStoreManager {
                 "unregistered CAS object retrieval requires a local BLAKE3 key",
             ));
         }
-        if self.content_store.config.max_blob_size > 0
-            && parsed.size > self.content_store.config.max_blob_size as u64
-        {
-            return Err(SinexError::blob_storage(format!(
-                "CAS object size {} exceeds configured limit {}",
-                parsed.size, self.content_store.config.max_blob_size
-            )));
-        }
+        self.content_store.ensure_file_size_allowed(parsed.size)?;
         self.content_store
             .ensure_content_local(content_key)
             .await
@@ -628,7 +622,11 @@ impl ContentStoreManager {
             .content_store
             .canonicalize_local_cas_path(&path)
             .await?;
-        let content = tokio::fs::read(&path).await.map_err(SinexError::io)?;
+        let content = MaterialContentStore::read_file_with_limit(
+            &path,
+            self.content_store.config.max_blob_size,
+        )
+        .await?;
         if content.len() as u64 != parsed.size {
             return Err(
                 SinexError::processing("CAS object size does not match its key")
@@ -775,7 +773,12 @@ impl ContentStoreManager {
         expected_blake3: &str,
     ) -> RuntimeResult<()> {
         let path = self.find_symlink_path(content_key).await?;
-        let stored_content = tokio::fs::read(&path).await.map_err(|e| {
+        let stored_content = MaterialContentStore::read_file_with_limit(
+            &path,
+            self.content_store.config.max_blob_size,
+        )
+        .await
+        .map_err(|e| {
             SinexError::blob_storage(format!(
                 "Post-write verification: failed to re-read {content_key}: {e}"
             ))
@@ -802,13 +805,11 @@ impl ContentStoreManager {
             )));
         }
 
-        let output = AsyncCommand::new("git-annex")
-            .arg("contentlocation")
+        let mut cmd = AsyncCommand::new("git-annex");
+        cmd.arg("contentlocation")
             .arg(content_key)
-            .current_dir(self.content_store.root_path())
-            .output()
-            .await
-            .map_err(SinexError::io)?;
+            .current_dir(self.content_store.root_path());
+        let output = run_command_async(cmd, "Failed to run git-annex contentlocation").await?;
 
         if !output.status.success() {
             return Err(SinexError::processing(format!(
@@ -817,18 +818,12 @@ impl ContentStoreManager {
             )));
         }
 
-        let relative = String::from_utf8(output.stdout).map_err(|e| {
-            SinexError::processing("Invalid UTF-8 from git-annex contentlocation").with_source(e)
-        })?;
-        let trimmed = relative.trim();
-        if trimmed.is_empty() {
-            return Err(SinexError::processing(format!(
-                "git-annex contentlocation returned empty path for {content_key}"
-            )));
-        }
-
-        let path = self.content_store.root_path().join(trimmed);
-        Ok(path)
+        self.content_store
+            .resolve_command_path(
+                &output.stdout,
+                "Failed to resolve git-annex contentlocation path",
+            )
+            .await
     }
 
     /// Simple MIME type detection

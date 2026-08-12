@@ -160,6 +160,53 @@ async fn direct_store_file_enforces_configured_size_limit() -> ::xtask::sandbox:
 }
 
 #[sinex_test]
+async fn bounded_content_store_reads_reject_oversized_files_before_buffering()
+-> ::xtask::sandbox::TestResult<()> {
+    let repo_dir = tempfile::tempdir()?;
+    let repo_path = Utf8PathBuf::from_path_buf(repo_dir.path().to_path_buf())
+        .expect("temporary path should be valid utf-8");
+    let source_path = repo_path.join("oversized.bin");
+    tokio::fs::write(&source_path, b"1234").await?;
+
+    let error = MaterialContentStore::read_file_with_limit(&source_path, 3)
+        .await
+        .expect_err("bounded reads must reject content beyond the configured limit");
+    assert!(error.to_string().contains("exceeds limit"));
+    Ok(())
+}
+
+#[sinex_test]
+async fn local_cas_paths_reject_symlink_escape() -> ::xtask::sandbox::TestResult<()> {
+    let repo_dir = tempfile::tempdir()?;
+    let outside_dir = tempfile::tempdir()?;
+    let repo_path = Utf8PathBuf::from_path_buf(repo_dir.path().to_path_buf())
+        .expect("temporary path should be valid utf-8");
+    let outside_path = outside_dir.path().join("outside");
+    tokio::fs::write(&outside_path, b"outside").await?;
+    let content_store = MaterialContentStore::new(ContentStoreConfig {
+        root_path: repo_path,
+        ..Default::default()
+    })?;
+    let digest = "a".repeat(64);
+    let cas_path = content_store
+        .path_if_local(&format!("{LOCAL_BLAKE3_CAS_BACKEND}-s7--{digest}"))?
+        .expect("valid local CAS key should resolve");
+    tokio::fs::create_dir_all(cas_path.parent().expect("CAS path has a parent")).await?;
+    #[cfg(unix)]
+    std::os::unix::fs::symlink(&outside_path, &cas_path)?;
+
+    #[cfg(unix)]
+    assert!(
+        content_store
+            .canonicalize_local_cas_path(&cas_path)
+            .await
+            .is_err(),
+        "CAS symlinks must not resolve outside the configured root"
+    );
+    Ok(())
+}
+
+#[sinex_test]
 async fn annex_path_arguments_reject_traversal() -> ::xtask::sandbox::TestResult<()> {
     let repo_dir = tempfile::tempdir()?;
     let repo_path = Utf8PathBuf::from_path_buf(repo_dir.path().to_path_buf())

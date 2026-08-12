@@ -13,6 +13,7 @@ use std::sync::{
     atomic::{AtomicU64, Ordering},
 };
 use std::time::Duration;
+use tokio::io::AsyncReadExt;
 use tokio::process::Command as AsyncCommand;
 use tokio::sync::Mutex as AsyncMutex;
 use tracing::{debug, info, warn};
@@ -236,9 +237,9 @@ pub fn default_content_store_path() -> camino::Utf8PathBuf {
         |_| {
             camino::Utf8PathBuf::from(
                 sinex_primitives::environment::environment()
-                .work_directory("content-store")
-                .to_string_lossy()
-                .into_owned(),
+                    .work_directory("content-store")
+                    .to_string_lossy()
+                    .into_owned(),
             )
         },
         |home| camino::Utf8PathBuf::from(format!("{home}/.local/share/sinex/content-store")),
@@ -410,6 +411,34 @@ impl ContentStoreKey {
 fn validate_local_blake3_digest(digest: &str) -> RuntimeResult<()> {
     ContentKey::validate_local_blake3_digest(digest)
         .map_err(|err| SinexError::validation(err).with_context("digest_len", digest.len()))
+}
+
+async fn canonicalize_path_within_root(
+    root: &Utf8Path,
+    path: &Utf8Path,
+) -> RuntimeResult<Utf8PathBuf> {
+    let canonical_root = tokio::fs::canonicalize(root)
+        .await
+        .map_err(SinexError::io)?;
+    let canonical_path = tokio::fs::canonicalize(path)
+        .await
+        .map_err(SinexError::io)?;
+    let canonical_root = Utf8PathBuf::from_path_buf(canonical_root).map_err(|path| {
+        SinexError::validation("canonical content-store root path is not valid UTF-8")
+            .with_context("path", path.display().to_string())
+    })?;
+    let canonical_path = Utf8PathBuf::from_path_buf(canonical_path).map_err(|path| {
+        SinexError::validation("canonical content-store path is not valid UTF-8")
+            .with_context("path", path.display().to_string())
+    })?;
+    if !canonical_path.starts_with(&canonical_root) {
+        return Err(
+            SinexError::validation("canonical content-store path escapes configured root")
+                .with_context("path", canonical_path.to_string())
+                .with_context("root", canonical_root.to_string()),
+        );
+    }
+    Ok(canonical_path)
 }
 
 #[derive(Debug)]
@@ -586,8 +615,18 @@ impl MaterialContentStore {
         self.store_file_local_cas(&resolved_path, file_size).await
     }
 
-    fn ensure_file_size_allowed(&self, file_size: u64) -> RuntimeResult<()> {
-        if self.config.max_blob_size > 0 && file_size > self.config.max_blob_size as u64 {
+    pub(super) fn ensure_file_size_allowed(&self, file_size: u64) -> RuntimeResult<()> {
+        let Some(max_blob_size) = (self.config.max_blob_size > 0)
+            .then(|| u64::try_from(self.config.max_blob_size))
+            .transpose()
+            .map_err(|error| {
+                SinexError::validation("configured content-store size limit is unsupported")
+                    .with_source(error)
+            })?
+        else {
+            return Ok(());
+        };
+        if file_size > max_blob_size {
             return Err(SinexError::blob_storage(format!(
                 "blob size {file_size} exceeds limit {}",
                 self.config.max_blob_size
@@ -601,12 +640,22 @@ impl MaterialContentStore {
         resolved_path: &Utf8Path,
         file_size: u64,
     ) -> RuntimeResult<ContentStoreKey> {
-        let hash = Self::compute_blake3_hash(resolved_path).await?;
+        let hash =
+            Self::compute_blake3_hash_with_limit(resolved_path, self.config.max_blob_size).await?;
         let target = self.local_blake3_cas_path_for_hash(&hash)?;
-        if !target.exists() {
+        if target.exists() {
+            self.canonicalize_local_cas_path(&target).await?;
+        } else {
             let parent = target.parent().ok_or_else(|| {
                 SinexError::processing(format!("Local CAS target has no parent: {target}"))
             })?;
+            let mut existing_parent = parent;
+            while !existing_parent.exists() {
+                existing_parent = existing_parent.parent().ok_or_else(|| {
+                    SinexError::validation("local CAS path has no existing ancestor")
+                })?;
+            }
+            canonicalize_path_within_root(&self.local_blake3_cas_root(), existing_parent).await?;
             tokio::fs::create_dir_all(parent)
                 .await
                 .map_err(SinexError::io)?;
@@ -616,6 +665,22 @@ impl MaterialContentStore {
             tokio::fs::copy(resolved_path, &tmp)
                 .await
                 .map_err(SinexError::io)?;
+            let copied_size = tokio::fs::metadata(&tmp)
+                .await
+                .map_err(SinexError::io)?
+                .len();
+            if let Err(error) = self.ensure_file_size_allowed(copied_size) {
+                let _ = tokio::fs::remove_file(&tmp).await;
+                return Err(error);
+            }
+            if copied_size != file_size {
+                let _ = tokio::fs::remove_file(&tmp).await;
+                return Err(SinexError::processing(
+                    "source file changed while copying into local CAS",
+                )
+                .with_context("observed_size", copied_size.to_string())
+                .with_context("initial_size", file_size.to_string()));
+            }
             // tokio::fs::copy (like std::fs::copy) preserves the SOURCE file's
             // permission bits -- if resolved_path was ever more permissive
             // than CAS content should be, that permissiveness would otherwise
@@ -680,28 +745,37 @@ impl MaterialContentStore {
 
     pub async fn canonicalize_local_cas_path(&self, path: &Utf8Path) -> RuntimeResult<Utf8PathBuf> {
         self.ensure_local_cas_path_within_root(path)?;
-        let canonical_root = tokio::fs::canonicalize(self.local_blake3_cas_root())
-            .await
-            .map_err(SinexError::io)?;
-        let canonical_path = tokio::fs::canonicalize(path)
-            .await
-            .map_err(SinexError::io)?;
-        let canonical_root = Utf8PathBuf::from_path_buf(canonical_root).map_err(|path| {
-            SinexError::validation("canonical local CAS root path is not valid UTF-8")
-                .with_context("path", path.display().to_string())
-        })?;
-        let canonical_path = Utf8PathBuf::from_path_buf(canonical_path).map_err(|path| {
-            SinexError::validation("canonical local CAS content path is not valid UTF-8")
-                .with_context("path", path.display().to_string())
-        })?;
-        if !canonical_path.starts_with(&canonical_root) {
-            return Err(SinexError::validation(
-                "canonical local CAS path escapes content-store root",
-            )
-            .with_context("path", canonical_path.to_string())
-            .with_context("root", canonical_root.to_string()));
+        canonicalize_path_within_root(&self.local_blake3_cas_root(), path).await
+    }
+
+    /// Canonicalize an existing path and require that it remains under the
+    /// configured content-store root. This is used for paths returned by
+    /// external backends, which may contain symlinks or absolute paths.
+    pub async fn canonicalize_root_contained_path(
+        &self,
+        path: &Utf8Path,
+    ) -> RuntimeResult<Utf8PathBuf> {
+        canonicalize_path_within_root(&self.config.root_path, path).await
+    }
+
+    pub(super) async fn resolve_command_path(
+        &self,
+        stdout: &[u8],
+        context: &'static str,
+    ) -> RuntimeResult<Utf8PathBuf> {
+        let reported = String::from_utf8(stdout.to_vec())
+            .map_err(|error| SinexError::processing(context).with_source(error))?;
+        let reported = reported.trim();
+        if reported.is_empty() {
+            return Err(SinexError::processing(context)
+                .with_context("reason", "command returned an empty content path"));
         }
-        Ok(canonical_path)
+        let candidate = if Path::new(reported).is_absolute() {
+            Utf8PathBuf::from(reported)
+        } else {
+            self.config.root_path.join(reported)
+        };
+        self.canonicalize_root_contained_path(&candidate).await
     }
 
     pub fn path_if_local(&self, key: &str) -> RuntimeResult<Option<Utf8PathBuf>> {
@@ -730,13 +804,11 @@ impl MaterialContentStore {
                 "legacy annex is disabled; cannot resolve annex content path",
             ));
         }
-        let output = AsyncCommand::new("git-annex")
-            .arg("contentlocation")
+        let mut cmd = AsyncCommand::new("git-annex");
+        cmd.arg("contentlocation")
             .arg(key)
-            .current_dir(&self.config.root_path)
-            .output()
-            .await
-            .map_err(SinexError::io)?;
+            .current_dir(&self.config.root_path);
+        let output = run_command_async(cmd, "Failed to run git-annex contentlocation").await?;
 
         if !output.status.success() {
             return Err(SinexError::processing(format!(
@@ -745,18 +817,11 @@ impl MaterialContentStore {
             )));
         }
 
-        let relative = String::from_utf8(output.stdout).map_err(|e| {
-            SinexError::processing("Invalid UTF-8 from git-annex contentlocation").with_source(e)
-        })?;
-        let trimmed = relative.trim();
-        if trimmed.is_empty() {
-            return Err(SinexError::processing(format!(
-                "git-annex contentlocation returned empty path for {key}"
-            )));
-        }
-
-        let path = self.config.root_path.join(trimmed);
-        Ok(path)
+        self.resolve_command_path(
+            &output.stdout,
+            "Failed to resolve git-annex contentlocation path",
+        )
+        .await
     }
 
     /// Get the content-store key for a file.
@@ -779,7 +844,9 @@ impl MaterialContentStore {
                 .map_err(SinexError::io)?
                 .len();
             self.ensure_file_size_allowed(file_size)?;
-            let hash = Self::compute_blake3_hash(&resolved_path).await?;
+            let hash =
+                Self::compute_blake3_hash_with_limit(&resolved_path, self.config.max_blob_size)
+                    .await?;
             let _path = self.local_blake3_cas_path_for_hash(&hash)?;
             return Ok(ContentStoreKey {
                 key: format!("{LOCAL_BLAKE3_CAS_BACKEND}-s{file_size}--{hash}"),
@@ -788,9 +855,10 @@ impl MaterialContentStore {
                 digest: hash,
             });
         }
+        let (_is_key, argument) = self.resolve_argument(file_path.as_str()).await?;
         let mut cmd = AsyncCommand::new("git-annex");
         cmd.arg("lookupkey")
-            .arg(file_path.as_str())
+            .arg(argument)
             .current_dir(&self.config.root_path);
         let output = run_command_async(cmd, "Failed to run git-annex lookupkey").await?;
 
@@ -831,9 +899,11 @@ impl MaterialContentStore {
             return Ok((false, rel.to_string_lossy().into_owned()));
         } else {
             let path = Path::new(key_or_path);
-            if path.is_absolute() || path.components().any(|part| {
-                matches!(part, std::path::Component::ParentDir)
-            }) {
+            if path.is_absolute()
+                || path
+                    .components()
+                    .any(|part| matches!(part, std::path::Component::ParentDir))
+            {
                 return Err(SinexError::validation(
                     "content-store argument must be a key or a root-contained relative path",
                 ));
@@ -848,6 +918,7 @@ impl MaterialContentStore {
 
         if let Some(path) = self.path_if_local(key_or_path)? {
             if path.exists() {
+                self.canonicalize_local_cas_path(&path).await?;
                 return Ok(());
             }
             return Err(SinexError::processing(format!(
@@ -894,6 +965,7 @@ impl MaterialContentStore {
                     "cannot drop local CAS content without force: {key_or_path}"
                 )));
             }
+            self.canonicalize_local_cas_path(&path).await?;
             match tokio::fs::remove_file(&path).await {
                 Ok(()) => return Ok(()),
                 Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
@@ -952,7 +1024,11 @@ impl MaterialContentStore {
                     success: false,
                 });
             }
-            let hash = Self::compute_blake3_hash(&path).await?;
+            let metadata = tokio::fs::metadata(&path).await.map_err(SinexError::io)?;
+            self.ensure_file_size_allowed(metadata.len())?;
+            let path = self.canonicalize_local_cas_path(&path).await?;
+            let hash =
+                Self::compute_blake3_hash_with_limit(&path, self.config.max_blob_size).await?;
             return Ok(ContentVerificationResult {
                 output: format!("local CAS verification {key}"),
                 success: hash == parsed.digest,
@@ -1082,10 +1158,44 @@ impl MaterialContentStore {
 
     /// Compute BLAKE3 hash for deduplication
     pub async fn compute_blake3_hash(file_path: &Utf8Path) -> RuntimeResult<String> {
-        let content = tokio::fs::read(file_path).await.map_err(SinexError::io)?;
+        Self::compute_blake3_hash_with_limit(file_path, 0).await
+    }
+
+    pub(super) async fn compute_blake3_hash_with_limit(
+        file_path: &Utf8Path,
+        max_blob_size: usize,
+    ) -> RuntimeResult<String> {
+        let content = Self::read_file_with_limit(file_path, max_blob_size).await?;
 
         let hash = blake3::hash(&content);
         Ok(hash.to_hex().to_string())
+    }
+
+    pub(super) async fn read_file_with_limit(
+        file_path: &Utf8Path,
+        max_blob_size: usize,
+    ) -> RuntimeResult<Vec<u8>> {
+        let mut file = tokio::fs::File::open(file_path)
+            .await
+            .map_err(SinexError::io)?;
+        let mut content = Vec::new();
+        let mut chunk = [0_u8; 64 * 1024];
+        loop {
+            let bytes_read = file.read(&mut chunk).await.map_err(SinexError::io)?;
+            if bytes_read == 0 {
+                break;
+            }
+            let new_len = content.len().checked_add(bytes_read).ok_or_else(|| {
+                SinexError::blob_storage("blob content size overflow while reading")
+            })?;
+            if max_blob_size > 0 && new_len > max_blob_size {
+                return Err(SinexError::blob_storage(format!(
+                    "blob size exceeds limit {max_blob_size} while reading {file_path}"
+                )));
+            }
+            content.extend_from_slice(&chunk[..bytes_read]);
+        }
+        Ok(content)
     }
 
     /// Walk the local CAS directory structure and yield all discovered hash paths.
