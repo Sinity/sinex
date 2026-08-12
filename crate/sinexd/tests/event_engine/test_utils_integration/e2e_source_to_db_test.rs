@@ -1,4 +1,5 @@
 use async_nats::jetstream;
+use futures::StreamExt as _;
 use serde_json::json;
 use sinexd::event_engine::{
     EventEngineResult, JetStreamConsumer, JetStreamTopology, validator::IngestEventValidator,

@@ -36,4 +36,16 @@ mod event_engine {
     mod telemetry_persistence_test;
     mod tls_integration_test;
     mod validator_schema_order_test;
+    // sinex-usgn: orphaned since before the v7od consolidation -- never
+    // wired into any [[test]]/aggregator entry, never compiled by `xtask
+    // test`. Revived here; see the module doc comments for their own
+    // per-file provenance.
+    mod wal_integrity_test;
+
+    mod test_utils_integration {
+        mod configuration_test;
+        mod e2e_source_to_db_test;
+        mod event_processing_integration_test;
+        mod stream_processing_test;
+    }
 }
