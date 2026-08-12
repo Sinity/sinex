@@ -130,6 +130,14 @@ struct ConsumerSetup {
 }
 
 async fn start_isolated_consumer(ctx: &TestContext, suffix: &str) -> TestResult<ConsumerSetup> {
+    start_isolated_consumer_with_lower_bound(ctx, suffix, None).await
+}
+
+async fn start_isolated_consumer_with_lower_bound(
+    ctx: &TestContext,
+    suffix: &str,
+    ts_orig_lower_bound: Option<Timestamp>,
+) -> TestResult<ConsumerSetup> {
     let nats = ctx.nats_handle()?;
     let nats_client = ctx.nats_client();
     let pool = ctx.pool.clone();
@@ -155,7 +163,8 @@ async fn start_isolated_consumer(ctx: &TestContext, suffix: &str) -> TestResult<
         pool.clone(),
         Arc::new(RwLock::new(validator)),
         topology.clone(),
-    );
+    )
+    .with_ts_orig_lower_bound(ts_orig_lower_bound);
     let handle = spawn_consumer_and_wait_ready(ctx, &js, &topology, consumer).await?;
 
     Ok(ConsumerSetup {
@@ -2754,7 +2763,12 @@ async fn resolved_material_ts_orig_reuses_plausibility_gate(
     ctx: TestContext,
 ) -> TestResult<()> {
     let ctx = ctx.with_nats().shared().await?;
-    let setup = start_isolated_consumer(&ctx, "resolved-ts-orig").await?;
+    let setup = start_isolated_consumer_with_lower_bound(
+        &ctx,
+        "resolved-ts-orig",
+        Some(Timestamp::from_const(time::macros::datetime!(2000-01-01 00:00:00 UTC))),
+    )
+    .await?;
     let nats_client = ctx.nats_client();
     let env = ctx.env();
     let now = temporal::now();
