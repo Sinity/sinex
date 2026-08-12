@@ -532,7 +532,14 @@ async fn cleanup_orphaned_temp_files_one_bad_entry_does_not_abort_whole_pass(
     // A genuinely orphaned material folder that IS a valid UUID and has no
     // corresponding live assembler state -- this should be cleanable.
     let orphan_material_id = Uuid::now_v7();
-    std::fs::create_dir_all(state_dir.path().join(orphan_material_id.to_string()))?;
+    let orphan_dir = state_dir.path().join(orphan_material_id.to_string());
+    std::fs::create_dir_all(&orphan_dir)?;
+    let orphan_temp_path = orphan_dir.join(super::super::state::TEMP_FILE_NAME);
+    std::fs::write(&orphan_temp_path, b"orphaned material")?;
+    std::fs::File::options()
+        .append(true)
+        .open(&orphan_temp_path)?
+        .set_modified(std::time::SystemTime::now() - std::time::Duration::from_secs(7_200))?;
 
     let result = assembler.cleanup_orphaned_temp_files().await;
 
@@ -540,6 +547,14 @@ async fn cleanup_orphaned_temp_files_one_bad_entry_does_not_abort_whole_pass(
         result.is_ok(),
         "sinex-ijps: one malformed entry under state_root must not abort the whole \
          orphan-cleanup pass; got {result:?}"
+    );
+    assert!(
+        state_dir.path().join("not-a-material-id").exists(),
+        "the malformed entry must be skipped rather than removed"
+    );
+    assert!(
+        !orphan_dir.exists(),
+        "anti-vacuity: the valid stale orphan must still be cleaned after the malformed entry"
     );
     Ok(())
 }
