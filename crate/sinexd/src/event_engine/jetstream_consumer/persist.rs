@@ -83,7 +83,7 @@ impl JetStreamConsumer {
         // This runs *after* the readiness gate above, so every material here has
         // a registry row visible in the DB — the source-material timing tier can
         // always resolve a stable `(ts_orig, ts_quality)`.
-        self.resolve_ready_ts_orig(batch, &ready_indices).await?;
+        let ready_indices = self.resolve_ready_ts_orig(batch, &ready_indices).await?;
 
         let ready: Vec<&PreparedEvent> = ready_indices.iter().map(|&idx| &batch[idx]).collect();
         self.persist_and_confirm_prepared_batch(&ready).await

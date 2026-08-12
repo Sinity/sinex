@@ -192,7 +192,7 @@ impl JetStreamConsumer {
         &self,
         batch: &mut [PreparedEvent],
         ready_indices: &[usize],
-    ) -> EventEngineResult<()> {
+    ) -> EventEngineResult<Vec<usize>> {
         // Collect distinct materials that actually need resolution.
         let mut needed: Vec<Uuid> = Vec::new();
         for &idx in ready_indices {
@@ -208,7 +208,7 @@ impl JetStreamConsumer {
             }
         }
         if needed.is_empty() {
-            return Ok(());
+            return Ok(ready_indices.to_vec());
         }
 
         // Fetch timing + ledger once per material into a batch-local cache.
@@ -267,10 +267,16 @@ impl JetStreamConsumer {
             );
         }
 
-        // Assign the resolved value per event.
+        // Assign the resolved value per event. Material timing is source-native
+        // input, so it must pass the same lower-bound/future checks as an
+        // explicit parser timestamp after the readiness-gated lookup.
+        let mut valid_indices = Vec::with_capacity(ready_indices.len());
+        let mut rejected = Vec::new();
         for &idx in ready_indices {
+            let parsed_id = batch[idx].parsed_id;
             let event = &mut batch[idx].event;
             if event.ts_orig.is_some() {
+                valid_indices.push(idx);
                 continue;
             }
             let (material_id, anchor_byte) = match &event.provenance {
@@ -283,9 +289,22 @@ impl JetStreamConsumer {
                 let (ts_orig, rung) = reader.derive_ts_orig(anchor_byte, timing);
                 event.ts_orig = Some(ts_orig);
                 event.ts_quality = Some(rung);
+                if let Some(rejection) = self.admission.timestamp_rejection(ts_orig, parsed_id) {
+                    rejected.push((idx, rejection));
+                } else {
+                    valid_indices.push(idx);
+                }
             }
         }
-        Ok(())
+
+        for (idx, rejection) in rejected {
+            self.record_admission_rejection(&rejection).await;
+            let prepared = &batch[idx];
+            self.route_validation_failure(&prepared.message, rejection, &prepared.settlement)
+                .await?;
+        }
+
+        Ok(valid_indices)
     }
 
     /// sinex-r6d.12: writes the DLQ record, then reports this child's

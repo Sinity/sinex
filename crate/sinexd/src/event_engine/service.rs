@@ -1044,18 +1044,20 @@ impl IngestService {
         let heartbeat_handle = self.heartbeat_counter_handle.clone();
         let settlement_registry = self.settlement_registry.clone();
         let (ready_tx, ready_rx) = tokio::sync::oneshot::channel();
-        let Some(ts_orig_lower_bound) =
-            Timestamp::from_unix_timestamp(self.config.ts_orig_lower_bound_unix)
-        else {
-            let error =
-                SinexError::configuration("ts_orig_lower_bound_unix is outside timestamp range")
-                    .with_context(
-                        "ts_orig_lower_bound_unix",
-                        self.config.ts_orig_lower_bound_unix.to_string(),
-                    );
-            let _ = ready_tx.send(());
-            let handle = tokio::spawn(async move { Err(error) });
-            return (handle, ready_rx);
+        let ts_orig_lower_bound = match self.config.ts_orig_lower_bound_unix {
+            Some(unix_seconds) => match Timestamp::from_unix_timestamp(unix_seconds) {
+                Some(timestamp) => Some(timestamp),
+                None => {
+                    let error = SinexError::configuration(
+                        "ts_orig_lower_bound_unix is outside timestamp range",
+                    )
+                    .with_context("ts_orig_lower_bound_unix", unix_seconds.to_string());
+                    let _ = ready_tx.send(());
+                    let handle = tokio::spawn(async move { Err(error) });
+                    return (handle, ready_rx);
+                }
+            },
+            None => None,
         };
         let handle = tokio::spawn(async move {
             let mut consumer = crate::event_engine::JetStreamConsumer::new(

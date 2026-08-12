@@ -641,6 +641,12 @@ let
                 # Operational intervals.
                 "SINEX_EVENT_ENGINE_SCHEMA_RELOAD_INTERVAL_SECS=${toString coreCfg.event_engine.schemaReloadIntervalSecs}"
                 "SINEX_EVENT_ENGINE_TELEMETRY_INTERVAL_SECS=${toString coreCfg.event_engine.telemetryIntervalSecs}"
+                # Historical imports must not inherit an implicit 2000-01-01 floor.
+                # Set the option explicitly when a deployment needs an older-data bound.
+                ]
+              ++ lib.optional (coreCfg.event_engine.tsOrigLowerBoundUnix != null)
+                "SINEX_EVENT_ENGINE_TS_ORIG_LOWER_BOUND_UNIX=${toString coreCfg.event_engine.tsOrigLowerBoundUnix}"
+              ++ [
                 # API config.
                 "SINEX_API_MAX_CONCURRENCY=${toString apiLimits.maxConcurrency}"
                 "SINEX_API_REQUEST_TIMEOUT_SECS=${toString apiLimits.requestTimeoutSec}"

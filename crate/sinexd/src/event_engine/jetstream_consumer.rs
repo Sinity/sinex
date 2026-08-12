@@ -147,8 +147,8 @@ pub struct JetStreamConsumer {
     heartbeat_handle: Option<HeartbeatCounterHandle>,
     /// Maximum duration `ts_orig` may exceed wall-clock time before DLQ routing
     future_ts_skew: time::Duration,
-    /// Earliest accepted `ts_orig` as a timestamp (default: 2000-01-01 UTC)
-    ts_orig_lower_bound: Timestamp,
+    /// Optional earliest accepted `ts_orig` as a timestamp.
+    ts_orig_lower_bound: Option<Timestamp>,
     /// Max concurrent batch-processing tasks during startup catch-up.
     /// Limits I/O pressure while the consumer works through the backlog.
     /// Default: 4. Set to 0 to disable catch-up limiting (full speed).

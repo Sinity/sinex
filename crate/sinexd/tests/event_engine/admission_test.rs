@@ -374,6 +374,59 @@ async fn admission_service_rejects_future_timestamp_with_event_id(
     Ok(())
 }
 
+/// Historical source-native dates are legitimate input. The default admission
+/// service must preserve a pre-2000 event while the independent future-skew
+/// check and timestamp deserialization remain active.
+#[sinex_test]
+async fn admission_service_preserves_pre_2000_historical_timestamp(
+    ctx: TestContext,
+) -> TestResult<()> {
+    let material_id = ctx
+        .create_source_material(Some("admission-pre-2000-timestamp"))
+        .await?;
+    let event_id = Uuid::now_v7();
+    let mut event = DynamicPayload::new(
+        "admission-test",
+        "historical.timestamp",
+        serde_json::json!({ "ok": true }),
+    )
+    .from_material_at(material_id, 0)
+    .at_time(Timestamp::from_const(
+        time::macros::datetime!(1990-01-01 00:00:00 UTC),
+    ))
+    .build()?
+    .to_json_event()?;
+    event.id = Some(Id::from_uuid(event_id));
+
+    let service = admission_service(&ctx);
+    match service.admit_event(event).await? {
+        AdmissionDecision::Admitted(_) => {}
+        other => panic!("pre-2000 source timestamp must be admitted by default: {other:?}"),
+    }
+
+    let bounded_service = admission_service(&ctx).with_ts_orig_lower_bound(Some(
+        Timestamp::from_const(time::macros::datetime!(2000-01-01 00:00:00 UTC)),
+    ));
+    let mut bounded_event = DynamicPayload::new(
+        "admission-test",
+        "historical.timestamp.bounded",
+        serde_json::json!({ "ok": true }),
+    )
+    .from_material_at(material_id, 1)
+    .at_time(Timestamp::from_const(
+        time::macros::datetime!(1990-01-01 00:00:00 UTC),
+    ))
+    .build()?
+    .to_json_event()?;
+    bounded_event.id = Some(Id::new());
+    assert!(matches!(
+        bounded_service.admit_event(bounded_event).await?,
+        AdmissionDecision::Rejected(rejection)
+            if rejection.kind == AdmissionRejectionKind::PastTimestamp
+    ));
+    Ok(())
+}
+
 #[sinex_test]
 async fn admission_candidate_metadata_stamps_existing_event_columns(
     ctx: TestContext,

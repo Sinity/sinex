@@ -163,16 +163,15 @@ pub struct EventEngineConfig {
     #[validate(range(min = 1, max = 86400))]
     pub ts_orig_future_skew_secs: u64,
 
-    /// Earliest accepted `ts_orig` expressed as a Unix timestamp (seconds since epoch).
+    /// Optional earliest accepted `ts_orig` expressed as a Unix timestamp (seconds since epoch).
     /// Events with `ts_orig` before this date are considered implausibly old and routed to the DLQ.
     ///
-    /// Default: `946684800` (2000-01-01 00:00:00 UTC).
+    /// The default is unset so legitimate historical imports are not silently lost. RFC3339
+    /// parsing and the future-skew bound remain enforced independently.
     ///
-    /// Set via: `SINEX_EVENT_ENGINE_TS_ORIG_LOWER_BOUND_UNIX=946684800`
+    /// Set via: `SINEX_EVENT_ENGINE_TS_ORIG_LOWER_BOUND_UNIX=946684800`.
     #[serde(default = "default_ts_orig_lower_bound_unix")]
-    #[builder(default = default_ts_orig_lower_bound_unix())]
-    #[validate(range(min = 0))]
-    pub ts_orig_lower_bound_unix: i64,
+    pub ts_orig_lower_bound_unix: Option<i64>,
 
     /// Maximum buffered out-of-order slices per material assembly.
     ///
@@ -385,9 +384,10 @@ impl EventEngineConfig {
         let ts_orig_future_skew_secs: u64 =
             shared_env::strict_parsed("SINEX_EVENT_ENGINE_TS_ORIG_FUTURE_SKEW_SECS")?
                 .unwrap_or_else(default_ts_orig_future_skew_secs);
-        let ts_orig_lower_bound_unix: i64 =
-            shared_env::strict_parsed("SINEX_EVENT_ENGINE_TS_ORIG_LOWER_BOUND_UNIX")?
-                .unwrap_or_else(default_ts_orig_lower_bound_unix);
+        let ts_orig_lower_bound_unix = shared_env::strict_parsed::<i64>(
+            "SINEX_EVENT_ENGINE_TS_ORIG_LOWER_BOUND_UNIX",
+        )?
+        .or_else(default_ts_orig_lower_bound_unix);
 
         // Construct NatsConnectionConfig from args/environment.
         // Full auth/TLS detail is still supplied via the shared env-first NATS config.
@@ -1277,8 +1277,8 @@ fn default_ts_orig_future_skew_secs() -> u64 {
     3600 // 1 hour
 }
 
-fn default_ts_orig_lower_bound_unix() -> i64 {
-    946_684_800 // 2000-01-01 00:00:00 UTC
+fn default_ts_orig_lower_bound_unix() -> Option<i64> {
+    None
 }
 
 #[cfg(test)]

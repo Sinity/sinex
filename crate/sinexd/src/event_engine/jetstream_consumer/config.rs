@@ -50,9 +50,7 @@ impl JetStreamConsumer {
             stats_log_interval: Duration::from_mins(1),
             heartbeat_handle: None,
             future_ts_skew: time::Duration::hours(1),
-            ts_orig_lower_bound: Timestamp::from_const(
-                time::macros::datetime!(2000-01-01 00:00:00 UTC),
-            ),
+            ts_orig_lower_bound: None,
             startup_catch_up_max_concurrent: 4,
             reject_initial_replay: true,
             stream_pressure_warning_state: Arc::new(tokio::sync::Mutex::new(HashMap::new())),
@@ -86,7 +84,7 @@ impl JetStreamConsumer {
 
     /// Set the earliest accepted `ts_orig` as a timestamp.
     #[must_use]
-    pub fn with_ts_orig_lower_bound(mut self, lower_bound: Timestamp) -> Self {
+    pub fn with_ts_orig_lower_bound(mut self, lower_bound: Option<Timestamp>) -> Self {
         self.ts_orig_lower_bound = lower_bound;
         self.admission.set_ts_orig_lower_bound(lower_bound);
         self

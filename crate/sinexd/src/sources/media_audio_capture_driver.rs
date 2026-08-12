@@ -15,6 +15,7 @@
 //! device path is verified on the host, not CI.
 
 use std::collections::HashMap;
+use std::path::Path;
 use std::process::Stdio;
 use std::time::{Duration, Instant};
 
@@ -404,6 +405,31 @@ impl<B: AudioCaptureBackend> MediaAudioCaptureDriver<B> {
         );
         Ok(())
     }
+
+    async fn capture_if_allowed(
+        &self,
+        runtime: &RuntimeContext,
+        private_mode_state_dir: &Path,
+    ) -> RuntimeResult<bool> {
+        let gate = crate::sources::session_gate::evaluate_capture_gate(
+            runtime.handles().db_pool(),
+            private_mode_state_dir,
+            SOURCE_ID,
+            LIVE_SESSION_MODE_ID,
+            "default",
+        )
+        .await;
+        if gate.is_suspended() {
+            debug!(
+                source_id = SOURCE_ID,
+                reason = gate.reason_label(),
+                "audio capture suspended"
+            );
+            return Ok(false);
+        }
+        self.capture_once(runtime).await?;
+        Ok(true)
+    }
 }
 
 impl SourceDriver for MediaAudioCaptureDriver<CommandAudioCaptureBackend> {
@@ -449,8 +475,12 @@ impl SourceDriver for MediaAudioCaptureDriver<CommandAudioCaptureBackend> {
             .runtime
             .clone()
             .ok_or_else(|| SinexError::invalid_state("audio capture runtime not initialized"))?;
-        self.capture_once(&runtime).await?;
-        Ok(snapshot_report(1, started.elapsed()))
+        let private_mode_state_dir =
+            sinex_primitives::privacy::resolve_private_mode_state_dir(None);
+        let captured = self
+            .capture_if_allowed(&runtime, &private_mode_state_dir)
+            .await?;
+        Ok(snapshot_report(u64::from(captured), started.elapsed()))
     }
 
     async fn scan_historical(
@@ -488,29 +518,15 @@ impl SourceDriver for MediaAudioCaptureDriver<CommandAudioCaptureBackend> {
             sinex_primitives::privacy::resolve_private_mode_state_dir(None);
         let mut captures = 0_u64;
         loop {
-            let gate = match runtime.handles().db_pool() {
-                Some(pool) => {
-                    crate::sources::session_gate::evaluate_capture_gate(
-                        pool,
-                        &private_mode_state_dir,
-                        SOURCE_ID,
-                        LIVE_SESSION_MODE_ID,
-                        "default",
-                    )
-                    .await
+            match self
+                .capture_if_allowed(&runtime, &private_mode_state_dir)
+                .await
+            {
+                Ok(true) => captures += 1,
+                Ok(false) => {}
+                Err(error) => {
+                    warn!(source_id = SOURCE_ID, error = %error, "audio capture failed");
                 }
-                None => crate::sources::session_gate::CaptureGateDecision::active(),
-            };
-            if gate.is_suspended() {
-                debug!(
-                    source_id = SOURCE_ID,
-                    reason = gate.reason_label(),
-                    "audio capture suspended"
-                );
-            } else if let Err(error) = self.capture_once(&runtime).await {
-                warn!(source_id = SOURCE_ID, error = %error, "audio capture failed");
-            } else {
-                captures += 1;
             }
             tokio::select! {
                 biased;

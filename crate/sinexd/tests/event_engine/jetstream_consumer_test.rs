@@ -705,6 +705,71 @@ async fn invalid_timestamp_routes_to_dlq_and_allows_progress() -> color_eyre::Re
     Ok(())
 }
 
+/// Re-imported material can carry a source-native date through its manifest
+/// timing record while the event itself leaves `ts_orig` unresolved. The
+/// readiness-gated resolver must preserve a legitimate pre-2000 source date;
+/// this exercises the real deferred material path rather than only the direct
+/// AdmissionService path.
+#[sinex_test]
+async fn reimport_manifest_source_date_survives_deferred_admission(
+    ctx: TestContext,
+) -> TestResult<()> {
+    let ctx = ctx.with_nats().shared().await?;
+    let setup = start_isolated_consumer(&ctx, "historical-manifest-date").await?;
+    let material_id = Uuid::now_v7();
+    let source_date = Timestamp::from_const(time::macros::datetime!(1990-01-01 00:00:00 UTC));
+
+    sqlx::query!(
+        r#"
+        INSERT INTO raw.source_material_registry
+            (id, material_kind, source_identifier, status, timing_info_type, start_time, staged_at)
+        VALUES ($1, 'annex', $2, 'completed',
+                'intrinsic', $3::timestamptz, NOW())
+        "#,
+        material_id,
+        format!("reimport-manifest-source-date-{material_id}"),
+        source_date.inner(),
+    )
+    .execute(&ctx.pool)
+    .await?;
+
+    let event_id = Uuid::now_v7();
+    let event = json!({
+        "id": event_id.to_string(),
+        "source": "reimport-manifest",
+        "event_type": "source.date",
+        "payload": {"source_date": source_date.format_rfc3339()},
+        "ts_orig": null,
+        "host": "test-host",
+        "source_material_id": material_id.to_string(),
+        "anchor_byte": 0,
+    });
+    let subject = ctx.env().nats_subject_with_namespace(
+        Some(&setup.namespace),
+        "events.raw.reimport_manifest.source_date",
+    );
+    ctx.nats_client()
+        .publish(
+            subject,
+            serde_json::to_vec(&admission_envelope("reimport-manifest", event))?.into(),
+        )
+        .await?;
+    ctx.nats_client().flush().await?;
+
+    WaitHelpers::wait_for_event_id(&ctx.pool, event_id.into(), Timeouts::SHORT).await?;
+    let persisted = ctx
+        .pool
+        .events()
+        .get_by_id(event_id.into())
+        .await?
+        .expect("deferred historical event should persist");
+    assert_eq!(persisted.ts_orig, Some(source_date));
+
+    setup.handle.abort();
+    let _ = setup.handle.await;
+    Ok(())
+}
+
 #[sinex_test]
 async fn duplicate_events_are_idempotent(ctx: TestContext) -> TestResult<()> {
     let ctx = ctx.with_nats().shared().await?;
@@ -1564,12 +1629,12 @@ async fn multi_child_intent_settles_valid_and_rejected_siblings(
         "source": "r6d12mixed",
         "event_type": "r6d12mixed.bad",
         "payload": {"data": "bad"},
-        // A well-formed but implausibly-old RFC3339 timestamp: it must
+        // A well-formed but implausibly-future RFC3339 timestamp: it must
         // deserialize fine (unlike a malformed string, which would poison
         // the WHOLE envelope's deserialization and reject the valid
-        // sibling too) yet still get rejected by the per-event
-        // ts_orig_lower_bound (2000-01-01) admission check.
-        "ts_orig": "1990-01-01T00:00:00Z",
+        // sibling too) yet still get rejected by the future-skew admission
+        // check. Legitimate pre-2000 timestamps are covered separately.
+        "ts_orig": (temporal::now() + temporal::Duration::days(3650)).format_rfc3339(),
         "host": "test-host",
         "source_material_id": FIXTURE_SOURCE_MATERIAL_ID,
         "anchor_byte": 1,

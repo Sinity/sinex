@@ -798,6 +798,15 @@ in
                   default = 60;
                   description = "Interval in seconds between event_engine processing telemetry emissions.";
                 };
+                tsOrigLowerBoundUnix = mkOption {
+                  type = nullOr int;
+                  default = null;
+                  description = ''
+                    Optional earliest accepted source timestamp as Unix seconds.
+                    Null (the default) preserves legitimate historical imports;
+                    malformed timestamps and future-skew violations remain rejected.
+                  '';
+                };
                 blobGcIntervalSecs = mkOption {
                   type = nullOr positive;
                   default = null;

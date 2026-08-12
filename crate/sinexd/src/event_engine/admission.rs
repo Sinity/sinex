@@ -493,7 +493,7 @@ pub struct AdmissionService {
     fail_once: Option<Arc<AtomicBool>>,
     db_failures_remaining: Option<Arc<AtomicUsize>>,
     future_ts_skew: time::Duration,
-    ts_orig_lower_bound: Timestamp,
+    ts_orig_lower_bound: Option<Timestamp>,
     storage_lane: EventStorageLane,
 }
 
@@ -559,9 +559,7 @@ impl AdmissionService {
             fail_once: None,
             db_failures_remaining: None,
             future_ts_skew: time::Duration::hours(1),
-            ts_orig_lower_bound: Timestamp::from_const(time::macros::datetime!(
-                2000-01-01 00:00:00 UTC
-            )),
+            ts_orig_lower_bound: None,
             storage_lane: EventStorageLane::Activity,
         }
     }
@@ -573,7 +571,7 @@ impl AdmissionService {
     }
 
     #[must_use]
-    pub fn with_ts_orig_lower_bound(mut self, lower_bound: Timestamp) -> Self {
+    pub fn with_ts_orig_lower_bound(mut self, lower_bound: Option<Timestamp>) -> Self {
         self.ts_orig_lower_bound = lower_bound;
         self
     }
@@ -594,8 +592,50 @@ impl AdmissionService {
         self.future_ts_skew = skew;
     }
 
-    pub fn set_ts_orig_lower_bound(&mut self, lower_bound: Timestamp) {
+    pub fn set_ts_orig_lower_bound(&mut self, lower_bound: Option<Timestamp>) {
         self.ts_orig_lower_bound = lower_bound;
+    }
+
+    /// Validate a source-native timestamp after it has been resolved from a
+    /// material manifest or temporal ledger. Explicit event timestamps take
+    /// this same path during admission; deferred material timestamps must use
+    /// it after the source-material readiness gate.
+    #[must_use]
+    pub(crate) fn timestamp_rejection(
+        &self,
+        ts_orig: Timestamp,
+        event_id: Uuid,
+    ) -> Option<AdmissionRejection> {
+        if let Some(lower_bound) = self.ts_orig_lower_bound
+            && ts_orig < lower_bound
+        {
+            return Some(
+                AdmissionRejection::new(
+                    AdmissionRejectionKind::PastTimestamp,
+                    format!(
+                        "ts_orig {ts_orig} predates lower bound {lower_bound} (implausibly old)"
+                    ),
+                )
+                .with_event_id(event_id),
+            );
+        }
+
+        let now = Timestamp::now();
+        let latest_expected = now + self.future_ts_skew;
+        if ts_orig > latest_expected {
+            return Some(
+                AdmissionRejection::new(
+                    AdmissionRejectionKind::FutureTimestamp,
+                    format!(
+                        "ts_orig {ts_orig} exceeds latest expected {latest_expected} by {} seconds (implausibly future)",
+                        (ts_orig - now).whole_seconds()
+                    ),
+                )
+                .with_event_id(event_id),
+            );
+        }
+
+        None
     }
 
     pub fn set_storage_lane(&mut self, storage_lane: EventStorageLane) {
@@ -778,54 +818,21 @@ impl AdmissionService {
         }
 
         if let Some(ts_orig) = event.ts_orig {
-            let now = Timestamp::now();
-            if ts_orig < self.ts_orig_lower_bound {
+            if let Some(rejection) = self.timestamp_rejection(
+                ts_orig,
+                event.id.map(|id| id.to_uuid()).unwrap_or_default(),
+            ) {
                 error!(
                     target: "sinex_metrics",
                     metric = "event_engine.admission_rejections_total",
-                    kind = "past_timestamp",
+                    kind = rejection.kind.outcome_code(),
                     event_id = ?event.id,
                     source = %event.source,
                     event_type = %event.event_type,
                     ts_orig = %ts_orig,
-                    lower_bound = %self.ts_orig_lower_bound,
-                    "Event ts_orig predates lower bound"
+                    "Event ts_orig rejected by admission timestamp bounds"
                 );
-                return Ok(AdmissionDecision::Rejected(
-                    AdmissionRejection::new(
-                        AdmissionRejectionKind::PastTimestamp,
-                        format!(
-                            "ts_orig {ts_orig} predates lower bound {} (implausibly old)",
-                            self.ts_orig_lower_bound
-                        ),
-                    )
-                    .with_event_id(event.id.map(|id| id.to_uuid()).unwrap_or_default()),
-                ));
-            }
-            if ts_orig > now + self.future_ts_skew {
-                let latest_expected = now + self.future_ts_skew;
-                error!(
-                    target: "sinex_metrics",
-                    metric = "event_engine.admission_rejections_total",
-                    kind = "future_timestamp",
-                    event_id = ?event.id,
-                    source = %event.source,
-                    event_type = %event.event_type,
-                    ts_orig = %ts_orig,
-                    latest_expected = %latest_expected,
-                    skew_seconds = (ts_orig - now).whole_seconds(),
-                    "Event ts_orig is implausibly far in the future"
-                );
-                return Ok(AdmissionDecision::Rejected(
-                    AdmissionRejection::new(
-                        AdmissionRejectionKind::FutureTimestamp,
-                        format!(
-                            "ts_orig {ts_orig} exceeds latest expected {latest_expected} by {} seconds (implausibly future)",
-                            (ts_orig - now).whole_seconds()
-                        ),
-                    )
-                    .with_event_id(event.id.map(|id| id.to_uuid()).unwrap_or_default()),
-                ));
+                return Ok(AdmissionDecision::Rejected(rejection));
             }
         }
 

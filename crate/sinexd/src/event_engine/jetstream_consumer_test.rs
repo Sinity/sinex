@@ -103,21 +103,11 @@ async fn suspicious_future_ts_orig_default_one_hour_skew() -> TestResult<()> {
 }
 
 #[sinex_test]
-async fn implausibly_old_ts_orig_default_year_2000() -> TestResult<()> {
-    let lower_bound = Timestamp::from_const(time::macros::datetime!(2000-01-01 00:00:00 UTC));
-    let before_2000 = Timestamp::from_const(time::macros::datetime!(1999-12-31 23:59:59 UTC));
-    let after_2000 = Timestamp::from_const(time::macros::datetime!(2000-01-02 00:00:00 UTC));
-    assert!(
-        before_2000 < lower_bound,
-        "1999-12-31 should be before lower bound"
-    );
-    assert!(
-        (lower_bound >= lower_bound),
-        "2000-01-01 itself should not be flagged"
-    );
-    assert!(
-        (after_2000 >= lower_bound),
-        "2000-01-02 should not be flagged"
+async fn historical_ts_orig_default_has_no_lower_bound() -> TestResult<()> {
+    let config = crate::event_engine::EventEngineConfig::default();
+    assert_eq!(
+        config.ts_orig_lower_bound_unix, None,
+        "the deployed default must not DLQ legitimate pre-2000 imports"
     );
     Ok(())
 }
