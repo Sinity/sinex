@@ -98,7 +98,7 @@ mod lk67_invalidation_reachability {
             .initialize_with_transport(
                 "lk67-invalidation-reachability".to_string(),
                 HashMap::new(),
-                None,
+                Some(ctx.pool().clone()),
                 EventTransport::Nats(Arc::new(crate::runtime::NatsPublisher::new(
                     ctx.nats_client(),
                 ))),
