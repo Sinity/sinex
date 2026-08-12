@@ -1010,3 +1010,87 @@ async fn projection_registry_replay_invalidation(ctx: TestContext) -> Result<()>
 
     Ok(())
 }
+
+/// sinex-x47r: `count_visible_replay_outputs` (execution/collect.rs) counts
+/// `COUNT(DISTINCT logical_source_identifier)`, and
+/// `with_logical_source_identifiers` sets `minimum_visible_count` to the
+/// number of distinct logical sources -- normally 1. A replay that archives
+/// many events from one logical source and successfully re-emits only ONE
+/// of them satisfies the gate just as well as a replay that re-emits all of
+/// them, because the gate only asks "did at least one source show up",
+/// never "how many rows came back".
+#[sinex_test]
+#[ignore = "sinex-x47r open: the output-validation gate is trivially satisfiable by re-emitting a \
+            single event out of many archived ones from the same logical source; un-ignore once \
+            the gate checks something proportional to what was actually archived"]
+async fn output_validation_gate_passes_when_most_archived_events_never_return(
+    ctx: TestContext,
+) -> Result<()> {
+    let ctx = ctx.with_nats().dedicated().await?;
+    let replay = Arc::new(ReplayStateMachine::new(ctx.pool.clone()));
+    let engine = ReplayExecutionEngine::new(replay.clone(), ctx.nats_client());
+
+    let logical_source = "output-gate-trivial-satisfy-test";
+    let material_id = ctx.create_source_material(Some(logical_source)).await?;
+
+    // Archive 3 real events from the same logical source.
+    let mut archived_ids = Vec::new();
+    for i in 0..3 {
+        let event = DynamicPayload::new(
+            "fs-test",
+            FileCreatedPayload::EVENT_TYPE.as_static_str(),
+            json!({ "path": format!("/tmp/output-gate-{i}.txt") }),
+        )
+        .from_material(material_id)
+        .build()?;
+        let inserted = ctx.pool.events().insert(event).await?;
+        archived_ids.push(inserted.id.expect("inserted event must have an id").to_uuid());
+    }
+
+    let operation = replay
+        .create_operation(sample_scope(), "test:output-gate".into())
+        .await?;
+    let operation_id = operation.operation_id;
+    ctx.pool
+        .events()
+        .execute_cascade_archive(
+            &archived_ids,
+            "archive for output-gate trivial-satisfy test",
+            &operation_id.to_string(),
+            "test:output-gate",
+        )
+        .await?;
+
+    // The real replay only successfully re-emits ONE of the three archived
+    // events (simulating a partially-failed re-scan).
+    let mut replacement = DynamicPayload::new(
+        "fs-test",
+        FileCreatedPayload::EVENT_TYPE.as_static_str(),
+        json!({ "path": "/tmp/output-gate-0.txt" }),
+    )
+    .from_material(material_id)
+    .build()?;
+    replacement.created_by_operation_id = Some(operation_id);
+    ctx.pool.events().insert(replacement).await?;
+
+    let expected = ExpectedReplayOutputs {
+        minimum_visible_count: 1,
+        sources: vec!["fs-test".to_string()],
+        event_types: vec![FileCreatedPayload::EVENT_TYPE.as_static_str().to_string()],
+        logical_source_identifiers: vec![logical_source.to_string()],
+    };
+    let visible = engine
+        .count_visible_replay_outputs(&ctx.pool, operation_id, &expected)
+        .await?;
+
+    assert!(
+        visible < expected.minimum_visible_count as i64,
+        "sinex-x47r: the output-validation gate should NOT report success (visible={visible} >= \
+         minimum={}) when only 1 of 3 archived events from the same logical source actually came \
+         back -- a real fix needs a bound proportional to what was archived, not just \
+         'did the source show up at all'",
+        expected.minimum_visible_count
+    );
+
+    Ok(())
+}

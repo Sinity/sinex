@@ -39,6 +39,39 @@ async fn end_before_begin_without_slices_short_timeouts(ctx: TestContext) -> Tes
 }
 
 #[sinex_test]
+#[ignore = "sinex-2nsg open: a material wedged in AssemblyPhase::Finalizing is never surfaced by \
+            find_stale_materials no matter how old it is (maintenance.rs unconditional `continue` \
+            on Finalizing), so a panicked detached finalize worker leaves it permanently invisible \
+            to the stale sweep; un-ignore once Finalizing gets an age bound"]
+async fn finalizing_phase_material_stuck_for_hours_is_never_flagged_stale(
+    ctx: TestContext,
+) -> TestResult<()> {
+    let ctx = ctx.with_nats().shared().await?;
+    let (assembler, _content_store_dir, _state_dir) =
+        super::super::test_support::TestAssemblerBuilder::new("maintenance-test")
+            .slice_timeout_secs(60)
+            .build(&ctx)
+            .await?;
+
+    let material_id = Uuid::now_v7();
+    let mut state = assembler.create_placeholder_state(material_id).await?;
+    // Simulate a detached finalize worker that panicked mid-flight: the phase
+    // was set to Finalizing and never reverted, hours ago.
+    state.phase = super::super::state::AssemblyPhase::Finalizing;
+    state.last_slice_received = Timestamp::now() - time::Duration::hours(6);
+    assembler.insert_state_handle(material_id, state);
+
+    let stale = assembler.find_stale_materials().await;
+
+    assert!(
+        stale.iter().any(|(id, _)| *id == material_id),
+        "a material wedged in Finalizing for 6 hours must eventually be surfaced as stale, \
+         not silently excluded forever regardless of age"
+    );
+    Ok(())
+}
+
+#[sinex_test]
 async fn orphan_reconcile_does_not_short_timeout_live_self_observation_registry_rows(
     ctx: TestContext,
 ) -> TestResult<()> {

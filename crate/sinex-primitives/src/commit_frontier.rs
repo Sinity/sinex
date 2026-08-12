@@ -258,6 +258,50 @@ mod tests {
         assert!(frontier.is_fully_committed());
     }
 
+    /// sinex-8g4z: `restore()` resets `next_ticket` to 0 unconditionally.
+    /// If a pre-crash atom was submitted but never completed (its ticket
+    /// value observed/logged by a caller before the crash), the FIRST
+    /// `submit()` after `restore()` mints the exact same `AtomTicket(0)`
+    /// for a completely different, unrelated atom. A caller that later
+    /// tries to reconcile the stale pre-crash receipt by calling
+    /// `complete()` with the old ticket value collides with the new atom
+    /// instead of being rejected as unknown.
+    #[test]
+    #[ignore = "sinex-8g4z open: CommitFrontier::restore's next_ticket=0 reset lets a stale \
+                pre-crash AtomTicket collide with a genuinely different post-restore atom; \
+                un-ignore once restore() seeds next_ticket high enough to never reuse a value \
+                that could still be referenced by an in-flight caller"]
+    fn restore_resets_ticket_sequence_and_collides_with_a_stale_pending_ticket() {
+        let mut pre_crash: CommitFrontier<u64> = CommitFrontier::new();
+        let stale_ticket = pre_crash.submit();
+        // The atom was never completed before the crash -- its ticket value
+        // may still be held by some in-flight caller (e.g. logged in a
+        // request/receipt) expecting to reconcile it after restart. `pre_crash`
+        // itself is now abandoned (simulating the crash) and never touched again.
+
+        let mut restored: CommitFrontier<u64> = CommitFrontier::restore(999, 42);
+        let _real_new_ticket = restored.submit();
+
+        // A caller reconciling the stale pre-crash receipt tries to complete
+        // it using the OLD ticket value. On correct behavior this should be
+        // a safe no-op (per `complete`'s own doc comment: "completing an
+        // unknown ticket ... is also a no-op") because that ticket value
+        // does not legitimately identify anything in the restored frontier.
+        // On buggy behavior (next_ticket reset to 0), the stale value
+        // coincidentally IS the real new atom's ticket, so this call
+        // corrupts it with an unrelated payload instead of no-op'ing.
+        let (stale_outcome, stale_payload) = outcome(7_777);
+        restored.complete(stale_ticket, stale_outcome, stale_payload);
+
+        assert_ne!(
+            restored.frontier(),
+            (43, Some(&7_777)),
+            "sinex-8g4z: a ticket value carried over from an abandoned pre-crash frontier must \
+             not be able to match and complete a genuinely different post-restore atom -- it \
+             should be an unknown-ticket no-op instead"
+        );
+    }
+
     #[test]
     fn in_order_completion_advances_monotonically() {
         let mut frontier = CommitFrontier::new();

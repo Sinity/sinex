@@ -149,6 +149,96 @@ async fn tombstone_count(ctx: &TestContext, event_id: &str) -> TestResult<i64> {
     .await?)
 }
 
+async fn archived_annotation_count(ctx: &TestContext, event_id: &str) -> TestResult<i64> {
+    Ok(sqlx::query_scalar!(
+        r#"SELECT COUNT(*)::bigint as "count!" FROM audit.archived_annotations WHERE event_id = $1::uuid"#,
+        event_id.parse::<uuid::Uuid>()?
+    )
+    .fetch_one(ctx.pool())
+    .await?)
+}
+
+/// sinex-kwwt: `execute_cascade_tombstone` (apply.rs) inserts a tombstone
+/// skeleton row and deletes from `audit.archived_events`, but never touches
+/// `audit.archived_annotations`, `audit.archived_embeddings`, or
+/// `audit.archived_tagged_items` -- unlike its non-destructive sibling
+/// `execute_cascade_restore`, which cleans up all three. A permanent purge
+/// (the exact operation an operator uses to remove sensitive data) leaves
+/// operator-authored annotation content behind forever, orphaned and
+/// unreachable by any later purge attempt.
+#[sinex_test]
+#[ignore = "sinex-kwwt open: execute_cascade_tombstone leaks audit.archived_annotations rows (and \
+            archived_embeddings/archived_tagged_items) for any tombstoned event that had one; \
+            un-ignore once the tombstone path cleans up all archive side-tables like restore does"]
+async fn tombstone_approve_purges_archived_annotation_content(ctx: TestContext) -> TestResult<()> {
+    let auth = RpcAuthContext::system();
+    let services = ServiceContainer::from_database_url(ctx.database_url().to_string()).await?;
+    let source = "test.lifecycle.tombstone-annotation-leak";
+    let event = publish_event(&ctx, source, 1).await?;
+    let event_id = event
+        .id
+        .expect("published event should have an id")
+        .to_string();
+
+    // An operator-curated annotation on the live event, before it is
+    // archived+tombstoned.
+    sqlx::query!(
+        r#"
+        INSERT INTO core.event_annotations (event_id, annotation_type, content, created_by)
+        VALUES ($1::uuid, 'note', 'sensitive operator note that must be purgeable', 'test:operator')
+        "#,
+        event_id.parse::<uuid::Uuid>()?,
+    )
+    .execute(ctx.pool())
+    .await?;
+
+    handle_lifecycle_archive(
+        ctx.pool(),
+        json!({
+            "event_ids": [event_id.clone()],
+            "dry_run": false,
+            "reason": "prepare tombstone with an annotated event",
+        }),
+        &auth,
+    )
+    .await?;
+    // Archiving copies the annotation into audit.archived_annotations.
+    assert_eq!(archived_annotation_count(&ctx, &event_id).await?, 1);
+
+    let create: TombstoneCreateResponse = serde_json::from_value(
+        handle_tombstone_create(
+            ctx.pool(),
+            json!({
+                "source": source,
+                "limit": 1,
+                "reason": "preview annotated event for permanent purge",
+            }),
+            &auth,
+        )
+        .await?,
+    )?;
+
+    handle_tombstone_approve(
+        json!({
+            "operation_id": create.operation.operation_id,
+            "yes_i_understand_data_is_gone": true,
+        }),
+        &services,
+        &auth,
+    )
+    .await?;
+
+    assert_eq!(
+        archived_annotation_count(&ctx, &event_id).await?,
+        0,
+        "sinex-kwwt: a permanent purge (tombstone approve) must remove the archived annotation \
+         content too, not just the archived_events skeleton row -- otherwise operator-curated \
+         content the purge was specifically meant to remove survives forever, orphaned"
+    );
+
+    Ok(())
+}
+
 #[sinex_test]
 async fn archive_and_restore_operations_are_persisted_and_auditable(
     ctx: TestContext,
