@@ -26,7 +26,13 @@ use sinex_primitives::privacy::{
 };
 use sinex_primitives::rpc::sources::{CaveatSeverity, caveat_codes};
 use sinex_primitives::{Bytes, HostName, JsonValue, Seconds, SinexError};
-use std::{collections::HashMap, sync::Arc};
+use std::{
+    collections::HashMap,
+    sync::{
+        atomic::{AtomicUsize, Ordering},
+        Arc,
+    },
+};
 use tokio::sync::mpsc;
 use xtask::sandbox::prelude::{
     EnvGuard, TestContext, TestResult, WaitHelpers, sinex_serial_test, sinex_test,
@@ -57,6 +63,37 @@ impl InputShapeAdapter for TestAdapter {
 }
 
 impl InputShapeAdapterExt for TestAdapter {}
+
+/// Counts adapter opens so the replay guard test can prove that a scoped
+/// replay never falls through to a fresh-cursor whole-source scan.
+static REPLAY_GUARD_OPENS: AtomicUsize = AtomicUsize::new(0);
+
+#[derive(Default)]
+struct ReplayGuardAdapter;
+
+#[async_trait]
+impl InputShapeAdapter for ReplayGuardAdapter {
+    type Config = ();
+    type Cursor = u64;
+
+    const KIND: InputShapeKind = InputShapeKind::AppendOnlyFile;
+
+    async fn open(
+        &self,
+        _material_id: Id<SourceMaterial>,
+        _config: &Self::Config,
+        _cursor: Option<Self::Cursor>,
+    ) -> ParserResult<BoxStream<'static, ParserResult<SourceRecord>>> {
+        REPLAY_GUARD_OPENS.fetch_add(1, Ordering::SeqCst);
+        Ok(Box::pin(stream::empty()))
+    }
+
+    fn cursor_after(&self, _record: &SourceRecord) -> ParserResult<Self::Cursor> {
+        Ok(0)
+    }
+}
+
+impl InputShapeAdapterExt for ReplayGuardAdapter {}
 
 #[derive(Default)]
 struct ErroringAdapter;
@@ -228,6 +265,45 @@ impl InputShapeAdapter for EmptyLogicalPathRecordAdapter {
 }
 
 impl InputShapeAdapterExt for EmptyLogicalPathRecordAdapter {}
+
+/// Replays the same durable material occurrence on every open. This models a
+/// retry of one source record after a sibling settlement boundary without
+/// introducing a new material id, which is the occurrence identity contract
+/// exercised by sinex-w4i.
+#[derive(Default)]
+struct StableMaterialRecordAdapter;
+
+#[async_trait]
+impl InputShapeAdapter for StableMaterialRecordAdapter {
+    type Config = ();
+    type Cursor = u64;
+
+    const KIND: InputShapeKind = InputShapeKind::StaticFile;
+
+    async fn open(
+        &self,
+        _material_id: Id<SourceMaterial>,
+        _config: &Self::Config,
+        _cursor: Option<Self::Cursor>,
+    ) -> ParserResult<BoxStream<'static, ParserResult<SourceRecord>>> {
+        Ok(Box::pin(stream::once(async {
+            Ok(SourceRecord {
+                material_id: Id::from_uuid(Uuid::from_u128(0x535441424c455f4d4154455249414c)),
+                anchor: MaterialAnchor::ByteRange { start: 0, len: 0 },
+                bytes: Vec::new(),
+                logical_path: None,
+                source_ts_hint: None,
+                metadata: JsonValue::Null,
+            })
+        })))
+    }
+
+    fn cursor_after(&self, _record: &SourceRecord) -> ParserResult<Self::Cursor> {
+        Ok(1)
+    }
+}
+
+impl InputShapeAdapterExt for StableMaterialRecordAdapter {}
 
 #[derive(Default)]
 struct PendingAfterOneRecordAdapter;
@@ -1297,6 +1373,83 @@ async fn adapter_historical_finalizes_finite_drain_material(ctx: TestContext) ->
     Ok(())
 }
 
+/// sinex-nbag: a scoped replay for an adapter without a material-backed
+/// replay route must fail closed before opening the adapter. Opening it with
+/// the replay worker's fresh checkpoint namespace would rescan both the
+/// selected and unselected occurrences from cursor zero, creating duplicate
+/// live interpretations for the unselected ones.
+#[sinex_test]
+async fn scoped_replay_does_not_open_generic_adapter_from_fresh_cursor(
+    ctx: TestContext,
+) -> TestResult<()> {
+    let ctx = ctx.with_nats().shared().await?;
+    let (runtime, _event_receiver) = make_adapter_runtime(&ctx).await?;
+    REPLAY_GUARD_OPENS.store(0, Ordering::SeqCst);
+    let mut source =
+        AdapterBackedSource::<ReplayGuardAdapter, TestParser>::new("test.scoped-replay-guard");
+    let mut state = AdapterModuleState::default();
+
+    source
+        .initialize(AdapterSourceConfig::default(), &runtime, &mut state)
+        .await?;
+
+    let selected_material = Uuid::now_v7();
+    let unselected_material = Uuid::now_v7();
+    let error = source
+        .scan_historical(
+            &mut state,
+            Checkpoint::None,
+            TimeHorizon::Historical {
+                end_time: Timestamp::now(),
+            },
+            ScanArgs {
+                replay: Some(MaterialReplayContext {
+                    operation_id: Uuid::now_v7(),
+                    materials: vec![
+                        ResolvedReplayMaterial {
+                            source_material_id: selected_material,
+                            material_kind: "fixture".to_string(),
+                            source_identifier: "selected".to_string(),
+                            material_metadata: JsonValue::Null,
+                            material_start_time: None,
+                            material_end_time: None,
+                        },
+                        ResolvedReplayMaterial {
+                            source_material_id: unselected_material,
+                            material_kind: "fixture".to_string(),
+                            source_identifier: "unselected".to_string(),
+                            material_metadata: JsonValue::Null,
+                            material_start_time: None,
+                            material_end_time: None,
+                        },
+                    ],
+                    occurrences: Vec::new(),
+                    replay_scope: ReplayScopeFilters {
+                        material_ids: Some(vec![selected_material]),
+                        event_types: Some(vec!["test.event".to_string()]),
+                    },
+                }),
+                ..Default::default()
+            },
+        )
+        .await
+        .expect_err("generic scoped replay must fail closed");
+
+    assert!(
+        error
+            .to_string()
+            .contains("replay is not supported for this adapter"),
+        "guard error should explain that the adapter has no bounded replay route: {error}"
+    );
+    assert_eq!(
+        REPLAY_GUARD_OPENS.load(Ordering::SeqCst),
+        0,
+        "scoped replay must not open a fresh cursor and rescan selected plus unselected material"
+    );
+    assert_eq!(state.cursor, None);
+    Ok(())
+}
+
 #[sinex_test]
 async fn adapter_backed_source_preserves_already_materialized_record_provenance(
     ctx: TestContext,
@@ -1782,10 +1935,11 @@ impl MaterialParser for MultiIntentParser {
 
 /// sinex-w4i: every keyless sibling emitted from one material record receives
 /// a deterministic occurrence identity. The durable-emission gate still keeps
-/// the record cursor closed until every sibling settles, while admission can
-/// now recognize a settled sibling if the whole record is retried.
+/// the record cursor closed until every sibling settles, while the normal
+/// admission outcome suppresses a sibling that was already persisted when the
+/// whole record is retried.
 #[sinex_test]
-async fn adapter_multi_intent_partial_settlement_duplicates_the_settled_sibling_on_retry(
+async fn adapter_multi_intent_partial_settlement_suppresses_settled_sibling_on_retry(
     ctx: TestContext,
 ) -> TestResult<()> {
     let ctx = ctx.with_nats().shared().await?;
@@ -1795,7 +1949,7 @@ async fn adapter_multi_intent_partial_settlement_duplicates_the_settled_sibling_
     let registry1 = crate::runtime::durable_emission::SettlementRegistry::new();
     let (runtime1, mut event_receiver1) =
         make_adapter_runtime_with_settlement_registry(&ctx, registry1.clone()).await?;
-    let mut source1 = AdapterBackedSource::<EmptyLogicalPathRecordAdapter, MultiIntentParser>::new(
+    let mut source1 = AdapterBackedSource::<StableMaterialRecordAdapter, MultiIntentParser>::new(
         "desktop.clipboard",
     )
     .with_durable_emission_timeout(std::time::Duration::from_millis(150));
@@ -1839,7 +1993,11 @@ async fn adapter_multi_intent_partial_settlement_duplicates_the_settled_sibling_
         2,
         "every keyless sibling must carry an admission identity"
     );
-    assert_ne!(attempt1[0].1, attempt1[1].1, "sibling slots must not collide");
+    assert_ne!(
+        attempt1[0].1,
+        attempt1[1].1,
+        "sibling slots must not collide"
+    );
     assert_eq!(
         emitted_1, 0,
         "the record does not fully unlock (its second sibling never settled), so the FIRST \
@@ -1854,7 +2012,7 @@ async fn adapter_multi_intent_partial_settlement_duplicates_the_settled_sibling_
     let registry2 = crate::runtime::durable_emission::SettlementRegistry::new();
     let (runtime2, mut event_receiver2) =
         make_adapter_runtime_with_settlement_registry(&ctx, registry2.clone()).await?;
-    let mut source2 = AdapterBackedSource::<EmptyLogicalPathRecordAdapter, MultiIntentParser>::new(
+    let mut source2 = AdapterBackedSource::<StableMaterialRecordAdapter, MultiIntentParser>::new(
         "desktop.clipboard",
     )
     .with_durable_emission_timeout(std::time::Duration::from_millis(150));
@@ -1862,50 +2020,60 @@ async fn adapter_multi_intent_partial_settlement_duplicates_the_settled_sibling_
         .initialize(AdapterSourceConfig::default(), &runtime2, &mut state)
         .await?;
 
+    let settled_key = attempt1[0].1.clone();
     let settler2 = tokio::spawn(async move {
-        let mut ids = Vec::new();
-        while ids.len() < 2 {
+        let mut outcomes = Vec::new();
+        while outcomes.len() < 2 {
             let Some(event) = event_receiver2.recv().await else {
                 break;
             };
             let id = event.id.expect("emit() assigns an id");
-            registry2.resolve(
-                id,
+            let suppressed = event.equivalence_key.as_ref() == settled_key.as_ref();
+            let outcome = if suppressed {
+                crate::runtime::durable_emission::EmissionReceiptState::Suppressed {
+                    reason: crate::runtime::durable_emission::SuppressionReason::
+                        EquivalenceKeyDuplicate,
+                    existing_event_id: None,
+                }
+            } else {
                 crate::runtime::durable_emission::EmissionReceiptState::PersistedConfirmed {
                     lane: sinex_db::repositories::EventStorageLane::Activity,
                     inserted: true,
                     confirmed_sequence: None,
-                },
-            );
-            ids.push((id, event.equivalence_key.clone()));
+                }
+            };
+            registry2.resolve(id, outcome);
+            outcomes.push((event.equivalence_key.clone(), suppressed));
         }
-        ids
+        outcomes
     });
 
     let emitted_2 = source2.drain_adapter(None, &mut state, None, None).await?;
-    let attempt2_ids = settler2.await.expect("settler2 did not panic");
+    let attempt2_outcomes = settler2.await.expect("settler2 did not panic");
 
     assert_eq!(
-        attempt2_ids.len(),
+        attempt2_outcomes.len(),
         2,
-        "the retry re-parses the whole record and re-emits BOTH intents, including the one \
-         that was already durably confirmed in attempt 1"
+        "the retry re-parses the whole record, so both sibling identities reach admission"
     );
     assert_eq!(
         emitted_2, 2,
-        "this time both siblings settle, so the record fully unlocks and both its events count \
-         as emitted"
+        "suppressed and persisted terminal outcomes both unlock the record's durable frontier"
     );
     assert_eq!(state.cursor, Some(1));
 
     assert_eq!(
-        attempt2_ids.iter().filter(|(_, key)| key.is_some()).count(),
-        2,
-        "retry must preserve identity for every sibling"
+        attempt2_outcomes[0],
+        (attempt1[0].1.clone(), true),
+        "the previously settled sibling must take the admission suppression path"
     );
     assert_ne!(
-        attempt2_ids[0].1, attempt2_ids[1].1,
+        attempt2_outcomes[0].0, attempt2_outcomes[1].0,
         "retry sibling slots must remain distinct"
+    );
+    assert_eq!(
+        attempt2_outcomes[1].1, false,
+        "the sibling without a durable first-attempt outcome must persist on retry"
     );
     Ok(())
 }
