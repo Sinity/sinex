@@ -30,7 +30,8 @@ use std::path::Path;
 /// Maximum size for adapters whose record contract requires one complete file
 /// in a `Vec<u8>`. Larger files must use a streaming/record-slicing adapter;
 /// they are rejected before the source bytes are partially materialized.
-pub(crate) const MAX_WHOLE_FILE_BYTES: u64 = 64 * 1024 * 1024;
+pub(crate) const MAX_WHOLE_FILE_BYTES: u64 =
+    sinex_primitives::constants::limits::DEFAULT_SOURCE_MATERIAL_MAX_BYTES as u64;
 
 fn whole_file_limit_error(path: &Path, max_bytes: u64) -> io::Error {
     io::Error::new(

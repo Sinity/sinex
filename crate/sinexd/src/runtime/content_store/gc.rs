@@ -114,9 +114,12 @@ async fn delete_unreferenced_blob(
     Ok(UnreferencedBlobCleanup::Deleted)
 }
 
-/// Remove aged, unreferenced material registry rows and the blob rows they kept
-/// alive. A later blob pass is intentional: it recovers the crash window after
-/// a registry delete and before CAS cleanup, and it makes each run idempotent.
+/// Remove aged, unreferenced disposable material registry rows and the blob
+/// rows they kept alive. `sensing`, `failed`, `recovered_partial`, and
+/// `cancelled` are disposable after the grace period; `completed` is retained
+/// indefinitely because it is a successful raw-material provenance root. A
+/// later blob pass is intentional: it recovers the crash window after a
+/// registry delete and before CAS cleanup, and it makes each run idempotent.
 pub async fn sweep_stale_material_registry(
     pool: &PgPool,
     content_store: &MaterialContentStore,

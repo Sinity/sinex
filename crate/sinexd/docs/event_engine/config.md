@@ -51,3 +51,10 @@ The module exports the matching `SINEX_NATS_*` variables for event_engine and ru
   mandatory, while schema validation controls whether present schemas are enforced.
 
 See `validator.md` for the behavioral matrix and rollout guidance.
+
+## Source-material size
+
+`max_material_size_bytes` defaults to and is capped at 512 MiB. The same hard
+ceiling is used by the content store and whole-file parser adapters, so a
+material accepted by assembly remains loadable for parsing. Larger inputs must
+use a record-slicing or streaming source shape; inputs are never truncated.

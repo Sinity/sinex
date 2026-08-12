@@ -1,4 +1,5 @@
 use super::*;
+use sinex_primitives::constants::limits::DEFAULT_SOURCE_MATERIAL_MAX_BYTES;
 use std::fs;
 use std::io::Write;
 use tempfile::Builder;
@@ -7,6 +8,16 @@ use xtask::sandbox::prelude::sinex_test;
 
 fn dummy_material_id() -> Id<SourceMaterial> {
     Id::from_uuid(uuid::Uuid::new_v4())
+}
+
+#[sinex_test]
+async fn static_file_limit_matches_source_material_ceiling() -> xtask::sandbox::TestResult<()> {
+    assert_eq!(
+        super::MAX_FILE_BYTES,
+        DEFAULT_SOURCE_MATERIAL_MAX_BYTES as u64,
+        "whole-file adapters must accept every material size the assembler accepts"
+    );
+    Ok(())
 }
 
 fn write_git_head(repo: &std::path::Path, oid: &str) -> xtask::sandbox::TestResult<()> {

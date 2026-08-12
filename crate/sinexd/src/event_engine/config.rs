@@ -996,7 +996,9 @@ fn validate_max_message_size(value: &Bytes) -> Result<(), ValidationError> {
 
 fn validate_material_size_limit(value: &Bytes) -> Result<(), ValidationError> {
     let bytes = value.as_u64();
-    if !(1024..=1_073_741_824).contains(&bytes) {
+    if !(1024..=sinex_primitives::constants::limits::DEFAULT_SOURCE_MATERIAL_MAX_BYTES as u64)
+        .contains(&bytes)
+    {
         return Err(ValidationError::new("range"));
     }
     Ok(())
@@ -1121,7 +1123,9 @@ fn default_disk_min_available_bytes() -> Bytes {
 fn default_max_material_size_bytes() -> Bytes {
     match shared_env::strict_parsed("SINEX_EVENT_ENGINE_MAX_MATERIAL_SIZE_BYTES") {
         Ok(Some(value)) => Bytes::from_bytes(value),
-        Ok(None) => Bytes::from_mebibytes(512),
+        Ok(None) => Bytes::from_bytes(
+            sinex_primitives::constants::limits::DEFAULT_SOURCE_MATERIAL_MAX_BYTES as u64,
+        ),
         Err(error) => {
             error!(
                 target: "sinex_metrics",
@@ -1130,7 +1134,9 @@ fn default_max_material_size_bytes() -> Bytes {
                 %error,
                 "Invalid env override for max material size; using default"
             );
-            Bytes::from_mebibytes(512)
+            Bytes::from_bytes(
+                sinex_primitives::constants::limits::DEFAULT_SOURCE_MATERIAL_MAX_BYTES as u64,
+            )
         }
     }
 }

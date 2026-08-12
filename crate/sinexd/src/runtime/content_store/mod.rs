@@ -262,7 +262,7 @@ pub struct ContentStoreConfig {
 }
 
 const fn default_max_blob_size() -> usize {
-    512 * 1024 * 1024 // Match the default material assembler ceiling.
+    sinex_primitives::constants::limits::DEFAULT_SOURCE_MATERIAL_MAX_BYTES
 }
 
 impl Default for ContentStoreConfig {

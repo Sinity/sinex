@@ -1735,7 +1735,7 @@ impl SourceMaterialRepository<'_> {
             WITH candidates AS (
                 SELECT sm.id
                 FROM raw.source_material_registry sm
-                WHERE sm.status IN ('sensing', 'failed')
+                WHERE sm.status IN ('sensing', 'failed', 'recovered_partial', 'cancelled')
                   AND COALESCE(sm.end_time, sm.start_time, sm.staged_at) < $1
                   AND NOT EXISTS (
                       SELECT 1 FROM core.events e WHERE e.source_material_id = sm.id
@@ -1749,7 +1749,7 @@ impl SourceMaterialRepository<'_> {
             DELETE FROM raw.source_material_registry sm
             USING candidates
             WHERE sm.id = candidates.id
-              AND sm.status IN ('sensing', 'failed')
+              AND sm.status IN ('sensing', 'failed', 'recovered_partial', 'cancelled')
               AND COALESCE(sm.end_time, sm.start_time, sm.staged_at) < $1
               AND NOT EXISTS (
                   SELECT 1 FROM core.events e WHERE e.source_material_id = sm.id
