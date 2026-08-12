@@ -11,6 +11,7 @@ use color_eyre::eyre::{WrapErr, eyre};
 use color_eyre::{Report, Result};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
+use sinex_primitives::DEFAULT_RUNTIME_LIVENESS_STALE_AFTER_SECS;
 use sinex_primitives::SemanticLaneStatus;
 use sinex_primitives::Uuid;
 use sinex_primitives::domain::{EventSource, EventType};
@@ -439,7 +440,7 @@ const fn default_true() -> bool {
 }
 
 const fn default_stale_after_secs() -> u64 {
-    300
+    DEFAULT_RUNTIME_LIVENESS_STALE_AFTER_SECS
 }
 
 const fn default_recent_window_secs() -> u64 {

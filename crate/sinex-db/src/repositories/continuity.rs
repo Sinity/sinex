@@ -28,12 +28,12 @@
 //!   carries a `privacy.tier` that requires a more conservative answer.
 
 use super::common::{DbResult, db_error};
-use sinex_primitives::Timestamp;
 use sinex_primitives::sources::SourceFamily;
 use sinex_primitives::sources::continuity::{
     CoverageContract, CoverageGap, DeclaredCoverageContract, DeclaredCoverageContractKind, GapKind,
     PrivacyClass, Replayability, SeamKind, SourceContinuityReport, TemporalSeam,
 };
+use sinex_primitives::{DEFAULT_RUNTIME_LIVENESS_STALE_AFTER_SECS, Timestamp};
 use sqlx::PgPool;
 use time::OffsetDateTime;
 
@@ -322,6 +322,18 @@ impl<'a> ContinuityRepository<'a> {
             prev = Some(chunk);
         }
 
+        if coverage_contract == CoverageContract::Continuous {
+            if let Some(latest) = agg.latest_ts {
+                if let Some(gap) = continuous_trailing_gap(
+                    latest,
+                    OffsetDateTime::now_utc(),
+                    DEFAULT_RUNTIME_LIVENESS_STALE_AFTER_SECS,
+                ) {
+                    gaps.push(gap);
+                }
+            }
+        }
+
         let replayability = build_replayability(ReplayabilityFlags {
             any_blob: agg.any_blob,
             good_timing: agg.good_timing,
@@ -365,6 +377,20 @@ where
     R: ChunkAccess,
 {
     row.end_time()
+}
+
+fn continuous_trailing_gap(
+    latest: OffsetDateTime,
+    now: OffsetDateTime,
+    stale_after_secs: u64,
+) -> Option<CoverageGap> {
+    let age = (now - latest).whole_seconds();
+    (age >= stale_after_secs as i64).then(|| CoverageGap {
+        from_ts: latest.into(),
+        to_ts: now.into(),
+        kind: GapKind::ServiceCrash,
+        attribution: Some("continuous source has no recent observed coverage".to_string()),
+    })
 }
 
 trait ChunkAccess {

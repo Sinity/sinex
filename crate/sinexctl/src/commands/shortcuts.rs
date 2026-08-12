@@ -8,6 +8,7 @@ use color_eyre::Result;
 use console::style;
 use futures::StreamExt;
 use serde_json::json;
+use sinex_primitives::DEFAULT_RUNTIME_LIVENESS_STALE_AFTER_SECS;
 use sinex_primitives::domain::HealthStatus;
 use sinex_primitives::privacy::{load_private_mode_state, resolve_private_mode_state_dir};
 use sinex_primitives::query::{
@@ -238,7 +239,10 @@ async fn collect_runtime_and_dlq_signals(
     signals: &mut Vec<RuntimeStatusSignal>,
     warnings: &mut Vec<RuntimeStatusWarning>,
 ) {
-    match client.runtime_list_active(31_536_000).await {
+    match client
+        .runtime_list_active(DEFAULT_RUNTIME_LIVENESS_STALE_AFTER_SECS)
+        .await
+    {
         Ok(response) => {
             let modules = response.modules;
             let total = modules.len();

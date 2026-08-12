@@ -9,11 +9,14 @@ use crate::domain::{HealthStatus, ModuleName};
 use crate::env as shared_env;
 use crate::rpc::{RpcDomain, RpcMethod, RpcMutability, RpcRole, RpcStability, methods};
 use crate::views::{SourceCoverageListView, ViewEnvelope};
-use crate::{Result, Timestamp, Uuid};
+use crate::{
+    DEFAULT_RUNTIME_LIVENESS_STALE_AFTER_SECS, Result, RuntimeLiveness, RuntimeLivenessSignals,
+    RuntimeLivenessStatus, Timestamp, Uuid, evaluate_runtime_liveness,
+};
 use serde::{Deserialize, Serialize};
 
 fn default_stale_after_secs() -> u64 {
-    300
+    DEFAULT_RUNTIME_LIVENESS_STALE_AFTER_SECS
 }
 
 fn default_recent_window_secs() -> u64 {
@@ -253,6 +256,41 @@ impl EmitStallVerdict {
 }
 
 impl SourceStatus {
+    /// Evaluate the canonical runtime liveness verdict for this snapshot.
+    #[must_use]
+    pub fn runtime_liveness(&self, stale_after_secs: u64, now: Timestamp) -> RuntimeLiveness {
+        evaluate_runtime_liveness(
+            RuntimeLivenessSignals {
+                run_status: self.run_status.as_deref(),
+                health_status: self.current_health,
+                last_heartbeat_at: self.last_heartbeat_at,
+                last_output_at: self.last_output_at,
+            },
+            stale_after_secs,
+            now,
+        )
+    }
+
+    /// Whether the canonical verdict is a terminal or stale condition.
+    #[must_use]
+    pub fn is_liveness_failure(&self, stale_after_secs: u64, now: Timestamp) -> bool {
+        matches!(
+            self.runtime_liveness(stale_after_secs, now).status,
+            RuntimeLivenessStatus::Stale
+                | RuntimeLivenessStatus::Unhealthy
+                | RuntimeLivenessStatus::Stopped
+        )
+    }
+
+    /// Whether this snapshot is currently healthy enough to count as live.
+    #[must_use]
+    pub fn is_live(&self, stale_after_secs: u64, now: Timestamp) -> bool {
+        matches!(
+            self.runtime_liveness(stale_after_secs, now).status,
+            RuntimeLivenessStatus::Healthy | RuntimeLivenessStatus::Degraded
+        )
+    }
+
     /// Classify this source's emit-rate health against the supplied
     /// thresholds and reference instant (`now`).
     ///

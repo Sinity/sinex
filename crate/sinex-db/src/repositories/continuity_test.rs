@@ -282,3 +282,18 @@ async fn unknown_declared_contract_falls_back_to_heuristic() -> xtask::sandbox::
     assert!(!is_declared);
     Ok(())
 }
+
+#[sinex_test]
+async fn continuous_trailing_gap_requires_stale_latest_observation()
+-> xtask::sandbox::TestResult<()> {
+    let latest = datetime!(2026-08-12 11:54 UTC);
+    let now = datetime!(2026-08-12 12:00 UTC);
+    let gap = continuous_trailing_gap(latest, now, 300).expect("stale tail expected");
+    assert_eq!(gap.kind, GapKind::ServiceCrash);
+    assert_eq!(
+        gap.attribution.as_deref(),
+        Some("continuous source has no recent observed coverage")
+    );
+    assert!(continuous_trailing_gap(latest, now, 600).is_none());
+    Ok(())
+}

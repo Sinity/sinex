@@ -39,6 +39,7 @@ pub mod query;
 pub mod query_units;
 pub mod relations;
 pub mod rpc;
+pub mod runtime_liveness;
 pub mod runtime_pressure;
 pub mod runtime_target;
 pub mod schema_constraints;
@@ -191,6 +192,10 @@ pub use query_units::{
     QueryFieldDescriptor, QueryFieldType, QueryOperator, QueryPagination, QuerySortDescriptor,
     QueryUnitDescriptor, QueryUnitId, QueryValue, SinexQuery, SinexQueryPredicate, SinexQuerySort,
     parse_sinex_query, query_unit_descriptor, query_unit_descriptors,
+};
+pub use runtime_liveness::{
+    DEFAULT_RUNTIME_LIVENESS_STALE_AFTER_SECS, RuntimeLiveness, RuntimeLivenessSignals,
+    RuntimeLivenessStatus, evaluate_runtime_liveness,
 };
 pub use runtime_pressure::{RuntimePressureAction, RuntimePressureLevel};
 pub use runtime_target::{

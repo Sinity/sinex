@@ -2,11 +2,11 @@
 
 use crate::domain::ModuleName;
 use crate::rpc::{RpcDomain, RpcMethod, RpcMutability, RpcRole, RpcStability, methods};
-use crate::{Timestamp, Uuid};
+use crate::{DEFAULT_RUNTIME_LIVENESS_STALE_AFTER_SECS, Timestamp, Uuid};
 use serde::{Deserialize, Serialize};
 
 fn default_stale_after_secs() -> u64 {
-    300
+    DEFAULT_RUNTIME_LIVENESS_STALE_AFTER_SECS
 }
 
 fn default_recent_window_secs() -> u64 {

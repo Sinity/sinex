@@ -18,6 +18,7 @@ pub const SOURCE_READINESS_LIST_SCHEMA_VERSION: &str = "sinex.source-readiness-l
 #[serde(rename_all = "snake_case")]
 pub enum SourceCoverageReadiness {
     Ready,
+    Stale,
     Proposed,
     MissingMaterial,
     MissingEvents,
@@ -29,6 +30,7 @@ impl SourceCoverageReadiness {
     pub const fn as_str(self) -> &'static str {
         match self {
             Self::Ready => "ready",
+            Self::Stale => "stale",
             Self::Proposed => "proposed",
             Self::MissingMaterial => "missing_material",
             Self::MissingEvents => "missing_events",
@@ -41,6 +43,7 @@ impl SourceCoverageReadiness {
 #[serde(rename_all = "snake_case")]
 pub enum SourceCoverageContinuity {
     Active,
+    Stale,
     MaterialOnly,
     EventOnly,
     Gapped,
@@ -52,6 +55,7 @@ impl SourceCoverageContinuity {
     pub const fn as_str(self) -> &'static str {
         match self {
             Self::Active => "active",
+            Self::Stale => "stale",
             Self::MaterialOnly => "material_only",
             Self::EventOnly => "event_only",
             Self::Gapped => "gapped",

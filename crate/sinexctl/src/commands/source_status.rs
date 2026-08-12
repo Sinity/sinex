@@ -101,6 +101,7 @@ fn source_status_matches_family(source: &SourceCoverageView, family: &str) -> bo
 fn readiness_label(readiness: SourceCoverageReadiness) -> console::StyledObject<&'static str> {
     match readiness {
         SourceCoverageReadiness::Ready => style("ready").green(),
+        SourceCoverageReadiness::Stale => style("stale").red(),
         SourceCoverageReadiness::Proposed => style("proposed").cyan(),
         SourceCoverageReadiness::MissingMaterial => style("missing-material").yellow(),
         SourceCoverageReadiness::MissingEvents => style("missing-events").yellow(),
@@ -111,6 +112,7 @@ fn readiness_label(readiness: SourceCoverageReadiness) -> console::StyledObject<
 fn continuity_label(continuity: SourceCoverageContinuity) -> console::StyledObject<&'static str> {
     match continuity {
         SourceCoverageContinuity::Active => style("active").green(),
+        SourceCoverageContinuity::Stale => style("stale").red(),
         SourceCoverageContinuity::MaterialOnly => style("material-only").yellow(),
         SourceCoverageContinuity::EventOnly => style("event-only").yellow(),
         SourceCoverageContinuity::Gapped => style("gapped").red(),

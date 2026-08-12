@@ -183,24 +183,8 @@ async fn source_coverage_view_marks_ready_when_catalog_material_and_events_exist
     Ok(())
 }
 
-// ---------------------------------------------------------------------------
-// sinex-hdnv finding #1 (CRITICAL, still open): readiness/continuity gap
-// detection is lifetime-count>0, never time-bounded. `source_coverage_view`
-// takes a `now: Timestamp` parameter, but tracing every use of `now` in the
-// function shows it is consulted ONLY inside `classify_emit_stall` (which
-// requires a live `runtime_observations` entry to exist at all) -- it is
-// NEVER compared against `last_event_at`/`last_material_at` in the
-// readiness/continuity/gap computation. A source with real historical
-// material and events from months/years ago, and zero current runtime
-// observation, is indistinguishable from a healthy currently-active source.
-//
-// This test is a CHARACTERIZATION test: it pins the CURRENT (buggy) behavior
-// so the bug is documented and won't regress silently, and so a future fix
-// has a concrete assertion to flip. It is not asserting desired behavior.
-// ---------------------------------------------------------------------------
-
 #[sinex_test]
-async fn source_coverage_view_reports_ready_for_stale_year_old_events_bug_pinned()
+async fn source_coverage_view_marks_historical_coverage_stale()
 -> xtask::sandbox::TestResult<()> {
     let long_ago = OffsetDateTime::now_utc() - time::Duration::days(400);
     let mut events = HashMap::new();
@@ -235,25 +219,21 @@ async fn source_coverage_view_reports_ready_for_stale_year_old_events_bug_pinned
         Timestamp::now(),
     );
 
-    // BUG (sinex-hdnv #1): a source dead for 400+ days, with no current
-    // runtime observation, is reported identically to a healthy active one --
-    // Ready/Active with zero gaps. Once #1 is fixed (e.g. by comparing
-    // last_event_at/last_material_at against `now` with a staleness
-    // threshold), this test's assertions should be INVERTED to expect
-    // Stale/Gapped with a real gap entry, not Ready/Active/empty-gaps.
     assert_eq!(
         view.readiness,
-        SourceCoverageReadiness::Ready,
-        "documents sinex-hdnv #1: stale-but-historically-present source reports Ready"
+        SourceCoverageReadiness::Stale,
+        "historical coverage without a recent observation must not report Ready"
     );
     assert_eq!(
         view.continuity,
-        SourceCoverageContinuity::Active,
-        "documents sinex-hdnv #1: stale-but-historically-present source reports Active"
+        SourceCoverageContinuity::Stale,
+        "historical coverage without a recent observation must not report Active"
     );
     assert!(
-        view.gaps.is_empty(),
-        "documents sinex-hdnv #1: no trailing-gap is raised for a 400-day-dead source"
+        view.gaps
+            .iter()
+            .any(|gap| gap.kind == "runtime_liveness_stale"),
+        "stale runtime liveness must be represented as a concrete coverage gap"
     );
     Ok(())
 }
@@ -1632,6 +1612,7 @@ async fn source_runtime_observation_requires_health_heartbeat_or_output() -> xta
     let now = Timestamp::now();
     let mut manifest_only = terminal_bridge_status(now);
     manifest_only.live = false;
+    manifest_only.run_status = None;
     manifest_only.last_heartbeat_at = None;
     manifest_only.current_health = None;
     manifest_only.health_changed_at = None;
@@ -1648,8 +1629,14 @@ async fn source_runtime_observation_requires_health_heartbeat_or_output() -> xta
     heartbeat.last_heartbeat_at = Some(now - time::Duration::seconds(5));
     assert!(source_status_has_runtime_evidence(&heartbeat));
 
-    let output = manifest_only.with_recent_output(now - time::Duration::seconds(30), 7);
+    let output = manifest_only
+        .clone()
+        .with_recent_output(now - time::Duration::seconds(30), 7);
     assert!(source_status_has_runtime_evidence(&output));
+
+    let mut failed = manifest_only;
+    failed.run_status = Some("failed".to_string());
+    assert!(source_status_has_runtime_evidence(&failed));
 
     Ok(())
 }

@@ -659,7 +659,9 @@ impl GatewayClient {
     /// runtime registry (`runtime_list_active`), not the removed coordination-KV
     /// `instance_health` path. A single daemon is always its own leader.
     pub async fn runtime_status(&self, module_name: &str) -> Result<InstanceHealthResponse> {
-        let active = self.runtime_list_active(31_536_000).await?;
+        let active = self
+            .runtime_list_active(sinex_primitives::DEFAULT_RUNTIME_LIVENESS_STALE_AFTER_SECS)
+            .await?;
         let info = active
             .modules
             .into_iter()

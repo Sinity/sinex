@@ -1443,8 +1443,11 @@ impl StateRepository<'_> {
                 nm.description,
                 nr.status as "manifest_status?",
                 (
-                    COALESCE(health.status IN ('healthy', 'degraded'), false)
-                    OR outputs.last_output_at IS NOT NULL
+                    nr.status IN ('running', 'draining', 'paused')
+                    AND (
+                        COALESCE(health.status IN ('healthy', 'degraded'), false)
+                        OR outputs.last_output_at IS NOT NULL
+                    )
                 ) as "live!",
                 nr.service_name,
                 nr.instance_id,
@@ -1572,7 +1575,9 @@ impl StateRepository<'_> {
                     COUNT(*) FILTER (
                         WHERE e.ts_coided > NOW() - make_interval(secs => $2::float8)
                     ) AS recent_output_count,
-                    MAX(e.ts_coided) AS last_output_at,
+                    MAX(e.ts_coided) FILTER (
+                        WHERE e.ts_coided > NOW() - make_interval(secs => $2::float8)
+                    ) AS last_output_at,
                     MAX(e.ts_coided) FILTER (WHERE e.created_by_operation_id IS NOT NULL)
                         AS last_replay_at
                 FROM core.events e
@@ -1627,8 +1632,11 @@ impl StateRepository<'_> {
                 nm.description,
                 nr.status as "manifest_status?",
                 (
-                    COALESCE(health.status IN ('healthy', 'degraded'), false)
-                    OR outputs.last_output_at IS NOT NULL
+                    nr.status IN ('running', 'draining', 'paused')
+                    AND (
+                        COALESCE(health.status IN ('healthy', 'degraded'), false)
+                        OR outputs.last_output_at IS NOT NULL
+                    )
                 ) as "live!",
                 nr.service_name,
                 nr.instance_id,
@@ -1675,7 +1683,9 @@ impl StateRepository<'_> {
                     COUNT(*) FILTER (
                         WHERE e.ts_coided > NOW() - make_interval(secs => $2::float8)
                     ) AS recent_output_count,
-                    MAX(e.ts_coided) AS last_output_at
+                    MAX(e.ts_coided) FILTER (
+                        WHERE e.ts_coided > NOW() - make_interval(secs => $1::float8)
+                    ) AS last_output_at
                 FROM core.events e
                 WHERE nr.id IS NOT NULL
                   AND e.module_run_id = nr.id

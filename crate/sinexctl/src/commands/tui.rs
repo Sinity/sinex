@@ -15,6 +15,7 @@ use ratatui::{
     text::{Line, Span},
     widgets::{Block, Borders, Clear, List, ListItem, Paragraph, Wrap},
 };
+use sinex_primitives::DEFAULT_RUNTIME_LIVENESS_STALE_AFTER_SECS;
 use sinex_primitives::privacy::private_mode::RuntimePrivateModeState;
 use sinex_primitives::query::{EventQuery, QueryResultEvent, SortDirection, TimeRange};
 use sinex_primitives::rpc::privacy::PrivateModeStateResponse;
@@ -303,7 +304,11 @@ impl App {
     }
 
     async fn refresh_runtime_and_dlq(&mut self) {
-        match self.client.runtime_list_active(31_536_000).await {
+        match self
+            .client
+            .runtime_list_active(DEFAULT_RUNTIME_LIVENESS_STALE_AFTER_SECS)
+            .await
+        {
             Ok(response) => self.modules = response.modules,
             Err(e) => {
                 self.error = Some(format!("Failed to fetch modules: {e}"));
@@ -1490,6 +1495,7 @@ fn mode_detail_lines(mode: &SourceModeStatusView) -> Vec<Line<'static>> {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum SourceCockpitState {
     Ready,
+    Stale,
     Proposed,
     MaterialOnly,
     EventOnly,
@@ -1522,6 +1528,9 @@ fn source_cockpit_state(source: &SourceCoverageView) -> SourceCockpitState {
             SourceCockpitState::Ready
         }
         (SourceCoverageReadiness::Proposed, _) => SourceCockpitState::Proposed,
+        (SourceCoverageReadiness::Stale, _) | (_, SourceCoverageContinuity::Stale) => {
+            SourceCockpitState::Stale
+        }
         (SourceCoverageReadiness::MissingMaterial, _) => SourceCockpitState::MissingMaterial,
         (SourceCoverageReadiness::MissingEvents, _) => SourceCockpitState::MissingEvents,
         (SourceCoverageReadiness::MissingBinding, _) => SourceCockpitState::MissingBinding,
@@ -1556,6 +1565,7 @@ fn source_has_unparsed_caveat(source: &SourceCoverageView) -> bool {
 fn source_state_label(state: SourceCockpitState) -> &'static str {
     match state {
         SourceCockpitState::Ready => "ready",
+        SourceCockpitState::Stale => "stale",
         SourceCockpitState::Proposed => "proposed",
         SourceCockpitState::MaterialOnly => "material-only",
         SourceCockpitState::EventOnly => "event-only",
@@ -1572,6 +1582,7 @@ fn source_state_label(state: SourceCockpitState) -> &'static str {
 fn source_state_color(state: SourceCockpitState) -> Color {
     match state {
         SourceCockpitState::Ready => Color::Green,
+        SourceCockpitState::Stale => Color::Red,
         SourceCockpitState::Proposed
         | SourceCockpitState::MaterialOnly
         | SourceCockpitState::EventOnly
@@ -1588,6 +1599,7 @@ fn source_state_color(state: SourceCockpitState) -> Color {
 fn readiness_label(readiness: SourceCoverageReadiness) -> &'static str {
     match readiness {
         SourceCoverageReadiness::Ready => "ready",
+        SourceCoverageReadiness::Stale => "stale",
         SourceCoverageReadiness::Proposed => "proposed",
         SourceCoverageReadiness::MissingMaterial => "missing-material",
         SourceCoverageReadiness::MissingEvents => "missing-events",
@@ -1598,6 +1610,7 @@ fn readiness_label(readiness: SourceCoverageReadiness) -> &'static str {
 fn continuity_label(continuity: SourceCoverageContinuity) -> &'static str {
     match continuity {
         SourceCoverageContinuity::Active => "active",
+        SourceCoverageContinuity::Stale => "stale",
         SourceCoverageContinuity::MaterialOnly => "material-only",
         SourceCoverageContinuity::EventOnly => "event-only",
         SourceCoverageContinuity::Gapped => "gapped",

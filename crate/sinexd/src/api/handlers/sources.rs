@@ -1901,7 +1901,7 @@ pub async fn handle_sources_continuity_explain_gap(
             req.at, req.source_family
         ),
         (None, _) => format!(
-            "At {}, coverage was present for source family {} (no gap to explain)",
+            "At {}, no coverage gap was observed for source family {}; this does not establish that the family had coverage at that time",
             req.at, req.source_family
         ),
     };

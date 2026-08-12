@@ -27,6 +27,10 @@ use sinex_primitives::views::{
     SourceCoverageListView, SourceCoverageReadiness, SourceCoverageView, SourceModeStatusView,
     SourcePrivacyPosture, SourceResourceBudgetView, ViewEnvelope,
 };
+use sinex_primitives::{
+    DEFAULT_RUNTIME_LIVENESS_STALE_AFTER_SECS, RuntimeLivenessSignals, RuntimeLivenessStatus,
+    evaluate_runtime_liveness,
+};
 use sqlx::FromRow;
 use sqlx::PgPool;
 use std::collections::{BTreeSet, HashMap};
@@ -81,6 +85,7 @@ pub async fn handle_sources_status(
     pool: &PgPool,
     request: SourcesStatusRequest,
 ) -> Result<SourcesStatusResponse> {
+    let now = Timestamp::now();
     let stale_after = Duration::from_secs(request.stale_after_secs);
     let recent_window = Duration::from_secs(request.recent_window_secs);
     let sources = pool
@@ -89,24 +94,28 @@ pub async fn handle_sources_status(
         .await
         .map_err(|e| SinexError::database("Failed to list sources status").with_std_error(&e))?
         .into_iter()
-        .map(|row| SourceStatus {
-            module_name: row.module_name,
-            version: row.version,
-            description: row.description,
-            manifest_status: row.manifest_status.unwrap_or_default(),
-            live: row.live,
-            service_name: row.service_name,
-            instance_id: row.instance_id,
-            module_run_id: row.module_run_id,
-            host: row.host,
-            run_status: row.run_status,
-            started_at: row.started_at,
-            last_heartbeat_at: row.last_heartbeat_at,
-            current_health: row.current_health,
-            health_changed_at: row.health_changed_at,
-            health_reason: row.health_reason,
-            recent_output_count: row.recent_output_count,
-            last_output_at: row.last_output_at,
+        .map(|row| {
+            let mut status = SourceStatus {
+                module_name: row.module_name,
+                version: row.version,
+                description: row.description,
+                manifest_status: row.manifest_status.unwrap_or_default(),
+                live: row.live,
+                service_name: row.service_name,
+                instance_id: row.instance_id,
+                module_run_id: row.module_run_id,
+                host: row.host,
+                run_status: row.run_status,
+                started_at: row.started_at,
+                last_heartbeat_at: row.last_heartbeat_at,
+                current_health: row.current_health,
+                health_changed_at: row.health_changed_at,
+                health_reason: row.health_reason,
+                recent_output_count: row.recent_output_count,
+                last_output_at: row.last_output_at,
+            };
+            status.live = status.is_live(request.stale_after_secs, now);
+            status
         })
         .collect();
 
@@ -170,7 +179,8 @@ pub async fn handle_sources_status_view(
         event_aggregates.insert((row.source.clone(), row.event_type.clone()), row);
     }
     let material_aggregates = material_aggregates_by_logical_source(material_rows);
-    let runtime_observations = source_runtime_observations(source_status_rows);
+    let runtime_observations =
+        source_runtime_observations(source_status_rows, status_defaults.stale_after_secs, now);
     let email_provider_states = latest_email_provider_operation_states(pool).await?;
     let email_projection_states = latest_email_mailbox_projection_states(pool).await?;
     let session_states = latest_source_session_states(pool).await?;
@@ -394,6 +404,33 @@ fn source_coverage_view(
     let has_live_binding = accepted_binding_count > 0;
     let has_material = material_count > 0;
     let has_events = event_count > 0;
+    let fallback_last_observed = max_timestamp(
+        last_material_at.map(Into::into),
+        last_event_at.map(Into::into),
+    )
+    .map(Timestamp::from);
+    let liveness = runtime_observation_for_source(contract.id, runtime_observations)
+        .map(|observation| {
+            observation.runtime_liveness(DEFAULT_RUNTIME_LIVENESS_STALE_AFTER_SECS, now)
+        })
+        .unwrap_or_else(|| {
+            evaluate_runtime_liveness(
+                RuntimeLivenessSignals {
+                    run_status: None,
+                    health_status: None,
+                    last_heartbeat_at: None,
+                    last_output_at: fallback_last_observed,
+                },
+                DEFAULT_RUNTIME_LIVENESS_STALE_AFTER_SECS,
+                now,
+            )
+        });
+    let liveness_failure = matches!(
+        liveness.status,
+        RuntimeLivenessStatus::Stale
+            | RuntimeLivenessStatus::Unhealthy
+            | RuntimeLivenessStatus::Stopped
+    );
 
     let mut gaps = Vec::new();
     let mut caveats = Vec::new();
@@ -461,6 +498,27 @@ fn source_coverage_view(
             caveats.push(runtime_unobserved_caveat(contract));
         }
     }
+    if liveness_failure {
+        gaps.push(CoverageGapView {
+            kind: source_liveness_gap_kind(liveness.status).to_string(),
+            message: format!(
+                "{} has canonical runtime liveness status {:?}; evidence: {}",
+                runtime_subject(contract),
+                liveness.status,
+                liveness.evidence.join(", ")
+            ),
+        });
+        caveats.push(CaveatView {
+            id: runtime_caveat_id(contract, "liveness"),
+            message: format!(
+                "{} is not currently live: {:?} (last observed {:?})",
+                runtime_subject(contract),
+                liveness.status,
+                liveness.last_observed_at
+            ),
+            ref_: runtime_ref(contract),
+        });
+    }
     if contract.id == "email.mailbox" {
         gaps.extend(email_provider_operation_gaps(
             bindings,
@@ -484,7 +542,9 @@ fn source_coverage_view(
         caveats.extend(sessions.iter().map(session_control_caveat));
     }
 
-    let readiness = if !has_live_binding && proposed_binding_count > 0 {
+    let readiness = if liveness_failure && has_live_binding && (has_material || has_events) {
+        SourceCoverageReadiness::Stale
+    } else if !has_live_binding && proposed_binding_count > 0 {
         SourceCoverageReadiness::Proposed
     } else if !has_live_binding {
         SourceCoverageReadiness::MissingBinding
@@ -495,12 +555,16 @@ fn source_coverage_view(
     } else {
         SourceCoverageReadiness::Ready
     };
-    let continuity = match (has_material, has_events) {
-        (true, true) => SourceCoverageContinuity::Active,
-        (true, false) => SourceCoverageContinuity::MaterialOnly,
-        (false, true) => SourceCoverageContinuity::EventOnly,
-        (false, false) if bindings.is_empty() => SourceCoverageContinuity::Unknown,
-        (false, false) => SourceCoverageContinuity::Gapped,
+    let continuity = if liveness_failure && has_live_binding && (has_material || has_events) {
+        SourceCoverageContinuity::Stale
+    } else {
+        match (has_material, has_events) {
+            (true, true) => SourceCoverageContinuity::Active,
+            (true, false) => SourceCoverageContinuity::MaterialOnly,
+            (false, true) => SourceCoverageContinuity::EventOnly,
+            (false, false) if bindings.is_empty() => SourceCoverageContinuity::Unknown,
+            (false, false) => SourceCoverageContinuity::Gapped,
+        }
     };
     let selected_binding = bindings
         .iter()
@@ -973,10 +1037,12 @@ fn runtime_unobserved_caveat(contract: &SourceContract) -> CaveatView {
 
 fn source_runtime_observations(
     rows: Vec<sinex_db::repositories::state::SourcesStatusRow>,
+    stale_after_secs: u64,
+    now: Timestamp,
 ) -> HashMap<String, SourceStatus> {
     rows.into_iter()
         .filter_map(|row| {
-            let status = SourceStatus {
+            let mut status = SourceStatus {
                 module_name: row.module_name,
                 version: row.version,
                 description: row.description,
@@ -995,6 +1061,7 @@ fn source_runtime_observations(
                 recent_output_count: row.recent_output_count,
                 last_output_at: row.last_output_at,
             };
+            status.live = status.is_live(stale_after_secs, now);
             source_status_has_runtime_evidence(&status)
                 .then(|| (status.module_name.to_string(), status))
         })
@@ -1002,10 +1069,23 @@ fn source_runtime_observations(
 }
 
 fn source_status_has_runtime_evidence(status: &SourceStatus) -> bool {
-    status.current_health.is_some()
+    status.run_status.is_some()
+        || status.current_health.is_some()
         || status.last_heartbeat_at.is_some()
         || status.last_output_at.is_some()
         || status.recent_output_count > 0
+}
+
+fn source_liveness_gap_kind(status: RuntimeLivenessStatus) -> &'static str {
+    match status {
+        RuntimeLivenessStatus::Stale => "runtime_liveness_stale",
+        RuntimeLivenessStatus::Unhealthy => "runtime_liveness_unhealthy",
+        RuntimeLivenessStatus::Stopped => "runtime_liveness_stopped",
+        RuntimeLivenessStatus::Degraded => "runtime_liveness_degraded",
+        RuntimeLivenessStatus::Healthy | RuntimeLivenessStatus::Unknown => {
+            "runtime_liveness_unknown"
+        }
+    }
 }
 
 fn source_mode_status_view(
