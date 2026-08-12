@@ -145,13 +145,16 @@ fn simple_async_expansion_keeps_single_serial_guard_inside_timed_future() {
 #[test]
 #[ignore = "sinex-mqe3 open: attr.parse_args().unwrap() panics instead of compile-erroring on malformed #[cases(..)] input"]
 fn cases_attr_with_malformed_args_panics_instead_of_compile_erroring() {
-    // Malformed args body -- the exact class of typo `sinex_proptest!`'s
-    // loop can receive from a mistyped test declaration. The outer
-    // `#[cases(...)]` attribute syntax is well-formed; it's the inner
-    // token stream that fails to parse as an expression when `parse_args`
-    // is later called against it.
+    // `#[cases]` with no parenthesized args at all -- the exact typo
+    // `sinex_proptest!`'s loop can receive from a test author forgetting
+    // the value (`#[cases]` instead of `#[cases(45)]`). The outer
+    // attribute syntax is perfectly well-formed (a bare `Meta::Path`), but
+    // `parse_args()` requires the `Meta::List` (parenthesized) form and
+    // returns `Err` for a bare path -- there is no token stream to
+    // extract at all, unlike a merely-unusual-but-still-tokenizable body,
+    // which `parse_args::<TokenStream>()` would happily accept.
     let attr: syn::Attribute =
-        syn::parse_str("#[cases(,,)]").expect("outer attribute syntax alone is well-formed");
+        syn::parse_str("#[cases]").expect("a bare attribute path is well-formed syntax");
     let result = std::panic::catch_unwind(|| {
         let _: proc_macro2::TokenStream = attr.parse_args().unwrap();
     });
