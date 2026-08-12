@@ -68,7 +68,11 @@ async fn route_material_error_propagates_oversized_dlq_payload_failure(
 /// this fail (the stream is bootstrapped only by this test).
 #[sinex_test]
 async fn material_dlq_requires_and_records_durable_evidence(ctx: TestContext) -> TestResult<()> {
-    let ctx = ctx.with_nats().dedicated().await?;
+    // The production material assembler uses the process-wide JetStream
+    // topology. Keep this route proof on the shared sandbox, as the adjacent
+    // material-DLQ tests do, so the test exercises the same responder and
+    // namespace setup rather than a second ephemeral server lifecycle.
+    let ctx = ctx.with_nats().shared().await?;
     let (assembler, _content_store_dir, _state_dir) = test_assembler(&ctx).await?;
     super::pipeline::bootstrap_streams(&assembler).await?;
     let dlq_stream_name = ctx.env().nats_stream_name_with_namespace(
@@ -80,12 +84,17 @@ async fn material_dlq_requires_and_records_durable_evidence(ctx: TestContext) ->
             name: dlq_stream_name.clone(),
             subjects: vec![assembler.dlq_subject.clone()],
             retention: async_nats::jetstream::stream::RetentionPolicy::Limits,
-            storage: async_nats::jetstream::stream::StorageType::Memory,
+            storage: async_nats::jetstream::stream::StorageType::File,
             max_age: tokio::time::Duration::from_secs(300),
+            allow_direct: true,
             ..Default::default()
         })
         .await?;
-
+    let mut dlq_stream = async_nats::jetstream::new(ctx.nats_client())
+        .get_stream(&dlq_stream_name)
+        .await?;
+    let dlq_info = dlq_stream.info().await?;
+    assert_eq!(dlq_info.config.subjects, vec![assembler.dlq_subject.clone()]);
     let material_id = uuid::Uuid::now_v7();
     let durable_failure_id = assembler
         .route_material_error(
