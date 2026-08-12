@@ -155,7 +155,8 @@ const STREAM_IDLE_FINALIZE_REASON: &str = "adapter-stream-idle";
 /// records / `ADAPTER_MATERIAL_BATCH_MAX_BYTES` bytes, so this is a per-item
 /// timeout inside `SettlementRegistry::await_batch`'s concurrent wait, not a
 /// per-batch serialization cost.
-const ADAPTER_DURABLE_EMISSION_PER_ITEM_TIMEOUT: Duration = Duration::from_secs(30);
+const ADAPTER_DURABLE_EMISSION_PER_ITEM_TIMEOUT: Duration =
+    crate::event_engine::jetstream_consumer::settings::DURABLE_EMISSION_SETTLEMENT_TIMEOUT;
 
 // =============================================================================
 // Typed runtime config — wraps adapter config + optional binding flags

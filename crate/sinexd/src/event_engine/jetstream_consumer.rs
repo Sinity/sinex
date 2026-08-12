@@ -81,7 +81,7 @@ mod prepare;
 mod pressure;
 mod readiness;
 mod run_loop;
-mod settings;
+pub(crate) mod settings;
 mod stats;
 mod telemetry;
 

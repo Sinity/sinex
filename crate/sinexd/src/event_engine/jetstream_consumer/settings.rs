@@ -28,7 +28,7 @@ pub(super) const MAIN_CONSUMER_TERMINAL_DLQ_THRESHOLD: i64 = 10;
 /// threshold = 30 means up to ~150s wall-clock for the BEGIN to catch up before
 /// we give up and DLQ. The earlier value of 10 (50s) routed many events to DLQ
 /// during normal backlog drains. See #1310 / #1311.
-pub(super) const SOURCE_MATERIAL_READY_DLQ_THRESHOLD: i64 = 30;
+pub(crate) const SOURCE_MATERIAL_READY_DLQ_THRESHOLD: i64 = 30;
 
 // A WorkQueue message that reaches NATS `max_deliver` stops redelivering, so
 // every application-side terminal DLQ decision must happen strictly before
@@ -57,7 +57,24 @@ const _: () = assert!(
 ///
 /// 5 s × 30 retries = 150 s is the practical upper bound a healthy assembler
 /// should clear; longer delays mainly hurt liveness under transient races.
-pub(super) const FK_VIOLATION_RETRY_DELAY: Duration = Duration::from_secs(5);
+pub(crate) const FK_VIOLATION_RETRY_DELAY: Duration = Duration::from_secs(5);
+
+/// Maximum healthy cross-stream lag tolerated before source-material events
+/// reach the terminal DLQ threshold.
+pub(crate) const SOURCE_MATERIAL_READY_DEFERRAL_BUDGET: Duration = Duration::from_secs(
+    (SOURCE_MATERIAL_READY_DLQ_THRESHOLD as u64) * FK_VIOLATION_RETRY_DELAY.as_secs(),
+);
+
+/// Receipt callers wait beyond the complete FK deferral budget, allowing the
+/// terminal redelivery to settle before classifying the item as timed out.
+pub(crate) const DURABLE_EMISSION_SETTLEMENT_TIMEOUT: Duration = Duration::from_secs(
+    SOURCE_MATERIAL_READY_DEFERRAL_BUDGET.as_secs() + FK_VIOLATION_RETRY_DELAY.as_secs(),
+);
+
+const _: () = assert!(
+    DURABLE_EMISSION_SETTLEMENT_TIMEOUT.as_secs()
+        > SOURCE_MATERIAL_READY_DEFERRAL_BUDGET.as_secs()
+);
 pub(super) const STREAM_CAPACITY_CHECK_INTERVAL: Duration = Duration::from_mins(5); // Check every 5 minutes
 // Keep runtime-created stream caps aligned with the Nix bootstrap path. The current
 // nats CLI rejects --max-bytes values above signed 32-bit range.

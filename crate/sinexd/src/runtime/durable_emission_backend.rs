@@ -156,7 +156,7 @@ pub async fn emit_batch_durable(
                 // recorded in `immediate` (emit failed) or awaited through
                 // `await_batch` (emit succeeded, so it's in `awaited_by_id`
                 // unconditionally, including the timeout/dropped case which
-                // await_batch itself maps to FailedTransient). Kept as an
+                // await_batch itself maps to TimedOut). Kept as an
                 // honest non-panicking fallback rather than an `expect()`.
                 EmissionItemReceipt {
                     event_id: Some(id),
@@ -341,7 +341,7 @@ mod tests {
         assert!(!receipt.unlocks_progress());
         assert!(matches!(
             receipt.items[0].state,
-            EmissionReceiptState::FailedTransient { .. }
+            EmissionReceiptState::TimedOut { .. }
         ));
         assert!(
             registry.is_empty(),
@@ -370,13 +370,63 @@ mod tests {
         assert!(!receipt.unlocks_progress());
         assert!(matches!(
             receipt.items[0].state,
-            EmissionReceiptState::FailedTransient { .. }
+            EmissionReceiptState::TimedOut { .. }
         ));
         assert!(
             elapsed < Duration::from_secs(5),
             "an emit() failure must be reported immediately, not after the 30s per_item_timeout: {elapsed:?}"
         );
         assert!(registry.is_empty(), "a failed emit must cancel its registration, not leak it");
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn real_route_waits_through_lag_boundary_without_retry_classification()
+    -> TestResult<()> {
+        let (tx, mut rx) = mpsc::channel(8);
+        let emitter = EventEmitter::new(tx, false);
+        let registry = SettlementRegistry::new();
+        let events = vec![material_event(40)];
+        let req = request(events);
+        let registry_for_settler = registry.clone();
+
+        // Exercise the real emitter -> settlement-registry route with an
+        // injected lag just below its wait boundary. Healthy assembler lag
+        // must settle as persisted, not look like a retryable timeout that
+        // would mint a second interpretation.
+        let lag = Duration::from_millis(75);
+        let settler = tokio::spawn(async move {
+            let event = rx.recv().await.expect("event was not emitted");
+            tokio::time::sleep(lag).await;
+            registry_for_settler.resolve(
+                event.id.expect("emitter assigns an id"),
+                EmissionReceiptState::PersistedConfirmed {
+                    lane: sinex_db::repositories::EventStorageLane::Activity,
+                    inserted: true,
+                    confirmed_sequence: None,
+                },
+            );
+        });
+
+        let receipt = emit_batch_durable(
+            &registry,
+            &emitter,
+            req,
+            lag + Duration::from_millis(25),
+        )
+        .await;
+        settler.await.expect("settler task did not panic");
+
+        assert_eq!(receipt.items.len(), 1);
+        assert!(
+            receipt.unlocks_progress(),
+            "lagged terminal settlement must unlock progress"
+        );
+        assert!(matches!(
+            receipt.items[0].state,
+            EmissionReceiptState::PersistedConfirmed { .. }
+        ));
+        assert!(registry.is_empty(), "settled route must not leave a retry waiter");
         Ok(())
     }
 }

@@ -43,7 +43,8 @@ const DERIVED_OUTPUT_PARENT_HARD_LIMIT: usize = 1000;
 /// `adapter_source.rs::ADAPTER_DURABLE_EMISSION_PER_ITEM_TIMEOUT` — both are
 /// bounding the same underlying `SettlementRegistry::await_batch` wait.
 /// Overridable via `AutomatonRuntime::with_durable_emission_timeout` (tests).
-const AUTOMATON_DURABLE_EMISSION_PER_ITEM_TIMEOUT: Duration = Duration::from_secs(30);
+const AUTOMATON_DURABLE_EMISSION_PER_ITEM_TIMEOUT: Duration =
+    crate::event_engine::jetstream_consumer::settings::DURABLE_EMISSION_SETTLEMENT_TIMEOUT;
 
 fn stale_output_ids_or_fail_scope(
     module_name: &str,
