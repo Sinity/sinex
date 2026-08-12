@@ -885,3 +885,7 @@ impl HistoryDb {
         Ok(())
     }
 }
+
+#[cfg(test)]
+#[path = "schema_test.rs"]
+mod tests;

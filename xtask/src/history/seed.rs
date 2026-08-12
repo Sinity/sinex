@@ -298,3 +298,7 @@ fn format_ts(unix: i64) -> String {
     let fmt = format_description::parse("[year]-[month]-[day]T[hour]:[minute]:[second]Z").unwrap();
     dt.format(&fmt).unwrap_or_else(|_| unix.to_string())
 }
+
+#[cfg(test)]
+#[path = "seed_test.rs"]
+mod tests;

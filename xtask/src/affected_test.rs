@@ -485,7 +485,14 @@ async fn test_simple_test_name_term_count_rejects_complex_filters() -> TestResul
 
 #[sinex_test]
 async fn test_infer_test_binaries_maps_nested_integration_modules() -> TestResult<()> {
+    // sinex-v7od consolidated tests/sources/*.rs under one aggregated
+    // `tests/sources.rs` nextest binary; production_path.rs (and everything
+    // nested under it) is a plain `mod`, not its own [[test]] root anymore.
+    // The fixture must include that aggregator file so
+    // nested_integration_root's root_relative_path existence check succeeds,
+    // and the expected binary is "sources", not "production_path".
     let repo = tempfile::tempdir()?;
+    let aggregator = repo.path().join("crate/sinexd/tests/sources.rs");
     let root = repo
         .path()
         .join("crate/sinexd/tests/sources/production_path.rs");
@@ -493,6 +500,7 @@ async fn test_infer_test_binaries_maps_nested_integration_modules() -> TestResul
         .path()
         .join("crate/sinexd/tests/sources/production_path/browser.rs");
     fs::create_dir_all(nested.parent().expect("nested parent"))?;
+    fs::write(&aggregator, "mod sources { mod production_path; }\n")?;
     fs::write(
         &root,
         "#[path = \"production_path/browser.rs\"] mod browser;\n",
@@ -506,13 +514,15 @@ async fn test_infer_test_binaries_maps_nested_integration_modules() -> TestResul
         repo.path(),
         "test(browser_history_qutebrowser_initial_ingestion)",
     )?;
-    assert_eq!(inferred, vec!["production_path".to_string()]);
+    assert_eq!(inferred, vec!["sources".to_string()]);
     Ok(())
 }
 
 #[sinex_test]
 async fn test_infer_test_binaries_maps_deep_nested_integration_modules() -> TestResult<()> {
+    // Same sinex-v7od aggregation as above, one level deeper.
     let repo = tempfile::tempdir()?;
+    let aggregator = repo.path().join("crate/sinexd/tests/sources.rs");
     let root = repo
         .path()
         .join("crate/sinexd/tests/sources/production_path.rs");
@@ -520,6 +530,7 @@ async fn test_infer_test_binaries_maps_deep_nested_integration_modules() -> Test
         .path()
         .join("crate/sinexd/tests/sources/production_path/obligations/initial_ingestion.rs");
     fs::create_dir_all(nested.parent().expect("nested parent"))?;
+    fs::write(&aggregator, "mod sources { mod production_path; }\n")?;
     fs::write(
         &root,
         "#[path = \"production_path/obligations/mod.rs\"] mod obligations;\n",
@@ -533,7 +544,7 @@ async fn test_infer_test_binaries_maps_deep_nested_integration_modules() -> Test
         repo.path(),
         "test(source_driver_host_scan_private_mode_matrix)",
     )?;
-    assert_eq!(inferred, vec!["production_path".to_string()]);
+    assert_eq!(inferred, vec!["sources".to_string()]);
     Ok(())
 }
 

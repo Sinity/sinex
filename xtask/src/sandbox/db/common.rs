@@ -54,13 +54,22 @@ async fn get_nonempty_tables(pool: &DbPool) -> TestResult<Vec<String>> {
     Ok(rows
         .into_iter()
         .filter_map(|(table, has_rows)| {
-            if has_rows && table != "raw.source_material_registry" {
+            if is_reportable_nonempty_table(&table, has_rows) {
                 Some(table)
             } else {
                 None
             }
         })
         .collect())
+}
+
+/// Whether a table with residual rows should be reported as dirty state.
+///
+/// sinex-mb9u: `raw.source_material_registry` is hardcoded out of this check
+/// entirely, so residual rows there can never be detected as a clean-state
+/// violation even when it's the ONLY table that's actually dirty.
+fn is_reportable_nonempty_table(table: &str, has_rows: bool) -> bool {
+    has_rows && table != "raw.source_material_registry"
 }
 
 pub async fn reset_database(pool: &DbPool) -> TestResult<()> {
@@ -141,3 +150,7 @@ where
     // Implementation for session-based cleanup if needed
     f(conn).await
 }
+
+#[cfg(test)]
+#[path = "common_test.rs"]
+mod tests;
