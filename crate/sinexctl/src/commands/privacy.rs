@@ -72,6 +72,9 @@ enum PrivacySubcommand {
     /// Summarize current privacy posture from private-mode, DLQ, and source readiness.
     Audit(PrivacyAuditArgs),
 
+    /// Run a bounded, read-only recognizer audit without returning matched values.
+    ShadowAudit(PrivacyShadowAuditArgs),
+
     /// Export event metadata without raw payloads, snippets, or source-material bytes.
     Export(PrivacyExportArgs),
 }
@@ -357,6 +360,33 @@ struct PrivacyAuditArgs {
 }
 
 #[derive(Debug, Args)]
+struct PrivacyShadowAuditArgs {
+    /// Lower timestamp bound: duration (for example 24h) or RFC3339.
+    #[arg(long)]
+    since: Option<String>,
+
+    /// Exclusive upper timestamp bound: duration or RFC3339.
+    #[arg(long)]
+    until: Option<String>,
+
+    /// Optional event source filter.
+    #[arg(long)]
+    source: Option<String>,
+
+    /// Optional event type filter.
+    #[arg(long = "event-type")]
+    event_type: Option<String>,
+
+    /// Maximum events scanned per event lane.
+    #[arg(long, default_value_t = 10_000)]
+    limit_events: i64,
+
+    /// Maximum rows inventoried per non-event surface.
+    #[arg(long, default_value_t = 500)]
+    limit_rows_per_surface: i64,
+}
+
+#[derive(Debug, Args)]
 struct PrivacyExportArgs {
     /// Filter by source. Repeatable; omit to include all sources.
     #[arg(long)]
@@ -427,6 +457,7 @@ impl PrivacyCommand {
                 } => "privacy policy scope unbind",
             },
             PrivacySubcommand::Audit(_) => "privacy audit",
+            PrivacySubcommand::ShadowAudit(_) => "privacy shadow-audit",
             PrivacySubcommand::Export(_) => "privacy export",
         }
     }
@@ -436,6 +467,7 @@ impl PrivacyCommand {
             PrivacySubcommand::PrivateMode { cmd } => cmd.execute(client, format).await,
             PrivacySubcommand::Policy { cmd } => cmd.execute(client, format).await,
             PrivacySubcommand::Audit(args) => args.execute(client, format).await,
+            PrivacySubcommand::ShadowAudit(args) => args.execute(client, format).await,
             PrivacySubcommand::Export(args) => args.execute(client, format).await,
         }
     }
@@ -703,6 +735,23 @@ impl PrivacyAuditArgs {
             return Ok(());
         }
         CommandOutput::single(report, format_privacy_audit_report).display(&format)?;
+        Ok(())
+    }
+}
+
+impl PrivacyShadowAuditArgs {
+    async fn execute(&self, client: &GatewayClient, format: OutputFormat) -> Result<()> {
+        let response = client
+            .privacy_shadow_audit(sinex_primitives::rpc::privacy::PrivacyShadowAuditRequest {
+                since: self.since.clone(),
+                until: self.until.clone(),
+                source: self.source.clone(),
+                event_type: self.event_type.clone(),
+                limit_events: self.limit_events,
+                limit_rows_per_surface: self.limit_rows_per_surface,
+            })
+            .await?;
+        CommandOutput::single(response, format_privacy_shadow_audit).display(&format)?;
         Ok(())
     }
 }
@@ -1463,6 +1512,30 @@ fn format_privacy_policy_list(report: &PrivacyPolicyListResponse) -> String {
         }
     }
 
+    lines.join("\n")
+}
+
+fn format_privacy_shadow_audit(
+    report: &sinex_primitives::rpc::privacy::PrivacyShadowAuditResponse,
+) -> String {
+    let mut lines = vec![
+        "Privacy Shadow Audit".to_string(),
+        format!("Read-only proven: {}", report.read_only_proven),
+        format!("Scanned events: {}", report.scanned_events),
+        format!("Scanned rows: {}", report.scanned_rows),
+        format!("Surfaces: {}", report.surfaces.len()),
+        format!("Findings: {}", report.findings.len()),
+    ];
+    for surface in &report.surfaces {
+        lines.push(format!(
+            "  {} [{}] before={} after={} affected={}",
+            surface.surface,
+            serde_json::to_string(&surface.status).unwrap_or_else(|_| "unknown".to_string()),
+            surface.before_count,
+            surface.after_count,
+            surface.affected_count
+        ));
+    }
     lines.join("\n")
 }
 

@@ -70,6 +70,7 @@ use sinex_primitives::rpc::{
         PRIVACY_POLICY_LIST_METHOD, PRIVACY_POLICY_RULE_ADD_METHOD,
         PRIVACY_POLICY_RULE_REMOVE_METHOD, PRIVACY_POLICY_RULE_SET_ENABLED_METHOD,
         PRIVACY_POLICY_SCOPE_BIND_METHOD, PRIVACY_POLICY_SEED_BUILTIN_METHOD,
+        PRIVACY_SHADOW_AUDIT_METHOD,
         PRIVACY_PRIVATE_MODE_DISABLE_METHOD, PRIVACY_PRIVATE_MODE_ENABLE_METHOD,
         PRIVACY_PRIVATE_MODE_STATUS_METHOD, PrivacyPolicyBackendAddRequest,
         PrivacyPolicyDictionaryAddRequest, PrivacyPolicyFieldBindRequest,
@@ -79,6 +80,7 @@ use sinex_primitives::rpc::{
         PrivacyPolicyRuleRemoveResponse, PrivacyPolicyRuleSetEnabledRequest,
         PrivacyPolicyRuleSetEnabledResponse, PrivacyPolicyScopeBindRequest,
         PrivacyPolicySeedBuiltinRequest, PrivacyPolicySeedBuiltinResponse,
+        PrivacyShadowAuditRequest, PrivacyShadowAuditResponse,
         PrivateModeDisableRequest, PrivateModeEnableRequest, PrivateModeStateResponse,
         PrivateModeStatusRequest,
     },
@@ -1683,6 +1685,13 @@ impl GatewayClient {
     ) -> Result<PrivacyPolicyFieldUnbindResponse> {
         self.call_typed(PRIVACY_POLICY_FIELD_UNBIND_METHOD, &req)
             .await
+    }
+
+    pub async fn privacy_shadow_audit(
+        &self,
+        req: PrivacyShadowAuditRequest,
+    ) -> Result<PrivacyShadowAuditResponse> {
+        self.call_typed(PRIVACY_SHADOW_AUDIT_METHOD, &req).await
     }
 
     // ==================== Two-Step Tombstone Commands (SEC-003) ====================

@@ -8,8 +8,8 @@ use sinex_primitives::domain::OperationStatus;
 use sinex_primitives::environment::SinexEnvironment;
 use sinex_primitives::prelude::*;
 use sinex_primitives::privacy::{
-    RuntimePrivateModeState, builtin_policy_seed_rules, load_private_mode_state,
-    save_private_mode_state,
+    CategorySet, PrivacyConfig, PrivacyEngine, ProcessingContext, RuntimePrivateModeState,
+    builtin_policy_seed_rules, load_private_mode_state, save_private_mode_state,
 };
 use sinex_primitives::rpc::privacy::{
     PrivacyPolicyBackendAddRequest, PrivacyPolicyDictionary, PrivacyPolicyDictionaryAddRequest,
@@ -21,16 +21,45 @@ use sinex_primitives::rpc::privacy::{
     PrivacyPolicyRuleSetEnabledRequest, PrivacyPolicyRuleSetEnabledResponse,
     PrivacyPolicyScopeBindRequest, PrivacyPolicySeedBuiltinRequest,
     PrivacyPolicySeedBuiltinResponse, PrivateModeDisableRequest, PrivateModeEnableRequest,
-    PrivateModeStateResponse, PrivateModeStatusRequest,
+    PrivateModeStateResponse, PrivateModeStatusRequest, PrivacyInvalidationStatus,
+    PrivacyInvalidationSurface, PrivacyShadowAuditFinding, PrivacyShadowAuditRequest,
+    PrivacyShadowAuditResponse,
 };
-use sinex_primitives::temporal::Timestamp;
+use sinex_primitives::temporal::{Timestamp, parse_duration};
 use sinex_primitives::transport;
-use sqlx::PgPool;
-use std::collections::HashSet;
+use sqlx::{PgPool, Postgres, Row};
+use std::collections::{BTreeMap, HashSet};
 use std::path::Path;
 
 const PRIVATE_MODE_OPERATION_TYPE: &str = "privacy.private_mode";
 const PRIVATE_MODE_CONTROL_SUBJECT: &str = "sinex.control.privacy.private_mode";
+
+const SHADOW_SURFACES: &[(&str, &str)] = &[
+    ("core.events", "retention follows event lifecycle"),
+    ("reflection.events", "reflection retention window"),
+    ("audit.archived_events", "operator-authorized archive retention"),
+    ("audit.archived_annotations", "operator-authorized archive retention"),
+    ("audit.archived_embeddings", "operator-authorized archive retention"),
+    ("audit.archived_tagged_items", "operator-authorized archive retention"),
+    ("raw.source_material_registry", "source material retention policy"),
+    ("raw.source_material_links", "source material retention policy"),
+    ("raw.temporal_ledger", "source material retention policy"),
+    ("core.document_chunks", "projection rebuild retention"),
+    ("core.email_mailbox_projection", "projection rebuild retention"),
+    ("core.entities", "projection rebuild retention"),
+    ("core.entity_relations", "projection rebuild retention"),
+    ("core.event_annotations", "operator annotation retention"),
+    ("core.event_embeddings", "embedding worker retention"),
+    ("core.embedding_cache", "cache eviction horizon"),
+    ("derivation.lane_outputs", "lane retention and discard policy"),
+    ("derivation.projection_registry", "stale registry rebuild horizon"),
+    ("core.model_effects", "model-effect retention policy"),
+    ("core.operations_log", "immutable operator audit retention"),
+    ("sinex_schemas.dlq_events", "DLQ retention window"),
+    ("sinex_telemetry.current_health", "telemetry retention window"),
+    ("sinex_telemetry.current_window_focus", "telemetry retention window"),
+    ("sinex_telemetry.recent_activity_summary", "telemetry retention window"),
+];
 
 /// Fold typed Presidio `context_words` into the rule's `matcher_config` under
 /// the `"context"` key, so the recognizer-rule compiler and analyzer request
@@ -656,6 +685,246 @@ pub async fn handle_privacy_policy_field_unbind(
         scope_id: request.scope_id,
         removed: true,
     })
+}
+
+/// Run the bounded report-only privacy audit over the live database.
+///
+/// The audit opens a PostgreSQL read-only transaction, samples both event
+/// lanes, recursively inspects only JSON string leaves, and reports rule
+/// metadata/counts. Other registered surfaces are enumerated with bounded row
+/// counts so the output distinguishes "scanned and empty" from "not covered".
+pub async fn handle_privacy_shadow_audit(
+    pool: &PgPool,
+    mut request: PrivacyShadowAuditRequest,
+) -> Result<PrivacyShadowAuditResponse> {
+    if request.limit_events <= 0 || request.limit_rows_per_surface <= 0 {
+        return Err(SinexError::validation(
+            "privacy shadow audit limits must be positive",
+        ));
+    }
+    request.limit_events = request.limit_events.min(10_000);
+    request.limit_rows_per_surface = request.limit_rows_per_surface.min(1_000);
+
+    let since = parse_audit_bound(request.since.as_deref(), false)?;
+    let until = parse_audit_bound(request.until.as_deref(), true)?;
+    if since.is_some() && until.is_some() && since >= until {
+        return Err(SinexError::validation(
+            "privacy shadow audit since must be before until",
+        ));
+    }
+
+    let mut tx = pool
+        .begin()
+        .await
+        .map_err(|e| SinexError::database("failed to begin privacy shadow audit").with_source(e.to_string()))?;
+    sqlx::query("SET TRANSACTION READ ONLY")
+        .execute(&mut *tx)
+        .await
+        .map_err(|e| SinexError::database("failed to set privacy shadow audit read-only").with_source(e.to_string()))?;
+    let read_only: bool = sqlx::query_scalar("SELECT current_setting('transaction_read_only') = 'on'")
+        .fetch_one(&mut *tx)
+        .await
+        .map_err(|e| SinexError::database("failed to prove privacy shadow audit read-only").with_source(e.to_string()))?;
+    if !read_only {
+        return Err(SinexError::invalid_state(
+            "privacy shadow audit could not prove a read-only transaction",
+        ));
+    }
+
+    let engine = PrivacyEngine::new(PrivacyConfig {
+        enabled: true,
+        builtin_categories: CategorySet::All,
+        ..PrivacyConfig::default()
+    })
+    .map_err(|e| SinexError::processing("failed to compile privacy shadow recognizers").with_source(e.to_string()))?;
+    let mut aggregate = BTreeMap::<(String, String, String, String, String, String), PrivacyShadowAuditFinding>::new();
+    let mut surfaces = Vec::new();
+    let mut scanned_events = 0_u64;
+    let mut scanned_rows = 0_u64;
+
+    for lane in ["core.events", "reflection.events"] {
+        let (schema, table) = lane.split_once('.').expect("static lane has schema");
+        let mut sql = format!(
+            "SELECT source, event_type, payload, ts_orig FROM {schema}.{table} WHERE TRUE"
+        );
+        if request.source.is_some() {
+            sql.push_str(" AND source = $1");
+        }
+        if request.event_type.is_some() {
+            sql.push_str(if request.source.is_some() { " AND event_type = $2" } else { " AND event_type = $1" });
+        }
+        if since.is_some() {
+            let index = 1 + request.source.is_some() as usize + request.event_type.is_some() as usize;
+            sql.push_str(&format!(" AND ts_orig >= ${index}"));
+        }
+        if until.is_some() {
+            let index = 1
+                + request.source.is_some() as usize
+                + request.event_type.is_some() as usize
+                + since.is_some() as usize;
+            sql.push_str(&format!(" AND ts_orig < ${index}"));
+        }
+        sql.push_str(" ORDER BY id DESC LIMIT $");
+        sql.push_str(&(1 + request.source.is_some() as usize + request.event_type.is_some() as usize + since.is_some() as usize + until.is_some() as usize).to_string());
+
+        let mut query = sqlx::query(&sql);
+        if let Some(source) = request.source.as_deref() {
+            query = query.bind(source);
+        }
+        if let Some(event_type) = request.event_type.as_deref() {
+            query = query.bind(event_type);
+        }
+        if let Some(since) = since {
+            query = query.bind(since);
+        }
+        if let Some(until) = until {
+            query = query.bind(until);
+        }
+        let rows = query
+            .bind(request.limit_events)
+            .fetch_all(&mut *tx)
+            .await
+            .map_err(|e| SinexError::database(format!("privacy shadow audit failed on {lane}")).with_source(e.to_string()))?;
+        for row in rows {
+            scanned_events += 1;
+            scanned_rows += 1;
+            let source: String = row.try_get("source").map_err(|e| SinexError::database("privacy shadow audit source read failed").with_source(e.to_string()))?;
+            let event_type: String = row.try_get("event_type").map_err(|e| SinexError::database("privacy shadow audit event type read failed").with_source(e.to_string()))?;
+            let payload: Value = row.try_get("payload").map_err(|e| SinexError::database("privacy shadow audit payload read failed").with_source(e.to_string()))?;
+            let ts_orig: Option<time::OffsetDateTime> = row.try_get("ts_orig").ok();
+            let timestamp = ts_orig.map(|value| value.format(&time::format_description::well_known::Rfc3339).unwrap_or_default());
+            let mut leaves = Vec::new();
+            collect_string_leaves(&payload, "$", &mut leaves);
+            for (path, value) in leaves {
+                let context = audit_context_for_field(&path);
+                for finding in engine.detect_matches(&value, context) {
+                    let key = (
+                        finding.rule_name.clone(),
+                        format!("{:?}", finding.category),
+                        lane.to_string(),
+                        source.clone(),
+                        event_type.clone(),
+                        path.clone(),
+                    );
+                    let entry = aggregate.entry(key).or_insert_with(|| PrivacyShadowAuditFinding {
+                        recognizer: finding.rule_name,
+                        category: finding.category,
+                        surface: lane.to_string(),
+                        source: source.clone(),
+                        event_type: event_type.clone(),
+                        field_path: path.clone(),
+                        sampled_row_count: 0,
+                        matched_row_count: 0,
+                        match_count: 0,
+                        first_seen: timestamp.clone(),
+                        last_seen: timestamp.clone(),
+                    });
+                    entry.matched_row_count += 1;
+                    entry.match_count += finding.match_count;
+                    if entry.first_seen.is_none() {
+                        entry.first_seen.clone_from(&timestamp);
+                    }
+                    entry.last_seen.clone_from(&timestamp);
+                }
+            }
+        }
+        surfaces.push(PrivacyInvalidationSurface {
+            surface: lane.to_string(),
+            status: PrivacyInvalidationStatus::Scanned,
+            before_count: count_rows(&mut tx, lane, request.limit_events).await?,
+            after_count: 0,
+            affected_count: 0,
+            residual_horizon: Some("event lifecycle retention".to_string()),
+            detail: Some("bounded payload scan; values omitted".to_string()),
+        });
+    }
+
+    for &(surface, horizon) in SHADOW_SURFACES {
+        if surfaces.iter().any(|row| row.surface == surface) {
+            continue;
+        }
+        let count = count_rows(&mut tx, surface, request.limit_rows_per_surface).await?;
+        scanned_rows += count;
+        surfaces.push(PrivacyInvalidationSurface {
+            surface: surface.to_string(),
+            status: PrivacyInvalidationStatus::Scanned,
+            before_count: count,
+            after_count: count,
+            affected_count: 0,
+            residual_horizon: Some(horizon.to_string()),
+            detail: Some("bounded row inventory; payload values omitted".to_string()),
+        });
+    }
+
+    tx.rollback().await.map_err(|e| SinexError::database("failed to roll back privacy shadow audit").with_source(e.to_string()))?;
+    let generated_at = Timestamp::now().format_rfc3339();
+    Ok(PrivacyShadowAuditResponse {
+        schema_version: "sinex.privacy-shadow-audit/v1".to_string(),
+        generated_at,
+        read_only_proven: true,
+        scanned_events,
+        scanned_rows,
+        scope: request,
+        surfaces,
+        findings: aggregate.into_values().collect(),
+        caveats: vec![
+            "default-zero-redaction is measured, not changed by this command".to_string(),
+            "NATS retained frames, recovery spool, journald, xtask history, exports, backups, WAL, and physical database remnants require separate retention inspection".to_string(),
+        ],
+    })
+}
+
+async fn count_rows(
+    tx: &mut sqlx::Transaction<'_, Postgres>,
+    surface: &str,
+    limit: i64,
+) -> Result<u64> {
+    let query = format!("SELECT COUNT(*)::bigint FROM (SELECT 1 FROM {surface} LIMIT $1) bounded");
+    let count: i64 = sqlx::query_scalar(&query)
+        .bind(limit)
+        .fetch_one(&mut **tx)
+        .await
+        .map_err(|e| SinexError::database(format!("privacy shadow audit surface read failed for {surface}")).with_source(e.to_string()))?;
+    Ok(count.max(0) as u64)
+}
+
+fn parse_audit_bound(value: Option<&str>, _upper: bool) -> Result<Option<time::OffsetDateTime>> {
+    let Some(value) = value else { return Ok(None); };
+    if let Ok(timestamp) = Timestamp::parse_rfc3339(value) {
+        return Ok(Some(timestamp.into()));
+    }
+    let Some(duration) = parse_duration(value) else {
+        return Err(SinexError::validation(format!("invalid privacy audit time bound: {value}")));
+    };
+    Ok(Some((Timestamp::now() - duration).into()))
+}
+
+fn collect_string_leaves(value: &Value, path: &str, output: &mut Vec<(String, String)>) {
+    match value {
+        Value::String(value) => output.push((path.to_string(), value.clone())),
+        Value::Array(values) => values.iter().enumerate().for_each(|(index, value)| {
+            collect_string_leaves(value, &format!("{path}/{index}"), output);
+        }),
+        Value::Object(values) => values.iter().for_each(|(key, value)| {
+            collect_string_leaves(value, &format!("{path}/{}", key.replace('~', "~0").replace('/', "~1")), output);
+        }),
+        _ => {}
+    }
+}
+
+fn audit_context_for_field(path: &str) -> ProcessingContext {
+    let lower = path.to_ascii_lowercase();
+    if lower.contains("command") || lower.contains("shell") {
+        ProcessingContext::Command
+    } else if lower.contains("clipboard") {
+        ProcessingContext::Clipboard
+    } else if lower.contains("message") || lower.contains("body") || lower.contains("text") || lower.contains("content") || lower.contains("note") {
+        ProcessingContext::Document
+    } else if lower.contains("path") || lower.contains("url") || lower.contains("host") || lower.contains("title") {
+        ProcessingContext::Metadata
+    } else {
+        ProcessingContext::Document
+    }
 }
 
 fn normalize_optional_text(value: Option<String>) -> Option<String> {

@@ -46,6 +46,7 @@ use sinex_primitives::rpc::{
         PRIVACY_POLICY_LIST_METHOD, PRIVACY_POLICY_RULE_ADD_METHOD,
         PRIVACY_POLICY_RULE_REMOVE_METHOD, PRIVACY_POLICY_RULE_SET_ENABLED_METHOD,
         PRIVACY_POLICY_SCOPE_BIND_METHOD, PRIVACY_POLICY_SEED_BUILTIN_METHOD,
+        PRIVACY_SHADOW_AUDIT_METHOD,
         PRIVACY_PRIVATE_MODE_DISABLE_METHOD, PRIVACY_PRIVATE_MODE_ENABLE_METHOD,
         PRIVACY_PRIVATE_MODE_STATUS_METHOD,
     },
@@ -531,6 +532,7 @@ fn build_registry_impl() -> RpcRegistry {
         handle_privacy_policy_list, handle_privacy_policy_rule_add,
         handle_privacy_policy_rule_remove, handle_privacy_policy_rule_set_enabled,
         handle_privacy_policy_scope_bind, handle_privacy_policy_seed_builtin,
+        handle_privacy_shadow_audit,
         handle_private_mode_disable_service, handle_private_mode_enable_service,
         handle_private_mode_status_service, handle_replay_approve_operation,
         handle_replay_cancel_operation, handle_replay_create_operation,
@@ -919,6 +921,7 @@ fn build_registry_impl() -> RpcRegistry {
             PRIVACY_POLICY_FIELD_UNBIND_METHOD,
             boxed!(handle_privacy_policy_field_unbind),
         )
+        .pool_typed_rpc(PRIVACY_SHADOW_AUDIT_METHOD, boxed!(handle_privacy_shadow_audit))
         // Replay create/preview (Write - doesn't execute yet)
         .replay_typed_rpc(
             REPLAY_CREATE_OPERATION_METHOD,

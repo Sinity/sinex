@@ -2475,6 +2475,25 @@ BEGIN
     END IF;
 
     IF p_archived_ids IS NOT NULL AND array_length(p_archived_ids, 1) IS NOT NULL THEN
+        -- Capture material roots before the archive rows disappear. Projection
+        -- rows may point at the material rather than at the event itself.
+        DROP TABLE IF EXISTS _tombstone_material_ids;
+        CREATE TEMP TABLE _tombstone_material_ids ON COMMIT DROP AS
+        SELECT DISTINCT source_material_id
+        FROM audit.archived_events
+        WHERE id = ANY(p_archived_ids)
+          AND source_material_id IS NOT NULL;
+
+        DROP TABLE IF EXISTS _tombstone_document_ids;
+        CREATE TEMP TABLE _tombstone_document_ids ON COMMIT DROP AS
+        SELECT DISTINCT d.id
+        FROM core.documents d
+        WHERE d.parsed_event_id = ANY(p_archived_ids)
+        UNION
+        SELECT DISTINCT dc.document_id
+        FROM core.document_chunks dc
+        WHERE dc.chunked_event_id = ANY(p_archived_ids);
+
         INSERT INTO core.event_tombstones (
             id, source, event_type, ts_orig, ts_purged,
             purge_reason, purge_operation_id, archived_at
@@ -2507,6 +2526,54 @@ BEGIN
 
         DELETE FROM audit.archived_tagged_items
         WHERE item_id = ANY(p_archived_ids) AND item_type = 'event';
+
+        -- Remove event-linked rebuildable projections in the same irreversible
+        -- transaction. These tables intentionally do not all have foreign keys
+        -- to the event/archive roots, so archive deletion alone is insufficient
+        -- for privacy completeness.
+        DELETE FROM core.document_chunks
+        WHERE chunked_event_id = ANY(p_archived_ids)
+           OR document_id IN (SELECT id FROM _tombstone_document_ids);
+
+        DELETE FROM core.documents
+        WHERE id IN (SELECT id FROM _tombstone_document_ids)
+           OR parsed_event_id = ANY(p_archived_ids);
+
+        DELETE FROM core.email_mailbox_projection
+        WHERE last_message_event_id = ANY(p_archived_ids)
+           OR last_thread_event_id = ANY(p_archived_ids)
+           OR last_attachment_event_id = ANY(p_archived_ids)
+           OR raw_material_id IN (
+               SELECT source_material_id::text FROM _tombstone_material_ids
+           );
+
+        DELETE FROM derivation.lane_outputs
+        WHERE source_event_id = ANY(p_archived_ids)
+           OR source_material_id IN (SELECT source_material_id FROM _tombstone_material_ids);
+
+        DELETE FROM core.event_temporal_facts
+        WHERE event_id = ANY(p_archived_ids);
+
+        DELETE FROM core.event_cluster_members
+        WHERE event_id = ANY(p_archived_ids);
+
+        DELETE FROM core.model_effects
+        WHERE source_event_id = ANY(p_archived_ids);
+
+        DELETE FROM sinex_schemas.dlq_events
+        WHERE failed_event_id = ANY(p_archived_ids);
+
+        DELETE FROM core.entity_relations
+        WHERE source_event_ids && p_archived_ids;
+
+        DELETE FROM core.entities
+        WHERE source_event_ids && p_archived_ids;
+
+        DELETE FROM core.event_annotations
+        WHERE event_id = ANY(p_archived_ids);
+
+        DELETE FROM core.event_embeddings
+        WHERE event_id = ANY(p_archived_ids);
 
         DELETE FROM audit.archived_events
         WHERE id = ANY(p_archived_ids);

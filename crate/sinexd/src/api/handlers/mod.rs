@@ -96,7 +96,7 @@ pub use privacy::{
     handle_privacy_policy_field_bind, handle_privacy_policy_field_unbind,
     handle_privacy_policy_list, handle_privacy_policy_rule_add, handle_privacy_policy_rule_remove,
     handle_privacy_policy_rule_set_enabled, handle_privacy_policy_scope_bind,
-    handle_privacy_policy_seed_builtin, handle_private_mode_disable,
+    handle_privacy_policy_seed_builtin, handle_privacy_shadow_audit, handle_private_mode_disable,
     handle_private_mode_disable_service, handle_private_mode_enable,
     handle_private_mode_enable_service, handle_private_mode_status,
     handle_private_mode_status_service,
