@@ -798,6 +798,18 @@ async fn reimport_manifest_source_date_survives_deferred_admission(
         .expect("deferred historical event should persist");
     assert_eq!(persisted.ts_orig, Some(source_date));
 
+    let (stored_ts_orig, stored_ts_coided): (Timestamp, Timestamp) = sqlx::query_as(
+        "SELECT ts_orig, ts_coided FROM core.events WHERE id = $1::uuid",
+    )
+    .bind(event_id)
+    .fetch_one(ctx.pool())
+    .await?;
+    assert_eq!(stored_ts_orig, source_date);
+    assert!(
+        stored_ts_coided > source_date,
+        "historical import must retain its source clock while receiving a fresh interpretation clock"
+    );
+
     setup.handle.abort();
     let _ = setup.handle.await;
     Ok(())

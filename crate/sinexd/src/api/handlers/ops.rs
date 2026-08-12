@@ -27,7 +27,7 @@ use sinex_primitives::parser::{
 use sinex_primitives::rpc::sources::{SourceMaterialMetadataContract, SourceOrigin};
 use sinex_primitives::temporal::Timestamp;
 use sqlx::PgPool;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use crate::runtime::parser::{
     EmailMboxFileAdapter, EmailMboxFileConfig, GmailApiCursorAdapter, GmailApiCursorConfig,
@@ -2075,7 +2075,11 @@ async fn project_email_mailbox_event(
 }
 
 fn elapsed_millis(started: Instant) -> i64 {
-    i64::try_from(started.elapsed().as_millis()).expect("operation duration must fit i64")
+    duration_millis(started.elapsed())
+}
+
+fn duration_millis(duration: Duration) -> i64 {
+    duration.as_millis().min(i64::MAX as u128) as i64
 }
 
 fn parsed_material_intent_to_event(
@@ -2377,6 +2381,20 @@ mod tests {
             email_capture_runtime_equivalence_key(&retry),
             "a retry of the same runtime observation must resolve to the same occurrence key"
         );
+    }
+
+    #[test]
+    fn duration_millis_preserves_values_beyond_the_legacy_i32_limit() {
+        let duration = Duration::from_millis(i64::from(i32::MAX) as u64 + 1);
+
+        assert_eq!(duration_millis(duration), i64::from(i32::MAX) + 1);
+    }
+
+    #[test]
+    fn duration_millis_saturates_i64_overflow_without_panicking() {
+        let duration = Duration::new(u64::MAX, 999_999_999);
+
+        assert_eq!(duration_millis(duration), i64::MAX);
     }
 }
 
