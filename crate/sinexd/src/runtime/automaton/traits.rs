@@ -235,6 +235,12 @@ pub trait Windowed: Send + Sync + 'static {
         AutomatonModel::Windowed
     }
 
+    /// Scope invalidation is opt-in because most window state is global or
+    /// spans more than one derived output scope.
+    fn supports_scope_invalidation_recompute(&self) -> bool {
+        false
+    }
+
     /// Static output declarations for the derivation control plane
     /// (sinex-0vx). See [`Transducer::OUTPUT_DECLARATIONS`].
     const OUTPUT_DECLARATIONS: &'static [DerivationOutputDeclaration] = &[];
@@ -302,7 +308,6 @@ pub trait Windowed: Send + Sync + 'static {
             } else {
                 None
             };
-            *state = rebuilt_state;
             Ok(output)
         }
     }
@@ -353,6 +358,12 @@ pub trait ScopeReconciler: Send + Sync + 'static {
     }
     fn automaton_model(&self) -> AutomatonModel {
         AutomatonModel::ScopeReconciler
+    }
+
+    /// A single scope is not a complete replacement for a global accumulator.
+    /// Scope-local implementations must explicitly opt in.
+    fn supports_scope_invalidation_recompute(&self) -> bool {
+        false
     }
 
     /// Static output declarations for the derivation control plane
@@ -406,7 +417,6 @@ pub trait ScopeReconciler: Send + Sync + 'static {
                         .await?,
                 );
             }
-            *state = recomputed_state;
             Ok(outputs)
         }
     }
@@ -547,6 +557,10 @@ pub trait Automaton: Send + Sync + 'static {
     fn output_event_source(&self) -> &'static str;
     fn automaton_model(&self) -> AutomatonModel;
 
+    fn supports_scope_invalidation_recompute(&self) -> bool {
+        false
+    }
+
     /// Static output declarations for the derivation control plane
     /// (sinex-0vx). Required (no default) on this unifying trait: each of
     /// the four wrapper impls below forwards the underlying model's
@@ -645,6 +659,9 @@ impl<N: Transducer> Automaton for TransducerWrapper<N> {
     }
     fn automaton_model(&self) -> AutomatonModel {
         self.0.automaton_model()
+    }
+    fn supports_scope_invalidation_recompute(&self) -> bool {
+        self.0.supports_scope_invalidation_recompute()
     }
     const OUTPUT_DECLARATIONS: &'static [DerivationOutputDeclaration] = N::OUTPUT_DECLARATIONS;
 
@@ -758,6 +775,9 @@ impl<N: Windowed> Automaton for WindowedWrapper<N> {
         working_set: Vec<sinex_primitives::events::Event<JsonValue>>,
         context: &AutomatonContext,
     ) -> Result<Vec<DerivedOutput<JsonValue>>, AutomatonLogicError> {
+        if !self.0.supports_scope_invalidation_recompute() {
+            return Ok(Vec::new());
+        }
         let inputs: Vec<N::Input> = working_set
             .into_iter()
             .map(|e| {
@@ -867,6 +887,9 @@ where
     fn automaton_model(&self) -> AutomatonModel {
         self.0.automaton_model()
     }
+    fn supports_scope_invalidation_recompute(&self) -> bool {
+        self.0.supports_scope_invalidation_recompute()
+    }
     const OUTPUT_DECLARATIONS: &'static [DerivationOutputDeclaration] = N::OUTPUT_DECLARATIONS;
 
     async fn process_derived(
@@ -902,6 +925,9 @@ where
         working_set: Vec<sinex_primitives::events::Event<JsonValue>>,
         context: &AutomatonContext,
     ) -> Result<Vec<DerivedOutput<JsonValue>>, AutomatonLogicError> {
+        if !self.0.supports_scope_invalidation_recompute() {
+            return Ok(Vec::new());
+        }
         let inputs: Vec<N::Input> = working_set
             .into_iter()
             .map(|e| {

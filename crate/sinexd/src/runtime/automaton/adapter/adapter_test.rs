@@ -295,6 +295,10 @@ impl ScopeReconciler for TestScopeReconcilerAutomaton {
         vec!["default".into()]
     }
 
+    fn supports_scope_invalidation_recompute(&self) -> bool {
+        true
+    }
+
     async fn reconcile(
         &mut self,
         _state: &mut Self::State,
@@ -341,7 +345,9 @@ struct StatefulInvalidationState {
     invalidations_applied: u64,
 }
 
-struct StatefulInvalidationNode;
+struct StatefulInvalidationNode {
+    allow_scope_recompute: bool,
+}
 
 impl ScopeReconciler for StatefulInvalidationNode {
     type State = StatefulInvalidationState;
@@ -361,6 +367,10 @@ impl ScopeReconciler for StatefulInvalidationNode {
     }
     fn scope_keys(&self, _input: &Self::Input, _context: &AutomatonContext) -> Vec<String> {
         vec!["default".into()]
+    }
+
+    fn supports_scope_invalidation_recompute(&self) -> bool {
+        self.allow_scope_recompute
     }
 
     async fn reconcile(

@@ -3,10 +3,10 @@
 //! Carved out of `adapter/mod.rs` as part of #697. Pure mechanical move; the
 //! methods, control flow, and instrumentation are unchanged.
 //!
-//! This machinery is the direct `derived.invalidation` consumer used by the
-//! scan-driven automaton loop. The deployed event-bridge path does not consume
-//! this subject directly; replay/archive therefore also records pending scope
-//! invalidations durably and drains them through operation/debt recovery.
+//! This machinery is the `derived.invalidation` consumer used by both the
+//! scan-driven loop and the deployed event-bridge path. Replay/archive also
+//! records pending scope invalidations durably and drains them through
+//! operation/debt recovery.
 
 #[cfg(feature = "messaging")]
 use super::log_self_observation_failure;
@@ -56,6 +56,24 @@ where
             self.automaton.input_event_type(),
             self.automaton.input_provenance_filter(),
         ) {
+            return Ok(PreparedInvalidation {
+                outputs: Vec::new(),
+                scopes: Vec::new(),
+                operation_uuid: invalidation
+                    .operation_id
+                    .unwrap_or_else(|| *Id::<OperationMarker>::new().as_uuid()),
+            });
+        }
+
+        // A scope key is not necessarily a state partition. Refuse to rebuild
+        // or archive outputs unless the automaton explicitly proves that its
+        // state is scope-local; this protects global accumulators from an
+        // empty or foreign working set.
+        if !self.automaton.supports_scope_invalidation_recompute() {
+            debug!(
+                automaton = %self.automaton.name(),
+                "Skipping scope invalidation without an explicit scope-local recompute contract"
+            );
             return Ok(PreparedInvalidation {
                 outputs: Vec::new(),
                 scopes: Vec::new(),

@@ -779,7 +779,9 @@ async fn handle_invalidation_message_checkpoints_state_only_mutations(
         make_runtime_state_with_db(&ctx, "adapter-regression-stateful-invalidation", None).await?;
 
     let mut adapter = AutomatonRuntime::with_config(
-        ScopeReconcilerWrapper(StatefulInvalidationNode),
+        ScopeReconcilerWrapper(StatefulInvalidationNode {
+            allow_scope_recompute: true,
+        }),
         AutomatonAdapterConfig {
             checkpoint_interval: 1,
             ..AutomatonAdapterConfig::default()
@@ -812,6 +814,73 @@ async fn handle_invalidation_message_checkpoints_state_only_mutations(
     assert_eq!(
         adapter.events_since_checkpoint, 0,
         "successful invalidation checkpoint should clear the dirty counter"
+    );
+    Ok(())
+}
+
+#[cfg(feature = "messaging")]
+#[sinex_test]
+async fn global_state_invalidation_does_not_clobber_unrelated_state(
+    ctx: TestContext,
+) -> TestResult<()> {
+    use super::super::super::DerivedScopeInvalidation;
+    use sinex_db::DbPoolExt;
+    use sinex_primitives::events::DynamicPayload;
+    use sinex_primitives::{EventSource, EventType};
+
+    let ctx = ctx.with_nats().dedicated().await?;
+    let material_id = ctx
+        .create_source_material(Some("derived-invalidation-global-state"))
+        .await?;
+    let mut input = DynamicPayload::new(
+        "measurements",
+        "measurement.taken",
+        serde_json::json!({ "value": 11_i64 }),
+    )
+    .from_material(material_id)
+    .build()?;
+    input.scope_key = Some("scope:foreign".to_string());
+    let input_id = ctx
+        .pool()
+        .events()
+        .insert_batch(vec![input])
+        .await?
+        .into_iter()
+        .next()
+        .and_then(|event| event.id)
+        .expect("invalidation input should have an id");
+
+    let (runtime, _event_receiver) =
+        make_runtime_state_with_db(&ctx, "adapter-regression-global-state", None).await?;
+    let mut adapter = AutomatonRuntime::with_config(
+        ScopeReconcilerWrapper(StatefulInvalidationNode {
+            allow_scope_recompute: false,
+        }),
+        AutomatonAdapterConfig {
+            checkpoint_interval: 1,
+            ..AutomatonAdapterConfig::default()
+        },
+    );
+    adapter.checkpoint_manager = Some(runtime.checkpoint_manager());
+    adapter.event_emitter = Some(runtime.event_emitter().clone());
+    adapter.host = runtime.service_info().host().to_string();
+    adapter.runtime = Some(runtime);
+    adapter.persisted_state.state.invalidations_applied = 41;
+
+    let invalidation = DerivedScopeInvalidation::replaced(
+        vec![*input_id.as_uuid()],
+        EventSource::from_static("measurements"),
+        EventType::from_static("measurement.taken"),
+    )
+    .with_scope_keys(vec!["scope:foreign".to_string()]);
+    let processed = adapter
+        .handle_invalidation_message(&serde_json::to_vec(&invalidation)?)
+        .await?;
+
+    assert_eq!(processed, Some(0));
+    assert_eq!(
+        adapter.persisted_state.state.invalidations_applied, 41,
+        "a foreign scope must not replace a global accumulator with default state"
     );
     Ok(())
 }
