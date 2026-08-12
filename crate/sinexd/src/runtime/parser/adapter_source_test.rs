@@ -841,6 +841,30 @@ async fn adapter_source_config_derives_private_mode_binding_flag() -> xtask::san
     Ok(())
 }
 
+#[sinex_serial_test]
+async fn adapter_source_config_uses_service_state_dir_by_default()
+-> xtask::sandbox::TestResult<()> {
+    let dir = tempfile::tempdir()?;
+    save_private_mode_state(
+        dir.path(),
+        &RuntimePrivateModeState::enabled_by(
+            "sinity",
+            vec!["desktop".to_string()],
+            Timestamp::UNIX_EPOCH,
+        ),
+    )?;
+    let mut env = EnvGuard::new();
+    env.set("SINEX_STATE_DIR", dir.path().display().to_string());
+
+    // This is the production shape: source bindings provide adapter fields
+    // but do not repeat the daemon's private-mode state root.
+    let config = AdapterSourceConfig::default();
+    let binding = config.to_binding_config_for_source("desktop.clipboard")?;
+
+    assert!(binding.is_truthy("private_mode_active"));
+    Ok(())
+}
+
 #[sinex_test]
 async fn adapter_source_config_keeps_continuous_start_policy_out_of_adapter_json()
 -> xtask::sandbox::TestResult<()> {

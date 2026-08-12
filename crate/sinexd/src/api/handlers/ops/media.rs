@@ -4,6 +4,7 @@ use sinex_primitives::domain::{
     OperationStatus, SourceMaterialFormat, SourceMaterialTimingInfoType,
 };
 use sinex_primitives::events::SourceMaterial;
+use sinex_primitives::privacy::resolve_private_mode_state_dir;
 use sinex_primitives::rpc::sources::{SourceMaterialMetadataContract, SourceOrigin};
 use sinex_primitives::{Id, SinexError};
 use sqlx::PgPool;
@@ -308,6 +309,44 @@ pub(super) async fn execute_worker_output(
     preview_summary: &mut serde_json::Value,
     is_admin: bool,
 ) -> Result<Option<MediaWorkerOutputResult>> {
+    let session_scope = scope
+        .get("session_scope")
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or("default");
+    let gate = crate::sources::session_gate::evaluate_capture_gate(
+        Some(pool),
+        &resolve_private_mode_state_dir(None),
+        spec.source_id,
+        mode_id,
+        session_scope,
+    )
+    .await;
+    if gate.is_suspended() {
+        let executor_state = "media_capture_blocked_private_mode";
+        let detail = serde_json::json!({
+            "reason": gate.reason_label(),
+            "source_id": spec.source_id,
+            "mode_id": mode_id,
+            "session_scope": session_scope,
+        });
+        scope.insert("executor_state".to_string(), serde_json::json!(executor_state));
+        scope.insert("capture_gate".to_string(), detail.clone());
+        let preview = preview_summary
+            .as_object_mut()
+            .expect("package operation preview is an object");
+        preview.insert("executor_state".to_string(), serde_json::json!(executor_state));
+        preview.insert("capture_gate".to_string(), detail);
+        return Ok(Some(MediaWorkerOutputResult {
+            status: OperationStatus::Cancelled,
+            message: format!(
+                "{}; on-demand capture blocked by {}",
+                spec.surface,
+                gate.reason_label()
+            ),
+            duration_ms: Some(0),
+        }));
+    }
+
     let Some(worker_output) = resolve_media_worker_output(scope, preview_summary, is_admin).await?
     else {
         return Ok(None);
@@ -418,17 +457,26 @@ pub(super) async fn execute_worker_output(
             .with_operation("ops.start")
     })?;
 
-    let mut admitted_event_ids = Vec::new();
-    for intent in outcome.events {
-        let event = parsed_material_intent_to_event(
-            intent,
-            Id::<SourceMaterial>::from_uuid(material_record.id),
-        )?;
-        let persisted = pool.events().insert(event).await?;
-        if let Some(id) = persisted.id {
-            admitted_event_ids.push(id.to_string());
-        }
-    }
+    let events = outcome
+        .events
+        .into_iter()
+        .map(|intent| {
+            parsed_material_intent_to_event(
+                intent,
+                Id::<SourceMaterial>::from_uuid(material_record.id),
+            )
+        })
+        .collect::<Result<Vec<_>>>()?;
+    let persisted_events = super::redact_and_persist_events(pool, events).await?;
+    let admitted_event_ids: Vec<String> = persisted_events
+        .iter()
+        .map(|event| {
+            event
+                .id
+                .map(|id| id.to_uuid().to_string())
+                .ok_or_else(|| SinexError::invalid_state("persisted media event missing identity"))
+        })
+        .collect::<Result<Vec<_>>>()?;
 
     scope.insert(
         "executor_state".to_string(),

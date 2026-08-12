@@ -35,6 +35,8 @@ use crate::runtime::parser::{
     ImapSyncMode, NativeImapSyncClient, NativeImapSyncClientConfig, NativeImapTlsMode, OAuthError,
     OAuthTokenProvider,
 };
+use crate::event_engine::admission::AdmittedEvent;
+use crate::event_engine::policy::PolicyEngine;
 use crate::sources::source_contracts::email::EmailMailboxParser;
 
 mod email;
@@ -63,6 +65,68 @@ pub use sinex_primitives::rpc::ops::{
 };
 
 type Result<T> = std::result::Result<T, SinexError>;
+
+fn persisted_event_uuid(
+    event: &Event<serde_json::Value>,
+    context: &'static str,
+) -> Result<uuid::Uuid> {
+    event.id.map(|id| id.to_uuid()).ok_or_else(|| {
+        SinexError::invalid_state("persisted ops event is missing its database identity")
+            .with_context("context", context)
+            .with_context("event_state", "DB-loaded event required")
+    })
+}
+
+async fn redact_events(
+    pool: &PgPool,
+    events: Vec<Event<serde_json::Value>>,
+) -> Result<Vec<Event<serde_json::Value>>> {
+    if events.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    let policy = PolicyEngine::load(pool.clone()).await?;
+    policy.ensure_fresh().await;
+    let admitted = events
+        .into_iter()
+        .map(|mut event| {
+            // API-side parser events are new until persistence assigns them an
+            // identity. The privacy admission contract still needs that
+            // identity, so mint it before moving the event into AdmittedEvent.
+            let event_id = *event.id.get_or_insert_with(Id::new);
+            Ok(AdmittedEvent {
+                content_hash: sinex_primitives::events::payload_content_hash(&event.payload),
+                event_id: event_id.to_uuid(),
+                event,
+                metadata: None,
+            })
+        })
+        .collect::<Result<Vec<_>>>()?;
+    Ok(policy
+        .redact_batch(admitted)
+        .await
+        .into_iter()
+        .map(|admitted| admitted.event)
+        .collect())
+}
+
+/// Persist events originating in an API-side parser through the same privacy
+/// chokepoint used by the JetStream persistence consumer. These operations are
+/// intentionally synchronous with their event insert: the caller must never
+/// project or report the pre-redaction payload as if it were durable output.
+pub(super) async fn redact_and_persist_events(
+    pool: &PgPool,
+    events: Vec<Event<serde_json::Value>>,
+) -> Result<Vec<Event<serde_json::Value>>> {
+    let redacted = redact_events(pool, events).await?;
+    let mut persisted = Vec::with_capacity(redacted.len());
+    for event in redacted {
+        let persisted_event = pool.events().insert(event).await?;
+        let _ = persisted_event_uuid(&persisted_event, "ops direct privacy persistence")?;
+        persisted.push(persisted_event);
+    }
+    Ok(persisted)
+}
 
 fn default_ops_limit() -> i64 {
     100
@@ -2000,15 +2064,18 @@ async fn admit_email_record(
             .with_context("parse_error", error.to_string())
             .with_operation("ops.start")
     })?;
+    let mut event_types = Vec::with_capacity(intents.len());
+    let mut events = Vec::with_capacity(intents.len());
     for intent in intents {
-        let event_type = intent.event_type.as_str().to_string();
-        let payload = intent.payload.clone();
-        let event = parsed_material_intent_to_event(intent, material_id)?;
-        let persisted = pool.events().insert(event).await?;
-        if let Some(id) = persisted.id {
-            summary.event_ids.push(id.to_string());
-            project_email_mailbox_event(pool, mode_id, id.to_uuid(), event_type, payload).await?;
-        }
+        event_types.push(intent.event_type.as_str().to_string());
+        events.push(parsed_material_intent_to_event(intent, material_id)?);
+    }
+    for (event_type, event) in event_types.into_iter().zip(
+        redact_and_persist_events(pool, events).await?,
+    ) {
+        let id = persisted_event_uuid(&event, "email staged sync projection")?;
+        summary.event_ids.push(id.to_string());
+        project_email_mailbox_event(pool, mode_id, id, event_type, event.payload).await?;
     }
     Ok(())
 }
@@ -2039,18 +2106,22 @@ async fn admit_email_provider_record(
             .with_operation("ops.start")
     })?;
     let mut last_cursor = None;
+    let mut event_types = Vec::with_capacity(intents.len());
+    let mut events = Vec::with_capacity(intents.len());
     for intent in intents {
         let event_type = intent.event_type.as_str().to_string();
-        let payload = intent.payload.clone();
-        if intent.event_type.as_str() == "email.sync_cursor.observed" {
+        if event_type == "email.sync_cursor.observed" {
             last_cursor = Some(intent.payload.clone());
         }
-        let event = parsed_material_intent_to_event(intent, material_id)?;
-        let persisted = pool.events().insert(event).await?;
-        if let Some(id) = persisted.id {
-            summary.event_ids.push(id.to_string());
-            project_email_mailbox_event(pool, mode_id, id.to_uuid(), event_type, payload).await?;
-        }
+        event_types.push(event_type);
+        events.push(parsed_material_intent_to_event(intent, material_id)?);
+    }
+    for (event_type, event) in event_types.into_iter().zip(
+        redact_and_persist_events(pool, events).await?,
+    ) {
+        let id = persisted_event_uuid(&event, "email provider sync projection")?;
+        summary.event_ids.push(id.to_string());
+        project_email_mailbox_event(pool, mode_id, id, event_type, event.payload).await?;
     }
     Ok(last_cursor)
 }
@@ -2321,6 +2392,11 @@ async fn emit_email_capture_runtime_observed(
             ))
             .with_operation("ops.start")
         })?;
+    let event = redact_events(pool, vec![event])
+        .await?
+        .into_iter()
+        .next()
+        .ok_or_else(|| SinexError::invalid_state("email runtime event redaction returned no event"))?;
     if let Some(existing) = pool
         .events()
         .find_live_by_equivalence_key(&equivalence_key, EventStorageLane::Activity)

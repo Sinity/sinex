@@ -107,7 +107,8 @@ use sinex_primitives::parser::{
 };
 use sinex_primitives::primitives::Uuid;
 use sinex_primitives::privacy::{
-    RuntimePrivateModeState, load_private_mode_state, save_private_mode_state,
+    RuntimePrivateModeState, load_private_mode_state, resolve_private_mode_state_dir,
+    save_private_mode_state,
 };
 use sinex_primitives::rpc::sources::SourceCaveat;
 use sinex_primitives::temporal::Timestamp;
@@ -275,11 +276,16 @@ impl AdapterSourceConfig {
         source_id: &str,
     ) -> Result<BindingConfig, crate::runtime::SinexError> {
         let mut bc = self.to_binding_config();
-        let Some(state_dir) = &self.private_mode_state_dir else {
-            return Ok(bc);
-        };
+        // The daemon already exposes SINEX_STATE_DIR to every source process.
+        // Use it as the default here so adapter-backed sources participate in
+        // the same private-mode contract as the dedicated media drivers even
+        // when their per-binding JSON does not repeat the state path.
+        let state_dir = self
+            .private_mode_state_dir
+            .clone()
+            .unwrap_or_else(|| resolve_private_mode_state_dir(None));
 
-        let state = match load_private_mode_state(state_dir) {
+        let state = match load_private_mode_state(&state_dir) {
             Ok(state) => state,
             Err(error) => {
                 tracing::warn!(
@@ -2145,8 +2151,12 @@ where
         self.poll_interval = config.continuous_poll_interval()?;
         self.runtime_config = Some(config.clone());
         #[cfg(feature = "messaging")]
-        if let Some(state_dir) = config.private_mode_state_dir.clone()
-            && let Some(nats_client) = runtime.nats_client()
+        let state_dir = config
+            .private_mode_state_dir
+            .clone()
+            .unwrap_or_else(|| resolve_private_mode_state_dir(None));
+        #[cfg(feature = "messaging")]
+        if let Some(nats_client) = runtime.nats_client()
         {
             self.private_mode_control_task = Some(spawn_private_mode_control_listener(
                 nats_client,
