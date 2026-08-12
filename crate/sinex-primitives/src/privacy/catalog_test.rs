@@ -9,12 +9,12 @@ async fn catalog_has_expected_count() -> ::xtask::sandbox::TestResult<()> {
     // (password_entry_title, login_window_title, password_manager_title,
     // sensitive_file_title) are gone — WindowTitle is no longer a policy
     // concept — and former infrastructure rules fold into PII.
-    // 20 secret + 11 PII + 3 privacy = 34.
+    // 22 secret + 11 PII + 3 privacy = 36.
     let count = |cat: RuleCategory| rules.iter().filter(|r| r.category == cat).count();
-    assert_eq!(count(RuleCategory::Secret), 20, "secret rule count");
+    assert_eq!(count(RuleCategory::Secret), 22, "secret rule count");
     assert_eq!(count(RuleCategory::Pii), 11, "PII rule count");
     assert_eq!(count(RuleCategory::Privacy), 3, "privacy rule count");
-    assert_eq!(rules.len(), 34, "total built-in rule count");
+    assert_eq!(rules.len(), 36, "total built-in rule count");
     Ok(())
 }
 
@@ -153,6 +153,31 @@ fn rule_exists(name: &str) -> bool {
 #[sinex_test]
 async fn anthropic_api_key_rule_exists() -> ::xtask::sandbox::TestResult<()> {
     assert!(rule_exists("anthropic_api_key"));
+    Ok(())
+}
+
+#[sinex_test]
+async fn high_value_secret_catalog_shapes_are_present() -> ::xtask::sandbox::TestResult<()> {
+    for name in ["basic_auth_header", "basic_auth_cli"] {
+        assert!(rule_exists(name), "missing catalog rule {name}");
+    }
+    let rules = builtin_rules();
+    let anthropic = rules
+        .iter()
+        .find(|rule| rule.name == "anthropic_api_key")
+        .unwrap();
+    let openai = rules
+        .iter()
+        .find(|rule| rule.name == "openai_api_key")
+        .unwrap();
+    let matcher_text = |rule: &PatternRule| match &rule.matcher {
+        Matcher::Regex { pattern } => pattern.clone(),
+        _ => panic!("expected regex matcher"),
+    };
+    assert!(matcher_text(anthropic).contains("oat"));
+    assert!(matcher_text(anthropic).contains("sid"));
+    assert!(matcher_text(openai).contains("svcacct"));
+    assert!(matcher_text(openai).contains("admin"));
     Ok(())
 }
 

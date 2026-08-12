@@ -373,7 +373,7 @@ async fn privacy_literal_policy_handles_unicode_and_forged_envelope_marker(
 
     let engine = PolicyEngine::load(pool.clone()).await?;
     let payload = json!({
-        "note": "İ SECRET; ẞ SECRET; documentation says ⌜enc:v1:example but SECRET stays private"
+        "note": "İ SECRET; ẞ SECRET; ẞhunter2secret; documentation says ⌜enc:v1:example and ⌜enc:v1:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA⌝ but SECRET stays private"
     });
     let result = engine
         .redact_batch(vec![admit(make_material_event(
@@ -389,7 +389,8 @@ async fn privacy_literal_policy_handles_unicode_and_forged_envelope_marker(
         !without_replacement_markers.to_ascii_lowercase().contains("secret"),
         "got: {note}"
     );
-    assert_eq!(note.matches("<SECRET>").count(), 3, "got: {note}");
+    assert_eq!(note.matches("<SECRET>").count(), 4, "got: {note}");
+    assert!(!note.contains("hunter2secret"), "got: {note}");
 
     Ok(())
 }
