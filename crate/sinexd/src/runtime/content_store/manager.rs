@@ -567,6 +567,59 @@ impl ContentStoreManager {
         Ok(content)
     }
 
+    /// Retrieve a local CAS object that is not represented by a `core.blobs`
+    /// row, such as a `MaterialManifestV1` object.  The key is still parsed,
+    /// size-checked, path-confined, and BLAKE3-verified before bytes are
+    /// returned; this is intentionally narrower than the user-facing blob
+    /// retrieval route.
+    pub async fn retrieve_cas_object(&self, content_key: &str) -> RuntimeResult<Vec<u8>> {
+        let parsed = ContentStoreKey::parse(content_key).map_err(SinexError::validation)?;
+        if !parsed.is_local_blake3_cas() {
+            return Err(SinexError::validation(
+                "unregistered CAS object retrieval requires a local BLAKE3 key",
+            ));
+        }
+        if self.content_store.config.max_blob_size > 0
+            && parsed.size > self.content_store.config.max_blob_size as u64
+        {
+            return Err(SinexError::blob_storage(format!(
+                "CAS object size {} exceeds configured limit {}",
+                parsed.size, self.content_store.config.max_blob_size
+            )));
+        }
+        self.content_store
+            .ensure_content_local(content_key)
+            .await
+            .map_err(|error| {
+                SinexError::blob_storage(error).with_operation("retrieve_cas_object")
+            })?;
+        let path = self
+            .content_store
+            .path_if_local(content_key)?
+            .ok_or_else(|| SinexError::processing("local CAS path was not resolved"))?;
+        let path = self
+            .content_store
+            .canonicalize_local_cas_path(&path)
+            .await?;
+        let content = tokio::fs::read(&path).await.map_err(SinexError::io)?;
+        if content.len() as u64 != parsed.size {
+            return Err(
+                SinexError::processing("CAS object size does not match its key")
+                    .with_context("expected_size", parsed.size.to_string())
+                    .with_context("actual_size", content.len().to_string()),
+            );
+        }
+        let actual_digest = blake3::hash(&content).to_hex().to_string();
+        if actual_digest != parsed.digest {
+            return Err(
+                SinexError::processing("CAS object digest does not match its key")
+                    .with_context("expected_digest", parsed.digest)
+                    .with_context("actual_digest", actual_digest),
+            );
+        }
+        Ok(content)
+    }
+
     /// Retrieve a blob's content path
     pub async fn get_blob_path(&self, content_key: &str) -> RuntimeResult<Utf8PathBuf> {
         let start = Instant::now();

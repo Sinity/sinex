@@ -26,6 +26,19 @@ pub enum MetadataAvailability {
     Withheld,
 }
 
+/// Field-level disclosure classification carried with the witness envelope.
+/// This is metadata for routing and review, not a replacement for the runtime
+/// access-control boundary.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ManifestPrivacyClass {
+    Public,
+    Personal,
+    Sensitive,
+    Secret,
+    Unknown,
+}
+
 /// A value together with its capture status.  `Unknown` is deliberately not
 /// represented as a null value: consumers must distinguish absent evidence
 /// from a source that explicitly contained a null.
@@ -168,13 +181,180 @@ pub struct MaterialManifestV1 {
     pub continuity: ContinuityEnvelope,
     pub provenance: ProvenanceEnvelope,
     pub temporal_evidence: BTreeMap<String, JsonValue>,
+    /// Keys are manifest field paths.  The `*` entry is the explicit fallback
+    /// for fields not classified by a legacy route.
+    #[serde(default)]
+    pub privacy_classification: BTreeMap<String, ManifestPrivacyClass>,
     /// Extension data is sorted to keep the canonical representation stable;
     /// unknown fields remain recoverable rather than being dropped.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub extensions: BTreeMap<String, JsonValue>,
 }
 
+fn captured_string_field(
+    object: Option<&serde_json::Map<String, JsonValue>>,
+    key: &str,
+) -> Captured<String> {
+    object
+        .and_then(|object| object.get(key))
+        .and_then(JsonValue::as_str)
+        .map_or_else(Captured::unknown, |value| {
+            Captured::observed(value.to_string())
+        })
+}
+
 impl MaterialManifestV1 {
+    /// Build the manifest emitted by the generic material assembler.  Route-
+    /// specific enrichers can replace explicit `Unknown` fields later, but the
+    /// generic path always emits a complete envelope and retains its original
+    /// metadata under `extensions`.
+    #[must_use]
+    pub fn from_capture(
+        source_material_id: Uuid,
+        source_identifier: impl Into<String>,
+        material_kind: impl Into<String>,
+        content_hash: impl Into<String>,
+        encoded_size: u64,
+        metadata: JsonValue,
+        started_at: impl Into<String>,
+        ended_at: impl Into<String>,
+    ) -> Self {
+        let source_identifier = source_identifier.into();
+        let material_kind = material_kind.into();
+        let content_hash = content_hash.into();
+        let metadata = match metadata {
+            JsonValue::Object(_) => metadata,
+            other => serde_json::json!({"value": other}),
+        };
+        let metadata_object = metadata.as_object().cloned();
+        let embedded_metadata = metadata_object
+            .as_ref()
+            .and_then(|object| object.get("embedded_metadata"))
+            .and_then(JsonValue::as_object)
+            .map(|object| {
+                Captured::observed(
+                    object
+                        .iter()
+                        .map(|(key, value)| (key.clone(), value.clone()))
+                        .collect(),
+                )
+            })
+            .unwrap_or_else(Captured::unknown);
+        let privacy_class = metadata_object
+            .as_ref()
+            .and_then(|object| object.get("privacy_class"))
+            .and_then(JsonValue::as_str)
+            .map_or(ManifestPrivacyClass::Unknown, |value| match value {
+                "public" => ManifestPrivacyClass::Public,
+                "personal" => ManifestPrivacyClass::Personal,
+                "sensitive" => ManifestPrivacyClass::Sensitive,
+                "secret" => ManifestPrivacyClass::Secret,
+                _ => ManifestPrivacyClass::Unknown,
+            });
+        let mut temporal_evidence = BTreeMap::new();
+        temporal_evidence.insert(
+            "captured_started_at".to_string(),
+            JsonValue::String(started_at.into()),
+        );
+        temporal_evidence.insert(
+            "captured_ended_at".to_string(),
+            JsonValue::String(ended_at.into()),
+        );
+
+        let mut extensions = BTreeMap::new();
+        extensions.insert("capture_metadata".to_string(), metadata);
+
+        Self {
+            manifest_type: MATERIAL_MANIFEST_V1.to_string(),
+            source_material_id,
+            source_identifier,
+            material_kind,
+            bytes: MaterialBytes {
+                encoded: ContentDigest {
+                    algorithm: "blake3".to_string(),
+                    value_hex: content_hash,
+                },
+                encoded_size,
+                logical: Captured::unknown(),
+                logical_size: Captured::unknown(),
+                parser_ranges: Vec::new(),
+            },
+            filesystem: FilesystemEnvelope {
+                path_bytes_base64: Captured::unknown(),
+                file_type: Captured::unknown(),
+                size: Captured::unknown(),
+                mode: Captured::unknown(),
+                uid: Captured::unknown(),
+                gid: Captured::unknown(),
+                inode: Captured::unknown(),
+                device: Captured::unknown(),
+                link_target_bytes_base64: Captured::unknown(),
+                xattrs: Captured::unknown(),
+                sparse_extents: Captured::unknown(),
+            },
+            container: ContainerEnvelope {
+                format: Captured::unknown(),
+                header_bytes: Captured::unknown(),
+                member_path_bytes_base64: Captured::unknown(),
+                member_metadata: Captured::unknown(),
+            },
+            interpretation: InterpretationEnvelope {
+                mime_type: metadata_object
+                    .as_ref()
+                    .and_then(|object| {
+                        object
+                            .get("mime_type")
+                            .or_else(|| object.get("content_type"))
+                    })
+                    .and_then(JsonValue::as_str)
+                    .map_or_else(Captured::unknown, |value| {
+                        Captured::observed(value.to_string())
+                    }),
+                mime_detection_method: captured_string_field(
+                    metadata_object.as_ref(),
+                    "mime_detection_method",
+                ),
+                charset: metadata_object
+                    .as_ref()
+                    .and_then(|object| object.get("charset").or_else(|| object.get("encoding")))
+                    .and_then(JsonValue::as_str)
+                    .map_or_else(Captured::unknown, |value| {
+                        Captured::observed(value.to_string())
+                    }),
+                bom: captured_string_field(metadata_object.as_ref(), "bom"),
+                newline_style: captured_string_field(metadata_object.as_ref(), "newline_style"),
+                embedded_metadata,
+            },
+            transport: TransportEnvelope {
+                authority: Captured::not_applicable(),
+                locator: Captured::unknown(),
+                revision: Captured::unknown(),
+                etag: Captured::unknown(),
+                fetched_at: Captured::unknown(),
+            },
+            continuity: ContinuityEnvelope {
+                logical_source: captured_string_field(
+                    metadata_object.as_ref(),
+                    "logical_source_identifier",
+                ),
+                parent_material_id: Captured::unknown(),
+                part_index: Captured::unknown(),
+                part_count: Captured::unknown(),
+                continuation_key: Captured::unknown(),
+                member_key: Captured::unknown(),
+            },
+            provenance: ProvenanceEnvelope {
+                acquired_by: captured_string_field(metadata_object.as_ref(), "acquired_by"),
+                parser: captured_string_field(metadata_object.as_ref(), "parser"),
+                parser_version: captured_string_field(metadata_object.as_ref(), "parser_version"),
+                extractor_versions: BTreeMap::new(),
+            },
+            temporal_evidence,
+            privacy_classification: BTreeMap::from([("*".to_string(), privacy_class)]),
+            extensions,
+        }
+    }
+
     /// Return the deterministic JSON representation used as the CAS object.
     /// Struct field order is fixed by declaration and nested JSON objects are
     /// recursively sorted as well.  This matters for extractor extensions,
@@ -201,10 +381,16 @@ impl MaterialManifestV1 {
         if self.bytes.encoded.algorithm.is_empty() || self.bytes.encoded.value_hex.is_empty() {
             return Err("encoded material digest is missing");
         }
-        if self.bytes.parser_ranges.iter().any(|range| {
-            range.start >= range.end || range.end > self.bytes.encoded_size
-        }) {
+        if self
+            .bytes
+            .parser_ranges
+            .iter()
+            .any(|range| range.start >= range.end || range.end > self.bytes.encoded_size)
+        {
             return Err("parser byte range is outside encoded material");
+        }
+        if self.privacy_classification.is_empty() {
+            return Err("manifest privacy classification is missing");
         }
         Ok(())
     }
@@ -259,6 +445,42 @@ mod tests {
         let value = serde_json::json!({"b": 1, "a": {"d": 1, "c": 2}});
         let canonical = serde_json::to_vec(&canonicalize_json(value)).expect("serialize");
         assert_eq!(canonical, br#"{"a":{"c":2,"d":1},"b":1}"#);
+    }
+
+    #[test]
+    fn generic_capture_preserves_available_route_metadata() {
+        let manifest = MaterialManifestV1::from_capture(
+            Uuid::nil(),
+            "archive.bin",
+            "local_cas",
+            &"a".repeat(64),
+            3,
+            serde_json::json!({
+                "mime_type": "text/plain",
+                "encoding": "utf-8",
+                "logical_source_identifier": "terminal.text-history",
+                "privacy_class": "personal",
+            }),
+            "2026-08-12T00:00:00Z",
+            "2026-08-12T00:00:01Z",
+        );
+        assert_eq!(
+            manifest.interpretation.mime_type,
+            Captured::observed("text/plain".to_string())
+        );
+        assert_eq!(
+            manifest.interpretation.charset,
+            Captured::observed("utf-8".to_string())
+        );
+        assert_eq!(
+            manifest.continuity.logical_source,
+            Captured::observed("terminal.text-history".to_string())
+        );
+        assert_eq!(
+            manifest.privacy_classification.get("*"),
+            Some(&ManifestPrivacyClass::Personal)
+        );
+        manifest.validate().expect("generic capture must be valid");
     }
 
     #[test]
@@ -346,6 +568,10 @@ mod tests {
                 extractor_versions: BTreeMap::new(),
             },
             temporal_evidence: BTreeMap::new(),
+            privacy_classification: BTreeMap::from([(
+                "*".to_string(),
+                ManifestPrivacyClass::Unknown,
+            )]),
             extensions: BTreeMap::new(),
         }
     }

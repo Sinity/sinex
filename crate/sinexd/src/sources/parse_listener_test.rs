@@ -3,7 +3,7 @@ use crate::runtime::content_store::ContentStoreConfig;
 use crate::sources::dispatch::test_parser_dispatch;
 use camino::Utf8PathBuf;
 use sinex_db::repositories::source_materials::SourceMaterial as SourceMaterialRegistration;
-use sinex_primitives::Uuid;
+use sinex_primitives::{Id, MaterialManifestV1, Uuid};
 use tempfile::TempDir;
 use xtask::sandbox::prelude::*;
 
@@ -36,9 +36,7 @@ async fn stage_material(
     let material = ctx
         .pool()
         .source_materials()
-        .register_material(
-            SourceMaterialRegistration::blob_text(filename).with_blob_id(blob.id),
-        )
+        .register_material(SourceMaterialRegistration::blob_text(filename).with_blob_id(blob.id))
         .await?;
     Ok(material.id)
 }
@@ -68,9 +66,60 @@ async fn load_material_bytes_returns_real_content(ctx: TestContext) -> TestResul
 }
 
 #[sinex_test]
-async fn load_material_bytes_fails_closed_on_missing_material(
+async fn load_material_bytes_uses_and_validates_manifest_authority(
     ctx: TestContext,
 ) -> TestResult<()> {
+    let (content_store, _tmp) = test_content_store(&ctx)?;
+    let payload = b"manifest-authoritative bytes";
+    let blob = content_store
+        .ingest_from_bytes(payload, "manifest.log", "text/plain")
+        .await?;
+    let material = ctx
+        .pool()
+        .source_materials()
+        .register_material(
+            SourceMaterialRegistration::blob_text("manifest.log").with_blob_id(blob.id),
+        )
+        .await?;
+    let manifest = MaterialManifestV1::from_capture(
+        material.id,
+        "manifest.log",
+        "local_cas",
+        blake3::hash(payload).to_hex().to_string(),
+        payload.len() as u64,
+        serde_json::json!({"logical_source_identifier": "test.manifest"}),
+        "2026-08-12T00:00:00Z",
+        "2026-08-12T00:00:01Z",
+    );
+    let manifest_blob = content_store
+        .ingest_from_bytes(
+            &manifest.canonical_bytes()?,
+            "material-manifest.json",
+            "application/json",
+        )
+        .await?;
+    ctx.pool()
+        .source_materials()
+        .update_metadata(
+            Id::from_uuid(material.id),
+            serde_json::json!({
+                "material_manifest": {
+                    "manifest_type": sinex_primitives::MATERIAL_MANIFEST_V1,
+                    "content_key": manifest_blob.content_key(),
+                }
+            }),
+        )
+        .await?;
+
+    let bytes = load_material_bytes(ctx.pool(), &content_store, material.id)
+        .await
+        .map_err(|e| eyre!(e))?;
+    assert_eq!(bytes, payload);
+    Ok(())
+}
+
+#[sinex_test]
+async fn load_material_bytes_fails_closed_on_missing_material(ctx: TestContext) -> TestResult<()> {
     let (content_store, _tmp) = test_content_store(&ctx)?;
     let err = load_material_bytes(ctx.pool(), &content_store, Uuid::now_v7())
         .await

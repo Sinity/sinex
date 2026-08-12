@@ -13,11 +13,14 @@
 
 use crate::runtime::{RuntimeResult, SinexError};
 use serde::{Deserialize, Serialize};
+use serde_json::Value as JsonValue;
 use sqlx::PgPool;
 use std::collections::HashSet;
 use std::time::{Duration as StdDuration, SystemTime};
 
-use super::{LOCAL_BLAKE3_CAS_BACKEND, LOCAL_BLAKE3_CAS_DIR, MaterialContentStore};
+use super::{
+    ContentStoreKey, LOCAL_BLAKE3_CAS_BACKEND, LOCAL_BLAKE3_CAS_DIR, MaterialContentStore,
+};
 
 /// Result of a single CAS file check.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -235,7 +238,12 @@ pub async fn check_cas(
     Ok((report, file_statuses))
 }
 
-/// Load all BLAKE3 hashes from `core.blobs` where `annex_backend = 'SINEXBLAKE3'`.
+/// Load all BLAKE3 hashes that have a durable database authority.
+///
+/// Manifests are intentionally not ordinary user blobs: they are stored in CAS
+/// and referenced from source-material metadata. Include those references in
+/// the fsck authority set so a normal orphan sweep cannot delete replay
+/// metadata that is still needed by a live material row.
 async fn load_sinexblake3_hashes(pool: &PgPool) -> RuntimeResult<Vec<(String, String)>> {
     let rows = sqlx::query_as::<_, (String, String)>(
         r"
@@ -249,7 +257,37 @@ async fn load_sinexblake3_hashes(pool: &PgPool) -> RuntimeResult<Vec<(String, St
     .await
     .map_err(|e| SinexError::database(format!("failed to load SINEXBLAKE3 hashes: {e}")))?;
 
-    Ok(rows)
+    let mut references = rows;
+    let material_rows = sqlx::query_as::<_, (String, JsonValue)>(
+        r"
+        SELECT id::text, metadata
+        FROM raw.source_material_registry
+        WHERE metadata->'material_manifest'->>'content_key' IS NOT NULL
+        ",
+    )
+    .fetch_all(pool)
+    .await
+    .map_err(|e| SinexError::database(format!("failed to load material manifest references: {e}")))?;
+    for (material_id, metadata) in material_rows {
+        let Some(content_key) = metadata
+            .get("material_manifest")
+            .and_then(JsonValue::as_object)
+            .and_then(|manifest| manifest.get("content_key"))
+            .and_then(JsonValue::as_str)
+        else {
+            continue;
+        };
+        let Ok(parsed) = ContentStoreKey::parse(content_key) else {
+            continue;
+        };
+        if parsed.is_local_blake3_cas() {
+            references.push((
+                parsed.digest,
+                format!("material-manifest:{material_id}"),
+            ));
+        }
+    }
+    Ok(references)
 }
 
 /// Verify that a CAS file's BLAKE3 hash matches its filename.

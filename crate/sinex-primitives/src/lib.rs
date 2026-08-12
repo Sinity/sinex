@@ -176,12 +176,6 @@ pub use llm::*;
 pub use output_kind::{
     OUTPUT_KIND_DECLARATIONS, OutputKind, OutputKindDeclaration, declared_output_kind,
 };
-pub use source_material_manifest::{
-    ByteRange as MaterialByteRange, Captured as CapturedMetadata, ContainerEnvelope,
-    ContinuityEnvelope, ContentDigest, FilesystemEnvelope, InterpretationEnvelope,
-    MaterialBytes, MaterialManifestV1, MetadataAvailability, ProvenanceEnvelope,
-    TransportEnvelope, MATERIAL_MANIFEST_V1,
-};
 pub use primitives::Uuid;
 pub use public_ref::{
     PublicSinexRef, PublicSinexRefParseError, RESOLVED_OBJECT_VIEW_SCHEMA_VERSION,
@@ -209,6 +203,12 @@ pub use semantic::*;
 pub use serde_json::Value as JsonValue;
 pub use session_lane::*;
 pub use source_contracts::{SourceRuntimeBinding, SubjectQuery, SubjectRef};
+pub use source_material_manifest::{
+    ByteRange as MaterialByteRange, Captured as CapturedMetadata, ContainerEnvelope, ContentDigest,
+    ContinuityEnvelope, FilesystemEnvelope, InterpretationEnvelope, MATERIAL_MANIFEST_V1,
+    ManifestPrivacyClass, MaterialBytes, MaterialManifestV1, MetadataAvailability,
+    ProvenanceEnvelope, TransportEnvelope,
+};
 pub use task_domain::*;
 pub use temporal::{OffsetDateTime, now};
 pub use units::{Bytes, Seconds};

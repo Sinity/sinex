@@ -14,13 +14,13 @@ use async_nats::Client;
 use futures::StreamExt;
 use serde::{Deserialize, Serialize};
 use sinex_db::{Blob, DbPoolExt, SourceMaterialRecord};
-use sinex_primitives::{ControlSubject, Id, Uuid};
+use sinex_primitives::{ControlSubject, Id, MaterialManifestV1, Uuid};
 use sqlx::PgPool;
 use std::sync::Arc;
 use tracing::{error, info, warn};
 
-use crate::runtime::nats_payload::ensure_nats_payload_fits;
 use crate::runtime::content_store::ContentStoreManager;
+use crate::runtime::nats_payload::ensure_nats_payload_fits;
 use crate::sources::dispatch::ParserDispatchFn;
 
 /// Command dispatched by the gateway replay engine to request a source parse.
@@ -144,6 +144,64 @@ async fn load_material_bytes(
         .await
         .map_err(|e| format!("failed to load blob {blob_id} for material {material_id}: {e}"))?
         .ok_or_else(|| format!("blob {blob_id} for material {material_id} not found"))?;
+
+    let manifest_content_key = if let Some(manifest_reference) = material
+        .metadata
+        .get("material_manifest")
+        .and_then(serde_json::Value::as_object)
+    {
+        let manifest_key = manifest_reference
+            .get("content_key")
+            .and_then(serde_json::Value::as_str)
+            .ok_or_else(|| {
+                format!("source material {material_id} has malformed manifest reference")
+            })?;
+        let manifest_bytes = content_store
+            .retrieve_cas_object(manifest_key)
+            .await
+            .map_err(|e| format!("failed to retrieve manifest for material {material_id}: {e}"))?;
+        let manifest: MaterialManifestV1 = serde_json::from_slice(&manifest_bytes)
+            .map_err(|e| format!("failed to decode manifest for material {material_id}: {e}"))?;
+        manifest
+            .validate()
+            .map_err(|e| format!("manifest validation failed for material {material_id}: {e}"))?;
+        if manifest.source_material_id != material_id {
+            return Err(format!(
+                "manifest source material mismatch: expected {material_id}, got {}",
+                manifest.source_material_id
+            ));
+        }
+        if manifest.bytes.encoded.algorithm != "blake3" {
+            return Err(format!(
+                "manifest for material {material_id} uses unsupported content digest algorithm {}",
+                manifest.bytes.encoded.algorithm
+            ));
+        }
+        if manifest.bytes.encoded_size != blob.size_bytes as u64
+            || manifest.bytes.encoded.value_hex != blob.checksum_blake3.clone().unwrap_or_default()
+        {
+            return Err(format!(
+                "manifest byte identity mismatch for material {material_id}"
+            ));
+        }
+        Some(format!(
+            "SINEXBLAKE3-s{}--{}",
+            manifest.bytes.encoded_size, manifest.bytes.encoded.value_hex
+        ))
+    } else {
+        None
+    };
+
+    if let Some(manifest_content_key) = manifest_content_key {
+        return content_store
+            .retrieve_cas_object(&manifest_content_key)
+            .await
+            .map_err(|e| {
+                format!(
+                    "failed to retrieve manifest-authoritative bytes for material {material_id}: {e}"
+                )
+            });
+    }
 
     content_store
         .retrieve_content(&blob.content_key())
