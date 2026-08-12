@@ -5,7 +5,6 @@
 //! source-material/blob/ledger commit boundary lives in `finalization_transaction`.
 
 use serde::Serialize;
-use futures::FutureExt as _;
 use sinex_db::repositories::DbPoolExt;
 use sinex_db::schema::defs::records::SourceMaterialRecord;
 use sinex_primitives::Timestamp;
@@ -15,9 +14,12 @@ use sinex_primitives::{
     Id, JsonValue, MaterialStatus, Uuid, sources::is_self_observation_material_source,
 };
 use tokio::sync::Mutex;
+use tokio::task::JoinHandle;
+use tokio::task::JoinHandle;
 use tracing::{debug, error, info, warn};
 
 use crate::event_engine::{EventEngineResult, SinexError};
+use crate::event_engine::durable_failure::persist_failure_evidence;
 use crate::runtime::nats_payload::ensure_nats_payload_fits;
 
 use super::assembly_state_machine::{
@@ -136,6 +138,58 @@ impl MaterialAssembler {
         // WAL is immutable — End message remains. In-memory state reverted.
     }
 
+    async fn recover_finalization_worker_panic(
+        state_handle: &Arc<Mutex<super::state::AssemblerState>>,
+    ) {
+        let mut state = state_handle.lock().await;
+        if state.phase == AssemblyPhase::Finalizing {
+            // `pending_end` remains retained throughout the worker attempt, so
+            // returning to Accumulating makes the maintenance re-drive route
+            // immediately usable after a detached worker panic.
+            state.phase = AssemblyPhase::Accumulating;
+        }
+    }
+
+    async fn observe_finalize_worker(
+        &self,
+        material_id: Uuid,
+        state_handle: Arc<Mutex<super::state::AssemblerState>>,
+        worker: JoinHandle<EventEngineResult<()>>,
+    ) {
+        match worker.await {
+            Ok(Ok(())) => {}
+            Ok(Err(error)) => warn!(
+                material_id = %material_id,
+                error = %error,
+                "Decoupled material finalize failed; retry state preserved for maintenance re-drive"
+            ),
+            Err(error) => {
+                warn!(
+                    material_id = %material_id,
+                    error = ?error,
+                    "Decoupled material finalize worker panicked or was aborted; restoring maintenance recovery state"
+                );
+                Self::recover_finalization_worker_panic(&state_handle).await;
+                // Keep the recovery action observable even if the worker
+                // vanished before it could emit its own error.
+                if let Err(dlq_error) = self
+                    .route_material_error(
+                        material_id,
+                        "material_finalize_worker_terminated",
+                        serde_json::json!({ "join_error": error.to_string() }),
+                    )
+                    .await
+                {
+                    warn!(
+                        material_id = %material_id,
+                        error = %dlq_error,
+                        "Failed to publish material finalize worker termination evidence"
+                    );
+                }
+            }
+        }
+    }
+
     /// Route material failure to DLQ.
     ///
     /// Mirrors the raw-event DLQ discipline (`jetstream_consumer::dlq::route_to_dlq`):
@@ -147,13 +201,34 @@ impl MaterialAssembler {
         material_id: Uuid,
         error: impl Into<String>,
         context: JsonValue,
-    ) -> EventEngineResult<()> {
+    ) -> EventEngineResult<Uuid> {
         let payload = MaterialDlqPayload {
             material_id: material_id.to_string(),
             error: error.into(),
             context,
             failed_at: Timestamp::now(),
         };
+
+        let payload_json = serde_json::to_value(&payload).map_err(|error| {
+            SinexError::serialization("Failed to encode material DLQ evidence")
+                .with_source(error)
+        })?;
+        let durable_failure_id = persist_failure_evidence(
+            &self.pool,
+            material_id,
+            "event-engine.material-assembler",
+            "source-material",
+            "material.assembly",
+            "permanent",
+            &payload.error,
+            payload_json,
+            serde_json::json!({
+                "durability_source": "postgres_pre_material_dlq_settlement",
+                "material_id": material_id,
+            }),
+            0,
+        )
+        .await?;
 
         let bytes = serde_json::to_vec(&payload).map_err(|e| {
             error!(
@@ -204,7 +279,7 @@ impl MaterialAssembler {
             })?;
 
         debug!(material_id = %material_id, "Routed to DLQ");
-        Ok(())
+        Ok(durable_failure_id)
     }
 
     /// Route a material failure to DLQ, then durably settle it as terminal-failed —
@@ -565,28 +640,11 @@ impl MaterialAssembler {
                         PendingEndBehavior::Ignore,
                     )
                     .await
-                {
-                    warn!(
-                        material_id = %material_id,
-                        error = %error,
-                        "Decoupled material finalize failed; retry state preserved for maintenance re-drive"
-                    );
-                }
-            })
-            .catch_unwind()
-            .await;
+            });
 
-            if outcome.is_err() {
-                error!(
-                    target: "sinex_metrics",
-                    metric = "assembly_finalization_worker_panics_total",
-                    material_id = %material_id,
-                    "Detached material finalization worker panicked; restoring retry state"
-                );
-                assembler
-                    .recover_panicked_finalize(material_id, recovery_state_handle)
-                    .await;
-            }
+            recovery_assembler
+                .observe_finalize_worker(material_id, state_handle, worker)
+                .await;
         });
     }
 
