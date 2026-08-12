@@ -604,3 +604,89 @@ async fn document_search_empty_query_error(ctx: TestContext) -> TestResult<()> {
     );
     Ok(())
 }
+
+/// sinex-3o15 bug 1 (parameter-index collision with `natural_key_prefix`) does
+/// NOT reproduce against current master: `bind_index` is incremented after
+/// every predicate branch including `natural_key_prefix` in both
+/// `search_fts` and `search_trigram`, and the bind-value list matches. This
+/// is a positive confirmation test, not a red one -- filed alongside the
+/// still-open bug 2 test below so the bead's disposition is traceable to a
+/// real check rather than a stale claim.
+#[sinex_test]
+async fn document_search_natural_key_prefix_does_not_collide_with_limit_offset_binds(
+    ctx: TestContext,
+) -> TestResult<()> {
+    let doc_id = Uuid::now_v7();
+    seed_document(&ctx, doc_id, "dendron_markdown", "notes/rust-async").await?;
+    seed_chunk(&ctx, doc_id, 0, "Rust async programming with tokio and futures").await?;
+
+    let repo = ctx.pool.documents();
+    let results = repo
+        .search(&DocumentSearchQuery {
+            query: "tokio".to_string(),
+            kind: None,
+            document_ids: None,
+            natural_key_prefix: Some("notes/".to_string()),
+            updated_after: None,
+            updated_before: None,
+            limit: Some(5),
+            offset: None,
+            vector_params: None,
+        })
+        .await?;
+
+    assert!(
+        !results.results.is_empty(),
+        "natural_key_prefix + limit together should not error or silently drop hits"
+    );
+    Ok(())
+}
+
+/// sinex-3o15 bug 2: `DocumentSearchQuery::vector_params` and
+/// `SearchMode::{Vector, Hybrid}` are declared but `search()` never reads
+/// `vector_params` -- it always runs FTS then trigram, silently misrouting
+/// any caller expecting vector/hybrid semantics.
+#[sinex_test]
+#[ignore = "sinex-3o15 open: search() never reads query.vector_params -- a caller requesting vector \
+            search is silently misrouted to FTS/trigram instead of getting Vector/Hybrid results \
+            (or an explicit NotImplemented error)"]
+async fn document_search_with_vector_params_does_not_silently_fall_back_to_fts(
+    ctx: TestContext,
+) -> TestResult<()> {
+    let doc_id = Uuid::now_v7();
+    seed_document(&ctx, doc_id, "dendron_markdown", "notes/rust-async").await?;
+    seed_chunk(&ctx, doc_id, 0, "Rust async programming with tokio and futures").await?;
+
+    let repo = ctx.pool.documents();
+    let results = repo
+        .search(&DocumentSearchQuery {
+            query: "tokio".to_string(),
+            kind: None,
+            document_ids: None,
+            natural_key_prefix: None,
+            updated_after: None,
+            updated_before: None,
+            limit: None,
+            offset: None,
+            vector_params: Some(sinex_db::repositories::VectorSearchParams {
+                embedding: vec![0.1; 8],
+                limit: 5,
+                max_distance: None,
+            }),
+        })
+        .await?;
+
+    // A caller that explicitly asked for vector search must get a Vector or
+    // Hybrid result set -- silently falling back to plain FTS defeats the
+    // purpose of setting vector_params at all.
+    assert!(
+        matches!(
+            results.search_mode,
+            sinex_db::repositories::SearchMode::Vector | sinex_db::repositories::SearchMode::Hybrid
+        ),
+        "expected Vector or Hybrid search_mode when vector_params is set, got {:?} -- \
+         vector_params was silently ignored and the query fell through to FTS/trigram",
+        results.search_mode
+    );
+    Ok(())
+}

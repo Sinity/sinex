@@ -136,3 +136,29 @@ async fn coordination_covers_edge_cases() -> TestResult<()> {
     assert!(unnamed.is_ready());
     Ok(())
 }
+
+#[sinex_test]
+#[ignore = "sinex-y8vc open: CoordinationPrimitive::wait()'s Automatic-reset (barrier) path uses \
+            tokio::time::timeout(timeout_duration / 10, ...) inside its wait loop and propagates the \
+            first sub-timeout via `?`, so a barrier that never fills times out after ~1/10th of the \
+            caller's requested budget instead of the full budget"]
+async fn barrier_wait_honors_the_full_requested_timeout_budget() -> TestResult<()> {
+    // Threshold 2, only ever incremented once below -- the barrier never
+    // fills, so wait() must run out the *full* requested timeout before
+    // erroring, not bail out after ~1/10th of it.
+    let barrier = Arc::new(CoordinationPrimitive::barrier(2, "budget_test"));
+    let requested_timeout = Duration::from_millis(600);
+
+    let start = tokio::time::Instant::now();
+    let result = barrier.wait(requested_timeout).await;
+    let elapsed = start.elapsed();
+
+    assert!(result.is_err(), "barrier should time out (never fills)");
+    assert!(
+        elapsed >= requested_timeout,
+        "wait() returned after {elapsed:?} but was asked to wait the full {requested_timeout:?} -- \
+         it bailed out early on an internal timeout_duration/10 sub-wait instead of honoring the \
+         full requested budget"
+    );
+    Ok(())
+}

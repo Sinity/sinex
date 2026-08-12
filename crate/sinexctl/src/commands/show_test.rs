@@ -1,5 +1,6 @@
+use crate::client::gateway::ClientConfig;
 use super::*;
-use sinex_primitives::public_ref::ResolvedObjectStatus;
+use sinex_primitives::public_ref::{PublicSinexRef, ResolvedObjectStatus};
 use sinex_primitives::testing::event_fixture;
 use sinex_primitives::views::SinexObjectRef;
 use sinex_primitives::{Event, EventSource, EventType, Id, JsonValue, Uuid};
@@ -115,5 +116,34 @@ async fn table_renderer_shows_resolution_status_and_surface() -> xtask::TestResu
     assert!(table.contains("Status: Resolved"));
     assert!(table.contains("Source surface: sinexctl.command_catalog"));
     assert!(table.contains("Payload: use --format json for full object details"));
+    Ok(())
+}
+
+#[sinex_test]
+#[ignore = "sinex-89mx open: SinexObjectKind::Document (and 10 sibling variants: DocumentChunk, \
+            SemanticEntity, SemanticRelation, QueryRun, AdmissionOutcome, Snapshot, MomentCandidate, \
+            PrivacySession, Caveat, ExternalRef) round-trip-parses fine via `sinexctl show \
+            document:<id>` but resolve_ref has no real match arm for it -- it's permanently \
+            unsupported, not 'not found yet', despite looking identical to a working kind"]
+async fn resolve_ref_supports_document_kind_not_just_unsupported_fallthrough() -> xtask::TestResult<()>
+{
+    let client = GatewayClient::new(ClientConfig {
+        url: "https://127.0.0.1:1".to_string(), // never contacted for a kind with a real arm
+        token: Some("test-token".to_string()),
+        insecure: true,
+        ..Default::default()
+    })?;
+    let public_ref = PublicSinexRef::new(SinexObjectKind::Document, "some-document-id");
+
+    let envelope = resolve_ref(&client, public_ref).await?;
+
+    assert_ne!(
+        envelope.payload.status,
+        ResolvedObjectStatus::Unsupported,
+        "SinexObjectKind::Document round-trips through public_ref parsing and the TUI display \
+         table as if it were a real, working kind, but resolve_ref's match falls through to the \
+         generic `_ => unsupported` arm for it -- this is a permanently dead capability, not a \
+         real 'not found' result"
+    );
     Ok(())
 }
