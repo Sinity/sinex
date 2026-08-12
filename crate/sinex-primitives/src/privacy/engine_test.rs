@@ -466,3 +466,75 @@ async fn all_matcher_does_not_fire_when_one_branch_missing() -> ::xtask::sandbox
     assert!(!result.any_matched());
     Ok(())
 }
+
+#[sinex_test]
+async fn redact_label_interpolates_capture_groups() -> ::xtask::sandbox::TestResult<()> {
+    // sinex-vceo's "$1 interpolation never implemented" claim was FALSE for
+    // regex matchers: apply_regex (engine.rs) passes the label straight to
+    // regex::Regex::replace_all, whose &str Replacer impl already expands
+    // $1/$2 natively. (apply_strategy_to_match's literal return only affects
+    // the Structural/Literal matcher paths, which don't have capture groups
+    // to interpolate in the first place.) Kept as a real regression test.
+    let mut config = PrivacyConfig::default();
+    config.builtin_categories = CategorySet::None;
+    config.extra_rules.push(PatternRule {
+        name: "custom-order-id".into(),
+        description: "test rule with a capture-group label".into(),
+        category: RuleCategory::Custom,
+        matcher: Matcher::Regex {
+            pattern: r"ORDER-(\d+)".into(),
+        },
+        strategy: Strategy::Redact {
+            label: Some("ORDER-$1-REDACTED".into()),
+        },
+        contexts: Vec::new(),
+        enabled: true,
+    });
+    let e = PrivacyEngine::new(config).unwrap();
+
+    let result = e.process("ref: ORDER-4471", ProcessingContext::Command);
+
+    assert!(
+        !result.text.contains("$1"),
+        "label's $1 placeholder was emitted literally instead of being interpolated: {}",
+        result.text
+    );
+    assert!(
+        result.text.contains("4471"),
+        "label's $1 should have been replaced with the matched capture group '4471': {}",
+        result.text
+    );
+    Ok(())
+}
+
+#[sinex_test]
+#[ignore = "sinex-fonj open (item 2): PrivacyEngine::process_json recurses into strings/arrays/objects only -- a numeric JSON field matching a sensitive pattern passes through completely untouched"]
+async fn process_json_redacts_sensitive_numeric_fields() -> ::xtask::sandbox::TestResult<()> {
+    let mut config = PrivacyConfig::default();
+    config.builtin_categories = CategorySet::None;
+    config.extra_rules.push(PatternRule {
+        name: "test-numeric-secret".into(),
+        description: "regression fixture for sinex-fonj item 2".into(),
+        category: RuleCategory::Custom,
+        matcher: Matcher::Literal {
+            text: "999999999".into(),
+            case_sensitive: false,
+        },
+        strategy: Strategy::Redact {
+            label: Some("<REDACTED>".into()),
+        },
+        contexts: Vec::new(),
+        enabled: true,
+    });
+    let e = PrivacyEngine::new(config).unwrap();
+
+    let payload = serde_json::json!({ "ssn": 999999999u64 });
+    let result = e.process_json(&payload, ProcessingContext::Document);
+
+    assert_ne!(
+        result, payload,
+        "a JSON number field ({payload}) matching a configured sensitive literal was left \
+         completely untouched by process_json -- non-string fields are never redacted"
+    );
+    Ok(())
+}

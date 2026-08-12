@@ -409,3 +409,7 @@ pub fn normalize_unicode(input: &str) -> Result<String> {
 
     Ok(normalized)
 }
+
+#[cfg(test)]
+#[path = "core_test.rs"]
+mod tests;
