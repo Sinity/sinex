@@ -1,6 +1,14 @@
 use super::{
     CasFsckOptions, CasStatus, LOCAL_BLAKE3_CAS_BACKEND, check_cas, check_cas_with_options,
 };
+
+#[test]
+fn default_fsck_options_do_not_impose_arbitrary_limits() {
+    let options = CasFsckOptions::default();
+    assert_eq!(options.max_runtime, None);
+    assert_eq!(options.max_entries, None);
+    assert_eq!(options.verify_bytes_per_sec, None);
+}
 use crate::runtime::content_store::{ContentStoreConfig, MaterialContentStore, gc::sweep_orphans};
 use camino::Utf8PathBuf;
 use serde_json::json;

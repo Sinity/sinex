@@ -213,13 +213,13 @@ pub struct BlobFsckCommand {
     #[arg(long)]
     pub apply: bool,
 
-    /// Maximum wall-clock duration for one pass. Apply mode refuses a partial pass.
-    #[arg(long, default_value_t = 55 * 60)]
-    pub max_seconds: u64,
+    /// Optional maximum wall-clock duration for one pass. Apply mode refuses a partial pass.
+    #[arg(long)]
+    pub max_seconds: Option<u64>,
 
-    /// Maximum aggregate bytes/sec read for cryptographic verification.
-    #[arg(long, default_value_t = 64 * 1024 * 1024)]
-    pub verify_bytes_per_second: u64,
+    /// Optional maximum aggregate bytes/sec read for cryptographic verification.
+    #[arg(long)]
+    pub verify_bytes_per_second: Option<u64>,
 }
 
 #[derive(Debug, Serialize)]
@@ -272,9 +272,13 @@ impl BlobFsckCommand {
             &content_store,
             self.apply,
             CasFsckOptions {
-                max_runtime: Some(std::time::Duration::from_secs(self.max_seconds.max(1))),
+                max_runtime: self
+                    .max_seconds
+                    .map(|seconds| std::time::Duration::from_secs(seconds.max(1))),
                 max_entries: None,
-                verify_bytes_per_sec: Some(self.verify_bytes_per_second.max(1) as f64),
+                verify_bytes_per_sec: self
+                    .verify_bytes_per_second
+                    .map(|bytes| bytes.max(1) as f64),
             },
         )
         .await

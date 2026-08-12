@@ -101,11 +101,12 @@ pub enum CasFsckStopReason {
     EntryBudget,
 }
 
-/// Resource limits for one fsck pass.
+/// Optional resource limits for one fsck pass.
 ///
-/// The defaults deliberately make a pass cooperative and bounded. A large
-/// store must be handled by a resumable/quarantine lifecycle, not by silently
-/// allowing one maintenance invocation to monopolize the host indefinitely.
+/// An ordinary fsck is completion-oriented: it has no guessed wall-clock or
+/// verification-throughput ceiling. Operators may provide limits when the
+/// host needs admission control; an explicitly bounded incomplete apply pass
+/// remains fail-closed.
 #[derive(Debug, Clone, Copy)]
 pub struct CasFsckOptions {
     pub max_runtime: Option<StdDuration>,
@@ -116,9 +117,9 @@ pub struct CasFsckOptions {
 impl Default for CasFsckOptions {
     fn default() -> Self {
         Self {
-            max_runtime: Some(StdDuration::from_secs(55 * 60)),
+            max_runtime: None,
             max_entries: None,
-            verify_bytes_per_sec: Some(64.0 * 1024.0 * 1024.0),
+            verify_bytes_per_sec: None,
         }
     }
 }

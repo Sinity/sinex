@@ -46,9 +46,12 @@ impl Default for WorkBudget {
         Self {
             max_items: None,
             max_bytes: None,
-            max_runtime: Some(Duration::from_secs(55 * 60)),
+            // A generic controller cannot safely guess an operation's deadline
+            // or throughput. Callers must opt into limits appropriate to their
+            // work and host-admission policy.
+            max_runtime: None,
             items_per_sec: None,
-            bytes_per_sec: Some(64.0 * 1024.0 * 1024.0),
+            bytes_per_sec: None,
         }
     }
 }
