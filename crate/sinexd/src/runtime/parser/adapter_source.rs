@@ -1577,9 +1577,11 @@ where
                             parser_checkpoint_before,
                         );
                         warn!(
+                            target: "sinex_metrics",
+                            metric = "source_parser_rejections_total",
                             source = self.source_id,
                             error = %e,
-                            "parse_record error — skipping"
+                            "source parser rejected record"
                         );
                         continue;
                     }

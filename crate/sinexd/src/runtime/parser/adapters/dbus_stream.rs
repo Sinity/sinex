@@ -232,12 +232,9 @@ impl ParsedMatchRule {
 }
 
 /// Does the message satisfy at least one of the parsed rules? An empty rule
-/// list is treated as "match everything" (mirrors how an empty `match_rules`
-/// config is rewritten to the defaults at subscription time).
+/// list matches nothing. Malformed configured rules must not silently widen a
+/// subscription to every message.
 pub fn matches_any_rule(msg: &DbusMessage, rules: &[ParsedMatchRule]) -> bool {
-    if rules.is_empty() {
-        return true;
-    }
     rules.iter().any(|r| r.matches(msg))
 }
 

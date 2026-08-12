@@ -352,7 +352,7 @@ impl MaterialAssembler {
         let reason = reason.into();
         self.route_material_error(material_id, reason.clone(), context)
             .await?;
-        self.finalize_failed_material(material_id, &reason).await;
+        self.finalize_failed_material(material_id, &reason).await?;
         Ok(())
     }
 
@@ -517,24 +517,19 @@ impl MaterialAssembler {
     }
 
     /// Finalize a failed material: mark as failed, clean up state, and remove from active map
-    pub(super) async fn finalize_failed_material(&self, material_id: Uuid, reason: &str) {
+    pub(super) async fn finalize_failed_material(
+        &self,
+        material_id: Uuid,
+        reason: &str,
+    ) -> EventEngineResult<()> {
         let FailureCleanupClaim::Claimed { resume_phase } =
             self.begin_failure_cleanup(material_id, reason).await
         else {
-            return;
+            return Ok(());
         };
 
-        if let Err(error) = self
-            .finalize_failed_material_claimed_checked(material_id, reason, resume_phase)
+        self.finalize_failed_material_claimed_checked(material_id, reason, resume_phase)
             .await
-        {
-            warn!(
-                material_id = %material_id,
-                failure_reason = reason,
-                error = %error,
-                "Failed-material cleanup could not durably land; preserving retry state"
-            );
-        }
     }
 
     pub(super) async fn finalize_failed_material_claimed_checked(

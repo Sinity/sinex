@@ -280,7 +280,6 @@ async fn invalid_utf8_returns_parser_error() -> TestResult<()> {
 /// gets contaminated with fence/front-matter remnants. Fails until the
 /// offset accounts for the actual line-terminator width.
 #[sinex_test]
-#[ignore = "sinex-xtmp open (knowledgebase CRLF): front-matter split leaves CRLF remnants in body -- fails until fixed"]
 async fn split_front_matter_handles_crlf_without_body_contamination() -> TestResult<()> {
     let crlf_note =
         "---\r\nid: crlf.test\r\ncreated: 2025-03-15\r\n---\r\nThe real body starts here.\r\n";

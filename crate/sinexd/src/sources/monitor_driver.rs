@@ -139,7 +139,7 @@ async fn fire_monitor_once(
         // fire between BEGIN and FINALIZE, routing the material to DLQ
         // as slice_arrival_timeout (#1320).
         acq.append_slice(&mut mat_handle, &[]).await?;
-        acq.finalize(mat_handle, "monitor-empty").await?;
+        acq.finalize(&mut mat_handle, "monitor-empty").await?;
         return Ok(());
     }
 
@@ -147,7 +147,7 @@ async fn fire_monitor_once(
     let content =
         serde_json::to_vec(&events).map_err(|e| SinexError::serialization(e.to_string()))?;
     acq.append_slice(&mut mat_handle, &content).await?;
-    acq.finalize(mat_handle, "monitor-complete").await?;
+    acq.finalize(&mut mat_handle, "monitor-complete").await?;
 
     let count = events.len();
     for event in events {

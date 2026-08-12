@@ -603,13 +603,17 @@ impl MaterialAssembler {
             .await
             .map_err(|e| SinexError::io("Failed to iterate state directory").with_source(e))?
         {
-            if entry
-                .file_type()
-                .await
-                .map_err(|e| SinexError::io("Failed to check file type").with_source(e))?
-                .is_dir()
+            let file_type = match entry.file_type().await {
+                Ok(file_type) => file_type,
+                Err(error) => {
+                    warn!(path = %entry.path().display(), error = %error, "Skipping state entry whose type could not be inspected");
+                    continue;
+                }
+            };
+            if file_type.is_dir()
+                && let Err(error) = self.check_orphaned_folder(entry.path()).await
             {
-                self.check_orphaned_folder(entry.path()).await?;
+                warn!(path = %entry.path().display(), error = %error, "Skipping malformed orphaned assembly state entry");
             }
         }
 

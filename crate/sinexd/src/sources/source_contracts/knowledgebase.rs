@@ -92,11 +92,16 @@ fn split_front_matter(content: &str) -> (&str, &str) {
 /// Find the byte position of `---` at the start of a line within `s`.
 fn find_closing_fence(s: &str) -> Option<usize> {
     let mut pos = 0;
-    for line in s.lines() {
-        if line.starts_with("---") && line.trim() == "---" {
+    for raw_line in s.split_inclusive('\n') {
+        let line = raw_line
+            .strip_suffix('\n')
+            .unwrap_or(raw_line)
+            .strip_suffix('\r')
+            .unwrap_or_else(|| raw_line.strip_suffix('\n').unwrap_or(raw_line));
+        if line.trim() == "---" {
             return Some(pos);
         }
-        pos += line.len() + 1; // +1 for '\n'
+        pos += raw_line.len();
     }
     None
 }

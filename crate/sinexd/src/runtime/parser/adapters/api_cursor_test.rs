@@ -203,6 +203,7 @@ async fn page_zero_mid_page_checkpoint_refetches_page_zero() -> xtask::sandbox::
         last_cursor: None,
         last_etag: None,
         page_incomplete: true,
+        page_index: 0,
     });
     let stream = adapter
         .open(dummy_material_id(), &ApiCursorConfig::default(), checkpoint)
@@ -493,6 +494,7 @@ async fn runtime_checkpoint_overrides_config_initial_cursor() -> xtask::sandbox:
         last_cursor: Some("2".to_owned()),
         last_etag: None,
         page_incomplete: false,
+        page_index: 2,
     });
     let stream = adapter
         .open(dummy_material_id(), &config, checkpoint)
@@ -527,6 +529,7 @@ async fn terminal_checkpoint_does_not_reimport() -> xtask::sandbox::TestResult<(
         last_cursor: None,
         last_etag: Some("etag-final".to_owned()),
         page_incomplete: false,
+        page_index: 0,
     });
     let stream = adapter
         .open(dummy_material_id(), &config, terminal)

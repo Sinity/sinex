@@ -365,7 +365,7 @@ impl SqliteSnapshotLane {
 
         let material_id = handle.material_id;
         self.acquisition_manager
-            .finalize(handle, "snapshot-lane-interval")
+            .finalize(&mut handle, "snapshot-lane-interval")
             .await?;
 
         self.last_hash = Some(hash);

@@ -407,7 +407,6 @@ async fn test_non_existent_root_is_silently_skipped() -> xtask::sandbox::TestRes
 /// the test runner) -- even bounded, cycle-safe traversal should still find
 /// `target.txt` exactly once, not once per depth level.
 #[sinex_test]
-#[ignore = "sinex-xtmp open (symlink-cycle recursion): same file rediscovered once per depth level -- fails until fixed"]
 async fn test_symlink_cycle_does_not_over_collect_the_same_file() -> xtask::sandbox::TestResult<()>
 {
     let dir = TempDir::new().unwrap();

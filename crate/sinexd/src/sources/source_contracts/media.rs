@@ -568,7 +568,7 @@ fn parse_audio_transcript_material(text: &str) -> ParserResult<AudioTranscriptMa
         };
     }
 
-    let segments = if text.contains("-->") {
+    let segments = if contains_timing_cue(text) {
         parse_timed_text_segments(text)?
     } else {
         nonempty_lines(text)
@@ -871,6 +871,18 @@ fn parse_timed_text_segments(text: &str) -> ParserResult<Vec<TranscriptSegment>>
         ));
     }
     Ok(segments)
+}
+
+fn contains_timing_cue(text: &str) -> bool {
+    text.lines().any(|line| {
+        let Some((start, rest)) = line.split_once("-->") else {
+            return false;
+        };
+        let Some(end) = rest.split_whitespace().next() else {
+            return false;
+        };
+        parse_time_ms(start.trim()).is_ok() && parse_time_ms(end).is_ok()
+    })
 }
 
 fn parse_timing_line(line: &str) -> ParserResult<(u64, u64)> {

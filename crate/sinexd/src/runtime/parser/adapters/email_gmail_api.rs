@@ -68,6 +68,8 @@ fn default_gmail_page_size() -> u32 {
 pub struct GmailApiCursor {
     pub page_token: Option<String>,
     pub history_id: Option<String>,
+    #[serde(default)]
+    pub page_index: u64,
 }
 
 /// Request passed to the runtime-provided Gmail client.
@@ -570,11 +572,12 @@ where
             .as_ref()
             .and_then(|cursor| cursor.history_id.clone())
             .or_else(|| config.initial_history_id.clone());
+        let start_page_index = cursor.as_ref().map_or(0, |cursor| cursor.page_index);
         let request_seed = GmailRequestSeed::from_config(config);
         let client = Arc::clone(&self.client);
 
         let pages = stream::unfold(
-            Some((start_page_token, start_history_id, 0_u64)),
+            Some((start_page_token, start_history_id, start_page_index)),
             move |state| {
                 let client = Arc::clone(&client);
                 let request_seed = request_seed.clone();
@@ -613,11 +616,13 @@ where
                                 GmailApiCursor {
                                     page_token: next_page_token.clone(),
                                     history_id: page_history_id.clone(),
+                                    page_index: page_index.saturating_add(1),
                                 }
                             } else {
                                 GmailApiCursor {
                                     page_token: page_token.clone(),
                                     history_id: page_history_id.clone(),
+                                    page_index,
                                 }
                             };
                             build_gmail_record(
@@ -655,6 +660,11 @@ where
                 .get(META_GMAIL_HISTORY_ID)
                 .and_then(JsonValue::as_str)
                 .map(str::to_owned),
+            page_index: record
+                .metadata
+                .get(META_GMAIL_PAGE_INDEX)
+                .and_then(JsonValue::as_u64)
+                .unwrap_or(0),
         })
     }
 }
@@ -743,7 +753,7 @@ fn build_gmail_record(
     }
     metadata.insert(
         META_GMAIL_PAGE_INDEX.to_string(),
-        serde_json::json!(page_index),
+        serde_json::json!(cursor_after.page_index),
     );
     metadata.insert(
         META_GMAIL_RECORD_INDEX.to_string(),

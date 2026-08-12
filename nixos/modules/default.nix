@@ -534,8 +534,8 @@ in
                 };
                 maxBlobSize = mkOption {
                   type = signed;
-                  default = 104857600;
-                  description = "Maximum allowed blob size in bytes (default 100 MB). Set to 0 to disable.";
+                  default = 536870912;
+                  description = "Maximum allowed blob size in bytes (default 512 MiB, matching material assembly). Set to 0 to disable.";
                 };
                 maintenance = mkOption {
                   type = submodule {

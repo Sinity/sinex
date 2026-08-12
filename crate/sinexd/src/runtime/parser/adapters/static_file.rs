@@ -26,6 +26,8 @@ use crate::runtime::parser::{
 #[derive(Debug, Clone, Default)]
 pub struct StaticFileAdapter;
 
+const MAX_FILE_BYTES: u64 = 64 * 1024 * 1024;
+
 /// Configuration for [`StaticFileAdapter`].
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct StaticFileConfig {
@@ -94,6 +96,12 @@ impl InputShapeAdapter for StaticFileAdapter {
         let bytes = if metadata.is_dir() {
             Vec::new()
         } else {
+            if metadata.len() > MAX_FILE_BYTES {
+                return Err(ParserError::Adapter(format!(
+                    "file {} exceeds the {}-byte static input cap",
+                    config.path, MAX_FILE_BYTES
+                )));
+            }
             std::fs::read(&path)?
         };
 
@@ -118,6 +126,13 @@ impl InputShapeAdapter for StaticFileAdapter {
             return Ok(None);
         }
 
+        let metadata = std::fs::metadata(&config.path)?;
+        if metadata.len() > MAX_FILE_BYTES {
+            return Err(ParserError::Adapter(format!(
+                "file {} exceeds the {}-byte static input cap",
+                config.path, MAX_FILE_BYTES
+            )));
+        }
         let bytes = std::fs::read(&config.path)?;
         match Utf8Path::new(&config.path)
             .extension()

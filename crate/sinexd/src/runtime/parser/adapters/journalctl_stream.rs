@@ -54,6 +54,8 @@ use crate::runtime::parser::{InputShapeAdapter, ParserError, ParserResult};
 #[derive(Debug, Clone, Default)]
 pub struct JournalctlStreamAdapter;
 
+const MAX_JOURNAL_LINE_BYTES: usize = 256 * 1024;
+
 /// Configuration for [`JournalctlStreamAdapter`].
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct JournalctlStreamConfig {
@@ -153,6 +155,21 @@ impl InputShapeAdapter for JournalctlStreamAdapter {
                     Ok(None) => break,
                     Ok(Some(line)) => {
                         if line.is_empty() {
+                            continue;
+                        }
+                        if line.len() > MAX_JOURNAL_LINE_BYTES {
+                            tracing::warn!(
+                                target: "sinex_metrics",
+                                metric = "source_parser_size_cap_rejections_total",
+                                parser = "system.journald",
+                                size = line.len(),
+                                max = MAX_JOURNAL_LINE_BYTES,
+                                "journal record rejected by size cap"
+                            );
+                            yield Err(ParserError::Parse(format!(
+                                "journal line exceeds configured size cap: {} > {} bytes",
+                                line.len(), MAX_JOURNAL_LINE_BYTES
+                            )));
                             continue;
                         }
 
@@ -473,6 +490,12 @@ pub fn records_from_journal_lines(
         .enumerate()
         .filter(|(_, l)| !l.is_empty())
         .map(|(i, line)| {
+            if line.len() > MAX_JOURNAL_LINE_BYTES {
+                return Err(ParserError::Parse(format!(
+                    "journal line exceeds configured size cap: {} > {} bytes",
+                    line.len(), MAX_JOURNAL_LINE_BYTES
+                )));
+            }
             let material_offset = bytes_read;
             bytes_read += line.len() as u64 + 1; // +1 for the stripped newline
             Ok(SourceRecord {

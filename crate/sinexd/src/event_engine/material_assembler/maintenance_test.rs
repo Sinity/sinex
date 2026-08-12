@@ -573,7 +573,6 @@ async fn stale_zero_event_source_material_timeout_recovers_partial_without_dlq(
 /// aborts the WHOLE cleanup pass. Every other genuinely orphaned folder in
 /// that run is skipped until the bad entry is manually removed.
 #[sinex_test]
-#[ignore = "sinex-ijps open: one non-UUID-named directory under state_root aborts the entire orphan-cleanup pass instead of being skipped"]
 async fn cleanup_orphaned_temp_files_one_bad_entry_does_not_abort_whole_pass(
     ctx: TestContext,
 ) -> TestResult<()> {
