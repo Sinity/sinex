@@ -1,6 +1,37 @@
 use bon::Builder;
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::time::{Duration as StdDuration, Instant};
+
+const THROUGHPUT_WINDOW: StdDuration = StdDuration::from_secs(60);
+
+fn evict_throughput_samples(samples: &mut VecDeque<Instant>, now: Instant) {
+    let Some(cutoff) = now.checked_sub(THROUGHPUT_WINDOW) else {
+        return;
+    };
+    while samples.front().is_some_and(|sample| *sample < cutoff) {
+        samples.pop_front();
+    }
+}
+
+fn record_throughput_sample(samples: &mut VecDeque<Instant>, now: Instant) {
+    evict_throughput_samples(samples, now);
+    samples.push_back(now);
+}
+
+fn windowed_throughput(samples: &VecDeque<Instant>, now: Instant) -> f64 {
+    let cutoff = now.checked_sub(THROUGHPUT_WINDOW).unwrap_or(now);
+    let live_samples: Vec<_> = samples
+        .iter()
+        .copied()
+        .filter(|sample| *sample >= cutoff && *sample <= now)
+        .collect();
+    let Some(oldest) = live_samples.first().copied() else {
+        return 0.0;
+    };
+    let span = now.saturating_duration_since(oldest).min(THROUGHPUT_WINDOW);
+    let seconds = span.as_secs_f64().max(0.001);
+    live_samples.len() as f64 / seconds
+}
 
 /// Metadata captured alongside baseline measurements for result comparison.
 #[derive(Debug, Clone)]
@@ -29,7 +60,7 @@ pub struct BaselineTracker {
     success_counts: HashMap<String, usize>,
     error_counts: HashMap<String, usize>,
     baselines: HashMap<String, PerformanceBaseline>,
-    start_time: Instant,
+    throughput_samples: HashMap<String, VecDeque<Instant>>,
 }
 
 impl Default for BaselineTracker {
@@ -46,7 +77,7 @@ impl BaselineTracker {
             success_counts: HashMap::new(),
             error_counts: HashMap::new(),
             baselines: HashMap::new(),
-            start_time: Instant::now(),
+            throughput_samples: HashMap::new(),
         }
     }
 
@@ -61,6 +92,12 @@ impl BaselineTracker {
                 .success_counts
                 .entry(operation.to_string())
                 .or_insert(0) += 1;
+            record_throughput_sample(
+                self.throughput_samples
+                    .entry(operation.to_string())
+                    .or_default(),
+                Instant::now(),
+            );
         } else {
             *self.error_counts.entry(operation.to_string()).or_insert(0) += 1;
         }
@@ -92,7 +129,10 @@ impl BaselineTracker {
             0.0
         };
 
-        let throughput = success as f64 / self.start_time.elapsed().as_secs_f64();
+        let throughput = self
+            .throughput_samples
+            .get(operation)
+            .map_or(0.0, |samples| windowed_throughput(samples, Instant::now()));
 
         let baseline = PerformanceBaseline {
             operation_name: operation.to_string(),
@@ -160,8 +200,8 @@ pub struct RegressionDetector {
     success_counts: HashMap<String, usize>,
     #[builder(default)]
     error_counts: HashMap<String, usize>,
-    #[builder(default = Instant::now())]
-    start_time: Instant,
+    #[builder(default)]
+    throughput_samples: HashMap<String, VecDeque<Instant>>,
 }
 
 #[derive(Debug, Clone, Builder)]
@@ -217,7 +257,7 @@ impl RegressionDetector {
             measurements: HashMap::new(),
             success_counts: HashMap::new(),
             error_counts: HashMap::new(),
-            start_time: Instant::now(),
+            throughput_samples: HashMap::new(),
         }
     }
 
@@ -229,7 +269,7 @@ impl RegressionDetector {
             measurements: HashMap::new(),
             success_counts: HashMap::new(),
             error_counts: HashMap::new(),
-            start_time: Instant::now(),
+            throughput_samples: HashMap::new(),
         }
     }
 
@@ -249,6 +289,12 @@ impl RegressionDetector {
                 .success_counts
                 .entry(operation.to_string())
                 .or_insert(0) += 1;
+            record_throughput_sample(
+                self.throughput_samples
+                    .entry(operation.to_string())
+                    .or_default(),
+                Instant::now(),
+            );
         } else {
             *self.error_counts.entry(operation.to_string()).or_insert(0) += 1;
         }
@@ -285,7 +331,10 @@ impl RegressionDetector {
                 0.0
             };
 
-            let throughput = *success_count as f64 / self.start_time.elapsed().as_secs_f64();
+            let throughput = self
+                .throughput_samples
+                .get(operation)
+                .map_or(0.0, |samples| windowed_throughput(samples, Instant::now()));
 
             Some(PerformanceMeasurement {
                 average_latency,
@@ -505,3 +554,7 @@ impl RegressionDetector {
         }
     }
 }
+
+#[cfg(test)]
+#[path = "regression_test.rs"]
+mod tests;
