@@ -581,8 +581,12 @@ impl EventValidator {
     }
     fn check_payload_size(&self, payload: &JsonValue) -> ValidationResult {
         let payload_bytes = serde_json::to_vec(payload)
-            .map(|v| v.len())
-            .unwrap_or_default();
+            .map_err(|error| {
+                ValidationError::SecurityValidation(format!(
+                    "payload serialization failed while enforcing size limit: {error}"
+                ))
+            })?
+            .len();
         if payload_bytes > self.max_payload_bytes {
             return Err(ValidationError::PayloadTooLarge {
                 size: payload_bytes,
