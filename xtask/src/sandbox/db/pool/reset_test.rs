@@ -119,3 +119,30 @@ async fn ensure_default_session_state_conn_resets_multiple_dirty_settings(
     assert_eq!(sync_commit, "off");
     Ok(())
 }
+
+#[sinex_test]
+#[ignore = "sinex-t8bo open: ensure_default_session_state_conn silently returns Ok(()) when the session-GUC read itself fails, hiding a possibly-dirty session"]
+async fn ensure_default_session_state_conn_surfaces_guc_read_failures(
+    ctx: crate::sandbox::Sandbox,
+) -> ::xtask::sandbox::TestResult<()> {
+    let mut conn = ctx.pool().acquire().await?;
+
+    // Put the session into an aborted-transaction state, so the GUC read
+    // inside ensure_default_session_state_conn itself fails with "current
+    // transaction is aborted" -- a realistic transient-failure stand-in
+    // for the "fetch_one errors" branch this bug describes.
+    sqlx::query("BEGIN").execute(conn.as_mut()).await?;
+    let _ = sqlx::query("SELECT 1/0").execute(conn.as_mut()).await; // aborts the txn
+
+    let result = super::ensure_default_session_state_conn(conn.as_mut()).await;
+    assert!(
+        result.is_err(),
+        "ensure_default_session_state_conn must not report Ok(()) when it could not even \
+         read the session GUCs it's supposed to be resetting -- doing so hands back a \
+         connection reported as 'clean' whose actual session_replication_role/row_security/\
+         synchronous_commit state is completely unknown, risking cross-test-run pollution"
+    );
+
+    let _ = sqlx::query("ROLLBACK").execute(conn.as_mut()).await;
+    Ok(())
+}

@@ -129,3 +129,32 @@ async fn test_path_depth_validation() -> TestResult<()> {
 
     Ok(())
 }
+
+#[sinex_test]
+#[ignore = "sinex-8vq1 open: create_test_temp_dir(test_name) does not sanitize '/' or '..' in test_name, allowing it to escape the safe temp base"]
+async fn create_test_temp_dir_rejects_path_traversal_in_test_name() -> TestResult<()> {
+    let temp_base = get_safe_temp_base()?;
+    // `Utf8PathBuf::join` performs no ".." resolution -- the *unresolved*
+    // joined string trivially starts with `temp_base` even when it
+    // logically escapes it, so the real check must canonicalize both sides
+    // against the actual filesystem (matching how the OS resolves the
+    // directory tree `create_dir_all` really creates).
+    let canonical_temp_base = std::fs::canonicalize(temp_base.as_std_path())?;
+
+    let result = create_test_temp_dir("../../../escaped-outside-sandbox");
+    match result {
+        Err(_) => {
+            // Correct future behavior: traversal in test_name is rejected outright.
+        }
+        Ok(dir) => {
+            let canonical_dir = std::fs::canonicalize(dir.as_std_path())?;
+            let _ = std::fs::remove_dir_all(&dir);
+            assert!(
+                canonical_dir.starts_with(&canonical_temp_base),
+                "create_test_temp_dir must never resolve outside its safe temp base \
+                 ({canonical_temp_base:?}), but a traversal test_name produced: {canonical_dir:?}"
+            );
+        }
+    }
+    Ok(())
+}

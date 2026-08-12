@@ -251,3 +251,42 @@ fn run_git(cwd: &std::path::Path, args: &[&str]) -> TestResult<()> {
     }
     Ok(())
 }
+
+#[test]
+#[ignore = "sinex-9nl open: changed_item_fully_covered treats ANY partial-overlap evidence as full hunk coverage, not just evidence that spans the whole hunk"]
+fn changed_item_fully_covered_wrongly_accepts_partial_line_overlap_as_full_coverage() {
+    // A 100-line changed hunk (lines 1-100), with only ONE line of evidence
+    // (line 5) overlapping it. ranges_overlap() only requires ANY overlap,
+    // so this single-line evidence -- which cannot possibly exercise lines
+    // 6-100 -- is currently accepted as proof the WHOLE hunk is covered.
+    let item = ChangedItem {
+        path: "crate/sinexd/src/example.rs".to_string(),
+        package: Some("sinexd".to_string()),
+        hunks: vec![ChangedHunk {
+            line_start: 1,
+            line_end: 100,
+        }],
+        rust_items: vec![],
+        content_hash: None,
+    };
+
+    let impacted_tests = vec![ImpactedTest {
+        package: Some("sinexd".to_string()),
+        test_name: "narrow_incidental_test".to_string(),
+        evidence: vec![ImpactEvidence {
+            source: ImpactEvidenceSource::CoverageRegion,
+            subject: "crate/sinexd/src/example.rs".to_string(),
+            reason: "LLVM coverage touched example.rs:5-5".to_string(),
+            line_start: Some(5),
+            line_end: Some(5),
+        }],
+    }];
+
+    assert!(
+        !changed_item_fully_covered(&item, &impacted_tests),
+        "a single line of overlapping evidence (line 5) must not be treated as full coverage \
+         proof for a 100-line hunk (lines 1-100) -- this false-positive 'fully covered' \
+         verdict lets balanced-mode impact analysis skip a broad test run when only a tiny \
+         sliver of the actual change is evidenced"
+    );
+}

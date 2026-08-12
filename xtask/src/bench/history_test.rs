@@ -349,3 +349,51 @@ async fn test_rolling_baseline_outlier_immunity() -> TestResult<()> {
     );
     Ok(())
 }
+
+fn metadata_with_mode_profile(git_sha: &str, mode: &str, profile: &str) -> BenchRunMetadata {
+    BenchRunMetadata {
+        mode: mode.to_string(),
+        profile: profile.to_string(),
+        git_sha: git_sha.to_string(),
+        git_branch: "main".to_string(),
+        git_dirty: false,
+        rustc_version: "1.75.0".to_string(),
+    }
+}
+
+#[sinex_test]
+#[ignore = "sinex-t9ee open: get_trend ignores run mode/profile, mixing incomparable release/debug runs into one trend"]
+async fn get_trend_excludes_runs_from_a_different_mode_and_profile() -> TestResult<()> {
+    let (_dir, db) = test_db();
+    let scenario = Scenario {
+        threads: 12,
+        package: String::new(),
+        db_pool_size: None,
+    };
+
+    // A debug/sweeps run (slow, expected) ...
+    db.save_run(
+        &metadata_with_mode_profile("debug-run", "sweeps", "debug"),
+        &sample_results(),
+    )
+    .unwrap();
+    // ... and a release/fast run of the SAME scenario (threads=12, package="")
+    // must never be compared against each other in one trend -- they measure
+    // incomparable build conditions.
+    db.save_run(
+        &metadata_with_mode_profile("release-run", "sweeps", "release"),
+        &sample_results(),
+    )
+    .unwrap();
+
+    let trend = db.get_trend(&scenario, 5).unwrap();
+    assert_eq!(
+        trend.len(),
+        1,
+        "get_trend must filter by the caller's mode/profile, not just threads+package -- \
+         got {} points mixing debug and release runs: {:?}",
+        trend.len(),
+        trend.iter().map(|p| &p.git_sha).collect::<Vec<_>>()
+    );
+    Ok(())
+}
