@@ -2540,6 +2540,83 @@ async fn file_drop_replay_anchor_matches_live_append_capture(
     Ok(())
 }
 
+/// Multiple FileDrop records share one append-stream material. Replay must
+/// retain each record's physical range instead of collapsing them onto a
+/// logical-path-derived anchor.
+#[sinex_test]
+async fn file_drop_replay_preserves_each_live_append_occurrence(
+    ctx: TestContext,
+) -> TestResult<()> {
+    let ctx = ctx.with_nats().shared().await?;
+    let work_dir = tempfile::tempdir()?;
+    let manager = Arc::new(
+        AcquisitionManager::with_defaults(ctx.nats_client(), "file-drop-multi-parity")
+            .with_work_dir(work_dir.path()),
+    );
+    let mut acquirer = AppendStreamAcquirer::new(manager);
+    let records = [
+        ("/tmp/file-drop/first.txt", json!({"event_kind": "Deleted"})),
+        ("/tmp/file-drop/second.txt", json!({"event_kind": "Deleted"})),
+    ];
+    let mut captured = Vec::with_capacity(records.len());
+    let mut authoritative_bytes = Vec::new();
+
+    for (path, mut metadata) in records {
+        metadata["path"] = json!(path);
+        let record = SourceRecord {
+            material_id: Id::from_uuid(Uuid::nil()),
+            anchor: MaterialAnchor::DirectoryEntry {
+                path: Utf8PathBuf::from(path),
+                content_hash: None,
+            },
+            bytes: path.as_bytes().to_vec(),
+            logical_path: Some(Utf8PathBuf::from(path)),
+            source_ts_hint: None,
+            metadata,
+        };
+        let bytes = materialization_bytes_for_adapter_record(&record)?;
+        let live = acquirer.append_with_anchor(&bytes, "file-drop").await?;
+        authoritative_bytes.extend_from_slice(&bytes);
+        captured.push((bytes, live));
+    }
+    acquirer.finalize("multi-parity-test").await?;
+
+    let material_len = authoritative_bytes.len() as u64;
+    for (bytes, live) in &captured {
+        let occurrence = crate::runtime::stream::ReplayMaterialOccurrence {
+            source_material_id: live.material_id,
+            anchor_byte: live.offset_start,
+            offset_start: Some(live.offset_start),
+            offset_end: Some(live.offset_end),
+            record_metadata: json!({"event_kind": "Deleted"}),
+        };
+        let (replay, range) = file_drop_replay_range(material_len, &occurrence)?;
+
+        assert_eq!(
+            &authoritative_bytes[range],
+            bytes,
+            "replay must read the same physical append-stream range as capture"
+        );
+        assert_eq!(
+            replay,
+            MaterialAnchor::ByteRange {
+                start: live.offset_start as u64,
+                len: bytes.len() as u64,
+            }
+        );
+        assert_eq!(
+            anchor_offsets_for_materialized_record(&replay),
+            (
+                live.offset_start,
+                Some(live.offset_start),
+                Some(live.offset_end)
+            )
+        );
+    }
+    assert_ne!(captured[0].1.offset_start, captured[1].1.offset_start);
+    Ok(())
+}
+
 #[sinex_serial_test]
 async fn file_drop_replay_reads_authoritative_cas_bytes_after_source_removed(
     ctx: TestContext,
