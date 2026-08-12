@@ -1891,20 +1891,7 @@ pub async fn handle_sources_continuity_explain_gap(
         .await?;
     apply_private_mode_explain_gap_overlay(services, &req.source_family, req.at, &mut gap);
 
-    let explanation = match (&gap, gap.as_ref().and_then(|g| g.attribution.as_deref())) {
-        (Some(_), Some(reason)) => format!(
-            "At {}, source family {} was inside a coverage gap: {}",
-            req.at, req.source_family, reason
-        ),
-        (Some(_), None) => format!(
-            "At {}, source family {} was inside a coverage gap (no attribution available)",
-            req.at, req.source_family
-        ),
-        (None, _) => format!(
-            "At {}, no coverage gap was observed for source family {}; this does not establish that the family had coverage at that time",
-            req.at, req.source_family
-        ),
-    };
+    let explanation = continuity_gap_explanation(&req.source_family, req.at, gap.as_ref());
 
     Ok(SourcesExplainGapResponse {
         source_family: req.source_family,
@@ -1912,6 +1899,27 @@ pub async fn handle_sources_continuity_explain_gap(
         gap,
         explanation,
     })
+}
+
+fn continuity_gap_explanation(
+    source_family: &SourceFamily,
+    at: Timestamp,
+    gap: Option<&ContinuityCoverageGap>,
+) -> String {
+    match (gap, gap.and_then(|g| g.attribution.as_deref())) {
+        (Some(_), Some(reason)) => format!(
+            "At {}, source family {} was inside a coverage gap: {}",
+            at, source_family, reason
+        ),
+        (Some(_), None) => format!(
+            "At {}, source family {} was inside a coverage gap (no attribution available)",
+            at, source_family
+        ),
+        (None, _) => format!(
+            "At {}, no coverage gap was observed for source family {}; this does not establish that the family had coverage at that time",
+            at, source_family
+        ),
+    }
 }
 
 fn apply_private_mode_continuity_overlay(

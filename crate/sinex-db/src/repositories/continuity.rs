@@ -33,7 +33,10 @@ use sinex_primitives::sources::continuity::{
     CoverageContract, CoverageGap, DeclaredCoverageContract, DeclaredCoverageContractKind, GapKind,
     PrivacyClass, Replayability, SeamKind, SourceContinuityReport, TemporalSeam,
 };
-use sinex_primitives::{DEFAULT_RUNTIME_LIVENESS_STALE_AFTER_SECS, Timestamp};
+use sinex_primitives::{
+    DEFAULT_RUNTIME_LIVENESS_STALE_AFTER_SECS, RuntimeLivenessSignals, RuntimeLivenessStatus,
+    Timestamp, evaluate_runtime_liveness,
+};
 use sqlx::PgPool;
 use time::OffsetDateTime;
 
@@ -384,8 +387,17 @@ fn continuous_trailing_gap(
     now: OffsetDateTime,
     stale_after_secs: u64,
 ) -> Option<CoverageGap> {
-    let age = (now - latest).whole_seconds();
-    (age >= stale_after_secs as i64).then(|| CoverageGap {
+    let liveness = evaluate_runtime_liveness(
+        RuntimeLivenessSignals {
+            run_status: None,
+            health_status: None,
+            last_heartbeat_at: None,
+            last_output_at: Some(latest.into()),
+        },
+        stale_after_secs,
+        now.into(),
+    );
+    matches!(liveness.status, RuntimeLivenessStatus::Stale).then(|| CoverageGap {
         from_ts: latest.into(),
         to_ts: now.into(),
         kind: GapKind::ServiceCrash,

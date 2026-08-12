@@ -83,7 +83,9 @@ pub fn evaluate_runtime_liveness(
         RuntimeLivenessStatus::Unknown
     } else if age_secs.is_some_and(|age| age >= stale_after_secs as i64) {
         RuntimeLivenessStatus::Stale
-    } else if matches!(signals.health_status, Some(HealthStatus::Degraded)) {
+    } else if matches!(run_status.as_deref(), Some("draining" | "paused"))
+        || matches!(signals.health_status, Some(HealthStatus::Degraded))
+    {
         RuntimeLivenessStatus::Degraded
     } else {
         RuntimeLivenessStatus::Healthy
@@ -144,6 +146,21 @@ mod tests {
             RuntimeLivenessSignals {
                 run_status: Some("running"),
                 health_status: Some(HealthStatus::Degraded),
+                last_heartbeat_at: Some((datetime!(2026-08-12 11:59:30 UTC)).into()),
+                last_output_at: None,
+            },
+            300,
+            now(),
+        );
+        assert_eq!(result.status, RuntimeLivenessStatus::Degraded);
+    }
+
+    #[test]
+    fn paused_run_is_degraded_even_with_fresh_heartbeat() {
+        let result = evaluate_runtime_liveness(
+            RuntimeLivenessSignals {
+                run_status: Some("paused"),
+                health_status: Some(HealthStatus::Healthy),
                 last_heartbeat_at: Some((datetime!(2026-08-12 11:59:30 UTC)).into()),
                 last_output_at: None,
             },

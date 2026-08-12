@@ -135,7 +135,7 @@ pub async fn handle_sources_status_view(
 ) -> Result<ViewEnvelope<SourceCoverageListView>> {
     let pool = services.pool();
     let now = Timestamp::now();
-    let status_defaults = SourcesStatusRequest::default();
+    let recent_window_secs = SourcesStatusRequest::default().recent_window_secs;
     let bindings: Vec<&'static SourceRuntimeBinding> = source_runtime_bindings().collect();
     let mut contracts = matching_source_contracts(&request);
     contracts.sort_by_key(|contract| contract.id);
@@ -145,8 +145,8 @@ pub async fn handle_sources_status_view(
     } else {
         pool.state()
             .list_sources_status_for_modules(
-                Duration::from_secs(status_defaults.stale_after_secs),
-                Duration::from_secs(status_defaults.recent_window_secs),
+                Duration::from_secs(request.stale_after_secs),
+                Duration::from_secs(recent_window_secs),
                 &source_status_module_names,
             )
             .await
@@ -180,7 +180,7 @@ pub async fn handle_sources_status_view(
     }
     let material_aggregates = material_aggregates_by_logical_source(material_rows);
     let runtime_observations =
-        source_runtime_observations(source_status_rows, status_defaults.stale_after_secs, now);
+        source_runtime_observations(source_status_rows, request.stale_after_secs, now);
     let email_provider_states = latest_email_provider_operation_states(pool).await?;
     let email_projection_states = latest_email_mailbox_projection_states(pool).await?;
     let session_states = latest_source_session_states(pool).await?;
@@ -192,7 +192,7 @@ pub async fn handle_sources_status_view(
             .copied()
             .filter(|binding| binding.source_id == contract.id)
             .collect();
-        views.push(source_coverage_view(
+        views.push(source_coverage_view_with_stale_after(
             contract,
             &source_bindings,
             &event_aggregates,
@@ -201,6 +201,7 @@ pub async fn handle_sources_status_view(
             &email_provider_states,
             &email_projection_states,
             &session_states,
+            request.stale_after_secs,
             now,
         ));
     }
@@ -214,6 +215,7 @@ pub async fn handle_sources_status_view(
             "source": request.source.as_deref().filter(|value| !value.is_empty()),
             "family": request.family.as_deref().filter(|value| !value.is_empty()),
             "exact_counts": request.exact_counts,
+            "stale_after_secs": request.stale_after_secs,
         }));
     }
     if !request.exact_counts {
@@ -381,6 +383,32 @@ fn source_coverage_view(
     session_states: &HashMap<String, Vec<sinex_db::repositories::SourceSessionStateRecord>>,
     now: Timestamp,
 ) -> SourceCoverageView {
+    source_coverage_view_with_stale_after(
+        contract,
+        bindings,
+        event_aggregates,
+        material_aggregates,
+        runtime_observations,
+        email_provider_states,
+        email_projection_states,
+        session_states,
+        DEFAULT_RUNTIME_LIVENESS_STALE_AFTER_SECS,
+        now,
+    )
+}
+
+fn source_coverage_view_with_stale_after(
+    contract: &SourceContract,
+    bindings: &[&SourceRuntimeBinding],
+    event_aggregates: &HashMap<(String, String), SourceEventAggregateRow>,
+    material_aggregates: &HashMap<String, SourceMaterialAggregateRow>,
+    runtime_observations: &HashMap<String, SourceStatus>,
+    email_provider_states: &HashMap<String, EmailProviderOperationState>,
+    email_projection_states: &HashMap<String, EmailMailboxProjectionState>,
+    session_states: &HashMap<String, Vec<sinex_db::repositories::SourceSessionStateRecord>>,
+    stale_after_secs: u64,
+    now: Timestamp,
+) -> SourceCoverageView {
     let mut event_count = 0i64;
     let mut last_event_at = None;
     let event_types: Vec<String> = contract
@@ -411,7 +439,7 @@ fn source_coverage_view(
     .map(Timestamp::from);
     let liveness = runtime_observation_for_source(contract.id, runtime_observations)
         .map(|observation| {
-            observation.runtime_liveness(DEFAULT_RUNTIME_LIVENESS_STALE_AFTER_SECS, now)
+            observation.runtime_liveness(stale_after_secs, now)
         })
         .unwrap_or_else(|| {
             evaluate_runtime_liveness(
@@ -421,7 +449,7 @@ fn source_coverage_view(
                     last_heartbeat_at: None,
                     last_output_at: fallback_last_observed,
                 },
-                DEFAULT_RUNTIME_LIVENESS_STALE_AFTER_SECS,
+                stale_after_secs,
                 now,
             )
         });

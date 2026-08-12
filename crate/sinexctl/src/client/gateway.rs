@@ -627,6 +627,7 @@ impl GatewayClient {
                 source,
                 family,
                 exact_counts,
+                stale_after_secs: sinex_primitives::DEFAULT_RUNTIME_LIVENESS_STALE_AFTER_SECS,
             },
         )
         .await

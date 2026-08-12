@@ -32,6 +32,26 @@ fn chunk_with_privacy(
     }
 }
 
+#[sinex_test]
+async fn continuous_trailing_gap_is_time_bounded() -> xtask::sandbox::TestResult<()> {
+    let now = datetime!(2026-08-12 12:00 UTC);
+
+    let gap = continuous_trailing_gap(
+        now - time::Duration::minutes(10),
+        now,
+        DEFAULT_RUNTIME_LIVENESS_STALE_AFTER_SECS,
+    )
+    .expect("a continuous source silent past the liveness threshold needs a trailing gap");
+    assert_eq!(gap.kind, GapKind::ServiceCrash);
+    assert!(continuous_trailing_gap(
+        now - time::Duration::minutes(4),
+        now,
+        DEFAULT_RUNTIME_LIVENESS_STALE_AFTER_SECS,
+    )
+    .is_none());
+    Ok(())
+}
+
 fn chunk_with_declared(
     kind: &str,
     status: &str,

@@ -238,52 +238,59 @@ async fn source_coverage_view_marks_historical_coverage_stale()
     Ok(())
 }
 
-// ---------------------------------------------------------------------------
-// The remaining sinex-hdnv findings (#3, #4, #5, #6, #7) are drafted as
-// scoped-but-not-implemented test shapes below, per the same
-// characterization-test approach as #1 above. Each names the exact function
-// to target and what fixture setup would prove/disprove the finding. Left
-// as #[ignore] rather than deleted, so a future pass can un-ignore and fill
-// in the body without re-deriving the investigation from scratch.
-// ---------------------------------------------------------------------------
-
 #[sinex_test]
-#[ignore = "sinex-hdnv #3: draft shape, not implemented -- see body for what's needed"]
-async fn gap_explain_false_all_clear_for_zero_material_family() -> xtask::sandbox::TestResult<()> {
-    // Target: sinex_source_gap_explain (crate/sinexd/src/api/handlers/sources.rs
-    // per the bead's citation -- confirm exact fn name/location first, this
-    // file only covers source_status.rs's own surface).
-    // Setup needed: a source FAMILY (per split_part(source,'.',1), e.g.
-    // "activitywatch") with literally zero materials and zero events -- no
-    // row at all in either aggregate, not just an old one.
-    // Assertion to characterize the bug: the explain response claims
-    // "coverage was present (no gap to explain)" for that family, i.e. total
-    // absence produces the strongest possible false all-clear.
-    // Also worth a second case: querying a namespace that's never existed
-    // (e.g. "desktop.activitywatch" vs the family-derived "activitywatch")
-    // per the bead's note that families are derived from split_part rather
-    // than contract namespaces.
-    unimplemented!("draft shape only -- see comment above for required setup")
+async fn source_coverage_view_uses_failed_run_status_with_fresh_evidence()
+-> xtask::sandbox::TestResult<()> {
+    let now = Timestamp::now();
+    let mut failed = terminal_bridge_status(now);
+    failed.module_name = ModuleName::new(CONTRACT.id);
+    failed.run_status = Some("failed".to_string());
+    failed.last_heartbeat_at = Some(now - time::Duration::seconds(5));
+    failed.last_output_at = Some(now - time::Duration::seconds(5));
+    let runtime = HashMap::from([(CONTRACT.id.to_string(), failed)]);
+
+    let view = source_coverage_view(
+        &CONTRACT,
+        &[&BINDING],
+        &HashMap::from([(
+            ("fixture".to_string(), "fixture.event".to_string()),
+            SourceEventAggregateRow {
+                source: "fixture".to_string(),
+                event_type: "fixture.event".to_string(),
+                event_count: 1,
+                last_event_at: Some(now.into()),
+            },
+        )]),
+        &HashMap::from([(
+            "fixture.source".to_string(),
+            SourceMaterialAggregateRow {
+                source_identifier: "fixture.source".to_string(),
+                material_count: 1,
+                last_material_at: Some(now.into()),
+            },
+        )]),
+        &runtime,
+        &HashMap::new(),
+        &HashMap::new(),
+        &HashMap::new(),
+        now,
+    );
+
+    assert_eq!(view.readiness, SourceCoverageReadiness::Stale);
+    assert_eq!(view.continuity, SourceCoverageContinuity::Stale);
+    assert!(
+        view.gaps
+            .iter()
+            .any(|gap| gap.kind == "runtime_liveness_unhealthy"),
+        "a failed run must remain unhealthy even when its last output is fresh"
+    );
+    Ok(())
 }
 
-#[sinex_test]
-#[ignore = "sinex-hdnv #4: draft shape, not implemented -- see body for what's needed"]
-async fn trailing_gap_after_last_material_chunk_is_not_detected() -> xtask::sandbox::TestResult<()>
-{
-    // Target: continuity.rs's gap/seam detection (build_report /
-    // classify_seam per CLAUDE.md's continuity.rs summary -- this file does
-    // not cover continuity.rs directly, a sibling continuity_test.rs would
-    // need to be created, none currently exists in this crate).
-    // Setup needed: two or more historical material chunks with a real
-    // internal seam BETWEEN them (already covered by existing gap logic per
-    // the bead), PLUS the last chunk's end-time set far in the past relative
-    // to "now" with nothing after it.
-    // Assertion to characterize the bug: gaps list only contains the
-    // between-chunk seam, nothing flags the trailing period from the last
-    // chunk's end to "now" as a gap, even though the source has clearly been
-    // silent for a long time since.
-    unimplemented!("draft shape only -- see comment above for required setup")
-}
+// sinex-hdnv's zero-coverage and trailing-gap proofs live beside the helpers
+// they exercise: `sources_test.rs` and the DB continuity tests respectively.
+// The remaining cadence/readiness findings below are intentionally tracked as
+// drafts because they need source-contract-specific policy decisions.
 
 #[sinex_test]
 #[ignore = "sinex-hdnv #5: draft shape, not implemented -- see body for what's needed"]
@@ -376,6 +383,7 @@ async fn status_view_request_filters_contracts_by_source_and_family() -> xtask::
         source: Some("browser.history".to_string()),
         family: None,
         exact_counts: false,
+        stale_after_secs: 300,
     });
     assert_eq!(by_source.len(), 1);
     assert_eq!(by_source[0].id, "browser.history");
@@ -384,6 +392,7 @@ async fn status_view_request_filters_contracts_by_source_and_family() -> xtask::
         source: None,
         family: Some("browser".to_string()),
         exact_counts: false,
+        stale_after_secs: 300,
     });
     let source_ids = by_family
         .iter()
@@ -410,6 +419,7 @@ async fn source_status_module_names_include_runtime_aliases() -> xtask::TestResu
         source: Some("browser.history".to_string()),
         family: None,
         exact_counts: false,
+        stale_after_secs: 300,
     });
 
     let module_names = source_status_module_names(&contracts);

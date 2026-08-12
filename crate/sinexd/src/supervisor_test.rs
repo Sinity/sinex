@@ -38,6 +38,19 @@ async fn runtime_retry_backoff_has_bounded_jitter() -> xtask::sandbox::TestResul
     Ok(())
 }
 
+#[sinex_test]
+async fn runtime_retry_backoff_stays_capped_at_the_ladder_max()
+-> xtask::sandbox::TestResult<()> {
+    for entropy in [0, 1, u64::MAX] {
+        assert_eq!(
+            jittered_runtime_backoff(Duration::from_secs(30), entropy),
+            Duration::from_secs(30),
+            "jitter must not extend a capped retry ladder"
+        );
+    }
+    Ok(())
+}
+
 /// sinex-ijz6: `SINEX_AUTOMATA_ENABLED` unset must select the 2026-07-08
 /// ratified default-enabled set (canonicalizer, session-detector,
 /// hourly-summarizer, daily-summarizer, health, attention-stream,

@@ -26,3 +26,19 @@ work paths. A path that has not been created yet is checked through its nearest
 existing ancestor, so the gate measures the filesystem that would receive the
 runtime data. The current gate is a point-in-time free-space floor; it does not
 project storage growth or estimate time-to-full.
+
+## Runtime liveness and startup readiness
+
+Runtime-facing status uses the shared `sinex_primitives::runtime_liveness`
+evaluation. Its default freshness window is 300 seconds and callers may pass a
+different `stale_after_secs` value explicitly; source coverage views carry that
+same value through their request instead of selecting a separate consumer
+threshold. The result is recency-aware and includes the latest observation,
+age, status, and evidence. Failed or stopped runs remain unhealthy even when
+their last output is recent; draining and paused runs are degraded.
+
+Hosted source bindings and automata receive a small randomized startup delay,
+and crash retries add bounded jitter while preserving the 30-second maximum
+backoff. A source runtime sends `READY=1` only after its snapshot and any
+required gap-fill phase complete. Bridge-backed automata similarly wait for
+historical catch-up and the durable live consumer before notifying readiness.

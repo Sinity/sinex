@@ -71,6 +71,9 @@ pub struct SourcesStatusViewRequest {
     /// this false to use bounded presence probes instead of full-table counts.
     #[serde(default = "default_exact_counts")]
     pub exact_counts: bool,
+    /// Runtime evidence older than this is stale in the coverage view.
+    #[serde(default = "default_stale_after_secs")]
+    pub stale_after_secs: u64,
 }
 
 impl Default for SourcesStatusViewRequest {
@@ -79,6 +82,7 @@ impl Default for SourcesStatusViewRequest {
             source: None,
             family: None,
             exact_counts: default_exact_counts(),
+            stale_after_secs: default_stale_after_secs(),
         }
     }
 }

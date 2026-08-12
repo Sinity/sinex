@@ -26,6 +26,17 @@ fn continuity_report(source_family: &str) -> SourceContinuityReport {
     }
 }
 
+#[sinex_test]
+async fn continuity_explanation_does_not_turn_absence_into_coverage() -> xtask::sandbox::TestResult<()>
+{
+    let family = SourceFamily::new("never-observed")?;
+    let explanation = continuity_gap_explanation(&family, Timestamp::UNIX_EPOCH, None);
+
+    assert!(!explanation.contains("coverage was present"));
+    assert!(explanation.contains("does not establish that the family had coverage"));
+    Ok(())
+}
+
 fn readiness(source_family: &str, source_identifier: &str) -> SourceReadiness {
     SourceReadiness {
         binding_id: None,

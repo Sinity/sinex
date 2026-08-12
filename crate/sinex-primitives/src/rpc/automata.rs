@@ -2,7 +2,10 @@
 
 use crate::domain::ModuleName;
 use crate::rpc::{RpcDomain, RpcMethod, RpcMutability, RpcRole, RpcStability, methods};
-use crate::{DEFAULT_RUNTIME_LIVENESS_STALE_AFTER_SECS, Timestamp, Uuid};
+use crate::{
+    DEFAULT_RUNTIME_LIVENESS_STALE_AFTER_SECS, RuntimeLiveness, RuntimeLivenessSignals,
+    RuntimeLivenessStatus, Timestamp, Uuid, evaluate_runtime_liveness,
+};
 use serde::{Deserialize, Serialize};
 
 fn default_stale_after_secs() -> u64 {
@@ -101,4 +104,30 @@ pub struct AutomatonStatus {
     pub last_output_at: Option<Timestamp>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub last_replay_at: Option<Timestamp>,
+}
+
+impl AutomatonStatus {
+    /// Evaluate this status snapshot with the shared runtime liveness rules.
+    #[must_use]
+    pub fn runtime_liveness(&self, stale_after_secs: u64, now: Timestamp) -> RuntimeLiveness {
+        evaluate_runtime_liveness(
+            RuntimeLivenessSignals {
+                run_status: self.run_status.as_deref(),
+                health_status: None,
+                last_heartbeat_at: self.last_heartbeat_at,
+                last_output_at: self.last_output_at,
+            },
+            stale_after_secs,
+            now,
+        )
+    }
+
+    /// Whether this snapshot is healthy enough to count as live.
+    #[must_use]
+    pub fn is_live(&self, stale_after_secs: u64, now: Timestamp) -> bool {
+        matches!(
+            self.runtime_liveness(stale_after_secs, now).status,
+            RuntimeLivenessStatus::Healthy | RuntimeLivenessStatus::Degraded
+        )
+    }
 }
