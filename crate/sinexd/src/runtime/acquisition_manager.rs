@@ -147,6 +147,8 @@ pub struct AcquisitionManager {
     streams_ready: Arc<AtomicBool>,
     streams_bootstrap_lock: Arc<Mutex<()>>,
     work_dir: Option<PathBuf>,
+    #[cfg(test)]
+    fail_next_finalize: Arc<AtomicBool>,
 }
 
 /// Handle to an active source material being captured
@@ -372,6 +374,8 @@ impl AcquisitionManager {
             streams_ready: Arc::new(AtomicBool::new(false)),
             streams_bootstrap_lock: Arc::new(Mutex::new(())),
             work_dir,
+            #[cfg(test)]
+            fail_next_finalize: Arc::new(AtomicBool::new(false)),
         }
     }
 
@@ -729,6 +733,36 @@ impl AcquisitionManager {
             .await
     }
 
+    /// Finalize an owned stream handle without consuming it on failure.
+    ///
+    /// The handle contains the material identity, pending BEGIN/slice state,
+    /// and the local staging file. Keeping it borrowed lets a caller retry a
+    /// transient publication failure against the same material instead of
+    /// silently cutting over to a new occurrence.
+    pub async fn finalize_in_place(
+        &self,
+        handle: &mut SourceMaterialHandle,
+        reason: &str,
+    ) -> RuntimeResult<()> {
+        #[cfg(test)]
+        if self
+            .fail_next_finalize
+            .swap(false, std::sync::atomic::Ordering::AcqRel)
+        {
+            return Err(SinexError::messaging(
+                "injected source material finalization failure",
+            ));
+        }
+        self.finalize_with_metadata(handle, reason, json!({}))
+            .await
+    }
+
+    #[cfg(test)]
+    fn fail_next_finalize_for_test(&self) {
+        self.fail_next_finalize
+            .store(true, std::sync::atomic::Ordering::Release);
+    }
+
     /// Cancel a material capture and finalize with cancellation metadata.
     pub async fn cancel(
         &self,
@@ -1021,15 +1055,7 @@ impl AppendStreamAcquirer {
                 source_identifier,
                 "Rotating material due to source identifier change"
             );
-            let old_handle = self.current_handle.take().ok_or_else(|| {
-                SinexError::invalid_state(
-                    "current_handle should exist for source identifier rotation",
-                )
-            })?;
-            self.manager
-                .finalize(old_handle, "source-identifier-change")
-                .await?;
-            self.current_source_identifier = None;
+            self.finalize_current("source-identifier-change").await?;
             self.begin_stream_material(source_identifier).await?;
         }
 
@@ -1044,11 +1070,7 @@ impl AppendStreamAcquirer {
         // Check rotation
         if self.should_rotate_before_append_len(total_bytes)? {
             info!("Rotating material due to size/age limits");
-            let old_handle = self.current_handle.take().ok_or_else(|| {
-                SinexError::invalid_state("current_handle should exist for rotation")
-            })?;
-            self.manager.finalize(old_handle, "rotation").await?;
-            self.current_source_identifier = None;
+            self.finalize_current("rotation").await?;
             self.begin_stream_material(source_identifier).await?;
         }
 
@@ -1071,15 +1093,7 @@ impl AppendStreamAcquirer {
         match self.current_handle {
             None => self.begin_stream_material(source_identifier).await,
             Some(_) if self.current_source_identifier.as_deref() != Some(source_identifier) => {
-                let old_handle = self.current_handle.take().ok_or_else(|| {
-                    SinexError::invalid_state(
-                        "current_handle should exist for source identifier rotation",
-                    )
-                })?;
-                self.manager
-                    .finalize(old_handle, "source-identifier-change")
-                    .await?;
-                self.current_source_identifier = None;
+                self.finalize_current("source-identifier-change").await?;
                 self.begin_stream_material(source_identifier).await
             }
             Some(_) => Ok(()),
@@ -1200,8 +1214,14 @@ impl AppendStreamAcquirer {
 
     /// Finalize current material
     pub async fn finalize(&mut self, reason: &str) -> RuntimeResult<()> {
-        if let Some(handle) = self.current_handle.take() {
-            self.manager.finalize(handle, reason).await?;
+        self.finalize_current(reason).await?;
+        Ok(())
+    }
+
+    async fn finalize_current(&mut self, reason: &str) -> RuntimeResult<()> {
+        if let Some(handle) = self.current_handle.as_mut() {
+            self.manager.finalize_in_place(handle, reason).await?;
+            self.current_handle = None;
         }
         self.current_source_identifier = None;
         Ok(())
@@ -1494,9 +1514,9 @@ impl BufferedAppendStreamWriter {
             })
             .await;
 
-        if send_result.is_err() {
-            return Ok(());
-        }
+        send_result.map_err(|_| {
+            SinexError::processing("buffered append writer has shut down".to_string())
+        })?;
 
         response
             .await
@@ -1519,9 +1539,9 @@ impl BufferedAppendStreamWriter {
             })
             .await;
 
-        if send_result.is_err() {
-            return Ok(());
-        }
+        send_result.map_err(|_| {
+            SinexError::processing("buffered append writer has shut down".to_string())
+        })?;
 
         response
             .await
@@ -1546,9 +1566,9 @@ impl BufferedAppendStreamWriter {
             })
             .await;
 
-        if send_result.is_err() {
-            return Ok(());
-        }
+        send_result.map_err(|_| {
+            SinexError::processing("buffered append writer has shut down".to_string())
+        })?;
 
         response
             .await
