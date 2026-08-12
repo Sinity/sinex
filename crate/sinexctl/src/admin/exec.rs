@@ -5,9 +5,10 @@
 //! structured context so the caller can add further context.
 
 use color_eyre::eyre::{Context, Result, bail, eyre};
+use serde_json::Value;
 use std::collections::BTreeMap;
 use std::io::ErrorKind;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
 /// Run `pg_dump -Fc -Z 9 -f <dump_path> <database_url>`.
@@ -378,60 +379,87 @@ pub fn tar_extract_zstd(archive_path: &Path, target_dir: &Path) -> Result<()> {
     Ok(())
 }
 
-/// Check which sinex systemd services are currently active.
+const QUIESCE_UNITS: &[&str] = &["sinexd.service", "nats.service"];
+
+/// Check which deployed services can mutate the snapshot components.
 ///
-/// Returns the list of active unit names matching `sinex-*`.  If `systemctl`
-/// is not available (dev environment) returns an empty list.
+/// The runtime target is intentionally excluded. Its `PartOf` relationship
+/// also stops PostgreSQL, which must remain available for the dump.
 #[must_use]
 pub fn active_sinex_services() -> Vec<String> {
-    let Ok(output) = Command::new("systemctl")
-        .args([
-            "list-units",
-            "--state=active",
-            "--plain",
-            "--no-legend",
-            "sinex-*",
-        ])
-        .stdin(Stdio::null())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::null())
-        .output()
-    else {
-        return Vec::new();
-    };
-
-    if !output.status.success() {
-        return Vec::new();
-    }
-
-    String::from_utf8_lossy(&output.stdout)
-        .lines()
-        .filter_map(|line| {
-            let unit = line.split_whitespace().next()?;
-            Some(unit.to_string())
+    QUIESCE_UNITS
+        .iter()
+        .filter_map(|unit| {
+            let output = Command::new("systemctl")
+                .args(["is-active", "--quiet", unit])
+                .stdin(Stdio::null())
+                .stdout(Stdio::null())
+                .stderr(Stdio::null())
+                .status()
+                .ok()?;
+            output.success().then(|| (*unit).to_string())
         })
         .collect()
 }
 
-/// Stop all sinex services: `systemctl stop 'sinex-*'`.
+/// Stop the active writer services without stopping PostgreSQL via a target.
 pub fn stop_sinex_services() -> Result<()> {
+    let active = active_sinex_services();
+    if active.is_empty() {
+        return Ok(());
+    }
     let output = Command::new("systemctl")
-        .args(["stop", "sinex-*"])
+        .arg("stop")
+        .args(&active)
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::piped())
         .output()
-        .context("spawn systemctl stop sinex-*")?;
+        .context("spawn systemctl stop snapshot writer services")?;
 
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
         bail!(
-            "systemctl stop sinex-* failed (exit {}): {}",
+            "systemctl stop snapshot writer services failed (exit {}): {}",
             output.status.code().unwrap_or(-1),
             stderr.trim()
         );
     }
     Ok(())
+}
+
+/// Discover the JetStream store directory from the running NATS unit's
+/// validated configuration. This avoids coupling snapshots to SINEX_STATE_DIR:
+/// NATS is deployed as a separate service with its own store root.
+pub fn nats_jetstream_store_dir() -> Result<PathBuf> {
+    let output = Command::new("systemctl")
+        .args(["show", "nats.service", "--property=ExecStart", "--value"])
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .output()
+        .context("discover NATS systemd command line")?;
+    if !output.status.success() {
+        bail!("systemctl could not inspect nats.service");
+    }
+    let command = String::from_utf8_lossy(&output.stdout);
+    let config_path = command
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .windows(2)
+        .find_map(|parts| (parts[0] == "-c").then_some(parts[1]))
+        .ok_or_else(|| eyre!("nats.service ExecStart does not expose a -c config path"))?;
+    let config = std::fs::read_to_string(config_path)
+        .with_context(|| format!("read NATS config {config_path}"))?;
+    let config: Value = serde_json::from_str(&config)
+        .with_context(|| format!("parse NATS config {config_path} as JSON"))?;
+    let store_dir = config
+        .get("jetstream")
+        .and_then(|jetstream| jetstream.get("store_dir"))
+        .and_then(Value::as_str)
+        .filter(|path| !path.is_empty())
+        .ok_or_else(|| eyre!("NATS config has no non-empty jetstream.store_dir"))?;
+    Ok(PathBuf::from(store_dir))
 }
 
 /// Copy a directory tree recursively with `cp -a`.

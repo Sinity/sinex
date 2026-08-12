@@ -54,7 +54,7 @@ sinexctl ops state restore --archive <path> --target-dir <empty-dir>
 | Component  | What is captured                                    |
 |------------|-----------------------------------------------------|
 | `postgres` | Full custom-format `pg_dump` of `DATABASE_URL`      |
-| `nats`     | `$STATE_DIR/nats/jetstream/` directory tree         |
+| `nats`     | The `jetstream.store_dir` from the deployed `nats.service` config |
 | `cas`      | `$STATE_DIR/blob-repository/` directory tree        |
 | `state`    | Everything else under `$STATE_DIR` (spool, WALs, …) |
 
@@ -65,7 +65,7 @@ manifest.json                   -- JSON metadata + BLAKE3 checksums
 postgres/
   sinex_prod.dump               -- pg_dump custom-format (-Fc -Z9)
 nats/
-  jetstream/                    -- NATS JetStream state tree
+  jetstream/                    -- NATS JetStream state tree from the live store_dir
   streams.summary.json          -- `nats stream ls --json` output (best-effort)
 cas/
   blob-repository/              -- CAS BLAKE3 content store tree
@@ -218,9 +218,9 @@ pg_restore \
 
 ```bash
 sudo systemctl stop nats  # if managed by NixOS
-sudo mkdir -p /var/lib/sinex/nats/jetstream
-sudo cp -a "$RESTORE_DIR/nats/jetstream/." /var/lib/sinex/nats/jetstream/
-sudo chown -R nats:nats /var/lib/sinex/nats/
+sudo mkdir -p /var/lib/nats/jetstream
+sudo cp -a "$RESTORE_DIR/nats/jetstream/." /var/lib/nats/jetstream/
+sudo chown -R nats:nats /var/lib/nats/jetstream
 sudo systemctl start nats
 ```
 

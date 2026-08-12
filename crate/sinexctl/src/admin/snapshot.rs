@@ -421,7 +421,19 @@ impl AdminSnapshotCommand {
         }
 
         if component_set.contains("nats") {
-            let nats_src = state_dir.join("nats/jetstream");
+            let nats_src = if self.dry_run {
+                state_dir.join("nats/jetstream")
+            } else {
+                exec::nats_jetstream_store_dir().context(
+                    "discover the deployed NATS JetStream store directory for snapshot",
+                )?
+            };
+            if !nats_src.is_dir() {
+                bail!(
+                    "NATS JetStream store directory {} is absent; refusing to record an empty backup",
+                    nats_src.display()
+                );
+            }
             let mut record = self.capture_dir_component(
                 "nats",
                 "nats/jetstream/",

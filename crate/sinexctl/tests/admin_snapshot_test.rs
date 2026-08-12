@@ -1252,7 +1252,7 @@ async fn library_dry_run_returns_valid_result() -> xtask::sandbox::TestResult<()
         "snapshot should report compiled source descriptor ids"
     );
 
-    // Nats, CAS, and state should all appear.
+    // NATS, CAS, and state should appear in the dry-run estimate.
     let names: Vec<&str> = result
         .components_captured
         .iter()
@@ -1283,7 +1283,11 @@ async fn library_live_snapshot_archive_records_live_manifest() -> xtask::sandbox
         database_url: None,
         state_dir: Some(state_dir.path().to_path_buf()),
         auto_stop: false,
-        components: vec![Component::Nats, Component::Cas, Component::State],
+        // A live archive test uses fixture-owned directories. NATS is
+        // discovered from the deployed systemd configuration and is covered
+        // by the dry-run path above, so it is excluded from this unprivileged
+        // fixture test.
+        components: vec![Component::Cas, Component::State],
     };
 
     let result = cmd.execute()?;
