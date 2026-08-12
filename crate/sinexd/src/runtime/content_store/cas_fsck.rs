@@ -94,6 +94,16 @@ pub async fn check_cas(
             "refusing CAS orphan deletion because the paired database has no SINEXBLAKE3 rows",
         ));
     }
+    if apply
+        && !known_blake3_hashes.is_empty()
+        && entries.len() > known_blake3_hashes.len().saturating_mul(2)
+    {
+        return Err(SinexError::validation(format!(
+            "refusing CAS orphan deletion because the scanned store has an implausibly high orphan ratio ({} files vs {} DB rows)",
+            entries.len(),
+            known_blake3_hashes.len()
+        )));
+    }
     let mut known_hash_set: HashSet<String> = HashSet::new();
     for (hash, _blob_id) in &known_blake3_hashes {
         known_hash_set.insert(hash.clone());
