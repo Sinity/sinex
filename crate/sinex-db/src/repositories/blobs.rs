@@ -342,12 +342,12 @@ impl BlobRepository {
                 OR EXISTS (
                     SELECT 1 FROM core.events e
                     WHERE e.associated_blob_ids IS NOT NULL
-                      AND $1 = ANY(e.associated_blob_ids)
+                      AND e.associated_blob_ids @> ARRAY[$1]::uuid[]
                 )
                 OR EXISTS (
                     SELECT 1 FROM audit.archived_events ae
                     WHERE ae.associated_blob_ids IS NOT NULL
-                      AND $1 = ANY(ae.associated_blob_ids)
+                      AND ae.associated_blob_ids @> ARRAY[$1]::uuid[]
                 )
             ) AS "referenced!"
             "#,
@@ -450,12 +450,12 @@ impl BlobRepository {
               AND NOT EXISTS (
                 SELECT 1 FROM core.events e
                 WHERE e.associated_blob_ids IS NOT NULL
-                  AND b.id = ANY(e.associated_blob_ids)
+                  AND e.associated_blob_ids @> ARRAY[b.id]::uuid[]
               )
               AND NOT EXISTS (
                 SELECT 1 FROM audit.archived_events ae
                 WHERE ae.associated_blob_ids IS NOT NULL
-                  AND b.id = ANY(ae.associated_blob_ids)
+                  AND ae.associated_blob_ids @> ARRAY[b.id]::uuid[]
               )
             ORDER BY b.created_at ASC, b.id ASC
             LIMIT $1

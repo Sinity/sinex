@@ -63,6 +63,11 @@ const EVENTS_REQUIRED_INDEXES: &[&str] = &[
     // index degrades the lookup to a sequential scan on the hypertable and
     // `apply::diff` never reports the loss (#2196 Finding 2).
     "ix_events_equivalence_key",
+    // Blob tombstone reference checks use array containment on live events.
+    // Keep the GIN index in the drift inventory as well as the create list so
+    // a manual drop cannot silently turn every blob check into a hypertable
+    // scan.
+    "ix_events_associated_blob_ids",
     // Partial index backing self-telemetry queries (created by
     // `configure_timescaledb`). Listed here so drift detection covers it.
     "ix_events_sinex_telemetry",
@@ -99,6 +104,7 @@ const ARCHIVED_EVENTS_REQUIRED_INDEXES: &[&str] = &[
     "ix_archived_events_source_ts_orig",
     "ix_archived_events_archived_at",
     "ix_archived_events_source_event_ids",
+    "ix_archived_events_associated_blob_ids",
 ];
 const TEMPORAL_LEDGER_REQUIRED_INDEXES: &[&str] = &[
     "uk_temporal_ledger_material_offset_source_type",
@@ -1366,6 +1372,22 @@ async fn configure_timescaledb(pool: &PgPool) -> Result<(), ApplyError> {
                 ) THEN
                     EXECUTE format(
                         'CREATE INDEX IF NOT EXISTS %I ON %I.%I ((split_part(source, ''.'', 1)))',
+                        chunk_index_name,
+                        chunk_schema,
+                        chunk_name
+                    );
+                END IF;
+
+                chunk_index_name := chunk_name || '_ix_events_associated_blob_ids';
+                IF NOT EXISTS (
+                    SELECT 1
+                    FROM pg_indexes
+                    WHERE schemaname = chunk_schema
+                      AND tablename = chunk_name
+                      AND indexname = chunk_index_name
+                ) THEN
+                    EXECUTE format(
+                        'CREATE INDEX IF NOT EXISTS %I ON %I.%I USING GIN (associated_blob_ids) WHERE associated_blob_ids IS NOT NULL',
                         chunk_index_name,
                         chunk_schema,
                         chunk_name

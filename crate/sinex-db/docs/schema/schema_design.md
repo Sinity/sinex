@@ -77,3 +77,9 @@ Postgres witness. Event-engine writes go through `DlqEventRepository`.
 - bind UUID parameters directly (`$1::uuid`, `$1::uuid[]`)
 - keep ordering explicit for deterministic replay (`ORDER BY ts_coided DESC, id DESC`)
 - prefer index-aligned predicates for source/type/time paths
+- `core.events.associated_blob_ids` and `audit.archived_events.associated_blob_ids`
+  are protected by required partial GIN indexes; blob-reference checks must use
+  array containment (`associated_blob_ids @> ARRAY[$1]::uuid[]`) so PostgreSQL
+  can use those indexes.
+- COPY serialization is checked at daemon boot against the authoritative
+  `core.events` definition, with the per-batch guard retained as defense in depth.

@@ -78,6 +78,46 @@ async fn declarative_apply_is_idempotent(ctx: TestContext) -> TestResult<()> {
 }
 
 #[sinex_test]
+async fn declarative_diff_detects_missing_blob_reference_indexes(
+    ctx: TestContext,
+) -> TestResult<()> {
+    sinex_db::schema::apply::apply(&ctx.pool).await?;
+
+    sqlx::query("DROP INDEX IF EXISTS core.ix_events_associated_blob_ids")
+        .execute(&ctx.pool)
+        .await?;
+    sqlx::query("DROP INDEX IF EXISTS audit.ix_archived_events_associated_blob_ids")
+        .execute(&ctx.pool)
+        .await?;
+
+    let drift = sinex_db::schema::apply::diff(&ctx.pool).await?;
+    assert!(
+        drift
+            .iter()
+            .any(|entry| entry.contains("core.events index ix_events_associated_blob_ids")),
+        "apply::diff must report a missing live blob-reference index: {drift:?}"
+    );
+    assert!(
+        drift.iter().any(|entry| {
+            entry.contains("audit.archived_events index ix_archived_events_associated_blob_ids")
+        }),
+        "apply::diff must report a missing archive blob-reference index: {drift:?}"
+    );
+
+    sinex_db::schema::apply::apply(&ctx.pool).await?;
+    let repaired = sinex_db::schema::apply::diff(&ctx.pool).await?;
+    assert!(
+        !repaired.iter().any(|entry| {
+            entry.contains("ix_events_associated_blob_ids")
+                || entry.contains("ix_archived_events_associated_blob_ids")
+        }),
+        "schema apply must recreate both blob-reference indexes: {repaired:?}"
+    );
+
+    Ok(())
+}
+
+#[sinex_test]
 async fn shared_access_role_bootstrap_is_idempotent(ctx: TestContext) -> TestResult<()> {
     sinex_db::schema::apply::ensure_shared_access_roles(&ctx.pool).await?;
 

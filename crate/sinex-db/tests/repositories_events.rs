@@ -1,4 +1,5 @@
 use serde_json::json;
+use sinex_db::replay::state_machine::ReplayScope;
 use sinex_db::repositories::{
     COPY_BATCH_THRESHOLD, DbPoolExt, EventStorageLane, ReplacementKind, ReplacementRecord,
     StreamBatchRow,
@@ -135,6 +136,98 @@ async fn events_repository_inserts_typed_events(ctx: TestContext) -> TestResult<
     assert_eq!(inserted.payload["path"], json!("/tmp/repo-insert.txt"));
     assert_eq!(inserted.payload["size"], json!(512));
     assert!(inserted.id.is_some());
+    Ok(())
+}
+
+#[sinex_test]
+async fn reimport_scale_pages_use_bounded_keysets_and_quality_limits(
+    ctx: TestContext,
+) -> TestResult<()> {
+    let material_id = ctx
+        .create_source_material(Some("reimport-scale-page-test"))
+        .await?;
+    let source = EventSource::new("reimport-scale")?;
+    let mut inserted_ids = Vec::new();
+
+    for anchor in 0..5i64 {
+        let event = DynamicPayload::new(source.clone(), "reimport.page", json!({"anchor": anchor}))
+        .from_material_at(material_id, anchor)
+        .at_time(Timestamp::now())
+        .build()?;
+        inserted_ids.push(ctx.pool.events().insert(event).await?.id.unwrap());
+    }
+
+    let first_page = ctx
+        .pool
+        .events()
+        .get_by_source_after_id(&source, None, 2)
+        .await?;
+    assert_eq!(first_page.len(), 2);
+    let second_page = ctx
+        .pool
+        .events()
+        .get_by_source_after_id(&source, first_page.last().map(|event| event.id.unwrap()), 2)
+        .await?;
+    assert_eq!(second_page.len(), 2);
+    assert!(
+        first_page
+            .iter()
+            .all(|first| second_page.iter().all(|second| first.id != second.id)),
+        "keyset pages must not repeat rows"
+    );
+
+    let scope = ReplayScope {
+        source_name: source.to_string(),
+        ..Default::default()
+    };
+    let root_page = ctx
+        .pool
+        .replay()
+        .collect_scope_root_ids_page(&scope, None, 2)
+        .await?;
+    assert_eq!(root_page.len(), 2);
+    let next_root_page = ctx
+        .pool
+        .replay()
+        .collect_scope_root_ids_page(&scope, root_page.last().copied(), 2)
+        .await?;
+    assert_eq!(next_root_page.len(), 2);
+    assert!(
+        root_page.iter().all(|id| !next_root_page.contains(id)),
+        "replay root keyset pages must not repeat rows"
+    );
+
+    let regression_source = EventSource::new("reimport-regressions")?;
+    let first = DynamicPayload::new(
+        regression_source.clone(),
+        "reimport.regression",
+        json!({"position": 1}),
+    )
+    .from_material_at(material_id, 100)
+    .at_time(Timestamp::now())
+    .build()?;
+    ctx.pool.events().insert(first).await?;
+    let second = DynamicPayload::new(
+        regression_source,
+        "reimport.regression",
+        json!({"position": 2}),
+    )
+    .from_material_at(material_id, 101)
+    .at_time(Timestamp::now() - time::Duration::seconds(1))
+    .build()?;
+    ctx.pool.events().insert(second).await?;
+
+    // The limit bounds the CTE's input before LAG runs. Use a bound large
+    // enough to include this fixture's two-row source window; a global limit
+    // of one would necessarily have no predecessor for the window function.
+    let regressions = ctx.pool.events().find_timestamp_regressions(100).await?;
+    assert_eq!(
+        regressions.len(),
+        1,
+        "the bounded regression scan must still return an in-window violation"
+    );
+    assert_eq!(inserted_ids.len(), 5);
+
     Ok(())
 }
 
