@@ -56,12 +56,12 @@ pub enum ComponentExtras {
     /// so serde's untagged matching would otherwise accept every NATS extras
     /// object as an empty Postgres record and discard `member_paths`.
     Nats(NatsExtras),
+    /// Runtime state metadata.
+    State(StateExtras),
     /// `PostgreSQL` row counts per table.
     Postgres(PostgresExtras),
     /// CAS blob count.
     Cas(CasExtras),
-    /// Runtime state metadata.
-    State(StateExtras),
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

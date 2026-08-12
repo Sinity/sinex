@@ -1056,6 +1056,24 @@ fn registered_source_ids() -> Vec<String> {
     let mut ids: Vec<String> = source_contracts::all_source_contracts()
         .map(|descriptor| descriptor.id.to_string())
         .collect();
+    // `sinexctl` does not retain every sinexd source-registration object at
+    // link time, so its inventory can legitimately be empty even though the
+    // daemon's generated catalog is populated. The generated catalog is the
+    // checked-in Rust→Nix source-of-truth projection; use it as the CLI
+    // metadata fallback rather than writing a misleading empty source list.
+    if ids.is_empty() {
+        let catalog: serde_json::Value = serde_json::from_str(include_str!(
+            "../../../../nixos/modules/source-catalog.generated.json"
+        ))
+        .expect("generated source catalog must be valid JSON");
+        ids = catalog["entries"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter_map(|entry| entry["contract"]["id"].as_str())
+            .map(str::to_owned)
+            .collect();
+    }
     ids.sort();
     ids.dedup();
     ids

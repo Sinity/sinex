@@ -331,7 +331,8 @@ async fn dry_run_reports_estimates_and_creates_no_archive() -> xtask::sandbox::T
 
     let output = sinexctl_bin()
         .args([
-            "admin",
+            "ops",
+            "state",
             "snapshot",
             "--output",
             &output_path.to_string_lossy(),
@@ -395,7 +396,8 @@ async fn dry_run_non_postgres_components_do_not_require_database_url()
 
     let output = sinexctl_bin()
         .args([
-            "admin",
+            "ops",
+            "state",
             "snapshot",
             "--output",
             &output_path.to_string_lossy(),
@@ -459,7 +461,8 @@ async fn snapshot_archive_preserves_component_paths_and_nats_member_manifest()
     let output = sinexctl_bin()
         .env("PATH", path)
         .args([
-            "admin",
+            "ops",
+            "state",
             "snapshot",
             "--output",
             &output_path.to_string_lossy(),
@@ -638,15 +641,19 @@ async fn state_snapshot_dry_run_uses_snapshot_implementation() -> xtask::sandbox
 /// archive during dry-run.
 #[sinex_test]
 async fn state_snapshot_live_mode_dry_run_reports_estimates() -> xtask::sandbox::TestResult<()> {
+    let state_dir = make_fake_state_dir()?;
     let output_dir = tempfile::tempdir()?;
     let output_path = output_dir.path().join("state-live.tar.zst");
 
     let output = sinexctl_bin()
         .args([
+            "ops",
             "state",
             "snapshot",
             "--output",
             &output_path.to_string_lossy(),
+            "--state-dir",
+            &state_dir.path().to_string_lossy(),
             "--dry-run",
             "--mode",
             "live",
@@ -1272,7 +1279,8 @@ async fn staging_cleaned_up_on_pg_dump_failure() -> xtask::sandbox::TestResult<(
     // Use an intentionally invalid DATABASE_URL.
     let output = sinexctl_bin()
         .args([
-            "admin",
+            "ops",
+            "state",
             "snapshot",
             "--output",
             &output_path.to_string_lossy(),
@@ -1343,7 +1351,8 @@ async fn snapshot_fails_when_postgres_row_count_query_fails() -> xtask::sandbox:
         .env("PATH", path)
         .env("SINEX_PSQL_BIN", &psql)
         .args([
-            "admin",
+            "ops",
+            "state",
             "snapshot",
             "--output",
             &output_path.to_string_lossy(),
@@ -1396,7 +1405,8 @@ async fn quiesced_snapshot_fails_closed_when_systemctl_inventory_fails()
     let output = sinexctl_bin()
         .env("PATH", path)
         .args([
-            "admin",
+            "ops",
+            "state",
             "snapshot",
             "--output",
             &output_path.to_string_lossy(),

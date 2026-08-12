@@ -14,7 +14,7 @@ fn sinexctl() -> Command {
 
 #[sinex_test]
 async fn snapshot_structured_completion_shape() -> TestResult<()> {
-    let line = "sinexctl events source:wm";
+    let line = "sinexctl query events where source = wm";
     let cursor = line.len().to_string();
     let output = sinexctl()
         .args([
@@ -37,17 +37,17 @@ async fn snapshot_structured_completion_shape() -> TestResult<()> {
 
     let response: serde_json::Value = serde_json::from_slice(&output.stdout)
         .expect("_complete --format json must emit a single JSON document");
-    assert_eq!(response["schema_version"], 1);
+    assert_eq!(response["schema_version"], "sinex.completion-response/v1");
     assert_eq!(response["line"], line);
     assert_eq!(response["cursor"], line.len());
-    assert_eq!(response["active_token"], "source:wm");
+    assert_eq!(response["active_token"], "wm");
 
     let candidates = response["candidates"]
         .as_array()
         .expect("completion response must contain an array of candidates");
     let hyprland = candidates
         .iter()
-        .find(|candidate| candidate["value"] == "source:wm.hyprland")
+        .find(|candidate| candidate["value"] == "\"wm.hyprland\"")
         .expect("structured completion should include wm.hyprland source candidate");
 
     for field in [
@@ -72,7 +72,7 @@ async fn snapshot_structured_completion_shape() -> TestResult<()> {
     assert_eq!(hyprland["stale"], true);
     assert_eq!(
         hyprland["privacy"],
-        "schema-key-only; payload values not sampled"
+        "metadata-only"
     );
     Ok(())
 }

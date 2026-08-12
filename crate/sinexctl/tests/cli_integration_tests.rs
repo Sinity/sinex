@@ -177,7 +177,7 @@ mod help_tests {
             .args([
                 "_complete",
                 "--line",
-                "sinexctl events source:wm",
+                "sinexctl query events where source = wm",
                 "--cursor",
                 "24",
                 "--format",
@@ -186,7 +186,7 @@ mod help_tests {
             .assert()
             .success()
             .stdout(predicate::str::contains("\"schema_version\""))
-            .stdout(predicate::str::contains("source:wm.hyprland"));
+            .stdout(predicate::str::contains("wm.hyprland"));
         Ok(())
     }
 
