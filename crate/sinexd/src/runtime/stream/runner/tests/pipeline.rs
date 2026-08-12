@@ -8,17 +8,8 @@ use crate::runtime::stream::{ProcessingStats, RuntimeInitContext};
 
 #[cfg(feature = "messaging")]
 mod lk67_invalidation_reachability {
-    //! sinex-lk67: the replay cascade publishes scope invalidations on
-    //! `INVALIDATION_SUBJECT` (execution/collect.rs), but the ONLY live
-    //! dispatch path for every registered automaton is
-    //! `RuntimeRunner::run_automaton_event_bridge` (every automaton has
-    //! `manages_own_continuous_loop == false`, asserted for all of them in
-    //! `automata/registry_test.rs`). The bridge's `AutomatonRuntime::process_event_batch`
-    //! never calls `process_invalidation`/`handle_invalidation_message` --
-    //! those only exist on the `run_continuous` path, which the bridge never
-    //! takes. This proves the consumer is unreachable in production: publish
-    //! a real invalidation on the real subject while the bridge is running,
-    //! and observe it is never applied.
+    //! sinex-lk67: the production bridge consumes replay-cascade invalidations
+    //! on the real subject and dispatches them to the automaton adapter.
     use super::*;
     use crate::runtime::{
         AutomatonContext, AutomatonLogicError, AutomatonRuntime, DerivedOutput,
@@ -87,15 +78,14 @@ mod lk67_invalidation_reachability {
             self.invalidations_applied.fetch_add(1, Ordering::SeqCst);
             Ok(Vec::new())
         }
+
+        fn supports_scope_invalidation_recompute(&self) -> bool {
+            true
+        }
     }
 
     #[sinex_test]
-    #[ignore = "sinex-lk67 open: the replay-cascade-published scope invalidation is never consumed \
-                by the live bridge dispatch path (run_automaton_event_bridge); \
-                un-ignore once F1 (invalidation consumer wiring) lands"]
-    async fn bridge_never_consumes_a_published_scope_invalidation(
-        ctx: TestContext,
-    ) -> TestResult<()> {
+    async fn bridge_consumes_a_published_scope_invalidation(ctx: TestContext) -> TestResult<()> {
         let ctx = ctx.with_nats().shared().await?;
         let invalidations_applied = Arc::new(AtomicU64::new(0));
         let automaton = InvalidationSpyAutomaton {
@@ -135,9 +125,8 @@ mod lk67_invalidation_reachability {
         js.publish_with_headers(invalidation_subject, headers, payload.into())
             .await?;
 
-        // Run the real bridge briefly. It has no confirmed events to
-        // process, so it just sits polling the confirmed-events consumer --
-        // proving it never even glances at the invalidation subject.
+        // Run the real bridge briefly. It has no confirmed events to process,
+        // so invalidation delivery is the only route to the spy.
         let bridge_result = tokio::time::timeout(
             Duration::from_secs(3),
             runner.run_automaton_event_bridge(Checkpoint::None),
@@ -145,16 +134,13 @@ mod lk67_invalidation_reachability {
         .await;
         assert!(
             bridge_result.is_err(),
-            "bridge should still be idly polling confirmed events after 3s (no confirmed events \
-             were published), not have exited for any reason"
+            "bridge should remain live while the invalidation is delivered"
         );
 
         assert_eq!(
             invalidations_applied.load(Ordering::SeqCst),
-            0,
-            "sinex-lk67: a scope invalidation published on the real INVALIDATION_SUBJECT, while \
-             the real production bridge was running, was never consumed -- recompute_scope was \
-             never called. This is the F1 reachability gap: fix it and this must become 1."
+            1,
+            "the real bridge must dispatch the published invalidation to recompute_scope"
         );
         Ok(())
     }

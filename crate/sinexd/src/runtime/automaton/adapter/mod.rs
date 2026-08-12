@@ -332,7 +332,7 @@ where
 /// When `sub` is `None` (no NATS available), pends forever — effectively
 /// disabling the select arm without needing `#[cfg]` inside `tokio::select!`.
 #[cfg(feature = "messaging")]
-async fn recv_invalidation(
+pub(crate) async fn recv_invalidation(
     sub: &mut Option<async_nats::jetstream::consumer::push::Messages>,
     fail_point_after_ack: Option<&Arc<std::sync::atomic::AtomicBool>>,
 ) -> Option<Vec<u8>> {
@@ -373,7 +373,7 @@ async fn recv_invalidation(
 
 /// Stub when messaging feature is disabled — always pends.
 #[cfg(not(feature = "messaging"))]
-async fn recv_invalidation(
+pub(crate) async fn recv_invalidation(
     _sub: &mut (),
     _fail_point_after_ack: Option<&Arc<std::sync::atomic::AtomicBool>>,
 ) -> Option<Vec<u8>> {
@@ -661,6 +661,10 @@ where
             duration: std::time::Duration::from_secs_f64(batch_runtime_ms / 1000.0),
             ..ProcessingStats::default()
         })
+    }
+
+    async fn process_invalidation_message(&mut self, payload: &[u8]) -> RuntimeResult<Option<u64>> {
+        self.handle_invalidation_message(payload).await
     }
 
     async fn shutdown(&mut self) -> RuntimeResult<()> {

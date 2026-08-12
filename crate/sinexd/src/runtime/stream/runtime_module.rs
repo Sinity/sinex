@@ -83,6 +83,13 @@ pub trait RuntimeModule: Send + Sync {
         }
     }
 
+    fn process_invalidation_message(
+        &mut self,
+        _payload: &[u8],
+    ) -> impl std::future::Future<Output = RuntimeResult<Option<u64>>> + Send {
+        async { Ok(None) }
+    }
+
     fn shutdown(&mut self) -> impl std::future::Future<Output = RuntimeResult<()>> + Send {
         async {
             info!(module = %self.module_name(), "Runtime actor shutting down");
@@ -170,6 +177,10 @@ pub trait ErasedRuntimeModule: Send + Sync {
         &'a mut self,
         events: Vec<Event<JsonValue>>,
     ) -> BoxFuture<'a, RuntimeResult<ProcessingStats>>;
+    fn process_invalidation_message<'a>(
+        &'a mut self,
+        payload: &'a [u8],
+    ) -> BoxFuture<'a, RuntimeResult<Option<u64>>>;
     fn shutdown(&mut self) -> BoxFuture<'_, RuntimeResult<()>>;
     fn periodic_flush(&mut self, now: Timestamp) -> BoxFuture<'_, RuntimeResult<u64>>;
     fn estimate_scan_scope<'a>(
@@ -247,6 +258,12 @@ impl<T: RuntimeModule> ErasedRuntimeModule for T {
         events: Vec<Event<JsonValue>>,
     ) -> BoxFuture<'a, RuntimeResult<ProcessingStats>> {
         Box::pin(RuntimeModule::process_event_batch(self, events))
+    }
+    fn process_invalidation_message<'a>(
+        &'a mut self,
+        payload: &'a [u8],
+    ) -> BoxFuture<'a, RuntimeResult<Option<u64>>> {
+        Box::pin(RuntimeModule::process_invalidation_message(self, payload))
     }
     fn shutdown(&mut self) -> BoxFuture<'_, RuntimeResult<()>> {
         Box::pin(RuntimeModule::shutdown(self))

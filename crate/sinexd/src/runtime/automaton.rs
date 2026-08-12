@@ -17,6 +17,7 @@ pub mod invalidation;
 mod output;
 pub mod traits;
 
+pub(crate) use adapter::recv_invalidation;
 pub use adapter::{
     AutomatonRuntime, DeclaresOutputs, MultiOutputTransducerAdapter, ScopeReconcilerAdapter,
     TransducerAdapter, WindowedAdapter,

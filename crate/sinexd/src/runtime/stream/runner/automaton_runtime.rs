@@ -144,11 +144,47 @@ impl RuntimeRunner {
         consumer_config.liveness_observer = Some(liveness_observer);
 
         let consumer = Arc::new(JetStreamEventConsumer::new(
-            nats_client,
-            env,
+            nats_client.clone(),
+            env.clone(),
             consumer_config,
             handler,
         ));
+
+        let mut invalidation_sub = {
+            let stream_name = env.nats_stream_name("SINEX_RAW_EVENTS_DERIVED_INVALIDATIONS");
+            let queue_group = format!("derived.invalidation.{}", self.module.module_name());
+            let deliver_subject = nats_client.new_inbox();
+            let js = async_nats::jetstream::new(nats_client.clone());
+            match js.get_stream(&stream_name).await {
+                Ok(stream) => {
+                    let config = async_nats::jetstream::consumer::push::Config {
+                        deliver_subject,
+                        deliver_group: Some(queue_group.clone()),
+                        ..Default::default()
+                    };
+                    match stream.create_consumer(config).await {
+                        Ok(consumer) => match consumer.messages().await {
+                            Ok(messages) => Some(messages),
+                            Err(error) => {
+                                warn!(automaton = %self.module.module_name(), error = %error,
+                                    "Failed to start bridge invalidation consumer");
+                                None
+                            }
+                        },
+                        Err(error) => {
+                            warn!(automaton = %self.module.module_name(), error = %error,
+                                "Failed to create bridge invalidation consumer");
+                            None
+                        }
+                    }
+                }
+                Err(error) => {
+                    warn!(automaton = %self.module.module_name(), error = %error,
+                        "Failed to get bridge invalidation stream");
+                    None
+                }
+            }
+        };
 
         // sinex-li78: hand the test/harness-only consumer-ready sender (see
         // `RuntimeRunner::confirmed_consumer_ready_tx` field doc) to the
@@ -242,6 +278,7 @@ impl RuntimeRunner {
             enum LoopAction {
                 Event(Option<Event<JsonValue>>),
                 FlushTick,
+                Invalidation(Option<Vec<u8>>),
             }
 
             let action = if drain_controller.is_requested() {
@@ -250,6 +287,9 @@ impl RuntimeRunner {
                 tokio::select! {
                     event = receiver.recv() => LoopAction::Event(event),
                     _ = flush_ticker.tick() => LoopAction::FlushTick,
+                    payload = crate::runtime::automaton::recv_invalidation(
+                        &mut invalidation_sub, None,
+                    ) => LoopAction::Invalidation(payload),
                 }
             };
 
@@ -263,6 +303,12 @@ impl RuntimeRunner {
                             "Windowed periodic flush failed; continuing"
                         );
                     }
+                }
+                LoopAction::Invalidation(Some(payload)) => {
+                    self.module.process_invalidation_message(&payload).await?;
+                }
+                LoopAction::Invalidation(None) => {
+                    invalidation_sub = None;
                 }
                 LoopAction::Event(next_event) => {
                     let Some(first) = next_event else {
