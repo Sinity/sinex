@@ -109,6 +109,10 @@ async fn emit_event_rejects_offset_mismatch() -> TestResult<()> {
     .from_material_at(material_id, 1)
     .with_offset_start(1)?
     .with_offset_end(2)?
+    .at_time(
+        sinex_primitives::Timestamp::from_unix_timestamp_millis(1_710_000_000_123)
+            .ok_or_else(|| SinexError::processing("test timestamp should be valid"))?,
+    )
     .build()
     .expect("infallible: test provenance set");
 
@@ -118,6 +122,31 @@ async fn emit_event_rejects_offset_mismatch() -> TestResult<()> {
         .expect_err("stage-as-you-go should not rewrite material offsets");
 
     assert!(err.to_string().contains("offsets do not match"));
+    Ok(())
+}
+
+#[sinex_test]
+async fn emit_event_rejects_missing_material_started_at_instead_of_fabricating_now()
+-> TestResult<()> {
+    let (tx, mut rx) = mpsc::channel(1);
+    let emitter = EventEmitter::new(tx, false);
+    let context = StageAsYouGoContext::from_optional_emitter(emitter);
+    let material_id = Uuid::now_v7();
+    let event = DynamicPayload::new(
+        "stage.test",
+        "line.captured",
+        serde_json::json!({"line": "hello"}),
+    )
+    .from_material_at(material_id, 12)
+    .build()
+    .expect("infallible: test provenance set");
+
+    let error = context
+        .emit_event_with_provenance(event, material_id, Some(12), None)
+        .await
+        .expect_err("missing material timing must not synthesize a provenance clock");
+    assert!(error.to_string().contains("no durable started_at timestamp"));
+    assert!(rx.try_recv().is_err(), "failed event must not be emitted");
     Ok(())
 }
 

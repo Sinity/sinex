@@ -7,7 +7,6 @@ use crate::runtime::{RuntimeResult, SinexError};
 use serde_json::{Map as JsonMap, json};
 use sinex_primitives::Id;
 use sinex_primitives::JsonValue;
-use sinex_primitives::Timestamp;
 use sinex_primitives::events::{Event, Provenance};
 use std::collections::HashMap;
 use std::io::ErrorKind;
@@ -372,11 +371,13 @@ impl StageAsYouGoContext {
     ) -> RuntimeResult<Uuid> {
         let anchor_byte = offset_start.or(offset_end).unwrap_or(0);
         if event.ts_orig.is_none() {
-            event.ts_orig = Some(
-                self.material_started_at(source_material_id)
-                    .await
-                    .unwrap_or_else(Timestamp::now),
-            );
+            event.ts_orig = Some(self.material_started_at(source_material_id).await.ok_or_else(
+                || {
+                    SinexError::processing(format!(
+                        "source material {source_material_id} has no durable started_at timestamp"
+                    ))
+                },
+            )?);
         }
 
         validate_stage_material_provenance(
