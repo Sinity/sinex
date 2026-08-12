@@ -195,13 +195,11 @@ impl DocumentParserAutomaton {
         };
 
         if content.len() as u64 > MAX_DOCUMENT_BYTES {
-            tracing::warn!(
-                file_path = %file_path,
-                size = content.len(),
-                max = MAX_DOCUMENT_BYTES,
-                "Document exceeds size cap, skipping"
-            );
-            return Ok(Vec::new());
+            return Err(oversized_input_error(
+                "document",
+                &file_path,
+                content.len(),
+            ));
         }
 
         let natural_key = file_path.clone();
@@ -339,12 +337,11 @@ impl DocumentParserAutomaton {
         }
 
         if stdout.len() as u64 > MAX_DOCUMENT_BYTES {
-            tracing::warn!(
-                parent_id = %parent_id_str,
-                size = stdout.len(),
-                "Terminal output exceeds size cap, skipping"
-            );
-            return Ok(Vec::new());
+            return Err(oversized_input_error(
+                "terminal output",
+                &parent_id_str,
+                stdout.len(),
+            ));
         }
 
         let document_id = derive_document_id("terminal", &natural_key);
@@ -427,6 +424,22 @@ impl DocumentParserAutomaton {
 }
 
 // ── Helpers ─────────────────────────────────────────────────────────────
+
+/// Report an oversized input as a deterministic data-shaped failure.
+///
+/// Returning `InputParsing` is intentional: the automaton adapter classifies it
+/// as a data error and durably routes the parent event to the processing-failure
+/// stream. An empty successful output would advance parser progress while
+/// leaving no recoverable evidence of the rejected input.
+fn oversized_input_error(
+    input_kind: &str,
+    source_identity: &str,
+    size: usize,
+) -> AutomatonLogicError {
+    AutomatonLogicError::InputParsing(format!(
+        "document parser rejected oversized {input_kind} from {source_identity}: {size} bytes exceeds maximum {MAX_DOCUMENT_BYTES} bytes"
+    ))
+}
 
 /// Extract YAML-like frontmatter between leading `---` delimiters.
 /// Returns `(frontmatter_map, body_without_frontmatter, body_byte_offset)`,
