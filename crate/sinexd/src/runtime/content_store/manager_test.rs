@@ -113,6 +113,25 @@ async fn require_ingest_filename_rejects_paths_without_final_component() -> Test
     Ok(())
 }
 
+#[sinex_test]
+async fn temporary_blob_path_guard_removes_upload_on_scope_exit() -> TestResult<()> {
+    let temp_dir = tempfile::tempdir()?;
+    let path = Utf8PathBuf::from_path_buf(temp_dir.path().join("upload.tmp"))
+        .map_err(|_| color_eyre::eyre::eyre!("temporary path must be UTF-8"))?;
+    tokio::fs::write(&path, b"transient upload").await?;
+
+    {
+        let guard = super::TemporaryBlobPath::new(path.clone());
+        assert!(guard.as_path().exists());
+    }
+
+    assert!(
+        !path.exists(),
+        "anti-vacuity: an upload temp path must be removed when ingest exits through any path"
+    );
+    Ok(())
+}
+
 fn manager_fixture(ctx: &TestContext) -> TestResult<(ContentStoreManager, tempfile::TempDir)> {
     let temp_dir = tempfile::TempDir::new()?;
     let root_path = Utf8PathBuf::from_path_buf(temp_dir.path().join("content-store"))

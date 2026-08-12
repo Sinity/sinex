@@ -38,6 +38,36 @@ pub use sinex_db::models::Blob as BlobMetadata;
 /// Default capacity for content-store-manager event channels to prevent unbounded buffering.
 pub const BLOB_EVENT_CHANNEL_CAPACITY: usize = 1024;
 
+/// Owns the transient source path used while copying an in-memory upload into
+/// the durable CAS.  The CAS copy is not the ownership transfer: every error
+/// after this path is created must still remove the source file, including
+/// post-write verification and metadata-registration failures.
+struct TemporaryBlobPath(Utf8PathBuf);
+
+impl TemporaryBlobPath {
+    fn new(path: Utf8PathBuf) -> Self {
+        Self(path)
+    }
+
+    fn as_path(&self) -> &Utf8Path {
+        &self.0
+    }
+}
+
+impl Drop for TemporaryBlobPath {
+    fn drop(&mut self) {
+        if let Err(error) = std::fs::remove_file(self.0.as_std_path())
+            && error.kind() != std::io::ErrorKind::NotFound
+        {
+            warn!(
+                error = %error,
+                path = %self.0,
+                "Failed to remove temporary blob file after ingest"
+            );
+        }
+    }
+}
+
 fn verification_status_persist_error(
     content_key: &str,
     status: BlobVerificationStatus,
@@ -402,17 +432,22 @@ impl ContentStoreManager {
         }
 
         // Write to secure temp file for content-store ingestion
-        let temp_file_path = create_secure_temp_path("sinex_blob", "tmp")
-            .map_err(|e| SinexError::io(std::io::Error::other(e)))?;
+        let temp_file_path = TemporaryBlobPath::new(
+            create_secure_temp_path("sinex_blob", "tmp")
+                .map_err(|e| SinexError::io(std::io::Error::other(e)))?,
+        );
 
-        let mut temp_file = tokio::fs::File::create(&temp_file_path)
+        let mut temp_file = tokio::fs::File::create(temp_file_path.as_path())
             .await
             .map_err(SinexError::io)?;
         // sinex-vyi3: this transient file (holding the full content bytes
         // about to be staged into CAS) lives in the SYSTEM temp directory,
         // not under any of the ingest-spool paths the NixOS directoryRules
         // fix tightens -- restrict it explicitly.
-        super::restrict_permissions(temp_file_path.as_std_path(), super::CONTENT_STORE_FILE_MODE);
+        super::restrict_permissions(
+            temp_file_path.as_path().as_std_path(),
+            super::CONTENT_STORE_FILE_MODE,
+        );
         temp_file.write_all(content).await.map_err(SinexError::io)?;
         temp_file.sync_all().await.map_err(SinexError::io)?;
         drop(temp_file);
@@ -429,14 +464,6 @@ impl ContentStoreManager {
 
         self.verify_post_write(&content_key.key, &blake3_hash)
             .await?;
-
-        if let Err(e) = tokio::fs::remove_file(&temp_file_path).await {
-            warn!(
-                error = %e,
-                path = %temp_file_path,
-                "Failed to remove temporary blob file after ingest"
-            );
-        }
 
         self.register_new_blob(
             &content_key,
