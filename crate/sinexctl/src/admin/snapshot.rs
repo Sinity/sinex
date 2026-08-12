@@ -121,6 +121,14 @@ pub struct AdminSnapshotCommand {
     #[arg(long, env = "SINEX_STATE_DIR")]
     pub state_dir: Option<PathBuf>,
 
+    /// NATS JetStream store directory for an alternate deployment.
+    ///
+    /// The deployed default is discovered from `SINEX_NATS_JETSTREAM_STORE_DIR`
+    /// on `sinexd.service`; this override keeps a separate NATS root explicit
+    /// when `--state-dir` points at a fixture or alternate topology.
+    #[arg(long, env = "SINEX_NATS_JETSTREAM_STORE_DIR")]
+    pub nats_store_dir: Option<PathBuf>,
+
     /// Stop sinex services automatically if they are running.
     #[arg(long)]
     pub auto_stop: bool,
@@ -142,8 +150,8 @@ EXAMPLES:
     sinexctl ops state inspect --archive /var/backup/sinex/latest.sinex.tar.zst
 
 NOTES:
-    This reads manifest.json from the archive and checks that non-empty
-    component paths named by the manifest are present in the tar member list.
+    This reads manifest.json from the archive and checks that component paths
+    named by the manifest are present in the tar member list.
 ")]
 pub struct AdminSnapshotInspectCommand {
     /// Snapshot archive to inspect.
@@ -312,6 +320,7 @@ impl AdminSnapshotCommand {
         let captures_nats = self.components.iter().any(|c| c == &Component::Nats);
         let topology = exec::SnapshotTopology::discover(
             self.state_dir.as_deref(),
+            self.nats_store_dir.as_deref(),
             captures_nats && !self.dry_run,
             !self.dry_run && mode.requires_quiescence(),
         )?;
@@ -798,7 +807,7 @@ impl AdminSnapshotRestoreCommand {
             );
         }
 
-        let topology = exec::SnapshotTopology::discover(None, false, true)
+        let topology = exec::SnapshotTopology::discover(None, None, false, true)
             .context("discover deployed backup topology before restore planning")?;
         let active_services = topology.active_writer_units.clone();
         let mut warnings = Vec::new();
@@ -906,6 +915,8 @@ impl AdminSnapshotRestoreCommand {
             );
         }
 
+        self.verify_postgres_restore_target_empty(&inspect.manifest, topology)?;
+
         std::fs::create_dir_all(&self.target_dir)
             .with_context(|| format!("create restore target {}", self.target_dir.display()))?;
         exec::tar_extract_zstd(&self.archive, &self.target_dir).with_context(|| {
@@ -915,7 +926,7 @@ impl AdminSnapshotRestoreCommand {
             )
         })?;
 
-        let postgres_row_counts = self.execute_postgres_restore_drill(&inspect.manifest, topology)?;
+        let postgres_row_counts = self.execute_postgres_restore_drill(&inspect.manifest)?;
 
         Ok(observe_restored_target(
             &inspect.manifest,
@@ -928,7 +939,6 @@ impl AdminSnapshotRestoreCommand {
     fn execute_postgres_restore_drill(
         &self,
         manifest: &SnapshotManifest,
-        topology: &exec::SnapshotTopology,
     ) -> Result<Option<BTreeMap<String, i64>>> {
         let Some(component) = manifest
             .components
@@ -954,10 +964,6 @@ impl AdminSnapshotRestoreCommand {
             )
         })?;
         let dump_path = self.target_dir.join(&component.path);
-        topology.verify_restore_database_empty(
-            restore_database_url,
-            self.psql_bin.as_deref(),
-        )?;
         exec::psql_execute(
             restore_database_url,
             "CREATE EXTENSION IF NOT EXISTS timescaledb; SELECT timescaledb_pre_restore();",
@@ -985,6 +991,27 @@ impl AdminSnapshotRestoreCommand {
         )
         .context("query restored postgres row counts")?;
         Ok(Some(observed))
+    }
+
+    fn verify_postgres_restore_target_empty(
+        &self,
+        manifest: &SnapshotManifest,
+        topology: &exec::SnapshotTopology,
+    ) -> Result<()> {
+        if !manifest
+            .components
+            .iter()
+            .any(|component| component.name == "postgres" && component.bytes > 0)
+        {
+            return Ok(());
+        }
+        let restore_database_url = self.restore_database_url.as_deref().ok_or_else(|| {
+            eyre!(
+                "postgres restore drill execution requires --restore-database-url pointing at \
+                 an empty drill database"
+            )
+        })?;
+        topology.verify_restore_database_empty(restore_database_url, self.psql_bin.as_deref())
     }
 }
 
@@ -1084,15 +1111,23 @@ fn inspect_snapshot_archive(archive_path: &Path) -> Result<SnapshotInspectResult
     let entries = exec::tar_list_zstd(archive_path)
         .with_context(|| format!("list snapshot archive {}", archive_path.display()))?;
     validate_archive_entries_safe(&entries)?;
-    verify_archive_content_integrity(archive_path, &manifest)
-        .with_context(|| format!("verify snapshot component hashes at {}", archive_path.display()))?;
-    let missing_component_paths = manifest
+    let missing_component_paths: Vec<String> = manifest
         .components
         .iter()
-        .filter(|component| component.bytes > 0)
         .filter(|component| !archive_path_contains(&entries, &component.path))
         .map(|component| component.path.clone())
         .collect();
+    // Preserve a structured coverage report for inspect callers. Restore still
+    // fails closed on this list, while hash verification remains strict for
+    // archives whose declared members are present.
+    if missing_component_paths.is_empty() {
+        verify_archive_content_integrity(archive_path, &manifest).with_context(|| {
+            format!(
+                "verify snapshot component hashes at {}",
+                archive_path.display()
+            )
+        })?;
+    }
     let components = manifest
         .components
         .iter()
@@ -1175,6 +1210,20 @@ struct RestoreTargetState {
 }
 
 fn classify_restore_target(target_dir: &Path) -> Result<RestoreTargetState> {
+    match std::fs::symlink_metadata(target_dir) {
+        Ok(metadata) if metadata.file_type().is_symlink() => {
+            bail!(
+                "restore target must not be a symbolic link: {}",
+                target_dir.display()
+            );
+        }
+        Ok(_) => {}
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+        Err(error) => {
+            return Err(error)
+                .with_context(|| format!("inspect restore target {}", target_dir.display()));
+        }
+    }
     if !target_dir.exists() {
         let parent = target_dir
             .parent()

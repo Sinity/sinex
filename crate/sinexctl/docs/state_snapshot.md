@@ -42,6 +42,7 @@ sinexctl ops state snapshot --output <path>
   [--dry-run]                      # estimate sizes, no archive
   [--database-url <url>]           # override DATABASE_URL
   [--state-dir <path>]             # override the deployed SINEX_STATE_DIR
+  [--nats-store-dir <path>]        # override the deployed JetStream store root
   [--auto-stop]                    # stop discovered active writer units automatically
   [--components postgres,nats,cas,state]  # subset, default all
 
@@ -62,13 +63,15 @@ sinexctl ops state restore --archive <path> --target-dir <empty-dir>
 | `cas`      | `$STATE_DIR/blob-repository/` directory tree        |
 | `state`    | Everything else under `$STATE_DIR` (spool, WALs, …) |
 
-These paths are deployment-specific. The command derives `SINEX_STATE_DIR` and
-`SINEX_CONTENT_STORE_PATH` from the active `sinexd.service` environment and
-derives the NATS `jetstream.store_dir` from the deployed `nats.service`
-configuration. On the current NixOS deployment they resolve to
+These paths are deployment-specific. The command derives `SINEX_STATE_DIR`,
+`SINEX_CONTENT_STORE_PATH`, and `SINEX_NATS_JETSTREAM_STORE_DIR` from the
+configured `sinexd.service` environment. For compatibility with older
+deployments, NATS discovery can strictly read `jetstream.store_dir` from the
+deployed `nats.service` configuration. On the current NixOS deployment they resolve to
 `/var/lib/sinex/state`, `/var/lib/sinex/state/blob-repository`, and
 `/var/lib/nats/jetstream`, respectively. If systemd cannot expose these
-values, capture fails instead of recording an empty component.
+values, or the explicit override is not supplied for an alternate topology,
+capture fails instead of recording an empty component.
 
 ## Archive layout
 
@@ -116,7 +119,8 @@ sinexctl ops state restore \
 The dry-run command does not extract or write restored state. It validates:
 
 - `manifest.json` is readable from the archive.
-- Non-empty component paths declared by the manifest are present in the tar.
+- Component paths declared by the manifest are present in the tar; missing
+  paths are reported as structured coverage evidence.
 - The target path is an empty directory, or does not exist under an existing
   parent directory.
 - Active snapshot-writer units are reported so destructive restore can quiesce
@@ -165,8 +169,9 @@ Isolated drill execution refuses to run unless:
   emptiness query must succeed; missing row-count evidence or a failed query
   makes the restore verdict fail closed.
 
-For the full deployed-topology integration test, use a dedicated empty drill
-database and opt in explicitly:
+The deployed-topology round-trip is an executable seam, not evidence that a
+NixOS integration run occurred. Use a dedicated empty drill database and opt
+in explicitly in a live deployment or NixOS VM:
 
 ```bash
 SINEX_REAL_TOPOLOGY_TEST=1 \
@@ -179,7 +184,9 @@ The test discovers `SINEX_STATE_DIR`, the NATS `jetstream.store_dir`, and
 active writer units from the live NixOS deployment, captures all components,
 then restores the archive into the supplied empty PostgreSQL drill database
 and isolated filesystem target. It is intentionally opt-in because it reads
-live state and requires an operator-provisioned empty database.
+live state and requires an operator-provisioned empty database. A focused
+unit/integration test with fake command seams does not establish this
+deployment evidence.
 
 The JSON/YAML result includes `observed_checks` comparing the isolated drill
 target against the manifest: source IDs, NATS JetStream member paths when
@@ -225,8 +232,8 @@ sinexctl ops state inspect \
     --archive /var/backup/sinex/2026-05-15.sinex.tar.zst
 ```
 
-The command reads `manifest.json`, lists the archive, and reports any non-empty
-component paths from the manifest that are missing from the tar member list.
+The command reads `manifest.json`, lists the archive, and reports any manifest
+component paths that are missing from the tar member list.
 
 ```bash
 cat "$RESTORE_DIR/manifest.json" | jq .

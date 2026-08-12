@@ -298,6 +298,9 @@ let
     "SINEX_LOG_DIR=${logDir}"
     "SINEX_NATS_URL=${natsUrl}"
     "SINEX_NATS_MONITORING_PORT=${toString runtimeCfg.nats.monitoringPort}"
+    # The backup/restore CLI must use the NATS service's resolved JetStream
+    # root, which may intentionally live outside SINEX_STATE_DIR.
+    "SINEX_NATS_JETSTREAM_STORE_DIR=${toString runtimeCfg.nats.storeDir}"
     # Both event_engine and API access the same content-store root; set here
     # so all core services share a consistent path without per-service repetition.
     "SINEX_CONTENT_STORE_PATH=${blobDir}"

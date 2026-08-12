@@ -179,17 +179,23 @@ impl SnapshotTopology {
     /// normal path reads the service environment and NATS unit configuration.
     pub fn discover(
         state_dir_override: Option<&Path>,
+        nats_store_dir_override: Option<&Path>,
         require_nats: bool,
         inspect_active_units: bool,
     ) -> Result<Self> {
         let state_dir = match state_dir_override {
             Some(path) => path.to_path_buf(),
-            None => sinex_service_path("SINEX_STATE_DIR")
-                .context("resolve deployed SINEX_STATE_DIR")?,
+            None => {
+                sinex_service_path("SINEX_STATE_DIR").context("resolve deployed SINEX_STATE_DIR")?
+            }
         };
         let nats_store_dir = if require_nats {
-            Some(if state_dir_override.is_some() {
-                state_dir.join("nats/jetstream")
+            Some(if let Some(path) = nats_store_dir_override {
+                path.to_path_buf()
+            } else if state_dir_override.is_some() {
+                bail!(
+                    "NATS JetStream store directory must be explicit when --state-dir is supplied"
+                );
             } else {
                 nats_jetstream_store_dir()
                     .context("discover deployed NATS JetStream store directory")?
@@ -511,7 +517,7 @@ pub fn active_sinex_services() -> Result<Vec<String>> {
 
 /// Stop the active writer services without stopping PostgreSQL via a target.
 pub fn stop_sinex_services() -> Result<()> {
-    let topology = SnapshotTopology::discover(None, false, true)?;
+    let topology = SnapshotTopology::discover(None, None, false, true)?;
     stop_sinex_services_for(&topology.active_writer_units)
 }
 
@@ -555,13 +561,15 @@ fn is_snapshot_writer_unit(unit: &str) -> bool {
         return false;
     }
     let is_service_or_timer = unit.ends_with(".service") || unit.ends_with(".timer");
+    let is_read_only_support = unit == "sinex-preflight.service";
     let is_target_access = unit.contains("-target-access.service");
     let is_desktop_setup = unit.starts_with("sinex-kitty-")
         || unit.starts_with("sinex-terminal-target-access")
         || unit.starts_with("sinex-browser-target-access")
         || unit.starts_with("sinex-desktop-target-access")
+        || unit.starts_with("sinex-desktop-acl-")
         || unit.starts_with("sinex-document-target-access");
-    is_service_or_timer && !is_target_access && !is_desktop_setup
+    is_service_or_timer && !is_read_only_support && !is_target_access && !is_desktop_setup
 }
 
 /// Read a path-valued environment variable from the deployed `sinexd.service`.
@@ -595,6 +603,19 @@ pub fn sinex_service_path(variable: &str) -> Result<PathBuf> {
 /// validated configuration. This avoids coupling snapshots to SINEX_STATE_DIR:
 /// NATS is deployed as a separate service with its own store root.
 pub fn nats_jetstream_store_dir() -> Result<PathBuf> {
+    if let Ok(path) = sinex_service_path("SINEX_NATS_JETSTREAM_STORE_DIR") {
+        if path.is_absolute() {
+            return Ok(path);
+        }
+        bail!(
+            "sinexd.service SINEX_NATS_JETSTREAM_STORE_DIR is not absolute: {}",
+            path.display()
+        );
+    }
+
+    // Keep a strict compatibility seam for deployments generated before the
+    // explicit sinexd environment contract existed. Both discovery paths must
+    // identify a non-empty absolute path; there is no state-root fallback.
     let output = Command::new("systemctl")
         .args(["show", "nats.service", "--property=ExecStart", "--value"])
         .stdin(Stdio::null())
@@ -630,7 +651,11 @@ fn nats_store_dir_from_config(config: &str) -> Result<PathBuf> {
         .and_then(Value::as_str)
         .filter(|path| !path.is_empty())
         .ok_or_else(|| eyre!("NATS config has no non-empty jetstream.store_dir"))?;
-    Ok(PathBuf::from(store_dir))
+    let path = PathBuf::from(store_dir);
+    if !path.is_absolute() {
+        bail!("NATS config jetstream.store_dir is not absolute: {store_dir}");
+    }
+    Ok(path)
 }
 
 /// Copy a directory tree recursively with `cp -a`.
@@ -775,7 +800,10 @@ pub fn cp_entry_live(src: &Path, dst: &Path) -> Result<()> {
 
 #[cfg(test)]
 mod tests {
-    use super::{nats_config_path_from_exec_start, nats_store_dir_from_config};
+    use super::{
+        SnapshotTopology, is_snapshot_writer_unit, nats_config_path_from_exec_start,
+        nats_store_dir_from_config,
+    };
 
     #[test]
     fn parses_systemd_nats_execstart_and_json_store_dir() {
@@ -787,11 +815,9 @@ mod tests {
             "/nix/store/config"
         );
         assert_eq!(
-            nats_store_dir_from_config(
-                r#"{"jetstream":{"store_dir":"/var/lib/nats/jetstream"}}"#
-            )
-            .expect("NATS JSON should expose jetstream.store_dir")
-            .to_string_lossy(),
+            nats_store_dir_from_config(r#"{"jetstream":{"store_dir":"/var/lib/nats/jetstream"}}"#)
+                .expect("NATS JSON should expose jetstream.store_dir")
+                .to_string_lossy(),
             "/var/lib/nats/jetstream"
         );
     }
@@ -801,5 +827,44 @@ mod tests {
         let error = nats_store_dir_from_config(r#"{"jetstream":{}}"#)
             .expect_err("missing NATS store_dir must not silently select a fallback");
         assert!(error.to_string().contains("store_dir"));
+    }
+
+    #[test]
+    fn rejects_relative_nats_store_dir() {
+        let error =
+            nats_store_dir_from_config(r#"{"jetstream":{"store_dir":"relative/jetstream"}}"#)
+                .expect_err("NATS store paths must be absolute deployment paths");
+        assert!(error.to_string().contains("not absolute"));
+    }
+
+    #[test]
+    fn discovers_an_explicit_alternate_nats_store_without_state_root_assumption() {
+        let topology = SnapshotTopology::discover(
+            Some(std::path::Path::new("/var/lib/sinex/state")),
+            Some(std::path::Path::new("/var/lib/nats/jetstream")),
+            true,
+            false,
+        )
+        .expect("explicit topology overrides should not need systemd");
+        assert_eq!(
+            topology.nats_store_dir,
+            Some(std::path::PathBuf::from("/var/lib/nats/jetstream"))
+        );
+    }
+
+    #[test]
+    fn quiesce_discovery_includes_writers_but_excludes_access_and_preflight_units() {
+        assert!(is_snapshot_writer_unit("sinexd.service"));
+        assert!(is_snapshot_writer_unit("nats.service"));
+        assert!(is_snapshot_writer_unit("sinex-document-scan.service"));
+        assert!(is_snapshot_writer_unit("sinex-document-scan.timer"));
+        assert!(!is_snapshot_writer_unit("sinex-preflight.service"));
+        assert!(!is_snapshot_writer_unit(
+            "sinex-desktop-target-access.service"
+        ));
+        assert!(!is_snapshot_writer_unit(
+            "sinex-desktop-acl-refresh.service"
+        ));
+        assert!(!is_snapshot_writer_unit("postgresql.service"));
     }
 }
