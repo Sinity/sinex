@@ -27,3 +27,22 @@ async fn purge_stale_removes_idle_entries_without_lookup() -> TestResult<()> {
     assert!(set.is_empty());
     Ok(())
 }
+
+#[sinex_test]
+async fn refreshing_ready_material_reschedules_expiration() -> TestResult<()> {
+    let set = MaterialReadySet::with_policy(Duration::from_millis(20), 1);
+    let material_id = Uuid::now_v7();
+
+    set.mark_ready(material_id);
+    std::thread::sleep(Duration::from_millis(10));
+    set.mark_ready(material_id);
+    std::thread::sleep(Duration::from_millis(15));
+
+    assert!(set.is_ready(&material_id));
+    assert_eq!(set.purge_stale(), 0);
+
+    std::thread::sleep(Duration::from_millis(10));
+    assert_eq!(set.purge_stale(), 1);
+    assert!(set.is_empty());
+    Ok(())
+}
