@@ -338,7 +338,7 @@ impl<B: ScreenCaptureBackend> MediaScreenCaptureDriver<B> {
         let mut handle = acq.begin_material(SOURCE_ID).await?;
         let material_id: Id<SourceMaterial> = Id::from_uuid(handle.material_id);
         acq.append_slice(&mut handle, &captured.bytes).await?;
-        acq.finalize(&mut handle, "screenshot-captured").await?;
+        acq.finalize(handle, "screenshot-captured").await?;
 
         let event = build_screenshot_event(
             &captured,
