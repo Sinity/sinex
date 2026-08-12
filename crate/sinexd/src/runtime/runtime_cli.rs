@@ -976,9 +976,22 @@ impl<T: crate::runtime::stream::RuntimeModule + ExplorationProvider + Default + 
 
     async fn connect_primary_db(args: &RuntimeCli) -> RuntimeResult<PgPool> {
         let database_url = resolve_primary_database_url(args)?;
-        PgPool::connect(&database_url)
+        let service_name = default_service_name(args);
+        let runtime_config = crate::runtime::RuntimeConfig::load_from_env(service_name.as_str())
+            .map_err(|error| {
+                SinexError::configuration("Invalid runtime database configuration")
+                    .with_source(error)
+            })?;
+        // Preserve the former sqlx default of ten connections while routing
+        // runtime pools through the shared timeout and capacity policy. The
+        // pool ceiling comes from RuntimeConfig, so SINEX_DB_POOL_SIZE and
+        // its per-service form are effective on this production route.
+        let config = sinex_db::PoolConfig::from_env_with_default_max_connections(
+            runtime_config.database_pool_size,
+        );
+        sinex_db::create_pool_with_config(&database_url, &config)
             .await
-            .map_err(|e| SinexError::unknown(format!("Failed to connect to database: {e}")))
+            .map_err(|e| SinexError::database("Failed to connect runtime database").with_source(e))
     }
 
     async fn connect_nats_transport(

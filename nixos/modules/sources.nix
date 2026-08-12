@@ -621,6 +621,7 @@ let
             mkServiceEnv (
               [
                 "RUST_LOG=${coreCfg.event_engine.logLevel}"
+                "SINEX_DB_POOL_SIZE=${toString cfg.database.connectionPool.maxConnections}"
                 # Event engine pool size and timeouts.
                 "SINEX_EVENT_ENGINE_POOL_SIZE=${toString cfg.database.connectionPool.maxConnections}"
                 "SINEX_EVENT_ENGINE_POOL_ACQUIRE_TIMEOUT_SECS=${toString cfg.database.connectionPool.connectionTimeout}"

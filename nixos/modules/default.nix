@@ -435,8 +435,8 @@ in
               options = {
                 maxConnections = mkOption {
                   type = positive;
-                  default = 4;
-                  description = "Maximum connections per Sinex process.";
+                  default = 10;
+                  description = "Maximum connections per Sinex runtime pool.";
                 };
                 minConnections = mkOption {
                   type = positive;
@@ -925,7 +925,7 @@ in
                   description = ''
                     sinex-d4qg: the API's own database connection pool size,
                     kept distinct from the shared per-service default
-                    (database.connectionPool.maxConnections, currently 4)
+                    (database.connectionPool.maxConnections, currently 10)
                     that is applied uniformly to the event engine and every
                     automaton. A single long-lived transaction on the API's
                     pool -- e.g. a large replay preview's cascade-expansion

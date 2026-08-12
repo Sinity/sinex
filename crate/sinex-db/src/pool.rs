@@ -149,10 +149,26 @@ impl Default for PoolConfig {
 impl PoolConfig {
     #[must_use]
     pub fn from_env() -> Self {
+        Self::from_env_with_default_max_connections(Self::default().max_connections)
+    }
+
+    /// Load pool settings from the process environment using an explicit
+    /// fallback for the per-process pool ceiling.
+    #[must_use]
+    pub fn from_env_with_default_max_connections(default_max_connections: u32) -> Self {
         let mut config = Self::default();
+        config.max_connections = default_max_connections;
 
         if let Some(num) =
             env_parse_override("SINEX_DB_MAX_CONNECTIONS", "database pool max connections")
+        {
+            config.max_connections = num;
+        } else if let Some(num) =
+            env_parse_override("SINEX_DB_POOL_SIZE", "database pool size")
+        {
+            config.max_connections = num;
+        } else if let Some(num) =
+            env_parse_override("SINEX_DATABASE_POOL_SIZE", "database pool size")
         {
             config.max_connections = num;
         }
