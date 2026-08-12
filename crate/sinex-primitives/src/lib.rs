@@ -45,6 +45,7 @@ pub mod schema_constraints;
 pub mod semantic;
 pub mod session_lane;
 pub mod source_contracts;
+pub mod source_material_manifest;
 pub mod text;
 pub mod views;
 
@@ -174,6 +175,12 @@ pub use ids::Id;
 pub use llm::*;
 pub use output_kind::{
     OUTPUT_KIND_DECLARATIONS, OutputKind, OutputKindDeclaration, declared_output_kind,
+};
+pub use source_material_manifest::{
+    ByteRange as MaterialByteRange, Captured as CapturedMetadata, ContainerEnvelope,
+    ContinuityEnvelope, ContentDigest, FilesystemEnvelope, InterpretationEnvelope,
+    MaterialBytes, MaterialManifestV1, MetadataAvailability, ProvenanceEnvelope,
+    TransportEnvelope, MATERIAL_MANIFEST_V1,
 };
 pub use primitives::Uuid;
 pub use public_ref::{
