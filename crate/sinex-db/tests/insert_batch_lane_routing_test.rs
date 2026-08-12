@@ -10,6 +10,9 @@
 
 use sinex_db::DbPoolExt;
 use sinex_primitives::events::payload::DynamicPayload;
+use sinex_primitives::events::EventId;
+use sinex_primitives::derivation::DerivedProductClass;
+use sinex_primitives::Id;
 use xtask::sandbox::prelude::*;
 
 #[sinex_test]
@@ -73,5 +76,78 @@ async fn insert_batch_routes_reflection_event_out_of_multi_element_batch(
          hardcodes core.events regardless of source_role"
     );
 
+    Ok(())
+}
+
+#[sinex_test]
+async fn insert_batch_keeps_cross_chunk_reflection_parent_live(ctx: TestContext) -> TestResult<()> {
+    let material_id = ctx
+        .create_source_material(Some("kgp4-cross-chunk-parent-material"))
+        .await?;
+    let parent_id = Id::new();
+    let mut parent = DynamicPayload::new(
+        "sinex.parent",
+        "kgp4.reflection.parent",
+        serde_json::json!({"role": "reflection-parent"}),
+    )
+    .from_material(material_id)
+    .build()?;
+    parent.id = Some(parent_id);
+
+    let mut child = DynamicPayload::new(
+        "sinex.child",
+        "kgp4.reflection.child",
+        serde_json::json!({"role": "reflection-child"}),
+    )
+    .from_parents(vec![EventId::from_uuid(*parent_id.as_uuid())])?
+    .build()?;
+    child.product_class = Some(DerivedProductClass::CanonicalDerivedEvent);
+
+    // Put the child in chunk one and its parent in chunk two. The production
+    // insert path must validate parent liveness against the full batch, not
+    // only the current 50-row chunk.
+    let mut batch = vec![child];
+    for index in 0..49 {
+        batch.push(
+            DynamicPayload::new(
+                "kgp4-cross-chunk-activity",
+                "kgp4.activity.filler",
+                serde_json::json!({"index": index}),
+            )
+            .from_material(material_id)
+            .build()?,
+        );
+    }
+    batch.push(parent);
+
+    let inserted = ctx.pool().events().insert_batch(batch).await?;
+    assert_eq!(inserted.len(), 51);
+    let child_id = inserted
+        .iter()
+        .find(|event| event.event_type.as_str() == "kgp4.reflection.child")
+        .and_then(|event| event.id.as_ref())
+        .expect("cross-chunk child should be inserted");
+    let parent_id = inserted
+        .iter()
+        .find(|event| event.event_type.as_str() == "kgp4.reflection.parent")
+        .and_then(|event| event.id.as_ref())
+        .expect("cross-chunk parent should be inserted");
+
+    let child_lanes: (i64, i64) = sqlx::query_as(
+        "SELECT (SELECT count(*) FROM reflection.events WHERE id = $1),\
+                (SELECT count(*) FROM core.events WHERE id = $1)",
+    )
+    .bind(child_id.as_uuid())
+    .fetch_one(ctx.pool())
+    .await?;
+    let parent_lanes: (i64, i64) = sqlx::query_as(
+        "SELECT (SELECT count(*) FROM reflection.events WHERE id = $1),\
+                (SELECT count(*) FROM core.events WHERE id = $1)",
+    )
+    .bind(parent_id.as_uuid())
+    .fetch_one(ctx.pool())
+    .await?;
+    assert_eq!(child_lanes, (1, 0));
+    assert_eq!(parent_lanes, (1, 0));
     Ok(())
 }

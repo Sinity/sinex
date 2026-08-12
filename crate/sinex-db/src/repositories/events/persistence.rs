@@ -947,14 +947,12 @@ impl<'a> EventRepository<'a> {
         ensure_no_intra_batch_synthesis_cycles(&synthesis_checks)?;
 
         for chunk in events.chunks(chunk_size) {
-            let (chunk_activity_event_ids, chunk_reflection_event_ids) =
-                Self::batch_event_ids_by_lane(chunk);
             let mut chunk_results = self
                 .insert_batch_unnest_in_tx(
                     &mut tx,
                     chunk.to_vec(),
-                    &chunk_activity_event_ids,
-                    &chunk_reflection_event_ids,
+                    &activity_event_ids,
+                    &reflection_event_ids,
                 )
                 .await?;
             processed += chunk_results.len();
