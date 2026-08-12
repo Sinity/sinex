@@ -1131,3 +1131,30 @@ async fn test_create_entities_transaction_atomicity(ctx: TestContext) -> TestRes
 
     Ok(())
 }
+
+/// sinex-fm8z (issue 1 of 2): an unrecognized `material_type` string falls
+/// through `match material_type { ... _ => SourceMaterial::blob() }`
+/// silently rather than erroring, unlike `EntityTypeMapper` which rejects
+/// unknown entity types explicitly. A caller passing a typo'd or
+/// unsupported material_type gets a material silently mis-registered as a
+/// generic blob rather than a clear failure.
+#[sinex_test]
+#[ignore = "sinex-fm8z open: register_source_material silently downgrades an unrecognized material_type to a generic blob instead of erroring"]
+async fn register_source_material_rejects_unrecognized_material_type(
+    ctx: TestContext,
+) -> TestResult<()> {
+    let pool = ctx.pool();
+    let pkm = PkmService::new(pool.clone());
+
+    let result = pkm
+        .register_source_material("video", None, b"not a real material kind", None, json!({}))
+        .await;
+
+    assert!(
+        result.is_err(),
+        "sinex-fm8z: an unrecognized material_type ('video') must be rejected, not silently \
+         registered as a generic blob -- got {result:?}"
+    );
+
+    Ok(())
+}

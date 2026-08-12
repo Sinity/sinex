@@ -486,3 +486,35 @@ async fn shadow_lane_relation_coverage_reflects_actual_material_grounding_sinex_
     );
     Ok(())
 }
+
+/// sinex-u39b (sub-issue 3 of 6): `read_stream_checkpoint_events` computes
+/// `limit` via `end_seq.saturating_sub(start_seq)`. For a malformed scope
+/// with `start_seq > end_seq`, that saturates to 0 rather than surfacing an
+/// error -- the lane silently processes zero events and still reports
+/// success instead of rejecting the nonsensical range.
+#[sinex_test]
+#[ignore = "sinex-u39b open: entity_chain_shadow silently accepts a start_seq > end_seq scope as zero-events-processed success instead of erroring"]
+async fn shadow_lane_rejects_start_seq_past_end_seq_sinex_u39b(ctx: TestContext) -> TestResult<()> {
+    let pool = ctx.pool();
+    seed_declarations(pool).await?;
+    insert_fixture_events(pool).await?;
+
+    let scope = DerivationScope::StreamCheckpoint {
+        stream: "core-events".to_string(),
+        filter_subjects: vec![],
+        start_seq: 100,
+        end_seq: Some(5),
+        coverage_window: None,
+        input_set_hash: "malformed-start-past-end".to_string(),
+    };
+
+    let result = run_entity_chain_shadow_lane(pool, scope, None, None, "malformed-range").await;
+    let succeeded_with_output_count = result.as_ref().ok().map(|r| r.outputs.entities.len());
+
+    assert!(
+        result.is_err(),
+        "sinex-u39b: a scope with start_seq (100) > end_seq (5) must be rejected, not silently \
+         accepted as a zero-event success (entity count if it succeeded: {succeeded_with_output_count:?})"
+    );
+    Ok(())
+}
