@@ -1334,6 +1334,49 @@ async fn configure_timescaledb(pool: &PgPool) -> Result<(), ApplyError> {
         "CREATE INDEX IF NOT EXISTS ix_events_source_family ON core.events ((split_part(source, '.', 1)))",
     )
     .await?;
+    // A root hypertable index is not sufficient evidence that every existing
+    // chunk has its physical index.  This can occur when a database was
+    // converged after chunks already existed, or when a prior per-chunk index
+    // operation stopped partway through.  Repair only missing chunk copies;
+    // do not drop/rebuild the root index, which would impose an avoidable
+    // table-wide lock on a large event store.  New chunks inherit the valid
+    // root index through Timescale's hypertable index machinery.
+    execute_sql(
+        pool,
+        r#"
+        DO $$
+        DECLARE
+            chunk_schema name;
+            chunk_name name;
+            chunk_index_name text;
+        BEGIN
+            FOR chunk_schema, chunk_name IN
+                SELECT c.chunk_schema, c.chunk_name
+                FROM timescaledb_information.chunks c
+                WHERE c.hypertable_schema = 'core'
+                  AND c.hypertable_name = 'events'
+            LOOP
+                chunk_index_name := chunk_name || '_ix_events_source_family';
+                IF NOT EXISTS (
+                    SELECT 1
+                    FROM pg_indexes
+                    WHERE schemaname = chunk_schema
+                      AND tablename = chunk_name
+                      AND indexname = chunk_index_name
+                ) THEN
+                    EXECUTE format(
+                        'CREATE INDEX IF NOT EXISTS %I ON %I.%I ((split_part(source, ''.'', 1)))',
+                        chunk_index_name,
+                        chunk_schema,
+                        chunk_name
+                    );
+                END IF;
+            END LOOP;
+        END
+        $$;
+        "#,
+    )
+    .await?;
     configure_reflection_timescaledb(pool).await?;
     execute_sql(
         pool,
