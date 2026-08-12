@@ -2110,9 +2110,21 @@ where
     ) -> RuntimeResult<ScanReport> {
         let start = Instant::now();
         if A::KIND == InputShapeKind::FileDrop
-            && let Some(replay) = args.replay
+            && let Some(replay) = args.replay.clone()
         {
             return self.replay_file_drop_materials(replay).await;
+        }
+        if args.replay.is_some() {
+            // Never silently widen a scoped replay into a whole-source scan.
+            // Until this adapter has a durable material-backed replay route,
+            // failing closed is safer than archiving a narrow scope and
+            // emitting duplicate interpretations for every out-of-scope
+            // occurrence from the fresh cursor.
+            return Err(crate::runtime::SinexError::configuration(
+                "replay is not supported for this adapter until durable source-material replay is available",
+            )
+            .with_context("source_id", self.source_id)
+            .with_context("adapter_kind", A::KIND.as_str()));
         }
 
         // sinex-2n9: historical/catch-up scans are paced by default. See
