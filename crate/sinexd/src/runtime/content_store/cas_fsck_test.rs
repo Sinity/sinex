@@ -3,7 +3,8 @@ use super::{
     check_cas_with_options, check_cas_with_options_and_control,
 };
 use crate::runtime::content_store::{
-    CasWalkCheckpoint, ContentStoreConfig, MaterialContentStore, gc::sweep_orphans,
+    CasWalkCheckpoint, ContentStoreConfig, MaterialContentStore,
+    gc::{sweep_orphans, sweep_orphans_detailed},
 };
 use crate::runtime::work_control::WorkCancellation;
 use camino::Utf8PathBuf;
@@ -116,6 +117,33 @@ async fn live_source_material_manifest_cas_reference_survives_apply_orphan_sweep
         "anti-vacuity: removing raw.source_material_registry material_manifest content_key references from load_sinexblake3_hashes makes this stale CAS file orphaned and the apply-mode sweep deletes it"
     );
 
+    Ok(())
+}
+
+#[sinex_test]
+async fn detailed_cas_sweep_returns_orphan_identity_for_operator_output(
+    ctx: TestContext,
+) -> TestResult<()> {
+    let store_dir = tempfile::tempdir()?;
+    let root_path = Utf8PathBuf::from_path_buf(store_dir.path().to_path_buf())
+        .expect("temporary content-store path must be UTF-8");
+    let content_store = MaterialContentStore::new(ContentStoreConfig {
+        root_path: root_path.clone(),
+        ..Default::default()
+    })?;
+    let source = root_path.join("orphan.txt");
+    tokio::fs::write(&source, b"operator-visible orphan").await?;
+    let key = content_store.store_file(&source).await?;
+
+    let (report, entries) = sweep_orphans_detailed(ctx.pool(), &content_store, false).await?;
+    assert_eq!(report.orphaned, 1);
+    assert_eq!(entries.len(), 1);
+    assert_eq!(entries[0].key, key);
+    assert_eq!(entries[0].number, 1);
+    assert_eq!(
+        entries[0].key.key, key.key,
+        "anti-vacuity: local-CAS detailed sweeps must preserve the exact orphan key for operator auditing"
+    );
     Ok(())
 }
 
