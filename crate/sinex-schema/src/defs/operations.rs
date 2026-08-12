@@ -639,7 +639,7 @@ impl OperationsLog {
             )
             .col(ColumnDef::new(OperationsLog::ResultMessage).text())
             .col(ColumnDef::new(OperationsLog::PreviewSummary).json_binary()) // Output of replay planner
-            .col(ColumnDef::new(OperationsLog::DurationMs).integer())
+            .col(ColumnDef::new(OperationsLog::DurationMs).big_integer())
             .to_owned()
     }
 

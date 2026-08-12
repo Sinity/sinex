@@ -27,7 +27,7 @@ pub struct OperationRecord {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub preview_summary: Option<Value>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub duration_ms: Option<i32>,
+    pub duration_ms: Option<i64>,
 }
 
 /// Event summary for audit trail

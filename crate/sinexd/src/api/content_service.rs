@@ -44,7 +44,7 @@ impl ContentService {
         result_status: OperationStatus,
         result_message: Option<String>,
         preview_summary: Option<serde_json::Value>,
-        duration_ms: Option<i32>,
+        duration_ms: Option<i64>,
     ) -> Result<()> {
         self.pool
             .state()
@@ -193,7 +193,6 @@ impl ContentService {
     }
 }
 
-fn elapsed_ms(duration: std::time::Duration) -> Option<i32> {
-    let millis = duration.as_millis().min(i32::MAX as u128);
-    i32::try_from(millis).ok()
+fn elapsed_ms(duration: std::time::Duration) -> Option<i64> {
+    i64::try_from(duration.as_millis()).ok()
 }

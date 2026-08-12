@@ -17,7 +17,7 @@ pub struct OperationRecord {
     pub result_status: OperationStatus,
     pub result_message: Option<String>,
     pub preview_summary: Option<JsonValue>,
-    pub duration_ms: Option<i32>,
+    pub duration_ms: Option<i64>,
 }
 
 /// Operation log entry for creating operations
@@ -34,7 +34,7 @@ pub struct Operation {
     pub result_status: OperationStatus,
     pub result_message: Option<String>,
     pub preview_summary: Option<JsonValue>,
-    pub duration_ms: Option<i32>,
+    pub duration_ms: Option<i64>,
 }
 
 /// Manifest row returned by `register_module` — lightweight projection of `core.manifests`.

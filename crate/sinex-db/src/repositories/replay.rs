@@ -301,7 +301,7 @@ impl ReplayRepository<'_> {
         meta_json: JsonValue,
         status: &str,
         msg: &str,
-        duration_ms: Option<i32>,
+        duration_ms: Option<i64>,
     ) -> Result<()> {
         sqlx::query!(
             r#"

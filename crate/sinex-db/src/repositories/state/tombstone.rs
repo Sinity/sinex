@@ -35,7 +35,7 @@ impl StateRepository<'_> {
     fn tombstone_operation_duration_ms(
         operation: &TombstoneOperation,
         finished_at: Timestamp,
-    ) -> DbResult<Option<i32>> {
+    ) -> DbResult<Option<i64>> {
         let created_at = Timestamp::parse_rfc3339(&operation.created_at).map_err(|error| {
             SinexError::invalid_state(format!(
                 "Tombstone operation {} has invalid created_at '{}': {error}",
@@ -49,9 +49,9 @@ impl StateRepository<'_> {
                 operation.operation_id
             )));
         }
-        let duration_ms = i32::try_from(elapsed_ms).map_err(|_| {
+        let duration_ms = i64::try_from(elapsed_ms).map_err(|_| {
             SinexError::invalid_state(format!(
-                "Tombstone operation {} duration overflowed i32 milliseconds",
+                "Tombstone operation {} duration overflowed i64 milliseconds",
                 operation.operation_id
             ))
         })?;
@@ -156,7 +156,7 @@ impl StateRepository<'_> {
         scope: JsonValue,
         preview_summary: Option<JsonValue>,
         result_message: Option<&str>,
-        duration_ms: Option<i32>,
+        duration_ms: Option<i64>,
     ) -> DbResult<()> {
         let operation_uuid = Uuid::from_str(operation_id)
             .map_err(|_| SinexError::validation(format!("Invalid operation ID: {operation_id}")))?;

@@ -41,7 +41,7 @@ async fn parse_duration_to_timestamp_preserves_subsecond_precision() -> TestResu
 }
 
 #[sinex_test]
-async fn tombstone_duration_ms_clamps_large_elapsed_values() -> TestResult<()> {
+async fn tombstone_duration_ms_preserves_large_elapsed_values() -> TestResult<()> {
     let operation = TombstoneOperation {
         operation_id: "op-test".to_string(),
         phase: TombstoneOperationPhase::Executing,
@@ -66,7 +66,7 @@ async fn tombstone_duration_ms_clamps_large_elapsed_values() -> TestResult<()> {
     let duration_ms = tombstone_duration_ms(&operation, Timestamp::now())
         .expect("old timestamps should still produce a bounded duration");
 
-    assert_eq!(duration_ms, Some(i32::MAX));
+    assert!(duration_ms.is_some_and(|duration| duration > i64::from(i32::MAX)));
     Ok(())
 }
 

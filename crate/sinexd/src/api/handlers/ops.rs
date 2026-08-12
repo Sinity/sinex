@@ -598,7 +598,7 @@ fn provider_cursor_value(payload: &serde_json::Value) -> Option<String> {
 struct EmailSyncExecutionResult {
     status: OperationStatus,
     message: String,
-    duration_ms: Option<i32>,
+    duration_ms: Option<i64>,
 }
 
 struct EmailProviderSyncSummary {
@@ -2074,8 +2074,8 @@ async fn project_email_mailbox_event(
     Ok(())
 }
 
-fn elapsed_millis(started: Instant) -> i32 {
-    i32::try_from(started.elapsed().as_millis()).unwrap_or(i32::MAX)
+fn elapsed_millis(started: Instant) -> i64 {
+    i64::try_from(started.elapsed().as_millis()).expect("operation duration must fit i64")
 }
 
 fn parsed_material_intent_to_event(

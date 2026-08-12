@@ -638,7 +638,6 @@ fn calculate_checksums(content: &[u8]) -> (String, String) {
     (blake3_hash, sha256_hash)
 }
 
-fn elapsed_ms(duration: Duration) -> Option<i32> {
-    let millis = duration.as_millis().min(i32::MAX as u128);
-    i32::try_from(millis).ok()
+fn elapsed_ms(duration: Duration) -> Option<i64> {
+    i64::try_from(duration.as_millis()).ok()
 }

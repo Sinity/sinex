@@ -279,7 +279,7 @@ async fn query_affected_events(
     pool: &PgPool,
     operation_type: &str,
     operation_id: &Id<OperationMarker>,
-    duration_ms: Option<i32>,
+    duration_ms: Option<i64>,
     limit: i64,
     after_id: Option<&Id<Event>>,
     preview_summary: Option<&Value>,
@@ -314,7 +314,7 @@ async fn query_affected_events(
 
     let page_size = limit.min(MAX_AUDIT_PAGE_SIZE);
     let fetch_limit = page_size + 1;
-    let duration_secs = f64::from(duration_ms.unwrap_or(5000)) / 1000.0;
+    let duration_secs = duration_ms.unwrap_or(5000) as f64 / 1000.0;
     let op_uuid = operation_id.to_uuid();
 
     let mut rows: Vec<AffectedEventRow> = if let Some(cursor) = after_id {

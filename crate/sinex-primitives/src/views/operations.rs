@@ -35,7 +35,7 @@ pub struct OperationView {
     pub status: OperationStatus,
     /// Wall-clock duration in milliseconds, `null` while still running.
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub duration_ms: Option<i32>,
+    pub duration_ms: Option<i64>,
     /// Human-readable result message set on completion or failure.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub result_message: Option<String>,
@@ -60,7 +60,7 @@ impl OperationView {
         operation_type: &str,
         operator: String,
         status: OperationStatus,
-        duration_ms: Option<i32>,
+        duration_ms: Option<i64>,
         result_message: Option<String>,
         scope: Option<JsonValue>,
         preview_summary: Option<JsonValue>,

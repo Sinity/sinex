@@ -185,6 +185,7 @@ pub async fn apply(pool: &PgPool) -> Result<(), ApplyError> {
     create_tables(pool).await?;
     crate::converge::converge_tables(pool, &convergible_tables).await?;
     converge_operations_log_constraints(pool).await?;
+    converge_operations_log_duration_type(pool).await?;
     converge_source_material_registry_constraints(pool).await?;
     normalize_manifest_type_values(pool).await?;
     converge_db_check_constraints(pool).await?;
@@ -477,6 +478,41 @@ async fn converge_operations_log_constraints(pool: &PgPool) -> Result<(), ApplyE
     .await?;
 
     Ok(())
+}
+
+async fn converge_operations_log_duration_type(pool: &PgPool) -> Result<(), ApplyError> {
+    let Some(data_type) = sqlx::query_scalar::<_, String>(
+        r"
+        SELECT data_type
+        FROM information_schema.columns
+        WHERE table_schema = 'core'
+          AND table_name = 'operations_log'
+          AND column_name = 'duration_ms'
+        ",
+    )
+    .fetch_optional(pool)
+    .await?
+    else {
+        return Ok(());
+    };
+
+    match data_type.as_str() {
+        "bigint" => Ok(()),
+        "integer" => {
+            execute_sql(
+                pool,
+                r"
+                ALTER TABLE core.operations_log
+                    ALTER COLUMN duration_ms TYPE BIGINT
+                    USING duration_ms::bigint
+                ",
+            )
+            .await
+        }
+        other => Err(ApplyError::Internal(format!(
+            "core.operations_log.duration_ms has unexpected type {other}"
+        ))),
+    }
 }
 
 async fn operations_log_operation_type_constraint_is_current(
@@ -2067,7 +2103,7 @@ BEGIN
         result_message = p_summary->>'message',
         duration_ms = COALESCE(
             duration_ms,
-            (EXTRACT(EPOCH FROM (NOW() - uuid_extract_timestamp(p_operation_id))) * 1000)::integer
+            (EXTRACT(EPOCH FROM (NOW() - uuid_extract_timestamp(p_operation_id))) * 1000)::bigint
         ),
         preview_summary = COALESCE(preview_summary, '{}'::jsonb) || p_summary
     WHERE id = p_operation_id;
@@ -2088,7 +2124,7 @@ BEGIN
         result_message = p_error->>'error',
         duration_ms = COALESCE(
             duration_ms,
-            (EXTRACT(EPOCH FROM (NOW() - uuid_extract_timestamp(p_operation_id))) * 1000)::integer
+            (EXTRACT(EPOCH FROM (NOW() - uuid_extract_timestamp(p_operation_id))) * 1000)::bigint
         ),
         preview_summary = COALESCE(preview_summary, '{}'::jsonb) || p_error
     WHERE id = p_operation_id;

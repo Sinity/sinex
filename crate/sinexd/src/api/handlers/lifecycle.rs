@@ -617,15 +617,17 @@ fn matches_requested_tombstone_state(
 fn tombstone_duration_ms(
     operation: &TombstoneOperation,
     finished_at: Timestamp,
-) -> Result<Option<i32>> {
+) -> Result<Option<i64>> {
     let created_at = Timestamp::parse_rfc3339(&operation.created_at).map_err(|error| {
         SinexError::invalid_state("Tombstone operation has invalid created_at timestamp")
             .with_context("created_at", &operation.created_at)
             .with_std_error(&error)
     })?;
     let elapsed_ms = (finished_at - created_at).whole_milliseconds();
-    let clamped = elapsed_ms.clamp(0, i128::from(i32::MAX));
-    Ok(Some(clamped as i32))
+    let duration_ms = i64::try_from(elapsed_ms.max(0)).map_err(|_| {
+        SinexError::invalid_state("Tombstone operation duration overflowed i64 milliseconds")
+    })?;
+    Ok(Some(duration_ms))
 }
 
 fn parse_previewed_event_ids(

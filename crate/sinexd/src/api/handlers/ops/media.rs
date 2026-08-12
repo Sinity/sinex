@@ -24,21 +24,21 @@ use super::{Result, elapsed_millis, parsed_material_intent_to_event};
 pub(super) struct MediaWorkerOutputResult {
     pub(super) status: OperationStatus,
     pub(super) message: String,
-    pub(super) duration_ms: Option<i32>,
+    pub(super) duration_ms: Option<i64>,
 }
 
 struct MediaWorkerOutput {
     bytes: Vec<u8>,
     source_identifier: String,
     executor_state: &'static str,
-    duration_ms: Option<i32>,
+    duration_ms: Option<i64>,
 }
 
 struct MediaWorkerCommandOutcome {
     output: Option<MediaWorkerOutput>,
     summary: serde_json::Value,
     failure_message: Option<String>,
-    duration_ms: Option<i32>,
+    duration_ms: Option<i64>,
     /// Structured capture-debt entry recorded on failure/timeout/model-missing
     /// so the local-model-batch outcome is visible as operator debt rather than
     /// an opaque error.
@@ -717,7 +717,7 @@ async fn execute_media_worker_command(
 /// local-model-batch coverage.
 fn worker_budget_block(
     request: &MediaWorkerCommandRequest,
-    duration_ms: i32,
+    duration_ms: i64,
     timed_out: bool,
 ) -> serde_json::Value {
     let timeout_ms = request.timeout().as_millis();

@@ -409,12 +409,12 @@ fn state_json_label(state: ReplayState) -> &'static str {
     }
 }
 
-fn duration_ms(created_at: Timestamp, finished_at: Timestamp) -> i32 {
+fn duration_ms(created_at: Timestamp, finished_at: Timestamp) -> i64 {
     let elapsed_ms = (finished_at - created_at).whole_milliseconds();
-    elapsed_ms.clamp(0, i128::from(i32::MAX)) as i32
+    elapsed_ms.max(0) as i64
 }
 
-fn meta_duration_ms(meta: &MetaJson) -> Option<i32> {
+fn meta_duration_ms(meta: &MetaJson) -> Option<i64> {
     meta.finished_at
         .map(|finished_at| duration_ms(meta.created_at, finished_at))
 }
