@@ -83,8 +83,42 @@ pub struct MaterialReplayContext {
     /// Fully resolved source materials covered by this replay scope.
     pub materials: Vec<ResolvedReplayMaterial>,
 
+    /// Durable occurrence coordinates captured before the replay archive.
+    ///
+    /// Some live adapters append multiple logical records into one material.
+    /// Their replay must therefore use the original event coordinates rather
+    /// than try to derive a substitute from material-level metadata.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub occurrences: Vec<ReplayMaterialOccurrence>,
+
     /// Scope filters narrowing what to replay within the material.
     pub replay_scope: ReplayScopeFilters,
+}
+
+/// One material-backed occurrence selected for a replay operation.
+///
+/// These values come from the persisted material provenance of the live root
+/// event before it is archived. They are replay context, not a second identity
+/// scheme: `anchor_byte` remains the canonical occurrence coordinate.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ReplayMaterialOccurrence {
+    /// Material containing the original record.
+    pub source_material_id: Uuid,
+
+    /// Original stable occurrence anchor.
+    pub anchor_byte: i64,
+
+    /// Original record start in the material when known.
+    pub offset_start: Option<i64>,
+
+    /// Original record end in the material when known.
+    pub offset_end: Option<i64>,
+
+    /// Adapter record metadata needed to reconstruct the selected occurrence.
+    /// FileDrop append materials contain several logical records, so material
+    /// registry metadata alone is not sufficient to recover event kind/path.
+    #[serde(default)]
+    pub record_metadata: serde_json::Value,
 }
 
 /// Scope filters for replay operations, narrowing what to replay within a material.

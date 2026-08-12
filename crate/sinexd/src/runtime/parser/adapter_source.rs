@@ -695,35 +695,57 @@ where
         let mut skipped: u64 = 0;
 
         for material in &replay.materials {
-            let metadata = material.material_metadata.clone();
-            if !self.replay_material_matches_event_type_filter(&metadata, &replay) {
-                skipped = skipped.saturating_add(1);
-                continue;
+            let occurrences = replay
+                .occurrences
+                .iter()
+                .filter(|occurrence| occurrence.source_material_id == material.source_material_id);
+            let mut found_occurrence = false;
+
+            for occurrence in occurrences {
+                found_occurrence = true;
+                let metadata = if occurrence.record_metadata.is_null() {
+                    // Non-filesystem FileDrop adapters may not have a
+                    // filesystem-shaped root payload. Preserve their existing
+                    // material-level metadata path until they gain an
+                    // adapter-specific occurrence carrier.
+                    material.material_metadata.clone()
+                } else {
+                    occurrence.record_metadata.clone()
+                };
+                if !self.replay_material_matches_event_type_filter(&metadata, &replay) {
+                    skipped = skipped.saturating_add(1);
+                    continue;
+                }
+                let logical_path = metadata
+                    .get("path")
+                    .and_then(JsonValue::as_str)
+                    .map(Utf8PathBuf::from);
+                let bytes = logical_path
+                    .as_ref()
+                    .map_or_else(Vec::new, |path| path.as_str().as_bytes().to_vec());
+                let anchor = file_drop_replay_anchor(bytes.len() as u64, occurrence)?;
+
+                let record = SourceRecord {
+                    material_id: Id::from_uuid(material.source_material_id),
+                    anchor,
+                    bytes,
+                    logical_path,
+                    source_ts_hint: None,
+                    metadata: metadata.clone(),
+                };
+
+                emitted = emitted.saturating_add(
+                    self.process_materialized_record(record, replay.operation_id)
+                        .await?,
+                );
             }
 
-            let logical_path = metadata
-                .get("path")
-                .and_then(JsonValue::as_str)
-                .map(Utf8PathBuf::from);
-            let bytes = logical_path
-                .as_ref()
-                .map_or_else(Vec::new, |path| path.as_str().as_bytes().to_vec());
-            let anchor =
-                file_drop_replay_anchor(&metadata, logical_path.as_ref(), bytes.len() as u64);
-
-            let record = SourceRecord {
-                material_id: Id::from_uuid(material.source_material_id),
-                anchor,
-                bytes,
-                logical_path,
-                source_ts_hint: None,
-                metadata,
-            };
-
-            emitted = emitted.saturating_add(
-                self.process_materialized_record(record, replay.operation_id)
-                    .await?,
-            );
+            if !found_occurrence {
+                return Err(crate::runtime::SinexError::invalid_state(
+                    "FileDrop replay context is missing the original material occurrence coordinates",
+                )
+                .with_context("source_material_id", material.source_material_id.to_string()));
+            }
         }
 
         Ok(ScanReport {
@@ -2556,45 +2578,48 @@ fn hash_anchor_key_to_i64(digest: &blake3::Hash) -> i64 {
     i64::from_le_bytes(buf)
 }
 
-/// Reconstruct the `MaterialAnchor` a file-drop record originally captured,
-/// from its persisted `raw.source_material_registry` metadata.
-///
-/// `sinex-audit-anchor-byte-degenerate`: replay must derive the SAME anchor
-/// (and therefore the same `anchor_byte`, via [`anchor_offsets_for_materialized_record`])
-/// that the original capture produced, or every replayed record collapses to
-/// a shared degenerate key. Content-materialized records (regular file bytes
-/// staged into their own dedicated material — see
-/// `materialize_file_content_record_with_cache`) captured `ByteRange { start: 0, .. }`.
-/// Everything else (deleted/moved/oversized-skipped files, which share one
-/// append-stream material across many occurrences) captured
-/// `DirectoryEntry { path, content_hash: None }`.
+/// Reconstruct the physical anchor from the original durable occurrence
+/// coordinates. FileDrop captures append several records into one material,
+/// so a directory path is not a substitute for the append-stream offset.
 fn file_drop_replay_anchor(
-    metadata: &JsonValue,
-    logical_path: Option<&Utf8PathBuf>,
     bytes_len: u64,
-) -> MaterialAnchor {
-    let content_materialized = metadata
-        .get("content_materialized")
-        .and_then(JsonValue::as_bool)
-        .unwrap_or(false);
-
-    if !content_materialized
-        && let Some(path) = logical_path
-    {
-        return MaterialAnchor::DirectoryEntry {
-            path: path.clone(),
-            content_hash: None,
-        };
+    occurrence: &crate::runtime::stream::ReplayMaterialOccurrence,
+) -> RuntimeResult<MaterialAnchor> {
+    let start = u64::try_from(occurrence.anchor_byte).map_err(|_| {
+        crate::runtime::SinexError::invalid_state(
+            "FileDrop replay occurrence anchor_byte must be non-negative",
+        )
+        .with_context("anchor_byte", occurrence.anchor_byte.to_string())
+    })?;
+    let offset_start = occurrence.offset_start.unwrap_or(occurrence.anchor_byte);
+    if offset_start != occurrence.anchor_byte {
+        return Err(crate::runtime::SinexError::invalid_state(
+            "FileDrop replay occurrence offset_start disagrees with anchor_byte",
+        )
+        .with_context("anchor_byte", occurrence.anchor_byte.to_string())
+        .with_context("offset_start", offset_start.to_string()));
     }
 
-    let content_len = metadata
-        .get("content_size_bytes")
-        .and_then(JsonValue::as_u64)
-        .unwrap_or(bytes_len);
-    MaterialAnchor::ByteRange {
-        start: 0,
-        len: content_len,
-    }
+    let default_end = start.saturating_add(bytes_len);
+    let end = occurrence
+        .offset_end
+        .map(u64::try_from)
+        .transpose()
+        .map_err(|_| {
+            crate::runtime::SinexError::invalid_state(
+                "FileDrop replay occurrence offset_end must be non-negative",
+            )
+        })?
+        .unwrap_or(default_end);
+    let len = end.checked_sub(start).ok_or_else(|| {
+        crate::runtime::SinexError::invalid_state(
+            "FileDrop replay occurrence offset_end precedes anchor_byte",
+        )
+        .with_context("anchor_byte", occurrence.anchor_byte.to_string())
+        .with_context("offset_end", end.to_string())
+    })?;
+
+    Ok(MaterialAnchor::ByteRange { start, len })
 }
 
 /// Convert a `ParsedEventIntent` to an `Event<JsonValue>`, overriding `anchor_byte`

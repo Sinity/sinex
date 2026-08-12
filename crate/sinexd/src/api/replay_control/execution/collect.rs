@@ -8,7 +8,7 @@ use super::{
 };
 use crate::runtime::automaton::invalidation::{DerivedScopeInvalidation, INVALIDATION_SUBJECT};
 use crate::runtime::nats_payload::ensure_nats_payload_fits;
-use crate::runtime::stream::ResolvedReplayMaterial;
+use crate::runtime::stream::{ReplayMaterialOccurrence, ResolvedReplayMaterial};
 use sinex_db::repositories::{DbPoolExt, EventRepositoryTx};
 use sinex_primitives::domain::{EventSource, EventType, SourceIdentifier};
 use sinex_primitives::events::{Event as StoredEvent, Provenance};
@@ -188,6 +188,54 @@ impl ReplayExecutionEngine {
             event_types,
             logical_source_identifiers: Vec::new(),
         })
+    }
+
+    /// Extract the original material occurrence coordinates before replay
+    /// archives the live roots. FileDrop's append-stream material can hold
+    /// multiple records, so material metadata alone cannot recover these.
+    pub(crate) fn replay_material_occurrences(
+        material_roots: &[StoredEvent],
+    ) -> Result<Vec<ReplayMaterialOccurrence>> {
+        let mut occurrences = Vec::with_capacity(material_roots.len());
+
+        for event in material_roots {
+            let Provenance::Material {
+                id,
+                anchor_byte,
+                offset_start,
+                offset_end,
+                ..
+            } = &event.provenance
+            else {
+                return Err(SinexError::invalid_state(
+                    "Replay occurrence context included a non-material root",
+                ));
+            };
+
+            occurrences.push(ReplayMaterialOccurrence {
+                source_material_id: *id.as_uuid(),
+                anchor_byte: *anchor_byte,
+                offset_start: *offset_start,
+                offset_end: *offset_end,
+                record_metadata: file_drop_record_metadata(event)?,
+            });
+        }
+
+        occurrences.sort_by_key(|occurrence| {
+            (
+                occurrence.source_material_id,
+                occurrence.anchor_byte,
+                occurrence.offset_start,
+                occurrence.offset_end,
+            )
+        });
+        occurrences.dedup_by(|left, right| {
+            left.source_material_id == right.source_material_id
+                && left.anchor_byte == right.anchor_byte
+                && left.offset_start == right.offset_start
+                && left.offset_end == right.offset_end
+        });
+        Ok(occurrences)
     }
 
     pub(crate) fn logical_source_identifier(material: &ResolvedReplayMaterial) -> String {
@@ -777,4 +825,44 @@ impl ReplayExecutionEngine {
     pub(crate) const SCAN_ACK_TIMEOUT: Duration = Duration::from_secs(10);
     /// Timeout for the entire scan operation to complete.
     pub(crate) const SCAN_COMPLETION_TIMEOUT: Duration = Duration::from_mins(10);
+}
+
+fn file_drop_record_metadata(event: &StoredEvent) -> Result<serde_json::Value> {
+    let event_type = event.event_type.as_ref().to_string();
+    let payload = &event.payload;
+    let (event_kind, path) = match event_type.as_str() {
+        "file.created" | "file.modified" | "file.deleted" => (
+            match event_type.as_str() {
+                "file.created" => "Created",
+                "file.modified" => "Modified",
+                _ => "Deleted",
+            },
+            payload.get("path"),
+        ),
+        "file.moved" => ("Moved", payload.get("new_path")),
+        _ => return Ok(serde_json::Value::Null),
+    };
+    let Some(path) = path else {
+        return Err(SinexError::invalid_state(
+            "FileDrop replay root payload is missing its path",
+        ));
+    };
+
+    let mut metadata = serde_json::json!({
+        "event_kind": event_kind,
+        "path": path,
+    });
+    if event_type == "file.modified"
+        && let Some(size) = payload.get("size")
+    {
+        metadata["content_size_bytes"] = size.clone();
+    }
+    if event_type == "file.moved" {
+        if let Some(old_path) = payload.get("old_path") {
+            metadata["move_from_path"] = old_path.clone();
+        }
+        metadata["move_to_path"] = path.clone();
+        metadata["move_role"] = serde_json::Value::String("To".to_string());
+    }
+    Ok(metadata)
 }

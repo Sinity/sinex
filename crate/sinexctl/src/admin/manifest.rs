@@ -62,8 +62,10 @@ pub enum ComponentExtras {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PostgresExtras {
-    /// Live row count estimates keyed by `schema.table`.
-    pub row_counts: std::collections::BTreeMap<String, i64>,
+    /// Exact row counts keyed by `schema.table`.
+    /// `None` means capture could not obtain evidence.
+    #[serde(default)]
+    pub row_counts: Option<std::collections::BTreeMap<String, i64>>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

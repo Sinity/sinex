@@ -1,6 +1,8 @@
 use super::*;
 
-fn manifest_with_postgres_row_counts(row_counts: BTreeMap<String, i64>) -> SnapshotManifest {
+fn manifest_with_postgres_row_counts(
+    row_counts: Option<BTreeMap<String, i64>>,
+) -> SnapshotManifest {
     SnapshotManifest {
         snapshot_id: "01930000-0000-7000-8000-000000000000".to_string(),
         created_at: "2026-08-11T00:00:00Z".to_string(),
@@ -43,16 +45,15 @@ fn manifest_with_postgres_row_counts(row_counts: BTreeMap<String, i64>) -> Snaps
 /// distinguishable in the manifest (e.g. `Option<BTreeMap<..>>` with `None`
 /// meaning "capture couldn't determine this"), not just a comparison tweak.
 #[test]
-#[ignore = "sinex-l9uq open: postgres_row_counts_match can report Some(true) vacuously when the expected map came from a swallowed capture failure -- fails until fixed"]
 fn postgres_row_counts_match_is_not_vacuously_true_when_expected_came_from_a_capture_failure() {
     // Simulates unwrap_or_default() swallowing a pg_row_counts() error during
     // capture: the manifest's only postgres component has an empty row_counts
     // map, indistinguishable from "genuinely zero durable tables".
-    let manifest = manifest_with_postgres_row_counts(BTreeMap::new());
+    let manifest = manifest_with_postgres_row_counts(None);
     let expected = expected_postgres_row_counts(&manifest);
     assert_eq!(
         expected,
-        Some(BTreeMap::new()),
+        None,
         "sanity: expected_postgres_row_counts should surface the empty map \
          as-is from the manifest (this is the data-loss point sinex-l9uq \
          item 1 describes -- the failure signal is already gone by here)"
@@ -65,9 +66,9 @@ fn postgres_row_counts_match_is_not_vacuously_true_when_expected_came_from_a_cap
     let postgres_row_counts_match = expected
         .map(|e| Some(&observed_after_a_broken_restore).is_some_and(|o| o == &e));
 
-    assert_ne!(
+    assert_eq!(
         postgres_row_counts_match,
-        Some(true),
+        None,
         "an empty expected row-count map (which can only arise from a lost \
          capture-time failure signal, per sinex-l9uq item 1) must not be \
          reported as a genuine restore-integrity match against an \

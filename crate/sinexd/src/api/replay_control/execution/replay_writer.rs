@@ -362,6 +362,7 @@ impl ReplayExecutionEngine {
             .into_iter()
             .collect();
         let replay_materials = self.resolve_replay_materials(pool, &material_ids).await?;
+        let replay_occurrences = Self::replay_material_occurrences(&material_roots)?;
         let expected_replay_outputs = Self::with_logical_source_identifiers(
             Self::expected_replay_outputs(&material_roots)?,
             &replay_materials,
@@ -491,6 +492,7 @@ impl ReplayExecutionEngine {
         let replay_context = MaterialReplayContext {
             operation_id,
             materials: replay_materials,
+            occurrences: replay_occurrences,
             replay_scope: SourceReplayScopeFilters {
                 material_ids: normalized.material_ids,
                 event_types: normalized.event_types,

@@ -2315,68 +2315,60 @@ fn git_object_anchors_hash_to_distinct_anchor_bytes() {
     assert_ne!(one_anchor_byte, two_anchor_byte);
 }
 
-// sinex-audit-anchor-byte-degenerate: replay must reconstruct the SAME
-// MaterialAnchor variant the original capture used, so the two functions
-// together (file_drop_replay_anchor -> anchor_offsets_for_materialized_record)
-// reproduce the exact anchor_byte captured live. This is the direct
-// regression test for `replay_file_drop_materials`, exercised at the
-// pure-function level since the full replay dispatch requires a live
-// acquisition manager.
+// sinex-fka1: replay must use the original append-stream coordinates rather
+// than deriving a path hash. This is the direct regression test for
+// `replay_file_drop_materials`, exercised at the pure-function level since
+// the full replay dispatch requires a live acquisition manager.
 #[test]
-fn file_drop_replay_reconstructs_distinguishable_anchors_for_multiple_events() {
-    // Two distinct non-content-materialized occurrences (e.g. two `Deleted`
-    // events for different paths) sharing one append-stream material at
-    // capture time, as `file_drop.rs::records_from_file_drop_event` emits.
-    let deleted_one_metadata = json!({
-        "event_kind": "Deleted",
-        "path": "/tmp/replay/deleted-one.txt",
-    });
-    let deleted_two_metadata = json!({
-        "event_kind": "Deleted",
-        "path": "/tmp/replay/deleted-two.txt",
-    });
+fn file_drop_replay_reuses_original_append_offsets() {
+    let occurrence_one = crate::runtime::stream::ReplayMaterialOccurrence {
+        source_material_id: Uuid::nil(),
+        anchor_byte: 17,
+        offset_start: Some(17),
+        offset_end: Some(23),
+        record_metadata: json!({"event_kind": "Deleted", "path": "/tmp/one"}),
+    };
+    let occurrence_two = crate::runtime::stream::ReplayMaterialOccurrence {
+        source_material_id: Uuid::nil(),
+        anchor_byte: 23,
+        offset_start: Some(23),
+        offset_end: Some(31),
+        record_metadata: json!({"event_kind": "Deleted", "path": "/tmp/two"}),
+    };
 
-    let anchor_one = file_drop_replay_anchor(
-        &deleted_one_metadata,
-        Some(&Utf8PathBuf::from("/tmp/replay/deleted-one.txt")),
-        "/tmp/replay/deleted-one.txt".len() as u64,
+    let anchor_one = file_drop_replay_anchor(6, &occurrence_one).unwrap();
+    let anchor_two = file_drop_replay_anchor(8, &occurrence_two).unwrap();
+    assert_eq!(
+        anchor_one,
+        MaterialAnchor::ByteRange { start: 17, len: 6 }
     );
-    let anchor_two = file_drop_replay_anchor(
-        &deleted_two_metadata,
-        Some(&Utf8PathBuf::from("/tmp/replay/deleted-two.txt")),
-        "/tmp/replay/deleted-two.txt".len() as u64,
-    );
-
-    assert!(matches!(anchor_one, MaterialAnchor::DirectoryEntry { .. }));
-    assert!(matches!(anchor_two, MaterialAnchor::DirectoryEntry { .. }));
-
-    let (anchor_byte_one, ..) = anchor_offsets_for_materialized_record(&anchor_one);
-    let (anchor_byte_two, ..) = anchor_offsets_for_materialized_record(&anchor_two);
-
-    assert_ne!(
-        anchor_byte_one, 0,
-        "replayed deleted-file occurrence must not collapse to the degenerate constant 0"
-    );
-    assert_ne!(
-        anchor_byte_one, anchor_byte_two,
-        "two distinct replayed fs occurrences sharing a material must not land in the \
-         same record_event_replacements bucket (the cross-product bug)"
+    assert_eq!(
+        anchor_two,
+        MaterialAnchor::ByteRange { start: 23, len: 8 }
     );
 
-    // A content-materialized record (regular file bytes staged into its own
-    // dedicated material) must still reconstruct the original ByteRange{0, len}
-    // shape — this path was already correct and must not regress.
-    let content_metadata = json!({
-        "event_kind": "Created",
-        "path": "/tmp/replay/created.txt",
-        "content_materialized": true,
-        "content_size_bytes": 42,
-    });
-    let content_anchor = file_drop_replay_anchor(
-        &content_metadata,
-        Some(&Utf8PathBuf::from("/tmp/replay/created.txt")),
-        0,
-    );
+    let (anchor_byte_one, start_one, end_one) =
+        anchor_offsets_for_materialized_record(&anchor_one);
+    let (anchor_byte_two, start_two, end_two) =
+        anchor_offsets_for_materialized_record(&anchor_two);
+    assert_eq!((anchor_byte_one, start_one, end_one), (17, Some(17), Some(23)));
+    assert_eq!((anchor_byte_two, start_two, end_two), (23, Some(23), Some(31)));
+
+    // A content-materialized record still reconstructs its original byte
+    // range when the persisted occurrence coordinates say it began at zero.
+    let content_occurrence = crate::runtime::stream::ReplayMaterialOccurrence {
+        source_material_id: Uuid::nil(),
+        anchor_byte: 0,
+        offset_start: Some(0),
+        offset_end: Some(42),
+        record_metadata: json!({
+            "event_kind": "Created",
+            "path": "/tmp/replay/created.txt",
+            "content_materialized": true,
+            "content_size_bytes": 42,
+        }),
+    };
+    let content_anchor = file_drop_replay_anchor(42, &content_occurrence).unwrap();
     assert_eq!(
         content_anchor,
         MaterialAnchor::ByteRange { start: 0, len: 42 }

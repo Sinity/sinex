@@ -576,7 +576,10 @@ impl AdminSnapshotCommand {
             (bytes, blake3)
         };
 
-        let row_counts = exec::pg_row_counts(database_url).unwrap_or_default();
+        let row_counts = Some(
+            exec::pg_row_counts(database_url)
+                .context("capture authoritative PostgreSQL row-count evidence")?,
+        );
 
         Ok(ComponentRecord {
             name: "postgres".to_string(),
@@ -867,9 +870,6 @@ impl AdminSnapshotRestoreCommand {
         &self,
         manifest: &SnapshotManifest,
     ) -> Result<Option<BTreeMap<String, i64>>> {
-        let Some(expected_row_counts) = expected_postgres_row_counts(manifest) else {
-            return Ok(None);
-        };
         let Some(component) = manifest
             .components
             .iter()
@@ -880,6 +880,12 @@ impl AdminSnapshotRestoreCommand {
         if component.bytes == 0 {
             return Ok(Some(BTreeMap::new()));
         }
+
+        let expected_row_counts = expected_postgres_row_counts(manifest).ok_or_else(|| {
+            eyre!(
+                "snapshot manifest lacks authoritative PostgreSQL row-count evidence; refusing restore verification"
+            )
+        })?;
 
         let restore_database_url = self.restore_database_url.as_deref().ok_or_else(|| {
             eyre!(
@@ -1159,7 +1165,7 @@ fn restore_drill_checks(
         .components
         .iter()
         .find_map(|component| match &component.extras {
-            Some(ComponentExtras::Postgres(extras)) => Some(extras.row_counts.len()),
+            Some(ComponentExtras::Postgres(extras)) => extras.row_counts.as_ref().map(BTreeMap::len),
             _ => None,
         })
         .unwrap_or(0);
@@ -1377,6 +1383,7 @@ fn expected_postgres_row_counts(manifest: &SnapshotManifest) -> Option<BTreeMap<
             Some(ComponentExtras::Postgres(extras)) => Some(
                 extras
                     .row_counts
+                    .as_ref()?
                     .iter()
                     .filter(|(table, _)| durable_postgres_row_count_key(table))
                     .map(|(table, count)| (table.clone(), *count))

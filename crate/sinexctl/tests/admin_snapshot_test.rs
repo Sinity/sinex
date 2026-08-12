@@ -168,7 +168,9 @@ fn make_postgres_snapshot_archive() -> TestResult<(TempDir, PathBuf)> {
             path: "postgres/sinex_prod.dump".to_string(),
             bytes: 22,
             blake3: postgres_blake3,
-            extras: Some(ComponentExtras::Postgres(PostgresExtras { row_counts })),
+            extras: Some(ComponentExtras::Postgres(PostgresExtras {
+                row_counts: Some(row_counts),
+            })),
         }],
         totals: Totals {
             uncompressed_bytes: 22,
@@ -1338,7 +1340,9 @@ async fn manifest_round_trips_through_serde() -> xtask::sandbox::TestResult<()> 
                 path: "postgres/sinex_prod.dump".to_string(),
                 bytes: 12345678,
                 blake3: "a".repeat(64),
-                extras: Some(ComponentExtras::Postgres(PostgresExtras { row_counts })),
+                extras: Some(ComponentExtras::Postgres(PostgresExtras {
+                    row_counts: Some(row_counts),
+                })),
             },
             ComponentRecord {
                 name: "cas".to_string(),
