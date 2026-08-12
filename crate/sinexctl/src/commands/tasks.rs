@@ -86,13 +86,24 @@ impl TaskImportCommand {
 
         let mut imported = 0u64;
         let mut skipped = 0u64;
+        let mut failures = Vec::new();
         for task in &tasks {
-            let uuid = task["uuid"].as_str().unwrap_or("");
-            if uuid.is_empty() {
-                skipped += 1;
-                continue;
-            }
-            let request = build_task_create_request(task)?;
+            let request = match build_task_create_request(task) {
+                Ok(request) => request,
+                Err(error) => {
+                    eprintln!("  failed to parse Taskwarrior task: {error}");
+                    skipped += 1;
+                    failures.push(error.to_string());
+                    continue;
+                }
+            };
+            let uuid = request
+                .external_refs
+                .first()
+                .map_or_else(
+                    || "<unknown>".to_string(),
+                    |external_ref| external_ref.external_id.clone(),
+                );
             if self.dry_run {
                 let desc = task["description"].as_str().unwrap_or("");
                 println!("  [dry-run] {uuid} {desc}");
@@ -102,13 +113,21 @@ impl TaskImportCommand {
             // Taskwarrior export → sinex task.created event
             match client.tasks_create(request).await {
                 Ok(_) => imported += 1,
-                Err(e) => {
-                    eprintln!("  failed to import {uuid}: {e}");
+                Err(error) => {
+                    eprintln!("  failed to import {uuid}: {error}");
                     skipped += 1;
+                    failures.push(format!("{uuid}: {error}"));
                 }
             }
         }
         println!("imported: {imported}, skipped: {skipped}");
+        if !failures.is_empty() {
+            return Err(eyre!(
+                "Taskwarrior import failed for {} task(s): {}",
+                failures.len(),
+                failures.join("; ")
+            ));
+        }
         Ok(())
     }
 }
@@ -118,25 +137,18 @@ impl TaskImportCommand {
 fn build_task_create_request(
     task: &serde_json::Value,
 ) -> Result<sinex_primitives::rpc::tasks::TaskCreateRequest> {
-    let title = task["description"].as_str().unwrap_or("").to_string();
-    let project = task["project"].as_str().map(String::from);
-    let uuid = task["uuid"]
-        .as_str()
+    let uuid = taskwarrior_string_field(task, "uuid")?
         .filter(|uuid| !uuid.trim().is_empty())
         .ok_or_else(|| eyre!("Taskwarrior task is missing uuid"))?;
-    let tags = task["tags"]
-        .as_array()
-        .map(|tags| {
-            tags.iter()
-                .filter_map(serde_json::Value::as_str)
-                .map(ToString::to_string)
-                .collect()
-        })
-        .unwrap_or_default();
-    let due_at = task["due"]
-        .as_str()
-        .map(parse_taskwarrior_due_at)
+    let title = taskwarrior_string_field(task, "description")?
+        .filter(|description| !description.trim().is_empty())
+        .ok_or_else(|| eyre!("Taskwarrior task {uuid:?} is missing description"))?;
+    let project = taskwarrior_string_field(task, "project")?;
+    let tags = taskwarrior_tags(task)?;
+    let due_at = taskwarrior_string_field(task, "due")?
+        .map(|due| parse_taskwarrior_due_at(&due))
         .transpose()?;
+    let priority = taskwarrior_string_field(task, "priority")?;
 
     Ok(sinex_primitives::rpc::tasks::TaskCreateRequest {
         task_id: None,
@@ -145,13 +157,42 @@ fn build_task_create_request(
         project_id: project,
         tags,
         due_at,
-        priority: task["priority"].as_str().map(String::from),
+        priority,
         external_refs: vec![TaskExternalRef {
             system: "taskwarrior".to_string(),
-            external_id: uuid.to_string(),
+            external_id: uuid.trim().to_string(),
             version: None,
         }],
     })
+}
+
+fn taskwarrior_string_field(
+    task: &serde_json::Value,
+    field: &str,
+) -> Result<Option<String>> {
+    match task.get(field) {
+        None | Some(serde_json::Value::Null) => Ok(None),
+        Some(serde_json::Value::String(value)) => Ok(Some(value.clone())),
+        Some(value) => Err(eyre!(
+            "Taskwarrior field {field:?} must be a string, got {value}"
+        )),
+    }
+}
+
+fn taskwarrior_tags(task: &serde_json::Value) -> Result<Vec<String>> {
+    match task.get("tags") {
+        None | Some(serde_json::Value::Null) => Ok(Vec::new()),
+        Some(serde_json::Value::Array(tags)) => tags
+            .iter()
+            .enumerate()
+            .map(|(index, tag)| {
+                tag.as_str()
+                    .map(ToString::to_string)
+                    .ok_or_else(|| eyre!("Taskwarrior tag at index {index} must be a string"))
+            })
+            .collect(),
+        Some(value) => Err(eyre!("Taskwarrior field \"tags\" must be an array, got {value}")),
+    }
 }
 
 fn parse_taskwarrior_due_at(input: &str) -> Result<sinex_primitives::Timestamp> {
