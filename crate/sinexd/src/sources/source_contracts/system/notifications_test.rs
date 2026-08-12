@@ -91,7 +91,7 @@ async fn distinct_notifications_with_same_app_and_summary_do_not_collide() -> Te
     Ok(())
 }
 
-/// sinex-xfz3: `ts_orig` is `Timestamp::now()` called by the PARSER itself --
+/// sinex-xfz3: the parser has no intrinsic timestamp in this signal --
 /// there is no genuine intrinsic timestamp field anywhere in the D-Bus
 /// `notification.sent` signal payload. Sibling parsers facing the identical
 /// no-real-intrinsic-time situation in the same directory (udev.rs, dbus.rs)
@@ -99,9 +99,6 @@ async fn distinct_notifications_with_same_app_and_summary_do_not_collide() -> Te
 /// admission's `raw.temporal_ledger` resolution from ever correcting it, so
 /// on replay the persisted `ts_orig` silently becomes "when replay ran."
 #[sinex_test]
-#[ignore = "sinex-xfz3 open: NotificationParser fabricates ts_orig via \
-            Timestamp::now() and falsely tags it Intrinsic instead of \
-            Atemporal, unlike sibling udev.rs/dbus.rs parsers"]
 async fn notification_sent_ts_orig_is_atemporal_not_fabricated_intrinsic() -> TestResult<()> {
     let mid = Id::<SourceMaterial>::new();
     let record = make_notification_record(

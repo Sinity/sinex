@@ -162,7 +162,7 @@ impl MaterialParser for JournaldParser {
                     serde_json::to_value(&payload)
                         .map_err(|e| ParserError::Parse(e.to_string()))?,
                 )
-                .ts_orig(Timestamp::now())
+                .ts_orig(ctx.acquisition_time)
                 .timing(TimingEvidence::Atemporal)
                 .anchor(record.anchor.clone())
                 .privacy_context(ProcessingContext::Journal)
@@ -177,11 +177,19 @@ impl MaterialParser for JournaldParser {
             .and_then(|s| s.parse().ok())
             .unwrap_or(0);
 
-        let timestamp = if timestamp_us > 0 {
-            Timestamp::from_unix_timestamp_nanos(i128::from(timestamp_us) * 1_000)
-                .unwrap_or_else(Timestamp::now)
+        let (timestamp, timing) = if timestamp_us > 0 {
+            match Timestamp::from_unix_timestamp_nanos(i128::from(timestamp_us) * 1_000) {
+                Some(timestamp) => (
+                    timestamp,
+                    TimingEvidence::Intrinsic {
+                        field: "__REALTIME_TIMESTAMP".into(),
+                        confidence: TimingConfidence::Intrinsic,
+                    },
+                ),
+                None => (ctx.acquisition_time, TimingEvidence::Atemporal),
+            }
         } else {
-            Timestamp::now()
+            (ctx.acquisition_time, TimingEvidence::Atemporal)
         };
 
         // sinex-1877 / fresh-rebuild B1: sinexd's own journald output is redundant
@@ -274,10 +282,7 @@ impl MaterialParser for JournaldParser {
             .event_source(EventSource::from_static("journald"))
             .payload(serde_json::to_value(&payload).map_err(|e| ParserError::Parse(e.to_string()))?)
             .ts_orig(timestamp)
-            .timing(TimingEvidence::Intrinsic {
-                field: "__REALTIME_TIMESTAMP".into(),
-                confidence: TimingConfidence::Intrinsic,
-            })
+            .timing(timing)
             .anchor(record.anchor.clone())
             .privacy_context(ProcessingContext::Journal)
             .build();

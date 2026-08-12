@@ -38,8 +38,6 @@ fn make_record(mid: Id<SourceMaterial>, body: serde_json::Value) -> SourceRecord
 /// sinex-xfz3: same fabricated-Intrinsic-timestamp bug as notifications.rs,
 /// same directory, same sibling-parser asymmetry with udev.rs/dbus.rs.
 #[sinex_test]
-#[ignore = "sinex-xfz3 open: NotificationClosedParser fabricates ts_orig via \
-            Timestamp::now() and falsely tags it Intrinsic instead of Atemporal"]
 async fn notification_closed_ts_orig_is_atemporal_not_fabricated_intrinsic() -> TestResult<()> {
     let mid = Id::<SourceMaterial>::new();
     let record = make_record(

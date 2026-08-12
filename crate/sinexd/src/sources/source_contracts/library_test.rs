@@ -321,10 +321,6 @@ async fn extract_author_title_preserves_inner_dashes() -> xtask::sandbox::TestRe
 }
 
 #[sinex_test]
-#[ignore = "sinex-k42g open: read_mtime tags a wall-clock Timestamp::now() fallback as \
-            TimingEvidence::InferredMtime (resolved quality) when metadata.modified() \
-            succeeds but the SystemTime->Timestamp conversion fails (e.g. a pre-epoch \
-            mtime), instead of Atemporal like the adjacent Err(_) branch"]
 async fn read_mtime_tags_pre_epoch_metadata_as_atemporal_not_inferred()
 -> xtask::sandbox::TestResult<()> {
     let dir = TempDir::new()?;
@@ -342,19 +338,20 @@ async fn read_mtime_tags_pre_epoch_metadata_as_atemporal_not_inferred()
 
     let utf8_path = Utf8PathBuf::from_path_buf(path.clone())
         .map_err(|_| color_eyre::eyre::eyre!("non-utf8 tempdir path"))?;
-    let (_mtime, evidence) = read_mtime(&utf8_path);
+    let record = make_record(utf8_path.as_str(), b"content".to_vec(), None);
+    let mut parser = DocsLibraryParser;
+    let intents = parser.parse_record(record, &make_ctx()).await?;
+    let evidence = &intents[0].timing;
 
-    // Correct behavior: a fabricated now() timestamp must never be tagged as a
-    // resolved-quality InferredMtime -- it must defer to raw.temporal_ledger
-    // resolution like the sibling Err(_) branch does, i.e. Atemporal.
-    assert!(
-        matches!(
-            evidence,
-            sinex_primitives::parser::TimingEvidence::Atemporal
-        ),
+    // A fabricated now() timestamp must never be tagged as a resolved-quality
+    // InferredMtime. It must defer to raw.temporal_ledger resolution like the
+    // sibling Err(_) branch does, i.e. Atemporal.
+    assert_eq!(
+        evidence,
+        &sinex_primitives::parser::TimingEvidence::Atemporal,
         "expected Atemporal for a fabricated fallback timestamp, got {evidence:?} \
          -- a pre-epoch mtime makes duration_since(UNIX_EPOCH) fail, so read_mtime \
-         falls back to Timestamp::now() but currently mislabels it InferredMtime"
+         must not label its Timestamp::now() fallback InferredMtime"
     );
     Ok(())
 }

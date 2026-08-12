@@ -309,12 +309,13 @@ impl MaterialParser for DocsLibraryParser {
 }
 
 /// Read mtime from the filesystem.  Returns `(Timestamp, TimingEvidence)`.
-/// On failure, falls back to `Timestamp::now()` with `Atemporal` evidence.
+/// On failure, falls back to `Timestamp::now()` with `Atemporal` evidence so
+/// the fabricated value cannot be treated as an intrinsic source timestamp.
 fn read_mtime(path: &Utf8PathBuf) -> (Timestamp, TimingEvidence) {
     let meta_result = std::fs::metadata(path.as_std_path());
     match meta_result {
         Ok(meta) => {
-            let mtime = meta
+            let Some(mtime) = meta
                 .modified()
                 .ok()
                 .and_then(|t| t.duration_since(UNIX_EPOCH).ok())
@@ -322,12 +323,16 @@ fn read_mtime(path: &Utf8PathBuf) -> (Timestamp, TimingEvidence) {
                     let nanos = i128::try_from(d.as_nanos()).ok()?;
                     Timestamp::from_unix_timestamp_nanos(nanos)
                 })
-                .unwrap_or_else(Timestamp::now);
-            let evidence = TimingEvidence::InferredMtime {
-                path: path.clone(),
-                mtime,
+            else {
+                return (Timestamp::now(), TimingEvidence::Atemporal);
             };
-            (mtime, evidence)
+            (
+                mtime,
+                TimingEvidence::InferredMtime {
+                    path: path.clone(),
+                    mtime,
+                },
+            )
         }
         Err(_) => (Timestamp::now(), TimingEvidence::Atemporal),
     }

@@ -71,7 +71,7 @@ async fn valid_started_at_keeps_intrinsic_timing_evidence() -> TestResult<()> {
 }
 
 /// sinex-dmz9: a row with a MISSING `started_at` must not fabricate a
-/// wall-clock ts_orig that gets trusted downstream. TimingEvidence::Atemporal
+/// acquisition-time placeholder that gets trusted downstream. TimingEvidence::Atemporal
 /// signals intent_to_event_with_anchor (adapter_source.rs) to leave the
 /// persisted event's real ts_orig unresolved for material-tier derivation.
 #[sinex_test]
@@ -110,12 +110,10 @@ async fn unparseable_started_at_yields_atemporal_timing_evidence() -> TestResult
 }
 
 /// The occurrence key must still be built deterministically even when
-/// started_at is missing -- ts_orig's wall-clock placeholder still feeds
-/// the key (a separate, unrelated concern from the trusted-timestamp fix
-/// above); this test pins that the placeholder path doesn't panic or
-/// produce an empty key.
+/// started_at is missing. The stable SQLite row anchor, not a wall clock,
+/// identifies the same physical row on every re-read.
 #[sinex_test]
-async fn missing_started_at_still_produces_a_nonempty_occurrence_key() -> TestResult<()> {
+async fn missing_started_at_reuses_the_stable_sqlite_row_occurrence_key() -> TestResult<()> {
     let mut parser = ActivityWatchParser;
     let record = aw_row(
         "aw-watcher-web_firefox",
@@ -123,13 +121,22 @@ async fn missing_started_at_still_produces_a_nonempty_occurrence_key() -> TestRe
         serde_json::json!({"url": "https://example.com", "title": "Example"}),
     );
     let ctx = parser_context();
-    let intents = parser.parse_record(record, &ctx).await?;
+    let first = parser.parse_record(record.clone(), &ctx).await?;
+    let second = parser.parse_record(record, &ctx).await?;
 
-    assert_eq!(intents.len(), 1);
-    let key = intents[0]
+    assert_eq!(first.len(), 1);
+    assert_eq!(second.len(), 1);
+    let key = first[0]
         .occurrence_key
         .as_ref()
         .expect("occurrence key is always set by this parser");
-    assert!(!key.fields.is_empty());
+    assert_eq!(key, second[0].occurrence_key.as_ref().unwrap());
+    assert_eq!(
+        key.fields,
+        vec![
+            ("bucket_id".to_string(), "aw-watcher-web_firefox".to_string()),
+            ("event_timestamp".to_string(), "anchor:events:1".to_string()),
+        ]
+    );
     Ok(())
 }

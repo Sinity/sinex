@@ -8,14 +8,13 @@ use sinex_macros::SourceMeta;
 use sinex_primitives::domain::{EventSource, EventType};
 use sinex_primitives::parser::{
     MaterialAnchor, OccurrenceKey, ParsedEventIntent, ParserContext, ParserId, ParserManifest,
-    SourceId, SourceRecord, TimingConfidence, TimingEvidence,
+    SourceId, SourceRecord, TimingEvidence,
 };
 use sinex_primitives::privacy::ProcessingContext;
 use sinex_primitives::source_contracts::{
     AccessScope, CheckpointFamily, Horizon, OccurrenceIdentity, PrivacyTier, ResourceProfile,
     RetentionPolicy, RunnerPack, RuntimeShape,
 };
-use sinex_primitives::temporal::Timestamp;
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct NotificationParserConfig;
@@ -64,12 +63,12 @@ impl MaterialParser for NotificationParser {
     async fn parse_record(
         &mut self,
         record: SourceRecord,
-        _ctx: &ParserContext,
+        ctx: &ParserContext,
     ) -> ParserResult<Vec<ParsedEventIntent>> {
         let payload: serde_json::Value = serde_json::from_slice(&record.bytes)
             .map_err(|e| ParserError::Parse(format!("notification JSON: {e}")))?;
 
-        let ts_orig = Timestamp::now();
+        let ts_orig = ctx.acquisition_time;
         let app_name = payload["app_name"].as_str().unwrap_or("");
         let summary = payload["summary"].as_str().unwrap_or("");
         let body = payload["body"].as_str().unwrap_or("");
@@ -109,10 +108,7 @@ impl MaterialParser for NotificationParser {
                     "timestamp": ts_orig,
                 }))
                 .ts_orig(ts_orig)
-                .timing(TimingEvidence::Intrinsic {
-                    field: "timestamp".into(),
-                    confidence: TimingConfidence::Intrinsic,
-                })
+                .timing(TimingEvidence::Atemporal)
                 .anchor(MaterialAnchor::ByteRange { start: 0, len: 1 })
                 .occurrence_key(OccurrenceKey {
                     source_id: SourceId::from_static("desktop.notification"),

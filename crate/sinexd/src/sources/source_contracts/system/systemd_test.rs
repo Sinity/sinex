@@ -67,15 +67,10 @@ async fn test_systemd_parser_skips_non_unit_records() -> TestResult<()> {
     Ok(())
 }
 
-/// sinex-10ef open: same bug shape as journald.rs -- a missing/malformed
-/// `__REALTIME_TIMESTAMP` falls back to a fabricated `Timestamp::now()`, but
-/// the intent is still unconditionally tagged `TimingEvidence::Intrinsic`
-/// rather than `Atemporal`, bypassing deferred resolution via
-/// `raw.temporal_ledger`.
+/// sinex-10ef regression: a missing/malformed `__REALTIME_TIMESTAMP` uses a
+/// fabricated acquisition-time value, which must remain `Atemporal` rather
+/// than being tagged as a trustworthy intrinsic timestamp.
 #[sinex_test]
-#[ignore = "sinex-10ef open: systemd.rs tags a fabricated Timestamp::now() fallback as \
-            TimingEvidence::Intrinsic instead of Atemporal when __REALTIME_TIMESTAMP is \
-            missing/malformed, bypassing temporal_ledger-based deferred resolution"]
 async fn test_systemd_missing_realtime_timestamp_is_tagged_atemporal_not_intrinsic()
 -> TestResult<()> {
     let mid = Id::<SourceMaterial>::new();

@@ -137,10 +137,19 @@ impl MaterialParser for SystemdParser {
             .and_then(|s| s.parse().ok())
             .unwrap_or(0);
 
-        let timestamp = if timestamp_us > 0 {
-            Timestamp::from_unix_timestamp(timestamp_us / 1_000_000).unwrap_or_else(Timestamp::now)
+        let (timestamp, timing) = if timestamp_us > 0 {
+            match Timestamp::from_unix_timestamp_nanos(i128::from(timestamp_us) * 1_000) {
+                Some(timestamp) => (
+                    timestamp,
+                    TimingEvidence::Intrinsic {
+                        field: "__REALTIME_TIMESTAMP".into(),
+                        confidence: TimingConfidence::Intrinsic,
+                    },
+                ),
+                None => (ctx.acquisition_time, TimingEvidence::Atemporal),
+            }
         } else {
-            Timestamp::now()
+            (ctx.acquisition_time, TimingEvidence::Atemporal)
         };
 
         let message = json
@@ -266,10 +275,7 @@ impl MaterialParser for SystemdParser {
             .event_source(EventSource::from_static("systemd"))
             .payload(payload_value)
             .ts_orig(timestamp)
-            .timing(TimingEvidence::Intrinsic {
-                field: "__REALTIME_TIMESTAMP".into(),
-                confidence: TimingConfidence::Intrinsic,
-            })
+            .timing(timing)
             .anchor(record.anchor.clone())
             .privacy_context(ProcessingContext::Journal)
             .build();
