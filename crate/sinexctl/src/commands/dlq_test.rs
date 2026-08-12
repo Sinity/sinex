@@ -1073,3 +1073,33 @@ async fn dlq_cleanup_plan_caveats_name_candidates_and_blockers()
     );
     Ok(())
 }
+
+#[sinex_test]
+async fn dlq_requeue_candidates_disclose_duplicate_window_risk() -> xtask::sandbox::TestResult<()> {
+    let plan = DlqCleanupPlanView {
+        schema_version: DLQ_CLEANUP_PLAN_SCHEMA_VERSION.to_string(),
+        total_messages: 2,
+        pressure_level: sinex_primitives::RuntimePressureLevel::Warning,
+        retained_sequence_span: "40..41".to_string(),
+        inspected_tail: 2,
+        candidate_count: 1,
+        blocked_count: 0,
+        purge_candidate_messages: 0,
+        requeue_candidate_messages: 2,
+        coalesced_actions: Vec::new(),
+        items: Vec::new(),
+        recommended_next: "Review requeue candidates".to_string(),
+    };
+
+    let envelope = dlq_cleanup_plan_envelope(plan.clone());
+    assert!(
+        envelope.caveats.iter().any(|caveat| {
+            caveat.message.contains("duplicate window") && caveat.message.contains("sinex-3kqx")
+        }),
+        "cleanup-plan envelope must disclose duplicate-window risk"
+    );
+    let rendered = format_dlq_cleanup_plan_table(&plan);
+    assert!(rendered.contains("WARNING:"));
+    assert!(rendered.contains("sinex-3kqx"));
+    Ok(())
+}
