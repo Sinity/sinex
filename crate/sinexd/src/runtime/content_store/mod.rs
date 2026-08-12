@@ -221,18 +221,29 @@ async fn run_command_async(
 /// resolve from this same key so they address one CAS — replay reading source
 /// material must hit the exact store that ingestion wrote, or it fails closed.
 #[must_use]
-pub fn default_content_store_path() -> String {
+pub fn default_content_store_path() -> camino::Utf8PathBuf {
     if let Ok(v) = std::env::var("SINEX_CONTENT_STORE_PATH") {
-        return v;
+        match sinex_primitives::validation::validate_path(&v) {
+            Ok(path) => return path,
+            Err(error) => {
+                warn!(
+                    value = %v,
+                    %error,
+                    "Invalid content-store path override; using the shared fallback"
+                );
+            }
+        }
     }
     std::env::var("HOME").map_or_else(
         |_| {
-            sinex_primitives::environment::environment()
+            camino::Utf8PathBuf::from(
+                sinex_primitives::environment::environment()
                 .work_directory("content-store")
                 .to_string_lossy()
-                .into_owned()
+                .into_owned(),
+            )
         },
-        |home| format!("{home}/.local/share/sinex/content-store"),
+        |home| camino::Utf8PathBuf::from(format!("{home}/.local/share/sinex/content-store")),
     )
 }
 

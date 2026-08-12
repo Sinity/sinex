@@ -613,9 +613,7 @@ impl RuntimeRunner {
         // Resolve the SHARED content store (same SINEX_CONTENT_STORE_PATH the
         // gateway uses) so parse replay reads the CAS that ingestion wrote.
         let content_store_config = crate::runtime::content_store::ContentStoreConfig {
-            root_path: camino::Utf8PathBuf::from(
-                crate::runtime::content_store::default_content_store_path(),
-            ),
+            root_path: crate::runtime::content_store::default_content_store_path(),
             ..Default::default()
         };
         let content_store = match crate::runtime::content_store::ContentStoreManager::new(

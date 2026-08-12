@@ -954,16 +954,7 @@ fn validate_work_dir(path: &Utf8PathBuf) -> Result<(), validator::ValidationErro
 }
 
 fn default_content_store_path() -> Utf8PathBuf {
-    if let Some(validated) = env_validated_path("SINEX_CONTENT_STORE_PATH", "content-store path") {
-        return validated;
-    }
-
-    let content_store = default_work_dir().join("content-store");
-    validated_path_or_fallback(
-        &content_store,
-        Utf8PathBuf::from("/tmp/sinex/event_engine/content-store"),
-        "content-store path",
-    )
+    crate::runtime::content_store::default_content_store_path()
 }
 
 fn default_assembler_state_dir() -> Utf8PathBuf {

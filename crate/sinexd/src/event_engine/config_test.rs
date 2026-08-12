@@ -105,12 +105,13 @@ async fn default_config_does_not_hide_non_utf8_database_url_env()
 async fn derived_default_paths_ignore_invalid_overrides() -> xtask::sandbox::TestResult<()> {
     let mut env = EnvGuard::new();
     env.set("SINEX_EVENT_ENGINE_WORK_DIR", "/tmp/sinexd-config-root");
+    env.set("HOME", "/tmp/sinexd-cas-home");
     env.set("SINEX_CONTENT_STORE_PATH", "../../bad-content-store");
     env.set("SINEX_MATERIAL_ASSEMBLER_DIR", "../../bad-state-dir");
 
     assert_eq!(
         default_content_store_path(),
-        Utf8PathBuf::from("/tmp/sinexd-config-root/content-store")
+        Utf8PathBuf::from("/tmp/sinexd-cas-home/.local/share/sinex/content-store")
     );
     assert_eq!(
         default_assembler_state_dir(),

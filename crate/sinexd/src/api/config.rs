@@ -304,7 +304,7 @@ fn default_content_store_path() -> String {
     // is handled by the macro (it reads SINEX_API_CONTENT_STORE_PATH and
     // overrides this default). Source runtimes resolve from the same shared
     // resolver so gateway and sources address one CAS.
-    crate::runtime::content_store::default_content_store_path()
+    crate::runtime::content_store::default_content_store_path().to_string()
 }
 
 fn default_state_dir() -> PathBuf {

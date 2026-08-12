@@ -37,7 +37,9 @@ fn configured_state_dir() -> RuntimeResult<String> {
 
 fn configured_data_dir() -> RuntimeResult<String> {
     shared_env::strict_var("SINEX_DATA_DIR")?.map_or_else(
-        || Ok(crate::runtime::content_store::default_content_store_path()),
+        || Ok(
+            crate::runtime::content_store::default_content_store_path().to_string(),
+        ),
         Ok,
     )
 }
