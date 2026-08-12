@@ -262,6 +262,16 @@ impl JetStreamConsumer {
                 .await
             {
                 Ok(ack) => match ack.await {
+                    Ok(ack) if ack.duplicate => {
+                        warn!(
+                            nats_msg_id = ?dlq_entry.nats_msg_id,
+                            attempt,
+                            "DLQ publish was acknowledged as a JetStream duplicate; refusing to settle the raw message"
+                        );
+                        last_error = Some(SinexError::network(
+                            "DLQ publish was deduplicated and is not fresh durable evidence",
+                        ));
+                    }
                     Ok(_) => {
                         debug!(nats_msg_id = ?dlq_entry.nats_msg_id, "Routed to DLQ");
                         return Ok(durable_failure_id);

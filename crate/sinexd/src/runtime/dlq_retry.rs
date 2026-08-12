@@ -489,15 +489,21 @@ impl DlqRetryHandler {
             target.original_payload.len(),
         )?;
 
-        js.publish_with_headers(
-            target.original_subject,
-            headers,
-            target.original_payload.into(),
-        )
-        .await
-        .map_err(|e| SinexError::processing("Failed to republish message").with_source(e))?
-        .await
-        .map_err(|e| SinexError::processing("Failed to await publish ack").with_source(e))?;
+        let publish_ack = js
+            .publish_with_headers(
+                target.original_subject,
+                headers,
+                target.original_payload.into(),
+            )
+            .await
+            .map_err(|e| SinexError::processing("Failed to republish message").with_source(e))?
+            .await
+            .map_err(|e| SinexError::processing("Failed to await publish ack").with_source(e))?;
+        if publish_ack.duplicate {
+            return Err(SinexError::processing(
+                "DLQ retry publish was deduplicated; retaining the original DLQ message",
+            ));
+        }
 
         Ok(())
     }
@@ -551,15 +557,21 @@ impl DlqRetryHandler {
             target.original_payload.len(),
         )?;
 
-        js.publish_with_headers(
-            target.original_subject,
-            headers,
-            target.original_payload.into(),
-        )
-        .await
-        .map_err(|e| SinexError::processing("Failed to republish message").with_source(e))?
-        .await
-        .map_err(|e| SinexError::processing("Failed to await publish ack").with_source(e))?;
+        let publish_ack = js
+            .publish_with_headers(
+                target.original_subject,
+                headers,
+                target.original_payload.into(),
+            )
+            .await
+            .map_err(|e| SinexError::processing("Failed to republish message").with_source(e))?
+            .await
+            .map_err(|e| SinexError::processing("Failed to await publish ack").with_source(e))?;
+        if publish_ack.duplicate {
+            return Err(SinexError::processing(
+                "DLQ retry publish was deduplicated; retaining the original DLQ message",
+            ));
+        }
 
         self.permanently_fail_stream_message(stream, message)
             .await?;
