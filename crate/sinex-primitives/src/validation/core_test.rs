@@ -3,10 +3,10 @@ use serde_json::json;
 use xtask::sandbox::sinex_test;
 
 #[sinex_test]
-#[ignore = "sinex-ufgc open: NUL-stripping on JSON object keys silently collapses two distinct keys that differ only by an embedded NUL into one, losing data"]
 async fn strip_postgres_jsonb_nul_chars_does_not_collapse_distinct_keys()
 -> ::xtask::sandbox::TestResult<()> {
-    // "a\0" and "a" both strip down to "a" -- map::insert silently drops one entry.
+    // "a\0" and "a" both strip down to "a". The fallible path must reject
+    // this rather than allowing map::insert to silently drop one entry.
     let mut value = json!({
         "a\u{0}": "first",
         "a": "second",
@@ -14,13 +14,17 @@ async fn strip_postgres_jsonb_nul_chars_does_not_collapse_distinct_keys()
     let map_len_before = value.as_object().unwrap().len();
     assert_eq!(map_len_before, 2, "test setup: two distinct keys expected");
 
-    strip_postgres_jsonb_nul_chars(&mut value);
+    let result = try_strip_postgres_jsonb_nul_chars(&mut value);
 
+    assert!(
+        result.is_err(),
+        "NUL-stripped object-key collision must be rejected"
+    );
     let map = value.as_object().unwrap();
     assert_eq!(
         map.len(),
         2,
-        "NUL-stripping collapsed two distinct keys into one -- data loss (map now has {} entries: {:?})",
+        "rejected NUL-stripping must not overwrite either original key (map now has {} entries: {:?})",
         map.len(),
         map
     );

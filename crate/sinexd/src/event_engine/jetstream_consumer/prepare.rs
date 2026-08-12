@@ -19,13 +19,33 @@ impl JetStreamConsumer {
         })
     }
 
-    #[instrument(skip(self, msg))]
-    pub(super) async fn prepare_events(
+    /// Admit and prepare every message returned by one pull in a shared
+    /// equivalence-key scope. Settlement remains per raw envelope, while the
+    /// admission classification sees sibling messages before persistence.
+    pub(super) async fn prepare_events_batch(
+        &self,
+        messages: Vec<jetstream::Message>,
+    ) -> EventEngineResult<Vec<PreparedEvent>> {
+        let payloads = messages
+            .iter()
+            .map(|message| message.payload.as_ref())
+            .collect::<Vec<_>>();
+        let decisions = self.admission.admit_intent_bytes_batch(&payloads).await?;
+        let mut prepared = Vec::new();
+        for (message, decisions) in messages.into_iter().zip(decisions) {
+            prepared.extend(
+                self.prepare_events_from_decisions(message, decisions)
+                    .await?,
+            );
+        }
+        Ok(prepared)
+    }
+
+    async fn prepare_events_from_decisions(
         &self,
         msg: jetstream::Message,
+        decisions: Vec<AdmissionDecision>,
     ) -> EventEngineResult<Vec<PreparedEvent>> {
-        let decisions = self.admission.admit_intent_bytes(&msg.payload).await?;
-
         // sinex-r6d.12: an intent with zero decisions (empty EventIntent.events)
         // has no children to settle through — ack it directly. Every other
         // path below goes through the shared RawEnvelopeSettlement so no

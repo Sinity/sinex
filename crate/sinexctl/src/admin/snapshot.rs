@@ -935,6 +935,16 @@ impl AdminSnapshotRestoreCommand {
             )
         })?;
         let dump_path = self.target_dir.join(&component.path);
+        let user_relation_count = exec::pg_user_relation_count(
+            restore_database_url,
+            self.psql_bin.as_deref(),
+        )
+        .context("verify restore target database is empty")?;
+        if user_relation_count != 0 {
+            bail!(
+                "restore target database is not empty: {user_relation_count} user relation(s) exist"
+            );
+        }
         exec::psql_execute(
             restore_database_url,
             "CREATE EXTENSION IF NOT EXISTS timescaledb; SELECT timescaledb_pre_restore();",
@@ -1042,6 +1052,9 @@ fn inspect_snapshot_archive(archive_path: &Path) -> Result<SnapshotInspectResult
     let manifest = read_snapshot_manifest_from_archive(archive_path)?;
     let entries = exec::tar_list_zstd(archive_path)
         .with_context(|| format!("list snapshot archive {}", archive_path.display()))?;
+    validate_archive_entries_safe(&entries)?;
+    verify_archive_content_integrity(archive_path, &manifest)
+        .with_context(|| format!("verify snapshot component hashes at {}", archive_path.display()))?;
     let missing_component_paths = manifest
         .components
         .iter()
@@ -1255,6 +1268,32 @@ fn verify_archive_content_integrity(
     archive_path: &Path,
     manifest: &SnapshotManifest,
 ) -> Result<()> {
+    let unverifiable = manifest
+        .components
+        .iter()
+        .filter(|component| component.bytes > 0)
+        .filter(|component| matches!(component.blake3.as_str(), "absent" | "dry-run" | "error"))
+        .map(|component| component.name.as_str())
+        .collect::<Vec<_>>();
+    if !unverifiable.is_empty() {
+        bail!(
+            "snapshot manifest has unverifiable non-empty component hashes: {}",
+            unverifiable.join(", ")
+        );
+    }
+    let empty_required = manifest
+        .components
+        .iter()
+        .filter(|component| matches!(component.name.as_str(), "postgres" | "nats"))
+        .filter(|component| component.bytes == 0)
+        .map(|component| component.name.as_str())
+        .collect::<Vec<_>>();
+    if !empty_required.is_empty() {
+        bail!(
+            "snapshot manifest has empty required components: {}",
+            empty_required.join(", ")
+        );
+    }
     let archive_entries = exec::tar_list_zstd(archive_path).with_context(|| {
         format!(
             "list archive {} for content verification",

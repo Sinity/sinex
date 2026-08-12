@@ -128,6 +128,41 @@ pub fn psql_execute(database_url: &str, sql: &str, psql_bin: Option<&Path>) -> R
     Ok(())
 }
 
+/// Return the number of user relations in a restore target.
+///
+/// A restore drill must start with a database that has no user-owned
+/// relations. Checking relation existence, rather than approximate row
+/// statistics, catches a target that would collide with the dump even when its
+/// tables happen to be empty.
+pub fn pg_user_relation_count(database_url: &str, psql_bin: Option<&Path>) -> Result<i64> {
+    let sql = "SELECT count(*) FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace WHERE c.relkind IN ('r','p','v','m','f') AND n.nspname <> 'information_schema' AND n.nspname NOT LIKE 'pg_%';";
+    let output = Command::new(psql_bin.unwrap_or_else(|| Path::new("psql")))
+        .args([
+            "--tuples-only",
+            "--no-align",
+            "--command",
+            sql,
+            database_url,
+        ])
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .output()
+        .context("spawn psql to verify restore target emptiness")?;
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        bail!(
+            "psql restore-target emptiness query failed (exit {}): {}",
+            output.status.code().unwrap_or(-1),
+            stderr.trim()
+        );
+    }
+    String::from_utf8_lossy(&output.stdout)
+        .trim()
+        .parse::<i64>()
+        .context("parse restore-target user relation count")
+}
+
 /// Restore a custom-format `pg_dump` archive into `database_url`.
 pub fn pg_restore(
     database_url: &str,

@@ -4,32 +4,15 @@
 //! `source_role(event.source)`, the same way the single-element path already
 //! does via `insert_with_tx`.
 //!
-//! STATUS AS WRITTEN (2026-08-11): this test is EXPECTED TO FAIL against the
-//! current implementation. `insert_batch_unnest_in_tx`
-//! (`crate/sinex-db/src/repositories/events/persistence.rs`, multi-element
-//! path) hardcodes `INSERT INTO core.events` and pins parent-liveness to
-//! `EventStorageLane::Activity` regardless of each event's actual
-//! `source_role` -- so a reflection-source event sharing a batch with any
-//! other event lands in `core.events` instead of `reflection.events`,
-//! silently reproducing the sinex-4k4b activity-surface-pollution class.
-//! The single-element path (`insert_with_tx`, reached when a batch has
-//! exactly one event) is not affected -- it already checks `source_role`
-//! correctly, which is why the fix must group multi-element batches by lane
-//! rather than just copying the single-element check.
-//!
-//! Production dependency exercised: `EventRepository::insert_batch`. Fixing
-//! sinex-kgp4 (grouping the multi-element path by `source_role` the way the
-//! single-element path already does) should make this test pass without any
-//! change to the test itself.
+//! Production dependency exercised: `EventRepository::insert_batch`. The
+//! mixed batch below forces its multi-element path and verifies physical
+//! placement directly in both event tables.
 
 use sinex_db::DbPoolExt;
 use sinex_primitives::events::payload::DynamicPayload;
 use xtask::sandbox::prelude::*;
 
 #[sinex_test]
-#[ignore = "sinex-kgp4 open: insert_batch's multi-element path still hardcodes core.events \
-            regardless of source_role -- this test fails until that fix lands, kept here so the \
-            fix has an immediate, precise pass/fail signal once someone picks it up"]
 async fn insert_batch_routes_reflection_event_out_of_multi_element_batch(
     ctx: TestContext,
 ) -> TestResult<()> {
@@ -54,12 +37,6 @@ async fn insert_batch_routes_reflection_event_out_of_multi_element_batch(
     )
     .from_material(material_id)
     .build()?;
-    let reflection_event_id = *reflection_event
-        .id
-        .as_ref()
-        .expect("built event should have an id")
-        .as_uuid();
-
     // len() == 2 forces the multi-element path (insert_batch_unnest_in_tx),
     // not the len()==1 single-element delegation to insert_with_tx.
     let inserted = ctx
@@ -68,6 +45,14 @@ async fn insert_batch_routes_reflection_event_out_of_multi_element_batch(
         .insert_batch(vec![reflection_event, activity_event])
         .await?;
     assert_eq!(inserted.len(), 2, "both events in the batch should be inserted");
+    let reflection_event_id = *inserted
+        .iter()
+        .find(|event| event.source.as_str() == "sinex.selftest")
+        .expect("inserted batch should retain the reflection event")
+        .id
+        .as_ref()
+        .expect("inserted event should have an id")
+        .as_uuid();
 
     let in_reflection: i64 = sqlx::query_scalar(
         "SELECT count(*) FROM reflection.events WHERE id = $1",

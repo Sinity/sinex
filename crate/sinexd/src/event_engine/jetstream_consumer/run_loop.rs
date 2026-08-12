@@ -331,16 +331,14 @@ impl JetStreamConsumer {
         )
         .await
         .map_err(|e| SinexError::network("Failed to fetch messages").with_source(e))?;
-        let mut fetched_bytes: u64 = 0;
-        for msg in messages {
-            fetched_bytes += msg.payload.len() as u64;
-            #[cfg(any(test, feature = "testing"))]
-            if let Some(counter) = &self.delivery_observer {
-                counter.fetch_add(1, Ordering::Relaxed);
-            }
-
-            let prepared_events = self.prepare_events(msg).await?;
-            batch.extend(prepared_events);
+        let fetched_bytes: u64 = messages.iter().map(|msg| msg.payload.len() as u64).sum();
+        #[cfg(any(test, feature = "testing"))]
+        if let Some(counter) = &self.delivery_observer {
+            counter.fetch_add(messages.len() as u64, Ordering::Relaxed);
+        }
+        let prepared_messages = self.prepare_events_batch(messages).await?;
+        for prepared_event in prepared_messages {
+            batch.push(prepared_event);
         }
 
         if batch.is_empty() {

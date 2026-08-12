@@ -702,6 +702,52 @@ async fn snapshot_inspect_reports_manifest_and_archive_paths() -> xtask::sandbox
     Ok(())
 }
 
+#[sinex_test]
+async fn snapshot_inspect_rejects_empty_required_nats_component()
+-> xtask::sandbox::TestResult<()> {
+    use sinexctl::admin::manifest::{ComponentRecord, NatsExtras, SnapshotManifest, Totals};
+
+    let dir = tempfile::tempdir()?;
+    let staging = dir.path().join("staging");
+    fs::create_dir_all(staging.join("nats").join("jetstream"))?;
+    let manifest = SnapshotManifest {
+        snapshot_id: "01970a7f-391b-7000-8000-000000000005".to_string(),
+        created_at: "2026-05-15T11:34:00Z".to_string(),
+        sinex_version: "0.1.0".to_string(),
+        git_sha: None,
+        host: "sinnix-prime".to_string(),
+        mode: "quiesce".to_string(),
+        source_ids: registered_fixture_source_ids(),
+        components: vec![ComponentRecord {
+            name: "nats".to_string(),
+            path: "nats/jetstream/".to_string(),
+            bytes: 0,
+            blake3: snapshot_component_blake3(&staging.join("nats"))?,
+            extras: Some(ComponentExtras::Nats(NatsExtras {
+                member_paths: Vec::new(),
+            })),
+        }],
+        totals: Totals {
+            uncompressed_bytes: 0,
+            archive_bytes: Some(128),
+        },
+    };
+    fs::write(
+        staging.join("manifest.json"),
+        serde_json::to_vec_pretty(&manifest)?,
+    )?;
+    let archive = dir.path().join("empty-nats.sinex.tar.zst");
+    exec::tar_create_zstd(&staging, &archive, 1, 1)?;
+
+    let error = AdminSnapshotInspectCommand { archive }.execute()
+        .expect_err("inspect must reject an empty required NATS component");
+    assert!(
+        format!("{error:#}").contains("empty required components: nats"),
+        "error should identify the empty required component: {error:#}"
+    );
+    Ok(())
+}
+
 /// `ops state restore --dry-run` validates archive structure and returns
 /// a non-destructive restore drill plan.
 #[sinex_test]
@@ -959,7 +1005,7 @@ async fn snapshot_restore_executes_postgres_drill_with_row_count_check()
         &tools,
         "psql",
         &format!(
-            "#!/bin/sh\nprintf '%s\\n' \"$@\" >> {}\ncase \"$*\" in\n  *'pg_stat_user_tables'*) printf 'core.events\\npg_temp_141.sinex_batch_staging\\n' ;;\n  *'count(*)'*) printf '7\\n' ;;\nesac\nexit 0\n",
+            "#!/bin/sh\nprintf '%s\\n' \"$@\" >> {}\ncase \"$*\" in\n  *'pg_stat_user_tables'*) printf 'core.events\\npg_temp_141.sinex_batch_staging\\n' ;;\n  *'pg_class'*) printf '0\\n' ;;\n  *'count(*)'*) printf '7\\n' ;;\nesac\nexit 0\n",
             psql_log.display()
         ),
     )?;

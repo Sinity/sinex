@@ -2548,8 +2548,7 @@ async fn settlement_registry_resolves_durable_debt_for_an_admission_rejected_eve
     Ok(())
 }
 
-/// sinex-txt4 regression test (CRITICAL, currently EXPECTED TO FAIL — no fix
-/// has landed for this bead yet). Reproduces the bead's own named repro
+/// sinex-txt4 regression test. Reproduces the bead's named repro
 /// recipe exactly: two events sharing an `equivalence_key`, published as two
 /// separate NATS messages with NO persistence barrier between them, so both
 /// land in the SAME fetch batch. Admission's equivalence-key pre-pass only
@@ -2567,19 +2566,7 @@ async fn settlement_registry_resolves_durable_debt_for_an_admission_rejected_eve
 /// barrier) blind to the bug: a quiet/barriered consumer drains one message
 /// per fetch, so the two never co-occupy a batch.
 ///
-/// sinex-txt4 open, coordinator note: this test's OWN harness is not yet
-/// reliable, separate from whether the target bug is real. The original
-/// version silently lost both publishes (a fire-and-forget core-NATS
-/// publish, `publish_event`, sent before the raw stream existed) --
-/// bootstrapping the stream first fixed that, but doing so now surfaces a
-/// deeper interaction with `recreate_raw_stream_for_workqueue_if_safe`'s
-/// WorkQueue-migration bootstrap logic when messages already exist and no
-/// consumer is attached yet (`jetstream_streams.rs`), which currently makes
-/// the consumer task exit before signalling readiness. Ignored until that
-/// harness issue is diagnosed and fixed -- do not trust this as evidence
-/// either way on sinex-txt4 until it runs clean.
 #[sinex_test]
-#[ignore = "sinex-txt4 open: test harness itself is broken (WorkQueue-migration bootstrap race), not yet proving the target bug either way -- needs harness fix first"]
 async fn equivalence_key_collision_within_one_fetch_batch_must_not_duplicate(
     ctx: TestContext,
 ) -> TestResult<()> {
@@ -2650,7 +2637,12 @@ async fn equivalence_key_collision_within_one_fetch_batch_must_not_duplicate(
         pool.clone(),
         Arc::new(RwLock::new(validator)),
         topology.clone(),
-    );
+    )
+    // This test deliberately seeds the stream before creating the durable
+    // consumer. Allow that explicit historical replay so the test exercises
+    // the batch-collision path instead of the production safety refusal for
+    // an unconfigured cold-start replay.
+    .with_reject_initial_replay(false);
     let consumer_handle = spawn_consumer_and_wait_ready(&ctx, &js, &topology, consumer).await?;
 
     WaitHelpers::wait_for_source_events(&pool, "txt4-source", 1, Timeouts::STANDARD).await?;

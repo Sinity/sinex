@@ -917,9 +917,14 @@ impl<'a> EventRepository<'a> {
         }
         ensure_batch_event_ids(&mut events);
 
+        let (activity_event_ids, reflection_event_ids) =
+            Self::batch_event_ids_by_lane(&events);
+
         // For small batches, use the optimized single-transaction approach
         if events.len() <= 50 {
-            return self.insert_batch_unnest(events).await;
+            return self
+                .insert_batch_unnest(events, &activity_event_ids, &reflection_event_ids)
+                .await;
         }
 
         // For larger batches, still chunk the VALUES statement size, but keep the
@@ -942,8 +947,15 @@ impl<'a> EventRepository<'a> {
         ensure_no_intra_batch_synthesis_cycles(&synthesis_checks)?;
 
         for chunk in events.chunks(chunk_size) {
+            let (chunk_activity_event_ids, chunk_reflection_event_ids) =
+                Self::batch_event_ids_by_lane(chunk);
             let mut chunk_results = self
-                .insert_batch_unnest_in_tx(&mut tx, chunk.to_vec())
+                .insert_batch_unnest_in_tx(
+                    &mut tx,
+                    chunk.to_vec(),
+                    &chunk_activity_event_ids,
+                    &chunk_reflection_event_ids,
+                )
                 .await?;
             processed += chunk_results.len();
             results.append(&mut chunk_results);
@@ -972,6 +984,8 @@ impl<'a> EventRepository<'a> {
     async fn insert_batch_unnest(
         &self,
         events: Vec<Event<JsonValue>>,
+        activity_event_ids: &HashSet<Uuid>,
+        reflection_event_ids: &HashSet<Uuid>,
     ) -> DbResult<Vec<Event<JsonValue>>> {
         let mut tx = self.pool.begin().await.map_err(|e| {
             db_error(
@@ -985,7 +999,14 @@ impl<'a> EventRepository<'a> {
 
         crate::query_helpers::set_repeatable_read(&mut tx).await?;
 
-        let events = self.insert_batch_unnest_in_tx(&mut tx, events).await?;
+        let events = self
+            .insert_batch_unnest_in_tx(
+                &mut tx,
+                events,
+                activity_event_ids,
+                reflection_event_ids,
+            )
+            .await?;
 
         tx.commit().await.map_err(|e| {
             db_error(
@@ -1000,14 +1021,115 @@ impl<'a> EventRepository<'a> {
     async fn insert_batch_unnest_in_tx(
         &self,
         tx: &mut Transaction<'_, Postgres>,
+        events: Vec<Event<JsonValue>>,
+        activity_event_ids: &HashSet<Uuid>,
+        reflection_event_ids: &HashSet<Uuid>,
+    ) -> DbResult<Vec<Event<JsonValue>>> {
+        if events.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        let input_ids = events
+            .iter()
+            .map(|event| {
+                event
+                    .id
+                    .as_ref()
+                    .expect("batch event ids are assigned before lane partitioning")
+                    .to_uuid()
+            })
+            .collect::<Vec<_>>();
+
+        let mut activity_events = Vec::new();
+        let mut reflection_events = Vec::new();
+        for event in events {
+            match Self::event_storage_lane(&event) {
+                EventStorageLane::Activity => activity_events.push(event),
+                EventStorageLane::Reflection => reflection_events.push(event),
+            }
+        }
+
+        let mut inserted_by_id = HashMap::new();
+        for (lane, lane_events, lane_event_ids) in [
+            (
+                EventStorageLane::Activity,
+                activity_events,
+                activity_event_ids,
+            ),
+            (
+                EventStorageLane::Reflection,
+                reflection_events,
+                reflection_event_ids,
+            ),
+        ] {
+            for event in self
+                .insert_batch_unnest_lane_in_tx(tx, lane_events, lane, lane_event_ids)
+                .await?
+            {
+                let id = event
+                    .id
+                    .as_ref()
+                    .expect("inserted batch event has an id")
+                    .to_uuid();
+                inserted_by_id.insert(id, event);
+            }
+        }
+
+        // Lane grouping is an execution detail; preserve the public API's input order.
+        let mut result = Vec::with_capacity(input_ids.len());
+        for id in input_ids {
+            result.push(
+                inserted_by_id
+                    .remove(&id)
+                    .expect("inserted batch event was indexed by id"),
+            );
+        }
+        Ok(result)
+    }
+
+    fn batch_event_ids_by_lane(
+        events: &[Event<JsonValue>],
+    ) -> (HashSet<Uuid>, HashSet<Uuid>) {
+        let mut activity_event_ids = HashSet::new();
+        let mut reflection_event_ids = HashSet::new();
+        for event in events {
+            let id = event
+                .id
+                .as_ref()
+                .expect("batch event ids are assigned before lane partitioning")
+                .to_uuid();
+            match Self::event_storage_lane(event) {
+                EventStorageLane::Activity => {
+                    activity_event_ids.insert(id);
+                }
+                EventStorageLane::Reflection => {
+                    reflection_event_ids.insert(id);
+                }
+            }
+        }
+        (activity_event_ids, reflection_event_ids)
+    }
+
+    fn event_storage_lane(event: &Event<JsonValue>) -> EventStorageLane {
+        match source_role(event.source.as_str()) {
+            SourceRole::Activity => EventStorageLane::Activity,
+            SourceRole::Reflection => EventStorageLane::Reflection,
+        }
+    }
+
+    async fn insert_batch_unnest_lane_in_tx(
+        &self,
+        tx: &mut Transaction<'_, Postgres>,
         mut events: Vec<Event<JsonValue>>,
+        lane: EventStorageLane,
+        batch_event_ids: &HashSet<Uuid>,
     ) -> DbResult<Vec<Event<JsonValue>>> {
         if events.is_empty() {
             return Ok(Vec::new());
         }
 
         // For very small batches, use individual inserts to avoid overhead
-        if events.len() == 1 {
+        if events.len() == 1 && batch_event_ids.len() <= 1 {
             let event = events.remove(0);
             let inserted = self.insert_with_tx(tx, event).await?;
             return Ok(vec![inserted]);
@@ -1138,19 +1260,15 @@ impl<'a> EventRepository<'a> {
         }
 
         ensure_no_intra_batch_synthesis_cycles(&synthesis_checks)?;
-        let batch_event_ids = ids.iter().copied().collect::<HashSet<_>>();
-
         // Enforce derived cycle detection (parity with insert/insert_stream_batch).
-        // This UNNEST batch path always inserts into `core.events` (below), so
-        // the parent-liveness check is pinned to the Activity lane to match.
         for (event_id, source_ids) in &synthesis_checks {
             ensure_no_synthesis_cycles(&mut **tx, event_id, source_ids)?;
             ensure_source_event_ids_are_live(
                 &mut **tx,
                 event_id,
                 source_ids,
-                Some(&batch_event_ids),
-                EventStorageLane::Activity,
+                Some(batch_event_ids),
+                lane,
             )
             .await?;
         }
@@ -1159,10 +1277,11 @@ impl<'a> EventRepository<'a> {
         // (source_event_ids/associated_blob_ids) and `query!` rejects array nulls.
         //
         // Column list is derived from EVENT_COPY_COLUMNS (the SSOT) so that adding
-        // a new core.events column only requires updating postgres_copy.rs — not this
+        // a new event-table column only requires updating postgres_copy.rs — not this
         // site. Bind order MUST match EVENT_COPY_COLUMNS order exactly. (#1575)
         let mut builder = QueryBuilder::new(format!(
-            "INSERT INTO core.events ({}) ",
+            "INSERT INTO {} ({}) ",
+            lane.table_name(),
             event_copy_column_list_sql()
         ));
         builder.push_values(0..ids.len(), |mut b, idx| {

@@ -20,7 +20,9 @@ use sinex_primitives::events::admission::{ACCEPTED_ENVELOPE_VERSIONS, EventInten
 use sinex_primitives::events::builder::{EventId, Provenance};
 use sinex_primitives::events::schema_registry::{RevisionPolicy, revision_policy_for_event_type};
 use sinex_primitives::events::{EquivalenceKey, Event, ScopeKey, payload_content_hash};
-use sinex_primitives::{Id, JsonValue, Timestamp, Uuid, strip_postgres_jsonb_nul_chars};
+use sinex_primitives::{
+    Id, JsonValue, Timestamp, Uuid, try_strip_postgres_jsonb_nul_chars,
+};
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
@@ -495,6 +497,59 @@ pub struct AdmissionService {
     storage_lane: EventStorageLane,
 }
 
+fn parse_intent_bytes(payload: &[u8]) -> Result<EventIntent, AdmissionDecision> {
+    if payload.len() > MAX_EVENT_PAYLOAD_BYTES {
+        return Err(AdmissionDecision::Rejected(AdmissionRejection::new(
+            AdmissionRejectionKind::PayloadTooLarge,
+            format!(
+                "Event payload too large: {} bytes (limit: {} bytes)",
+                payload.len(),
+                MAX_EVENT_PAYLOAD_BYTES
+            ),
+        )));
+    }
+    let payload_str = std::str::from_utf8(payload).map_err(|error| {
+        AdmissionDecision::Rejected(AdmissionRejection::new(
+            AdmissionRejectionKind::InvalidUtf8,
+            format!("Event payload is not valid UTF-8: {error}"),
+        ))
+    })?;
+    serde_json::from_slice::<serde_json::Value>(payload).map_err(|error| {
+        AdmissionDecision::Rejected(AdmissionRejection::new(
+            AdmissionRejectionKind::EventDeserialization,
+            format!("Parse error: {error}"),
+        ))
+    })?;
+    sinex_primitives::validation::validate_json(payload_str).map_err(|error| {
+        AdmissionDecision::Rejected(AdmissionRejection::new(
+            AdmissionRejectionKind::StructuralJson,
+            format!("Event payload failed structural validation: {error}"),
+        ))
+    })?;
+    let intent: EventIntent = serde_json::from_slice(payload).map_err(|error| {
+        AdmissionDecision::Rejected(AdmissionRejection::new(
+            AdmissionRejectionKind::EnvelopeDeserialization,
+            format!("Failed to deserialize admission envelope: {error}"),
+        ))
+    })?;
+    intent.validate().map_err(|error| {
+        AdmissionDecision::Rejected(AdmissionRejection::new(
+            AdmissionRejectionKind::EnvelopeValidation,
+            format!("Admission envelope validation failed: {error}"),
+        ))
+    })?;
+    if !ACCEPTED_ENVELOPE_VERSIONS.contains(&intent.envelope_version.as_str()) {
+        return Err(AdmissionDecision::Rejected(AdmissionRejection::new(
+            AdmissionRejectionKind::EnvelopeValidation,
+            format!(
+                "Envelope version {} is not accepted. Accepted versions: {:?}",
+                intent.envelope_version, ACCEPTED_ENVELOPE_VERSIONS
+            ),
+        )));
+    }
+    Ok(intent)
+}
+
 impl AdmissionService {
     pub fn new(pool: DbPool, validator: Arc<RwLock<IngestEventValidator>>) -> Self {
         Self {
@@ -947,6 +1002,194 @@ impl AdmissionService {
     /// Durable transport ingress is envelope-only. Raw `Event` JSON is accepted
     /// only by direct test/bootstrap helpers that call `admit_bytes()`.
     pub async fn admit_intent_bytes(
+        &self,
+        payload: &[u8],
+    ) -> EventEngineResult<Vec<AdmissionDecision>> {
+        Ok(self.admit_intent_bytes_batch(&[payload]).await?.remove(0))
+    }
+
+    /// Admit all event-intent envelopes from one fetch batch together.
+    ///
+    /// Equivalence-key reconciliation is scoped to the complete fetch, not
+    /// to one envelope. This keeps an earlier same-key interpretation from
+    /// being classified as fresh merely because its message has not reached
+    /// persistence yet. The returned groups retain the original message
+    /// boundaries so transport settlement remains per raw envelope.
+    pub async fn admit_intent_bytes_batch(
+        &self,
+        payloads: &[&[u8]],
+    ) -> EventEngineResult<Vec<Vec<AdmissionDecision>>> {
+        let mut decisions_by_message: Vec<Vec<AdmissionDecision>> =
+            Vec::with_capacity(payloads.len());
+        let mut events = Vec::new();
+
+        for (message_index, payload) in payloads.iter().enumerate() {
+            match parse_intent_bytes(payload) {
+                Ok(intent) => {
+                    decisions_by_message.push(Vec::new());
+                    events.extend(
+                        intent
+                            .events
+                            .into_iter()
+                            .map(|event| (message_index, event)),
+                    );
+                }
+                Err(decision) => decisions_by_message.push(vec![decision]),
+            }
+        }
+
+        let decisions = self.admit_events_batch(events).await?;
+        for (message_index, decision) in decisions {
+            decisions_by_message[message_index].push(decision);
+        }
+        Ok(decisions_by_message)
+    }
+
+    async fn admit_events_batch(
+        &self,
+        events: Vec<(usize, Event<JsonValue>)>,
+    ) -> EventEngineResult<Vec<(usize, AdmissionDecision)>> {
+        let mut decisions = Vec::with_capacity(events.len());
+
+        // Batch pre-pass (#1637 + sinex-n9a): fetch every live occurrence row
+        // sharing an equivalence_key present in this fetch with a single
+        // round-trip. The in-memory maps below then extend that snapshot over
+        // all messages in the same fetch before persistence begins.
+        let equiv_keys: Vec<String> = events
+            .iter()
+            .filter_map(|(_, e)| e.equivalence_key.as_ref().map(|k| k.as_str().to_owned()))
+            .collect();
+        let mut live_by_key: HashMap<String, LiveEquivalenceRow> = if equiv_keys.is_empty() {
+            HashMap::new()
+        } else {
+            match self
+                .pool
+                .events()
+                .find_live_by_equivalence_keys(&equiv_keys, self.storage_lane)
+                .await
+            {
+                Ok(rows) => rows
+                    .into_iter()
+                    .map(|row| (row.equivalence_key.clone(), row))
+                    .collect(),
+                Err(e) => {
+                    warn!(
+                        error = %e,
+                        equiv_key_count = equiv_keys.len(),
+                        "batch equivalence_key pre-pass failed; admitting this batch fresh (fail-open)"
+                    );
+                    HashMap::new()
+                }
+            }
+        };
+
+        // Track the latest in-memory interpretation and the original external
+        // archive target for each key. A same-key predecessor from this fetch
+        // is demoted instead of archived because it has not been persisted.
+        let mut key_last_index: HashMap<String, usize> = HashMap::new();
+        let mut key_archive_target: HashMap<String, Option<Uuid>> = HashMap::new();
+
+        for (message_index, event) in events {
+            let equiv_key = event.equivalence_key.clone();
+            let outcome = equiv_key
+                .as_deref()
+                .and_then(|key| live_by_key.get(key))
+                .map_or(EquivalenceOutcome::Fresh, |live| {
+                    classify_live_match(&event, live)
+                });
+            let decision = self
+                .admit_event_with_metadata(event, None, Some(outcome))
+                .await?;
+
+            let Some(key) = equiv_key else {
+                decisions.push((message_index, decision));
+                continue;
+            };
+
+            let admitted = match &decision {
+                AdmissionDecision::Admitted(admitted)
+                | AdmissionDecision::Transformed(admitted)
+                | AdmissionDecision::Superseded { admitted, .. } => admitted,
+                AdmissionDecision::Suppressed(_)
+                | AdmissionDecision::QuarantineNeeded(_)
+                | AdmissionDecision::Rejected(_) => {
+                    decisions.push((message_index, decision));
+                    continue;
+                }
+            };
+
+            live_by_key.insert(
+                key.clone(),
+                LiveEquivalenceRow {
+                    equivalence_key: admitted.event.equivalence_key.clone().unwrap_or_default(),
+                    id: admitted.event_id,
+                    payload: admitted.event.payload.clone(),
+                    content_hash: Some(payload_content_hash(&admitted.event.payload).to_vec()),
+                },
+            );
+
+            let idx = decisions.len();
+            match decision {
+                AdmissionDecision::Superseded {
+                    superseded_event_id,
+                    admitted,
+                } if key_last_index.contains_key(&key) => {
+                    let prev_idx = key_last_index[&key];
+                    let _ = superseded_event_id;
+                    let demoted_event_id = match &decisions[prev_idx].1 {
+                        AdmissionDecision::Admitted(admitted)
+                        | AdmissionDecision::Transformed(admitted)
+                        | AdmissionDecision::Superseded { admitted, .. } => Some(admitted.event_id),
+                        AdmissionDecision::Suppressed(_)
+                        | AdmissionDecision::QuarantineNeeded(_)
+                        | AdmissionDecision::Rejected(_) => None,
+                    };
+                    let mut demotion = AdmissionRejection::new(
+                        AdmissionRejectionKind::SupersededWithinBatch,
+                        format!(
+                            "equivalence_key {key} was revised again later in the same fetch \
+                             before this interpretation was ever persisted"
+                        ),
+                    );
+                    if let Some(id) = demoted_event_id {
+                        demotion = demotion.with_event_id(id);
+                    }
+                    let external_target = key_archive_target.get(&key).copied().flatten();
+                    decisions[prev_idx].1 = AdmissionDecision::Suppressed(demotion);
+                    key_last_index.insert(key.clone(), idx);
+                    key_archive_target.insert(key, external_target);
+                    decisions.push((
+                        message_index,
+                        match external_target {
+                            Some(target) => AdmissionDecision::Superseded {
+                                admitted,
+                                superseded_event_id: target,
+                            },
+                            None => AdmissionDecision::Admitted(admitted),
+                        },
+                    ));
+                }
+                AdmissionDecision::Superseded {
+                    superseded_event_id,
+                    ..
+                } => {
+                    key_last_index.insert(key.clone(), idx);
+                    key_archive_target.insert(key, Some(superseded_event_id));
+                    decisions.push((message_index, decision));
+                }
+                AdmissionDecision::Admitted(_) | AdmissionDecision::Transformed(_) => {
+                    key_last_index.insert(key.clone(), idx);
+                    key_archive_target.insert(key, None);
+                    decisions.push((message_index, decision));
+                }
+                _ => unreachable!("filtered to Admitted/Transformed/Superseded above"),
+            }
+        }
+        Ok(decisions)
+    }
+
+    /// Parse and validate one event-intent envelope before admission.
+    async fn legacy_admit_intent_bytes(
         &self,
         payload: &[u8],
     ) -> EventEngineResult<Vec<AdmissionDecision>> {
@@ -1504,7 +1747,12 @@ fn admitted_to_stream_rows(batch: &[&AdmittedEvent]) -> EventEngineResult<Vec<St
             let content_hash = admitted.content_hash;
 
             let mut payload = event.payload.clone();
-            let stripped_nul_bytes = strip_postgres_jsonb_nul_chars(&mut payload);
+            let stripped_nul_bytes = try_strip_postgres_jsonb_nul_chars(&mut payload)
+                .map_err(|error| {
+                    SinexError::validation("event payload cannot be represented as PostgreSQL JSONB")
+                        .with_context("event_id", admitted.event_id.to_string())
+                        .with_source(error)
+                })?;
             if stripped_nul_bytes > 0 {
                 warn!(
                     event_id = %admitted.event_id,

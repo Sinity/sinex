@@ -206,7 +206,8 @@ pub use task_domain::*;
 pub use temporal::{OffsetDateTime, now};
 pub use units::{Bytes, Seconds};
 pub use validation::{
-    sanitize_filename_component, strip_postgres_jsonb_nul_chars, validate_json,
-    validate_json_value, validate_path, validate_path_within_root,
+    sanitize_filename_component, strip_postgres_jsonb_nul_chars,
+    try_strip_postgres_jsonb_nul_chars, validate_json, validate_json_value, validate_path,
+    validate_path_within_root,
 };
 pub use views::*;
