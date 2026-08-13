@@ -833,6 +833,10 @@ async fn tombstone_approve_deletes_blob_row_once_last_reference_is_gone(
         .await?,
     )?;
 
+    // A repeat apply must preserve the lifecycle function and temporal-facts
+    // view relationship before the real tombstone path reaches its CAS checks.
+    sinex_db::apply_schema(ctx.pool()).await?;
+
     let approve: TombstoneApproveResponse = serde_json::from_value(
         handle_tombstone_approve(
             json!({
