@@ -2304,9 +2304,20 @@ where
     ) -> RuntimeResult<ScanReport> {
         let start = Instant::now();
         if let Some(replay) = args.replay.clone() {
+            if A::KIND == InputShapeKind::DirectoryWalk {
+                // DirectoryWalkAdapter's native occurrence is a DirectoryEntry,
+                // but the replay envelope does not carry its logical path or
+                // native anchor. Reopening it would enumerate the configured
+                // roots from the beginning and could reinterpret out-of-scope
+                // files, so reject before touching CAS or the adapter.
+                return Err(crate::runtime::SinexError::configuration(
+                    "scoped replay is not supported for DirectoryWalkAdapter because the replay context lacks the original logical path and native DirectoryEntry anchor",
+                )
+                .with_context("source_id", self.source_id)
+                .with_context("adapter_kind", A::KIND.as_str()));
+            }
             // Never silently widen a scoped replay into a fresh-source scan.
-            // Every adapter now enters the CAS-backed route; adapters whose
-            // occurrence coordinates are not byte ranges fail closed there.
+            // Byte-range-capable adapters enter the bounded CAS-backed route.
             return self.replay_materials_from_cas(replay).await;
         }
 

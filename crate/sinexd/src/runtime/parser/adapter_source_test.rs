@@ -2,13 +2,14 @@ use super::*;
 use crate::runtime::checkpoint::CheckpointManager;
 use crate::runtime::content_store::{ContentStoreConfig, ContentStoreManager};
 use crate::runtime::parser::adapters::{
-    AppendOnlyCursor, ChainedCursor, FileDropAdapter, SqliteRowCursor,
+    AppendOnlyCursor, ChainedCursor, DirectoryWalkAdapter, FileDropAdapter, SqliteRowCursor,
 };
 use crate::runtime::parser::{InputShapeKind, ParserError, ParserResult, SourceRecord};
 use crate::runtime::stream::{
     Checkpoint, ContinuousStart, EventEmitter, ReplayMaterialOccurrence, ReplayScopeFilters,
     ResolvedReplayMaterial, RuntimeHandles, ScanArgs, ServiceInfo, TimeHorizon,
 };
+use crate::sources::source_contracts::library::DocsLibraryParser;
 use crate::runtime::{EventTransport, NatsPublisher, SOURCE_MATERIAL_STREAM};
 use async_trait::async_trait;
 use camino::Utf8PathBuf;
@@ -1561,6 +1562,104 @@ async fn scoped_replay_does_not_open_generic_adapter_from_fresh_cursor(
         "scoped replay must not open a fresh cursor and rescan selected plus unselected material"
     );
     assert_eq!(state.cursor, None);
+    Ok(())
+}
+
+/// `DirectoryWalkAdapter` has a logical `DirectoryEntry` occurrence, but the
+/// replay envelope currently carries neither its path nor its native anchor.
+/// The production source route must therefore reject before a root walk can
+/// rescan selected and unselected files and emit duplicate live interpretations.
+#[sinex_test]
+async fn directory_walk_scoped_replay_fails_closed_before_source_rescan(
+    ctx: TestContext,
+) -> TestResult<()> {
+    let ctx = ctx.with_nats().shared().await?;
+    let (runtime, mut event_receiver) = make_adapter_runtime(&ctx).await?;
+    let source_root = tempfile::tempdir()?;
+    tokio::fs::write(source_root.path().join("selected.md"), b"selected").await?;
+    tokio::fs::write(source_root.path().join("unselected.md"), b"unselected").await?;
+
+    let mut source =
+        AdapterBackedSource::<DirectoryWalkAdapter, DocsLibraryParser>::new("library.replay");
+    let mut state = AdapterModuleState::default();
+    source
+        .initialize(
+            AdapterSourceConfig {
+                adapter: json!({"roots": [source_root.path()]}),
+                ..Default::default()
+            },
+            &runtime,
+            &mut state,
+        )
+        .await?;
+
+    let selected_material = Uuid::now_v7();
+    let unselected_material = Uuid::now_v7();
+    let error = source
+        .scan_historical(
+            &mut state,
+            Checkpoint::None,
+            TimeHorizon::Historical {
+                end_time: Timestamp::now(),
+            },
+            ScanArgs {
+                replay: Some(MaterialReplayContext {
+                    operation_id: Uuid::now_v7(),
+                    materials: vec![
+                        ResolvedReplayMaterial {
+                            source_material_id: selected_material,
+                            material_kind: "append_stream".to_string(),
+                            source_identifier: "selected".to_string(),
+                            material_metadata: JsonValue::Null,
+                            material_start_time: None,
+                            material_end_time: None,
+                        },
+                        ResolvedReplayMaterial {
+                            source_material_id: unselected_material,
+                            material_kind: "append_stream".to_string(),
+                            source_identifier: "unselected".to_string(),
+                            material_metadata: JsonValue::Null,
+                            material_start_time: None,
+                            material_end_time: None,
+                        },
+                    ],
+                    occurrences: vec![ReplayMaterialOccurrence {
+                        source_material_id: selected_material,
+                        anchor_byte: 0,
+                        offset_start: None,
+                        offset_end: None,
+                        record_metadata: JsonValue::Null,
+                    }],
+                    replay_scope: ReplayScopeFilters {
+                        material_ids: Some(vec![selected_material]),
+                        event_types: Some(vec!["document.indexed".to_string()]),
+                    },
+                }),
+                ..Default::default()
+            },
+        )
+        .await
+        .expect_err("DirectoryWalk scoped replay must fail closed");
+
+    assert!(
+        error
+            .to_string()
+            .contains("DirectoryWalkAdapter because the replay context lacks"),
+        "error must identify the unsupported bounded replay contract: {error}"
+    );
+    assert!(
+        state.cursor.is_none(),
+        "a rejected replay must not advance the source cursor"
+    );
+    assert_eq!(
+        source.current_material_id(),
+        None,
+        "a rejected replay must not open source material"
+    );
+    assert!(matches!(
+        event_receiver.try_recv(),
+        Err(tokio::sync::mpsc::error::TryRecvError::Empty)
+    ));
     Ok(())
 }
 
