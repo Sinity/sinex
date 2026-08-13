@@ -17,9 +17,7 @@ async fn parsed_event_count_backfill_registers_status(ctx: TestContext) -> TestR
 }
 
 #[sinex_test]
-async fn parsed_event_count_backfill_requires_quiescent_ack(
-    ctx: TestContext,
-) -> TestResult<()> {
+async fn parsed_event_count_backfill_requires_quiescent_ack(ctx: TestContext) -> TestResult<()> {
     ensure_backfill_schema(ctx.pool()).await?;
 
     let error = run_parsed_event_count_backfill(

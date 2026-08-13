@@ -6,9 +6,8 @@ use crate::defs::{
     EmailMailboxProjection, EmailProviderState, EmbeddingCache, EmbeddingModels, Entities,
     EntityRelations, EventAnnotations, EventClusterMembers, EventClusters, EventEmbeddings,
     EventPayloadSchemas, EventReplacements, EventTombstones, Events, ImportOutcomes, Manifests,
-    ModelEffects,
-    OperationsLog, Runs, SourceMaterialLinks, SourceMaterialRegistry, SourceSessionState,
-    TaggedItems, Tags, TemporalLedger,
+    ModelEffects, OperationsLog, Runs, SourceMaterialLinks, SourceMaterialRegistry,
+    SourceSessionState, TaggedItems, Tags, TemporalLedger,
 };
 use crate::registry;
 use sea_query::{IndexCreateStatement, PostgresQueryBuilder, TableCreateStatement};

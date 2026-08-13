@@ -39,7 +39,10 @@ fn guarded_function_sets_cover_boot_sensitive_blocks() {
             "core.lifecycle_tier_status()",
         ]
     );
-    assert_eq!(JSONB_MERGE_FUNCTIONS, &["core.jsonb_merge_deep(jsonb,jsonb)"]);
+    assert_eq!(
+        JSONB_MERGE_FUNCTIONS,
+        &["core.jsonb_merge_deep(jsonb,jsonb)"]
+    );
     assert_eq!(
         EMBEDDING_INDEX_MANAGEMENT_FUNCTIONS,
         &[
@@ -77,9 +80,7 @@ fn reflection_event_trigger_sql_targets_reflection_table() {
     assert!(sql.contains("reflection.fn_events_no_update"));
     assert!(sql.contains("reflection.fn_events_validate_payload"));
     assert!(sql.contains("reflection.fn_events_validate_material_bounds"));
-    assert!(!sql.contains(
-        "DROP TRIGGER IF EXISTS trg_events_no_update ON core.events"
-    ));
+    assert!(!sql.contains("DROP TRIGGER IF EXISTS trg_events_no_update ON core.events"));
     assert!(
         !sql.contains("CREATE TRIGGER trg_events_no_update\n        BEFORE UPDATE ON core.events")
     );

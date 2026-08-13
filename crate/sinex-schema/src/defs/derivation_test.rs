@@ -284,12 +284,11 @@ async fn derivation_schema_adjudicated_claim_with_judgment_event_succeeds(
     .await
     .expect("an accepted claim with a real adjudication_event_id must succeed");
 
-    let stored_adjudication_event_id: Uuid = sqlx::query_scalar(
-        "SELECT adjudication_event_id FROM core.events WHERE id = $1",
-    )
-    .bind(claim_event_id)
-    .fetch_one(ctx.pool())
-    .await?;
+    let stored_adjudication_event_id: Uuid =
+        sqlx::query_scalar("SELECT adjudication_event_id FROM core.events WHERE id = $1")
+            .bind(claim_event_id)
+            .fetch_one(ctx.pool())
+            .await?;
     assert_eq!(stored_adjudication_event_id, judgment_event_id);
     Ok(())
 }

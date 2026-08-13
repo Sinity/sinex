@@ -74,7 +74,10 @@ async fn authority_finalizer_registry_registered_declaration_succeeds(
     .bind("test.finalizer.registered_declaration_succeeds")
     .fetch_one(ctx.pool())
     .await?;
-    assert!(requires_human_judgment, "requires_human_judgment defaults to true");
+    assert!(
+        requires_human_judgment,
+        "requires_human_judgment defaults to true"
+    );
     assert!(active, "active defaults to true");
     Ok(())
 }

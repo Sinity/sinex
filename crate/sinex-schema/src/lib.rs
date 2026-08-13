@@ -24,6 +24,9 @@ pub mod converge;
 /// The single source of truth for all schema definitions.
 pub mod defs;
 
+/// Typed schema expectations and the PostgreSQL catalog verify interpreter.
+pub mod expectation;
+
 /// Centralized registry of all database schemas.
 pub mod registry;
 

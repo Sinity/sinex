@@ -1262,6 +1262,13 @@ pub fn convergible_tables() -> Result<Vec<ConvergibleTable>, ApplyError> {
     ])
 }
 
+/// Typed expectation view over the same registry consumed by convergence.
+/// Keeping this adapter next to the registry makes it impossible for a new
+/// convergible table to be invisible to the catalog verifier.
+pub fn table_expectations() -> Result<Vec<crate::expectation::TableExpectation>, ApplyError> {
+    crate::expectation::table_expectations()
+}
+
 /// Return the canonical destructive convergence inventory in stable order.
 ///
 /// This inventory is used for startup warnings and the compatibility contract;
@@ -1270,10 +1277,7 @@ pub fn destructive_schema_contract() -> Result<String, ApplyError> {
     let mut changes = Vec::new();
     for table in convergible_tables()? {
         for column in table.columns_to_drop {
-            changes.push(format!(
-                "{}:{}",
-                table.meta.qualified_name, column
-            ));
+            changes.push(format!("{}:{}", table.meta.qualified_name, column));
         }
         if let Some(mirror) = table.mirror {
             for column in mirror.columns_to_drop {
@@ -1282,7 +1286,10 @@ pub fn destructive_schema_contract() -> Result<String, ApplyError> {
         }
     }
     changes.sort_unstable();
-    Ok(format!("{DESTRUCTIVE_SCHEMA_VERSION}|{}", changes.join("|")))
+    Ok(format!(
+        "{DESTRUCTIVE_SCHEMA_VERSION}|{}",
+        changes.join("|")
+    ))
 }
 
 /// Converges each registered table against the live database.

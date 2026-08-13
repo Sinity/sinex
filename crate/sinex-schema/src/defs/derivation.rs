@@ -848,18 +848,20 @@ impl DerivationProjectionRegistry {
                     .not_null(),
             )
             .col(
-                ColumnDef::new(Self::Status).text().not_null().check(
-                    Expr::cust(
+                ColumnDef::new(Self::Status)
+                    .text()
+                    .not_null()
+                    .check(Expr::cust(
                         "status IN ('absent', 'building', 'ready', 'stale', 'failed', 'partial')",
-                    ),
-                ),
+                    )),
             )
             .col(
-                ColumnDef::new(Self::FreshnessClass).text().not_null().check(
-                    Expr::cust(
+                ColumnDef::new(Self::FreshnessClass)
+                    .text()
+                    .not_null()
+                    .check(Expr::cust(
                         "freshness_class IN ('seconds', 'minutes', 'hours', 'days', 'manual')",
-                    ),
-                ),
+                    )),
             )
             .col(
                 ColumnDef::new(Self::AcceptableStaleness)
@@ -875,11 +877,7 @@ impl DerivationProjectionRegistry {
             )
             .col(ColumnDef::new(Self::StaleReason).text())
             .col(ColumnDef::new(Self::LastError).text())
-            .col(
-                ColumnDef::new(Self::VerificationCommand)
-                    .text()
-                    .not_null(),
-            )
+            .col(ColumnDef::new(Self::VerificationCommand).text().not_null())
             .col(
                 ColumnDef::new(Self::UpdatedAt)
                     .timestamp_with_time_zone()
@@ -891,9 +889,7 @@ impl DerivationProjectionRegistry {
             // form (true whenever the left side is false, never rejects a
             // malformed row). This form actually enforces "ready implies built_at
             // set".
-            .check(Expr::cust(
-                "status <> 'ready' OR built_at IS NOT NULL",
-            ))
+            .check(Expr::cust("status <> 'ready' OR built_at IS NOT NULL"))
             .check(Expr::cust(
                 "status NOT IN ('stale', 'failed', 'partial') OR stale_reason IS NOT NULL",
             ))

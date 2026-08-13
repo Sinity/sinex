@@ -38,7 +38,11 @@ async fn convergible_tables_resolve_known_metadata() -> TestResult<()> {
     let total = names.len();
     names.sort_unstable();
     names.dedup();
-    assert_eq!(names.len(), total, "convergible registry has duplicate tables");
+    assert_eq!(
+        names.len(),
+        total,
+        "convergible registry has duplicate tables"
+    );
     Ok(())
 }
 
