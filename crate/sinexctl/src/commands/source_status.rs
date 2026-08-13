@@ -1,6 +1,7 @@
 use clap::Args;
 use console::style;
 use serde_json::Map;
+use sinex_primitives::rpc::curation::CurationListDuplicateCandidatesRequest;
 use sinex_primitives::sources::source_identity_matches_family;
 use sinex_primitives::views::{
     ActionAvailabilityState, SourceCoverageContinuity, SourceCoverageListView,
@@ -12,6 +13,18 @@ use crate::Result;
 use crate::client::GatewayClient;
 use crate::fmt::{CommandOutput, print_finite_envelope};
 use crate::model::OutputFormat;
+
+const ADJUDICATION_CANDIDATE_LIMIT: i64 = 1_000;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum AdjudicationQueueSummary {
+    Available {
+        clusters: usize,
+        events: i64,
+        partial: bool,
+    },
+    Unavailable,
+}
 
 /// Show source coverage/readiness status.
 #[derive(Debug, Args)]
@@ -58,8 +71,30 @@ impl SourceStatusCommand {
         if print_finite_envelope(&envelope, format)? {
             return Ok(());
         }
-        CommandOutput::single(envelope, format_sources_status_table).display(&format)?;
+        let adjudication = load_adjudication_queue_summary(client).await;
+        CommandOutput::single(envelope, move |envelope| {
+            format_sources_status_table_with_adjudication(envelope, adjudication)
+        })
+        .display(&format)?;
         Ok(())
+    }
+}
+
+async fn load_adjudication_queue_summary(client: &GatewayClient) -> AdjudicationQueueSummary {
+    let response = client
+        .curation_duplicate_candidates_list(CurationListDuplicateCandidatesRequest {
+            limit: ADJUDICATION_CANDIDATE_LIMIT,
+            events_per_cluster: 1,
+            ..Default::default()
+        })
+        .await;
+    match response {
+        Ok(response) => AdjudicationQueueSummary::Available {
+            clusters: response.clusters.len(),
+            events: response.clusters.iter().map(|cluster| cluster.event_count).sum(),
+            partial: response.clusters.len() as i64 >= ADJUDICATION_CANDIDATE_LIMIT,
+        },
+        Err(_) => AdjudicationQueueSummary::Unavailable,
     }
 }
 
@@ -210,6 +245,13 @@ const fn action_state_label(state: ActionAvailabilityState) -> &'static str {
 }
 
 fn format_sources_status_table(envelope: &ViewEnvelope<SourceCoverageListView>) -> String {
+    format_sources_status_table_with_adjudication(envelope, AdjudicationQueueSummary::Unavailable)
+}
+
+fn format_sources_status_table_with_adjudication(
+    envelope: &ViewEnvelope<SourceCoverageListView>,
+    adjudication: AdjudicationQueueSummary,
+) -> String {
     if envelope.payload.sources.is_empty() {
         return "No sources registered.".to_string();
     }
@@ -252,10 +294,30 @@ fn format_sources_status_table(envelope: &ViewEnvelope<SourceCoverageListView>) 
     let mut table = builder.build();
     table.with(Style::rounded());
     format!(
-        "{}\n{}",
+        "{}\n{}\n{}",
         source_status_summary_line(&envelope.payload),
+        adjudication_queue_summary_line(adjudication),
         table
     )
+}
+
+fn adjudication_queue_summary_line(adjudication: AdjudicationQueueSummary) -> String {
+    match adjudication {
+        AdjudicationQueueSummary::Available {
+            clusters,
+            events,
+            partial,
+        } => format!(
+            "Dedup adjudication queue: {}{} pending candidate cluster(s), {} candidate event(s){}",
+            clusters,
+            if partial { "+" } else { "" },
+            events,
+            if partial { "; bounded query limit reached" } else { "" },
+        ),
+        AdjudicationQueueSummary::Unavailable => {
+            "Dedup adjudication queue: unavailable (source status remains available)".to_string()
+        }
+    }
 }
 
 fn format_basis_points_percent(basis_points: u32) -> String {

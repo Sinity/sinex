@@ -162,6 +162,30 @@ async fn table_renderer_shows_source_coverage_view_fields() -> xtask::TestResult
 }
 
 #[sinex_test]
+async fn table_renderer_shows_global_adjudication_queue_without_false_source_mapping(
+) -> xtask::TestResult<()> {
+    let envelope = ViewEnvelope::new(
+        "sinexctl.sources.status",
+        SourceCoverageListView::new(vec![fixture_source()]),
+    );
+
+    let table = format_sources_status_table_with_adjudication(
+        &envelope,
+        AdjudicationQueueSummary::Available {
+            clusters: 2,
+            events: 5,
+            partial: false,
+        },
+    );
+
+    assert!(table.contains(
+        "Dedup adjudication queue: 2 pending candidate cluster(s), 5 candidate event(s)"
+    ));
+    assert!(!table.contains("fixture.source: 2 pending"));
+    Ok(())
+}
+
+#[sinex_test]
 async fn table_renderer_shows_coverage_error_rate() -> xtask::TestResult<()> {
     let envelope = ViewEnvelope::new(
         "sinexctl.sources.status",
