@@ -542,6 +542,12 @@ pub struct AdmissionService {
     future_ts_skew: time::Duration,
     ts_orig_lower_bound: Option<Timestamp>,
     storage_lane: EventStorageLane,
+    /// Unit-test-only rendezvous for the narrow window after the original
+    /// schema FK failure and before the fresh registry reload. Production has
+    /// no hook here: this makes the cache-race recovery contract deterministic
+    /// without widening the general fault-injection surface.
+    #[cfg(test)]
+    payload_schema_fk_retry_barrier: Option<Arc<tokio::sync::Barrier>>,
 }
 
 fn parse_intent_bytes(payload: &[u8]) -> Result<EventIntent, AdmissionDecision> {
@@ -608,6 +614,8 @@ impl AdmissionService {
             future_ts_skew: time::Duration::hours(1),
             ts_orig_lower_bound: None,
             storage_lane: EventStorageLane::Activity,
+            #[cfg(test)]
+            payload_schema_fk_retry_barrier: None,
         }
     }
 
@@ -1598,6 +1606,13 @@ impl AdmissionService {
                 // null the annotation: that would let the DB row disagree with
                 // the confirmed event. Refresh the validator and retry only if
                 // the exact schema IDs still validate for every affected row.
+                #[cfg(test)]
+                if let Some(barrier) = &self.payload_schema_fk_retry_barrier {
+                    // First rendezvous lets the test restore the schema row;
+                    // the second proves it has committed before the reload.
+                    barrier.wait().await;
+                    barrier.wait().await;
+                }
                 let refreshed_rows = self
                     .reload_and_revalidate_payload_schema_rows(&to_persist, &rows, &error)
                     .await?;
