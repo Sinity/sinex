@@ -171,6 +171,7 @@ pub(crate) use debt::{
 };
 pub use evidence::EvidenceCommands;
 pub use import::ImportCommands;
+pub(crate) use import::render_import_report;
 pub use jobs::JobsCommands;
 
 

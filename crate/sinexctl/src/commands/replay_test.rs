@@ -1,5 +1,5 @@
 use super::{
-    MaterialReplayabilityScorecard, Replayability, execute_watch,
+    MaterialReplayabilityScorecard, Replayability, execute_run, execute_watch,
     format_per_material_scorecard_table, format_replay_preview_table, preview_total_events,
     replay_list_envelope, replay_operation_caveats, replay_preview_envelope,
     replay_status_envelope, truncate_head_chars, truncate_tail_chars, weakness_dimensions,
@@ -8,7 +8,10 @@ use crate::client::{ClientConfig, GatewayClient};
 use crate::fmt::render_finite_envelope;
 use crate::model::OutputFormat;
 use serde_json::json;
-use sinex_primitives::rpc::replay::{ReplayCheckpoint, ReplayOperation, ReplayScope, ReplayState};
+use sinex_primitives::rpc::replay::{
+    ReplayCheckpoint, ReplayGateOverrides, ReplayOperation, ReplayScope, ReplayState,
+};
+use sinex_primitives::rpc::sources::SourcesImportReportResponse;
 use sinex_primitives::views::{ReadinessCaveatId, VIEW_ENVELOPE_SCHEMA_VERSION};
 use wiremock::matchers::{method, path};
 use wiremock::{Mock, MockServer, ResponseTemplate};
@@ -365,6 +368,97 @@ fn fixture_gateway_client(server: &MockServer) -> color_eyre::Result<GatewayClie
         insecure: true,
         ..Default::default()
     })
+}
+
+fn fixture_import_report(operation_id: &str) -> SourcesImportReportResponse {
+    SourcesImportReportResponse {
+        operation_id: operation_id.to_string(),
+        operation_type: "replay".to_string(),
+        operation_status: "success".to_string(),
+        scope: json!({"source_name": "terminal.zsh-history"}),
+        source: Some("terminal.zsh-history".to_string()),
+        source_material_ids: vec!["material-fixture".to_string()],
+        attempted: 11,
+        new: 2,
+        suppressed: 3,
+        superseded: 1,
+        failures: 1,
+        dlq: 1,
+        unresolved: 3,
+        breakdown: Vec::new(),
+        examples: Vec::new(),
+    }
+}
+
+#[sinex_test]
+async fn ordinary_replay_run_fetches_the_durable_idempotence_report() -> TestResult<()> {
+    let operation = fixture_replay_operation("op-completed-report", ReplayState::Completed, 11);
+    let mut planning = operation.clone();
+    planning.state = ReplayState::Planning;
+    let mut previewed = operation.clone();
+    previewed.state = ReplayState::Previewed;
+    let mut approved = operation.clone();
+    approved.state = ReplayState::Approved;
+    let mut executing = operation.clone();
+    executing.state = ReplayState::Executing;
+    let report = fixture_import_report(&operation.operation_id);
+    let server = MockServer::start().await;
+    let planning_for_response = planning.clone();
+    let previewed_for_response = previewed.clone();
+    let approved_for_response = approved.clone();
+    let executing_for_response = executing.clone();
+    let operation_for_response = operation.clone();
+    let report_for_response = report.clone();
+    Mock::given(method("POST"))
+        .and(path("/"))
+        .respond_with(move |request: &wiremock::Request| {
+            let body: serde_json::Value =
+                serde_json::from_slice(&request.body).expect("valid JSON-RPC request body");
+            let result = match body["method"].as_str() {
+                Some("replay.create_operation") => json!({
+                    "operation": planning_for_response,
+                }),
+                Some("replay.preview_operation") => json!({
+                    "operation": previewed_for_response,
+                    "preview": {"total_events": 11},
+                }),
+                Some("replay.approve_operation") => json!({
+                    "operation": approved_for_response,
+                }),
+                Some("replay.execute_operation") => json!({
+                    "operation": executing_for_response,
+                }),
+                Some("replay.operation_status") => json!({
+                    "operation": operation_for_response,
+                }),
+                Some("sources.import_report") => json!(report_for_response),
+                Some("curation.duplicate_candidates.list") => json!({"clusters": []}),
+                method => panic!("unexpected method in completion fixture: {method:?}"),
+            };
+            ResponseTemplate::new(200).set_body_json(json!({
+                "jsonrpc": "2.0",
+                "id": body["id"],
+                "result": result,
+            }))
+        })
+        .mount(&server)
+        .await;
+    let client = fixture_gateway_client(&server)?;
+
+    execute_run(
+        &client,
+        "terminal.zsh-history",
+        None,
+        None,
+        &[],
+        &[],
+        false,
+        ReplayGateOverrides::default(),
+        &OutputFormat::Table,
+    )
+    .await?;
+
+    Ok(())
 }
 
 // sinex-2bti: JSON/Ndjson/Dot output formats for `sinexctl ops replay watch`

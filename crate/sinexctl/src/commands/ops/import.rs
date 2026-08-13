@@ -56,33 +56,76 @@ impl ImportCommands {
                 println!("{}", format_import_progress_table(&response.imports));
             }
             Self::Report { operation_id } => {
-                let response = client
-                    .sources_import_report(SourcesImportReportRequest {
-                        operation_id: operation_id.clone(),
-                    })
-                    .await?;
-                let mut envelope =
-                    ViewEnvelope::new("sinexctl.ops.import.report", response.clone());
-                if abnormal_suppression_rate(&response) {
-                    envelope.caveats.push(CaveatView {
-                        id: "import.abnormal_suppression_rate".to_string(),
-                        message: "Most candidates were suppressed. Inspect the per-source/material breakdown and examples before treating this import as a complete no-op.".to_string(),
-                        ref_: None,
-                    });
-                }
-                if print_finite_envelope(&envelope, format)? {
-                    return Ok(());
-                }
-                let adjudication =
-                    load_adjudication_queue_summary(client, response.source.clone()).await;
-                println!(
-                    "{}",
-                    format_import_report_table_with_adjudication(&response, adjudication)
-                );
+                render_import_report(
+                    client,
+                    operation_id,
+                    format,
+                    "sinexctl.ops.import.report",
+                    false,
+                )
+                .await?;
             }
         }
         Ok(())
     }
+}
+
+/// Render the durable report for an operation that has just reached a terminal
+/// state. Table output includes the operator line and adjudication queue; the
+/// machine formats retain the typed [`ViewEnvelope`] instead of mixing prose
+/// into structured output.
+pub(crate) async fn render_import_report(
+    client: &GatewayClient,
+    operation_id: &str,
+    format: OutputFormat,
+    source_surface: &'static str,
+    streaming: bool,
+) -> Result<()> {
+    let response = fetch_import_report(client, operation_id).await?;
+    let envelope = import_report_envelope(response.clone(), source_surface);
+
+    if streaming {
+        let items = std::slice::from_ref(&response);
+        if let Some(output) = render_envelope(&envelope, items, format)? {
+            print_machine_output(&output);
+            return Ok(());
+        }
+    } else if print_finite_envelope(&envelope, format)? {
+        return Ok(());
+    }
+
+    let adjudication = load_adjudication_queue_summary(client, response.source.clone()).await;
+    println!(
+        "{}",
+        format_import_report_table_with_adjudication(&response, adjudication)
+    );
+    Ok(())
+}
+
+pub(crate) async fn fetch_import_report(
+    client: &GatewayClient,
+    operation_id: &str,
+) -> Result<SourcesImportReportResponse> {
+    client
+        .sources_import_report(SourcesImportReportRequest {
+            operation_id: operation_id.to_string(),
+        })
+        .await
+}
+
+pub(crate) fn import_report_envelope(
+    response: SourcesImportReportResponse,
+    source_surface: &'static str,
+) -> ViewEnvelope<SourcesImportReportResponse> {
+    let mut envelope = ViewEnvelope::new(source_surface, response.clone());
+    if abnormal_suppression_rate(&response) {
+        envelope.caveats.push(CaveatView {
+            id: "import.abnormal_suppression_rate".to_string(),
+            message: "Most candidates were suppressed. Inspect the per-source/material breakdown and examples before treating this import as a complete no-op.".to_string(),
+            ref_: None,
+        });
+    }
+    envelope
 }
 
 async fn load_adjudication_queue_summary(
@@ -277,6 +320,7 @@ fn format_eta(seconds: f64) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::fmt::render_finite_envelope;
     use sinex_primitives::rpc::sources::ImportReportExample;
 
     fn report(attempted: u64, suppressed: u64) -> SourcesImportReportResponse {
@@ -336,5 +380,44 @@ mod tests {
         assert!(table.contains(
             "3 pending candidate cluster(s), 7 candidate event(s)"
         ));
+    }
+
+    #[test]
+    fn import_report_table_prints_the_complete_idempotence_line() {
+        let mut report = report(11, 3);
+        report.new = 2;
+        report.superseded = 1;
+        report.failures = 1;
+        report.dlq = 1;
+        report.unresolved = 3;
+
+        let table = format_import_report_table_with_adjudication(
+            &report,
+            AdjudicationQueueSummary::Available {
+                clusters: 4,
+                events: 6,
+                partial: false,
+            },
+        );
+
+        assert!(table.starts_with(
+            "Import idempotence: 2 new, 3 suppressed, 1 superseded, 1 failures, 1 DLQ, 3 unresolved, 4 adjudication candidates"
+        ));
+    }
+
+    #[test]
+    fn import_report_envelope_keeps_machine_payload_typed() {
+        let report = report(1, 0);
+        let envelope = import_report_envelope(report, "sinexctl.ops.replay.run");
+        let rendered = render_finite_envelope(&envelope, OutputFormat::Json)
+            .expect("json envelope rendering should succeed")
+            .expect("json envelope should be present");
+        let parsed: serde_json::Value =
+            serde_json::from_str(&rendered).expect("rendered envelope should be valid JSON");
+
+        assert_eq!(parsed["source_surface"], "sinexctl.ops.replay.run");
+        assert_eq!(parsed["payload"]["new"], 1);
+        assert_eq!(parsed["payload"]["suppressed"], 0);
+        assert!(parsed["payload"]["operation_id"].is_string());
     }
 }

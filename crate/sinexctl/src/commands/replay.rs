@@ -10,6 +10,7 @@ use tokio::time::{Duration, sleep};
 
 use crate::Result;
 use crate::client::GatewayClient;
+use crate::commands::ops::render_import_report;
 use crate::fmt::{
     CommandOutput, ProgressReporter, format_json, format_yaml, print_finite_envelope,
 };
@@ -398,7 +399,19 @@ impl ReplayCommands {
                         },
                     )
                     .await?;
+                let terminal = operation.state.is_terminal();
+                let operation_id = operation.operation_id.clone();
                 CommandOutput::single(operation, format_replay_execute_table).display(&format)?;
+                if terminal {
+                    render_import_report(
+                        client,
+                        &operation_id,
+                        format,
+                        "sinexctl.ops.replay.execute",
+                        false,
+                    )
+                    .await?;
+                }
             }
 
             Self::Submit {
@@ -427,7 +440,19 @@ impl ReplayCommands {
                         },
                     )
                     .await?;
+                let terminal = operation.state.is_terminal();
+                let operation_id = operation.operation_id.clone();
                 CommandOutput::single(operation, format_replay_submit_table).display(&format)?;
+                if terminal {
+                    render_import_report(
+                        client,
+                        &operation_id,
+                        format,
+                        "sinexctl.ops.replay.submit",
+                        false,
+                    )
+                    .await?;
+                }
             }
 
             Self::Cancel {
@@ -552,6 +577,14 @@ async fn execute_watch(
                 match op.state {
                     ReplayState::Completed => {
                         progress.finish_with_message("Completed successfully");
+                        render_import_report(
+                            client,
+                            operation_id,
+                            *format,
+                            "sinexctl.ops.replay.watch",
+                            true,
+                        )
+                        .await?;
                         break;
                     }
                     ReplayState::Failed => {
@@ -560,10 +593,26 @@ async fn execute_watch(
                             op.error_details.as_deref().unwrap_or("Unknown error")
                         );
                         progress.abandon_with_message(&msg);
+                        render_import_report(
+                            client,
+                            operation_id,
+                            *format,
+                            "sinexctl.ops.replay.watch",
+                            true,
+                        )
+                        .await?;
                         return Err(color_eyre::eyre::eyre!(msg));
                     }
                     ReplayState::Cancelled => {
                         progress.abandon_with_message("Cancelled");
+                        render_import_report(
+                            client,
+                            operation_id,
+                            *format,
+                            "sinexctl.ops.replay.watch",
+                            true,
+                        )
+                        .await?;
                         break;
                     }
                     _ => {
@@ -576,13 +625,32 @@ async fn execute_watch(
             let op = client.replay_status(operation_id).await?;
             println!("{}", format_json(&op)?);
             if op.state.is_terminal() {
+                render_import_report(
+                    client,
+                    operation_id,
+                    *format,
+                    "sinexctl.ops.replay.watch",
+                    true,
+                )
+                .await?;
                 break;
             }
             sleep(Duration::from_secs(interval)).await;
         },
         OutputFormat::Yaml => {
             let op = client.replay_status(operation_id).await?;
+            let terminal = op.state.is_terminal();
             println!("{}", format_yaml(&op)?);
+            if terminal {
+                render_import_report(
+                    client,
+                    operation_id,
+                    *format,
+                    "sinexctl.ops.replay.watch",
+                    true,
+                )
+                .await?;
+            }
         }
     }
     Ok(())
@@ -637,6 +705,7 @@ async fn execute_run(
     if total == 0 {
         eprintln!("No events to replay. Cancelling.");
         client.replay_cancel(&op_id, Some("empty scope")).await?;
+        render_import_report(client, &op_id, *format, "sinexctl.ops.replay.run", false).await?;
         return Ok(());
     }
 
