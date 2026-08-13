@@ -15,10 +15,6 @@ use ratatui::{
     text::{Line, Span},
     widgets::{Block, Borders, Clear, List, ListItem, Paragraph, Wrap},
 };
-use sinex_primitives::{
-    DEFAULT_RUNTIME_LIVENESS_STALE_AFTER_SECS, RuntimeLivenessPolicy, RuntimeLivenessSignals,
-    RuntimeLivenessStatus, evaluate_runtime_liveness,
-};
 use sinex_primitives::privacy::private_mode::RuntimePrivateModeState;
 use sinex_primitives::query::{EventQuery, QueryResultEvent, SortDirection, TimeRange};
 use sinex_primitives::rpc::privacy::PrivateModeStateResponse;
@@ -29,6 +25,11 @@ use sinex_primitives::views::{
     SinexObjectKind, SourceCoverageContinuity, SourceCoverageReadiness, SourceCoverageView,
     SourceModeStatusView,
 };
+use sinex_primitives::{
+    DEFAULT_RUNTIME_LIVENESS_STALE_AFTER_SECS, RuntimeLivenessPolicy, RuntimeLivenessSignals,
+    RuntimeLivenessStatus, evaluate_runtime_liveness,
+};
+use std::collections::HashMap;
 use std::io;
 use std::time::Instant;
 use time::Duration;
@@ -111,12 +112,78 @@ struct App {
     loading: bool,
     last_refresh: Instant,
     error: Option<String>,
+    refresh_errors: Vec<String>,
+    refresh_state: RefreshState,
     selected_index: usize,
     show_help: bool,
     copy_menu_open: bool,
     copy_index: usize,
     payload_raw: bool,
     feedback: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+enum RefreshPanel {
+    Gateway,
+    Modules,
+    Dlq,
+    DlqPreview,
+    Operations,
+    Replay,
+    Lifecycle,
+    PrivateMode,
+    Sources,
+    Events,
+}
+
+impl RefreshPanel {
+    const ALL: [Self; 10] = [
+        Self::Gateway,
+        Self::Modules,
+        Self::Dlq,
+        Self::DlqPreview,
+        Self::Operations,
+        Self::Replay,
+        Self::Lifecycle,
+        Self::PrivateMode,
+        Self::Sources,
+        Self::Events,
+    ];
+}
+
+#[derive(Debug, Default)]
+struct PanelRefreshState {
+    last_success: Option<Instant>,
+    failed: bool,
+}
+
+#[derive(Debug, Default)]
+struct RefreshState {
+    panels: HashMap<RefreshPanel, PanelRefreshState>,
+}
+
+impl RefreshState {
+    fn mark_success(&mut self, panel: RefreshPanel) {
+        let state = self.panels.entry(panel).or_default();
+        state.last_success = Some(Instant::now());
+        state.failed = false;
+    }
+
+    fn mark_failure(&mut self, panel: RefreshPanel) {
+        self.panels.entry(panel).or_default().failed = true;
+    }
+
+    fn is_stale(&self, panel: RefreshPanel) -> bool {
+        self.panels
+            .get(&panel)
+            .is_some_and(|state| state.failed && state.last_success.is_some())
+    }
+
+    fn is_unavailable(&self, panel: RefreshPanel) -> bool {
+        self.panels
+            .get(&panel)
+            .is_some_and(|state| state.failed && state.last_success.is_none())
+    }
 }
 
 fn module_liveness(module: &RuntimeInfo, now: Timestamp) -> RuntimeLivenessStatus {
@@ -157,6 +224,8 @@ impl App {
                 .checked_sub(std::time::Duration::from_secs(refresh_interval + 1))
                 .unwrap_or(Instant::now()),
             error: None,
+            refresh_errors: Vec::new(),
+            refresh_state: RefreshState::default(),
             selected_index: 0,
             show_help: false,
             copy_menu_open: false,
@@ -301,12 +370,18 @@ impl App {
     async fn refresh(&mut self) {
         self.loading = true;
         self.error = None;
+        self.refresh_errors.clear();
+        self.feedback = None;
 
-        // Fetch gateway version — abort refresh on connectivity failure.
         match self.client.version().await {
-            Ok(v) => self.gateway_version = v,
+            Ok(v) => {
+                self.gateway_version = v;
+                self.refresh_state.mark_success(RefreshPanel::Gateway);
+            }
             Err(e) => {
-                self.error = Some(format!("Failed to connect: {e}"));
+                self.refresh_state.mark_failure(RefreshPanel::Gateway);
+                self.record_refresh_error(format!("Failed to connect: {e}"));
+                self.mark_all_panels_failed();
                 self.loading = false;
                 return;
             }
@@ -318,6 +393,30 @@ impl App {
 
         self.loading = false;
         self.last_refresh = Instant::now();
+        self.error = (!self.refresh_errors.is_empty()).then(|| self.refresh_errors.join("; "));
+    }
+
+    fn record_refresh_error(&mut self, error: String) {
+        self.refresh_errors.push(error);
+    }
+
+    fn mark_all_panels_failed(&mut self) {
+        for panel in RefreshPanel::ALL {
+            if panel != RefreshPanel::Gateway {
+                self.refresh_state.mark_failure(panel);
+            }
+        }
+        self.error = (!self.refresh_errors.is_empty()).then(|| self.refresh_errors.join("; "));
+    }
+
+    fn panel_title(&self, title: &str, panel: RefreshPanel) -> String {
+        if self.refresh_state.is_stale(panel) {
+            format!("{title} [STALE]")
+        } else if self.refresh_state.is_unavailable(panel) {
+            format!("{title} [UNAVAILABLE]")
+        } else {
+            title.to_string()
+        }
     }
 
     async fn refresh_runtime_and_dlq(&mut self) {
@@ -326,20 +425,24 @@ impl App {
             .runtime_list_active(DEFAULT_RUNTIME_LIVENESS_STALE_AFTER_SECS)
             .await
         {
-            Ok(response) => self.modules = response.modules,
+            Ok(response) => {
+                self.modules = response.modules;
+                self.refresh_state.mark_success(RefreshPanel::Modules);
+            }
             Err(e) => {
-                self.error = Some(format!("Failed to fetch modules: {e}"));
+                self.refresh_state.mark_failure(RefreshPanel::Modules);
+                self.record_refresh_error(format!("Failed to fetch modules: {e}"));
             }
         }
         match self.client.dlq_list().await {
             Ok(stats) => {
                 self.dlq_operation_card = Some(OperationControlCardView::from_dlq_status(&stats));
                 self.dlq_stats = Some(stats);
+                self.refresh_state.mark_success(RefreshPanel::Dlq);
             }
             Err(e) => {
-                if self.error.is_none() {
-                    self.error = Some(format!("Failed to fetch DLQ: {e}"));
-                }
+                self.refresh_state.mark_failure(RefreshPanel::Dlq);
+                self.record_refresh_error(format!("Failed to fetch DLQ: {e}"));
             }
         }
         match self.client.dlq_peek(Some(5)).await {
@@ -348,11 +451,11 @@ impl App {
                     .messages
                     .iter()
                     .find_map(OperationControlCardView::from_automaton_dlq_message);
+                self.refresh_state.mark_success(RefreshPanel::DlqPreview);
             }
             Err(e) => {
-                if self.error.is_none() {
-                    self.error = Some(format!("Failed to fetch DLQ previews: {e}"));
-                }
+                self.refresh_state.mark_failure(RefreshPanel::DlqPreview);
+                self.record_refresh_error(format!("Failed to fetch DLQ previews: {e}"));
             }
         }
     }
@@ -361,11 +464,11 @@ impl App {
         match self.client.ops_list(None, None, Some(10)).await {
             Ok(operations) => {
                 self.ops_jobs = OperationJobListView::new(operations_to_views(&operations));
+                self.refresh_state.mark_success(RefreshPanel::Operations);
             }
             Err(e) => {
-                if self.error.is_none() {
-                    self.error = Some(format!("Failed to fetch operations: {e}"));
-                }
+                self.refresh_state.mark_failure(RefreshPanel::Operations);
+                self.record_refresh_error(format!("Failed to fetch operations: {e}"));
             }
         }
         match self.client.replay_list_filtered(None, None, Some(10)).await {
@@ -374,30 +477,32 @@ impl App {
                     .iter()
                     .map(OperationControlCardView::from_replay_operation)
                     .collect();
+                self.refresh_state.mark_success(RefreshPanel::Replay);
             }
             Err(e) => {
-                if self.error.is_none() {
-                    self.error = Some(format!("Failed to fetch replay operations: {e}"));
-                }
+                self.refresh_state.mark_failure(RefreshPanel::Replay);
+                self.record_refresh_error(format!("Failed to fetch replay operations: {e}"));
             }
         }
         match self.client.lifecycle_status().await {
             Ok(status) => {
                 self.lifecycle_operation_card =
                     Some(OperationControlCardView::from_lifecycle_status(&status));
+                self.refresh_state.mark_success(RefreshPanel::Lifecycle);
             }
             Err(e) => {
-                if self.error.is_none() {
-                    self.error = Some(format!("Failed to fetch lifecycle status: {e}"));
-                }
+                self.refresh_state.mark_failure(RefreshPanel::Lifecycle);
+                self.record_refresh_error(format!("Failed to fetch lifecycle status: {e}"));
             }
         }
         match self.client.private_mode_status().await {
-            Ok(state) => self.private_mode = Some(state),
+            Ok(state) => {
+                self.private_mode = Some(state);
+                self.refresh_state.mark_success(RefreshPanel::PrivateMode);
+            }
             Err(e) => {
-                if self.error.is_none() {
-                    self.error = Some(format!("Failed to fetch private-mode status: {e}"));
-                }
+                self.refresh_state.mark_failure(RefreshPanel::PrivateMode);
+                self.record_refresh_error(format!("Failed to fetch private-mode status: {e}"));
             }
         }
     }
@@ -407,11 +512,11 @@ impl App {
             Ok(resp) => {
                 self.source_coverage = resp.payload.sources;
                 self.clamp_selection();
+                self.refresh_state.mark_success(RefreshPanel::Sources);
             }
             Err(e) => {
-                if self.error.is_none() {
-                    self.error = Some(format!("Failed to fetch source status: {e}"));
-                }
+                self.refresh_state.mark_failure(RefreshPanel::Sources);
+                self.record_refresh_error(format!("Failed to fetch source status: {e}"));
             }
         }
 
@@ -426,11 +531,11 @@ impl App {
                 self.recent_events = cards.cards;
                 self.recent_event_rows.clear();
                 self.clamp_selection();
+                self.refresh_state.mark_success(RefreshPanel::Events);
             }
             Err(e) => {
-                if self.error.is_none() {
-                    self.error = Some(format!("Failed to fetch events: {e}"));
-                }
+                self.refresh_state.mark_failure(RefreshPanel::Events);
+                self.record_refresh_error(format!("Failed to fetch events: {e}"));
                 self.recent_events.clear();
                 self.recent_event_rows.clear();
             }
@@ -656,10 +761,10 @@ fn render_status_bar(f: &mut Frame, area: Rect, app: &App) {
         "Auto-refresh: off".to_string()
     };
 
-    let status_text = if let Some(feedback) = &app.feedback {
-        format!("{feedback} | c:copy p:payload r:refresh ?:help q:quit")
-    } else if let Some(err) = &app.error {
+    let status_text = if let Some(err) = &app.error {
         format!("Error: {err} | Press 'r' to retry")
+    } else if let Some(feedback) = &app.feedback {
+        format!("{feedback} | c:copy p:payload r:refresh ?:help q:quit")
     } else {
         format!(
             "Gateway v{} | {} | ↑↓/jk:navigate Tab/←→:switch c:copy p:payload r:refresh ?:help q:quit",
@@ -667,10 +772,10 @@ fn render_status_bar(f: &mut Frame, area: Rect, app: &App) {
         )
     };
 
-    let style = if app.feedback.is_some() {
-        Style::default().fg(Color::Yellow)
-    } else if app.error.is_some() {
+    let style = if app.error.is_some() {
         Style::default().fg(Color::Red)
+    } else if app.feedback.is_some() {
+        Style::default().fg(Color::Yellow)
     } else {
         Style::default().fg(Color::DarkGray)
     };
@@ -705,20 +810,21 @@ fn render_dashboard(f: &mut Frame, area: Rect, app: &App) {
             "Healthy Modules: {healthy_modules}/{total_modules}"
         )),
         ListItem::new(format!("Recent Events (1h): {events_count}")),
-        ListItem::new(format!(
-            "DLQ Messages: {}",
-            if dlq_total > 0 {
-                format!("{dlq_total} ⚠")
-            } else {
-                "0 ✓".to_string()
-            }
-        )),
+        ListItem::new(if app.refresh_state.is_stale(RefreshPanel::Dlq) {
+            format!("DLQ Messages: {dlq_total} ⚠ stale")
+        } else if app.refresh_state.is_unavailable(RefreshPanel::Dlq) {
+            "DLQ Messages: unavailable".to_string()
+        } else if dlq_total > 0 {
+            format!("DLQ Messages: {dlq_total} ⚠")
+        } else {
+            "DLQ Messages: 0 ✓ (NATS only; persistent DLQ not exposed)".to_string()
+        }),
     ];
 
     let overview = List::new(overview_items)
         .block(
             Block::default()
-                .title("System Overview")
+                .title(app.panel_title("System Overview", RefreshPanel::Gateway))
                 .borders(Borders::ALL),
         )
         .style(Style::default().fg(Color::White));
@@ -732,11 +838,7 @@ fn render_dashboard(f: &mut Frame, area: Rect, app: &App) {
             let liveness = module_liveness(n, Timestamp::now());
             let is_live = liveness.is_live();
             let status_icon = if is_live { "●" } else { "○" };
-            let color = if is_live {
-                Color::Green
-            } else {
-                Color::Red
-            };
+            let color = if is_live { Color::Green } else { Color::Red };
             let name = n
                 .host
                 .as_deref()
@@ -752,7 +854,11 @@ fn render_dashboard(f: &mut Frame, area: Rect, app: &App) {
     } else {
         module_items
     })
-    .block(Block::default().title("Modules").borders(Borders::ALL));
+    .block(
+        Block::default()
+            .title(app.panel_title("Modules", RefreshPanel::Modules))
+            .borders(Borders::ALL),
+    );
     f.render_widget(runtime_list, chunks[1]);
 }
 
@@ -796,7 +902,11 @@ fn render_operations(f: &mut Frame, area: Rect, app: &App) {
     })
     .block(
         Block::default()
-            .title(format!("Operations Room ({} cards)", cards.len()))
+            .title(format!(
+                "{} ({} cards)",
+                app.panel_title("Operations Room", RefreshPanel::Operations),
+                cards.len()
+            ))
             .borders(Borders::ALL),
     );
     f.render_widget(list, chunks[0]);
@@ -1146,12 +1256,20 @@ fn render_modules(f: &mut Frame, area: Rect, app: &App) {
         .iter()
         .enumerate()
         .map(|(i, n)| {
-            let is_live = module_liveness(n, Timestamp::now()).is_live();
-            let status_icon = if is_live { "●" } else { "○" };
-            let color = if is_live {
-                Color::Green
-            } else {
-                Color::Red
+            let liveness = module_liveness(n, Timestamp::now());
+            let status_icon = match liveness {
+                RuntimeLivenessStatus::Healthy => "●",
+                RuntimeLivenessStatus::Degraded => "△",
+                RuntimeLivenessStatus::Unhealthy
+                | RuntimeLivenessStatus::Stale
+                | RuntimeLivenessStatus::Stopped => "○",
+                RuntimeLivenessStatus::Unknown => "?",
+            };
+            let color = match liveness {
+                RuntimeLivenessStatus::Healthy => Color::Green,
+                RuntimeLivenessStatus::Degraded | RuntimeLivenessStatus::Stale => Color::Yellow,
+                RuntimeLivenessStatus::Unhealthy | RuntimeLivenessStatus::Stopped => Color::Red,
+                RuntimeLivenessStatus::Unknown => Color::DarkGray,
             };
             let style = if i == app.selected_index {
                 Style::default().fg(color).add_modifier(Modifier::REVERSED)
@@ -1168,8 +1286,8 @@ fn render_modules(f: &mut Frame, area: Rect, app: &App) {
                 .as_ref()
                 .map_or_else(|| "none".to_string(), format_heartbeat_age);
             ListItem::new(format!(
-                "{} {} | Type: {} | Heartbeat: {}",
-                status_icon, name, n.module_kind, heartbeat_str
+                "{} {} | Type: {} | status={} | Heartbeat: {}",
+                status_icon, name, n.module_kind, liveness, heartbeat_str
             ))
             .style(style)
         })
@@ -1182,7 +1300,11 @@ fn render_modules(f: &mut Frame, area: Rect, app: &App) {
     })
     .block(
         Block::default()
-            .title(format!("Modules ({} total)", app.modules.len()))
+            .title(format!(
+                "{} ({} total)",
+                app.panel_title("Modules", RefreshPanel::Modules),
+                app.modules.len()
+            ))
             .borders(Borders::ALL),
     );
     f.render_widget(list, area);
@@ -1244,7 +1366,8 @@ fn render_sources(f: &mut Frame, area: Rect, app: &App) {
     .block(
         Block::default()
             .title(format!(
-                "Sources ({} coverage rows)",
+                "{} ({} coverage rows)",
+                app.panel_title("Sources", RefreshPanel::Sources),
                 app.source_coverage.len()
             ))
             .borders(Borders::ALL),
@@ -1703,7 +1826,17 @@ fn render_events(f: &mut Frame, area: Rect, app: &App) {
     } else {
         items
     })
-    .block(Block::default().title(title).borders(Borders::ALL));
+    .block(
+        Block::default()
+            .title(if app.refresh_state.is_stale(RefreshPanel::Events) {
+                format!("{title} [STALE]")
+            } else if app.refresh_state.is_unavailable(RefreshPanel::Events) {
+                format!("{title} [UNAVAILABLE]")
+            } else {
+                title
+            })
+            .borders(Borders::ALL),
+    );
     f.render_widget(list, chunks[0]);
 
     render_event_inspector(f, chunks[1], app);
@@ -2151,32 +2284,46 @@ fn truncate_chars(input: &str, max_chars: usize) -> String {
 fn render_dlq(f: &mut Frame, area: Rect, app: &App) {
     let (block_title, items) = match &app.dlq_stats {
         Some(stats) if stats.total_messages > 0 => {
-            let title = format!("Raw Ingest DLQ ({} messages) ⚠", stats.total_messages);
+            let title = format!(
+                "{} ({} messages) ⚠",
+                app.panel_title("Raw Ingest DLQ", RefreshPanel::Dlq),
+                stats.total_messages
+            );
             let items = vec![
                 ListItem::new(format!("Total Messages: {}", stats.total_messages))
                     .style(Style::default().fg(Color::Yellow)),
                 ListItem::new(format!("Total Size: {}", format_bytes(stats.total_bytes))),
                 ListItem::new(format!("First Sequence: {}", stats.first_seq)),
                 ListItem::new(format!("Last Sequence: {}", stats.last_seq)),
+                ListItem::new(format!("Pressure: {}", stats.pressure_level)),
+                ListItem::new(format!("Recommended action: {}", stats.recommended_action)),
+                ListItem::new(format!("Action reason: {}", stats.action_reason)),
                 ListItem::new(""),
                 ListItem::new("Use 'sinexctl ops dlq peek' to inspect raw-ingest failures."),
-                ListItem::new("Use 'sinexctl ops dlq requeue --all' to retry."),
             ];
             (title, items)
         }
         Some(_) => {
-            let title = "Raw Ingest DLQ (empty) ✓".to_string();
+            let title = format!(
+                "{} (empty) ✓",
+                app.panel_title("Raw Ingest DLQ", RefreshPanel::Dlq)
+            );
             let items = vec![
                 ListItem::new("No messages in the raw-ingest DLQ.")
                     .style(Style::default().fg(Color::Green)),
                 ListItem::new(""),
                 ListItem::new("Messages that fail raw ingest appear here."),
+                ListItem::new("Persistent DLQ evidence is not exposed by this typed client."),
             ];
             (title, items)
         }
         None => {
-            let title = "Raw Ingest DLQ".to_string();
-            let items = vec![ListItem::new("Loading...")];
+            let title = app.panel_title("Raw Ingest DLQ", RefreshPanel::Dlq);
+            let items = vec![ListItem::new(if app.loading {
+                "Loading..."
+            } else {
+                "Unavailable; see status footer"
+            })];
             (title, items)
         }
     };
