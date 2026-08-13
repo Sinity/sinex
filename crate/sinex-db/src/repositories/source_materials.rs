@@ -361,7 +361,7 @@ impl SourceMaterialRepository<'_> {
                 let material = material.clone();
                 Box::pin(async move {
                     set_repeatable_read(tx).await?;
-                    let mut record =
+                    let record =
                         Self::insert_material_with_id_with_executor(&mut **tx, id, &material)
                             .await?;
                     if let Some(total_bytes) = total_bytes {
@@ -374,7 +374,13 @@ impl SourceMaterialRepository<'_> {
                             Some(total_bytes),
                         )
                         .await?;
-                        record.total_bytes = Some(total_bytes);
+                        return Self::fetch_by_id_with_executor(&mut **tx, record.id.into())
+                            .await?
+                            .ok_or_else(|| {
+                                SinexError::invalid_state(
+                                    "source material disappeared during byte finalization",
+                                )
+                            });
                     }
                     Ok(record)
                 })
@@ -429,6 +435,16 @@ impl SourceMaterialRepository<'_> {
 
     pub async fn get_by_id_with_executor<'e, E>(
         &self,
+        executor: E,
+        id: Id<SourceMaterialRecord>,
+    ) -> DbResult<Option<SourceMaterialRecord>>
+    where
+        E: sqlx::Executor<'e, Database = sqlx::Postgres>,
+    {
+        Self::fetch_by_id_with_executor(executor, id).await
+    }
+
+    async fn fetch_by_id_with_executor<'e, E>(
         executor: E,
         id: Id<SourceMaterialRecord>,
     ) -> DbResult<Option<SourceMaterialRecord>>

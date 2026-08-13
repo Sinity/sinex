@@ -1398,6 +1398,13 @@ async fn register_material_with_total_bytes_is_atomic_and_authoritative(
         sinex_primitives::domain::MaterialStatus::Completed
     );
     assert_eq!(record.total_bytes, Some(42));
+    assert_eq!(
+        SourceMaterialMetadataContract::from_metadata(&record.metadata)
+            .and_then(|contract| contract.statistics)
+            .and_then(|statistics| statistics.total_bytes),
+        Some(42),
+        "the returned material must reflect the committed byte finalization"
+    );
     let persisted = ctx
         .pool
         .source_materials()
