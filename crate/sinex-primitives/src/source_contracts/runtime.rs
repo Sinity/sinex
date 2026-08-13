@@ -5,7 +5,8 @@ use serde::Serialize;
 use crate::privacy::ProcessingContext;
 use crate::source_contracts::{
     CheckpointFamily, MaterialLifecyclePolicy, ResourceBudgetSpec, ResourceProfile, RunnerPack,
-    RuntimeShape, SourceCapabilityRef, SourceCriticality, SubjectRef, TransportSemantics,
+    RuntimeShape, SourceCapabilityRef, SourceCriticality, SourceRecoveryPolicy, SubjectRef,
+    TransportSemantics,
 };
 
 #[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq)]
@@ -49,6 +50,12 @@ pub struct SourceRuntimeBinding {
     pub material_lifecycle: MaterialLifecyclePolicy,
     /// Transport, delivery, replay, DLQ, and backpressure semantics.
     pub transport_semantics: TransportSemantics,
+    /// Declared source-level replay, catch-up, and accepted-loss authority.
+    ///
+    /// Existing inventory rows are migrated incrementally. Missing policies are
+    /// reported by [`source_runtime_binding_recovery_policy_diagnostics`] and
+    /// are not silently inferred from transport semantics.
+    pub recovery_policy: Option<SourceRecoveryPolicy>,
     /// Whether wiping Sinex's own copy of this source's data is safe
     /// (sinex-sn6s). `None` means undeclared; startup validation
     /// (`sinexd::sources::bindings::validate_bindings`) refuses to enable a
@@ -76,7 +83,6 @@ pub struct HasRuntimeShape;
 pub struct MissingBuildImpact;
 #[derive(Debug, Clone, Copy)]
 pub struct HasBuildImpact;
-
 #[derive(Debug, Clone, Copy)]
 pub struct SourceRuntimeBindingBuilder<Output, Privacy, CheckpointFam, Runtime, Build> {
     descriptor: SourceRuntimeBinding,
@@ -115,6 +121,7 @@ impl SourceRuntimeBinding {
                 build_impact: SourceBuildImpact::ZERO,
                 material_lifecycle: MaterialLifecyclePolicy::RetainRaw,
                 transport_semantics: TransportSemantics::DIRECT_APPEND_STREAM,
+                recovery_policy: None,
                 criticality: None,
             },
             _state: PhantomData,
@@ -197,6 +204,17 @@ impl<O, P, CF, RS, BI> SourceRuntimeBindingBuilder<O, P, CF, RS, BI> {
     #[must_use]
     pub const fn transport_semantics(mut self, semantics: TransportSemantics) -> Self {
         self.descriptor.transport_semantics = semantics;
+        self
+    }
+
+    /// Declare source-level replay, catch-up, and accepted-loss authority.
+    ///
+    /// The transition migration keeps this optional for existing registrations;
+    /// use [`source_runtime_binding_recovery_policy_diagnostics`] to enumerate
+    /// every omitted or invalid policy before enforcing it at startup.
+    #[must_use]
+    pub const fn recovery_policy(mut self, recovery_policy: SourceRecoveryPolicy) -> Self {
+        self.descriptor.recovery_policy = Some(recovery_policy);
         self
     }
 
@@ -308,6 +326,33 @@ inventory::collect!(SourceRuntimeBinding);
 
 pub fn source_runtime_bindings() -> impl Iterator<Item = &'static SourceRuntimeBinding> {
     inventory::iter::<SourceRuntimeBinding>()
+}
+
+/// A missing or invalid recovery declaration found in the binding inventory.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+pub struct SourceRecoveryPolicyDiagnostic {
+    pub binding_id: &'static str,
+    pub source_id: &'static str,
+    pub reason: &'static str,
+}
+
+/// Enumerate every binding that still lacks a recovery declaration or carries
+/// an internally inconsistent one. This is the migration's explicit
+/// completeness carrier; it never guesses from `TransportSemantics`.
+pub fn source_runtime_binding_recovery_policy_diagnostics(
+) -> impl Iterator<Item = SourceRecoveryPolicyDiagnostic> {
+    source_runtime_bindings().filter_map(|binding| match binding.recovery_policy {
+        None => Some(SourceRecoveryPolicyDiagnostic {
+            binding_id: binding.id,
+            source_id: binding.source_id,
+            reason: "missing SourceRecoveryPolicy",
+        }),
+        Some(policy) => policy.validate().err().map(|reason| SourceRecoveryPolicyDiagnostic {
+            binding_id: binding.id,
+            source_id: binding.source_id,
+            reason,
+        }),
+    })
 }
 
 /// Physical/build footprint declared by a source binding.

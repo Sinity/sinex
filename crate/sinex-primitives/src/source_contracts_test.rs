@@ -55,6 +55,7 @@ async fn source_runtime_binding_builder_accepts_all_required_fields() -> TestRes
     .checkpoint_family(CheckpointFamily::AppendStream)
     .runtime_shape(RuntimeShape::Continuous)
     .build_impact(SourceBuildImpact::ZERO)
+    .recovery_policy(SourceRecoveryPolicy::APPEND_STREAM)
     .build();
 
     assert_eq!(descriptor.output_event_type, "test.output");
@@ -71,6 +72,45 @@ async fn source_runtime_binding_builder_accepts_all_required_fields() -> TestRes
     assert_eq!(
         descriptor.transport_semantics,
         TransportSemantics::DIRECT_APPEND_STREAM
+    );
+    assert_eq!(
+        descriptor.recovery_policy,
+        Some(SourceRecoveryPolicy::APPEND_STREAM)
+    );
+    Ok(())
+}
+
+#[sinex_test]
+async fn source_recovery_policy_rejects_vacuous_loss_acceptance() -> TestResult<()> {
+    let missing_rationale = SourceRecoveryPolicy::live_observation("", "sinex-r6d.8");
+    assert_eq!(
+        missing_rationale.validate(),
+        Err("accepted-loss policy requires a rationale and durable record")
+    );
+
+    let missing_record = SourceRecoveryPolicy::live_observation("live upstream", "");
+    assert_eq!(
+        missing_record.validate(),
+        Err("accepted-loss policy requires a rationale and durable record")
+    );
+
+    let policy = SourceRecoveryPolicy::live_observation("live upstream", "sinex-r6d.8");
+    assert!(!policy.is_replayable());
+    assert_eq!(policy.validate(), Ok(()));
+    Ok(())
+}
+
+#[sinex_test]
+async fn source_recovery_policy_rejects_incompatible_authority() -> TestResult<()> {
+    let policy = SourceRecoveryPolicy {
+        replayability_class: SourceReplayabilityClass::AppendStream,
+        catch_up_authority: CatchUpAuthority::ParentEvents,
+        accepted_loss_policy: AcceptedLossPolicy::NoSilentLoss,
+    };
+
+    assert_eq!(
+        policy.validate(),
+        Err("replayability class and catch-up authority are incompatible")
     );
     Ok(())
 }
@@ -190,6 +230,7 @@ async fn source_runtime_binding_exposes_typed_capability_refs() -> TestResult<()
     .checkpoint_family(CheckpointFamily::AppendStream)
     .runtime_shape(RuntimeShape::OnDemand)
     .build_impact(SourceBuildImpact::ZERO)
+    .recovery_policy(SourceRecoveryPolicy::APPEND_STREAM)
     .build();
 
     let capabilities = binding.capability_refs().collect::<Vec<_>>();
@@ -227,6 +268,28 @@ async fn source_runtime_binding_exposes_typed_capability_refs() -> TestResult<()
     .checkpoint_family(CheckpointFamily::AppendStream)
     .runtime_shape(RuntimeShape::OnDemand)
     .build_impact(SourceBuildImpact::ZERO)
+    .recovery_policy(SourceRecoveryPolicy::APPEND_STREAM)
+    .build()
+}
+
+// This fixture deliberately omits a policy so the inventory diagnostic is
+// proven against the real link-time registration surface.
+::inventory::submit! {
+    SourceRuntimeBinding::builder(
+        SubjectRef::from_static("source:primitives.recovery-policy-missing"),
+        "primitives.recovery-policy-missing",
+        "test",
+    )
+    .implementation("sinex-primitives::test")
+    .adapter("test_adapter")
+    .output_event_type("test.output")
+    .privacy_context(ProcessingContext::Metadata)
+    .resource_profile(ResourceProfile::EmbeddedEmitter)
+    .source_id("primitives.recovery-policy-missing")
+    .runner_pack(RunnerPack::InProcess)
+    .checkpoint_family(CheckpointFamily::AppendStream)
+    .runtime_shape(RuntimeShape::OnDemand)
+    .build_impact(SourceBuildImpact::ZERO)
     .build()
 }
 
@@ -237,5 +300,19 @@ async fn source_runtime_binding_inventory_collects_submissions() -> TestResult<(
         .collect::<Vec<_>>();
 
     assert!(bindings.contains(&"source:primitives.inventory-sentinel"));
+    Ok(())
+}
+
+#[sinex_test]
+async fn source_recovery_policy_inventory_diagnostics_are_explicit() -> TestResult<()> {
+    let diagnostics = source_runtime_binding_recovery_policy_diagnostics().collect::<Vec<_>>();
+
+    assert!(diagnostics.iter().any(|diagnostic| {
+        diagnostic.binding_id == "primitives.recovery-policy-missing"
+            && diagnostic.reason == "missing SourceRecoveryPolicy"
+    }));
+    assert!(!diagnostics.iter().any(|diagnostic| {
+        diagnostic.binding_id == "primitives.inventory-sentinel"
+    }));
     Ok(())
 }

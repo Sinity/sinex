@@ -25,6 +25,159 @@ pub enum CheckpointFamily {
     LiveObservation,
 }
 
+/// Declared replayability of a runtime binding's source data.
+///
+/// This class describes the source-level recovery substrate, not whether a
+/// particular delivery transport can redeliver a message. See
+/// [`SourceRecoveryPolicy`] for the authority and loss decision that make the
+/// class operational.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SourceReplayabilityClass {
+    RetainedMaterial,
+    AppendStream,
+    MutableSnapshot,
+    JournalCursor,
+    ExternalProducer,
+    LiveObservation,
+    DerivedInternal,
+}
+
+/// The authority a binding may use to recover after a checkpoint or process
+/// failure.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CatchUpAuthority {
+    SourceMaterialRegistry,
+    BackingStore,
+    JournalRetention,
+    ExternalProducer,
+    ParentEvents,
+    None,
+}
+
+/// Explicit disposition for data a recovery attempt cannot reconstruct.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum AcceptedLossPolicy {
+    NoSilentLoss,
+    BoundedByAuthority { boundary: &'static str },
+    Accepted { rationale: &'static str, record: &'static str },
+}
+
+/// Recovery contract for one deployed source binding.
+///
+/// Each binding must declare all three dimensions. This is intentionally
+/// separate from [`TransportSemantics`]: delivery replay does not establish
+/// authority to re-read source data.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+pub struct SourceRecoveryPolicy {
+    pub replayability_class: SourceReplayabilityClass,
+    pub catch_up_authority: CatchUpAuthority,
+    pub accepted_loss_policy: AcceptedLossPolicy,
+}
+
+impl SourceRecoveryPolicy {
+    pub const RETAINED_MATERIAL: Self = Self {
+        replayability_class: SourceReplayabilityClass::RetainedMaterial,
+        catch_up_authority: CatchUpAuthority::SourceMaterialRegistry,
+        accepted_loss_policy: AcceptedLossPolicy::NoSilentLoss,
+    };
+
+    pub const APPEND_STREAM: Self = Self {
+        replayability_class: SourceReplayabilityClass::AppendStream,
+        catch_up_authority: CatchUpAuthority::BackingStore,
+        accepted_loss_policy: AcceptedLossPolicy::NoSilentLoss,
+    };
+
+    pub const MUTABLE_SNAPSHOT: Self = Self {
+        replayability_class: SourceReplayabilityClass::MutableSnapshot,
+        catch_up_authority: CatchUpAuthority::BackingStore,
+        accepted_loss_policy: AcceptedLossPolicy::NoSilentLoss,
+    };
+
+    pub const JOURNAL_CURSOR: Self = Self {
+        replayability_class: SourceReplayabilityClass::JournalCursor,
+        catch_up_authority: CatchUpAuthority::JournalRetention,
+        accepted_loss_policy: AcceptedLossPolicy::BoundedByAuthority {
+            boundary: "upstream journal retention",
+        },
+    };
+
+    pub const EXTERNAL_PRODUCER: Self = Self {
+        replayability_class: SourceReplayabilityClass::ExternalProducer,
+        catch_up_authority: CatchUpAuthority::ExternalProducer,
+        accepted_loss_policy: AcceptedLossPolicy::NoSilentLoss,
+    };
+
+    pub const DERIVED_INTERNAL: Self = Self {
+        replayability_class: SourceReplayabilityClass::DerivedInternal,
+        catch_up_authority: CatchUpAuthority::ParentEvents,
+        accepted_loss_policy: AcceptedLossPolicy::NoSilentLoss,
+    };
+
+    #[must_use]
+    pub const fn live_observation(rationale: &'static str, record: &'static str) -> Self {
+        Self {
+            replayability_class: SourceReplayabilityClass::LiveObservation,
+            catch_up_authority: CatchUpAuthority::None,
+            accepted_loss_policy: AcceptedLossPolicy::Accepted { rationale, record },
+        }
+    }
+
+    #[must_use]
+    pub const fn is_replayable(self) -> bool {
+        !matches!(
+            self.replayability_class,
+            SourceReplayabilityClass::LiveObservation
+        )
+    }
+
+    /// Verify that the declared class, authority, and loss decision form a
+    /// meaningful recovery contract.
+    pub fn validate(self) -> Result<(), &'static str> {
+        let class_authority_matches = matches!(
+            (self.replayability_class, self.catch_up_authority),
+            (
+                SourceReplayabilityClass::RetainedMaterial,
+                CatchUpAuthority::SourceMaterialRegistry
+            ) | (
+                SourceReplayabilityClass::AppendStream | SourceReplayabilityClass::MutableSnapshot,
+                CatchUpAuthority::BackingStore
+            ) | (
+                SourceReplayabilityClass::JournalCursor,
+                CatchUpAuthority::JournalRetention
+            ) | (
+                SourceReplayabilityClass::ExternalProducer,
+                CatchUpAuthority::ExternalProducer
+            ) | (
+                SourceReplayabilityClass::LiveObservation,
+                CatchUpAuthority::None
+            ) | (
+                SourceReplayabilityClass::DerivedInternal,
+                CatchUpAuthority::ParentEvents
+            )
+        );
+        if !class_authority_matches {
+            return Err("replayability class and catch-up authority are incompatible");
+        }
+
+        match self.accepted_loss_policy {
+            AcceptedLossPolicy::NoSilentLoss => Ok(()),
+            AcceptedLossPolicy::BoundedByAuthority { boundary } if boundary.is_empty() => {
+                Err("bounded-loss policy requires a non-empty authority boundary")
+            }
+            AcceptedLossPolicy::BoundedByAuthority { .. } => Ok(()),
+            AcceptedLossPolicy::Accepted { rationale, record }
+                if rationale.is_empty() || record.is_empty() =>
+            {
+                Err("accepted-loss policy requires a rationale and durable record")
+            }
+            AcceptedLossPolicy::Accepted { .. } => Ok(()),
+        }
+    }
+}
+
 /// Whether wiping Sinex's own copy of this source's data would lose
 /// information that exists nowhere else (sinex-sn6s).
 ///
@@ -159,6 +312,8 @@ pub struct TransportSemantics {
     pub transport: TransportKind,
     pub delivery: DeliverySemantics,
     pub ordering: OrderingSemantics,
+    /// Whether this *transport* can replay/redeliver. It is not source
+    /// recovery authority; consult [`SourceRecoveryPolicy`] for that contract.
     pub replayable: bool,
     pub dlq: bool,
     pub backpressure: bool,
