@@ -16,15 +16,41 @@ async fn replay_execution_fails_when_outputs_never_become_query_visible(
     .from_material(material_id)
     .build()?;
     let inserted = ctx.pool.events().insert(event).await?;
-    let target_id = inserted
+    let target_event_id = inserted.id.expect("inserted replay target must have id");
+    let target_id = target_event_id.to_uuid();
+    let target_ts = target_event_id.timestamp().expect("test ID must be UUIDv7");
+
+    // The non-cancel failure must recover the entire archived cascade, not
+    // merely the material root. A derived child is archived alongside the
+    // root before output validation begins.
+    let product_class = DerivedProductClass::CanonicalDerivedEvent;
+    seed_product_declaration(
+        &ctx.pool,
+        "sinex.test.replay_output_visibility_timeout",
+        product_class,
+        "replay-output-visibility-derived",
+        "analytics.summary",
+    )
+    .await?;
+    let mut derived = DynamicPayload::new(
+        "replay-output-visibility-derived",
+        "analytics.summary",
+        json!({ "path": "/tmp/replay-output-visibility-timeout-derived.txt" }),
+    )
+    .from_parents([target_event_id])?
+    .build()?;
+    derived.product_class = Some(product_class);
+    derived.claim_support = Some(sinex_primitives::derivation::ClaimSupport::unknown());
+    derived.derivation_declaration_id =
+        Some("sinex.test.replay_output_visibility_timeout".to_string());
+    let derived_id = ctx
+        .pool
+        .events()
+        .insert(derived)
+        .await?
         .id
-        .expect("inserted replay target must have id")
+        .expect("inserted derived cascade member must have id")
         .to_uuid();
-    let target_ts = inserted
-        .id
-        .expect("inserted replay target must have id")
-        .timestamp()
-        .expect("test ID must be UUIDv7");
 
     let replay = Arc::new(ReplayStateMachine::new(ctx.pool.clone()));
     let nats_client = ctx.nats_client();
@@ -61,8 +87,7 @@ async fn replay_execution_fails_when_outputs_never_become_query_visible(
         .await
         .expect_err("missing replay outputs must fail before completion");
     assert!(
-        err.to_string()
-            .contains("Replay outputs were not query-visible after successful scan"),
+        err.to_string().contains("Replay outputs did not match"),
         "unexpected error: {err}"
     );
 
@@ -73,19 +98,26 @@ async fn replay_execution_fails_when_outputs_never_become_query_visible(
         Some(sinex_primitives::domain::ReplayOutcome::Failed)
     );
 
-    let live_target_count: i64 =
-        sqlx::query_scalar("SELECT COUNT(*)::bigint FROM core.events WHERE id = $1::uuid")
-            .bind(target_id)
+    let cascade_ids = [target_id, derived_id];
+    let live_cascade_count: i64 =
+        sqlx::query_scalar("SELECT COUNT(*)::bigint FROM core.events WHERE id = ANY($1::uuid[])")
+            .bind(&cascade_ids)
             .fetch_one(&ctx.pool)
             .await?;
-    let archived_target_count: i64 = sqlx::query_scalar(
-        "SELECT COUNT(*)::bigint FROM audit.archived_events WHERE id = $1::uuid",
+    let archived_cascade_count: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*)::bigint FROM audit.archived_events WHERE id = ANY($1::uuid[])",
     )
-    .bind(target_id)
+    .bind(&cascade_ids)
     .fetch_one(&ctx.pool)
     .await?;
-    assert_eq!(live_target_count, 1);
-    assert_eq!(archived_target_count, 0);
+    assert_eq!(
+        live_cascade_count, 2,
+        "output-validation timeout must restore every archived cascade member"
+    );
+    assert_eq!(
+        archived_cascade_count, 0,
+        "output-validation timeout must not leave root or derived rows orphaned in audit storage"
+    );
 
     let dispatched_command = scan_command_rx.await.map_err(|_| {
         test_error("fake visibility-timeout-test source runtime did not receive a scan command")
@@ -165,7 +197,7 @@ async fn replay_execution_fails_when_source_runtime_never_reports_completion(
         .await
         .expect_err("execute should fail when the source runtime never reports completion");
     assert!(
-        err.to_string().contains("archived cascade left untouched"),
+        err.to_string().contains("restored archived cascade"),
         "timeout failure should explain why replay execution failed: {err}"
     );
 
@@ -749,7 +781,9 @@ async fn replay_execution_restores_cascade_when_initial_scope_invalidation_publi
 /// backing must stop replay before the archive transaction can remove roots.
 #[sinex_test]
 async fn replay_rejects_unreadable_authority_before_archive(ctx: TestContext) -> Result<()> {
-    use crate::runtime::content_store::{ContentStoreConfig, ContentStoreManager, MaterialContentStore};
+    use crate::runtime::content_store::{
+        ContentStoreConfig, ContentStoreManager, MaterialContentStore,
+    };
     use camino::Utf8PathBuf;
 
     let ctx = ctx.with_nats().dedicated().await?;
@@ -760,9 +794,17 @@ async fn replay_rejects_unreadable_authority_before_archive(ctx: TestContext) ->
         root_path: root,
         ..Default::default()
     };
-    let authority = Arc::new(ContentStoreManager::new(config.clone(), ctx.pool.clone(), None)?);
+    let authority = Arc::new(ContentStoreManager::new(
+        config.clone(),
+        ctx.pool.clone(),
+        None,
+    )?);
     let blob = authority
-        .ingest_from_bytes(b"authority-before-archive", "authority-before.log", "text/plain")
+        .ingest_from_bytes(
+            b"authority-before-archive",
+            "authority-before.log",
+            "text/plain",
+        )
         .await?;
     let material = ctx
         .pool
@@ -809,7 +851,10 @@ async fn replay_rejects_unreadable_authority_before_archive(ctx: TestContext) ->
         .create_operation(scope.clone(), "test:authority-before".into())
         .await?;
     replay
-        .update_preview(operation.operation_id, replay.generate_preview_summary(&scope).await?)
+        .update_preview(
+            operation.operation_id,
+            replay.generate_preview_summary(&scope).await?,
+        )
         .await?;
     replay
         .approve(operation.operation_id, "admin:approver".into())
@@ -821,19 +866,28 @@ async fn replay_rejects_unreadable_authority_before_archive(ctx: TestContext) ->
         .await
         .expect_err("missing authoritative bytes must reject replay before archive");
     assert!(
-        error.to_string().contains("authority validation failed before archive"),
+        error
+            .to_string()
+            .contains("authority validation failed before archive"),
         "unexpected error: {error}"
     );
     let live: i64 = sqlx::query_scalar("SELECT COUNT(*)::bigint FROM core.events WHERE id = $1")
         .bind(event_id.to_uuid())
         .fetch_one(&ctx.pool)
         .await?;
-    let archived: i64 = sqlx::query_scalar("SELECT COUNT(*)::bigint FROM audit.archived_events WHERE id = $1")
-        .bind(event_id.to_uuid())
-        .fetch_one(&ctx.pool)
-        .await?;
-    assert_eq!(live, 1, "authority preflight must leave the live root intact");
-    assert_eq!(archived, 0, "authority preflight must prevent destructive archive");
+    let archived: i64 =
+        sqlx::query_scalar("SELECT COUNT(*)::bigint FROM audit.archived_events WHERE id = $1")
+            .bind(event_id.to_uuid())
+            .fetch_one(&ctx.pool)
+            .await?;
+    assert_eq!(
+        live, 1,
+        "authority preflight must leave the live root intact"
+    );
+    assert_eq!(
+        archived, 0,
+        "authority preflight must prevent destructive archive"
+    );
     Ok(())
 }
 
@@ -842,8 +896,12 @@ async fn replay_rejects_unreadable_authority_before_archive(ctx: TestContext) ->
 #[sinex_test]
 async fn replay_rejects_output_from_outside_material_scope(ctx: TestContext) -> Result<()> {
     let ctx = ctx.with_nats().dedicated().await?;
-    let expected_material = ctx.create_source_material(Some("scope-output-expected")).await?;
-    let unrelated_material = ctx.create_source_material(Some("scope-output-unrelated")).await?;
+    let expected_material = ctx
+        .create_source_material(Some("scope-output-expected"))
+        .await?;
+    let unrelated_material = ctx
+        .create_source_material(Some("scope-output-unrelated"))
+        .await?;
     let event = DynamicPayload::new(
         "scope-output-test",
         FileCreatedPayload::EVENT_TYPE.as_static_str(),
@@ -887,7 +945,10 @@ async fn replay_rejects_output_from_outside_material_scope(ctx: TestContext) -> 
         .create_operation(scope.clone(), "test:wrong-material-output".into())
         .await?;
     replay
-        .update_preview(operation.operation_id, replay.generate_preview_summary(&scope).await?)
+        .update_preview(
+            operation.operation_id,
+            replay.generate_preview_summary(&scope).await?,
+        )
         .await?;
     replay
         .approve(operation.operation_id, "admin:approver".into())
@@ -899,7 +960,9 @@ async fn replay_rejects_output_from_outside_material_scope(ctx: TestContext) -> 
         .await
         .expect_err("cross-material output must not satisfy replay validation");
     assert!(
-        error.to_string().contains("source-material occurrence scope"),
+        error
+            .to_string()
+            .contains("source-material occurrence scope"),
         "unexpected error: {error}"
     );
     output_handle.await??;
@@ -908,6 +971,9 @@ async fn replay_rejects_output_from_outside_material_scope(ctx: TestContext) -> 
         .bind(event_id.to_uuid())
         .fetch_one(&ctx.pool)
         .await?;
-    assert_eq!(live, 1, "failed output validation must restore the archived root");
+    assert_eq!(
+        live, 1,
+        "failed output validation must restore the archived root"
+    );
     Ok(())
 }

@@ -8,6 +8,8 @@
 
 use crate::AdapterKind;
 use futures::StreamExt;
+use sinex_db::repositories::Operation;
+use sinex_primitives::domain::OperationStatus;
 use sinex_primitives::environment::environment;
 use sinex_primitives::{ControlSubject, MaterialManifestV1, Uuid};
 use sinexd::runtime::stream::ReplayMaterialOccurrence;
@@ -168,19 +170,19 @@ async fn find_material_events(
 #[sinex_test(timeout = 180)]
 async fn manifest_and_source_removal_obligation(ctx: TestContext) -> TestResult<()> {
     let ctx = ctx.with_nats().shared().await?;
-    let cas_dir = tempfile::tempdir()?;
     let source_dir = tempfile::tempdir()?;
     let source_path = source_dir.path().join("production-path-proof.txt");
     let source_path_string = source_path.to_string_lossy().into_owned();
     let payload = b"production path manifest proof: exact CAS bytes";
 
-    // The source host and event engine must resolve the same CAS root. EnvGuard
-    // also prevents this production-path test from leaking its test CAS into
-    // neighboring tests.
-    let mut env = EnvGuard::new();
-    env.set("SINEX_CONTENT_STORE_PATH", cas_dir.path());
-
     let event_engine_work_dir = tempfile::tempdir()?;
+    // start_test_event_engine_with_config resolves the canonical CAS root as
+    // <work_dir>/content-store for the spawned event-engine process. Inspect
+    // that same root below; an unrelated process-wide env override would not
+    // control the child and would make this authority assertion meaningless.
+    let cas_dir = event_engine_work_dir.path().join("content-store");
+    let mut env = EnvGuard::new();
+    env.set("SINEX_CONTENT_STORE_PATH", &cas_dir);
     let mut event_engine = start_test_event_engine_with_config(
         TestEventEngineConfig {
             nats: ctx.nats_handle()?.connection_config(),
@@ -196,7 +198,6 @@ async fn manifest_and_source_removal_obligation(ctx: TestContext) -> TestResult<
     )
     .await?;
 
-    let source_work_dir = tempfile::tempdir()?;
     let runtime_config = serde_json::json!({
         "watch_paths": [source_dir.path()],
         "max_capture_bytes": 1024,
@@ -206,7 +207,9 @@ async fn manifest_and_source_removal_obligation(ctx: TestContext) -> TestResult<
             source_id: MANIFEST_REPLAY_SOURCE_ID.to_string(),
             nats: ctx.nats_handle()?.connection_config(),
             database_url: ctx.database_url().to_string(),
-            work_dir: Some(source_work_dir.path().to_path_buf()),
+            // The source host and event engine must resolve one canonical CAS
+            // root. The helpers derive it as <work_dir>/content-store.
+            work_dir: Some(event_engine_work_dir.path().to_path_buf()),
             namespace: Some(ctx.pipeline_namespace().prefix().to_string()),
             runtime_config: Some(runtime_config.to_string()),
             service_name: Some("production-path-manifest-replay".to_string()),
@@ -253,7 +256,7 @@ async fn manifest_and_source_removal_obligation(ctx: TestContext) -> TestResult<
         material.metadata["material_manifest"]["manifest_type"],
         sinex_primitives::MATERIAL_MANIFEST_V1
     );
-    let cas_root = camino::Utf8PathBuf::from_path_buf(cas_dir.path().to_path_buf())
+    let cas_root = camino::Utf8PathBuf::from_path_buf(cas_dir.clone())
         .map_err(|path| eyre!("test CAS path is not UTF-8: {}", path.display()))?;
     let content_store = ContentStoreManager::new(
         ContentStoreConfig {
@@ -294,13 +297,41 @@ async fn manifest_and_source_removal_obligation(ctx: TestContext) -> TestResult<
     let original_events = find_material_events(ctx.pool(), material.id).await?;
     assert_eq!(original_events.len(), 1);
     let original_event = &original_events[0];
+    let expected_anchor_hash = blake3::Hash::from_hex(manifest.bytes.encoded.value_hex.as_str())
+        .map_err(|error| eyre!("manifest encoded digest is invalid: {error}"))?;
     assert_eq!(original_event.1, 0);
     assert_eq!(original_event.2, Some(0));
     assert_eq!(original_event.3, Some(payload.len() as i64));
     assert_eq!(
         original_event.4.as_deref(),
-        Some(blake3::hash(payload).as_bytes().as_slice())
+        Some(expected_anchor_hash.as_bytes().as_slice())
     );
+
+    let operation_id = ctx
+        .pool()
+        .state()
+        .log_operation(Operation {
+            id: None,
+            operation_type: "source.replay".to_string(),
+            operator: "production-path-test".to_string(),
+            scope: Some(serde_json::json!({"source_id": MANIFEST_REPLAY_SOURCE_ID})),
+            result_status: OperationStatus::Running,
+            result_message: None,
+            preview_summary: None,
+            duration_ms: None,
+        })
+        .await?
+        .id
+        .to_uuid();
+    ctx.pool()
+        .events()
+        .execute_cascade_archive(
+            &[original_event.0],
+            "source-removal replay proof",
+            &operation_id.to_string(),
+            "production-path-test",
+        )
+        .await?;
 
     // Anti-vacuity mutation: replay must not pass because the old path still
     // happens to contain equivalent bytes. The path is changed, then removed.
@@ -315,7 +346,6 @@ async fn manifest_and_source_removal_obligation(ctx: TestContext) -> TestResult<
         "the original source path must be gone"
     );
 
-    let operation_id = Uuid::now_v7();
     let replay = MaterialReplayContext {
         operation_id,
         materials: vec![ResolvedReplayMaterial {
@@ -353,6 +383,7 @@ async fn manifest_and_source_removal_obligation(ctx: TestContext) -> TestResult<
     let progress_subject =
         environment().nats_subject(&ControlSubject::replay_progress(operation_id));
     let mut progress = nats.subscribe(progress_subject).await?;
+    nats.flush().await?;
     let scan_subject =
         environment().nats_subject(&ControlSubject::source_scan(MANIFEST_REPLAY_SOURCE_ID));
     let ack_message = nats
@@ -399,15 +430,25 @@ async fn manifest_and_source_removal_obligation(ctx: TestContext) -> TestResult<
             let pool = ctx.pool().clone();
             let material_id = material.id;
             async move {
-                Ok::<bool, sqlx::Error>(find_material_events(&pool, material_id).await?.len() == 2)
+                Ok::<bool, sqlx::Error>(find_material_events(&pool, material_id).await?.len() == 1)
             }
         },
         Timeouts::LONG,
     )
     .await?;
     let replayed_events = find_material_events(ctx.pool(), material.id).await?;
-    assert_eq!(replayed_events.len(), 2);
-    let replayed_event = &replayed_events[1];
+    assert_eq!(replayed_events.len(), 1);
+    let archived_count: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*)::bigint FROM audit.archived_events WHERE id = $1::uuid",
+    )
+    .bind(original_event.0)
+    .fetch_one(ctx.pool())
+    .await?;
+    assert_eq!(
+        archived_count, 1,
+        "the original interpretation must be archived"
+    );
+    let replayed_event = &replayed_events[0];
     assert_ne!(
         replayed_event.0, original_event.0,
         "replay must mint a fresh event id"

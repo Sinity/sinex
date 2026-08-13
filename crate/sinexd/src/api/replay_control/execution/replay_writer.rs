@@ -449,10 +449,27 @@ impl ReplayExecutionEngine {
         // host (#1081) via a parse command. The routing decision is made here so both
         // paths share the archive + invalidation + checkpoint machinery above.
         if scope.is_staged_source_scope() {
-            while let Some(batch) = self
-                .collect_archived_replay_root_batch(pool, &archive_reason, after_root_id)
-                .await?
-            {
+            loop {
+                let batch = match self
+                    .collect_archived_replay_root_batch(pool, &archive_reason, after_root_id)
+                    .await
+                {
+                    Ok(batch) => batch,
+                    Err(error) => {
+                        return self
+                            .compensate_after_archive_failure(
+                                pool,
+                                &cascade_ids,
+                                &scope_metadata,
+                                operation_id,
+                                error,
+                            )
+                            .await;
+                    }
+                };
+                let Some(batch) = batch else {
+                    break;
+                };
                 dispatched_root_count += batch.material_roots.len() as u64;
                 after_root_id = Some(batch.last_root_id);
                 Self::merge_expected_replay_outputs(
@@ -494,10 +511,27 @@ impl ReplayExecutionEngine {
                 .await;
         }
 
-        while let Some(batch) = self
-            .collect_archived_replay_root_batch(pool, &archive_reason, after_root_id)
-            .await?
-        {
+        loop {
+            let batch = match self
+                .collect_archived_replay_root_batch(pool, &archive_reason, after_root_id)
+                .await
+            {
+                Ok(batch) => batch,
+                Err(error) => {
+                    return self
+                        .compensate_after_archive_failure(
+                            pool,
+                            &cascade_ids,
+                            &scope_metadata,
+                            operation_id,
+                            error,
+                        )
+                        .await;
+                }
+            };
+            let Some(batch) = batch else {
+                break;
+            };
             dispatched_root_count += batch.material_roots.len() as u64;
             after_root_id = Some(batch.last_root_id);
             batch_number += 1;
@@ -799,10 +833,21 @@ impl ReplayExecutionEngine {
             "executor": executor_name,
         });
 
-        let command_payload = serde_json::to_vec(&parse_command).map_err(|err| {
-            SinexError::serialization("Failed to serialize source parse command")
-                .with_std_error(&err)
-        })?;
+        let command_payload = match serde_json::to_vec(&parse_command) {
+            Ok(payload) => payload,
+            Err(err) => {
+                return self
+                    .abort_before_scan_ack(
+                        pool,
+                        cascade_ids,
+                        scope_metadata,
+                        operation_id,
+                        SinexError::serialization("Failed to serialize source parse command")
+                            .with_std_error(&err),
+                    )
+                    .await;
+            }
+        };
 
         info!(
             operation_id = %operation_id,

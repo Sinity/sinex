@@ -68,9 +68,11 @@ impl RuntimeRunner {
 
         // Only advertise this runtime as ready after snapshot and gap-fill
         // have completed. Those phases establish the initial checkpoint and
-        // durable coverage baseline; advertising before them made a process
-        // that was still warming look healthy to the service manager.
-        systemd_notify::notify_ready("sinex-runtime");
+        // durable coverage baseline. Sources with an asynchronous continuous
+        // subscription defer the signal until that subscription is armed.
+        if !self.module.defers_service_ready_until_continuous() {
+            systemd_notify::notify_ready("sinex-runtime");
+        }
 
         // Phase 3: Continuous processing (traditional scan method)
         if self.module.capabilities().supports_continuous {

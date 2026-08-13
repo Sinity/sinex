@@ -33,7 +33,8 @@ use crate::runtime::parser::InputShapeAdapterExt;
 use crate::runtime::parser::{InputShapeAdapter, ParserError, ParserResult};
 #[cfg(feature = "messaging")]
 use crate::runtime::{
-    acquisition_manager::AcquisitionManager, source_material::stage_material_from_file_bounded,
+    acquisition_manager::AcquisitionManager,
+    source_material::stage_material_from_file_bounded_with_digest,
 };
 
 #[cfg(target_os = "linux")]
@@ -1173,22 +1174,35 @@ async fn materialize_file_content_record_with_cache(
     }
 
     let material_metadata = metadata
+        .clone()
         .with_materialized_content_hash(len, cache_key.content_hash.clone(), false)
         .into_json();
-    let (material_id, total_bytes) = stage_material_from_file_bounded(
-        &acquisition,
-        &path,
-        "file-drop-content-material",
-        Some(material_metadata.clone()),
-        Some(max_capture_bytes),
-    )
-    .await
-    .map_err(ParserError::Sinex)?;
+    let (material_id, total_bytes, captured_content_hash) =
+        stage_material_from_file_bounded_with_digest(
+            &acquisition,
+            &path,
+            "file-drop-content-material",
+            Some(material_metadata.clone()),
+            Some(max_capture_bytes),
+        )
+        .await
+        .map_err(ParserError::Sinex)?;
 
     let material_id = Id::from_uuid(material_id);
     let materialized_len = total_bytes.max(0) as u64;
+    let material_metadata = metadata
+        .with_materialized_content_hash(materialized_len, captured_content_hash, false)
+        .into_json();
+    let actual_cache_key = FileContentMaterializationCacheKey {
+        path: path.clone(),
+        len: materialized_len,
+        content_hash: material_metadata["content_hash"]
+            .as_str()
+            .unwrap_or_default()
+            .to_string(),
+    };
     cache.insert(
-        cache_key,
+        actual_cache_key,
         MaterializedFileContent {
             material_id,
             len: materialized_len,

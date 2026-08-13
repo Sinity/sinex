@@ -38,6 +38,11 @@ pub trait RuntimeModule: Send + Sync {
         RuntimeCapabilities::default()
     }
 
+    /// Whether this source reports readiness from its continuous-start path.
+    fn defers_service_ready_until_continuous(&self) -> bool {
+        false
+    }
+
     /// Single concrete raw event type this module consumes, if any.
     ///
     /// When `Some(t)`, the raw-event consumer can filter the stream server-side
@@ -159,6 +164,7 @@ pub trait ErasedRuntimeModule: Send + Sync {
     fn module_name(&self) -> &str;
     fn module_kind(&self) -> ModuleKind;
     fn capabilities(&self) -> RuntimeCapabilities;
+    fn defers_service_ready_until_continuous(&self) -> bool;
     fn raw_event_type_filter(&self) -> Option<&'static str>;
     fn event_type_filters(&self) -> Vec<&'static str>;
     fn confirmed_event_provenance_filter(&self) -> InputProvenanceFilter;
@@ -200,6 +206,9 @@ impl<T: RuntimeModule> ErasedRuntimeModule for T {
     }
     fn capabilities(&self) -> RuntimeCapabilities {
         RuntimeModule::capabilities(self)
+    }
+    fn defers_service_ready_until_continuous(&self) -> bool {
+        RuntimeModule::defers_service_ready_until_continuous(self)
     }
     fn raw_event_type_filter(&self) -> Option<&'static str> {
         RuntimeModule::raw_event_type_filter(self)

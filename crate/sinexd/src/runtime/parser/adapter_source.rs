@@ -114,7 +114,6 @@ use sinex_primitives::temporal::Timestamp;
 #[cfg(feature = "db")]
 use sinex_db::DbPoolExt;
 
-use crate::runtime::RuntimeResult;
 use crate::runtime::acquisition_manager::{
     AcquisitionManager, AppendStreamAcquirer, RotationPolicy,
 };
@@ -137,6 +136,7 @@ use crate::runtime::stream::{
     Checkpoint, ContinuousStart, MaterialReplayContext, RuntimeCapabilities, RuntimeContext,
     ScanArgs, ScanReport, TimeHorizon,
 };
+use crate::runtime::{RuntimeResult, systemd_notify};
 use camino::Utf8PathBuf;
 use sinex_primitives::commit_frontier::{CommitFrontier, TerminalOutcome};
 use std::path::PathBuf;
@@ -702,6 +702,20 @@ where
         Ok(true)
     }
 
+    async fn finalize_file_drop_record_material(&mut self) -> RuntimeResult<()> {
+        if A::KIND != InputShapeKind::FileDrop {
+            return Ok(());
+        }
+
+        let Some(acquirer) = self.stream_acquirer.as_mut() else {
+            return Ok(());
+        };
+        if acquirer.current_material_id().is_some() {
+            acquirer.finalize("file-drop-record-complete").await?;
+        }
+        Ok(())
+    }
+
     async fn replay_materials_from_cas(
         &mut self,
         replay: MaterialReplayContext,
@@ -788,6 +802,17 @@ where
                     unreachable!("database-backed replay returned early above")
                 }
             };
+            info!(
+                source = self.source_id,
+                operation_id = %replay.operation_id,
+                material_id = %material.source_material_id,
+                occurrences = replay
+                    .occurrences
+                    .iter()
+                    .filter(|occurrence| occurrence.source_material_id == material.source_material_id)
+                    .count(),
+                "loaded authoritative material for replay"
+            );
             let material_bytes = &material_authority.bytes;
             let occurrences = replay
                 .occurrences
@@ -871,6 +896,13 @@ where
                     metadata: metadata.clone(),
                 };
 
+                info!(
+                    source = self.source_id,
+                    operation_id = %replay.operation_id,
+                    material_id = %material.source_material_id,
+                    anchor_byte = occurrence.anchor_byte,
+                    "replaying authoritative material occurrence"
+                );
                 emitted = emitted.saturating_add(
                     self.process_materialized_record(record, replay.operation_id)
                         .await?,
@@ -945,7 +977,9 @@ where
         let material_id = record.material_id;
         let (anchor_byte, offset_start, offset_end) =
             anchor_offsets_for_materialized_record(&record.anchor);
-        let anchor_payload_hash = blake3::hash(record.bytes.as_slice()).as_bytes().to_owned();
+        let anchor_payload_hash = self
+            .anchor_payload_hash_for_materialized_record(&record)
+            .await?;
         self.link_latest_sqlite_snapshot_backing_material(material_id)
             .await;
 
@@ -1005,58 +1039,72 @@ where
             return Ok(0);
         }
 
-        // Replay has no cursor to advance, but it still has a progress atom:
-        // the selected material occurrence. Route sibling events through the
-        // same receipt barrier as live adapter records so a mid-record emit
-        // failure cannot be reported as a successful replay scan or silently
-        // discard one child after the others were accepted.
-        let registry = self
-            .runtime
-            .as_ref()
-            .map(RuntimeContext::settlement_registry)
-            .unwrap_or_default();
-        let request = DurableEmissionRequest {
-            origin: EmissionOrigin::HistoricalReplay,
-            required_level: ReceiptLevel::AdmissionSettled,
-            progress_atom: ProgressAtom::SourceRecord {
-                source_id: self.source_id.to_string(),
-                material_id: material_id.to_uuid(),
-                anchor_byte,
-                cursor_after: JsonValue::Null,
-            },
-            events,
-            allow_spool_backend: false,
-        };
-        let receipt = emit_batch_durable(
-            &registry,
-            &event_emitter,
-            request,
-            self.durable_emission_timeout,
-        )
-        .await;
-        let settled = receipt
-            .items
-            .iter()
-            .filter(|item| item.state.is_progress_unlocking())
-            .count();
-        if settled != receipt.items.len() {
-            let state = receipt
-                .items
-                .iter()
-                .find(|item| !item.state.is_progress_unlocking())
-                .map_or_else(
-                    || "missing receipt item".to_string(),
-                    |item| format!("{:?}", item.state),
-                );
-            return Err(crate::runtime::SinexError::processing(
-                "replay material occurrence did not durably settle every sibling",
-            )
-            .with_context("source_id", self.source_id)
-            .with_context("material_id", material_id.to_string())
-            .with_context("anchor_byte", anchor_byte.to_string())
-            .with_context("receipt_state", state));
+        // The source host and event engine are separate processes in the real
+        // topology, so their in-memory SettlementRegistry instances cannot
+        // resolve one another. Replay therefore emits with stable candidate
+        // IDs and waits on the database authority: either the candidate row
+        // is visible in core.events or audit.import_outcomes records its
+        // terminal suppression. This is bounded by the same configured
+        // operation timeout and never treats a bare mpsc handoff as success.
+        let candidate_ids: Vec<_> = events
+            .iter_mut()
+            .map(|event| *event.id.get_or_insert_with(Id::new))
+            .collect();
+        for event in events {
+            event_emitter.emit(event).await?;
         }
-        Ok(settled as u64)
+
+        #[cfg(feature = "db")]
+        {
+            let pool = self
+                .runtime
+                .as_ref()
+                .and_then(|runtime| runtime.handles().db_pool())
+                .ok_or_else(|| {
+                    crate::runtime::SinexError::configuration(
+                        "replay settlement requires a database-backed runtime",
+                    )
+                })?;
+            let deadline = tokio::time::Instant::now() + self.durable_emission_timeout;
+            loop {
+                let mut settled = 0;
+                for candidate_id in &candidate_ids {
+                    if pool.events().get_by_id(*candidate_id).await?.is_some() {
+                        settled += 1;
+                        continue;
+                    }
+                    if let Some(report) = pool.import_outcomes().report(operation_id).await?
+                        && report
+                            .outcomes
+                            .iter()
+                            .any(|outcome| outcome.candidate_event_id == candidate_id.to_uuid())
+                    {
+                        settled += 1;
+                    }
+                }
+                if settled == candidate_ids.len() {
+                    return Ok(settled as u64);
+                }
+                if tokio::time::Instant::now() >= deadline {
+                    return Err(crate::runtime::SinexError::processing(
+                        "replay material occurrence did not reach a durable database settlement",
+                    )
+                    .with_context("source_id", self.source_id)
+                    .with_context("material_id", material_id.to_string())
+                    .with_context("anchor_byte", anchor_byte.to_string())
+                    .with_context("settled", settled.to_string())
+                    .with_context("total", candidate_ids.len().to_string()));
+                }
+                tokio::time::sleep(Duration::from_millis(25)).await;
+            }
+        }
+        #[cfg(not(feature = "db"))]
+        {
+            let _ = (candidate_ids, operation_id);
+            Err(crate::runtime::SinexError::configuration(
+                "replay settlement requires the database-backed runtime",
+            ))
+        }
     }
 
     /// Observe adapter-level input shape before draining records.
@@ -1192,13 +1240,12 @@ where
             let (anchor_byte, offset_start, offset_end) =
                 anchor_offsets_for_materialized_record(&record.anchor);
             // Pre-materialized adapter records (file-drop content staging,
-            // SQLite row snapshots) already own their anchor; hash the record
-            // payload bytes as the integrity witness. Records with non-byte
-            // anchors (directory entries, git objects) carry only a logical
-            // identifier in `bytes`, so we still hash whatever the adapter
-            // chose to emit — verify just re-runs the same hashing on the
-            // same byte range and confirms consistency, not authenticity.
-            let anchor_payload_hash = blake3::hash(record.bytes.as_slice()).as_bytes().to_owned();
+            // SQLite row snapshots) already own their anchor. For byte-range
+            // authorities, hash the exact CAS range rather than the adapter's
+            // descriptor bytes (which may only contain a path or row key).
+            let anchor_payload_hash = self
+                .anchor_payload_hash_for_materialized_record(&record)
+                .await?;
             return Ok(MaterializedAdapterRecord {
                 material_id: record.material_id,
                 record,
@@ -1524,6 +1571,14 @@ where
                 );
             }
         };
+
+        // FileDrop's `open` call has completed its native `watch()` setup at
+        // this point. Its service route intentionally defers READY=1 until
+        // that subscription is armed, so a caller cannot create a file in the
+        // gap between process readiness and watcher registration.
+        if A::KIND == InputShapeKind::FileDrop {
+            systemd_notify::notify_ready("sinex-runtime");
+        }
 
         let mut emitted: u64 = 0;
         let mut deferred_pending_record: Option<PendingAdapterRecord<A::Cursor>> = None;
@@ -1941,6 +1996,14 @@ where
             }
             self.refresh_parser_checkpoint_state(state);
 
+            // FileDrop is an open-ended watcher, so its drain future does not
+            // return at a logical record boundary. Complete each accepted
+            // record material after its durable-emission receipt settles;
+            // otherwise the material assembler cannot publish a completed
+            // authority until age rotation or source shutdown, making a live
+            // source-removal replay impossible in the normal running state.
+            self.finalize_file_drop_record_material().await?;
+
             let (_, committed_checkpoint) = cursor_frontier.frontier();
             if let Some(checkpoint) = committed_checkpoint {
                 state.cursor = Some(checkpoint.clone());
@@ -1974,6 +2037,28 @@ where
             "drain_adapter complete"
         );
         Ok(emitted)
+    }
+
+    async fn anchor_payload_hash_for_materialized_record(
+        &self,
+        record: &SourceRecord,
+    ) -> RuntimeResult<[u8; 32]> {
+        if let Some(content_hash) = record
+            .metadata
+            .get("content_hash")
+            .and_then(JsonValue::as_str)
+        {
+            let hash = blake3::Hash::from_hex(content_hash).map_err(|error| {
+                crate::runtime::SinexError::validation(
+                    "pre-materialized adapter record has an invalid content_hash",
+                )
+                .with_context("content_hash", content_hash)
+                .with_std_error(&error)
+            })?;
+            return Ok(*hash.as_bytes());
+        }
+
+        Ok(*blake3::hash(record.bytes.as_slice()).as_bytes())
     }
 
     async fn persist_stream_checkpoint_if_due(
@@ -2156,7 +2241,11 @@ where
 
     fn capabilities(&self) -> RuntimeCapabilities {
         RuntimeCapabilities {
-            supports_snapshot: true,
+            // File-drop opens a native watcher whose stream remains open for
+            // the lifetime of the source. Treating that stream as a finite
+            // startup snapshot prevents the service route from ever reaching
+            // its post-snapshot READY=1 notification.
+            supports_snapshot: A::KIND != InputShapeKind::FileDrop,
             supports_historical: true,
             // Continuous mode is poll-based for adapters that don't stream.
             supports_continuous: true,
@@ -2166,6 +2255,10 @@ where
             manages_own_continuous_loop: true,
             manages_own_checkpoints: false,
         }
+    }
+
+    fn defers_service_ready_until_continuous(&self) -> bool {
+        A::KIND == InputShapeKind::FileDrop
     }
 
     async fn initialize(

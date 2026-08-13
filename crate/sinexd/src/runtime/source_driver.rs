@@ -77,6 +77,11 @@ pub trait SourceDriver: Send + Sync + 'static {
         }
     }
 
+    /// Whether service readiness must wait until continuous capture is armed.
+    fn defers_service_ready_until_continuous(&self) -> bool {
+        false
+    }
+
     /// Initialize the source logic.
     /// Called after state is loaded and runtime is set up.
     fn initialize(
@@ -762,6 +767,10 @@ impl<I: SourceDriver> RuntimeModule for SourceDriverRuntime<I> {
 
     fn capabilities(&self) -> RuntimeCapabilities {
         self.source.capabilities()
+    }
+
+    fn defers_service_ready_until_continuous(&self) -> bool {
+        self.source.defers_service_ready_until_continuous()
     }
 
     async fn current_checkpoint(&self) -> RuntimeResult<Checkpoint> {
