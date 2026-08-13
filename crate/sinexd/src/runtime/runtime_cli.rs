@@ -3,15 +3,20 @@
 //! This module provides the standardized CLI interface for runtime modules
 //! implementing the service/scan/explore subcommand pattern.
 
+use crate::api::handlers::handle_curation_list_duplicate_candidates;
+use crate::api::handlers::import_report::render_report;
 use crate::runtime::event_transport::EventTransport;
 pub use crate::runtime::exploration::{ExplorationProvider, ExportFormat, SourceState};
 use crate::runtime::stream::{Checkpoint, RuntimeRunner, TimeHorizon};
 use crate::runtime::{RuntimeResult, SinexError};
 use clap::{Parser, Subcommand};
-use sinex_primitives::SanitizedPath;
+use sinex_db::DbPoolExt;
 use sinex_primitives::domain::ServiceName;
 use sinex_primitives::env as shared_env;
+use sinex_primitives::rpc::curation::CurationListDuplicateCandidatesRequest;
+use sinex_primitives::rpc::sources::SourcesImportReportResponse;
 use sinex_primitives::temporal::Timestamp;
+use sinex_primitives::{JsonValue, SanitizedPath, Uuid};
 
 // Re-export common activity/history types used by exploration flows.
 pub use crate::runtime::{ActivityEntry, IngestionHistoryEntry};
@@ -22,6 +27,8 @@ use std::path::PathBuf;
 use std::str::FromStr;
 use std::sync::Arc;
 use tracing::{info, warn};
+
+const DIRECT_SCAN_OPERATION_ID_CONFIG_KEY: &str = "__sinex_direct_scan_operation_id";
 
 /// Standard CLI arguments for runtime modules.
 #[derive(Parser, Debug, Clone)]
@@ -641,7 +648,7 @@ impl<T: crate::runtime::stream::RuntimeModule + ExplorationProvider + Default + 
     async fn handle_scan_command(
         &self,
         module: T,
-        runtime_config: HashMap<String, serde_json::Value>,
+        mut runtime_config: HashMap<String, serde_json::Value>,
         from: &str,
         until: &str,
         targets: &[SanitizedPath],
@@ -686,17 +693,40 @@ impl<T: crate::runtime::stream::RuntimeModule + ExplorationProvider + Default + 
         let nats_config = args.nats.to_config()?;
         let transport = Self::connect_nats_transport(&nats_config, args.namespace.clone()).await?;
 
+        let operation_id = if let Some(pool) = db_pool.as_ref() {
+            let operation = pool
+                .state()
+                .start_operation(
+                    "import",
+                    &Self::direct_scan_operator(args),
+                    Self::direct_scan_scope(args, from, until, targets),
+                )
+                .await?;
+            let operation_id = operation.id.to_uuid();
+            runtime_config.insert(
+                DIRECT_SCAN_OPERATION_ID_CONFIG_KEY.to_string(),
+                serde_json::json!(operation_id),
+            );
+            Some(operation_id)
+        } else {
+            None
+        };
+
         // Initialize runner with transport
-        runner
+        let initialization = runner
             .initialize_with_transport(
                 service_name,
                 runtime_config,
-                db_pool,
+                db_pool.clone(),
                 transport,
                 std::path::PathBuf::from(work_dir.as_str()),
                 dry_run,
             )
-            .await?;
+            .await;
+        if let Err(error) = initialization {
+            Self::fail_direct_scan_operation(db_pool.as_ref(), operation_id, &error).await;
+            return Err(error);
+        }
 
         // Historical-import pacing override (sinex-2n9): `--unlimited` wins
         // outright; individual rate overrides layer on top of the default
@@ -773,20 +803,53 @@ impl<T: crate::runtime::stream::RuntimeModule + ExplorationProvider + Default + 
         let shutdown_result = runner.shutdown().await;
         let maybe_report = match (workflow_result, shutdown_result) {
             (Ok(report), Ok(())) => report,
-            (Err(scan_error), Ok(())) => return Err(scan_error),
-            (Ok(_), Err(shutdown_error)) => return Err(shutdown_error),
+            (Err(scan_error), Ok(())) => {
+                Self::fail_direct_scan_operation(db_pool.as_ref(), operation_id, &scan_error).await;
+                return Err(scan_error);
+            }
+            (Ok(_), Err(shutdown_error)) => {
+                Self::fail_direct_scan_operation(db_pool.as_ref(), operation_id, &shutdown_error)
+                    .await;
+                return Err(shutdown_error);
+            }
             (Err(scan_error), Err(shutdown_error)) => {
-                return Err(SinexError::lifecycle(
+                let error = SinexError::lifecycle(
                     "scan command failed and runner shutdown also failed".to_string(),
                 )
                 .with_context("scan_error", scan_error.to_string())
-                .with_source(shutdown_error));
+                .with_source(shutdown_error);
+                Self::fail_direct_scan_operation(db_pool.as_ref(), operation_id, &error).await;
+                return Err(error);
             }
         };
 
         let Some(report) = maybe_report else {
+            if let (Some(pool), Some(operation_id)) = (db_pool.as_ref(), operation_id) {
+                pool.state()
+                    .update_operation_result(
+                        &sinex_primitives::Id::from_uuid(operation_id),
+                        sinex_primitives::domain::OperationStatus::Cancelled,
+                        Some("scan cancelled before event emission".to_string()),
+                    )
+                    .await?;
+                Self::print_direct_scan_import_receipt(pool, operation_id).await?;
+            } else {
+                Self::print_dry_run_import_receipt();
+            }
             return Ok(());
         };
+
+        if let (Some(pool), Some(operation_id)) = (db_pool.as_ref(), operation_id) {
+            pool.state()
+                .complete_operation(
+                    &sinex_primitives::Id::from_uuid(operation_id),
+                    Self::direct_scan_summary(&report),
+                )
+                .await?;
+            Self::print_direct_scan_import_receipt(pool, operation_id).await?;
+        } else {
+            Self::print_dry_run_import_receipt();
+        }
 
         // Display results
         println!("Scan Results:");
@@ -833,6 +896,132 @@ impl<T: crate::runtime::stream::RuntimeModule + ExplorationProvider + Default + 
             }
         }
         Ok(())
+    }
+
+    fn direct_scan_operator(args: &RuntimeCli) -> String {
+        format!("runtime-cli:{}", Self::resolve_service_name(args))
+    }
+
+    fn direct_scan_scope(
+        args: &RuntimeCli,
+        from: &str,
+        until: &str,
+        targets: &[SanitizedPath],
+    ) -> JsonValue {
+        serde_json::json!({
+            "command": "scan",
+            "source": args.source,
+            "service_name": Self::resolve_service_name(args).as_str(),
+            "from": from,
+            "until": until,
+            "targets": targets.iter().map(ToString::to_string).collect::<Vec<_>>(),
+        })
+    }
+
+    fn direct_scan_summary(report: &crate::runtime::stream::ScanReport) -> JsonValue {
+        serde_json::json!({
+            "events_processed": report.events_processed,
+            "successful_targets": report.successful_targets,
+            "failed_targets": report.failed_targets.iter().map(|(target, _)| target).collect::<Vec<_>>(),
+        })
+    }
+
+    async fn fail_direct_scan_operation(
+        db_pool: Option<&PgPool>,
+        operation_id: Option<Uuid>,
+        error: &SinexError,
+    ) {
+        let (Some(pool), Some(operation_id)) = (db_pool, operation_id) else {
+            return;
+        };
+        if let Err(finalize_error) = pool
+            .state()
+            .fail_operation(
+                &sinex_primitives::Id::from_uuid(operation_id),
+                serde_json::json!({ "error": error.to_string() }),
+            )
+            .await
+        {
+            warn!(
+                operation_id = %operation_id,
+                error = %finalize_error,
+                "failed to record direct scan operation failure"
+            );
+        }
+    }
+
+    async fn print_direct_scan_import_receipt(
+        db_pool: &PgPool,
+        operation_id: Uuid,
+    ) -> RuntimeResult<()> {
+        let data = db_pool
+            .import_outcomes()
+            .report(operation_id)
+            .await?
+            .ok_or_else(|| {
+                SinexError::not_found("direct scan import operation not found")
+                    .with_context("operation_id", operation_id.to_string())
+            })?;
+        let report = render_report(operation_id, data);
+        let adjudication_candidates = if let Some(source) = report.source.clone() {
+            match handle_curation_list_duplicate_candidates(
+                db_pool,
+                CurationListDuplicateCandidatesRequest {
+                    source: Some(source),
+                    event_type: None,
+                    limit: 1000,
+                    events_per_cluster: 1,
+                },
+            )
+            .await
+            {
+                Ok(response) => Some(response.clusters.len()),
+                Err(error) => {
+                    warn!(
+                        operation_id = %operation_id,
+                        error = %error,
+                        "could not load direct scan adjudication candidates"
+                    );
+                    None
+                }
+            }
+        } else {
+            None
+        };
+        Self::print_import_receipt(&report, adjudication_candidates);
+        Ok(())
+    }
+
+    fn print_dry_run_import_receipt() {
+        println!("Import idempotence: unavailable for dry-run scans (no durable outcomes emitted)");
+    }
+
+    fn print_import_receipt(
+        report: &SourcesImportReportResponse,
+        adjudication_candidates: Option<usize>,
+    ) {
+        println!(
+            "{}",
+            Self::format_direct_scan_import_receipt(report, adjudication_candidates)
+        );
+        println!("Operation: {} ({})", report.operation_id, report.operation_status);
+    }
+
+    fn format_direct_scan_import_receipt(
+        report: &SourcesImportReportResponse,
+        adjudication_candidates: Option<usize>,
+    ) -> String {
+        let candidates = adjudication_candidates
+            .map_or_else(|| "unavailable".to_string(), |count| count.to_string());
+        format!(
+            "Import idempotence: {} new, {} suppressed, {} superseded, {} failures, {} DLQ, {} unresolved, {candidates} adjudication candidates",
+            report.new,
+            report.suppressed,
+            report.superseded,
+            report.failures,
+            report.dlq,
+            report.unresolved,
+        )
     }
 
     #[allow(

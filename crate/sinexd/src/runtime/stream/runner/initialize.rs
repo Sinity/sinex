@@ -18,12 +18,23 @@ impl RuntimeRunner {
     pub async fn initialize_with_transport(
         &mut self,
         service_name: impl Into<ServiceName>,
-        raw_config: HashMap<String, serde_json::Value>,
+        mut raw_config: HashMap<String, serde_json::Value>,
         #[cfg(feature = "db")] db_pool: Option<PgPool>,
         transport: EventTransport,
         work_dir: std::path::PathBuf,
         dry_run: bool,
     ) -> RuntimeResult<()> {
+        let default_created_by_operation_id = raw_config
+            .remove("__sinex_direct_scan_operation_id")
+            .map(serde_json::from_value::<sinex_primitives::Uuid>)
+            .transpose()
+            .map_err(|error| {
+                SinexError::configuration(
+                    "direct scan operation ID must be a UUID string in runtime configuration",
+                )
+                .with_std_error(&error)
+            })?;
+
         // Re-entrancy guard: only allow initialization from Created state
         match self.lifecycle {
             RunnerLifecycle::Created => {}
@@ -182,6 +193,9 @@ impl RuntimeRunner {
 
         if let Some(module_run_id) = module_run_id {
             event_emitter = event_emitter.with_default_module_run_id(module_run_id);
+        }
+        if let Some(operation_id) = default_created_by_operation_id {
+            event_emitter = event_emitter.with_default_created_by_operation_id(operation_id);
         }
 
         // No LeaseManager passed to handles

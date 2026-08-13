@@ -8,6 +8,7 @@ pub(super) const SQLSTATE_UNDEFINED_FUNCTION: &str = "42883";
 pub const PROJECTION_REBUILD_OPERATION_TYPE: &str = "projection-rebuild";
 
 pub(super) const MANAGED_OPERATION_TYPES: &[&str] = &[
+    "import",
     "replay",
     "archive",
     "restore",

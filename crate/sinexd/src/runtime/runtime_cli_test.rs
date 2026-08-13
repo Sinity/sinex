@@ -8,6 +8,8 @@ use crate::runtime::SinexError;
 use crate::runtime::stream::Checkpoint;
 use clap::Parser;
 use sinex_primitives::SanitizedPath;
+use sinex_primitives::rpc::sources::SourcesImportReportResponse;
+use sinex_primitives::JsonValue;
 use std::str::FromStr;
 use xtask::sandbox::sinex_serial_test;
 use xtask::sandbox::sinex_test;
@@ -37,6 +39,39 @@ async fn render_cli_value_is_explicit_on_format_failure() -> TestResult<()> {
 #[sinex_test]
 async fn render_optional_cli_timestamp_is_explicit_when_unknown() -> TestResult<()> {
     assert_eq!(render_optional_cli_timestamp(None), "unknown");
+    Ok(())
+}
+
+#[sinex_test]
+async fn direct_scan_import_receipt_includes_all_durable_outcomes_and_adjudication() -> TestResult<()>
+{
+    let report = SourcesImportReportResponse {
+        operation_id: "018f0d0b-4f07-7f02-87d3-b8d221a5d6b2".to_string(),
+        operation_type: "import".to_string(),
+        operation_status: "success".to_string(),
+        scope: JsonValue::Null,
+        source: Some("documents.library".to_string()),
+        source_material_ids: Vec::new(),
+        attempted: 15,
+        new: 7,
+        suppressed: 3,
+        superseded: 2,
+        failures: 1,
+        dlq: 1,
+        unresolved: 1,
+        breakdown: Vec::new(),
+        examples: Vec::new(),
+    };
+
+    let line = RuntimeCliRunner::<TerminalCommandCanonicalizerRuntime>::format_direct_scan_import_receipt(
+        &report,
+        Some(4),
+    );
+
+    assert_eq!(
+        line,
+        "Import idempotence: 7 new, 3 suppressed, 2 superseded, 1 failures, 1 DLQ, 1 unresolved, 4 adjudication candidates"
+    );
     Ok(())
 }
 

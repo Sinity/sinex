@@ -41,7 +41,10 @@ struct Counts {
     dlq: u64,
 }
 
-fn render_report(operation_id: Uuid, data: ImportReportData) -> SourcesImportReportResponse {
+pub(crate) fn render_report(
+    operation_id: Uuid,
+    data: ImportReportData,
+) -> SourcesImportReportResponse {
     let superseded_new_ids: BTreeSet<Uuid> = data
         .replacements
         .iter()
