@@ -69,6 +69,18 @@ async fn health_report_marks_schema_compilation_failures_as_degraded() -> TestRe
     assert!(!report.healthy);
     assert_eq!(report.status, GatewayHealthStatus::Degraded);
     assert!(report.degradation_reasons[0].contains("schema_id="));
+
+    let mut recovered_report = report.clone();
+    recovered_report.status = GatewayHealthStatus::Healthy;
+    recovered_report.healthy = true;
+    recovered_report.degradation_reasons.clear();
+    apply_schema_compilation_health(&mut recovered_report, Ok(Vec::new()));
+    assert!(
+        recovered_report.healthy,
+        "successful reload must clear the failure signal"
+    );
+    assert_eq!(recovered_report.status, GatewayHealthStatus::Healthy);
+    assert!(recovered_report.degradation_reasons.is_empty());
     Ok(())
 }
 
