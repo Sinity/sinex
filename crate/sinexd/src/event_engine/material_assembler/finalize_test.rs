@@ -764,7 +764,7 @@ async fn finalization_persists_canonical_manifest_and_registry_reference(
     ctx: TestContext,
 ) -> TestResult<()> {
     let ctx = ctx.with_nats().shared().await?;
-    let (assembler, _content_store_dir, _state_dir) = test_assembler(&ctx).await?;
+    let (assembler, _content_store_dir, state_dir) = test_assembler(&ctx).await?;
     let material_id = Uuid::now_v7();
     let material_id_typed = Id::from_uuid(material_id);
     let started_at = Timestamp::now();
@@ -788,6 +788,10 @@ async fn finalization_persists_canonical_manifest_and_registry_reference(
     )
     .await?;
     io::handle_slice(&assembler, material_id, 0, payload.clone()).await?;
+    let staged_material_path = state_dir
+        .path()
+        .join(material_id.to_string())
+        .join("material.bin");
 
     let state_handle = assembler
         .get_state_handle(&material_id)
@@ -808,6 +812,11 @@ async fn finalization_persists_canonical_manifest_and_registry_reference(
         .try_finalize_pending_end(material_id, state_handle, PendingEndBehavior::Error)
         .await?;
 
+    assert!(
+        !staged_material_path.exists(),
+        "the finalized authority must not depend on the assembler source path"
+    );
+
     let material = ctx
         .pool
         .source_materials()
@@ -827,15 +836,59 @@ async fn finalization_persists_canonical_manifest_and_registry_reference(
         .path_if_local(manifest_reference)?
         .expect("manifest CAS key must resolve to a local path");
     let manifest_bytes = tokio::fs::read(manifest_path).await?;
-    let manifest: MaterialManifestV1 = serde_json::from_slice(&manifest_bytes)?;
+    let manifest = match MaterialManifestV1::decode(&manifest_bytes)
+        .map_err(|error| {
+            color_eyre::eyre::eyre!("finalizer manifest decode failed: {error}")
+        })?
+    {
+        sinex_primitives::DecodedMaterialManifest::V1(manifest) => manifest,
+        decoded => panic!("finalizer must emit a V1 manifest, got {decoded:?}"),
+    };
     manifest
         .validate()
         .expect("finalizer must emit a valid manifest");
+    assert_eq!(
+        manifest.canonical_bytes()?,
+        manifest_bytes,
+        "registry metadata must point to the canonical manifest encoding"
+    );
+    assert_eq!(
+        manifest_key,
+        ContentStoreKey::local_blake3(
+            manifest_bytes.len() as u64,
+            blake3::hash(&manifest_bytes).to_hex().to_string(),
+        )?,
+        "registry metadata must point to the manifest's exact CAS object"
+    );
     assert_eq!(manifest.source_material_id, material_id);
     assert_eq!(manifest.bytes.encoded_size, payload.len() as u64);
     assert_eq!(
         manifest.bytes.encoded.value_hex,
         blake3::hash(&payload).to_hex().to_string()
+    );
+    let encoded_content_key = ContentStoreKey::parse(
+        &manifest
+            .encoded_content_store_key()
+            .map_err(|error| {
+                color_eyre::eyre::eyre!("finalizer encoded CAS key derivation failed: {error}")
+            })?,
+    )?;
+    let expected_content_key = ContentStoreKey::local_blake3(
+        payload.len() as u64,
+        blake3::hash(&payload).to_hex().to_string(),
+    )?;
+    assert_eq!(
+        encoded_content_key, expected_content_key,
+        "the V1 manifest must name the exact encoded material CAS authority"
+    );
+    let encoded_content_path = assembler
+        .content_store
+        .path_if_local(&encoded_content_key.key)?
+        .expect("manifest encoded authority must resolve to a local CAS path");
+    assert_eq!(
+        tokio::fs::read(encoded_content_path).await?,
+        payload,
+        "the manifest encoded authority must contain the ingested bytes"
     );
     assert_eq!(
         manifest.interpretation.charset.availability,
