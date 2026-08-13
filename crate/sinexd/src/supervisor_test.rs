@@ -62,13 +62,15 @@ async fn runtime_retry_schedule_jitters_capped_retries_and_resets_after_stabilit
         Duration::from_secs(3)
     );
 
-    for entropy in [0, 1, u64::MAX] {
-        let capped = schedule.next_delay(Duration::ZERO, entropy);
-        assert!(capped >= Duration::from_secs(15));
-        assert!(capped <= Duration::from_secs(30));
-    }
+    let mut capped_schedule = RuntimeRetrySchedule {
+        delay: Duration::from_secs(30),
+    };
+    let first_capped = capped_schedule.next_delay(Duration::ZERO, 0);
+    let second_capped = capped_schedule.next_delay(Duration::ZERO, 1);
+    assert_eq!(first_capped, Duration::from_secs(15));
+    assert_eq!(second_capped, Duration::from_secs(16));
 
-    let reset = schedule.next_delay(Duration::from_secs(60), 1);
+    let reset = capped_schedule.next_delay(Duration::from_secs(60), 1);
     assert_eq!(reset, Duration::from_millis(500));
     Ok(())
 }
