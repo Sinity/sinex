@@ -19,7 +19,10 @@ use sinex_primitives::events::{Event, EventPayload, SourceMaterial};
 use sinex_primitives::rpc::instructions::{
     HyprlandWorkspaceSwitchRequest, HyprlandWorkspaceSwitchResponse,
 };
-use sinex_primitives::{Id, JsonValue, Result, SinexError, Timestamp, Uuid};
+use sinex_primitives::{
+    DEFAULT_RUNTIME_LIVENESS_STALE_AFTER_SECS, Id, JsonValue, Result, RuntimeLivenessPolicy,
+    RuntimeLivenessSignals, SinexError, Timestamp, Uuid, evaluate_runtime_liveness,
+};
 use sqlx::PgPool;
 
 use crate::api::rpc_server::RpcAuthContext;
@@ -84,7 +87,8 @@ pub async fn handle_hyprland_workspace_switch(
         )
     })?;
 
-    let current_workspace_id = latest_hyprland_workspace(pool).await?;
+    let current_workspace = latest_hyprland_workspace(pool).await?;
+    let current_workspace_id = current_workspace.map(|(workspace_id, _)| workspace_id);
     let observation_ready = current_workspace_id.is_some();
     let mut attempt = plan_hyprland_workspace_switch(
         &instruction,
@@ -234,10 +238,10 @@ async fn persist_attempt(
     })
 }
 
-async fn latest_hyprland_workspace(pool: &PgPool) -> Result<Option<i32>> {
+async fn latest_hyprland_workspace(pool: &PgPool) -> Result<Option<(i32, Timestamp)>> {
     let row = sqlx::query!(
         r#"
-        SELECT payload
+        SELECT payload, ts_coided as "observed_at!: Timestamp"
         FROM core.events
         WHERE source = 'wm.hyprland'
           AND event_type = 'workspace.switched'
@@ -260,7 +264,20 @@ async fn latest_hyprland_workspace(pool: &PgPool) -> Result<Option<i32>> {
             SinexError::serialization("latest Hyprland workspace observation payload is invalid")
                 .with_std_error(&error)
         })?;
-    Ok(Some(payload.to_workspace_id))
+    let liveness = evaluate_runtime_liveness(
+        RuntimeLivenessSignals {
+            run_status: None,
+            health_status: None,
+            last_heartbeat_at: None,
+            last_output_at: Some(row.observed_at),
+        },
+        RuntimeLivenessPolicy::new(DEFAULT_RUNTIME_LIVENESS_STALE_AFTER_SECS),
+        Timestamp::now(),
+    );
+    Ok(liveness
+        .status
+        .is_live()
+        .then_some((payload.to_workspace_id, row.observed_at)))
 }
 
 async fn active_hyprland_workspace_instruction(
