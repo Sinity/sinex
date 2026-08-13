@@ -15,6 +15,7 @@
 //! must not rely on inert taxonomy metadata for scheduling or proof claims.
 
 use sinex_db::repositories::DbPoolExt;
+use sinex_primitives::DEFAULT_RUNTIME_LIVENESS_STALE_AFTER_SECS;
 use sinex_primitives::sources::SourceFamily;
 use sinex_primitives::sources::continuity::SeamKind;
 use sqlx::types::Uuid;
