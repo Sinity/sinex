@@ -69,6 +69,18 @@ async fn gateway_config_rejects_invalid_numeric_env_overrides() -> TestResult<()
 }
 
 #[sinex_serial_test]
+async fn gateway_config_propagates_invalid_nested_nats_configuration() -> TestResult<()> {
+    let mut env = EnvGuard::new();
+    env.set("DATABASE_URL", "postgresql://gateway-config/sinex");
+    env.set("SINEX_NATS_REQUIRE_TLS", "definitely");
+
+    let error = GatewayConfig::load()
+        .expect_err("invalid nested NATS TLS setting must reject gateway startup configuration");
+    assert!(error.to_string().contains("SINEX_NATS_REQUIRE_TLS"));
+    Ok(())
+}
+
+#[sinex_serial_test]
 async fn gateway_config_load_with_database_url_keeps_manual_env_overrides() -> TestResult<()> {
     let mut env = EnvGuard::new();
     env.set("SINEX_NATS_URL", "nats://127.0.0.1:4555");

@@ -565,14 +565,7 @@ impl<I: SourceDriver> RuntimeModule for SourceDriverRuntime<I> {
                 // Clone before SelfObserver::new() takes ownership of nats_client.
                 let nats_for_probe = nats_client.clone();
                 let observer = Arc::new(SelfObserver::new(nats_client, config));
-                let thresholds = HealthThresholds::from_env().unwrap_or_else(|error| {
-                    warn!(
-                        module = %self.source.name(),
-                        error = %error,
-                        "Invalid health monitoring threshold override; using defaults"
-                    );
-                    HealthThresholds::default()
-                });
+                let thresholds = HealthThresholds::from_env()?;
                 let liveness_probe: crate::runtime::health_reporter::LivenessProbe =
                     Arc::new(move || {
                         let client = nats_for_probe.clone();

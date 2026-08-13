@@ -115,7 +115,7 @@ pub struct GatewayConfig {
 
     /// Shared NATS connection configuration used by replay control and coordination.
     #[serde(default)]
-    #[sinex_config(nested)]
+    #[sinex_config(nested_fallible)]
     pub nats: NatsConnectionConfig,
 
     /// TLS certificate path for the RPC server.

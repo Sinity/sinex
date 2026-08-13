@@ -4,6 +4,8 @@ use super::*;
 use crate::environment::SinexEnvironment;
 use serde_json::json;
 use xtask::sandbox::{EnvGuard, sinex_serial_test, sinex_test};
+#[cfg(unix)]
+use std::{ffi::OsString, os::unix::ffi::OsStringExt};
 
 #[sinex_test]
 async fn tls_provider_installation_is_idempotent() -> xtask::sandbox::TestResult<()> {
@@ -30,13 +32,28 @@ async fn non_tls_config_skips_provider_installation() -> xtask::sandbox::TestRes
 async fn from_env_parses_require_tls_strictly() -> xtask::sandbox::TestResult<()> {
     let mut env = EnvGuard::new();
     env.set("SINEX_NATS_REQUIRE_TLS", "true");
-    assert!(NatsConnectionConfig::from_env().require_tls);
+    assert!(NatsConnectionConfig::from_env()?.require_tls);
 
     env.set("SINEX_NATS_REQUIRE_TLS", "tru");
-    assert!(
-        !NatsConnectionConfig::from_env().require_tls,
-        "invalid TLS override must fall back to the default rather than silently enabling TLS"
+    let error = NatsConnectionConfig::from_env()
+        .expect_err("malformed TLS requirement must abort NATS configuration loading");
+    assert!(error.to_string().contains("SINEX_NATS_REQUIRE_TLS"));
+    Ok(())
+}
+
+#[cfg(unix)]
+#[sinex_serial_test]
+async fn from_env_rejects_non_unicode_auth_path() -> xtask::sandbox::TestResult<()> {
+    let mut env = EnvGuard::new();
+    env.set(
+        "SINEX_NATS_CREDS_FILE",
+        OsString::from_vec(vec![0x2f, 0x74, 0x6d, 0x70, 0x80]),
     );
+
+    let error = NatsConnectionConfig::from_env()
+        .expect_err("non-Unicode credential path must not be silently dropped");
+    assert!(error.to_string().contains("SINEX_NATS_CREDS_FILE"));
+    assert!(error.to_string().contains("not valid UTF-8"));
     Ok(())
 }
 

@@ -490,14 +490,7 @@ where
                     };
 
                     let observer = Arc::new(SelfObserver::new(nats_client, config));
-                    let thresholds = HealthThresholds::from_env().unwrap_or_else(|error| {
-                        warn!(
-                            automaton = %self.automaton.name(),
-                            error = %error,
-                            "Invalid health monitoring threshold override; using defaults"
-                        );
-                        HealthThresholds::default()
-                    });
+                    let thresholds = HealthThresholds::from_env()?;
 
                     self.health_reporter = Some(Arc::new(HealthReporter::new(
                         self.automaton.name().to_string(),

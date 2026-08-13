@@ -391,7 +391,7 @@ impl EventEngineConfig {
 
         // Construct NatsConnectionConfig from args/environment.
         // Full auth/TLS detail is still supplied via the shared env-first NATS config.
-        let mut nats_config = sinex_primitives::nats::NatsConnectionConfig::from_env();
+        let mut nats_config = sinex_primitives::nats::NatsConnectionConfig::from_env()?;
         nats_config.url = nats_url;
         nats_config.require_tls = nats_require_tls;
         let nats_config_clone = nats_config;
@@ -749,7 +749,7 @@ impl Default for EventEngineConfig {
             database_pool_size: 16,
             pool_acquire_timeout_secs: default_pool_acquire_timeout_secs(),
             pool_idle_timeout_secs: default_pool_idle_timeout_secs(),
-            nats: sinex_primitives::nats::NatsConnectionConfig::from_env(),
+            nats: sinex_primitives::nats::NatsConnectionConfig::default(),
             consumer_fetch_max_messages: default_consumer_fetch_max_messages(),
             consumer_fetch_timeout_ms: default_consumer_fetch_timeout_ms(),
             consumer_max_ack_pending: default_consumer_max_ack_pending(),

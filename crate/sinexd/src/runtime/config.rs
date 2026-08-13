@@ -663,7 +663,9 @@ fn service_or_global_env_list(
 fn nats_config_from_env(
     service_prefix: &str,
 ) -> Result<sinex_primitives::nats::NatsConnectionConfig, ConfigError> {
-    let mut config = sinex_primitives::nats::NatsConnectionConfig::from_env();
+    let mut config = sinex_primitives::nats::NatsConnectionConfig::from_env().map_err(|error| {
+        ConfigError::Validation(format!("invalid shared NATS configuration: {error}"))
+    })?;
 
     if let Some(url) = service_or_global_env_string(service_prefix, "NATS_URL")? {
         config.url = url;

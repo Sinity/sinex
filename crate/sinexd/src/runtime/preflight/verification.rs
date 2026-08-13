@@ -460,7 +460,7 @@ async fn verify_service_integration(_messages: &mut [String]) -> RuntimeResult<V
         ))
     })?;
     let nats_url = resolve_nats_url()?;
-    let mut nats_config = sinex_primitives::nats::NatsConnectionConfig::from_env();
+    let mut nats_config = sinex_primitives::nats::NatsConnectionConfig::from_env()?;
     nats_config.url = nats_url;
     let client = nats_config.connect().await.map_err(|e| {
         SinexError::processing(format!(

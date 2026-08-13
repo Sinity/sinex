@@ -1,6 +1,6 @@
 use super::*;
 use std::sync::atomic::AtomicU64;
-use xtask::sandbox::prelude::sinex_test;
+use xtask::sandbox::prelude::{EnvGuard, TestResult, sinex_serial_test, sinex_test};
 
 #[derive(Debug)]
 struct ManualHealthClock {
@@ -38,6 +38,22 @@ fn reporter_with_clock(clock: Arc<ManualHealthClock>) -> HealthReporter {
         },
         clock,
     )
+}
+
+#[sinex_serial_test]
+async fn health_thresholds_reject_invalid_startup_overrides() -> TestResult<()> {
+    let mut env = EnvGuard::new();
+    env.set("SINEX_HEALTH_ERROR_RATE_DEGRADED", "0.8");
+    env.set("SINEX_HEALTH_ERROR_RATE_FAILED", "0.2");
+
+    let error = HealthThresholds::from_env()
+        .expect_err("invalid health thresholds must reject runtime startup configuration");
+    assert!(
+        error
+            .to_string()
+            .contains("health degraded threshold must not exceed the failed threshold")
+    );
+    Ok(())
 }
 
 #[sinex_test]

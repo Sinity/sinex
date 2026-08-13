@@ -118,8 +118,8 @@ pub struct NatsArgs {
 }
 
 impl NatsArgs {
-    fn to_config(&self) -> sinex_primitives::nats::NatsConnectionConfig {
-        let mut config = sinex_primitives::nats::NatsConnectionConfig::from_env();
+    fn to_config(&self) -> RuntimeResult<sinex_primitives::nats::NatsConnectionConfig> {
+        let mut config = sinex_primitives::nats::NatsConnectionConfig::from_env()?;
 
         config.url.clone_from(&self.url);
         config.name.clone_from(&self.name);
@@ -164,7 +164,7 @@ impl NatsArgs {
             config.token_file = Some(path.clone());
         }
 
-        config
+        Ok(config)
     }
 }
 
@@ -616,8 +616,8 @@ impl<T: crate::runtime::stream::RuntimeModule + ExplorationProvider + Default + 
                 }
             }
         };
-        let transport =
-            Self::connect_nats_transport(&args.nats.to_config(), args.namespace.clone()).await?;
+        let nats_config = args.nats.to_config()?;
+        let transport = Self::connect_nats_transport(&nats_config, args.namespace.clone()).await?;
 
         // Initialize runner with transport
         runner
@@ -683,8 +683,8 @@ impl<T: crate::runtime::stream::RuntimeModule + ExplorationProvider + Default + 
             Some(Self::connect_primary_db(args).await?)
         };
 
-        let transport =
-            Self::connect_nats_transport(&args.nats.to_config(), args.namespace.clone()).await?;
+        let nats_config = args.nats.to_config()?;
+        let transport = Self::connect_nats_transport(&nats_config, args.namespace.clone()).await?;
 
         // Initialize runner with transport
         runner
