@@ -4,7 +4,7 @@
 //! content-store reconciliation, blob registration, source-material finalization,
 //! and precise temporal-ledger coverage.
 
-use crate::runtime::content_store::ContentStoreKey;
+use crate::runtime::content_store::{CasWriteLease, ContentStoreKey};
 use serde_json::json;
 use sinex_db::schema::defs::records::SourceMaterialRecord;
 use sinex_db::{models::blob::Blob, repositories::DbPoolExt};
@@ -87,6 +87,7 @@ pub(super) struct FinalizationRequest<'a> {
     pub total_size_bytes: i64,
     pub metadata: JsonValue,
     pub final_status: MaterialStatus,
+    pub write_lease: Option<&'a CasWriteLease>,
 }
 
 #[derive(Debug)]
@@ -117,6 +118,15 @@ impl<'a> FinalizationTransaction<'a> {
             .await
         {
             FinalizationCommitOutcome::Landed(handle) => {
+                if let Some(lease) = request.write_lease
+                    && let Err(error) = self.assembler.content_store.release_write_lease(lease).await
+                {
+                    warn!(
+                        material_id = %request.final_state.material_id,
+                        error = %error,
+                        "Material commit was already durable but CAS write lease release will retry"
+                    );
+                }
                 info!(
                     material_id = %request.final_state.material_id,
                     content_key = %request.content_key.key,
@@ -224,10 +234,21 @@ impl<'a> FinalizationTransaction<'a> {
         // entries.
 
         match tx.commit().await {
-            Ok(()) => Ok(FinalizedHandle {
-                blob_id,
-                reused_existing_commit: false,
-            }),
+            Ok(()) => {
+                if let Some(lease) = request.write_lease
+                    && let Err(error) = self.assembler.content_store.release_write_lease(lease).await
+                {
+                    warn!(
+                        material_id = %request.final_state.material_id,
+                        error = %error,
+                        "Material commit was durable but CAS write lease release failed"
+                    );
+                }
+                Ok(FinalizedHandle {
+                    blob_id,
+                    reused_existing_commit: false,
+                })
+            }
             Err(error) => {
                 let commit_error =
                     SinexError::database("Failed to commit material finalization transaction")

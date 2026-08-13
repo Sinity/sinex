@@ -763,7 +763,10 @@ impl MaterialAssembler {
     async fn import_into_content_store(
         &self,
         state: &FinalizationState,
-    ) -> EventEngineResult<crate::runtime::content_store::ContentStoreKey> {
+    ) -> EventEngineResult<(
+        crate::runtime::content_store::ContentStoreKey,
+        crate::runtime::content_store::CasWriteLease,
+    )> {
         io::import_into_content_store(self, state).await
     }
 

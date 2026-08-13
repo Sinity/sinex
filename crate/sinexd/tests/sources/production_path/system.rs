@@ -90,6 +90,41 @@ async fn test_system_dbus_initial_ingestion() -> TestResult<()> {
     .map_err(|e| color_eyre::eyre::eyre!("{e}"))
 }
 
+#[sinex_test]
+async fn system_dbus_malformed_rules_fail_closed_on_production_adapter_route() -> TestResult<()> {
+    use futures::StreamExt;
+    use sinex_primitives::events::SourceMaterial;
+    use sinex_primitives::ids::Id;
+    use sinexd::runtime::parser::{
+        DbusBus, DbusMessage, DbusStreamAdapter, DbusStreamConfig, MockDbusBackend,
+    };
+
+    let message = DbusMessage {
+        interface: "org.example.Forbidden".into(),
+        member: "Nope".into(),
+        path: "/org/example".into(),
+        sender: Some(":1.42".into()),
+        body_json: serde_json::json!({"secret": true}),
+    };
+    let config = DbusStreamConfig {
+        bus: DbusBus::Session,
+        match_rules: vec!["totallynotarule".into()],
+    };
+    let material_id = Id::<SourceMaterial>::from_uuid(uuid::Uuid::new_v4());
+    let stream = DbusStreamAdapter::open_with_backend(
+        Box::new(MockDbusBackend::new(vec![message])),
+        material_id,
+        &config,
+    );
+    let records: Vec<_> = stream.collect().await;
+
+    assert!(
+        records.is_empty(),
+        "an all-malformed configured rule set must match nothing"
+    );
+    Ok(())
+}
+
 // ---------------------------------------------------------------------------
 // desktop.notification (D-Bus Notify stream → NotificationParser)
 // ---------------------------------------------------------------------------

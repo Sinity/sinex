@@ -53,6 +53,7 @@ pub use path_validator::{VerifiedPath, create_secure_temp_path, validate_and_con
 pub const LOCAL_BLAKE3_CAS_BACKEND: &str = ContentKey::LOCAL_BLAKE3_CAS_BACKEND;
 const LOCAL_BLAKE3_CAS_DIR: &str = "sinex-cas";
 pub(crate) const CAS_LIFECYCLE_DIR: &str = ".sinex-cas-lifecycle";
+const CAS_INGEST_LEASE_DIR: &str = "ingest-leases";
 const CAS_PENDING_DELETE_DIR: &str = "pending-deletes";
 const CAS_QUARANTINE_DIR: &str = "quarantine";
 const CONTENT_STORE_PROCESS_COUNTERS_PATH_ENV: &str = "SINEX_CONTENT_STORE_PROCESS_COUNTERS_PATH";
@@ -375,6 +376,20 @@ pub struct PendingDeletion {
     pub key: ContentStoreKey,
     pub source_path: Utf8PathBuf,
     pub quarantine_path: Utf8PathBuf,
+    pub created_at_unix_secs: u64,
+    #[serde(skip)]
+    pub(crate) record_path: Utf8PathBuf,
+}
+
+/// Durable intent for a CAS publish that has not yet crossed its database
+/// commit boundary. The record is created before the temporary copy starts
+/// and removed only after the owning metadata transaction commits.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct CasWriteLease {
+    pub operation_id: String,
+    pub key: ContentStoreKey,
+    pub source_path: Utf8PathBuf,
+    pub target_path: Utf8PathBuf,
     pub created_at_unix_secs: u64,
     #[serde(skip)]
     pub(crate) record_path: Utf8PathBuf,
@@ -733,6 +748,10 @@ impl MaterialContentStore {
         self.lifecycle_root().join(CAS_PENDING_DELETE_DIR)
     }
 
+    fn ingest_lease_root(&self) -> Utf8PathBuf {
+        self.lifecycle_root().join(CAS_INGEST_LEASE_DIR)
+    }
+
     fn quarantine_root(&self) -> Utf8PathBuf {
         self.lifecycle_root().join(CAS_QUARANTINE_DIR)
     }
@@ -769,6 +788,72 @@ impl MaterialContentStore {
                 .ok_or_else(|| SinexError::processing("CAS pending-delete record has no parent"))?,
         )
         .await
+    }
+
+    async fn write_ingest_lease(&self, lease: &CasWriteLease) -> RuntimeResult<()> {
+        let bytes = serde_json::to_vec(lease).map_err(|error| {
+            SinexError::serialization("serialize CAS ingest lease").with_source(error)
+        })?;
+        let temp_path = lease
+            .record_path
+            .with_extension(format!("json.tmp-{}", Uuid::now_v7()));
+        let mut file = tokio::fs::File::create(&temp_path)
+            .await
+            .map_err(SinexError::io)?;
+        file.write_all(&bytes).await.map_err(SinexError::io)?;
+        file.sync_all().await.map_err(SinexError::io)?;
+        drop(file);
+        tokio::fs::rename(&temp_path, &lease.record_path)
+            .await
+            .map_err(SinexError::io)?;
+        Self::sync_directory(
+            lease
+                .record_path
+                .parent()
+                .ok_or_else(|| SinexError::processing("CAS ingest lease has no parent"))?,
+        )
+        .await
+    }
+
+    /// List durable CAS publish leases left by current or previous processes.
+    /// Malformed records fail closed so fsck cannot delete content while its
+    /// lifecycle authority is unreadable.
+    pub async fn list_write_leases(&self) -> RuntimeResult<Vec<CasWriteLease>> {
+        let root = self.ingest_lease_root();
+        if !root.exists() {
+            return Ok(Vec::new());
+        }
+        let mut entries = tokio::fs::read_dir(&root).await.map_err(SinexError::io)?;
+        let mut leases = Vec::new();
+        while let Some(entry) = entries.next_entry().await.map_err(SinexError::io)? {
+            if !entry.file_type().await.map_err(SinexError::io)?.is_file()
+                || entry.path().extension().and_then(|ext| ext.to_str()) != Some("json")
+            {
+                continue;
+            }
+            let record_path = Self::require_utf8_path(entry.path())?;
+            let bytes = tokio::fs::read(&record_path).await.map_err(SinexError::io)?;
+            let mut lease: CasWriteLease = serde_json::from_slice(&bytes).map_err(|error| {
+                SinexError::serialization("parse CAS ingest lease")
+                    .with_context("path", record_path.to_string())
+                    .with_source(error)
+            })?;
+            lease.record_path = record_path;
+            leases.push(lease);
+        }
+        leases.sort_by(|left, right| left.operation_id.cmp(&right.operation_id));
+        Ok(leases)
+    }
+
+    /// Release a publish lease after its owning metadata commit is durable.
+    /// A missing record is idempotent; other failures leave it for fsck retry.
+    pub async fn release_write_lease(&self, lease: &CasWriteLease) -> RuntimeResult<()> {
+        match tokio::fs::remove_file(&lease.record_path).await {
+            Ok(()) => {}
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+            Err(error) => return Err(SinexError::io(error)),
+        }
+        Self::sync_directory(&self.ingest_lease_root()).await
     }
 
     /// List durable CAS deletion records. Malformed records fail closed: the
@@ -1007,6 +1092,18 @@ impl MaterialContentStore {
 
     /// Store a file and return the backend-neutral content-store key.
     pub async fn store_file(&self, file_path: impl AsRef<Path>) -> RuntimeResult<ContentStoreKey> {
+        let (key, lease) = self.store_file_with_lease(file_path).await?;
+        self.release_write_lease(&lease).await?;
+        Ok(key)
+    }
+
+    /// Store a file and retain a durable lease until the caller's metadata
+    /// transaction commits. The lease protects both the temporary publish and
+    /// the final CAS object across process restart.
+    pub async fn store_file_with_lease(
+        &self,
+        file_path: impl AsRef<Path>,
+    ) -> RuntimeResult<(ContentStoreKey, CasWriteLease)> {
         let file_path = Self::require_utf8_path(file_path)?;
         debug!("Storing file in content store: {:?}", file_path);
 
@@ -1033,6 +1130,21 @@ impl MaterialContentStore {
         &self,
         file_path: impl AsRef<Path>,
     ) -> RuntimeResult<ContentStoreKey> {
+        let (key, lease) = self.store_owned_temp_file_with_lease(file_path).await?;
+        self.release_write_lease(&lease).await?;
+        Ok(key)
+    }
+
+    /// Store an internal, process-owned staging file while retaining the
+    /// durable lease until the caller's metadata transaction commits. Unlike
+    /// `store_file`, this intentionally does not apply external source-root
+    /// containment: the assembler's private staging directory is a sibling
+    /// of the configured CAS root and is protected by the caller's ownership
+    /// and path construction contract.
+    pub(crate) async fn store_owned_temp_file_with_lease(
+        &self,
+        file_path: impl AsRef<Path>,
+    ) -> RuntimeResult<(ContentStoreKey, CasWriteLease)> {
         let file_path = Self::require_utf8_path(file_path)?;
         let file_size = tokio::fs::metadata(&file_path)
             .await
@@ -1066,10 +1178,17 @@ impl MaterialContentStore {
         &self,
         resolved_path: &Utf8Path,
         file_size: u64,
-    ) -> RuntimeResult<ContentStoreKey> {
+    ) -> RuntimeResult<(ContentStoreKey, CasWriteLease)> {
         let hash =
             Self::compute_blake3_hash_with_limit(resolved_path, self.config.max_blob_size).await?;
         let target = self.local_blake3_cas_path_for_hash(&hash)?;
+        let key = ContentStoreKey {
+            key: format!("{LOCAL_BLAKE3_CAS_BACKEND}-s{file_size}--{hash}"),
+            backend: ContentBackend::LocalBlake3Cas,
+            size: file_size,
+            digest: hash.clone(),
+        };
+        let lease = self.create_ingest_lease(&key, resolved_path, &target).await?;
         if target.exists() {
             self.canonicalize_local_cas_path(&target).await?;
         } else {
@@ -1108,6 +1227,16 @@ impl MaterialContentStore {
                 .with_context("observed_size", copied_size.to_string())
                 .with_context("initial_size", file_size.to_string()));
             }
+            let copied_hash =
+                Self::compute_blake3_hash_with_limit(&tmp, self.config.max_blob_size).await?;
+            if copied_hash != hash {
+                let _ = tokio::fs::remove_file(&tmp).await;
+                return Err(SinexError::processing(
+                    "source file changed while copying into local CAS",
+                )
+                .with_context("expected_hash", hash)
+                .with_context("copied_hash", copied_hash));
+            }
             // tokio::fs::copy (like std::fs::copy) preserves the SOURCE file's
             // permission bits -- if resolved_path was ever more permissive
             // than CAS content should be, that permissiveness would otherwise
@@ -1133,12 +1262,35 @@ impl MaterialContentStore {
             }
         }
 
-        Ok(ContentStoreKey {
-            key: format!("{LOCAL_BLAKE3_CAS_BACKEND}-s{file_size}--{hash}"),
-            backend: ContentBackend::LocalBlake3Cas,
-            size: file_size,
-            digest: hash,
-        })
+        Ok((key, lease))
+    }
+
+    async fn create_ingest_lease(
+        &self,
+        key: &ContentStoreKey,
+        source_path: &Utf8Path,
+        target_path: &Utf8Path,
+    ) -> RuntimeResult<CasWriteLease> {
+        let root = self.ingest_lease_root();
+        tokio::fs::create_dir_all(&root).await.map_err(SinexError::io)?;
+        restrict_permissions(self.lifecycle_root().as_std_path(), CONTENT_STORE_DIR_MODE);
+        restrict_permissions(root.as_std_path(), CONTENT_STORE_DIR_MODE);
+        let operation_id = Uuid::now_v7().to_string();
+        let record_path = root.join(format!("{operation_id}.json"));
+        let created_at_unix_secs = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs();
+        let lease = CasWriteLease {
+            operation_id,
+            key: key.clone(),
+            source_path: source_path.to_owned(),
+            target_path: target_path.to_owned(),
+            created_at_unix_secs,
+            record_path,
+        };
+        self.write_ingest_lease(&lease).await?;
+        Ok(lease)
     }
 
     fn local_blake3_cas_root(&self) -> Utf8PathBuf {

@@ -3,17 +3,16 @@ use crate::fmt::render_finite_envelope;
 use sinex_primitives::domain::{MaterialStatus, SourceMaterialTimingInfoType};
 use sinex_primitives::parser::ParserId;
 use sinex_primitives::rpc::sources::{
-    ContinuityContractStatus,
-    SourceMaterialRemediationCandidate, SourceMaterialRemediationPage,
-    SourceMaterialRemediationSummary, SourceReadinessCost, SourceReadinessStatus,
-    SourceShapeDriftObservation, SourceShapeTypeChange, SourcesRemediationPlanResponse,
-    ReplayabilityStatus, caveat_codes,
+    ContinuityContractStatus, ReplayabilityStatus, SourceMaterialRemediationCandidate,
+    SourceMaterialRemediationPage, SourceMaterialRemediationSummary, SourceReadinessCost,
+    SourceReadinessStatus, SourceShapeDriftObservation, SourceShapeTypeChange,
+    SourcesRemediationPlanResponse, caveat_codes,
 };
 use sinex_primitives::views::{
-    SOURCE_CONTINUITY_DETAIL_SCHEMA_VERSION, SOURCE_CONTINUITY_GAP_SCHEMA_VERSION,
-    SOURCE_CONTINUITY_LIST_SCHEMA_VERSION, SOURCE_DRIFT_LIST_SCHEMA_VERSION,
-    SOURCE_READINESS_DETAIL_SCHEMA_VERSION, SOURCE_READINESS_LIST_SCHEMA_VERSION,
-    ReadinessCaveatId, VIEW_ENVELOPE_SCHEMA_VERSION,
+    ReadinessCaveatId, SOURCE_CONTINUITY_DETAIL_SCHEMA_VERSION,
+    SOURCE_CONTINUITY_GAP_SCHEMA_VERSION, SOURCE_CONTINUITY_LIST_SCHEMA_VERSION,
+    SOURCE_DRIFT_LIST_SCHEMA_VERSION, SOURCE_READINESS_DETAIL_SCHEMA_VERSION,
+    SOURCE_READINESS_LIST_SCHEMA_VERSION, VIEW_ENVELOPE_SCHEMA_VERSION,
 };
 use xtask::sandbox::prelude::*;
 
@@ -599,7 +598,10 @@ async fn empty_source_continuity_diagnostics_carries_coverage_caveat() -> TestRe
         envelope.caveats[0].id,
         ReadinessCaveatId::CoverageUnmeasurable.as_str()
     );
-    assert_eq!(envelope.query_echo.as_ref().unwrap()["source"], "fixture.source");
+    assert_eq!(
+        envelope.query_echo.as_ref().unwrap()["source"],
+        "fixture.source"
+    );
     Ok(())
 }
 

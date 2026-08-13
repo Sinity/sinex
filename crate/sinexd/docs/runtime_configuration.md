@@ -37,6 +37,14 @@ threshold. The result is recency-aware and includes the latest observation,
 age, status, and evidence. Failed or stopped runs remain unhealthy even when
 their last output is recent; draining and paused runs are degraded.
 
+The continuity list, family report, and gap explanation routes accept the same
+window as `stale_after_secs`; `sinexctl sources continuity` and its gap command
+expose it as `--stale-after-seconds`. Source readiness retains its separate
+`stale_after_seconds` material-freshness input because readiness rows do not
+have a safe source-to-runtime identity join. Runtime failure and heartbeat
+evidence therefore come from source status and continuity, while readiness
+describes staged material and parser coverage.
+
 Hosted source bindings and automata receive a small randomized startup delay,
 and crash retries add bounded jitter while preserving the 30-second maximum
 backoff. A source runtime sends `READY=1` only after its snapshot and any

@@ -33,9 +33,7 @@ use sinex_primitives::rpc::llm::{
     LlmBudgetReportRequest, LlmPromptsListRequest, LlmRouteExplainRequest,
 };
 use sinex_primitives::rpc::methods;
-use sinex_primitives::rpc::privacy::{
-    PrivacyShadowAuditRequest, PrivateModeStateResponse,
-};
+use sinex_primitives::rpc::privacy::{PrivacyShadowAuditRequest, PrivateModeStateResponse};
 use sinex_primitives::rpc::replay::ReplayState;
 use sinex_primitives::rpc::runtime::{
     RuntimeHealthResponse, RuntimeListActiveResponse, RuntimeListResponse,
@@ -47,9 +45,8 @@ use sinex_primitives::rpc::semantic::{
 use sinex_primitives::rpc::source_status::SourcesStatusResponse;
 use sinex_primitives::rpc::sources::{
     SourcesContinuityRequest, SourcesCoverageRequest, SourcesDriftListRequest,
-    SourcesImportReportRequest, SourcesListRequest,
-    SourcesReadinessGetRequest, SourcesReadinessListRequest, SourcesRemediationPlanRequest,
-    SourcesShowRequest,
+    SourcesImportReportRequest, SourcesListRequest, SourcesReadinessGetRequest,
+    SourcesReadinessListRequest, SourcesRemediationPlanRequest, SourcesShowRequest,
 };
 use sinex_primitives::rpc::system::SystemHealthResponse;
 use sinex_primitives::rpc::tasks::{
@@ -201,6 +198,8 @@ struct SourceContinuityArgs {
     source_family: Option<SourceFamily>,
     #[serde(default)]
     since: Option<Timestamp>,
+    #[serde(default = "default_stale_after_secs")]
+    stale_after_secs: u64,
 }
 
 #[derive(Debug, Deserialize, Serialize)]
@@ -215,6 +214,8 @@ struct SourceDriftArgs {
 struct SourceGapExplainArgs {
     source_family: SourceFamily,
     at: Timestamp,
+    #[serde(default = "default_stale_after_secs")]
+    stale_after_secs: u64,
 }
 
 #[derive(Debug, Deserialize, Serialize)]
@@ -1217,7 +1218,8 @@ pub fn tools() -> Vec<McpTool> {
                 "type": "object",
                 "properties": {
                     "source_family": { "type": "string" },
-                    "since": { "type": "string", "format": "date-time" }
+                    "since": { "type": "string", "format": "date-time" },
+                    "stale_after_secs": { "type": "integer", "minimum": 1, "default": 300 }
                 },
                 "additionalProperties": false
             }),
@@ -1245,7 +1247,8 @@ pub fn tools() -> Vec<McpTool> {
                 "required": ["source_family", "at"],
                 "properties": {
                     "source_family": { "type": "string" },
-                    "at": { "type": "string", "format": "date-time" }
+                    "at": { "type": "string", "format": "date-time" },
+                    "stale_after_secs": { "type": "integer", "minimum": 1, "default": 300 }
                 },
                 "additionalProperties": false
             }),
@@ -2016,9 +2019,7 @@ async fn call_tool_runtime_analytics(
         "sinex_sources_status" => sources_status(client, arguments.clone()).await,
         "sinex_sources_status_view" => sources_status_view(client, arguments.clone()).await,
         "sinex_source_health" => runtime_health(client, arguments.clone()).await,
-        "sinex_coordination_instances" => {
-            coordination_instances(client, arguments.clone()).await
-        }
+        "sinex_coordination_instances" => coordination_instances(client, arguments.clone()).await,
         "sinex_coordination_leader" => coordination_leader(client, arguments.clone()).await,
         "sinex_coordination_instance_health" => {
             coordination_instance_health(client, arguments.clone()).await
@@ -2182,10 +2183,16 @@ async fn source_continuity(client: &GatewayClient, arguments: Value) -> Result<V
                 "sinex_source_continuity `since` is only supported when listing all families"
             ));
         }
-        let request = SourcesContinuityGetRequest { source_family };
+        let request = SourcesContinuityGetRequest {
+            source_family,
+            stale_after_secs: args.stale_after_secs,
+        };
         serde_json::to_value(client.sources_continuity_get(request).await?)?
     } else {
-        let request = SourcesContinuityListRequest { since: args.since };
+        let request = SourcesContinuityListRequest {
+            since: args.since,
+            stale_after_secs: args.stale_after_secs,
+        };
         serde_json::to_value(client.sources_continuity_list(request).await?)?
     };
 
@@ -2217,6 +2224,7 @@ async fn source_gap_explain(client: &GatewayClient, arguments: Value) -> Result<
         .sources_continuity_explain_gap(SourcesExplainGapRequest {
             source_family: args.source_family.clone(),
             at: args.at,
+            stale_after_secs: args.stale_after_secs,
         })
         .await?;
     Ok(mcp_view_envelope(
@@ -2533,10 +2541,7 @@ async fn coordination_leader(client: &GatewayClient, arguments: Value) -> Result
     ))
 }
 
-async fn coordination_instance_health(
-    client: &GatewayClient,
-    arguments: Value,
-) -> Result<Value> {
+async fn coordination_instance_health(client: &GatewayClient, arguments: Value) -> Result<Value> {
     let args: CoordinationInstanceHealthArgs = serde_json::from_value(arguments)?;
     let response = client
         .coordination_instance_health(InstanceHealthRequest {

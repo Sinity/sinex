@@ -938,6 +938,7 @@ async fn finalization_transaction_is_idempotent_after_commit_lands(
             total_size_bytes: end.total_size_bytes,
             metadata: json!({}),
             final_status: MaterialStatus::Completed,
+            write_lease: None,
         })
         .await?;
     assert_eq!(*handle.blob_id.as_uuid(), *blob.id.as_uuid());
@@ -1011,6 +1012,7 @@ async fn finalization_transaction_rolls_back_blob_material_and_ledger_on_finaliz
             total_size_bytes: -1,
             metadata: json!({ "finalized": true }),
             final_status: MaterialStatus::Completed,
+            write_lease: None,
         })
         .await
         .expect_err("negative total_bytes should fail source-material finalization");
@@ -1130,6 +1132,7 @@ async fn finalization_transaction_reuses_existing_blob_inside_transaction(
             total_size_bytes: end.total_size_bytes,
             metadata: json!({}),
             final_status: MaterialStatus::Completed,
+            write_lease: None,
         })
         .await?;
     assert_eq!(*handle.blob_id.as_uuid(), *existing_blob.id.as_uuid());
@@ -1234,6 +1237,7 @@ async fn finalization_transaction_reuses_existing_blob_by_blake3_inside_transact
             total_size_bytes: end.total_size_bytes,
             metadata: json!({}),
             final_status: MaterialStatus::Completed,
+            write_lease: None,
         })
         .await?;
     assert_eq!(*handle.blob_id.as_uuid(), *existing_blob.id.as_uuid());

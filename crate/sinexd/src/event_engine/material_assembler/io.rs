@@ -21,7 +21,7 @@ use super::{
     },
 };
 use crate::event_engine::{EventEngineResult, SinexError};
-use crate::runtime::content_store::ContentStoreKey;
+use crate::runtime::content_store::{CasWriteLease, ContentStoreKey};
 use blake3::Hasher;
 use camino::Utf8PathBuf;
 use sinex_primitives::Timestamp;
@@ -1760,7 +1760,7 @@ async fn notify_slice_staging_io_for_tests() {}
 pub(super) async fn import_into_content_store(
     assembler: &MaterialAssembler,
     state: &FinalizationState,
-) -> EventEngineResult<ContentStoreKey> {
+) -> EventEngineResult<(ContentStoreKey, CasWriteLease)> {
     let staging_path = Utf8PathBuf::from_path_buf(state.temp_path.clone()).map_err(|path| {
         SinexError::io(format!(
             "Staging path is not valid utf-8 for content-store import: {}",
@@ -1770,7 +1770,7 @@ pub(super) async fn import_into_content_store(
 
     assembler
         .content_store
-        .store_file(&staging_path)
+        .store_owned_temp_file_with_lease(&staging_path)
         .await
         .map_err(|e| SinexError::io("content-store import failed").with_source(e))
 }

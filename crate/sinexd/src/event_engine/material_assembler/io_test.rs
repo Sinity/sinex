@@ -62,12 +62,21 @@ async fn import_into_content_store_preserves_staging_file_until_cleanup(
         started_at: Timestamp::now(),
     };
 
-    let content_key = import_into_content_store(&assembler, &final_state).await?;
+    let (content_key, lease) = import_into_content_store(&assembler, &final_state).await?;
     assert!(!content_key.key.is_empty());
+    assert_eq!(
+        assembler.content_store.list_write_leases().await?.len(),
+        1,
+        "production material import must retain its lease until finalization commits"
+    );
     assert!(
         temp_path.exists(),
         "content-store import should preserve the staging file until cleanup succeeds"
     );
+    assembler
+        .content_store
+        .release_write_lease(&lease)
+        .await?;
     Ok(())
 }
 

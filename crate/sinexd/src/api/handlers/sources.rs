@@ -4,8 +4,8 @@
 //! `sources.coverage` — the CLI-driven source material inventory surface.
 
 use serde::{Deserialize, Serialize};
-use sinex_db::{CascadeSource, DbPoolExt};
 use sinex_db::repositories::SourceMaterial;
+use sinex_db::{CascadeSource, DbPoolExt};
 use sinex_primitives::domain::{
     MaterialStatus, MaterialStorageKind, SourceMaterialFormat, SourceMaterialTimingInfoType,
 };
@@ -611,15 +611,11 @@ fn remediation_decision(
             "medium",
             "inspect recovered partial material; keep if admitted events are useful, otherwise plan replay or re-ingest",
         ),
-        MaterialStatus::Failed
-            if event_count > 0 && reason == Some("slice_arrival_timeout") =>
-        {
-            (
-                "recover_timeout_partial",
-                "high",
-                "mark timed-out material recovered_partial because events were admitted before timeout, then investigate why finalization timed out",
-            )
-        }
+        MaterialStatus::Failed if event_count > 0 && reason == Some("slice_arrival_timeout") => (
+            "recover_timeout_partial",
+            "high",
+            "mark timed-out material recovered_partial because events were admitted before timeout, then investigate why finalization timed out",
+        ),
         MaterialStatus::Failed if event_count > 0 => (
             "inspect_failed_eventful",
             "high",
@@ -1156,10 +1152,13 @@ pub async fn handle_sources_archive(
                             .with_std_error(&error)
                     })?
             };
-            let cascade_count = repo_tx.cascade_node_count(&table_name).await.map_err(|error| {
-                SinexError::database("Failed to count source material archive cascade")
-                    .with_std_error(&error)
-            })?;
+            let cascade_count = repo_tx
+                .cascade_node_count(&table_name)
+                .await
+                .map_err(|error| {
+                    SinexError::database("Failed to count source material archive cascade")
+                        .with_std_error(&error)
+                })?;
             let event_id_sample = repo_tx
                 .get_cascade_id_sample(&table_name, SOURCE_ARCHIVE_EVENT_ID_SAMPLE_LIMIT)
                 .await
@@ -1227,8 +1226,10 @@ pub async fn handle_sources_archive(
                 )
                 .await
                 .map_err(|error| {
-                    SinexError::database("Failed to finalize empty source material archive operation")
-                        .with_std_error(&error)
+                    SinexError::database(
+                        "Failed to finalize empty source material archive operation",
+                    )
+                    .with_std_error(&error)
                 })?;
         }
         let preview = serde_json::json!({
@@ -1857,7 +1858,7 @@ pub async fn handle_sources_continuity_list(
     let mut reports = services
         .pool()
         .continuity()
-        .list_continuity_reports(req.since)
+        .list_continuity_reports(req.since, req.stale_after_secs)
         .await?;
     apply_private_mode_continuity_overlay(services, &mut reports);
 
@@ -1872,7 +1873,7 @@ pub async fn handle_sources_continuity_get(
     let mut report = services
         .pool()
         .continuity()
-        .get_continuity_report(&req.source_family)
+        .get_continuity_report(&req.source_family, req.stale_after_secs)
         .await?;
     apply_private_mode_continuity_get_overlay(services, &req.source_family, &mut report);
 
@@ -1887,7 +1888,7 @@ pub async fn handle_sources_continuity_explain_gap(
     let mut gap = services
         .pool()
         .continuity()
-        .explain_gap(&req.source_family, req.at)
+        .explain_gap(&req.source_family, req.at, req.stale_after_secs)
         .await?;
     apply_private_mode_explain_gap_overlay(services, &req.source_family, req.at, &mut gap);
 

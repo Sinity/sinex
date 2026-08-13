@@ -120,7 +120,7 @@ async fn seam_classification_emits_expected_continuation(ctx: TestContext) -> Te
     let report = ctx
         .pool()
         .continuity()
-        .get_continuity_report(&family)
+        .get_continuity_report(&family, DEFAULT_RUNTIME_LIVENESS_STALE_AFTER_SECS)
         .await?
         .expect("family observable after seeding event");
 
@@ -164,7 +164,7 @@ async fn seam_classification_emits_overlap(ctx: TestContext) -> TestResult<()> {
     let report = ctx
         .pool()
         .continuity()
-        .get_continuity_report(&family)
+        .get_continuity_report(&family, DEFAULT_RUNTIME_LIVENESS_STALE_AFTER_SECS)
         .await?
         .expect("family observable");
 
@@ -210,7 +210,7 @@ async fn seam_classification_emits_discontinuity(ctx: TestContext) -> TestResult
     let report = ctx
         .pool()
         .continuity()
-        .get_continuity_report(&family)
+        .get_continuity_report(&family, DEFAULT_RUNTIME_LIVENESS_STALE_AFTER_SECS)
         .await?
         .expect("family observable");
 
@@ -263,7 +263,7 @@ async fn seam_classification_emits_recovered_partial(ctx: TestContext) -> TestRe
     let report = ctx
         .pool()
         .continuity()
-        .get_continuity_report(&family)
+        .get_continuity_report(&family, DEFAULT_RUNTIME_LIVENESS_STALE_AFTER_SECS)
         .await?
         .expect("family observable");
 

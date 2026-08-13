@@ -1011,10 +1011,12 @@ impl StateRepository<'_> {
         )
         .fetch_optional(self.pool)
         .await?
-        .ok_or_else(|| crate::repositories::common::db_error(
-            sqlx::Error::RowNotFound,
-            "start_run: ON CONFLICT DO NOTHING returned no row"
-        ))
+        .ok_or_else(|| {
+            crate::repositories::common::db_error(
+                sqlx::Error::RowNotFound,
+                "start_run: ON CONFLICT DO NOTHING returned no row",
+            )
+        })
     }
 
     /// Refresh the mutable heartbeat timestamp for a running module run.
@@ -1683,9 +1685,7 @@ impl StateRepository<'_> {
                     COUNT(*) FILTER (
                         WHERE e.ts_coided > NOW() - make_interval(secs => $2::float8)
                     ) AS recent_output_count,
-                    MAX(e.ts_coided) FILTER (
-                        WHERE e.ts_coided > NOW() - make_interval(secs => $1::float8)
-                    ) AS last_output_at
+                    MAX(e.ts_coided) AS last_output_at
                 FROM core.events e
                 WHERE nr.id IS NOT NULL
                   AND e.module_run_id = nr.id

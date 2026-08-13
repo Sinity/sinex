@@ -34,7 +34,7 @@ use sinex_primitives::sources::continuity::{
     PrivacyClass, Replayability, SeamKind, SourceContinuityReport, TemporalSeam,
 };
 use sinex_primitives::{
-    DEFAULT_RUNTIME_LIVENESS_STALE_AFTER_SECS, RuntimeLivenessSignals, RuntimeLivenessStatus,
+    RuntimeLivenessSignals, RuntimeLivenessStatus,
     Timestamp, evaluate_runtime_liveness,
 };
 use sqlx::PgPool;
@@ -58,11 +58,12 @@ impl<'a> ContinuityRepository<'a> {
     pub async fn list_continuity_reports(
         &self,
         since: Option<Timestamp>,
+        stale_after_secs: u64,
     ) -> DbResult<Vec<SourceContinuityReport>> {
         let families = self.observed_families(since).await?;
         let mut out = Vec::with_capacity(families.len());
         for family in families {
-            if let Some(report) = self.build_report(&family, since).await? {
+            if let Some(report) = self.build_report(&family, since, stale_after_secs).await? {
                 out.push(report);
             }
         }
@@ -76,8 +77,10 @@ impl<'a> ContinuityRepository<'a> {
     pub async fn get_continuity_report(
         &self,
         source_family: &SourceFamily,
+        stale_after_secs: u64,
     ) -> DbResult<Option<SourceContinuityReport>> {
-        self.build_report(source_family, None).await
+        self.build_report(source_family, None, stale_after_secs)
+            .await
     }
 
     /// Resolve attribution for a single point inside a suspected gap.
@@ -87,8 +90,12 @@ impl<'a> ContinuityRepository<'a> {
         &self,
         source_family: &SourceFamily,
         at: Timestamp,
+        stale_after_secs: u64,
     ) -> DbResult<Option<CoverageGap>> {
-        let Some(report) = self.build_report(source_family, None).await? else {
+        let Some(report) = self
+            .build_report(source_family, None, stale_after_secs)
+            .await?
+        else {
             return Ok(None);
         };
         Ok(report.gaps.into_iter().find(|gap| {
@@ -137,6 +144,7 @@ impl<'a> ContinuityRepository<'a> {
         &self,
         family: &SourceFamily,
         since: Option<Timestamp>,
+        stale_after_secs: u64,
     ) -> DbResult<Option<SourceContinuityReport>> {
         let family_str = family.as_str();
         let since_pg: Option<OffsetDateTime> = since.map(Into::into);
@@ -327,11 +335,9 @@ impl<'a> ContinuityRepository<'a> {
 
         if coverage_contract == CoverageContract::Continuous {
             if let Some(latest) = agg.latest_ts {
-                if let Some(gap) = continuous_trailing_gap(
-                    latest,
-                    OffsetDateTime::now_utc(),
-                    DEFAULT_RUNTIME_LIVENESS_STALE_AFTER_SECS,
-                ) {
+                if let Some(gap) =
+                    continuous_trailing_gap(latest, OffsetDateTime::now_utc(), stale_after_secs)
+                {
                     gaps.push(gap);
                 }
             }

@@ -4,8 +4,8 @@ use sinex_primitives::error::SinexError;
 use xtask::sandbox::{EnvGuard, sinex_serial_test, sinex_test};
 
 #[sinex_serial_test]
-async fn module_heartbeat_stale_after_defaults_invalid_override()
--> xtask::sandbox::TestResult<()> {
+async fn module_heartbeat_stale_after_defaults_invalid_override() -> xtask::sandbox::TestResult<()>
+{
     let mut env = EnvGuard::new();
     env.set("SINEX_MODULE_HEARTBEAT_STALE_SECS", "bogus");
 
@@ -19,8 +19,7 @@ async fn module_heartbeat_stale_after_defaults_invalid_override()
 }
 
 #[sinex_serial_test]
-async fn module_heartbeat_stale_after_defaults_zero_override() -> xtask::sandbox::TestResult<()>
-{
+async fn module_heartbeat_stale_after_defaults_zero_override() -> xtask::sandbox::TestResult<()> {
     let mut env = EnvGuard::new();
     env.set("SINEX_MODULE_HEARTBEAT_STALE_SECS", "0");
 

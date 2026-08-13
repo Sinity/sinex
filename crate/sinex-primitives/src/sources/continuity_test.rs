@@ -12,8 +12,8 @@ async fn declared_coverage_contract_default_is_unknown() -> xtask::sandbox::Test
 }
 
 #[sinex_test]
-async fn declared_coverage_contract_kind_strings_match_check_set()
--> xtask::sandbox::TestResult<()> {
+async fn declared_coverage_contract_kind_strings_match_check_set() -> xtask::sandbox::TestResult<()>
+{
     for kind in [
         DeclaredCoverageContractKind::Continuous,
         DeclaredCoverageContractKind::PeriodicDump,
@@ -33,8 +33,8 @@ async fn declared_coverage_contract_kind_strings_match_check_set()
 }
 
 #[sinex_test]
-async fn declared_coverage_contract_serializes_kind_pascal_case()
--> xtask::sandbox::TestResult<()> {
+async fn declared_coverage_contract_serializes_kind_pascal_case() -> xtask::sandbox::TestResult<()>
+{
     let c = DeclaredCoverageContract {
         kind: DeclaredCoverageContractKind::PeriodicDump,
         ..Default::default()
@@ -66,8 +66,7 @@ async fn privacy_class_default_is_unknown() -> xtask::sandbox::TestResult<()> {
 }
 
 #[sinex_test]
-async fn privacy_class_is_private_excludes_public_and_unknown() -> xtask::sandbox::TestResult<()>
-{
+async fn privacy_class_is_private_excludes_public_and_unknown() -> xtask::sandbox::TestResult<()> {
     assert!(!PrivacyClass::Public.is_private());
     assert!(!PrivacyClass::Unknown.is_private());
     assert!(PrivacyClass::Personal.is_private());

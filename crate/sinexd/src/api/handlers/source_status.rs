@@ -438,9 +438,7 @@ fn source_coverage_view_with_stale_after(
     )
     .map(Timestamp::from);
     let liveness = runtime_observation_for_source(contract.id, runtime_observations)
-        .map(|observation| {
-            observation.runtime_liveness(stale_after_secs, now)
-        })
+        .map(|observation| observation.runtime_liveness(stale_after_secs, now))
         .unwrap_or_else(|| {
             evaluate_runtime_liveness(
                 RuntimeLivenessSignals {
@@ -453,12 +451,7 @@ fn source_coverage_view_with_stale_after(
                 now,
             )
         });
-    let liveness_failure = matches!(
-        liveness.status,
-        RuntimeLivenessStatus::Stale
-            | RuntimeLivenessStatus::Unhealthy
-            | RuntimeLivenessStatus::Stopped
-    );
+    let liveness_failure = liveness.status.is_failure();
 
     let mut gaps = Vec::new();
     let mut caveats = Vec::new();
@@ -495,7 +488,8 @@ fn source_coverage_view_with_stale_after(
         });
         caveats.push(CaveatView {
             id: ReadinessCaveatId::SourceAbsent.as_str().to_string(),
-            message: "no live events match this source contract's declared source/event_type pairs".to_string(),
+            message: "no live events match this source contract's declared source/event_type pairs"
+                .to_string(),
             ref_: Some(SinexObjectRef::new(
                 SinexObjectKind::SourceDriver,
                 contract.id.to_string(),
@@ -1149,7 +1143,10 @@ fn source_mode_status_view(
         backpressure: binding.transport_semantics.backpressure,
         privacy_context: format!("{:?}", binding.privacy_context).to_ascii_lowercase(),
         resource_budget: source_resource_budget_view(binding),
-        criticality: binding.criticality.map(criticality_name).map(str::to_string),
+        criticality: binding
+            .criticality
+            .map(criticality_name)
+            .map(str::to_string),
         runtime_observed: runtime_observation.map(|_| true),
         runtime_live: runtime_observation.map(|observation| observation.live),
         last_heartbeat_at: runtime_observation
@@ -1500,10 +1497,7 @@ fn max_timestamp(
     }
 }
 
-fn source_actions(
-    source_id: &str,
-    bindings: &[&SourceRuntimeBinding],
-) -> Vec<ActionAvailability> {
+fn source_actions(source_id: &str, bindings: &[&SourceRuntimeBinding]) -> Vec<ActionAvailability> {
     let mut actions = vec![
         ActionAvailability::read(
             "sources.readiness",

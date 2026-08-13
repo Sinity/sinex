@@ -55,10 +55,7 @@ async fn mcp_standard_envelope_shape_carries_caveat_and_privacy_state() -> TestR
     assert_eq!(response["source_surface"], "sinex_test_tool");
     assert_eq!(response["query_echo"], json!({ "limit": 3 }));
     assert_eq!(response["payload"], json!({ "result": [] }));
-    assert_eq!(
-        response["privacy_state"]["state"],
-        "transformation_unknown"
-    );
+    assert_eq!(response["privacy_state"]["state"], "transformation_unknown");
     assert!(
         !response["caveats"]
             .as_array()
@@ -72,8 +69,12 @@ async fn mcp_standard_envelope_shape_carries_caveat_and_privacy_state() -> TestR
             .as_array()
             .expect("caveats must be an array")
             .iter()
-            .any(|caveat| caveat["id"] == ReadinessCaveatId::CoverageUnmeasurable.as_str()
-                && caveat["message"].as_str().is_some_and(|message| message.contains("$.result"))),
+            .any(
+                |caveat| caveat["id"] == ReadinessCaveatId::CoverageUnmeasurable.as_str()
+                    && caveat["message"]
+                        .as_str()
+                        .is_some_and(|message| message.contains("$.result"))
+            ),
         "MCP envelopes must explain empty result collections: {response:?}"
     );
     Ok(())
@@ -92,8 +93,12 @@ async fn mcp_standard_envelope_shape_explains_null_result_slots() -> TestResult<
             .as_array()
             .expect("caveats must be an array")
             .iter()
-            .any(|caveat| caveat["id"] == ReadinessCaveatId::SourceAbsent.as_str()
-                && caveat["message"].as_str().is_some_and(|message| message.contains("$.snapshot"))),
+            .any(
+                |caveat| caveat["id"] == ReadinessCaveatId::SourceAbsent.as_str()
+                    && caveat["message"]
+                        .as_str()
+                        .is_some_and(|message| message.contains("$.snapshot"))
+            ),
         "MCP envelopes must explain null result slots: {response:?}"
     );
     Ok(())
@@ -118,19 +123,22 @@ async fn mcp_view_envelope_with_caveats_preserves_server_caveats() -> TestResult
     assert!(
         caveats
             .iter()
-        .all(|caveat| caveat["id"] != "mcp.raw_samples_redacted"),
+            .all(|caveat| caveat["id"] != "mcp.raw_samples_redacted"),
         "untransformed MCP envelopes must not claim raw-sample redaction: {response:?}"
     );
     assert!(
         caveats.iter().any(|caveat| caveat["id"]
             == ReadinessCaveatId::CoverageUnmeasurable.as_str()
-            && caveat["message"].as_str().is_some_and(|message| message.contains("$.sources"))),
+            && caveat["message"]
+                .as_str()
+                .is_some_and(|message| message.contains("$.sources"))),
         "automatic empty-source caveat must be present: {response:?}"
     );
     assert!(
-        caveats.iter().any(|caveat| caveat["id"]
-            == ReadinessCaveatId::SourceAbsent.as_str()
-            && caveat["message"] == "source status server caveat"),
+        caveats.iter().any(
+            |caveat| caveat["id"] == ReadinessCaveatId::SourceAbsent.as_str()
+                && caveat["message"] == "source status server caveat"
+        ),
         "server caveat must survive MCP re-enveloping: {response:?}"
     );
     Ok(())
@@ -147,10 +155,7 @@ async fn mcp_gateway_unavailable_response_is_still_a_view_envelope() -> TestResu
     assert_eq!(response["source_surface"], "sinex_sources_status");
     assert_eq!(response["payload"]["status"], "degraded");
     assert_eq!(response["payload"]["reason"], "gateway_unreachable");
-    assert_eq!(
-        response["privacy_state"]["state"],
-        "transformation_unknown"
-    );
+    assert_eq!(response["privacy_state"]["state"], "transformation_unknown");
     let caveats = response["caveats"]
         .as_array()
         .expect("degraded envelope caveats must be an array");
@@ -207,10 +212,17 @@ async fn context_pack_project_path_returns_unscoped_with_scope_caveat() -> TestR
         .iter()
         .find(|caveat| caveat.id == "context_pack.project_scope_unavailable")
         .expect("real project path must expose scope limitation caveat");
-    assert!(caveat.message.contains("project_path scoping is unavailable"));
+    assert!(
+        caveat
+            .message
+            .contains("project_path scoping is unavailable")
+    );
     assert!(caveat.message.contains("sinex-a4w.3.3"));
     assert_eq!(
-        caveat.ref_.as_ref().map(|object_ref| object_ref.id.as_str()),
+        caveat
+            .ref_
+            .as_ref()
+            .map(|object_ref| object_ref.id.as_str()),
         Some("sinex_context_pack.project_path")
     );
 
@@ -232,8 +244,7 @@ async fn context_pack_project_path_returns_unscoped_with_scope_caveat() -> TestR
 }
 
 #[sinex_test]
-async fn context_pack_source_like_project_path_returns_source_hint_with_caveat(
-) -> TestResult<()> {
+async fn context_pack_source_like_project_path_returns_source_hint_with_caveat() -> TestResult<()> {
     let args = ContextPackArgs {
         project_path: Some("terminal.atuin-history".to_string()),
         limit: 3,
@@ -256,7 +267,11 @@ async fn context_pack_source_like_project_path_returns_source_hint_with_caveat(
         .find(|caveat| caveat.id == "context_pack.project_scope_unavailable")
         .expect("source-hint fallback must still expose scope limitation caveat");
     assert!(caveat.message.contains("source-hint filtered"));
-    assert!(caveat.message.contains("source_hint=terminal.atuin-history"));
+    assert!(
+        caveat
+            .message
+            .contains("source_hint=terminal.atuin-history")
+    );
     Ok(())
 }
 

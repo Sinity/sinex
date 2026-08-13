@@ -1090,7 +1090,7 @@ impl MaterialAssembler {
         };
         let final_status = final_material_status(&finalize_metadata);
 
-        let content_key = match self.import_into_content_store(&final_state).await {
+        let (content_key, write_lease) = match self.import_into_content_store(&final_state).await {
             Ok(result) => result,
             Err(e) => {
                 let e = e.with_context(
@@ -1170,6 +1170,7 @@ impl MaterialAssembler {
                 total_size_bytes: end.total_size_bytes,
                 metadata: finalize_metadata,
                 final_status,
+                write_lease: Some(&write_lease),
             }),
         )
         .await

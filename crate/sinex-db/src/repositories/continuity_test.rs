@@ -43,12 +43,14 @@ async fn continuous_trailing_gap_is_time_bounded() -> xtask::sandbox::TestResult
     )
     .expect("a continuous source silent past the liveness threshold needs a trailing gap");
     assert_eq!(gap.kind, GapKind::ServiceCrash);
-    assert!(continuous_trailing_gap(
-        now - time::Duration::minutes(4),
-        now,
-        DEFAULT_RUNTIME_LIVENESS_STALE_AFTER_SECS,
-    )
-    .is_none());
+    assert!(
+        continuous_trailing_gap(
+            now - time::Duration::minutes(4),
+            now,
+            DEFAULT_RUNTIME_LIVENESS_STALE_AFTER_SECS,
+        )
+        .is_none()
+    );
     Ok(())
 }
 
@@ -73,8 +75,7 @@ fn chunk_with_declared(
 }
 
 #[sinex_test]
-async fn classify_overlap_when_curr_starts_before_prev_ends() -> xtask::sandbox::TestResult<()>
-{
+async fn classify_overlap_when_curr_starts_before_prev_ends() -> xtask::sandbox::TestResult<()> {
     let prev = chunk(
         "annex",
         "completed",
@@ -152,8 +153,7 @@ async fn classify_discontinuity_for_long_gap() -> xtask::sandbox::TestResult<()>
 }
 
 #[sinex_test]
-async fn classify_recovered_partial_when_either_chunk_marked() -> xtask::sandbox::TestResult<()>
-{
+async fn classify_recovered_partial_when_either_chunk_marked() -> xtask::sandbox::TestResult<()> {
     let prev = chunk(
         "annex",
         "recovered_partial",
@@ -265,8 +265,8 @@ async fn private_mode_seam_only_fires_for_private_classes() -> xtask::sandbox::T
 }
 
 #[sinex_test]
-async fn declared_coverage_contract_overrides_heuristic_inference()
--> xtask::sandbox::TestResult<()> {
+async fn declared_coverage_contract_overrides_heuristic_inference() -> xtask::sandbox::TestResult<()>
+{
     let declared = DeclaredCoverageContract {
         kind: DeclaredCoverageContractKind::EphemeralStream,
         ..Default::default()

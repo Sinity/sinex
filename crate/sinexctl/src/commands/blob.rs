@@ -326,6 +326,7 @@ impl BlobFsckCommand {
             bytes_verified,
             incomplete,
             stop_reason,
+            ..
         } = report;
 
         let details: Vec<CasFileDetail> = file_statuses

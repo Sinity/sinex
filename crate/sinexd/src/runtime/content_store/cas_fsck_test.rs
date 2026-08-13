@@ -92,6 +92,86 @@ async fn pending_cas_delete_survives_failure_and_resumes(_ctx: TestContext) -> T
 }
 
 #[sinex_test]
+async fn live_cas_lease_survives_restart_and_protects_fsck_until_commit(
+    ctx: TestContext,
+) -> TestResult<()> {
+    let store_dir = tempfile::tempdir()?;
+    let root_path = Utf8PathBuf::from_path_buf(store_dir.path().to_path_buf())
+        .expect("temporary content-store path must be UTF-8");
+    let content_store = MaterialContentStore::new(ContentStoreConfig {
+        root_path: root_path.clone(),
+        ..Default::default()
+    })?;
+    let source = root_path.join("lease-source.txt");
+    tokio::fs::write(&source, b"lease survives restart").await?;
+    let (key, _returned_lease) = content_store.store_file_with_lease(&source).await?;
+    let object_path = content_store
+        .path_if_local(&key.key)?
+        .expect("local CAS key must resolve to an object");
+    std::fs::File::open(object_path.as_std_path())?.set_times(
+        std::fs::FileTimes::new().set_modified(
+            SystemTime::now()
+                .checked_sub(Duration::from_secs(11 * 60))
+                .expect("fixture timestamp must be representable"),
+        ),
+    )?;
+
+    // Reconstruct the store as a fresh process would. The durable lease, not
+    // an in-memory guard, must keep the old published object authoritative.
+    let restarted_store = MaterialContentStore::new(ContentStoreConfig {
+        root_path,
+        ..Default::default()
+    })?;
+    let (report, statuses) = check_cas(ctx.pool(), &restarted_store, true).await?;
+    assert_eq!(report.leased, 1);
+    assert_eq!(report.orphaned, 0);
+    assert_eq!(report.quarantined, 0);
+    assert!(statuses.iter().any(|status| {
+        status.hash == key.digest && status.status == CasStatus::Leased
+    }));
+    assert!(object_path.exists(), "a live lease must protect old CAS bytes");
+
+    let lease = restarted_store
+        .list_write_leases()
+        .await?
+        .pop()
+        .expect("restart must recover the durable lease");
+    restarted_store.release_write_lease(&lease).await?;
+
+    // Keep one unrelated DB authority so apply-mode orphan-ratio safeguards do
+    // not turn this focused lifecycle test into a no-authority bypass.
+    let retained_hash = blake3::hash(b"retained authority").to_hex().to_string();
+    ctx.pool
+        .blobs()
+        .insert(
+            Blob::builder()
+                .storage_backend(LOCAL_BLAKE3_CAS_BACKEND.to_string())
+                .content_hash(retained_hash.clone())
+                .size_bytes(18)
+                .checksum_blake3(retained_hash)
+                .build(),
+        )
+        .await?;
+
+    let quarantine_report = check_cas(ctx.pool(), &restarted_store, true).await?.0;
+    assert_eq!(quarantine_report.quarantined, 1);
+    assert_eq!(quarantine_report.pending_deletes, 1);
+    assert!(!object_path.exists(), "commit release must make the orphan sweep eligible");
+
+    let mut pending = restarted_store
+        .list_pending_deletions()
+        .await?
+        .pop()
+        .expect("quarantine must leave a retry record");
+    pending.created_at_unix_secs = pending.created_at_unix_secs.saturating_sub(11 * 60);
+    tokio::fs::write(&pending.record_path, serde_json::to_vec(&pending)?).await?;
+    let delete_report = check_cas(ctx.pool(), &restarted_store, true).await?.0;
+    assert_eq!(delete_report.removed, 1);
+    assert!(restarted_store.list_pending_deletions().await?.is_empty());
+    Ok(())
+}
+
+#[sinex_test]
 async fn referenced_cas_quarantine_is_restored_by_apply_reconciliation(
     ctx: TestContext,
 ) -> TestResult<()> {

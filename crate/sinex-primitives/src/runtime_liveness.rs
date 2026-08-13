@@ -22,6 +22,18 @@ pub enum RuntimeLivenessStatus {
     Unknown,
 }
 
+impl RuntimeLivenessStatus {
+    #[must_use]
+    pub const fn is_live(self) -> bool {
+        matches!(self, Self::Healthy | Self::Degraded)
+    }
+
+    #[must_use]
+    pub const fn is_failure(self) -> bool {
+        matches!(self, Self::Unhealthy | Self::Stale | Self::Stopped)
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct RuntimeLiveness {
     pub status: RuntimeLivenessStatus,
@@ -68,6 +80,7 @@ pub fn evaluate_runtime_liveness(
     if let Some(age) = age_secs {
         evidence.push(format!("observed_age_secs={age}"));
     }
+    evidence.push(format!("stale_after_secs={stale_after_secs}"));
 
     let run_status = signals.run_status.map(str::to_ascii_lowercase);
     let status = if matches!(
@@ -123,6 +136,64 @@ mod tests {
         );
         assert_eq!(result.status, RuntimeLivenessStatus::Stale);
         assert_eq!(result.age_secs, Some(360));
+    }
+
+    #[test]
+    fn historical_output_is_stale_when_no_newer_observation_exists() {
+        let result = evaluate_runtime_liveness(
+            RuntimeLivenessSignals {
+                run_status: Some("running"),
+                health_status: None,
+                last_heartbeat_at: None,
+                last_output_at: Some((datetime!(2026-08-12 11:50 UTC)).into()),
+            },
+            300,
+            now(),
+        );
+        assert_eq!(result.status, RuntimeLivenessStatus::Stale);
+        assert_eq!(
+            result.last_observed_at,
+            Some(datetime!(2026-08-12 11:50 UTC).into())
+        );
+        assert!(
+            result
+                .evidence
+                .iter()
+                .any(|item| item == "stale_after_secs=300")
+        );
+    }
+
+    #[test]
+    fn never_observed_is_unknown_even_when_runtime_is_registered() {
+        let result = evaluate_runtime_liveness(
+            RuntimeLivenessSignals {
+                run_status: Some("running"),
+                health_status: None,
+                last_heartbeat_at: None,
+                last_output_at: None,
+            },
+            300,
+            now(),
+        );
+        assert_eq!(result.status, RuntimeLivenessStatus::Unknown);
+        assert_eq!(result.last_observed_at, None);
+        assert!(!result.status.is_live());
+    }
+
+    #[test]
+    fn runtime_info_failed_status_wins_over_fresh_heartbeat() {
+        let result = evaluate_runtime_liveness(
+            RuntimeLivenessSignals {
+                run_status: Some("failed"),
+                health_status: Some(HealthStatus::Healthy),
+                last_heartbeat_at: Some((datetime!(2026-08-12 11:59:30 UTC)).into()),
+                last_output_at: None,
+            },
+            300,
+            now(),
+        );
+        assert_eq!(result.status, RuntimeLivenessStatus::Unhealthy);
+        assert!(result.status.is_failure());
     }
 
     #[test]

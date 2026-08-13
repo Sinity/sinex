@@ -184,8 +184,7 @@ async fn source_coverage_view_marks_ready_when_catalog_material_and_events_exist
 }
 
 #[sinex_test]
-async fn source_coverage_view_marks_historical_coverage_stale()
--> xtask::sandbox::TestResult<()> {
+async fn source_coverage_view_marks_historical_coverage_stale() -> xtask::sandbox::TestResult<()> {
     let long_ago = OffsetDateTime::now_utc() - time::Duration::days(400);
     let mut events = HashMap::new();
     events.insert(
@@ -277,12 +276,67 @@ async fn source_coverage_view_uses_failed_run_status_with_fresh_evidence()
     );
 
     assert_eq!(view.readiness, SourceCoverageReadiness::Stale);
-    assert_eq!(view.continuity, SourceCoverageContinuity::Stale);
+    assert_eq!(
+        view.continuity,
+        SourceCoverageContinuity::Stale,
+        "failed run status must demote current continuity even with fresh evidence"
+    );
     assert!(
         view.gaps
             .iter()
             .any(|gap| gap.kind == "runtime_liveness_unhealthy"),
         "a failed run must remain unhealthy even when its last output is fresh"
+    );
+    Ok(())
+}
+
+#[sinex_test]
+async fn source_coverage_view_marks_dead_runtime_after_historical_output_stale()
+-> xtask::sandbox::TestResult<()> {
+    let now = Timestamp::now();
+    let mut dead = terminal_bridge_status(now);
+    dead.module_name = ModuleName::new(CONTRACT.id);
+    dead.current_health = None;
+    dead.health_changed_at = None;
+    dead.health_reason = None;
+    dead.last_heartbeat_at = None;
+    dead.last_output_at = Some(now - time::Duration::minutes(10));
+    dead.recent_output_count = 0;
+    let runtime = HashMap::from([(CONTRACT.id.to_string(), dead)]);
+
+    let view = source_coverage_view(
+        &CONTRACT,
+        &[&BINDING],
+        &HashMap::from([(
+            ("fixture".to_string(), "fixture.event".to_string()),
+            SourceEventAggregateRow {
+                source: "fixture".to_string(),
+                event_type: "fixture.event".to_string(),
+                event_count: 1,
+                last_event_at: Some(now.into()),
+            },
+        )]),
+        &HashMap::from([(
+            "fixture.source".to_string(),
+            SourceMaterialAggregateRow {
+                source_identifier: "fixture.source".to_string(),
+                material_count: 1,
+                last_material_at: Some(now.into()),
+            },
+        )]),
+        &runtime,
+        &HashMap::new(),
+        &HashMap::new(),
+        &HashMap::new(),
+        now,
+    );
+
+    assert_eq!(view.readiness, SourceCoverageReadiness::Stale);
+    assert_eq!(view.continuity, SourceCoverageContinuity::Stale);
+    assert!(
+        view.gaps
+            .iter()
+            .any(|gap| gap.kind == "runtime_liveness_stale")
     );
     Ok(())
 }
@@ -310,8 +364,8 @@ async fn periodic_dump_classification_explains_away_real_outage() -> xtask::sand
 
 #[sinex_test]
 #[ignore = "sinex-hdnv #6: draft shape, not implemented -- see body for what's needed"]
-async fn continuous_capturer_reads_available_for_a_week_after_death() -> xtask::sandbox::TestResult<()>
-{
+async fn continuous_capturer_reads_available_for_a_week_after_death()
+-> xtask::sandbox::TestResult<()> {
     // Target: source_materials.rs's readiness computation (the "only real
     // recency check in the whole surface", per the bead -- a 7-day default
     // staleness window). Two related bugs to characterize in one test:
@@ -452,18 +506,15 @@ async fn source_coverage_view_surfaces_missing_material_caveat() -> xtask::TestR
     assert_eq!(view.readiness, SourceCoverageReadiness::MissingMaterial);
     assert_eq!(view.continuity, SourceCoverageContinuity::Gapped);
     assert!(view.gaps.iter().any(|gap| gap.kind == "missing_material"));
-    assert!(
-        view.caveats
-            .iter()
-            .any(|caveat| caveat.id == ReadinessCaveatId::SourceAbsent.as_str()
-                && caveat.message.contains("no source material"))
-    );
+    assert!(view.caveats.iter().any(|caveat| caveat.id
+        == ReadinessCaveatId::SourceAbsent.as_str()
+        && caveat.message.contains("no source material")));
     Ok(())
 }
 
 #[sinex_test]
-async fn source_coverage_view_surfaces_missing_events_with_standard_caveat()
--> xtask::TestResult<()> {
+async fn source_coverage_view_surfaces_missing_events_with_standard_caveat() -> xtask::TestResult<()>
+{
     let now = OffsetDateTime::now_utc();
     let events = HashMap::new();
     let mut materials = HashMap::new();
@@ -491,12 +542,9 @@ async fn source_coverage_view_surfaces_missing_events_with_standard_caveat()
     assert_eq!(view.readiness, SourceCoverageReadiness::MissingEvents);
     assert_eq!(view.continuity, SourceCoverageContinuity::MaterialOnly);
     assert!(view.gaps.iter().any(|gap| gap.kind == "missing_events"));
-    assert!(
-        view.caveats
-            .iter()
-            .any(|caveat| caveat.id == ReadinessCaveatId::SourceAbsent.as_str()
-                && caveat.message.contains("no live events"))
-    );
+    assert!(view.caveats.iter().any(|caveat| caveat.id
+        == ReadinessCaveatId::SourceAbsent.as_str()
+        && caveat.message.contains("no live events")));
     Ok(())
 }
 

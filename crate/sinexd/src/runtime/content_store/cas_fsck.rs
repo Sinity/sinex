@@ -63,6 +63,8 @@ pub enum CasStatus {
     Missing,
     /// A content-store staging file that has not been atomically published.
     Staged,
+    /// A published object still held by a live durable ingest lease.
+    Leased,
 }
 
 /// Aggregate report from a CAS fsck run.
@@ -86,6 +88,10 @@ pub struct CasFsckReport {
     pub protected_recent: usize,
     /// In-flight staging files retained regardless of age.
     pub staged: usize,
+    /// Published objects protected by a live ingest lease.
+    pub leased: usize,
+    /// Ingest leases older than the recovery grace period.
+    pub stale_leases: usize,
     /// Orphans that became DB-referenced during the scan/apply race.
     pub recheck_protected: usize,
     /// Orphans moved into durable quarantine during an apply pass.
@@ -105,6 +111,7 @@ pub struct CasFsckReport {
 }
 
 const CAS_ORPHAN_GRACE: StdDuration = StdDuration::from_secs(10 * 60);
+const CAS_INGEST_LEASE_GRACE: StdDuration = StdDuration::from_secs(24 * 60 * 60);
 static CAS_FSCK_ADMISSION: OnceLock<WorkAdmission> = OnceLock::new();
 
 fn cas_fsck_admission() -> &'static WorkAdmission {
@@ -216,10 +223,15 @@ pub async fn check_cas_with_options_and_control(
     let mut scan_complete = false;
 
     // Build a set of known hashes from core.blobs for SINEXBLAKE3 entries
-    let known_blake3_hashes: HashMap<_, _> = load_sinexblake3_hashes(pool, content_store)
-        .await?
-        .into_iter()
-        .collect();
+    let mut known_blake3_hashes = HashMap::new();
+    for (hash, authority) in load_sinexblake3_hashes(pool, content_store).await? {
+        known_blake3_hashes.entry(hash).or_insert(authority);
+    }
+    let (lease_references, stale_leases) = load_ingest_lease_references(content_store).await?;
+    report.stale_leases = stale_leases;
+    for (hash, authority) in lease_references {
+        known_blake3_hashes.entry(hash).or_insert(authority);
+    }
     let known_hash_set: HashSet<String> = known_blake3_hashes.keys().cloned().collect();
 
     reconcile_pending_deletions(pool, content_store, apply, &mut report).await?;
@@ -277,12 +289,18 @@ pub async fn check_cas_with_options_and_control(
                             return Err(error);
                         }
                         if matches {
-                            report.referenced += 1;
+                            let status = if blob_id.starts_with("lease:") {
+                                report.leased += 1;
+                                CasStatus::Leased
+                            } else {
+                                report.referenced += 1;
+                                CasStatus::Referenced
+                            };
                             file_statuses.push(CasFileStatus {
                                 hash,
                                 path: path.to_string(),
                                 size_bytes: size,
-                                status: CasStatus::Referenced,
+                                status,
                                 blob_id: Some(blob_id),
                             });
                         } else {
@@ -434,7 +452,7 @@ pub async fn check_cas_with_options_and_control(
             if is_recent {
                 continue;
             }
-            if cas_hash_is_referenced(pool, hash).await?.is_some() {
+            if cas_hash_is_referenced(pool, content_store, hash).await?.is_some() {
                 report.recheck_protected += 1;
                 continue;
             }
@@ -558,7 +576,7 @@ where
                 continue;
             }
 
-            let blob_id = cas_hash_is_referenced(pool, &hash).await?;
+            let blob_id = cas_hash_is_referenced(pool, content_store, &hash).await?;
             if let Some(blob_id) = blob_id {
                 let cancellation = work.cancellation();
                 match verify_cas_file_content(&path, &hash, &cancellation).await {
@@ -576,12 +594,18 @@ where
                             return Err(error);
                         }
                         if matches {
-                            report.referenced += 1;
+                            let status = if blob_id.starts_with("lease:") {
+                                report.leased += 1;
+                                CasStatus::Leased
+                            } else {
+                                report.referenced += 1;
+                                CasStatus::Referenced
+                            };
                             on_status(CasFileStatus {
                                 hash,
                                 path: path.to_string(),
                                 size_bytes: size,
-                                status: CasStatus::Referenced,
+                                status,
                                 blob_id: Some(blob_id),
                             });
                         } else {
@@ -763,7 +787,7 @@ async fn reconcile_pending_deletions(
             report.pending_deletes += 1;
             continue;
         }
-        if cas_hash_is_referenced(pool, &record.key.digest)
+        if cas_hash_is_referenced(pool, content_store, &record.key.digest)
             .await?
             .is_some()
         {
@@ -807,8 +831,12 @@ fn fsck_stop_reason(work: &WorkController) -> Option<CasFsckStopReason> {
 /// Re-check DB authority immediately before destructive filesystem mutation.
 /// The initial hash snapshot is intentionally not sufficient: a material/blob
 /// commit can race a long fsck walk and publish a reference after the snapshot.
-async fn cas_hash_is_referenced(pool: &PgPool, hash: &str) -> RuntimeResult<Option<String>> {
-    sqlx::query_scalar::<_, String>(
+async fn cas_hash_is_referenced(
+    pool: &PgPool,
+    content_store: &MaterialContentStore,
+    hash: &str,
+) -> RuntimeResult<Option<String>> {
+    let database_authority = sqlx::query_scalar::<_, String>(
         r"
         SELECT id::text
         FROM core.blobs
@@ -827,7 +855,46 @@ async fn cas_hash_is_referenced(pool: &PgPool, hash: &str) -> RuntimeResult<Opti
     .await
     .map_err(|error| {
         SinexError::database("re-check CAS authority before orphan removal").with_source(error)
-    })
+    })?;
+    if database_authority.is_some() {
+        return Ok(database_authority);
+    }
+    let now = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs();
+    Ok(content_store
+        .list_write_leases()
+        .await?
+        .into_iter()
+        .find(|lease| {
+            lease.key.digest == hash
+                && now.saturating_sub(lease.created_at_unix_secs)
+                    < CAS_INGEST_LEASE_GRACE.as_secs()
+        })
+        .map(|lease| format!("lease:{}", lease.operation_id)))
+}
+
+async fn load_ingest_lease_references(
+    content_store: &MaterialContentStore,
+) -> RuntimeResult<(Vec<(String, String)>, usize)> {
+    let now = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs();
+    let mut references = Vec::new();
+    let mut stale = 0;
+    for lease in content_store.list_write_leases().await? {
+        if now.saturating_sub(lease.created_at_unix_secs) < CAS_INGEST_LEASE_GRACE.as_secs() {
+            references.push((
+                lease.key.digest,
+                format!("lease:{}", lease.operation_id),
+            ));
+        } else {
+            stale += 1;
+        }
+    }
+    Ok((references, stale))
 }
 
 /// Load all BLAKE3 hashes that have a durable database authority.

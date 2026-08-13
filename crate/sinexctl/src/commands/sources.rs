@@ -1,6 +1,7 @@
 use clap::{Args, ValueEnum};
 use console::style;
 use serde::{Deserialize, Serialize};
+use sinex_primitives::DEFAULT_RUNTIME_LIVENESS_STALE_AFTER_SECS;
 use sinex_primitives::domain::{MaterialStatus, SourceMaterialFormat};
 use sinex_primitives::rpc::sources::{
     SourceMaterialDetail, SourceMaterialRemediationCandidate, SourceMaterialRemediationPage,
@@ -251,8 +252,7 @@ pub struct ListCommand {
 const SOURCE_MATERIAL_LIST_SCHEMA_VERSION: &str = "sinex.source-material-list/v1";
 const SOURCE_MATERIAL_DETAIL_SCHEMA_VERSION: &str = "sinex.source-material-detail/v1";
 const SOURCE_COVERAGE_LIST_SCHEMA_VERSION: &str = "sinex.source-coverage-list/v1";
-const SOURCE_CONTINUITY_DIAGNOSTICS_SCHEMA_VERSION: &str =
-    "sinex.source-continuity-diagnostics/v1";
+const SOURCE_CONTINUITY_DIAGNOSTICS_SCHEMA_VERSION: &str = "sinex.source-continuity-diagnostics/v1";
 const SOURCE_MATERIAL_REMEDIATION_PLAN_SCHEMA_VERSION: &str =
     "sinex.source-material-remediation-plan/v1";
 
@@ -976,6 +976,10 @@ pub struct ContinuityCommand {
     /// Restrict listed reports to families staged at or after this RFC3339 timestamp.
     #[arg(long, conflicts_with_all = ["source", "family"])]
     since: Option<String>,
+
+    /// Mark continuous coverage trailing this many seconds as a gap.
+    #[arg(long = "stale-after-seconds", default_value_t = DEFAULT_RUNTIME_LIVENESS_STALE_AFTER_SECS)]
+    stale_after_secs: u64,
 }
 
 impl ContinuityCommand {
@@ -987,11 +991,8 @@ impl ContinuityCommand {
                 material_kind: self.kind.clone(),
             };
             let resp: SourcesContinuityResponse = client.sources_continuity(req).await?;
-            let envelope = source_continuity_diagnostics_envelope(
-                resp.clone(),
-                source,
-                self.kind.as_deref(),
-            );
+            let envelope =
+                source_continuity_diagnostics_envelope(resp.clone(), source, self.kind.as_deref());
             if print_finite_envelope(&envelope, format)? {
                 return Ok(());
             }
@@ -1006,6 +1007,7 @@ impl ContinuityCommand {
             })?;
             let req = SourcesContinuityGetRequest {
                 source_family: family,
+                stale_after_secs: self.stale_after_secs,
             };
             let resp: SourcesContinuityGetResponse = client.sources_continuity_get(req).await?;
             let envelope = ViewEnvelope::new(
@@ -1024,7 +1026,10 @@ impl ContinuityCommand {
 
         // ── List mode ──
         let since = self.since.as_deref().map(parse_timestamp).transpose()?;
-        let req = SourcesContinuityListRequest { since };
+        let req = SourcesContinuityListRequest {
+            since,
+            stale_after_secs: self.stale_after_secs,
+        };
         let resp: SourcesContinuityListResponse = client.sources_continuity_list(req).await?;
         let envelope = ViewEnvelope::new(
             "sinexctl.sources.continuity",
@@ -1075,6 +1080,10 @@ pub struct ExplainGapCommand {
     /// Timestamp to explain (RFC3339).
     #[arg(long)]
     at: String,
+
+    /// Mark continuous coverage trailing this many seconds as a gap.
+    #[arg(long = "stale-after-seconds", default_value_t = DEFAULT_RUNTIME_LIVENESS_STALE_AFTER_SECS)]
+    stale_after_secs: u64,
 }
 
 impl ExplainGapCommand {
@@ -1085,6 +1094,7 @@ impl ExplainGapCommand {
         let req = SourcesExplainGapRequest {
             source_family: family,
             at,
+            stale_after_secs: self.stale_after_secs,
         };
         let resp: SourcesExplainGapResponse = client.sources_continuity_explain_gap(req).await?;
         let envelope = ViewEnvelope::new(

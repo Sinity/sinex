@@ -506,6 +506,17 @@ async fn runtime_checkpoint_overrides_config_initial_cursor() -> xtask::sandbox:
     let val: serde_json::Value =
         serde_json::from_slice(&records[0].as_ref().unwrap().bytes).unwrap();
     assert_eq!(val["p"], 2);
+
+    let record = records[0].as_ref().unwrap();
+    assert!(matches!(
+        record.anchor,
+        MaterialAnchor::StreamFrame {
+            material_offset: 2,
+            frame_index: 0
+        }
+    ));
+    let cursor_after = adapter.cursor_after(record).unwrap();
+    assert_eq!(cursor_after.page_index, 3);
     Ok(())
 }
 

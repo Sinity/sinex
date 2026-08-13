@@ -237,6 +237,17 @@ blob route remains available for materials without a manifest. This means the
 original source path—and, for a valid manifest, even the optional blob lookup—
 is not required to recover the recorded bytes.
 
+CAS publish lifecycle is lease-backed. `store_file_with_lease` writes and fsyncs
+an ingest-intent record before copying, fsyncs the object and CAS directory
+after atomic publication, and returns without releasing that lease. The owning
+metadata transaction releases it only after PostgreSQL commit. The legacy
+`store_file` convenience route releases immediately because it has no metadata
+transaction to coordinate. Fsck treats live leases as authority across restart;
+leases older than the 24-hour recovery grace are reported stale and become
+ordinary age-gated orphan candidates. Quarantine and pending-delete records
+remain durable so delete failures can be retried or restored after a reference
+reappears.
+
 Ordinary fsck remains completion-oriented and unbounded by default. Runtime,
 entry, and verification-throughput limits are opt-in through
 `CasFsckOptions`; an explicitly incomplete apply pass remains fail-closed.
