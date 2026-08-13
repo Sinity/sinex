@@ -1,15 +1,74 @@
 use super::recover_stale_replay_operations;
-use sinex_db::DbPoolExt;
-use sinex_primitives::events::{EventPayload, payloads::FileCreatedPayload};
+use super::{
+    GatewayHealthReport, GatewayHealthStatus, NatsHealthProbe, RawIngestDlqHealth,
+    ReplayControlStatus, SseConfirmationStatus, apply_schema_compilation_health,
+};
 use crate::api::{ReplayScope, ReplayState};
-use std::collections::HashMap;
+use sinex_db::DbPoolExt;
+use sinex_db::validation::SchemaCompilationFailure;
+use sinex_primitives::events::{EventPayload, payloads::FileCreatedPayload};
 use sqlx::postgres::PgPoolOptions;
+use std::collections::HashMap;
 use xtask::sandbox::prelude::*;
 
 #[sinex_test]
 async fn stale_replay_recovery_accepts_clean_state(ctx: TestContext) -> TestResult<()> {
     let replay = sinex_db::replay::state_machine::ReplayStateMachine::new(ctx.pool.clone());
     recover_stale_replay_operations(&replay).await?;
+    Ok(())
+}
+
+#[sinex_test]
+async fn health_report_marks_schema_compilation_failures_as_degraded() -> TestResult<()> {
+    let mut report = GatewayHealthReport {
+        status: GatewayHealthStatus::Healthy,
+        db_ok: true,
+        db_latency_ms: Some(1),
+        db_detail: "ok".to_string(),
+        nats: NatsHealthProbe {
+            connected: true,
+            latency_ms: Some(1),
+            detail: "ok".to_string(),
+        },
+        raw_ingest_dlq: RawIngestDlqHealth {
+            status: GatewayHealthStatus::Healthy,
+            connected: true,
+            pending_messages: Some(0),
+            pending_sequence_span: Some(0),
+            detail: "empty".to_string(),
+        },
+        replay: ReplayControlStatus {
+            enabled: true,
+            connected: true,
+            last_error: None,
+        },
+        sse_confirmation: SseConfirmationStatus {
+            running: true,
+            degraded: false,
+            detail: "ok".to_string(),
+        },
+        runtime_liveness: sinex_primitives::RuntimeLivenessAggregate::evaluate(
+            Vec::new(),
+            sinex_primitives::RuntimeLivenessPolicy::default(),
+            sinex_primitives::Timestamp::now(),
+        ),
+        healthy: true,
+        serving: true,
+        degradation_reasons: Vec::new(),
+    };
+    apply_schema_compilation_health(
+        &mut report,
+        Ok(vec![SchemaCompilationFailure {
+            name: "test.source.test.event".to_string(),
+            schema_version: "1".to_string(),
+            schema_id: uuid::Uuid::from_u128(1),
+            error: "invalid type".to_string(),
+        }]),
+    );
+
+    assert!(!report.healthy);
+    assert_eq!(report.status, GatewayHealthStatus::Degraded);
+    assert!(report.degradation_reasons[0].contains("schema_id="));
     Ok(())
 }
 

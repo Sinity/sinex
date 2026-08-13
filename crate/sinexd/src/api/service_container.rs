@@ -6,6 +6,7 @@ use crate::api::handlers::dlq::recover_stale_dlq_requeue_operations;
 use crate::api::replay_control::{ReplayControlClient, ReplayControlError, spawn_replay_control};
 use crate::event_engine::policy::PolicyEngine;
 use crate::runtime::content_store::{ContentStoreConfig, ContentStoreManager};
+use sinex_db::validation::{EventValidator, SchemaCompilationFailure};
 use sinex_db::{DbPoolExt, create_pool_with_config};
 use sinex_db::pkm::PkmService;
 use sinex_db::replay::state_machine::ReplayStateMachine;
@@ -519,7 +520,7 @@ impl ServiceContainer {
             )),
         };
 
-        aggregate_gateway_health_report(
+        let mut report = aggregate_gateway_health_report(
             db_ok,
             db_latency_ms,
             db_detail,
@@ -528,7 +529,45 @@ impl ServiceContainer {
             replay,
             sse_confirmation,
             runtime_liveness,
-        )
+        );
+
+        if db_ok {
+            let probe = match tokio::time::timeout(
+                Duration::from_secs(5),
+                EventValidator::load_from_db_with_options(self.pool(), true),
+            )
+            .await
+            {
+                Ok(Ok(validator)) => Ok(validator.get_schema_compilation_failures()),
+                Ok(Err(error)) => Err(format!("schema validation health probe failed: {error}")),
+                Err(_) => Err("schema validation health probe timed out (>5s)".to_string()),
+            };
+            apply_schema_compilation_health(&mut report, probe);
+        }
+        report
+    }
+}
+
+fn apply_schema_compilation_health(
+    report: &mut GatewayHealthReport,
+    probe: Result<Vec<SchemaCompilationFailure>, String>,
+) {
+    match probe {
+        Ok(failures) => report
+            .degradation_reasons
+            .extend(failures.into_iter().map(|failure| {
+                format!(
+                    "schema compilation failure: {} version {} (schema_id={}): {}",
+                    failure.name, failure.schema_version, failure.schema_id, failure.error
+                )
+            })),
+        Err(error) => report.degradation_reasons.push(error),
+    }
+    if !report.degradation_reasons.is_empty() {
+        report.healthy = false;
+        if report.status == GatewayHealthStatus::Healthy {
+            report.status = GatewayHealthStatus::Degraded;
+        }
     }
 }
 

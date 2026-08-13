@@ -2,6 +2,7 @@ use camino::Utf8PathBuf;
 use futures::StreamExt as _;
 use serde::Deserialize;
 use sinex_db::DbPoolExt;
+use sinex_db::SourceMaterialRecord;
 use sinex_db::repositories::state::Operation as DbOperation;
 use sinex_db::repositories::state::PROJECTION_REBUILD_OPERATION_TYPE;
 use sinex_db::repositories::{
@@ -27,11 +28,13 @@ use sinex_primitives::parser::{
 use sinex_primitives::rpc::sources::{SourceMaterialMetadataContract, SourceOrigin};
 use sinex_primitives::temporal::Timestamp;
 use sqlx::PgPool;
+use std::collections::HashMap;
 use std::time::{Duration, Instant};
 
 use crate::event_engine::admission::AdmittedEvent;
 use crate::event_engine::policy::PolicyEngine;
 use crate::event_engine::{AdmissionService, IngestEventValidator};
+use crate::runtime::ingestion_helpers::{LedgerEntry, LedgerReader, MaterialTiming};
 use crate::runtime::parser::{
     EmailMboxFileAdapter, EmailMboxFileConfig, GmailApiCursorAdapter, GmailApiCursorConfig,
     GmailHttpClient, GmailOAuthCredentials, GoogleOAuthClient, ImapSyncAdapter, ImapSyncConfig,
@@ -131,7 +134,8 @@ pub(super) async fn redact_and_persist_events(
 
     let policy = PolicyEngine::load(pool.clone()).await?;
     policy.ensure_fresh().await;
-    let redacted = policy.redact_batch(admitted_ops_events(events)?).await;
+    let mut redacted = policy.redact_batch(admitted_ops_events(events)?).await;
+    resolve_ops_material_timestamps(pool, &mut redacted).await?;
     let admission = AdmissionService::new(
         pool.clone(),
         Arc::new(RwLock::new(IngestEventValidator::new(false))),
@@ -141,6 +145,71 @@ pub(super) async fn redact_and_persist_events(
         .into_iter()
         .map(|admitted| admitted.event)
         .collect())
+}
+
+/// Resolve deferred material-event timestamps for API-side persistence.
+///
+/// JetStream persistence performs this after its material-readiness gate. Ops
+/// handlers already have a registered material, but bypass that consumer path;
+/// keep the same lower-precedence material/temporal-ledger resolution here so
+/// the shared admission route never persists an event with a missing `ts_orig`.
+async fn resolve_ops_material_timestamps(
+    pool: &PgPool,
+    events: &mut [AdmittedEvent],
+) -> Result<()> {
+    let mut cache = HashMap::new();
+    for admitted in events.iter_mut() {
+        if admitted.event.ts_orig.is_some() {
+            continue;
+        }
+        let sinex_primitives::events::Provenance::Material {
+            id, anchor_byte, ..
+        } = &admitted.event.provenance
+        else {
+            continue;
+        };
+        let material_id = *id.as_uuid();
+        if let std::collections::hash_map::Entry::Vacant(entry) = cache.entry(material_id) {
+            let record = pool
+                .source_materials()
+                .get_by_id(Id::<SourceMaterialRecord>::from_uuid(material_id))
+                .await?
+                .ok_or_else(|| {
+                    SinexError::validation("ops event references missing source material")
+                        .with_context("material_id", material_id.to_string())
+                })?;
+            let timing_info_type = record
+                .timing_info_type
+                .parse()
+                .unwrap_or(SourceMaterialTimingInfoType::Unknown);
+            let timing = MaterialTiming {
+                timing_info_type,
+                start_time: record.start_time,
+                staged_at: record.staged_at,
+            };
+            let ledger = pool
+                .source_materials()
+                .read_temporal_ledger(material_id)
+                .await?
+                .into_iter()
+                .map(|row| LedgerEntry {
+                    offset_start: row.offset_start,
+                    offset_end: row.offset_end,
+                    ts_capture: row.ts_capture,
+                    precision: row.precision,
+                    source_type: row.source_type,
+                })
+                .collect();
+            entry.insert((timing, LedgerReader::new(material_id, ledger)));
+        }
+        let (timing, ledger) = cache
+            .get(&material_id)
+            .expect("material timing inserted above");
+        let (ts_orig, quality) = ledger.derive_ts_orig(*anchor_byte, timing);
+        admitted.event.ts_orig = Some(ts_orig);
+        admitted.event.ts_quality = Some(quality);
+    }
+    Ok(())
 }
 
 fn default_ops_limit() -> i64 {

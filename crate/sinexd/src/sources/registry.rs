@@ -7,7 +7,7 @@
 
 use sinex_primitives::parser::SourceId;
 use sinex_primitives::source_contracts::{self, SourceContract};
-use sinex_primitives::sources::{SourceRole, source_role};
+use sinex_primitives::sources::source_role;
 
 /// Registry of source contracts loaded from the compile-time inventory.
 ///
@@ -96,19 +96,22 @@ impl SourceContractRegistry {
 }
 
 fn role_mismatches(contract: &SourceContract) -> impl Iterator<Item = String> + '_ {
-    contract.event_types.iter().filter_map(move |(source, event_type)| {
-        let resolved = source_role(source);
-        (resolved != contract.source_role).then(|| {
-            format!(
-                "contract `{}` declares {}/{} as {}, but routing resolves it as {}",
-                contract.id,
-                source,
-                event_type,
-                contract.source_role.as_str(),
-                resolved.as_str(),
-            )
+    contract
+        .event_types
+        .iter()
+        .filter_map(move |(source, event_type)| {
+            let resolved = source_role(source);
+            (resolved != contract.source_role).then(|| {
+                format!(
+                    "contract `{}` declares {}/{} as {}, but routing resolves it as {}",
+                    contract.id,
+                    source,
+                    event_type,
+                    contract.source_role.as_str(),
+                    resolved.as_str(),
+                )
+            })
         })
-    })
 }
 
 #[cfg(test)]
@@ -117,13 +120,14 @@ mod tests {
     use sinex_primitives::source_contracts::{
         AccessScope, Horizon, OccurrenceIdentity, PrivacyTier, RetentionPolicy,
     };
+    use sinex_primitives::sources::SourceRole;
     use xtask::sandbox::prelude::*;
 
     #[sinex_test]
     async fn registered_contract_roles_match_event_persistence_routing() -> TestResult<()> {
         SourceContractRegistry::from_inventory()
             .validate_event_source_roles()
-            .map_err(Into::into)
+            .map_err(|error| color_eyre::eyre::eyre!(error))
     }
 
     #[sinex_test]
