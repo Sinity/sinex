@@ -114,6 +114,12 @@ mod lk67_invalidation_reachability {
         let js = ctx.jetstream().await?;
         let env = sinex_primitives::environment::environment().clone();
         let invalidation_subject = env.nats_subject(INVALIDATION_SUBJECT);
+        js.get_or_create_stream(async_nats::jetstream::stream::Config {
+            name: env.nats_stream_name("SINEX_RAW_EVENTS_DERIVED_INVALIDATIONS"),
+            subjects: vec![invalidation_subject.clone()],
+            ..Default::default()
+        })
+        .await?;
         let invalidation = DerivedScopeInvalidation::archived(
             vec![Uuid::now_v7()],
             EventSource::new("test-source")?,
