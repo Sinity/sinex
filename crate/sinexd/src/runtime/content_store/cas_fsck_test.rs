@@ -352,6 +352,100 @@ async fn manifest_encoded_bytes_are_reconciled_as_cas_authority(
 }
 
 #[sinex_test]
+async fn reappeared_manifest_reference_restores_quarantined_encoded_bytes(
+    ctx: TestContext,
+) -> TestResult<()> {
+    let store_dir = tempfile::tempdir()?;
+    let root_path = Utf8PathBuf::from_path_buf(store_dir.path().to_path_buf())
+        .expect("temporary content-store path must be UTF-8");
+    let content_store = MaterialContentStore::new(ContentStoreConfig {
+        root_path: root_path.clone(),
+        ..Default::default()
+    })?;
+
+    let payload = b"manifest encoded bytes must survive a late reference";
+    let payload_path = root_path.join("payload.bin");
+    tokio::fs::write(&payload_path, payload).await?;
+    let payload_key = content_store.store_file(&payload_path).await?;
+
+    let material_id = Uuid::now_v7();
+    let manifest = MaterialManifestV1::from_capture(
+        material_id,
+        "payload.bin",
+        "test",
+        payload_key.digest.clone(),
+        payload.len() as u64,
+        json!({"privacy_class": "personal"}),
+        "2026-08-13T00:00:00Z",
+        "2026-08-13T00:00:01Z",
+    );
+    let manifest_path = root_path.join("manifest.json");
+    tokio::fs::write(&manifest_path, manifest.canonical_bytes()?).await?;
+    let manifest_key = content_store.store_file(&manifest_path).await?;
+
+    // Keep the manifest object itself authoritative so the first sweep can
+    // quarantine only the encoded source bytes.  This mirrors a real manifest
+    // object that is already known to the CAS authority set while its registry
+    // projection is being committed.
+    ctx.pool
+        .blobs()
+        .insert(
+            Blob::builder()
+                .storage_backend(LOCAL_BLAKE3_CAS_BACKEND.to_string())
+                .content_hash(manifest_key.digest.clone())
+                .size_bytes(manifest_key.size as i64)
+                .checksum_blake3(manifest_key.digest.clone())
+                .build(),
+        )
+        .await?;
+    std::fs::File::open(
+        content_store
+            .path_if_local(&payload_key.key)?
+            .expect("payload must be local CAS")
+            .as_std_path(),
+    )?
+    .set_times(
+        std::fs::FileTimes::new().set_modified(
+            SystemTime::now()
+                .checked_sub(Duration::from_secs(11 * 60))
+                .expect("fixture timestamp must be representable"),
+        ),
+    )?;
+
+    let first = sweep_orphans(ctx.pool(), &content_store, true).await?;
+    assert_eq!(first.quarantined, 1);
+    assert!(
+        !content_store
+            .path_if_local(&payload_key.key)?
+            .expect("payload must be local CAS")
+            .exists()
+    );
+
+    ctx.pool
+        .source_materials()
+        .register_external_in_flight(
+            material_id,
+            "test",
+            Some("test://manifest-late-reference"),
+            json!({"material_manifest": {"content_key": manifest_key.key}}),
+            Timestamp::now(),
+        )
+        .await?;
+
+    let second = sweep_orphans(ctx.pool(), &content_store, true).await?;
+    assert_eq!(second.restored, 1);
+    assert!(
+        content_store
+            .path_if_local(&payload_key.key)?
+            .expect("payload must be local CAS")
+            .exists(),
+        "anti-vacuity: pending-delete rechecks must follow manifest encoded-byte authority, not only core.blobs and the manifest object"
+    );
+    assert!(content_store.list_pending_deletions().await?.is_empty());
+    Ok(())
+}
+
+#[sinex_test]
 async fn detailed_cas_sweep_returns_orphan_identity_for_operator_output(
     ctx: TestContext,
 ) -> TestResult<()> {

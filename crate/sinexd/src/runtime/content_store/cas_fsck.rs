@@ -859,6 +859,16 @@ async fn cas_hash_is_referenced(
     if database_authority.is_some() {
         return Ok(database_authority);
     }
+
+    // A V1 material manifest is a two-object authority: its registry row
+    // names the manifest object, and the manifest names the exact encoded
+    // source bytes.  The SQL check above can see only the first half.  Re-read
+    // the manifest before finalizing a quarantine so a material reference that
+    // appears after the initial fsck snapshot can restore its encoded bytes.
+    if let Some(authority) = material_manifest_hash_authority(pool, content_store, hash).await? {
+        return Ok(Some(authority));
+    }
+
     let now = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .unwrap_or_default()
@@ -873,6 +883,38 @@ async fn cas_hash_is_referenced(
                     < CAS_INGEST_LEASE_GRACE.as_secs()
         })
         .map(|lease| format!("lease:{}", lease.operation_id)))
+}
+
+async fn material_manifest_hash_authority(
+    pool: &PgPool,
+    content_store: &MaterialContentStore,
+    hash: &str,
+) -> RuntimeResult<Option<String>> {
+    let material_rows = sqlx::query_as::<_, (String, JsonValue)>(
+        r"
+        SELECT id::text, metadata
+        FROM raw.source_material_registry
+        WHERE metadata->'material_manifest'->>'content_key' IS NOT NULL
+        ",
+    )
+    .fetch(pool);
+
+    futures::pin_mut!(material_rows);
+    while let Some(row) = material_rows.next().await {
+        let (material_id, metadata) = row.map_err(|error| {
+            SinexError::database("stream source-material manifests for CAS authority recheck")
+                .with_source(error)
+        })?;
+        if let Some((_, authority)) =
+            material_manifest_authorities(content_store, &material_id, &metadata)
+                .await?
+                .into_iter()
+                .find(|(candidate, _)| candidate == hash)
+        {
+            return Ok(Some(authority));
+        }
+    }
+    Ok(None)
 }
 
 async fn load_ingest_lease_references(
@@ -997,7 +1039,10 @@ async fn material_manifest_authorities(
     else {
         return Ok(references);
     };
-    if manifest.bytes.encoded.algorithm != "blake3" {
+    if manifest.source_material_id.to_string() != material_id
+        || manifest.validate().is_err()
+        || manifest.canonical_bytes().ok().as_deref() != Some(manifest_bytes.as_slice())
+    {
         return Ok(references);
     }
     let Ok(encoded_key) = ContentStoreKey::local_blake3(

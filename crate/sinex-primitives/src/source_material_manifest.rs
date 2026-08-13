@@ -523,8 +523,20 @@ impl MaterialManifestV1 {
         if self.manifest_type != MaterialManifestType::V1 {
             return Err("unsupported material manifest discriminator");
         }
-        if self.bytes.encoded.algorithm.is_empty() || self.bytes.encoded.value_hex.is_empty() {
-            return Err("encoded material digest is missing");
+        if self.source_identifier.is_empty() || self.material_kind.is_empty() {
+            return Err("manifest source identity is missing");
+        }
+        if self.bytes.encoded.algorithm != "blake3"
+            || self.bytes.encoded.value_hex.len() != 64
+            || !self
+                .bytes
+                .encoded
+                .value_hex
+                .bytes()
+                .all(|byte| byte.is_ascii_hexdigit())
+            || self.bytes.encoded.value_hex != self.bytes.encoded.value_hex.to_ascii_lowercase()
+        {
+            return Err("encoded material digest is not a canonical BLAKE3 digest");
         }
         if self
             .bytes
@@ -635,6 +647,23 @@ mod tests {
         assert_eq!(
             manifest.validate(),
             Err("unsupported material manifest discriminator")
+        );
+    }
+
+    #[test]
+    fn validation_rejects_noncanonical_encoded_identity() {
+        let mut manifest = minimal_manifest();
+        manifest.bytes.encoded.algorithm = "sha256".to_string();
+        assert_eq!(
+            manifest.validate(),
+            Err("encoded material digest is not a canonical BLAKE3 digest")
+        );
+
+        manifest.bytes.encoded.algorithm = "blake3".to_string();
+        manifest.bytes.encoded.value_hex = "A".repeat(64);
+        assert_eq!(
+            manifest.validate(),
+            Err("encoded material digest is not a canonical BLAKE3 digest")
         );
     }
 
