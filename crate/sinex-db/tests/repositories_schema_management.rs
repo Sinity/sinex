@@ -504,7 +504,7 @@ async fn sync_schema_bundle_detects_content_hash_drift_from_schema_content(
     // bundle actually declares.
     let sync_result = repo
         .sync_schema_bundle([
-            original_entry,
+            original_entry.clone(),
         ])
         .await?;
 
@@ -524,7 +524,7 @@ async fn sync_schema_bundle_detects_content_hash_drift_from_schema_content(
         sync_result.unchanged, sync_result.updated
     );
     assert_eq!(
-        active.schema_content, original.schema_content,
+        active.schema_content, original_entry.schema_content,
         "sync must reconcile schema_content back to the bundle's declared \
          content once hash/content drift is detected, not leave the \
          manually-corrupted content in place"
