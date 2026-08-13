@@ -171,7 +171,11 @@ async fn startup_recovery_restores_a_cascade_stranded_by_an_immediate_restart(
         .await?;
     tx.commit().await?;
 
-    let just_before_restart = sinex_primitives::temporal::now() - time::Duration::seconds(30);
+    // The production default is RestartSec=10. Simulate the journal left by a
+    // process that crashed after committing its archive, then restarted after
+    // that delay. This remains inside the former ten-minute stale threshold.
+    const RESTART_SEC_WINDOW: time::Duration = time::Duration::seconds(10);
+    let just_before_restart = sinex_primitives::temporal::now() - RESTART_SEC_WINDOW;
     sqlx::query!(
         r#"
         UPDATE core.operations_log

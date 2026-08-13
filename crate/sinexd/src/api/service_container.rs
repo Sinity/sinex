@@ -69,7 +69,8 @@ const REPLAY_CONTROL_CONNECT_BACKOFF_MAX: Duration = Duration::from_secs(1);
 async fn recover_stale_replay_operations(replay: &ReplayStateMachine) -> SinexResult<()> {
     // ServiceContainer is constructed once per process start, before any
     // replay can be executing in this process. A restart immediately after a
-    // committed archive must therefore recover every running replay journal.
+    // committed archive, including the configured RestartSec window, must
+    // therefore recover every running replay journal.
     const STARTUP_RECOVERY_THRESHOLD: Duration = Duration::ZERO;
 
     match replay
