@@ -214,10 +214,23 @@ impl Supervisor {
             "sinexd running"
         );
 
+        // Hosted runners report readiness only after their snapshot/gap-fill
+        // or automaton catch-up completes. Turn those runner-level signals into
+        // the top-level systemd barrier instead of announcing READY merely
+        // because the tasks were spawned.
+        let hosted_readiness = systemd_notify::configure_hosted_readiness(
+            automaton_handles.len() + source_binding_handles.len(),
+        );
+        let hosted_warm = hosted_readiness.wait(shutdown_rx.clone()).await;
+
         // Use the unhosted variant — `enter_hosted_mode` set the latch so
         // in-process bindings stop calling sd_notify, but the supervisor
         // itself still needs to talk to systemd.
-        systemd_notify::notify_ready_unhosted("sinexd");
+        if hosted_warm {
+            systemd_notify::notify_ready_unhosted("sinexd");
+        } else {
+            info!("sinexd shutdown began before hosted workers warmed; READY not sent");
+        }
         let watchdog = systemd_notify::spawn_watchdog_unhosted("sinexd");
 
         // Monitor the event engine for unexpected exits. If the engine

@@ -1,9 +1,64 @@
 use std::sync::mpsc;
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::{Arc, OnceLock};
 use std::thread::JoinHandle as ThreadJoinHandle;
 use std::time::Duration;
 
 use sd_notify::NotifyState;
+use tokio::sync::{Notify, watch};
 use tracing::{debug, warn};
+
+struct HostedReadinessState {
+    expected: usize,
+    observed: AtomicUsize,
+    notify: Notify,
+}
+
+static HOSTED_READINESS: OnceLock<Arc<HostedReadinessState>> = OnceLock::new();
+
+/// Supervisor-owned view of the startup barrier for in-process workers.
+pub struct HostedReadiness {
+    state: Arc<HostedReadinessState>,
+}
+
+impl HostedReadiness {
+    /// Wait until every worker expected by the supervisor has reached its
+    /// runner-level startup barrier, or until shutdown begins. Shutdown is a
+    /// normal false result: the supervisor must not announce READY while it
+    /// is tearing down.
+    pub async fn wait(&self, mut shutdown_rx: watch::Receiver<bool>) -> bool {
+        loop {
+            if self.state.observed.load(Ordering::Acquire) >= self.state.expected {
+                return true;
+            }
+            if *shutdown_rx.borrow() {
+                return false;
+            }
+            tokio::select! {
+                _ = self.state.notify.notified() => {}
+                changed = shutdown_rx.changed() => {
+                    if changed.is_err() || *shutdown_rx.borrow() {
+                        return false;
+                    }
+                }
+            }
+        }
+    }
+}
+
+/// Configure the count of hosted workers that must complete their runner
+/// startup sequence before the top-level supervisor may announce READY.
+/// Called exactly once during supervisor startup, before spawned workers can
+/// be polled.
+pub fn configure_hosted_readiness(expected: usize) -> HostedReadiness {
+    let state = Arc::new(HostedReadinessState {
+        expected,
+        observed: AtomicUsize::new(0),
+        notify: Notify::new(),
+    });
+    let state = HOSTED_READINESS.get_or_init(|| state).clone();
+    HostedReadiness { state }
+}
 
 fn watchdog_interval() -> Option<Duration> {
     let mut usec = 0_u64;
@@ -31,6 +86,23 @@ fn is_hosted() -> bool {
 
 pub fn notify_ready(component: &str) {
     if is_hosted() {
+        if let Some(state) = HOSTED_READINESS.get() {
+            let mut observed = state.observed.load(Ordering::Acquire);
+            while observed < state.expected {
+                match state.observed.compare_exchange(
+                    observed,
+                    observed + 1,
+                    Ordering::AcqRel,
+                    Ordering::Acquire,
+                ) {
+                    Ok(_) => {
+                        state.notify.notify_waiters();
+                        break;
+                    }
+                    Err(actual) => observed = actual,
+                }
+            }
+        }
         return;
     }
     notify_ready_unhosted(component);

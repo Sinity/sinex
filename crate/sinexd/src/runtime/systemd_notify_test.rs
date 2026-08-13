@@ -1,9 +1,14 @@
 // Small inline tests are justified here because they exercise private
 // watchdog interval logic and process-global environment handling directly.
-use super::{notify_ready, notify_stopping, spawn_watchdog, stop_watchdog};
+use super::{
+    HostedReadiness, HostedReadinessState, notify_ready, notify_stopping, spawn_watchdog,
+    stop_watchdog,
+};
 use crate::runtime::SinexError;
 use std::process;
 use std::sync::LazyLock;
+use std::sync::Arc;
+use std::sync::atomic::AtomicUsize;
 use tempfile::tempdir;
 use tokio::net::UnixDatagram;
 use tokio::time::{Duration, timeout};
@@ -11,6 +16,54 @@ use xtask::sandbox::sinex_test;
 
 static ENV_LOCK: LazyLock<tokio::sync::Mutex<()>> =
     LazyLock::new(|| tokio::sync::Mutex::new(()));
+
+#[sinex_test]
+async fn hosted_readiness_handles_zero_workers_and_shutdown() -> xtask::sandbox::TestResult<()> {
+    let zero = HostedReadiness {
+        state: Arc::new(HostedReadinessState {
+            expected: 0,
+            observed: AtomicUsize::new(0),
+            notify: tokio::sync::Notify::new(),
+        }),
+    };
+    let (_shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);
+    assert!(zero.wait(shutdown_rx).await);
+
+    let cancelled = HostedReadiness {
+        state: Arc::new(HostedReadinessState {
+            expected: 1,
+            observed: AtomicUsize::new(0),
+            notify: tokio::sync::Notify::new(),
+        }),
+    };
+    let (shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);
+    shutdown_tx.send(true)?;
+    assert!(!cancelled.wait(shutdown_rx).await);
+    Ok(())
+}
+
+#[sinex_test]
+async fn hosted_readiness_reaches_warm_after_each_worker_signal()
+-> xtask::sandbox::TestResult<()> {
+    let readiness = HostedReadiness {
+        state: Arc::new(HostedReadinessState {
+            expected: 2,
+            observed: AtomicUsize::new(0),
+            notify: tokio::sync::Notify::new(),
+        }),
+    };
+    let state = Arc::clone(&readiness.state);
+    let (_shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);
+    let waiter = tokio::spawn(async move { readiness.wait(shutdown_rx).await });
+    state.observed.store(1, std::sync::atomic::Ordering::Release);
+    state.notify.notify_waiters();
+    tokio::task::yield_now().await;
+    assert!(!waiter.is_finished());
+    state.observed.store(2, std::sync::atomic::Ordering::Release);
+    state.notify.notify_waiters();
+    assert!(tokio::time::timeout(Duration::from_secs(1), waiter).await??);
+    Ok(())
+}
 
 fn restore_var(key: &str, value: Option<std::ffi::OsString>) {
     match value {
