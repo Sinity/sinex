@@ -871,6 +871,133 @@ async fn tombstone_approve_deletes_blob_row_once_last_reference_is_gone(
     Ok(())
 }
 
+/// A database failure while removing the final `core.blobs` authority must
+/// leave the CAS bytes intact. The old route called `drop_content` before the
+/// DELETE, so this trigger reproduced a surviving blob row whose bytes were
+/// already gone. The real tombstone route now reaches the CAS cleanup only
+/// after the transaction has durably deleted that row.
+#[sinex_test]
+async fn tombstone_approve_retains_cas_when_blob_authority_delete_fails(
+    ctx: TestContext,
+) -> TestResult<()> {
+    let auth = RpcAuthContext::system();
+    let services = ServiceContainer::from_database_url(ctx.database_url().to_string()).await?;
+    let source = "test.lifecycle.tombstone.blob-authority-failure";
+
+    let content_store = services.content.content_store();
+    let payload = b"blob authority must outlive failed deletion";
+    let blob = content_store
+        .ingest_from_bytes(payload, "authority-failure.bin", "application/octet-stream")
+        .await?;
+    let content_key = blob.content_key();
+
+    let material = ctx
+        .pool()
+        .source_materials()
+        .register_material(
+            SourceMaterialRegistration::blob_binary("authority-failure.bin")
+                .with_blob_id(blob.id),
+        )
+        .await?;
+    let material_id = sinex_primitives::Id::from_uuid(material.id);
+    let event = ctx
+        .pool()
+        .events()
+        .insert(
+            DynamicPayload::new(source, "test.lifecycle.blob-authority-failure", json!({}))
+                .from_material(material_id)
+                .build()?,
+        )
+        .await?;
+    let event_id = event.id.expect("inserted event must have an id").to_string();
+
+    let archive: LifecycleArchiveResponse = serde_json::from_value(
+        handle_lifecycle_archive(
+            ctx.pool(),
+            json!({
+                "event_ids": [event_id],
+                "dry_run": false,
+                "reason": "prepare blob authority delete failure",
+            }),
+            &auth,
+        )
+        .await?,
+    )?;
+    assert_eq!(archive.archived_count, 1);
+    let created: TombstoneCreateResponse = serde_json::from_value(
+        handle_tombstone_create(
+            ctx.pool(),
+            json!({
+                "source": source,
+                "limit": 1,
+                "reason": "exercise blob authority delete failure",
+            }),
+            &auth,
+        )
+        .await?,
+    )?;
+
+    sqlx::query(
+        r#"
+        CREATE OR REPLACE FUNCTION public.test_fail_tombstone_blob_authority_delete()
+        RETURNS trigger
+        LANGUAGE plpgsql
+        AS $$
+        BEGIN
+            RAISE EXCEPTION 'injected tombstone blob authority delete failure';
+        END;
+        $$;
+        "#,
+    )
+    .execute(ctx.pool())
+    .await?;
+    sqlx::query(
+        r#"
+        CREATE TRIGGER test_fail_tombstone_blob_authority_delete
+        BEFORE DELETE ON core.blobs
+        FOR EACH ROW
+        EXECUTE FUNCTION public.test_fail_tombstone_blob_authority_delete();
+        "#,
+    )
+    .execute(ctx.pool())
+    .await?;
+
+    let approve: TombstoneApproveResponse = serde_json::from_value(
+        handle_tombstone_approve(
+            json!({
+                "operation_id": created.operation.operation_id,
+                "yes_i_understand_data_is_gone": true,
+            }),
+            &services,
+            &auth,
+        )
+        .await?,
+    )?;
+    assert_eq!(approve.operation.tombstoned_count, Some(1));
+
+    let blob_after = ctx.pool().blobs().get_by_id(blob.id).await?;
+    assert!(
+        blob_after.is_some(),
+        "anti-vacuity: injected authority-delete failure must preserve the committed blob row"
+    );
+    assert_eq!(
+        content_store.retrieve_content(&content_key).await?,
+        payload,
+        "anti-vacuity: DB deletion failure must not strand a committed blob authority without CAS bytes"
+    );
+
+    sqlx::query(
+        "DROP TRIGGER test_fail_tombstone_blob_authority_delete ON core.blobs",
+    )
+    .execute(ctx.pool())
+    .await?;
+    sqlx::query("DROP FUNCTION public.test_fail_tombstone_blob_authority_delete()")
+        .execute(ctx.pool())
+        .await?;
+
+    Ok(())
+}
+
 #[sinex_test]
 async fn tombstone_cancel_persists_terminal_metadata(ctx: TestContext) -> TestResult<()> {
     let auth = RpcAuthContext::system();

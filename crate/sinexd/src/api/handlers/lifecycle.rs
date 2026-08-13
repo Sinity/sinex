@@ -974,10 +974,10 @@ enum BlobTombstoneOutcome {
     /// A live reference (sibling material or event `associated_blob_ids`)
     /// survived the recheck taken under the row lock; content and row kept.
     StillReferenced,
-    /// CAS content was dropped; `row_deleted` reports whether the
-    /// `core.blobs` row delete itself affected a row (it may already have
-    /// been removed by a concurrent caller that lost the row-lock race).
-    Dropped { row_deleted: bool },
+    /// The `core.blobs` authority row was durably removed. The caller may now
+    /// clean up its CAS bytes, knowing a transaction failure cannot restore a
+    /// committed reference to content it already deleted.
+    AuthorityRemoved { content_key: String },
 }
 
 /// Handle lifecycle.tombstone.approve
@@ -1294,8 +1294,9 @@ pub async fn handle_tombstone_approve(
 
                 // Check-then-delete, atomically with respect to concurrent new
                 // references (sinex-audit-cas-refcheck-toctou): lock the
-                // `core.blobs` row (`FOR UPDATE`), recheck references, drop the
-                // CAS content, and delete the row all inside ONE transaction.
+                // `core.blobs` row (`FOR UPDATE`), recheck references, and
+                // remove the DB authority in ONE transaction. Only after that
+                // transaction commits may we irreversibly remove CAS bytes.
                 // The row lock blocks a concurrent dedup insert into
                 // `raw.source_material_registry` (its `optional_blob_id` FK
                 // takes an implicit `FOR KEY SHARE` lock on this row) until this
@@ -1316,7 +1317,7 @@ pub async fn handle_tombstone_approve(
                             .lock_by_id_for_update(&mut **tx, blob_id)
                             .await?
                         else {
-                            return Ok(BlobTombstoneOutcome::AlreadyGone);
+                            return Ok(Some(BlobTombstoneOutcome::AlreadyGone));
                         };
 
                         if pool
@@ -1331,41 +1332,48 @@ pub async fn handle_tombstone_approve(
                             // Still referenced elsewhere (sibling material or a
                             // derived event's associated_blob_ids) -- keep the
                             // content and the row alive.
-                            return Ok(BlobTombstoneOutcome::StillReferenced);
+                            return Ok(Some(BlobTombstoneOutcome::StillReferenced));
                         }
 
-                        content_store
-                            .drop_content(&blob_row.content_key(), true)
-                            .await?;
-
                         // Zero remaining references: the core.blobs row is now
-                        // dead too. Delete it in the same transaction so it
+                        // dead too. Remove it in the same transaction so it
                         // cannot survive as a zombie row that later fools dedup
                         // on re-ingestion (sinex-audit-cas-zombie-blob-rows).
+                        // Do not call drop_content here: a failed DELETE or
+                        // COMMIT would roll the row back while the previous
+                        // ordering had already destroyed its CAS authority.
                         let row_deleted = pool
                             .blobs()
                             .delete_by_id_with_executor(&mut **tx, blob_id)
                             .await?;
 
-                        Ok(BlobTombstoneOutcome::Dropped { row_deleted })
+                        Ok(row_deleted.then(|| BlobTombstoneOutcome::AuthorityRemoved {
+                            content_key: blob_row.content_key(),
+                        }))
                     })
                     .await;
 
                 match outcome {
-                    Ok(BlobTombstoneOutcome::AlreadyGone) => {}
-                    Ok(BlobTombstoneOutcome::StillReferenced) => blobs_shared += 1,
-                    Ok(BlobTombstoneOutcome::Dropped { row_deleted }) => {
-                        blobs_dropped += 1;
-                        if row_deleted {
-                            blob_rows_deleted += 1;
+                    Ok(Some(BlobTombstoneOutcome::AlreadyGone)) => {}
+                    Ok(Some(BlobTombstoneOutcome::StillReferenced)) => blobs_shared += 1,
+                    Ok(Some(BlobTombstoneOutcome::AuthorityRemoved { content_key })) => {
+                        blob_rows_deleted += 1;
+                        match content_store.drop_content(&content_key, true).await {
+                            Ok(()) => blobs_dropped += 1,
+                            Err(error) => warn!(
+                                material_id = %material_id,
+                                blob_id = %blob_uuid,
+                                error = %error,
+                                "CAS cleanup failed after blob authority committed; fsck can recover the unreferenced content"
+                            ),
                         }
                     }
+                    Ok(None) => {}
                     Err(e) => warn!(
                         material_id = %material_id,
                         blob_id = %blob_uuid,
                         error = %e,
-                        "Failed delete-on-tombstone transaction for blob; \
-                         GC sweeper will recover the orphan blob/row"
+                        "Failed to durably transition delete-on-tombstone blob authority; retaining CAS content"
                     ),
                 }
             }
