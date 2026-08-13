@@ -32,6 +32,7 @@ pub mod otel_projection;
 pub mod output_kind;
 pub mod pacing;
 pub mod parser;
+pub mod polylogue_protocol;
 pub mod primitives;
 pub mod privacy;
 pub mod public_ref;
