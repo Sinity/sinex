@@ -508,6 +508,7 @@ async fn canonicalize_path_within_root(
 pub struct MaterialContentStore {
     pub config: ContentStoreConfig,
     fault_injector: FaultInjector,
+    sync_parent_directory: fn(&Path) -> std::io::Result<()>,
 }
 
 /// A restart-safe cursor for the local CAS prefix tree.
@@ -775,6 +776,7 @@ impl MaterialContentStore {
         Self {
             config,
             fault_injector,
+            sync_parent_directory,
         }
     }
 
@@ -1364,10 +1366,7 @@ impl MaterialContentStore {
                 // directory fsync makes the atomic name publication durable.
                 // Without the latter, a power loss can lose the directory
                 // entry after callers have acknowledged the material.
-                std::fs::File::open(parent.as_std_path())
-                    .map_err(SinexError::io)?
-                    .sync_all()
-                    .map_err(SinexError::io)?;
+                (self.sync_parent_directory)(parent.as_std_path()).map_err(SinexError::io)?;
                 self.fault_injector.inject(FaultPoint::CasPublish)?;
             }
         }
@@ -2031,6 +2030,10 @@ impl MaterialContentStore {
 
         Ok(())
     }
+}
+
+fn sync_parent_directory(path: &Path) -> std::io::Result<()> {
+    std::fs::File::open(path)?.sync_all()
 }
 
 fn parse_unused_output(stdout: &[u8]) -> Result<Vec<UnusedContentEntry>, String> {

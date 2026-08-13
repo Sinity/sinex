@@ -459,6 +459,52 @@ async fn cas_publish_fault_preserves_published_object_until_commit_cleanup()
 }
 
 #[sinex_test]
+async fn post_rename_directory_sync_failure_is_not_acknowledged_and_reingests()
+-> ::xtask::sandbox::TestResult<()> {
+    fn fail_directory_sync(_: &std::path::Path) -> std::io::Result<()> {
+        Err(std::io::Error::other("injected directory sync failure"))
+    }
+
+    let repo_dir = tempfile::tempdir()?;
+    let root_path = Utf8PathBuf::from_path_buf(repo_dir.path().to_path_buf())
+        .expect("temp path should be valid UTF-8");
+    let source_path = root_path.join("publish-boundary.jsonl");
+    let payload = br#"{"event":"publish-boundary"}"#;
+    tokio::fs::write(&source_path, payload).await?;
+
+    let mut faulted_store = MaterialContentStore::new(ContentStoreConfig {
+        root_path: root_path.clone(),
+        ..Default::default()
+    })?;
+    faulted_store.sync_parent_directory = fail_directory_sync;
+
+    let error = faulted_store
+        .store_file(&source_path)
+        .await
+        .expect_err("post-rename directory sync failure must not acknowledge ingestion");
+    assert!(error.to_string().contains("injected directory sync failure"));
+
+    let digest = blake3::hash(payload).to_hex().to_string();
+    let key = format!("{LOCAL_BLAKE3_CAS_BACKEND}-s{}--{digest}", payload.len());
+    let published_path = faulted_store
+        .path_if_local(&key)?
+        .expect("fixture must use local CAS");
+    assert!(
+        published_path.exists(),
+        "failure must occur after rename while caller observes no success"
+    );
+
+    let restarted_store = MaterialContentStore::new(ContentStoreConfig {
+        root_path,
+        ..Default::default()
+    })?;
+    let recovered = restarted_store.store_file(&source_path).await?;
+    assert_eq!(recovered.key, key);
+    restarted_store.ensure_content_local(&key).await?;
+    Ok(())
+}
+
+#[sinex_test]
 async fn cas_quarantine_and_delete_faults_are_resumable() -> ::xtask::sandbox::TestResult<()> {
     let repo_dir = tempfile::tempdir()?;
     let repo_path = Utf8PathBuf::from_path_buf(repo_dir.path().to_path_buf())
