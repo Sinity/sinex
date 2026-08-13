@@ -447,28 +447,92 @@ where
         // flush moment (input-time in Catchup, wall-time in Live).
         let context = AutomatonContext::timer_flush(watermark)?;
 
-        let outputs = self
+        // `timer_flush_derived` is allowed to clear/reset the window while it
+        // constructs its output. Keep a serialization snapshot so a failed or
+        // merely emitted-but-unsettled output cannot make that state disappear
+        // across the next checkpoint/restart. This mirrors the durable barrier
+        // in `commit_prepared_inputs`; timer-driven output has no input event
+        // whose checkpoint can otherwise hold the state behind it.
+        let state_snapshot = serde_json::to_value(&self.persisted_state.state).map_err(|error| {
+            SinexError::serialization("failed to snapshot window state before timer flush")
+                .with_context("automaton", self.automaton.name())
+                .with_source(error)
+        })?;
+        let automaton_name = self.automaton.name();
+        let restore_state = |state: &mut N::State| -> RuntimeResult<()> {
+            *state = serde_json::from_value(state_snapshot.clone()).map_err(|error| {
+                SinexError::serialization("failed to restore window state after timer flush")
+                    .with_context("automaton", automaton_name)
+                    .with_source(error)
+            })?;
+            Ok(())
+        };
+
+        let outputs = match self
             .automaton
             .timer_flush_derived(&mut self.persisted_state.state, watermark, &context)
             .await
-            .map_err(|e| {
-                SinexError::processing("windowed timer flush failed")
-                    .with_context("automaton", self.automaton.name())
-                    .with_source(e)
-            })?;
+        {
+            Ok(outputs) => outputs,
+            Err(error) => {
+                restore_state(&mut self.persisted_state.state)?;
+                return Err(SinexError::processing("windowed timer flush failed")
+                    .with_context("automaton", automaton_name)
+                    .with_source(error));
+            }
+        };
 
         if outputs.is_empty() {
             return Ok(0);
         }
 
-        self.validate_output_batch(&outputs, "timer flush")?;
+        if let Err(error) = self.validate_output_batch(&outputs, "timer flush") {
+            restore_state(&mut self.persisted_state.state)?;
+            return Err(error);
+        }
         self.observe_output_batch(&outputs, "timer_flush").await;
-        let output_events = self.build_output_events(outputs, None, &context)?;
+        let output_events = match self.build_output_events(outputs, None, &context) {
+            Ok(events) => events,
+            Err(error) => {
+                restore_state(&mut self.persisted_state.state)?;
+                return Err(error);
+            }
+        };
         let count = output_events.len() as u64;
 
         if count > 0 {
-            self.emit_output_events(output_events, "timer flush")
-                .await?;
+            let Some(emitter) = self.event_emitter.as_ref() else {
+                restore_state(&mut self.persisted_state.state)?;
+                return Err(SinexError::lifecycle(
+                    "automaton output channel is not initialized for timer flush",
+                )
+                .with_context("automaton", automaton_name));
+            };
+            let registry = self
+                .runtime
+                .as_ref()
+                .map(RuntimeContext::settlement_registry)
+                .unwrap_or_default();
+            let request = DurableEmissionRequest {
+                origin: EmissionOrigin::WindowedTimer,
+                required_level: ReceiptLevel::AdmissionSettled,
+                progress_atom: ProgressAtom::WindowFlush {
+                    automaton: self.automaton.name().to_string(),
+                    flush_id: context.trigger_uuid(),
+                },
+                events: output_events,
+                allow_spool_backend: false,
+            };
+            let receipt =
+                emit_batch_durable(&registry, emitter, request, self.durable_emission_timeout).await;
+            if !receipt.unlocks_progress() {
+                restore_state(&mut self.persisted_state.state)?;
+                return Err(SinexError::processing(
+                    "timer-flush output was emitted but did not reach a durable settlement",
+                )
+                .with_context("automaton", automaton_name)
+                .with_context("flush_id", context.trigger_event_id.to_string()));
+            }
         }
 
         Ok(count)

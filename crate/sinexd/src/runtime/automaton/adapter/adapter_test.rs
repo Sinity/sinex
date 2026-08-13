@@ -1373,7 +1373,11 @@ impl Windowed for EmittingWindowedAutomaton {
         state.has_pending_window = false;
         let declaration = &FLUSH_BARRIER_OUTPUT_DECLARATIONS[0];
         Ok(Some(
-            DerivedOutput::windowed(json!({"ok": true}), Timestamp::now(), Vec::new())
+            DerivedOutput::windowed(
+                json!({"ok": true}),
+                Timestamp::now(),
+                vec![Uuid::now_v7()],
+            )
                 .with_declaration_id(declaration.declaration_id)
                 .with_product_class(declaration.product_class)
                 .with_claim_support(declaration.default_support.instantiate(1, 0, 1, 0)),
@@ -1389,10 +1393,6 @@ impl Windowed for EmittingWindowedAutomaton {
 /// resolves the emitted event, so a shutdown/checkpoint-save landing here
 /// would durably lose the window with no receipt ever having unlocked it.
 #[sinex_test]
-#[ignore = "sinex-vxu open: timer_flush has no state-commit barrier -- it mutates \
-            persisted_state.state unconditionally before its emitted output's \
-            durable-emission receipt is known to have settled, unlike process_batch's \
-            commit_prepared_inputs gating"]
 async fn timer_flush_does_not_clear_window_state_before_emission_settles(
     ctx: TestContext,
 ) -> TestResult<()> {
@@ -1411,15 +1411,14 @@ async fn timer_flush_does_not_clear_window_state_before_emission_settles(
     adapter.runtime = Some(runtime);
     adapter.persisted_state.state.has_pending_window = true;
 
-    let emitted = adapter.timer_flush(Timestamp::now()).await?;
+    let error = adapter
+        .timer_flush(Timestamp::now())
+        .await
+        .expect_err("unsettled timer output must not be reported as successful");
 
-    // Unlike process_batch (which only counts durably-confirmed events),
-    // timer_flush's emitted count is just `output_events.len()` -- it
-    // reports success the instant the mpsc handoff succeeds, never having
-    // consulted the settlement registry wired above at all.
-    assert_eq!(
-        emitted, 1,
-        "timer_flush reports the mpsc handoff as emitted with no durable-settlement check"
+    assert!(
+        error.to_string().contains("durable settlement"),
+        "timer flush must surface the unsettled receipt: {error}"
     );
     assert!(
         adapter.persisted_state.state.has_pending_window,
