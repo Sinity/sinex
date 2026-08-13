@@ -31,11 +31,11 @@
 //!    against `pg_constraint`. Missing constraints are added with `NOT VALID` and
 //!    then validated in a second pass (avoids full table scan on large tables).
 //!
-//! 6. **Mirror table** — `audit.archived_events` mirrors `core.events` via
-//!    `LIKE … INCLUDING ALL` at creation time. Since LIKE is a one-shot, new
-//!    columns added to `core.events` must be explicitly mirrored. The engine
-//!    handles this automatically, skipping generated columns that cannot be
-//!    replicated as-is.
+//! 6. **Mirror tables** — `reflection.events` and `audit.archived_events`
+//!    mirror `core.events` via `LIKE … INCLUDING ALL` at creation time. Since
+//!    LIKE is a one-shot, new columns and named checks added to `core.events`
+//!    must be explicitly mirrored. The engine handles this automatically,
+//!    skipping generated columns that cannot be replicated as-is.
 //!
 //! 7. **Obsolete index cleanup** — drops renamed/replaced indexes in a single
 //!    round trip so the replacement `IF NOT EXISTS` creations succeed cleanly.
@@ -102,14 +102,27 @@ pub struct NamedForeignKey {
     pub statement_fn: fn() -> ForeignKeyCreateStatement,
 }
 
-/// Specification for a mirror table that tracks a primary table's column set.
+/// Specification for the mirror tables that track a primary table's column set.
 ///
-/// `audit.archived_events` is created with `LIKE core.events INCLUDING ALL`
-/// which copies columns only once at creation time. This spec causes the
-/// convergence engine to propagate any new columns to the mirror automatically.
+/// `reflection.events` and `audit.archived_events` are created with `LIKE
+/// core.events INCLUDING ALL`, which copies columns only once at creation
+/// time. This spec causes the convergence engine to propagate any new columns
+/// and named CHECKs to each mirror automatically.
 pub struct MirrorSpec {
+    pub targets: &'static [MirrorTarget],
+}
+
+/// One table that mirrors a convergible primary table.
+pub struct MirrorTarget {
     pub schema: &'static str,
     pub table: &'static str,
+    /// Named CHECK constraints whose source expression is shared with the
+    /// primary table but whose constraint names are specific to this mirror.
+    ///
+    /// `CREATE TABLE ... LIKE ... INCLUDING ALL` copies checks only when the
+    /// mirror is first created. Keeping these declarations here makes a later
+    /// drop repairable by ordinary convergence.
+    pub named_constraints: &'static [NamedConstraint],
     /// Legacy columns to drop from the mirror (may differ from primary).
     pub columns_to_drop: &'static [&'static str],
     /// When true, skip columns that use `.extra("GENERATED ALWAYS AS …")`.
@@ -146,7 +159,7 @@ pub struct ConvergibleTable {
     /// `strict_diff::check_orphan_columns`. Remove entries here once the
     /// corresponding `columns_to_drop` step has run on all target databases.
     pub pending_drop: &'static [&'static str],
-    /// Optional mirror table (e.g., `audit.archived_events` for core.events).
+    /// Optional mirror tables for this primary table.
     pub mirror: Option<MirrorSpec>,
 }
 
@@ -598,9 +611,9 @@ async fn converge_named_constraints(
 /// parsed expression tree, so two constraints with the same predicate produce
 /// byte-identical definitions (modulo a trailing ` NOT VALID`). For every group
 /// of constraints sharing a normalized body, if the group contains a declared
-/// name we drop the non-declared members. Groups with no declared member (the
-/// anonymous XOR-provenance and offset-kind invariants, column-level checks
-/// with no named twin) are left untouched.
+/// name we drop the non-declared members. Groups with no declared member
+/// (for example, the offset-kind invariant and column-level checks with no
+/// named twin) are left untouched.
 async fn drop_duplicate_check_constraints(
     pool: &PgPool,
     schema: &str,
@@ -758,12 +771,16 @@ pub fn convergible_tables() -> Result<Vec<ConvergibleTable>, ApplyError> {
         ConvergibleTable {
             meta: find_meta("core.events")?,
             statement_fn: Events::create_table_statement,
-            // Named provenance constraints — identified and idempotently recreated
-            // by name. Anonymous CREATE TABLE CHECKs (the XOR provenance invariant)
-            // are excluded here; they're set-and-forget at table creation.
+            // Named provenance constraints are identified and idempotently
+            // recreated by name. The inline CREATE TABLE CHECKs are their
+            // bootstrap declarations; convergence owns the durable names.
             column_renames: &[],
             pending_drop: &[],
             named_constraints: vec![
+                NamedConstraint {
+                    name: "events_provenance_xor",
+                    expression: "(source_material_id IS NOT NULL AND source_event_ids IS NULL) OR (source_material_id IS NULL AND source_event_ids IS NOT NULL)",
+                },
                 NamedConstraint {
                     name: "events_anchor_byte_non_negative",
                     expression: "anchor_byte IS NULL OR anchor_byte >= 0",
@@ -867,19 +884,41 @@ pub fn convergible_tables() -> Result<Vec<ConvergibleTable>, ApplyError> {
             // occurrence_id was removed when occurrence rows were folded back
             // into material provenance identity: (source_material_id, anchor_byte).
             columns_to_drop: &["node_version", "occurrence_id"],
-            // audit.archived_events was created with LIKE core.events INCLUDING ALL.
-            // LIKE only runs at CREATE TABLE time, so new columns added to core.events
-            // must be explicitly propagated to the mirror.
+            // Both event-lane mirrors were created with LIKE core.events
+            // INCLUDING ALL. LIKE only runs at CREATE TABLE time, so later
+            // columns and named constraints must be explicitly converged.
             mirror: Some(MirrorSpec {
-                schema: "audit",
-                table: "archived_events",
-                columns_to_drop: &["node_version", "occurrence_id", "superseded_by_event_id"],
-                // ts_coided is GENERATED ALWAYS AS in core.events, but must be a plain
-                // TIMESTAMPTZ in audit.archived_events (the expression is dropped by
-                // create_table_sql()). Skip it here — it already exists from LIKE
-                // INCLUDING ALL so ADD COLUMN IF NOT EXISTS would be a no-op anyway.
-                // Skipping avoids any edge-case where the expression is re-added.
-                skip_extra_generated: true,
+                targets: &[
+                    MirrorTarget {
+                        schema: "reflection",
+                        table: "events",
+                        named_constraints: &[NamedConstraint {
+                            name: "reflection_events_provenance_xor",
+                            expression: "(source_material_id IS NOT NULL AND source_event_ids IS NULL) OR (source_material_id IS NULL AND source_event_ids IS NOT NULL)",
+                        }],
+                        columns_to_drop: &[],
+                        skip_extra_generated: false,
+                    },
+                    MirrorTarget {
+                        schema: "audit",
+                        table: "archived_events",
+                        named_constraints: &[NamedConstraint {
+                            name: "archived_events_provenance_xor",
+                            expression: "(source_material_id IS NOT NULL AND source_event_ids IS NULL) OR (source_material_id IS NULL AND source_event_ids IS NOT NULL)",
+                        }],
+                        columns_to_drop: &[
+                            "node_version",
+                            "occurrence_id",
+                            "superseded_by_event_id",
+                        ],
+                        // ts_coided is GENERATED ALWAYS AS in core.events, but must be a plain
+                        // TIMESTAMPTZ in audit.archived_events (the expression is dropped by
+                        // create_table_sql()). Skip it here — it already exists from LIKE
+                        // INCLUDING ALL so ADD COLUMN IF NOT EXISTS would be a no-op anyway.
+                        // Skipping avoids any edge-case where the expression is re-added.
+                        skip_extra_generated: true,
+                    },
+                ],
             }),
         },
         ConvergibleTable {
@@ -1279,9 +1318,11 @@ pub fn destructive_schema_contract() -> Result<String, ApplyError> {
         for column in table.columns_to_drop {
             changes.push(format!("{}:{}", table.meta.qualified_name, column));
         }
-        if let Some(mirror) = table.mirror {
-            for column in mirror.columns_to_drop {
-                changes.push(format!("{}.{}:{}", mirror.schema, mirror.table, column));
+        if let Some(mirrors) = table.mirror {
+            for mirror in mirrors.targets {
+                for column in mirror.columns_to_drop {
+                    changes.push(format!("{}.{}:{}", mirror.schema, mirror.table, column));
+                }
             }
         }
     }
@@ -1316,9 +1357,20 @@ pub async fn converge_tables(pool: &PgPool, tables: &[ConvergibleTable]) -> Resu
             // extract_column_nullability (PostgreSQL disallows ALTER COLUMN
             // SET NOT NULL on generated columns).
             let nullability = extract_column_nullability(&stmt);
-            let mirror = ct.mirror.as_ref().map(|m| {
-                let cols = extract_column_sqls(&stmt, m.schema, m.table, m.skip_extra_generated);
-                (m, cols)
+            let mirror = ct.mirror.as_ref().map(|mirrors| {
+                mirrors
+                    .targets
+                    .iter()
+                    .map(|mirror| {
+                        let cols = extract_column_sqls(
+                            &stmt,
+                            mirror.schema,
+                            mirror.table,
+                            mirror.skip_extra_generated,
+                        );
+                        (mirror, cols)
+                    })
+                    .collect::<Vec<_>>()
             });
             (primary, nullability, mirror)
         };
@@ -1361,14 +1413,33 @@ pub async fn converge_tables(pool: &PgPool, tables: &[ConvergibleTable]) -> Resu
                 .await?;
         }
 
-        if let Some((mirror, mirror_col_sqls)) = mirror_cols {
-            let mirror_exists =
-                crate::apply::relation_exists(pool, &format!("{}.{}", mirror.schema, mirror.table))
+        if let Some(mirror_cols) = mirror_cols {
+            for (mirror, mirror_col_sqls) in mirror_cols {
+                let mirror_exists = crate::apply::relation_exists(
+                    pool,
+                    &format!("{}.{}", mirror.schema, mirror.table),
+                )
+                .await?;
+                if mirror_exists {
+                    add_missing_columns(pool, mirror.schema, mirror.table, &mirror_col_sqls)
+                        .await?;
+                    drop_legacy_columns(pool, mirror.schema, mirror.table, mirror.columns_to_drop)
+                        .await?;
+                    converge_named_constraints(
+                        pool,
+                        mirror.schema,
+                        mirror.table,
+                        mirror.named_constraints,
+                    )
                     .await?;
-            if mirror_exists {
-                add_missing_columns(pool, mirror.schema, mirror.table, &mirror_col_sqls).await?;
-                drop_legacy_columns(pool, mirror.schema, mirror.table, mirror.columns_to_drop)
+                    drop_duplicate_check_constraints(
+                        pool,
+                        mirror.schema,
+                        mirror.table,
+                        mirror.named_constraints,
+                    )
                     .await?;
+                }
             }
         }
     }

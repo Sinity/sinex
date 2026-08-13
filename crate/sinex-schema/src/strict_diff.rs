@@ -710,6 +710,13 @@ struct DeclaredInlineCheck {
     expected_markers: &'static [&'static str],
 }
 
+const PROVENANCE_XOR_MARKERS: &[&str] = &[
+    "source_material_id IS NOT NULL",
+    "source_event_ids IS NULL",
+    "source_material_id IS NULL",
+    "source_event_ids IS NOT NULL",
+];
+
 const DECLARED_INLINE_CHECKS: &[DeclaredInlineCheck] = &[
     DeclaredInlineCheck {
         schema: "core",
@@ -720,12 +727,19 @@ const DECLARED_INLINE_CHECKS: &[DeclaredInlineCheck] = &[
         // it disappears, the provenance contract is gone.
         // Markers span both OR-branches of the constraint so a partial
         // rewrite that removes the derived side is also detected.
-        expected_markers: &[
-            "source_material_id IS NOT NULL",
-            "source_event_ids IS NULL",
-            "source_material_id IS NULL",
-            "source_event_ids IS NOT NULL",
-        ],
+        expected_markers: PROVENANCE_XOR_MARKERS,
+    },
+    DeclaredInlineCheck {
+        schema: "reflection",
+        table: "events",
+        label: "xor_provenance",
+        expected_markers: PROVENANCE_XOR_MARKERS,
+    },
+    DeclaredInlineCheck {
+        schema: "audit",
+        table: "archived_events",
+        label: "xor_provenance",
+        expected_markers: PROVENANCE_XOR_MARKERS,
     },
     DeclaredInlineCheck {
         schema: "core",

@@ -985,12 +985,9 @@ async fn create_indexes(pool: &PgPool) -> Result<(), ApplyError> {
     index_sql.push(Events::create_claim_adjudication_index_sql());
     index_sql.push(Events::create_text_search_index_sql());
     // Derivation control plane (sinex-0vx.4 / W1): reflection.events needs the
-    // same two indexes as core.events. reflection.events is not in the
-    // ConvergibleTable/MirrorSpec engine (it converges via the hand-rolled
-    // REFLECTION_EVENTS_TABLE_SQL DO-block instead — see that constant), and
-    // CREATE TABLE ... LIKE only clones indexes existing on core.events at
-    // creation time, so these are declared explicitly rather than assumed
-    // inherited.
+    // same two indexes as core.events. Mirror convergence owns columns and
+    // named checks, but indexes remain explicit because CREATE TABLE ... LIKE
+    // only clones indexes present at creation time.
     index_sql.push(
         "CREATE INDEX IF NOT EXISTS ix_events_product_class ON reflection.events (product_class, source, event_type) WHERE product_class IS NOT NULL"
             .to_string(),
@@ -3052,11 +3049,10 @@ $$;
 const REFLECTION_EVENTS_TABLE_SQL: &str = r"
 CREATE TABLE IF NOT EXISTS reflection.events (LIKE core.events INCLUDING ALL);
 
--- CREATE TABLE ... LIKE only copies columns at creation time. Columns added
--- to core.events after reflection.events already existed on a given database
--- must be explicitly propagated here (sinex-0vx.4 / W1: product_class,
--- claim_support, derivation_declaration_id, derivation_epoch_id,
--- derivation_lane_id, adjudication_event_id).
+-- CREATE TABLE ... LIKE only copies columns at creation time. The convergence
+-- engine propagates core.events columns and the provenance XOR check to this
+-- mirror. These explicit ADD COLUMN clauses retain compatibility for the
+-- derivation control-plane table bootstrap path.
 ALTER TABLE reflection.events
     ADD COLUMN IF NOT EXISTS product_class TEXT,
     ADD COLUMN IF NOT EXISTS claim_support JSONB,
