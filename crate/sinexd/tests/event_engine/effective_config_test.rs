@@ -5,7 +5,7 @@ use xtask::sandbox::prelude::*;
 #[sinex_test]
 async fn defaults_match_constants() -> TestResult<()> {
     let config = EventEngineConfig::default();
-    assert_eq!(config.database_pool_size, 50);
+    assert_eq!(config.database_pool_size, 16);
     assert_eq!(config.max_buffered_slices, 4096);
     assert!(!config.dry_run);
     assert!(config.validate_schemas);
