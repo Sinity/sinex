@@ -109,15 +109,15 @@ async fn unparseable_started_at_yields_atemporal_timing_evidence() -> TestResult
     Ok(())
 }
 
-/// The occurrence key must still be built deterministically even when
-/// started_at is missing. The stable SQLite row anchor, not a wall clock,
-/// identifies the same physical row on every re-read.
+/// The occurrence key must still be built deterministically when started_at
+/// fails to parse. The stable SQLite row anchor, not a wall clock, identifies
+/// the same physical row on every re-read.
 #[sinex_test]
-async fn missing_started_at_reuses_the_stable_sqlite_row_occurrence_key() -> TestResult<()> {
+async fn unparseable_started_at_reuses_the_stable_sqlite_row_occurrence_key() -> TestResult<()> {
     let mut parser = ActivityWatchParser;
     let record = aw_row(
         "aw-watcher-web_firefox",
-        serde_json::Value::Null,
+        serde_json::json!({"not": "a timestamp"}),
         serde_json::json!({"url": "https://example.com", "title": "Example"}),
     );
     let ctx = parser_context();
