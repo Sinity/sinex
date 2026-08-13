@@ -84,7 +84,7 @@ async fn publish_requeueable_dlq_message(
     let original_payload = json!({"id": event_id, "value": "requeueable"});
     let raw_bytes = serde_json::to_vec(&original_payload)?;
     let envelope = json!({
-        "requeueable": true,
+        "payload_authority": "exact_raw_bytes",
         "raw_bytes_base64": base64::Engine::encode(
             &base64::engine::general_purpose::STANDARD,
             raw_bytes,
@@ -760,8 +760,14 @@ async fn dlq_requeue_by_id_requeues_event_engine_style_entry(ctx: TestContext) -
         "host": "test-host",
         "payload": { "value": "gateway requeue proof" }
     });
+    let raw_bytes = serde_json::to_vec(&original_event)?;
     let dlq_entry = json!({
         "nats_msg_id": event_id,
+        "payload_authority": "exact_raw_bytes",
+        "raw_bytes_base64": base64::Engine::encode(
+            &base64::engine::general_purpose::STANDARD,
+            raw_bytes,
+        ),
         "error": "db failure",
         "original_payload": original_event,
         "failed_at": Timestamp::now().format_rfc3339()

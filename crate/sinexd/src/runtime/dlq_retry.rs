@@ -11,6 +11,7 @@ use futures::StreamExt;
 use serde_json::Value as JsonValue;
 use sinex_primitives::{
     environment::SinexEnvironment, temporal, transport, units::Seconds,
+    rpc::dlq::DlqPayloadAuthority,
     utils::wait_helpers::RetryConfig,
 };
 use std::time::Duration;
@@ -321,19 +322,14 @@ impl DlqRetryHandler {
                 continue;
             }
 
-            if !dlq_entry_is_requeueable(&message.payload) {
+            if let Err(error) = ensure_dlq_entry_has_authoritative_raw_bytes(&message.payload) {
                 warn!(
                     event_id,
                     sequence,
-                    "DLQ event has no exact raw bytes; permanently settling without republishing"
+                    error = %error,
+                    "DLQ event has no authoritative raw bytes; retaining it without republishing"
                 );
-                ensure_durable_failure_evidence(Some(&message.headers))?;
-                self.permanently_fail_stream_message(&stream, &message)
-                    .await?;
-                return Err(SinexError::validation(
-                    "DLQ event is not requeueable because exact raw bytes are unavailable",
-                )
-                .with_context("event_id", event_id.to_string()));
+                return Err(error.with_context("event_id", event_id.to_string()));
             }
 
             let retry_count = dlq_stored_retry_count(&message.headers)?;
@@ -419,24 +415,13 @@ impl DlqRetryHandler {
                 }
             };
 
-            if !dlq_entry_is_requeueable(&message.payload) {
+            if let Err(error) = ensure_dlq_entry_has_authoritative_raw_bytes(&message.payload) {
                 warn!(
                     sequence,
-                    "DLQ sequence-range entry has no exact raw bytes; permanently settling without republishing"
+                    error = %error,
+                    "DLQ sequence-range entry has no authoritative raw bytes; retaining it without republishing"
                 );
-                ensure_durable_failure_evidence(Some(&message.headers))?;
-                self.permanently_fail_stream_message(&stream, &message)
-                    .await?;
-                result.permanently_failed = result.permanently_failed.saturating_add(1);
-                processed = processed.saturating_add(1);
-                self.report_progress(DlqRetryProgress {
-                    processed,
-                    retried: result.retried,
-                    permanently_failed: result.permanently_failed,
-                    transient_failures: result.transient_failures,
-                    last_sequence: Some(sequence),
-                });
-                continue;
+                return Err(error.with_context("sequence", sequence.to_string()));
             }
 
             let retry_count = dlq_stored_retry_count(&message.headers)?;
@@ -510,21 +495,13 @@ impl DlqRetryHandler {
             return Ok(DlqMessageDisposition::PermanentlyFailed);
         }
 
-        if !dlq_entry_is_requeueable(&msg.payload) {
+        if let Err(error) = ensure_dlq_entry_has_authoritative_raw_bytes(&msg.payload) {
             warn!(
                 subject = %msg.subject,
-                "DLQ message has no exact raw bytes; permanently settling without republishing"
+                error = %error,
+                "DLQ message has no authoritative raw bytes; retaining it without republishing"
             );
-            ensure_durable_failure_evidence(msg.headers.as_ref())?;
-            msg.ack().await.map_err(|error| {
-                Self::message_settlement_error(
-                    "failed to ack non-requeueable DLQ message",
-                    msg.subject.as_str(),
-                    error,
-                )
-            })?;
-            self.delete_consumer_message(stream, msg).await?;
-            return Ok(DlqMessageDisposition::PermanentlyFailed);
+            return Err(error);
         }
 
         match self.retry_message(js, msg, retry_count).await {
@@ -961,42 +938,7 @@ fn dlq_requeue_target(
         SinexError::processing("Failed to parse DLQ payload envelope").with_source(e)
     })?;
 
-    let original_value = envelope
-        .get("original_event")
-        .or_else(|| envelope.get("original_payload"))
-        .ok_or_else(|| {
-            SinexError::processing("DLQ payload is missing original event data".to_string())
-        })?;
-
-    if !envelope
-        .get("requeueable")
-        .and_then(JsonValue::as_bool)
-        .unwrap_or(false)
-    {
-        return Err(SinexError::validation(
-            "DLQ entry is not requeueable because it does not carry exact raw bytes",
-        )
-        .with_context(
-            "requeue_blocked_reason",
-            envelope
-                .get("requeue_blocked_reason")
-                .and_then(JsonValue::as_str)
-                .unwrap_or("replayability was not explicitly granted"),
-        ));
-    }
-
-    let raw_base64 = envelope
-        .get("raw_bytes_base64")
-        .and_then(JsonValue::as_str)
-        .ok_or_else(|| {
-            SinexError::validation(
-                "DLQ entry is marked requeueable but exact raw bytes are missing",
-            )
-        })?;
-    let original_payload =
-        base64::Engine::decode(&base64::engine::general_purpose::STANDARD, raw_base64).map_err(
-            |e| SinexError::validation("DLQ entry carries invalid base64 raw bytes").with_source(e),
-        )?;
+    let original_payload = authoritative_raw_bytes(&envelope)?;
 
     let event_id = headers
         .get("Event-Id")
@@ -1004,12 +946,6 @@ fn dlq_requeue_target(
         .or_else(|| {
             envelope
                 .get("event_id")
-                .and_then(|value| value.as_str())
-                .map(ToOwned::to_owned)
-        })
-        .or_else(|| {
-            original_value
-                .get("id")
                 .and_then(|value| value.as_str())
                 .map(ToOwned::to_owned)
         })
@@ -1035,23 +971,50 @@ fn dlq_requeue_target(
     })
 }
 
-fn dlq_entry_is_requeueable(payload: &[u8]) -> bool {
-    let Some(envelope) = serde_json::from_slice::<JsonValue>(payload).ok() else {
-        return false;
-    };
-    if !envelope
-        .get("requeueable")
-        .and_then(JsonValue::as_bool)
-        .unwrap_or(false)
-    {
-        return false;
+fn ensure_dlq_entry_has_authoritative_raw_bytes(payload: &[u8]) -> RuntimeResult<()> {
+    let envelope = serde_json::from_slice::<JsonValue>(payload).map_err(|error| {
+        SinexError::validation("DLQ entry is not valid JSON and has no replay authority")
+            .with_source(error)
+    })?;
+    authoritative_raw_bytes(&envelope).map(|_| ())
+}
+
+fn authoritative_raw_bytes(envelope: &JsonValue) -> RuntimeResult<Vec<u8>> {
+    let authority = envelope
+        .get("payload_authority")
+        .cloned()
+        .ok_or_else(|| {
+            SinexError::validation("DLQ entry is missing an explicit payload authority")
+        })
+        .and_then(|value| {
+            serde_json::from_value::<DlqPayloadAuthority>(value).map_err(|error| {
+                SinexError::validation("DLQ entry has an invalid payload authority")
+                    .with_source(error)
+            })
+        })?;
+    if authority != DlqPayloadAuthority::ExactRawBytes {
+        return Err(SinexError::validation(
+            "DLQ entry is not requeueable because its payload is only an operator preview",
+        )
+        .with_context(
+            "requeue_blocked_reason",
+            envelope
+                .get("requeue_blocked_reason")
+                .and_then(JsonValue::as_str)
+                .unwrap_or("replayability was not explicitly granted"),
+        ));
     }
-    envelope
+    let raw_base64 = envelope
         .get("raw_bytes_base64")
         .and_then(JsonValue::as_str)
-        .is_some_and(|raw_base64| {
-            base64::Engine::decode(&base64::engine::general_purpose::STANDARD, raw_base64).is_ok()
-        })
+        .ok_or_else(|| {
+            SinexError::validation(
+                "DLQ entry authorizes raw replay but exact raw bytes are missing",
+            )
+        })?;
+    base64::Engine::decode(&base64::engine::general_purpose::STANDARD, raw_base64).map_err(
+        |error| SinexError::validation("DLQ entry carries invalid base64 raw bytes").with_source(error),
+    )
 }
 
 #[cfg(test)]

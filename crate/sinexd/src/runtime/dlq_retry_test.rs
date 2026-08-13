@@ -106,7 +106,7 @@ async fn dlq_requeue_target_uses_subject_event_id_fallback() -> TestResult<()> {
     headers.insert("Original-Subject", "events.raw.shell.command");
 
     let payload = serde_json::json!({
-        "requeueable": true,
+        "payload_authority": "exact_raw_bytes",
         "raw_bytes_base64": base64::Engine::encode(
             &base64::engine::general_purpose::STANDARD,
             br#"{"command":"ls"}"#,
@@ -138,7 +138,7 @@ async fn dlq_requeue_target_preserves_envelope_event_id_without_reparse() -> Tes
     headers.insert("Original-Subject", "events.raw.shell.command");
 
     let payload = serde_json::json!({
-        "requeueable": true,
+        "payload_authority": "exact_raw_bytes",
         "raw_bytes_base64": base64::Engine::encode(
             &base64::engine::general_purpose::STANDARD,
             br#"{"command":"pwd"}"#,
@@ -166,7 +166,7 @@ async fn dlq_requeue_target_rejects_redacted_preview_as_raw_input() -> TestResul
     let mut headers = async_nats::HeaderMap::new();
     headers.insert("Original-Subject", "events.raw.shell.command");
     let payload = serde_json::json!({
-        "requeueable": false,
+        "payload_authority": "operator_preview",
         "requeue_blocked_reason": "raw bytes unavailable: DLQ privacy policy redacted the payload",
         "original_payload": {"command": "<REDACTED>"}
     });
@@ -177,7 +177,7 @@ async fn dlq_requeue_target_rejects_redacted_preview_as_raw_input() -> TestResul
         &serde_json::to_vec(&payload)?,
     )
     .expect_err("redacted preview must never be serialized as a raw retry");
-    assert!(error.to_string().contains("not requeueable"));
+    assert!(error.to_string().contains("operator preview"));
     assert!(error.to_string().contains("privacy policy"));
     Ok(())
 }
@@ -187,7 +187,7 @@ async fn dlq_requeue_target_rejects_metadata_stub_as_raw_input() -> TestResult<(
     let mut headers = async_nats::HeaderMap::new();
     headers.insert("Original-Subject", "events.raw.shell.command");
     let payload = serde_json::json!({
-        "requeueable": false,
+        "payload_authority": "operator_preview",
         "requeue_blocked_reason": "raw bytes unavailable: DLQ envelope exceeded NATS publish budget",
         "original_payload": {
             "_original_payload_omitted": true,
@@ -201,7 +201,7 @@ async fn dlq_requeue_target_rejects_metadata_stub_as_raw_input() -> TestResult<(
         &serde_json::to_vec(&payload)?,
     )
     .expect_err("metadata stub must never be serialized as a raw retry");
-    assert!(error.to_string().contains("not requeueable"));
+    assert!(error.to_string().contains("operator preview"));
     assert!(error.to_string().contains("publish budget"));
     Ok(())
 }
@@ -212,7 +212,7 @@ async fn dlq_requeue_target_decodes_exact_raw_bytes() -> TestResult<()> {
     headers.insert("Original-Subject", "events.raw.shell.command");
     let raw_bytes = b" {\"command\":\"ls\",\"spacing\":true} ";
     let payload = serde_json::json!({
-        "requeueable": true,
+        "payload_authority": "exact_raw_bytes",
         "raw_bytes_base64": base64::Engine::encode(
             &base64::engine::general_purpose::STANDARD,
             raw_bytes,
@@ -226,6 +226,31 @@ async fn dlq_requeue_target_decodes_exact_raw_bytes() -> TestResult<()> {
         &serde_json::to_vec(&payload)?,
     )?;
     assert_eq!(target.original_payload, raw_bytes);
+    Ok(())
+}
+
+#[sinex_test]
+async fn dlq_requeue_target_rejects_privacy_suppressed_parse_failure_as_raw_input(
+) -> TestResult<()> {
+    let mut headers = async_nats::HeaderMap::new();
+    headers.insert("Original-Subject", "events.raw.shell.command");
+    let payload = serde_json::json!({
+        "payload_authority": "operator_preview",
+        "requeue_blocked_reason": "raw bytes unavailable: original payload failed JSON parsing and was privacy-suppressed",
+        "original_payload": {
+            "_raw_bytes_suppressed": true,
+            "_raw_bytes_len": 17
+        }
+    });
+
+    let error = super::dlq_requeue_target(
+        &headers,
+        "events.dlq.shell.00000000-0000-7000-8000-000000000046",
+        &serde_json::to_vec(&payload)?,
+    )
+    .expect_err("privacy-suppressed parse failure must never be raw retry input");
+    assert!(error.to_string().contains("operator preview"));
+    assert!(error.to_string().contains("privacy-suppressed"));
     Ok(())
 }
 

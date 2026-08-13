@@ -3,6 +3,7 @@
 use serde::Serialize;
 
 use crate::event_engine::durable_failure::{DURABLE_FAILURE_ID_HEADER, persist_failure_evidence};
+use sinex_primitives::rpc::dlq::DlqPayloadAuthority;
 
 use super::*;
 
@@ -11,12 +12,13 @@ pub(super) struct DlqEntry {
     /// NATS Msg-Id header value (not a Sinex event `UUIDv7`).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(super) nats_msg_id: Option<String>,
-    /// Whether this entry carries the exact ingress bytes required for replay.
-    pub(super) requeueable: bool,
+    /// Separates raw-stream replay authority from the operator-facing preview.
+    pub(super) payload_authority: DlqPayloadAuthority,
     /// Machine- and operator-visible explanation when raw replay is blocked.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(super) requeue_blocked_reason: Option<String>,
     pub(super) error: String,
+    /// Disclosure-filtered payload for operator inspection. Never retry input.
     pub(super) original_payload: JsonValue,
     /// Exact ingress bytes, kept separate from the operator-facing payload.
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -200,7 +202,11 @@ impl JetStreamConsumer {
 
         let mut dlq_entry = DlqEntry {
             nats_msg_id: original_nats_msg_id,
-            requeueable: raw_bytes_base64.is_some(),
+            payload_authority: if raw_bytes_base64.is_some() {
+                DlqPayloadAuthority::ExactRawBytes
+            } else {
+                DlqPayloadAuthority::OperatorPreview
+            },
             raw_bytes_base64,
             requeue_blocked_reason,
             error,
@@ -233,7 +239,7 @@ impl JetStreamConsumer {
                 original_payload_len = msg.payload.len(),
                 "DLQ envelope exceeds publish budget; replacing stored original payload with metadata stub"
             );
-            dlq_entry.requeueable = false;
+            dlq_entry.payload_authority = DlqPayloadAuthority::OperatorPreview;
             dlq_entry.raw_bytes_base64 = None;
             dlq_entry.requeue_blocked_reason = Some(
                 "raw bytes unavailable: DLQ envelope exceeded NATS publish budget".to_string(),
@@ -272,7 +278,7 @@ impl JetStreamConsumer {
                 "original_subject": msg.subject.as_str(),
                 "original_nats_msg_id": dlq_entry.nats_msg_id.clone(),
                 "durability_source": "postgres_pre_dlq_settlement",
-                "requeueable": dlq_entry.requeueable,
+                "payload_authority": dlq_entry.payload_authority,
                 "requeue_blocked_reason": dlq_entry.requeue_blocked_reason.clone(),
             }),
             retry_count,

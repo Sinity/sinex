@@ -333,7 +333,7 @@ async fn dlq_route_marks_redacted_and_parse_failure_entries_non_requeueable(
     assert_eq!(state.messages, 2);
     let first_entry = dlq_stream.direct_get(state.first_sequence).await?;
     let first_envelope: serde_json::Value = serde_json::from_slice(&first_entry.payload)?;
-    assert_eq!(first_envelope["requeueable"], false);
+    assert_eq!(first_envelope["payload_authority"], "operator_preview");
     assert!(first_envelope["raw_bytes_base64"].is_null());
     assert!(
         first_envelope["requeue_blocked_reason"]
@@ -344,7 +344,7 @@ async fn dlq_route_marks_redacted_and_parse_failure_entries_non_requeueable(
         .direct_get(state.first_sequence.saturating_add(1))
         .await?;
     let second_envelope: serde_json::Value = serde_json::from_slice(&second_entry.payload)?;
-    assert_eq!(second_envelope["requeueable"], false);
+    assert_eq!(second_envelope["payload_authority"], "operator_preview");
     assert!(second_envelope["raw_bytes_base64"].is_null());
     assert!(
         second_envelope["requeue_blocked_reason"]
@@ -357,11 +357,13 @@ async fn dlq_route_marks_redacted_and_parse_failure_entries_non_requeueable(
         ctx.env().clone(),
         DlqRetryConfig::default(),
     );
-    let result = handler
+    let error = handler
         .retry_sequence_range(state.first_sequence, state.last_sequence)
-        .await?;
-    assert_eq!(result.retried, 0);
-    assert_eq!(result.permanently_failed, 2);
+        .await
+        .expect_err("preview-only entries must remain retained instead of being retried");
+    assert!(error.to_string().contains("operator preview"));
+    let retained = dlq_stream.info().await?.state;
+    assert_eq!(retained.messages, 2);
     assert!(
         tokio::time::timeout(Duration::from_millis(250), messages.next())
             .await
