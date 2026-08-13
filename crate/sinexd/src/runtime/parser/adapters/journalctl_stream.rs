@@ -154,6 +154,13 @@ impl InputShapeAdapter for JournalctlStreamAdapter {
                     }
                     Ok(None) => break,
                     Ok(Some(line)) => {
+                        // `lines()` has already consumed this line's trailing newline,
+                        // whether or not the line produces a record. Keep the stream-byte
+                        // cursor in lockstep before blank-line and size-cap handling so the
+                        // next emitted anchor still identifies its real material position.
+                        let material_offset = bytes_read;
+                        bytes_read += line.len() as u64 + 1;
+
                         if line.is_empty() {
                             continue;
                         }
@@ -174,14 +181,10 @@ impl InputShapeAdapter for JournalctlStreamAdapter {
                         }
 
                         let bytes = line.as_bytes().to_vec();
-                        let len = bytes.len() as u64;
                         let anchor = MaterialAnchor::StreamFrame {
-                            material_offset: bytes_read,
+                            material_offset,
                             frame_index,
                         };
-
-                        // +1 for the newline `.lines()` strips from each entry.
-                        bytes_read += len + 1;
 
                         let record = SourceRecord {
                             material_id,
@@ -485,32 +488,41 @@ pub fn records_from_journal_lines(
     lines: &[&str],
 ) -> Vec<ParserResult<SourceRecord>> {
     let mut bytes_read: u64 = 0;
-    lines
-        .iter()
-        .enumerate()
-        .filter(|(_, l)| !l.is_empty())
-        .map(|(i, line)| {
-            if line.len() > MAX_JOURNAL_LINE_BYTES {
-                return Err(ParserError::Parse(format!(
-                    "journal line exceeds configured size cap: {} > {} bytes",
-                    line.len(), MAX_JOURNAL_LINE_BYTES
-                )));
-            }
-            let material_offset = bytes_read;
-            bytes_read += line.len() as u64 + 1; // +1 for the stripped newline
-            Ok(SourceRecord {
-                material_id,
-                anchor: MaterialAnchor::StreamFrame {
-                    material_offset,
-                    frame_index: i as u64,
-                },
-                bytes: line.as_bytes().to_vec(),
-                logical_path: None,
-                source_ts_hint: None,
-                metadata: serde_json::Value::Null,
-            })
-        })
-        .collect()
+    let mut frame_index: u64 = 0;
+    let mut records = Vec::with_capacity(lines.len());
+
+    for line in lines {
+        // Match `open()`: every line, including blanks and rejected records,
+        // has consumed its trailing newline before the next line is observed.
+        let material_offset = bytes_read;
+        bytes_read += line.len() as u64 + 1;
+
+        if line.is_empty() {
+            continue;
+        }
+        if line.len() > MAX_JOURNAL_LINE_BYTES {
+            records.push(Err(ParserError::Parse(format!(
+                "journal line exceeds configured size cap: {} > {} bytes",
+                line.len(), MAX_JOURNAL_LINE_BYTES
+            ))));
+            continue;
+        }
+
+        records.push(Ok(SourceRecord {
+            material_id,
+            anchor: MaterialAnchor::StreamFrame {
+                material_offset,
+                frame_index,
+            },
+            bytes: line.as_bytes().to_vec(),
+            logical_path: None,
+            source_ts_hint: None,
+            metadata: serde_json::Value::Null,
+        }));
+        frame_index += 1;
+    }
+
+    records
 }
 
 #[cfg(test)]
