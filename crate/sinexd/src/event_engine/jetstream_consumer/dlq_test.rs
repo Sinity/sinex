@@ -148,7 +148,7 @@ async fn dlq_route_keeps_multi_child_intents_with_same_leading_event_recoverable
 
     // Explicitly remove the bounded NATS copy to model max_age expiry without
     // making the test wait. The Postgres witnesses must remain queryable.
-    let dlq_stream = js.get_stream(&topology.dlq_stream).await?;
+    let mut dlq_stream = js.get_stream(&topology.dlq_stream).await?;
     dlq_stream.purge().await?;
     for durable_failure_id in durable_failure_ids {
         let evidence = sqlx::query!(
@@ -188,12 +188,13 @@ async fn dlq_requeue_then_refail_survives_the_dlq_dupe_window(ctx: TestContext) 
     let payload = json!({
         "events": [{"id": "00000000-0000-7000-8000-000000000011"}]
     });
+    let raw_bytes = serde_json::to_vec(&payload)?;
     let mut headers = async_nats::HeaderMap::new();
     headers.insert("Nats-Msg-Id", "requeue-refail-original");
     js.publish_with_headers(
         topology.events_subject.clone(),
         headers,
-        serde_json::to_vec(&payload)?.into(),
+        raw_bytes.clone().into(),
     )
     .await?
     .await?;
@@ -204,10 +205,7 @@ async fn dlq_requeue_then_refail_survives_the_dlq_dupe_window(ctx: TestContext) 
     consumer
         .route_to_dlq(&first_raw, "initial admission failure".to_string())
         .await?;
-    first_raw
-        .ack()
-        .await
-        .map_err(ack_error)?;
+    first_raw.ack().await.map_err(ack_error)?;
 
     let initial_dlq_state = js
         .get_stream(&topology.dlq_stream)
@@ -216,21 +214,29 @@ async fn dlq_requeue_then_refail_survives_the_dlq_dupe_window(ctx: TestContext) 
         .await?
         .state
         .clone();
-    let handler = DlqRetryHandler::new(ctx.nats_client(), ctx.env().clone(), DlqRetryConfig::default());
+    let handler = DlqRetryHandler::new(
+        ctx.nats_client(),
+        ctx.env().clone(),
+        DlqRetryConfig::default(),
+    );
     handler
-        .retry_sequence_range(initial_dlq_state.first_sequence, initial_dlq_state.first_sequence)
+        .retry_sequence_range(
+            initial_dlq_state.first_sequence,
+            initial_dlq_state.first_sequence,
+        )
         .await?;
 
     let refailed_raw = tokio::time::timeout(Duration::from_secs(2), messages.next())
         .await?
         .expect("DLQ retry must republish the original raw intent")?;
+    assert_eq!(refailed_raw.payload.as_ref(), raw_bytes.as_slice());
     consumer
-        .route_to_dlq(&refailed_raw, "refailed admission within dupeWindow".to_string())
+        .route_to_dlq(
+            &refailed_raw,
+            "refailed admission within dupeWindow".to_string(),
+        )
         .await?;
-    refailed_raw
-        .ack()
-        .await
-        .map_err(ack_error)?;
+    refailed_raw.ack().await.map_err(ack_error)?;
 
     let mut dlq_stream = js.get_stream(&topology.dlq_stream).await?;
     let state = dlq_stream.info().await?.state.clone();
@@ -246,6 +252,120 @@ async fn dlq_requeue_then_refail_survives_the_dlq_dupe_window(ctx: TestContext) 
             .map(|value| value.as_str()),
         Some("1"),
         "the refailed DLQ entry must preserve the generation that makes its Msg-Id fresh"
+    );
+    Ok(())
+}
+
+#[sinex_test]
+async fn dlq_route_marks_redacted_and_parse_failure_entries_non_requeueable(
+    ctx: TestContext,
+) -> TestResult<()> {
+    let ctx = ctx.with_nats().dedicated().await?;
+    let (consumer, topology, js) = bootstrapped_consumer(&ctx).await?;
+    ctx.pool()
+        .privacy_policy()
+        .add_rule(
+            "dlq-route-raw-fidelity-secret",
+            "DLQ raw-fidelity test rule",
+            "literal",
+            "DLQ_ROUTE_SECRET",
+            false,
+            "redact",
+            Some("<REDACTED>"),
+            "default",
+        )
+        .await?;
+    ctx.pool()
+        .privacy_policy()
+        .bind_field_rule("dlq-route-raw-fidelity-secret", None, None, None, 0)
+        .await?;
+    let consumer = consumer.with_policy_engine().await?;
+
+    let raw_stream = js.get_stream(&topology.events_stream).await?;
+    let raw_consumer_name = format!("dlq-raw-fidelity-{}", Uuid::now_v7());
+    let raw_consumer = raw_stream
+        .create_consumer(jetstream::consumer::pull::Config {
+            name: Some(raw_consumer_name.clone()),
+            durable_name: Some(raw_consumer_name),
+            filter_subject: topology.events_subject.to_string(),
+            ack_policy: jetstream::consumer::AckPolicy::Explicit,
+            ..Default::default()
+        })
+        .await?;
+    let mut messages = raw_consumer.messages().await?;
+
+    let redacted_raw =
+        br#"{"event_id":"00000000-0000-7000-8000-000000000012","secret":"DLQ_ROUTE_SECRET"}"#;
+    let malformed_raw = b"not-json-dlq-raw";
+    for (msg_id, raw) in [
+        ("dlq-raw-fidelity-redacted", redacted_raw.as_slice()),
+        ("dlq-raw-fidelity-malformed", malformed_raw.as_slice()),
+    ] {
+        let mut headers = async_nats::HeaderMap::new();
+        headers.insert("Nats-Msg-Id", msg_id);
+        js.publish_with_headers(
+            topology.events_subject.clone(),
+            headers,
+            raw.to_vec().into(),
+        )
+        .await?
+        .await?;
+    }
+
+    let first_raw = tokio::time::timeout(Duration::from_secs(2), messages.next())
+        .await?
+        .expect("raw consumer must receive the redacted payload")?;
+    consumer
+        .route_to_dlq(&first_raw, "redacted admission failure".to_string())
+        .await?;
+    first_raw.ack().await.map_err(ack_error)?;
+
+    let second_raw = tokio::time::timeout(Duration::from_secs(2), messages.next())
+        .await?
+        .expect("raw consumer must receive the malformed payload")?;
+    consumer
+        .route_to_dlq(&second_raw, "parse failure".to_string())
+        .await?;
+    second_raw.ack().await.map_err(ack_error)?;
+
+    let mut dlq_stream = js.get_stream(&topology.dlq_stream).await?;
+    let state = dlq_stream.info().await?.state.clone();
+    assert_eq!(state.messages, 2);
+    let first_entry = dlq_stream.direct_get(state.first_sequence).await?;
+    let first_envelope: serde_json::Value = serde_json::from_slice(&first_entry.payload)?;
+    assert_eq!(first_envelope["requeueable"], false);
+    assert!(first_envelope["raw_bytes_base64"].is_null());
+    assert!(
+        first_envelope["requeue_blocked_reason"]
+            .as_str()
+            .is_some_and(|reason| reason.contains("privacy policy"))
+    );
+    let second_entry = dlq_stream
+        .direct_get(state.first_sequence.saturating_add(1))
+        .await?;
+    let second_envelope: serde_json::Value = serde_json::from_slice(&second_entry.payload)?;
+    assert_eq!(second_envelope["requeueable"], false);
+    assert!(second_envelope["raw_bytes_base64"].is_null());
+    assert!(
+        second_envelope["requeue_blocked_reason"]
+            .as_str()
+            .is_some_and(|reason| reason.contains("failed JSON parsing"))
+    );
+
+    let handler = DlqRetryHandler::new(
+        ctx.nats_client(),
+        ctx.env().clone(),
+        DlqRetryConfig::default(),
+    );
+    let result = handler
+        .retry_sequence_range(state.first_sequence, state.last_sequence)
+        .await?;
+    assert_eq!(result.retried, 0);
+    assert_eq!(result.permanently_failed, 2);
+    assert!(
+        tokio::time::timeout(Duration::from_millis(250), messages.next())
+            .await
+            .is_err()
     );
     Ok(())
 }

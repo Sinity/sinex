@@ -294,23 +294,19 @@ fn is_isolatable_batch_persistence_failure_covers_program_limit_exceeded_class()
     );
 }
 
-/// sinex-w16e: a row-level deterministic validation error (e.g. "validated
-/// event missing ts_orig", admission.rs's own `admitted_to_stream_rows`
-/// path) is NOT classified isolatable -- it carries no sqlstate and its text
-/// doesn't match the one hardcoded "non-live source_event_ids" fragment
-/// `is_non_live_derived_parent_validation` checks for. One bad event with a
-/// missing ts_orig currently DLQs its whole batch, including healthy
-/// siblings, instead of being bisected out on its own.
+/// sinex-w16e: deterministic row-level validation failures from the real
+/// `admitted_to_stream_rows` conversion must be isolated during persistence
+/// bisection so healthy siblings can still commit.
 #[test]
-#[ignore = "sinex-w16e open: is_isolatable_batch_persistence_failure does not classify a \
-            deterministic row-level Validation error (missing ts_orig / claim_support \
-            serialize failure) as isolatable -- only the single 'non-live source_event_ids' \
-            text fragment qualifies, so one bad row DLQs the whole batch"]
 fn is_isolatable_batch_persistence_failure_covers_deterministic_row_validation_errors() {
-    let err = SinexError::validation("validated event missing ts_orig");
-    assert!(
-        is_isolatable_batch_persistence_failure(&err),
-        "a deterministic row-level validation error (no sqlstate, not a transient DB \
-         condition) should isolate its own row rather than DLQing the entire batch"
-    );
+    for message in [
+        "validated event missing ts_orig",
+        "failed to serialize event claim_support",
+    ] {
+        let err = SinexError::validation(message);
+        assert!(
+            is_isolatable_batch_persistence_failure(&err),
+            "deterministic row-level validation error {message:?} must isolate its own row"
+        );
+    }
 }

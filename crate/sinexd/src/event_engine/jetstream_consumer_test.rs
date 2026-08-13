@@ -229,6 +229,21 @@ async fn generic_validation_error_is_not_isolatable() -> TestResult<()> {
 }
 
 #[sinex_test]
+async fn deterministic_row_validation_errors_are_isolatable() -> TestResult<()> {
+    for message in [
+        "validated event missing ts_orig",
+        "failed to serialize event claim_support",
+    ] {
+        let error = SinexError::validation(message);
+        assert!(
+            is_isolatable_batch_persistence_failure(&error),
+            "deterministic row-level validation error {message:?} must be bisected"
+        );
+    }
+    Ok(())
+}
+
+#[sinex_test]
 async fn uuid_v7_guard_rejects_other_uuid_versions() -> TestResult<()> {
     // Random UUIDv7 minted by Id::new() must pass the admission guard.
     assert!(is_uuid_v7(&Uuid::now_v7()));

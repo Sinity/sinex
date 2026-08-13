@@ -102,7 +102,9 @@ pub async fn spawn_consumer_and_wait_ready(
                     "jetstream consumer exited before signalling readiness: {result:?}"
                 ));
             }
-            return Err(eyre!("jetstream consumer exited before signalling readiness"));
+            return Err(eyre!(
+                "jetstream consumer exited before signalling readiness"
+            ));
         }
     }
 

@@ -46,6 +46,10 @@ fn db_write_timeout(batch_size: usize) -> Duration {
 /// SQLSTATE classes that indicate a deterministic row-level persistence fault.
 const SQLSTATE_DATA_EXCEPTION_CLASS: &str = "22";
 const SQLSTATE_INTEGRITY_CONSTRAINT_VIOLATION_CLASS: &str = "23";
+const DETERMINISTIC_ROW_VALIDATION_FRAGMENTS: [&str; 2] = [
+    "validated event missing ts_orig",
+    "failed to serialize event claim_support",
+];
 
 /// Error-class marker for deferred source-material FK violations.
 const ERROR_CLASS_SOURCE_MATERIAL_FK: &str = "source_material_fk_violation";
@@ -1572,42 +1576,47 @@ impl AdmissionService {
             ))
         })?;
 
-        let insert_result = match insert_result {
-            Err(ref error) if is_payload_schema_fk_violation(error) => {
-                let schema_stripped_count = rows
-                    .iter()
-                    .filter(|row| row.payload_schema_id.is_some())
-                    .count();
-                warn!(
-                    batch_size = to_persist.len(),
-                    schema_stripped_count,
-                    "INSERT hit FK violation on payload_schema_id; retrying without schema IDs on affected rows"
-                );
-                let mut rows_without_schema = rows.clone();
-                for row in &mut rows_without_schema {
-                    if row.payload_schema_id.is_some() {
-                        row.payload_schema_id = None;
-                    }
-                }
-                let retry_timeout = db_write_timeout(rows_without_schema.len());
-                timeout(
+        let (insert_result, rows_for_error) = match insert_result {
+            Ok(result) => (Ok(result), rows.clone()),
+            Err(error) if is_payload_schema_fk_violation(&error) => {
+                // A schema FK failure means the validator's metadata and the
+                // database registry may have crossed a commit boundary. Never
+                // null the annotation: that would let the DB row disagree with
+                // the confirmed event. Refresh the validator and retry only if
+                // the exact schema IDs still validate for every affected row.
+                let refreshed_rows = self
+                    .reload_and_revalidate_payload_schema_rows(&to_persist, &rows, &error)
+                    .await?;
+                let retry_timeout = db_write_timeout(refreshed_rows.len());
+                let retry_result = timeout(
                     retry_timeout,
                     self.pool
                         .events()
-                        .insert_stream_batch_into(self.storage_lane, &rows_without_schema),
+                        .insert_stream_batch_into(self.storage_lane, &refreshed_rows),
                 )
                 .await
                 .map_err(|_| {
                     SinexError::database(format!(
-                        "Persisting batch (schema-id-stripped retry) timed out after {retry_timeout:?}"
+                        "Persisting batch after payload-schema reload timed out after {retry_timeout:?}"
                     ))
-                })?
+                })?;
+                let retry_result = match retry_result {
+                    Err(ref retry_error) if is_payload_schema_fk_violation(retry_error) => {
+                        Err(payload_schema_fk_terminal_error(
+                            retry_error,
+                            &refreshed_rows,
+                            "schema FK remained invalid after reload/revalidation",
+                        ))
+                    }
+                    other => other,
+                };
+                (retry_result, refreshed_rows)
             }
-            other => other,
+            Err(error) => (Err(error), rows.clone()),
         };
 
         let result = insert_result.map_err(|error| {
-            if is_source_material_fk_violation_for_stream_batch(&error, &rows) {
+            if is_source_material_fk_violation_for_stream_batch(&error, &rows_for_error) {
                 warn!(
                     batch_size = to_persist.len(),
                     "INSERT hit FK violation (source_material not yet registered); will retry"
@@ -1626,6 +1635,76 @@ impl AdmissionService {
         let inserted_ids = require_inserted_ids(result.inserted_ids, to_persist.len())?;
         self.remember_event_ids(plan.cacheable_event_ids()).await;
         Ok(AdmissionPersistResult::persisted_plan(plan, inserted_ids))
+    }
+
+    async fn reload_and_revalidate_payload_schema_rows(
+        &self,
+        events: &[&AdmittedEvent],
+        rows: &[StreamBatchRow],
+        original_error: &SinexError,
+    ) -> EventEngineResult<Vec<StreamBatchRow>> {
+        let schema_row_count = rows
+            .iter()
+            .filter(|row| row.payload_schema_id.is_some())
+            .count();
+        if schema_row_count == 0 {
+            return Err(payload_schema_fk_terminal_error(
+                original_error,
+                rows,
+                "FK named payload schema but no schema-bearing row was present",
+            ));
+        }
+
+        let validation_enabled = self.validator.read().await.validation_enabled();
+        let fresh_inner = match IngestEventValidator::load_fresh_schemas_with_options(
+            &self.pool,
+            validation_enabled,
+        )
+        .await
+        {
+            Ok(inner) => inner,
+            Err(reload_error) => {
+                return Err(payload_schema_fk_terminal_error(
+                    original_error,
+                    rows,
+                    &format!("schema reload failed: {reload_error}"),
+                ));
+            }
+        };
+        self.validator.write().await.swap_inner(fresh_inner);
+
+        let validator = self.validator.read().await;
+        let mut evidence = Vec::new();
+        for (event, row) in events.iter().zip(rows) {
+            let Some(expected_schema_id) = row.payload_schema_id else {
+                continue;
+            };
+            match validator.validate_event(&event.event) {
+                ValidationResult::Valid { schema_id } if schema_id == expected_schema_id => {}
+                validation => evidence.push(format!(
+                    "event {} expected schema {} but revalidation returned {validation:?}",
+                    row.id, expected_schema_id
+                )),
+            }
+        }
+        drop(validator);
+
+        if !evidence.is_empty() {
+            return Err(payload_schema_fk_terminal_error(
+                original_error,
+                rows,
+                &evidence.join("; "),
+            ));
+        }
+
+        tracing::info!(
+            target: "sinex_metrics",
+            metric = "event_engine.payload_schema_fk_reload_total",
+            batch_size = rows.len(),
+            schema_row_count,
+            "payload-schema FK race recovered after schema reload and exact-ID revalidation"
+        );
+        Ok(rows.to_vec())
     }
 
     #[must_use]
@@ -1980,7 +2059,7 @@ fn is_isolatable_batch_persistence_failure(error: &SinexError) -> bool {
         return false;
     }
 
-    if is_non_live_derived_parent_validation(error) {
+    if is_non_live_derived_parent_validation(error) || is_deterministic_row_validation(error) {
         return true;
     }
 
@@ -1992,6 +2071,55 @@ fn is_isolatable_batch_persistence_failure(error: &SinexError) -> bool {
         value.starts_with(SQLSTATE_DATA_EXCEPTION_CLASS)
             || value.starts_with(SQLSTATE_INTEGRITY_CONSTRAINT_VIOLATION_CLASS)
     })
+}
+
+fn is_deterministic_row_validation(error: &SinexError) -> bool {
+    error.kind() == SinexErrorKind::Validation
+        && DETERMINISTIC_ROW_VALIDATION_FRAGMENTS
+            .iter()
+            .any(|fragment| error.to_string().contains(fragment))
+}
+
+fn payload_schema_fk_terminal_error(
+    original_error: &SinexError,
+    rows: &[StreamBatchRow],
+    revalidation_evidence: &str,
+) -> SinexError {
+    let event_ids = rows
+        .iter()
+        .map(|row| row.id.to_string())
+        .collect::<Vec<_>>()
+        .join(",");
+    let schema_ids = rows
+        .iter()
+        .filter_map(|row| row.payload_schema_id)
+        .map(|schema_id| schema_id.to_string())
+        .collect::<Vec<_>>()
+        .join(",");
+    let mut terminal = SinexError::database(format!(
+        "payload_schema_id FK violation is terminal after schema reload/revalidation; refusing to strip metadata for event_ids=[{event_ids}] schema_ids=[{schema_ids}]: {revalidation_evidence}; original={original_error}"
+    ))
+    .with_operation("admission.persist_payload_schema_fk")
+    .with_context("error_class", "payload_schema_fk_terminal")
+    .with_context("schema_revalidation", revalidation_evidence)
+    .with_context("event_ids", &event_ids)
+    .with_context("schema_ids", &schema_ids)
+    .with_source(original_error.to_string());
+    if let Some(sqlstate) = original_error.context_map().get("sqlstate") {
+        terminal = terminal.with_context("sqlstate", sqlstate);
+    }
+    if let Some(constraint) = original_error.context_map().get("constraint") {
+        terminal = terminal.with_context("constraint", constraint);
+    }
+    tracing::error!(
+        target: "sinex_metrics",
+        metric = "event_engine.payload_schema_fk_terminal_total",
+        event_ids = %event_ids,
+        schema_ids = %schema_ids,
+        revalidation_evidence,
+        "payload-schema FK metadata was preserved and routed to terminal settlement"
+    );
+    terminal
 }
 
 fn is_non_live_derived_parent_validation(error: &SinexError) -> bool {

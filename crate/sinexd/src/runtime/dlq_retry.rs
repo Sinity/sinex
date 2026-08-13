@@ -97,6 +97,13 @@ pub struct DlqRetryProgress {
     pub last_sequence: Option<u64>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum DlqMessageDisposition {
+    Retried,
+    PermanentlyFailed,
+    TransientFailure,
+}
+
 /// DLQ retry handler
 pub struct DlqRetryHandler {
     nats_client: async_nats::Client,
@@ -191,13 +198,17 @@ impl DlqRetryHandler {
             let next = tokio::time::timeout(Duration::from_secs(5), messages.next()).await;
             match next {
                 Ok(Some(Ok(msg))) => {
-                    if self.handle_dlq_message(&js, &stream, &msg).await? {
-                        result.retried = result.retried.saturating_add(1);
-                    } else if dlq_retry_attempts(&msg)? >= self.config.max_retries() {
-                        result.permanently_failed = result.permanently_failed.saturating_add(1);
-                    } else {
-                        result.transient_failures = result.transient_failures.saturating_add(1);
-                }
+                    match self.handle_dlq_message(&js, &stream, &msg).await? {
+                        DlqMessageDisposition::Retried => {
+                            result.retried = result.retried.saturating_add(1);
+                        }
+                        DlqMessageDisposition::PermanentlyFailed => {
+                            result.permanently_failed = result.permanently_failed.saturating_add(1);
+                        }
+                        DlqMessageDisposition::TransientFailure => {
+                            result.transient_failures = result.transient_failures.saturating_add(1);
+                        }
+                    }
                     processed = processed.saturating_add(1);
                     self.report_progress(DlqRetryProgress {
                         processed,
@@ -305,6 +316,21 @@ impl DlqRetryHandler {
                 continue;
             }
 
+            if !dlq_entry_is_requeueable(&message.payload) {
+                warn!(
+                    event_id,
+                    sequence,
+                    "DLQ event has no exact raw bytes; permanently settling without republishing"
+                );
+                ensure_durable_failure_evidence(Some(&message.headers))?;
+                self.permanently_fail_stream_message(&stream, &message)
+                    .await?;
+                return Err(SinexError::validation(
+                    "DLQ event is not requeueable because exact raw bytes are unavailable",
+                )
+                .with_context("event_id", event_id.to_string()));
+            }
+
             let retry_count = dlq_stored_retry_count(&message.headers)?;
             if retry_count >= self.config.max_retries() {
                 warn!(
@@ -388,6 +414,26 @@ impl DlqRetryHandler {
                 }
             };
 
+            if !dlq_entry_is_requeueable(&message.payload) {
+                warn!(
+                    sequence,
+                    "DLQ sequence-range entry has no exact raw bytes; permanently settling without republishing"
+                );
+                ensure_durable_failure_evidence(Some(&message.headers))?;
+                self.permanently_fail_stream_message(&stream, &message)
+                    .await?;
+                result.permanently_failed = result.permanently_failed.saturating_add(1);
+                processed = processed.saturating_add(1);
+                self.report_progress(DlqRetryProgress {
+                    processed,
+                    retried: result.retried,
+                    permanently_failed: result.permanently_failed,
+                    transient_failures: result.transient_failures,
+                    last_sequence: Some(sequence),
+                });
+                continue;
+            }
+
             let retry_count = dlq_stored_retry_count(&message.headers)?;
             if retry_count >= self.config.max_retries() {
                 warn!(
@@ -430,13 +476,13 @@ impl DlqRetryHandler {
     }
 
     /// Process a single DLQ message: check retry count, retry or permanently fail.
-    /// Returns `true` if the message was successfully retried.
+    /// Returns the durable settlement disposition for one DLQ message.
     async fn handle_dlq_message(
         &self,
         js: &jetstream::Context,
         stream: &jetstream::stream::Stream,
         msg: &jetstream::Message,
-    ) -> RuntimeResult<bool> {
+    ) -> RuntimeResult<DlqMessageDisposition> {
         let retry_count = dlq_retry_attempts(msg)?;
 
         if retry_count >= self.config.max_retries() {
@@ -456,7 +502,24 @@ impl DlqRetryHandler {
                 )
             })?;
             self.delete_consumer_message(stream, msg).await?;
-            return Ok(false);
+            return Ok(DlqMessageDisposition::PermanentlyFailed);
+        }
+
+        if !dlq_entry_is_requeueable(&msg.payload) {
+            warn!(
+                subject = %msg.subject,
+                "DLQ message has no exact raw bytes; permanently settling without republishing"
+            );
+            ensure_durable_failure_evidence(msg.headers.as_ref())?;
+            msg.ack().await.map_err(|error| {
+                Self::message_settlement_error(
+                    "failed to ack non-requeueable DLQ message",
+                    msg.subject.as_str(),
+                    error,
+                )
+            })?;
+            self.delete_consumer_message(stream, msg).await?;
+            return Ok(DlqMessageDisposition::PermanentlyFailed);
         }
 
         match self.retry_message(js, msg, retry_count).await {
@@ -469,7 +532,7 @@ impl DlqRetryHandler {
                     )
                 })?;
                 self.delete_consumer_message(stream, msg).await?;
-                Ok(true)
+                Ok(DlqMessageDisposition::Retried)
             }
             Err(e) => {
                 error!(
@@ -490,7 +553,7 @@ impl DlqRetryHandler {
                     )
                     .with_context("retry_error", e.to_string())
                 })?;
-                Ok(false)
+                Ok(DlqMessageDisposition::TransientFailure)
             }
         }
     }
@@ -899,21 +962,35 @@ fn dlq_requeue_target(
             SinexError::processing("DLQ payload is missing original event data".to_string())
         })?;
 
-    let original_payload = if let Some(raw_base64) = original_value
-        .get("_raw_bytes_base64")
-        .and_then(|value| value.as_str())
+    if !envelope
+        .get("requeueable")
+        .and_then(JsonValue::as_bool)
+        .unwrap_or(false)
     {
+        return Err(SinexError::validation(
+            "DLQ entry is not requeueable because it does not carry exact raw bytes",
+        )
+        .with_context(
+            "requeue_blocked_reason",
+            envelope
+                .get("requeue_blocked_reason")
+                .and_then(JsonValue::as_str)
+                .unwrap_or("replayability was not explicitly granted"),
+        ));
+    }
+
+    let raw_base64 = envelope
+        .get("raw_bytes_base64")
+        .and_then(JsonValue::as_str)
+        .ok_or_else(|| {
+            SinexError::validation(
+                "DLQ entry is marked requeueable but exact raw bytes are missing",
+            )
+        })?;
+    let original_payload =
         base64::Engine::decode(&base64::engine::general_purpose::STANDARD, raw_base64).map_err(
-            |e| {
-                SinexError::processing("Failed to decode base64 original DLQ payload")
-                    .with_source(e)
-            },
-        )?
-    } else {
-        serde_json::to_vec(original_value).map_err(|e| {
-            SinexError::processing("Failed to re-serialize original DLQ payload").with_source(e)
-        })?
-    };
+            |e| SinexError::validation("DLQ entry carries invalid base64 raw bytes").with_source(e),
+        )?;
 
     let event_id = headers
         .get("Event-Id")
@@ -950,6 +1027,25 @@ fn dlq_requeue_target(
         dlq_requeue_generation,
         durable_failure_id,
     })
+}
+
+fn dlq_entry_is_requeueable(payload: &[u8]) -> bool {
+    let Some(envelope) = serde_json::from_slice::<JsonValue>(payload).ok() else {
+        return false;
+    };
+    if !envelope
+        .get("requeueable")
+        .and_then(JsonValue::as_bool)
+        .unwrap_or(false)
+    {
+        return false;
+    }
+    envelope
+        .get("raw_bytes_base64")
+        .and_then(JsonValue::as_str)
+        .is_some_and(|raw_base64| {
+            base64::Engine::decode(&base64::engine::general_purpose::STANDARD, raw_base64).is_ok()
+        })
 }
 
 #[cfg(test)]

@@ -11,8 +11,16 @@ pub(super) struct DlqEntry {
     /// NATS Msg-Id header value (not a Sinex event `UUIDv7`).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(super) nats_msg_id: Option<String>,
+    /// Whether this entry carries the exact ingress bytes required for replay.
+    pub(super) requeueable: bool,
+    /// Machine- and operator-visible explanation when raw replay is blocked.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(super) requeue_blocked_reason: Option<String>,
     pub(super) error: String,
     pub(super) original_payload: JsonValue,
+    /// Exact ingress bytes, kept separate from the operator-facing payload.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(super) raw_bytes_base64: Option<String>,
     pub(super) failed_at: Timestamp,
 }
 
@@ -125,45 +133,57 @@ impl JetStreamConsumer {
             .and_then(|h| h.get("Nats-Msg-Id"))
             .map(|v| v.as_str().to_string());
 
-        let original_payload = match serde_json::from_slice(&msg.payload) {
-            Ok(json) => json,
-            Err(parse_err) => {
-                warn!(
-                    error = %parse_err,
-                    payload_len = msg.payload.len(),
-                    "Failed to parse original payload for DLQ entry; preserving raw bytes as base64"
-                );
-                // ── DLQ raw-bytes scrub (#1042 Slice 4) ─────────────────────────
-                // The `_raw_bytes_base64` field carries the unparsed raw bytes. For
-                // non-Public sources these bytes may contain unredacted sensitive
-                // content. We conservatively suppress the raw field and replace it
-                // with a metadata-only stub so raw payloads never persist in the DLQ.
-                serde_json::json!({
-                    "_parse_error": parse_err.to_string(),
-                    "_raw_bytes_suppressed": true,
-                    "_raw_bytes_len": msg.payload.len(),
-                    "_dlq_note": "raw payload suppressed by privacy chokepoint (#1042)"
-                })
-            }
-        };
-
-        // ── DLQ payload redaction (#1042 Slice 4) ────────────────────────────
-        // Apply policy redaction to the parsed DLQ payload before storing it.
-        // Uses the global (NULL source/type) scope for conservative coverage.
-        // On error, the already-parsed JSON remains (no raw bytes risk here since
-        // the parse succeeded — structured fields are at least partially safe).
-        let original_payload = self.policy_engine.redact_json_value(original_payload).await;
-        // ── End DLQ redaction ────────────────────────────────────────────────
+        let (original_payload, raw_bytes_base64, requeue_blocked_reason) =
+            match serde_json::from_slice::<JsonValue>(&msg.payload) {
+                Ok(json) => {
+                    let redacted_payload = self.policy_engine.redact_json_value(json.clone()).await;
+                    if redacted_payload == json {
+                        (
+                            redacted_payload,
+                            Some(base64::Engine::encode(
+                                &base64::engine::general_purpose::STANDARD,
+                                &msg.payload,
+                            )),
+                            None,
+                        )
+                    } else {
+                        (
+                            redacted_payload,
+                            None,
+                            Some(
+                                "raw bytes unavailable: DLQ privacy policy redacted the payload"
+                                    .to_string(),
+                            ),
+                        )
+                    }
+                }
+                Err(parse_err) => {
+                    warn!(
+                        error = %parse_err,
+                        payload_len = msg.payload.len(),
+                        "Failed to parse original payload for DLQ entry; raw replay is blocked"
+                    );
+                    (
+                        serde_json::json!({
+                            "_parse_error": parse_err.to_string(),
+                            "_raw_bytes_suppressed": true,
+                            "_raw_bytes_len": msg.payload.len(),
+                            "_dlq_note": "raw payload suppressed by privacy chokepoint (#1042)"
+                        }),
+                        None,
+                        Some(
+                            "raw bytes unavailable: original payload failed JSON parsing and was privacy-suppressed"
+                                .to_string(),
+                        ),
+                    )
+                }
+            };
 
         let dlq_publish_msg_id =
             dlq_publish_msg_id(msg, original_nats_msg_id.as_deref(), &original_payload)?;
         let requeue_generation = dlq_requeue_generation(msg.headers.as_ref())?;
         let original_event_id = dlq_event_id(&original_payload);
 
-        // JetStream is only a bounded delivery bus. Write the operator-visible
-        // witness before publishing to it so a later ACK cannot outrun the
-        // evidence that justifies progress. The payload is already behind the
-        // admission privacy chokepoint above.
         let failed_event_id = original_event_id
             .as_deref()
             .and_then(|value| value.parse::<Uuid>().ok())
@@ -177,26 +197,12 @@ impl JetStreamConsumer {
             .ok()
             .map(|info| info.delivered.clamp(0, i64::from(i32::MAX)) as i32)
             .unwrap_or(0);
-        let durable_failure_id = persist_failure_evidence(
-            &self.pool,
-            failed_event_id,
-            "event-engine.raw-ingest",
-            &source,
-            &event_type,
-            "permanent",
-            &error,
-            original_payload.clone(),
-            serde_json::json!({
-                "original_subject": msg.subject.as_str(),
-                "original_nats_msg_id": original_nats_msg_id,
-                "durability_source": "postgres_pre_dlq_settlement",
-            }),
-            retry_count,
-        )
-        .await?;
 
         let mut dlq_entry = DlqEntry {
             nats_msg_id: original_nats_msg_id,
+            requeueable: raw_bytes_base64.is_some(),
+            raw_bytes_base64,
+            requeue_blocked_reason,
             error,
             original_payload,
             failed_at: Timestamp::now(),
@@ -211,11 +217,6 @@ impl JetStreamConsumer {
         headers.insert(DLQ_REQUEUE_GENERATION_HEADER, requeue_generation.as_str());
         headers.insert("Original-Subject", msg.subject.as_str());
         headers.insert("Retry-Count", "0");
-        let durable_failure_id_header = durable_failure_id.to_string();
-        headers.insert(
-            DURABLE_FAILURE_ID_HEADER,
-            durable_failure_id_header.as_str(),
-        );
         insert_traffic_class_header(&mut headers, NatsTrafficClass::RawIngestDlq);
         transport::insert_semantic_transport_class_header(&mut headers, transport::Class::Critical);
         if let Some(event_id) = original_event_id.as_deref() {
@@ -231,6 +232,11 @@ impl JetStreamConsumer {
                 payload_len = payload.len(),
                 original_payload_len = msg.payload.len(),
                 "DLQ envelope exceeds publish budget; replacing stored original payload with metadata stub"
+            );
+            dlq_entry.requeueable = false;
+            dlq_entry.raw_bytes_base64 = None;
+            dlq_entry.requeue_blocked_reason = Some(
+                "raw bytes unavailable: DLQ envelope exceeded NATS publish budget".to_string(),
             );
             dlq_entry.original_payload = serde_json::json!({
                 "_dlq_note": "original payload omitted because DLQ envelope exceeded NATS publish budget",
@@ -248,6 +254,35 @@ impl JetStreamConsumer {
                 payload.len(),
             )?;
         }
+
+        // JetStream is only a bounded delivery bus. Write the operator-visible
+        // witness before publishing to it so a later ACK cannot outrun the
+        // evidence that justifies progress. The payload preview and replay
+        // contract are now finalized, including any oversize fallback above.
+        let durable_failure_id = persist_failure_evidence(
+            &self.pool,
+            failed_event_id,
+            "event-engine.raw-ingest",
+            &source,
+            &event_type,
+            "permanent",
+            &dlq_entry.error,
+            dlq_entry.original_payload.clone(),
+            serde_json::json!({
+                "original_subject": msg.subject.as_str(),
+                "original_nats_msg_id": dlq_entry.nats_msg_id.clone(),
+                "durability_source": "postgres_pre_dlq_settlement",
+                "requeueable": dlq_entry.requeueable,
+                "requeue_blocked_reason": dlq_entry.requeue_blocked_reason.clone(),
+            }),
+            retry_count,
+        )
+        .await?;
+        let durable_failure_id_header = durable_failure_id.to_string();
+        headers.insert(
+            DURABLE_FAILURE_ID_HEADER,
+            durable_failure_id_header.as_str(),
+        );
 
         let mut backoff = DLQ_PUBLISH_BACKOFF_BASE;
         let mut last_error: Option<SinexError> = None;

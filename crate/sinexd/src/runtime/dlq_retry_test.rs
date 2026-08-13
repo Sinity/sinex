@@ -106,6 +106,11 @@ async fn dlq_requeue_target_uses_subject_event_id_fallback() -> TestResult<()> {
     headers.insert("Original-Subject", "events.raw.shell.command");
 
     let payload = serde_json::json!({
+        "requeueable": true,
+        "raw_bytes_base64": base64::Engine::encode(
+            &base64::engine::general_purpose::STANDARD,
+            br#"{"command":"ls"}"#,
+        ),
         "original_payload": {
             "command": "ls"
         }
@@ -133,6 +138,11 @@ async fn dlq_requeue_target_preserves_envelope_event_id_without_reparse() -> Tes
     headers.insert("Original-Subject", "events.raw.shell.command");
 
     let payload = serde_json::json!({
+        "requeueable": true,
+        "raw_bytes_base64": base64::Engine::encode(
+            &base64::engine::general_purpose::STANDARD,
+            br#"{"command":"pwd"}"#,
+        ),
         "event_id": "00000000-0000-7000-8000-000000000099",
         "original_payload": {
             "command": "pwd"
@@ -148,6 +158,74 @@ async fn dlq_requeue_target_preserves_envelope_event_id_without_reparse() -> Tes
         target.event_id.as_deref(),
         Some("00000000-0000-7000-8000-000000000099")
     );
+    Ok(())
+}
+
+#[sinex_test]
+async fn dlq_requeue_target_rejects_redacted_preview_as_raw_input() -> TestResult<()> {
+    let mut headers = async_nats::HeaderMap::new();
+    headers.insert("Original-Subject", "events.raw.shell.command");
+    let payload = serde_json::json!({
+        "requeueable": false,
+        "requeue_blocked_reason": "raw bytes unavailable: DLQ privacy policy redacted the payload",
+        "original_payload": {"command": "<REDACTED>"}
+    });
+
+    let error = super::dlq_requeue_target(
+        &headers,
+        "events.dlq.shell.00000000-0000-7000-8000-000000000043",
+        &serde_json::to_vec(&payload)?,
+    )
+    .expect_err("redacted preview must never be serialized as a raw retry");
+    assert!(error.to_string().contains("not requeueable"));
+    assert!(error.to_string().contains("privacy policy"));
+    Ok(())
+}
+
+#[sinex_test]
+async fn dlq_requeue_target_rejects_metadata_stub_as_raw_input() -> TestResult<()> {
+    let mut headers = async_nats::HeaderMap::new();
+    headers.insert("Original-Subject", "events.raw.shell.command");
+    let payload = serde_json::json!({
+        "requeueable": false,
+        "requeue_blocked_reason": "raw bytes unavailable: DLQ envelope exceeded NATS publish budget",
+        "original_payload": {
+            "_original_payload_omitted": true,
+            "_original_payload_len": 9000000
+        }
+    });
+
+    let error = super::dlq_requeue_target(
+        &headers,
+        "events.dlq.shell.00000000-0000-7000-8000-000000000044",
+        &serde_json::to_vec(&payload)?,
+    )
+    .expect_err("metadata stub must never be serialized as a raw retry");
+    assert!(error.to_string().contains("not requeueable"));
+    assert!(error.to_string().contains("publish budget"));
+    Ok(())
+}
+
+#[sinex_test]
+async fn dlq_requeue_target_decodes_exact_raw_bytes() -> TestResult<()> {
+    let mut headers = async_nats::HeaderMap::new();
+    headers.insert("Original-Subject", "events.raw.shell.command");
+    let raw_bytes = b" {\"command\":\"ls\",\"spacing\":true} ";
+    let payload = serde_json::json!({
+        "requeueable": true,
+        "raw_bytes_base64": base64::Engine::encode(
+            &base64::engine::general_purpose::STANDARD,
+            raw_bytes,
+        ),
+        "original_payload": {"command": "ls", "spacing": true}
+    });
+
+    let target = super::dlq_requeue_target(
+        &headers,
+        "events.dlq.shell.00000000-0000-7000-8000-000000000045",
+        &serde_json::to_vec(&payload)?,
+    )?;
+    assert_eq!(target.original_payload, raw_bytes);
     Ok(())
 }
 
