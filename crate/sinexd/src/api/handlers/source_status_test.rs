@@ -1,6 +1,7 @@
 #![allow(clippy::unwrap_used)]
 
 use super::*;
+use sinex_db::repositories::SourceDedupExampleRow;
 use sinex_primitives::Id;
 use sinex_primitives::domain::{HealthStatus, ModuleName, SourceIdentifier};
 use sinex_primitives::events::SourceMaterial;
@@ -44,25 +45,55 @@ fn session_record(
 
 #[sinex_test]
 async fn source_status_dedup_summary_aggregates_durable_outcomes() -> xtask::TestResult<()> {
-    let summary = source_dedup_summary(vec![
-        SourceDedupCountRow {
+    let breakdown = source_dedup_breakdown(vec![
+        SourceDedupBreakdownRow {
             source: "fixture".to_string(),
+            event_type: "event.created".to_string(),
             admitted: 4,
             suppressed: 12,
             superseded: 1,
             failed: 0,
             dlq: 0,
+            examples: vec![SourceDedupExampleRow {
+                source: "fixture".to_string(),
+                event_type: "event.created".to_string(),
+                outcome: "suppressed".to_string(),
+                candidate_event_id: uuid::Uuid::from_u128(1),
+                existing_event_id: Some(uuid::Uuid::from_u128(2)),
+            }],
         },
-        SourceDedupCountRow {
+        SourceDedupBreakdownRow {
             source: "other".to_string(),
+            event_type: "event.updated".to_string(),
             admitted: 2,
             suppressed: 1,
             superseded: 3,
             failed: 1,
             dlq: 2,
+            examples: vec![SourceDedupExampleRow {
+                source: "other".to_string(),
+                event_type: "event.updated".to_string(),
+                outcome: "admitted".to_string(),
+                candidate_event_id: uuid::Uuid::from_u128(3),
+                existing_event_id: None,
+            }],
         },
     ]);
+    let summary = source_dedup_summary(&breakdown);
 
+    assert_eq!(breakdown.len(), 2);
+    assert_eq!(breakdown[0].source, "fixture");
+    assert_eq!(breakdown[0].event_type, "event.created");
+    assert_eq!(
+        breakdown[0].examples[0].candidate_event_ref,
+        uuid::Uuid::from_u128(1).to_string()
+    );
+    assert_eq!(breakdown[1].source, "other");
+    assert_eq!(breakdown[1].event_type, "event.updated");
+    assert_eq!(
+        breakdown[1].examples[0].candidate_event_ref,
+        uuid::Uuid::from_u128(3).to_string()
+    );
     assert_eq!(summary.admitted, 6);
     assert_eq!(summary.suppressed, 13);
     assert_eq!(summary.superseded, 4);
@@ -325,8 +356,7 @@ async fn source_coverage_view_uses_failed_run_status_with_fresh_evidence()
 }
 
 #[sinex_test]
-async fn source_coverage_view_demotes_emit_stalled_live_source()
--> xtask::sandbox::TestResult<()> {
+async fn source_coverage_view_demotes_emit_stalled_live_source() -> xtask::sandbox::TestResult<()> {
     let now = Timestamp::now();
     let mut stalled = terminal_bridge_status(now);
     stalled.module_name = ModuleName::new(CONTRACT.id);
@@ -365,10 +395,11 @@ async fn source_coverage_view_demotes_emit_stalled_live_source()
 
     assert_eq!(view.readiness, SourceCoverageReadiness::Stale);
     assert_eq!(view.continuity, SourceCoverageContinuity::Stale);
-    assert!(view
-        .gaps
-        .iter()
-        .any(|gap| gap.kind == "runtime_binding_stalled"));
+    assert!(
+        view.gaps
+            .iter()
+            .any(|gap| gap.kind == "runtime_binding_stalled")
+    );
     Ok(())
 }
 
@@ -542,10 +573,12 @@ async fn status_view_request_filters_contracts_by_source_and_family() -> xtask::
 
 #[sinex_test]
 async fn source_event_pairs_deduplicates_declared_event_pairs() -> xtask::TestResult<()> {
-    let (sources, event_types) = source_event_pairs(&[&CONTRACT, &CONTRACT]);
+    let pairs = source_event_pairs(&[&CONTRACT, &CONTRACT]);
 
-    assert_eq!(sources, vec!["fixture".to_string()]);
-    assert_eq!(event_types, vec!["fixture.event".to_string()]);
+    assert_eq!(
+        pairs,
+        vec![("fixture".to_string(), "fixture.event".to_string())]
+    );
     Ok(())
 }
 

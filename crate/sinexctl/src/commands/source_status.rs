@@ -5,7 +5,8 @@ use sinex_primitives::rpc::curation::CurationListDuplicateCandidatesRequest;
 use sinex_primitives::sources::source_identity_matches_family;
 use sinex_primitives::views::{
     ActionAvailabilityState, SourceCoverageContinuity, SourceCoverageListView,
-    SourceCoverageReadiness, SourceCoverageView, SourceModeStatusView, ViewEnvelope,
+    SourceCoverageReadiness, SourceCoverageView, SourceDedupBreakdownView, SourceDedupWindowView,
+    SourceModeStatusView, ViewEnvelope,
 };
 use tabled::{builder::Builder, settings::Style};
 
@@ -91,7 +92,11 @@ async fn load_adjudication_queue_summary(client: &GatewayClient) -> Adjudication
     match response {
         Ok(response) => AdjudicationQueueSummary::Available {
             clusters: response.clusters.len(),
-            events: response.clusters.iter().map(|cluster| cluster.event_count).sum(),
+            events: response
+                .clusters
+                .iter()
+                .map(|cluster| cluster.event_count)
+                .sum(),
             partial: response.clusters.len() as i64 >= ADJUDICATION_CANDIDATE_LIMIT,
         },
         Err(_) => AdjudicationQueueSummary::Unavailable,
@@ -296,8 +301,12 @@ fn format_sources_status_table_with_adjudication(
     let mut summary_lines = vec![
         source_status_summary_line(&envelope.payload),
         source_dedup_summary_line(&envelope.payload),
+        source_dedup_window_line(&envelope.payload.dedup_window),
         adjudication_queue_summary_line(adjudication),
     ];
+    summary_lines.extend(source_dedup_breakdown_lines(
+        &envelope.payload.dedup_breakdown,
+    ));
     if !envelope.caveats.is_empty() {
         summary_lines.push(format!(
             "Source status caveats: {}",
@@ -323,7 +332,11 @@ fn adjudication_queue_summary_line(adjudication: AdjudicationQueueSummary) -> St
             clusters,
             if partial { "+" } else { "" },
             events,
-            if partial { "; bounded query limit reached" } else { "" },
+            if partial {
+                "; bounded query limit reached"
+            } else {
+                ""
+            },
         ),
         AdjudicationQueueSummary::Unavailable => {
             "Dedup adjudication queue: unavailable (source status remains available)".to_string()
@@ -346,6 +359,43 @@ fn source_dedup_summary_line(view: &SourceCoverageListView) -> String {
         dedup.dlq,
         dedup.attempted(),
     )
+}
+
+fn source_dedup_window_line(window: &SourceDedupWindowView) -> String {
+    format!(
+        "Dedup breakdown window: policy={} examples_per_group={} omitted_history={}",
+        window.policy, window.example_limit, window.omitted_history
+    )
+}
+
+fn source_dedup_breakdown_lines(rows: &[SourceDedupBreakdownView]) -> Vec<String> {
+    rows.iter()
+        .map(|row| {
+            let examples = row
+                .examples
+                .iter()
+                .map(|example| {
+                    let existing = example
+                        .existing_event_ref
+                        .as_deref()
+                        .map_or_else(String::new, |reference| format!("->{reference}"));
+                    format!("{}:{}{}", example.outcome, example.candidate_event_ref, existing)
+                })
+                .collect::<Vec<_>>()
+                .join(",");
+            format!(
+                "Dedup breakdown: source={} event_type={} admitted={} suppressed={} superseded={} failed={} dlq={} examples=[{}]",
+                row.source,
+                row.event_type,
+                row.admitted,
+                row.suppressed,
+                row.superseded,
+                row.failed,
+                row.dlq,
+                examples,
+            )
+        })
+        .collect()
 }
 
 fn source_status_summary_line(view: &SourceCoverageListView) -> String {

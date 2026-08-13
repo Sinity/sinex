@@ -4,7 +4,7 @@ use crate::api::service_container::ServiceContainer;
 use serde_json::Value;
 use sinex_db::DbPoolExt;
 use sinex_db::repositories::{
-    EmailMailboxProjectionSummary, EmailProviderStateRecord, SourceDedupCountRow,
+    EmailMailboxProjectionSummary, EmailProviderStateRecord, SourceDedupBreakdownRow,
 };
 use sinex_primitives::SinexError;
 use sinex_primitives::domain::SourceIdentifier;
@@ -25,9 +25,11 @@ use sinex_primitives::sources::source_identity_matches_family;
 use sinex_primitives::temporal::Timestamp;
 use sinex_primitives::views::{
     ActionAvailability, ActionAvailabilityState, ActionSideEffect, CaveatView, CoverageGapView,
-    ReadinessCaveatId, SinexObjectKind, SinexObjectRef, SourceCoverageContinuity,
-    SourceCoverageListView, SourceCoverageReadiness, SourceCoverageView, SourceDedupSummaryView,
-    SourceModeStatusView, SourcePrivacyPosture, SourceResourceBudgetView, ViewEnvelope,
+    ReadinessCaveatId, SOURCE_DEDUP_EXAMPLE_LIMIT, SinexObjectKind, SinexObjectRef,
+    SourceCoverageContinuity, SourceCoverageListView, SourceCoverageReadiness, SourceCoverageView,
+    SourceDedupBreakdownView, SourceDedupExampleView, SourceDedupSummaryView,
+    SourceDedupWindowView, SourceModeStatusView, SourcePrivacyPosture, SourceResourceBudgetView,
+    ViewEnvelope,
 };
 use sinex_primitives::{
     DEFAULT_RUNTIME_LIVENESS_STALE_AFTER_SECS, RuntimeLivenessPolicy, RuntimeLivenessSignals,
@@ -177,13 +179,17 @@ pub async fn handle_sources_status_view(
     let event_rows = load_source_event_aggregates(pool, &contracts, request.exact_counts).await?;
     let dedup_rows = pool
         .import_outcomes()
-        .source_status_counts(&source_event_sources(&contracts))
+        .source_status_breakdown(
+            &source_event_pairs(&contracts),
+            SOURCE_DEDUP_EXAMPLE_LIMIT as i64,
+        )
         .await
         .map_err(|error| {
             SinexError::database("Failed to compute source deduplication outcomes")
                 .with_std_error(&error)
         })?;
-    let dedup_summary = source_dedup_summary(dedup_rows);
+    let dedup_breakdown = source_dedup_breakdown(dedup_rows);
+    let dedup_summary = source_dedup_summary(&dedup_breakdown);
 
     let mut event_aggregates = HashMap::<(String, String), SourceEventAggregateRow>::new();
     for row in event_rows {
@@ -219,6 +225,8 @@ pub async fn handle_sources_status_view(
 
     let mut payload = SourceCoverageListView::new(views);
     payload.dedup = dedup_summary;
+    payload.dedup_breakdown = dedup_breakdown;
+    payload.dedup_window = SourceDedupWindowView::default();
     let mut envelope = ViewEnvelope::new("sinexd.sources.status.view", payload);
     if source_status_view_has_filter(&request) || !request.exact_counts {
         envelope.query_echo = Some(serde_json::json!({
@@ -281,10 +289,18 @@ async fn load_source_event_aggregates(
     contracts: &[&SourceContract],
     exact_counts: bool,
 ) -> Result<Vec<SourceEventAggregateRow>> {
-    let (sources, event_types) = source_event_pairs(contracts);
-    if sources.is_empty() {
+    let pairs = source_event_pairs(contracts);
+    if pairs.is_empty() {
         return Ok(Vec::new());
     }
+    let sources = pairs
+        .iter()
+        .map(|(source, _)| source.clone())
+        .collect::<Vec<_>>();
+    let event_types = pairs
+        .iter()
+        .map(|(_, event_type)| event_type.clone())
+        .collect::<Vec<_>>();
 
     if exact_counts {
         sqlx::query_as!(
@@ -347,36 +363,43 @@ async fn load_source_event_aggregates(
     }
 }
 
-fn source_event_pairs(contracts: &[&SourceContract]) -> (Vec<String>, Vec<String>) {
+fn source_event_pairs(contracts: &[&SourceContract]) -> Vec<(String, String)> {
     let mut seen = BTreeSet::new();
-    let mut sources = Vec::new();
-    let mut event_types = Vec::new();
     for contract in contracts {
         for (source, event_type) in contract.event_types {
-            if seen.insert((*source, *event_type)) {
-                sources.push((*source).to_string());
-                event_types.push((*event_type).to_string());
-            }
+            seen.insert((*source, *event_type));
         }
     }
-    (sources, event_types)
+    seen.into_iter()
+        .map(|(source, event_type)| (source.to_string(), event_type.to_string()))
+        .collect()
 }
 
-fn source_event_sources(contracts: &[&SourceContract]) -> Vec<String> {
-    let mut sources = BTreeSet::new();
-    for contract in contracts {
-        sources.extend(
-            contract
-                .event_types
-                .iter()
-                .map(|(source, _)| (*source).to_string()),
-        );
-    }
-    sources.into_iter().collect()
-}
-
-fn source_dedup_summary(rows: Vec<SourceDedupCountRow>) -> SourceDedupSummaryView {
+fn source_dedup_breakdown(rows: Vec<SourceDedupBreakdownRow>) -> Vec<SourceDedupBreakdownView> {
     rows.into_iter()
+        .map(|row| SourceDedupBreakdownView {
+            source: row.source,
+            event_type: row.event_type,
+            admitted: row.admitted,
+            suppressed: row.suppressed,
+            superseded: row.superseded,
+            failed: row.failed,
+            dlq: row.dlq,
+            examples: row
+                .examples
+                .into_iter()
+                .map(|example| SourceDedupExampleView {
+                    outcome: example.outcome,
+                    candidate_event_ref: example.candidate_event_id.to_string(),
+                    existing_event_ref: example.existing_event_id.map(|id| id.to_string()),
+                })
+                .collect(),
+        })
+        .collect()
+}
+
+fn source_dedup_summary(rows: &[SourceDedupBreakdownView]) -> SourceDedupSummaryView {
+    rows.iter()
         .fold(SourceDedupSummaryView::default(), |mut summary, row| {
             summary.admitted += row.admitted;
             summary.suppressed += row.suppressed;

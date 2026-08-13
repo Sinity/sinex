@@ -59,7 +59,7 @@ pub use events::{
 };
 pub use import_outcomes::{
     ImportEventRow, ImportOutcomeRepository, ImportReplacementRow, ImportReportData,
-    SourceDedupCountRow,
+    SourceDedupBreakdownRow, SourceDedupExampleRow,
 };
 pub use integrity::IntegrityRepository;
 pub use knowledge_graph::{
