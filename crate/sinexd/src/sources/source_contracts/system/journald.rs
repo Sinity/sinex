@@ -36,7 +36,7 @@ fn journal_field<'a>(json: &'a serde_json::Value, key: &str) -> Option<&'a str> 
 /// whenever the field's raw bytes aren't valid printable UTF-8 text, which
 /// includes any line containing ANSI escape codes). Array values are decoded
 /// lossily since journald itself makes no UTF-8 guarantee for these fields.
-fn decode_journald_field(v: &serde_json::Value) -> Option<String> {
+pub(crate) fn decode_journald_field(v: &serde_json::Value) -> Option<String> {
     match v {
         serde_json::Value::String(s) => Some(s.clone()),
         serde_json::Value::Array(items) => {

@@ -1,9 +1,10 @@
 //! `system.systemd` — systemd unit events filtered from journald.
 //!
 //! Uses `JournalctlStreamAdapter` (same subprocess as `system.journald`).
-//! Records without `_SYSTEMD_UNIT` are silently skipped.
+//! Records without `UNIT` or `USER_UNIT` are silently skipped.
 
 use crate::runtime::parser::{MaterialParser, ParserError};
+use super::journald::decode_journald_field;
 use sinex_macros::SourceMeta;
 use sinex_primitives::domain::{EventSource, EventType};
 use sinex_primitives::events::enums::{SystemdActiveState, SystemdUnitType};
@@ -119,21 +120,27 @@ impl MaterialParser for SystemdParser {
         let json: serde_json::Value = serde_json::from_slice(&record.bytes)
             .map_err(|e| ParserError::Parse(format!("failed to parse journal JSON: {e}")))?;
 
-        // Only process records with a unit name.
-        let unit_name = match json.get("_SYSTEMD_UNIT").and_then(|v| v.as_str()) {
-            Some(u) => u.to_string(),
+        // `_SYSTEMD_UNIT` identifies the unit that logged a message. Manager
+        // lifecycle records identify the unit being transitioned with UNIT or
+        // USER_UNIT; ordinary unit logs have neither and belong to journald.
+        let unit_name = match json
+            .get("UNIT")
+            .or_else(|| json.get("USER_UNIT"))
+            .and_then(decode_journald_field)
+            .filter(|unit| !unit.is_empty())
+        {
+            Some(unit) => unit,
             None => return Ok(vec![]),
         };
 
         let cursor = json
             .get("__CURSOR")
-            .and_then(|v| v.as_str())
-            .unwrap_or("")
-            .to_string();
+            .and_then(decode_journald_field)
+            .unwrap_or_default();
 
         let timestamp_us: i64 = json
             .get("__REALTIME_TIMESTAMP")
-            .and_then(|v| v.as_str())
+            .and_then(decode_journald_field)
             .and_then(|s| s.parse().ok())
             .unwrap_or(0);
 
@@ -154,32 +161,28 @@ impl MaterialParser for SystemdParser {
 
         let message = json
             .get("MESSAGE")
-            .and_then(|v| v.as_str())
-            .unwrap_or("")
-            .to_string();
+            .and_then(decode_journald_field)
+            .unwrap_or_default();
 
         let pid_str = json
             .get("_PID")
-            .and_then(|v| v.as_str())
-            .map(std::string::ToString::to_string);
+            .and_then(decode_journald_field);
         let uid_str = json
             .get("_UID")
-            .and_then(|v| v.as_str())
-            .map(std::string::ToString::to_string);
+            .and_then(decode_journald_field);
 
         let unit_result = json
             .get("UNIT_RESULT")
-            .and_then(|v| v.as_str())
-            .unwrap_or("");
+            .and_then(decode_journald_field)
+            .unwrap_or_default();
         let active_state_str = json
             .get("ACTIVE_STATE")
-            .and_then(|v| v.as_str())
-            .unwrap_or("inactive");
+            .and_then(decode_journald_field)
+            .unwrap_or_else(|| "inactive".into());
         let sub_state = json
             .get("SUB_STATE")
-            .and_then(|v| v.as_str())
-            .unwrap_or("dead")
-            .to_string();
+            .and_then(decode_journald_field)
+            .unwrap_or_else(|| "dead".into());
 
         let unit_type = infer_unit_type(&unit_name);
         let active_state = active_state_str
@@ -291,7 +294,8 @@ impl MaterialParser for SystemdParser {
             "/UNIT_RESULT",
             "/__CURSOR",
             "/__REALTIME_TIMESTAMP",
-            "/_SYSTEMD_UNIT",
+            "/UNIT",
+            "/USER_UNIT",
         ]
         .into_iter()
         .map(str::to_string)
