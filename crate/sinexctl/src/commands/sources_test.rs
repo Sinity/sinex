@@ -634,6 +634,23 @@ async fn source_coverage_table_renderer_stays_on_raw_response() -> TestResult<()
 }
 
 #[sinex_test]
+async fn source_coverage_table_marks_missing_source_dates_unknown() -> TestResult<()> {
+    let mut coverage = fixture_coverage("undated.source");
+    coverage.earliest_ts = None;
+    coverage.latest_ts = None;
+
+    let table = format_coverage_table(&SourcesCoverageResponse {
+        sources: vec![coverage],
+    });
+
+    assert!(
+        table.contains("unknown"),
+        "missing source dates must remain explicit in operator output"
+    );
+    Ok(())
+}
+
+#[sinex_test]
 async fn source_remediation_plan_table_surfaces_actions_and_reasons() -> TestResult<()> {
     let failed = fixture_remediation_candidate(
         "failed123456",

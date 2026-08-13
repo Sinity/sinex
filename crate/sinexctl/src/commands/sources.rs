@@ -784,8 +784,8 @@ fn format_coverage_table(response: &SourcesCoverageResponse) -> String {
     ]);
 
     for bucket in &response.sources {
-        let earliest = bucket.earliest_ts.as_deref().unwrap_or("-");
-        let latest = bucket.latest_ts.as_deref().unwrap_or("-");
+        let earliest = bucket.earliest_ts.as_deref().unwrap_or("unknown");
+        let latest = bucket.latest_ts.as_deref().unwrap_or("unknown");
         let events = bucket
             .event_count
             .map_or_else(|| style("-").dim().to_string(), |c| c.to_string());

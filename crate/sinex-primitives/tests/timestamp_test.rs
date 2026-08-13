@@ -18,11 +18,14 @@ async fn test_timestamp_boundaries(ctx: TestContext) -> TestResult<()> {
     let ctx = ctx.with_nats().build().await?;
     let scope = ctx.pipeline().await?;
 
-    // All timestamps must be within [2000-01-01, now+1h] or event_engine routes them to DLQ.
-    // TS_ORIG_LOWER_BOUND = 2000-01-01; SUSPICIOUS_TS_ORIG_FUTURE_SKEW = 1 hour.
+    // Historical source dates remain valid input. Only the independent future-skew
+    // bound applies by default.
     let current = now();
+    let pre_2000 = Timestamp::from_const(time::macros::datetime!(1990-01-01 00:00:00 UTC));
     let timestamp_cases = &[
-        // Just after the lower bound (2001-01-01)
+        // A genuinely old source-native date must survive the real pipeline.
+        pre_2000,
+        // Historical
         Timestamp::from_unix_timestamp(978_307_200).unwrap(),
         // Mid-range historical
         Timestamp::new(time::OffsetDateTime::new_utc(
@@ -61,6 +64,11 @@ async fn test_timestamp_boundaries(ctx: TestContext) -> TestResult<()> {
         events.len(),
         timestamp_cases.len(),
         "All events should be stored"
+    );
+
+    assert!(
+        events.iter().any(|event| event.ts_orig == Some(pre_2000)),
+        "the real event pipeline must preserve a pre-2000 source timestamp"
     );
 
     // Verify timestamps are preserved correctly

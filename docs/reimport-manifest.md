@@ -75,6 +75,10 @@ Before Phase C, refresh this table's size/cardinality columns with a machine-rea
 4. `ts_orig` quality distribution and source-material provenance;
 5. final source row/event counts and a rerun/idempotence comparison.
 
+The pre-import source-date inventory is a required part of that machine-readable manifest. Each selected source or file batch must record its exact authority path, content hash, observed earliest and latest source-native dates, and a date status of `known`, `unknown`, or `not_applicable`. `unknown` is an explicit result when the source has no trustworthy date, not permission to substitute staging time or import time. The inventory must also record the configured `ts_orig` lower-bound decision for the run and the count of records that would predate any explicitly configured bound. A source with a plausible pre-2000 date must either run with the default unset lower bound or carry an operator-reviewed bound decision before import. Do not infer that a source is post-2000 from an empty sample or from the current wall clock.
+
+After each route completes, compare the inventory with the persisted source-material coverage and import report. Any source-date range that remains `unknown`, any pre-2000 candidate count that was not measured, or any mismatch between the selected-file inventory and the admitted/DLQ counts is an operational gate failure. Preserve the source material and its provenance for investigation; do not discard the route as a successful import.
+
 The rerun comparison must use `sinexctl ops import report <operation-id> --format json`. A successful idempotent rerun is expected to show zero new live rows and all repeat candidates classified as suppressed, with source/material/event-type breakdown rows and examples. A rebuild or replay that supersedes prior interpretations must retain the replacement examples even after those new interpretations are archived.
 
 For a registered historical source, the runtime shape is:
