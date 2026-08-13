@@ -2550,8 +2550,10 @@ BEGIN
         WHERE source_event_id = ANY(p_archived_ids)
            OR source_material_id IN (SELECT source_material_id FROM _tombstone_material_ids);
 
-        DELETE FROM core.event_temporal_facts
-        WHERE event_id = ANY(p_archived_ids);
+        -- `core.event_temporal_facts` is a live view over `core.events` and
+        -- `raw.temporal_ledger`, not an authority table. Deleting from it
+        -- raises `cannot delete from view`; the underlying event/archive and
+        -- ledger lifecycle operations above/below remove its visible rows.
 
         DELETE FROM core.event_cluster_members
         WHERE event_id = ANY(p_archived_ids);
