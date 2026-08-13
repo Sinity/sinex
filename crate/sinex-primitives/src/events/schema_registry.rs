@@ -4,7 +4,7 @@
 
 use crate::domain::{EventSource, EventType, SchemaVersion};
 use crate::error::Result;
-use serde_json::Value;
+use serde_json::{Map, Value};
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::OnceLock;
@@ -234,13 +234,38 @@ pub fn calculate_schema_content_hash(
     hasher.update(b":");
     hasher.update(version.as_bytes());
     hasher.update(b":");
-    let serialized = serde_json::to_vec(schema_content).map_err(|error| {
+    let canonical_content = canonicalize_schema_json(schema_content);
+    let serialized = serde_json::to_vec(&canonical_content).map_err(|error| {
         crate::error::SinexError::validation(format!(
             "Failed to serialize schema content for hashing: {error}"
         ))
     })?;
     hasher.update(&serialized);
     Ok(hasher.finalize().to_hex().to_string())
+}
+
+/// Normalize schema JSON before hashing.
+///
+/// PostgreSQL stores schemas as jsonb, which does not preserve object-key
+/// insertion order. Hashing the original serde_json bytes would therefore
+/// make an unchanged schema look different after a database round trip.
+fn canonicalize_schema_json(value: &Value) -> Value {
+    match value {
+        Value::Object(object) => {
+            let mut keys: Vec<_> = object.keys().collect();
+            keys.sort_unstable();
+
+            let mut canonical = Map::with_capacity(object.len());
+            for key in keys {
+                canonical.insert(key.clone(), canonicalize_schema_json(&object[key]));
+            }
+            Value::Object(canonical)
+        }
+        Value::Array(items) => {
+            Value::Array(items.iter().map(canonicalize_schema_json).collect())
+        }
+        scalar => scalar.clone(),
+    }
 }
 
 pub fn annotate_schema_bundle_json(
