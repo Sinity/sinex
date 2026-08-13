@@ -144,10 +144,9 @@ pub struct DbusMessage {
 /// A parsed D-Bus match rule subset.
 ///
 /// We only model the conditions the source host uses: `type`, `interface`,
-/// `member`, `path`, `path_namespace`, `sender`. Any other keys (e.g. `arg0`)
-/// are stored verbatim and currently treated as "pass-through" — the broker
-/// will enforce them, and the post-filter is conservative (does not drop a
-/// message just because it carries an arg0 the rule expected).
+/// `member`, `path`, `path_namespace`, and `sender`. Rules without at least
+/// one modeled condition are rejected so an unsupported or empty rule cannot
+/// become an unconstrained post-filter that admits every signal.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct ParsedMatchRule {
     pub msg_type: Option<String>,
@@ -164,10 +163,13 @@ impl FromStr for ParsedMatchRule {
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         // D-Bus match rule: `key='value',key='value',...`
         let mut rule = ParsedMatchRule::default();
+        let mut has_modeled_condition = false;
         for raw_clause in s.split(',') {
             let clause = raw_clause.trim();
             if clause.is_empty() {
-                continue;
+                return Err(ParserError::Config(
+                    "invalid match rule clause: empty clause".into(),
+                ));
             }
             let (key, value) = clause.split_once('=').ok_or_else(|| {
                 ParserError::Config(format!("invalid match rule clause (no `=`): {clause}"))
@@ -175,16 +177,41 @@ impl FromStr for ParsedMatchRule {
             let key = key.trim();
             let value = value.trim().trim_matches('\'').trim_matches('"');
             match key {
-                "type" => rule.msg_type = Some(value.to_string()),
-                "interface" => rule.interface = Some(value.to_string()),
-                "member" => rule.member = Some(value.to_string()),
-                "path" => rule.path = Some(value.to_string()),
-                "path_namespace" => rule.path_namespace = Some(value.to_string()),
-                "sender" => rule.sender = Some(value.to_string()),
-                // Unknown keys are ignored by the post-filter; the broker
-                // will still enforce them if the rule was forwarded.
-                _ => {}
+                "type" => {
+                    has_modeled_condition = true;
+                    rule.msg_type = Some(value.to_string());
+                }
+                "interface" => {
+                    has_modeled_condition = true;
+                    rule.interface = Some(value.to_string());
+                }
+                "member" => {
+                    has_modeled_condition = true;
+                    rule.member = Some(value.to_string());
+                }
+                "path" => {
+                    has_modeled_condition = true;
+                    rule.path = Some(value.to_string());
+                }
+                "path_namespace" => {
+                    has_modeled_condition = true;
+                    rule.path_namespace = Some(value.to_string());
+                }
+                "sender" => {
+                    has_modeled_condition = true;
+                    rule.sender = Some(value.to_string());
+                }
+                _ => {
+                    return Err(ParserError::Config(format!(
+                        "unsupported D-Bus match rule key: {key}"
+                    )));
+                }
             }
+        }
+        if !has_modeled_condition {
+            return Err(ParserError::Config(
+                "D-Bus match rule has no modeled conditions".into(),
+            ));
         }
         Ok(rule)
     }
