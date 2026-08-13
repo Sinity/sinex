@@ -16,8 +16,10 @@ use xtask::sandbox::prelude::*;
 /// A minimal journald JSON line that produces a `journald.entry.written` event.
 const JOURNAL_FIXTURE: &[u8] = br#"{"__CURSOR":"s=abc;i=1;b=x;m=y;t=z;x=w","__REALTIME_TIMESTAMP":"1700000000000000","MESSAGE":"test log entry","PRIORITY":"6","_HOSTNAME":"sinnix-prime"}"#;
 
-/// A journald line with `_SYSTEMD_UNIT` that produces a `systemd.unit.started` event.
-const SYSTEMD_FIXTURE: &[u8] = br#"{"__CURSOR":"s=abc;i=2;b=x;m=y;t=z;x=w","__REALTIME_TIMESTAMP":"1700000001000000","_SYSTEMD_UNIT":"nginx.service","MESSAGE":"Started A Web Server.","PRIORITY":"6"}"#;
+/// A genuine manager lifecycle line with `UNIT` that produces a
+/// `systemd.unit.started` event. `_SYSTEMD_UNIT` alone is deliberately not
+/// sufficient: ordinary logs from a service carry it too.
+const SYSTEMD_FIXTURE: &[u8] = br#"{"__CURSOR":"s=abc;i=2;b=x;m=y;t=z;x=w","__REALTIME_TIMESTAMP":"1700000001000000","_SYSTEMD_UNIT":"systemd.service","UNIT":"nginx.service","MESSAGE":"Started A Web Server.","PRIORITY":"6"}"#;
 
 /// A D-Bus JSON record with interface + member in metadata (signal.received).
 const DBUS_FIXTURE: &[u8] = br#"{"key":"value"}"#;

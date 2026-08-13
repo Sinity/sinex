@@ -27,7 +27,7 @@ async fn system_json_parsers_declare_required_input_keys() -> TestResult<()> {
             "/UNIT_RESULT",
             "/__CURSOR",
             "/__REALTIME_TIMESTAMP",
-            "/_SYSTEMD_UNIT",
+            "/UNIT",
         ],
     );
     Ok(())
@@ -57,7 +57,7 @@ async fn systemd_required_unit_removal_blocks_readiness() -> TestResult<()> {
     let before = SourceRecordFingerprint::from_json(&json!({
         "__CURSOR": "s=abc;i=1",
         "__REALTIME_TIMESTAMP": "1700000000000000",
-        "_SYSTEMD_UNIT": "example.service",
+        "UNIT": "example.service",
         "MESSAGE": "Started example.service.",
         "UNIT_RESULT": "success",
         "ACTIVE_STATE": "active",
@@ -74,7 +74,7 @@ async fn systemd_required_unit_removal_blocks_readiness() -> TestResult<()> {
 
     let drift =
         SourceRecordFingerprint::diff(SourceId::from_static("system.systemd"), &before, &after)
-            .expect("removing _SYSTEMD_UNIT should produce JSON shape drift");
-    assert_required_key_blocks_readiness(drift, SystemdParser, "/_SYSTEMD_UNIT");
+        .expect("removing UNIT should produce JSON shape drift");
+    assert_required_key_blocks_readiness(drift, SystemdParser, "/UNIT");
     Ok(())
 }
