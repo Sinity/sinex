@@ -13,31 +13,34 @@ use sinex_primitives::domain::{
     OperationStatus, SourceMaterialFormat, SourceMaterialTimingInfoType,
 };
 use sinex_primitives::events::DynamicPayload;
+use sinex_primitives::events::EventPayload;
 use sinex_primitives::events::payloads::email::{
     EmailAuthorizationState, EmailCaptureRuntimeObservedPayload, EmailContinuityState,
     EmailNetworkState, EmailProviderKind, EmailRateLimitState, EmailSyncCursorObservedPayload,
     EmailSyncState,
 };
-use sinex_primitives::events::EventPayload;
 use sinex_primitives::events::{Event, SourceMaterial};
 use sinex_primitives::parser::{
-    InputShapeAdapter, MaterialAnchor, MaterialParser, ParserContext, SourceId, SourceRecord,
-    OccurrenceKey, maybe_occurrence_key_string,
+    InputShapeAdapter, MaterialAnchor, MaterialParser, OccurrenceKey, ParserContext, SourceId,
+    SourceRecord, maybe_occurrence_key_string,
 };
 use sinex_primitives::rpc::sources::{SourceMaterialMetadataContract, SourceOrigin};
 use sinex_primitives::temporal::Timestamp;
 use sqlx::PgPool;
 use std::time::{Duration, Instant};
 
+use crate::event_engine::admission::AdmittedEvent;
+use crate::event_engine::policy::PolicyEngine;
+use crate::event_engine::{AdmissionService, IngestEventValidator};
 use crate::runtime::parser::{
     EmailMboxFileAdapter, EmailMboxFileConfig, GmailApiCursorAdapter, GmailApiCursorConfig,
     GmailHttpClient, GmailOAuthCredentials, GoogleOAuthClient, ImapSyncAdapter, ImapSyncConfig,
     ImapSyncMode, NativeImapSyncClient, NativeImapSyncClientConfig, NativeImapTlsMode, OAuthError,
     OAuthTokenProvider,
 };
-use crate::event_engine::admission::AdmittedEvent;
-use crate::event_engine::policy::PolicyEngine;
 use crate::sources::source_contracts::email::EmailMailboxParser;
+use std::sync::Arc;
+use tokio::sync::RwLock;
 
 mod email;
 mod media;
@@ -50,12 +53,11 @@ use package::{
     EMAIL_IMAP_SYNC_DEFAULT_BATCH_SIZE, EMAIL_IMAP_SYNC_DEFAULT_IDLE_TIMEOUT_MS,
     EMAIL_IMAP_SYNC_EXECUTOR_STATE, EMAIL_IMAP_SYNC_FAILED_EXECUTOR_STATE,
     EMAIL_MAILDIR_STAGED_MODE_ID, EMAIL_MBOX_STAGED_MODE_ID, EMAIL_PROVIDER_MODE_IDS,
-    EMAIL_STAGED_MODE_IDS,
-    EMAIL_STAGED_SYNC_DEFAULT_MAX_MESSAGE_BYTES, EMAIL_STAGED_SYNC_EXECUTOR_STATE,
-    EmailProviderModeMetadata, EmailProviderOperationScope, EmailProviderRuntimeMode,
-    PACKAGE_OPERATION_EXECUTOR_STATE, PackageOperationSpec, email_provider_authorization_state_ref,
-    email_provider_sync_cursor_kind, media_operation_metadata, package_mode_contract_metadata,
-    package_operation_spec,
+    EMAIL_STAGED_MODE_IDS, EMAIL_STAGED_SYNC_DEFAULT_MAX_MESSAGE_BYTES,
+    EMAIL_STAGED_SYNC_EXECUTOR_STATE, EmailProviderModeMetadata, EmailProviderOperationScope,
+    EmailProviderRuntimeMode, PACKAGE_OPERATION_EXECUTOR_STATE, PackageOperationSpec,
+    email_provider_authorization_state_ref, email_provider_sync_cursor_kind,
+    media_operation_metadata, package_mode_contract_metadata, package_operation_spec,
 };
 
 // Re-export shared types
@@ -77,17 +79,8 @@ fn persisted_event_uuid(
     })
 }
 
-async fn redact_events(
-    pool: &PgPool,
-    events: Vec<Event<serde_json::Value>>,
-) -> Result<Vec<Event<serde_json::Value>>> {
-    if events.is_empty() {
-        return Ok(Vec::new());
-    }
-
-    let policy = PolicyEngine::load(pool.clone()).await?;
-    policy.ensure_fresh().await;
-    let admitted = events
+fn admitted_ops_events(events: Vec<Event<serde_json::Value>>) -> Result<Vec<AdmittedEvent>> {
+    events
         .into_iter()
         .map(|mut event| {
             // API-side parser events are new until persistence assigns them an
@@ -101,31 +94,53 @@ async fn redact_events(
                 metadata: None,
             })
         })
-        .collect::<Result<Vec<_>>>()?;
+        .collect()
+}
+
+async fn redact_events(
+    pool: &PgPool,
+    events: Vec<Event<serde_json::Value>>,
+) -> Result<Vec<Event<serde_json::Value>>> {
+    if events.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    let policy = PolicyEngine::load(pool.clone()).await?;
+    policy.ensure_fresh().await;
     Ok(policy
-        .redact_batch(admitted)
+        .redact_batch(admitted_ops_events(events)?)
         .await
         .into_iter()
         .map(|admitted| admitted.event)
         .collect())
 }
 
-/// Persist events originating in an API-side parser through the same privacy
-/// chokepoint used by the JetStream persistence consumer. These operations are
-/// intentionally synchronous with their event insert: the caller must never
-/// project or report the pre-redaction payload as if it were durable output.
+/// Persist API-side parser events through the production admission service.
+///
+/// The `AdmissionService` owns the batch persistence route used by the
+/// JetStream consumer, including its stream-batch repository write. Redaction
+/// stays immediately before that route so projections and operation summaries
+/// can only observe the durable, redacted image.
 pub(super) async fn redact_and_persist_events(
     pool: &PgPool,
     events: Vec<Event<serde_json::Value>>,
 ) -> Result<Vec<Event<serde_json::Value>>> {
-    let redacted = redact_events(pool, events).await?;
-    let mut persisted = Vec::with_capacity(redacted.len());
-    for event in redacted {
-        let persisted_event = pool.events().insert(event).await?;
-        let _ = persisted_event_uuid(&persisted_event, "ops direct privacy persistence")?;
-        persisted.push(persisted_event);
+    if events.is_empty() {
+        return Ok(Vec::new());
     }
-    Ok(persisted)
+
+    let policy = PolicyEngine::load(pool.clone()).await?;
+    policy.ensure_fresh().await;
+    let redacted = policy.redact_batch(admitted_ops_events(events)?).await;
+    let admission = AdmissionService::new(
+        pool.clone(),
+        Arc::new(RwLock::new(IngestEventValidator::new(false))),
+    );
+    admission.persist_batch(&redacted).await?;
+    Ok(redacted
+        .into_iter()
+        .map(|admitted| admitted.event)
+        .collect())
 }
 
 fn default_ops_limit() -> i64 {
@@ -172,8 +187,7 @@ pub async fn handle_ops_start(
     let record = if request.operation_type == PROJECTION_REBUILD_OPERATION_TYPE {
         start_projection_rebuild_operation(pool, actor, scope_jsonb).await?
     } else if package_operation_spec(&request.operation_type).is_some() {
-        start_package_operation(pool, actor, &request.operation_type, scope_jsonb, is_admin)
-            .await?
+        start_package_operation(pool, actor, &request.operation_type, scope_jsonb, is_admin).await?
     } else {
         pool.state()
             .start_operation(&request.operation_type, actor, scope_jsonb)
@@ -1266,13 +1280,13 @@ impl EmailGmailSyncRequest {
                 network_state: EmailNetworkState::Unknown,
             });
         };
-        let token = tokio::fs::read_to_string(token_file).await.map_err(|error| {
-            OAuthTokenFailure {
+        let token = tokio::fs::read_to_string(token_file)
+            .await
+            .map_err(|error| OAuthTokenFailure {
                 message: format!("Gmail API token file is unavailable: {error}"),
                 auth_state: EmailAuthorizationState::Missing,
                 network_state: EmailNetworkState::Unknown,
-            }
-        })?;
+            })?;
         let token = token.trim().to_string();
         if token.is_empty() {
             return Err(OAuthTokenFailure {
@@ -2068,9 +2082,10 @@ async fn admit_email_record(
         event_types.push(intent.event_type.as_str().to_string());
         events.push(parsed_material_intent_to_event(intent, material_id)?);
     }
-    for (event_type, event) in event_types.into_iter().zip(
-        redact_and_persist_events(pool, events).await?,
-    ) {
+    for (event_type, event) in event_types
+        .into_iter()
+        .zip(redact_and_persist_events(pool, events).await?)
+    {
         let id = persisted_event_uuid(&event, "email staged sync projection")?;
         summary.event_ids.push(id.to_string());
         project_email_mailbox_event(pool, mode_id, id, event_type, event.payload).await?;
@@ -2114,9 +2129,10 @@ async fn admit_email_provider_record(
         event_types.push(event_type);
         events.push(parsed_material_intent_to_event(intent, material_id)?);
     }
-    for (event_type, event) in event_types.into_iter().zip(
-        redact_and_persist_events(pool, events).await?,
-    ) {
+    for (event_type, event) in event_types
+        .into_iter()
+        .zip(redact_and_persist_events(pool, events).await?)
+    {
         let id = persisted_event_uuid(&event, "email provider sync projection")?;
         summary.event_ids.push(id.to_string());
         project_email_mailbox_event(pool, mode_id, id, event_type, event.payload).await?;
@@ -2394,7 +2410,9 @@ async fn emit_email_capture_runtime_observed(
         .await?
         .into_iter()
         .next()
-        .ok_or_else(|| SinexError::invalid_state("email runtime event redaction returned no event"))?;
+        .ok_or_else(|| {
+            SinexError::invalid_state("email runtime event redaction returned no event")
+        })?;
     if let Some(existing) = pool
         .events()
         .find_live_by_equivalence_key(&equivalence_key, EventStorageLane::Activity)
@@ -2403,7 +2421,7 @@ async fn emit_email_capture_runtime_observed(
     {
         return Ok(());
     }
-    pool.events().insert(event).await?;
+    let _ = redact_and_persist_events(pool, vec![event]).await?;
     Ok(())
 }
 
@@ -2411,7 +2429,10 @@ fn email_capture_runtime_equivalence_key(payload: &EmailCaptureRuntimeObservedPa
     maybe_occurrence_key_string(Some(&OccurrenceKey {
         source_id: SourceId::from_static("email.mailbox"),
         fields: vec![
-            ("provider".to_string(), payload.provider.as_str().to_string()),
+            (
+                "provider".to_string(),
+                payload.provider.as_str().to_string(),
+            ),
             (
                 "account_binding_ref".to_string(),
                 payload.account_binding_ref.clone(),
@@ -2429,6 +2450,91 @@ fn email_capture_runtime_equivalence_key(payload: &EmailCaptureRuntimeObservedPa
 #[cfg(test)]
 mod tests {
     use super::*;
+    use camino::Utf8PathBuf;
+    use sinex_primitives::parser::SourceRecord;
+    use xtask::sandbox::prelude::*;
+
+    async fn add_global_redaction_rule(pool: &PgPool, name: &str, secret: &str) -> TestResult<()> {
+        let repo = pool.privacy_policy();
+        repo.add_rule(
+            name,
+            "ops redaction route test",
+            "literal",
+            secret,
+            false,
+            "redact",
+            Some("<REDACTED>"),
+            "default",
+        )
+        .await?;
+        repo.bind_field_rule(name, None, None, None, 0).await?;
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn email_admission_persists_global_rule_redacted_payload(
+        ctx: TestContext,
+    ) -> TestResult<()> {
+        let secret = "SINEX_GK8J_EMAIL_SECRET";
+        add_global_redaction_rule(ctx.pool(), "gk8j-email-redaction", secret).await?;
+
+        let material = ctx
+            .pool()
+            .source_materials()
+            .register_material(sinex_db::repositories::SourceMaterial::blob_text(
+                "memory://gk8j-email.eml",
+            ))
+            .await?;
+        let message = format!(
+            "From: sender@example.test\r\nTo: recipient@example.test\r\nSubject: {secret}\r\nDate: Tue, 2 Jan 2024 03:04:05 +0000\r\nMessage-ID: <gk8j@example.test>\r\n\r\nBody {secret}\r\n"
+        );
+        let record = SourceRecord {
+            material_id: Id::from_uuid(material.id),
+            anchor: MaterialAnchor::ByteRange {
+                start: 0,
+                len: message.len() as u64,
+            },
+            bytes: message.into_bytes(),
+            logical_path: Some(Utf8PathBuf::from("mail/inbox/gk8j.eml")),
+            source_ts_hint: None,
+            metadata: serde_json::Value::Null,
+        };
+        let mut parser = EmailMailboxParser;
+        let mut summary = EmailStagedSyncSummary {
+            material_ids: Vec::new(),
+            event_ids: Vec::new(),
+            parsed_record_count: 0,
+        };
+
+        admit_email_record(
+            ctx.pool(),
+            &mut parser,
+            record,
+            Id::from_uuid(material.id),
+            "source:email.mailbox.maildir-staged",
+            &mut summary,
+        )
+        .await?;
+
+        assert!(
+            !summary.event_ids.is_empty(),
+            "email record must emit events"
+        );
+        for event_id in summary.event_ids {
+            let stored = ctx
+                .pool()
+                .events()
+                .get_by_id(Id::from_uuid(uuid::Uuid::parse_str(&event_id)?))
+                .await?
+                .expect("email admission event must persist");
+            let payload = serde_json::to_string(&stored.payload)?;
+            assert!(
+                !payload.contains(secret),
+                "stored email payload must be redacted: {payload}"
+            );
+        }
+        Ok(())
+    }
 
     #[test]
     fn email_runtime_equivalence_key_uses_the_declared_occurrence_fields() {

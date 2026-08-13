@@ -272,6 +272,12 @@ impl XtaskCommand for LintForbiddenCommand {
             is_tests_path,
         )?);
 
+        // The event engine owns durable event persistence. These are the
+        // temporary, explicit parent-epic inventory while their owners move
+        // them through admission; any new direct `EventRepository::insert`
+        // call outside the engine fails this gate.
+        violations.extend(check_direct_event_repository_inserts()?);
+
         // Bare `Uuid` for event_id / material_id (#1173): every public field
         // named `event_id` or `material_id` must be phantom-typed (`Id<Event>`,
         // `Id<SourceMaterial>`) rather than a raw `Uuid`. The SDK already has
@@ -741,6 +747,28 @@ fn check_pattern_allow_tests(label: &str, pattern: &str, allow: &[&str]) -> Resu
     check_pattern(label, pattern, allow, is_tests_path)
 }
 
+const DIRECT_EVENT_REPOSITORY_INSERT_LEGACY_ALLOW: [&str; 6] = [
+    "crate/sinexd/src/api/handlers/browser.rs",
+    "crate/sinexd/src/api/handlers/curation.rs",
+    "crate/sinexd/src/api/handlers/health.rs",
+    "crate/sinexd/src/api/handlers/instructions.rs",
+    "crate/sinexd/src/api/handlers/tasks.rs",
+    "crate/sinexd/src/automata/entity_chain_shadow.rs",
+];
+
+fn check_direct_event_repository_inserts() -> Result<Vec<String>> {
+    run_rg(r"\.events\(\)\.insert\(").and_then(|matches| {
+        filter_allowlist(
+            matches,
+            &DIRECT_EVENT_REPOSITORY_INSERT_LEGACY_ALLOW,
+            is_tests_path,
+        )
+    })
+    .with_context(|| {
+        "failed to scan for direct EventRepository::insert calls outside the admission engine"
+    })
+}
+
 /// Check test attributes, allowing only dedicated test directories.
 ///
 /// Inline `mod tests` blocks in library or source files must use `#[sinex_test]`
@@ -943,16 +971,14 @@ fn property_strategy_domain_fallback_violations_for_file(
 /// with a one-line reason -- this is NOT a blanket exemption list, it exists
 /// so genuinely reviewed exceptions don't re-trip the check, while anything
 /// new still fails loudly.
-const SQLX_WRITE_MACRO_OUTSIDE_REPOSITORIES_ALLOWLIST: &[(&str, &str)] = &[
-    (
-        "crate/sinexctl/src/commands/blob.rs",
-        "BlobMigrateCommand::migrate_single_blob's legacy-git-annex-to-CAS \
+const SQLX_WRITE_MACRO_OUTSIDE_REPOSITORIES_ALLOWLIST: &[(&str, &str)] = &[(
+    "crate/sinexctl/src/commands/blob.rs",
+    "BlobMigrateCommand::migrate_single_blob's legacy-git-annex-to-CAS \
          migration UPDATE (core.blobs). Discovered while landing sinex-k22c's \
          3 named bypass sites and this lint extension itself; not yet \
          triaged/migrated to a repository method -- tracked as a follow-up, \
          not silently accepted. Remove this entry once fixed.",
-    ),
-];
+)];
 
 /// Scans for write-verb-shaped `sqlx::query!`/`query_as!` macro calls (SQL
 /// text starting with `INSERT`/`UPDATE`/`DELETE`) outside the repository
@@ -962,7 +988,11 @@ fn check_sqlx_write_macro_forms_outside_repositories() -> Result<Vec<String>> {
     let workspace = workspace_root();
     let mut violations = Vec::new();
 
-    for root in ["crate/sinexd/src", "crate/sinexctl/src", "crate/sinex-primitives/src"] {
+    for root in [
+        "crate/sinexd/src",
+        "crate/sinexctl/src",
+        "crate/sinex-primitives/src",
+    ] {
         let scan_root = workspace.join(root);
         if !scan_root.exists() {
             continue;

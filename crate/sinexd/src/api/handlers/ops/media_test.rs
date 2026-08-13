@@ -1,7 +1,30 @@
 use super::super::package::PackageOperationSpec;
 use super::*;
+use sinex_db::DbPoolExt;
 use sinex_primitives::privacy::{RuntimePrivateModeState, save_private_mode_state};
+use sinex_primitives::{Event, Id};
 use xtask::sandbox::prelude::*;
+
+async fn add_global_redaction_rule(
+    pool: &sqlx::PgPool,
+    name: &str,
+    secret: &str,
+) -> TestResult<()> {
+    let repo = pool.privacy_policy();
+    repo.add_rule(
+        name,
+        "media redaction route test",
+        "literal",
+        secret,
+        false,
+        "redact",
+        Some("<REDACTED>"),
+        "default",
+    )
+    .await?;
+    repo.bind_field_rule(name, None, None, None, 0).await?;
+    Ok(())
+}
 
 #[sinex_test]
 async fn on_demand_media_actions_cancel_before_consuming_raw_output(
@@ -90,6 +113,67 @@ async fn on_demand_media_actions_cancel_before_consuming_raw_output(
             "media_capture_blocked_private_mode"
         );
         assert_eq!(preview["capture_gate"]["reason"], "private_mode");
+    }
+    Ok(())
+}
+
+#[sinex_test]
+async fn media_worker_admission_persists_global_rule_redacted_payload(
+    ctx: TestContext,
+) -> TestResult<()> {
+    let secret = "SINEX_GK8J_MEDIA_SECRET";
+    add_global_redaction_rule(ctx.pool(), "gk8j-media-redaction", secret).await?;
+    let state_dir = tempfile::tempdir()?;
+    let spec = PackageOperationSpec {
+        operation_type: "media.screen-ocr.run-ocr",
+        source_id: "media.screen-ocr",
+        default_mode_id: Some("source:media.screen-ocr.local-model-batch"),
+        accepted_mode_ids: &["source:media.screen-ocr.local-model-batch"],
+        action: "run_ocr",
+        surface: "media_capture",
+        executor_message: "test",
+    };
+    let mut scope = serde_json::Map::new();
+    scope.insert("worker_output".to_string(), serde_json::json!(secret));
+    let mut preview = serde_json::json!({ "operation_type": spec.operation_type });
+
+    let result = execute_media_operation_with_state_dir(
+        ctx.pool(),
+        &spec,
+        "source:media.screen-ocr.local-model-batch",
+        "test-operator",
+        &mut scope,
+        &mut preview,
+        true,
+        state_dir.path(),
+    )
+    .await?
+    .expect("media worker operation must produce an executor result");
+
+    assert_eq!(result.status, OperationStatus::Success);
+    let event_ids = scope["worker_output_event_ids"]
+        .as_array()
+        .expect("media operation must report admitted event ids");
+    assert!(
+        !event_ids.is_empty(),
+        "media worker output must emit events"
+    );
+    for event_id in event_ids {
+        let event_id = event_id
+            .as_str()
+            .expect("reported media event id must be a string")
+            .parse()?;
+        let stored = ctx
+            .pool()
+            .events()
+            .get_by_id(Id::<Event<serde_json::Value>>::from_uuid(event_id))
+            .await?
+            .expect("media admission event must persist");
+        let payload = serde_json::to_string(&stored.payload)?;
+        assert!(
+            !payload.contains(secret),
+            "stored media payload must be redacted: {payload}"
+        );
     }
     Ok(())
 }

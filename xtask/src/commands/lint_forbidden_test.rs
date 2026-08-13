@@ -69,6 +69,39 @@ async fn test_filter_allowlist_rejects_empty_match_paths() -> ::xtask::sandbox::
 }
 
 #[sinex_test]
+async fn direct_event_insert_guard_rejects_unblessed_persistence()
+-> ::xtask::sandbox::TestResult<()> {
+    let violations = filter_allowlist(
+        vec![
+            "crate/sinexd/src/api/handlers/future.rs:42:pool.events().insert(event).await?;"
+                .to_string(),
+        ],
+        &DIRECT_EVENT_REPOSITORY_INSERT_LEGACY_ALLOW,
+        is_tests_path,
+    )?;
+
+    assert_eq!(violations.len(), 1);
+    assert!(violations[0].contains("future.rs"));
+    Ok(())
+}
+
+#[sinex_test]
+async fn direct_event_insert_guard_accepts_explicit_legacy_inventory()
+-> ::xtask::sandbox::TestResult<()> {
+    let violations = filter_allowlist(
+        vec![
+            "crate/sinexd/src/api/handlers/tasks.rs:72:pool.events().insert(event).await?;"
+                .to_string(),
+        ],
+        &DIRECT_EVENT_REPOSITORY_INSERT_LEGACY_ALLOW,
+        is_tests_path,
+    )?;
+
+    assert!(violations.is_empty());
+    Ok(())
+}
+
+#[sinex_test]
 async fn test_transport_publish_family_inventory_is_current() -> ::xtask::sandbox::TestResult<()> {
     let violations = check_transport_publish_family_inventory()?;
     assert!(
@@ -662,8 +695,7 @@ async fn evidence_tier_reintroduction_rejects_struct_and_enum() -> ::xtask::sand
 }
 
 #[sinex_test]
-async fn evidence_tier_reintroduction_ignores_prose_mentions() -> ::xtask::sandbox::TestResult<()>
-{
+async fn evidence_tier_reintroduction_ignores_prose_mentions() -> ::xtask::sandbox::TestResult<()> {
     let fixture = "// ClaimSupport replaces the old scalar-EvidenceTier idea: see derivation.rs";
     let violations = evidence_tier_violations_for_file("fixture.rs", fixture);
     assert!(violations.is_empty(), "{violations:?}");
