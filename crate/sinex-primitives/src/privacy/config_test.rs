@@ -19,7 +19,7 @@ async fn default_config_round_trips_through_toml() -> ::xtask::sandbox::TestResu
     let parsed: PrivacyConfig = toml::from_str(&toml_str).expect("deserialize");
 
     assert!(parsed.enabled);
-    assert!(matches!(parsed.builtin_categories, CategorySet::None));
+    assert!(matches!(parsed.builtin_categories, CategorySet::All));
     assert!(parsed.extra_rules.is_empty());
     assert!(parsed.overrides.is_empty());
     assert!(!parsed.track_stats);
@@ -129,7 +129,7 @@ async fn from_file_missing_fields_use_defaults() -> ::xtask::sandbox::TestResult
 
     let config = PrivacyConfig::from_file(&path).unwrap();
     assert!(config.enabled); // default
-    assert!(matches!(config.builtin_categories, CategorySet::None)); // default
+    assert!(matches!(config.builtin_categories, CategorySet::All)); // default
     assert!(config.track_stats); // overridden
     Ok(())
 }
@@ -308,7 +308,6 @@ async fn from_env_rejects_invalid_default_strategy() -> ::xtask::sandbox::TestRe
 }
 
 #[sinex_test]
-#[ignore = "sinex-vceo open: documented SINEX_PRIVACY_BUILTIN default is 'all' (from_env doc table) but the actual runtime default (no env var, no config file) is CategorySet::None"]
 async fn from_env_default_matches_documented_builtin_default() -> ::xtask::sandbox::TestResult<()> {
     let _guard = ENV_LOCK.lock().await;
     let old_builtin = std::env::var_os("SINEX_PRIVACY_BUILTIN");

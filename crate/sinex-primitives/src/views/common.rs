@@ -170,6 +170,9 @@ impl ActionAvailability {
 #[serde(rename_all = "snake_case")]
 pub enum PrivacyStateKind {
     RawVisible,
+    /// The surface exposes content but did not receive a trusted
+    /// transformation receipt for this route.
+    TransformationUnknown,
     MetadataOnly,
     Redacted,
     Suppressed,
@@ -192,6 +195,14 @@ impl PrivacyStateView {
         Self {
             state: PrivacyStateKind::RawVisible,
             reason: None,
+        }
+    }
+
+    #[must_use]
+    pub fn transformation_unknown() -> Self {
+        Self {
+            state: PrivacyStateKind::TransformationUnknown,
+            reason: Some("transformation status was not provided by the route".to_string()),
         }
     }
 }

@@ -1653,7 +1653,7 @@ async fn ops_start_email_mailbox_export_applies_disclosure_policy(
         "email-export-subject",
         r"EMAIL_SUBJECT_SECRET_[A-Za-z0-9_]+",
         "<EMAIL_SUBJECT>",
-        "/messages/0/subject",
+        "/subject",
     )
     .await?;
     add_email_export_disclosure_rule(
@@ -1661,7 +1661,7 @@ async fn ops_start_email_mailbox_export_applies_disclosure_policy(
         "email-export-recipient",
         r"recipient_secret_[A-Za-z0-9_@.]+",
         "<EMAIL_RECIPIENT>",
-        "/messages/0/to/0",
+        "/to/0",
     )
     .await?;
     add_email_export_disclosure_rule(
@@ -1669,7 +1669,7 @@ async fn ops_start_email_mailbox_export_applies_disclosure_policy(
         "email-export-material",
         r"raw_email_secret_[A-Za-z0-9_]+",
         "<EMAIL_MATERIAL>",
-        "/messages/0/raw_material_id",
+        "/raw_material_id",
     )
     .await?;
     add_email_export_disclosure_rule(
@@ -1677,7 +1677,7 @@ async fn ops_start_email_mailbox_export_applies_disclosure_policy(
         "email-export-source-file",
         r"source_file_secret_[A-Za-z0-9_.-]+",
         "<EMAIL_SOURCE_FILE>",
-        "/messages/0/source_file",
+        "/source_file",
     )
     .await?;
 
@@ -1698,6 +1698,41 @@ async fn ops_start_email_mailbox_export_applies_disclosure_policy(
         }),
     )
     .await?;
+    for (index, (subject, recipient, material, source_file)) in [
+        (
+            "EMAIL_SUBJECT_SECRET_board_packet_002",
+            "recipient_secret_private_002@example.test",
+            "raw_email_secret_material_002",
+            "source_file_secret_maildir_002.eml",
+        ),
+        (
+            "EMAIL_SUBJECT_SECRET_board_packet_003",
+            "recipient_secret_private_003@example.test",
+            "raw_email_secret_material_003",
+            "source_file_secret_maildir_003.eml",
+        ),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        seed_email_projection_message(
+            &ctx,
+            "source:email.mailbox",
+            json!({
+                "message_id": format!("sensitive-export-{index:03}@example.test"),
+                "folder": "INBOX",
+                "source_file": source_file,
+                "raw_material_id": material,
+                "mailbox_format": "rfc822",
+                "subject": subject,
+                "from": ["sender@example.test"],
+                "to": [recipient],
+                "body_bytes": 4096,
+                "attachment_count": 1
+            }),
+        )
+        .await?;
+    }
     let dir = tempfile::tempdir()?;
     let output_path = dir.path().join("mailbox-export-redacted.json");
 
@@ -1729,6 +1764,14 @@ async fn ops_start_email_mailbox_export_applies_disclosure_policy(
         "recipient_secret_private@example.test",
         "raw_email_secret_material_001",
         "source_file_secret_maildir.eml",
+        "EMAIL_SUBJECT_SECRET_board_packet_002",
+        "recipient_secret_private_002@example.test",
+        "raw_email_secret_material_002",
+        "source_file_secret_maildir_002.eml",
+        "EMAIL_SUBJECT_SECRET_board_packet_003",
+        "recipient_secret_private_003@example.test",
+        "raw_email_secret_material_003",
+        "source_file_secret_maildir_003.eml",
     ] {
         assert!(
             !scope_json.contains(token),
@@ -1738,6 +1781,17 @@ async fn ops_start_email_mailbox_export_applies_disclosure_policy(
             !exported_json.contains(token),
             "written email export must not leak email token {token}: {exported_json}"
         );
+    }
+    assert_eq!(exported["message_count"], 3);
+    for message in exported["messages"]
+        .as_array()
+        .expect("mailbox export messages array")
+    {
+        let message_json = serde_json::to_string(message)?;
+        assert!(message_json.contains("<EMAIL_SUBJECT>"));
+        assert!(message_json.contains("<EMAIL_RECIPIENT>"));
+        assert!(message_json.contains("<EMAIL_MATERIAL>"));
+        assert!(message_json.contains("<EMAIL_SOURCE_FILE>"));
     }
     for replacement in [
         "<EMAIL_SUBJECT>",

@@ -158,7 +158,10 @@ impl EventCardView {
             summary: event_summary(event, result.snippet.as_deref()),
             payload_preview: payload_preview(&event.payload),
             material_refs: provenance.material_refs,
-            privacy_state: PrivacyStateView::raw_visible(),
+            // The primitive view constructor has no route-level disclosure
+            // receipt. Callers that actually run disclosure must overwrite
+            // this explicitly; never infer redaction from the card shape.
+            privacy_state: PrivacyStateView::transformation_unknown(),
             caveats,
             trace_refs: provenance.trace_refs,
             trace_links: provenance.trace_links,

@@ -1319,11 +1319,50 @@ fn apply_scoped_engine_to_json(value: JsonValue, scope: &ScopedEngine) -> JsonVa
                 *field_value = scope
                     .engine
                     .process_json(&original, ProcessingContext::Document);
+            } else {
+                // Export manifests may wrap event-shaped values in arrays
+                // (`messages`, `material_exports`, ...). A field rule written
+                // for one email event, such as `/subject`, must protect every
+                // matching array element rather than silently selecting none.
+                apply_field_path_to_array_elements(&mut value, &pointer, &scope.engine);
             }
         }
     }
 
     value
+}
+
+fn apply_field_path_to_array_elements(
+    value: &mut JsonValue,
+    pointer: &str,
+    engine: &PrivacyEngine,
+) -> bool {
+    match value {
+        JsonValue::Array(items) => {
+            let mut changed = false;
+            for item in items {
+                if let Some(field_value) = item.pointer_mut(pointer) {
+                    let original = std::mem::replace(field_value, JsonValue::Null);
+                    *field_value = engine.process_json(&original, ProcessingContext::Document);
+                    changed = true;
+                } else {
+                    changed |= apply_field_path_to_array_elements(item, pointer, engine);
+                }
+            }
+            changed
+        }
+        JsonValue::Object(fields) => {
+            let mut changed = false;
+            for child in fields
+                .values_mut()
+                .filter(|child| child.is_array() || child.is_object())
+            {
+                changed |= apply_field_path_to_array_elements(child, pointer, engine);
+            }
+            changed
+        }
+        _ => false,
+    }
 }
 
 fn field_path_pointer(path: &str) -> String {
