@@ -13,7 +13,10 @@ use sinex_primitives::domain::{EventSource, EventType};
 use sinex_primitives::{Id, Pagination, Uuid};
 use sqlx::types::Json;
 use std::collections::HashSet;
+use std::future::Future;
 use tracing::instrument;
+
+const KEYSET_SKIP_PAGE_SIZE: i64 = Pagination::MAX_LIMIT;
 
 impl EventRepository<'_> {
     #[instrument(skip(self), fields(event_id = %id))]
@@ -85,20 +88,10 @@ impl EventRepository<'_> {
         pagination: Pagination,
     ) -> DbResult<Vec<Event<JsonValue>>> {
         let (limit, offset) = pagination.as_tuple();
-
-        let records = sqlx::query_as::<_, EventRecord>(concat!(
-            "SELECT ",
-            event_select_columns!(),
-            " FROM core.events WHERE source = $1 ORDER BY ts_coided DESC LIMIT $2 OFFSET $3"
-        ))
-        .bind(source.as_str())
-        .bind(limit)
-        .bind(offset)
-        .fetch_all(self.pool)
+        paginate_keyset(offset, limit, |after_id, page_limit| {
+            self.get_by_source_after_id(source, after_id, page_limit)
+        })
         .await
-        .map_err(|e| db_error(e, "get events by source"))?;
-
-        records_to_events(records)
     }
 
     /// Fetch a bounded source page using a UUIDv7 keyset cursor.
@@ -145,20 +138,10 @@ impl EventRepository<'_> {
         pagination: Pagination,
     ) -> DbResult<Vec<Event<JsonValue>>> {
         let (limit, offset) = pagination.as_tuple();
-
-        let records = sqlx::query_as::<_, EventRecord>(concat!(
-            "SELECT ",
-            event_select_columns!(),
-            " FROM core.events WHERE event_type = $1 ORDER BY ts_coided DESC LIMIT $2 OFFSET $3"
-        ))
-        .bind(event_type.as_str())
-        .bind(limit)
-        .bind(offset)
-        .fetch_all(self.pool)
+        paginate_keyset(offset, limit, |after_id, page_limit| {
+            self.get_by_event_type_after_id(event_type, after_id, page_limit)
+        })
         .await
-        .map_err(|e| db_error(e, "get events by type"))?;
-
-        records_to_events(records)
     }
 
     /// Fetch a bounded event-type page using a UUIDv7 keyset cursor.
@@ -289,22 +272,10 @@ impl EventRepository<'_> {
         pagination: Pagination,
     ) -> DbResult<Vec<Event<JsonValue>>> {
         let (limit, offset) = pagination.as_tuple();
-
-        // Use index hint for TimescaleDB optimization on time-range queries
-        let records = sqlx::query_as::<_, EventRecord>(concat!(
-            "SELECT ",
-            event_select_columns!(),
-            " FROM core.events WHERE ts_coided >= $1 AND ts_coided <= $2 ORDER BY ts_coided DESC LIMIT $3 OFFSET $4"
-        ))
-        .bind(start)
-        .bind(end)
-        .bind(limit)
-        .bind(offset)
-        .fetch_all(self.pool)
+        paginate_keyset(offset, limit, |after_id, page_limit| {
+            self.get_by_time_range_after_id(start, end, after_id, page_limit)
+        })
         .await
-        .map_err(|e| db_error(e, "get events by time range"))?;
-
-        records_to_events(records)
     }
 
     /// Fetch a bounded time-range page using a UUIDv7 keyset cursor.
@@ -961,6 +932,37 @@ fn validate_keyset_limit(limit: i64) -> DbResult<()> {
         return Err(SinexError::validation("keyset page limit must be positive"));
     }
     Ok(())
+}
+
+/// Preserve the legacy offset-shaped repository API without issuing a database
+/// skip scan. Deep callers walk bounded UUIDv7 keyset pages until the
+/// requested offset, then fetch the requested page from the final cursor.
+pub(crate) async fn paginate_keyset<F, Fut>(
+    offset: i64,
+    limit: i64,
+    mut fetch_page: F,
+) -> DbResult<Vec<Event<JsonValue>>>
+where
+    F: FnMut(Option<Id<Event<JsonValue>>>, i64) -> Fut,
+    Fut: Future<Output = DbResult<Vec<Event<JsonValue>>>>,
+{
+    let mut cursor = None;
+    let mut remaining = offset;
+
+    while remaining > 0 {
+        let page_limit = remaining.min(KEYSET_SKIP_PAGE_SIZE);
+        let page = fetch_page(cursor, page_limit).await?;
+        if page.is_empty() || page.len() < page_limit as usize {
+            return Ok(Vec::new());
+        }
+
+        cursor = Some(page.last().and_then(|event| event.id).ok_or_else(|| {
+            SinexError::database("keyset pagination encountered an event without an id")
+        })?);
+        remaining -= page.len() as i64;
+    }
+
+    fetch_page(cursor, limit).await
 }
 
 /// The live `core.events` row an incoming equivalence-keyed interpretation

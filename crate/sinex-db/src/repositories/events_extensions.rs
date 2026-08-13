@@ -3,7 +3,7 @@
 use crate::JsonValue;
 use crate::models::Event;
 use crate::repositories::common::{DbResult, Repository, db_error};
-use crate::repositories::events::queries::extract_plan_rows;
+use crate::repositories::events::queries::{extract_plan_rows, paginate_keyset};
 use crate::repositories::events::{EventRepository, event_select_columns};
 
 use crate::EventRecord;
@@ -26,26 +26,10 @@ impl EventRepository<'_> {
         pagination: Pagination,
     ) -> DbResult<Vec<Event<JsonValue>>> {
         let (limit, offset) = pagination.as_tuple();
-
-        let records = sqlx::query_as::<_, EventRecord>(concat!(
-            "SELECT ",
-            event_select_columns!(),
-            " FROM core.events WHERE source = $1 AND ts_coided >= $2 AND ts_coided <= $3 \
-             ORDER BY ts_coided DESC LIMIT $4 OFFSET $5"
-        ))
-        .bind(source.as_str())
-        .bind(start)
-        .bind(end)
-        .bind(limit)
-        .bind(offset)
-        .fetch_all(self.pool())
+        paginate_keyset(offset, limit, |after_id, page_limit| {
+            self.get_by_source_and_time_range_after_id(source, start, end, after_id, page_limit)
+        })
         .await
-        .map_err(|e| db_error(e, "get events by source and time range"))?;
-
-        records
-            .into_iter()
-            .map(super::events::conversions::EventRecordExt::try_to_event)
-            .collect()
     }
 
     /// Fetch a bounded source/time page using a UUIDv7 keyset cursor.
@@ -104,26 +88,12 @@ impl EventRepository<'_> {
         pagination: Pagination,
     ) -> DbResult<Vec<Event<JsonValue>>> {
         let (limit, offset) = pagination.as_tuple();
-
-        let records = sqlx::query_as::<_, EventRecord>(concat!(
-            "SELECT ",
-            event_select_columns!(),
-            " FROM core.events WHERE source = $1 AND ts_coided >= $2 AND ts_coided <= $3 \
-             AND source_event_ids IS NULL ORDER BY ts_coided DESC LIMIT $4 OFFSET $5"
-        ))
-        .bind(source.as_str())
-        .bind(start)
-        .bind(end)
-        .bind(limit)
-        .bind(offset)
-        .fetch_all(self.pool())
+        paginate_keyset(offset, limit, |after_id, page_limit| {
+            self.get_material_root_events_in_range_after_id(
+                source, start, end, after_id, page_limit,
+            )
+        })
         .await
-        .map_err(|e| db_error(e, "get material-root events by source and time range"))?;
-
-        records
-            .into_iter()
-            .map(super::events::conversions::EventRecordExt::try_to_event)
-            .collect()
     }
 
     /// Fetch bounded material-root events with a UUIDv7 keyset cursor.

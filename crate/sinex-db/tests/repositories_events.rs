@@ -175,6 +175,118 @@ async fn reimport_scale_pages_use_bounded_keysets_and_quality_limits(
             .all(|first| second_page.iter().all(|second| first.id != second.id)),
         "keyset pages must not repeat rows"
     );
+    let legacy_page = ctx
+        .pool
+        .events()
+        .get_by_source(&source, Pagination::new(Some(2), Some(2)))
+        .await?;
+    assert_eq!(
+        legacy_page.iter().map(|event| event.id).collect::<Vec<_>>(),
+        second_page.iter().map(|event| event.id).collect::<Vec<_>>(),
+        "legacy offset-shaped pagination must walk the same keyset pages"
+    );
+
+    let start = Timestamp::now() - time::Duration::minutes(1);
+    let end = Timestamp::now() + time::Duration::minutes(1);
+    let event_type = EventType::new("reimport.page")?;
+    let type_page = ctx
+        .pool
+        .events()
+        .get_by_event_type_after_id(&event_type, None, 2)
+        .await?;
+    let type_next_page = ctx
+        .pool
+        .events()
+        .get_by_event_type_after_id(
+            &event_type,
+            type_page.last().map(|event| event.id.unwrap()),
+            2,
+        )
+        .await?;
+    assert_eq!(type_page.len(), 2);
+    assert_eq!(type_next_page.len(), 2);
+    assert!(
+        type_page
+            .iter()
+            .all(|first| type_next_page.iter().all(|second| first.id != second.id)),
+        "event-type keyset pages must not repeat rows"
+    );
+
+    let range_page = ctx
+        .pool
+        .events()
+        .get_by_time_range_after_id(start, end, None, 2)
+        .await?;
+    let range_next_page = ctx
+        .pool
+        .events()
+        .get_by_time_range_after_id(
+            start,
+            end,
+            range_page.last().map(|event| event.id.unwrap()),
+            2,
+        )
+        .await?;
+    assert_eq!(range_page.len(), 2);
+    assert_eq!(range_next_page.len(), 2);
+    assert!(
+        range_page
+            .iter()
+            .all(|first| range_next_page.iter().all(|second| first.id != second.id)),
+        "time-range keyset pages must not repeat rows"
+    );
+
+    let source_range_page = ctx
+        .pool
+        .events()
+        .get_by_source_and_time_range_after_id(&source, start, end, None, 2)
+        .await?;
+    let source_range_next_page = ctx
+        .pool
+        .events()
+        .get_by_source_and_time_range_after_id(
+            &source,
+            start,
+            end,
+            source_range_page.last().map(|event| event.id.unwrap()),
+            2,
+        )
+        .await?;
+    assert_eq!(source_range_page.len(), 2);
+    assert_eq!(source_range_next_page.len(), 2);
+    assert!(
+        source_range_page.iter().all(|first| source_range_next_page
+            .iter()
+            .all(|second| first.id != second.id)),
+        "source/time keyset pages must not repeat rows"
+    );
+
+    let material_root_page = ctx
+        .pool
+        .events()
+        .get_material_root_events_in_range_after_id(&source, start, end, None, 2)
+        .await?;
+    let material_root_next_page = ctx
+        .pool
+        .events()
+        .get_material_root_events_in_range_after_id(
+            &source,
+            start,
+            end,
+            material_root_page.last().map(|event| event.id.unwrap()),
+            2,
+        )
+        .await?;
+    assert_eq!(material_root_page.len(), 2);
+    assert_eq!(material_root_next_page.len(), 2);
+    assert!(
+        material_root_page
+            .iter()
+            .all(|first| material_root_next_page
+                .iter()
+                .all(|second| first.id != second.id)),
+        "material-root keyset pages must not repeat rows"
+    );
 
     let scope = ReplayScope {
         source_name: source.to_string(),
@@ -195,6 +307,15 @@ async fn reimport_scale_pages_use_bounded_keysets_and_quality_limits(
     assert!(
         root_page.iter().all(|id| !next_root_page.contains(id)),
         "replay root keyset pages must not repeat rows"
+    );
+    assert_eq!(
+        ctx.pool
+            .replay()
+            .collect_scope_root_ids(&scope)
+            .await?
+            .len(),
+        5,
+        "the full root collector must traverse every bounded keyset page"
     );
 
     let regression_source = EventSource::new("reimport-regressions")?;
@@ -518,7 +639,7 @@ async fn stream_batch_copy_roundtrip_diverse_payloads(ctx: TestContext) -> TestR
             derivation_epoch_id: None,
             derivation_lane_id: None,
             adjudication_event_id: None,
-        content_hash: None,
+            content_hash: None,
         });
     }
 
@@ -877,7 +998,7 @@ async fn stream_batch_insert_rejects_intra_batch_synthesis_cycles(
             derivation_epoch_id: None,
             derivation_lane_id: None,
             adjudication_event_id: None,
-        content_hash: None,
+            content_hash: None,
         },
         StreamBatchRow {
             id: second_id,
@@ -909,7 +1030,7 @@ async fn stream_batch_insert_rejects_intra_batch_synthesis_cycles(
             derivation_epoch_id: None,
             derivation_lane_id: None,
             adjudication_event_id: None,
-        content_hash: None,
+            content_hash: None,
         },
     ];
 

@@ -33,6 +33,8 @@ use validation::{
     validate_cascade_table_name,
 };
 
+const CASCADE_ROOT_BATCH_SIZE: usize = 1_000;
+
 /// Event repository for database operations
 pub struct EventRepository<'a> {
     pub(super) pool: &'a PgPool,
@@ -100,24 +102,25 @@ impl<'a> EventRepository<'a> {
         table_name: &str,
         event_ids: &[Uuid],
     ) -> DbResult<()> {
-        let ids: Vec<Uuid> = event_ids.to_vec();
-        sqlx::query_scalar::<_, i64>(
-            r"SELECT core.cascade_populate_roots($1, $2::uuid[]) as inserted",
-        )
-        .bind(table_name)
-        .bind(&ids)
-        .fetch_one(self.pool)
-        .await
-        .map_err(|e| {
-            db_error(
-                e,
-                &format!(
-                    "Failed to populate cascade roots: {} event IDs into table '{}'",
-                    event_ids.len(),
-                    table_name
-                ),
+        for ids in event_ids.chunks(CASCADE_ROOT_BATCH_SIZE) {
+            sqlx::query_scalar::<_, i64>(
+                r"SELECT core.cascade_populate_roots($1, $2::uuid[]) as inserted",
             )
-        })?;
+            .bind(table_name)
+            .bind(ids)
+            .fetch_one(self.pool)
+            .await
+            .map_err(|e| {
+                db_error(
+                    e,
+                    &format!(
+                        "Failed to populate cascade roots: {} event IDs into table '{}'",
+                        event_ids.len(),
+                        table_name
+                    ),
+                )
+            })?;
+        }
         Ok(())
     }
 
@@ -2749,15 +2752,16 @@ impl<'a, 't> EventRepositoryTx<'a, 't> {
         table_name: &str,
         event_ids: &[Uuid],
     ) -> DbResult<()> {
-        let ids: Vec<Uuid> = event_ids.to_vec();
-        sqlx::query_scalar::<_, i64>(
-            r"SELECT core.cascade_populate_roots($1, $2::uuid[]) as inserted",
-        )
-        .bind(table_name)
-        .bind(&ids)
-        .fetch_one(&mut **self.tx)
-        .await
-        .map_err(|e| db_error(e, "populate cascade roots"))?;
+        for ids in event_ids.chunks(CASCADE_ROOT_BATCH_SIZE) {
+            sqlx::query_scalar::<_, i64>(
+                r"SELECT core.cascade_populate_roots($1, $2::uuid[]) as inserted",
+            )
+            .bind(table_name)
+            .bind(ids)
+            .fetch_one(&mut **self.tx)
+            .await
+            .map_err(|e| db_error(e, "populate cascade roots"))?;
+        }
         Ok(())
     }
 
