@@ -293,12 +293,23 @@ fn format_sources_status_table_with_adjudication(
 
     let mut table = builder.build();
     table.with(Style::rounded());
-    format!(
-        "{}\n{}\n{}",
+    let mut summary_lines = vec![
         source_status_summary_line(&envelope.payload),
+        source_dedup_summary_line(&envelope.payload),
         adjudication_queue_summary_line(adjudication),
-        table
-    )
+    ];
+    if !envelope.caveats.is_empty() {
+        summary_lines.push(format!(
+            "Source status caveats: {}",
+            envelope
+                .caveats
+                .iter()
+                .map(|caveat| caveat.id.as_str())
+                .collect::<Vec<_>>()
+                .join(", ")
+        ));
+    }
+    format!("{}\n{}", summary_lines.join("\n"), table)
 }
 
 fn adjudication_queue_summary_line(adjudication: AdjudicationQueueSummary) -> String {
@@ -322,6 +333,19 @@ fn adjudication_queue_summary_line(adjudication: AdjudicationQueueSummary) -> St
 
 fn format_basis_points_percent(basis_points: u32) -> String {
     format!("{}.{:02}%", basis_points / 100, basis_points % 100)
+}
+
+fn source_dedup_summary_line(view: &SourceCoverageListView) -> String {
+    let dedup = &view.dedup;
+    format!(
+        "Dedup outcomes: admitted={} suppressed={} superseded={} failed={} dlq={} attempted={}",
+        dedup.admitted,
+        dedup.suppressed,
+        dedup.superseded,
+        dedup.failed,
+        dedup.dlq,
+        dedup.attempted(),
+    )
 }
 
 fn source_status_summary_line(view: &SourceCoverageListView) -> String {

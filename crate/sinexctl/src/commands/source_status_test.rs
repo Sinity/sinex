@@ -3,8 +3,9 @@
 use super::*;
 use crate::fmt::render_finite_envelope;
 use sinex_primitives::views::{
-    ActionAvailability, CaveatView, CoverageGapView, SourceCoverageListView, SourcePrivacyPosture,
-    SourceResourceBudgetView, VIEW_ENVELOPE_SCHEMA_VERSION,
+    ActionAvailability, CaveatView, CoverageGapView, SourceCoverageListView,
+    SourceDedupSummaryView, SourcePrivacyPosture, SourceResourceBudgetView,
+    VIEW_ENVELOPE_SCHEMA_VERSION,
 };
 use xtask::sandbox::sinex_test;
 
@@ -151,6 +152,7 @@ async fn table_renderer_shows_source_coverage_view_fields() -> xtask::TestResult
     assert!(table.contains("Sources: total=1 ready=1"));
     assert!(table.contains("coverage_error_sources=0"));
     assert!(table.contains("coverage_error_rate=0.00%"));
+    assert!(table.contains("Dedup outcomes: admitted=0 suppressed=0 superseded=0"));
     assert!(table.contains("ready"));
     assert!(table.contains("active"));
     assert!(table.contains("accepted:1"));
@@ -158,6 +160,34 @@ async fn table_renderer_shows_source_coverage_view_fields() -> xtask::TestResult
     assert!(table.contains("fixture/fixture.event"));
     assert!(table.contains("source.runtime_bridge.unobserved"));
     assert!(table.contains("terminal.activity.check:enabled"));
+    Ok(())
+}
+
+#[sinex_test]
+async fn table_renderer_shows_dedup_counts_and_source_status_caveat() -> xtask::TestResult<()> {
+    let mut envelope = ViewEnvelope::new(
+        "sinexctl.sources.status",
+        SourceCoverageListView::new(vec![fixture_source()]),
+    );
+    envelope.payload.dedup = SourceDedupSummaryView {
+        admitted: 4,
+        suppressed: 8,
+        superseded: 1,
+        failed: 0,
+        dlq: 0,
+    };
+    envelope.caveats.push(CaveatView {
+        id: "import.abnormal_suppression_rate".to_string(),
+        message: "fixture abnormal suppression".to_string(),
+        ref_: None,
+    });
+
+    let table = format_sources_status_table(&envelope);
+
+    assert!(table.contains(
+        "Dedup outcomes: admitted=4 suppressed=8 superseded=1 failed=0 dlq=0 attempted=13"
+    ));
+    assert!(table.contains("Source status caveats: import.abnormal_suppression_rate"));
     Ok(())
 }
 

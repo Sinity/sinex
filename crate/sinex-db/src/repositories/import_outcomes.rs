@@ -32,6 +32,18 @@ pub struct ImportReportData {
     pub outcomes: Vec<ImportOutcomeRecord>,
 }
 
+/// Durable deduplication outcomes grouped by source namespace for the source
+/// status read surface.
+#[derive(Debug, Clone, FromRow)]
+pub struct SourceDedupCountRow {
+    pub source: String,
+    pub admitted: i64,
+    pub suppressed: i64,
+    pub superseded: i64,
+    pub failed: i64,
+    pub dlq: i64,
+}
+
 /// Repository for the audit ledger behind import reports.
 pub struct ImportOutcomeRepository<'a> {
     pool: &'a PgPool,
@@ -48,6 +60,85 @@ impl<'a> Repository<'a> for ImportOutcomeRepository<'a> {
 }
 
 impl ImportOutcomeRepository<'_> {
+    /// Load durable admission outcomes for the source-status view.
+    ///
+    /// Admitted and superseded events come from the operation lineage and
+    /// replacement ledger. Suppressed, failed, and DLQ candidates come from
+    /// `audit.import_outcomes`, which is the durable witness for candidates
+    /// that never became live rows.
+    pub async fn source_status_counts(
+        &self,
+        sources: &[String],
+    ) -> DbResult<Vec<SourceDedupCountRow>> {
+        if sources.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        sqlx::query_as::<_, SourceDedupCountRow>(
+            r#"
+            WITH requested AS (
+                SELECT DISTINCT source
+                FROM unnest($1::text[]) AS requested(source)
+            ), operation_events AS (
+                SELECT id, source
+                FROM core.events
+                WHERE created_by_operation_id IS NOT NULL
+                  AND source = ANY($1::text[])
+                UNION ALL
+                SELECT id, source
+                FROM audit.archived_events
+                WHERE created_by_operation_id IS NOT NULL
+                  AND source = ANY($1::text[])
+            ), admitted AS (
+                SELECT
+                    source,
+                    COUNT(*) FILTER (
+                        WHERE NOT EXISTS (
+                            SELECT 1
+                            FROM audit.event_replacements replacements
+                            WHERE replacements.new_event_id = operation_events.id
+                              AND replacements.relation_kind = 'superseded'
+                        )
+                    )::bigint AS admitted,
+                    COUNT(*) FILTER (
+                        WHERE EXISTS (
+                            SELECT 1
+                            FROM audit.event_replacements replacements
+                            WHERE replacements.new_event_id = operation_events.id
+                              AND replacements.relation_kind = 'superseded'
+                        )
+                    )::bigint AS superseded
+                FROM operation_events
+                GROUP BY source
+            ), outcomes AS (
+                SELECT
+                    source,
+                    COUNT(*) FILTER (WHERE outcome = 'suppressed')::bigint AS suppressed,
+                    COUNT(*) FILTER (WHERE outcome = 'failed')::bigint AS failed,
+                    COUNT(*) FILTER (WHERE outcome = 'dlq')::bigint AS dlq
+                FROM audit.import_outcomes
+                WHERE source = ANY($1::text[])
+                GROUP BY source
+            )
+            SELECT
+                requested.source,
+                COALESCE(admitted.admitted, 0)::bigint AS admitted,
+                COALESCE(outcomes.suppressed, 0)::bigint AS suppressed,
+                COALESCE(admitted.superseded, 0)::bigint AS superseded,
+                COALESCE(outcomes.failed, 0)::bigint AS failed,
+                COALESCE(outcomes.dlq, 0)::bigint AS dlq
+            FROM requested
+            LEFT JOIN admitted USING (source)
+            LEFT JOIN outcomes USING (source)
+            ORDER BY requested.source
+            "#,
+        )
+        .bind(sources)
+        .fetch_all(self.pool)
+        .await
+        .map_err(|error| db_error(error, "load source status dedup outcomes"))
+    }
+
     /// Record a suppressed candidate once. Candidates without an operation ID
     /// are intentionally ignored because they cannot belong to a rerun report.
     pub async fn record_suppressed(

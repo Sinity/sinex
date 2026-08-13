@@ -3,7 +3,9 @@
 use crate::api::service_container::ServiceContainer;
 use serde_json::Value;
 use sinex_db::DbPoolExt;
-use sinex_db::repositories::{EmailMailboxProjectionSummary, EmailProviderStateRecord};
+use sinex_db::repositories::{
+    EmailMailboxProjectionSummary, EmailProviderStateRecord, SourceDedupCountRow,
+};
 use sinex_primitives::SinexError;
 use sinex_primitives::domain::SourceIdentifier;
 use sinex_primitives::rpc::{
@@ -24,8 +26,8 @@ use sinex_primitives::temporal::Timestamp;
 use sinex_primitives::views::{
     ActionAvailability, ActionAvailabilityState, ActionSideEffect, CaveatView, CoverageGapView,
     ReadinessCaveatId, SinexObjectKind, SinexObjectRef, SourceCoverageContinuity,
-    SourceCoverageListView, SourceCoverageReadiness, SourceCoverageView, SourceModeStatusView,
-    SourcePrivacyPosture, SourceResourceBudgetView, ViewEnvelope,
+    SourceCoverageListView, SourceCoverageReadiness, SourceCoverageView, SourceDedupSummaryView,
+    SourceModeStatusView, SourcePrivacyPosture, SourceResourceBudgetView, ViewEnvelope,
 };
 use sinex_primitives::{
     DEFAULT_RUNTIME_LIVENESS_STALE_AFTER_SECS, RuntimeLivenessPolicy, RuntimeLivenessSignals,
@@ -173,6 +175,15 @@ pub async fn handle_sources_status_view(
     })?;
 
     let event_rows = load_source_event_aggregates(pool, &contracts, request.exact_counts).await?;
+    let dedup_rows = pool
+        .import_outcomes()
+        .source_status_counts(&source_event_sources(&contracts))
+        .await
+        .map_err(|error| {
+            SinexError::database("Failed to compute source deduplication outcomes")
+                .with_std_error(&error)
+        })?;
+    let dedup_summary = source_dedup_summary(dedup_rows);
 
     let mut event_aggregates = HashMap::<(String, String), SourceEventAggregateRow>::new();
     for row in event_rows {
@@ -206,10 +217,9 @@ pub async fn handle_sources_status_view(
         ));
     }
 
-    let mut envelope = ViewEnvelope::new(
-        "sinexd.sources.status.view",
-        SourceCoverageListView::new(views),
-    );
+    let mut payload = SourceCoverageListView::new(views);
+    payload.dedup = dedup_summary;
+    let mut envelope = ViewEnvelope::new("sinexd.sources.status.view", payload);
     if source_status_view_has_filter(&request) || !request.exact_counts {
         envelope.query_echo = Some(serde_json::json!({
             "source": request.source.as_deref().filter(|value| !value.is_empty()),
@@ -224,6 +234,9 @@ pub async fn handle_sources_status_view(
             message: "filtered source status uses bounded event-presence probes; event_count is the number of declared event kinds with at least one live event, not the lifetime row count".to_string(),
             ref_: None,
         });
+    }
+    if let Some(caveat) = source_dedup_caveat(&envelope.payload.dedup) {
+        envelope.caveats.push(caveat);
     }
     Ok(envelope)
 }
@@ -347,6 +360,43 @@ fn source_event_pairs(contracts: &[&SourceContract]) -> (Vec<String>, Vec<String
         }
     }
     (sources, event_types)
+}
+
+fn source_event_sources(contracts: &[&SourceContract]) -> Vec<String> {
+    let mut sources = BTreeSet::new();
+    for contract in contracts {
+        sources.extend(
+            contract
+                .event_types
+                .iter()
+                .map(|(source, _)| (*source).to_string()),
+        );
+    }
+    sources.into_iter().collect()
+}
+
+fn source_dedup_summary(rows: Vec<SourceDedupCountRow>) -> SourceDedupSummaryView {
+    rows.into_iter()
+        .fold(SourceDedupSummaryView::default(), |mut summary, row| {
+            summary.admitted += row.admitted;
+            summary.suppressed += row.suppressed;
+            summary.superseded += row.superseded;
+            summary.failed += row.failed;
+            summary.dlq += row.dlq;
+            summary
+        })
+}
+
+fn source_dedup_caveat(summary: &SourceDedupSummaryView) -> Option<CaveatView> {
+    summary.has_abnormal_suppression_rate().then(|| CaveatView {
+        id: "import.abnormal_suppression_rate".to_string(),
+        message: format!(
+            "source status covers an abnormal suppression rate: {} suppressed of {} durable import outcome(s); inspect the import report and examples before treating this as a complete no-op",
+            summary.suppressed,
+            summary.attempted(),
+        ),
+        ref_: None,
+    })
 }
 
 fn material_aggregates_by_logical_source(

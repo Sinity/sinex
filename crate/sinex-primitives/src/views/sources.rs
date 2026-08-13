@@ -179,6 +179,27 @@ pub struct CoverageGapView {
     pub message: String,
 }
 
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub struct SourceDedupSummaryView {
+    pub admitted: i64,
+    pub suppressed: i64,
+    pub superseded: i64,
+    pub failed: i64,
+    pub dlq: i64,
+}
+
+impl SourceDedupSummaryView {
+    #[must_use]
+    pub fn attempted(&self) -> i64 {
+        self.admitted + self.suppressed + self.superseded + self.failed + self.dlq
+    }
+
+    #[must_use]
+    pub fn has_abnormal_suppression_rate(&self) -> bool {
+        self.attempted() >= 10 && self.suppressed.saturating_mul(2) >= self.attempted()
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct SourceCoverageView {
     pub source_id: String,
@@ -214,6 +235,8 @@ pub struct SourceCoverageListView {
     pub count: usize,
     pub summary: SourceCoverageSummaryView,
     pub sources: Vec<SourceCoverageView>,
+    #[serde(default)]
+    pub dedup: SourceDedupSummaryView,
 }
 
 impl SourceCoverageListView {
@@ -226,6 +249,7 @@ impl SourceCoverageListView {
             count,
             summary,
             sources,
+            dedup: SourceDedupSummaryView::default(),
         }
     }
 

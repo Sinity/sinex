@@ -42,6 +42,39 @@ fn session_record(
 }
 
 #[sinex_test]
+async fn source_status_dedup_summary_aggregates_durable_outcomes() -> xtask::TestResult<()> {
+    let summary = source_dedup_summary(vec![
+        SourceDedupCountRow {
+            source: "fixture".to_string(),
+            admitted: 4,
+            suppressed: 12,
+            superseded: 1,
+            failed: 0,
+            dlq: 0,
+        },
+        SourceDedupCountRow {
+            source: "other".to_string(),
+            admitted: 2,
+            suppressed: 1,
+            superseded: 3,
+            failed: 1,
+            dlq: 2,
+        },
+    ]);
+
+    assert_eq!(summary.admitted, 6);
+    assert_eq!(summary.suppressed, 13);
+    assert_eq!(summary.superseded, 4);
+    assert_eq!(summary.failed, 1);
+    assert_eq!(summary.dlq, 2);
+    assert_eq!(summary.attempted(), 26);
+    let caveat = source_dedup_caveat(&summary).expect("abnormal suppression caveat");
+    assert_eq!(caveat.id, "import.abnormal_suppression_rate");
+    assert!(caveat.message.contains("13 suppressed of 26"));
+    Ok(())
+}
+
+#[sinex_test]
 async fn session_control_caveat_reports_operator_posture() -> xtask::sandbox::TestResult<()> {
     let gap = session_control_gap(&session_record("paused", false))
         .expect("paused live session should produce a coverage gap");
