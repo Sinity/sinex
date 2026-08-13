@@ -33,6 +33,7 @@ sinex_primitives::register_source_contract! {
         id: CRITICALITY_FIXTURE_SOURCE_ID,
         namespace: "test",
         event_types: &[("sinex.fixture", "criticality.undeclared")],
+        source_role: sinex_primitives::sources::SourceRole::Reflection,
         privacy_tier: PrivacyTier::Public,
         horizons: &[Horizon::Continuous],
         retention: RetentionPolicy::Forever,

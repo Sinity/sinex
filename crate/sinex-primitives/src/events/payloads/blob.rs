@@ -77,6 +77,7 @@ register_source_contract! {
             ("blob_storage", "blob.verified"),
             ("blob_storage", "storage.statistics"),
         ],
+        source_role: crate::sources::SourceRole::Activity,
         privacy_tier: SuPrivacyTier::Sensitive,
         horizons: &[SuHorizon::Continuous],
         retention: SuRetentionPolicy::Forever,

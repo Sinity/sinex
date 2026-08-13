@@ -483,6 +483,7 @@ register_source_contract! {
         event_types: &[
             ("derived.activity-window", "activity.window.summary"),
         ],
+        source_role: sinex_primitives::sources::SourceRole::Activity,
         // Inherits the privacy tier of its inputs (window titles, commands).
         privacy_tier: ContractPrivacyTier::Sensitive,
         horizons: &[ContractHorizon::Continuous],

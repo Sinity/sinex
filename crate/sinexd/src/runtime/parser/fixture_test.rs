@@ -29,6 +29,7 @@ fn fixture_descriptor() -> SourceContract {
         id: "fixture.source",
         namespace: "fixture",
         event_types: EVENT_TYPES,
+        source_role: sinex_primitives::sources::SourceRole::Activity,
         privacy_tier: PrivacyTier::Sensitive,
         horizons: HORIZONS,
         retention: RetentionPolicy::Forever,

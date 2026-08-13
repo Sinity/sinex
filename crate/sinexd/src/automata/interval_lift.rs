@@ -1176,6 +1176,7 @@ register_source_contract! {
         event_types: &[
             ("derived.interval-lift", "state.interval"),
         ],
+        source_role: sinex_primitives::sources::SourceRole::Activity,
         privacy_tier: ContractPrivacyTier::Sensitive,
         horizons: &[ContractHorizon::Continuous],
         retention: ContractRetentionPolicy::Forever,

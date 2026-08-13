@@ -696,6 +696,7 @@ register_source_contract! {
             ("document-parser", "document.parsed"),
             ("document-parser", "document.chunked"),
         ],
+        source_role: sinex_primitives::sources::SourceRole::Activity,
         privacy_tier: ContractPrivacyTier::Sensitive,
         horizons: &[ContractHorizon::Continuous],
         retention: ContractRetentionPolicy::Forever,

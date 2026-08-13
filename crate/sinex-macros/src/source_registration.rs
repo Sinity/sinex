@@ -221,6 +221,7 @@ pub(crate) fn generate_source_contract(
                 id: #id,
                 namespace: #namespace,
                 event_types: &[ #(#event_type_pairs),* ],
+                source_role: ::sinex_primitives::sources::SourceRole::Activity,
                 privacy_tier: #privacy_tier,
                 horizons: &[ #(#horizons),* ],
                 retention: #retention,

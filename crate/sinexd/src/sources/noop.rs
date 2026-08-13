@@ -29,6 +29,7 @@ register_source_contract! {
         id: "noop",
         namespace: "sinex",
         event_types: &[],
+        source_role: sinex_primitives::sources::SourceRole::Activity,
         privacy_tier: PrivacyTier::Public,
         horizons: &[Horizon::Continuous],
         retention: RetentionPolicy::Forever,

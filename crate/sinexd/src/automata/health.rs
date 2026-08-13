@@ -661,6 +661,7 @@ register_source_contract! {
         event_types: &[
             ("health-aggregator", "health.aggregated_report"),
         ],
+        source_role: sinex_primitives::sources::SourceRole::Activity,
         // Health metrics describe component liveness, not user content.
         privacy_tier: ContractPrivacyTier::Public,
         horizons: &[ContractHorizon::Continuous],

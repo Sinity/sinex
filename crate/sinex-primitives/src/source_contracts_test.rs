@@ -22,11 +22,13 @@ async fn register_source_contract_named_form_compiles() -> TestResult<()> {
     use crate::source_contracts::{
         Horizon, OccurrenceIdentity, PrivacyTier, RetentionPolicy, SourceContract,
     };
+    use crate::sources::SourceRole;
 
     let descriptor = SourceContract {
         id: "test.register-form",
         namespace: "test",
         event_types: &[("test.source", "test.event")],
+        source_role: SourceRole::Activity,
         privacy_tier: PrivacyTier::Sensitive,
         horizons: &[Horizon::Continuous],
         retention: RetentionPolicy::Forever,
