@@ -849,17 +849,26 @@ async fn replay_execution_cancel_midflight_stops_emission_and_restores_cascade(
     .fetch_one(&ctx.pool)
     .await?;
     assert!(
-        replacement_count > 0,
+        emitted_by_fake_source > 0,
         "at least one replacement event should have landed before cancel was observed"
     );
-    assert!(
-        (replacement_count as u64) < MAX_EVENTS,
-        "cancellation should have stopped emission before all {MAX_EVENTS} replacement events \
-         landed, got {replacement_count}"
-    );
     assert_eq!(
-        replacement_count as u64, emitted_by_fake_source,
-        "the fake source's own emitted count must match what actually landed in core.events"
+        replacement_count, 0,
+        "cancelled replay must archive partial replacement events before restoring originals"
+    );
+    let archived_replacement_count: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*)::bigint FROM audit.archived_events WHERE created_by_operation_id = $1::uuid",
+    )
+    .bind(operation_id)
+    .fetch_one(&ctx.pool)
+    .await?;
+    assert_eq!(
+        archived_replacement_count, emitted_by_fake_source as i64,
+        "cancelled replay must retain every emitted replacement in the archive"
+    );
+    assert!(
+        emitted_by_fake_source < MAX_EVENTS,
+        "cancellation should have stopped emission before all {MAX_EVENTS} replacement events landed"
     );
 
     // No further replacement events land after the scan has reported its
