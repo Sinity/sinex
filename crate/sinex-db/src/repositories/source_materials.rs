@@ -3,23 +3,25 @@
 //! This repository handles registration and tracking of source materials
 //! (files, streams, etc.) that contain events to be processed.
 use super::common::{DbResult, EnhancedRepository, Repository, db_error};
+use crate::repositories::DbPoolExt;
 use crate::schema::SourceMaterialRegistry;
 pub use crate::schema::defs::records::SourceMaterialLinkRecord;
 use crate::schema::defs::records::SourceMaterialRecord;
 use serde_json::{Map as JsonMap, Value as JsonValue, json};
 use sinex_primitives::domain::{
-    MaterialStatus, SourceMaterialTimingInfoType, TemporalClock, TemporalPrecision,
-    TemporalSourceType,
+    MaterialStatus, ModuleKind, SourceIdentifier, SourceMaterialTimingInfoType, TemporalClock,
+    TemporalPrecision, TemporalSourceType,
 };
 use sinex_primitives::rpc::sources::{
     CaveatSeverity, SourceCaveat, SourceMaterialMetadataContract, SourceReadiness,
     SourceReadinessCost, SourceReadinessStatus, caveat_codes,
 };
 use sinex_primitives::{
-    DEFAULT_RUNTIME_LIVENESS_STALE_AFTER_SECS, Id, RuntimeLivenessPolicy, SinexError, Timestamp,
-    events::OffsetKind,
+    DEFAULT_RUNTIME_LIVENESS_STALE_AFTER_SECS, Id, RuntimeLivenessPolicy, RuntimeLivenessSignals,
+    RuntimeLivenessStatus, SinexError, Timestamp, evaluate_runtime_liveness, events::OffsetKind,
 };
 use sqlx::PgPool;
+use std::collections::HashMap;
 use time::format_description;
 use uuid::Uuid;
 
@@ -1346,9 +1348,18 @@ impl SourceMaterialRepository<'_> {
         source_family: Option<&str>,
         stale_after_seconds: Option<i64>,
     ) -> DbResult<Vec<SourceReadiness>> {
-        let stale_after = stale_after_seconds
-            .unwrap_or(DEFAULT_RUNTIME_LIVENESS_STALE_AFTER_SECS as i64);
+        let stale_after =
+            stale_after_seconds.unwrap_or(DEFAULT_RUNTIME_LIVENESS_STALE_AFTER_SECS as i64);
         let liveness_policy = RuntimeLivenessPolicy::new(stale_after.max(0) as u64);
+        let runtime_evidence = self
+            .pool
+            .state()
+            .list_runtime_liveness_evidence()
+            .await?
+            .into_iter()
+            .filter(|evidence| evidence.module_kind == ModuleKind::Source)
+            .map(|evidence| (evidence.module_name.to_string(), evidence))
+            .collect::<HashMap<_, _>>();
 
         let rows = sqlx::query!(
             r#"
@@ -1391,6 +1402,24 @@ impl SourceMaterialRepository<'_> {
             }
 
             let freshness_seconds = row.last_success_at.map(|ts| (now - ts).whole_seconds());
+            let logical_source_identifier = SourceIdentifier::from_wire(&row.source_identifier)
+                .map(|identifier| identifier.logical_id)
+                .unwrap_or_else(|_| row.source_identifier.clone());
+            let runtime = runtime_evidence
+                .get(&logical_source_identifier)
+                .or_else(|| runtime_evidence.get(&row.source_identifier));
+            let liveness = runtime.map(|evidence| {
+                evaluate_runtime_liveness(
+                    RuntimeLivenessSignals {
+                        run_status: evidence.run_status.as_deref(),
+                        health_status: evidence.health_status,
+                        last_heartbeat_at: evidence.last_heartbeat_at,
+                        last_output_at: evidence.last_output_at,
+                    },
+                    liveness_policy,
+                    now.into(),
+                )
+            });
 
             let display_identifier = redact_identifier_for_display(&row.source_identifier);
 
@@ -1408,13 +1437,13 @@ impl SourceMaterialRepository<'_> {
                 code: caveat_codes::PARSER_OPERATION_EVIDENCE_UNJOINED.to_string(),
                 severity: CaveatSeverity::Info,
                 message:
-                    "Readiness is derived from raw material and admitted events; parser/source-worker operation evidence is reported by operation and debt surfaces."
+                    "Readiness joins canonical runtime run/health/heartbeat/output evidence; parser/source-worker operation details remain in operation and debt surfaces."
                         .to_string(),
                 evidence_ref: None,
             });
 
             // Status classification.
-            let status = if row.completed_count == 0 && row.failed_count > 0 {
+            let material_status = if row.completed_count == 0 && row.failed_count > 0 {
                 caveats.push(SourceCaveat {
                     code: caveat_codes::PARSER_FAILED_RECENTLY.to_string(),
                     severity: CaveatSeverity::Degraded,
@@ -1460,6 +1489,19 @@ impl SourceMaterialRepository<'_> {
                 SourceReadinessStatus::Unknown
             };
 
+            let status = match liveness.as_ref().map(|assessment| assessment.status) {
+                Some(RuntimeLivenessStatus::Unhealthy | RuntimeLivenessStatus::Stopped) => {
+                    SourceReadinessStatus::Error
+                }
+                Some(RuntimeLivenessStatus::Stale) => SourceReadinessStatus::Stale,
+                Some(RuntimeLivenessStatus::Degraded)
+                    if material_status != SourceReadinessStatus::Error =>
+                {
+                    SourceReadinessStatus::Partial
+                }
+                _ => material_status,
+            };
+
             // Cost: registry-only data is local and cheap. Replay/refresh of an
             // archive_kind material would be local-heavy; we don't have that
             // signal here so we report local_fast and let consumers escalate.
@@ -1473,6 +1515,16 @@ impl SourceMaterialRepository<'_> {
                 "failed_count": row.failed_count,
                 "cancelled_count": row.cancelled_count,
                 "recovered_partial_count": row.partial_count,
+                "runtime": runtime.map(|evidence| {
+                    json!({
+                        "run_status": evidence.run_status,
+                        "health_status": evidence.health_status.map(|status| format!("{status:?}")),
+                        "last_heartbeat_at": evidence.last_heartbeat_at.map(|ts| ts.to_string()),
+                        "last_output_at": evidence.last_output_at.map(|ts| ts.to_string()),
+                        "liveness_status": liveness.as_ref().map(|assessment| format!("{:?}", assessment.status)),
+                        "liveness_evidence": liveness.as_ref().map(|assessment| &assessment.evidence),
+                    })
+                }),
             });
 
             out.push(SourceReadiness {
