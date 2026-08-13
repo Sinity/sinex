@@ -621,36 +621,41 @@ async fn execute_watch(
                 }
             }
         }
-        OutputFormat::Json | OutputFormat::Ndjson | OutputFormat::Dot => loop {
+        OutputFormat::Json | OutputFormat::Ndjson | OutputFormat::Dot | OutputFormat::Yaml => loop {
             let op = client.replay_status(operation_id).await?;
-            println!("{}", format_json(&op)?);
+            let rendered = match format {
+                OutputFormat::Yaml => format_yaml(&op)?,
+                OutputFormat::Json | OutputFormat::Ndjson | OutputFormat::Dot => format_json(&op)?,
+                OutputFormat::Table => unreachable!("table watch uses a progress reporter"),
+            };
+            println!("{rendered}");
             if op.state.is_terminal() {
+                let failure = (op.state == ReplayState::Failed).then(|| {
+                    format!(
+                        "Failed: {}",
+                        op.error_details.as_deref().unwrap_or("Unknown error")
+                    )
+                });
                 render_import_report(
                     client,
                     operation_id,
-                    *format,
+                    // Dot watch status is intentionally emitted as JSON; use the
+                    // same supported machine-readable form for its terminal report.
+                    if *format == OutputFormat::Dot {
+                        OutputFormat::Json
+                    } else {
+                        *format
+                    },
                     "sinexctl.ops.replay.watch",
                     true,
                 )
                 .await?;
+                if let Some(msg) = failure {
+                    return Err(color_eyre::eyre::eyre!(msg));
+                }
                 break;
             }
             sleep(Duration::from_secs(interval)).await;
-        },
-        OutputFormat::Yaml => {
-            let op = client.replay_status(operation_id).await?;
-            let terminal = op.state.is_terminal();
-            println!("{}", format_yaml(&op)?);
-            if terminal {
-                render_import_report(
-                    client,
-                    operation_id,
-                    *format,
-                    "sinexctl.ops.replay.watch",
-                    true,
-                )
-                .await?;
-            }
         }
     }
     Ok(())
