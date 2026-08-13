@@ -4,6 +4,7 @@ use crate::sources::continuity::{SourceContinuityReport, SourcesExplainGapRespon
 use crate::temporal::Timestamp;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 use std::collections::BTreeMap;
 
 pub const SOURCE_CONTINUITY_DETAIL_SCHEMA_VERSION: &str = "sinex.source-continuity-detail/v1";
@@ -120,7 +121,17 @@ pub struct SourceModeStatusView {
     pub transport: String,
     pub delivery: String,
     pub ordering: String,
-    pub replayable: bool,
+    /// Source-level recovery class. This is distinct from `transport_replayable`:
+    /// transport redelivery does not establish source re-read authority.
+    pub replayability_class: String,
+    /// Authority the binding uses to catch up after a checkpoint or process failure.
+    pub catch_up_authority: String,
+    /// Explicit disposition for source data that recovery cannot reconstruct.
+    pub accepted_loss_policy: Value,
+    /// Whether the delivery transport itself can redeliver messages.
+    /// Consult `replayability_class` for archive-and-scan replay eligibility.
+    #[serde(alias = "replayable")]
+    pub transport_replayable: bool,
     pub dlq: bool,
     pub backpressure: bool,
     pub privacy_context: String,

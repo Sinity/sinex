@@ -16,10 +16,11 @@ use sinex_primitives::rpc::{
     },
 };
 use sinex_primitives::source_contracts::{
-    AccessScope, BudgetPressureAction, CheckpointFamily, DeliverySemantics,
-    MaterialLifecyclePolicy, OrderingSemantics, ResourceBudgetSpec, ResourceProfile, RunnerPack,
-    SourceCapabilityKind, SourceContract, SourceCriticality, SourceRuntimeBinding, TransportKind,
-    WorkClass, all_source_contracts, source_runtime_bindings,
+    AcceptedLossPolicy, AccessScope, BudgetPressureAction, CatchUpAuthority, CheckpointFamily,
+    DeliverySemantics, MaterialLifecyclePolicy, OrderingSemantics, ResourceBudgetSpec,
+    ResourceProfile, RunnerPack, SourceCapabilityKind, SourceContract, SourceCriticality,
+    SourceReplayabilityClass, SourceRuntimeBinding, TransportKind, WorkClass, all_source_contracts,
+    source_runtime_bindings,
 };
 use sinex_primitives::sources::source_identity_matches_family;
 use sinex_primitives::temporal::Timestamp;
@@ -1230,7 +1231,14 @@ fn source_mode_status_view(
         transport: transport_kind_name(binding.transport_semantics.transport).to_string(),
         delivery: delivery_semantics_name(binding.transport_semantics.delivery).to_string(),
         ordering: ordering_semantics_name(binding.transport_semantics.ordering).to_string(),
-        replayable: binding.transport_semantics.replayable,
+        replayability_class: replayability_class_name(binding.recovery_policy.replayability_class)
+            .to_string(),
+        catch_up_authority: catch_up_authority_name(binding.recovery_policy.catch_up_authority)
+            .to_string(),
+        accepted_loss_policy: accepted_loss_policy_view(
+            binding.recovery_policy.accepted_loss_policy,
+        ),
+        transport_replayable: binding.transport_semantics.replayable,
         dlq: binding.transport_semantics.dlq,
         backpressure: binding.transport_semantics.backpressure,
         privacy_context: format!("{:?}", binding.privacy_context).to_ascii_lowercase(),
@@ -1288,6 +1296,43 @@ fn source_mode_status_view(
                 )
             })
             .collect(),
+    }
+}
+
+fn replayability_class_name(class: SourceReplayabilityClass) -> &'static str {
+    match class {
+        SourceReplayabilityClass::RetainedMaterial => "retained_material",
+        SourceReplayabilityClass::AppendStream => "append_stream",
+        SourceReplayabilityClass::MutableSnapshot => "mutable_snapshot",
+        SourceReplayabilityClass::JournalCursor => "journal_cursor",
+        SourceReplayabilityClass::ExternalProducer => "external_producer",
+        SourceReplayabilityClass::LiveObservation => "live_observation",
+        SourceReplayabilityClass::DerivedInternal => "derived_internal",
+    }
+}
+
+fn catch_up_authority_name(authority: CatchUpAuthority) -> &'static str {
+    match authority {
+        CatchUpAuthority::SourceMaterialRegistry => "source_material_registry",
+        CatchUpAuthority::BackingStore => "backing_store",
+        CatchUpAuthority::JournalRetention => "journal_retention",
+        CatchUpAuthority::ExternalProducer => "external_producer",
+        CatchUpAuthority::ParentEvents => "parent_events",
+        CatchUpAuthority::None => "none",
+    }
+}
+
+fn accepted_loss_policy_view(policy: AcceptedLossPolicy) -> Value {
+    match policy {
+        AcceptedLossPolicy::NoSilentLoss => serde_json::json!({"kind": "no_silent_loss"}),
+        AcceptedLossPolicy::BoundedByAuthority { boundary } => {
+            serde_json::json!({"kind": "bounded_by_authority", "boundary": boundary})
+        }
+        AcceptedLossPolicy::Accepted { rationale, record } => serde_json::json!({
+            "kind": "accepted",
+            "rationale": rationale,
+            "record": record,
+        }),
     }
 }
 

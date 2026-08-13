@@ -838,6 +838,15 @@ pub struct SourcePackageCompletenessModeView {
     pub completeness: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub subject: Option<String>,
+    /// Source-level archive-and-scan replay eligibility for this mode.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub replayability_class: Option<String>,
+    /// Authority this mode uses to catch up after a failed checkpoint or process.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub catch_up_authority: Option<String>,
+    /// Explicit disposition for source data this mode cannot reconstruct.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub accepted_loss_policy: Option<JsonValue>,
     pub acquisition_kind: String,
     pub operator_enablement: String,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]

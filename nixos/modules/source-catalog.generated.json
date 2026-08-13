@@ -11,6 +11,7 @@
             "ai.message"
           ]
         ],
+        "source_role": "activity",
         "privacy_tier": "sensitive",
         "horizons": [
           "historical"
@@ -60,6 +61,13 @@
           "dlq": false,
           "backpressure": false
         },
+        "recovery_policy": {
+          "replayability_class": "append_stream",
+          "catch_up_authority": "backing_store",
+          "accepted_loss_policy": {
+            "kind": "no_silent_loss"
+          }
+        },
         "criticality": null
       },
       "resource_limits": {
@@ -98,6 +106,7 @@
             "ai.message"
           ]
         ],
+        "source_role": "activity",
         "privacy_tier": "sensitive",
         "horizons": [
           "historical"
@@ -147,6 +156,13 @@
           "dlq": false,
           "backpressure": false
         },
+        "recovery_policy": {
+          "replayability_class": "append_stream",
+          "catch_up_authority": "backing_store",
+          "accepted_loss_policy": {
+            "kind": "no_silent_loss"
+          }
+        },
         "criticality": null
       },
       "resource_limits": {
@@ -185,6 +201,7 @@
             "activity.window.summary"
           ]
         ],
+        "source_role": "activity",
         "privacy_tier": "sensitive",
         "horizons": [
           "continuous"
@@ -234,6 +251,13 @@
           "dlq": false,
           "backpressure": false
         },
+        "recovery_policy": {
+          "replayability_class": "derived_internal",
+          "catch_up_authority": "parent_events",
+          "accepted_loss_policy": {
+            "kind": "no_silent_loss"
+          }
+        },
         "criticality": null
       },
       "resource_limits": {
@@ -273,6 +297,7 @@
             "attention.span"
           ]
         ],
+        "source_role": "activity",
         "privacy_tier": "sensitive",
         "horizons": [
           "continuous"
@@ -321,6 +346,13 @@
           "replayable": true,
           "dlq": false,
           "backpressure": false
+        },
+        "recovery_policy": {
+          "replayability_class": "derived_internal",
+          "catch_up_authority": "parent_events",
+          "accepted_loss_policy": {
+            "kind": "no_silent_loss"
+          }
         },
         "criticality": null
       },
@@ -373,6 +405,7 @@
             "storage.statistics"
           ]
         ],
+        "source_role": "activity",
         "privacy_tier": "sensitive",
         "horizons": [
           "continuous"
@@ -421,6 +454,15 @@
           "dlq": false,
           "backpressure": false
         },
+        "recovery_policy": {
+          "replayability_class": "live_observation",
+          "catch_up_authority": "none",
+          "accepted_loss_policy": {
+            "kind": "accepted",
+            "rationale": "in-process blob lifecycle has no recoverable source history",
+            "record": "sinex-r6d.8"
+          }
+        },
         "criticality": null
       },
       "resource_limits": {
@@ -460,6 +502,7 @@
             "page.visited"
           ]
         ],
+        "source_role": "activity",
         "privacy_tier": "secret",
         "horizons": [
           "continuous",
@@ -522,6 +565,13 @@
           "dlq": true,
           "backpressure": true
         },
+        "recovery_policy": {
+          "replayability_class": "mutable_snapshot",
+          "catch_up_authority": "backing_store",
+          "accepted_loss_policy": {
+            "kind": "no_silent_loss"
+          }
+        },
         "criticality": "reconstructable"
       },
       "resource_limits": {
@@ -561,6 +611,7 @@
             "page.visited"
           ]
         ],
+        "source_role": "activity",
         "privacy_tier": "secret",
         "horizons": [
           "historical"
@@ -610,6 +661,13 @@
           "dlq": false,
           "backpressure": false
         },
+        "recovery_policy": {
+          "replayability_class": "append_stream",
+          "catch_up_authority": "backing_store",
+          "accepted_loss_policy": {
+            "kind": "no_silent_loss"
+          }
+        },
         "criticality": "reconstructable"
       },
       "resource_limits": {
@@ -648,6 +706,7 @@
             "activity.summary.daily"
           ]
         ],
+        "source_role": "activity",
         "privacy_tier": "sensitive",
         "horizons": [
           "continuous"
@@ -697,6 +756,13 @@
           "dlq": false,
           "backpressure": false
         },
+        "recovery_policy": {
+          "replayability_class": "derived_internal",
+          "catch_up_authority": "parent_events",
+          "accepted_loss_policy": {
+            "kind": "no_silent_loss"
+          }
+        },
         "criticality": null
       },
       "resource_limits": {
@@ -744,6 +810,7 @@
             "browser.tab.active"
           ]
         ],
+        "source_role": "activity",
         "privacy_tier": "secret",
         "horizons": [
           "historical"
@@ -796,6 +863,13 @@
           "dlq": true,
           "backpressure": true
         },
+        "recovery_policy": {
+          "replayability_class": "mutable_snapshot",
+          "catch_up_authority": "backing_store",
+          "accepted_loss_policy": {
+            "kind": "no_silent_loss"
+          }
+        },
         "criticality": "reconstructable"
       },
       "resource_limits": {
@@ -839,6 +913,7 @@
             "clipboard.selected"
           ]
         ],
+        "source_role": "activity",
         "privacy_tier": "secret",
         "horizons": [
           "continuous"
@@ -888,6 +963,15 @@
           "dlq": true,
           "backpressure": true
         },
+        "recovery_policy": {
+          "replayability_class": "live_observation",
+          "catch_up_authority": "none",
+          "accepted_loss_policy": {
+            "kind": "accepted",
+            "rationale": "live source has no recoverable history",
+            "record": "sinex-r6d.8"
+          }
+        },
         "criticality": null
       },
       "resource_limits": {
@@ -927,6 +1011,7 @@
             "notification.sent"
           ]
         ],
+        "source_role": "activity",
         "privacy_tier": "sensitive",
         "horizons": [
           "continuous"
@@ -976,6 +1061,15 @@
           "dlq": true,
           "backpressure": true
         },
+        "recovery_policy": {
+          "replayability_class": "live_observation",
+          "catch_up_authority": "none",
+          "accepted_loss_policy": {
+            "kind": "accepted",
+            "rationale": "live source has no recoverable history",
+            "record": "sinex-r6d.8"
+          }
+        },
         "criticality": null
       },
       "resource_limits": {
@@ -1015,6 +1109,7 @@
             "notification.action_invoked"
           ]
         ],
+        "source_role": "activity",
         "privacy_tier": "sensitive",
         "horizons": [
           "continuous"
@@ -1064,6 +1159,15 @@
           "dlq": true,
           "backpressure": true
         },
+        "recovery_policy": {
+          "replayability_class": "live_observation",
+          "catch_up_authority": "none",
+          "accepted_loss_policy": {
+            "kind": "accepted",
+            "rationale": "live source has no recoverable history",
+            "record": "sinex-r6d.8"
+          }
+        },
         "criticality": null
       },
       "resource_limits": {
@@ -1103,6 +1207,7 @@
             "notification.closed"
           ]
         ],
+        "source_role": "activity",
         "privacy_tier": "public",
         "horizons": [
           "continuous"
@@ -1151,6 +1256,15 @@
           "replayable": false,
           "dlq": true,
           "backpressure": true
+        },
+        "recovery_policy": {
+          "replayability_class": "live_observation",
+          "catch_up_authority": "none",
+          "accepted_loss_policy": {
+            "kind": "accepted",
+            "rationale": "live source has no recoverable history",
+            "record": "sinex-r6d.8"
+          }
         },
         "criticality": null
       },
@@ -1223,6 +1337,7 @@
             "wm.unhandled"
           ]
         ],
+        "source_role": "activity",
         "privacy_tier": "sensitive",
         "horizons": [
           "continuous"
@@ -1272,6 +1387,15 @@
           "dlq": true,
           "backpressure": true
         },
+        "recovery_policy": {
+          "replayability_class": "live_observation",
+          "catch_up_authority": "none",
+          "accepted_loss_policy": {
+            "kind": "accepted",
+            "rationale": "live source has no recoverable history",
+            "record": "sinex-r6d.8"
+          }
+        },
         "criticality": "not_reconstructable"
       },
       "resource_limits": {
@@ -1311,6 +1435,7 @@
             "document.indexed"
           ]
         ],
+        "source_role": "activity",
         "privacy_tier": "sensitive",
         "horizons": [
           "historical"
@@ -1360,6 +1485,13 @@
           "dlq": false,
           "backpressure": false
         },
+        "recovery_policy": {
+          "replayability_class": "append_stream",
+          "catch_up_authority": "backing_store",
+          "accepted_loss_policy": {
+            "kind": "no_silent_loss"
+          }
+        },
         "criticality": null
       },
       "resource_limits": {
@@ -1402,6 +1534,7 @@
             "document.chunked"
           ]
         ],
+        "source_role": "activity",
         "privacy_tier": "sensitive",
         "horizons": [
           "continuous"
@@ -1451,6 +1584,13 @@
           "dlq": false,
           "backpressure": false
         },
+        "recovery_policy": {
+          "replayability_class": "derived_internal",
+          "catch_up_authority": "parent_events",
+          "accepted_loss_policy": {
+            "kind": "no_silent_loss"
+          }
+        },
         "criticality": null
       },
       "resource_limits": {
@@ -1490,6 +1630,7 @@
             "document.ingested"
           ]
         ],
+        "source_role": "activity",
         "privacy_tier": "secret",
         "horizons": [
           "continuous",
@@ -1538,6 +1679,13 @@
           "replayable": true,
           "dlq": false,
           "backpressure": false
+        },
+        "recovery_policy": {
+          "replayability_class": "append_stream",
+          "catch_up_authority": "backing_store",
+          "accepted_loss_policy": {
+            "kind": "no_silent_loss"
+          }
         },
         "criticality": null
       },
@@ -1601,6 +1749,7 @@
             "email.capture_runtime.observed"
           ]
         ],
+        "source_role": "activity",
         "privacy_tier": "sensitive",
         "horizons": [
           "historical"
@@ -1660,6 +1809,13 @@
           "dlq": false,
           "backpressure": false
         },
+        "recovery_policy": {
+          "replayability_class": "append_stream",
+          "catch_up_authority": "backing_store",
+          "accepted_loss_policy": {
+            "kind": "no_silent_loss"
+          }
+        },
         "criticality": null
       },
       "runtime_bindings": [
@@ -1706,6 +1862,13 @@
             "replayable": true,
             "dlq": false,
             "backpressure": false
+          },
+          "recovery_policy": {
+            "replayability_class": "append_stream",
+            "catch_up_authority": "backing_store",
+            "accepted_loss_policy": {
+              "kind": "no_silent_loss"
+            }
           },
           "criticality": null
         },
@@ -1756,6 +1919,14 @@
             "dlq": true,
             "backpressure": true
           },
+          "recovery_policy": {
+            "replayability_class": "journal_cursor",
+            "catch_up_authority": "journal_retention",
+            "accepted_loss_policy": {
+              "kind": "bounded_by_authority",
+              "boundary": "upstream journal retention"
+            }
+          },
           "criticality": null
         },
         {
@@ -1803,6 +1974,15 @@
             "replayable": true,
             "dlq": true,
             "backpressure": true
+          },
+          "recovery_policy": {
+            "replayability_class": "live_observation",
+            "catch_up_authority": "none",
+            "accepted_loss_policy": {
+              "kind": "accepted",
+              "rationale": "IMAP IDLE observations have no recoverable source history",
+              "record": "sinex-r6d.8"
+            }
           },
           "criticality": null
         },
@@ -1853,6 +2033,13 @@
             "dlq": true,
             "backpressure": true
           },
+          "recovery_policy": {
+            "replayability_class": "mutable_snapshot",
+            "catch_up_authority": "backing_store",
+            "accepted_loss_policy": {
+              "kind": "no_silent_loss"
+            }
+          },
           "criticality": null
         },
         {
@@ -1898,6 +2085,13 @@
             "dlq": false,
             "backpressure": false
           },
+          "recovery_policy": {
+            "replayability_class": "append_stream",
+            "catch_up_authority": "backing_store",
+            "accepted_loss_policy": {
+              "kind": "no_silent_loss"
+            }
+          },
           "criticality": null
         },
         {
@@ -1942,6 +2136,13 @@
             "replayable": true,
             "dlq": false,
             "backpressure": false
+          },
+          "recovery_policy": {
+            "replayability_class": "append_stream",
+            "catch_up_authority": "backing_store",
+            "accepted_loss_policy": {
+              "kind": "no_silent_loss"
+            }
           },
           "criticality": null
         },
@@ -1989,6 +2190,13 @@
             "dlq": false,
             "backpressure": false
           },
+          "recovery_policy": {
+            "replayability_class": "append_stream",
+            "catch_up_authority": "backing_store",
+            "accepted_loss_policy": {
+              "kind": "no_silent_loss"
+            }
+          },
           "criticality": null
         }
       ],
@@ -2028,6 +2236,7 @@
             "entity.enriched"
           ]
         ],
+        "source_role": "activity",
         "privacy_tier": "sensitive",
         "horizons": [
           "continuous"
@@ -2077,6 +2286,13 @@
           "dlq": false,
           "backpressure": false
         },
+        "recovery_policy": {
+          "replayability_class": "derived_internal",
+          "catch_up_authority": "parent_events",
+          "accepted_loss_policy": {
+            "kind": "no_silent_loss"
+          }
+        },
         "criticality": null
       },
       "resource_limits": {
@@ -2116,6 +2332,7 @@
             "entity.extracted"
           ]
         ],
+        "source_role": "activity",
         "privacy_tier": "sensitive",
         "horizons": [
           "continuous"
@@ -2165,6 +2382,13 @@
           "dlq": false,
           "backpressure": false
         },
+        "recovery_policy": {
+          "replayability_class": "derived_internal",
+          "catch_up_authority": "parent_events",
+          "accepted_loss_policy": {
+            "kind": "no_silent_loss"
+          }
+        },
         "criticality": null
       },
       "resource_limits": {
@@ -2204,6 +2428,7 @@
             "entity.resolved"
           ]
         ],
+        "source_role": "activity",
         "privacy_tier": "sensitive",
         "horizons": [
           "continuous"
@@ -2253,6 +2478,13 @@
           "dlq": false,
           "backpressure": false
         },
+        "recovery_policy": {
+          "replayability_class": "derived_internal",
+          "catch_up_authority": "parent_events",
+          "accepted_loss_policy": {
+            "kind": "no_silent_loss"
+          }
+        },
         "criticality": null
       },
       "resource_limits": {
@@ -2292,6 +2524,7 @@
             "message.sent"
           ]
         ],
+        "source_role": "activity",
         "privacy_tier": "sensitive",
         "horizons": [
           "historical"
@@ -2340,6 +2573,13 @@
           "replayable": true,
           "dlq": false,
           "backpressure": false
+        },
+        "recovery_policy": {
+          "replayability_class": "append_stream",
+          "catch_up_authority": "backing_store",
+          "accepted_loss_policy": {
+            "kind": "no_silent_loss"
+          }
         },
         "criticality": null
       },
@@ -2391,6 +2631,7 @@
             "file.moved"
           ]
         ],
+        "source_role": "activity",
         "privacy_tier": "secret",
         "horizons": [
           "continuous",
@@ -2440,6 +2681,13 @@
           "dlq": true,
           "backpressure": true
         },
+        "recovery_policy": {
+          "replayability_class": "append_stream",
+          "catch_up_authority": "backing_store",
+          "accepted_loss_policy": {
+            "kind": "no_silent_loss"
+          }
+        },
         "criticality": "not_reconstructable"
       },
       "resource_limits": {
@@ -2479,6 +2727,7 @@
             "commit.created"
           ]
         ],
+        "source_role": "activity",
         "privacy_tier": "sensitive",
         "horizons": [
           "historical"
@@ -2528,6 +2777,13 @@
           "dlq": false,
           "backpressure": false
         },
+        "recovery_policy": {
+          "replayability_class": "append_stream",
+          "catch_up_authority": "backing_store",
+          "accepted_loss_policy": {
+            "kind": "no_silent_loss"
+          }
+        },
         "criticality": "reconstructable"
       },
       "resource_limits": {
@@ -2566,6 +2822,7 @@
             "health.aggregated_report"
           ]
         ],
+        "source_role": "activity",
         "privacy_tier": "public",
         "horizons": [
           "continuous"
@@ -2615,6 +2872,13 @@
           "dlq": false,
           "backpressure": false
         },
+        "recovery_policy": {
+          "replayability_class": "derived_internal",
+          "catch_up_authority": "parent_events",
+          "accepted_loss_policy": {
+            "kind": "no_silent_loss"
+          }
+        },
         "criticality": null
       },
       "resource_limits": {
@@ -2654,6 +2918,7 @@
             "transaction.posted"
           ]
         ],
+        "source_role": "activity",
         "privacy_tier": "sensitive",
         "horizons": [
           "historical"
@@ -2703,6 +2968,13 @@
           "dlq": false,
           "backpressure": false
         },
+        "recovery_policy": {
+          "replayability_class": "append_stream",
+          "catch_up_authority": "backing_store",
+          "accepted_loss_policy": {
+            "kind": "no_silent_loss"
+          }
+        },
         "criticality": null
       },
       "resource_limits": {
@@ -2741,6 +3013,7 @@
             "activity.summary.hourly"
           ]
         ],
+        "source_role": "activity",
         "privacy_tier": "sensitive",
         "horizons": [
           "continuous"
@@ -2790,6 +3063,13 @@
           "dlq": false,
           "backpressure": false
         },
+        "recovery_policy": {
+          "replayability_class": "derived_internal",
+          "catch_up_authority": "parent_events",
+          "accepted_loss_policy": {
+            "kind": "no_silent_loss"
+          }
+        },
         "criticality": null
       },
       "resource_limits": {
@@ -2829,6 +3109,7 @@
             "expectation.status"
           ]
         ],
+        "source_role": "activity",
         "privacy_tier": "sensitive",
         "horizons": [
           "continuous"
@@ -2878,6 +3159,13 @@
           "dlq": false,
           "backpressure": false
         },
+        "recovery_policy": {
+          "replayability_class": "derived_internal",
+          "catch_up_authority": "parent_events",
+          "accepted_loss_policy": {
+            "kind": "no_silent_loss"
+          }
+        },
         "criticality": null
       },
       "resource_limits": {
@@ -2917,6 +3205,7 @@
             "integration.polylogue.session_indexed"
           ]
         ],
+        "source_role": "activity",
         "privacy_tier": "sensitive",
         "horizons": [
           "continuous",
@@ -2967,6 +3256,13 @@
           "dlq": true,
           "backpressure": true
         },
+        "recovery_policy": {
+          "replayability_class": "external_producer",
+          "catch_up_authority": "external_producer",
+          "accepted_loss_policy": {
+            "kind": "no_silent_loss"
+          }
+        },
         "criticality": null
       },
       "resource_limits": {
@@ -3006,6 +3302,7 @@
             "state.interval"
           ]
         ],
+        "source_role": "activity",
         "privacy_tier": "sensitive",
         "horizons": [
           "continuous"
@@ -3055,6 +3352,13 @@
           "dlq": false,
           "backpressure": false
         },
+        "recovery_policy": {
+          "replayability_class": "derived_internal",
+          "catch_up_authority": "parent_events",
+          "accepted_loss_policy": {
+            "kind": "no_silent_loss"
+          }
+        },
         "criticality": null
       },
       "resource_limits": {
@@ -3094,6 +3398,7 @@
             "note.observed"
           ]
         ],
+        "source_role": "activity",
         "privacy_tier": "sensitive",
         "horizons": [
           "historical"
@@ -3142,6 +3447,13 @@
           "replayable": true,
           "dlq": false,
           "backpressure": false
+        },
+        "recovery_policy": {
+          "replayability_class": "append_stream",
+          "catch_up_authority": "backing_store",
+          "accepted_loss_policy": {
+            "kind": "no_silent_loss"
+          }
         },
         "criticality": null
       },
@@ -3197,6 +3509,7 @@
             "media.audio.transcription_run_observed"
           ]
         ],
+        "source_role": "activity",
         "privacy_tier": "sensitive",
         "horizons": [
           "historical"
@@ -3254,6 +3567,13 @@
           "dlq": false,
           "backpressure": false
         },
+        "recovery_policy": {
+          "replayability_class": "append_stream",
+          "catch_up_authority": "backing_store",
+          "accepted_loss_policy": {
+            "kind": "no_silent_loss"
+          }
+        },
         "criticality": null
       },
       "runtime_bindings": [
@@ -3299,6 +3619,13 @@
             "dlq": false,
             "backpressure": false
           },
+          "recovery_policy": {
+            "replayability_class": "append_stream",
+            "catch_up_authority": "backing_store",
+            "accepted_loss_policy": {
+              "kind": "no_silent_loss"
+            }
+          },
           "criticality": null
         },
         {
@@ -3341,6 +3668,13 @@
             "replayable": true,
             "dlq": false,
             "backpressure": false
+          },
+          "recovery_policy": {
+            "replayability_class": "append_stream",
+            "catch_up_authority": "backing_store",
+            "accepted_loss_policy": {
+              "kind": "no_silent_loss"
+            }
           },
           "criticality": "reconstructable"
         },
@@ -3387,6 +3721,15 @@
             "dlq": true,
             "backpressure": true
           },
+          "recovery_policy": {
+            "replayability_class": "live_observation",
+            "catch_up_authority": "none",
+            "accepted_loss_policy": {
+              "kind": "accepted",
+              "rationale": "live audio capture has no recoverable source history",
+              "record": "sinex-r6d.8"
+            }
+          },
           "criticality": "not_reconstructable"
         },
         {
@@ -3429,6 +3772,13 @@
             "replayable": true,
             "dlq": false,
             "backpressure": false
+          },
+          "recovery_policy": {
+            "replayability_class": "derived_internal",
+            "catch_up_authority": "parent_events",
+            "accepted_loss_policy": {
+              "kind": "no_silent_loss"
+            }
           },
           "criticality": "reconstructable"
         },
@@ -3473,6 +3823,15 @@
             "replayable": false,
             "dlq": true,
             "backpressure": true
+          },
+          "recovery_policy": {
+            "replayability_class": "live_observation",
+            "catch_up_authority": "none",
+            "accepted_loss_policy": {
+              "kind": "accepted",
+              "rationale": "on-demand audio capture has no recoverable source history",
+              "record": "sinex-r6d.8"
+            }
           },
           "criticality": "not_reconstructable"
         }
@@ -3533,6 +3892,7 @@
             "media.screen.ocr_run_observed"
           ]
         ],
+        "source_role": "activity",
         "privacy_tier": "sensitive",
         "horizons": [
           "historical"
@@ -3590,6 +3950,13 @@
           "dlq": false,
           "backpressure": false
         },
+        "recovery_policy": {
+          "replayability_class": "append_stream",
+          "catch_up_authority": "backing_store",
+          "accepted_loss_policy": {
+            "kind": "no_silent_loss"
+          }
+        },
         "criticality": null
       },
       "runtime_bindings": [
@@ -3634,6 +4001,13 @@
             "replayable": true,
             "dlq": false,
             "backpressure": false
+          },
+          "recovery_policy": {
+            "replayability_class": "append_stream",
+            "catch_up_authority": "backing_store",
+            "accepted_loss_policy": {
+              "kind": "no_silent_loss"
+            }
           },
           "criticality": null
         },
@@ -3680,6 +4054,15 @@
             "dlq": true,
             "backpressure": true
           },
+          "recovery_policy": {
+            "replayability_class": "live_observation",
+            "catch_up_authority": "none",
+            "accepted_loss_policy": {
+              "kind": "accepted",
+              "rationale": "live screen capture has no recoverable source history",
+              "record": "sinex-r6d.8"
+            }
+          },
           "criticality": "not_reconstructable"
         },
         {
@@ -3722,6 +4105,13 @@
             "replayable": true,
             "dlq": false,
             "backpressure": false
+          },
+          "recovery_policy": {
+            "replayability_class": "derived_internal",
+            "catch_up_authority": "parent_events",
+            "accepted_loss_policy": {
+              "kind": "no_silent_loss"
+            }
           },
           "criticality": "reconstructable"
         },
@@ -3766,6 +4156,15 @@
             "dlq": true,
             "backpressure": true
           },
+          "recovery_policy": {
+            "replayability_class": "live_observation",
+            "catch_up_authority": "none",
+            "accepted_loss_policy": {
+              "kind": "accepted",
+              "rationale": "on-demand screen capture has no recoverable source history",
+              "record": "sinex-r6d.8"
+            }
+          },
           "criticality": "not_reconstructable"
         },
         {
@@ -3808,6 +4207,15 @@
             "replayable": false,
             "dlq": true,
             "backpressure": true
+          },
+          "recovery_policy": {
+            "replayability_class": "live_observation",
+            "catch_up_authority": "none",
+            "accepted_loss_policy": {
+              "kind": "accepted",
+              "rationale": "on-demand video capture has no recoverable source history",
+              "record": "sinex-r6d.8"
+            }
           },
           "criticality": null
         },
@@ -3852,6 +4260,13 @@
             "dlq": false,
             "backpressure": false
           },
+          "recovery_policy": {
+            "replayability_class": "append_stream",
+            "catch_up_authority": "backing_store",
+            "accepted_loss_policy": {
+              "kind": "no_silent_loss"
+            }
+          },
           "criticality": "reconstructable"
         },
         {
@@ -3895,6 +4310,13 @@
             "dlq": false,
             "backpressure": false
           },
+          "recovery_policy": {
+            "replayability_class": "append_stream",
+            "catch_up_authority": "backing_store",
+            "accepted_loss_policy": {
+              "kind": "no_silent_loss"
+            }
+          },
           "criticality": "reconstructable"
         }
       ],
@@ -3929,6 +4351,7 @@
         "id": "noop",
         "namespace": "sinex",
         "event_types": [],
+        "source_role": "activity",
         "privacy_tier": "public",
         "horizons": [
           "continuous"
@@ -3978,6 +4401,15 @@
           "dlq": false,
           "backpressure": false
         },
+        "recovery_policy": {
+          "replayability_class": "live_observation",
+          "catch_up_authority": "none",
+          "accepted_loss_policy": {
+            "kind": "accepted",
+            "rationale": "noop source has no recoverable observation history",
+            "record": "sinex-r6d.8"
+          }
+        },
         "criticality": null
       },
       "resource_limits": {
@@ -4017,6 +4449,7 @@
             "privacy.fixture.record"
           ]
         ],
+        "source_role": "activity",
         "privacy_tier": "sensitive",
         "horizons": [
           "historical"
@@ -4066,6 +4499,13 @@
           "dlq": false,
           "backpressure": false
         },
+        "recovery_policy": {
+          "replayability_class": "append_stream",
+          "catch_up_authority": "backing_store",
+          "accepted_loss_policy": {
+            "kind": "no_silent_loss"
+          }
+        },
         "criticality": null
       },
       "resource_limits": {
@@ -4104,6 +4544,7 @@
             "bookmark.created"
           ]
         ],
+        "source_role": "activity",
         "privacy_tier": "sensitive",
         "horizons": [
           "historical"
@@ -4153,6 +4594,13 @@
           "dlq": false,
           "backpressure": false
         },
+        "recovery_policy": {
+          "replayability_class": "append_stream",
+          "catch_up_authority": "backing_store",
+          "accepted_loss_policy": {
+            "kind": "no_silent_loss"
+          }
+        },
         "criticality": "reconstructable"
       },
       "resource_limits": {
@@ -4191,6 +4639,7 @@
             "social.comment.posted"
           ]
         ],
+        "source_role": "activity",
         "privacy_tier": "sensitive",
         "horizons": [
           "historical"
@@ -4240,6 +4689,13 @@
           "dlq": false,
           "backpressure": false
         },
+        "recovery_policy": {
+          "replayability_class": "append_stream",
+          "catch_up_authority": "backing_store",
+          "accepted_loss_policy": {
+            "kind": "no_silent_loss"
+          }
+        },
         "criticality": null
       },
       "resource_limits": {
@@ -4278,6 +4734,7 @@
             "social.post.created"
           ]
         ],
+        "source_role": "activity",
         "privacy_tier": "sensitive",
         "horizons": [
           "historical"
@@ -4327,6 +4784,13 @@
           "dlq": false,
           "backpressure": false
         },
+        "recovery_policy": {
+          "replayability_class": "append_stream",
+          "catch_up_authority": "backing_store",
+          "accepted_loss_policy": {
+            "kind": "no_silent_loss"
+          }
+        },
         "criticality": null
       },
       "resource_limits": {
@@ -4365,6 +4829,7 @@
             "entity.related"
           ]
         ],
+        "source_role": "activity",
         "privacy_tier": "sensitive",
         "horizons": [
           "continuous"
@@ -4414,6 +4879,13 @@
           "dlq": false,
           "backpressure": false
         },
+        "recovery_policy": {
+          "replayability_class": "derived_internal",
+          "catch_up_authority": "parent_events",
+          "accepted_loss_policy": {
+            "kind": "no_silent_loss"
+          }
+        },
         "criticality": null
       },
       "resource_limits": {
@@ -4453,6 +4925,7 @@
             "activity.session.boundary"
           ]
         ],
+        "source_role": "activity",
         "privacy_tier": "sensitive",
         "horizons": [
           "continuous"
@@ -4502,6 +4975,13 @@
           "dlq": false,
           "backpressure": false
         },
+        "recovery_policy": {
+          "replayability_class": "derived_internal",
+          "catch_up_authority": "parent_events",
+          "accepted_loss_policy": {
+            "kind": "no_silent_loss"
+          }
+        },
         "criticality": null
       },
       "resource_limits": {
@@ -4541,6 +5021,7 @@
             "automaton.error"
           ]
         ],
+        "source_role": "reflection",
         "privacy_tier": "public",
         "horizons": [
           "continuous"
@@ -4588,6 +5069,15 @@
           "replayable": true,
           "dlq": false,
           "backpressure": false
+        },
+        "recovery_policy": {
+          "replayability_class": "live_observation",
+          "catch_up_authority": "none",
+          "accepted_loss_policy": {
+            "kind": "accepted",
+            "rationale": "in-process automaton errors have no recoverable source history",
+            "record": "sinex-r6d.8"
+          }
         },
         "criticality": null
       },
@@ -4640,6 +5130,7 @@
             "health.status"
           ]
         ],
+        "source_role": "reflection",
         "privacy_tier": "public",
         "horizons": [
           "continuous"
@@ -4688,6 +5179,15 @@
           "dlq": false,
           "backpressure": false
         },
+        "recovery_policy": {
+          "replayability_class": "live_observation",
+          "catch_up_authority": "none",
+          "accepted_loss_policy": {
+            "kind": "accepted",
+            "rationale": "in-process metrics have no recoverable source history",
+            "record": "sinex-r6d.8"
+          }
+        },
         "criticality": null
       },
       "resource_limits": {
@@ -4727,6 +5227,7 @@
             "processing.stats"
           ]
         ],
+        "source_role": "reflection",
         "privacy_tier": "public",
         "horizons": [
           "continuous"
@@ -4774,6 +5275,15 @@
           "replayable": true,
           "dlq": false,
           "backpressure": false
+        },
+        "recovery_policy": {
+          "replayability_class": "live_observation",
+          "catch_up_authority": "none",
+          "accepted_loss_policy": {
+            "kind": "accepted",
+            "rationale": "runtime telemetry has no recoverable source history",
+            "record": "sinex-r6d.8"
+          }
         },
         "criticality": null
       },
@@ -4830,6 +5340,7 @@
             "gateway.rpc.call"
           ]
         ],
+        "source_role": "reflection",
         "privacy_tier": "public",
         "horizons": [
           "continuous"
@@ -4877,6 +5388,15 @@
           "replayable": true,
           "dlq": false,
           "backpressure": false
+        },
+        "recovery_policy": {
+          "replayability_class": "live_observation",
+          "catch_up_authority": "none",
+          "accepted_loss_policy": {
+            "kind": "accepted",
+            "rationale": "API telemetry has no recoverable source history",
+            "record": "sinex-r6d.8"
+          }
         },
         "criticality": null
       },
@@ -4933,6 +5453,7 @@
             "consumer.startup_replay_risk"
           ]
         ],
+        "source_role": "reflection",
         "privacy_tier": "public",
         "horizons": [
           "continuous"
@@ -4980,6 +5501,15 @@
           "replayable": true,
           "dlq": false,
           "backpressure": false
+        },
+        "recovery_policy": {
+          "replayability_class": "live_observation",
+          "catch_up_authority": "none",
+          "accepted_loss_policy": {
+            "kind": "accepted",
+            "rationale": "event-engine telemetry has no recoverable source history",
+            "record": "sinex-r6d.8"
+          }
         },
         "criticality": null
       },
@@ -5032,6 +5562,7 @@
             "process.shutdown"
           ]
         ],
+        "source_role": "reflection",
         "privacy_tier": "public",
         "horizons": [
           "continuous"
@@ -5080,6 +5611,15 @@
           "dlq": false,
           "backpressure": false
         },
+        "recovery_policy": {
+          "replayability_class": "live_observation",
+          "catch_up_authority": "none",
+          "accepted_loss_policy": {
+            "kind": "accepted",
+            "rationale": "in-process lifecycle telemetry has no recoverable source history",
+            "record": "sinex-r6d.8"
+          }
+        },
         "criticality": null
       },
       "resource_limits": {
@@ -5119,6 +5659,7 @@
             "sleep.session"
           ]
         ],
+        "source_role": "activity",
         "privacy_tier": "sensitive",
         "horizons": [
           "historical"
@@ -5168,6 +5709,13 @@
           "dlq": false,
           "backpressure": false
         },
+        "recovery_policy": {
+          "replayability_class": "append_stream",
+          "catch_up_authority": "backing_store",
+          "accepted_loss_policy": {
+            "kind": "no_silent_loss"
+          }
+        },
         "criticality": null
       },
       "resource_limits": {
@@ -5206,6 +5754,7 @@
             "track.played"
           ]
         ],
+        "source_role": "activity",
         "privacy_tier": "sensitive",
         "horizons": [
           "historical"
@@ -5254,6 +5803,13 @@
           "replayable": true,
           "dlq": false,
           "backpressure": false
+        },
+        "recovery_policy": {
+          "replayability_class": "append_stream",
+          "catch_up_authority": "backing_store",
+          "accepted_loss_policy": {
+            "kind": "no_silent_loss"
+          }
         },
         "criticality": null
       },
@@ -5325,6 +5881,7 @@
             "notification.sent"
           ]
         ],
+        "source_role": "activity",
         "privacy_tier": "sensitive",
         "horizons": [
           "continuous"
@@ -5373,6 +5930,15 @@
           "dlq": true,
           "backpressure": true
         },
+        "recovery_policy": {
+          "replayability_class": "live_observation",
+          "catch_up_authority": "none",
+          "accepted_loss_policy": {
+            "kind": "accepted",
+            "rationale": "live source has no recoverable history",
+            "record": "sinex-r6d.8"
+          }
+        },
         "criticality": "not_reconstructable"
       },
       "resource_limits": {
@@ -5416,6 +5982,7 @@
             "sync.completed"
           ]
         ],
+        "source_role": "activity",
         "privacy_tier": "sensitive",
         "horizons": [
           "continuous",
@@ -5466,6 +6033,14 @@
           "dlq": true,
           "backpressure": true
         },
+        "recovery_policy": {
+          "replayability_class": "journal_cursor",
+          "catch_up_authority": "journal_retention",
+          "accepted_loss_policy": {
+            "kind": "bounded_by_authority",
+            "boundary": "upstream journal retention"
+          }
+        },
         "criticality": "not_reconstructable"
       },
       "resource_limits": {
@@ -5505,6 +6080,7 @@
             "monitoring.started"
           ]
         ],
+        "source_role": "activity",
         "privacy_tier": "public",
         "horizons": [
           "continuous"
@@ -5552,6 +6128,15 @@
           "replayable": false,
           "dlq": false,
           "backpressure": false
+        },
+        "recovery_policy": {
+          "replayability_class": "live_observation",
+          "catch_up_authority": "none",
+          "accepted_loss_policy": {
+            "kind": "accepted",
+            "rationale": "live source has no recoverable history",
+            "record": "sinex-r6d.8"
+          }
         },
         "criticality": "reconstructable"
       },
@@ -5607,6 +6192,7 @@
             "timer.triggered"
           ]
         ],
+        "source_role": "activity",
         "privacy_tier": "sensitive",
         "horizons": [
           "continuous"
@@ -5654,6 +6240,14 @@
           "replayable": true,
           "dlq": true,
           "backpressure": true
+        },
+        "recovery_policy": {
+          "replayability_class": "journal_cursor",
+          "catch_up_authority": "journal_retention",
+          "accepted_loss_policy": {
+            "kind": "bounded_by_authority",
+            "boundary": "upstream journal retention"
+          }
         },
         "criticality": "not_reconstructable"
       },
@@ -5710,6 +6304,7 @@
             "device.other"
           ]
         ],
+        "source_role": "activity",
         "privacy_tier": "sensitive",
         "horizons": [
           "continuous"
@@ -5758,6 +6353,15 @@
           "dlq": true,
           "backpressure": true
         },
+        "recovery_policy": {
+          "replayability_class": "live_observation",
+          "catch_up_authority": "none",
+          "accepted_loss_policy": {
+            "kind": "accepted",
+            "rationale": "live source has no recoverable history",
+            "record": "sinex-r6d.8"
+          }
+        },
         "criticality": "not_reconstructable"
       },
       "resource_limits": {
@@ -5797,6 +6401,7 @@
             "knowledge.tag_applied"
           ]
         ],
+        "source_role": "activity",
         "privacy_tier": "sensitive",
         "horizons": [
           "continuous"
@@ -5846,6 +6451,13 @@
           "dlq": false,
           "backpressure": false
         },
+        "recovery_policy": {
+          "replayability_class": "derived_internal",
+          "catch_up_authority": "parent_events",
+          "accepted_loss_policy": {
+            "kind": "no_silent_loss"
+          }
+        },
         "criticality": null
       },
       "resource_limits": {
@@ -5885,6 +6497,7 @@
             "command.canonical"
           ]
         ],
+        "source_role": "activity",
         "privacy_tier": "sensitive",
         "horizons": [
           "continuous"
@@ -5934,6 +6547,13 @@
           "dlq": false,
           "backpressure": false
         },
+        "recovery_policy": {
+          "replayability_class": "derived_internal",
+          "catch_up_authority": "parent_events",
+          "accepted_loss_policy": {
+            "kind": "no_silent_loss"
+          }
+        },
         "criticality": null
       },
       "resource_limits": {
@@ -5977,6 +6597,7 @@
             "session.prompt"
           ]
         ],
+        "source_role": "activity",
         "privacy_tier": "sensitive",
         "horizons": [
           "historical"
@@ -6029,6 +6650,13 @@
           "dlq": true,
           "backpressure": true
         },
+        "recovery_policy": {
+          "replayability_class": "mutable_snapshot",
+          "catch_up_authority": "backing_store",
+          "accepted_loss_policy": {
+            "kind": "no_silent_loss"
+          }
+        },
         "criticality": null
       },
       "resource_limits": {
@@ -6067,6 +6695,7 @@
             "command.executed"
           ]
         ],
+        "source_role": "activity",
         "privacy_tier": "sensitive",
         "horizons": [
           "continuous",
@@ -6119,6 +6748,13 @@
           "dlq": true,
           "backpressure": true
         },
+        "recovery_policy": {
+          "replayability_class": "mutable_snapshot",
+          "catch_up_authority": "backing_store",
+          "accepted_loss_policy": {
+            "kind": "no_silent_loss"
+          }
+        },
         "criticality": "reconstructable"
       },
       "resource_limits": {
@@ -6158,6 +6794,7 @@
             "command.imported"
           ]
         ],
+        "source_role": "activity",
         "privacy_tier": "sensitive",
         "horizons": [
           "continuous",
@@ -6208,6 +6845,13 @@
           "dlq": true,
           "backpressure": true
         },
+        "recovery_policy": {
+          "replayability_class": "append_stream",
+          "catch_up_authority": "backing_store",
+          "accepted_loss_policy": {
+            "kind": "no_silent_loss"
+          }
+        },
         "criticality": null
       },
       "resource_limits": {
@@ -6247,6 +6891,7 @@
             "command.imported"
           ]
         ],
+        "source_role": "activity",
         "privacy_tier": "sensitive",
         "horizons": [
           "continuous",
@@ -6299,6 +6944,13 @@
           "dlq": true,
           "backpressure": true
         },
+        "recovery_policy": {
+          "replayability_class": "mutable_snapshot",
+          "catch_up_authority": "backing_store",
+          "accepted_loss_policy": {
+            "kind": "no_silent_loss"
+          }
+        },
         "criticality": null
       },
       "resource_limits": {
@@ -6338,6 +6990,7 @@
             "command.executed"
           ]
         ],
+        "source_role": "activity",
         "privacy_tier": "sensitive",
         "horizons": [
           "continuous"
@@ -6397,6 +7050,15 @@
           "dlq": true,
           "backpressure": true
         },
+        "recovery_policy": {
+          "replayability_class": "live_observation",
+          "catch_up_authority": "none",
+          "accepted_loss_policy": {
+            "kind": "accepted",
+            "rationale": "live source has no recoverable history",
+            "record": "sinex-r6d.8"
+          }
+        },
         "criticality": null
       },
       "resource_limits": {
@@ -6436,6 +7098,7 @@
             "shell.terminal_monitoring_started"
           ]
         ],
+        "source_role": "activity",
         "privacy_tier": "public",
         "horizons": [
           "continuous"
@@ -6484,6 +7147,15 @@
           "dlq": false,
           "backpressure": false
         },
+        "recovery_policy": {
+          "replayability_class": "live_observation",
+          "catch_up_authority": "none",
+          "accepted_loss_policy": {
+            "kind": "accepted",
+            "rationale": "live source has no recoverable history",
+            "record": "sinex-r6d.8"
+          }
+        },
         "criticality": "not_reconstructable"
       },
       "resource_limits": {
@@ -6522,6 +7194,7 @@
             "command.imported"
           ]
         ],
+        "source_role": "activity",
         "privacy_tier": "sensitive",
         "horizons": [
           "continuous",
@@ -6572,6 +7245,13 @@
           "dlq": true,
           "backpressure": true
         },
+        "recovery_policy": {
+          "replayability_class": "append_stream",
+          "catch_up_authority": "backing_store",
+          "accepted_loss_policy": {
+            "kind": "no_silent_loss"
+          }
+        },
         "criticality": null
       },
       "resource_limits": {
@@ -6611,6 +7291,7 @@
             "command.imported"
           ]
         ],
+        "source_role": "activity",
         "privacy_tier": "sensitive",
         "horizons": [
           "continuous",
@@ -6660,6 +7341,13 @@
           "replayable": true,
           "dlq": true,
           "backpressure": true
+        },
+        "recovery_policy": {
+          "replayability_class": "append_stream",
+          "catch_up_authority": "backing_store",
+          "accepted_loss_policy": {
+            "kind": "no_silent_loss"
+          }
         },
         "criticality": null
       },
@@ -6712,6 +7400,7 @@
             "irc.server_notice"
           ]
         ],
+        "source_role": "activity",
         "privacy_tier": "sensitive",
         "horizons": [
           "historical"
@@ -6760,6 +7449,13 @@
           "dlq": false,
           "backpressure": false
         },
+        "recovery_policy": {
+          "replayability_class": "append_stream",
+          "catch_up_authority": "backing_store",
+          "accepted_loss_policy": {
+            "kind": "no_silent_loss"
+          }
+        },
         "criticality": null
       },
       "resource_limits": {
@@ -6799,6 +7495,7 @@
             "irc.message"
           ]
         ],
+        "source_role": "activity",
         "privacy_tier": "sensitive",
         "horizons": [
           "historical"
@@ -6847,6 +7544,13 @@
           "dlq": false,
           "backpressure": false
         },
+        "recovery_policy": {
+          "replayability_class": "append_stream",
+          "catch_up_authority": "backing_store",
+          "accepted_loss_policy": {
+            "kind": "no_silent_loss"
+          }
+        },
         "criticality": null
       },
       "resource_limits": {
@@ -6886,6 +7590,7 @@
             "social.entry.created"
           ]
         ],
+        "source_role": "activity",
         "privacy_tier": "sensitive",
         "horizons": [
           "historical"
@@ -6935,6 +7640,13 @@
           "dlq": false,
           "backpressure": false
         },
+        "recovery_policy": {
+          "replayability_class": "append_stream",
+          "catch_up_authority": "backing_store",
+          "accepted_loss_policy": {
+            "kind": "no_silent_loss"
+          }
+        },
         "criticality": null
       },
       "resource_limits": {
@@ -6973,6 +7685,7 @@
             "social.entry_comment.posted"
           ]
         ],
+        "source_role": "activity",
         "privacy_tier": "sensitive",
         "horizons": [
           "historical"
@@ -7021,6 +7734,13 @@
           "replayable": true,
           "dlq": false,
           "backpressure": false
+        },
+        "recovery_policy": {
+          "replayability_class": "append_stream",
+          "catch_up_authority": "backing_store",
+          "accepted_loss_policy": {
+            "kind": "no_silent_loss"
+          }
         },
         "criticality": null
       },

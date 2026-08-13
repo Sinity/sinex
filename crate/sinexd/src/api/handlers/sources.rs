@@ -803,20 +803,31 @@ pub async fn handle_sources_package_completeness(
             modes: package
                 .modes
                 .into_values()
-                .map(|mode| SourcePackageCompletenessModeView {
-                    mode_id: mode.mode_id,
-                    package_id: mode.package_id,
-                    mode_state: serialized_label(&mode.mode_state),
-                    completeness: serialized_label(&mode.completeness),
-                    subject: mode.subject,
-                    acquisition_kind: mode.acquisition_kind.to_string(),
-                    operator_enablement: mode.operator_enablement.to_string(),
-                    missing: mode.missing,
-                    caveats: mode.caveats,
-                    event_contract_refs: mode.event_contract_refs,
-                    admission_policy_refs: mode.admission_policy_refs,
-                    coverage_debt_refs: mode.coverage_debt_refs,
-                    operation_refs: mode.operation_refs,
+                .map(|mode| {
+                    let recovery_policy = mode.sources.runtime_binding.as_ref();
+                    SourcePackageCompletenessModeView {
+                        mode_id: mode.mode_id,
+                        package_id: mode.package_id,
+                        mode_state: serialized_label(&mode.mode_state),
+                        completeness: serialized_label(&mode.completeness),
+                        subject: mode.subject,
+                        replayability_class: recovery_policy
+                            .and_then(|binding| binding.replayability_class.as_str())
+                            .map(str::to_string),
+                        catch_up_authority: recovery_policy
+                            .and_then(|binding| binding.catch_up_authority.as_str())
+                            .map(str::to_string),
+                        accepted_loss_policy: recovery_policy
+                            .map(|binding| binding.accepted_loss_policy.clone()),
+                        acquisition_kind: mode.acquisition_kind.to_string(),
+                        operator_enablement: mode.operator_enablement.to_string(),
+                        missing: mode.missing,
+                        caveats: mode.caveats,
+                        event_contract_refs: mode.event_contract_refs,
+                        admission_policy_refs: mode.admission_policy_refs,
+                        coverage_debt_refs: mode.coverage_debt_refs,
+                        operation_refs: mode.operation_refs,
+                    }
                 })
                 .collect(),
         })

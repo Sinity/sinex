@@ -9,8 +9,8 @@ use sinex_primitives::privacy::ProcessingContext;
 use sinex_primitives::rpc::{method_catalog, methods};
 use sinex_primitives::source_contracts::{
     AccessScope, CheckpointFamily, Horizon, OccurrenceIdentity, PrivacyTier, ResourceProfile,
-    RetentionPolicy, RunnerPack, RuntimeShape, SourceBuildImpact, SourceRecoveryPolicy,
-    SubjectRef, all_source_contracts, source_runtime_bindings,
+    RetentionPolicy, RunnerPack, RuntimeShape, SourceBuildImpact, SourceRecoveryPolicy, SubjectRef,
+    all_source_contracts, source_runtime_bindings,
 };
 use sinex_primitives::views::{
     ActionAvailability, ActionAvailabilityState, ActionSideEffect, SourceCoverageListView,
@@ -161,10 +161,10 @@ static BINDING: SourceRuntimeBinding = SourceRuntimeBinding::builder(
 .source_id("fixture.source")
 .runner_pack(RunnerPack::SinexdSource)
 .checkpoint_family(CheckpointFamily::AppendStream)
-    .runtime_shape(RuntimeShape::OnDemand)
-    .build_impact(SourceBuildImpact::ZERO)
-    .recovery_policy(SourceRecoveryPolicy::APPEND_STREAM)
-    .build();
+.runtime_shape(RuntimeShape::OnDemand)
+.build_impact(SourceBuildImpact::ZERO)
+.recovery_policy(SourceRecoveryPolicy::APPEND_STREAM)
+.build();
 
 fn assert_action_rpc_methods_are_cataloged(
     source_id: &str,
@@ -246,6 +246,11 @@ async fn source_coverage_view_marks_ready_when_catalog_material_and_events_exist
             .iter()
             .any(|action| action.id == "sources.readiness")
     );
+    let mode = view.modes.first().expect("fixture binding mode");
+    assert_eq!(mode.replayability_class, "append_stream");
+    assert_eq!(mode.catch_up_authority, "backing_store");
+    assert_eq!(mode.accepted_loss_policy["kind"], "no_silent_loss");
+    assert!(mode.transport_replayable);
     assert_action_rpc_methods_are_cataloged(CONTRACT.id, &view.actions)?;
     Ok(())
 }
