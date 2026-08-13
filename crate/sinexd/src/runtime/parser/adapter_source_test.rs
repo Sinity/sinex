@@ -1555,8 +1555,8 @@ async fn scoped_replay_does_not_open_generic_adapter_from_fresh_cursor(
     assert!(
         error
             .to_string()
-            .contains("replay is not supported for this adapter"),
-        "guard error should explain that the adapter has no bounded replay route: {error}"
+            .contains("material replay"),
+        "guard error should explain that replay stayed on the bounded material route: {error}"
     );
     assert_eq!(
         REPLAY_GUARD_OPENS.load(Ordering::SeqCst),
@@ -2708,8 +2708,8 @@ fn file_drop_replay_reuses_original_append_offsets() {
         record_metadata: json!({"event_kind": "Deleted", "path": "/tmp/two"}),
     };
 
-    let anchor_one = file_drop_replay_anchor(31, &occurrence_one).unwrap();
-    let anchor_two = file_drop_replay_anchor(31, &occurrence_two).unwrap();
+    let anchor_one = material_replay_anchor(31, &occurrence_one).unwrap();
+    let anchor_two = material_replay_anchor(31, &occurrence_two).unwrap();
     assert_eq!(
         anchor_one,
         MaterialAnchor::ByteRange { start: 17, len: 6 }
@@ -2740,7 +2740,7 @@ fn file_drop_replay_reuses_original_append_offsets() {
             "content_size_bytes": 42,
         }),
     };
-    let content_anchor = file_drop_replay_anchor(42, &content_occurrence).unwrap();
+    let content_anchor = material_replay_anchor(42, &content_occurrence).unwrap();
     assert_eq!(
         content_anchor,
         MaterialAnchor::ByteRange { start: 0, len: 42 }
@@ -2757,7 +2757,7 @@ fn file_drop_replay_fails_closed_without_durable_range_coordinates() {
         record_metadata: json!({"event_kind": "Created", "path": "/tmp/missing"}),
     };
 
-    let error = file_drop_replay_range(32, &occurrence)
+    let error = material_replay_range(32, &occurrence)
         .expect_err("replay must not guess a byte range from logical metadata");
     assert!(
         error
@@ -2805,7 +2805,7 @@ async fn file_drop_replay_anchor_matches_live_append_capture(
         offset_end: Some(live.offset_end),
         record_metadata: record.metadata,
     };
-    let replay = file_drop_replay_anchor(live_bytes.len() as u64, &occurrence)?;
+    let replay = material_replay_anchor(live_bytes.len() as u64, &occurrence)?;
     assert_eq!(
         replay,
         MaterialAnchor::ByteRange {
@@ -2875,7 +2875,7 @@ async fn file_drop_replay_preserves_each_live_append_occurrence(
             offset_end: Some(live.offset_end),
             record_metadata: json!({"event_kind": "Deleted"}),
         };
-        let (replay, range) = file_drop_replay_range(material_len, &occurrence)?;
+        let (replay, range) = material_replay_range(material_len, &occurrence)?;
 
         assert_eq!(
             &authoritative_bytes[range],
