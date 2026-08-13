@@ -2439,6 +2439,53 @@ async fn adapter_source_state_summarizes_latest_input_drift_caveats()
 // #1570 Prong C — occurrence_key lands on the event as equivalence_key
 // -------------------------------------------------------------------------
 
+/// A malformed ActivityWatch `started_at` is material timing that the parser
+/// cannot resolve. The adapter must therefore preserve the missing event time
+/// for temporal-ledger resolution at admission instead of promoting the
+/// parser's acquisition-time placeholder.
+#[sinex_test]
+async fn activitywatch_malformed_started_at_defers_ts_orig_to_material_tier(
+) -> xtask::sandbox::TestResult<()> {
+    use crate::sources::source_contracts::desktop::activitywatch::ActivityWatchParser;
+    use crate::runtime::parser::MaterialParser;
+
+    let material_id = Id::<SourceMaterial>::from_uuid(Uuid::now_v7());
+    let record = SourceRecord {
+        material_id,
+        anchor: MaterialAnchor::SqliteRow {
+            table: "events".to_string(),
+            rowid: 42,
+        },
+        bytes: br#"{"bucket_id":"aw-watcher-window_test","started_at":{"malformed":true},"duration":1.0,"data":{"app":"kitty","title":"shell"}}"#.to_vec(),
+        logical_path: None,
+        source_ts_hint: None,
+        metadata: JsonValue::Null,
+    };
+    let ctx = ParserContext {
+        source_id: SourceId::from_static("desktop.activitywatch"),
+        source_material_id: material_id,
+        record_anchor: record.anchor.clone(),
+        operation_id: Uuid::now_v7(),
+        job_id: Uuid::now_v7(),
+        host: "test-host".to_string(),
+        acquisition_time: Timestamp::now(),
+    };
+
+    let mut parser = ActivityWatchParser;
+    let intent = parser
+        .parse_record(record, &ctx)
+        .await?
+        .pop()
+        .expect("known ActivityWatch bucket produces one intent");
+    assert_eq!(intent.timing, TimingEvidence::Atemporal);
+
+    let event = intent_to_event_with_anchor(intent, material_id, 42, None, None, None, 0)
+        .expect("ActivityWatch intent converts to an event");
+    assert_eq!(event.ts_orig, None);
+    assert_eq!(event.ts_quality, None);
+    Ok(())
+}
+
 /// A parser-supplied occurrence key is carried onto the event as
 /// `equivalence_key`, so it reaches the curation duplicate workbench.
 #[sinex_test]
