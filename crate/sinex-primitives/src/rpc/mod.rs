@@ -221,6 +221,7 @@ pub fn method_catalog() -> Vec<RpcMethodInfo> {
         llm::LLM_BUDGET_REPORT_METHOD.info(),
         llm::LLM_PROMPTS_LIST_METHOD.info(),
         llm::LLM_ROUTE_EXPLAIN_METHOD.info(),
+        llm::LLM_EMBEDDING_ESTIMATE_METHOD.info(),
         runtime::RUNTIME_DRAIN_METHOD.info(),
         runtime::RUNTIME_HEALTH_METHOD.info(),
         runtime::RUNTIME_LIST_ACTIVE_METHOD.info(),

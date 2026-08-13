@@ -765,6 +765,7 @@ fn llm_command_path(cmd: &sinexctl::commands::llm::LlmCommand) -> String {
         LlmSubcommand::Prompts(_) => "llm prompts".to_string(),
         LlmSubcommand::RouteExplain(_) => "llm route-explain".to_string(),
         LlmSubcommand::BudgetReport(_) => "llm budget-report".to_string(),
+        LlmSubcommand::EmbeddingEstimate(_) => "llm embedding-estimate".to_string(),
     }
 }
 

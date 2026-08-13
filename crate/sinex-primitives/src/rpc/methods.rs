@@ -38,6 +38,7 @@ pub const CURATION_FINALIZE: &str = "curation.finalize";
 pub const LLM_PROMPTS_LIST: &str = "llm.prompts.list";
 pub const LLM_ROUTE_EXPLAIN: &str = "llm.route.explain";
 pub const LLM_BUDGET_REPORT: &str = "llm.budget.report";
+pub const LLM_EMBEDDING_ESTIMATE: &str = "llm.embedding.estimate";
 
 // Tasks
 pub const TASKS_CREATE: &str = "tasks.create";

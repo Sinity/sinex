@@ -64,8 +64,9 @@ use sinex_primitives::rpc::{
         TombstoneStatusResponse,
     },
     llm::{
-        LLM_BUDGET_REPORT_METHOD, LLM_PROMPTS_LIST_METHOD, LLM_ROUTE_EXPLAIN_METHOD,
-        LlmBudgetReportRequest, LlmBudgetReportResponse, LlmPromptsListRequest,
+        LLM_BUDGET_REPORT_METHOD, LLM_EMBEDDING_ESTIMATE_METHOD, LLM_PROMPTS_LIST_METHOD,
+        LLM_ROUTE_EXPLAIN_METHOD, LlmBudgetReportRequest, LlmBudgetReportResponse,
+        LlmEmbeddingEstimateRequest, LlmEmbeddingEstimateResponse, LlmPromptsListRequest,
         LlmRouteExplainRequest, LlmRouteExplainResponse,
     },
     ops::{Operation as OpsOperation, OpsGetResponse, OpsListResponse, OpsStartResponse},
@@ -1304,6 +1305,13 @@ impl GatewayClient {
         request: LlmBudgetReportRequest,
     ) -> Result<LlmBudgetReportResponse> {
         self.call_typed(LLM_BUDGET_REPORT_METHOD, &request).await
+    }
+
+    pub async fn llm_embedding_estimate(
+        &self,
+        request: LlmEmbeddingEstimateRequest,
+    ) -> Result<LlmEmbeddingEstimateResponse> {
+        self.call_typed(LLM_EMBEDDING_ESTIMATE_METHOD, &request).await
     }
 
     // ==================== Source Material Commands ====================

@@ -69,7 +69,10 @@ pub use lifecycle::{
     handle_tombstone_preview,
     handle_tombstone_status,
 };
-pub use llm::{handle_llm_budget_report, handle_llm_prompts_list, handle_llm_route_explain};
+pub use llm::{
+    handle_llm_budget_report, handle_llm_embedding_estimate, handle_llm_prompts_list,
+    handle_llm_route_explain,
+};
 pub use ops::{handle_ops_cancel, handle_ops_get, handle_ops_list, handle_ops_start};
 pub use runtime_registry::{
     handle_runtime_drain, handle_runtime_list, handle_runtime_resume, handle_runtime_set_horizon,

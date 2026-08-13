@@ -41,7 +41,10 @@ use sinex_primitives::rpc::{
         LIFECYCLE_TOMBSTONE_CREATE_METHOD, LIFECYCLE_TOMBSTONE_LIST_METHOD,
         LIFECYCLE_TOMBSTONE_PREVIEW_METHOD, LIFECYCLE_TOMBSTONE_STATUS_METHOD,
     },
-    llm::{LLM_BUDGET_REPORT_METHOD, LLM_PROMPTS_LIST_METHOD, LLM_ROUTE_EXPLAIN_METHOD},
+    llm::{
+        LLM_BUDGET_REPORT_METHOD, LLM_EMBEDDING_ESTIMATE_METHOD, LLM_PROMPTS_LIST_METHOD,
+        LLM_ROUTE_EXPLAIN_METHOD,
+    },
     ops::{OPS_CANCEL_METHOD, OPS_GET_METHOD, OPS_LIST_METHOD, OPS_START_METHOD},
     pkm::{PKM_CREATE_ENTITIES_METHOD, PKM_CREATE_NOTE_METHOD, PKM_LINK_ENTITIES_METHOD},
     privacy::{
@@ -531,7 +534,8 @@ fn build_registry_impl() -> RpcRegistry {
         handle_events_lineage, handle_events_query, handle_events_relation_evidence,
         handle_health_effect_record, handle_health_intake_record, handle_hyprland_workspace_switch,
         handle_lifecycle_archive, handle_lifecycle_restore, handle_lifecycle_status,
-        handle_link_entities, handle_llm_budget_report, handle_llm_prompts_list,
+        handle_link_entities, handle_llm_budget_report, handle_llm_embedding_estimate,
+        handle_llm_prompts_list,
         handle_llm_route_explain, handle_ops_cancel, handle_ops_get, handle_ops_list,
         handle_ops_start, handle_privacy_policy_backend_add, handle_privacy_policy_dictionary_add,
         handle_privacy_policy_field_bind, handle_privacy_policy_field_unbind,
@@ -608,6 +612,10 @@ fn build_registry_impl() -> RpcRegistry {
         .pool_typed_rpc(LLM_PROMPTS_LIST_METHOD, boxed!(handle_llm_prompts_list))
         .pool_typed_rpc(LLM_ROUTE_EXPLAIN_METHOD, boxed!(handle_llm_route_explain))
         .pool_typed_rpc(LLM_BUDGET_REPORT_METHOD, boxed!(handle_llm_budget_report))
+        .pool_typed_rpc(
+            LLM_EMBEDDING_ESTIMATE_METHOD,
+            boxed!(handle_llm_embedding_estimate),
+        )
         .service_typed_rpc(EVENTS_LINEAGE_METHOD, boxed!(handle_events_lineage))
         .pool_typed_rpc(TASKS_LIST_METHOD, boxed!(handle_tasks_list))
         .pool_typed_rpc(TASKS_STATE_GET_METHOD, boxed!(handle_tasks_state_get))

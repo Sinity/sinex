@@ -5,7 +5,8 @@ use color_eyre::Result;
 use color_eyre::eyre::eyre;
 use sinex_primitives::query::EventQueryResult;
 use sinex_primitives::rpc::llm::{
-    LlmBudgetReportRequest, LlmBudgetReportResponse, LlmPromptsListRequest, LlmRouteExplainRequest,
+    LlmBudgetReportRequest, LlmBudgetReportResponse, LlmEmbeddingEstimateRequest,
+    LlmEmbeddingEstimateResponse, LlmPromptsListRequest, LlmRouteExplainRequest,
     LlmRouteExplainResponse,
 };
 use sinex_primitives::views::{
@@ -33,6 +34,7 @@ impl LlmCommand {
             LlmSubcommand::Prompts(cmd) => cmd.execute(client, format).await,
             LlmSubcommand::RouteExplain(cmd) => cmd.execute(client, format).await,
             LlmSubcommand::BudgetReport(cmd) => cmd.execute(client, format).await,
+            LlmSubcommand::EmbeddingEstimate(cmd) => cmd.execute(client, format).await,
         }
     }
 }
@@ -45,6 +47,20 @@ pub enum LlmSubcommand {
     RouteExplain(LlmRouteExplainCommand),
     /// Summarize recent budget-ledger events.
     BudgetReport(LlmBudgetReportCommand),
+    /// Estimate the bounded, privacy-filtered first embedding run.
+    EmbeddingEstimate(LlmEmbeddingEstimateCommand),
+}
+
+#[derive(Debug, Args)]
+pub struct LlmEmbeddingEstimateCommand;
+
+impl LlmEmbeddingEstimateCommand {
+    async fn execute(&self, client: &GatewayClient, format: OutputFormat) -> Result<()> {
+        let response = client
+            .llm_embedding_estimate(LlmEmbeddingEstimateRequest {})
+            .await?;
+        render_embedding_estimate(&response, format)
+    }
 }
 
 #[derive(Debug, Args)]
@@ -206,12 +222,41 @@ fn render_budget_report(
     Ok(())
 }
 
+fn render_embedding_estimate(
+    response: &LlmEmbeddingEstimateResponse,
+    format: OutputFormat,
+) -> Result<()> {
+    match format {
+        OutputFormat::Json | OutputFormat::Ndjson | OutputFormat::Dot => {
+            println!("{}", format_json(response)?)
+        }
+        OutputFormat::Yaml => println!("{}", format_yaml(response)?),
+        OutputFormat::Table => {
+            println!("Embedding dry-run estimate");
+            println!("  Model:              {}", response.model);
+            println!("  Scanned events:     {}", response.scanned_events);
+            println!("  Scanned materials:  {}", response.scanned_materials);
+            println!("  Selected events:    {}", response.eligible_events);
+            println!("  Quarantined:        {}", response.quarantined_events);
+            println!("  Skipped:            {}", response.skipped_events);
+            println!("  Estimated tokens:   {}", response.estimated_tokens);
+            println!(
+                "  Estimated cost:     {} microUSD",
+                response.estimated_cost_microusd
+            );
+            println!("  Selected families:  {:?}", response.selected_event_types);
+            println!("  Quarantine reasons: {:?}", response.quarantined_by_reason);
+        }
+    }
+    Ok(())
+}
+
 fn llm_prompts_envelope(
     response: &EventQueryResult,
     query_echo: serde_json::Value,
 ) -> ViewEnvelope<EventQueryResult> {
-    let mut envelope =
-        ViewEnvelope::new("sinexctl.semantic.llm.prompts", response.clone()).with_query_echo(query_echo);
+    let mut envelope = ViewEnvelope::new("sinexctl.semantic.llm.prompts", response.clone())
+        .with_query_echo(query_echo);
     if matches!(response, EventQueryResult::Events { events, .. } if events.is_empty()) {
         envelope.caveats.push(llm_producer_absent_caveat(
             "llm.prompt_template.registered",
@@ -225,9 +270,8 @@ fn llm_budget_report_envelope(
     response: &LlmBudgetReportResponse,
     query_echo: serde_json::Value,
 ) -> ViewEnvelope<LlmBudgetReportResponse> {
-    let mut envelope =
-        ViewEnvelope::new("sinexctl.semantic.llm.budget-report", response.clone())
-            .with_query_echo(query_echo);
+    let mut envelope = ViewEnvelope::new("sinexctl.semantic.llm.budget-report", response.clone())
+        .with_query_echo(query_echo);
     envelope.caveats.extend(response.caveats.clone());
     envelope
 }
