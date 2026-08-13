@@ -49,12 +49,13 @@ mod tests {
         ctx: TestContext,
     ) -> TestResult<()> {
         let ctx = ctx.with_nats().dedicated().await?;
+        let nats_client = ctx.nats_client();
         let publisher = NatsPublisher::with_namespace(
-            ctx.nats_client(),
+            nats_client.clone(),
             Some("flag-only-progress".to_string()),
         );
         let env = sinex_primitives::environment::environment();
-        let store = ScanProgressStore::open(ctx.nats_client(), env, publisher.namespace()).await?;
+        let store = ScanProgressStore::open(&nats_client, &env, publisher.namespace()).await?;
         let controller = PacingController::new(RateBudget::default_paced());
         let tracker = ScanProgressTracker::new(None);
         let snapshot = ScanProgressSnapshot::from_controller(
@@ -66,11 +67,11 @@ mod tests {
         );
         store.publish(&snapshot).await?;
 
-        let namespaced = ScanProgressStore::open(ctx.nats_client(), env, publisher.namespace())
+        let namespaced = ScanProgressStore::open(&nats_client, &env, publisher.namespace())
             .await?
             .list()
             .await?;
-        let default = ScanProgressStore::open(ctx.nats_client(), env, None)
+        let default = ScanProgressStore::open(&nats_client, &env, None)
             .await?
             .list()
             .await?;
