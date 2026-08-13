@@ -684,6 +684,22 @@ async fn reconcile_replayed_file_progress(
             return Ok(());
         }
 
+        if actual_size > pending_write.offset {
+            // The staged file is written before its WAL Slice commit record.
+            // A crash can therefore leave a partial or complete suffix even
+            // though the WAL still contains only the durable prefix. Preserve
+            // the prefix and keep the pending write so the source frame can be
+            // redelivered instead of discarding the whole assembly.
+            truncate_staged_file_to(temp_path, pending_write.offset).await?;
+            debug!(
+                material_id = %material_id,
+                actual_size,
+                rollback_size = pending_write.offset,
+                "Truncated uncommitted staged suffix while restoring pending material write"
+            );
+            return Ok(());
+        }
+
         return Err(
             SinexError::invalid_state("pending_write does not match staged file progress")
                 .with_context("material_id", material_id.to_string())
@@ -709,7 +725,49 @@ async fn reconcile_replayed_file_progress(
         .with_context("actual_size", actual_size.to_string()));
     }
 
+    if actual_size > state_snapshot.expected_offset {
+        // This is the same write-ahead ordering window without a replayed
+        // pending marker (for example, a crash before that checkpoint became
+        // durable). The bytes beyond the WAL frontier are not authoritative.
+        truncate_staged_file_to(temp_path, state_snapshot.expected_offset).await?;
+        debug!(
+            material_id = %material_id,
+            actual_size,
+            rollback_size = state_snapshot.expected_offset,
+            "Truncated uncommitted staged suffix while restoring material progress"
+        );
+        return Ok(());
+    }
+
     Ok(())
+}
+
+async fn truncate_staged_file_to(temp_path: &Path, size: i64) -> EventEngineResult<()> {
+    let size = u64::try_from(size).map_err(|error| {
+        SinexError::invalid_state("staged file rollback offset is negative")
+            .with_context("path", temp_path.display().to_string())
+            .with_std_error(&error)
+    })?;
+    let file = File::options()
+        .write(true)
+        .open(temp_path)
+        .await
+        .map_err(|error| {
+            SinexError::io("failed to open staged file for crash recovery")
+                .with_context("path", temp_path.display().to_string())
+                .with_source(error)
+        })?;
+    file.set_len(size).await.map_err(|error| {
+        SinexError::io("failed to truncate uncommitted staged suffix")
+            .with_context("path", temp_path.display().to_string())
+            .with_context("size", size.to_string())
+            .with_source(error)
+    })?;
+    file.sync_data().await.map_err(|error| {
+        SinexError::io("failed to sync staged-file rollback")
+            .with_context("path", temp_path.display().to_string())
+            .with_source(error)
+    })
 }
 
 async fn staged_file_size_bytes(temp_path: &Path) -> EventEngineResult<i64> {
@@ -1624,7 +1682,7 @@ async fn commit_pending_slice_write(
     } else {
         assembler
             .durability_policy
-            .sync_staged_file_if_needed(state, material_id, false)
+            .sync_staged_file_if_needed(state, material_id, true)
             .await?;
     }
 
@@ -1637,6 +1695,15 @@ async fn commit_pending_slice_write(
         },
     )
     .await?;
+
+    // A source frame may be ACKed as soon as this handler returns. The staged
+    // bytes and the WAL commit record must therefore both be durable before
+    // returning; otherwise a power loss can acknowledge a slice that restart
+    // cannot reconstruct or redeliver.
+    assembler
+        .durability_policy
+        .sync_wal_if_needed(state, true)
+        .await?;
 
     state.hasher.update(data);
     state.expected_offset = expected_size_after_write;

@@ -104,15 +104,106 @@ async fn append_slice_data_batches_staged_and_wal_sync(ctx: TestContext) -> Test
     append_slice_data(&assembler, &mut state, material_id, b"small-record").await?;
 
     assert_eq!(state.expected_offset, "small-record".len() as i64);
-    assert_eq!(state.staged_bytes_since_sync, "small-record".len() as i64);
-    assert!(
-        state.wal_entries_since_sync > 0,
-        "per-slice WAL writes should stay buffered instead of forced durable"
-    );
+    assert_eq!(state.staged_bytes_since_sync, 0);
+    assert_eq!(state.wal_entries_since_sync, 0);
+    assert_eq!(state.wal_bytes_since_sync, 0);
 
     sync_staged_file_for_finalization(&assembler, &mut state, material_id).await?;
 
     assert_eq!(state.staged_bytes_since_sync, 0);
+    Ok(())
+}
+
+#[sinex_test]
+async fn restore_state_truncates_partial_pending_write_and_keeps_it_for_redelivery(
+    ctx: TestContext,
+) -> TestResult<()> {
+    let ctx = ctx.with_nats().shared().await?;
+    let (assembler, _content_store_dir, state_dir) = test_assembler(&ctx).await?;
+    let material_id = Uuid::now_v7();
+    let material_dir = state_dir.path().join(material_id.to_string());
+    tokio::fs::create_dir_all(&material_dir).await?;
+    tokio::fs::write(material_dir.join(TEMP_FILE_NAME), b"durablepartial").await?;
+
+    write_wal_entry(
+        &material_dir.join(WAL_FILE_NAME),
+        WalEntry::Checkpoint(PersistedState {
+            material_id: material_id.to_string(),
+            expected_offset: 6,
+            slice_count: 1,
+            started_at: Timestamp::now().format_rfc3339(),
+            last_slice_received: None,
+            material_kind: "test".to_string(),
+            source_identifier: "test://partial-pending-write".to_string(),
+            metadata: json!({}),
+            pending_write: Some(PendingWrite {
+                offset: 6,
+                len: 9,
+                slice_count_delta: 1,
+            }),
+            pending_end: None,
+            phase: AssemblyPhase::Accumulating,
+        }),
+    )
+    .await?;
+
+    restore_state(&assembler).await?;
+
+    let state = assembler
+        .get_state_handle(&material_id)
+        .expect("partial pending write should remain recoverable");
+    let state = state.lock().await;
+    assert_eq!(state.expected_offset, 6);
+    assert_eq!(
+        state.pending_write.as_ref().map(|write| write.offset),
+        Some(6)
+    );
+    assert_eq!(
+        tokio::fs::metadata(material_dir.join(TEMP_FILE_NAME))
+            .await?
+            .len(),
+        6
+    );
+    Ok(())
+}
+
+#[sinex_test]
+async fn restore_state_truncates_uncommitted_suffix_without_pending_marker(
+    ctx: TestContext,
+) -> TestResult<()> {
+    let ctx = ctx.with_nats().shared().await?;
+    let (assembler, _content_store_dir, state_dir) = test_assembler(&ctx).await?;
+    let material_id = Uuid::now_v7();
+    let material_dir = state_dir.path().join(material_id.to_string());
+    tokio::fs::create_dir_all(&material_dir).await?;
+    tokio::fs::write(material_dir.join(TEMP_FILE_NAME), b"committed-extra").await?;
+
+    write_wal_entry(
+        &material_dir.join(WAL_FILE_NAME),
+        WalEntry::Checkpoint(PersistedState {
+            material_id: material_id.to_string(),
+            expected_offset: 10,
+            slice_count: 1,
+            started_at: Timestamp::now().format_rfc3339(),
+            last_slice_received: None,
+            material_kind: "test".to_string(),
+            source_identifier: "test://uncommitted-suffix".to_string(),
+            metadata: json!({}),
+            pending_write: None,
+            pending_end: None,
+            phase: AssemblyPhase::Accumulating,
+        }),
+    )
+    .await?;
+
+    restore_state(&assembler).await?;
+
+    let state = assembler
+        .get_state_handle(&material_id)
+        .expect("WAL-confirmed prefix should remain recoverable");
+    assert_eq!(state.lock().await.expected_offset, 10);
+    let bytes = tokio::fs::read(material_dir.join(TEMP_FILE_NAME)).await?;
+    assert_eq!(bytes, b"committed-", "only the WAL-confirmed prefix survives");
     Ok(())
 }
 
