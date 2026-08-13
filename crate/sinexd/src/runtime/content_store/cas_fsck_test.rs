@@ -53,6 +53,38 @@ async fn cancelled_fsck_reports_incomplete_without_scanning(ctx: TestContext) ->
 }
 
 #[sinex_test]
+async fn apply_fsck_holds_cross_handle_destructive_admission(
+    ctx: TestContext,
+) -> TestResult<()> {
+    let store_dir = tempfile::tempdir()?;
+    let root_path = Utf8PathBuf::from_path_buf(store_dir.path().to_path_buf())
+        .expect("temporary content-store path must be UTF-8");
+    let content_store = MaterialContentStore::new(ContentStoreConfig {
+        root_path,
+        ..Default::default()
+    })?;
+    let cancellation = WorkCancellation::new();
+    let held = content_store
+        .acquire_destructive_admission(&cancellation)
+        .await?;
+
+    let waiting_cancellation = WorkCancellation::new();
+    let waiting = content_store.acquire_destructive_admission(&waiting_cancellation);
+    tokio::pin!(waiting);
+    assert!(
+        tokio::time::timeout(std::time::Duration::from_millis(125), &mut waiting)
+            .await
+            .is_err(),
+        "a second CAS owner must wait while the first owner holds the lock"
+    );
+    waiting_cancellation.cancel();
+    assert!(waiting.await.is_err());
+    drop(held);
+    let _ = ctx;
+    Ok(())
+}
+
+#[sinex_test]
 async fn bounded_fsck_cancellation_stops_authority_stream_after_walk(
     ctx: TestContext,
 ) -> TestResult<()> {
@@ -184,8 +216,15 @@ async fn cancelled_reconciliation_preserves_pending_cas_deletion(
     );
     let mut report = CasFsckReport::default();
     let complete =
-        reconcile_pending_deletions(ctx.pool(), &content_store, true, &mut report, &mut work)
-            .await?;
+        reconcile_pending_deletions(
+            ctx.pool(),
+            &content_store,
+            true,
+            &mut report,
+            &mut work,
+            None,
+        )
+        .await?;
 
     assert!(!complete);
     assert_eq!(report.stop_reason, Some(CasFsckStopReason::Cancelled));
@@ -238,6 +277,7 @@ async fn cancelled_orphan_apply_preserves_live_cas_object(ctx: TestContext) -> T
         &statuses,
         &mut report,
         &mut work,
+        None,
     )
     .await?;
 

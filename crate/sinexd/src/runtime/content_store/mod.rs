@@ -1,4 +1,5 @@
 use crate::runtime::{FaultInjector, FaultPoint, RuntimeResult, SinexError};
+use crate::runtime::work_control::{WorkCancellation, WorkFileAdmission};
 use camino::{Utf8Path, Utf8PathBuf};
 use serde::de::{self, Visitor};
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
@@ -56,6 +57,7 @@ pub(crate) const CAS_LIFECYCLE_DIR: &str = ".sinex-cas-lifecycle";
 const CAS_INGEST_LEASE_DIR: &str = "ingest-leases";
 const CAS_PENDING_DELETE_DIR: &str = "pending-deletes";
 const CAS_QUARANTINE_DIR: &str = "quarantine";
+const CAS_DESTRUCTIVE_LOCK_FILE: &str = ".sinex-cas-destructive.lock";
 const CONTENT_STORE_PROCESS_COUNTERS_PATH_ENV: &str = "SINEX_CONTENT_STORE_PROCESS_COUNTERS_PATH";
 
 static CONTENT_STORE_PROCESS_LOCK: OnceLock<AsyncMutex<()>> = OnceLock::new();
@@ -775,6 +777,16 @@ impl MaterialContentStore {
         &self.config.root_path
     }
 
+    /// Serialize destructive CAS mutations across daemons, CLI processes, and
+    /// system timers that share this content-store root.
+    pub(crate) async fn acquire_destructive_admission(
+        &self,
+        cancellation: &WorkCancellation,
+    ) -> RuntimeResult<WorkFileAdmission> {
+        let lock_path = self.config.root_path.join(CAS_DESTRUCTIVE_LOCK_FILE);
+        WorkFileAdmission::acquire(lock_path.as_std_path(), cancellation).await
+    }
+
     fn lifecycle_root(&self) -> Utf8PathBuf {
         self.config.root_path.join(CAS_LIFECYCLE_DIR)
     }
@@ -930,6 +942,21 @@ impl MaterialContentStore {
         &self,
         key: &ContentStoreKey,
     ) -> RuntimeResult<Option<PendingDeletion>> {
+        let admission = self
+            .acquire_destructive_admission(&WorkCancellation::new())
+            .await?;
+        self.quarantine_local_cas_with_admission(key, &admission).await
+    }
+
+    /// Move a local CAS object while the caller holds the store's destructive
+    /// admission. Keeping this separate from the acquiring wrapper prevents
+    /// fsck and other multi-step operations from recursively locking the same
+    /// file when they already own the admission.
+    pub(crate) async fn quarantine_local_cas_with_admission(
+        &self,
+        key: &ContentStoreKey,
+        _admission: &WorkFileAdmission,
+    ) -> RuntimeResult<Option<PendingDeletion>> {
         if !key.is_local_blake3_cas() {
             return Err(SinexError::validation(
                 "CAS quarantine requires a local BLAKE3 content key",
@@ -990,6 +1017,20 @@ impl MaterialContentStore {
     /// Finish a previously quarantined deletion. If the unlink fails, both
     /// the quarantine bytes and its record remain for a later retry.
     pub async fn finalize_pending_deletion(&self, pending: &PendingDeletion) -> RuntimeResult<()> {
+        let admission = self
+            .acquire_destructive_admission(&WorkCancellation::new())
+            .await?;
+        self.finalize_pending_deletion_with_admission(pending, &admission)
+            .await
+    }
+
+    /// Finish a quarantined deletion while the caller owns destructive
+    /// admission; see [`Self::quarantine_local_cas_with_admission`].
+    pub(crate) async fn finalize_pending_deletion_with_admission(
+        &self,
+        pending: &PendingDeletion,
+        _admission: &WorkFileAdmission,
+    ) -> RuntimeResult<()> {
         #[cfg(test)]
         if TEST_FAIL_NEXT_PENDING_DELETE.swap(false, Ordering::SeqCst) {
             return Err(SinexError::io("injected CAS quarantine delete failure"));
@@ -1012,6 +1053,20 @@ impl MaterialContentStore {
     /// Restore a pending deletion when a database reference reappears during
     /// the quarantine grace period.
     pub async fn restore_pending_deletion(&self, pending: &PendingDeletion) -> RuntimeResult<()> {
+        let admission = self
+            .acquire_destructive_admission(&WorkCancellation::new())
+            .await?;
+        self.restore_pending_deletion_with_admission(pending, &admission)
+            .await
+    }
+
+    /// Restore a pending deletion while the caller owns destructive admission;
+    /// see [`Self::quarantine_local_cas_with_admission`].
+    pub(crate) async fn restore_pending_deletion_with_admission(
+        &self,
+        pending: &PendingDeletion,
+        _admission: &WorkFileAdmission,
+    ) -> RuntimeResult<()> {
         if pending.quarantine_path.exists() {
             if pending.source_path.exists() {
                 tokio::fs::remove_file(&pending.quarantine_path)
@@ -1573,6 +1628,22 @@ impl MaterialContentStore {
     /// Drop content if sufficient copies exist elsewhere
     pub async fn drop_content(&self, key_or_path: &str, force: bool) -> RuntimeResult<()> {
         debug!("Dropping content for: {key_or_path}");
+        let admission = self
+            .acquire_destructive_admission(&WorkCancellation::new())
+            .await?;
+        self.drop_content_with_admission(key_or_path, force, &admission)
+            .await
+    }
+
+    /// Drop content while the caller owns destructive admission. This is the
+    /// form used by multi-step CAS operations that already hold the lock.
+    pub(crate) async fn drop_content_with_admission(
+        &self,
+        key_or_path: &str,
+        force: bool,
+        admission: &WorkFileAdmission,
+    ) -> RuntimeResult<()> {
+        debug!("Dropping content for: {key_or_path}");
 
         if let Some(path) = self.path_if_local(key_or_path)? {
             if !force {
@@ -1588,13 +1659,18 @@ impl MaterialContentStore {
                     .into_iter()
                     .find(|pending| pending.key == key)
                 {
-                    self.finalize_pending_deletion(&pending).await?;
+                    self.finalize_pending_deletion_with_admission(&pending, admission)
+                        .await?;
                 }
                 return Ok(());
             }
             self.canonicalize_local_cas_path(&path).await?;
-            if let Some(pending) = self.quarantine_local_cas(&key).await? {
-                self.finalize_pending_deletion(&pending).await?;
+            if let Some(pending) = self
+                .quarantine_local_cas_with_admission(&key, admission)
+                .await?
+            {
+                self.finalize_pending_deletion_with_admission(&pending, admission)
+                    .await?;
             }
             return Ok(());
         }

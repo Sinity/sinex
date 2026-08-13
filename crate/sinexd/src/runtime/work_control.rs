@@ -7,7 +7,9 @@
 
 use std::sync::Arc;
 use std::time::{Duration, Instant};
+use std::{fs::OpenOptions, path::Path};
 
+use nix::fcntl::{Flock, FlockArg};
 use tokio::sync::{Notify, OwnedSemaphorePermit, Semaphore};
 
 use crate::runtime::{RuntimeResult, SinexError};
@@ -170,6 +172,61 @@ impl WorkAdmission {
             }
             () = cancellation_wake => {
                 Err(SinexError::validation("work admission cancelled"))
+            }
+        }
+    }
+}
+
+/// Cross-process exclusive admission backed by a POSIX advisory lock.
+///
+/// The in-process [`WorkAdmission`] is useful for fairness inside one daemon,
+/// but cannot coordinate a daemon, CLI, timer, and recovery command that share
+/// a store. This guard closes that gap without imposing a timeout: callers can
+/// cancel a waiter, while an uncancelled operation waits until the owner exits
+/// and the kernel releases the lock. Dropping the guard releases the lock.
+#[derive(Debug)]
+pub struct WorkFileAdmission {
+    _lock: Flock<std::fs::File>,
+}
+
+impl WorkFileAdmission {
+    /// Acquire `path` exclusively, waiting cooperatively while another
+    /// process owns it. The parent directory must already exist; admission
+    /// must not create or mutate an operation's data layout as a side effect.
+    pub async fn acquire(
+        path: impl AsRef<Path>,
+        cancellation: &WorkCancellation,
+    ) -> RuntimeResult<Self> {
+        let path = path.as_ref();
+        let mut file = OpenOptions::new()
+            .create(true)
+            .read(true)
+            .write(true)
+            .open(path)
+            .map_err(SinexError::io)?;
+
+        loop {
+            let cancellation_wake = cancellation.wake.notified();
+            if cancellation.is_cancelled() {
+                return Err(SinexError::validation("work file admission cancelled"));
+            }
+            match Flock::lock(file, FlockArg::LockExclusiveNonblock) {
+                Ok(lock) => return Ok(Self { _lock: lock }),
+                Err((unlocked_file, nix::errno::Errno::EWOULDBLOCK)) => {
+                    file = unlocked_file;
+                    tokio::select! {
+                        () = tokio::time::sleep(Duration::from_millis(100)) => {}
+                        () = cancellation_wake => {
+                            return Err(SinexError::validation("work file admission cancelled"));
+                        }
+                    }
+                }
+                Err((_unlocked_file, error)) => {
+                    return Err(SinexError::processing(format!(
+                        "failed to acquire work file admission {}: {error}",
+                        path.display()
+                    )));
+                }
             }
         }
     }

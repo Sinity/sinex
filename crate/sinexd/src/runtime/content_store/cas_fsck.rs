@@ -28,7 +28,7 @@ use super::{
 };
 use crate::runtime::work_control::{
     WorkAdmission, WorkBudget, WorkCancellation, WorkController, WorkIdentity, WorkOutcome,
-    WorkStopReason,
+    WorkFileAdmission, WorkStopReason,
 };
 
 /// Result of a single CAS file check.
@@ -196,9 +196,6 @@ pub async fn check_cas_with_options_and_control(
     cancellation: WorkCancellation,
 ) -> RuntimeResult<(CasFsckReport, Vec<CasFileStatus>, CasWalkCheckpoint)> {
     let initial_checkpoint = checkpoint.unwrap_or_default();
-    let mut walker = content_store
-        .cas_walker_with_control(Some(initial_checkpoint.clone()), Some(cancellation.clone()))
-        .await?;
     let mut file_statuses: Vec<CasFileStatus> = Vec::new();
     let mut report = CasFsckReport::default();
     let mut present_hashes: HashSet<String> = HashSet::new();
@@ -212,7 +209,19 @@ pub async fn check_cas_with_options_and_control(
         }
         return Ok((report, file_statuses, initial_checkpoint));
     }
+    let mut walker = content_store
+        .cas_walker_with_control(Some(initial_checkpoint.clone()), Some(cancellation.clone()))
+        .await?;
     let _admission = cas_fsck_admission().acquire(&cancellation).await?;
+    let _destructive_admission = if apply {
+        Some(
+            content_store
+                .acquire_destructive_admission(&cancellation)
+                .await?,
+        )
+    } else {
+        None
+    };
     let mut work = WorkController::new(
         WorkIdentity::ephemeral("cas-fsck", content_store.root_path().as_str()),
         WorkBudget {
@@ -243,7 +252,15 @@ pub async fn check_cas_with_options_and_control(
 
     if continue_work {
         continue_work =
-            reconcile_pending_deletions(pool, content_store, apply, &mut report, &mut work).await?;
+            reconcile_pending_deletions(
+                pool,
+                content_store,
+                apply,
+                &mut report,
+                &mut work,
+                _destructive_admission.as_ref(),
+            )
+            .await?;
     }
 
     'scan: while continue_work {
@@ -448,7 +465,15 @@ pub async fn check_cas_with_options_and_control(
     // The returned statuses are also the bounded walk's classification output,
     // so no separate orphan-candidate list is retained.
     if apply && !report.incomplete {
-        apply_orphan_deletions(pool, content_store, &file_statuses, &mut report, &mut work).await?;
+        apply_orphan_deletions(
+            pool,
+            content_store,
+            &file_statuses,
+            &mut report,
+            &mut work,
+            _destructive_admission.as_ref(),
+        )
+        .await?;
     }
 
     // Remove empty prefix directories after cleanup
@@ -793,6 +818,7 @@ async fn reconcile_pending_deletions(
     apply: bool,
     report: &mut CasFsckReport,
     work: &mut WorkController,
+    admission: Option<&WorkFileAdmission>,
 ) -> RuntimeResult<bool> {
     let pending = content_store.list_pending_deletions().await?;
     let now = SystemTime::now()
@@ -817,7 +843,13 @@ async fn reconcile_pending_deletions(
             if !fsck_destructive_boundary(work, report)? {
                 return Ok(false);
             }
-            content_store.restore_pending_deletion(&record).await?;
+            if let Some(admission) = admission {
+                content_store
+                    .restore_pending_deletion_with_admission(&record, admission)
+                    .await?;
+            } else {
+                content_store.restore_pending_deletion(&record).await?;
+            }
             report.restored += 1;
             continue;
         }
@@ -828,7 +860,14 @@ async fn reconcile_pending_deletions(
         if !fsck_destructive_boundary(work, report)? {
             return Ok(false);
         }
-        match content_store.finalize_pending_deletion(&record).await {
+        let finalize = if let Some(admission) = admission {
+            content_store
+                .finalize_pending_deletion_with_admission(&record, admission)
+                .await
+        } else {
+            content_store.finalize_pending_deletion(&record).await
+        };
+        match finalize {
             Ok(()) => report.removed += 1,
             Err(error) => {
                 report.pending_deletes += 1;
@@ -852,6 +891,7 @@ async fn apply_orphan_deletions(
     file_statuses: &[CasFileStatus],
     report: &mut CasFsckReport,
     work: &mut WorkController,
+    admission: Option<&WorkFileAdmission>,
 ) -> RuntimeResult<()> {
     for status in file_statuses
         .iter()
@@ -886,7 +926,14 @@ async fn apply_orphan_deletions(
         if !fsck_destructive_boundary(work, report)? {
             return Ok(());
         }
-        match content_store.quarantine_local_cas(&key).await {
+        let quarantine = if let Some(admission) = admission {
+            content_store
+                .quarantine_local_cas_with_admission(&key, admission)
+                .await
+        } else {
+            content_store.quarantine_local_cas(&key).await
+        };
+        match quarantine {
             Ok(Some(_pending)) => {
                 report.quarantined += 1;
                 report.pending_deletes += 1;

@@ -8,6 +8,32 @@ use std::sync::{
 };
 
 #[tokio::test]
+async fn file_admission_is_cross_handle_and_cancellation_aware() {
+    let directory = tempfile::tempdir().unwrap();
+    let lock_path = directory.path().join("maintenance.lock");
+    let first_cancel = WorkCancellation::new();
+    let _first = super::work_control::WorkFileAdmission::acquire(&lock_path, &first_cancel)
+        .await
+        .unwrap();
+
+    let second_cancel = WorkCancellation::new();
+    let waiting = {
+        let lock_path = lock_path.clone();
+        let second_cancel = second_cancel.clone();
+        tokio::spawn(async move {
+            super::work_control::WorkFileAdmission::acquire(&lock_path, &second_cancel).await
+        })
+    };
+    tokio::time::sleep(std::time::Duration::from_millis(125)).await;
+    second_cancel.cancel();
+    let result = tokio::time::timeout(std::time::Duration::from_secs(1), waiting)
+        .await
+        .expect("cancelled file-admission waiter must not hang")
+        .unwrap();
+    assert!(result.is_err());
+}
+
+#[tokio::test]
 async fn cancellation_interrupts_rate_wait() {
     let cancellation = WorkCancellation::new();
     let mut controller = WorkController::new(
