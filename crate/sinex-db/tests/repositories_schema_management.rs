@@ -449,9 +449,6 @@ async fn sync_schema_bundle_converges_same_version_content_drift(
 }
 
 #[sinex_test]
-#[ignore = "sinex-2gk open: sync_schema_bundle trusts the stored content_hash column instead of \
-            recomputing it from schema_content, so a manually-edited schema_content with a stale \
-            content_hash false-cleans as 'unchanged' and is never reconciled back"]
 async fn sync_schema_bundle_detects_content_hash_drift_from_schema_content(
     ctx: TestContext,
 ) -> color_eyre::Result<()> {
@@ -468,8 +465,17 @@ async fn sync_schema_bundle_detects_content_hash_drift_from_schema_content(
             "required": ["value"]
         }),
     };
-    let registered = repo.register_schema(original.clone()).await?;
-    let original_hash = registered.content_hash.clone();
+    let original_entry = SchemaBundleEntry::new(
+        original.source.to_string(),
+        original.event_type.to_string(),
+        original.schema_version.clone(),
+        original.schema_content.clone(),
+    )?;
+    repo.sync_schema_bundle([original_entry.clone()]).await?;
+    let registered = repo
+        .get_active_schema(original.source.as_str(), original.event_type.as_str())
+        .await?;
+    let original_hash = original_entry.content_hash.clone();
 
     // Simulate a manual/out-of-band edit to schema_content that does NOT
     // recompute content_hash -- exactly the drift scenario sinex-2gk describes
@@ -498,12 +504,7 @@ async fn sync_schema_bundle_detects_content_hash_drift_from_schema_content(
     // bundle actually declares.
     let sync_result = repo
         .sync_schema_bundle([
-            sinex_primitives::events::schema_registry::SchemaBundleEntry::new(
-                original.source.to_string(),
-                original.event_type.to_string(),
-                original.schema_version.clone(),
-                original.schema_content.clone(),
-            )?,
+            original_entry,
         ])
         .await?;
 
