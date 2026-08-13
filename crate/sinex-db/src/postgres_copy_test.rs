@@ -51,6 +51,25 @@ fn row_fields(row: &StreamBatchRow) -> Vec<String> {
     trimmed.split('\t').map(str::to_string).collect()
 }
 
+/// The eager daemon boot check must reject COPY/schema drift before a large
+/// batch reaches the serializer. The production startup route invokes the
+/// same public verifier; this fixture removes one declared column without
+/// writing a COPY row.
+#[sinex_test]
+async fn copy_contract_rejects_missing_declared_column_before_serialization(
+) -> ::xtask::sandbox::TestResult<()> {
+    let truncated_contract = &EVENT_COPY_COLUMNS[..EVENT_COPY_COLUMNS.len() - 1];
+
+    let error = validate_event_copy_columns(truncated_contract)
+        .expect_err("missing an authoritative event column must fail the COPY preflight");
+
+    assert!(
+        error.contains("missing_from_copy=[content_hash]"),
+        "unexpected COPY contract drift error: {error}"
+    );
+    Ok(())
+}
+
 /// The COPY format must have exactly one field per authoritative writable event column.
 #[sinex_test]
 async fn produces_exactly_declared_field_count() -> ::xtask::sandbox::TestResult<()> {

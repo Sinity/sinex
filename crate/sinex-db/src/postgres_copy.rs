@@ -306,25 +306,32 @@ fn column_is_not_null(column: &sea_query::ColumnDef) -> bool {
     reason = "COPY contract drift detector: panic at startup if COPY columns drift from schema authority"
 )]
 pub fn verify_event_copy_contract() {
+    if let Err(error) = validate_event_copy_columns(&EVENT_COPY_COLUMNS) {
+        panic!("{error}");
+    }
+}
+
+fn validate_event_copy_columns(copy_contract: &[EventCopyColumn]) -> Result<(), String> {
     let authoritative_columns = authoritative_copy_columns();
 
     let mut contract_names = BTreeSet::new();
     let mut duplicate_contract_names = BTreeSet::new();
-    for column in EVENT_COPY_COLUMNS {
+    for column in copy_contract {
         let name = column.name();
         if !contract_names.insert(name.clone()) {
             duplicate_contract_names.insert(name);
         }
     }
 
-    assert!(
-        duplicate_contract_names.is_empty(),
-        "COPY contract duplicates core.events columns: {}",
-        duplicate_contract_names
+    if !duplicate_contract_names.is_empty() {
+        return Err(format!(
+            "COPY contract duplicates core.events columns: {}",
+            duplicate_contract_names
             .into_iter()
             .collect::<Vec<_>>()
             .join(", ")
-    );
+        ));
+    }
 
     let authoritative_names: BTreeSet<String> = authoritative_columns.keys().cloned().collect();
     if contract_names != authoritative_names {
@@ -337,15 +344,15 @@ pub fn verify_event_copy_contract() {
             .cloned()
             .collect::<Vec<_>>();
 
-        panic!(
+        return Err(format!(
             "COPY contract drifted from authoritative core.events schema; missing_from_copy=[{}] extra_in_copy=[{}]",
             missing_from_copy.join(", "),
             extra_in_copy.join(", ")
-        );
+        ));
     }
 
     let mut type_mismatches = Vec::new();
-    for column in EVENT_COPY_COLUMNS {
+    for column in copy_contract {
         let name = column.name();
         let authoritative_type = authoritative_columns
             .get(&name)
@@ -362,11 +369,14 @@ pub fn verify_event_copy_contract() {
         }
     }
 
-    assert!(
-        type_mismatches.is_empty(),
-        "COPY contract type drifted from authoritative core.events schema: {}",
-        type_mismatches.join("; ")
-    );
+    if type_mismatches.is_empty() {
+        Ok(())
+    } else {
+        Err(format!(
+            "COPY contract type drifted from authoritative core.events schema: {}",
+            type_mismatches.join("; ")
+        ))
+    }
 }
 
 #[cfg(test)]
