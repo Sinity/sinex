@@ -1,4 +1,4 @@
-use crate::runtime::{RuntimeResult, SinexError};
+use crate::runtime::{FaultInjector, FaultPoint, RuntimeResult, SinexError};
 use camino::{Utf8Path, Utf8PathBuf};
 use serde::de::{self, Visitor};
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
@@ -503,6 +503,7 @@ async fn canonicalize_path_within_root(
 #[derive(Debug)]
 pub struct MaterialContentStore {
     pub config: ContentStoreConfig,
+    fault_injector: FaultInjector,
 }
 
 /// A restart-safe cursor for the local CAS prefix tree.
@@ -533,12 +534,19 @@ pub struct CasWalker {
     hash_index: usize,
     hash_entries: Option<tokio::fs::ReadDir>,
     checkpoint: CasWalkCheckpoint,
+    cancellation: Option<crate::runtime::work_control::WorkCancellation>,
 }
 
-async fn read_sorted_cas_directories(path: &Utf8Path) -> RuntimeResult<Vec<Utf8PathBuf>> {
+async fn read_sorted_cas_directories(
+    path: &Utf8Path,
+    cancellation: Option<&crate::runtime::work_control::WorkCancellation>,
+) -> RuntimeResult<Vec<Utf8PathBuf>> {
     let mut read_dir = tokio::fs::read_dir(path).await.map_err(SinexError::io)?;
     let mut directories = Vec::new();
     while let Some(entry) = read_dir.next_entry().await.map_err(SinexError::io)? {
+        if cancellation.is_some_and(|cancellation| cancellation.is_cancelled()) {
+            return Err(SinexError::validation("CAS directory walk cancelled"));
+        }
         if !entry.file_type().await.map_err(SinexError::io)?.is_dir() {
             continue;
         }
@@ -561,11 +569,21 @@ fn cas_path_name(path: &Utf8Path) -> RuntimeResult<String> {
 }
 
 impl CasWalker {
-    async fn new(cas_root: Utf8PathBuf, checkpoint: CasWalkCheckpoint) -> RuntimeResult<Self> {
+    async fn new(
+        cas_root: Utf8PathBuf,
+        checkpoint: CasWalkCheckpoint,
+        cancellation: Option<crate::runtime::work_control::WorkCancellation>,
+    ) -> RuntimeResult<Self> {
+        if cancellation
+            .as_ref()
+            .is_some_and(crate::runtime::work_control::WorkCancellation::is_cancelled)
+        {
+            return Err(SinexError::validation("CAS directory walk cancelled"));
+        }
         let mut prefix_dirs = if checkpoint.complete {
             Vec::new()
         } else {
-            read_sorted_cas_directories(&cas_root).await?
+            read_sorted_cas_directories(&cas_root, cancellation.as_ref()).await?
         };
         if let Some(prefix_a) = checkpoint.prefix_a.as_deref() {
             prefix_dirs
@@ -578,6 +596,7 @@ impl CasWalker {
             hash_index: 0,
             hash_entries: None,
             checkpoint,
+            cancellation,
         })
     }
 
@@ -588,6 +607,13 @@ impl CasWalker {
         let mut entries = Vec::with_capacity(batch_size);
 
         while entries.len() < batch_size {
+            if self
+                .cancellation
+                .as_ref()
+                .is_some_and(|cancellation| cancellation.is_cancelled())
+            {
+                return Err(SinexError::validation("CAS directory walk cancelled"));
+            }
             if let Some(hash_entries) = &mut self.hash_entries {
                 match hash_entries.next_entry().await.map_err(SinexError::io)? {
                     Some(entry) => {
@@ -639,7 +665,8 @@ impl CasWalker {
                     continue;
                 }
                 let prefix_path = &self.prefix_dirs[self.prefix_index];
-                self.hash_dirs = read_sorted_cas_directories(prefix_path).await?;
+                self.hash_dirs =
+                    read_sorted_cas_directories(prefix_path, self.cancellation.as_ref()).await?;
                 let prefix_a = cas_path_name(prefix_path)?;
                 if self.checkpoint.prefix_a.as_deref() == Some(prefix_a.as_str()) {
                     if let Some(prefix_b) = self.checkpoint.prefix_b.as_deref() {
@@ -731,7 +758,15 @@ impl MaterialContentStore {
             }
         }
 
-        Ok(MaterialContentStore { config })
+        Ok(Self::new_with_fault_injector(config, FaultInjector::from_env()))
+    }
+
+    pub fn new_with_fault_injector(config: ContentStoreConfig, fault_injector: FaultInjector) -> Self {
+        Self { config, fault_injector }
+    }
+
+    pub(crate) fn fault_injector(&self) -> FaultInjector {
+        self.fault_injector.clone()
     }
 
     /// Get the repository path
@@ -948,6 +983,7 @@ impl MaterialContentStore {
         )
         .await?;
         Self::sync_directory(&quarantine_root).await?;
+        self.fault_injector.inject(FaultPoint::CasQuarantine)?;
         Ok(Some(pending))
     }
 
@@ -964,6 +1000,7 @@ impl MaterialContentStore {
             Err(error) => return Err(SinexError::io(error)),
         }
         Self::sync_directory(&self.quarantine_root()).await?;
+        self.fault_injector.inject(FaultPoint::CasPendingDelete)?;
         match tokio::fs::remove_file(&pending.record_path).await {
             Ok(()) => {}
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
@@ -1211,6 +1248,7 @@ impl MaterialContentStore {
             tokio::fs::copy(resolved_path, &tmp)
                 .await
                 .map_err(SinexError::io)?;
+            self.fault_injector.inject(FaultPoint::CasStagedFile)?;
             let copied_size = tokio::fs::metadata(&tmp)
                 .await
                 .map_err(SinexError::io)?
@@ -1259,6 +1297,7 @@ impl MaterialContentStore {
                     .map_err(SinexError::io)?
                     .sync_all()
                     .map_err(SinexError::io)?;
+                self.fault_injector.inject(FaultPoint::CasPublish)?;
             }
         }
 
@@ -1290,6 +1329,7 @@ impl MaterialContentStore {
             record_path,
         };
         self.write_ingest_lease(&lease).await?;
+        self.fault_injector.inject(FaultPoint::CasLease)?;
         Ok(lease)
     }
 
@@ -1812,9 +1852,18 @@ impl MaterialContentStore {
         &self,
         checkpoint: Option<CasWalkCheckpoint>,
     ) -> RuntimeResult<CasWalker> {
+        self.cas_walker_with_control(checkpoint, None).await
+    }
+
+    pub async fn cas_walker_with_control(
+        &self,
+        checkpoint: Option<CasWalkCheckpoint>,
+        cancellation: Option<crate::runtime::work_control::WorkCancellation>,
+    ) -> RuntimeResult<CasWalker> {
         CasWalker::new(
             self.config.root_path.join(LOCAL_BLAKE3_CAS_DIR),
             checkpoint.unwrap_or_default(),
+            cancellation,
         )
         .await
     }

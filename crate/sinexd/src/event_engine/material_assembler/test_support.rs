@@ -9,6 +9,7 @@
 
 use std::sync::Arc;
 
+use crate::runtime::FaultInjector;
 use crate::runtime::content_store::{ContentStoreConfig, MaterialContentStore};
 use camino::Utf8PathBuf;
 use xtask::sandbox::prelude::*;
@@ -33,6 +34,7 @@ pub(super) struct TestAssemblerBuilder {
     max_material_size_bytes: u64,
     slice_timeout_secs: u64,
     buffered_slice_limit: usize,
+    fault_injector: Option<FaultInjector>,
 }
 
 impl TestAssemblerBuilder {
@@ -42,6 +44,7 @@ impl TestAssemblerBuilder {
             max_material_size_bytes: DEFAULT_MAX_MATERIAL_SIZE_BYTES,
             slice_timeout_secs: DEFAULT_SLICE_TIMEOUT_SECS,
             buffered_slice_limit: DEFAULT_FRAME_BUFFER,
+            fault_injector: None,
         }
     }
 
@@ -60,6 +63,11 @@ impl TestAssemblerBuilder {
         self
     }
 
+    pub(super) fn fault_injector(mut self, injector: FaultInjector) -> Self {
+        self.fault_injector = Some(injector);
+        self
+    }
+
     pub(super) async fn build(
         self,
         ctx: &TestContext,
@@ -68,12 +76,12 @@ impl TestAssemblerBuilder {
         let repo_path = Utf8PathBuf::from_path_buf(content_store_dir.path().to_path_buf())
             .map_err(|_| SinexError::validation("tempdir path is not valid utf-8"))?;
         MaterialContentStore::init_with_config(&repo_path, Some(self.label), false).await?;
-        let content_store = Arc::new(MaterialContentStore::new(ContentStoreConfig {
+        let content_store = Arc::new(MaterialContentStore::new_with_fault_injector(ContentStoreConfig {
             root_path: repo_path,
             num_copies: None,
             large_files: None,
             ..Default::default()
-        })?);
+        }, self.fault_injector.clone().unwrap_or_default()));
 
         let state_dir = tempfile::tempdir()?;
         let assembler = MaterialAssembler::new(

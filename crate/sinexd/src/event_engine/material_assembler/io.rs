@@ -21,6 +21,7 @@ use super::{
     },
 };
 use crate::event_engine::{EventEngineResult, SinexError};
+use crate::runtime::FaultPoint;
 use crate::runtime::content_store::{CasWriteLease, ContentStoreKey};
 use blake3::Hasher;
 use camino::Utf8PathBuf;
@@ -998,13 +999,13 @@ pub(super) async fn append_wal_entry(
     })?;
     let crc = crc32fast::hash(&entry_json);
     let seq = state.wal_seq;
-    state.wal_seq += 1;
-
     let envelope = WalEntryEnvelope { seq, crc, entry };
     let serialized = serde_json::to_string(&envelope).map_err(|e| {
         SinexError::serialization("failed to serialize WAL envelope").with_std_error(&e)
     })?;
     let wal_bytes = serialized.len().saturating_add(1);
+    assembler.fault_injector.inject(FaultPoint::MaterialWal)?;
+    state.wal_seq += 1;
 
     if let Some(file) = state.wal_file.as_mut() {
         file.write_all(serialized.as_bytes())
@@ -1384,6 +1385,7 @@ pub(super) async fn handle_slice(
             let slice_io_lock = assembler.slice_io_lock(material_id);
             let _slice_io_guard = slice_io_lock.lock().await;
             notify_slice_staging_io_for_tests().await;
+            assembler.fault_injector.inject(FaultPoint::MaterialStagedFile)?;
             stage_slice_file(material_id, &temp_path, &pending_write, &data, staged_sync).await?;
             let mut state = state_handle.lock().await;
             commit_pending_slice_write(

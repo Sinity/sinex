@@ -194,7 +194,10 @@ pub async fn check_cas_with_options_and_control(
 ) -> RuntimeResult<(CasFsckReport, Vec<CasFileStatus>, CasWalkCheckpoint)> {
     let initial_checkpoint = checkpoint.unwrap_or_default();
     let mut walker = content_store
-        .cas_walker(Some(initial_checkpoint.clone()))
+        .cas_walker_with_control(
+            Some(initial_checkpoint.clone()),
+            Some(cancellation.clone()),
+        )
         .await?;
     let mut file_statuses: Vec<CasFileStatus> = Vec::new();
     let mut report = CasFsckReport::default();
@@ -237,7 +240,15 @@ pub async fn check_cas_with_options_and_control(
     reconcile_pending_deletions(pool, content_store, apply, &mut report).await?;
 
     'scan: loop {
-        let batch = walker.next_batch(256).await?;
+        let batch = match walker.next_batch(256).await {
+            Ok(batch) => batch,
+            Err(_error) if work.cancellation().is_cancelled() => {
+                report.incomplete = true;
+                report.stop_reason = Some(CasFsckStopReason::Cancelled);
+                break 'scan;
+            }
+            Err(error) => return Err(error),
+        };
         for (hash, path, size) in batch.entries {
             if options
                 .max_entries
@@ -523,7 +534,10 @@ where
 
     let initial_checkpoint = checkpoint.unwrap_or_default();
     let mut walker = content_store
-        .cas_walker(Some(initial_checkpoint.clone()))
+        .cas_walker_with_control(
+            Some(initial_checkpoint.clone()),
+            Some(cancellation.clone()),
+        )
         .await?;
     let mut report = CasFsckReport::default();
     let mut work = WorkController::new(
@@ -545,7 +559,15 @@ where
     }
 
     'scan: loop {
-        let batch = walker.next_batch(256).await?;
+        let batch = match walker.next_batch(256).await {
+            Ok(batch) => batch,
+            Err(_error) if work.cancellation().is_cancelled() => {
+                report.incomplete = true;
+                report.stop_reason = Some(CasFsckStopReason::Cancelled);
+                break 'scan;
+            }
+            Err(error) => return Err(error),
+        };
         for (hash, path, size) in batch.entries {
             if options
                 .max_entries
@@ -787,6 +809,9 @@ async fn reconcile_pending_deletions(
             report.pending_deletes += 1;
             continue;
         }
+        content_store
+            .fault_injector()
+            .inject(crate::runtime::FaultPoint::CasReconciliation)?;
         if cas_hash_is_referenced(pool, content_store, &record.key.digest)
             .await?
             .is_some()

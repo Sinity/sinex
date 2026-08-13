@@ -1,7 +1,13 @@
 // Small inline tests are used here because the parser helper is private
 // and tightly coupled to git-annex output semantics.
 use super::*;
+use crate::runtime::work_control::WorkCancellation;
 use xtask::sandbox::{sinex_test, timing::WaitHelpers};
+
+async fn test_cas_root(repo_path: &Utf8Path) -> ::xtask::sandbox::TestResult<()> {
+    tokio::fs::create_dir_all(repo_path.join(LOCAL_BLAKE3_CAS_DIR)).await?;
+    Ok(())
+}
 
 #[sinex_test]
 async fn default_blob_retrieval_cap_matches_default_material_assembly_cap()
@@ -178,6 +184,7 @@ async fn bounded_content_store_reads_reject_oversized_files_before_buffering()
     let repo_dir = tempfile::tempdir()?;
     let repo_path = Utf8PathBuf::from_path_buf(repo_dir.path().to_path_buf())
         .expect("temporary path should be valid utf-8");
+    test_cas_root(&repo_path).await?;
     let source_path = repo_path.join("oversized.bin");
     tokio::fs::write(&source_path, b"1234").await?;
 
@@ -292,6 +299,7 @@ async fn local_cas_paths_reject_symlink_escape() -> ::xtask::sandbox::TestResult
     let outside_dir = tempfile::tempdir()?;
     let repo_path = Utf8PathBuf::from_path_buf(repo_dir.path().to_path_buf())
         .expect("temporary path should be valid utf-8");
+    test_cas_root(&repo_path).await?;
     let outside_path = outside_dir.path().join("outside");
     tokio::fs::write(&outside_path, b"outside").await?;
     let content_store = MaterialContentStore::new(ContentStoreConfig {
@@ -342,6 +350,7 @@ async fn cas_walker_batches_and_resumes_at_completed_prefixes()
     let repo_dir = tempfile::tempdir()?;
     let repo_path = Utf8PathBuf::from_path_buf(repo_dir.path().to_path_buf())
         .expect("temporary path should be valid utf-8");
+    test_cas_root(&repo_path).await?;
     let content_store = MaterialContentStore::new(ContentStoreConfig {
         root_path: repo_path.clone(),
         ..Default::default()
@@ -379,5 +388,115 @@ async fn cas_walker_batches_and_resumes_at_completed_prefixes()
     let completion = resumed.next_batch(1).await?;
     assert!(completion.complete);
     assert!(completion.entries.is_empty());
+    Ok(())
+}
+
+#[sinex_test]
+async fn cas_faults_leave_staged_file_and_lease_recoverable() -> ::xtask::sandbox::TestResult<()> {
+    let repo_dir = tempfile::tempdir()?;
+    let repo_path = Utf8PathBuf::from_path_buf(repo_dir.path().to_path_buf())
+        .expect("temporary path should be valid utf-8");
+    test_cas_root(&repo_path).await?;
+    let source = repo_path.join("source.bin");
+    tokio::fs::write(&source, b"staged fault").await?;
+    MaterialContentStore::init_with_config(&repo_path, None, false).await?;
+    let injector = FaultInjector::default();
+    injector.fail_once(FaultPoint::CasStagedFile);
+    let store = MaterialContentStore::new_with_fault_injector(
+        ContentStoreConfig {
+            root_path: repo_path.clone(),
+            ..Default::default()
+        },
+        injector,
+    );
+
+    assert!(store.store_file_with_lease(&source).await.is_err());
+    assert_eq!(store.list_write_leases().await?.len(), 1);
+    let entries = store.walk_cas().await?;
+    assert_eq!(entries.len(), 1);
+    assert!(entries[0].0.contains(".tmp-"));
+    Ok(())
+}
+
+#[sinex_test]
+async fn cas_publish_fault_preserves_published_object_until_commit_cleanup()
+-> ::xtask::sandbox::TestResult<()> {
+    let repo_dir = tempfile::tempdir()?;
+    let repo_path = Utf8PathBuf::from_path_buf(repo_dir.path().to_path_buf())
+        .expect("temporary path should be valid utf-8");
+    let source = repo_path.join("source.bin");
+    tokio::fs::write(&source, b"publish fault").await?;
+    MaterialContentStore::init_with_config(&repo_path, None, false).await?;
+    let injector = FaultInjector::default();
+    injector.fail_once(FaultPoint::CasPublish);
+    let store = MaterialContentStore::new_with_fault_injector(
+        ContentStoreConfig {
+            root_path: repo_path,
+            ..Default::default()
+        },
+        injector,
+    );
+
+    assert!(store.store_file_with_lease(&source).await.is_err());
+    let leases = store.list_write_leases().await?;
+    assert_eq!(leases.len(), 1);
+    let target = store
+        .path_if_local(&leases[0].key.key)?
+        .expect("published local CAS key must resolve");
+    assert!(target.exists(), "publish interruption must leave the object recoverable");
+    store.release_write_lease(&leases[0]).await?;
+    assert!(target.exists(), "lease cleanup must not delete published bytes");
+    Ok(())
+}
+
+#[sinex_test]
+async fn cas_quarantine_and_delete_faults_are_resumable() -> ::xtask::sandbox::TestResult<()> {
+    let repo_dir = tempfile::tempdir()?;
+    let repo_path = Utf8PathBuf::from_path_buf(repo_dir.path().to_path_buf())
+        .expect("temporary path should be valid utf-8");
+    let source = repo_path.join("source.bin");
+    tokio::fs::write(&source, b"quarantine fault").await?;
+    MaterialContentStore::init_with_config(&repo_path, None, false).await?;
+    let injector = FaultInjector::default();
+    let store = MaterialContentStore::new_with_fault_injector(
+        ContentStoreConfig {
+            root_path: repo_path,
+            ..Default::default()
+        },
+        injector.clone(),
+    );
+    let key = store.store_file(&source).await?;
+    injector.fail_once(FaultPoint::CasQuarantine);
+    assert!(store.quarantine_local_cas(&key).await.is_err());
+    let pending = store.list_pending_deletions().await?;
+    assert_eq!(pending.len(), 1);
+    let pending = pending[0].clone();
+    assert!(!pending.source_path.exists());
+    injector.fail_once(FaultPoint::CasPendingDelete);
+    assert!(store.finalize_pending_deletion(&pending).await.is_err());
+    assert_eq!(store.list_pending_deletions().await?.len(), 1);
+    store.finalize_pending_deletion(&pending).await?;
+    assert!(store.list_pending_deletions().await?.is_empty());
+    Ok(())
+}
+
+#[sinex_test]
+async fn cas_walker_cancellation_interrupts_directory_enumeration()
+-> ::xtask::sandbox::TestResult<()> {
+    let repo_dir = tempfile::tempdir()?;
+    let repo_path = Utf8PathBuf::from_path_buf(repo_dir.path().to_path_buf())
+        .expect("temporary path should be valid utf-8");
+    let store = MaterialContentStore::new(ContentStoreConfig {
+        root_path: repo_path,
+        ..Default::default()
+    })?;
+    tokio::fs::create_dir_all(store.root_path().join(LOCAL_BLAKE3_CAS_DIR).join("aa"))
+        .await?;
+    let cancellation = WorkCancellation::new();
+    cancellation.cancel();
+    assert!(store
+        .cas_walker_with_control(None, Some(cancellation))
+        .await
+        .is_err());
     Ok(())
 }

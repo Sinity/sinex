@@ -43,6 +43,7 @@ pub mod event_transport;
 pub mod examples;
 pub mod exploration;
 pub mod file_tailer;
+pub mod fault_injection;
 pub mod health_reporter;
 pub mod heartbeat;
 pub mod hyprland;
@@ -169,6 +170,7 @@ pub use content_store::{
     BlobMetadata, ContentBackend, ContentStoreConfig, ContentStoreKey, ContentStoreManager,
     MaterialContentStore,
 };
+pub use fault_injection::{FaultInjector, FaultMode, FaultPoint};
 pub use preflight::{VerificationStatus, verify_service_dependencies};
 
 // ApiCursor adapter — paginated REST import support (#1746).

@@ -1,5 +1,6 @@
 use super::*;
 use crate::event_engine::material_assembler::state::MaterialEndMessage;
+use crate::runtime::{FaultInjector, FaultPoint};
 use serde_json::json;
 #[cfg(unix)]
 use std::os::unix::ffi::OsStringExt;
@@ -111,6 +112,52 @@ async fn append_slice_data_batches_staged_and_wal_sync(ctx: TestContext) -> Test
     sync_staged_file_for_finalization(&assembler, &mut state, material_id).await?;
 
     assert_eq!(state.staged_bytes_since_sync, 0);
+    Ok(())
+}
+
+#[sinex_test]
+async fn staged_file_fault_is_recoverable_by_slice_redelivery(ctx: TestContext) -> TestResult<()> {
+    let ctx = ctx.with_nats().shared().await?;
+    let injector = FaultInjector::default();
+    injector.fail_once(FaultPoint::MaterialStagedFile);
+    let (assembler, _content_store_dir, _state_dir) =
+        super::super::test_support::TestAssemblerBuilder::new("io-fault-staged")
+            .fault_injector(injector)
+            .build(&ctx)
+            .await?;
+    let material_id = Uuid::now_v7();
+    assert!(handle_slice(&assembler, material_id, 0, b"retry-me".to_vec())
+        .await
+        .is_err());
+    handle_slice(&assembler, material_id, 0, b"retry-me".to_vec()).await?;
+    let state = assembler
+        .get_state_handle(&material_id)
+        .ok_or_else(|| SinexError::invalid_state("missing staged-fault state"))?;
+    assert_eq!(state.lock().await.expected_offset, 8);
+    Ok(())
+}
+
+#[sinex_test]
+async fn wal_fault_is_recoverable_by_slice_redelivery(ctx: TestContext) -> TestResult<()> {
+    let ctx = ctx.with_nats().shared().await?;
+    let injector = FaultInjector::default();
+    injector.fail_once(FaultPoint::MaterialWal);
+    let (assembler, _content_store_dir, _state_dir) =
+        super::super::test_support::TestAssemblerBuilder::new("io-fault-wal")
+            .fault_injector(injector)
+            .build(&ctx)
+            .await?;
+    let material_id = Uuid::now_v7();
+    assert!(handle_slice(&assembler, material_id, 0, b"retry-wal".to_vec())
+        .await
+        .is_err());
+    handle_slice(&assembler, material_id, 0, b"retry-wal".to_vec()).await?;
+    let state = assembler
+        .get_state_handle(&material_id)
+        .ok_or_else(|| SinexError::invalid_state("missing WAL-fault state"))?;
+    let state = state.lock().await;
+    assert_eq!(state.expected_offset, 9);
+    assert!(state.wal_seq > 0);
     Ok(())
 }
 
