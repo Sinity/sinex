@@ -201,10 +201,20 @@ impl<'a> EmbeddingRepository<'a> {
         let rows = sqlx::query_as::<_, EmbeddingTarget>(
             r"
             SELECT e.id as event_id,
+                   e.source as source,
                    e.event_type as event_type,
-                   e.payload::text as text_for_embedding
+                   e.payload::text as text_for_embedding,
+                   e.source_material_id::uuid as source_material_id,
+                   sm.source_identifier as material_source_identifier,
+                   sm.privacy_class as material_privacy_class,
+                   sm.metadata as material_metadata
             FROM core.events e
+            LEFT JOIN raw.source_material_registry sm
+              ON sm.id = e.source_material_id
             WHERE e.event_type = ANY($1)
+              AND e.source <> 'sinex'
+              AND e.source NOT LIKE 'sinex.%'
+              AND e.source NOT LIKE 'sinexd.%'
               AND NOT EXISTS (
                   SELECT 1
                   FROM core.event_embeddings ee
@@ -759,6 +769,11 @@ struct EmbeddingModelDimension {
 #[derive(Debug, sqlx::FromRow)]
 pub struct EmbeddingTarget {
     pub event_id: Uuid,
+    pub source: String,
     pub event_type: String,
     pub text_for_embedding: String,
+    pub source_material_id: Option<Uuid>,
+    pub material_source_identifier: Option<String>,
+    pub material_privacy_class: Option<String>,
+    pub material_metadata: Option<serde_json::Value>,
 }

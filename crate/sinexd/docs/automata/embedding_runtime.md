@@ -1,8 +1,8 @@
 # Embedding Runtime
 
-Status: design contract for the embedding execution layer. Implementation
-tracking lives in #1021 (embedding repository and hybrid search SQL) and #400
-(Tier-1 design). Recorded model effects are a separate dormant
+Status: execution contract for the embedding execution layer. The repository
+backfill route is implemented behind the `EmbeddingWorker`; recorded model
+effects remain a separate dormant
 schema/repository surface above this runtime layer; they are not part of the
 embedding runtime until a live derivation or proposal/judgment consumer is
 wired.
@@ -157,6 +157,29 @@ with at least these knobs:
 | `backfill.enabled` | Whether to backfill historical events |
 | `backfill.event_types` | Which event types to backfill |
 
+The first activation has a static safety fuse. Defaults are intentionally
+conservative and fail closed:
+
+| Variable | Default | Meaning |
+| --- | ---: | --- |
+| `SINEX_EMBEDDING_MAX_EVENTS` | `1000` | Hard maximum events inspected in one run |
+| `SINEX_EMBEDDING_MAX_MATERIALS` | `100` | Hard maximum distinct source materials inspected |
+| `SINEX_EMBEDDING_ALLOWED_MODELS` | `ollama/bge-base-en-v1.5` | Exact provider/model allowlist |
+| `SINEX_EMBEDDING_MAX_ESTIMATED_TOKENS` | `100000` | Abort threshold for estimated input tokens |
+| `SINEX_EMBEDDING_MAX_ESTIMATED_COST_MICROUSD` | `500000` | Abort threshold for estimated cost |
+| `SINEX_EMBEDDING_ESTIMATED_COST_PER_1K_TOKENS_MICROUSD` | `0` | Static local/provider pricing input |
+| `SINEX_EMBEDDING_ALLOWED_EVENT_TYPES` | `document.chunked` | First-run event-family allowlist |
+| `SINEX_EMBEDDING_ALLOWED_SOURCE_FAMILIES` | `document-parser` | First-run source-family allowlist |
+| `SINEX_EMBEDDING_ALLOWED_MATERIAL_PREFIXES` | `document` | First-run material-family allowlist |
+
+`sinexctl semantic llm embedding-estimate` runs the same database target
+selection and privacy/quarantine planner as the worker and reports selected
+families, per-reason quarantine counts, material/event counts, and token/cost
+estimates. It does not call Ollama or mutate embeddings. A real run loads one
+event beyond the event cap, performs all model/privacy/lifecycle/fuse checks,
+and only then calls the provider; crossing any ceiling aborts before the first
+provider request.
+
 The model identity inside the DB is the source of truth; config changes
 that don't match the registered model are a registration error, not a silent
 override.
@@ -167,6 +190,17 @@ Embedding runs locally; no text leaves the workstation. Embedded text still
 enters through the DB/user policy admission layer before it is eligible for
 embedding (see `crate/sinex-schema/docs/document_layer.md`). The embedding runtime does not run its
 own redaction pass; text arriving at the runtime is already admission-checked.
+
+The first-run planner adds a narrower activation quarantine on top of those
+planes. Reflection events, `claude`/`chatgpt`/`codex` and Polylogue sources,
+materials whose source identifier names an `ai-session`/Polylogue contract,
+declared `personal`/`secret`/`redacted` material, lifecycle
+`quarantine_until_reviewed`, and privacy-engine-suppressed payloads are never
+provider inputs. They are counted in the dry-run report. Unlisted event,
+source, or material families are skipped rather than implicitly admitted.
+This is a first-activation allowlist, not the final cross-repository ownership
+decision; that broader decision remains the follow-up represented by
+`sinex-4j2.8`.
 
 ## Open Questions
 
