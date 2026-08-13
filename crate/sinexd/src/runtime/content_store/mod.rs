@@ -393,6 +393,21 @@ pub struct ContentVerificationResult {
 }
 
 impl ContentStoreKey {
+    /// Construct a validated key for an object in the local BLAKE3 CAS.
+    ///
+    /// Callers must provide an observed size and digest; this constructor does
+    /// not derive either value from a path or a logical source identifier.
+    pub fn local_blake3(size: u64, digest: impl Into<String>) -> RuntimeResult<Self> {
+        let digest = digest.into();
+        validate_local_blake3_digest(&digest)?;
+        Ok(Self {
+            key: format!("{LOCAL_BLAKE3_CAS_BACKEND}-s{size}--{digest}"),
+            backend: ContentBackend::LocalBlake3Cas,
+            size,
+            digest,
+        })
+    }
+
     pub fn parse(key_str: &str) -> RuntimeResult<Self> {
         let content_key = ContentKey::from_str(key_str).map_err(|err| {
             SinexError::processing(format!("Invalid content-store key format: {key_str}"))

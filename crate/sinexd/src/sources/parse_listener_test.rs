@@ -1,5 +1,5 @@
 use super::*;
-use crate::runtime::content_store::ContentStoreConfig;
+use crate::runtime::content_store::{ContentStoreConfig, MaterialContentStore};
 use crate::sources::dispatch::test_parser_dispatch;
 use camino::Utf8PathBuf;
 use sinex_db::repositories::source_materials::SourceMaterial as SourceMaterialRegistration;
@@ -114,6 +114,60 @@ async fn load_material_bytes_uses_and_validates_manifest_authority(
     let bytes = load_material_bytes(ctx.pool(), &content_store, material.id)
         .await
         .map_err(|e| eyre!(e))?;
+    assert_eq!(bytes, payload);
+    Ok(())
+}
+
+#[sinex_test]
+async fn load_material_bytes_replays_from_manifest_when_blob_route_is_absent(
+    ctx: TestContext,
+) -> TestResult<()> {
+    let (content_store, tmp) = test_content_store(&ctx)?;
+    let root = Utf8PathBuf::from_path_buf(tmp.path().join("cas"))
+        .map_err(|_| eyre!("content-store path must be valid UTF-8"))?;
+    let raw_store = MaterialContentStore::new(ContentStoreConfig {
+        root_path: root.clone(),
+        ..Default::default()
+    })?;
+    let payload = b"source removal replay has no dependency on the original path";
+    let payload_path = root.join("removed-source.bin");
+    tokio::fs::write(&payload_path, payload).await?;
+    let payload_key = raw_store.store_file(&payload_path).await?;
+
+    let material_id = Uuid::now_v7();
+    let manifest = MaterialManifestV1::from_capture(
+        material_id,
+        "removed-source.bin",
+        "chunk",
+        payload_key.digest.clone(),
+        payload.len() as u64,
+        serde_json::json!({
+            "material_type": "chunk",
+            "pack_member_key": "observed-member-7",
+            "logical_source_identifier": "test.pack",
+        }),
+        "2026-08-12T00:00:00Z",
+        "2026-08-12T00:00:01Z",
+    );
+    let manifest_path = root.join("removed-source-manifest.json");
+    tokio::fs::write(&manifest_path, manifest.canonical_bytes()?).await?;
+    let manifest_key = raw_store.store_file(&manifest_path).await?;
+    tokio::fs::remove_file(&payload_path).await?;
+
+    ctx.pool
+        .source_materials()
+        .register_external_in_flight(
+            material_id,
+            "chunk",
+            Some("chunk://test.pack#7"),
+            serde_json::json!({"material_manifest": {"content_key": manifest_key.key}}),
+            sinex_primitives::Timestamp::now(),
+        )
+        .await?;
+
+    let bytes = load_material_bytes(ctx.pool(), &content_store, material_id)
+        .await
+        .map_err(|error| eyre!(error))?;
     assert_eq!(bytes, payload);
     Ok(())
 }

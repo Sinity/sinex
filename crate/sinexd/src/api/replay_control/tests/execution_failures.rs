@@ -235,7 +235,7 @@ async fn replay_execution_fails_fast_when_progress_checkpoint_persist_fails(
         env,
         "checkpoint-fail-test",
         1,
-        0,
+        1,
     )
     .await?;
 
@@ -294,11 +294,11 @@ async fn replay_execution_fails_fast_when_progress_checkpoint_persist_fails(
     .await?;
     assert_eq!(
         live_count, 1,
-        "checkpoint persistence failure before replacements should restore live rows"
+        "checkpoint persistence failure after partial emission should restore untouched live rows"
     );
     assert_eq!(
         archived_count, 0,
-        "checkpoint persistence failure before replacements should not leave archived rows behind"
+        "checkpoint persistence failure after partial emission must not leave archived rows behind"
     );
 
     await_fake_scan_source_runtime(scan_handle, "checkpoint-fail-test").await?;

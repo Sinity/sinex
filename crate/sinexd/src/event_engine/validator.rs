@@ -5,7 +5,8 @@
 
 use crate::event_engine::EventEngineResult;
 use sinex_db::validation::{
-    EventValidator as DbEventValidator, SchemaInfo, SchemaValidationOutcome,
+    EventValidator as DbEventValidator, SchemaCompilationFailure, SchemaInfo,
+    SchemaValidationOutcome,
 };
 use sinex_primitives::JsonValue;
 use sinex_primitives::domain::{EventSource, EventType};
@@ -309,6 +310,12 @@ impl IngestEventValidator {
     #[must_use]
     pub fn get_available_schemas(&self) -> Vec<SchemaInfo> {
         self.inner.get_available_schemas()
+    }
+
+    /// Registered schemas that failed compilation during the most recent load.
+    #[must_use]
+    pub fn get_schema_compilation_failures(&self) -> Vec<SchemaCompilationFailure> {
+        self.inner.get_schema_compilation_failures()
     }
 
     /// Lookup schema ID for a source/event pair.

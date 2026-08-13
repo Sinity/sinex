@@ -770,9 +770,19 @@ impl JetStreamConsumer {
                     schema_id = %schema_id,
                     source = %source,
                     event_type = %event_type,
-                    "Schema referenced by validator lookup is missing from cache; accepting event without payload schema id"
+                    strict_mode,
+                    "Schema referenced by validator lookup is missing from cache"
                 );
-                Ok(None)
+                if strict_mode {
+                    Err(SinexError::validation(format!(
+                        "Strict validation enabled: registered schema {schema_id} is unavailable (source={source}, event_type={event_type})"
+                    ))
+                    .with_operation("jetstream_consumer.validate_event")
+                    .with_context("strict_mode", "enabled")
+                    .with_context("schema_id", schema_id.to_string()))
+                } else {
+                    Ok(None)
+                }
             }
             ValidationResult::Invalid { errors } => Err(SinexError::validation(format!(
                 "Schema validation failed: {}",

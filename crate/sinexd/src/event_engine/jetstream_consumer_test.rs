@@ -74,6 +74,22 @@ async fn strict_mode_still_rejects_missing_schema_bindings() -> TestResult<()> {
 }
 
 #[sinex_test]
+async fn strict_mode_rejects_missing_schema_cache_entries() -> TestResult<()> {
+    let err = JetStreamConsumer::resolve_validation_result(
+        ValidationResult::SchemaNotFound {
+            schema_id: Uuid::now_v7(),
+        },
+        true,
+        &sinex_primitives::domain::EventSource::from_static("test"),
+        &sinex_primitives::domain::EventType::from_static("schema.missing"),
+    )
+    .expect_err("strict mode must reject registered schemas unavailable in the cache");
+
+    assert!(err.to_string().contains("Strict validation enabled"));
+    Ok(())
+}
+
+#[sinex_test]
 async fn require_inserted_ids_accepts_present_repository_ids() -> TestResult<()> {
     let ids = vec![Uuid::now_v7()];
     let accepted = JetStreamConsumer::require_inserted_ids(Some(ids.clone()), 1)?;

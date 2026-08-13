@@ -8,6 +8,7 @@ use sinex_primitives::privacy::resolve_private_mode_state_dir;
 use sinex_primitives::rpc::sources::{SourceMaterialMetadataContract, SourceOrigin};
 use sinex_primitives::{Id, SinexError};
 use sqlx::PgPool;
+use std::path::Path;
 use std::process::Stdio;
 use std::time::{Duration, Instant};
 use tokio::io::{AsyncRead, AsyncReadExt};
@@ -292,12 +293,47 @@ pub(super) async fn execute_media_operation(
     preview_summary: &mut serde_json::Value,
     is_admin: bool,
 ) -> Result<Option<MediaWorkerOutputResult>> {
+    let private_mode_state_dir = resolve_private_mode_state_dir(None);
+    execute_media_operation_with_state_dir(
+        pool,
+        spec,
+        mode_id,
+        actor,
+        scope,
+        preview_summary,
+        is_admin,
+        &private_mode_state_dir,
+    )
+    .await
+}
+
+async fn execute_media_operation_with_state_dir(
+    pool: &PgPool,
+    spec: &PackageOperationSpec,
+    mode_id: &str,
+    actor: &str,
+    scope: &mut serde_json::Map<String, serde_json::Value>,
+    preview_summary: &mut serde_json::Value,
+    is_admin: bool,
+    private_mode_state_dir: &Path,
+) -> Result<Option<MediaWorkerOutputResult>> {
     match spec.action {
         "enable_session" | "disable_session" | "pause" | "resume" => {
             execute_session_control(pool, spec, mode_id, actor, scope, preview_summary).await
         }
         "inspect" => execute_session_inspect(pool, spec, mode_id, scope, preview_summary).await,
-        _ => execute_worker_output(pool, spec, mode_id, scope, preview_summary, is_admin).await,
+        _ => {
+            execute_worker_output(
+                pool,
+                spec,
+                mode_id,
+                scope,
+                preview_summary,
+                is_admin,
+                private_mode_state_dir,
+            )
+            .await
+        }
     }
 }
 
@@ -308,6 +344,7 @@ pub(super) async fn execute_worker_output(
     scope: &mut serde_json::Map<String, serde_json::Value>,
     preview_summary: &mut serde_json::Value,
     is_admin: bool,
+    private_mode_state_dir: &Path,
 ) -> Result<Option<MediaWorkerOutputResult>> {
     let session_scope = scope
         .get("session_scope")
@@ -315,7 +352,7 @@ pub(super) async fn execute_worker_output(
         .unwrap_or("default");
     let gate = crate::sources::session_gate::evaluate_capture_gate(
         Some(pool),
-        &resolve_private_mode_state_dir(None),
+        private_mode_state_dir,
         spec.source_id,
         mode_id,
         session_scope,
@@ -329,12 +366,18 @@ pub(super) async fn execute_worker_output(
             "mode_id": mode_id,
             "session_scope": session_scope,
         });
-        scope.insert("executor_state".to_string(), serde_json::json!(executor_state));
+        scope.insert(
+            "executor_state".to_string(),
+            serde_json::json!(executor_state),
+        );
         scope.insert("capture_gate".to_string(), detail.clone());
         let preview = preview_summary
             .as_object_mut()
             .expect("package operation preview is an object");
-        preview.insert("executor_state".to_string(), serde_json::json!(executor_state));
+        preview.insert(
+            "executor_state".to_string(),
+            serde_json::json!(executor_state),
+        );
         preview.insert("capture_gate".to_string(), detail);
         return Ok(Some(MediaWorkerOutputResult {
             status: OperationStatus::Cancelled,
@@ -878,3 +921,7 @@ fn validate_media_worker_output_size(byte_len: usize) -> Result<()> {
     }
     Ok(())
 }
+
+#[cfg(test)]
+#[path = "media_test.rs"]
+mod tests;

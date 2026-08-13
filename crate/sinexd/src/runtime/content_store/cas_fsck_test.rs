@@ -11,7 +11,7 @@ use camino::Utf8PathBuf;
 use serde_json::json;
 use sinex_db::models::Blob;
 use sinex_db::repositories::DbPoolExt;
-use sinex_primitives::{Timestamp, Uuid};
+use sinex_primitives::{MaterialManifestV1, Timestamp, Uuid};
 use std::time::{Duration, SystemTime};
 use xtask::sandbox::prelude::*;
 
@@ -199,6 +199,75 @@ async fn live_source_material_manifest_cas_reference_survives_apply_orphan_sweep
         "anti-vacuity: removing raw.source_material_registry material_manifest content_key references from load_sinexblake3_hashes makes this stale CAS file orphaned and the apply-mode sweep deletes it"
     );
 
+    Ok(())
+}
+
+#[sinex_test]
+async fn manifest_encoded_bytes_are_reconciled_as_cas_authority(
+    ctx: TestContext,
+) -> TestResult<()> {
+    let store_dir = tempfile::tempdir()?;
+    let root_path = Utf8PathBuf::from_path_buf(store_dir.path().to_path_buf())
+        .expect("temporary content-store path must be UTF-8");
+    let content_store = MaterialContentStore::new(ContentStoreConfig {
+        root_path: root_path.clone(),
+        ..Default::default()
+    })?;
+    let payload = b"encoded bytes retained independently of the manifest object";
+    let payload_path = root_path.join("source.bin");
+    tokio::fs::write(&payload_path, payload).await?;
+    let payload_key = content_store.store_file(&payload_path).await?;
+
+    let material_id = Uuid::now_v7();
+    let manifest = MaterialManifestV1::from_capture(
+        material_id,
+        "source.bin",
+        "chunk",
+        payload_key.digest.clone(),
+        payload.len() as u64,
+        json!({
+            "material_type": "chunk",
+            "pack_member_key": "observed-member-7",
+            "logical_source_identifier": "test.pack",
+        }),
+        "2026-08-12T00:00:00Z",
+        "2026-08-12T00:00:01Z",
+    );
+    let manifest_path = root_path.join("manifest.json");
+    tokio::fs::write(&manifest_path, manifest.canonical_bytes()?).await?;
+    let manifest_key = content_store.store_file(&manifest_path).await?;
+
+    ctx.pool
+        .source_materials()
+        .register_external_in_flight(
+            material_id,
+            "chunk",
+            Some("chunk://test.pack#7"),
+            json!({"material_manifest": {"content_key": manifest_key.key}}),
+            Timestamp::now(),
+        )
+        .await?;
+
+    let (report, statuses) = check_cas(ctx.pool(), &content_store, false).await?;
+    assert_eq!(report.referenced, 2);
+    assert_eq!(report.orphaned, 0);
+    assert_eq!(report.missing, 0);
+    assert!(statuses.iter().any(|status| {
+        status.hash == payload_key.digest
+            && status.blob_id.as_deref()
+                == Some(format!("material-bytes:{material_id}").as_str())
+            && status.status == CasStatus::Referenced
+    }));
+
+    let sweep = sweep_orphans(ctx.pool(), &content_store, true).await?;
+    assert_eq!(sweep.orphaned, 0);
+    assert!(
+        content_store
+            .path_if_local(&payload_key.key)?
+            .expect("payload CAS path")
+            .exists(),
+        "manifest encoded digest must keep the exact source bytes out of orphan cleanup"
+    );
     Ok(())
 }
 

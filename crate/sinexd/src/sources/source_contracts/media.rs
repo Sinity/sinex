@@ -8,8 +8,9 @@
 //! spawns an operator-configured local worker process directly or admits
 //! operator/external-script-supplied `worker_output`/`worker_output_path`
 //! evidence — an RPC-driven executor, not an `InputShapeAdapter`. On-demand
-//! capture and long-lived session control bindings stay proposed until a
-//! durable live runner owns the capture process.
+//! capture and long-lived session control bindings are backed by the media
+//! capture drivers. Their raw live captures are marked non-reconstructable so
+//! startup validation keeps them in the pre-wipe criticality inventory.
 
 use async_trait::async_trait;
 use serde::Deserialize;
@@ -26,7 +27,8 @@ use sinex_primitives::parser::{
 use sinex_primitives::privacy::{ProcessingContext, SensitivityHint};
 use sinex_primitives::source_contracts::{
     AccessScope, CheckpointFamily, Horizon, MaterialLifecyclePolicy, OccurrenceIdentity,
-    PrivacyTier, ResourceProfile, RetentionPolicy, RunnerPack, RuntimeShape, TransportSemantics,
+    PrivacyTier, ResourceProfile, RetentionPolicy, RunnerPack, RuntimeShape, SourceCriticality,
+    TransportSemantics,
 };
 
 #[derive(Debug, Clone, Default, SourceMeta)]
@@ -62,6 +64,7 @@ use sinex_primitives::source_contracts::{
         runtime_shape = RuntimeShape::Scheduled,
         material_lifecycle = MaterialLifecyclePolicy::RetainRaw,
         transport_semantics = TransportSemantics::DIRECT_APPEND_STREAM,
+        criticality = SourceCriticality::Reconstructable,
         capabilities = "coverage:source-coverage, debt:unified-debt-view, operation:media.audio-transcript.import-bundle, operation:media.audio-transcript.inspect, operation:media.audio-transcript.delete-material, operation:media.audio-transcript.export"
     ),
     binding(
@@ -75,6 +78,7 @@ use sinex_primitives::source_contracts::{
         runtime_shape = RuntimeShape::OnDemand,
         material_lifecycle = MaterialLifecyclePolicy::DerivedOnly,
         transport_semantics = TransportSemantics::DIRECT_APPEND_STREAM,
+        criticality = SourceCriticality::Reconstructable,
         capabilities = "coverage:source-coverage, debt:unified-debt-view, operation:media.audio-transcript.run-model, operation:media.audio-transcript.retry, operation:media.audio-transcript.rebuild-artifact, operation:media.audio-transcript.inspect"
     ),
     binding(
@@ -88,6 +92,7 @@ use sinex_primitives::source_contracts::{
         runtime_shape = RuntimeShape::OnDemand,
         material_lifecycle = MaterialLifecyclePolicy::EphemeralRaw,
         transport_semantics = TransportSemantics::LOCAL_LIVE_QUEUE,
+        criticality = SourceCriticality::NotReconstructable,
         capabilities = "coverage:source-coverage, debt:unified-debt-view, operation:media.audio-transcript.enable-session, operation:media.audio-transcript.disable-session, operation:media.audio-transcript.pause, operation:media.audio-transcript.resume, operation:media.audio-transcript.inspect"
     ),
     binding(
@@ -101,6 +106,7 @@ use sinex_primitives::source_contracts::{
         runtime_shape = RuntimeShape::Continuous,
         material_lifecycle = MaterialLifecyclePolicy::EphemeralRaw,
         transport_semantics = TransportSemantics::LOCAL_LIVE_QUEUE,
+        criticality = SourceCriticality::NotReconstructable,
         capabilities = "coverage:source-coverage, debt:unified-debt-view, operation:media.audio-transcript.enable-session, operation:media.audio-transcript.disable-session, operation:media.audio-transcript.pause, operation:media.audio-transcript.resume, operation:media.audio-transcript.retry, operation:media.audio-transcript.inspect"
     )
 )]
@@ -139,6 +145,7 @@ pub struct MediaAudioTranscriptParser;
         runtime_shape = RuntimeShape::Scheduled,
         material_lifecycle = MaterialLifecyclePolicy::RetainRaw,
         transport_semantics = TransportSemantics::DIRECT_APPEND_STREAM,
+        criticality = SourceCriticality::Reconstructable,
         capabilities = "coverage:source-coverage, debt:unified-debt-view, operation:media.screen-ocr.import-screenshots, operation:media.screen-ocr.inspect, operation:media.screen-ocr.delete-material, operation:media.screen-ocr.export"
     ),
     binding(
@@ -152,6 +159,7 @@ pub struct MediaAudioTranscriptParser;
         runtime_shape = RuntimeShape::Scheduled,
         material_lifecycle = MaterialLifecyclePolicy::RetainRaw,
         transport_semantics = TransportSemantics::DIRECT_APPEND_STREAM,
+        criticality = SourceCriticality::Reconstructable,
         capabilities = "coverage:source-coverage, debt:unified-debt-view, operation:media.screen-ocr.import-video, operation:media.screen-ocr.inspect, operation:media.screen-ocr.delete-material, operation:media.screen-ocr.export"
     ),
     binding(
@@ -165,6 +173,7 @@ pub struct MediaAudioTranscriptParser;
         runtime_shape = RuntimeShape::OnDemand,
         material_lifecycle = MaterialLifecyclePolicy::DerivedOnly,
         transport_semantics = TransportSemantics::DIRECT_APPEND_STREAM,
+        criticality = SourceCriticality::Reconstructable,
         capabilities = "coverage:source-coverage, debt:unified-debt-view, operation:media.screen-ocr.run-ocr, operation:media.screen-ocr.retry, operation:media.screen-ocr.rebuild-artifact, operation:media.screen-ocr.inspect"
     ),
     binding(
@@ -178,6 +187,7 @@ pub struct MediaAudioTranscriptParser;
         runtime_shape = RuntimeShape::OnDemand,
         material_lifecycle = MaterialLifecyclePolicy::EphemeralRaw,
         transport_semantics = TransportSemantics::LOCAL_LIVE_QUEUE,
+        criticality = SourceCriticality::NotReconstructable,
         capabilities = "coverage:source-coverage, debt:unified-debt-view, operation:media.screen-ocr.capture-region, operation:media.screen-ocr.pause, operation:media.screen-ocr.resume, operation:media.screen-ocr.inspect"
     ),
     binding(
@@ -205,6 +215,7 @@ pub struct MediaAudioTranscriptParser;
         runtime_shape = RuntimeShape::Continuous,
         material_lifecycle = MaterialLifecyclePolicy::EphemeralRaw,
         transport_semantics = TransportSemantics::LOCAL_LIVE_QUEUE,
+        criticality = SourceCriticality::NotReconstructable,
         capabilities = "coverage:source-coverage, debt:unified-debt-view, operation:media.screen-ocr.enable-session, operation:media.screen-ocr.disable-session, operation:media.screen-ocr.pause, operation:media.screen-ocr.resume, operation:media.screen-ocr.retry, operation:media.screen-ocr.inspect"
     )
 )]

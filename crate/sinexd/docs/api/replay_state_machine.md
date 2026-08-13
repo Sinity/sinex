@@ -41,3 +41,22 @@ Planning   Planning
 - Checkpoints capture savepoint data for rollback.
 - Detailed error logging supports troubleshooting.
 - Operations can be cancelled at any non-terminal state.
+
+### Archive-before-reemit recovery
+
+Replay archives the affected event cascade before asking the source runtime to
+re-emit current interpretations. The archive transaction records the cascade
+IDs in the operation metadata, so recovery can restore the originals if the
+daemon stops before re-emission completes.
+
+On every daemon startup, `ServiceContainer` scans all replay operations still
+in an executing, cancelling, or committing state; it does not wait for a
+staleness window. This matches the deployed systemd restart path, where the
+daemon may restart seconds after a crash. Recovery restores archived rows before
+marking the operation failed and is safe to repeat.
+
+Any clean failure after the archive commit runs the same compensation sequence:
+link visible replacement events, restore archived rows whose occurrences have
+no live replacement, and publish scope invalidations. If any compensation step
+fails, the operation is marked failed with an explicit operator-recovery
+requirement instead of silently reporting a normal execution failure.

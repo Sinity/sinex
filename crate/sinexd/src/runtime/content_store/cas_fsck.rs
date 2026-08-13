@@ -16,6 +16,7 @@ use futures::StreamExt;
 use serde::{Deserialize, Serialize};
 use serde_json::Value as JsonValue;
 use sqlx::PgPool;
+use sinex_primitives::{DecodedMaterialManifest, MaterialManifestV1};
 use std::collections::{HashMap, HashSet};
 use std::sync::OnceLock;
 use std::time::{Duration as StdDuration, SystemTime, UNIX_EPOCH};
@@ -215,8 +216,10 @@ pub async fn check_cas_with_options_and_control(
     let mut scan_complete = false;
 
     // Build a set of known hashes from core.blobs for SINEXBLAKE3 entries
-    let known_blake3_hashes: HashMap<_, _> =
-        load_sinexblake3_hashes(pool).await?.into_iter().collect();
+    let known_blake3_hashes: HashMap<_, _> = load_sinexblake3_hashes(pool, content_store)
+        .await?
+        .into_iter()
+        .collect();
     let known_hash_set: HashSet<String> = known_blake3_hashes.keys().cloned().collect();
 
     reconcile_pending_deletions(pool, content_store, apply, &mut report).await?;
@@ -696,33 +699,23 @@ where
             SinexError::database("stream material manifest hashes for bounded CAS fsck")
                 .with_source(error)
         })?;
-        let Some(content_key) = metadata
-            .get("material_manifest")
-            .and_then(JsonValue::as_object)
-            .and_then(|manifest| manifest.get("content_key"))
-            .and_then(JsonValue::as_str)
-        else {
-            continue;
-        };
-        let Ok(parsed) = ContentStoreKey::parse(content_key) else {
-            continue;
-        };
-        if !parsed.is_local_blake3_cas() {
-            continue;
-        }
-        authority_count += 1;
-        if content_store
-            .local_blake3_cas_path_for_hash(&parsed.digest)
-            .is_ok_and(|path| !path.exists())
+        for (hash, authority) in
+            material_manifest_authorities(content_store, &material_id, &metadata).await?
         {
-            report.missing += 1;
-            on_status(CasFileStatus {
-                hash: parsed.digest.clone(),
-                path: missing_cas_path(content_store, &parsed.digest).to_string(),
-                size_bytes: 0,
-                status: CasStatus::Missing,
-                blob_id: Some(format!("material-manifest:{material_id}")),
-            });
+            authority_count += 1;
+            if content_store
+                .local_blake3_cas_path_for_hash(&hash)
+                .is_ok_and(|path| !path.exists())
+            {
+                report.missing += 1;
+                on_status(CasFileStatus {
+                    hash: hash.clone(),
+                    path: missing_cas_path(content_store, &hash).to_string(),
+                    size_bytes: 0,
+                    status: CasStatus::Missing,
+                    blob_id: Some(authority),
+                });
+            }
         }
     }
 
@@ -843,7 +836,10 @@ async fn cas_hash_is_referenced(pool: &PgPool, hash: &str) -> RuntimeResult<Opti
 /// and referenced from source-material metadata. Include those references in
 /// the fsck authority set so a normal orphan sweep cannot delete replay
 /// metadata that is still needed by a live material row.
-async fn load_sinexblake3_hashes(pool: &PgPool) -> RuntimeResult<Vec<(String, String)>> {
+async fn load_sinexblake3_hashes(
+    pool: &PgPool,
+    content_store: &MaterialContentStore,
+) -> RuntimeResult<Vec<(String, String)>> {
     let rows = sqlx::query_as::<_, (String, String)>(
         r"
         SELECT content_hash, id::text
@@ -870,21 +866,83 @@ async fn load_sinexblake3_hashes(pool: &PgPool) -> RuntimeResult<Vec<(String, St
         SinexError::database(format!("failed to load material manifest references: {e}"))
     })?;
     for (material_id, metadata) in material_rows {
-        let Some(content_key) = metadata
-            .get("material_manifest")
-            .and_then(JsonValue::as_object)
-            .and_then(|manifest| manifest.get("content_key"))
-            .and_then(JsonValue::as_str)
-        else {
-            continue;
-        };
-        let Ok(parsed) = ContentStoreKey::parse(content_key) else {
-            continue;
-        };
-        if parsed.is_local_blake3_cas() {
-            references.push((parsed.digest, format!("material-manifest:{material_id}")));
-        }
+        references.extend(
+            material_manifest_authorities(content_store, &material_id, &metadata).await?,
+        );
     }
+    Ok(references)
+}
+
+/// Return every CAS object that a source-material manifest makes authoritative.
+///
+/// The registry metadata names the manifest object itself. A valid V1 manifest
+/// additionally names the exact encoded material through its existing digest
+/// and size fields. Chunk/pack labels remain observed metadata; this helper
+/// never invents child objects from those labels.
+async fn material_manifest_authorities(
+    content_store: &MaterialContentStore,
+    material_id: &str,
+    metadata: &JsonValue,
+) -> RuntimeResult<Vec<(String, String)>> {
+    let Some(content_key) = metadata
+        .get("material_manifest")
+        .and_then(JsonValue::as_object)
+        .and_then(|manifest| manifest.get("content_key"))
+        .and_then(JsonValue::as_str)
+    else {
+        return Ok(Vec::new());
+    };
+    let Ok(parsed) = ContentStoreKey::parse(content_key) else {
+        return Ok(Vec::new());
+    };
+    if !parsed.is_local_blake3_cas() {
+        return Ok(Vec::new());
+    }
+
+    let mut references = vec![(
+        parsed.digest.clone(),
+        format!("material-manifest:{material_id}"),
+    )];
+    let Some(path) = content_store.path_if_local(content_key)? else {
+        return Ok(references);
+    };
+    if !path.exists() {
+        return Ok(references);
+    }
+    let manifest_bytes = match MaterialContentStore::read_file_with_limit(
+        &path,
+        content_store.config.max_blob_size,
+    )
+    .await
+    {
+        Ok(bytes) => bytes,
+        Err(error) => {
+            tracing::warn!(
+                material_id,
+                content_key,
+                error = %error,
+                "unable to read source-material manifest while reconciling CAS authorities"
+            );
+            return Ok(references);
+        }
+    };
+    let Ok(DecodedMaterialManifest::V1(manifest)) = MaterialManifestV1::decode(&manifest_bytes)
+    else {
+        return Ok(references);
+    };
+    if manifest.bytes.encoded.algorithm != "blake3" {
+        return Ok(references);
+    }
+    let Ok(encoded_key) = ContentStoreKey::local_blake3(
+        manifest.bytes.encoded_size,
+        manifest.bytes.encoded.value_hex,
+    ) else {
+        return Ok(references);
+    };
+    references.push((
+        encoded_key.digest,
+        format!("material-bytes:{material_id}"),
+    ));
     Ok(references)
 }
 

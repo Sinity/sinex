@@ -19,7 +19,7 @@ use sqlx::PgPool;
 use std::sync::Arc;
 use tracing::{error, info, warn};
 
-use crate::runtime::content_store::ContentStoreManager;
+use crate::runtime::content_store::{ContentStoreKey, ContentStoreManager};
 use crate::runtime::nats_payload::ensure_nats_payload_fits;
 use crate::sources::dispatch::ParserDispatchFn;
 
@@ -116,12 +116,12 @@ pub async fn spawn_parse_listener(
     }))
 }
 
-/// Load the raw bytes of a source material via registry → blob → CAS.
+/// Load the raw bytes of a source material via manifest → CAS, with the legacy
+/// registry → blob → CAS route as a fallback.
 ///
-/// Fails closed: a material that is absent, has no associated blob, whose blob
-/// row is missing, or whose content cannot be retrieved returns `Err`. The
-/// listener turns any `Err` into `SourceParseAck { accepted: false, .. }` so a
-/// parse-replay never silently "succeeds" with zero events on missing material.
+/// A valid manifest is sufficient authority for replay, even when the original
+/// source path or optional blob row is unavailable. Legacy materials without a
+/// manifest still fail closed when their blob route is unavailable.
 pub(crate) async fn load_material_bytes(
     pool: &PgPool,
     content_store: &ContentStoreManager,
@@ -172,17 +172,6 @@ async fn load_material_authority(
         .await
         .map_err(|e| format!("failed to load source material {material_id}: {e}"))?
         .ok_or_else(|| format!("source material {material_id} not found in registry"))?;
-
-    let blob_id = material.optional_blob_id.ok_or_else(|| {
-        format!("source material {material_id} has no associated blob; cannot load bytes")
-    })?;
-
-    let blob = pool
-        .blobs()
-        .get_by_id(Id::<Blob>::from_uuid(blob_id))
-        .await
-        .map_err(|e| format!("failed to load blob {blob_id} for material {material_id}: {e}"))?
-        .ok_or_else(|| format!("blob {blob_id} for material {material_id} not found"))?;
 
     let manifest = if let Some(manifest_reference) = material
         .metadata
@@ -241,25 +230,23 @@ async fn load_material_authority(
                 manifest.bytes.encoded.algorithm
             ));
         }
-        if manifest.bytes.encoded_size != blob.size_bytes as u64
-            || manifest.bytes.encoded.value_hex != blob.checksum_blake3.clone().unwrap_or_default()
-        {
-            return Err(format!(
-                "manifest byte identity mismatch for material {material_id}"
-            ));
-        }
         Some(manifest)
     } else {
         None
     };
 
     if let Some(manifest) = manifest.as_ref() {
-        let content_key = format!(
-            "SINEXBLAKE3-s{}--{}",
-            manifest.bytes.encoded_size, manifest.bytes.encoded.value_hex
-        );
+        let content_key = ContentStoreKey::local_blake3(
+            manifest.bytes.encoded_size,
+            manifest.bytes.encoded.value_hex.clone(),
+        )
+        .map_err(|error| {
+            format!(
+                "manifest for material {material_id} has an invalid encoded CAS identity: {error}"
+            )
+        })?;
         let bytes = content_store
-            .retrieve_cas_object(&content_key)
+            .retrieve_cas_object(&content_key.key)
             .await
             .map_err(|e| {
                 format!(
@@ -273,8 +260,41 @@ async fn load_material_authority(
                 "manifest-authoritative CAS bytes failed digest or size validation for material {material_id}"
             ));
         }
+        if let Some(blob_id) = material.optional_blob_id {
+            if let Some(blob) = pool
+                .blobs()
+                .get_by_id(Id::<Blob>::from_uuid(blob_id))
+                .await
+                .map_err(|e| {
+                    format!("failed to load optional blob {blob_id} for material {material_id}: {e}")
+                })?
+            {
+                let blob_matches = blob.size_bytes >= 0
+                    && blob.size_bytes as u64 == manifest.bytes.encoded_size
+                    && blob
+                        .checksum_blake3
+                        .as_deref()
+                        .map_or(true, |checksum| checksum == manifest.bytes.encoded.value_hex);
+                if !blob_matches {
+                    return Err(format!(
+                        "manifest byte identity mismatch for material {material_id}"
+                    ));
+                }
+            }
+        }
         return Ok((Some(manifest.clone()), bytes));
     }
+
+    let blob_id = material.optional_blob_id.ok_or_else(|| {
+        format!("source material {material_id} has no associated blob; cannot load bytes")
+    })?;
+
+    let blob = pool
+        .blobs()
+        .get_by_id(Id::<Blob>::from_uuid(blob_id))
+        .await
+        .map_err(|e| format!("failed to load blob {blob_id} for material {material_id}: {e}"))?
+        .ok_or_else(|| format!("blob {blob_id} for material {material_id} not found"))?;
 
     let bytes = content_store
         .retrieve_content(&blob.content_key())

@@ -217,6 +217,30 @@ The Sinex codebase now has comprehensive path validation security measures in pl
 - **Test Security**: Test environments have additional protections against system access
 - **Clear Patterns**: Established security patterns for new code
 
+## CAS authority and lossless replay
+
+The local CAS has two manifest-backed authorities for a source material:
+
+- registry metadata names the canonical manifest object with
+  `material_manifest.content_key`;
+- a valid `MaterialManifestV1` names the exact encoded source bytes with its
+  existing `bytes.encoded` digest and `bytes.encoded_size` fields.
+
+Fsck and orphan reconciliation retain both objects. They do not infer child
+objects from a `chunk`, `pack`, member, or continuation label: those semantics
+remain the observed manifest metadata (`continuity`, `container`, parser ranges,
+and extensions). Unsupported or malformed manifests retain their own CAS
+object but cannot safely establish an additional byte reference.
+
+Replay reads the manifest first and then the exact encoded CAS key. The legacy
+blob route remains available for materials without a manifest. This means the
+original source path—and, for a valid manifest, even the optional blob lookup—
+is not required to recover the recorded bytes.
+
+Ordinary fsck remains completion-oriented and unbounded by default. Runtime,
+entry, and verification-throughput limits are opt-in through
+`CasFsckOptions`; an explicitly incomplete apply pass remains fail-closed.
+
 The implementation provides strong protection against common path-based attack vectors while maintaining usability and performance. Regular security reviews and adherence to the established patterns will maintain this security posture as the codebase evolves.
 
 ## Files
