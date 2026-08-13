@@ -1781,6 +1781,7 @@ async fn execute_mbox_staged_email_sync(
         parsed_record_count: 0,
     };
     for path in &request.paths {
+        let total_bytes = staged_file_total_bytes(path)?;
         let material_record = register_email_staged_material(
             pool,
             spec,
@@ -1788,6 +1789,7 @@ async fn execute_mbox_staged_email_sync(
             path,
             SourceMaterialFormat::Text,
             serde_json::json!({ "email_staged_sync": { "input_kind": "mbox-file" } }),
+            total_bytes,
         )
         .await?;
         summary.material_ids.push(material_record.id.to_string());
@@ -1800,6 +1802,7 @@ async fn execute_mbox_staged_email_sync(
         admit_mbox_adapter_records(pool, &material_record, mode_id, config, &mut summary).await?;
     }
     for archive_path in &request.archive_paths {
+        let total_bytes = staged_file_total_bytes(archive_path)?;
         let material_record = register_email_staged_material(
             pool,
             spec,
@@ -1807,6 +1810,7 @@ async fn execute_mbox_staged_email_sync(
             archive_path,
             SourceMaterialFormat::Archive,
             serde_json::json!({ "email_staged_sync": { "input_kind": "takeout-archive" } }),
+            total_bytes,
         )
         .await?;
         summary.material_ids.push(material_record.id.to_string());
@@ -1873,6 +1877,11 @@ async fn execute_maildir_staged_email_sync(
                 .with_std_error(&error)
                 .with_operation("ops.start")
         })?;
+        let total_bytes = i64::try_from(bytes.len()).map_err(|error| {
+            SinexError::validation("email staged material is too large to record")
+                .with_std_error(&error)
+                .with_operation("ops.start")
+        })?;
         let material_record = register_email_staged_material(
             pool,
             spec,
@@ -1880,9 +1889,9 @@ async fn execute_maildir_staged_email_sync(
             &path,
             SourceMaterialFormat::Text,
             serde_json::json!({ "email_staged_sync": { "input_kind": "rfc822-file" } }),
+            Some(total_bytes),
         )
         .await?;
-        update_material_total_bytes(pool, material_record.id, bytes.len()).await?;
         summary.material_ids.push(material_record.id.to_string());
         let material_id = Id::<SourceMaterial>::from_uuid(material_record.id);
         let record = SourceRecord {
@@ -1986,6 +1995,7 @@ async fn register_email_staged_material(
     path: &Utf8PathBuf,
     format: SourceMaterialFormat,
     metadata: serde_json::Value,
+    total_bytes: Option<i64>,
 ) -> Result<sinex_db::SourceMaterialRecord> {
     let mut contract =
         SourceMaterialMetadataContract::new(format, SourceMaterialTimingInfoType::StagedAt);
@@ -2005,38 +2015,26 @@ async fn register_email_staged_material(
             }
         }))
         .with_metadata(metadata);
-    let material_record = pool.source_materials().register_material(material).await?;
-    if let Ok(metadata) = std::fs::metadata(path) {
-        if metadata.is_file() {
-            update_material_total_bytes(pool, material_record.id, metadata.len() as usize).await?;
+    match total_bytes {
+        Some(total_bytes) => {
+            pool.source_materials()
+                .register_material_with_total_bytes(material, total_bytes)
+                .await
         }
+        None => pool.source_materials().register_material(material).await,
     }
-    Ok(material_record)
 }
 
-async fn update_material_total_bytes(
-    pool: &PgPool,
-    material_id: uuid::Uuid,
-    byte_len: usize,
-) -> Result<()> {
-    let total_bytes = i64::try_from(byte_len).map_err(|error| {
+fn staged_file_total_bytes(path: &Utf8PathBuf) -> Result<Option<i64>> {
+    let metadata = match std::fs::metadata(path) {
+        Ok(metadata) if metadata.is_file() => metadata,
+        Ok(_) | Err(_) => return Ok(None),
+    };
+    i64::try_from(metadata.len()).map(Some).map_err(|error| {
         SinexError::validation("email staged material is too large to record")
             .with_std_error(&error)
             .with_operation("ops.start")
-    })?;
-    // finalize_in_flight, not a bare total_bytes-only UPDATE (sinex-k22c): the
-    // raw UPDATE left the material permanently at status='sensing' (no
-    // Completed transition, no end_time), so it was forever flagged by
-    // list_stale_sensing even though its capture had actually finished.
-    pool.source_materials()
-        .finalize_in_flight(material_id.into(), None, None, None, Some(total_bytes))
-        .await
-        .map_err(|error| {
-            SinexError::database("Failed to finalize staged email material")
-                .with_context("material_id", material_id.to_string())
-                .with_std_error(&error)
-        })?;
-    Ok(())
+    })
 }
 
 async fn admit_email_record(

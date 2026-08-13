@@ -229,35 +229,19 @@ pub async fn handle_sources_stage(
         )
         .with_metadata_contract(&contract);
 
-    let mut record = pool
-        .source_materials()
-        .register_material(material)
-        .await
-        .map_err(|error| {
-            SinexError::processing("Failed to register source material")
-                .with_context("file_path", &canonical)
-                .with_std_error(&error)
-        })?;
-
-    // Finalize the material now if we already know its full size (registration
-    // doesn't set total_bytes) -- via finalize_in_flight, not a bare
-    // total_bytes-only UPDATE (sinex-k22c). The bypassed raw UPDATE left the
-    // material permanently at status='sensing' (never Completed, no end_time),
-    // so it was forever flagged by list_stale_sensing.
-    if let Some(size) = file_size {
-        let blob_id_typed = blob_id
-            .as_ref()
-            .and_then(|id_str| uuid::Uuid::parse_str(id_str).ok().map(sinex_db::Id::from));
-        pool.source_materials()
-            .finalize_in_flight(record.id.into(), blob_id_typed, None, None, Some(size))
-            .await
-            .map_err(|error| {
-                SinexError::database("Failed to finalize staged source material")
-                    .with_context("material_id", record.id.to_string())
-                    .with_std_error(&error)
-            })?;
-        record.total_bytes = Some(size);
+    let record = match file_size {
+        Some(size) => {
+            pool.source_materials()
+                .register_material_with_total_bytes(material, size)
+                .await
+        }
+        None => pool.source_materials().register_material(material).await,
     }
+    .map_err(|error| {
+        SinexError::processing("Failed to register source material")
+            .with_context("file_path", &canonical)
+            .with_std_error(&error)
+    })?;
 
     let response = SourcesStageResponse {
         material_id: record.id.to_string(),

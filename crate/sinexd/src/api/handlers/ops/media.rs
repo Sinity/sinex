@@ -467,24 +467,15 @@ pub(super) async fn execute_worker_output(
                     "material_class": package.material_class().as_str()
                 }
             }));
-    let mut material_record = pool.source_materials().register_material(material).await?;
     let total_bytes = i64::try_from(worker_output.bytes.len()).map_err(|error| {
         SinexError::validation("media worker output is too large to record")
             .with_std_error(&error)
             .with_operation("ops.start")
     })?;
-    // finalize_in_flight, not a bare total_bytes-only UPDATE (sinex-k22c): the
-    // raw UPDATE left the material permanently at status='sensing' with no
-    // Completed transition/end_time.
-    pool.source_materials()
-        .finalize_in_flight(material_record.id.into(), None, None, None, Some(total_bytes))
-        .await
-        .map_err(|error| {
-            SinexError::database("Failed to finalize media worker output material")
-                .with_context("material_id", material_record.id.to_string())
-                .with_std_error(&error)
-        })?;
-    material_record.total_bytes = Some(total_bytes);
+    let material_record = pool
+        .source_materials()
+        .register_material_with_total_bytes(material, total_bytes)
+        .await?;
 
     let dispatch = crate::sources::dispatch::default_parser_dispatch();
     let outcome = dispatch(

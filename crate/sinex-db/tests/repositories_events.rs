@@ -1375,6 +1375,70 @@ async fn register_material_persists_source_material_metadata_contract(
 }
 
 #[sinex_test]
+async fn register_material_with_total_bytes_is_atomic_and_authoritative(
+    ctx: TestContext,
+) -> TestResult<()> {
+    let identifier = format!("finalized-material-{}.txt", uuid::Uuid::now_v7());
+    let contract = SourceMaterialMetadataContract::new(
+        SourceMaterialFormat::Text,
+        SourceMaterialTimingInfoType::Declared,
+    );
+    let record = ctx
+        .pool
+        .source_materials()
+        .register_material_with_total_bytes(
+            sinex_db::repositories::SourceMaterial::file(&identifier)
+                .with_metadata_contract(&contract),
+            42,
+        )
+        .await?;
+
+    assert_eq!(
+        record.status,
+        sinex_primitives::domain::MaterialStatus::Completed
+    );
+    assert_eq!(record.total_bytes, Some(42));
+    let persisted = ctx
+        .pool
+        .source_materials()
+        .get_by_id(Id::from_uuid(record.id))
+        .await?
+        .expect("atomic registration should persist its material");
+    assert_eq!(persisted.total_bytes, Some(42));
+    assert_eq!(
+        SourceMaterialMetadataContract::from_metadata(&persisted.metadata)
+            .and_then(|contract| contract.statistics)
+            .and_then(|statistics| statistics.total_bytes),
+        Some(42)
+    );
+
+    let rejected_identifier = format!("rejected-finalization-{}.txt", uuid::Uuid::now_v7());
+    let result = ctx
+        .pool
+        .source_materials()
+        .register_material_with_total_bytes(
+            sinex_db::repositories::SourceMaterial::file(&rejected_identifier),
+            -1,
+        )
+        .await;
+    assert!(
+        result.is_err(),
+        "negative total_bytes must reject finalization"
+    );
+    let persisted_count = sqlx::query_scalar!(
+        "SELECT COUNT(*) as \"count!: i64\" FROM raw.source_material_registry WHERE source_identifier = $1",
+        rejected_identifier,
+    )
+    .fetch_one(&ctx.pool)
+    .await?;
+    assert_eq!(
+        persisted_count, 0,
+        "a failed byte finalization must roll its material insert back"
+    );
+    Ok(())
+}
+
+#[sinex_test]
 async fn register_in_flight_preserves_explicit_source_material_metadata_contract(
     ctx: TestContext,
 ) -> TestResult<()> {

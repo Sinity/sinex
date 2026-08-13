@@ -211,7 +211,6 @@ impl SourceMaterialRepository<'_> {
     }
 
     async fn update_material_state<'e, E>(
-        &self,
         executor: E,
         id: Id<SourceMaterialRecord>,
         status: MaterialStatus,
@@ -269,10 +268,83 @@ impl SourceMaterialRepository<'_> {
         Ok(())
     }
 
+    async fn insert_material_with_id_with_executor<'e, E>(
+        executor: E,
+        id: Id<SourceMaterial>,
+        material: &SourceMaterial,
+    ) -> DbResult<SourceMaterialRecord>
+    where
+        E: sqlx::Executor<'e, Database = sqlx::Postgres>,
+    {
+        let start_time_offset = material.start_time;
+        let end_time_offset = material.end_time;
+        sqlx::query_as!(
+            SourceMaterialRecord,
+            r#"
+            INSERT INTO raw.source_material_registry (
+                id,
+                material_kind,
+                source_identifier,
+                status,
+                timing_info_type,
+                metadata,
+                start_time,
+                end_time,
+                staged_by,
+                staged_on_host,
+                optional_blob_id
+            ) VALUES (
+                $1::uuid,
+                $2,
+                $3,
+                $4,
+                $5,
+                $6,
+                $7,
+                $8,
+                $9,
+                $10,
+                $11::uuid
+            )
+            RETURNING
+                id as "id!: Uuid",
+                material_kind,
+                source_identifier,
+                status,
+                timing_info_type,
+                metadata,
+                staged_at as "staged_at: Timestamp",
+                start_time as "start_time: Timestamp",
+                end_time as "end_time: Timestamp",
+                staged_by,
+                staged_on_host,
+                optional_blob_id as "optional_blob_id: Uuid",
+                total_bytes as "total_bytes?: i64",
+                coverage_contract as "coverage_contract!: JsonValue",
+                privacy_class as "privacy_class!: String"
+            "#,
+            id.to_uuid(),
+            material.material_kind.as_str(),
+            material.source_identifier,
+            material.status.as_str(),
+            material.timing_info_type,
+            material.metadata,
+            start_time_offset.map(|t| *t),
+            end_time_offset.map(|t| *t),
+            material.staged_by,
+            material.staged_on_host,
+            material.optional_blob_id.map(|id| id.to_uuid())
+        )
+        .fetch_one(executor)
+        .await
+        .map_err(|e| db_error(e, "register material"))
+    }
+
     async fn insert_material_with_id(
         &self,
         id: Id<SourceMaterial>,
         material: SourceMaterial,
+        total_bytes: Option<i64>,
     ) -> DbResult<SourceMaterialRecord> {
         use crate::query_helpers::{
             IdempotentTransaction, RetryConfig, set_repeatable_read,
@@ -287,70 +359,24 @@ impl SourceMaterialRepository<'_> {
             move |tx| {
                 let id = id;
                 let material = material.clone();
-                let start_time_offset = material.start_time;
-                let end_time_offset = material.end_time;
                 Box::pin(async move {
                     set_repeatable_read(tx).await?;
-                    sqlx::query_as!(
-                        SourceMaterialRecord,
-                        r#"
-                INSERT INTO raw.source_material_registry (
-                    id,
-                    material_kind,
-                            source_identifier,
-                            status,
-                            timing_info_type,
-                            metadata,
-                            start_time,
-                            end_time,
-                            staged_by,
-                            staged_on_host,
-                            optional_blob_id
-                        ) VALUES (
-                            $1::uuid,
-                            $2,
-                            $3,
-                            $4,
-                            $5,
-                            $6,
-                            $7,
-                            $8,
-                            $9,
-                            $10,
-                            $11::uuid
+                    let mut record =
+                        Self::insert_material_with_id_with_executor(&mut **tx, id, &material)
+                            .await?;
+                    if let Some(total_bytes) = total_bytes {
+                        Self::update_material_state(
+                            &mut **tx,
+                            record.id.into(),
+                            material.status,
+                            None,
+                            json!({ "file_size_bytes": total_bytes }),
+                            Some(total_bytes),
                         )
-                        RETURNING
-                            id as "id!: Uuid",
-                            material_kind,
-                            source_identifier,
-                            status,
-                            timing_info_type,
-                            metadata,
-                            staged_at as "staged_at: Timestamp",
-                            start_time as "start_time: Timestamp",
-                            end_time as "end_time: Timestamp",
-                            staged_by,
-                            staged_on_host,
-                            optional_blob_id as "optional_blob_id: Uuid",
-                            total_bytes as "total_bytes?: i64",
-                coverage_contract as "coverage_contract!: JsonValue",
-                privacy_class as "privacy_class!: String"
-                        "#,
-                        id.to_uuid(),
-                        material.material_kind.as_str(),
-                        material.source_identifier,
-                        material.status.as_str(),
-                        material.timing_info_type,
-                        material.metadata,
-                        start_time_offset.map(|t| *t),
-                        end_time_offset.map(|t| *t),
-                        material.staged_by,
-                        material.staged_on_host,
-                        material.optional_blob_id.map(|id| id.to_uuid())
-                    )
-                    .fetch_one(&mut **tx)
-                    .await
-                    .map_err(|e| db_error(e, "register material"))
+                        .await?;
+                        record.total_bytes = Some(total_bytes);
+                    }
+                    Ok(record)
                 })
             },
         )
@@ -363,7 +389,22 @@ impl SourceMaterialRepository<'_> {
         material: SourceMaterial,
     ) -> DbResult<SourceMaterialRecord> {
         let id = Id::<SourceMaterial>::new();
-        self.insert_material_with_id(id, material).await
+        self.insert_material_with_id(id, material, None).await
+    }
+
+    /// Register a completed source material and final byte size atomically.
+    ///
+    /// The registry row and its byte-bound finalization share one retrying
+    /// transaction, so a finalization failure cannot leave a committed
+    /// `completed` material with `total_bytes = NULL`.
+    pub async fn register_material_with_total_bytes(
+        &self,
+        material: SourceMaterial,
+        total_bytes: i64,
+    ) -> DbResult<SourceMaterialRecord> {
+        let id = Id::<SourceMaterial>::new();
+        self.insert_material_with_id(id, material, Some(total_bytes))
+            .await
     }
 
     /// Register a completed source material with a caller-provided identifier.
@@ -375,7 +416,7 @@ impl SourceMaterialRepository<'_> {
         material_id: uuid::Uuid,
         material: SourceMaterial,
     ) -> DbResult<SourceMaterialRecord> {
-        self.insert_material_with_id(Id::<SourceMaterial>::from_uuid(material_id), material)
+        self.insert_material_with_id(Id::<SourceMaterial>::from_uuid(material_id), material, None)
             .await
     }
     /// Get source material by ID
@@ -1167,7 +1208,7 @@ impl SourceMaterialRepository<'_> {
             );
             JsonValue::Object(map)
         };
-        self.update_material_state(
+        Self::update_material_state(
             self.pool,
             id,
             MaterialStatus::Failed,
@@ -1205,7 +1246,7 @@ impl SourceMaterialRepository<'_> {
                 update.insert("_meta".to_string(), other);
             }
         }
-        self.update_material_state(
+        Self::update_material_state(
             self.pool,
             id,
             MaterialStatus::RecoveredPartial,
@@ -1291,7 +1332,7 @@ impl SourceMaterialRepository<'_> {
             }
             JsonValue::Object(map)
         };
-        self.update_material_state(
+        Self::update_material_state(
             executor,
             id,
             final_status,
