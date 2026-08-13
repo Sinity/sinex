@@ -473,6 +473,7 @@ impl GatewayConfig {
     /// Load configuration from defaults and environment variables.
     pub fn load() -> Result<Self, SinexError> {
         let mut config = Self::from_env()?;
+        config.namespace = crate::runtime::resolve_nats_namespace(config.namespace);
         if config.database_url.trim().is_empty() {
             return Err(SinexError::configuration(
                 "Database URL not provided — set DATABASE_URL or pass --database-url",
@@ -488,6 +489,7 @@ impl GatewayConfig {
     /// (NATS, TLS, content store, auth) but provide the database URL out-of-band.
     pub fn load_with_database_url(database_url: impl Into<String>) -> Result<Self, SinexError> {
         let mut config = Self::from_env()?;
+        config.namespace = crate::runtime::resolve_nats_namespace(config.namespace);
         config.database_url = database_url.into();
         if config.database_url.trim().is_empty() {
             return Err(SinexError::configuration(
@@ -514,6 +516,18 @@ impl GatewayConfig {
         }
         if let Some(origins) = cors_origins {
             self.cors_origins = origins;
+        }
+        self
+    }
+
+    /// Apply the daemon's global NATS namespace override.
+    ///
+    /// `None` means no CLI flag was supplied and preserves the environment
+    /// configuration; a blank explicit value resolves to the default topology.
+    #[must_use]
+    pub fn with_nats_namespace(mut self, namespace: Option<String>) -> Self {
+        if namespace.is_some() {
+            self.namespace = crate::runtime::resolve_nats_namespace(namespace);
         }
         self
     }

@@ -2326,10 +2326,13 @@ where
         // binding config > default_paced).
         let rate_budget = self.resolve_rate_budget(args.rate_budget);
         let nats_client = self.runtime.as_ref().and_then(RuntimeContext::nats_client);
-        // Matches how `RuntimeCli`/`NatsPublisher` resolve namespace elsewhere
-        // in the runtime (`--namespace` / `SINEX_NAMESPACE`); `RuntimeContext`
-        // does not currently expose the resolved namespace to source drivers.
-        let namespace = std::env::var("SINEX_NAMESPACE").ok();
+        // Reuse the namespace resolved for this runtime's publisher. Reading
+        // `SINEX_NAMESPACE` here would ignore a `--namespace` CLI override and
+        // split pacing/progress from the event stream it is meant to observe.
+        let namespace = self
+            .runtime
+            .as_ref()
+            .and_then(RuntimeContext::nats_namespace);
         let horizon = match &until {
             TimeHorizon::Historical { end_time } => Some(*end_time),
             TimeHorizon::Snapshot | TimeHorizon::Continuous => None,

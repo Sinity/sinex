@@ -432,7 +432,8 @@ async fn serve(cli: &Cli) -> color_eyre::Result<()> {
         Some(match cli.database_url.as_ref() {
             Some(url) => GatewayConfig::load_with_database_url(url.clone()),
             None => GatewayConfig::load(),
-        }?)
+        }?
+        .with_nats_namespace(cli.namespace.clone()))
     } else {
         None
     };
@@ -481,7 +482,8 @@ async fn rpc_server_serve(
         Some(url) => GatewayConfig::load_with_database_url(url.clone()),
         None => GatewayConfig::load(),
     }?
-    .with_cli_overrides(None, tcp_listen, cors_origins);
+    .with_cli_overrides(None, tcp_listen, cors_origins)
+    .with_nats_namespace(cli.namespace.clone());
 
     let services = ServiceContainer::new(&config).await?;
     let shutdown_rx = spawn_shutdown_task("sinexd-rpc-server");

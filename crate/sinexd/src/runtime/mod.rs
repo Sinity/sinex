@@ -128,7 +128,7 @@ pub use material::{
     ObservationMaterializer, RetryableMaterialCapture, StreamMaterialContext,
     TransientErrorPredicate,
 };
-pub use nats_publisher::NatsPublisher;
+pub use nats_publisher::{NatsPublisher, resolve_nats_namespace};
 pub use pacing::{BacklogGate, PacingController, RateBudget, ScanPacer};
 pub use pressure::PressureMonitor;
 pub use processing::AutomatonLogicError;

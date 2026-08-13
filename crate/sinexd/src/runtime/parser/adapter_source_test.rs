@@ -717,6 +717,13 @@ fn auto_settle_events(
 async fn make_adapter_runtime(
     ctx: &TestContext,
 ) -> TestResult<(RuntimeContext, mpsc::Receiver<Event<JsonValue>>)> {
+    make_adapter_runtime_with_namespace(ctx, None).await
+}
+
+async fn make_adapter_runtime_with_namespace(
+    ctx: &TestContext,
+    namespace: Option<String>,
+) -> TestResult<(RuntimeContext, mpsc::Receiver<Event<JsonValue>>)> {
     let kv = ctx.checkpoint_kv().await?;
     let checkpoint_manager = Arc::new(CheckpointManager::new(
         kv,
@@ -726,7 +733,7 @@ async fn make_adapter_runtime(
     ));
     let (event_sender, event_receiver_raw) = mpsc::channel::<Event<JsonValue>>(8);
     let emitter = EventEmitter::new(event_sender, false);
-    let publisher = Arc::new(NatsPublisher::new(ctx.nats_client()));
+    let publisher = Arc::new(NatsPublisher::with_namespace(ctx.nats_client(), namespace));
     let settlement_registry = crate::runtime::durable_emission::SettlementRegistry::new();
     let event_receiver = auto_settle_events(event_receiver_raw, settlement_registry.clone());
     let handles = RuntimeHandles::new_edge(
@@ -3435,12 +3442,10 @@ mod pacing_e2e {
         ctx: TestContext,
     ) -> TestResult<()> {
         // Shared process-wide NATS (matches every other test in this file);
-        // isolated from concurrent tests via a unique namespace, which also
-        // has to be visible to `scan_historical`'s own namespace resolution
-        // (`SINEX_NAMESPACE` env var) — safe to set process-wide here since
-        // nextest runs one test per process.
+        // isolated from concurrent tests via a unique namespace. The runtime
+        // receives it through its publisher exactly as a `--namespace` flag
+        // would; do not set `SINEX_NAMESPACE` here.
         let namespace = format!("pacing-e2e-{}", Uuid::now_v7().simple());
-        let _namespace_guard = xtask::sandbox::EnvGuard::set_single("SINEX_NAMESPACE", &namespace);
         let ctx = ctx.with_nats().shared().await?;
         let nats_client = ctx.nats_client();
 
@@ -3562,7 +3567,8 @@ mod pacing_e2e {
         };
 
         // --- The production route under test ---
-        let (runtime, event_receiver_raw) = make_adapter_runtime(&ctx).await?;
+        let (runtime, event_receiver_raw) =
+            make_adapter_runtime_with_namespace(&ctx, Some(namespace.clone())).await?;
         let settlement_registry = crate::runtime::durable_emission::SettlementRegistry::new();
         let publish_subject =
             env.nats_raw_event_subject_with_namespace(Some(&namespace), "test", "pacing.e2e");

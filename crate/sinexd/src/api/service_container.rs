@@ -228,6 +228,12 @@ impl ServiceContainer {
         self.nats_client.as_ref()
     }
 
+    /// Resolved namespace shared by gateway NATS read surfaces.
+    #[must_use]
+    pub fn nats_namespace(&self) -> Option<&str> {
+        self.config.namespace.as_deref()
+    }
+
     /// Get Sinex environment
     #[must_use]
     pub fn environment(&self) -> &sinex_primitives::environment::SinexEnvironment {

@@ -56,6 +56,23 @@ async fn gateway_cli_database_override_uses_effective_database_url() -> TestResu
 }
 
 #[sinex_serial_test]
+async fn gateway_namespace_normalizes_blank_env_and_accepts_cli_override() -> TestResult<()> {
+    let mut env = EnvGuard::new();
+    env.set("DATABASE_URL", "postgresql://gateway-config/sinex");
+    env.set("SINEX_NAMESPACE", "   ");
+
+    let config = GatewayConfig::load()?.with_nats_namespace(Some("flag-only".to_string()));
+
+    assert_eq!(config.namespace.as_deref(), Some("flag-only"));
+    assert_eq!(
+        GatewayConfig::load()?.namespace,
+        None,
+        "blank SINEX_NAMESPACE must resolve like an unset namespace"
+    );
+    Ok(())
+}
+
+#[sinex_serial_test]
 async fn gateway_config_rejects_invalid_numeric_env_overrides() -> TestResult<()> {
     let mut env = EnvGuard::new();
     env.set("SINEX_API_MAX_CONCURRENCY", "many");

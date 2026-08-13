@@ -6,6 +6,7 @@ use super::{
 use crate::automata::canonicalizer::TerminalCommandCanonicalizerRuntime;
 use crate::runtime::SinexError;
 use crate::runtime::stream::Checkpoint;
+use clap::Parser;
 use sinex_primitives::SanitizedPath;
 use std::str::FromStr;
 use xtask::sandbox::sinex_serial_test;
@@ -36,6 +37,20 @@ async fn render_cli_value_is_explicit_on_format_failure() -> TestResult<()> {
 #[sinex_test]
 async fn render_optional_cli_timestamp_is_explicit_when_unknown() -> TestResult<()> {
     assert_eq!(render_optional_cli_timestamp(None), "unknown");
+    Ok(())
+}
+
+#[sinex_test]
+async fn namespace_flag_is_parsed_without_environment_fallback() -> TestResult<()> {
+    let cli = RuntimeCli::try_parse_from([
+        "sinex-runtime",
+        "--namespace",
+        "flag-only",
+        "service",
+        "--dry-run",
+    ])?;
+
+    assert_eq!(cli.namespace.as_deref(), Some("flag-only"));
     Ok(())
 }
 

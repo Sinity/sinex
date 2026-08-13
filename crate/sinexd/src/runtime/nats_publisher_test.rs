@@ -52,6 +52,15 @@ async fn raw_stream_backpressure_uses_ordered_pending_hysteresis() -> TestResult
 }
 
 #[sinex_test]
+async fn publisher_treats_blank_namespace_as_unset(ctx: TestContext) -> TestResult<()> {
+    let ctx = ctx.with_nats().dedicated().await?;
+    let publisher = NatsPublisher::with_namespace(ctx.nats_client(), Some("   ".to_string()));
+
+    assert_eq!(publisher.namespace(), None);
+    Ok(())
+}
+
+#[sinex_test]
 async fn publish_payload_serializes_json_once() -> TestResult<()> {
     let mut event = DynamicPayload::new(
         "publisher.test",

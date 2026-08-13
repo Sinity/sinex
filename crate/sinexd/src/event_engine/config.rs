@@ -416,7 +416,7 @@ impl EventEngineConfig {
         config.ts_orig_future_skew_secs = ts_orig_future_skew_secs;
         config.ts_orig_lower_bound_unix = ts_orig_lower_bound_unix;
         config.nats = nats_config_clone;
-        config.nats_namespace = namespace;
+        config.nats_namespace = crate::runtime::resolve_nats_namespace(namespace);
         if let Some(path) = work_dir_override {
             config.work_dir = path;
         }

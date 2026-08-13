@@ -132,6 +132,20 @@ impl RuntimeContext {
         }
     }
 
+    /// Resolved NATS namespace carried by this runtime's publisher.
+    ///
+    /// Source scans must use this value for backlog pacing and progress KV so
+    /// their auxiliary NATS surfaces cannot drift from event publication.
+    #[cfg(feature = "messaging")]
+    #[must_use]
+    pub fn nats_namespace(&self) -> Option<String> {
+        self.handles
+            .transport()
+            .nats_publisher()
+            .ok()
+            .and_then(|publisher| publisher.namespace().map(ToOwned::to_owned))
+    }
+
     #[must_use]
     pub fn runtime_drain(&self) -> Arc<super::RuntimeDrainController> {
         self.handles.runtime_drain()
