@@ -8,7 +8,8 @@ use sinex_primitives::privacy::ProcessingContext;
 use sinex_primitives::rpc::{method_catalog, methods};
 use sinex_primitives::source_contracts::{
     AccessScope, CheckpointFamily, Horizon, OccurrenceIdentity, PrivacyTier, ResourceProfile,
-    RetentionPolicy, RunnerPack, RuntimeShape, SourceBuildImpact, SubjectRef,
+    RetentionPolicy, RunnerPack, RuntimeShape, SourceBuildImpact, SubjectRef, all_source_contracts,
+    source_runtime_bindings,
 };
 use sinex_primitives::views::{
     ActionAvailability, ActionAvailabilityState, ActionSideEffect, SourceCoverageListView,
@@ -590,6 +591,59 @@ async fn source_coverage_view_surfaces_missing_material_caveat() -> xtask::TestR
     assert!(view.caveats.iter().any(|caveat| caveat.id
         == ReadinessCaveatId::SourceAbsent.as_str()
         && caveat.message.contains("no source material")));
+    Ok(())
+}
+
+#[sinex_test]
+async fn registered_eventless_contract_with_no_evidence_is_explicitly_uncovered()
+-> xtask::TestResult<()> {
+    // Use the production inventory rather than a test-local descriptor: noop
+    // is an authoritative registered contract whose event_types are empty by
+    // design. Empty aggregate maps model the real zero-material,
+    // zero-event, zero-runtime-row case.
+    let contract = all_source_contracts()
+        .find(|contract| contract.id == "noop")
+        .expect("the production eventless noop contract must be registered");
+    assert!(contract.event_types.is_empty());
+    let bindings = source_runtime_bindings()
+        .filter(|binding| binding.source_id == contract.id)
+        .collect::<Vec<_>>();
+    assert!(
+        bindings.iter().any(|binding| !binding.proposed),
+        "the eventless contract should exercise the accepted-binding path"
+    );
+
+    let view = source_coverage_view_with_stale_after(
+        contract,
+        &bindings,
+        &HashMap::new(),
+        &HashMap::new(),
+        &HashMap::new(),
+        &HashMap::new(),
+        &HashMap::new(),
+        &HashMap::new(),
+        300,
+        Timestamp::now(),
+    );
+
+    assert_eq!(view.source_id, "noop");
+    assert_eq!(view.material_count, 0);
+    assert_eq!(view.event_count, 0);
+    assert_eq!(view.readiness, SourceCoverageReadiness::MissingMaterial);
+    assert_eq!(view.continuity, SourceCoverageContinuity::Gapped);
+    assert_ne!(view.readiness, SourceCoverageReadiness::Ready);
+    assert_ne!(view.continuity, SourceCoverageContinuity::Active);
+    assert!(view.gaps.iter().any(|gap| gap.kind == "missing_material"));
+    assert!(view.gaps.iter().any(|gap| gap.kind == "missing_events"));
+    assert!(view.caveats.iter().any(|caveat| {
+        caveat.id == ReadinessCaveatId::SourceAbsent.as_str()
+            && caveat.message.contains("no source material")
+    }));
+    assert!(
+        view.caveats
+            .iter()
+            .all(|caveat| !caveat.message.contains("coverage was present"))
+    );
     Ok(())
 }
 

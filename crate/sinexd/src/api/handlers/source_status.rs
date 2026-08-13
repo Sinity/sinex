@@ -482,6 +482,13 @@ fn source_coverage_view_with_stale_after(
     let has_live_binding = accepted_binding_count > 0;
     let has_material = material_count > 0;
     let has_events = event_count > 0;
+    // A registered contract is not covered merely because it has a binding,
+    // a runtime observation, or historical material on its own. Both sides
+    // of the contract must have evidence before this surface may report
+    // coverage as present. Keep this as one predicate so the missing-
+    // evidence guard cannot drift independently in the readiness and
+    // continuity branches below.
+    let has_coverage_evidence = has_material && has_events;
     let fallback_last_observed = max_timestamp(
         last_material_at.map(Into::into),
         last_event_at.map(Into::into),
@@ -617,28 +624,37 @@ fn source_coverage_view_with_stale_after(
         caveats.extend(sessions.iter().map(session_control_caveat));
     }
 
-    let readiness = if coverage_stale && has_live_binding && (has_material || has_events) {
+    let readiness = if !has_coverage_evidence {
+        if !has_material {
+            SourceCoverageReadiness::MissingMaterial
+        } else {
+            SourceCoverageReadiness::MissingEvents
+        }
+    } else if coverage_stale && has_live_binding {
         SourceCoverageReadiness::Stale
     } else if !has_live_binding && proposed_binding_count > 0 {
         SourceCoverageReadiness::Proposed
     } else if !has_live_binding {
         SourceCoverageReadiness::MissingBinding
-    } else if !has_material {
-        SourceCoverageReadiness::MissingMaterial
-    } else if !has_events {
-        SourceCoverageReadiness::MissingEvents
     } else {
         SourceCoverageReadiness::Ready
     };
-    let continuity = if coverage_stale && has_live_binding && (has_material || has_events) {
+    let continuity = if !has_coverage_evidence {
+        match (has_material, has_events) {
+            (false, false) if bindings.is_empty() => SourceCoverageContinuity::Unknown,
+            (false, false) => SourceCoverageContinuity::Gapped,
+            (true, false) => SourceCoverageContinuity::MaterialOnly,
+            (false, true) => SourceCoverageContinuity::EventOnly,
+            (true, true) => unreachable!("coverage evidence predicate rejected both sides"),
+        }
+    } else if coverage_stale && has_live_binding {
         SourceCoverageContinuity::Stale
     } else {
         match (has_material, has_events) {
             (true, true) => SourceCoverageContinuity::Active,
-            (true, false) => SourceCoverageContinuity::MaterialOnly,
-            (false, true) => SourceCoverageContinuity::EventOnly,
-            (false, false) if bindings.is_empty() => SourceCoverageContinuity::Unknown,
-            (false, false) => SourceCoverageContinuity::Gapped,
+            (true, false) | (false, true) | (false, false) => {
+                unreachable!("coverage evidence predicate guarantees both sides")
+            }
         }
     };
     let selected_binding = bindings
