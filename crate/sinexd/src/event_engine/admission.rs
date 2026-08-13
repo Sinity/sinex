@@ -147,7 +147,7 @@ enum EquivalenceOutcome {
     Fresh,
     /// A live row shares the key and policy says drop this interpretation
     /// (a `SuppressDuplicate` type, or an unchanged `SupersedeOnChange` re-emit).
-    Suppress,
+    Suppress { existing_event_id: Uuid },
     /// A live row shares the key, the type is `SupersedeOnChange`, and the
     /// content changed — archive `superseded_event_id` and admit this revision.
     Supersede { superseded_event_id: Uuid },
@@ -162,11 +162,15 @@ fn classify_live_match(
     live: &LiveEquivalenceRow,
 ) -> EquivalenceOutcome {
     match revision_policy_for_event_type(candidate.event_type.as_str()) {
-        RevisionPolicy::SuppressDuplicate => EquivalenceOutcome::Suppress,
+        RevisionPolicy::SuppressDuplicate => EquivalenceOutcome::Suppress {
+            existing_event_id: live.id,
+        },
         RevisionPolicy::SupersedeOnChange => {
             if payload_content_hash(&candidate.payload) == live_row_content_hash(live) {
                 // Identical re-emit of the same occurrence: idempotent, suppress.
-                EquivalenceOutcome::Suppress
+                EquivalenceOutcome::Suppress {
+                    existing_event_id: live.id,
+                }
             } else {
                 EquivalenceOutcome::Supersede {
                     superseded_event_id: live.id,
@@ -348,6 +352,7 @@ pub struct AdmissionRejection {
     pub kind: AdmissionRejectionKind,
     pub reason: String,
     pub event_id: Option<Uuid>,
+    pub existing_event_id: Option<Uuid>,
     pub candidate: Option<SuppressedCandidate>,
 }
 
@@ -357,6 +362,7 @@ impl AdmissionRejection {
             kind,
             reason: reason.into(),
             event_id: None,
+            existing_event_id: None,
             candidate: None,
         }
     }
@@ -364,6 +370,12 @@ impl AdmissionRejection {
     #[must_use]
     pub fn with_event_id(mut self, event_id: Uuid) -> Self {
         self.event_id = Some(event_id);
+        self
+    }
+
+    #[must_use]
+    pub fn with_existing_event_id(mut self, event_id: Uuid) -> Self {
+        self.existing_event_id = Some(event_id);
         self
     }
 
@@ -812,7 +824,7 @@ impl AdmissionService {
         };
         let supersede_target = match equivalence {
             EquivalenceOutcome::Fresh => None,
-            EquivalenceOutcome::Suppress => {
+            EquivalenceOutcome::Suppress { existing_event_id } => {
                 let mut rejection = AdmissionRejection::new(
                     AdmissionRejectionKind::OccurrenceDuplicate,
                     match &event.equivalence_key {
@@ -822,7 +834,9 @@ impl AdmissionService {
                         None => "live event with equivalence_key already exists".to_string(),
                     },
                 );
-                rejection = rejection.with_candidate(&event);
+                rejection = rejection
+                    .with_existing_event_id(existing_event_id)
+                    .with_candidate(&event);
                 return Ok(AdmissionDecision::Suppressed(rejection));
             }
             EquivalenceOutcome::Supersede {

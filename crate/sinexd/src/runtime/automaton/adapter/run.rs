@@ -7,6 +7,10 @@ use super::{AutomatonRuntime, historical_resume_position, recv_invalidation};
 
 use crate::runtime::automaton::context::AutomatonContext;
 use crate::runtime::automaton::traits::Automaton;
+use crate::runtime::durable_emission::{
+    DurableEmissionRequest, EmissionOrigin, ProgressAtom, ReceiptLevel,
+};
+use crate::runtime::durable_emission_backend::emit_batch_durable;
 use crate::runtime::stream::{Checkpoint, RuntimeContext, ScanArgs, ScanReport};
 use crate::runtime::{RuntimeResult, SinexError};
 use sinex_primitives::env as shared_env;
@@ -368,6 +372,7 @@ where
             for query_event in &matching_events {
                 let ctx = AutomatonContext::historical(&query_event.event, operation_id)?;
                 let trigger_event_id = ctx.trigger_event_id;
+                let state_before = self.snapshot_state()?;
 
                 match self
                     .automaton
@@ -379,22 +384,67 @@ where
                     .await
                 {
                     Ok(outputs) => {
-                        self.validate_output_batch(&outputs, "historical replay")?;
+                        if let Err(error) =
+                            self.validate_output_batch(&outputs, "historical replay")
+                        {
+                            self.restore_state(&state_before)?;
+                            return Err(error);
+                        }
                         self.observe_output_batch(&outputs, "replay").await;
-                        let output_events =
-                            self.build_output_events(outputs, Some(ctx.trigger_event_id), &ctx)?;
-                        if let Some(ref emitter) = self.event_emitter {
-                            for output_event in output_events {
-                                emitter.emit(output_event).await.map_err(|error| {
-                                    SinexError::lifecycle(
-                                        "failed to emit automaton replay output event",
-                                    )
-                                    .with_context("automaton", self.automaton.name())
-                                    .with_context("trigger_event_id", trigger_event_id.to_string())
-                                    .with_source(error)
-                                })?;
-                                events_emitted += 1;
+                        let output_events = match self.build_output_events(
+                            outputs,
+                            Some(ctx.trigger_event_id),
+                            &ctx,
+                        ) {
+                            Ok(events) => events,
+                            Err(error) => {
+                                self.restore_state(&state_before)?;
+                                return Err(error);
                             }
+                        };
+                        if output_events.is_empty() {
+                            // No output is itself a terminal settlement: the
+                            // input's state mutation may advance the replay
+                            // frontier without waiting on an emitter.
+                        } else {
+                            let emitter = self.event_emitter.as_ref().ok_or_else(|| {
+                                SinexError::lifecycle(
+                                    "automaton replay output channel is not initialized",
+                                )
+                                .with_context("automaton", self.automaton.name())
+                                .with_context("trigger_event_id", trigger_event_id.to_string())
+                            })?;
+                            let registry = self
+                                .runtime
+                                .as_ref()
+                                .map(RuntimeContext::settlement_registry)
+                                .unwrap_or_default();
+                            let request = DurableEmissionRequest {
+                                origin: EmissionOrigin::HistoricalReplay,
+                                required_level: ReceiptLevel::AdmissionSettled,
+                                progress_atom: ProgressAtom::AutomatonInputBatch {
+                                    automaton: self.automaton.name().to_string(),
+                                    input_event_ids: vec![*trigger_event_id.as_uuid()],
+                                },
+                                events: output_events,
+                                allow_spool_backend: false,
+                            };
+                            let receipt = emit_batch_durable(
+                                &registry,
+                                emitter,
+                                request,
+                                self.durable_emission_timeout,
+                            )
+                            .await;
+                            if !receipt.unlocks_progress() {
+                                self.restore_state(&state_before)?;
+                                return Err(SinexError::processing(
+                                    "historical replay output did not reach a durable settlement",
+                                )
+                                .with_context("automaton", self.automaton.name())
+                                .with_context("trigger_event_id", trigger_event_id.to_string()));
+                            }
+                            events_emitted += receipt.items.len() as u64;
                         }
                     }
                     Err(e) => {
@@ -421,6 +471,19 @@ where
                                 let failure_err = self
                                     .send_to_processing_failure_queue_or_fail(&failed_event, &e)
                                     .await;
+                                if failure_err.is_ok()
+                                    && !self.processing_failure_routing_is_durable()
+                                {
+                                    self.restore_state(&state_before)?;
+                                    return Err(SinexError::processing(
+                                        "historical replay failure routing was not durably evidenced",
+                                    )
+                                    .with_context("automaton", self.automaton.name())
+                                    .with_context(
+                                        "trigger_event_id",
+                                        trigger_event_id.to_string(),
+                                    ));
+                                }
                                 if let Err(cp_err) = self
                                     .save_state_with_file_fallback(
                                         "historical replay processing-failure checkpoint",
@@ -435,9 +498,13 @@ where
                                         "Failed to save checkpoint after replay processing-failure routing error"
                                     );
                                 }
-                                failure_err?;
+                                if let Err(error) = failure_err {
+                                    self.restore_state(&state_before)?;
+                                    return Err(error);
+                                }
                             }
                             Settlement::Retry { .. } => {
+                                self.restore_state(&state_before)?;
                                 error!(
                                     target: "sinex_metrics",
                                     metric = "derive.replay_retry_halts_total",
@@ -462,6 +529,7 @@ where
                                 return Err(e.into());
                             }
                             Settlement::HaltModule { reason } => {
+                                self.restore_state(&state_before)?;
                                 // Halt requests clean drain (see source_driver
                                 // / process.rs for the same shape) so systemd
                                 // records the unit as cleanly exited.
@@ -495,6 +563,7 @@ where
                                 )));
                             }
                             Settlement::DrainRuntimeUnit { reason } => {
+                                self.restore_state(&state_before)?;
                                 if let Some(drain) = self.shutdown_tx.as_ref() {
                                     let _ = drain.request_drain_and_warn(self.automaton.name());
                                 }

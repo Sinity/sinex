@@ -47,7 +47,9 @@ use tokio::sync::mpsc;
 use xtask::sandbox::prelude::*;
 
 #[derive(Debug, Default, Serialize, Deserialize)]
-struct TestDerivedState;
+struct TestDerivedState {
+    processed: usize,
+}
 
 #[derive(Debug, Default, Serialize, Deserialize)]
 struct WildcardMaterialOnlyState {
@@ -202,10 +204,11 @@ impl Transducer for EmittingAutomaton {
 
     async fn process(
         &mut self,
-        _state: &mut Self::State,
+        state: &mut Self::State,
         _input: Self::Input,
         context: &AutomatonContext,
     ) -> std::result::Result<Option<DerivedOutput<Self::Output>>, AutomatonLogicError> {
+        state.processed += 1;
         Ok(Some(
             DerivedOutput::transduced(
                 json!({"ok": true}),
@@ -551,6 +554,8 @@ async fn make_runtime_state_with_db(
     ));
     let (event_sender, event_receiver) = mpsc::channel::<Event<JsonValue>>(32);
     let emitter = EventEmitter::new(event_sender, false);
+    let settlement_registry = crate::runtime::durable_emission::SettlementRegistry::new();
+    let _settler = auto_settle_events(event_receiver, settlement_registry.clone());
     let publisher = Arc::new(NatsPublisher::new(ctx.nats_client()));
     let handles = RuntimeHandles::new(
         ctx.pool().clone(),
@@ -558,7 +563,8 @@ async fn make_runtime_state_with_db(
         emitter,
         EventTransport::Nats(publisher),
         None,
-    );
+    )
+    .with_settlement_registry(settlement_registry);
     let work_dir = tempdir()?;
     let work_dir_path = work_dir.keep();
     let work_dir_utf8 = Utf8PathBuf::from_path_buf(work_dir_path.clone()).map_err(|path| {
@@ -580,7 +586,10 @@ async fn make_runtime_state_with_db(
             HashMap::new(),
             work_dir_utf8,
         ),
-        event_receiver,
+        // The helper's returned receiver is retained for API compatibility;
+        // the settlement forwarder above owns the actual emitter receiver so
+        // historical replay tests exercise the production receipt route.
+        mpsc::channel::<Event<JsonValue>>(1).1,
     ))
 }
 
@@ -1234,6 +1243,10 @@ async fn process_batch_advances_checkpoint_only_after_durable_emission_settles(
             adapter.persisted_state.events_processed, 0,
             "the checkpoint must not advance while durable emission is still unresolved"
         );
+        assert_eq!(
+            adapter.persisted_state.state.processed, 0,
+            "unsettled output must roll back the automaton state delta as well as input progress"
+        );
         assert_eq!(adapter.current_checkpoint_internal(), Checkpoint::None);
     }
 
@@ -1373,11 +1386,7 @@ impl Windowed for EmittingWindowedAutomaton {
         state.has_pending_window = false;
         let declaration = &FLUSH_BARRIER_OUTPUT_DECLARATIONS[0];
         Ok(Some(
-            DerivedOutput::windowed(
-                json!({"ok": true}),
-                Timestamp::now(),
-                vec![Uuid::now_v7()],
-            )
+            DerivedOutput::windowed(json!({"ok": true}), Timestamp::now(), vec![Uuid::now_v7()])
                 .with_declaration_id(declaration.declaration_id)
                 .with_product_class(declaration.product_class)
                 .with_claim_support(declaration.default_support.instantiate(1, 0, 1, 0)),
@@ -1425,6 +1434,89 @@ async fn timer_flush_does_not_clear_window_state_before_emission_settles(
         "timer_flush must not clear the window's state past an output whose durable-emission \
          receipt never settled -- doing so unconditionally is exactly sinex-vxu's remaining \
          crash-loss window"
+    );
+    Ok(())
+}
+
+#[sinex_test]
+async fn timer_flush_checkpoints_state_only_after_durable_settlement(
+    ctx: TestContext,
+) -> TestResult<()> {
+    let ctx = ctx.with_nats().shared().await?;
+    let registry = crate::runtime::durable_emission::SettlementRegistry::new();
+    let (event_sender, event_receiver) = mpsc::channel::<Event<JsonValue>>(8);
+    let _settler = auto_settle_events(event_receiver, registry.clone());
+    let emitter = EventEmitter::new(event_sender, false);
+    let runtime =
+        make_runtime_state_with_registry(&ctx, "derived-windowed-flush-checkpoint-test", registry)
+            .await?;
+    let checkpoint_manager = runtime.checkpoint_manager();
+
+    let mut adapter = AutomatonRuntime::new(WindowedWrapper(EmittingWindowedAutomaton))
+        .with_durable_emission_timeout(std::time::Duration::from_millis(500));
+    adapter.checkpoint_manager = Some(checkpoint_manager.clone());
+    adapter.event_emitter = Some(emitter);
+    adapter.runtime = Some(runtime);
+    adapter.persisted_state.state.has_pending_window = true;
+
+    assert_eq!(adapter.timer_flush(Timestamp::now()).await?, 1);
+    let checkpoint = checkpoint_manager.load_checkpoint().await?;
+    assert_eq!(
+        checkpoint
+            .data
+            .as_ref()
+            .and_then(|data| data.get("state"))
+            .and_then(|state| state.get("has_pending_window"))
+            .and_then(JsonValue::as_bool),
+        Some(false),
+        "timer checkpoint must contain the post-flush state"
+    );
+    Ok(())
+}
+
+#[sinex_test]
+async fn shutdown_saves_pre_flush_state_after_unsettled_timer_output(
+    ctx: TestContext,
+) -> TestResult<()> {
+    let ctx = ctx.with_nats().shared().await?;
+    let registry = crate::runtime::durable_emission::SettlementRegistry::new();
+    let (event_sender, _event_receiver) = mpsc::channel::<Event<JsonValue>>(8);
+    let emitter = EventEmitter::new(event_sender, false);
+    let runtime =
+        make_runtime_state_with_registry(&ctx, "derived-windowed-flush-shutdown-test", registry)
+            .await?;
+    let checkpoint_dir = tempdir()?;
+    let checkpoint_path = checkpoint_dir.path().join("shutdown.checkpoint.json");
+    let mut adapter = AutomatonRuntime::with_shutdown_config(
+        WindowedWrapper(EmittingWindowedAutomaton),
+        ShutdownConfig {
+            checkpoint_path: Some(checkpoint_path.clone()),
+            ..ShutdownConfig::default()
+        },
+    )
+    .with_durable_emission_timeout(std::time::Duration::from_millis(100));
+    adapter.event_emitter = Some(emitter);
+    adapter.runtime = Some(runtime);
+    adapter.persisted_state.state.has_pending_window = true;
+
+    adapter
+        .timer_flush(Timestamp::now())
+        .await
+        .expect_err("unsettled timer output must block the flush");
+    RuntimeModule::shutdown(&mut adapter).await?;
+
+    let checkpoint = CheckpointState::load_from_file(&checkpoint_path)
+        .await?
+        .expect("shutdown must leave a checkpoint file");
+    assert_eq!(
+        checkpoint
+            .data
+            .as_ref()
+            .and_then(|data| data.get("state"))
+            .and_then(|state| state.get("has_pending_window"))
+            .and_then(JsonValue::as_bool),
+        Some(true),
+        "shutdown must not persist state past an unsettled timer receipt"
     );
     Ok(())
 }

@@ -49,6 +49,10 @@ The following are known route gaps, not successful imports: archived journald fi
 
 Every materialized route uses the generic finalizer to emit a canonical `MaterialManifestV1`. `Partial` means the envelope is present and every unavailable field is encoded as `unknown`, `not_applicable`, or `withheld`; `Legacy` and `Unknown` identify routes that have no proved V1 material authority. These labels are route evidence, not inferred source facts.
 
+The manifest and source-material registry form one recovery authority. Replay loads the canonical manifest and its referenced bytes from the content store, validates canonical bytes, digest, size, source-material ID, and occurrence ranges, then re-emits the original material coordinates. Removing the original source path must not change those coordinates. Registry deletion is guarded by a live and archived event-reference check, so a material remains available while any interpretation still cites it.
+
+Import reports are operation-scoped evidence. They classify admitted outputs from both `core.events` and `audit.archived_events`, retain replacement lineage after a later replay archives an output, and include the matched existing event ID for suppression examples. A finite CLI report adds a ViewEnvelope caveat when at least half of ten or more attempted candidates were suppressed. This is an inspection prompt, not proof that the import failed.
+
 ## Explicitly out of the activity-plane import
 
 These roots are preserved and audited separately. They are not silently treated as missing Sinex data. Optional media and uncovered exports remain explicit W1 decisions rather than being silently dropped:
@@ -70,6 +74,8 @@ Before Phase C, refresh this table's size/cardinality columns with a machine-rea
 3. admitted, suppressed, superseded, DLQ, and unresolved counts;
 4. `ts_orig` quality distribution and source-material provenance;
 5. final source row/event counts and a rerun/idempotence comparison.
+
+The rerun comparison must use `sinexctl ops import report <operation-id> --format json`. A successful idempotent rerun is expected to show zero new live rows and all repeat candidates classified as suppressed, with source/material/event-type breakdown rows and examples. A rebuild or replay that supersedes prior interpretations must retain the replacement examples even after those new interpretations are archived.
 
 For a registered historical source, the runtime shape is:
 

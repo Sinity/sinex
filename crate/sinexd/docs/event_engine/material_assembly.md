@@ -49,6 +49,7 @@ under the per-material state lock.
 ## Error Handling & Raw-Ingest DLQ
 
 If an assembly fails due to corruption, timeout, or storage errors:
-- **DLQ Routing**: The material ID and failure context are routed to the raw-ingest DLQ for manual investigation.
+- **DLQ Routing**: The material ID and failure context are routed to the raw-ingest DLQ for manual investigation. The assembler waits for the JetStream publish acknowledgement before marking the material failed and acknowledging its source frame.
+- **DLQ Publish Failure**: A failed or unconfirmed DLQ publish leaves the material retryable and NAKs the source frame. It never records a terminal failure with no durable DLQ evidence.
 - **Cleanup**: Temporary files and WAL entries are purged to reclaim disk space.
 - **State Update**: Source material is marked failed and metrics/logs capture failure context.

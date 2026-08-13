@@ -81,10 +81,17 @@ async fn publish_requeueable_dlq_message(
     headers.insert("Original-Subject", original_subject.as_str());
     headers.insert("Event-Id", event_id);
     headers.insert("Nats-Msg-Id", format!("dlq.{event_id}").as_str());
+    let original_payload = json!({"id": event_id, "value": "requeueable"});
+    let raw_bytes = serde_json::to_vec(&original_payload)?;
     let envelope = json!({
+        "requeueable": true,
+        "raw_bytes_base64": base64::Engine::encode(
+            &base64::engine::general_purpose::STANDARD,
+            raw_bytes,
+        ),
         "nats_msg_id": format!("raw.{event_id}"),
         "event_id": event_id,
-        "original_payload": {"id": event_id, "value": "requeueable"},
+        "original_payload": original_payload,
         "error": "test failure"
     });
     client

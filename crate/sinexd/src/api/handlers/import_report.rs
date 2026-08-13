@@ -234,3 +234,56 @@ fn collect_material_ids(data: &ImportReportData) -> Vec<String> {
     }
     ids.into_iter().collect()
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use sinex_db::repositories::{
+        ImportEventRow, ImportReplacementRow, Operation, OperationRecord,
+    };
+    use sinex_primitives::domain::OperationStatus;
+    use sinex_primitives::Id;
+
+    #[test]
+    fn archived_operation_output_remains_in_replacement_report() {
+        let operation_id = Id::<Operation>::new();
+        let old_event_id = Uuid::now_v7();
+        let new_event_id = Uuid::now_v7();
+        let material_id = Uuid::now_v7();
+        let response = render_report(
+            operation_id.to_uuid(),
+            ImportReportData {
+                operation: OperationRecord {
+                    id: operation_id,
+                    operation_type: "replay".to_string(),
+                    operator: "test".to_string(),
+                    scope: None,
+                    result_status: OperationStatus::Success,
+                    result_message: None,
+                    preview_summary: None,
+                    duration_ms: None,
+                },
+                admitted: vec![ImportEventRow {
+                    id: new_event_id,
+                    source: "fixture".to_string(),
+                    event_type: "fixture.event".to_string(),
+                    source_material_id: Some(material_id),
+                }],
+                replacements: vec![ImportReplacementRow {
+                    old_event_id,
+                    new_event_id,
+                    relation_kind: "superseded".to_string(),
+                }],
+                outcomes: Vec::new(),
+            },
+        );
+
+        assert_eq!(response.new, 0);
+        assert_eq!(response.superseded, 1);
+        let old_event_id = old_event_id.to_string();
+        assert_eq!(
+            response.examples[0].superseded_event_id.as_deref(),
+            Some(old_event_id.as_str())
+        );
+    }
+}

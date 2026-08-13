@@ -109,9 +109,17 @@ impl ImportOutcomeRepository<'_> {
 
         let admitted = sqlx::query_as::<_, ImportEventRow>(
             r#"
+            WITH operation_events AS (
+                SELECT id, source, event_type, source_material_id
+                FROM core.events
+                WHERE created_by_operation_id = $1
+                UNION ALL
+                SELECT id, source, event_type, source_material_id
+                FROM audit.archived_events
+                WHERE created_by_operation_id = $1
+            )
             SELECT id, source, event_type, source_material_id
-            FROM core.events
-            WHERE created_by_operation_id = $1
+            FROM operation_events
             ORDER BY id
             "#,
         )
@@ -122,11 +130,19 @@ impl ImportOutcomeRepository<'_> {
 
         let replacements = sqlx::query_as::<_, ImportReplacementRow>(
             r#"
+            WITH operation_events AS (
+                SELECT id
+                FROM core.events
+                WHERE created_by_operation_id = $1
+                UNION ALL
+                SELECT id
+                FROM audit.archived_events
+                WHERE created_by_operation_id = $1
+            )
             SELECT er.old_event_id, er.new_event_id, er.relation_kind
             FROM audit.event_replacements er
-            JOIN core.events e ON e.id = er.new_event_id
-            WHERE e.created_by_operation_id = $1
-              AND er.relation_kind = 'superseded'
+            JOIN operation_events e ON e.id = er.new_event_id
+            WHERE er.relation_kind = 'superseded'
             ORDER BY er.replaced_at, er.id
             "#,
         )

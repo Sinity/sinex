@@ -115,6 +115,7 @@ impl JetStreamConsumer {
                                  kept existing live interpretation and suppressed this revision"
                             ),
                             event_id: Some(admitted.event_id),
+                            existing_event_id: Some(superseded_event_id),
                             candidate: None,
                         }
                         .with_candidate(&admitted.event);
@@ -474,7 +475,7 @@ impl JetStreamConsumer {
                     &candidate.source,
                     &candidate.event_type,
                     &rejection.reason,
-                    None,
+                    rejection.existing_event_id,
                 )
                 .await
         {

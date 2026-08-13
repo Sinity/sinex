@@ -81,6 +81,10 @@ pub struct DlqRetryResult {
     pub permanently_failed: usize,
     /// Messages where retry failed transiently (NAK'd for redelivery).
     pub transient_failures: usize,
+    /// The drain stopped before the invocation-time backlog snapshot was
+    /// exhausted. The caller must keep the operation visible for recovery or
+    /// an explicit operator retry instead of reporting success.
+    pub incomplete: bool,
 }
 
 /// Durable progress emitted after each bulk DLQ settlement attempt.
@@ -243,14 +247,15 @@ impl DlqRetryHandler {
                     info!(
                         "DLQ drain stopped after {processed}/{target_count} messages (stream exhausted or timeout)"
                     );
+                    result.incomplete = true;
                     break;
                 }
             }
         }
 
         info!(
-            "DLQ retry complete: {} retried, {} permanently failed out of {processed} processed",
-            result.retried, result.permanently_failed
+            "DLQ retry complete: {} retried, {} permanently failed, {} transient failures out of {processed} processed (incomplete={})",
+            result.retried, result.permanently_failed, result.transient_failures, result.incomplete
         );
         Ok(result)
     }
@@ -565,8 +570,9 @@ impl DlqRetryHandler {
     ) -> RuntimeResult<()> {
         let sequence = msg
             .info()
-            .map_err(|error| SinexError::processing("failed to inspect settled DLQ message")
-                .with_source(error))?
+            .map_err(|error| {
+                SinexError::processing("failed to inspect settled DLQ message").with_source(error)
+            })?
             .stream_sequence;
         let deleted = stream
             .delete_message(sequence)

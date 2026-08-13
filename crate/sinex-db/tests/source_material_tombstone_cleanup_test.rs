@@ -114,3 +114,36 @@ async fn delete_material_removes_registry_row(ctx: TestContext) -> TestResult<()
     );
     Ok(())
 }
+
+#[sinex_test]
+async fn delete_material_preserves_referenced_registry_row(ctx: TestContext) -> TestResult<()> {
+    let material_id = ctx
+        .create_source_material(Some("delete-referenced-test"))
+        .await?
+        .to_uuid();
+    sqlx::query!(
+        r#"
+        INSERT INTO core.events (
+            id, source, event_type, host, payload, ts_orig, ts_orig_subnano,
+            source_material_id, anchor_byte
+        )
+        VALUES ($1, 'test', 'fixture.event', 'test-host', '{}'::jsonb,
+                NOW(), 0, $2, 0)
+        "#,
+        Uuid::now_v7(),
+        material_id,
+    )
+    .execute(ctx.pool())
+    .await?;
+
+    let repo = ctx.pool.source_materials();
+    assert!(
+        !repo.delete_material(Id::from_uuid(material_id)).await?,
+        "referenced material must remain available for replay recovery"
+    );
+    assert!(
+        repo.get_by_id(Id::from_uuid(material_id)).await?.is_some(),
+        "failed delete must preserve the registry row"
+    );
+    Ok(())
+}

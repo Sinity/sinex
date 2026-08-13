@@ -64,6 +64,10 @@ NATS DLQ message in `Sinex-Durable-Failure-Id`. NATS retention bounds delivery
 and replay availability only. Reimport completeness review must use the
 Postgres rows because they survive DLQ stream expiry.
 
+DLQ settlement is confirmation-gated. The event engine persists the Postgres failure witness before publishing the DLQ envelope, waits for the JetStream publish acknowledgement, and leaves the raw message unacked when publication or confirmation fails. A duplicate publish acknowledgement is rejected for a new DLQ route because it does not prove that this failure has a fresh durable envelope. Material assembly follows the same rule and NAKs its source frame when the material DLQ publish cannot be confirmed.
+
+Operator requeue publishes the exact retained raw bytes with a message ID derived from the retained DLQ stream sequence and requeue generation. It deletes the DLQ entry only after the raw publish acknowledgement. A duplicate acknowledgement is accepted only as idempotent evidence for that same sequence and generation, which makes a request retry safe without treating unrelated DLQ failures as the same message. Bulk requeue creates its operation record before draining, writes progress after each settlement attempt, marks incomplete or transiently failed work as failed, and resumes running operations from their durable selector during startup recovery.
+
 ### Batch Insert Routing
 
 ```

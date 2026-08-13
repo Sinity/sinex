@@ -9,7 +9,9 @@
 
 use crate::api::service_container::ServiceContainer;
 use crate::event_engine::policy::{DisclosureCaveat, DisclosureContext, PolicyEngine};
-use crate::runtime::dlq_retry::{DlqRetryConfig, DlqRetryHandler, DlqRetryProgress};
+use crate::runtime::dlq_retry::{
+    DlqRetryConfig, DlqRetryHandler, DlqRetryProgress, DlqRetryResult,
+};
 use serde_json::Value as JsonValue;
 use serde_json::json;
 use sinex_db::DbPoolExt;
@@ -465,12 +467,9 @@ pub async fn handle_dlq_requeue(
         .state()
         .start_operation("dlq.requeue", &actor, operation_scope.clone())
         .await
-        .map_err(|error| {
-            SinexError::database("Failed to persist DLQ requeue operation")
-                .with_source(error)
-        })?;
+        .map_err(|error| SinexError::database("Failed to persist DLQ requeue operation").with_source(error))?;
     let operation_id = operation.id.clone();
-    services
+    if let Err(error) = services
         .pool()
         .state()
         .update_operation_meta(
@@ -484,13 +483,27 @@ pub async fn handle_dlq_requeue(
                 "requeued_count": 0,
                 "permanently_failed": 0,
                 "transient_failures": 0,
+                "incomplete": false,
             }),
         )
         .await
-        .map_err(|error| {
-            SinexError::database("Failed to persist DLQ requeue progress")
-                .with_source(error)
-        })?;
+    {
+        let _ = services
+            .pool()
+            .state()
+            .fail_operation(
+                &operation_id,
+                json!({
+                    "error": "Failed to persist DLQ requeue progress",
+                    "detail": error.to_string(),
+                    "processed": 0,
+                }),
+            )
+            .await;
+        return Err(
+            SinexError::database("Failed to persist DLQ requeue progress").with_source(error),
+        );
+    }
 
     if let Some(ref event_id) = requeue_params.event_id {
         // A single-message retry is small enough to remain synchronous, but
@@ -583,6 +596,19 @@ fn spawn_bulk_dlq_requeue(
     selector: DlqBulkSelector,
 ) {
     let Some(nats_client) = services.nats_client().cloned() else {
+        let pool = services.pool().clone();
+        tokio::spawn(async move {
+            let _ = pool
+                .state()
+                .fail_operation(
+                    &operation_id,
+                    json!({
+                        "error": "NATS client is unavailable; DLQ requeue did not start",
+                        "processed": 0,
+                    }),
+                )
+                .await;
+        });
         return;
     };
     let env = services.environment().clone();
@@ -637,22 +663,46 @@ fn spawn_bulk_dlq_requeue(
                         "Some DLQ messages exceeded max retries and were permanently discarded"
                     );
                 }
-                if let Err(error) = services
-                    .pool()
-                    .state()
-                    .complete_operation(
-                        &operation_id,
-                        json!({
-                            "message": format!("requeued {} raw-ingest DLQ message(s)", result.retried),
-                            "processed": result.retried + result.permanently_failed + result.transient_failures,
-                            "requeued_count": result.retried,
-                            "permanently_failed": result.permanently_failed,
-                            "transient_failures": result.transient_failures,
-                        }),
-                    )
-                    .await
-                {
-                    warn!(operation_id = %operation_id, error = %error, "Failed to complete DLQ requeue operation");
+                let update = if dlq_operation_status(&result) == OperationStatus::Failed {
+                    let reason = if result.incomplete {
+                        "DLQ requeue stopped before the retained backlog snapshot was exhausted"
+                    } else {
+                        "DLQ requeue left transiently failed messages for redelivery"
+                    };
+                    services
+                        .pool()
+                        .state()
+                        .fail_operation(
+                            &operation_id,
+                            json!({
+                                "message": reason,
+                                "requeued_count": result.retried,
+                                "permanently_failed": result.permanently_failed,
+                                "transient_failures": result.transient_failures,
+                                "incomplete": result.incomplete,
+                                "processed": result.retried.saturating_add(result.permanently_failed).saturating_add(result.transient_failures),
+                            }),
+                        )
+                        .await
+                } else {
+                    services
+                        .pool()
+                        .state()
+                        .complete_operation(
+                            &operation_id,
+                            json!({
+                                "message": format!("requeued {} raw-ingest DLQ message(s)", result.retried),
+                                "requeued_count": result.retried,
+                                "permanently_failed": result.permanently_failed,
+                                "transient_failures": result.transient_failures,
+                                "incomplete": false,
+                                "processed": result.retried.saturating_add(result.permanently_failed),
+                            }),
+                        )
+                        .await
+                };
+                if let Err(error) = update {
+                    warn!(operation_id = %operation_id, error = %error, "Failed to settle DLQ requeue operation");
                 }
             }
             Err(error) => {
@@ -660,10 +710,7 @@ fn spawn_bulk_dlq_requeue(
                 if let Err(update_error) = services
                     .pool()
                     .state()
-                    .fail_operation(
-                        &operation_id,
-                        json!({ "error": message }),
-                    )
+                    .fail_operation(&operation_id, json!({ "error": message }))
                     .await
                 {
                     warn!(
@@ -793,6 +840,19 @@ fn spawn_recovered_single_dlq_requeue(
     event_id: String,
 ) {
     let Some(nats_client) = services.nats_client().cloned() else {
+        let pool = services.pool().clone();
+        tokio::spawn(async move {
+            let _ = pool
+                .state()
+                .fail_operation(
+                    &operation_id,
+                    json!({
+                        "error": "NATS client is unavailable; recovered DLQ requeue did not start",
+                        "processed": 0,
+                    }),
+                )
+                .await;
+        });
         return;
     };
     let env = services.environment().clone();
@@ -835,6 +895,14 @@ fn dlq_progress_summary(progress: &DlqRetryProgress) -> JsonValue {
         "transient_failures": progress.transient_failures,
         "last_sequence": progress.last_sequence,
     })
+}
+
+fn dlq_operation_status(result: &DlqRetryResult) -> OperationStatus {
+    if result.incomplete || result.transient_failures > 0 {
+        OperationStatus::Failed
+    } else {
+        OperationStatus::Success
+    }
 }
 
 /// Handle raw-DLQ purge request - permanently delete raw-ingest DLQ messages.

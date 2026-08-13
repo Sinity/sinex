@@ -2,6 +2,7 @@ use super::*;
 use sinex_primitives::rpc::sources::{
     ImportProgressEntry, SourcesImportReportRequest, SourcesImportReportResponse,
 };
+use sinex_primitives::views::CaveatView;
 use tabled::{builder::Builder, settings::Style};
 
 /// Live rate/position/ETA/backlog for in-flight paced historical imports
@@ -47,7 +48,15 @@ impl ImportCommands {
                         operation_id: operation_id.clone(),
                     })
                     .await?;
-                let envelope = ViewEnvelope::new("sinexctl.ops.import.report", response.clone());
+                let mut envelope =
+                    ViewEnvelope::new("sinexctl.ops.import.report", response.clone());
+                if abnormal_suppression_rate(&response) {
+                    envelope.caveats.push(CaveatView {
+                        id: "import.abnormal_suppression_rate".to_string(),
+                        message: "Most candidates were suppressed. Inspect the per-source/material breakdown and examples before treating this import as a complete no-op.".to_string(),
+                        ref_: None,
+                    });
+                }
                 if print_finite_envelope(&envelope, format)? {
                     return Ok(());
                 }
@@ -56,6 +65,10 @@ impl ImportCommands {
         }
         Ok(())
     }
+}
+
+fn abnormal_suppression_rate(report: &SourcesImportReportResponse) -> bool {
+    report.attempted >= 10 && report.suppressed.saturating_mul(2) >= report.attempted
 }
 
 fn format_import_report_table(report: &SourcesImportReportResponse) -> String {
@@ -160,5 +173,37 @@ fn format_eta(seconds: f64) -> String {
         format!("{:.0}m", seconds / 60.0)
     } else {
         format!("{:.1}h", seconds / 3600.0)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn report(attempted: u64, suppressed: u64) -> SourcesImportReportResponse {
+        SourcesImportReportResponse {
+            operation_id: "01JIMPORTTEST".to_string(),
+            operation_type: "replay".to_string(),
+            operation_status: "success".to_string(),
+            scope: serde_json::Value::Null,
+            source: None,
+            source_material_ids: Vec::new(),
+            attempted,
+            new: attempted.saturating_sub(suppressed),
+            suppressed,
+            superseded: 0,
+            failures: 0,
+            dlq: 0,
+            unresolved: 0,
+            breakdown: Vec::new(),
+            examples: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn suppression_caveat_requires_a_material_attempt_set() {
+        assert!(!abnormal_suppression_rate(&report(9, 9)));
+        assert!(!abnormal_suppression_rate(&report(10, 4)));
+        assert!(abnormal_suppression_rate(&report(10, 5)));
     }
 }

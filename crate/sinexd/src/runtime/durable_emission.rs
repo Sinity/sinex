@@ -121,6 +121,10 @@ pub struct DurableEmissionRequest {
 pub enum EmissionOrigin {
     SourceAdapter,
     AutomatonBridge,
+    /// Historical replay/catch-up output. It uses the same admission receipt
+    /// barrier as the live bridge but is labeled separately for replay
+    /// accounting and failure diagnosis.
+    HistoricalReplay,
     Invalidation,
     WindowedTimer,
     Reflection,
@@ -213,7 +217,11 @@ impl DurableEmissionReceipt {
     /// function.
     #[must_use]
     pub fn unlocks_progress(&self) -> bool {
-        !self.items.is_empty() && self.items.iter().all(|item| item.state.is_progress_unlocking())
+        !self.items.is_empty()
+            && self
+                .items
+                .iter()
+                .all(|item| item.state.is_progress_unlocking())
     }
 
     /// Diagnostic accessor: the first item, if any, that did NOT reach a
@@ -221,7 +229,9 @@ impl DurableEmissionReceipt {
     /// context when `unlocks_progress()` is false.
     #[must_use]
     pub fn first_non_progress(&self) -> Option<&EmissionItemReceipt> {
-        self.items.iter().find(|item| !item.state.is_progress_unlocking())
+        self.items
+            .iter()
+            .find(|item| !item.state.is_progress_unlocking())
     }
 }
 
@@ -532,7 +542,10 @@ mod tests {
             EmissionReceiptState::NoOutputSettled,
         ];
         for state in progress_unlocking {
-            assert!(state.is_progress_unlocking(), "{state:?} must be progress-unlocking");
+            assert!(
+                state.is_progress_unlocking(),
+                "{state:?} must be progress-unlocking"
+            );
         }
 
         let non_progress = [
@@ -556,7 +569,10 @@ mod tests {
             },
         ];
         for state in non_progress {
-            assert!(!state.is_progress_unlocking(), "{state:?} must NOT be progress-unlocking");
+            assert!(
+                !state.is_progress_unlocking(),
+                "{state:?} must NOT be progress-unlocking"
+            );
         }
     }
 }
@@ -627,7 +643,10 @@ mod settlement_registry_tests {
 
         assert!(registry.resolve(event_id, EmissionReceiptState::NoOutputSettled));
         assert!(!registry.resolve(event_id, debt("second-call-should-be-ignored")));
-        assert!(registry.is_empty(), "entry must be removed after the first resolve");
+        assert!(
+            registry.is_empty(),
+            "entry must be removed after the first resolve"
+        );
     }
 
     #[test]
@@ -676,7 +695,10 @@ mod settlement_registry_tests {
                 state: EmissionReceiptState::DurableDebt { reason, .. },
             } if *id == id_b && reason == "b-debt"
         ));
-        assert!(registry.is_empty(), "await_batch must not leave entries behind");
+        assert!(
+            registry.is_empty(),
+            "await_batch must not leave entries behind"
+        );
         Ok(())
     }
 
@@ -731,7 +753,10 @@ mod settlement_registry_tests {
             "one non-progress (timed-out) item must block the whole receipt"
         );
         assert!(matches!(
-            receipt.first_non_progress().expect("one non-progress item").state,
+            receipt
+                .first_non_progress()
+                .expect("one non-progress item")
+                .state,
             EmissionReceiptState::TimedOut { .. }
         ));
         Ok(())

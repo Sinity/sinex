@@ -2040,6 +2040,7 @@ let
                 service_name = "source-driver-${id}-${toString idx}";
                 runtime_config = runtimeConfig;
                 extra_args = extraArgs;
+                extra_env = binding.extraEnv or { };
                 catalog_metadata = catalogMetadata;
               })
               instanceList

@@ -60,7 +60,9 @@ fn supersede_on_change_prefers_stored_hash_over_mutated_live_payload() {
     let outcome = classify_live_match(&fresh_candidate, &live);
     assert_eq!(
         outcome,
-        EquivalenceOutcome::Suppress,
+        EquivalenceOutcome::Suppress {
+            existing_event_id: live.id,
+        },
         "an identical re-emit of the live row's ORIGINAL content must suppress, \
          even though the live row's current persisted payload was mutated since \
          its own admission — comparing stored hash to stored hash sidesteps the \
@@ -115,7 +117,9 @@ fn supersede_on_change_falls_back_to_recomputed_hash_when_stored_hash_is_null() 
     let outcome = classify_live_match(&identical_candidate, &live);
     assert_eq!(
         outcome,
-        EquivalenceOutcome::Suppress,
+        EquivalenceOutcome::Suppress {
+            existing_event_id: live.id,
+        },
         "NULL content_hash must fall back to recomputing from live.payload, \
          and an identical re-emit against an unmutated live row must suppress"
     );
@@ -128,10 +132,11 @@ fn supersede_on_change_falls_back_to_recomputed_hash_when_stored_hash_is_null() 
 #[test]
 fn supersede_on_change_falls_back_when_stored_hash_is_malformed() {
     let payload = serde_json::json!({ "value": "unmutated since admission" });
+    let live_id = Uuid::now_v7();
 
     let live = LiveEquivalenceRow {
         equivalence_key: "test-key".to_string(),
-        id: Uuid::now_v7(),
+        id: live_id,
         payload: payload.clone(),
         content_hash: Some(vec![1, 2, 3]), // wrong length, not a real 32-byte digest
     };
@@ -141,7 +146,9 @@ fn supersede_on_change_falls_back_when_stored_hash_is_malformed() {
     let outcome = classify_live_match(&identical_candidate, &live);
     assert_eq!(
         outcome,
-        EquivalenceOutcome::Suppress,
+        EquivalenceOutcome::Suppress {
+            existing_event_id: live_id,
+        },
         "a malformed stored hash must fall back to recomputing from live.payload, \
          not silently mismatch every candidate"
     );

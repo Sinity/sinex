@@ -204,6 +204,7 @@ async fn admission_decision_outcome_maps_occurrence_duplicate_to_deduplicated() 
         kind: AdmissionRejectionKind::OccurrenceDuplicate,
         reason: "live event with equivalence_key test-key already exists".to_string(),
         event_id: None,
+        existing_event_id: None,
         candidate: None,
     });
 
@@ -822,6 +823,7 @@ async fn supersede_on_change_identical_content_suppresses(ctx: TestContext) -> T
     match service.admit_event(repeat).await? {
         AdmissionDecision::Suppressed(rejection) => {
             assert_eq!(rejection.kind, AdmissionRejectionKind::OccurrenceDuplicate);
+            assert_eq!(rejection.existing_event_id, Some(live_id));
         }
         other => panic!("identical re-emit must suppress, not supersede: {other:?}"),
     }

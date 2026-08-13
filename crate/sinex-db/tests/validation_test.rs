@@ -17,6 +17,7 @@ async fn event_validator_preserves_unknown_id_clock_without_fabrication()
         host: HostName::from_static("validator"),
         module_run_id: None,
         payload_schema_id: None,
+        anchor_payload_hash: None,
         provenance: Provenance::from_material(Id::<SourceMaterial>::new(), 0, None, None),
         associated_blob_ids: None,
         temporal_policy: None,

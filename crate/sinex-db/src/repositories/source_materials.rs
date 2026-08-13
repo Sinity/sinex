@@ -1656,21 +1656,13 @@ impl SourceMaterialRepository<'_> {
         Ok(ids)
     }
 
-    /// Delete a source material registry row by ID. Returns `true` if a row was
-    /// actually removed. Caller is responsible for dropping the associated
-    /// blob from the content store separately — this only removes the DB row.
+    /// Delete an unreferenced source-material registry row by ID. Returns
+    /// `true` if a row was actually removed. The orphan check is part of the
+    /// delete statement, so a concurrent live or archived event keeps the
+    /// registry row available for replay recovery. Caller is responsible for
+    /// dropping associated content-store objects separately.
     pub async fn delete_material(&self, id: Id<SourceMaterialRecord>) -> DbResult<bool> {
-        let result = sqlx::query!(
-            r#"
-            DELETE FROM raw.source_material_registry
-            WHERE id = $1
-            "#,
-            id.to_uuid()
-        )
-        .execute(self.pool)
-        .await
-        .map_err(|e| db_error(e, "delete material"))?;
-        Ok(result.rows_affected() > 0)
+        Ok(self.delete_material_if_orphan(id).await?.is_some())
     }
 
     /// Atomically delete a source material registry row, but ONLY if it is
@@ -1678,8 +1670,8 @@ impl SourceMaterialRepository<'_> {
     /// references it) at the moment of the delete.
     ///
     /// This closes the delete-on-tombstone TOCTOU race (sinex-audit-tombstonerace):
-    /// `find_orphan_materials` followed later by an unconditional `delete_material`
-    /// call and an unconditional `content_store.drop_content` call left a window
+    /// `find_orphan_materials` followed later by an unconditional registry delete
+    /// and an unconditional `content_store.drop_content` call left a window
     /// where a new/redelivered event landing between the two could reference a
     /// material whose CAS content was already dropped. Baking the orphan recheck
     /// into the same statement as the delete means a caller only needs to gate

@@ -2231,6 +2231,7 @@ impl<'a> EventRepository<'a> {
 
     /// Get all event IDs in a cascade table (for execution).
     pub async fn get_cascade_ids(&self, table_name: &str) -> DbResult<Vec<Uuid>> {
+        validate_cascade_table_name(table_name)?;
         let rows = sqlx::query_scalar::<_, Uuid>(&format!(
             "SELECT id::uuid FROM {table_name} ORDER BY depth DESC"
         ))
