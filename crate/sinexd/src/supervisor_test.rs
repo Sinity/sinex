@@ -79,9 +79,9 @@ async fn runtime_retry_schedule_jitters_capped_retries_and_resets_after_stabilit
 }
 
 /// sinex-ijz6: `SINEX_AUTOMATA_ENABLED` unset must select the 2026-07-08
-/// ratified default-enabled set (canonicalizer, session-detector,
-/// hourly-summarizer, daily-summarizer, health, attention-stream,
-/// interval-lift -- 7 of 16), not "all".
+/// ratified default-enabled set (canonicalizer, health, analytics,
+/// attention-stream, interval-lift, session-detector, hourly-summarizer,
+/// daily-summarizer -- 8 of 16), not "all".
 #[sinex_test]
 async fn unset_automata_enabled_selects_the_ratified_default_set_not_all()
 -> xtask::sandbox::TestResult<()> {
@@ -93,6 +93,7 @@ async fn unset_automata_enabled_selects_the_ratified_default_set_not_all()
 
     let mut ratified = vec![
         "canonicalizer",
+        "analytics",
         "session",
         "hourly",
         "daily",
@@ -106,8 +107,9 @@ async fn unset_automata_enabled_selects_the_ratified_default_set_not_all()
         names,
         ratified,
         "SINEX_AUTOMATA_ENABLED unset selected {} automata instead of the ratified \
-         7-automaton default set -- entity-extractor/resolver/enricher, \
-         relation-extractor, analytics, tag-applier, and embedding-producer must \
+         8-automaton default set -- entity-extractor/resolver/enricher, \
+         relation-extractor, tag-applier, instruction-reconciler, document-parser, \
+         and embedding-producer must \
          stay default-off per the 2026-07-08 retire-until-needed ruling",
         names.len()
     );

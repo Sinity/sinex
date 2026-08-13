@@ -106,7 +106,7 @@ async fn cancelled_reconciliation_preserves_pending_cas_deletion(
     let source = root_path.join("cancelled-reconciliation.txt");
     tokio::fs::write(&source, b"pending deletion must survive cancellation").await?;
     let key = content_store.store_file(&source).await?;
-    let pending = content_store
+    let mut pending = content_store
         .quarantine_local_cas(&key)
         .await?
         .expect("fixture CAS object must be quarantined");

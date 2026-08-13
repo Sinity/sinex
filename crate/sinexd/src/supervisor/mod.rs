@@ -37,7 +37,7 @@ const ENV_AUTOMATA_ENABLED: &str = "SINEX_AUTOMATA_ENABLED";
 /// an explicit selector to add a profile-gated automaton or otherwise tailor
 /// the hosted set for a particular machine.
 const DEFAULT_AUTOMATA_ENABLED: &str =
-    "canonicalizer,health,attention-stream,interval-lift,session,hourly,daily";
+    "canonicalizer,health,analytics,attention-stream,interval-lift,session,hourly,daily";
 
 /// Environment variable pointing at the source-bindings manifest JSON.
 ///
