@@ -45,8 +45,8 @@ use sinex_primitives::source_contracts::{
 use sinex_primitives::{
     domain::{EventSource, EventType},
     parser::{
-        InputShapeKind, OccurrenceKey, ParsedEventIntent, ParserContext, ParserId, ParserManifest,
-        SourceId, SourceRecord, TimingConfidence, TimingEvidence,
+        InputShapeKind, MaterialAnchor, OccurrenceKey, ParsedEventIntent, ParserContext, ParserId,
+        ParserManifest, SourceId, SourceRecord, TimingConfidence, TimingEvidence,
     },
     privacy::ProcessingContext,
     temporal::Timestamp,
@@ -199,6 +199,42 @@ pub struct BrowserHistoryParserConfig {}
 )]
 pub struct BrowserHistoryParser;
 
+/// Configuration for [`TakeoutChromeHistoryParser`].
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct TakeoutChromeHistoryConfig;
+
+/// Parser for an extracted Google Takeout `Chrome/BrowserHistory.json` member.
+///
+/// The archive itself remains the operator-owned raw authority. This parser
+/// deliberately consumes an extracted member through `StaticFileAdapter` so
+/// the archive extraction step can be audited independently. Takeout rows do
+/// not carry Chromium's SQLite visit id, so their occurrence key is scoped to
+/// the Takeout client id and a deterministic row fingerprint. That makes
+/// overlapping Takeout exports idempotent while keeping them distinct from
+/// live or historical SQLite visits, which remain candidates for downstream
+/// adjudication rather than silent merges.
+#[derive(Debug, Clone, Default, SourceMeta)]
+#[source_meta(
+    id = "browser.takeout-history",
+    namespace = "web",
+    event_type = "page.visited",
+    event_source = "webhistory",
+    adapter = "StaticFileAdapter",
+    implementation = "sinexd",
+    privacy_tier = PrivacyTier::Secret,
+    horizons(Horizon::Historical),
+    retention = RetentionPolicy::Forever,
+    occurrence_identity = OccurrenceIdentity::Uuid5From("(takeout_client_id, record_hash)"),
+    access_scope = AccessScope::StagedExport,
+    privacy_context = ProcessingContext::Metadata,
+    resource_profile = ResourceProfile::BoundedFile,
+    runner_pack = RunnerPack::SinexdSource,
+    checkpoint_family = CheckpointFamily::AppendStream,
+    runtime_shape = RuntimeShape::OnDemand,
+    criticality = SourceCriticality::Reconstructable,
+)]
+pub struct TakeoutChromeHistoryParser;
+
 const PARSER_ID: &str = "browser-history";
 const PARSER_VERSION: &str = "1.0.1";
 
@@ -279,6 +315,191 @@ impl MaterialParser for BrowserHistoryParser {
             "secondary": { "skip_empty": true }
         })
     }
+}
+
+#[async_trait]
+impl MaterialParser for TakeoutChromeHistoryParser {
+    type Config = TakeoutChromeHistoryConfig;
+
+    fn manifest(&self) -> ParserManifest {
+        ParserManifest {
+            parser_id: ParserId::from_static("browser-takeout-history"),
+            parser_version: "1.0.0".into(),
+            accepted_input_shapes: vec![InputShapeKind::StaticFile],
+            source_id: SourceId::from_static("browser.takeout-history"),
+            declared_event_types: vec![(
+                EventSource::from_static("webhistory"),
+                EventType::from_static("page.visited"),
+            )],
+            privacy_contexts: vec![ProcessingContext::Metadata],
+            sensitivity_hints: Vec::new(),
+            description: "Parses extracted Google Takeout Chrome BrowserHistory.json files."
+                .into(),
+        }
+    }
+
+    async fn parse_record(
+        &mut self,
+        record: SourceRecord,
+        ctx: &ParserContext,
+    ) -> ParserResult<Vec<ParsedEventIntent>> {
+        let root: serde_json::Value = serde_json::from_slice(&record.bytes)
+            .map_err(|e| ParserError::Parse(format!("Takeout Chrome JSON parse failed: {e}")))?;
+        let rows = root
+            .get("Browser History")
+            .and_then(serde_json::Value::as_array)
+            .ok_or_else(|| {
+                ParserError::Parse(
+                    "Takeout Chrome JSON must contain a 'Browser History' array".into(),
+                )
+            })?;
+        let source_file = record
+            .logical_path
+            .as_deref()
+            .map_or_else(String::new, |path| path.as_str().to_owned());
+        let mut intents = Vec::with_capacity(rows.len());
+
+        for (index, row) in rows.iter().enumerate() {
+            let object = row.as_object().ok_or_else(|| {
+                ParserError::Parse(format!("Takeout Chrome row {index} is not an object"))
+            })?;
+            let url = object
+                .get("url")
+                .and_then(|value| value.as_str())
+                .ok_or_else(|| {
+                    ParserError::Parse(format!("Takeout Chrome row {index} has no url"))
+                })?;
+            let title = object
+                .get("title")
+                .and_then(|value| value.as_str())
+                .unwrap_or("");
+            let time_value = object.get("time_usec").ok_or_else(|| {
+                ParserError::Parse(format!("Takeout Chrome row {index} has no time_usec"))
+            })?;
+            let (time_usec, visit_time) = parse_takeout_time_usec(time_value, index)?;
+            let client_id = object
+                .get("client_id")
+                .and_then(|value| value.as_str())
+                .map(str::to_owned);
+            let page_transition = object
+                .get("page_transition")
+                .and_then(|value| value.as_str())
+                .map(str::to_owned);
+            let favicon_url = object
+                .get("favicon_url")
+                .and_then(|value| value.as_str())
+                .map(str::to_owned);
+
+            let record_hash = takeout_record_hash(
+                client_id.as_deref(),
+                &time_usec,
+                url,
+                title,
+                page_transition.as_deref(),
+            );
+            let client_scope = client_id
+                .clone()
+                .unwrap_or_else(|| format!("path:{source_file}"));
+            let mut payload = serde_json::Map::new();
+            payload.insert("browser".into(), serde_json::json!("chromium"));
+            payload.insert("title".into(), serde_json::json!(title));
+            payload.insert("url".into(), serde_json::json!(url));
+            payload.insert(
+                "visit_time".into(),
+                serde_json::json!(visit_time.format_rfc3339()),
+            );
+            payload.insert("time_usec".into(), serde_json::json!(time_usec));
+            payload.insert("source_file".into(), serde_json::json!(source_file));
+            payload.insert("takeout_record_hash".into(), serde_json::json!(record_hash));
+            if let Some(client_id) = client_id {
+                payload.insert("client_id".into(), serde_json::json!(client_id));
+            }
+            if let Some(page_transition) = page_transition {
+                payload.insert("transition".into(), serde_json::json!(page_transition));
+            }
+            if let Some(favicon_url) = favicon_url {
+                payload.insert("favicon_url".into(), serde_json::json!(favicon_url));
+            }
+
+            let intent = ParsedEventIntent::builder()
+                .source_id(ctx.source_id.clone())
+                .parser_id(ParserId::from_static("browser-takeout-history"))
+                .parser_version("1.0.0")
+                .event_type(EventType::from_static("page.visited"))
+                .event_source(EventSource::from_static("webhistory"))
+                .payload(serde_json::Value::Object(payload))
+                .ts_orig(visit_time)
+                .timing(TimingEvidence::Intrinsic {
+                    field: "time_usec".into(),
+                    confidence: TimingConfidence::Intrinsic,
+                })
+                // Static JSON-array imports use the stable provider-array
+                // ordinal as their per-entry material anchor. The
+                // record_hash above is the cross-export identity key.
+                .anchor(MaterialAnchor::ByteRange {
+                    start: index as u64,
+                    len: 1,
+                })
+                .occurrence_key(OccurrenceKey {
+                    source_id: SourceId::from_static("browser.takeout-history"),
+                    fields: vec![
+                        ("takeout_client_id".into(), client_scope),
+                        ("record_hash".into(), record_hash),
+                    ],
+                })
+                .privacy_context(ProcessingContext::Metadata)
+                .build();
+            intents.push(intent);
+        }
+
+        Ok(intents)
+    }
+
+    fn required_input_keys(&self) -> Vec<String> {
+        vec!["/Browser History/[]/time_usec".into(), "/Browser History/[]/url".into()]
+    }
+}
+
+fn parse_takeout_time_usec(
+    value: &serde_json::Value,
+    row_index: usize,
+) -> ParserResult<(String, Timestamp)> {
+    let raw = match value {
+        serde_json::Value::Number(number) => number.to_string(),
+        serde_json::Value::String(string) => string.clone(),
+        _ => {
+            return Err(ParserError::Parse(format!(
+                "Takeout Chrome row {row_index} time_usec is not numeric"
+            )));
+        }
+    };
+    let micros = raw.parse::<i64>().map_err(|error| {
+        ParserError::Parse(format!("Takeout Chrome row {row_index} invalid time_usec: {error}"))
+    })?;
+    let timestamp = Timestamp::from_unix_timestamp_nanos(i128::from(micros) * 1_000)
+        .ok_or_else(|| ParserError::Parse(format!("Takeout Chrome row {row_index} timestamp out of range")))?;
+    Ok((raw, timestamp))
+}
+
+fn takeout_record_hash(
+    client_id: Option<&str>,
+    time_usec: &str,
+    url: &str,
+    title: &str,
+    page_transition: Option<&str>,
+) -> String {
+    let mut hasher = blake3::Hasher::new();
+    for field in [
+        client_id.unwrap_or(""),
+        time_usec,
+        url,
+        title,
+        page_transition.unwrap_or(""),
+    ] {
+        hasher.update(field.as_bytes());
+        hasher.update(&[0]);
+    }
+    hasher.finalize().to_hex().to_string()
 }
 
 // ---------------------------------------------------------------------------

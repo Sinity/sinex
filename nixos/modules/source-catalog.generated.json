@@ -553,6 +553,93 @@
     },
     {
       "contract": {
+        "id": "browser.takeout-history",
+        "namespace": "web",
+        "event_types": [
+          [
+            "webhistory",
+            "page.visited"
+          ]
+        ],
+        "privacy_tier": "secret",
+        "horizons": [
+          "historical"
+        ],
+        "retention": {
+          "kind": "forever"
+        },
+        "occurrence_identity": {
+          "kind": "uuid5_from",
+          "key": "(takeout_client_id, record_hash)"
+        },
+        "access_scope": {
+          "scope": "staged_export"
+        }
+      },
+      "binding": {
+        "subject": "source:browser.takeout-history",
+        "id": "browser.takeout-history",
+        "domain": "web",
+        "implementation": "sinexd",
+        "adapter": "StaticFileAdapter",
+        "output_event_type": "page.visited",
+        "privacy_context": "metadata",
+        "resource_profile": "bounded_file",
+        "capabilities": [],
+        "source_id": "browser.takeout-history",
+        "proposed": false,
+        "runner_pack": "sinexd_source",
+        "checkpoint_family": {
+          "kind": "append_stream"
+        },
+        "runtime_shape": "on_demand",
+        "build_impact": {
+          "crate_impact": "0",
+          "binary_impact": "0",
+          "nix_output_impact": "0",
+          "derivation_impact": "0",
+          "sqlx_validation_impact": "0",
+          "dedicated_build_rationale": null
+        },
+        "material_lifecycle": "retain_raw",
+        "transport_semantics": {
+          "transport": "direct",
+          "delivery": "same_process",
+          "ordering": "cursor_order",
+          "replayable": true,
+          "dlq": false,
+          "backpressure": false
+        },
+        "criticality": "reconstructable"
+      },
+      "resource_limits": {
+        "memory_max_mib": 256,
+        "cpu_weight": 100
+      },
+      "resource_budget": {
+        "work_class": "bulk_import",
+        "steady_memory_mib": 128,
+        "burst_memory_mib": 256,
+        "cpu_weight": 100,
+        "max_input_bytes_per_sec": 16777216,
+        "max_input_events_per_sec": null,
+        "max_pending_material_bytes": 67108864,
+        "max_pending_candidates": 10000,
+        "max_unacked_transport_messages": null,
+        "batch_size": 1000,
+        "flush_interval_ms": 1000,
+        "checkpoint_interval_ms": 5000,
+        "expected_disk_write_bytes_per_min": 536870912,
+        "expected_wal_write_bytes_per_min": 268435456,
+        "pressure_actions": [
+          "throttle",
+          "defer",
+          "inspect"
+        ]
+      }
+    },
+    {
+      "contract": {
         "id": "daily-summarizer",
         "namespace": "derived",
         "event_types": [
@@ -2576,7 +2663,7 @@
         },
         "occurrence_identity": {
           "kind": "uuid5_from",
-          "key": "(date, description, first_explicit_posting_amount)"
+          "key": "(date, description, first_explicit_posting_amount_or_anchor)"
         },
         "access_scope": {
           "scope": "staged_export"
@@ -3255,7 +3342,7 @@
             "dlq": false,
             "backpressure": false
           },
-          "criticality": null
+          "criticality": "reconstructable"
         },
         {
           "subject": "source:media.audio-transcript.live-session",
@@ -3300,7 +3387,7 @@
             "dlq": true,
             "backpressure": true
           },
-          "criticality": null
+          "criticality": "not_reconstructable"
         },
         {
           "subject": "source:media.audio-transcript.local-model-batch",
@@ -3343,7 +3430,7 @@
             "dlq": false,
             "backpressure": false
           },
-          "criticality": null
+          "criticality": "reconstructable"
         },
         {
           "subject": "source:media.audio-transcript.on-demand-session",
@@ -3387,7 +3474,7 @@
             "dlq": true,
             "backpressure": true
           },
-          "criticality": null
+          "criticality": "not_reconstructable"
         }
       ],
       "resource_limits": {
@@ -3593,7 +3680,7 @@
             "dlq": true,
             "backpressure": true
           },
-          "criticality": null
+          "criticality": "not_reconstructable"
         },
         {
           "subject": "source:media.screen-ocr.local-model-batch",
@@ -3636,7 +3723,7 @@
             "dlq": false,
             "backpressure": false
           },
-          "criticality": null
+          "criticality": "reconstructable"
         },
         {
           "subject": "source:media.screen-ocr.on-demand-region",
@@ -3679,7 +3766,7 @@
             "dlq": true,
             "backpressure": true
           },
-          "criticality": null
+          "criticality": "not_reconstructable"
         },
         {
           "subject": "source:media.screen-ocr.on-demand-video",
@@ -3765,7 +3852,7 @@
             "dlq": false,
             "backpressure": false
           },
-          "criticality": null
+          "criticality": "reconstructable"
         },
         {
           "subject": "source:media.screen-ocr.video-staged",
@@ -3808,7 +3895,7 @@
             "dlq": false,
             "backpressure": false
           },
-          "criticality": null
+          "criticality": "reconstructable"
         }
       ],
       "resource_limits": {

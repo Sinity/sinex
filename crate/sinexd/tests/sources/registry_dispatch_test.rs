@@ -499,6 +499,41 @@ async fn source_meta_browser_history_registers_chained_adapter_factory() -> Test
 }
 
 #[sinex_test]
+async fn source_meta_takeout_browser_history_registers_static_factory() -> TestResult<()> {
+    use sinex_primitives::source_contracts::{all_source_contracts, source_runtime_bindings};
+
+    let source_id = sui("browser.takeout-history");
+    let contract = all_source_contracts()
+        .find(|contract| contract.id == "browser.takeout-history")
+        .expect("Takeout browser history contract must be registered");
+    assert!(
+        contract
+            .event_types
+            .iter()
+            .any(|(source, event_type)| *source == "webhistory" && *event_type == "page.visited"),
+        "Takeout browser history must declare webhistory/page.visited"
+    );
+    assert!(
+        source_runtime_bindings().any(|binding| {
+            binding.source_id == "browser.takeout-history"
+                && binding.adapter == "StaticFileAdapter"
+                && binding.output_event_type == "page.visited"
+                && !binding.proposed
+        }),
+        "Takeout browser history must register a live static-file binding"
+    );
+    assert!(
+        find_source_factory(&source_id).is_some(),
+        "Takeout browser history must register a source factory"
+    );
+    assert!(
+        find_parser_factory(&source_id).is_some(),
+        "Takeout browser history must register a parser factory"
+    );
+    Ok(())
+}
+
+#[sinex_test]
 async fn source_meta_document_staging_registers_parser_and_driver() -> TestResult<()> {
     use sinex_primitives::source_contracts::{all_source_contracts, source_runtime_bindings};
 
