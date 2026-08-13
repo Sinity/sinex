@@ -355,11 +355,10 @@ async fn collapse_shutdown_errors_preserves_additional_failures() -> TestResult<
 /// `initialize_with_transport`. On a failed module init, the function
 /// returns early without shutting either down -- dropping the `JoinHandle`
 /// values doesn't cancel the detached tokio tasks, so a malformed module
-/// config or init panic leaves stale NATS subscriptions/KV cleanup loops
+/// config leaves stale NATS subscriptions/KV cleanup loops
 /// running indefinitely.
 #[cfg(feature = "messaging")]
 #[sinex_test]
-#[ignore = "sinex-q102 open: checkpoint-cleanup/schema-listener tasks leak on failed module init -- fails until fixed"]
 async fn initialize_with_transport_shuts_down_background_tasks_on_failed_module_init(
     ctx: TestContext,
 ) -> TestResult<()> {

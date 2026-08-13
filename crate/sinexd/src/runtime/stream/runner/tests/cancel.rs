@@ -195,3 +195,89 @@ async fn dispatched_scan_cancel_stops_in_flight_emission(ctx: TestContext) -> Te
 
     Ok(())
 }
+
+/// `sinex-q102`: a replay worker is spawned from the command listener, but it
+/// remains owned by its parent runner. Shutting down that runner must cancel
+/// and join the worker before returning, rather than leaving it to emit after
+/// the command listener has stopped.
+#[cfg(feature = "messaging")]
+#[sinex_test]
+async fn runner_shutdown_cancels_and_joins_dispatched_replay_worker(
+    ctx: TestContext,
+) -> TestResult<()> {
+    let ctx = ctx.with_nats().dedicated().await?;
+    let client = ctx.nats_client();
+    let transport = EventTransport::Nats(Arc::new(NatsPublisher::new(client.clone())));
+    let work_dir = tempdir()?;
+
+    let mut runner = RuntimeRunner::new_with_factory(
+        SlowEmittingReplaySource::default(),
+        Arc::new(SlowEmittingReplaySource::default),
+    );
+    runner
+        .initialize_with_transport(
+            "slow-emitting-test-source".to_string(),
+            HashMap::new(),
+            Some(ctx.pool().clone()),
+            transport,
+            work_dir.path().to_path_buf(),
+            false,
+        )
+        .await?;
+    runner.start_command_listener();
+
+    let env = sinex_primitives::environment::environment();
+    let operation_id = Uuid::now_v7();
+    let scan_subject =
+        env.nats_subject("sinex.control.sources.slow-emitting-test-source.scan");
+    let progress_subject =
+        env.nats_subject(&format!("sinex.control.replay.progress.{operation_id}"));
+    let mut progress_sub = client.subscribe(progress_subject).await?;
+    let command = SourceScanCommand {
+        operation_id,
+        from: Checkpoint::None,
+        until: TimeHorizon::Historical {
+            end_time: Timestamp::now(),
+        },
+        args: ScanArgs::default(),
+    };
+
+    let ack_msg = tokio::time::timeout(
+        Duration::from_secs(3),
+        client.request(scan_subject, serde_json::to_vec(&command)?.into()),
+    )
+    .await??;
+    let ack: SourceScanAck = serde_json::from_slice(&ack_msg.payload)?;
+    assert!(
+        ack.accepted,
+        "scan command should be accepted: {:?}",
+        ack.error
+    );
+
+    let start_msg = tokio::time::timeout(Duration::from_secs(3), progress_sub.next())
+        .await?
+        .ok_or_else(|| color_eyre::eyre::eyre!("progress subscription closed early"))?;
+    let start_progress: SourceScanProgress = serde_json::from_slice(&start_msg.payload)?;
+    assert!(start_progress.final_report.is_none());
+
+    tokio::time::sleep(SLOW_SOURCE_DELAY).await;
+    tokio::time::timeout(Duration::from_secs(2), runner.shutdown())
+        .await?
+        .map_err(|error| color_eyre::eyre::eyre!("runner shutdown failed: {error}"))?;
+
+    let final_msg = tokio::time::timeout(Duration::from_millis(500), progress_sub.next())
+        .await?
+        .ok_or_else(|| color_eyre::eyre::eyre!("progress subscription closed before terminal update"))?;
+    let final_progress: SourceScanProgress = serde_json::from_slice(&final_msg.payload)?;
+    assert!(
+        final_progress.cancelled,
+        "runner shutdown must cancel the dispatched replay worker: {final_progress:?}"
+    );
+    assert!(
+        final_progress.events_emitted < SLOW_SOURCE_ITERATIONS as u64,
+        "runner shutdown must join the worker before it emits every event, got {}",
+        final_progress.events_emitted
+    );
+
+    Ok(())
+}

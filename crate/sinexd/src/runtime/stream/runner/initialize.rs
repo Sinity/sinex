@@ -149,7 +149,7 @@ impl RuntimeRunner {
         let transport_type = "NATS";
 
         #[cfg(feature = "db")]
-        let module_run_id = if let Some(pool) = db_pool.as_ref() {
+        let module_run_id = match if let Some(pool) = db_pool.as_ref() {
             self.register_runtime_identity(
                 pool,
                 &service_name,
@@ -158,9 +158,12 @@ impl RuntimeRunner {
                 &version,
                 &raw_config,
             )
-            .await?
+            .await
         } else {
-            None
+            Ok(None)
+        } {
+            Ok(module_run_id) => module_run_id,
+            Err(error) => return Err(self.fail_initialization(error).await),
         };
         #[cfg(not(feature = "db"))]
         let module_run_id = None;
@@ -256,8 +259,7 @@ impl RuntimeRunner {
             if let Some(pool) = handles.db_pool().cloned() {
                 Self::update_registered_run_status(&pool, &service_info, ModuleState::Failed).await;
             }
-            self.lifecycle = RunnerLifecycle::Created;
-            return Err(e);
+            return Err(self.fail_initialization(e).await);
         }
 
         self.handles = Some(handles);
@@ -309,6 +311,45 @@ impl RuntimeRunner {
         );
 
         Ok(())
+    }
+
+    /// Tear down tasks started before module initialization completed.
+    ///
+    /// `initialize_with_transport` starts the schema listener and optional
+    /// checkpoint cleanup loop before it can validate the module's typed
+    /// configuration. A later failure must explicitly await those tasks:
+    /// dropping their handles would otherwise detach them from the failed
+    /// runner.
+    async fn fail_initialization(&mut self, error: SinexError) -> SinexError {
+        let mut cleanup_errors = Vec::new();
+        Self::push_shutdown_error(
+            &mut cleanup_errors,
+            "schema broadcast listener",
+            Self::shutdown_task(
+                &mut self.schema_listener_handle,
+                self.schema_listener_shutdown.take(),
+                "schema broadcast listener",
+            )
+            .await,
+        );
+        Self::push_shutdown_error(
+            &mut cleanup_errors,
+            "checkpoint cleanup",
+            Self::shutdown_task(
+                &mut self.checkpoint_cleanup_handle,
+                self.checkpoint_cleanup_shutdown.take(),
+                "checkpoint cleanup",
+            )
+            .await,
+        );
+        self.event_batcher_shutdown.take();
+        self.lifecycle = RunnerLifecycle::Created;
+
+        match Self::collapse_shutdown_errors(cleanup_errors) {
+            Ok(()) => error,
+            Err(cleanup_error) => error
+                .with_context("initialization_cleanup_error", cleanup_error.to_string()),
+        }
     }
 
     pub(super) fn checkpoint_consumer_name(

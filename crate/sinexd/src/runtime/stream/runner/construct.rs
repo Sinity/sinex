@@ -59,6 +59,8 @@ impl RuntimeRunner {
             consumer_handle: None,
             command_listener_shutdown: None,
             command_listener_handle: None,
+            replay_worker_cancel: Arc::new(std::sync::Mutex::new(None)),
+            replay_worker_handle: Arc::new(std::sync::Mutex::new(None)),
             parse_listener_handle: None,
             #[cfg(any(test, feature = "testing"))]
             confirmed_consumer_ready_rx: Some(confirmed_consumer_ready_rx),

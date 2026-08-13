@@ -49,6 +49,14 @@ type SourceFactory<T> = Arc<dyn Fn() -> T + Send + Sync>;
 /// modules for replay-worker dispatch without the runner being generic.
 type ErasedSourceFactory = Arc<dyn Fn() -> Box<dyn ErasedRuntimeModule> + Send + Sync>;
 
+/// Shared cancellation state for the one replay worker a source runner may
+/// execute at a time.
+type ActiveScanCancel = Arc<std::sync::Mutex<Option<(Uuid, watch::Sender<bool>)>>>;
+
+/// The dispatched replay worker belongs to its parent runner, even though the
+/// command listener is the component that spawns it.
+type ReplayWorkerHandle = Arc<std::sync::Mutex<Option<tokio::task::JoinHandle<()>>>>;
+
 /// Unified runner for source drivers and automata.
 ///
 /// The runner is deliberately NON-generic over the module: it drives every
@@ -72,6 +80,8 @@ pub struct RuntimeRunner {
     consumer_handle: Option<tokio::task::JoinHandle<()>>,
     command_listener_shutdown: Option<watch::Sender<bool>>,
     command_listener_handle: Option<tokio::task::JoinHandle<()>>,
+    replay_worker_cancel: ActiveScanCancel,
+    replay_worker_handle: ReplayWorkerHandle,
     /// Per-source parse listener join handle (#1780). Started in service mode for
     /// source modules; aborted on shutdown. No shutdown channel: the listener
     /// holds a NATS subscription and is aborted directly (like `consumer_handle`).
