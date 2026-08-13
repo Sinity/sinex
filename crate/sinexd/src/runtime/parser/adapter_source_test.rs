@@ -1,4 +1,6 @@
 use super::*;
+use crate::event_engine::admission::{AdmissionDecision, AdmissionService};
+use crate::event_engine::validator::IngestEventValidator;
 use crate::runtime::checkpoint::CheckpointManager;
 use crate::runtime::content_store::{ContentStoreConfig, ContentStoreManager};
 use crate::runtime::parser::adapters::{
@@ -35,7 +37,7 @@ use std::{
         atomic::{AtomicUsize, Ordering},
     },
 };
-use tokio::sync::mpsc;
+use tokio::sync::{RwLock, mpsc};
 use xtask::sandbox::prelude::{
     EnvGuard, TestContext, TestResult, WaitHelpers, sinex_serial_test, sinex_test,
 };
@@ -712,6 +714,48 @@ fn auto_settle_events(
         }
     });
     forward_rx
+}
+
+/// Persist an adapter emission through the same admission service that owns
+/// occurrence-key duplicate suppression, then resolve the source receipt from
+/// that durable outcome. This intentionally exercises the production
+/// admission/persistence path instead of synthesizing a suppression receipt in
+/// the adapter test itself.
+async fn settle_adapter_event_through_admission(
+    admission: &AdmissionService,
+    registry: &crate::runtime::durable_emission::SettlementRegistry,
+    event: Event<JsonValue>,
+) -> TestResult<(Option<String>, bool)> {
+    let event_id = event.id.expect("emit() assigns an id");
+    let equivalence_key = event.equivalence_key.clone();
+    match admission.admit_event(event).await? {
+        AdmissionDecision::Admitted(admitted) | AdmissionDecision::Transformed(admitted) => {
+            admission.persist_batch(&[admitted]).await?;
+            registry.resolve(
+                event_id,
+                crate::runtime::durable_emission::EmissionReceiptState::PersistedConfirmed {
+                    lane: sinex_db::repositories::EventStorageLane::Activity,
+                    inserted: true,
+                    confirmed_sequence: None,
+                },
+            );
+            Ok((equivalence_key, false))
+        }
+        AdmissionDecision::Suppressed(_) => {
+            registry.resolve(
+                event_id,
+                crate::runtime::durable_emission::EmissionReceiptState::Suppressed {
+                    reason:
+                        crate::runtime::durable_emission::SuppressionReason::EquivalenceKeyDuplicate,
+                    existing_event_id: None,
+                },
+            );
+            Ok((equivalence_key, true))
+        }
+        outcome => Err(eyre!(
+            "adapter retry event must be admitted or occurrence-suppressed: {outcome:?}"
+        )),
+    }
 }
 
 async fn make_adapter_runtime(
@@ -2163,6 +2207,13 @@ async fn adapter_multi_intent_partial_settlement_suppresses_settled_sibling_on_r
     ctx: TestContext,
 ) -> TestResult<()> {
     let ctx = ctx.with_nats().shared().await?;
+    let material_id = Uuid::from_u128(0x535441424c455f4d4154455249414c);
+    ctx.ensure_specific_material(material_id, Some("multi-intent-retry"))
+        .await?;
+    let admission = Arc::new(AdmissionService::new(
+        ctx.pool().clone(),
+        Arc::new(RwLock::new(IngestEventValidator::new(false))),
+    ));
     let mut state = AdapterModuleState::<u64>::default();
 
     // --- Attempt 1: "first" durably settles, "second" never does. ---
@@ -2177,31 +2228,29 @@ async fn adapter_multi_intent_partial_settlement_suppresses_settled_sibling_on_r
         .initialize(AdapterSourceConfig::default(), &runtime1, &mut state)
         .await?;
 
+    let admission1 = Arc::clone(&admission);
     let settler1 = tokio::spawn(async move {
-        let mut ids = Vec::new();
-        while ids.len() < 2 {
+        let mut outcomes = Vec::new();
+        while outcomes.len() < 2 {
             let Some(event) = event_receiver1.recv().await else {
                 break;
             };
-            let id = event.id.expect("emit() assigns an id");
-            if ids.is_empty() {
-                registry1.resolve(
-                    id,
-                    crate::runtime::durable_emission::EmissionReceiptState::PersistedConfirmed {
-                        lane: sinex_db::repositories::EventStorageLane::Activity,
-                        inserted: true,
-                        confirmed_sequence: None,
-                    },
+            if outcomes.is_empty() {
+                outcomes.push(
+                    settle_adapter_event_through_admission(&admission1, &registry1, event).await?,
                 );
+            } else {
+                outcomes.push((event.equivalence_key.clone(), false));
             }
             // second event: deliberately never resolved (crash/timeout window).
-            ids.push((id, event.equivalence_key.clone()));
         }
-        ids
+        Ok::<_, color_eyre::Report>(outcomes)
     });
 
     let emitted_1 = source1.drain_adapter(None, &mut state, None, None).await?;
-    let attempt1 = settler1.await.expect("settler1 did not panic");
+    let attempt1 = settler1
+        .await
+        .expect("settler1 did not panic")?;
 
     assert_eq!(
         attempt1.len(),
@@ -2209,12 +2258,12 @@ async fn adapter_multi_intent_partial_settlement_suppresses_settled_sibling_on_r
         "both sibling intents reach the mpsc handoff"
     );
     assert_eq!(
-        attempt1.iter().filter(|(_, key)| key.is_some()).count(),
+        attempt1.iter().filter(|(key, _)| key.is_some()).count(),
         2,
         "every keyless sibling must carry an admission identity"
     );
     assert_ne!(
-        attempt1[0].1, attempt1[1].1,
+        attempt1[0].0, attempt1[1].0,
         "sibling slots must not collide"
     );
     assert_eq!(
@@ -2239,36 +2288,24 @@ async fn adapter_multi_intent_partial_settlement_suppresses_settled_sibling_on_r
         .initialize(AdapterSourceConfig::default(), &runtime2, &mut state)
         .await?;
 
-    let settled_key = attempt1[0].1.clone();
+    let admission2 = Arc::clone(&admission);
     let settler2 = tokio::spawn(async move {
         let mut outcomes = Vec::new();
         while outcomes.len() < 2 {
             let Some(event) = event_receiver2.recv().await else {
                 break;
             };
-            let id = event.id.expect("emit() assigns an id");
-            let suppressed = event.equivalence_key.as_ref() == settled_key.as_ref();
-            let outcome = if suppressed {
-                crate::runtime::durable_emission::EmissionReceiptState::Suppressed {
-                    reason:
-                        crate::runtime::durable_emission::SuppressionReason::EquivalenceKeyDuplicate,
-                    existing_event_id: None,
-                }
-            } else {
-                crate::runtime::durable_emission::EmissionReceiptState::PersistedConfirmed {
-                    lane: sinex_db::repositories::EventStorageLane::Activity,
-                    inserted: true,
-                    confirmed_sequence: None,
-                }
-            };
-            registry2.resolve(id, outcome);
-            outcomes.push((event.equivalence_key.clone(), suppressed));
+            outcomes.push(
+                settle_adapter_event_through_admission(&admission2, &registry2, event).await?,
+            );
         }
-        outcomes
+        Ok::<_, color_eyre::Report>(outcomes)
     });
 
     let emitted_2 = source2.drain_adapter(None, &mut state, None, None).await?;
-    let attempt2_outcomes = settler2.await.expect("settler2 did not panic");
+    let attempt2_outcomes = settler2
+        .await
+        .expect("settler2 did not panic")?;
 
     assert_eq!(
         attempt2_outcomes.len(),
@@ -2283,7 +2320,7 @@ async fn adapter_multi_intent_partial_settlement_suppresses_settled_sibling_on_r
 
     assert_eq!(
         attempt2_outcomes[0],
-        (attempt1[0].1.clone(), true),
+        (attempt1[0].0.clone(), true),
         "the previously settled sibling must take the admission suppression path"
     );
     assert_ne!(
@@ -2293,6 +2330,17 @@ async fn adapter_multi_intent_partial_settlement_suppresses_settled_sibling_on_r
     assert_eq!(
         attempt2_outcomes[1].1, false,
         "the sibling without a durable first-attempt outcome must persist on retry"
+    );
+    let persisted: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM core.events WHERE source_material_id = $1::uuid AND event_type = 'test.event'",
+    )
+    .bind(material_id)
+    .fetch_one(ctx.pool())
+    .await?;
+    assert_eq!(
+        persisted, 2,
+        "the persisted first sibling and retried second sibling must leave exactly one live event \
+         per occurrence; removing the adapter fallback equivalence key makes this count three"
     );
     Ok(())
 }
