@@ -1311,6 +1311,7 @@ impl IngestService {
     ) -> JoinHandle<()> {
         let shutdown_flag = self.shutdown_flag.clone();
         let shutdown_notify = self.shutdown_notify.clone();
+        let observer = self.observer.clone();
         let interval_duration = ready_set.maintenance_interval();
 
         tokio::spawn(async move {
@@ -1327,6 +1328,27 @@ impl IngestService {
                                 retained = ready_set.len(),
                                 "Evicted stale materials from MaterialReadySet background maintenance"
                             );
+                        }
+                        let snapshot = ready_set.metrics_snapshot();
+                        for (metric, value) in [
+                            ("material_ready_set.current_len", snapshot.current_len as f64),
+                            ("material_ready_set.peak_len", snapshot.peak_len as f64),
+                            (
+                                "material_ready_set.mark_ready_max_ns",
+                                snapshot.mark_ready_max_ns as f64,
+                            ),
+                            ("material_ready_set.seed_total_ns", snapshot.seed_total_ns as f64),
+                            ("material_ready_set.seed_max_ns", snapshot.seed_max_ns as f64),
+                            (
+                                "material_ready_set.purge_total_ns",
+                                snapshot.purge_total_ns as f64,
+                            ),
+                            ("material_ready_set.purge_max_ns", snapshot.purge_max_ns as f64),
+                            ("material_ready_set.purged_entries", snapshot.purged_entries as f64),
+                        ] {
+                            if let Err(error) = observer.emit_gauge(metric, value, None).await {
+                                warn!(metric, %error, "Failed to emit MaterialReadySet telemetry");
+                            }
                         }
                     }
                     () = crate::runtime::wait_for_shutdown_signal_bool(&shutdown_flag, &shutdown_notify) => {
