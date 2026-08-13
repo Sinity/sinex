@@ -31,10 +31,8 @@ fn synthetic_revision() -> (PolylogueRevisionManifest, BTreeMap<i32, Vec<u8>>) {
         "seq": 1,
         "session_id": "claude-code-session:demo"
     });
-    let head: Vec<u8> = canonical_json_bytes(&head_value)
-        .into_iter()
-        .chain([b'\n'])
-        .collect();
+    let mut head = canonical_json_bytes(&head_value).expect("head");
+    head.push(b'\n');
     let transcript = [
         canonical_json_bytes(&message_value).expect("message"),
         canonical_json_bytes(&block_value).expect("block"),
