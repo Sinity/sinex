@@ -20,9 +20,8 @@ use crate::runtime::shutdown::ShutdownConfig;
 use crate::runtime::stream::{
     Checkpoint, EventEmitter, RuntimeContext, RuntimeHandles, RuntimeModule, ScanArgs, ServiceInfo,
 };
-use crate::runtime::{
-    Automaton, AutomatonLogicError, ScopeReconciler, Transducer, Windowed, WindowedWrapper,
-};
+use crate::runtime::{AutomatonLogicError, ScopeReconciler, Transducer, Windowed, WindowedWrapper};
+use crate::runtime::automaton::traits::Automaton;
 use crate::runtime::{
     CheckpointManager, CheckpointState, EventTransport, NatsPublisher, SinexError,
 };
@@ -278,6 +277,27 @@ struct ScopeReconcilerOutput {
     count: usize,
 }
 
+const SCOPE_RECONCILER_OUTPUT_DECLARATION: sinex_primitives::derivation::DerivationOutputDeclaration =
+    sinex_primitives::derivation::DerivationOutputDeclaration {
+        declaration_id: "test.derived-adapter-scope-reconciler.measurement.aggregate",
+        owner: "test",
+        product_class: sinex_primitives::derivation::DerivedProductClass::CanonicalDerivedEvent,
+        write_surface: sinex_primitives::derivation::DerivationWriteSurface::DerivedOutput,
+        output_source: Some("adapter-regression-scope-reconciler"),
+        output_event_type: Some("measurement.aggregate"),
+        projection_kind: None,
+        artifact_kind: None,
+        proposal_kind: None,
+        semantics_version: "1.0.0",
+        input_eligibility: sinex_primitives::derivation::InputEligibility::ExplicitOnly,
+        default_support: sinex_primitives::derivation::ClaimSupportTemplate::new(
+            sinex_primitives::derivation::SupportLevel::Convergent,
+            sinex_primitives::derivation::SourceCoverage::Partial,
+            sinex_primitives::derivation::ClaimTemporalQuality::DeclaredEffective,
+        ),
+        verification_command: "xtask test -p sinexd -E 'test(scope_reconciler_invalidation)'",
+    };
+
 struct TestScopeReconcilerAutomaton;
 
 impl ScopeReconciler for TestScopeReconcilerAutomaton {
@@ -296,6 +316,8 @@ impl ScopeReconciler for TestScopeReconcilerAutomaton {
     fn output_event_type(&self) -> &'static str {
         "measurement.aggregate"
     }
+    const OUTPUT_DECLARATIONS: &'static [sinex_primitives::derivation::DerivationOutputDeclaration] =
+        &[SCOPE_RECONCILER_OUTPUT_DECLARATION];
     fn scope_keys(&self, _input: &Self::Input, _context: &AutomatonContext) -> Vec<String> {
         vec!["default".into()]
     }
@@ -343,6 +365,9 @@ impl ScopeReconciler for TestScopeReconcilerAutomaton {
                 vec![*context.trigger_event_id.as_uuid()],
                 scope_key.to_string(),
             )
+            .with_declaration_id(SCOPE_RECONCILER_OUTPUT_DECLARATION.declaration_id)
+            .with_product_class(SCOPE_RECONCILER_OUTPUT_DECLARATION.product_class)
+            .with_claim_support(sinex_primitives::derivation::ClaimSupport::unknown())
             .with_event_type("measurement.aggregate"),
         ])
     }

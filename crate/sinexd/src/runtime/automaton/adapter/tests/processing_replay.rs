@@ -678,13 +678,18 @@ async fn handle_invalidation_archives_before_output_emit_and_retries_without_dup
     stale_output.derivation_declaration_id = Some(declaration_id.to_string());
     ctx.pool().events().insert_batch(vec![stale_output]).await?;
 
-    let (runtime, event_receiver) =
+    let (runtime, _event_receiver) =
         make_runtime_state_with_db(&ctx, "adapter-regression-scope-reconciler", None).await?;
-    drop(event_receiver);
 
     let mut adapter = AutomatonRuntime::new(ScopeReconcilerWrapper(TestScopeReconcilerAutomaton));
     adapter.checkpoint_manager = Some(runtime.checkpoint_manager());
-    adapter.event_emitter = Some(runtime.event_emitter().clone());
+    // The runtime helper owns a background settlement receiver, so dropping
+    // its returned receiver does not make the shared emitter fail. Use an
+    // intentionally receiver-less channel for the first attempt to exercise
+    // the archive-before-emission failure window.
+    let (failing_sender, failing_receiver) = mpsc::channel(1);
+    drop(failing_receiver);
+    adapter.event_emitter = Some(EventEmitter::new(failing_sender, false));
     adapter.host = runtime.service_info().host().to_string();
     adapter.runtime = Some(runtime);
 
@@ -693,7 +698,7 @@ async fn handle_invalidation_archives_before_output_emit_and_retries_without_dup
         EventSource::from_static("measurements"),
         EventType::from_static("measurement.taken"),
     )
-    .with_scope_keys(vec![scope_key.to_string()]);
+        .with_scope_keys(vec![scope_key.to_string()]);
     let payload = serde_json::to_vec(&invalidation)?;
 
     let result = adapter.handle_invalidation_message(&payload).await;
