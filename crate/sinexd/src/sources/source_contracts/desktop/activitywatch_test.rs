@@ -109,6 +109,26 @@ async fn unparseable_started_at_yields_atemporal_timing_evidence() -> TestResult
     Ok(())
 }
 
+/// A JSON number outside ActivityWatch's signed-nanoseconds range is just as
+/// unusable as a missing or wrong-shape value.  It must not be promoted to an
+/// intrinsic timestamp.
+#[sinex_test]
+async fn out_of_range_started_at_yields_atemporal_timing_evidence() -> TestResult<()> {
+    let mut parser = ActivityWatchParser;
+    let record = aw_row(
+        "aw-watcher-window_host",
+        serde_json::json!(u64::MAX),
+        serde_json::json!({"app": "kitty", "title": "shell"}),
+    );
+    let ctx = parser_context();
+    let intents = parser.parse_record(record, &ctx).await?;
+
+    assert_eq!(intents.len(), 1);
+    assert_eq!(intents[0].ts_orig, ctx.acquisition_time);
+    assert_eq!(intents[0].timing, TimingEvidence::Atemporal);
+    Ok(())
+}
+
 /// The occurrence key must still be built deterministically when started_at
 /// fails to parse. The stable SQLite row anchor, not a wall clock, identifies
 /// the same physical row on every re-read.

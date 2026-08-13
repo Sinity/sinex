@@ -283,3 +283,24 @@ async fn test_journald_malformed_realtime_timestamp_is_tagged_atemporal_not_intr
     assert_eq!(intents[0].timing, TimingEvidence::Atemporal);
     Ok(())
 }
+
+/// `i64::MAX` parses as a provider microsecond value, but is beyond the
+/// representable `Timestamp` range. It must follow the same material-tier
+/// fallback as a missing or malformed journal timestamp.
+#[sinex_test]
+async fn test_journald_out_of_range_realtime_timestamp_is_tagged_atemporal_not_intrinsic()
+-> TestResult<()> {
+    let mid = Id::<SourceMaterial>::new();
+    let line = r#"{"__CURSOR":"s=abc;i=3","__REALTIME_TIMESTAMP":"9223372036854775807","MESSAGE":"entry with out-of-range realtime timestamp"}"#;
+    let records = records_from_journal_lines(mid, &[line]);
+    let record = records[0].as_ref().unwrap().clone();
+
+    let mut parser = JournaldParser;
+    let ctx = make_ctx(mid);
+    let intents = parser.parse_record(record, &ctx).await?;
+
+    assert_eq!(intents.len(), 1);
+    assert_eq!(intents[0].ts_orig, ctx.acquisition_time);
+    assert_eq!(intents[0].timing, TimingEvidence::Atemporal);
+    Ok(())
+}

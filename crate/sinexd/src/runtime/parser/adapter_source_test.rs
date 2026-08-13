@@ -2480,7 +2480,7 @@ async fn activitywatch_malformed_started_at_defers_ts_orig_to_material_tier(
 
     let mut parser = ActivityWatchParser;
     let intent = parser
-        .parse_record(record, &ctx)
+        .parse_record(record.clone(), &ctx)
         .await?
         .pop()
         .expect("known ActivityWatch bucket produces one intent");
@@ -2490,6 +2490,96 @@ async fn activitywatch_malformed_started_at_defers_ts_orig_to_material_tier(
         .expect("ActivityWatch intent converts to an event");
     assert_eq!(event.ts_orig, None);
     assert_eq!(event.ts_quality, None);
+
+    // Replaying the same malformed source bytes at a different acquisition
+    // time must not mint a different material event-time or occurrence key.
+    let replay_ctx = ParserContext {
+        acquisition_time: Timestamp::from_unix_timestamp(1_800_000_000)
+            .expect("fixed replay acquisition time"),
+        ..ctx
+    };
+    let replay_intent = parser
+        .parse_record(record, &replay_ctx)
+        .await?
+        .pop()
+        .expect("known ActivityWatch bucket produces one replay intent");
+    assert_eq!(replay_intent.timing, TimingEvidence::Atemporal);
+    let replay_event = intent_to_event_with_anchor(replay_intent, material_id, 42, None, None, None, 0)
+        .expect("replayed ActivityWatch intent converts to an event");
+    assert_eq!(replay_event.ts_orig, None);
+    assert_eq!(replay_event.ts_quality, None);
+    assert_eq!(event.equivalence_key, replay_event.equivalence_key);
+    Ok(())
+}
+
+/// Material parsers can carry their acquisition time in an intent because the
+/// intent type is concrete, but invalid provider timestamps must still take
+/// the production `Atemporal` route and arrive at admission unresolved.
+#[sinex_test]
+async fn journald_and_systemd_invalid_timestamps_defer_to_material_tier(
+) -> xtask::sandbox::TestResult<()> {
+    use crate::runtime::parser::records_from_journal_lines;
+    use crate::runtime::parser::MaterialParser;
+    use crate::sources::source_contracts::system::journald::JournaldParser;
+    use crate::sources::source_contracts::system::systemd::SystemdParser;
+
+    let material_id = Id::<SourceMaterial>::from_uuid(Uuid::now_v7());
+    let make_ctx = |source_id| ParserContext {
+        source_id: SourceId::from_static(source_id),
+        source_material_id: material_id,
+        record_anchor: MaterialAnchor::Line {
+            byte_start: 0,
+            line: 1,
+        },
+        operation_id: Uuid::now_v7(),
+        job_id: Uuid::now_v7(),
+        host: "test-host".to_string(),
+        acquisition_time: Timestamp::from_unix_timestamp(1_700_000_000)
+            .expect("fixed acquisition time"),
+    };
+    let assert_deferred = |intent: ParsedEventIntent| {
+        assert_eq!(intent.timing, TimingEvidence::Atemporal);
+        let event = intent_to_event_with_anchor(intent, material_id, 0, None, None, None, 0)
+            .expect("journal intent converts to a material event");
+        assert_eq!(event.ts_orig, None);
+        assert_eq!(event.ts_quality, None);
+    };
+
+    let mut journald = JournaldParser;
+    for line in [
+        r#"{"__CURSOR":"s=journal;i=1","MESSAGE":"missing timestamp"}"#,
+        r#"{"__CURSOR":"s=journal;i=2","__REALTIME_TIMESTAMP":"not-a-timestamp","MESSAGE":"malformed timestamp"}"#,
+        r#"{"__CURSOR":"s=journal;i=3","__REALTIME_TIMESTAMP":"9223372036854775807","MESSAGE":"out-of-range timestamp"}"#,
+    ] {
+        let record = records_from_journal_lines(material_id, &[line])
+            .into_iter()
+            .next()
+            .expect("one journal record")?;
+        let intent = journald
+            .parse_record(record, &make_ctx("system.journald"))
+            .await?
+            .pop()
+            .expect("journald emits one intent");
+        assert_deferred(intent);
+    }
+
+    let mut systemd = SystemdParser;
+    for line in [
+        r#"{"__CURSOR":"s=systemd;i=1","UNIT":"nginx.service","MESSAGE":"Started nginx.service."}"#,
+        r#"{"__CURSOR":"s=systemd;i=2","__REALTIME_TIMESTAMP":"not-a-timestamp","UNIT":"nginx.service","MESSAGE":"Started nginx.service."}"#,
+        r#"{"__CURSOR":"s=systemd;i=3","__REALTIME_TIMESTAMP":"9223372036854775807","UNIT":"nginx.service","MESSAGE":"Started nginx.service."}"#,
+    ] {
+        let record = records_from_journal_lines(material_id, &[line])
+            .into_iter()
+            .next()
+            .expect("one journal record")?;
+        let intent = systemd
+            .parse_record(record, &make_ctx("system.systemd"))
+            .await?
+            .pop()
+            .expect("systemd emits one intent");
+        assert_deferred(intent);
+    }
     Ok(())
 }
 
