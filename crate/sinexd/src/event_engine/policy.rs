@@ -750,6 +750,7 @@ impl PolicyEngine {
     /// external-recognizer failures suppress the affected value so analyzer
     /// outages do not persist unclassified sensitive text.
     pub async fn redact_batch(&self, mut batch: Vec<AdmittedEvent>) -> Vec<AdmittedEvent> {
+        self.ensure_fresh().await;
         // Snapshot the rule set (cheap Arc clone) and drop the read guard before
         // the external-recognizer await below, so a slow analyzer never blocks
         // policy refresh or other readers.
