@@ -638,7 +638,7 @@ fn active_sinex_services_with_inventory(
     // Inspect the executable identity instead of guessing from a service-name
     // prefix; unit renames then remain safe as long as the deployed command is
     // still a Sinex/NATS writer.
-    active_units
+    Ok(active_units
         .into_iter()
         .filter(|unit| unit.ends_with(".service") || unit.ends_with(".timer"))
         .filter(|unit| {
@@ -650,7 +650,7 @@ fn active_sinex_services_with_inventory(
                 })
                 .unwrap_or(false)
         })
-        .collect::<Vec<_>>()
+        .collect::<Vec<_>>())
 }
 
 /// Stop the active writer services without stopping PostgreSQL via a target.
