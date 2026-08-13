@@ -1,6 +1,7 @@
 use super::*;
 use crate::fmt::render_finite_envelope;
 use sinex_primitives::views::{ReadinessCaveatId, VIEW_ENVELOPE_SCHEMA_VERSION};
+use std::num::NonZeroUsize;
 use xtask::sandbox::prelude::*;
 
 fn sweep_summary(orphaned_entries: usize) -> BlobSweepSummary {
@@ -40,6 +41,7 @@ fn fsck_summary() -> BlobFsckSummary {
         restored: 0,
         entries_scanned: 0,
         bytes_verified: 0,
+        sample: None,
         incomplete: false,
         stop_reason: None,
         details: Vec::new(),
@@ -93,6 +95,61 @@ async fn blob_fsck_envelope_caveats_missing_corrupt_and_orphaned() -> TestResult
     assert_eq!(envelope.source_surface, "sinexctl.ops.blob.fsck");
     assert!(caveat_ids.contains(&ReadinessCaveatId::SourceAbsent.as_str()));
     assert!(caveat_ids.contains(&ReadinessCaveatId::WindowPartial.as_str()));
+    Ok(())
+}
+
+#[sinex_test]
+async fn blob_fsck_sample_parses_rejects_zero_and_translates_budget() -> TestResult<()> {
+    let full =
+        BlobFsckCommand::try_parse_from(["sinexctl", "--content-store-path", "/tmp/sinex-cas"])?;
+    assert_eq!(full.sample, None);
+    assert_eq!(full.cas_fsck_options().max_entries, None);
+
+    let sampled = BlobFsckCommand::try_parse_from([
+        "sinexctl",
+        "--content-store-path",
+        "/tmp/sinex-cas",
+        "--sample",
+        "7",
+    ])?;
+    assert_eq!(sampled.sample.map(NonZeroUsize::get), Some(7));
+    assert_eq!(sampled.cas_fsck_options().max_entries, Some(7));
+
+    let zero = BlobFsckCommand::try_parse_from([
+        "sinexctl",
+        "--content-store-path",
+        "/tmp/sinex-cas",
+        "--sample",
+        "0",
+    ]);
+    assert!(zero.is_err(), "--sample 0 must be rejected by clap");
+    Ok(())
+}
+
+#[sinex_test]
+async fn sampled_blob_fsck_envelope_reports_incomplete_entry_budget_and_all_findings()
+-> TestResult<()> {
+    let mut summary = fsck_summary();
+    summary.sample = Some(1);
+    summary.incomplete = true;
+    summary.stop_reason = Some("EntryBudget".to_string());
+
+    let envelope = blob_fsck_envelope(summary);
+    let messages = envelope
+        .caveats
+        .iter()
+        .map(|caveat| caveat.message.as_str())
+        .collect::<Vec<_>>();
+
+    assert!(messages.iter().any(|message| message.contains("orphaned")));
+    assert!(messages.iter().any(|message| message.contains("missing")));
+    assert!(messages.iter().any(|message| message.contains("corrupt")));
+    assert!(messages.iter().any(|message| {
+        message.contains("coverage is incomplete") && message.contains("EntryBudget")
+    }));
+    assert!(envelope.payload.incomplete);
+    assert_eq!(envelope.payload.stop_reason.as_deref(), Some("EntryBudget"));
+    assert_eq!(envelope.query_echo.as_ref().unwrap()["sample"], 1);
     Ok(())
 }
 

@@ -14,6 +14,7 @@ use sinexd::runtime::content_store::{
     cas_fsck::{CasFsckOptions, check_cas_with_options},
     gc::{BlobGcReport, sweep_orphans_detailed},
 };
+use std::num::NonZeroUsize;
 
 use crate::Result;
 use crate::fmt::{CommandOutput, format_bytes, print_finite_envelope};
@@ -241,6 +242,10 @@ pub struct BlobFsckCommand {
     /// Optional maximum aggregate bytes/sec read for cryptographic verification.
     #[arg(long)]
     pub verify_bytes_per_second: Option<u64>,
+
+    /// Inspect at most this many CAS entries. Sampled scans are incomplete.
+    #[arg(long)]
+    pub sample: Option<NonZeroUsize>,
 }
 
 #[derive(Debug, Serialize)]
@@ -262,6 +267,7 @@ struct BlobFsckSummary {
     restored: usize,
     entries_scanned: usize,
     bytes_verified: u64,
+    sample: Option<usize>,
     incomplete: bool,
     stop_reason: Option<String>,
     details: Vec<CasFileDetail>,
@@ -277,6 +283,18 @@ struct CasFileDetail {
 }
 
 impl BlobFsckCommand {
+    fn cas_fsck_options(&self) -> CasFsckOptions {
+        CasFsckOptions {
+            max_runtime: self
+                .max_seconds
+                .map(|seconds| std::time::Duration::from_secs(seconds.max(1))),
+            max_entries: self.sample.map(NonZeroUsize::get),
+            verify_bytes_per_sec: self
+                .verify_bytes_per_second
+                .map(|bytes| bytes.max(1) as f64),
+        }
+    }
+
     pub async fn execute(&self, format: OutputFormat) -> Result<()> {
         let database_url = std::env::var("DATABASE_URL").map_err(|_| {
             eyre!("DATABASE_URL not set. Set it in your environment before running blob fsck.")
@@ -291,22 +309,10 @@ impl BlobFsckCommand {
         })
         .wrap_err_with(|| format!("open content-store root {}", self.content_store_path))?;
 
-        let (report, file_statuses) = check_cas_with_options(
-            &pool,
-            &content_store,
-            self.apply,
-            CasFsckOptions {
-                max_runtime: self
-                    .max_seconds
-                    .map(|seconds| std::time::Duration::from_secs(seconds.max(1))),
-                max_entries: None,
-                verify_bytes_per_sec: self
-                    .verify_bytes_per_second
-                    .map(|bytes| bytes.max(1) as f64),
-            },
-        )
-        .await
-        .wrap_err("CAS filesystem check")?;
+        let (report, file_statuses) =
+            check_cas_with_options(&pool, &content_store, self.apply, self.cas_fsck_options())
+                .await
+                .wrap_err("CAS filesystem check")?;
 
         let CasFsckReport {
             referenced,
@@ -358,6 +364,7 @@ impl BlobFsckCommand {
             restored,
             entries_scanned,
             bytes_verified,
+            sample: self.sample.map(NonZeroUsize::get),
             incomplete,
             stop_reason: stop_reason.map(|reason| format!("{reason:?}")),
             details,
@@ -406,6 +413,10 @@ fn format_blob_fsck_summary(summary: &BlobFsckSummary) -> String {
         "  Bytes verified: {}\n",
         format_bytes(summary.bytes_verified)
     ));
+    match summary.sample {
+        Some(sample) => output.push_str(&format!("  Sample entries: {sample}\n")),
+        None => output.push_str("  Sample entries: unlimited\n"),
+    }
     output.push_str(&format!("  Incomplete: {}\n", summary.incomplete));
     if let Some(reason) = &summary.stop_reason {
         output.push_str(&format!("  Stop reason: {reason}\n"));
@@ -862,10 +873,12 @@ fn blob_sweep_envelope(summary: BlobSweepSummary) -> ViewEnvelope<BlobSweepSumma
 fn blob_fsck_envelope(summary: BlobFsckSummary) -> ViewEnvelope<BlobFsckSummary> {
     let mode = summary.mode;
     let content_store_path = summary.content_store_path.clone();
+    let sample = summary.sample;
     let mut envelope =
         ViewEnvelope::new("sinexctl.ops.blob.fsck", summary).with_query_echo(serde_json::json!({
             "mode": mode,
             "content_store_path": content_store_path,
+            "sample": sample,
         }));
     if envelope.payload.referenced == 0 && envelope.payload.details.is_empty() {
         envelope.caveats.push(blob_caveat(
@@ -905,6 +918,21 @@ fn blob_fsck_envelope(summary: BlobFsckSummary) -> ViewEnvelope<BlobFsckSummary>
                 envelope.payload.corrupt, envelope.payload.malformed
             ),
             "blob.fsck.invalid",
+            "sinexctl ops blob fsck",
+        ));
+    }
+    if envelope.payload.incomplete {
+        let stop_reason = envelope
+            .payload
+            .stop_reason
+            .as_deref()
+            .unwrap_or("unspecified");
+        envelope.caveats.push(blob_caveat(
+            ReadinessCaveatId::WindowPartial,
+            format!(
+                "blob fsck coverage is incomplete; the CAS scan stopped before complete coverage (stop reason: {stop_reason})"
+            ),
+            "blob.fsck.incomplete",
             "sinexctl ops blob fsck",
         ));
     }
