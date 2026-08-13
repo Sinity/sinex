@@ -193,18 +193,59 @@ impl RuntimeRunner {
         // behavior change (`run_with_ready_signal(None)` is exactly `run()`).
         #[cfg(any(test, feature = "testing"))]
         let ready_tx = self.confirmed_consumer_ready_tx.take();
-        #[cfg(not(any(test, feature = "testing")))]
-        let ready_tx = None;
 
-        // Process historical backlog BEFORE starting the JetStream consumer.
-        // The confirmed-event consumer ACKs after enqueueing into this bridge,
-        // before the automaton finishes processing the batch. A restart is safe
-        // only because every bridge-backed automaton can replay from its
-        // durable bridge checkpoint through the DB before it subscribes with
-        // DeliverPolicy::New. Load that checkpoint before catch-up: generic
-        // bridge-managed automata may report Checkpoint::None from
-        // module.current_checkpoint(), while the bridge KV holds the last
-        // successfully processed event.
+        let consumer_failure = Arc::new(tokio::sync::Mutex::new(None));
+        let consumer_runner = consumer.clone();
+        let consumer_failure_reporter = Arc::clone(&consumer_failure);
+
+        // Production must bind the durable consumer before the historical scan.
+        // With DeliverPolicy::New, creating it after catch-up leaves a permanent
+        // hole for events committed after the scan's query snapshot but before
+        // the consumer exists. The test-only hook remains externally awaited by
+        // harnesses whose scan implementation has no durable backing store.
+        #[cfg(not(any(test, feature = "testing")))]
+        let (startup_ready_tx, startup_ready_rx) = tokio::sync::oneshot::channel();
+        #[cfg(not(any(test, feature = "testing")))]
+        let startup_ready_rx = Some(startup_ready_rx);
+        #[cfg(not(any(test, feature = "testing")))]
+        let (startup_start_tx, startup_start_rx) = tokio::sync::oneshot::channel();
+
+        let consumer_handle = tokio::spawn(async move {
+            #[cfg(not(any(test, feature = "testing")))]
+            let ready_signal = Some(startup_ready_tx);
+            #[cfg(any(test, feature = "testing"))]
+            let ready_signal = ready_tx;
+
+            #[cfg(not(any(test, feature = "testing")))]
+            let result = consumer_runner
+                .run_with_ready_and_start_gate(ready_signal, startup_start_rx)
+                .await;
+            #[cfg(any(test, feature = "testing"))]
+            let result = consumer_runner.run_with_ready_signal(ready_signal).await;
+
+            if let Err(err) = result {
+                warn!(error = %err, "Automaton JetStream consumer terminated unexpectedly");
+                let mut guard = consumer_failure_reporter.lock().await;
+                *guard = Some(err);
+            }
+        });
+        drain_controller.register_runtime_abort(consumer_handle.abort_handle());
+        self.consumer_handle = Some(consumer_handle);
+
+        #[cfg(not(any(test, feature = "testing")))]
+        startup_ready_rx
+            .expect("production automaton startup readiness receiver")
+            .await
+            .map_err(|_| {
+                SinexError::lifecycle(
+                    "Automaton confirmed-event consumer stopped before startup readiness"
+                        .to_string(),
+                )
+            })?;
+
+        // Load the checkpoint before catch-up: generic bridge-managed automata
+        // may report Checkpoint::None from module.current_checkpoint(), while
+        // the bridge KV holds the last successfully processed event.
         info!("Processing historical backlog before entering continuous mode");
         let _ = self
             .module
@@ -217,18 +258,13 @@ impl RuntimeRunner {
             )
             .await?;
 
-        let consumer_failure = Arc::new(tokio::sync::Mutex::new(None));
-        let consumer_runner = consumer.clone();
-        let consumer_failure_reporter = Arc::clone(&consumer_failure);
-        let consumer_handle = tokio::spawn(async move {
-            if let Err(err) = consumer_runner.run_with_ready_signal(ready_tx).await {
-                warn!(error = %err, "Automaton JetStream consumer terminated unexpectedly");
-                let mut guard = consumer_failure_reporter.lock().await;
-                *guard = Some(err);
-            }
-        });
-        drain_controller.register_runtime_abort(consumer_handle.abort_handle());
-        self.consumer_handle = Some(consumer_handle);
+        #[cfg(not(any(test, feature = "testing")))]
+        startup_start_tx.send(()).map_err(|_| {
+            SinexError::lifecycle(
+                "Confirmed-event consumer stopped before catch-up released its start gate"
+                    .to_string(),
+            )
+        })?;
 
         // A bridge-backed automaton is not warmed until its historical scan
         // completed and the live durable consumer is bound. Readiness before

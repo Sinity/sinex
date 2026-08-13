@@ -3,7 +3,7 @@ use crate::runtime::content_store::{ContentStoreConfig, MaterialContentStore};
 use crate::sources::dispatch::test_parser_dispatch;
 use camino::Utf8PathBuf;
 use sinex_db::repositories::source_materials::SourceMaterial as SourceMaterialRegistration;
-use sinex_primitives::{Id, MaterialManifestV1, Uuid};
+use sinex_primitives::{ByteRange, Id, MaterialManifestV1, Uuid};
 use tempfile::TempDir;
 use xtask::sandbox::prelude::*;
 
@@ -149,6 +149,9 @@ async fn load_material_bytes_replays_from_manifest_when_blob_route_is_absent(
         "2026-08-12T00:00:00Z",
         "2026-08-12T00:00:01Z",
     );
+    let mut manifest = manifest;
+    let replay_range = ByteRange { start: 0, end: 24 };
+    manifest.bytes.parser_ranges = vec![replay_range];
     let manifest_path = root.join("removed-source-manifest.json");
     tokio::fs::write(&manifest_path, manifest.canonical_bytes()?).await?;
     let manifest_key = raw_store.store_file(&manifest_path).await?;
@@ -169,6 +172,10 @@ async fn load_material_bytes_replays_from_manifest_when_blob_route_is_absent(
         .await
         .map_err(|error| eyre!(error))?;
     assert_eq!(bytes, payload);
+    let range = load_material_range(ctx.pool(), &content_store, material_id, replay_range)
+        .await
+        .map_err(|error| eyre!(error))?;
+    assert_eq!(range, payload[..24]);
     Ok(())
 }
 

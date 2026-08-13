@@ -53,6 +53,68 @@ async fn cancelled_fsck_reports_incomplete_without_scanning(ctx: TestContext) ->
 }
 
 #[sinex_test]
+async fn bounded_fsck_cancellation_stops_authority_stream_after_walk(
+    ctx: TestContext,
+) -> TestResult<()> {
+    let store_dir = tempfile::tempdir()?;
+    let root_path = Utf8PathBuf::from_path_buf(store_dir.path().to_path_buf())
+        .expect("temporary content-store path must be UTF-8");
+    let content_store = MaterialContentStore::new(ContentStoreConfig {
+        root_path: root_path.clone(),
+        ..Default::default()
+    })?;
+    let source = root_path.join("bounded-cancel.txt");
+    tokio::fs::write(&source, b"cancel after the walk").await?;
+    content_store.store_file(&source).await?;
+
+    let missing_hash = blake3::hash(b"authority row with no file")
+        .to_hex()
+        .to_string();
+    ctx.pool
+        .blobs()
+        .insert(
+            Blob::builder()
+                .storage_backend(LOCAL_BLAKE3_CAS_BACKEND.to_string())
+                .content_hash(missing_hash.clone())
+                .size_bytes(24)
+                .checksum_blake3(missing_hash)
+                .build(),
+        )
+        .await?;
+
+    let cancellation = WorkCancellation::new();
+    let callback_cancellation = cancellation.clone();
+    let mut statuses = Vec::new();
+    let (report, checkpoint) = super::check_cas_bounded_with_control(
+        ctx.pool(),
+        &content_store,
+        false,
+        CasFsckOptions::default(),
+        None,
+        cancellation,
+        |status| {
+            statuses.push(status);
+            callback_cancellation.cancel();
+        },
+    )
+    .await?;
+
+    assert!(report.incomplete);
+    assert_eq!(report.stop_reason, Some(CasFsckStopReason::Cancelled));
+    assert_eq!(
+        report.missing, 0,
+        "cancelled authority rows must not be reported"
+    );
+    assert!(
+        statuses
+            .iter()
+            .all(|status| status.status != CasStatus::Missing)
+    );
+    assert_eq!(checkpoint, CasWalkCheckpoint::default());
+    Ok(())
+}
+
+#[sinex_test]
 async fn pending_cas_delete_survives_failure_and_resumes(_ctx: TestContext) -> TestResult<()> {
     let store_dir = tempfile::tempdir()?;
     let root_path = Utf8PathBuf::from_path_buf(store_dir.path().to_path_buf())

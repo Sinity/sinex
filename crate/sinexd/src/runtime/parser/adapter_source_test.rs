@@ -12,6 +12,7 @@ use crate::runtime::stream::{
 use crate::runtime::{EventTransport, NatsPublisher, SOURCE_MATERIAL_STREAM};
 use async_trait::async_trait;
 use camino::Utf8PathBuf;
+use color_eyre::eyre::eyre;
 use futures::stream::{self, BoxStream};
 use sinex_db::DbPoolExt;
 use sinex_db::repositories::source_material_relation_types;
@@ -25,7 +26,7 @@ use sinex_primitives::privacy::{
     save_private_mode_state,
 };
 use sinex_primitives::rpc::sources::{CaveatSeverity, caveat_codes};
-use sinex_primitives::{Bytes, HostName, JsonValue, Seconds, SinexError};
+use sinex_primitives::{Bytes, HostName, JsonValue, MaterialManifestV1, Seconds, SinexError};
 use std::{
     collections::HashMap,
     sync::{
@@ -2906,6 +2907,22 @@ async fn file_drop_replay_preserves_each_live_append_occurrence(
 async fn file_drop_replay_reads_authoritative_cas_bytes_after_source_removed(
     ctx: TestContext,
 ) -> TestResult<()> {
+    let runtime = tokio::runtime::Handle::current();
+    std::thread::Builder::new()
+        .name("file-drop-replay-test".to_string())
+        .stack_size(8 * 1024 * 1024)
+        .spawn(move || runtime.block_on(async move {
+            file_drop_replay_reads_authoritative_cas_bytes_after_source_removed_impl(ctx).await
+        }))
+        .map_err(|error| eyre!(error))?
+        .join()
+        .map_err(|_| eyre!("file-drop replay test thread panicked"))??;
+    Ok(())
+}
+
+async fn file_drop_replay_reads_authoritative_cas_bytes_after_source_removed_impl(
+    ctx: TestContext,
+) -> TestResult<()> {
     let ctx = ctx.with_nats().shared().await?;
     let (runtime, mut event_receiver) = make_adapter_runtime_with_db(&ctx).await?;
 
@@ -2946,6 +2963,43 @@ async fn file_drop_replay_reads_authoritative_cas_bytes_after_source_removed(
                     "path": logical_path,
                     "logical_source_identifier": "file-drop-replay-test",
                 })),
+        )
+        .await?;
+
+    // Exercise the production replay authority, not only the legacy blob
+    // fallback: the manifest is canonical CAS metadata and its encoded digest
+    // names the exact bytes that the replay range must read.
+    let manifest = MaterialManifestV1::from_capture(
+        material.id,
+        logical_path.as_str(),
+        "local_cas",
+        blake3::hash(authoritative_bytes).to_hex().to_string(),
+        authoritative_bytes.len() as u64,
+        json!({
+            "logical_source_identifier": "file-drop-replay-test",
+            "path": logical_path,
+        }),
+        "2026-08-12T00:00:00Z",
+        "2026-08-12T00:00:01Z",
+    );
+    manifest.validate().map_err(|error| eyre!(error))?;
+    let manifest_blob = content_store
+        .ingest_from_bytes(
+            &manifest.canonical_bytes()?,
+            "material-manifest.json",
+            "application/json",
+        )
+        .await?;
+    ctx.pool()
+        .source_materials()
+        .update_metadata(
+            Id::from_uuid(material.id),
+            json!({
+                "material_manifest": {
+                    "manifest_type": sinex_primitives::MATERIAL_MANIFEST_V1,
+                    "content_key": manifest_blob.content_key(),
+                }
+            }),
         )
         .await?;
 

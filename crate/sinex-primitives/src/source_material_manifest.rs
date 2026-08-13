@@ -7,6 +7,7 @@
 //! cannot silently turn "not captured" into a guessed value.
 
 use blake3::Hash;
+use crate::domain::ContentKey;
 use serde::{Deserialize, Serialize};
 use serde_json::Value as JsonValue;
 use std::collections::BTreeMap;
@@ -518,6 +519,19 @@ impl MaterialManifestV1 {
         })
     }
 
+    /// Return the exact local-CAS key for the encoded source bytes named by
+    /// this manifest. The key is derived only from the observed encoded size
+    /// and digest, never from the source identifier or a filesystem path.
+    pub fn encoded_content_store_key(&self) -> Result<String, &'static str> {
+        self.validate()?;
+        Ok(format!(
+            "{}-s{}--{}",
+            ContentKey::LOCAL_BLAKE3_CAS_BACKEND,
+            self.bytes.encoded_size,
+            self.bytes.encoded.value_hex
+        ))
+    }
+
     /// Reject discriminator drift before a manifest is persisted or replayed.
     pub fn validate(&self) -> Result<(), &'static str> {
         if self.manifest_type != MaterialManifestType::V1 {
@@ -594,6 +608,10 @@ mod tests {
         let digest = manifest.canonical_digest().expect("digest");
         assert_eq!(digest.algorithm, "blake3");
         assert_eq!(digest.value_hex.len(), 64);
+        assert_eq!(
+            manifest.encoded_content_store_key().expect("CAS key"),
+            format!("SINEXBLAKE3-s1--{}", "a".repeat(64))
+        );
         manifest.validate().expect("valid manifest");
     }
 

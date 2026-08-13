@@ -654,6 +654,12 @@ where
                 });
             }
         }
+        // A status sink can cancel after the final entry in a batch. Observe
+        // that request before advancing the resumable cursor or claiming the
+        // bounded walk completed.
+        if !fsck_work_boundary(&mut work, &mut report)? {
+            break 'scan;
+        }
         progress_checkpoint = batch.checkpoint.clone();
         if batch.complete {
             scan_complete = true;
@@ -669,6 +675,10 @@ where
         return Ok((report, progress_checkpoint));
     }
 
+    if !fsck_work_boundary(&mut work, &mut report)? {
+        return Ok((report, progress_checkpoint));
+    }
+
     let mut authority_count = 0_usize;
     let mut blob_rows = sqlx::query_as::<_, (String, String)>(
         r"
@@ -680,6 +690,9 @@ where
     .bind(LOCAL_BLAKE3_CAS_BACKEND)
     .fetch(pool);
     while let Some(row) = blob_rows.next().await {
+        if !fsck_work_boundary(&mut work, &mut report)? {
+            return Ok((report, progress_checkpoint));
+        }
         let (hash, blob_id) = row.map_err(|error| {
             SinexError::database("stream SINEXBLAKE3 hashes for bounded CAS fsck")
                 .with_source(error)
@@ -698,6 +711,9 @@ where
                 blob_id: Some(blob_id),
             });
         }
+        if !fsck_work_boundary(&mut work, &mut report)? {
+            return Ok((report, progress_checkpoint));
+        }
     }
 
     let mut material_rows = sqlx::query_as::<_, (String, JsonValue)>(
@@ -709,6 +725,9 @@ where
     )
     .fetch(pool);
     while let Some(row) = material_rows.next().await {
+        if !fsck_work_boundary(&mut work, &mut report)? {
+            return Ok((report, progress_checkpoint));
+        }
         let (material_id, metadata) = row.map_err(|error| {
             SinexError::database("stream material manifest hashes for bounded CAS fsck")
                 .with_source(error)
@@ -730,7 +749,14 @@ where
                     blob_id: Some(authority),
                 });
             }
+            if !fsck_work_boundary(&mut work, &mut report)? {
+                return Ok((report, progress_checkpoint));
+            }
         }
+    }
+
+    if !fsck_work_boundary(&mut work, &mut report)? {
+        return Ok((report, progress_checkpoint));
     }
 
     if report.entries_scanned > authority_count.saturating_mul(2) {

@@ -19,7 +19,7 @@ use sqlx::PgPool;
 use std::sync::Arc;
 use tracing::{error, info, warn};
 
-use crate::runtime::content_store::{ContentStoreKey, ContentStoreManager};
+use crate::runtime::content_store::ContentStoreManager;
 use crate::runtime::nats_payload::ensure_nats_payload_fits;
 use crate::sources::dispatch::ParserDispatchFn;
 
@@ -236,17 +236,15 @@ async fn load_material_authority(
     };
 
     if let Some(manifest) = manifest.as_ref() {
-        let content_key = ContentStoreKey::local_blake3(
-            manifest.bytes.encoded_size,
-            manifest.bytes.encoded.value_hex.clone(),
-        )
-        .map_err(|error| {
-            format!(
-                "manifest for material {material_id} has an invalid encoded CAS identity: {error}"
-            )
-        })?;
+        let content_key = manifest
+            .encoded_content_store_key()
+            .map_err(|error| {
+                format!(
+                    "manifest for material {material_id} has an invalid encoded CAS identity: {error}"
+                )
+            })?;
         let bytes = content_store
-            .retrieve_cas_object(&content_key.key)
+            .retrieve_cas_object(&content_key)
             .await
             .map_err(|e| {
                 format!(

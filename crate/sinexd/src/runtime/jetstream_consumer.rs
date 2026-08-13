@@ -168,7 +168,31 @@ impl JetStreamEventConsumer {
             *running = true;
         }
 
-        let result = self.run_inner(ready_tx).await;
+        let result = self.run_inner(ready_tx, None).await;
+        *self.running.write().await = false;
+        result
+    }
+
+    /// Create the durable consumer and signal readiness, then wait for the
+    /// caller to release the pull loop. This lets a production startup create
+    /// the `DeliverPolicy::New` consumer before a historical scan without
+    /// processing the same events concurrently through both paths.
+    pub async fn run_with_ready_and_start_gate(
+        &self,
+        ready_tx: Option<tokio::sync::oneshot::Sender<()>>,
+        start_rx: tokio::sync::oneshot::Receiver<()>,
+    ) -> RuntimeResult<()> {
+        {
+            let mut running = self.running.write().await;
+            if *running {
+                return Err(SinexError::lifecycle(
+                    "Consumer already running".to_string(),
+                ));
+            }
+            *running = true;
+        }
+
+        let result = self.run_inner(ready_tx, Some(start_rx)).await;
         *self.running.write().await = false;
         result
     }
@@ -176,6 +200,7 @@ impl JetStreamEventConsumer {
     async fn run_inner(
         &self,
         ready_tx: Option<tokio::sync::oneshot::Sender<()>>,
+        start_rx: Option<tokio::sync::oneshot::Receiver<()>>,
     ) -> RuntimeResult<()> {
         info!(
             "Starting confirmed-event consumer: {}",
@@ -207,6 +232,15 @@ impl JetStreamEventConsumer {
         if let Some(tx) = ready_tx {
             // Best-effort: a dropped receiver just means nobody cared.
             let _ = tx.send(());
+        }
+
+        if let Some(start_rx) = start_rx {
+            start_rx.await.map_err(|_| {
+                SinexError::lifecycle(
+                    "Confirmed-event consumer start gate dropped before catch-up completed"
+                        .to_string(),
+                )
+            })?;
         }
 
         Self::consume_confirmed_events(
