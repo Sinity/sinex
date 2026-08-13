@@ -34,13 +34,29 @@ xtask test -p xtask -E 'test(manifest_projection_keeps_duplicate_storage_explici
 
 Result: 2 exact tests passed. These tests validate the calculator contracts. They do not measure an import or replay.
 
-### Compressed archive probe
+### Compressed scoped replay probe
 
 ```bash
-xtask test -p sinex-db -E 'test(compressed_chunk_archive_cost_is_measurable)' --impact-mode=off
+xtask test -p sinex-db -E 'test(compressed_chunk_scoped_replay_cost_is_measurable)' --impact-mode=off
 ```
 
-Result: 1 exact test passed. The probe inserted 256 synthetic events, compressed the `core.events` chunk, archived all 256 rows, and verified 256 rows in `audit.archived_events`. It reported `archive_wall_ms=41`, `compressed_bytes_before=245760`, `compressed_bytes_after=499712`, `uncompressed_bytes_before=0`, `uncompressed_bytes_after=0`, and `wal_bytes=0.0`. The zero WAL delta and zero uncompressed-size fields are observed output limitations, not evidence of zero physical work. The test does not execute a scoped replay or recompress the post-archive chunk.
+The bounded `sinex-y0o3.10.1` harness allocates a fresh development database per test. It changes that database's `core.events` chunk interval to one millisecond, inserts eight natural UUIDv7-timed bursts for each sample, and therefore creates multiple chunks without inventing historical UUIDv7 values or touching production.
+
+The bounded samples are 256, 2048, and 8192 material-root events. Each sample records wall time and WAL observability for fixture insertion, compression, scoped replay archive, and recompression. The emitted `y0o3_10_1_compressed_scoped_replay_measurement` JSON also includes `pg_current_wal_lsn` snapshots and byte delta when available, `pg_stat_wal.wal_bytes` delta when available, live/archive row counts, direct-root/cascade/archive counts, and full chunk states before compression, after compression, after archive, and after recompression.
+
+The replay phase uses `ReplayScope` filtering plus the production cascade-session helpers to select roots, expand the cascade, and call the archive trigger within one transaction. Assertions require a multi-chunk fixture, all chunks compressed before archive and after recompression, exact root/cascade/archive counts, zero matching live rows after archive, and exact archived-row count. Missing WAL observability is represented as `null`; it does not invalidate the replay correctness measurement.
+
+The focused run on 2026-08-13 used test database `sinex_test_pool_37` and passed in 9.577 seconds. All three samples selected, cascaded, archived, and verified exactly their requested row count, leaving zero matching live rows and fully compressed chunks after recompression.
+
+| Rows | Insert ms | Compress ms | Archive ms | Recompress ms | Archive LSN delta | Archive `pg_stat_wal` delta |
+| ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| 256 | 137 | 51 | 66 | 4 | 0 | 0 |
+| 2,048 | 229 | 53 | 335 | 26 | 5,301,200 | 11,121,134 |
+| 8,192 | 537 | 80 | 1,557 | 44 | 21,820,304 | 33,427,070 |
+
+The structured output recorded 8, 16, and 26 compressed chunk snapshots after the three sequential samples. The latter two include already-compressed chunks from earlier samples in the same otherwise fresh database. The per-sample archive assertions remain material-filtered and exact.
+
+Residual scope: this is a checkout-local synthetic measurement, not a historical seven-day chunk-size model or a production replay. It cannot safely exercise the daemon-only source re-scan, confirmed publish/ack, or operation invalidation marker. `pg_stat_wal` is cluster-global, so its delta can include concurrent development-database activity. The harness does exercise the production database route used by the replay controller: scoped root selection, cascade session preparation and expansion, archive trigger/cascade, and recompression.
 
 ### MaterialReadySet scale probe
 
@@ -71,7 +87,5 @@ Result: the current checkout database contained 46 registered materials, 11,062 
 | Bead | Disposition | Evidence and remaining gap |
 | --- | --- | --- |
 | `sinex-y0o3.2` | Partial, not closure-ready | The real January 2025 ActivityWatch fixture has measured bytes and records. The required GB projection against `/realm` and hours-scale COPY import ETA are not measured because the staged ActivityWatch path was not run and the required core event, manifest, CAS, staging, NATS, and COPY-rate deltas are absent. No production-scale estimate is made. |
-| `sinex-y0o3.10` | Partial, not closure-ready | The compressed archive probe measured and verified a 256-event archive on a real checkout TimescaleDB. The required scoped replay, replay wall time, usable WAL measurement, and post-replay recompression result are absent. No pathological-cost escalation is justified by this run. |
+| `sinex-y0o3.10` | Partial, with bounded y0o3.10.1 measurement | The committed harness measures 256, 2048, and 8192 synthetic multi-chunk scoped replay archives and recompression through the production database route. It does not yet establish historical seven-day chunk cost, source re-scan, confirmed publish/ack, or a production-scale replay estimate. |
 | `sinex-y0o3.11` | Partial, not closure-ready | The committed ReadySet curve passed at 10,000, 50,000, and 100,000 synthetic entries. It does not measure the real staged-import cardinality, admission throughput degradation, eviction pause distribution in the import route, or FK-deferral rate against the 150-second budget. No `dpof` promotion is justified by synthetic-only timings. |
-
-The committed code remains unchanged in this chunk because the measurements identify missing execution coverage rather than a production defect. The next closure run needs a real staged ActivityWatch import delta and a replay route that records operation wall time, WAL LSN delta, chunk state before and after, and archive/replay counts in one isolated test.
