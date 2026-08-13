@@ -27,8 +27,17 @@ use crate::sources::bindings::{self as source_bindings, SourceBinding};
 /// Environment variable selecting which automata `sinexd` hosts.
 ///
 /// Comma-separated list of automaton names, or the literal `all`. Unknown
-/// names fail startup. Unset / empty disables every automaton.
+/// names fail startup. Unset selects the ratified default portfolio; an empty
+/// value disables every automaton explicitly.
 const ENV_AUTOMATA_ENABLED: &str = "SINEX_AUTOMATA_ENABLED";
+
+/// The automata hosted by a standalone `sinexd` when the selector is unset.
+///
+/// This is the ratified default portfolio. Deployment configuration may pass
+/// an explicit selector to add a profile-gated automaton or otherwise tailor
+/// the hosted set for a particular machine.
+const DEFAULT_AUTOMATA_ENABLED: &str =
+    "canonicalizer,health,attention-stream,interval-lift,session,hourly,daily";
 
 /// Environment variable pointing at the source-bindings manifest JSON.
 ///
@@ -526,8 +535,9 @@ fn start_automata(
     shutdown_rx: watch::Receiver<bool>,
 ) -> Result<Vec<(&'static str, JoinHandle<()>)>> {
     let raw = std::env::var(ENV_AUTOMATA_ENABLED).ok();
-    // Default to all automata when unset — the entity/relation/document
-    // automata are implemented and should activate by default (#1087).
+    // The Nix deployment normally supplies an explicit selector. Preserve the
+    // ratified portfolio for direct supervisor startup, where that environment
+    // assembly is absent.
     // Set SINEX_AUTOMATA_ENABLED= (empty) to explicitly disable.
     let effective = automata_enabled_arg(raw.as_deref());
     let selected = automata_registry::parse_enabled(effective)?;
@@ -553,7 +563,7 @@ fn start_automata(
 
 fn automata_enabled_arg(raw: Option<&str>) -> Option<&str> {
     match raw {
-        None => Some("all"),
+        None => Some(DEFAULT_AUTOMATA_ENABLED),
         Some(value) if value.trim().is_empty() => None,
         Some(value) => Some(value),
     }
