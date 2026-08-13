@@ -3,8 +3,8 @@
 //! Uses `JournalctlStreamAdapter` (same subprocess as `system.journald`).
 //! Records without `UNIT` or `USER_UNIT` are silently skipped.
 
-use crate::runtime::parser::{MaterialParser, ParserError};
 use super::journald::decode_journald_field;
+use crate::runtime::parser::{MaterialParser, ParserError};
 use sinex_macros::SourceMeta;
 use sinex_primitives::domain::{EventSource, EventType};
 use sinex_primitives::events::enums::{SystemdActiveState, SystemdUnitType};
@@ -164,12 +164,8 @@ impl MaterialParser for SystemdParser {
             .and_then(decode_journald_field)
             .unwrap_or_default();
 
-        let pid_str = json
-            .get("_PID")
-            .and_then(decode_journald_field);
-        let uid_str = json
-            .get("_UID")
-            .and_then(decode_journald_field);
+        let pid_str = json.get("_PID").and_then(decode_journald_field);
+        let uid_str = json.get("_UID").and_then(decode_journald_field);
 
         let unit_result = json
             .get("UNIT_RESULT")

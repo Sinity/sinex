@@ -100,7 +100,8 @@ async fn test_systemd_parser_emits_only_genuine_manager_transitions() -> TestRes
 async fn test_systemd_missing_realtime_timestamp_is_tagged_atemporal_not_intrinsic()
 -> TestResult<()> {
     let mid = Id::<SourceMaterial>::new();
-    let line = r#"{"__CURSOR":"s=abc;i=9","UNIT":"nginx.service","MESSAGE":"Started nginx.service."}"#;
+    let line =
+        r#"{"__CURSOR":"s=abc;i=9","UNIT":"nginx.service","MESSAGE":"Started nginx.service."}"#;
     let records = records_from_journal_lines(mid, &[line]);
     let record = records[0].as_ref().unwrap().clone();
 
