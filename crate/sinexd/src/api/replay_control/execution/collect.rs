@@ -949,12 +949,13 @@ impl ReplayExecutionEngine {
         pool: &sqlx::PgPool,
         cascade_ids: &[Uuid],
         operation_id: Uuid,
-    ) -> Result<()> {
+    ) -> Result<u64> {
         if cascade_ids.is_empty() {
-            return Ok(());
+            return Ok(0);
         }
 
-        pool.events()
+        let restored = pool
+            .events()
             .execute_cascade_restore(cascade_ids, &operation_id.to_string())
             .await
             .map_err(|err| {
@@ -963,7 +964,7 @@ impl ReplayExecutionEngine {
                 )
                 .with_source(err)
             })?;
-        Ok(())
+        Ok(restored)
     }
 
     pub(crate) async fn abort_before_scan_ack(
@@ -974,12 +975,22 @@ impl ReplayExecutionEngine {
         operation_id: Uuid,
         error: SinexError,
     ) -> Result<u64> {
-        if let Err(restore_error) = self.restore_cascade(pool, cascade_ids, operation_id).await {
+        let restored = match self.restore_cascade(pool, cascade_ids, operation_id).await {
+            Ok(restored) => restored,
+            Err(restore_error) => {
+                return Err(SinexError::service(format!(
+                    "Replay dispatch failed before source acknowledgement, and restoring the archived cascade also failed: {restore_error}"
+                ))
+                .with_source(error)
+                .with_source(restore_error));
+            }
+        };
+        if restored != cascade_ids.len() as u64 {
             return Err(SinexError::service(format!(
-                "Replay dispatch failed before source acknowledgement, and restoring the archived cascade also failed: {restore_error}"
+                "Replay dispatch failed before source acknowledgement; restored only {restored}/{} archived cascade members and operator recovery is required",
+                cascade_ids.len()
             ))
-            .with_source(error)
-            .with_source(restore_error));
+            .with_source(error));
         }
 
         if let Err(invalidation_error) = self

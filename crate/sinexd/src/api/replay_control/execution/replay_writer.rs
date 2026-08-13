@@ -1093,13 +1093,23 @@ impl ReplayExecutionEngine {
             );
             compensation_errors.push(link_error);
         }
-        if let Err(restore_error) = self.restore_cascade(pool, cascade_ids, operation_id).await {
-            warn!(
-                operation_id = %operation_id,
-                error = %restore_error,
-                "Failed to restore archived cascade during staged-replay failure compensation"
-            );
-            compensation_errors.push(restore_error);
+        let restored = match self.restore_cascade(pool, cascade_ids, operation_id).await {
+            Ok(restored) => restored,
+            Err(restore_error) => {
+                warn!(
+                    operation_id = %operation_id,
+                    error = %restore_error,
+                    "Failed to restore archived cascade during staged-replay failure compensation"
+                );
+                compensation_errors.push(restore_error);
+                0
+            }
+        };
+        if restored != cascade_ids.len() as u64 {
+            compensation_errors.push(SinexError::service(format!(
+                "restored only {restored}/{} archived cascade members; operator recovery is required",
+                cascade_ids.len()
+            )));
         }
         if let Err(invalidation_error) = self
             .publish_scope_invalidations(scope_metadata, operation_id)
@@ -1142,12 +1152,22 @@ impl ReplayExecutionEngine {
             .await
             .err();
 
-        if let Err(restore_error) = self.restore_cascade(pool, cascade_ids, operation_id).await {
-            return Err(SinexError::service(format!(
+        let restored = match self.restore_cascade(pool, cascade_ids, operation_id).await {
+            Ok(restored) => restored,
+            Err(restore_error) => {
+                return Err(SinexError::service(format!(
                 "Replay failed after archive, and restoring the archived cascade also failed: {restore_error}; operator recovery is required for operation {operation_id}"
             ))
             .with_source(error)
             .with_source(restore_error));
+            }
+        };
+        if restored != cascade_ids.len() as u64 {
+            return Err(SinexError::service(format!(
+                "Replay failed after archive; restored only {restored}/{} cascade members and operator recovery is required",
+                cascade_ids.len()
+            ))
+            .with_source(error));
         }
 
         if let Err(invalidation_error) = self

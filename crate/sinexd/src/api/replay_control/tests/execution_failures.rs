@@ -217,12 +217,12 @@ async fn replay_execution_fails_when_source_runtime_never_reports_completion(
     .fetch_one(&ctx.pool)
     .await?;
     assert_eq!(
-        live_count, 0,
-        "timed-out replay should not resurrect archived rows"
+        live_count, 1,
+        "timed-out replay should restore the archived cascade before reporting failure"
     );
     assert_eq!(
-        archived_count, 1,
-        "timed-out replay should leave the archived cascade untouched"
+        archived_count, 0,
+        "timed-out replay should not leave the archived cascade stranded"
     );
 
     let dispatched_command = scan_command_rx.await.map_err(|_| {
