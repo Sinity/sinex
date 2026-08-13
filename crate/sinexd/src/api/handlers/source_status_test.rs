@@ -291,6 +291,54 @@ async fn source_coverage_view_uses_failed_run_status_with_fresh_evidence()
 }
 
 #[sinex_test]
+async fn source_coverage_view_demotes_emit_stalled_live_source()
+-> xtask::sandbox::TestResult<()> {
+    let now = Timestamp::now();
+    let mut stalled = terminal_bridge_status(now);
+    stalled.module_name = ModuleName::new(CONTRACT.id);
+    stalled.current_health = Some(HealthStatus::Degraded);
+    stalled.health_reason = Some("emit rate stalled".to_string());
+    stalled.last_output_at = Some(now - time::Duration::seconds(1200));
+    stalled.recent_output_count = 0;
+    let runtime = HashMap::from([(CONTRACT.id.to_string(), stalled)]);
+
+    let view = source_coverage_view(
+        &CONTRACT,
+        &[&BINDING],
+        &HashMap::from([(
+            ("fixture".to_string(), "fixture.event".to_string()),
+            SourceEventAggregateRow {
+                source: "fixture".to_string(),
+                event_type: "fixture.event".to_string(),
+                event_count: 1,
+                last_event_at: Some(now.into()),
+            },
+        )]),
+        &HashMap::from([(
+            "fixture.source".to_string(),
+            SourceMaterialAggregateRow {
+                source_identifier: "fixture.source".to_string(),
+                material_count: 1,
+                last_material_at: Some(now.into()),
+            },
+        )]),
+        &runtime,
+        &HashMap::new(),
+        &HashMap::new(),
+        &HashMap::new(),
+        now,
+    );
+
+    assert_eq!(view.readiness, SourceCoverageReadiness::Stale);
+    assert_eq!(view.continuity, SourceCoverageContinuity::Stale);
+    assert!(view
+        .gaps
+        .iter()
+        .any(|gap| gap.kind == "runtime_binding_stalled"));
+    Ok(())
+}
+
+#[sinex_test]
 async fn source_coverage_view_marks_dead_runtime_after_historical_output_stale()
 -> xtask::sandbox::TestResult<()> {
     let now = Timestamp::now();

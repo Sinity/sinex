@@ -455,6 +455,7 @@ fn source_coverage_view_with_stale_after(
 
     let mut gaps = Vec::new();
     let mut caveats = Vec::new();
+    let mut emit_stalled = false;
     if bindings.is_empty() {
         gaps.push(CoverageGapView {
             kind: "missing_binding".to_string(),
@@ -506,6 +507,7 @@ fn source_coverage_view_with_stale_after(
                 });
             }
             let verdict = observation.classify_emit_stall(EmitStallThresholds::default(), now);
+            emit_stalled = matches!(verdict, EmitStallVerdict::Stalled);
             if matches!(verdict, EmitStallVerdict::Stalled) {
                 gaps.push(CoverageGapView {
                     kind: runtime_stalled_gap_kind(contract).to_string(),
@@ -520,6 +522,7 @@ fn source_coverage_view_with_stale_after(
             caveats.push(runtime_unobserved_caveat(contract));
         }
     }
+    let coverage_stale = liveness_failure || emit_stalled;
     if liveness_failure {
         gaps.push(CoverageGapView {
             kind: source_liveness_gap_kind(liveness.status).to_string(),
@@ -564,7 +567,7 @@ fn source_coverage_view_with_stale_after(
         caveats.extend(sessions.iter().map(session_control_caveat));
     }
 
-    let readiness = if liveness_failure && has_live_binding && (has_material || has_events) {
+    let readiness = if coverage_stale && has_live_binding && (has_material || has_events) {
         SourceCoverageReadiness::Stale
     } else if !has_live_binding && proposed_binding_count > 0 {
         SourceCoverageReadiness::Proposed
@@ -577,7 +580,7 @@ fn source_coverage_view_with_stale_after(
     } else {
         SourceCoverageReadiness::Ready
     };
-    let continuity = if liveness_failure && has_live_binding && (has_material || has_events) {
+    let continuity = if coverage_stale && has_live_binding && (has_material || has_events) {
         SourceCoverageContinuity::Stale
     } else {
         match (has_material, has_events) {
