@@ -69,7 +69,7 @@ enum PrivacySubcommand {
         cmd: PolicyCommand,
     },
 
-    /// Summarize current privacy posture from private-mode, DLQ, and source readiness.
+    /// Summarize current privacy posture from private-mode, policy catalog, DLQ, and source readiness.
     Audit(PrivacyAuditArgs),
 
     /// Run a bounded, read-only recognizer audit without returning matched values.
@@ -721,15 +721,7 @@ impl PolicyScopeUnbindArgs {
 
 impl PrivacyAuditArgs {
     async fn execute(&self, client: &GatewayClient, format: OutputFormat) -> Result<()> {
-        let private_mode = client.private_mode_status().await?.state;
-        let dlq = client.dlq_list().await?;
-        let readiness = client
-            .sources_readiness_list(SourcesReadinessListRequest {
-                source_family: self.source_family.clone(),
-                stale_after_seconds: self.stale_after_seconds,
-            })
-            .await?;
-        let report = build_privacy_audit_report(private_mode, &dlq, &readiness);
+        let report = collect_privacy_audit_report(client, self).await?;
         let envelope = privacy_audit_envelope(report.clone(), self);
         if print_finite_envelope(&envelope, format)? {
             return Ok(());
@@ -951,6 +943,8 @@ struct PrivacyExportReceipt {
 }
 
 const PRIVACY_POLICY_LIST_SCHEMA_VERSION: &str = "sinex.privacy-policy-list/v1";
+const EMPTY_PRIVACY_POLICY_CATALOG_MESSAGE: &str =
+    "no DB-backed privacy policy rules are configured; redaction/encryption remains a pass-through unless another policy layer applies";
 
 #[derive(Debug, Clone, Serialize)]
 struct PrivacyPolicyListView {
@@ -1056,7 +1050,7 @@ fn privacy_policy_list_envelope(
     if response.rules.is_empty() {
         envelope.caveats.push(privacy_caveat(
             ReadinessCaveatId::SourceAbsent,
-            "no DB-backed privacy policy rules are configured; redaction/encryption remains a pass-through unless another policy layer applies",
+            EMPTY_PRIVACY_POLICY_CATALOG_MESSAGE,
             "sinexctl privacy policy list",
         ));
     }
@@ -1170,10 +1164,33 @@ fn privacy_caveat(
     }
 }
 
+async fn collect_privacy_audit_report(
+    client: &GatewayClient,
+    args: &PrivacyAuditArgs,
+) -> Result<PrivacyAuditReport> {
+    let private_mode = client.private_mode_status().await?.state;
+    let dlq = client.dlq_list().await?;
+    let readiness = client
+        .sources_readiness_list(SourcesReadinessListRequest {
+            source_family: args.source_family.clone(),
+            stale_after_seconds: args.stale_after_seconds,
+        })
+        .await?;
+    let policy = client.privacy_policy_list(true).await?;
+
+    Ok(build_privacy_audit_report(
+        private_mode,
+        &dlq,
+        &readiness,
+        &policy,
+    ))
+}
+
 fn build_privacy_audit_report(
     private_mode: RuntimePrivateModeState,
     dlq: &DlqListResponse,
     readiness: &SourcesReadinessListResponse,
+    policy: &PrivacyPolicyListResponse,
 ) -> PrivacyAuditReport {
     let sources = summarize_sources(&readiness.sources);
     let mut findings = Vec::new();
@@ -1201,6 +1218,15 @@ fn build_privacy_audit_report(
                 "{} raw-ingest DLQ messages may need privacy-aware review before requeue",
                 dlq.total_messages
             ),
+        });
+    }
+
+    if policy.rules.is_empty() {
+        findings.push(PrivacyAuditFinding {
+            code: "privacy.policy_catalog_empty".to_string(),
+            severity: "blocking",
+            surface: "policy_catalog",
+            message: EMPTY_PRIVACY_POLICY_CATALOG_MESSAGE.to_string(),
         });
     }
 
