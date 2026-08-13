@@ -2024,6 +2024,7 @@ fn event_copy_actions(
 fn privacy_state_label(state: PrivacyStateKind) -> &'static str {
     match state {
         PrivacyStateKind::RawVisible => "raw visible",
+        PrivacyStateKind::TransformationUnknown => "transformation unknown",
         PrivacyStateKind::MetadataOnly => "metadata only",
         PrivacyStateKind::Redacted => "redacted",
         PrivacyStateKind::Suppressed => "suppressed",

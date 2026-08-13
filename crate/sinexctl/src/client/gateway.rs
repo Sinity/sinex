@@ -12,7 +12,12 @@ use sinex_primitives::rpc::{
     JsonRpcError, RpcMethod,
     automata::{AUTOMATA_STATUS_METHOD, AutomataStatusRequest, AutomataStatusResponse},
     content::{CONTENT_STORE_BLOB_METHOD, StoreBlobRequest, StoreBlobResponse},
-    coordination::{InstanceHealthResponse, InstanceInfo},
+    coordination::{
+        COORDINATION_GET_LEADER_METHOD, COORDINATION_INSTANCE_HEALTH_METHOD,
+        COORDINATION_LIST_INSTANCES_METHOD, GetLeaderRequest, GetLeaderResponse,
+        InstanceHealthRequest, InstanceHealthResponse, InstanceInfo, ListInstancesRequest,
+        ListInstancesResponse,
+    },
     curation::{
         CURATION_DUPLICATE_CANDIDATES_LIST_METHOD, CURATION_DUPLICATE_JUDGMENTS_RECORD_METHOD,
         CURATION_FINALIZE_METHOD, CURATION_JUDGMENTS_RECORD_METHOD, CURATION_PROPOSALS_LIST_METHOD,
@@ -693,6 +698,30 @@ impl GatewayClient {
             healthy,
             last_error: None,
         })
+    }
+
+    pub async fn coordination_list_instances(
+        &self,
+        request: ListInstancesRequest,
+    ) -> Result<ListInstancesResponse> {
+        self.call_typed(COORDINATION_LIST_INSTANCES_METHOD, &request)
+            .await
+    }
+
+    pub async fn coordination_get_leader(
+        &self,
+        request: GetLeaderRequest,
+    ) -> Result<GetLeaderResponse> {
+        self.call_typed(COORDINATION_GET_LEADER_METHOD, &request)
+            .await
+    }
+
+    pub async fn coordination_instance_health(
+        &self,
+        request: InstanceHealthRequest,
+    ) -> Result<InstanceHealthResponse> {
+        self.call_typed(COORDINATION_INSTANCE_HEALTH_METHOD, &request)
+            .await
     }
 
     /// Drain a runtime module for maintenance

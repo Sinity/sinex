@@ -15,6 +15,10 @@ use sinex_primitives::rpc::{
     audit::AUDIT_GET_METHOD,
     automata::AUTOMATA_STATUS_METHOD,
     browser::BROWSER_CAPTURE_BATCH_METHOD,
+    coordination::{
+        COORDINATION_GET_LEADER_METHOD, COORDINATION_INSTANCE_HEALTH_METHOD,
+        COORDINATION_LIST_INSTANCES_METHOD,
+    },
     content::{CONTENT_RETRIEVE_BLOB_METHOD, CONTENT_STORE_BLOB_METHOD},
     curation::{
         CURATION_DUPLICATE_CANDIDATES_LIST_METHOD, CURATION_DUPLICATE_JUDGMENTS_RECORD_METHOD,
@@ -516,6 +520,8 @@ pub fn list_all_methods() -> Vec<(String, crate::api::auth::Role)> {
 fn build_registry_impl() -> RpcRegistry {
     use crate::api::handlers::{
         handle_audit_get, handle_automata_status, handle_browser_capture_batch,
+        handle_coordination_get_leader, handle_coordination_instance_health,
+        handle_coordination_list_instances,
         handle_create_entities, handle_create_note, handle_curation_finalize,
         handle_curation_list_duplicate_candidates, handle_curation_list_proposals,
         handle_curation_record_duplicate_judgment, handle_curation_record_judgment,
@@ -659,6 +665,18 @@ fn build_registry_impl() -> RpcRegistry {
             boxed!(handle_runtime_list_active),
         )
         .pool_typed_rpc(RUNTIME_HEALTH_METHOD, boxed!(handle_runtime_health))
+        .pool_typed_rpc(
+            COORDINATION_LIST_INSTANCES_METHOD,
+            boxed!(handle_coordination_list_instances),
+        )
+        .pool_typed_rpc(
+            COORDINATION_GET_LEADER_METHOD,
+            boxed!(handle_coordination_get_leader),
+        )
+        .pool_typed_rpc(
+            COORDINATION_INSTANCE_HEALTH_METHOD,
+            boxed!(handle_coordination_instance_health),
+        )
         .pool_typed_rpc(AUTOMATA_STATUS_METHOD, boxed!(handle_automata_status))
         .pool_typed_rpc(SOURCES_STATUS_METHOD, boxed!(handle_sources_status))
         .service_typed_rpc(

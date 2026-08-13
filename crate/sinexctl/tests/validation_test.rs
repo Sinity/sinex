@@ -425,7 +425,7 @@ async fn mcp_search_events_call_uses_gateway_fixture() -> TestResult<()> {
         response["payload"]["result"]["cards"][0]["summary"],
         "disclosed fixture event"
     );
-    assert_eq!(response["privacy_state"]["state"], "redacted");
+    assert_eq!(response["privacy_state"]["state"], "transformation_unknown");
     assert!(
         !response.to_string().contains("secret_fixture_value"),
         "MCP event search leaked raw query payload or snippet text"
@@ -502,7 +502,7 @@ async fn mcp_relation_evidence_call_uses_gateway_fixture() -> TestResult<()> {
         response["payload"]["result"]["payload"]["query"]["relation"],
         "within"
     );
-    assert_eq!(response["privacy_state"]["state"], "redacted");
+    assert_eq!(response["privacy_state"]["state"], "transformation_unknown");
     Ok(())
 }
 
@@ -533,7 +533,7 @@ async fn mcp_source_readiness_call_uses_gateway_fixture() -> TestResult<()> {
     assert_eq!(sources[0]["source_id"], "terminal.atuin-history");
     assert_eq!(sources[0]["evidence"]["sample"], "[REDACTED]");
     assert_eq!(response["payload"]["caveats"], "suppressed_by_request");
-    assert_eq!(response["privacy_state"]["state"], "redacted");
+    assert_eq!(response["privacy_state"]["state"], "transformation_unknown");
     assert!(
         !response.to_string().contains("secret_fixture_value"),
         "MCP fixture response leaked raw sensitive sample text"
@@ -563,7 +563,7 @@ async fn mcp_source_continuity_list_call_uses_gateway_fixture() -> TestResult<()
         response["payload"]["result"]["reports"][0]["gaps"][0]["kind"],
         "private_mode"
     );
-    assert_eq!(response["privacy_state"]["state"], "redacted");
+    assert_eq!(response["privacy_state"]["state"], "transformation_unknown");
     Ok(())
 }
 
@@ -616,7 +616,7 @@ async fn mcp_source_continuity_get_call_uses_gateway_fixture() -> TestResult<()>
         response["payload"]["result"]["report"]["replayability"]["raw_bytes_preserved"],
         true
     );
-    assert_eq!(response["privacy_state"]["state"], "redacted");
+    assert_eq!(response["privacy_state"]["state"], "transformation_unknown");
     Ok(())
 }
 
@@ -646,7 +646,7 @@ async fn mcp_source_gap_explain_call_uses_gateway_fixture() -> TestResult<()> {
         explanation.contains("coverage gap"),
         "source gap explanation should describe the coverage gap: {explanation}"
     );
-    assert_eq!(response["privacy_state"]["state"], "redacted");
+    assert_eq!(response["privacy_state"]["state"], "transformation_unknown");
     Ok(())
 }
 
@@ -682,7 +682,7 @@ async fn mcp_source_identifier_continuity_call_uses_gateway_fixture() -> TestRes
         response["payload"]["result"]["replayability"]["replayable"],
         true
     );
-    assert_eq!(response["privacy_state"]["state"], "redacted");
+    assert_eq!(response["privacy_state"]["state"], "transformation_unknown");
     Ok(())
 }
 
@@ -699,7 +699,7 @@ async fn mcp_privacy_status_call_uses_gateway_fixture() -> TestResult<()> {
         response["payload"]["result"]["state"]["affected_source_classes"],
         json!(["terminal"])
     );
-    assert_eq!(response["privacy_state"]["state"], "redacted");
+    assert_eq!(response["privacy_state"]["state"], "transformation_unknown");
     assert!(
         !response.to_string().contains("secret_fixture_value"),
         "MCP privacy status leaked raw sensitive sample text"
@@ -721,7 +721,7 @@ async fn mcp_system_health_call_uses_gateway_fixture() -> TestResult<()> {
         response["payload"]["result"]["components"]["sse_confirmation"]["status"],
         "degraded"
     );
-    assert_eq!(response["privacy_state"]["state"], "redacted");
+    assert_eq!(response["privacy_state"]["state"], "transformation_unknown");
     Ok(())
 }
 
@@ -760,7 +760,7 @@ async fn mcp_tasks_list_call_uses_gateway_fixture() -> TestResult<()> {
         response["payload"]["result"]["tasks"][0]["tags"],
         json!(["mcp"])
     );
-    assert_eq!(response["privacy_state"]["state"], "redacted");
+    assert_eq!(response["privacy_state"]["state"], "transformation_unknown");
     Ok(())
 }
 
@@ -780,7 +780,7 @@ async fn mcp_task_state_call_uses_gateway_fixture() -> TestResult<()> {
         response["payload"]["result"]["state"]["title"],
         "Expose MCP task list"
     );
-    assert_eq!(response["privacy_state"]["state"], "redacted");
+    assert_eq!(response["privacy_state"]["state"], "transformation_unknown");
     Ok(())
 }
 
@@ -807,7 +807,7 @@ async fn mcp_replay_operations_call_uses_gateway_fixture() -> TestResult<()> {
         fixture_operation_id()
     );
     assert_eq!(response["payload"]["operations"][0]["state"], "Planning");
-    assert_eq!(response["privacy_state"]["state"], "redacted");
+    assert_eq!(response["privacy_state"]["state"], "transformation_unknown");
     Ok(())
 }
 
@@ -829,7 +829,7 @@ async fn mcp_replay_status_call_uses_gateway_fixture() -> TestResult<()> {
         fixture_operation_id()
     );
     assert_eq!(response["payload"]["operation"]["state"], "Previewed");
-    assert_eq!(response["privacy_state"]["state"], "redacted");
+    assert_eq!(response["privacy_state"]["state"], "transformation_unknown");
     Ok(())
 }
 
@@ -1044,7 +1044,7 @@ async fn mcp_automata_status_call_uses_gateway_fixture() -> TestResult<()> {
         response["payload"]["result"]["automata"][0]["event_lag_p99_ms"],
         42.0
     );
-    assert_eq!(response["privacy_state"]["state"], "redacted");
+    assert_eq!(response["privacy_state"]["state"], "transformation_unknown");
     Ok(())
 }
 
@@ -1071,7 +1071,7 @@ async fn mcp_sources_status_call_uses_gateway_fixture() -> TestResult<()> {
         response["payload"]["result"]["sources"][0]["current_health"],
         "healthy"
     );
-    assert_eq!(response["privacy_state"]["state"], "redacted");
+    assert_eq!(response["privacy_state"]["state"], "transformation_unknown");
     Ok(())
 }
 
@@ -1092,7 +1092,7 @@ async fn mcp_runtime_health_call_uses_gateway_fixture() -> TestResult<()> {
     assert_eq!(response["payload"]["result"]["active_count"], 2);
     assert_eq!(response["payload"]["result"]["inactive_count"], 1);
     assert_eq!(response["payload"]["result"]["unique_modules"], 3);
-    assert_eq!(response["privacy_state"]["state"], "redacted");
+    assert_eq!(response["privacy_state"]["state"], "transformation_unknown");
     Ok(())
 }
 
@@ -1193,7 +1193,7 @@ async fn mcp_runtime_active_call_uses_gateway_fixture() -> TestResult<()> {
         response["payload"]["result"]["modules"][0]["heartbeat_source"],
         "run"
     );
-    assert_eq!(response["privacy_state"]["state"], "redacted");
+    assert_eq!(response["privacy_state"]["state"], "transformation_unknown");
     Ok(())
 }
 
@@ -1240,7 +1240,7 @@ async fn mcp_runtime_registry_call_uses_gateway_fixture() -> TestResult<()> {
         response["payload"]["result"]["modules"][0]["state"],
         "running"
     );
-    assert_eq!(response["privacy_state"]["state"], "redacted");
+    assert_eq!(response["privacy_state"]["state"], "transformation_unknown");
     Ok(())
 }
 
@@ -1258,7 +1258,7 @@ async fn mcp_event_engine_validation_call_uses_gateway_fixture() -> TestResult<(
         response["payload"]["snapshot"]["validation_coverage_pct"],
         100.0
     );
-    assert_eq!(response["privacy_state"]["state"], "redacted");
+    assert_eq!(response["privacy_state"]["state"], "transformation_unknown");
     Ok(())
 }
 
@@ -1286,7 +1286,7 @@ async fn mcp_event_engine_batch_stats_call_uses_gateway_fixture() -> TestResult<
         response["payload"]["buckets"][0]["avg_validation_coverage_pct"],
         100.0
     );
-    assert_eq!(response["privacy_state"]["state"], "redacted");
+    assert_eq!(response["privacy_state"]["state"], "transformation_unknown");
     Ok(())
 }
 
@@ -1310,7 +1310,7 @@ async fn mcp_throughput_call_uses_gateway_fixture() -> TestResult<()> {
         response["payload"]["result"]["per_component"][0]["component"],
         "event_engine"
     );
-    assert_eq!(response["privacy_state"]["state"], "redacted");
+    assert_eq!(response["privacy_state"]["state"], "transformation_unknown");
     Ok(())
 }
 
@@ -1328,7 +1328,7 @@ async fn mcp_recent_activity_call_uses_gateway_fixture() -> TestResult<()> {
         "command"
     );
     assert_eq!(response["payload"]["entries"][0]["context"], "terminal");
-    assert_eq!(response["privacy_state"]["state"], "redacted");
+    assert_eq!(response["privacy_state"]["state"], "transformation_unknown");
     Ok(())
 }
 
@@ -1352,7 +1352,7 @@ async fn mcp_command_frequency_call_uses_gateway_fixture() -> TestResult<()> {
     assert_eq!(response["query_echo"]["limit"], 3);
     assert_eq!(response["payload"]["entries"][0]["command"], "xtask");
     assert_eq!(response["payload"]["entries"][0]["total_executions"], 12);
-    assert_eq!(response["privacy_state"]["state"], "redacted");
+    assert_eq!(response["privacy_state"]["state"], "transformation_unknown");
     Ok(())
 }
 
@@ -1379,7 +1379,7 @@ async fn mcp_file_activity_call_uses_gateway_fixture() -> TestResult<()> {
         "/realm/project/sinex"
     );
     assert_eq!(response["payload"]["entries"][0]["total_events"], 9);
-    assert_eq!(response["privacy_state"]["state"], "redacted");
+    assert_eq!(response["privacy_state"]["state"], "transformation_unknown");
     Ok(())
 }
 
@@ -1406,7 +1406,7 @@ async fn mcp_system_state_call_uses_gateway_fixture() -> TestResult<()> {
         response["payload"]["buckets"][0]["avg_memory_percent"],
         42.5
     );
-    assert_eq!(response["privacy_state"]["state"], "redacted");
+    assert_eq!(response["privacy_state"]["state"], "transformation_unknown");
     Ok(())
 }
 
@@ -1431,7 +1431,7 @@ async fn mcp_window_focus_call_uses_gateway_fixture() -> TestResult<()> {
     assert_eq!(response["payload"]["buckets"][0]["workspace"], "4");
     assert_eq!(response["payload"]["buckets"][0]["window_class"], "kitty");
     assert_eq!(response["payload"]["buckets"][0]["focus_event_count"], 6);
-    assert_eq!(response["privacy_state"]["state"], "redacted");
+    assert_eq!(response["privacy_state"]["state"], "transformation_unknown");
     Ok(())
 }
 
@@ -1447,7 +1447,7 @@ async fn mcp_current_health_call_uses_gateway_fixture() -> TestResult<()> {
     assert_eq!(response["payload"]["entries"][0]["source"], "sinex");
     assert_eq!(response["payload"]["entries"][0]["event_type"], "health");
     assert_eq!(response["payload"]["entries"][0]["status"], "healthy");
-    assert_eq!(response["privacy_state"]["state"], "redacted");
+    assert_eq!(response["privacy_state"]["state"], "transformation_unknown");
     Ok(())
 }
 
@@ -1462,7 +1462,7 @@ async fn mcp_current_device_state_call_uses_gateway_fixture() -> TestResult<()> 
     assert_eq!(response["query_echo"]["limit"], 4);
     assert_eq!(response["payload"]["entries"][0]["unit_name"], "sinexd");
     assert_eq!(response["payload"]["entries"][0]["state"], "active");
-    assert_eq!(response["privacy_state"]["state"], "redacted");
+    assert_eq!(response["privacy_state"]["state"], "transformation_unknown");
     Ok(())
 }
 
@@ -1477,7 +1477,7 @@ async fn mcp_gateway_stats_call_uses_gateway_fixture() -> TestResult<()> {
     assert_eq!(response["query_echo"]["limit"], 3);
     assert_eq!(response["payload"]["buckets"][0]["source"], "gateway");
     assert_eq!(response["payload"]["buckets"][0]["stat_events"], 4);
-    assert_eq!(response["privacy_state"]["state"], "redacted");
+    assert_eq!(response["privacy_state"]["state"], "transformation_unknown");
     Ok(())
 }
 
@@ -1492,7 +1492,7 @@ async fn mcp_stream_stats_call_uses_gateway_fixture() -> TestResult<()> {
     assert_eq!(response["query_echo"]["limit"], 3);
     assert_eq!(response["payload"]["buckets"][0]["stream_name"], "EVENTS");
     assert_eq!(response["payload"]["buckets"][0]["sample_count"], 2);
-    assert_eq!(response["privacy_state"]["state"], "redacted");
+    assert_eq!(response["privacy_state"]["state"], "transformation_unknown");
     Ok(())
 }
 
@@ -1507,7 +1507,7 @@ async fn mcp_assembly_stats_call_uses_gateway_fixture() -> TestResult<()> {
     assert_eq!(response["query_echo"]["limit"], 3);
     assert_eq!(response["payload"]["buckets"][0]["total_completed"], 7);
     assert_eq!(response["payload"]["buckets"][0]["sample_count"], 3);
-    assert_eq!(response["privacy_state"]["state"], "redacted");
+    assert_eq!(response["privacy_state"]["state"], "transformation_unknown");
     Ok(())
 }
 
@@ -1525,7 +1525,7 @@ async fn mcp_source_stats_call_uses_gateway_fixture() -> TestResult<()> {
         response["payload"]["buckets"][0]["total_events_processed"],
         42
     );
-    assert_eq!(response["privacy_state"]["state"], "redacted");
+    assert_eq!(response["privacy_state"]["state"], "transformation_unknown");
     Ok(())
 }
 
@@ -1544,7 +1544,7 @@ async fn mcp_metric_counters_call_uses_gateway_fixture() -> TestResult<()> {
     );
     assert_eq!(response["payload"]["buckets"][0]["metric_name"], "events");
     assert_eq!(response["payload"]["buckets"][0]["total_value"], 99);
-    assert_eq!(response["privacy_state"]["state"], "redacted");
+    assert_eq!(response["privacy_state"]["state"], "transformation_unknown");
     Ok(())
 }
 
@@ -1586,7 +1586,7 @@ async fn mcp_llm_route_explain_call_uses_gateway_fixture() -> TestResult<()> {
         response["payload"]["result"]["decision"]["model"],
         "fixture-model"
     );
-    assert_eq!(response["privacy_state"]["state"], "redacted");
+    assert_eq!(response["privacy_state"]["state"], "transformation_unknown");
     Ok(())
 }
 
@@ -1601,7 +1601,7 @@ async fn mcp_llm_budget_report_call_uses_gateway_fixture() -> TestResult<()> {
     assert_eq!(response["query_echo"]["limit"], 5);
     assert_eq!(response["payload"]["result"]["total_rows"], 1);
     assert_eq!(response["payload"]["result"]["prompt_tokens"], 12);
-    assert_eq!(response["privacy_state"]["state"], "redacted");
+    assert_eq!(response["privacy_state"]["state"], "transformation_unknown");
     Ok(())
 }
 
@@ -1637,7 +1637,7 @@ async fn mcp_dlq_stats_call_uses_gateway_fixture() -> TestResult<()> {
     assert_eq!(response["source_surface"], "sinex_dlq_stats");
     assert_eq!(response["payload"]["result"]["total_messages"], 2);
     assert_eq!(response["payload"]["result"]["total_bytes"], 512);
-    assert_eq!(response["privacy_state"]["state"], "redacted");
+    assert_eq!(response["privacy_state"]["state"], "transformation_unknown");
     Ok(())
 }
 
@@ -1662,7 +1662,7 @@ async fn mcp_dlq_peek_call_uses_gateway_fixture() -> TestResult<()> {
         response["payload"]["result"]["messages"][0]["privacy_caveats"][0]["ref"]["id"],
         "secret_redacted"
     );
-    assert_eq!(response["privacy_state"]["state"], "redacted");
+    assert_eq!(response["privacy_state"]["state"], "transformation_unknown");
     Ok(())
 }
 
@@ -1684,7 +1684,7 @@ async fn mcp_source_materials_call_uses_gateway_fixture() -> TestResult<()> {
         response["payload"]["result"]["materials"][0]["id"],
         fixture_material_id()
     );
-    assert_eq!(response["privacy_state"]["state"], "redacted");
+    assert_eq!(response["privacy_state"]["state"], "transformation_unknown");
     Ok(())
 }
 
@@ -1730,7 +1730,7 @@ async fn mcp_source_coverage_call_uses_gateway_fixture() -> TestResult<()> {
         response["payload"]["result"]["sources"][0]["recovered_partial_material_count"],
         1
     );
-    assert_eq!(response["privacy_state"]["state"], "redacted");
+    assert_eq!(response["privacy_state"]["state"], "transformation_unknown");
     Ok(())
 }
 
@@ -1760,7 +1760,7 @@ async fn mcp_source_remediation_plan_call_uses_gateway_fixture() -> TestResult<(
     assert_eq!(response["query_echo"]["include_empty"], true);
     assert_eq!(response["payload"]["result"]["summary"]["total_candidates"], 1);
     assert_eq!(response["payload"]["result"]["items"][0]["decision"], "inspect");
-    assert_eq!(response["privacy_state"]["state"], "redacted");
+    assert_eq!(response["privacy_state"]["state"], "transformation_unknown");
     Ok(())
 }
 
@@ -1783,7 +1783,7 @@ async fn mcp_source_package_completeness_call_uses_gateway_fixture() -> TestResu
         response["payload"]["result"]["packages"][0]["package_id"],
         "terminal.kitty-osc-live"
     );
-    assert_eq!(response["privacy_state"]["state"], "redacted");
+    assert_eq!(response["privacy_state"]["state"], "transformation_unknown");
     Ok(())
 }
 
@@ -1806,7 +1806,7 @@ async fn mcp_sources_status_view_call_uses_gateway_fixture() -> TestResult<()> {
     );
     assert_eq!(response["payload"]["sources"][0]["event_count"], 42);
     assert!(response["payload"]["result"].is_null());
-    assert_eq!(response["privacy_state"]["state"], "redacted");
+    assert_eq!(response["privacy_state"]["state"], "transformation_unknown");
     Ok(())
 }
 
@@ -1843,7 +1843,7 @@ async fn mcp_source_presets_call_uses_gateway_fixture() -> TestResult<()> {
         response["payload"]["result"]["presets"][0]["name"],
         "terminal.atuin.default"
     );
-    assert_eq!(response["privacy_state"]["state"], "redacted");
+    assert_eq!(response["privacy_state"]["state"], "transformation_unknown");
     Ok(())
 }
 
@@ -1866,7 +1866,7 @@ async fn mcp_source_bindings_call_uses_gateway_fixture() -> TestResult<()> {
         response["payload"]["result"]["bindings"][0]["id"],
         "terminal-atuin-history"
     );
-    assert_eq!(response["privacy_state"]["state"], "redacted");
+    assert_eq!(response["privacy_state"]["state"], "transformation_unknown");
     Ok(())
 }
 
@@ -1902,7 +1902,7 @@ async fn mcp_ops_list_call_uses_gateway_fixture() -> TestResult<()> {
         1
     );
     assert!(response["payload"]["result"].is_null());
-    assert_eq!(response["privacy_state"]["state"], "redacted");
+    assert_eq!(response["privacy_state"]["state"], "transformation_unknown");
     Ok(())
 }
 
@@ -1929,7 +1929,7 @@ async fn mcp_ops_get_call_uses_gateway_fixture() -> TestResult<()> {
     assert_eq!(response["payload"]["actions"][0]["side_effect"], "read");
     assert_eq!(response["payload"]["actions"].as_array().unwrap().len(), 1);
     assert!(response["payload"]["result"].is_null());
-    assert_eq!(response["privacy_state"]["state"], "redacted");
+    assert_eq!(response["privacy_state"]["state"], "transformation_unknown");
     Ok(())
 }
 
@@ -1943,7 +1943,7 @@ async fn mcp_lifecycle_status_call_uses_gateway_fixture() -> TestResult<()> {
     assert_eq!(response["source_surface"], "sinex_lifecycle_status");
     assert_eq!(response["payload"]["result"]["total_events"], 42);
     assert_eq!(response["payload"]["result"]["tiers"][0]["tier"], "live");
-    assert_eq!(response["privacy_state"]["state"], "redacted");
+    assert_eq!(response["privacy_state"]["state"], "transformation_unknown");
     Ok(())
 }
 
@@ -1969,7 +1969,7 @@ async fn mcp_audit_trail_call_uses_gateway_fixture() -> TestResult<()> {
         fixture_operation_id()
     );
     assert_eq!(response["payload"]["result"]["event_count"], 1);
-    assert_eq!(response["privacy_state"]["state"], "redacted");
+    assert_eq!(response["privacy_state"]["state"], "transformation_unknown");
     Ok(())
 }
 
@@ -1991,7 +1991,7 @@ async fn mcp_coordination_instances_call_uses_gateway_fixture() -> TestResult<()
         response["payload"]["result"]["instances"][0]["instance_id"],
         fixture_instance_id()
     );
-    assert_eq!(response["privacy_state"]["state"], "redacted");
+    assert_eq!(response["privacy_state"]["state"], "transformation_unknown");
     Ok(())
 }
 
@@ -2012,7 +2012,7 @@ async fn mcp_coordination_leader_call_uses_gateway_fixture() -> TestResult<()> {
         response["payload"]["result"]["leader"]["instance_id"],
         fixture_instance_id()
     );
-    assert_eq!(response["privacy_state"]["state"], "redacted");
+    assert_eq!(response["privacy_state"]["state"], "transformation_unknown");
     Ok(())
 }
 
@@ -2034,7 +2034,48 @@ async fn mcp_coordination_instance_health_call_uses_gateway_fixture() -> TestRes
     );
     assert_eq!(response["query_echo"]["instance_id"], fixture_instance_id());
     assert_eq!(response["payload"]["result"]["healthy"], true);
-    assert_eq!(response["privacy_state"]["state"], "redacted");
+    assert_eq!(response["privacy_state"]["state"], "transformation_unknown");
+    Ok(())
+}
+
+#[sinex_test]
+async fn mcp_privacy_shadow_audit_call_uses_gateway_fixture() -> TestResult<()> {
+    let server = mount_mcp_gateway_fixture().await;
+    let client = fixture_gateway_client(&server)?;
+
+    let response = call_tool(
+        &client,
+        "sinex_privacy_shadow_audit",
+        json!({ "source": "fixture", "limit_events": 3 }),
+    )
+    .await?;
+
+    assert_eq!(response["source_surface"], "sinex_privacy_shadow_audit");
+    assert_eq!(response["query_echo"]["source"], "fixture");
+    assert_eq!(response["payload"]["result"]["read_only_proven"], true);
+    assert_eq!(response["privacy_state"]["state"], "transformation_unknown");
+    Ok(())
+}
+
+#[sinex_test]
+async fn mcp_source_import_report_call_uses_gateway_fixture() -> TestResult<()> {
+    let server = mount_mcp_gateway_fixture().await;
+    let client = fixture_gateway_client(&server)?;
+
+    let response = call_tool(
+        &client,
+        "sinex_source_import_report",
+        json!({ "operation_id": fixture_operation_id() }),
+    )
+    .await?;
+
+    assert_eq!(response["source_surface"], "sinex_source_import_report");
+    assert_eq!(
+        response["payload"]["result"]["operation_id"],
+        fixture_operation_id()
+    );
+    assert_eq!(response["payload"]["result"]["operation_status"], "success");
+    assert_eq!(response["privacy_state"]["state"], "transformation_unknown");
     Ok(())
 }
 
@@ -2056,7 +2097,7 @@ async fn mcp_shadow_consumers_call_uses_gateway_fixture() -> TestResult<()> {
         response["payload"]["result"]["consumers"][0]["consumer_name"],
         "dev-fixture"
     );
-    assert_eq!(response["privacy_state"]["state"], "redacted");
+    assert_eq!(response["privacy_state"]["state"], "transformation_unknown");
     Ok(())
 }
 
@@ -2069,7 +2110,7 @@ async fn mcp_system_ping_call_uses_gateway_fixture() -> TestResult<()> {
 
     assert_eq!(response["source_surface"], "sinex_system_ping");
     assert_eq!(response["payload"]["result"], "pong");
-    assert_eq!(response["privacy_state"]["state"], "redacted");
+    assert_eq!(response["privacy_state"]["state"], "transformation_unknown");
     Ok(())
 }
 
@@ -2082,7 +2123,7 @@ async fn mcp_system_version_call_uses_gateway_fixture() -> TestResult<()> {
 
     assert_eq!(response["source_surface"], "sinex_system_version");
     assert_eq!(response["payload"]["result"], "0.4.2");
-    assert_eq!(response["privacy_state"]["state"], "redacted");
+    assert_eq!(response["privacy_state"]["state"], "transformation_unknown");
     Ok(())
 }
 
@@ -3136,6 +3177,34 @@ async fn mount_mcp_gateway_fixture() -> MockServer {
                     "instance": fixture_instance(true),
                     "healthy": true,
                     "last_error": null
+                }),
+                "privacy.shadow_audit" => json!({
+                    "schema_version": "sinex.privacy-shadow-audit/v1",
+                    "generated_at": "2026-05-19T12:00:00Z",
+                    "read_only_proven": true,
+                    "scanned_events": 1,
+                    "scanned_rows": 1,
+                    "scope": {},
+                    "surfaces": [],
+                    "findings": [],
+                    "caveats": []
+                }),
+                "sources.import_report" => json!({
+                    "operation_id": fixture_operation_id(),
+                    "operation_type": "import",
+                    "operation_status": "success",
+                    "scope": {},
+                    "source": null,
+                    "source_material_ids": [],
+                    "attempted": 0,
+                    "new": 0,
+                    "suppressed": 0,
+                    "superseded": 0,
+                    "failures": 0,
+                    "dlq": 0,
+                    "unresolved": 0,
+                    "breakdown": [],
+                    "examples": []
                 }),
                 "shadow.list" => json!({
                     "consumers": [

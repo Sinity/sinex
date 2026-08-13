@@ -55,14 +55,17 @@ async fn mcp_standard_envelope_shape_carries_caveat_and_privacy_state() -> TestR
     assert_eq!(response["source_surface"], "sinex_test_tool");
     assert_eq!(response["query_echo"], json!({ "limit": 3 }));
     assert_eq!(response["payload"], json!({ "result": [] }));
-    assert_eq!(response["privacy_state"]["state"], "redacted");
+    assert_eq!(
+        response["privacy_state"]["state"],
+        "transformation_unknown"
+    );
     assert!(
-        response["caveats"]
+        !response["caveats"]
             .as_array()
             .expect("caveats must be an array")
             .iter()
             .any(|caveat| caveat["id"] == "mcp.raw_samples_redacted"),
-        "MCP envelopes must carry the raw-sample redaction caveat: {response:?}"
+        "untransformed MCP envelopes must not claim raw-sample redaction: {response:?}"
     );
     assert!(
         response["caveats"]
@@ -115,8 +118,8 @@ async fn mcp_view_envelope_with_caveats_preserves_server_caveats() -> TestResult
     assert!(
         caveats
             .iter()
-            .any(|caveat| caveat["id"] == "mcp.raw_samples_redacted"),
-        "MCP redaction caveat must still be present: {response:?}"
+        .all(|caveat| caveat["id"] != "mcp.raw_samples_redacted"),
+        "untransformed MCP envelopes must not claim raw-sample redaction: {response:?}"
     );
     assert!(
         caveats.iter().any(|caveat| caveat["id"]
@@ -144,7 +147,10 @@ async fn mcp_gateway_unavailable_response_is_still_a_view_envelope() -> TestResu
     assert_eq!(response["source_surface"], "sinex_sources_status");
     assert_eq!(response["payload"]["status"], "degraded");
     assert_eq!(response["payload"]["reason"], "gateway_unreachable");
-    assert_eq!(response["privacy_state"]["state"], "redacted");
+    assert_eq!(
+        response["privacy_state"]["state"],
+        "transformation_unknown"
+    );
     let caveats = response["caveats"]
         .as_array()
         .expect("degraded envelope caveats must be an array");
@@ -157,9 +163,26 @@ async fn mcp_gateway_unavailable_response_is_still_a_view_envelope() -> TestResu
     assert!(
         caveats
             .iter()
-            .any(|caveat| caveat["id"] == "mcp.raw_samples_redacted"),
-        "degraded gateway response must preserve MCP redaction caveat: {response:?}"
+            .all(|caveat| caveat["id"] != "mcp.raw_samples_redacted"),
+        "degraded gateway response must not claim MCP redaction: {response:?}"
     );
+    Ok(())
+}
+
+#[sinex_test]
+async fn mcp_redacted_route_carries_route_specific_redaction_metadata() -> TestResult<()> {
+    let response = mcp_view_envelope_redacted(
+        "sinex_source_material",
+        &json!({ "material_id": "fixture" }),
+        &json!({ "result": { "payload": "<redacted>" } }),
+    )?;
+
+    assert_eq!(response["privacy_state"]["state"], "redacted");
+    assert!(response["caveats"].as_array().is_some_and(|caveats| {
+        caveats
+            .iter()
+            .any(|caveat| caveat["id"] == "mcp.raw_samples_redacted")
+    }));
     Ok(())
 }
 
