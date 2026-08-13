@@ -6,17 +6,29 @@ use xtask::sandbox::sinex_test;
 struct Marker;
 
 #[sinex_test]
-async fn timestamp_extracts_the_real_embedded_time_from_a_v7_uuid() -> TestResult<()> {
-    // Sanity check the non-buggy path: a genuine UUIDv7 embeds a real
-    // millisecond-precision timestamp that `timestamp()` must extract
-    // faithfully, not fabricate.
-    let before = time::OffsetDateTime::now_utc();
-    let id: Id<Marker> = Id::new();
-    let after = time::OffsetDateTime::now_utc();
+async fn timestamp_preserves_embedded_v7_time_and_ordering() -> TestResult<()> {
+    // Use fixed historical values so a fallback to `Timestamp::now()` cannot
+    // satisfy this test by accident. UUIDv7 preserves millisecond precision.
+    let earlier = Id::<Marker>::from_uuid(::uuid::Uuid::new_v7(::uuid::Timestamp::from_unix(
+        ::uuid::NoContext,
+        1_700_000_000,
+        123_456_789,
+    )));
+    let later = Id::<Marker>::from_uuid(::uuid::Uuid::new_v7(::uuid::Timestamp::from_unix(
+        ::uuid::NoContext,
+        1_700_000_001,
+        987_654_321,
+    )));
 
-    let extracted = id.timestamp().expect("UUIDv7 must carry a timestamp");
-    assert!(extracted.inner() >= before - time::Duration::seconds(1));
-    assert!(extracted.inner() <= after + time::Duration::seconds(1));
+    assert_eq!(
+        earlier.timestamp(),
+        Timestamp::from_unix_timestamp_millis(1_700_000_000_123)
+    );
+    assert_eq!(
+        later.timestamp(),
+        Timestamp::from_unix_timestamp_millis(1_700_000_001_987)
+    );
+    assert!(earlier < later, "UUIDv7 ordering must follow embedded time");
     Ok(())
 }
 
