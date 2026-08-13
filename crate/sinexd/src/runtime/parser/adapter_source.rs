@@ -102,9 +102,7 @@ use sinex_primitives::events::Event;
 use sinex_primitives::events::SourceMaterial;
 use sinex_primitives::events::builder::{EventBuilder, NoProvenance};
 use sinex_primitives::ids::Id;
-use sinex_primitives::parser::{
-    MaterialAnchor, ParsedEventIntent, ParserContext, TimingEvidence,
-};
+use sinex_primitives::parser::{MaterialAnchor, ParsedEventIntent, ParserContext, TimingEvidence};
 use sinex_primitives::primitives::Uuid;
 use sinex_primitives::privacy::{
     RuntimePrivateModeState, load_private_mode_state, resolve_private_mode_state_dir,
@@ -129,7 +127,6 @@ use crate::runtime::durable_emission::{
     DurableEmissionRequest, EmissionOrigin, ProgressAtom, ReceiptLevel,
 };
 use crate::runtime::durable_emission_backend::emit_batch_durable;
-use sinex_primitives::commit_frontier::{CommitFrontier, TerminalOutcome};
 use crate::runtime::parser::adapters::{LatestSqliteSnapshotEvidence, SqliteSnapshotLane};
 use crate::runtime::parser::{
     BindingConfig, DriftEvent, InitialStreamPosition, InputShapeAdapter, InputShapeAdapterExt,
@@ -141,6 +138,7 @@ use crate::runtime::stream::{
     ScanArgs, ScanReport, TimeHorizon,
 };
 use camino::Utf8PathBuf;
+use sinex_primitives::commit_frontier::{CommitFrontier, TerminalOutcome};
 use std::path::PathBuf;
 use std::sync::Arc;
 
@@ -756,7 +754,7 @@ where
                 continue;
             }
 
-            let material_bytes = {
+            let material_authority = {
                 #[cfg(feature = "db")]
                 {
                     let pool = self
@@ -768,7 +766,7 @@ where
                                 "material replay requires a database-backed source-material CAS route",
                             )
                         })?;
-                    crate::sources::parse_listener::load_material_bytes(
+                    crate::sources::parse_listener::load_material_authority(
                         pool,
                         &content_store,
                         material.source_material_id,
@@ -790,6 +788,7 @@ where
                     unreachable!("database-backed replay returned early above")
                 }
             };
+            let material_bytes = &material_authority.bytes;
             let occurrences = replay
                 .occurrences
                 .iter()
@@ -811,52 +810,26 @@ where
                     skipped = skipped.saturating_add(1);
                     continue;
                 }
-                let (anchor, range) = material_replay_range(
-                    material_bytes.len() as u64,
-                    occurrence,
-                )?;
-                let bytes = {
-                    #[cfg(feature = "db")]
-                    {
-                        let pool = self
-                            .runtime
-                            .as_ref()
-                            .and_then(|runtime| runtime.handles().db_pool())
-                            .ok_or_else(|| {
-                                crate::runtime::SinexError::configuration(
-                                    "material replay requires a database-backed source-material CAS route",
-                                )
-                            })?;
-                        crate::sources::parse_listener::load_material_range(
-                            pool,
-                            &content_store,
-                            material.source_material_id,
-                            sinex_primitives::ByteRange {
-                                start: range.start as u64,
-                                end: range.end as u64,
-                            },
+                let (anchor, range) =
+                    material_replay_range(material_bytes.len() as u64, occurrence)?;
+                let bytes = material_authority
+                    .exact_range(
+                        material.source_material_id,
+                        sinex_primitives::ByteRange {
+                            start: range.start as u64,
+                            end: range.end as u64,
+                        },
+                    )
+                    .map_err(|reason| {
+                        crate::runtime::SinexError::processing(
+                            "material replay could not load the exact authoritative CAS range",
                         )
-                        .await
-                        .map_err(|reason| {
-                            crate::runtime::SinexError::processing(
-                                "material replay could not load the exact authoritative CAS range",
-                            )
-                            .with_context(
-                                "source_material_id",
-                                material.source_material_id.to_string(),
-                            )
-                            .with_context("reason", reason)
-                        })?
-                    }
-                    #[cfg(not(feature = "db"))]
-                    {
-                        material_bytes.get(range).map(ToOwned::to_owned).ok_or_else(|| {
-                            crate::runtime::SinexError::invalid_state(
-                                "material replay occurrence range falls outside authoritative source-material bytes",
-                            )
-                        })?
-                    }
-                };
+                        .with_context(
+                            "source_material_id",
+                            material.source_material_id.to_string(),
+                        )
+                        .with_context("reason", reason)
+                    })?;
                 if bytes.is_empty() {
                     return Err(crate::runtime::SinexError::invalid_state(
                         "material replay occurrence range must not be empty",
@@ -1071,7 +1044,10 @@ where
                 .items
                 .iter()
                 .find(|item| !item.state.is_progress_unlocking())
-                .map_or_else(|| "missing receipt item".to_string(), |item| format!("{:?}", item.state));
+                .map_or_else(
+                    || "missing receipt item".to_string(),
+                    |item| format!("{:?}", item.state),
+                );
             return Err(crate::runtime::SinexError::processing(
                 "replay material occurrence did not durably settle every sibling",
             )
@@ -1769,7 +1745,10 @@ where
 
                 let parser_checkpoint_before = self.snapshot_parser_checkpoint_state();
                 let record_timing_hint = materialized.record.source_ts_hint.clone();
-                if let Some(ts) = record_timing_hint.as_ref().and_then(TimingEvidence::timestamp_value) {
+                if let Some(ts) = record_timing_hint
+                    .as_ref()
+                    .and_then(TimingEvidence::timestamp_value)
+                {
                     batch_position = Some(ts);
                 }
                 let intents = match self
@@ -1834,7 +1813,8 @@ where
                     // parsing of the rest of the batch); only the
                     // externally-persisted snapshot is deferred.
                     if let Some(cursor) = next_cursor {
-                        let merged_cursor = merge_cursor_update(latest_known_cursor.clone(), cursor);
+                        let merged_cursor =
+                            merge_cursor_update(latest_known_cursor.clone(), cursor);
                         latest_known_cursor = Some(merged_cursor.clone());
                         let ticket = cursor_frontier.submit();
                         record_plan.push(PendingRecordEmission {
@@ -1934,8 +1914,9 @@ where
                 if unlocked {
                     emitted = emitted.saturating_add(entry.event_count as u64);
                     batch_emitted = batch_emitted.saturating_add(entry.event_count as u64);
-                    state.total_events_emitted =
-                        state.total_events_emitted.saturating_add(entry.event_count as u64);
+                    state.total_events_emitted = state
+                        .total_events_emitted
+                        .saturating_add(entry.event_count as u64);
                     cursor_frontier.complete(
                         entry.ticket,
                         TerminalOutcome::PersistedConfirmed,
@@ -2215,8 +2196,7 @@ where
             .clone()
             .unwrap_or_else(|| resolve_private_mode_state_dir(None));
         #[cfg(feature = "messaging")]
-        if let Some(nats_client) = runtime.nats_client()
-        {
+        if let Some(nats_client) = runtime.nats_client() {
             self.private_mode_control_task = Some(spawn_private_mode_control_listener(
                 nats_client,
                 state_dir,
@@ -2865,9 +2845,7 @@ fn material_replay_range(
         )
     })?;
     let range_end = start.checked_add(len).ok_or_else(|| {
-        crate::runtime::SinexError::invalid_state(
-            "FileDrop replay occurrence range overflows",
-        )
+        crate::runtime::SinexError::invalid_state("FileDrop replay occurrence range overflows")
     })?;
     let range_end = usize::try_from(range_end).map_err(|_| {
         crate::runtime::SinexError::invalid_state(
@@ -2935,10 +2913,9 @@ fn intent_to_event_with_anchor(
     // curation duplicate-detection workbench (#1448) and also drives admission
     // suppression (#1637): the event_engine will suppress a new event if a live
     // row with the same equivalence_key already exists in core.events.
-    built.equivalence_key = sinex_primitives::parser::maybe_occurrence_key_string(
-        intent.occurrence_key.as_ref(),
-    )
-    .or(fallback_equivalence_key);
+    built.equivalence_key =
+        sinex_primitives::parser::maybe_occurrence_key_string(intent.occurrence_key.as_ref())
+            .or(fallback_equivalence_key);
 
     Ok(built)
 }

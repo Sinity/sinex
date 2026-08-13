@@ -438,7 +438,12 @@ impl ReplayExecutionEngine {
         operation_id: Uuid,
         executor_name: &str,
         gate_overrides: &ReplayGateOverrides,
-    ) -> Result<(ReplayOperation, u64, (Timestamp, Timestamp), ReplayPreviewSummary)> {
+    ) -> Result<(
+        ReplayOperation,
+        u64,
+        (Timestamp, Timestamp),
+        ReplayPreviewSummary,
+    )> {
         let op = self.replay.load_operation(operation_id).await?;
         if op.state != ReplayState::Approved {
             return Err(SinexError::invalid_state(format!(
@@ -476,7 +481,12 @@ impl ReplayExecutionEngine {
         operation_id: Uuid,
         submitter: &str,
         gate_overrides: &ReplayGateOverrides,
-    ) -> Result<(ReplayOperation, u64, (Timestamp, Timestamp), ReplayPreviewSummary)> {
+    ) -> Result<(
+        ReplayOperation,
+        u64,
+        (Timestamp, Timestamp),
+        ReplayPreviewSummary,
+    )> {
         let pending = self.replay.load_operation(operation_id).await?;
         let preview = pending.preview_summary.as_ref().ok_or_else(|| {
             SinexError::invalid_state(format!(
@@ -525,9 +535,7 @@ impl ReplayExecutionEngine {
         if preview_summary.root_event_count != total_events {
             return Err(SinexError::invalid_state(format!(
                 "Operation {} preview summary is inconsistent: total_events={} but root_event_count={}",
-                operation_id,
-                total_events,
-                preview_summary.root_event_count
+                operation_id, total_events, preview_summary.root_event_count
             )));
         }
         if preview_summary.root_event_id_fingerprint.is_empty() {

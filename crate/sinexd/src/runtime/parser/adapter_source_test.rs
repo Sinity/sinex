@@ -30,8 +30,8 @@ use sinex_primitives::{Bytes, HostName, JsonValue, MaterialManifestV1, Seconds, 
 use std::{
     collections::HashMap,
     sync::{
-        atomic::{AtomicUsize, Ordering},
         Arc,
+        atomic::{AtomicUsize, Ordering},
     },
 };
 use tokio::sync::mpsc;
@@ -885,8 +885,8 @@ async fn adapter_source_config_derives_private_mode_binding_flag() -> xtask::san
 }
 
 #[sinex_serial_test]
-async fn adapter_source_config_uses_service_state_dir_by_default()
--> xtask::sandbox::TestResult<()> {
+async fn adapter_source_config_uses_service_state_dir_by_default() -> xtask::sandbox::TestResult<()>
+{
     let dir = tempfile::tempdir()?;
     save_private_mode_state(
         dir.path(),
@@ -1075,11 +1075,7 @@ async fn adapter_backed_sources_suppress_acquisition_from_shared_state_dir(
     let state_dir = tempfile::tempdir()?;
     save_private_mode_state(
         state_dir.path(),
-        &RuntimePrivateModeState::enabled_by(
-            "test-operator",
-            Vec::new(),
-            Timestamp::UNIX_EPOCH,
-        ),
+        &RuntimePrivateModeState::enabled_by("test-operator", Vec::new(), Timestamp::UNIX_EPOCH),
     )?;
 
     let mut env = EnvGuard::new();
@@ -1092,8 +1088,7 @@ async fn adapter_backed_sources_suppress_acquisition_from_shared_state_dir(
         "browser.history",
         "terminal.bash-history",
     ] {
-        let mut source =
-            AdapterBackedSource::<PrivateModeProbeAdapter, TestParser>::new(source_id);
+        let mut source = AdapterBackedSource::<PrivateModeProbeAdapter, TestParser>::new(source_id);
         let mut state = AdapterModuleState::default();
 
         source
@@ -1102,7 +1097,10 @@ async fn adapter_backed_sources_suppress_acquisition_from_shared_state_dir(
         let emitted = source.drain_adapter(None, &mut state, None, None).await?;
 
         assert_eq!(emitted, 0, "private mode must suppress {source_id}");
-        assert_eq!(state.cursor, None, "suppressed {source_id} must not advance");
+        assert_eq!(
+            state.cursor, None,
+            "suppressed {source_id} must not advance"
+        );
         assert_eq!(
             source.current_material_id(),
             None,
@@ -1554,9 +1552,7 @@ async fn scoped_replay_does_not_open_generic_adapter_from_fresh_cursor(
         .expect_err("generic scoped replay must fail closed");
 
     assert!(
-        error
-            .to_string()
-            .contains("material replay"),
+        error.to_string().contains("material replay"),
         "guard error should explain that replay stayed on the bounded material route: {error}"
     );
     assert_eq!(
@@ -2112,8 +2108,7 @@ async fn adapter_multi_intent_partial_settlement_suppresses_settled_sibling_on_r
         "every keyless sibling must carry an admission identity"
     );
     assert_ne!(
-        attempt1[0].1,
-        attempt1[1].1,
+        attempt1[0].1, attempt1[1].1,
         "sibling slots must not collide"
     );
     assert_eq!(
@@ -2149,8 +2144,8 @@ async fn adapter_multi_intent_partial_settlement_suppresses_settled_sibling_on_r
             let suppressed = event.equivalence_key.as_ref() == settled_key.as_ref();
             let outcome = if suppressed {
                 crate::runtime::durable_emission::EmissionReceiptState::Suppressed {
-                    reason: crate::runtime::durable_emission::SuppressionReason::
-                        EquivalenceKeyDuplicate,
+                    reason:
+                        crate::runtime::durable_emission::SuppressionReason::EquivalenceKeyDuplicate,
                     existing_event_id: None,
                 }
             } else {
@@ -2402,18 +2397,16 @@ async fn keyless_material_intent_gets_retry_stable_equivalence_key()
         .anchor(MaterialAnchor::ByteRange { start: 0, len: 0 })
         .privacy_context(ProcessingContext::Metadata)
         .build();
-    let event = intent_to_event_with_anchor(
-        intent,
-        material_id,
-        0,
-        None,
-        None,
-        None,
-        0,
-    )
-    .expect("intent conversion");
+    let event = intent_to_event_with_anchor(intent, material_id, 0, None, None, None, 0)
+        .expect("intent conversion");
     assert!(event.equivalence_key.is_some());
-    assert!(event.equivalence_key.as_deref().unwrap().contains("sibling_index"));
+    assert!(
+        event
+            .equivalence_key
+            .as_deref()
+            .unwrap()
+            .contains("sibling_index")
+    );
     Ok(())
 }
 
@@ -2440,7 +2433,13 @@ async fn keyless_multi_intent_sibling_identity_is_stable_across_reparse()
         .enumerate()
         .map(|(index, which)| {
             intent_to_event_with_anchor(
-                make_intent(which), material_id, 12, Some(12), Some(16), None, index,
+                make_intent(which),
+                material_id,
+                12,
+                Some(12),
+                Some(16),
+                None,
+                index,
             )
             .expect("first conversion")
             .equivalence_key
@@ -2452,7 +2451,13 @@ async fn keyless_multi_intent_sibling_identity_is_stable_across_reparse()
         .enumerate()
         .map(|(index, which)| {
             intent_to_event_with_anchor(
-                make_intent(which), material_id, 12, Some(12), Some(16), None, index,
+                make_intent(which),
+                material_id,
+                12,
+                Some(12),
+                Some(16),
+                None,
+                index,
             )
             .expect("retry conversion")
             .equivalence_key
@@ -2711,21 +2716,19 @@ fn file_drop_replay_reuses_original_append_offsets() {
 
     let anchor_one = material_replay_anchor(31, &occurrence_one).unwrap();
     let anchor_two = material_replay_anchor(31, &occurrence_two).unwrap();
-    assert_eq!(
-        anchor_one,
-        MaterialAnchor::ByteRange { start: 17, len: 6 }
-    );
-    assert_eq!(
-        anchor_two,
-        MaterialAnchor::ByteRange { start: 23, len: 8 }
-    );
+    assert_eq!(anchor_one, MaterialAnchor::ByteRange { start: 17, len: 6 });
+    assert_eq!(anchor_two, MaterialAnchor::ByteRange { start: 23, len: 8 });
 
-    let (anchor_byte_one, start_one, end_one) =
-        anchor_offsets_for_materialized_record(&anchor_one);
-    let (anchor_byte_two, start_two, end_two) =
-        anchor_offsets_for_materialized_record(&anchor_two);
-    assert_eq!((anchor_byte_one, start_one, end_one), (17, Some(17), Some(23)));
-    assert_eq!((anchor_byte_two, start_two, end_two), (23, Some(23), Some(31)));
+    let (anchor_byte_one, start_one, end_one) = anchor_offsets_for_materialized_record(&anchor_one);
+    let (anchor_byte_two, start_two, end_two) = anchor_offsets_for_materialized_record(&anchor_two);
+    assert_eq!(
+        (anchor_byte_one, start_one, end_one),
+        (17, Some(17), Some(23))
+    );
+    assert_eq!(
+        (anchor_byte_two, start_two, end_two),
+        (23, Some(23), Some(31))
+    );
 
     // A content-materialized record still reconstructs its original byte
     // range when the persisted occurrence coordinates say it began at zero.
@@ -2772,9 +2775,7 @@ fn file_drop_replay_fails_closed_without_durable_range_coordinates() {
 /// acquirer that live capture uses. Synthetic non-zero offsets can pass while
 /// the live/replay coordinate spaces still disagree.
 #[sinex_test]
-async fn file_drop_replay_anchor_matches_live_append_capture(
-    ctx: TestContext,
-) -> TestResult<()> {
+async fn file_drop_replay_anchor_matches_live_append_capture(ctx: TestContext) -> TestResult<()> {
     let ctx = ctx.with_nats().shared().await?;
     let work_dir = tempfile::tempdir()?;
     let manager = Arc::new(
@@ -2842,7 +2843,10 @@ async fn file_drop_replay_preserves_each_live_append_occurrence(
     let mut acquirer = AppendStreamAcquirer::new(manager);
     let records = [
         ("/tmp/file-drop/first.txt", json!({"event_kind": "Deleted"})),
-        ("/tmp/file-drop/second.txt", json!({"event_kind": "Deleted"})),
+        (
+            "/tmp/file-drop/second.txt",
+            json!({"event_kind": "Deleted"}),
+        ),
     ];
     let mut captured = Vec::with_capacity(records.len());
     let mut authoritative_bytes = Vec::new();
@@ -2879,8 +2883,7 @@ async fn file_drop_replay_preserves_each_live_append_occurrence(
         let (replay, range) = material_replay_range(material_len, &occurrence)?;
 
         assert_eq!(
-            &authoritative_bytes[range],
-            bytes,
+            &authoritative_bytes[range], bytes,
             "replay must read the same physical append-stream range as capture"
         );
         assert_eq!(
@@ -2911,9 +2914,11 @@ async fn file_drop_replay_reads_authoritative_cas_bytes_after_source_removed(
     std::thread::Builder::new()
         .name("file-drop-replay-test".to_string())
         .stack_size(8 * 1024 * 1024)
-        .spawn(move || runtime.block_on(async move {
-            file_drop_replay_reads_authoritative_cas_bytes_after_source_removed_impl(ctx).await
-        }))
+        .spawn(move || {
+            runtime.block_on(async move {
+                file_drop_replay_reads_authoritative_cas_bytes_after_source_removed_impl(ctx).await
+            })
+        })
         .map_err(|error| eyre!(error))?
         .join()
         .map_err(|_| eyre!("file-drop replay test thread panicked"))??;

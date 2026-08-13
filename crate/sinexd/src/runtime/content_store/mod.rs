@@ -1,5 +1,5 @@
-use crate::runtime::{FaultInjector, FaultPoint, RuntimeResult, SinexError};
 use crate::runtime::work_control::{WorkCancellation, WorkFileAdmission};
+use crate::runtime::{FaultInjector, FaultPoint, RuntimeResult, SinexError};
 use camino::{Utf8Path, Utf8PathBuf};
 use serde::de::{self, Visitor};
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
@@ -48,7 +48,9 @@ pub mod manager;
 pub mod path_validator;
 
 pub use cas_fsck::{CasFileStatus, CasFsckReport, CasStatus, check_cas, sweep_orphans_cas};
-pub use manager::{BlobMetadata, ContentStoreManager};
+pub use manager::{
+    BlobMetadata, ContentStoreManager, MaterialReplayAuthority, MaterialReplayContent,
+};
 pub use path_validator::{VerifiedPath, create_secure_temp_path, validate_and_convert_path};
 
 pub const LOCAL_BLAKE3_CAS_BACKEND: &str = ContentKey::LOCAL_BLAKE3_CAS_BACKEND;
@@ -760,11 +762,20 @@ impl MaterialContentStore {
             }
         }
 
-        Ok(Self::new_with_fault_injector(config, FaultInjector::from_env()))
+        Ok(Self::new_with_fault_injector(
+            config,
+            FaultInjector::from_env(),
+        ))
     }
 
-    pub fn new_with_fault_injector(config: ContentStoreConfig, fault_injector: FaultInjector) -> Self {
-        Self { config, fault_injector }
+    pub fn new_with_fault_injector(
+        config: ContentStoreConfig,
+        fault_injector: FaultInjector,
+    ) -> Self {
+        Self {
+            config,
+            fault_injector,
+        }
     }
 
     pub(crate) fn fault_injector(&self) -> FaultInjector {
@@ -879,7 +890,9 @@ impl MaterialContentStore {
                 continue;
             }
             let record_path = Self::require_utf8_path(entry.path())?;
-            let bytes = tokio::fs::read(&record_path).await.map_err(SinexError::io)?;
+            let bytes = tokio::fs::read(&record_path)
+                .await
+                .map_err(SinexError::io)?;
             let mut lease: CasWriteLease = serde_json::from_slice(&bytes).map_err(|error| {
                 SinexError::serialization("parse CAS ingest lease")
                     .with_context("path", record_path.to_string())
@@ -945,7 +958,8 @@ impl MaterialContentStore {
         let admission = self
             .acquire_destructive_admission(&WorkCancellation::new())
             .await?;
-        self.quarantine_local_cas_with_admission(key, &admission).await
+        self.quarantine_local_cas_with_admission(key, &admission)
+            .await
     }
 
     /// Move a local CAS object while the caller holds the store's destructive
@@ -1280,7 +1294,9 @@ impl MaterialContentStore {
             size: file_size,
             digest: hash.clone(),
         };
-        let lease = self.create_ingest_lease(&key, resolved_path, &target).await?;
+        let lease = self
+            .create_ingest_lease(&key, resolved_path, &target)
+            .await?;
         if target.exists() {
             self.canonicalize_local_cas_path(&target).await?;
         } else {
@@ -1366,7 +1382,9 @@ impl MaterialContentStore {
         target_path: &Utf8Path,
     ) -> RuntimeResult<CasWriteLease> {
         let root = self.ingest_lease_root();
-        tokio::fs::create_dir_all(&root).await.map_err(SinexError::io)?;
+        tokio::fs::create_dir_all(&root)
+            .await
+            .map_err(SinexError::io)?;
         restrict_permissions(self.lifecycle_root().as_std_path(), CONTENT_STORE_DIR_MODE);
         restrict_permissions(root.as_std_path(), CONTENT_STORE_DIR_MODE);
         let operation_id = Uuid::now_v7().to_string();

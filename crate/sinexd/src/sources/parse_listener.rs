@@ -127,8 +127,51 @@ pub(crate) async fn load_material_bytes(
     content_store: &ContentStoreManager,
     material_id: Uuid,
 ) -> Result<Vec<u8>, String> {
-    let (_, bytes) = load_material_authority(pool, content_store, material_id).await?;
-    Ok(bytes)
+    Ok(load_material_authority(pool, content_store, material_id)
+        .await?
+        .bytes)
+}
+
+/// One fully validated material authority loaded for a replay operation.
+/// Callers may slice this value for every occurrence without another CAS
+/// read or digest pass. The bytes are already bounded by the content-store
+/// retrieval limit.
+pub(crate) struct LoadedMaterialAuthority {
+    pub(crate) manifest: Option<MaterialManifestV1>,
+    pub(crate) bytes: Vec<u8>,
+}
+
+impl LoadedMaterialAuthority {
+    pub(crate) fn exact_range(
+        &self,
+        material_id: Uuid,
+        range: sinex_primitives::ByteRange,
+    ) -> Result<Vec<u8>, String> {
+        let selected = if let Some(manifest) = &self.manifest {
+            manifest.exact_range(range).map_err(|error| {
+                format!("manifest range validation failed for material {material_id}: {error}")
+            })?
+        } else {
+            let start = usize::try_from(range.start).map_err(|_| {
+                format!("material range start does not fit host index for {material_id}")
+            })?;
+            let end = usize::try_from(range.end).map_err(|_| {
+                format!("material range end does not fit host index for {material_id}")
+            })?;
+            if start >= end || end > self.bytes.len() {
+                return Err(format!(
+                    "material range is outside legacy bytes for {material_id}"
+                ));
+            }
+            start..end
+        };
+        self.bytes
+            .get(selected)
+            .map(ToOwned::to_owned)
+            .ok_or_else(|| {
+                format!("material range is outside authoritative bytes for {material_id}")
+            })
+    }
 }
 
 /// Load one exact material range from the authoritative CAS object.  The
@@ -140,32 +183,16 @@ pub(crate) async fn load_material_range(
     material_id: Uuid,
     range: sinex_primitives::ByteRange,
 ) -> Result<Vec<u8>, String> {
-    let (manifest, bytes) = load_material_authority(pool, content_store, material_id).await?;
-    let selected = if let Some(manifest) = manifest {
-        manifest
-            .exact_range(range)
-            .map_err(|error| format!("manifest range validation failed for material {material_id}: {error}"))?
-    } else {
-        let start = usize::try_from(range.start)
-            .map_err(|_| format!("material range start does not fit host index for {material_id}"))?;
-        let end = usize::try_from(range.end)
-            .map_err(|_| format!("material range end does not fit host index for {material_id}"))?;
-        if start >= end || end > bytes.len() {
-            return Err(format!("material range is outside legacy bytes for {material_id}"));
-        }
-        start..end
-    };
-    bytes
-        .get(selected)
-        .map(ToOwned::to_owned)
-        .ok_or_else(|| format!("material range is outside authoritative bytes for {material_id}"))
+    load_material_authority(pool, content_store, material_id)
+        .await?
+        .exact_range(material_id, range)
 }
 
-async fn load_material_authority(
+pub(crate) async fn load_material_authority(
     pool: &PgPool,
     content_store: &ContentStoreManager,
     material_id: Uuid,
-) -> Result<(Option<MaterialManifestV1>, Vec<u8>), String> {
+) -> Result<LoadedMaterialAuthority, String> {
     let material = pool
         .source_materials()
         .get_by_id(Id::<SourceMaterialRecord>::from_uuid(material_id))
@@ -203,13 +230,9 @@ async fn load_material_authority(
                 ));
             }
         };
-        let canonical_manifest_bytes = manifest
-            .canonical_bytes()
-            .map_err(|error| {
-                format!(
-                    "failed to canonicalize manifest for material {material_id}: {error}"
-                )
-            })?;
+        let canonical_manifest_bytes = manifest.canonical_bytes().map_err(|error| {
+            format!("failed to canonicalize manifest for material {material_id}: {error}")
+        })?;
         if manifest_bytes != canonical_manifest_bytes {
             return Err(format!(
                 "manifest for material {material_id} is not in canonical encoding"
@@ -236,13 +259,11 @@ async fn load_material_authority(
     };
 
     if let Some(manifest) = manifest.as_ref() {
-        let content_key = manifest
-            .encoded_content_store_key()
-            .map_err(|error| {
-                format!(
-                    "manifest for material {material_id} has an invalid encoded CAS identity: {error}"
-                )
-            })?;
+        let content_key = manifest.encoded_content_store_key().map_err(|error| {
+            format!(
+                "manifest for material {material_id} has an invalid encoded CAS identity: {error}"
+            )
+        })?;
         let bytes = content_store
             .retrieve_cas_object(&content_key)
             .await
@@ -264,15 +285,16 @@ async fn load_material_authority(
                 .get_by_id(Id::<Blob>::from_uuid(blob_id))
                 .await
                 .map_err(|e| {
-                    format!("failed to load optional blob {blob_id} for material {material_id}: {e}")
+                    format!(
+                        "failed to load optional blob {blob_id} for material {material_id}: {e}"
+                    )
                 })?
             {
                 let blob_matches = blob.size_bytes >= 0
                     && blob.size_bytes as u64 == manifest.bytes.encoded_size
-                    && blob
-                        .checksum_blake3
-                        .as_deref()
-                        .map_or(true, |checksum| checksum == manifest.bytes.encoded.value_hex);
+                    && blob.checksum_blake3.as_deref().map_or(true, |checksum| {
+                        checksum == manifest.bytes.encoded.value_hex
+                    });
                 if !blob_matches {
                     return Err(format!(
                         "manifest byte identity mismatch for material {material_id}"
@@ -280,7 +302,10 @@ async fn load_material_authority(
                 }
             }
         }
-        return Ok((Some(manifest.clone()), bytes));
+        return Ok(LoadedMaterialAuthority {
+            manifest: Some(manifest.clone()),
+            bytes,
+        });
     }
 
     let blob_id = material.optional_blob_id.ok_or_else(|| {
@@ -298,7 +323,10 @@ async fn load_material_authority(
         .retrieve_content(&blob.content_key())
         .await
         .map_err(|e| format!("failed to retrieve content for material {material_id}: {e}"))?;
-    Ok((None, bytes))
+    Ok(LoadedMaterialAuthority {
+        manifest: None,
+        bytes,
+    })
 }
 
 /// Resolve a parse command into an ack: validate the source id, load real

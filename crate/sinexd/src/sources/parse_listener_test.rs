@@ -168,14 +168,18 @@ async fn load_material_bytes_replays_from_manifest_when_blob_route_is_absent(
         )
         .await?;
 
-    let bytes = load_material_bytes(ctx.pool(), &content_store, material_id)
+    let authority = load_material_authority(ctx.pool(), &content_store, material_id)
         .await
         .map_err(|error| eyre!(error))?;
-    assert_eq!(bytes, payload);
-    let range = load_material_range(ctx.pool(), &content_store, material_id, replay_range)
-        .await
+    assert_eq!(&authority.bytes, payload);
+    let range = authority
+        .exact_range(material_id, replay_range)
         .map_err(|error| eyre!(error))?;
     assert_eq!(range, payload[..24]);
+    let second_range = authority
+        .exact_range(material_id, ByteRange { start: 24, end: 47 })
+        .map_err(|error| eyre!(error))?;
+    assert_eq!(second_range, payload[24..47]);
     Ok(())
 }
 

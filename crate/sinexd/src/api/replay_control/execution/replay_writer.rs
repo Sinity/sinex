@@ -611,7 +611,7 @@ impl ReplayExecutionEngine {
     }
 
     #[allow(clippy::too_many_arguments)]
-    async fn dispatch_live_replay_scan_batch(
+    pub(super) async fn dispatch_live_replay_scan_batch(
         &self,
         operation_id: Uuid,
         execution_window: (Timestamp, Timestamp),

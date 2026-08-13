@@ -12,6 +12,7 @@ use camino::{Utf8Path, Utf8PathBuf};
 use serde_json::json;
 use sinex_db::DbPool;
 use sinex_db::DbPoolExt;
+use sinex_db::SourceMaterialRecord;
 use sinex_db::models::{Blob, SourceMaterial};
 use sinex_db::repositories::source_materials::SourceMaterial as SourceMaterialRegistration;
 use sinex_primitives::DynamicPayload;
@@ -19,7 +20,9 @@ use sinex_primitives::domain::BlobVerificationStatus;
 use sinex_primitives::events::{
     BlobIngestedPayload, BlobRetrievedPayload, BlobVerifiedPayload, StorageStatisticsPayload,
 };
-use sinex_primitives::{Event, Id, JsonValue};
+use sinex_primitives::{
+    ByteRange, DecodedMaterialManifest, Event, Id, JsonValue, MaterialManifestV1, Uuid,
+};
 use std::time::Instant;
 use tracing::{debug, info, warn};
 
@@ -35,6 +38,47 @@ use tokio::sync::mpsc::error::TrySendError;
 
 // Re-export Blob type for content-store consumers.
 pub use sinex_db::models::Blob as BlobMetadata;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MaterialReplayAuthority {
+    ManifestV1,
+    LegacyBlobFallback,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct MaterialReplayContent {
+    pub authority: MaterialReplayAuthority,
+    pub bytes: Vec<u8>,
+    manifest: Option<MaterialManifestV1>,
+}
+
+impl MaterialReplayContent {
+    pub fn slice_range(&self, material_id: Uuid, range: ByteRange) -> RuntimeResult<Vec<u8>> {
+        let selected = if let Some(manifest) = &self.manifest {
+            manifest.exact_range(range).map_err(|error| {
+                SinexError::validation(format!(
+                    "manifest replay range validation failed for source material {material_id}: {error}"
+                ))
+            })?
+        } else {
+            let start = usize::try_from(range.start).map_err(|error| {
+                SinexError::validation("legacy replay range start does not fit host index")
+                    .with_source(error)
+            })?;
+            let end = usize::try_from(range.end).map_err(|error| {
+                SinexError::validation("legacy replay range end does not fit host index")
+                    .with_source(error)
+            })?;
+            if start >= end || end > self.bytes.len() {
+                return Err(SinexError::validation(format!(
+                    "legacy replay range is outside source material {material_id}"
+                )));
+            }
+            start..end
+        };
+        Ok(self.bytes[selected].to_vec())
+    }
+}
 
 /// Default capacity for content-store-manager event channels to prevent unbounded buffering.
 pub const BLOB_EVENT_CHANNEL_CAPACITY: usize = 1024;
@@ -643,6 +687,169 @@ impl ContentStoreManager {
             );
         }
         Ok(content)
+    }
+
+    /// Load and fully validate one material's durable replay authority.
+    ///
+    /// V1 materials are resolved through the canonical manifest object and its
+    /// encoded BLAKE3 CAS identity. Materials without a manifest retain the
+    /// explicit legacy registry-blob fallback. The returned bytes are bounded
+    /// by the content-store max object size and can be sliced repeatedly for
+    /// all occurrences of this material without another full CAS read/hash.
+    pub async fn retrieve_material_replay_content(
+        &self,
+        material_id: Uuid,
+    ) -> RuntimeResult<MaterialReplayContent> {
+        let material = self
+            .db_pool
+            .source_materials()
+            .get_by_id(Id::<SourceMaterialRecord>::from_uuid(material_id))
+            .await?
+            .ok_or_else(|| {
+                SinexError::processing(format!(
+                    "source material {material_id} not found in registry"
+                ))
+            })?;
+
+        if let Some(manifest_reference) = material.metadata.get("material_manifest") {
+            let manifest_object = manifest_reference.as_object().ok_or_else(|| {
+                SinexError::validation(format!(
+                    "source material {material_id} has malformed manifest reference"
+                ))
+            })?;
+            let manifest_key = manifest_object
+                .get("content_key")
+                .and_then(JsonValue::as_str)
+                .ok_or_else(|| {
+                    SinexError::validation(format!(
+                        "source material {material_id} has malformed manifest reference"
+                    ))
+                })?;
+            let manifest_bytes = self.retrieve_cas_object(manifest_key).await?;
+            let manifest = match MaterialManifestV1::decode(&manifest_bytes).map_err(|error| {
+                SinexError::serialization(format!(
+                    "failed to decode manifest for source material {material_id}"
+                ))
+                .with_context("reason", error)
+            })? {
+                DecodedMaterialManifest::V1(manifest) => manifest,
+                DecodedMaterialManifest::Legacy(legacy) => {
+                    return Err(SinexError::validation(format!(
+                        "source material {material_id} has unsupported legacy manifest {}",
+                        legacy.manifest_type.as_str()
+                    )));
+                }
+                DecodedMaterialManifest::Unknown(unknown) => {
+                    return Err(SinexError::validation(format!(
+                        "source material {material_id} has unsupported manifest {}",
+                        unknown.manifest_type.as_str()
+                    )));
+                }
+            };
+            let canonical_manifest_bytes = manifest.canonical_bytes().map_err(|error| {
+                SinexError::serialization(format!(
+                    "failed to canonicalize manifest for source material {material_id}"
+                ))
+                .with_source(error)
+            })?;
+            if manifest_bytes != canonical_manifest_bytes {
+                return Err(SinexError::validation(format!(
+                    "manifest for source material {material_id} is not in canonical encoding"
+                )));
+            }
+            manifest.validate().map_err(|error| {
+                SinexError::validation(format!(
+                    "manifest validation failed for source material {material_id}: {error}"
+                ))
+            })?;
+            if manifest.source_material_id != material_id {
+                return Err(SinexError::validation(format!(
+                    "manifest source material mismatch: expected {material_id}, got {}",
+                    manifest.source_material_id
+                )));
+            }
+
+            let encoded_key = manifest.encoded_content_store_key().map_err(|error| {
+                SinexError::validation(format!(
+                    "manifest for source material {material_id} has invalid encoded CAS identity: {error}"
+                ))
+            })?;
+            let encoded_bytes = self.retrieve_cas_object(&encoded_key).await?;
+            if encoded_bytes.len() as u64 != manifest.bytes.encoded_size
+                || blake3::hash(&encoded_bytes).to_hex().to_string()
+                    != manifest.bytes.encoded.value_hex
+            {
+                return Err(SinexError::processing(format!(
+                    "manifest-authoritative CAS bytes failed digest or size validation for source material {material_id}"
+                )));
+            }
+            if let Some(blob_id) = material.optional_blob_id
+                && let Some(blob) = self
+                    .db_pool
+                    .blobs()
+                    .get_by_id(Id::<Blob>::from_uuid(blob_id))
+                    .await?
+            {
+                let blob_matches = blob.size_bytes >= 0
+                    && blob.size_bytes as u64 == manifest.bytes.encoded_size
+                    && blob
+                        .checksum_blake3
+                        .as_deref()
+                        .is_none_or(|checksum| checksum == manifest.bytes.encoded.value_hex);
+                if !blob_matches {
+                    return Err(SinexError::processing(format!(
+                        "manifest byte identity mismatch for source material {material_id}"
+                    )));
+                }
+            }
+
+            return Ok(MaterialReplayContent {
+                authority: MaterialReplayAuthority::ManifestV1,
+                bytes: encoded_bytes,
+                manifest: Some(manifest),
+            });
+        }
+
+        let blob_id = material.optional_blob_id.ok_or_else(|| {
+            SinexError::validation(format!(
+                "legacy source material {material_id} has no associated blob for replay fallback"
+            ))
+        })?;
+        let blob = self
+            .db_pool
+            .blobs()
+            .get_by_id(Id::<Blob>::from_uuid(blob_id))
+            .await?
+            .ok_or_else(|| {
+                SinexError::processing(format!(
+                    "legacy replay blob {blob_id} for source material {material_id} not found"
+                ))
+            })?;
+        let bytes = self.retrieve_content(&blob.content_key()).await?;
+        Ok(MaterialReplayContent {
+            authority: MaterialReplayAuthority::LegacyBlobFallback,
+            bytes,
+            manifest: None,
+        })
+    }
+
+    /// Resolve one replay occurrence from a previously fully validated
+    /// material authority. This convenience route preserves the range API for
+    /// callers that need one occurrence, while generic replay preflight uses
+    /// [`Self::retrieve_material_replay_content`] once per material.
+    pub async fn retrieve_material_replay_range(
+        &self,
+        material_id: Uuid,
+        range: ByteRange,
+    ) -> RuntimeResult<MaterialReplayContent> {
+        let resolved = self.retrieve_material_replay_content(material_id).await?;
+        let authority = resolved.authority;
+        let bytes = resolved.slice_range(material_id, range)?;
+        Ok(MaterialReplayContent {
+            authority,
+            bytes,
+            manifest: None,
+        })
     }
 
     /// Retrieve a blob's content path
