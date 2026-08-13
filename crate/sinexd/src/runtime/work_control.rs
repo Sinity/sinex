@@ -132,6 +132,10 @@ impl WorkCancellation {
     pub fn is_cancelled(&self) -> bool {
         self.cancelled.load(std::sync::atomic::Ordering::Acquire)
     }
+
+    pub(crate) async fn wait(&self) {
+        self.wake.notified().await;
+    }
 }
 
 /// Host- or subsystem-scoped admission. Tokio's semaphore is FIFO, so queued

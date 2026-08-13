@@ -24,8 +24,8 @@ async fn required_sleep_enforces_events_per_sec() -> TestResult<()> {
         backlog_pause_threshold: None,
         backlog_resume_threshold: None,
     });
-    controller.events_total = 1_000; // should take ~10s at 100/s
-    let sleep = controller.required_sleep(Duration::from_secs(1));
+    controller.event_tokens = Some(-900.0); // 1,000 events at 100/s, 100-token burst
+    let sleep = controller.required_sleep(Duration::ZERO);
     assert!(
         (sleep.as_secs_f64() - 9.0).abs() < 0.001,
         "expected ~9s sleep, got {sleep:?}"
@@ -41,8 +41,8 @@ async fn required_sleep_enforces_bytes_per_sec() -> TestResult<()> {
         backlog_pause_threshold: None,
         backlog_resume_threshold: None,
     });
-    controller.bytes_total = 5_000; // should take 5s at 1000 B/s
-    let sleep = controller.required_sleep(Duration::from_secs(1));
+    controller.byte_tokens = Some(-4_000.0); // 5,000 bytes at 1,000 B/s, 1,000-byte burst
+    let sleep = controller.required_sleep(Duration::ZERO);
     assert!(
         (sleep.as_secs_f64() - 4.0).abs() < 0.001,
         "expected ~4s sleep, got {sleep:?}"
@@ -59,8 +59,8 @@ async fn required_sleep_takes_the_binding_constraint() -> TestResult<()> {
         backlog_pause_threshold: None,
         backlog_resume_threshold: None,
     });
-    controller.events_total = 1_000;
-    controller.bytes_total = 2_000;
+    controller.event_tokens = Some(-1_000.0);
+    controller.byte_tokens = Some(-1_000.0);
     let sleep = controller.required_sleep(Duration::ZERO);
     assert!(
         (sleep.as_secs_f64() - 10.0).abs() < 0.001,
@@ -70,36 +70,45 @@ async fn required_sleep_takes_the_binding_constraint() -> TestResult<()> {
 }
 
 #[sinex_test]
-#[ignore = "sinex-eha0 open: lifetime-average model allows unbounded burst after any pause -- fails until fixed"]
-async fn required_sleep_bounds_burst_size_after_a_long_pause() -> TestResult<()> {
-    // sinex-eha0: PacingController computes sleep from the LIFETIME average
-    // rate, so after any long pause (a BacklogGate wait, a slow batch, a
-    // restart) `elapsed` grows while `events_total` doesn't -- the very next
-    // batch can burst arbitrarily far ahead of budget before `required_sleep`
-    // ever returns non-zero again. Worked example from the bug report:
-    // budget 100 ev/s, 600s elapsed with zero events processed, then a burst
-    // of 59_000 events lands with ZERO throttle -- ~590x the per-second
-    // budget in one shot. A token-bucket/windowed-rate model (the AC's
-    // required design) would cap this to a small, bounded multiple of the
-    // per-second budget regardless of how long the controller was idle;
-    // this test's exact threshold is a defensible placeholder for "bounded
-    // at all", not the real design's chosen window.
+async fn backlog_pause_resume_keeps_burst_bounded() -> TestResult<()> {
+    use std::sync::Arc;
+    use std::sync::atomic::{AtomicU64, Ordering};
+
+    let gate = BacklogGate::new(100, 10).with_poll_interval(Duration::from_millis(1));
+    let sequence: Arc<Vec<u64>> = Arc::new(vec![500, 50, 5]);
+    let index = Arc::new(AtomicU64::new(0));
+    let pending = Arc::clone(&sequence);
+    let pending_index = Arc::clone(&index);
+    let result = gate
+        .wait_for_capacity(|| {
+            let pending = Arc::clone(&pending);
+            let pending_index = Arc::clone(&pending_index);
+            async move {
+                let position = pending_index.fetch_add(1, Ordering::SeqCst) as usize;
+                Ok(Some(pending[position.min(pending.len() - 1)]))
+            }
+        })
+        .await?;
+    assert_eq!(result, Some(5));
+    assert!(index.load(Ordering::SeqCst) >= 3);
+
     let mut controller = PacingController::new(RateBudget {
-        events_per_sec: Some(100.0),
+        events_per_sec: Some(1_000.0),
         bytes_per_sec: None,
         backlog_pause_threshold: None,
         backlog_resume_threshold: None,
     });
-    controller.events_total = 59_000;
-    let sleep_after_long_idle = controller.required_sleep(Duration::from_secs(600));
+    let old = Instant::now() - Duration::from_secs(600);
+    controller.started = old;
+    controller.tokens_refilled_at = old;
 
+    let start = Instant::now();
+    controller.record_and_throttle(1_100, 0).await;
+    let elapsed = start.elapsed();
     assert!(
-        sleep_after_long_idle > Duration::ZERO,
-        "a burst of 59_000 events (590x the 100 ev/s budget) landing in one \
-         batch after a 600s idle period must still be throttled -- the \
-         lifetime-average model currently lets it through with zero sleep \
-         because 59_000/100=590s < 600s elapsed, defeating the module's \
-         stated purpose of preventing instantaneous-burst boot flaps"
+        elapsed >= Duration::from_millis(50),
+        "a resumed 1,100-event batch must pay the 100-event token debt after \
+         the bucket has been idle, got {elapsed:?}"
     );
     Ok(())
 }
@@ -113,22 +122,44 @@ async fn record_and_throttle_holds_average_rate_within_budget() -> TestResult<()
         backlog_resume_threshold: None,
     });
 
-    // Emitting 50 events in one shot should force ~0.25s of sleep to hold
-    // the 200 events/sec average — this proves the enforcement function
-    // actually sleeps proportional to the configured budget, not just that
-    // counters update.
+    // A 250-event batch exceeds the one-second, 200-token burst capacity and
+    // must pay the resulting 250ms debt.
     let start = Instant::now();
-    controller.record_and_throttle(50, 0).await;
+    controller.record_and_throttle(250, 0).await;
     let elapsed = start.elapsed();
     assert!(
         elapsed >= Duration::from_millis(200),
-        "expected pacing to enforce ~250ms, got {elapsed:?}"
+        "expected pacing to enforce ~250ms of token debt, got {elapsed:?}"
     );
     assert!(
         elapsed < Duration::from_secs(2),
         "pacing sleep took implausibly long: {elapsed:?}"
     );
-    assert_eq!(controller.events_total(), 50);
+    assert_eq!(controller.events_total(), 250);
+    Ok(())
+}
+
+#[sinex_test]
+async fn cancellation_interrupts_pacing_wait() -> TestResult<()> {
+    let cancellation = crate::runtime::work_control::WorkCancellation::new();
+    let task_cancellation = cancellation.clone();
+    let mut controller = PacingController::new(RateBudget {
+        events_per_sec: Some(10.0),
+        bytes_per_sec: None,
+        backlog_pause_threshold: None,
+        backlog_resume_threshold: None,
+    });
+
+    let task = tokio::spawn(async move {
+        controller
+            .record_and_throttle_with_cancellation(20, 0, &task_cancellation)
+            .await
+    });
+    tokio::task::yield_now().await;
+    cancellation.cancel();
+
+    let result = tokio::time::timeout(Duration::from_secs(1), task).await??;
+    assert!(result.is_err(), "cancellation must interrupt a rate wait");
     Ok(())
 }
 
