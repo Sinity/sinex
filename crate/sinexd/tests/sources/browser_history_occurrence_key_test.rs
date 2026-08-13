@@ -45,7 +45,6 @@ fn record_for(bytes: &[u8], logical_path: &str) -> SourceRecord {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-#[ignore = "sinex-k6lt open: qutebrowser/chromium rows with no rowid all collide on visit_id=\"0\", producing a shared (non-unique) occurrence key across genuinely different visits"]
 async fn qutebrowser_rows_with_no_rowid_do_not_share_an_occurrence_key() {
     let mut parser = BrowserHistoryParser;
 
@@ -73,7 +72,6 @@ async fn qutebrowser_rows_with_no_rowid_do_not_share_an_occurrence_key() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-#[ignore = "sinex-k6lt open: a visit record with no visitId/visit_id/id field gets occurrence_key = None entirely -- no occurrence identity at all"]
 async fn firefox_style_visit_with_no_visit_id_field_still_gets_an_occurrence_key() {
     let mut parser = BrowserHistoryParser;
     let record = record_for(

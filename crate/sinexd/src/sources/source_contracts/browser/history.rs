@@ -200,7 +200,7 @@ pub struct BrowserHistoryParserConfig {}
 pub struct BrowserHistoryParser;
 
 const PARSER_ID: &str = "browser-history";
-const PARSER_VERSION: &str = "1.0.0";
+const PARSER_VERSION: &str = "1.0.1";
 
 #[async_trait]
 impl MaterialParser for BrowserHistoryParser {
@@ -357,8 +357,7 @@ fn parse_qutebrowser_row(
 ) -> ParserResult<VisitData> {
     let row_id = obj
         .get("rowid")
-        .and_then(sinex_primitives::JsonValue::as_i64)
-        .unwrap_or(0);
+        .and_then(sinex_primitives::JsonValue::as_i64);
     let url = obj
         .get("url")
         .and_then(|v| v.as_str())
@@ -386,19 +385,18 @@ fn parse_qutebrowser_row(
         visit_time,
         referrer: None,
         transition: (redirect != 0).then(|| "redirect".to_string()),
-        visit_id: Some(row_id.to_string()),
+        visit_id: row_id.map(|id| id.to_string()),
         visit_duration_ms: None,
         source_file: String::new(),
         line_number: None,
-        db_row_id: Some(row_id as u64),
+        db_row_id: row_id.and_then(|id| u64::try_from(id).ok()),
     })
 }
 
 fn parse_chromium_row(obj: &serde_json::Map<String, serde_json::Value>) -> ParserResult<VisitData> {
     let row_id = obj
         .get("rowid")
-        .and_then(sinex_primitives::JsonValue::as_i64)
-        .unwrap_or(0);
+        .and_then(sinex_primitives::JsonValue::as_i64);
     let url = obj
         .get("url")
         .and_then(|v| v.as_str())
@@ -436,11 +434,11 @@ fn parse_chromium_row(obj: &serde_json::Map<String, serde_json::Value>) -> Parse
         visit_time,
         referrer,
         transition: Some(transition_raw.to_string()),
-        visit_id: Some(row_id.to_string()),
+        visit_id: row_id.map(|id| id.to_string()),
         visit_duration_ms: (visit_duration >= 0).then_some((visit_duration as u64) / 1_000),
         source_file: String::new(),
         line_number: None,
-        db_row_id: Some(row_id as u64),
+        db_row_id: row_id.and_then(|id| u64::try_from(id).ok()),
     })
 }
 
@@ -572,12 +570,30 @@ fn build_intent(
         payload.insert("db_row_id".into(), serde_json::json!(rid));
     }
 
-    let occurrence_key = visit.visit_id.as_ref().map(|vid| OccurrenceKey {
+    // Provider visit ids are stable across mutable SQLite re-reads. Keep the
+    // profile coordinate separate from the payload's source_file so the
+    // occurrence contract remains explicit. Records without a provider id
+    // still receive a replay-stable, source-scoped key, but it includes the
+    // physical record anchor and bytes. That prevents the old rowid=0
+    // collision while avoiding a silent cross-artifact merge of id-less
+    // Takeout rows with database visits.
+    let browser_profile = if visit.source_file.is_empty() {
+        visit.browser.clone()
+    } else {
+        visit.source_file.clone()
+    };
+    let visit_id = visit.visit_id.clone().unwrap_or_else(|| {
+        let mut hasher = blake3::Hasher::new();
+        hasher.update(browser_profile.as_bytes());
+        hasher.update(format!("{:?}", record.anchor).as_bytes());
+        hasher.update(&record.bytes);
+        format!("anonymous:{}", hasher.finalize().to_hex())
+    });
+    let occurrence_key = Some(OccurrenceKey {
         source_id: ctx.source_id.clone(),
         fields: vec![
-            ("browser".to_string(), visit.browser.clone()),
-            ("source_file".to_string(), visit.source_file.clone()),
-            ("visit_id".to_string(), vid.clone()),
+            ("browser_profile".to_string(), browser_profile),
+            ("visit_id".to_string(), visit_id),
         ],
     });
 

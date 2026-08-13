@@ -107,9 +107,8 @@ async fn sqlite_occurrence_key_includes_browser_profile() {
     assert_eq!(
         fields.as_slice(),
         [
-            ("browser".to_string(), "qutebrowser".to_string()),
             (
-                "source_file".to_string(),
+                "browser_profile".to_string(),
                 "primary/var/tmp/qutebrowser/history.sqlite".to_string()
             ),
             ("visit_id".to_string(), "101".to_string()),
