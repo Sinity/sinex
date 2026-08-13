@@ -279,12 +279,12 @@ where
     }
 
     #[cfg(feature = "db")]
-    pub(super) async fn apply_prepared_invalidation(
+    pub(super) async fn archive_prepared_invalidation(
         &self,
         operation_uuid: Uuid,
-        scopes: Vec<PreparedInvalidationScope>,
+        scopes: &[PreparedInvalidationScope],
     ) -> RuntimeResult<()> {
-        use sinex_db::repositories::{DbPoolExt, ReplacementKind, ReplacementRecord};
+        use sinex_db::repositories::DbPoolExt;
 
         let pool = {
             let runtime = self.runtime.as_ref().ok_or_else(|| {
@@ -315,9 +315,9 @@ where
 
                 info!(
                     automaton = %self.automaton.name(),
-                    scope_key = scope.scope_key,
+                    scope_key = %scope.scope_key,
                     archived_count = archived,
-                    "Archived stale derived outputs after successful recomputation emission"
+                    "Archived stale derived outputs before replacement emission"
                 );
 
                 // sinex-68c.4: any projection instance keyed to this scope
@@ -340,7 +340,29 @@ where
                     );
                 }
             }
+        }
 
+        Ok(())
+    }
+
+    #[cfg(feature = "db")]
+    pub(super) async fn record_prepared_replacements(
+        &self,
+        operation_uuid: Uuid,
+        scopes: &[PreparedInvalidationScope],
+    ) -> RuntimeResult<()> {
+        use sinex_db::repositories::{DbPoolExt, ReplacementKind, ReplacementRecord};
+
+        let pool = {
+            let runtime = self.runtime.as_ref().ok_or_else(|| {
+                SinexError::lifecycle(
+                    "Cannot record invalidation replacements: runtime not initialized",
+                )
+            })?;
+            runtime.db_pool().clone()
+        };
+
+        for scope in scopes {
             if !scope.stale_ids.is_empty() && !scope.new_event_ids.is_empty() {
                 let scope_key = scope.scope_key.clone();
                 let replacements: Vec<ReplacementRecord> = scope
@@ -388,9 +410,9 @@ where
     /// 4. Records replacement relations in `audit.event_replacements` (old→new linkage)
     /// 5. Returns replacement events for emission
     ///
-    /// `handle_invalidation_message()` uses the same preparation path but emits replacement
-    /// outputs before step 3, so channel/transport failures cannot create an empty scope by
-    /// archiving stale outputs first.
+    /// `handle_invalidation_message()` archives stale outputs before emitting replacements. A
+    /// crash or redelivery can therefore recompute a temporarily empty scope, but it cannot emit
+    /// a second replacement set for still-live stale outputs.
     ///
     /// Transducers return empty — their outputs are archived with their inputs.
     #[cfg(feature = "db")]
@@ -401,7 +423,9 @@ where
         let prepared = self.prepare_invalidation(invalidation).await?;
         let scope_count = prepared.scopes.len();
         let output_count = prepared.outputs.len();
-        self.apply_prepared_invalidation(prepared.operation_uuid, prepared.scopes)
+        self.archive_prepared_invalidation(prepared.operation_uuid, &prepared.scopes)
+            .await?;
+        self.record_prepared_replacements(prepared.operation_uuid, &prepared.scopes)
             .await?;
 
         info!(
@@ -482,6 +506,31 @@ where
                         scopes,
                         operation_uuid,
                     } = prepared;
+                    if let Err(error) = self
+                        .archive_prepared_invalidation(operation_uuid, &scopes)
+                        .await
+                    {
+                        error!(
+                            target: "sinex_metrics",
+                            metric = "derive.invalidation_errors_total",
+                            automaton = %module_name,
+                            error = %error,
+                            action = %invalidation.action,
+                            "Invalidation archive finalization failed before output emission"
+                        );
+                        #[cfg(feature = "messaging")]
+                        if let Some(ref obs) = self.self_observer
+                            && let Err(obs_error) =
+                                obs.emit_counter("invalidation.errors", 1, None).await
+                        {
+                            log_self_observation_failure(
+                                module_name,
+                                "invalidation.errors",
+                                &obs_error,
+                            );
+                        }
+                        return Ok(None);
+                    }
                     let count = match self
                         .emit_output_events(outputs, "scope invalidation recomputation")
                         .await
@@ -511,7 +560,7 @@ where
                         }
                     };
                     if let Err(error) = self
-                        .apply_prepared_invalidation(operation_uuid, scopes)
+                        .record_prepared_replacements(operation_uuid, &scopes)
                         .await
                     {
                         error!(
@@ -520,7 +569,7 @@ where
                             automaton = %module_name,
                             error = %error,
                             action = %invalidation.action,
-                            "Invalidation archive finalization failed after output emission"
+                            "Invalidation replacement recording failed after output emission"
                         );
                         #[cfg(feature = "messaging")]
                         if let Some(ref obs) = self.self_observer

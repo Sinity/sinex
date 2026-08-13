@@ -20,7 +20,9 @@ use crate::runtime::shutdown::ShutdownConfig;
 use crate::runtime::stream::{
     Checkpoint, EventEmitter, RuntimeContext, RuntimeHandles, RuntimeModule, ScanArgs, ServiceInfo,
 };
-use crate::runtime::{AutomatonLogicError, ScopeReconciler, Transducer, Windowed, WindowedWrapper};
+use crate::runtime::{
+    Automaton, AutomatonLogicError, ScopeReconciler, Transducer, Windowed, WindowedWrapper,
+};
 use crate::runtime::{
     CheckpointManager, CheckpointState, EventTransport, NatsPublisher, SinexError,
 };
@@ -334,12 +336,15 @@ impl ScopeReconciler for TestScopeReconcilerAutomaton {
         let total = working_set.iter().map(|input| input.value).sum();
         let count = working_set.len();
 
-        Ok(vec![DerivedOutput::reconciled(
-            ScopeReconcilerOutput { total, count },
-            context.ts_orig.unwrap_or_else(Timestamp::now),
-            vec![*context.trigger_event_id.as_uuid()],
-            scope_key.to_string(),
-        )])
+        Ok(vec![
+            DerivedOutput::reconciled(
+                ScopeReconcilerOutput { total, count },
+                context.ts_orig.unwrap_or_else(Timestamp::now),
+                vec![*context.trigger_event_id.as_uuid()],
+                scope_key.to_string(),
+            )
+            .with_event_type("measurement.aggregate"),
+        ])
     }
 }
 
@@ -688,6 +693,47 @@ async fn stale_output_ids_or_fail_scope_surfaces_query_error() -> TestResult<()>
     assert!(rendered.contains("Failed to query stale outputs"));
     assert!(rendered.contains("test-derived"));
     assert!(rendered.contains("scope-a"));
+    Ok(())
+}
+
+#[sinex_test]
+async fn scope_reconciler_invalidation_preserves_output_event_type() -> TestResult<()> {
+    let input = DynamicPayload::new(
+        "measurements",
+        "measurement.taken",
+        json!({ "value": 5_i64 }),
+    )
+    .from_material(Uuid::now_v7())
+    .build()?;
+    let context = AutomatonContext {
+        trigger_event_id: Id::new(),
+        source: EventSource::from_static("measurements"),
+        event_type: EventType::from_static("measurement.taken"),
+        ts_orig: None,
+        ts_coided: Timestamp::now(),
+        processing_mode: ProcessingMode::Replay,
+        trigger_kind: TriggerKind::ScopeInvalidation,
+        created_by_operation_id: None,
+        trigger_material_id: None,
+        trigger_anchor_byte: None,
+    };
+    let mut reconciler = ScopeReconcilerWrapper(TestScopeReconcilerAutomaton);
+    let mut state = TestScopeReconcilerState;
+
+    let outputs = reconciler
+        .process_invalidation_derived(&mut state, "scope:measurements", vec![input], &context)
+        .await?;
+
+    assert_eq!(
+        outputs.len(),
+        1,
+        "recomputation fixture must emit one output"
+    );
+    assert_eq!(
+        outputs[0].event_type,
+        Some("measurement.aggregate"),
+        "the wrapper must preserve an event type selected by recompute_scope"
+    );
     Ok(())
 }
 

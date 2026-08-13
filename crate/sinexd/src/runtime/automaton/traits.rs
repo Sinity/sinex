@@ -956,7 +956,7 @@ where
                     scope_key: output.scope_key,
                     equivalence_key: output.equivalence_key,
                     aggregation: output.aggregation,
-                    event_type: None,
+                    event_type: output.event_type,
                     declaration_id: output.declaration_id,
                     product_class: output.product_class,
                     claim_support: output.claim_support,

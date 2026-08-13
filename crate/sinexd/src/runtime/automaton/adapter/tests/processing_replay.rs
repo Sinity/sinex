@@ -626,7 +626,7 @@ async fn historical_replay_filters_wildcard_material_only_inputs(
 
 #[cfg(feature = "messaging")]
 #[sinex_test]
-async fn handle_invalidation_message_returns_none_when_output_emit_fails(
+async fn handle_invalidation_archives_before_output_emit_and_retries_without_duplicates(
     ctx: TestContext,
 ) -> TestResult<()> {
     use super::super::super::DerivedScopeInvalidation;
@@ -656,8 +656,7 @@ async fn handle_invalidation_message_returns_none_when_output_emit_fails(
         .and_then(|event| event.id)
         .expect("inserted input should have id");
     let product_class = sinex_primitives::derivation::DerivedProductClass::CanonicalDerivedEvent;
-    let declaration_id =
-        "sinex.test.handle_invalidation_message_returns_none_when_output_emit_fails";
+    let declaration_id = "sinex.test.handle_invalidation_archives_before_output_emit";
     seed_product_declaration(
         ctx.pool(),
         declaration_id,
@@ -718,8 +717,8 @@ async fn handle_invalidation_message_returns_none_when_output_emit_fails(
         other => panic!("expected count result, got {other:?}"),
     };
     assert_eq!(
-        live_output_count, 1,
-        "stale outputs must remain live when replacement emission fails"
+        live_output_count, 0,
+        "stale outputs must be archived before replacement emission begins"
     );
 
     let archived_output_count = sqlx::query_scalar!(
@@ -735,8 +734,25 @@ async fn handle_invalidation_message_returns_none_when_output_emit_fails(
     .fetch_one(ctx.pool())
     .await?;
     assert_eq!(
-        archived_output_count, 0,
-        "replacement emission failure must not archive stale outputs"
+        archived_output_count, 1,
+        "the archive marker must survive a failed replacement emission"
+    );
+    let (retry_sender, mut retry_receiver) = mpsc::channel(4);
+    adapter.event_emitter = Some(EventEmitter::new(retry_sender, false));
+    let retry = adapter.handle_invalidation_message(&payload).await?;
+    assert_eq!(
+        retry,
+        Some(1),
+        "redelivery must recompute exactly one replacement"
+    );
+    let emitted = tokio::time::timeout(std::time::Duration::from_secs(1), retry_receiver.recv())
+        .await?
+        .expect("redelivery should emit the recomputed replacement");
+    assert_eq!(emitted.scope_key.as_deref(), Some(scope_key));
+    assert_eq!(
+        retry_receiver.try_recv(),
+        Err(mpsc::error::TryRecvError::Empty),
+        "redelivery must not emit a duplicate replacement"
     );
     Ok(())
 }
