@@ -119,6 +119,65 @@ async fn load_material_bytes_uses_and_validates_manifest_authority(
 }
 
 #[sinex_test]
+async fn load_material_bytes_rejects_noncanonical_manifest_encoding(
+    ctx: TestContext,
+) -> TestResult<()> {
+    let (content_store, _tmp) = test_content_store(&ctx)?;
+    let payload = b"canonical manifest bytes";
+    let blob = content_store
+        .ingest_from_bytes(payload, "canonical.log", "text/plain")
+        .await?;
+    let material = ctx
+        .pool()
+        .source_materials()
+        .register_material(
+            SourceMaterialRegistration::blob_text("canonical.log").with_blob_id(blob.id),
+        )
+        .await?;
+    let manifest = MaterialManifestV1::from_capture(
+        material.id,
+        "canonical.log",
+        "local_cas",
+        blake3::hash(payload).to_hex().to_string(),
+        payload.len() as u64,
+        serde_json::json!({"logical_source_identifier": "test.canonical"}),
+        "2026-08-12T00:00:00Z",
+        "2026-08-12T00:00:01Z",
+    );
+    let canonical_bytes = manifest.canonical_bytes()?;
+    let noncanonical_bytes = serde_json::to_vec_pretty(&manifest)?;
+    assert_ne!(
+        canonical_bytes, noncanonical_bytes,
+        "fixture must exercise the canonical encoding boundary"
+    );
+    let manifest_blob = content_store
+        .ingest_from_bytes(
+            &noncanonical_bytes,
+            "material-manifest.json",
+            "application/json",
+        )
+        .await?;
+    ctx.pool()
+        .source_materials()
+        .update_metadata(
+            Id::from_uuid(material.id),
+            serde_json::json!({
+                "material_manifest": {
+                    "manifest_type": sinex_primitives::MATERIAL_MANIFEST_V1,
+                    "content_key": manifest_blob.content_key(),
+                }
+            }),
+        )
+        .await?;
+
+    let error = load_material_bytes(ctx.pool(), &content_store, material.id)
+        .await
+        .expect_err("manifest reads must require the canonical CAS representation");
+    assert!(error.contains("not in canonical encoding"), "got: {error}");
+    Ok(())
+}
+
+#[sinex_test]
 async fn load_material_bytes_rejects_manifest_with_invalid_discriminator(
     ctx: TestContext,
 ) -> TestResult<()> {

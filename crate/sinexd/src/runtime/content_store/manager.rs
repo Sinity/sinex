@@ -454,7 +454,7 @@ impl ContentStoreManager {
 
         let content_key = self
             .content_store
-            .store_file(temp_file_path.as_path())
+            .store_owned_temp_file(temp_file_path.as_path())
             .await
             .map_err(|e| {
                 SinexError::processing("Failed to add buffered upload to content store")

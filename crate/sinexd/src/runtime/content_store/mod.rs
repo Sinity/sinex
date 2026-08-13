@@ -1008,6 +1008,25 @@ impl MaterialContentStore {
         self.store_file_local_cas(&resolved_path, file_size).await
     }
 
+    /// Store a temporary file created by an internal content-store caller.
+    ///
+    /// External source paths must use [`Self::store_file`] so root containment
+    /// and symlink checks remain mandatory. In-memory uploads use a securely
+    /// created, process-owned temporary file instead, which intentionally lives
+    /// outside the CAS root and must not be treated as an external source path.
+    pub(super) async fn store_owned_temp_file(
+        &self,
+        file_path: impl AsRef<Path>,
+    ) -> RuntimeResult<ContentStoreKey> {
+        let file_path = Self::require_utf8_path(file_path)?;
+        let file_size = tokio::fs::metadata(&file_path)
+            .await
+            .map_err(SinexError::io)?
+            .len();
+        self.ensure_file_size_allowed(file_size)?;
+        self.store_file_local_cas(&file_path, file_size).await
+    }
+
     pub(super) fn ensure_file_size_allowed(&self, file_size: u64) -> RuntimeResult<()> {
         let Some(max_blob_size) = (self.config.max_blob_size > 0)
             .then(|| u64::try_from(self.config.max_blob_size))

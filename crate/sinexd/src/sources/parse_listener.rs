@@ -214,6 +214,18 @@ async fn load_material_authority(
                 ));
             }
         };
+        let canonical_manifest_bytes = manifest
+            .canonical_bytes()
+            .map_err(|error| {
+                format!(
+                    "failed to canonicalize manifest for material {material_id}: {error}"
+                )
+            })?;
+        if manifest_bytes != canonical_manifest_bytes {
+            return Err(format!(
+                "manifest for material {material_id} is not in canonical encoding"
+            ));
+        }
         manifest
             .validate()
             .map_err(|e| format!("manifest validation failed for material {material_id}: {e}"))?;

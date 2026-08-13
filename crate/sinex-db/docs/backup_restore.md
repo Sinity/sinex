@@ -33,6 +33,32 @@ this repo — sinex itself ships no backup automation.
   the auto-start policy), so they run whenever sinex is up, whether started
   manually or automatically. Neither unit is ever masked.
 
+### CAS, manifest, and archive integrity boundary
+
+The PostgreSQL dump covers `raw.source_material_registry`, `core.blobs`, and
+`audit.archived_events`. The CAS component is separate from PostgreSQL and must
+be captured with the snapshot's `cas/blob-repository/` component. A manifest
+reference in a source-material row is usable only when its CAS object can be
+read with the expected local-BLAKE3 key, size, digest, and canonical JSON
+encoding.
+
+The normal read and scrub paths enforce this boundary:
+
+- `sinexd` material replay reads the manifest and exact byte ranges from CAS;
+  it does not fall back to the original source path.
+- `sinexctl ops blob fsck` treats manifest references in
+  `raw.source_material_registry` as CAS authority and reports missing,
+  corrupt, or orphaned objects. Apply mode quarantines candidates before the
+  grace-period deletion step.
+- `sinexctl ops state snapshot` records a hash and file count for the CAS
+  component. The isolated restore drill compares the extracted CAS component
+  with that evidence before an operator considers restoring it into service.
+
+The Beads Dolt database is outside Sinex's PostgreSQL dump and CAS snapshot.
+The external backup policy must include `.beads/dolt/` and retain the tracked
+`.beads/issues.jsonl` export as a separate backup item. This repository does
+not claim that the Sinex snapshot backs up Beads state.
+
 ### Inspecting backup state
 
 ```bash
@@ -120,13 +146,18 @@ A passing drill leaves no production state mutated.
   store originals. Back those up with your usual file-level mechanism.
 - **The blob CAS at `services.sinex.storage.blob.repositoryPath` is not in
   the DB dump.** Treat it like source materials.
+- **The Beads Dolt database is not in the Sinex DB dump or CAS snapshot.**
+  Include `.beads/dolt/` in the external backup set and verify that its tracked
+  `issues.jsonl` export is recoverable separately.
 - **NATS JetStream state lives outside PG.** Lost JetStream state is
   recoverable from `core.events` (already-persisted events) and replay,
   but consumers that were mid-flight will re-deliver from their
   checkpoints.
-- **Restore has not been drilled in production as a scheduled, automated
-  check** — only the dump side is automated. See `sinex-w98` for making the
-  "backups are restorable" claim continuously verified rather than assumed.
+- **A real `pg_dump` to `pg_restore` round trip and a restored-CAS replay have
+  not been executed by this repository's focused tests.** The snapshot command
+  has isolated extraction and hash/count checks, while the operator runbook
+  still requires a throwaway database drill. No production wipe or restore is
+  implied.
 
 ## Off-host coverage
 
