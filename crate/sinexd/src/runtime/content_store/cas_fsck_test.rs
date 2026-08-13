@@ -53,9 +53,7 @@ async fn cancelled_fsck_reports_incomplete_without_scanning(ctx: TestContext) ->
 }
 
 #[sinex_test]
-async fn apply_fsck_holds_cross_handle_destructive_admission(
-    ctx: TestContext,
-) -> TestResult<()> {
+async fn apply_fsck_holds_cross_handle_destructive_admission(ctx: TestContext) -> TestResult<()> {
     let store_dir = tempfile::tempdir()?;
     let root_path = Utf8PathBuf::from_path_buf(store_dir.path().to_path_buf())
         .expect("temporary content-store path must be UTF-8");
@@ -215,16 +213,15 @@ async fn cancelled_reconciliation_preserves_pending_cas_deletion(
         cancellation,
     );
     let mut report = CasFsckReport::default();
-    let complete =
-        reconcile_pending_deletions(
-            ctx.pool(),
-            &content_store,
-            true,
-            &mut report,
-            &mut work,
-            None,
-        )
-        .await?;
+    let complete = reconcile_pending_deletions(
+        ctx.pool(),
+        &content_store,
+        true,
+        &mut report,
+        &mut work,
+        None,
+    )
+    .await?;
 
     assert!(!complete);
     assert_eq!(report.stop_reason, Some(CasFsckStopReason::Cancelled));

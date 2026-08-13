@@ -27,8 +27,8 @@ use super::{
     MaterialContentStore,
 };
 use crate::runtime::work_control::{
-    WorkAdmission, WorkBudget, WorkCancellation, WorkController, WorkIdentity, WorkOutcome,
-    WorkFileAdmission, WorkStopReason,
+    WorkAdmission, WorkBudget, WorkCancellation, WorkController, WorkFileAdmission, WorkIdentity,
+    WorkOutcome, WorkStopReason,
 };
 
 /// Result of a single CAS file check.
@@ -251,16 +251,15 @@ pub async fn check_cas_with_options_and_control(
     let known_hash_set: HashSet<String> = known_blake3_hashes.keys().cloned().collect();
 
     if continue_work {
-        continue_work =
-            reconcile_pending_deletions(
-                pool,
-                content_store,
-                apply,
-                &mut report,
-                &mut work,
-                _destructive_admission.as_ref(),
-            )
-            .await?;
+        continue_work = reconcile_pending_deletions(
+            pool,
+            content_store,
+            apply,
+            &mut report,
+            &mut work,
+            _destructive_admission.as_ref(),
+        )
+        .await?;
     }
 
     'scan: while continue_work {

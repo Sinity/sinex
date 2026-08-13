@@ -147,22 +147,18 @@ async fn periodic_gc_removes_disposable_terminal_rows_but_retains_completed_mate
     .await?;
     repo.finalize_in_flight(Id::from_uuid(completed_id), None, None, None, None)
         .await?;
-    sqlx::query(
-        "UPDATE raw.source_material_registry SET end_time = $2 WHERE id = ANY($1::uuid[])",
-    )
-    .bind([recovered_id, cancelled_id, completed_id].as_slice())
-    .bind(Timestamp::now() - time::Duration::days(30))
-    .execute(ctx.pool())
-    .await?;
+    sqlx::query("UPDATE raw.source_material_registry SET end_time = $2 WHERE id = ANY($1::uuid[])")
+        .bind([recovered_id, cancelled_id, completed_id].as_slice())
+        .bind(Timestamp::now() - time::Duration::days(30))
+        .execute(ctx.pool())
+        .await?;
 
     let report = sweep_stale_material_registry(ctx.pool(), &content_store, true).await?;
     assert!(report.registry_rows_deleted >= 2);
     assert!(repo.get_by_id(Id::from_uuid(recovered_id)).await?.is_none());
     assert!(repo.get_by_id(Id::from_uuid(cancelled_id)).await?.is_none());
     assert!(
-        repo.get_by_id(Id::from_uuid(completed_id))
-            .await?
-            .is_some(),
+        repo.get_by_id(Id::from_uuid(completed_id)).await?.is_some(),
         "successful source materials are retention roots and must not be GC'd"
     );
     Ok(())

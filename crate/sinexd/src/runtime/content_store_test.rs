@@ -21,8 +21,8 @@ async fn default_blob_retrieval_cap_matches_default_material_assembly_cap()
 }
 
 #[sinex_test]
-async fn content_store_default_honors_deployment_size_override()
--> ::xtask::sandbox::TestResult<()> {
+async fn content_store_default_honors_deployment_size_override() -> ::xtask::sandbox::TestResult<()>
+{
     let mut env = xtask::sandbox::EnvGuard::new();
     env.set("SINEX_CONTENT_STORE_MAX_BLOB_SIZE", "123456");
     assert_eq!(
@@ -289,7 +289,10 @@ async fn async_content_store_commands_are_serialized_through_process_exit()
     first.await??;
     second.await??;
     let order = tokio::fs::read_to_string(&marker).await?;
-    assert_eq!(order, "first-start\nfirst-end\nsecond\n", "anti-vacuity: the process lock must cover subprocess execution, not only invocation counting");
+    assert_eq!(
+        order, "first-start\nfirst-end\nsecond\n",
+        "anti-vacuity: the process lock must cover subprocess execution, not only invocation counting"
+    );
     Ok(())
 }
 
@@ -345,8 +348,8 @@ async fn annex_path_arguments_reject_traversal() -> ::xtask::sandbox::TestResult
 }
 
 #[sinex_test]
-async fn cas_walker_batches_and_resumes_at_completed_prefixes()
--> ::xtask::sandbox::TestResult<()> {
+async fn cas_walker_batches_and_resumes_at_completed_prefixes() -> ::xtask::sandbox::TestResult<()>
+{
     let repo_dir = tempfile::tempdir()?;
     let repo_path = Utf8PathBuf::from_path_buf(repo_dir.path().to_path_buf())
         .expect("temporary path should be valid utf-8");
@@ -443,9 +446,15 @@ async fn cas_publish_fault_preserves_published_object_until_commit_cleanup()
     let target = store
         .path_if_local(&leases[0].key.key)?
         .expect("published local CAS key must resolve");
-    assert!(target.exists(), "publish interruption must leave the object recoverable");
+    assert!(
+        target.exists(),
+        "publish interruption must leave the object recoverable"
+    );
     store.release_write_lease(&leases[0]).await?;
-    assert!(target.exists(), "lease cleanup must not delete published bytes");
+    assert!(
+        target.exists(),
+        "lease cleanup must not delete published bytes"
+    );
     Ok(())
 }
 
@@ -490,13 +499,14 @@ async fn cas_walker_cancellation_interrupts_directory_enumeration()
         root_path: repo_path,
         ..Default::default()
     })?;
-    tokio::fs::create_dir_all(store.root_path().join(LOCAL_BLAKE3_CAS_DIR).join("aa"))
-        .await?;
+    tokio::fs::create_dir_all(store.root_path().join(LOCAL_BLAKE3_CAS_DIR).join("aa")).await?;
     let cancellation = WorkCancellation::new();
     cancellation.cancel();
-    assert!(store
-        .cas_walker_with_control(None, Some(cancellation))
-        .await
-        .is_err());
+    assert!(
+        store
+            .cas_walker_with_control(None, Some(cancellation))
+            .await
+            .is_err()
+    );
     Ok(())
 }
