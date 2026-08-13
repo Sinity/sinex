@@ -5,6 +5,7 @@ use crate::event_engine::material_assembler::finalization_transaction::{
 };
 use crate::event_engine::material_assembler::{io, state};
 use crate::runtime::content_store::ContentStoreKey;
+use crate::runtime::{FaultInjector, FaultPoint};
 use serde_json::json;
 use sinex_db::{
     models::blob::Blob,
@@ -291,10 +292,10 @@ async fn route_material_error_propagates_terminal_settlement_failure(
     let state_handle = assembler.insert_state_handle(material_id, state);
     let state_guard = state_handle.lock().await;
     let mut route = Box::pin(assembler.route_material_error_then_finalize_failed(
-            material_id,
-            "material_persist_failed",
-            json!({"fault_injection": "closed_database_pool"}),
-        ));
+        material_id,
+        "material_persist_failed",
+        json!({"fault_injection": "closed_database_pool"}),
+    ));
 
     let dlq_message = tokio::select! {
         result = &mut route => panic!(
@@ -849,6 +850,153 @@ async fn finalization_persists_canonical_manifest_and_registry_reference(
 }
 
 #[sinex_test]
+async fn post_commit_response_failure_reconciles_real_cas_finalization(
+    ctx: TestContext,
+) -> TestResult<()> {
+    Box::pin(post_commit_response_failure_reconciles_real_cas_finalization_inner(ctx)).await
+}
+
+async fn post_commit_response_failure_reconciles_real_cas_finalization_inner(
+    ctx: TestContext,
+) -> TestResult<()> {
+    let ctx = ctx.with_nats().shared().await?;
+    let injector = FaultInjector::default();
+    injector.fail_once(FaultPoint::MaterialCommitPostCommitResponse);
+    let (assembler, _content_store_dir, _state_dir) =
+        super::super::test_support::TestAssemblerBuilder::new("post-commit-response-recovery")
+            .fault_injector(injector)
+            .build(&ctx)
+            .await?;
+    let material_id = Uuid::now_v7();
+    let material_id_typed = Id::from_uuid(material_id);
+    let started_at = Timestamp::now();
+    let ended_at = Timestamp::now();
+    let payload = b"post-commit response recovery bytes".to_vec();
+    let content_hash = blake3::hash(&payload).to_hex().to_string();
+    let content_key = ContentStoreKey::local_blake3(payload.len() as u64, content_hash.clone())?;
+
+    state::handle_begin(
+        &assembler,
+        material_id,
+        state::MaterialBeginMessage {
+            material_id: material_id.to_string(),
+            material_kind: "test-material".to_string(),
+            source_identifier: "test://post-commit-response-recovery".to_string(),
+            metadata: json!({}),
+            started_at: sinex_primitives::temporal::format_rfc3339(started_at),
+        },
+    )
+    .await?;
+    io::handle_slice(&assembler, material_id, 0, payload.clone()).await?;
+
+    let state_handle = assembler
+        .get_state_handle(&material_id)
+        .ok_or_else(|| SinexError::invalid_state("missing assembler state"))?;
+    {
+        let mut state = state_handle.lock().await;
+        state.pending_end = Some(MaterialEndMessage {
+            material_id: material_id.to_string(),
+            ended_at: sinex_primitives::temporal::format_rfc3339(ended_at),
+            content_hash: content_hash.clone(),
+            total_slices: 1,
+            total_size_bytes: payload.len() as i64,
+            metadata: json!({}),
+        });
+    }
+
+    let first_error = assembler
+        .try_finalize_pending_end(material_id, state_handle.clone(), PendingEndBehavior::Error)
+        .await
+        .expect_err("the injected response loss must reach the caller as an error");
+    assert_eq!(
+        first_error.context_map().get("commit_outcome"),
+        Some(&"unknown".to_string()),
+        "post-commit response loss must not be mistaken for a pre-commit failure: {first_error}"
+    );
+    assert_eq!(
+        first_error.context_map().get("commit_landed"),
+        Some(&"true".to_string())
+    );
+    assert_eq!(
+        first_error.context_map().get("response_failure"),
+        Some(&"post_commit".to_string())
+    );
+
+    let material = ctx
+        .pool
+        .source_materials()
+        .get_by_id(material_id_typed)
+        .await?
+        .expect("the PostgreSQL commit must have landed before the response error");
+    assert_eq!(material.status, MaterialStatus::Completed);
+    assert!(material.optional_blob_id.is_some());
+    assert_eq!(
+        assembler.content_store.list_write_leases().await?.len(),
+        0,
+        "the landed commit path must clean its CAS lease even when the caller receives an error"
+    );
+    let cas_path = assembler
+        .content_store
+        .path_if_local(&content_key.key)?
+        .expect("the published CAS object must remain addressable");
+    assert_eq!(tokio::fs::read(cas_path).await?, payload);
+    {
+        let state = state_handle.lock().await;
+        assert_eq!(state.phase, AssemblyPhase::Accumulating);
+        assert!(state.pending_end.is_some());
+    }
+
+    // Re-drive the ordinary finalization route. It must observe the already
+    // landed material and release the retry's newly created lease instead of
+    // inserting another blob or material authority.
+    assembler
+        .try_finalize_pending_end(material_id, state_handle, PendingEndBehavior::Error)
+        .await?;
+
+    assert!(
+        assembler
+            .content_store
+            .list_write_leases()
+            .await?
+            .is_empty()
+    );
+    let material_after_retry = ctx
+        .pool
+        .source_materials()
+        .get_by_id(material_id_typed)
+        .await?
+        .expect("reconciled material should remain authoritative");
+    assert_eq!(material_after_retry.status, MaterialStatus::Completed);
+    assert_eq!(
+        material_after_retry.optional_blob_id,
+        material.optional_blob_id
+    );
+    assert_eq!(
+        material_after_retry.metadata["material_manifest"], material.metadata["material_manifest"],
+        "reconciliation must not replace the already committed material authority"
+    );
+
+    let material_count = sqlx::query_scalar!(
+        r#"SELECT COUNT(*) as "count!: i64" FROM raw.source_material_registry WHERE id = $1"#,
+        material_id,
+    )
+    .fetch_one(&ctx.pool)
+    .await?;
+    assert_eq!(material_count, 1);
+    let blob_count = sqlx::query_scalar!(
+        r#"SELECT COUNT(*) as "count!: i64" FROM core.blobs
+           WHERE annex_backend = $1 AND content_hash = $2 AND size_bytes = $3"#,
+        content_key.storage_backend(),
+        content_key.digest,
+        content_key.size as i64,
+    )
+    .fetch_one(&ctx.pool)
+    .await?;
+    assert_eq!(blob_count, 1);
+    Ok(())
+}
+
+#[sinex_test]
 async fn finalization_transaction_is_idempotent_after_commit_lands(
     ctx: TestContext,
 ) -> TestResult<()> {
@@ -939,6 +1087,8 @@ async fn finalization_transaction_is_idempotent_after_commit_lands(
             metadata: json!({}),
             final_status: MaterialStatus::Completed,
             write_lease: None,
+            manifest_key: None,
+            manifest_lease: None,
         })
         .await?;
     assert_eq!(*handle.blob_id.as_uuid(), *blob.id.as_uuid());
@@ -1013,6 +1163,8 @@ async fn finalization_transaction_rolls_back_blob_material_and_ledger_on_finaliz
             metadata: json!({ "finalized": true }),
             final_status: MaterialStatus::Completed,
             write_lease: None,
+            manifest_key: None,
+            manifest_lease: None,
         })
         .await
         .expect_err("negative total_bytes should fail source-material finalization");
@@ -1133,6 +1285,8 @@ async fn finalization_transaction_reuses_existing_blob_inside_transaction(
             metadata: json!({}),
             final_status: MaterialStatus::Completed,
             write_lease: None,
+            manifest_key: None,
+            manifest_lease: None,
         })
         .await?;
     assert_eq!(*handle.blob_id.as_uuid(), *existing_blob.id.as_uuid());
@@ -1238,6 +1392,8 @@ async fn finalization_transaction_reuses_existing_blob_by_blake3_inside_transact
             metadata: json!({}),
             final_status: MaterialStatus::Completed,
             write_lease: None,
+            manifest_key: None,
+            manifest_lease: None,
         })
         .await?;
     assert_eq!(*handle.blob_id.as_uuid(), *existing_blob.id.as_uuid());

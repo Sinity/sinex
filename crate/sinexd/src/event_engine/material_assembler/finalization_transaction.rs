@@ -12,6 +12,8 @@ use sinex_primitives::{Id, JsonValue, MaterialStatus, Uuid};
 use tracing::{error, info, warn};
 
 use crate::event_engine::{EventEngineResult, SinexError};
+#[cfg(test)]
+use crate::runtime::FaultPoint;
 
 use super::{FinalizationState, MaterialAssembler};
 
@@ -88,6 +90,8 @@ pub(super) struct FinalizationRequest<'a> {
     pub metadata: JsonValue,
     pub final_status: MaterialStatus,
     pub write_lease: Option<&'a CasWriteLease>,
+    pub manifest_key: Option<&'a ContentStoreKey>,
+    pub manifest_lease: Option<&'a CasWriteLease>,
 }
 
 #[derive(Debug)]
@@ -118,8 +122,12 @@ impl<'a> FinalizationTransaction<'a> {
             .await
         {
             FinalizationCommitOutcome::Landed(handle) => {
-                self.release_landed_write_lease(request.final_state, request.write_lease)
-                    .await;
+                self.release_landed_write_leases(
+                    request.final_state,
+                    request.write_lease,
+                    request.manifest_lease,
+                )
+                .await;
                 info!(
                     material_id = %request.final_state.material_id,
                     content_key = %request.content_key.key,
@@ -158,8 +166,7 @@ impl<'a> FinalizationTransaction<'a> {
                     "ensure_material_record_present",
                 ),
             };
-            self.cleanup_content_import_failure(request.content_key)
-                .await;
+            self.cleanup_imports(&request).await;
             return Err(FinalizationError::new(
                 FinalizationErrorKind::EnsureMaterialRecord,
                 error,
@@ -183,8 +190,7 @@ impl<'a> FinalizationTransaction<'a> {
                         rollback_finalization_failure(error, rollback_error, "upsert_blob")
                     }
                 };
-                self.cleanup_content_import_failure(request.content_key)
-                    .await;
+                self.cleanup_imports(&request).await;
                 return Err(FinalizationError::new(
                     FinalizationErrorKind::UpsertBlob,
                     error,
@@ -199,7 +205,7 @@ impl<'a> FinalizationTransaction<'a> {
                 request.final_status,
                 blob_id,
                 request.total_size_bytes,
-                request.metadata,
+                request.metadata.clone(),
             )
             .await
         {
@@ -209,8 +215,7 @@ impl<'a> FinalizationTransaction<'a> {
                     rollback_finalization_failure(error, rollback_error, "finalize_material_record")
                 }
             };
-            self.cleanup_content_import_failure(request.content_key)
-                .await;
+            self.cleanup_imports(&request).await;
             return Err(FinalizationError::new(
                 FinalizationErrorKind::FinalizeMaterialRecord,
                 error,
@@ -228,8 +233,43 @@ impl<'a> FinalizationTransaction<'a> {
 
         match tx.commit().await {
             Ok(()) => {
-                self.release_landed_write_lease(request.final_state, request.write_lease)
-                    .await;
+                self.release_landed_write_leases(
+                    request.final_state,
+                    request.write_lease,
+                    request.manifest_lease,
+                )
+                .await;
+
+                // This seam exists only in unit-test builds. It models a
+                // response lost after both durable boundaries have completed:
+                // PostgreSQL commit and CAS lease cleanup. The caller must
+                // still receive an unknown-outcome error so its normal retry
+                // path proves reconciliation rather than assuming success.
+                #[cfg(test)]
+                if let Err(error) = self
+                    .assembler
+                    .fault_injector
+                    .inject(FaultPoint::MaterialCommitPostCommitResponse)
+                {
+                    let error = error
+                        .with_context("commit_outcome", "unknown")
+                        .with_context("commit_landed", "true")
+                        .with_context("response_failure", "post_commit")
+                        .with_context("retry_state_preserved", "true")
+                        .with_context("terminal_failure_routed", "false")
+                        .with_context(
+                            "recovery",
+                            "finalization retry reconciles the already-landed commit",
+                        )
+                        .with_context("material_id", request.final_state.material_id.to_string())
+                        .with_context("content_key", request.content_key.key.clone())
+                        .with_context("final_status", request.final_status.to_string());
+                    return Err(FinalizationError::new(
+                        FinalizationErrorKind::CommitOutcomeUnknown,
+                        error,
+                    ));
+                }
+
                 Ok(FinalizedHandle {
                     blob_id,
                     reused_existing_commit: false,
@@ -249,8 +289,12 @@ impl<'a> FinalizationTransaction<'a> {
                     .await
                 {
                     FinalizationCommitOutcome::Landed(handle) => {
-                        self.release_landed_write_lease(request.final_state, request.write_lease)
-                            .await;
+                        self.release_landed_write_leases(
+                            request.final_state,
+                            request.write_lease,
+                            request.manifest_lease,
+                        )
+                        .await;
                         warn!(
                             material_id = %request.final_state.material_id,
                             content_key = %request.content_key.key,
@@ -259,8 +303,7 @@ impl<'a> FinalizationTransaction<'a> {
                         Ok(handle)
                     }
                     FinalizationCommitOutcome::NotLanded => {
-                        self.cleanup_content_import_failure(request.content_key)
-                            .await;
+                        self.cleanup_imports(&request).await;
                         Err(FinalizationError::new(
                             FinalizationErrorKind::Commit,
                             commit_error,
@@ -292,24 +335,40 @@ impl<'a> FinalizationTransaction<'a> {
     /// Release the durable CAS lease after any path has confirmed the material
     /// finalization commit landed. This deliberately covers preflight retries,
     /// normal commits, and commit errors reconciled to a durable result.
-    async fn release_landed_write_lease(
+    async fn release_landed_write_leases(
         &self,
         final_state: &FinalizationState,
         write_lease: Option<&CasWriteLease>,
+        manifest_lease: Option<&CasWriteLease>,
     ) {
-        if let Some(lease) = write_lease
-            && let Err(error) = self
+        for lease in [write_lease, manifest_lease].into_iter().flatten() {
+            if let Err(error) = self
                 .assembler
                 .content_store
                 .release_write_lease(lease)
                 .await
-        {
-            warn!(
-                material_id = %final_state.material_id,
-                error = %error,
-                "Material commit was durable but CAS write lease release will retry"
-            );
+            {
+                warn!(
+                    material_id = %final_state.material_id,
+                    error = %error,
+                    "Material commit was durable but CAS write lease release will retry"
+                );
+            }
         }
+    }
+
+    async fn cleanup_imports(&self, request: &FinalizationRequest<'_>) {
+        self.cleanup_content_import_failure(request.content_key)
+            .await;
+        if let Some(manifest_key) = request.manifest_key {
+            self.cleanup_content_import_failure(manifest_key).await;
+        }
+        self.release_landed_write_leases(
+            request.final_state,
+            request.write_lease,
+            request.manifest_lease,
+        )
+        .await;
     }
 
     /// Insert or fetch blob metadata for the assembled material.

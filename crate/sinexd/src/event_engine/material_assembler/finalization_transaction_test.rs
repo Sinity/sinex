@@ -120,6 +120,8 @@ async fn finalization_releases_cas_lease_after_metadata_commit(ctx: TestContext)
             metadata: serde_json::json!({}),
             final_status: MaterialStatus::Completed,
             write_lease: Some(&lease),
+            manifest_key: None,
+            manifest_lease: None,
         })
         .await?;
 
@@ -187,6 +189,8 @@ async fn finalized_material_retry_releases_renewed_cas_lease(ctx: TestContext) -
         metadata: serde_json::json!({}),
         final_status: MaterialStatus::Completed,
         write_lease,
+        manifest_key: None,
+        manifest_lease: None,
     };
 
     FinalizationTransaction::new(&assembler)

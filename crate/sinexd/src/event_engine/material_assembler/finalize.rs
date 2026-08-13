@@ -348,7 +348,10 @@ impl MaterialAssembler {
         context: JsonValue,
         resume_phase: AssemblyPhase,
     ) -> EventEngineResult<()> {
-        if let Err(error) = self.route_material_error(material_id, reason, context).await {
+        if let Err(error) = self
+            .route_material_error(material_id, reason, context)
+            .await
+        {
             warn!(
                 material_id = %material_id,
                 failure_reason = reason,
@@ -494,8 +497,7 @@ impl MaterialAssembler {
             return Ok(false);
         }
 
-        let is_self_observation =
-            is_self_observation_material_source(&material.source_identifier);
+        let is_self_observation = is_self_observation_material_source(&material.source_identifier);
         let (recovery_reason, metadata_key, dlq_policy) = if is_self_observation {
             (
                 ZERO_EVENT_SELF_OBSERVATION_TIMEOUT_RECOVERY_REASON,
@@ -528,12 +530,10 @@ impl MaterialAssembler {
             )
             .await
             .map_err(|error| {
-                SinexError::database(
-                    "Failed to mark zero-event timeout recovered_partial",
-                )
-                .with_context("material_id", material_id.to_string())
-                .with_context("parsed_event_count", parsed_event_count.to_string())
-                .with_source(error)
+                SinexError::database("Failed to mark zero-event timeout recovered_partial")
+                    .with_context("material_id", material_id.to_string())
+                    .with_context("parsed_event_count", parsed_event_count.to_string())
+                    .with_source(error)
             })?;
 
         info!(
@@ -557,8 +557,7 @@ impl MaterialAssembler {
             return Ok(());
         };
 
-        self
-            .finalize_failed_material_claimed_checked(material_id, reason, resume_phase)
+        self.finalize_failed_material_claimed_checked(material_id, reason, resume_phase)
             .await
     }
 
@@ -618,7 +617,10 @@ impl MaterialAssembler {
         state_handle: &Arc<Mutex<super::state::AssemblerState>>,
         end: MaterialEndMessage,
     ) -> EventEngineResult<()> {
-        if let Err(error) = self.route_material_error(material_id, reason, context).await {
+        if let Err(error) = self
+            .route_material_error(material_id, reason, context)
+            .await
+        {
             warn!(
                 material_id = %material_id,
                 failure_reason = reason,
@@ -1121,7 +1123,7 @@ impl MaterialAssembler {
         // with the blob/material rows below; an interrupted transaction leaves a
         // recoverable CAS object for the lifecycle reconciler rather than losing
         // the only copy of its metadata.
-        let manifest_key = match self
+        let (manifest_key, manifest_lease) = match self
             .persist_material_manifest(
                 &final_state,
                 &end.content_hash,
@@ -1131,7 +1133,7 @@ impl MaterialAssembler {
             )
             .await
         {
-            Ok(key) => key,
+            Ok(result) => result,
             Err(error) => {
                 if let Err(dlq_error) = self
                     .route_material_error(
@@ -1171,6 +1173,8 @@ impl MaterialAssembler {
                 metadata: finalize_metadata,
                 final_status,
                 write_lease: Some(&write_lease),
+                manifest_key: Some(&manifest_key),
+                manifest_lease: Some(&manifest_lease),
             }),
         )
         .await
@@ -1189,10 +1193,12 @@ impl MaterialAssembler {
                     "Material finalization exceeded timeout; preserving retry state and NAKing for redelivery"
                 );
                 Self::revert_finalization_start(&state_handle, end).await;
-                return Err(SinexError::processing("material finalization exceeded timeout")
-                    .with_context("material_id", material_id.to_string())
-                    .with_context("timeout_secs", self.finalize_timeout.as_secs().to_string())
-                    .with_context("finalization_stage", "commit_outcome_unknown"));
+                return Err(
+                    SinexError::processing("material finalization exceeded timeout")
+                        .with_context("material_id", material_id.to_string())
+                        .with_context("timeout_secs", self.finalize_timeout.as_secs().to_string())
+                        .with_context("finalization_stage", "commit_outcome_unknown"),
+                );
             }
             Ok(Err(e)) => {
                 let commit_outcome_unknown = e.is_commit_outcome_unknown();
@@ -1295,7 +1301,10 @@ impl MaterialAssembler {
         total_size_bytes: i64,
         metadata: &JsonValue,
         ended_at: Timestamp,
-    ) -> EventEngineResult<crate::runtime::content_store::ContentStoreKey> {
+    ) -> EventEngineResult<(
+        crate::runtime::content_store::ContentStoreKey,
+        crate::runtime::content_store::CasWriteLease,
+    )> {
         let total_size_bytes = u64::try_from(total_size_bytes).map_err(|error| {
             SinexError::validation("material size cannot be represented in a manifest")
                 .with_std_error(&error)
@@ -1315,8 +1324,7 @@ impl MaterialAssembler {
                 .with_context("reason", error)
         })?;
         let bytes = manifest.canonical_bytes().map_err(|error| {
-            SinexError::serialization("failed to encode material manifest")
-                .with_std_error(&error)
+            SinexError::serialization("failed to encode material manifest").with_std_error(&error)
         })?;
 
         let parent = final_state.temp_path.parent().ok_or_else(|| {
@@ -1344,7 +1352,13 @@ impl MaterialAssembler {
                     path.display()
                 ))
             })?;
-            self.content_store.store_file(&utf8_path).await
+            // This is process-owned assembler staging, not an external source
+            // file. It intentionally lives outside the configured CAS root;
+            // retain its lease until the registry transaction confirms the
+            // metadata reference, just like the material bytes lease.
+            self.content_store
+                .store_owned_temp_file_with_lease(&utf8_path)
+                .await
         }
         .await;
         if let Err(error) = tokio::fs::remove_file(&manifest_path).await {

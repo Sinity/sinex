@@ -21,6 +21,11 @@ pub enum FaultPoint {
     CasReconciliation,
     MaterialStagedFile,
     MaterialWal,
+    /// Test-only response loss after the material transaction and CAS lease
+    /// cleanup have both completed. This is deliberately not part of the
+    /// production fault-injection surface.
+    #[cfg(test)]
+    MaterialCommitPostCommitResponse,
 }
 
 impl FaultPoint {
@@ -34,6 +39,8 @@ impl FaultPoint {
             Self::CasReconciliation => "cas-reconciliation",
             Self::MaterialStagedFile => "material-staged-file",
             Self::MaterialWal => "material-wal",
+            #[cfg(test)]
+            Self::MaterialCommitPostCommitResponse => "material-commit-post-commit-response",
         }
     }
 }
@@ -57,6 +64,8 @@ impl FromStr for FaultPoint {
             "cas-reconciliation" => Ok(Self::CasReconciliation),
             "material-staged-file" => Ok(Self::MaterialStagedFile),
             "material-wal" => Ok(Self::MaterialWal),
+            #[cfg(test)]
+            "material-commit-post-commit-response" => Ok(Self::MaterialCommitPostCommitResponse),
             other => Err(SinexError::validation(format!(
                 "unknown deterministic fault point: {other}"
             ))),
@@ -181,6 +190,7 @@ mod tests {
             FaultPoint::CasReconciliation,
             FaultPoint::MaterialStagedFile,
             FaultPoint::MaterialWal,
+            FaultPoint::MaterialCommitPostCommitResponse,
         ] {
             assert_eq!(point.to_string().parse::<FaultPoint>().unwrap(), point);
         }
