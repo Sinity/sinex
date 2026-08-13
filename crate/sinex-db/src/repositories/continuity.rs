@@ -34,7 +34,7 @@ use sinex_primitives::sources::continuity::{
     PrivacyClass, Replayability, SeamKind, SourceContinuityReport, TemporalSeam,
 };
 use sinex_primitives::{
-    RuntimeLivenessSignals, RuntimeLivenessStatus,
+    RuntimeLivenessPolicy, RuntimeLivenessSignals, RuntimeLivenessStatus,
     Timestamp, evaluate_runtime_liveness,
 };
 use sqlx::PgPool;
@@ -400,7 +400,7 @@ fn continuous_trailing_gap(
             last_heartbeat_at: None,
             last_output_at: Some(latest.into()),
         },
-        stale_after_secs,
+        RuntimeLivenessPolicy::new(stale_after_secs),
         now.into(),
     );
     matches!(liveness.status, RuntimeLivenessStatus::Stale).then(|| CoverageGap {

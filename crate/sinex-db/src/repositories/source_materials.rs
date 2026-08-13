@@ -15,7 +15,10 @@ use sinex_primitives::rpc::sources::{
     CaveatSeverity, SourceCaveat, SourceMaterialMetadataContract, SourceReadiness,
     SourceReadinessCost, SourceReadinessStatus, caveat_codes,
 };
-use sinex_primitives::{Id, SinexError, Timestamp, events::OffsetKind};
+use sinex_primitives::{
+    DEFAULT_RUNTIME_LIVENESS_STALE_AFTER_SECS, Id, RuntimeLivenessPolicy, SinexError, Timestamp,
+    events::OffsetKind,
+};
 use sqlx::PgPool;
 use time::format_description;
 use uuid::Uuid;
@@ -1323,7 +1326,7 @@ impl SourceMaterialRepository<'_> {
     /// pretend to be a full job monitor.
     ///
     /// `stale_after_seconds` controls when a recent-success source flips to
-    /// `Stale`. Defaults to 7 days when `None`.
+    /// `Stale`. Defaults to the canonical runtime liveness policy when `None`.
     pub async fn list_source_readiness(
         &self,
         source_family: Option<&str>,
@@ -1343,7 +1346,9 @@ impl SourceMaterialRepository<'_> {
         source_family: Option<&str>,
         stale_after_seconds: Option<i64>,
     ) -> DbResult<Vec<SourceReadiness>> {
-        let stale_after = stale_after_seconds.unwrap_or(7 * 24 * 3600);
+        let stale_after = stale_after_seconds
+            .unwrap_or(DEFAULT_RUNTIME_LIVENESS_STALE_AFTER_SECS as i64);
+        let liveness_policy = RuntimeLivenessPolicy::new(stale_after.max(0) as u64);
 
         let rows = sqlx::query!(
             r#"
@@ -1438,7 +1443,7 @@ impl SourceMaterialRepository<'_> {
                 });
                 SourceReadinessStatus::Partial
             } else if let Some(secs) = freshness_seconds {
-                if secs > stale_after {
+                if liveness_policy.considers_stale(secs) {
                     caveats.push(SourceCaveat {
                         code: caveat_codes::MATERIAL_NO_RECENT_SNAPSHOT.to_string(),
                         severity: CaveatSeverity::Warning,

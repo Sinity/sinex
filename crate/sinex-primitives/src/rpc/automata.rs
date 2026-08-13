@@ -3,8 +3,8 @@
 use crate::domain::ModuleName;
 use crate::rpc::{RpcDomain, RpcMethod, RpcMutability, RpcRole, RpcStability, methods};
 use crate::{
-    DEFAULT_RUNTIME_LIVENESS_STALE_AFTER_SECS, RuntimeLiveness, RuntimeLivenessSignals,
-    RuntimeLivenessStatus, Timestamp, Uuid, evaluate_runtime_liveness,
+    DEFAULT_RUNTIME_LIVENESS_STALE_AFTER_SECS, RuntimeLiveness, RuntimeLivenessPolicy,
+    RuntimeLivenessSignals, RuntimeLivenessStatus, Timestamp, Uuid, evaluate_runtime_liveness,
 };
 use serde::{Deserialize, Serialize};
 
@@ -117,7 +117,7 @@ impl AutomatonStatus {
                 last_heartbeat_at: self.last_heartbeat_at,
                 last_output_at: self.last_output_at,
             },
-            stale_after_secs,
+            RuntimeLivenessPolicy::new(stale_after_secs),
             now,
         )
     }

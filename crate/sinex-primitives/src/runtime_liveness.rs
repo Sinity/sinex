@@ -11,6 +11,34 @@ use crate::domain::HealthStatus;
 /// Shared default used by runtime, source, and automaton status requests.
 pub const DEFAULT_RUNTIME_LIVENESS_STALE_AFTER_SECS: u64 = 300;
 
+/// Explicit policy input for a runtime liveness evaluation.
+///
+/// Callers may choose a different threshold for a deliberately narrower
+/// observation window, but they must pass that choice as policy rather than
+/// embedding another freshness rule in their own status calculation.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct RuntimeLivenessPolicy {
+    pub stale_after_secs: u64,
+}
+
+impl RuntimeLivenessPolicy {
+    #[must_use]
+    pub const fn new(stale_after_secs: u64) -> Self {
+        Self { stale_after_secs }
+    }
+
+    #[must_use]
+    pub const fn considers_stale(self, age_secs: i64) -> bool {
+        age_secs >= self.stale_after_secs as i64
+    }
+}
+
+impl Default for RuntimeLivenessPolicy {
+    fn default() -> Self {
+        Self::new(DEFAULT_RUNTIME_LIVENESS_STALE_AFTER_SECS)
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum RuntimeLivenessStatus {
@@ -55,7 +83,7 @@ pub struct RuntimeLivenessSignals<'a> {
 #[must_use]
 pub fn evaluate_runtime_liveness(
     signals: RuntimeLivenessSignals<'_>,
-    stale_after_secs: u64,
+    policy: RuntimeLivenessPolicy,
     now: Timestamp,
 ) -> RuntimeLiveness {
     let last_observed_at = [signals.last_heartbeat_at, signals.last_output_at]
@@ -80,7 +108,7 @@ pub fn evaluate_runtime_liveness(
     if let Some(age) = age_secs {
         evidence.push(format!("observed_age_secs={age}"));
     }
-    evidence.push(format!("stale_after_secs={stale_after_secs}"));
+    evidence.push(format!("stale_after_secs={}", policy.stale_after_secs));
 
     let run_status = signals.run_status.map(str::to_ascii_lowercase);
     let status = if matches!(
@@ -94,7 +122,7 @@ pub fn evaluate_runtime_liveness(
         RuntimeLivenessStatus::Unhealthy
     } else if last_observed_at.is_none() {
         RuntimeLivenessStatus::Unknown
-    } else if age_secs.is_some_and(|age| age >= stale_after_secs as i64) {
+    } else if age_secs.is_some_and(|age| age >= policy.stale_after_secs as i64) {
         RuntimeLivenessStatus::Stale
     } else if matches!(run_status.as_deref(), Some("draining" | "paused"))
         || matches!(signals.health_status, Some(HealthStatus::Degraded))
@@ -131,7 +159,7 @@ mod tests {
                 last_heartbeat_at: Some((datetime!(2026-08-12 11:54 UTC)).into()),
                 last_output_at: None,
             },
-            300,
+            RuntimeLivenessPolicy::new(300),
             now(),
         );
         assert_eq!(result.status, RuntimeLivenessStatus::Stale);
@@ -147,7 +175,7 @@ mod tests {
                 last_heartbeat_at: None,
                 last_output_at: Some((datetime!(2026-08-12 11:50 UTC)).into()),
             },
-            300,
+            RuntimeLivenessPolicy::new(300),
             now(),
         );
         assert_eq!(result.status, RuntimeLivenessStatus::Stale);
@@ -172,7 +200,7 @@ mod tests {
                 last_heartbeat_at: None,
                 last_output_at: None,
             },
-            300,
+            RuntimeLivenessPolicy::new(300),
             now(),
         );
         assert_eq!(result.status, RuntimeLivenessStatus::Unknown);
@@ -189,7 +217,7 @@ mod tests {
                 last_heartbeat_at: Some((datetime!(2026-08-12 11:59:30 UTC)).into()),
                 last_output_at: None,
             },
-            300,
+            RuntimeLivenessPolicy::new(300),
             now(),
         );
         assert_eq!(result.status, RuntimeLivenessStatus::Unhealthy);
@@ -205,7 +233,7 @@ mod tests {
                 last_heartbeat_at: None,
                 last_output_at: Some((datetime!(2026-08-12 11:59 UTC)).into()),
             },
-            300,
+            RuntimeLivenessPolicy::new(300),
             now(),
         );
         assert_eq!(result.status, RuntimeLivenessStatus::Unhealthy);
@@ -220,7 +248,7 @@ mod tests {
                 last_heartbeat_at: Some((datetime!(2026-08-12 11:59:30 UTC)).into()),
                 last_output_at: None,
             },
-            300,
+            RuntimeLivenessPolicy::new(300),
             now(),
         );
         assert_eq!(result.status, RuntimeLivenessStatus::Degraded);
@@ -235,7 +263,7 @@ mod tests {
                 last_heartbeat_at: Some((datetime!(2026-08-12 11:59:30 UTC)).into()),
                 last_output_at: None,
             },
-            300,
+            RuntimeLivenessPolicy::new(300),
             now(),
         );
         assert_eq!(result.status, RuntimeLivenessStatus::Degraded);
@@ -250,7 +278,7 @@ mod tests {
                 last_heartbeat_at: Some((datetime!(2026-08-12 11:50 UTC)).into()),
                 last_output_at: Some((datetime!(2026-08-12 11:59 UTC)).into()),
             },
-            300,
+            RuntimeLivenessPolicy::new(300),
             now(),
         );
         assert_eq!(result.status, RuntimeLivenessStatus::Healthy);
@@ -258,5 +286,13 @@ mod tests {
             result.last_observed_at,
             Some((datetime!(2026-08-12 11:59 UTC)).into())
         );
+    }
+
+    #[test]
+    fn policy_is_the_single_staleness_boundary() {
+        let policy = RuntimeLivenessPolicy::new(30);
+        assert!(!policy.considers_stale(29));
+        assert!(policy.considers_stale(30));
+        assert_eq!(RuntimeLivenessPolicy::default().stale_after_secs, 300);
     }
 }

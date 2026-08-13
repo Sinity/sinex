@@ -7,7 +7,10 @@ use sinex_primitives::rpc::coordination::{
     InstanceInfo, ListInstancesRequest, ListInstancesResponse,
 };
 use sinex_primitives::rpc::runtime::{RuntimeInfo, RuntimeListActiveRequest};
-use sinex_primitives::{Result, SinexError};
+use sinex_primitives::{
+    Result, RuntimeLivenessPolicy, RuntimeLivenessSignals, SinexError, evaluate_runtime_liveness,
+    Timestamp,
+};
 use sqlx::PgPool;
 
 async fn active_runtime_modules(pool: &PgPool) -> Result<Vec<RuntimeInfo>> {
@@ -93,7 +96,18 @@ pub async fn handle_coordination_instance_health(
         return Err(SinexError::not_found("coordination instance not found")
             .with_context("instance_id", request.instance_id.to_string()));
     };
-    let healthy = module.status == "active";
+    let healthy = evaluate_runtime_liveness(
+        RuntimeLivenessSignals {
+            run_status: Some(module.status.as_str()),
+            health_status: None,
+            last_heartbeat_at: module.last_heartbeat_at,
+            last_output_at: None,
+        },
+        RuntimeLivenessPolicy::default(),
+        Timestamp::now(),
+    )
+    .status
+    .is_live();
     Ok(InstanceHealthResponse {
         instance: instance_info(module, true),
         healthy,

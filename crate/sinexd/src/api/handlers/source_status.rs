@@ -28,8 +28,8 @@ use sinex_primitives::views::{
     SourcePrivacyPosture, SourceResourceBudgetView, ViewEnvelope,
 };
 use sinex_primitives::{
-    DEFAULT_RUNTIME_LIVENESS_STALE_AFTER_SECS, RuntimeLivenessSignals, RuntimeLivenessStatus,
-    evaluate_runtime_liveness,
+    DEFAULT_RUNTIME_LIVENESS_STALE_AFTER_SECS, RuntimeLivenessPolicy, RuntimeLivenessSignals,
+    RuntimeLivenessStatus, evaluate_runtime_liveness,
 };
 use sqlx::FromRow;
 use sqlx::PgPool;
@@ -447,7 +447,7 @@ fn source_coverage_view_with_stale_after(
                     last_heartbeat_at: None,
                     last_output_at: fallback_last_observed,
                 },
-                stale_after_secs,
+                RuntimeLivenessPolicy::new(stale_after_secs),
                 now,
             )
         });

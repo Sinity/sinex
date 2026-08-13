@@ -683,7 +683,18 @@ impl GatewayClient {
                     .with_context("module", module_name)
             })?;
         let hostname = info.host.as_deref().and_then(|h| HostName::new(h).ok());
-        let healthy = info.status == "active";
+        let healthy = sinex_primitives::evaluate_runtime_liveness(
+            sinex_primitives::RuntimeLivenessSignals {
+                run_status: Some(info.status.as_str()),
+                health_status: None,
+                last_heartbeat_at: info.last_heartbeat_at,
+                last_output_at: None,
+            },
+            sinex_primitives::RuntimeLivenessPolicy::default(),
+            sinex_primitives::Timestamp::now(),
+        )
+        .status
+        .is_live();
         Ok(InstanceHealthResponse {
             instance: InstanceInfo {
                 instance_id: InstanceId::new(

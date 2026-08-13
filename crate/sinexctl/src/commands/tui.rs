@@ -15,7 +15,10 @@ use ratatui::{
     text::{Line, Span},
     widgets::{Block, Borders, Clear, List, ListItem, Paragraph, Wrap},
 };
-use sinex_primitives::DEFAULT_RUNTIME_LIVENESS_STALE_AFTER_SECS;
+use sinex_primitives::{
+    DEFAULT_RUNTIME_LIVENESS_STALE_AFTER_SECS, RuntimeLivenessPolicy, RuntimeLivenessSignals,
+    RuntimeLivenessStatus, evaluate_runtime_liveness,
+};
 use sinex_primitives::privacy::private_mode::RuntimePrivateModeState;
 use sinex_primitives::query::{EventQuery, QueryResultEvent, SortDirection, TimeRange};
 use sinex_primitives::rpc::privacy::PrivateModeStateResponse;
@@ -114,6 +117,20 @@ struct App {
     copy_index: usize,
     payload_raw: bool,
     feedback: Option<String>,
+}
+
+fn module_liveness(module: &RuntimeInfo, now: Timestamp) -> RuntimeLivenessStatus {
+    evaluate_runtime_liveness(
+        RuntimeLivenessSignals {
+            run_status: Some(module.status.as_str()),
+            health_status: None,
+            last_heartbeat_at: module.last_heartbeat_at,
+            last_output_at: None,
+        },
+        RuntimeLivenessPolicy::default(),
+        now,
+    )
+    .status
 }
 
 impl App {
@@ -671,14 +688,11 @@ fn render_dashboard(f: &mut Frame, area: Rect, app: &App) {
         .split(area);
 
     // Left: System overview
-    // Consider a module healthy if it has a recent heartbeat.
+    let now = Timestamp::now();
     let healthy_modules = app
         .modules
         .iter()
-        .filter(|n| {
-            n.last_heartbeat_at
-                .is_some_and(|hb| (Timestamp::now() - hb).whole_seconds() < 60)
-        })
+        .filter(|module| module_liveness(module, now).is_live())
         .count();
     let total_modules = app.modules.len();
     let dlq_total = app.dlq_stats.as_ref().map_or(0, |s| s.total_messages);
@@ -715,11 +729,10 @@ fn render_dashboard(f: &mut Frame, area: Rect, app: &App) {
         .modules
         .iter()
         .map(|n| {
-            let has_recent_heartbeat = n
-                .last_heartbeat_at
-                .is_some_and(|hb| (Timestamp::now() - hb).whole_seconds() < 60);
-            let status_icon = if has_recent_heartbeat { "●" } else { "○" };
-            let color = if has_recent_heartbeat {
+            let liveness = module_liveness(n, Timestamp::now());
+            let is_live = liveness.is_live();
+            let status_icon = if is_live { "●" } else { "○" };
+            let color = if is_live {
                 Color::Green
             } else {
                 Color::Red
@@ -1133,11 +1146,9 @@ fn render_modules(f: &mut Frame, area: Rect, app: &App) {
         .iter()
         .enumerate()
         .map(|(i, n)| {
-            let has_recent_heartbeat = n
-                .last_heartbeat_at
-                .is_some_and(|hb| (Timestamp::now() - hb).whole_seconds() < 60);
-            let status_icon = if has_recent_heartbeat { "●" } else { "○" };
-            let color = if has_recent_heartbeat {
+            let is_live = module_liveness(n, Timestamp::now()).is_live();
+            let status_icon = if is_live { "●" } else { "○" };
+            let color = if is_live {
                 Color::Green
             } else {
                 Color::Red

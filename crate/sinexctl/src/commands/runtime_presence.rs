@@ -9,8 +9,8 @@ use sinex_primitives::views::{
     CaveatView, ReadinessCaveatId, SinexObjectKind, SinexObjectRef, ViewEnvelope,
 };
 use sinex_primitives::{
-    DEFAULT_RUNTIME_LIVENESS_STALE_AFTER_SECS, RuntimeLivenessSignals, RuntimeLivenessStatus,
-    evaluate_runtime_liveness,
+    DEFAULT_RUNTIME_LIVENESS_STALE_AFTER_SECS, RuntimeLivenessPolicy, RuntimeLivenessSignals,
+    RuntimeLivenessStatus, evaluate_runtime_liveness,
 };
 
 use crate::client::GatewayClient;
@@ -55,7 +55,7 @@ impl RuntimePresenceCommand {
                         last_heartbeat_at: info.last_heartbeat_at,
                         last_output_at: None,
                     },
-                    stale_after_secs,
+                    RuntimeLivenessPolicy::new(stale_after_secs),
                     now,
                 );
                 EnrichedRuntimeInfo {

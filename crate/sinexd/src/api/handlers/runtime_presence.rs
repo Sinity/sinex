@@ -4,7 +4,10 @@
 
 use sinex_db::DbPoolExt;
 use sinex_primitives::SinexError;
-use sinex_primitives::{RuntimeLivenessSignals, RuntimeLivenessStatus, evaluate_runtime_liveness};
+use sinex_primitives::{
+    RuntimeLivenessPolicy, RuntimeLivenessSignals, RuntimeLivenessStatus,
+    evaluate_runtime_liveness,
+};
 use sinex_primitives::rpc::runtime::{
     RuntimeHealthRequest, RuntimeHealthResponse, RuntimeHeartbeatSource, RuntimeInfo,
     RuntimeListActiveRequest, RuntimeListActiveResponse,
@@ -58,7 +61,7 @@ pub async fn handle_runtime_list_active(
                         last_heartbeat_at: module.last_heartbeat_at,
                         last_output_at: None,
                     },
-                    request.stale_after_secs,
+                    RuntimeLivenessPolicy::new(request.stale_after_secs),
                     now,
                 )
                 .status,

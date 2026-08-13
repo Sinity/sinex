@@ -196,7 +196,7 @@ pub use query_units::{
 };
 pub use runtime_liveness::{
     DEFAULT_RUNTIME_LIVENESS_STALE_AFTER_SECS, RuntimeLiveness, RuntimeLivenessSignals,
-    RuntimeLivenessStatus, evaluate_runtime_liveness,
+    RuntimeLivenessPolicy, RuntimeLivenessStatus, evaluate_runtime_liveness,
 };
 pub use runtime_pressure::{RuntimePressureAction, RuntimePressureLevel};
 pub use runtime_target::{

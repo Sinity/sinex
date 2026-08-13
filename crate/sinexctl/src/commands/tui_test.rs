@@ -1,7 +1,8 @@
 use super::*;
 use crate::client::ClientConfig;
 use ratatui::backend::TestBackend;
-use sinex_primitives::domain::OperationStatus;
+use sinex_primitives::domain::{ModuleKind, ModuleName, OperationStatus};
+use sinex_primitives::rpc::runtime::RuntimeHeartbeatSource;
 use sinex_primitives::views::{
     CaveatView, CoverageGapView, EventSourceView, EventTimestampView, PrivacyStateView,
     SinexObjectRef, SourcePrivacyPosture,
@@ -601,4 +602,28 @@ fn buffer_to_text(buffer: &ratatui::buffer::Buffer) -> String {
         })
         .collect::<Vec<_>>()
         .join("\n")
+}
+
+#[sinex_test]
+async fn tui_module_liveness_uses_canonical_policy_and_run_status() -> TestResult<()> {
+    let now = Timestamp::now();
+    let mut module = RuntimeInfo {
+        module_name: ModuleName::new("fixture-module"),
+        module_kind: ModuleKind::Source,
+        version: "test".to_string(),
+        description: None,
+        service_name: None,
+        instance_id: None,
+        module_run_id: None,
+        host: None,
+        status: "running".to_string(),
+        last_heartbeat_at: Some(now),
+        started_at: Some(now),
+        heartbeat_source: RuntimeHeartbeatSource::Run,
+    };
+    assert_eq!(module_liveness(&module, now), RuntimeLivenessStatus::Healthy);
+
+    module.status = "failed".to_string();
+    assert_eq!(module_liveness(&module, now), RuntimeLivenessStatus::Unhealthy);
+    Ok(())
 }
