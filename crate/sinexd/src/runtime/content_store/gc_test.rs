@@ -46,6 +46,64 @@ async fn stale_unreferenced_registry_material_is_removed_by_periodic_gc(
 }
 
 #[sinex_test]
+async fn periodic_gc_retains_stale_material_with_manifest_replay_authority(
+    ctx: TestContext,
+) -> TestResult<()> {
+    let ctx = ctx.with_nats().shared().await?;
+    let store_dir = tempfile::tempdir()?;
+    let root_path = Utf8PathBuf::from_path_buf(store_dir.path().to_path_buf())
+        .expect("temporary content-store path must be UTF-8");
+    let content_store = MaterialContentStore::new(ContentStoreConfig {
+        root_path,
+        ..Default::default()
+    })?;
+    let repo = ctx.pool.source_materials();
+    let material_id = Uuid::now_v7();
+    repo.register_external_in_flight(
+        material_id,
+        "test",
+        Some(&format!("test://registry-gc/manifest/{material_id}")),
+        json!({}),
+        Timestamp::now() - time::Duration::days(30),
+    )
+    .await?;
+    repo.finalize_in_flight_as(
+        ctx.pool(),
+        Id::from_uuid(material_id),
+        MaterialStatus::Failed,
+        None,
+        None,
+        None,
+        None,
+    )
+    .await?;
+    repo.update_metadata(
+        Id::from_uuid(material_id),
+        json!({
+            "material_manifest": {
+                "manifest_type": sinex_primitives::MATERIAL_MANIFEST_V1,
+                "content_key": "local-cas-s1--aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+            }
+        }),
+    )
+    .await?;
+    sqlx::query("UPDATE raw.source_material_registry SET end_time = $2 WHERE id = $1")
+        .bind(material_id)
+        .bind(Timestamp::now() - time::Duration::days(30))
+        .execute(ctx.pool())
+        .await?;
+
+    let report = sweep_stale_material_registry(ctx.pool(), &content_store, true).await?;
+
+    assert_eq!(report.registry_rows_deleted, 0);
+    assert!(
+        repo.get_by_id(Id::from_uuid(material_id)).await?.is_some(),
+        "manifest-backed materials are replay roots and must survive registry GC"
+    );
+    Ok(())
+}
+
+#[sinex_test]
 async fn periodic_gc_removes_disposable_terminal_rows_but_retains_completed_materials(
     ctx: TestContext,
 ) -> TestResult<()> {

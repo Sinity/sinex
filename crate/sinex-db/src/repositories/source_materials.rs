@@ -1721,7 +1721,9 @@ impl SourceMaterialRepository<'_> {
     ///
     /// The age/status/reference predicates are repeated in the DELETE itself so
     /// a concurrent event admission cannot turn a previously selected row into
-    /// an unsafe deletion between selection and mutation.
+    /// an unsafe deletion between selection and mutation. A material manifest
+    /// is also a retention root: it is the replay authority for the exact CAS
+    /// bytes even when parsing produced no event.
     pub async fn delete_stale_unreferenced_materials(
         &self,
         older_than: Timestamp,
@@ -1734,6 +1736,7 @@ impl SourceMaterialRepository<'_> {
                 FROM raw.source_material_registry sm
                 WHERE sm.status IN ('sensing', 'failed', 'recovered_partial', 'cancelled')
                   AND COALESCE(sm.end_time, sm.start_time, sm.staged_at) < $1
+                  AND NOT (sm.metadata ? 'material_manifest')
                   AND NOT EXISTS (
                       SELECT 1 FROM core.events e WHERE e.source_material_id = sm.id
                   )
@@ -1748,6 +1751,7 @@ impl SourceMaterialRepository<'_> {
             WHERE sm.id = candidates.id
               AND sm.status IN ('sensing', 'failed', 'recovered_partial', 'cancelled')
               AND COALESCE(sm.end_time, sm.start_time, sm.staged_at) < $1
+              AND NOT (sm.metadata ? 'material_manifest')
               AND NOT EXISTS (
                   SELECT 1 FROM core.events e WHERE e.source_material_id = sm.id
               )
