@@ -1603,9 +1603,12 @@ struct ParsedEmailAttachment {
 }
 
 fn parse_rfc822(record: &SourceRecord) -> ParserResult<ParsedEmail> {
-    let text = std::str::from_utf8(&record.bytes)
-        .map_err(|error| ParserError::Parse(format!("email material is not UTF-8: {error}")))?;
-    let (headers, body) = split_headers_body(text);
+    // The registered source material remains the exact original bytes.  RFC
+    // 822 headers are commonly UTF-8 even when a legacy body contains a
+    // non-UTF-8 octet; preserve the raw witness and make only the parsed view
+    // loss-tolerant so envelope metadata is not discarded.
+    let text = String::from_utf8_lossy(&record.bytes);
+    let (headers, body) = split_headers_body(&text);
     let headers = parse_headers(headers);
     let header_attachments = attachment_headers(&text);
     let parsed_message = MessageParser::default().parse(&record.bytes);
